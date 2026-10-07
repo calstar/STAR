@@ -102,17 +102,17 @@ def test_an_unknown_unit_points_at_the_registry() -> None:
         to_si(1.0, "smoots")
 
 
-def test_gauge_pressure_is_deliberately_not_a_unit() -> None:
-    """``psig`` must not silently become an absolute pressure.
-
-    Gauge is a *reference*, not a unit: converting it needs the ambient
-    pressure, which a units table does not know. Accepting the spelling and
-    treating it as absolute would put every gauge-authored pressure one
-    atmosphere low -- about 15 psi, which is small enough to look plausible.
-    """
-    assert "psig" not in registered_units()
-    with pytest.raises(UnknownUnit):
-        to_si(500.0, "psig")
+def test_gauge_and_absolute_are_spelled_out_and_bare_is_a_difference() -> None:
+    """``psig`` is one standard atmosphere above ``psia``; bare ``psi`` carries
+    no offset, so it converts a *difference* exactly. Which a drawing's bare
+    pressure means is decided per parameter (feedtwin.model.pressure), never by
+    the unit table."""
+    assert to_si(500.0, "psig") == pytest.approx(500.0 * 6894.757293168361 + 101325.0)
+    assert to_si(500.0, "psia") == pytest.approx(500.0 * 6894.757293168361)
+    assert to_si(500.0, "psi") == to_si(500.0, "psia")
+    assert to_si(5.0, "barg") == pytest.approx(5e5 + 101325.0)
+    # The canonical pressure unit is still the unoffset Pa.
+    assert si_unit_of("pressure") == "Pa"
 
 
 def test_every_dimension_has_a_canonical_unit() -> None:

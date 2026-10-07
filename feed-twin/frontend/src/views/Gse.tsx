@@ -9,12 +9,14 @@
  * and the stand will tell you -- once.
  *
  * Below the regulators: the rest of the cart, which is not on the drawing
- * yet -- how fast it loads and charges. The model switches moved to the
- * Configuration tab with everything else the twin assumes.
+ * yet -- how fast it charges, and the LOX dewar that pushes the load in.
+ * The model switches moved to the Configuration tab with everything else
+ * the twin assumes.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { StandSetup } from '../api';
+import { Link } from 'react-router-dom';
+import { DOME_KNOB, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
 import { useStand } from '../stand';
 
@@ -78,6 +80,27 @@ function Number_({
   );
 }
 
+/** A knob from the drawing's hookup: turns the regulators linked to it. */
+function HookupKnob({ knob, disabled }: { knob: LiveKnob; disabled: boolean }) {
+  const { turnKnob } = useStand();
+  const commit = useCallback((v: number) => turnKnob(knob.id, v), [turnKnob, knob.id]);
+  const [value, setValue] = useCommitted(knob.psig, commit);
+  return (
+    <span title={`Sets ${knob.regulators.join(', ') || 'nothing yet'}`}>
+      <Knob
+        label={knob.label}
+        value={value}
+        min={knob.low}
+        max={knob.high}
+        step={5}
+        unit="psig"
+        onChange={setValue}
+        disabled={disabled}
+      />
+    </span>
+  );
+}
+
 export function Gse() {
   const { live, setup, setSetup } = useStand();
   const set = (patch: Partial<StandSetup>) => setSetup(patch);
@@ -93,6 +116,7 @@ export function Gse() {
     return tag ? { label: tag, value: live.pressure_psi[tag] } : undefined;
   };
   const bottle = live?.bottles[0];
+  const lox = live?.tanks.find((t) => t.side === 'lox');
   const tankMawp = 1000; // psig, the drawing's estimate for both tanks
 
   return (
@@ -118,19 +142,35 @@ export function Gse() {
                 : reading(/HI|HIGH/i)
             }
           />
-          <Knob
-            label="Dome control regulator"
-            value={dome}
-            min={0}
-            max={1000}
-            step={5}
-            unit="psig"
-            onChange={setDome}
-            disabled={locked}
-            redline={tankMawp - 50}
-            actual={reading(/REG/i) ?? reading(/UP/i)}
-          />
+          {/* A knob that sets nothing on this drawing is not on the panel. */}
+          {(live?.knobs?.length ?? 0) === 0 ||
+          live?.knobs?.some((k) => k.id === DOME_KNOB && k.regulators.length > 0) ? (
+            <Knob
+              label={live?.knobs?.find((k) => k.id === DOME_KNOB)?.label ?? 'Dome control regulator'}
+              value={dome}
+              min={0}
+              max={1000}
+              step={5}
+              unit="psig"
+              onChange={setDome}
+              disabled={locked}
+              redline={tankMawp - 50}
+              actual={reading(/REG/i) ?? reading(/UP/i)}
+            />
+          ) : null}
+          {(live?.knobs ?? [])
+            .filter((k) => k.id !== DOME_KNOB && k.regulators.length > 0)
+            .map((k) => (
+              <HookupKnob key={k.id} knob={k} disabled={locked} />
+            ))}
         </div>
+        <p className="mt-1 text-[11px] text-text-muted">
+          Which regulator each knob turns is set on the{' '}
+          <Link to="/hookup" className="text-blue-400 hover:underline">
+            Hookup
+          </Link>{' '}
+          page.
+        </p>
       </section>
 
       <section>
@@ -140,7 +180,22 @@ export function Gse() {
         <div className="bg-card flex flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3">
           <Number_ label="COPV charge" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
           <Number_ label="Fuel load" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
-          <Number_ label="LOX load" value={setup.tank_fill_s} unit="s" step={10} onChange={(tank_fill_s) => set({ tank_fill_s })} />
+          <span title="What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. 0: a fixed-rate load over the LOX load time.">
+            <Number_ label="LOX dewar" value={setup.dewar_psi} unit="psig" step={5} onChange={(dewar_psi) => set({ dewar_psi })} />
+          </span>
+          {setup.dewar_psi > 0 ? (
+            <span title="Everything on the fill line that is not tube -- in practice how far the dewar valve is open. 0.013 is what tops LE4 out at 30 psig during the chill.">
+              <Number_ label="Dewar valve" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
+            </span>
+          ) : (
+            <Number_ label="LOX load" value={setup.tank_fill_s} unit="s" step={10} onChange={(tank_fill_s) => set({ tank_fill_s })} />
+          )}
+          {lox && setup.dewar_psi > 0 ? (
+            <span className="pb-1.5 font-mono text-[12px] tabular-nums text-text-muted">
+              {lox.label} {lox.pressure_psi.toFixed(1)} psig · pouring {(lox.fill_flow_g_s ?? 0).toFixed(1)} g/s
+              {lox.chilling ? ' · chilling' : ''}
+            </span>
+          ) : null}
           <label
             className="flex items-center gap-2 pb-1.5 text-[12px] text-text"
             title="Off: the bottle starts empty and GN2 High Press charges it from the cart. On: it arrives full and cold, like a cylinder filled hours ago."

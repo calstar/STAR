@@ -26,6 +26,12 @@ dev_preflight() {
     # this app actually is.
     "$HERE/.venv/bin/python3" -m pip install -e "$HERE/../lib/feedtwin"
   fi
+  # The shared design store (stands: sharing, checkout, versions), the one
+  # pid-designer and EngineDesign keep their documents in. Checked apart from
+  # the venv so an existing venv picks it up too.
+  if ! "$HERE/.venv/bin/python3" -c "import stardesign" 2>/dev/null; then
+    "$HERE/.venv/bin/python3" -m pip install -e "$HERE/../lib/stardesign"
+  fi
   if [ ! -d "$HERE/frontend/node_modules" ]; then
     echo "  installing frontend dependencies..."
     (cd "$HERE/frontend" && npm install)

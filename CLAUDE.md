@@ -33,14 +33,18 @@ port* before concluding the endpoint is missing.
 ## Testing
 
 ```bash
+scripts/check.sh          # every feed-system gate CI runs, fast tier (~3 min)
+scripts/check.sh full     # plus tests marked slow and the Layer X parity test
 cd lib/feedtwin   && python3 -m pytest -q && python3 -m mypy feedtwin && python3 -m black --check feedtwin tests
-cd feed-twin      && python3 -m pytest -q
+cd feed-twin      && python3 -m pytest -q -m "not slow"     # drop -m for all 200+
 cd pid-designer   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q
 cd EngineDesign   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q   # 4 known failures
 ```
 
-`lib/stardesign` is not installed; the two document-store apps need it on
-`PYTHONPATH`.
+feed-twin installs `lib/stardesign` (`pip install -e ../lib/stardesign`; dev.sh
+and setup.sh do it); pid-designer and EngineDesign still take it on
+`PYTHONPATH`. Slow tests are listed in each `tests/conftest.py`; a test that
+runs a whole burn goes there.
 
 **A test that cannot fail is not a test.** Break the thing a new test guards and
 confirm it goes red before you trust it. Several tests here have passed against the
@@ -99,6 +103,29 @@ very bugs they were written for.
   reintroduce a budget that folds coupling steps -- it made the console integrate a
   different scheme from the one `docs/PHYSICS-BENCHMARK.md` checks. Vessels trip the
   stand above the MAWP their drawing declares (`Session._check_limits`). See 3.10.
+- **One engine: EngineDesign's, as a card.** An engine in feed-twin's library carries
+  EngineDesign's engine card (`POST /api/layerx/engine-card`, stored as the artifact's
+  `card` attachment), and a card goes on an engine only through `EngineCard.install`, as
+  Layer X does. Without one the cockpit fires feedtwin's simplified engine and says so
+  (−5 % thrust, +10 % Isp on LE4). A pulled engine is a copy: `/api/library/{id}/freshness`
+  says when EngineDesign has moved on. Compare the cockpit and Layer X only at the same T-0;
+  `EngineDesign/tests/test_layerx_cockpit_parity.py` holds them together. Burns are totalled
+  by `feedtwin.session.report`. See `docs/adr/0003-one-engine-one-burn.md`.
+- **Pressures: absolute inside, gauge on the drawing, never ambiguous** (ADR 0004).
+  A drawing's bare `psi` on an absolute pressure (tank, bottle, setpoint, dome, MAWP)
+  reads as psig; `psia` says absolute; a chamber pressure on the ENGINE symbol is
+  absolute. Differences (bias, droop, crack, relief set) take bare units only. The rule
+  is `feedtwin.model.pressure.drawn_unit`; never add an atmosphere by hand to a drawn
+  value -- `.si` is already absolute. Everything a person sets or reads is labelled
+  psig (`run.psig`/`from_psig`).
+- **Pages join at paired disconnects; controls reach the drawing through its hookup.**
+  pid-designer's rocket and GSE pages are one network: a QD pair (`options.pairedWith`)
+  is mated (`pid/network.py _mate_disconnects`), and a cart drawn on another page fills
+  the vehicle through the network while the session's built-in fills stand aside. Which
+  valve each state-machine actuator drives and which knob sets which regulator is the
+  drawing's **hookup** (`feedtwin.session.hookup`, the Hookup tab), kept per drawing
+  lineage. With none saved it is `suggest()`, which is the old behaviour bit for bit.
+  Never hard-code a valve or regulator tag; see `docs/integration/gse-pages-and-hookup.md`.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
@@ -110,9 +137,18 @@ very bugs they were written for.
   wall starts at the temperature of the fluid its line holds at rest, which is where a
   soak model would land anyway.
 
+- **A burn is a run record.** The cockpit records every burn at burnout
+  (`feed-twin/backend/runs.py`): inputs, code version, stand version, outcome,
+  solver summary. A new input that changes a burn belongs in `_inputs` or the
+  diff and the Explain ladder cannot see it. Layer X should write the same
+  record (ADR 0005).
+
 ## Docs worth knowing about
 
 - `docs/PHYSICS-BENCHMARK.md` — the regression regimen. Start here.
+- `docs/adr/` — 0004 pressure references, 0005 Layer X vs feed-twin (the Stand
+  and the Run are what the two share).
+- `feed-twin/docs/GETTING-STARTED.md`, `GLOSSARY.md` — for a new engineer.
 - `docs/overnight/` — a full pipeline run as a user, the defects it found, and the
   Phase 14 thermal work.
 - `docs/thermal/line-walls.md` — why the icicles on the fittings are evidence for the

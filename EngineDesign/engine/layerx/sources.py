@@ -104,6 +104,10 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
         if p is None:
             return None
         try:
+            if unit == "psig":  # an absolute pressure, as a gauge reads it
+                return (float(p.si) - 101325.0) / 6894.757293168361
+            if unit == "psi":  # a difference
+                return float(p.si) / 6894.757293168361
             return float(p.si if unit == "si" else p.value)
         except Exception:  # noqa: BLE001 - a summary never fails a listing
             return None
@@ -115,24 +119,24 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
             tanks.append({
                 "id": node.id, "label": node.label, "fluid": node.fluid,
                 "volume_L": (volume.si * 1e3) if volume is not None else None,
-                "mawp_psi": param(node, "MAWP", "value"),
+                "mawp_psi": param(node, "MAWP", "psig"),
             })
         elif node.type == "KBOTTLE":
             volume = node.params.get("volume")
             bottles.append({
                 "id": node.id, "label": node.label, "fluid": node.fluid,
                 "volume_L": (volume.si * 1e3) if volume is not None else None,
-                "pressure_psi": param(node, "pressure", "value"),
-                "mawp_psi": param(node, "MAWP", "value"),
+                "pressure_psi": param(node, "pressure", "psig"),
+                "mawp_psi": param(node, "MAWP", "psig"),
             })
         elif node.type == "PR":
             regulators.append({
                 "id": node.id, "label": node.label,
                 "dome_loaded": node.options.get("domeLoaded") == "yes",
-                "setpoint_psi": param(node, "setpoint", "value"),
-                "dome_bias_psi": param(node, "dome_bias", "value"),
+                "setpoint_psi": param(node, "setpoint", "psig"),
+                "dome_bias_psi": param(node, "dome_bias", "psi"),
                 "supply_coefficient": param(node, "supply_coefficient", "value"),
-                "flow_droop_psi": param(node, "flow_droop", "value"),
+                "flow_droop_psi": param(node, "flow_droop", "psi"),
             })
         elif node.type in ("ENGINE", "INJECTOR"):
             engines.append({"id": node.id, "label": node.label})

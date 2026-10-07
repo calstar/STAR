@@ -325,9 +325,13 @@ def tier2_steady_fire() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"  [SKIP] feed-twin backend unavailable ({type(exc).__name__})")
         return
-    engines = api.library.list("engine")
+    # The engine the expectations below were stated with: the shipped one, by
+    # source -- never "the newest", which is whatever somebody imported last
+    # (on 2026-10-06 a drilled 6800N upload moved every number here and read
+    # as a physics regression).
+    engines = [a for a in api.library.list("engine") if a.source == "shipped"]
     if not engines or study.find_diagram(api.library, "gn2") is None:
-        print("  [SKIP] the library has no engine or no gn2 study drawing")
+        print("  [SKIP] the library has no shipped engine or no gn2 study drawing")
         return
 
     engine = engines[0]

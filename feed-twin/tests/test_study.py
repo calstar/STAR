@@ -82,6 +82,17 @@ def _fixtures() -> None:
         )
 
 
+def shipped_engine() -> str:
+    """The engine a test study fires: the shipped one, named, never "newest"."""
+    found = next(
+        (a for a in library.list("engine") if a.source == "shipped"),
+        None,
+    ) or next(iter(library.list("engine")), None)
+    if found is None:
+        pytest.skip("no engine in the test library")
+    return found.id
+
+
 def status() -> dict:
     response = client.get("/api/study")
     assert response.status_code == 200, response.text
@@ -218,10 +229,14 @@ def test_only_one_study_runs_at_a_time() -> None:
 
 
 def test_a_second_request_over_http_is_refused_while_one_is_in_flight() -> None:
-    first = client.post("/api/study", json={"gases": ["gn2"]})
+    first = client.post(
+        "/api/study", json={"gases": ["gn2"], "engine": shipped_engine()}
+    )
     assert first.status_code == 200, first.text
     try:
-        second = client.post("/api/study", json={"gases": ["he"]})
+        second = client.post(
+            "/api/study", json={"gases": ["he"], "engine": shipped_engine()}
+        )
         assert second.status_code == 409
         assert "already running" in second.json()["detail"]
     finally:
@@ -229,7 +244,9 @@ def test_a_second_request_over_http_is_refused_while_one_is_in_flight() -> None:
 
 
 def test_cancelling_stops_the_run_and_keeps_what_finished() -> None:
-    started = client.post("/api/study", json={"gases": ["gn2", "he"]})
+    started = client.post(
+        "/api/study", json={"gases": ["gn2", "he"], "engine": shipped_engine()}
+    )
     assert started.status_code == 200, started.text
     assert status()["running"] is True
 
@@ -288,3 +305,35 @@ def test_the_thermal_options_do_not_add_cases() -> None:
     base = StudyRequest(gases=("gn2", "he"))
     assert replace(base, vapour=True, chilldown=50.0).cases() == base.cases()
     assert replace(base, collapse=True).cases() == 2 * base.cases()
+
+
+def test_a_study_without_an_engine_is_refused() -> None:
+    """It used to burn whichever engine was imported last, without saying so."""
+    response = client.post("/api/study", json={"gases": ["gn2"]})
+    assert response.status_code == 422
+    assert "engine" in response.json()["detail"].lower()
+
+
+def test_the_study_fires_the_selected_engine_and_says_which() -> None:
+    """Selected, not first in the library: the engine picked is deliberately
+    not the one the old rule (``library.list("engine")[0]``) would have fired."""
+    shipped_engine()
+    extra, _ = library.add(
+        ENGINE_CONFIG.read_bytes() + b"\n# another engine\n",
+        kind="engine",
+        name="another engine",
+        source="upload",
+        suffix=".yaml",
+    )
+    try:
+        engines = library.list("engine")
+        first = engines[0].id
+        chosen = next(a.id for a in engines if a.id != first)
+        started = client.post("/api/study", json={"gases": ["gn2"], "engine": chosen})
+        assert started.status_code == 200, started.text
+        body = started.json()
+        assert body["engine_id"] == chosen
+        assert body["engine_name"] == library.get(chosen).name
+    finally:
+        idle()
+        library.remove(extra.id)

@@ -544,12 +544,19 @@ class StudyRunner:
         self.error = ""
         self.request: StudyRequest | None = None
         self.result: StudyResult | None = None
+        #: The engine the current or last run fired: ``{"id", "name"}``.
+        self.engine: dict[str, str] = {}
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
     def start(
-        self, library: Library, engine_id: str, cea_cache: str, request: StudyRequest
+        self,
+        library: Library,
+        engine_id: str,
+        cea_cache: str,
+        request: StudyRequest,
+        engine_name: str = "",
     ) -> bool:
         """Begin a run. False if one is already going."""
         with self._lock:
@@ -561,6 +568,7 @@ class StudyRunner:
             self.error = ""
             self.request = request
             self.result = None
+            self.engine = {"id": engine_id, "name": engine_name or engine_id}
             self._cancel.clear()
 
         def work() -> None:

@@ -231,6 +231,40 @@ class ChamberResult:
 #: Standard gravity, for turning thrust into specific impulse [m/s^2].
 GRAVITY = 9.80665
 
+MIN_CHAMBER_FLOW = 1.0e-3
+"""Propellant arriving at the chamber that counts as "lit" [kg/s], per side.
+
+Well below a seat leak and far below any real injector flow, so it separates a
+shut stand from a burning one without a tuning question. Both propellants must
+arrive for anything to burn: one alone is unburned liquid passing through the
+throat, not a mixture at the c* table's leanest ratio."""
+
+
+def unlit(
+    ambient_pressure: float, mdot_oxidiser: float, mdot_fuel: float
+) -> "ChamberResult":
+    """The chamber with nothing burning in it: at ambient, no thrust.
+
+    A single propellant (a fuel lead, the step a tank runs dry) flows out
+    through the throat as liquid; its momentum thrust is a few newtons and its
+    pressure rise a psi or two, so it is reported as the unlit chamber it is.
+    Before this, a one-sided flow was evaluated at mixture ratio zero, which the
+    c* table clamps to its leanest point: fuel alone "burned" at 3.5 kN.
+    """
+    total = mdot_oxidiser + mdot_fuel
+    return ChamberResult(
+        pressure=ambient_pressure,
+        mdot_total=total,
+        mdot_oxidiser=mdot_oxidiser,
+        mdot_fuel=mdot_fuel,
+        # Zero, not infinity, with no fuel: the convention evaluate() keeps,
+        # and a number every reader of the result can serialise.
+        mixture_ratio=mdot_oxidiser / mdot_fuel if mdot_fuel > 1e-12 else 0.0,
+        combustion=CombustionState(cstar=0.0),
+        thrust=0.0,
+        specific_impulse=0.0,
+    )
+
 
 class Chamber:
     """Chamber pressure from the flows the injector delivers.
@@ -298,6 +332,9 @@ class Chamber:
                 thrust=0.0,
                 specific_impulse=0.0,
             )
+
+        if min(mdot_oxidiser, mdot_fuel) <= MIN_CHAMBER_FLOW:
+            return unlit(self.ambient_pressure, mdot_oxidiser, mdot_fuel)
 
         pressure = max(self.ambient_pressure, 1.0e5)
         state = CombustionState(cstar=0.0)

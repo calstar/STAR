@@ -44,6 +44,7 @@ solve was hard, and the alternative is a simulator that dies mid-sequence.
 
 from __future__ import annotations
 
+import copy
 import math
 import threading
 import time
@@ -52,22 +53,32 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Deque, Mapping
 
+from feedtwin.comps.correlations import (
+    DEFAULT_FRICTION_METHOD,
+    darcy_friction_factor,
+    reynolds,
+)
 from feedtwin.comps.iec_gas import XT_TYPICAL
 from feedtwin.comps.regulator import LOCKUP_SUPPLY_SIGNAL, SEAT_XT_SIGNAL, Regulator
 from feedtwin.engine.balance import MixtureBalance
+from feedtwin.engine.chamber import MIN_CHAMBER_FLOW as ENGINE_MIN_CHAMBER_FLOW
 from feedtwin.engine.chamber import ChamberResult
 from feedtwin.comps.wall import STAINLESS_DENSITY, LineWall, fitting_metal
 from feedtwin.props import Fluid, PropertyError
+from fluids.fittings import Cv_to_K
 from feedtwin.vessels.convection import GasFilm, still_gas_conductance
 from feedtwin.solve.network import Network
 from feedtwin.solve.steady import SteadyResult, solve_steady
 from feedtwin.vessels.geometry import CylindricalTank, cylindrical_from_volume
 from feedtwin.vessels.collapse import ConductionCollapse, NoCollapse
 from feedtwin.vessels.vapour import NoVapour, SaturatedVapour, latent_heat
-from feedtwin.vessels.tank import Tank, TankState
+from feedtwin.vessels.tank import Tank, TankRates, TankState
 from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
+from feedtwin.pid.network import DomeLoader
 from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
+from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
+from feedtwin.session.hookup import DOME, Hookup
 from feedtwin.session.model import AssemblyError, Model
 from feedtwin.session.statemachine import Binding, StateMachine
 
@@ -109,13 +120,11 @@ ROOM = 293.15
 """Room temperature [K]. Where a wall starts when its line has no upstream node
 to take a temperature from -- which on a drawn stand is nothing."""
 
-MIN_CHAMBER_FLOW = 1.0e-3
-"""Propellant arriving at the chamber that counts as "lit" [kg/s].
-
-Well below a seat leak and far below any real injector flow, so it separates a
-shut stand from a burning one without a tuning question."""
+#: Propellant per side that counts as "lit" [kg/s]; the chamber's own rule.
+MIN_CHAMBER_FLOW = ENGINE_MIN_CHAMBER_FLOW
 
 DRY_MASS = 1.0e-3
+
 
 #: Cap on those re-solves. One tick is allowed to cost this many network solves
 #: and no more; past it the step is simply taken, and the next tick corrects.
@@ -239,6 +248,12 @@ LIVE_STEP = 0.02
 #: in this model where the CFD toolbox would genuinely apply. See
 #: docs/solver-notes.md.
 #:
+#: What does work is the linear half of that: each ullage enters the solve as
+#: a storage node, its pressure an unknown tied to the gas it receives by the
+#: vessel's own response over the step (``Session._ullage_storage``,
+#: ``solve_steady(storage=...)``). Backward Euler on the press path, inside the
+#: one Newton solve, at the cost of three trial vessel steps per tank.
+#:
 #: Vessel sub-steps inside one coupling step. The vessels are stiffer than the
 #: network is expensive, so they take several short steps per solve.
 SUBSTEPS = 4
@@ -255,6 +270,24 @@ AMBIENT_T = 293.15
 FIBERGLASS_K = 0.04
 #: A liquid colder than this is a cryogen for the purposes of the notes.
 CRYOGENIC_K = 150.0
+#: Relative step for the press-path slope in ``Session._press_path_timescale``.
+#: Coarser than the solver's 1e-6: this sizes a step count, not a Newton step.
+PRESS_PATH_FD = 1.0e-3
+#: Probe for an ullage's storage slope in ``Session._ullage_storage``: the
+#: share of its gas a trial step adds or takes. A finite difference, not a
+#: physical number: small enough to stay linear, big enough to read through
+#: the property layer's rounding.
+STORAGE_PROBE = 1.0e-3
+#: Share of the supply band a tick's drain must cover before the press-path
+#: constant is applied (``Session._press_path_timescale``). A tenth: ~0.3 psi
+#: a tick at a 550 psig lockup, against 2-6 psi on a burning LE4 helium tank.
+PRESS_PATH_DRAIN_FRACTION = 0.1
+#: Fixed-point passes on the fill line's friction factor, which depends on the
+#: flow it sets. Clamond moves by under 0.1 % after the third.
+FILL_LINE_ITERATIONS = 4
+#: Wall roughness of the dewar's fill line [m]: drawn tube, the same number the
+#: drawing reader falls back to for a pipe (``pid.network.FALLBACKS``).
+FILL_LINE_ROUGHNESS = 1.5e-6
 #: A wetted wall this far above its liquid is still chilling down, and will
 #: boil the liquid hard if the tank is shut. Said in the notes.
 WARM_WALL_K = 30.0
@@ -341,11 +374,17 @@ class Setup:
     """Bottle fill target [psig], as its gauge would read it."""
     """What GN2 High Press fills the bottle to."""
 
-    copv_fill_s: float = 25.0
-    """Seconds to take the bottle from empty to target: what GN2 High Press
-    takes on the stand (operator). How hot the bottle ends up is
-    ``fill_stirring``'s business, not this number's -- an adiabatic charge
-    lands near the same temperature whether it takes 25 s or 300."""
+    copv_fill_s: float = 9.7
+    """Seconds to take the bottle from empty to target while the fill valve is
+    open. Fitted 2026-10-05 to the 12 Sep pulse fill (DAQ run
+    daq_20260912_204917: six High Press CTRL pulses, 233 to 3,515 psig): with
+    the stand's own valve commands, 9.7 s puts the twin's bottle within 183 psi
+    RMS of the DAQ over the fill. The operator's 25 s was 1,489 psi RMS -- it
+    reached 1,430 psig where the stand reached 3,515. The cart is not on the
+    drawing, so this is a rate rather than a solved flow, and it only holds with
+    the GSE bank well above the bottle: the rate is set by the bank side, not
+    the solenoid. How hot the bottle ends up is ``fill_stirring``'s business,
+    not this number's."""
 
     fuel_fill_s: float = 15.0
     """Seconds to take the fuel tank from empty to :data:`FULL_FRACTION`:
@@ -364,7 +403,10 @@ class Setup:
     rather than pressing the ullage -- at a twentieth of the real time it would
     be twenty times the real vent flow. Zero: the liquid collects from the
     first second and the wall chills as the load goes, which is the model
-    before this existed."""
+    before this existed.
+
+    Only read with :attr:`dewar_psi` at zero. A dewar load chills in real
+    time, at the rate its own flow takes heat out of the wall."""
 
     tank_fill_s: float = 120.0
     """Seconds to take a cryogen tank from empty to :data:`FULL_FRACTION`.
@@ -374,7 +416,56 @@ class Setup:
     liquid it meets, at a rate the vent has to carry. Loaded in thirty
     seconds the wall is still 240 K when the vent shuts and the tank runs
     away; loaded over minutes -- which is what a dewar transfer takes -- the
-    frost has formed by the time it is full. Set it to what the load takes."""
+    frost has formed by the time it is full. Set it to what the load takes.
+
+    Only read with :attr:`dewar_psi` at zero; with a dewar the load takes as
+    long as its line delivers."""
+
+    dewar_psi: float = 100.0
+    """LOX dewar pressure [psig] -- what pushes a cryogen load into its tank.
+
+    The stand fills from a ~100 psig dewar (operator, 2026-10-05). The dewar
+    and its fill line are GSE and not on the drawing yet, so they are this
+    knob and the three below. With it set, a load is a flow: the dewar
+    pressure less the tank's, through the fill line. While the tank wall is
+    warm, everything that arrives boils on it and the vapour goes into the
+    ullage, so the tank climbs until the vent carries what the dewar sends --
+    the rise the stand shows during a chilldown, larger the faster it pours.
+    Once the wall is at saturation the liquid collects. The dewar's liquid is
+    taken at the tank's own liquid temperature, and the dewar's height above
+    the tank is not counted.
+
+    Zero: the fixed-rate load of :attr:`tank_fill_s` and
+    :attr:`load_chill_s`, which is the model before this existed."""
+
+    dewar_line_bore_mm: float = 7.75
+    """Bore of the dewar's fill line [mm]: 3/8 in tube, 0.035 in wall
+    (operator: 3/8 in lines for now). Friction by Clamond over
+    :attr:`dewar_line_length_m`, plus the exit into the tank."""
+
+    dewar_line_length_m: float = 3.0
+    """Length of the dewar's fill line [m]. Estimated: a hose from a dewar
+    beside the stand to the tank's fill disconnect. Measure it."""
+
+    dewar_fill_cv: float = 0.013
+    """Flow coefficient of everything on the fill line that is not tube [Cv]:
+    the dewar's liquid valve, the cart's LOX Fill valve, the disconnect. In
+    practice, how far the dewar valve is open.
+
+    Calibrated, not known (2026-10-05). The stand tops out near 30 psig while
+    a LOX tank chills (operator), and with a Cv 0.5 vent on LE4 this is the
+    value that does that: the vent carries ~7 g/s of the vapour a warm wall
+    boils, so the dewar can only be sending about that. A clean 3/8 in line
+    from 100 psig pours ~0.7 kg/s; every gram of it boils on a warm wall,
+    and the tank rides up to the dewar's own pressure."""
+
+    gse_vent_cv: float = 0.5
+    """Flow coefficient of the cart's vent valve [Cv] (operator: ~0.5).
+
+    A tank with no vent valve drawn vents through a disconnect on its top and
+    a valve on the cart (see ``feedtwin.pid.network._gse_vents``); where the
+    drawing gives that disconnect no Cv or Cd, this is its size. It was the
+    fallback valve's Cv 4, which no one chose."""
 
     fill_stirring: float = 20.0
     """Multiplier on a vessel's gas-to-wall conductance while gas is being
@@ -532,6 +623,13 @@ class Setup:
     (Churchill–Chu natural convection, ``feedtwin.vessels.convection``) when
     the drawing leaves it blank, instead of the per-litre default above. A
     value on the drawing always wins."""
+    ullage_wall_by_level: bool = True
+    """A tank's ullage exchanges heat with the dry wall only -- the wall above
+    the liquid -- so its wall conductance is scaled by that wall's share of the
+    tank. Off: the whole tank's conductance at every fill (the scheme the
+    benchmark Study was stated at; ``burn_setup`` pins it off). On a 95 % full
+    LOX tank the difference is ~20x, and a freshly pressed ullage fell from 548
+    to 260 psig in six seconds of Ready instead of the ~30 s the stand shows."""
     wall_hA_dT: float = 10.0
     """Gas-to-wall temperature difference the still-gas film is evaluated at
     [K]. Natural convection stiffens roughly as dT^(1/4); ten kelvin is a
@@ -716,20 +814,23 @@ def _trip_limit(node: object, safety_factor: float, assumptions: list[str]) -> f
     The drawing says what the vessel will take as a burst pressure -- what a
     team that built it knows -- and the stand stops at that over a stated
     factor of safety. An older drawing carrying an MAWP trips at the MAWP.
-    Gauge on the drawing, like every number an operator reads.
+
+    Both are read as the drawing reads them (feedtwin.model.pressure): bare
+    "psi" is gauge, so ``.si`` is already absolute. The safety factor divides
+    what the wall carries -- the pressure across it, gauge -- not the absolute.
     """
     params = getattr(node, "params", {}) or {}
     label = getattr(node, "label", "") or getattr(node, "id", "vessel")
     burst = params.get("burst_pressure")
-    if burst is not None and burst.si > 0.0:
+    if burst is not None and burst.si > ATMOSPHERE:
         sf = max(float(safety_factor), 1.0)
+        across = (float(burst.si) - ATMOSPHERE) / sf
         assumptions.append(
-            f"{label} trip limit: burst pressure / {sf:g} "
-            f"({burst.si / sf / PSI:.0f} psig)."
+            f"{label} trip limit: burst pressure / {sf:g} ({across / PSI:.0f} psig)."
         )
-        return float(burst.si) / sf + ATMOSPHERE
+        return across + ATMOSPHERE
     rated_at = params.get("MAWP")
-    return (float(rated_at.si) + ATMOSPHERE) if rated_at is not None else 0.0
+    return float(rated_at.si) if rated_at is not None else 0.0
 
 
 def _vessel_wall(
@@ -841,6 +942,16 @@ class TankSim:
     chilling: bool = False
     #: Propellant the chill has flashed off and vented [kg].
     chill_boiled: float = 0.0
+    #: Dewar pressure behind a cryogen load [Pa absolute]; zero loads at the
+    #: fixed rate of ``fill_seconds`` instead (see :attr:`Setup.dewar_psi`).
+    dewar_pressure: float = 0.0
+    #: The dewar's fill line: bore [m], length [m], and the Cv of what on it
+    #: is not tube. See :attr:`Setup.dewar_fill_cv`.
+    fill_line_bore: float = 7.75e-3
+    fill_line_length: float = 3.0
+    fill_cv: float = 0.013
+    #: What the dewar delivered over the last step [kg/s].
+    fill_flow: float = 0.0
     #: The drawing symbol this was built from, for knobs re-read live.
     node: object = None
     #: Maximum allowable working pressure [Pa], 0 if the drawing gives none.
@@ -853,6 +964,14 @@ class TankSim:
     gravity: float = GRAVITY
     """What the liquid column feels [m/s^2]; the session copies
     :attr:`Setup.body_acceleration` in each tick."""
+    #: Ledger for the solver tab (feedtwin.session.diagnostics), cumulative:
+    #: mass the built-in load put in [kg]; mass and ullage energy the
+    #: integrator's own guards changed beyond what the rates said -- floors,
+    #: clamps, a step that could not be reached -- [kg] and [J]. Read, never
+    #: acted on.
+    added_kg: float = 0.0
+    fixed_kg: float = 0.0
+    fixed_J: float = 0.0
 
     @property
     def pressure(self) -> float:
@@ -898,6 +1017,7 @@ class TankSim:
             ),
             "volume_L": self.tank.geometry.total_volume * 1e3,
             "chilling": 1.0 if self.chilling else 0.0,
+            "fill_flow_g_s": self.fill_flow * 1e3,
             # The surface the ullage sees, when it is tracked apart from the
             # bulk; equal to the liquid temperature when it is not.
             "surface_temperature_K": (
@@ -959,6 +1079,121 @@ class TankSim:
         )
         return True
 
+    def _wanted(self) -> float:
+        """Liquid mass a load stops at [kg]: the full fraction of the tank."""
+        capacity = self.tank.geometry.total_volume * self.full_fraction
+        return capacity * self.tank.liquid_density(self.state)
+
+    def _collect(self, added: float) -> None:
+        """Put ``added`` kg of the load into the liquid."""
+        # `replace`, not a fresh TankState: rebuilding field by field silently
+        # drops anything added to the dataclass later, which is exactly how
+        # `vapour_mass` came to reset to zero every step.
+        self.state = replace(
+            self.state,
+            liquid_mass=self.state.liquid_mass + added,
+            # A load stirs the liquid; the layer forms once it is still.
+            surface_temperature=(
+                None
+                if self.state.surface_temperature is None
+                else self.state.liquid_temperature
+            ),
+        )
+
+    def fill_line_flow(self, drop: float) -> float:
+        """What the dewar's fill line passes at a pressure drop [kg/s].
+
+        Liquid through the line: ``drop = (f L / D + K_valves + 1) rho v^2 / 2``,
+        the 1 being the exit into the tank, ``K_valves`` from the Cv of what on
+        the line is not tube (``fluids.fittings.Cv_to_K``), and ``f`` Clamond at
+        the Reynolds number the flow itself sets -- iterated, since the flow
+        sets it. Nothing flows back into the dewar.
+        """
+        bore = self.fill_line_bore
+        if drop <= 0.0 or bore <= 0.0:
+            return 0.0
+        state = self.state
+        rho = self.tank.liquid_density(state)
+        try:
+            mu = self.tank.liquid.get("mu", T=state.liquid_temperature, q=0.0)
+        except (ValueError, PropertyError):
+            mu = 0.0
+        area = math.pi * bore * bore / 4.0
+        fixed = 1.0 + (Cv_to_K(self.fill_cv, bore) if self.fill_cv > 0.0 else 0.0)
+        friction = 0.0
+        flow = 0.0
+        for _ in range(FILL_LINE_ITERATIONS):
+            flow = area * math.sqrt(
+                2.0 * rho * drop / (fixed + friction * self.fill_line_length / bore)
+            )
+            Re = reynolds(flow, bore, rho, mu)
+            friction = darcy_friction_factor(
+                Re, FILL_LINE_ROUGHNESS / bore, DEFAULT_FRICTION_METHOD
+            )
+        return flow
+
+    def _dewar_load(self, dt: float) -> bool:
+        """One step of a cryogen load pushed in by the dewar.
+
+        What arrives is :meth:`fill_line_flow` at the dewar's pressure less the
+        tank's. Into a tank holding no liquid yet, with the wall above
+        saturation for the tank's pressure (plus the boiling onset, as in
+        :meth:`_chill`), it boils on the wall: the wall gives up ``h_fg`` for
+        every gram, and the vapour goes into the **ullage**, where only the
+        vent can take it out. That is the climb the stand shows while a tank
+        chills, and why it is larger the faster the dewar pours. What arrives
+        once the wall is cold -- or what the wall had no heat left to boil --
+        collects, up to the full fraction.
+
+        Returns whether the step was spent chilling.
+        """
+        state = self.state
+        room = self._wanted() - state.liquid_mass
+        if room <= 0.0 or dt <= 0.0:
+            return False
+        arriving = self.fill_line_flow(self.dewar_pressure - self.pressure) * dt
+        boiled = 0.0
+        if state.liquid_mass <= 1e-3:
+            try:
+                target = self.tank.liquid.get("T", p=self.pressure, q=0.0)
+                h_fg = latent_heat(self.tank.liquid, state.liquid_temperature)
+            except (ValueError, PropertyError):
+                target, h_fg = state.liquid_temperature, 0.0
+            target += max(self.tank.boiling_onset, 0.0)
+            walls = [state.ullage.wall_temperature]
+            if state.wetted_wall_temperature is not None:
+                walls.append(state.wetted_wall_temperature)
+            capacity = self.tank.wall_mass * self.tank.wall_capacity
+            if max(walls) > target + CHILLED_BAND and h_fg > 0.0 and capacity > 0.0:
+                # Each wall gives up the same heat per kelvin, so each falls by
+                # the same amount -- the one that boils what arrived -- unless
+                # it reaches the target first.
+                fall = arriving * h_fg / capacity
+                if all(w - fall >= target for w in walls):
+                    # All of it boils. Said exactly rather than as heat / h_fg,
+                    # whose round-off is a femtogram of "liquid" left on a warm
+                    # wall -- which heats past the critical point in one step.
+                    cooled = [w - fall for w in walls]
+                    boiled = arriving
+                else:
+                    cooled = [max(w - fall, min(w, target)) for w in walls]
+                    heat = capacity * sum(w - c for w, c in zip(walls, cooled))
+                    boiled = min(heat / len(walls) / h_fg, arriving)
+                self.chill_boiled += boiled
+                self.state = replace(
+                    state,
+                    ullage=replace(state.ullage, wall_temperature=cooled[0]),
+                    wetted_wall_temperature=(
+                        cooled[1] if state.wetted_wall_temperature is not None else None
+                    ),
+                    vapour_mass=state.vapour_mass + boiled,
+                )
+        collected = min(arriving - boiled, room)
+        if collected > 0.0:
+            self._collect(collected)
+        self.fill_flow = (boiled + max(collected, 0.0)) / dt
+        return boiled > 0.0
+
     def advance(
         self,
         dt: float,
@@ -983,27 +1218,23 @@ class TankSim:
         takes the ullage's own. Netting them would price the whole exchange at
         the supply's enthalpy and make a venting tank warm up.
         """
-        self.chilling = self.filling and self._chill(dt)
-        if self.filling and not self.chilling:
-            capacity = self.tank.geometry.total_volume * self.full_fraction
-            rho = self.tank.liquid_density(self.state)
-            wanted = capacity * rho
-            if self.state.liquid_mass < wanted:
-                span = max(self.fill_seconds, 1e-3)
-                added = min(wanted * dt / span, wanted - self.state.liquid_mass)
-                # `replace`, not a fresh TankState: rebuilding field by field
-                # silently drops anything added to the dataclass later, which is
-                # exactly how `vapour_mass` came to reset to zero every step.
-                self.state = replace(
-                    self.state,
-                    liquid_mass=self.state.liquid_mass + added,
-                    # A load stirs the liquid; the layer forms once it is still.
-                    surface_temperature=(
-                        None
-                        if self.state.surface_temperature is None
-                        else self.state.liquid_temperature
-                    ),
-                )
+        self.fill_flow = 0.0
+        if (
+            self.filling
+            and self.dewar_pressure > 0.0
+            and self.state.liquid_temperature < CRYOGENIC_K
+        ):
+            self.chilling = self._dewar_load(dt)
+        else:
+            self.chilling = self.filling and self._chill(dt)
+            if self.filling and not self.chilling:
+                wanted = self._wanted()
+                if self.state.liquid_mass < wanted:
+                    span = max(self.fill_seconds, 1e-3)
+                    added = min(wanted * dt / span, wanted - self.state.liquid_mass)
+                    self._collect(added)
+                    self.fill_flow = added / dt if dt > 0.0 else 0.0
+        self.added_kg += self.fill_flow * dt
 
         # Gas cannot flow into a vessel that has reached the pressure feeding
         # it. The network solve says how much is flowing *at the pressure the
@@ -1074,12 +1305,20 @@ class TankSim:
         )
         stirring = stirring if pressing else 1.0
 
-        # A tank with nothing in it cannot deliver liquid. Without this the
+        # A tank cannot deliver more liquid than it holds. Without this the
         # solver happily draws propellant out of an empty vessel and the mains
-        # keep flowing after the tank is dry.
-        self.empty = self.state.liquid_mass <= 1e-3
-        if self.empty:
-            mdot_liquid_out = 0.0
+        # keep flowing after the tank is dry. The session cuts its coupling
+        # step at the instant a tank runs out (`Session._dry_cut`), so the
+        # network never asks for more than is there; this is the backstop, and
+        # what it refuses is booked, because the network has already sent it
+        # downstream. Zeroing the outflow below a gram -- what this did --
+        # refused the rest of the step without a word: 17-25 g of propellant
+        # the engine burned and no vessel gave.
+        self.empty = self.state.liquid_mass <= DRY_MASS
+        holds = max(self.state.liquid_mass, 0.0) / dt if dt > 0.0 else 0.0
+        if mdot_liquid_out > holds:
+            self.fixed_kg += (mdot_liquid_out - holds) * dt
+            mdot_liquid_out = holds
 
         # What leaves through a vent is the ullage as it is: pressurant and
         # propellant vapour in proportion. The network solved one gas flow out
@@ -1096,10 +1335,26 @@ class TankSim:
         # out a vent takes its vapour share with it (`Session._vent_fraction`).
         held = self.state.ullage.mass + self.state.vapour_mass
         vapour_share = self.state.vapour_mass / held if held > 0.0 else 0.0
-        vapour_out = (
-            max(mdot_gas_out, 0.0) * vapour_share * min(max(vent_fraction, 0.0), 1.0)
-        )
+        vented = max(mdot_gas_out, 0.0) * min(max(vent_fraction, 0.0), 1.0)
+        vapour_out = vented * vapour_share
         pressurant_out = mdot_gas_out - vapour_out
+        # The pressurant does not go below its floor (`_settled`): it carries
+        # the ullage's heat capacity. Once it is there, what the vent takes is
+        # vapour -- a LOX tank chilling under its own boil-off vents oxygen,
+        # not the air it started with. Split by mass share regardless, the vent
+        # took air the floor then put back: ~3 g/s and 800 W through a whole
+        # chilldown, booked as a guard. Only the vented part shifts; gas traded
+        # with the press manifold stays pressurant (see above).
+        if vented > vapour_out and dt > 0.0 and self.state.vapour_mass > 0.0:
+            spare = max(
+                self.state.ullage.mass - self._pressurant_floor(), 0.0
+            ) / dt + max(mdot_gas_in, 0.0)
+            over = min(pressurant_out, vented - vapour_out) - spare
+            if over > 0.0:
+                shift = min(over, self.state.vapour_mass / dt - vapour_out)
+                if shift > 0.0:
+                    vapour_out += shift
+                    pressurant_out -= shift
         # One call, with the energy the two streams actually carry folded into
         # an effective inlet enthalpy -- the rates() signature takes a single
         # gas stream, and this keeps the physics right without forking it.
@@ -1152,9 +1407,19 @@ class TankSim:
         small ullage during a vent can overshoot into a state the equation of
         state refuses -- correctly, since it is a solid -- and the alternative
         to retrying is the run dying at the moment it is meant to demonstrate.
+
+        Halving shortens the piece, never the step: once a piece lands, the
+        next one starts from it, until all of ``dt`` is integrated. Returning
+        on the first piece that landed -- what this did -- dropped the rest of
+        the step's liquid outflow, gas exchange and heat every time a vent
+        forced a retry. The pieces are counted in whole ``dt / 2**halvings``
+        so they sum to ``dt`` exactly; with no retry it is one piece of ``dt``,
+        as before.
         """
-        remaining = dt
-        for _ in range(STEP_RETRIES + 1):
+        halvings = 0
+        done = 0  # pieces of dt / 2**halvings already integrated
+        while done < 1 << halvings:
+            remaining = dt / (1 << halvings)
             rates = self.tank.rates(
                 self.state,
                 mdot_liquid_out=mdot_liquid_out,
@@ -1174,9 +1439,15 @@ class TankSim:
             try:
                 self.tank.pressure(candidate)
             except Exception:  # noqa: BLE001 - any refusal means "too far"
-                remaining *= 0.5
+                if halvings == STEP_RETRIES:
+                    break
+                halvings += 1
+                done *= 2
                 continue
+            self._ledger(rates, remaining, candidate)
             self.state = candidate
+            done += 1
+        else:
             return
         # Still unreachable after halving: the ullage has run out of gas to
         # give. Settle it at atmosphere against the wall, which is where a
@@ -1184,6 +1455,8 @@ class TankSim:
         volume = max(self.tank.ullage_volume(self.state), 1e-9)
         wall = self.state.ullage.wall_temperature
         mass = self.tank.gas.get("rho", p=AMBIENT, T=wall) * volume
+        start = self.state
+        left = dt - done * dt / (1 << halvings)
         # `replace`, not a fresh TankState: rebuilding field by field drops
         # anything added to the dataclass later -- it is how vapour_mass once
         # reset every step, and it would have dropped the wetted wall here.
@@ -1198,6 +1471,38 @@ class TankSim:
             # it has gone out of the vent with the rest.
             vapour_mass=0.0,
         )
+        self._ledger(rates, left, self.state, start)
+
+    def _ledger(
+        self,
+        rates: TankRates,
+        dt: float,
+        landed: TankState,
+        start: TankState | None = None,
+    ) -> None:
+        """Book what the guards changed: where a piece of step ``landed``
+        against where the rates over its ``dt`` said it would."""
+        was = start or self.state
+
+        def total(state: TankState) -> float:
+            return state.liquid_mass + state.ullage.mass + state.vapour_mass
+
+        promised = (rates.ullage.mass + rates.liquid_mass + rates.vapour_mass) * dt
+        self.fixed_kg += total(landed) - total(was) - promised
+        self.fixed_J += (
+            landed.ullage.energy - was.ullage.energy - rates.ullage.energy * dt
+        )
+
+    def _pressurant_floor(self, wall_temperature: float | None = None) -> float:
+        """The least pressurant the ullage holds [kg]: atmosphere's worth at the
+        wall, in the ullage's present volume (see :meth:`_settled`)."""
+        volume = max(self.tank.ullage_volume(self.state), 1e-9)
+        wall = (
+            self.state.ullage.wall_temperature
+            if wall_temperature is None
+            else wall_temperature
+        )
+        return float(self.tank.gas.get("rho", p=AMBIENT, T=wall)) * volume
 
     def _settled(self, ullage: VesselState) -> VesselState:
         """Keep the ullage inside the states the gas can actually occupy.
@@ -1207,17 +1512,34 @@ class TankSim:
         A vent cannot pull a tank below the air outside it, so the **mass**
         cannot fall below what atmosphere would hold in that volume.
 
+        The floor is on the pressurant alone because the pressurant carries the
+        ullage's heat capacity: the propellant vapour has no energy term (see
+        ``Tank.rates``), so an ullage vented down to vapour alone would have no
+        thermal mass to integrate. What keeps the floor from *creating* gas is
+        the vent's split (:meth:`advance`): once the pressurant is at its floor
+        the vent takes vapour, which is what a tank chilling down under its own
+        boil-off is venting.
+
         Only the mass, deliberately. Chilling is bounded by sizing the step
         against the energy leaving (see MAX_ENERGY_FRACTION) rather than by
         clamping the temperature afterwards: a clamp applied every sub-step is
         a ratchet that puts energy *in*, and a venting tank then climbs in
         pressure instead of falling.
         """
-        volume = max(self.tank.ullage_volume(self.state), 1e-9)
-        mass = max(
-            ullage.mass,
-            self.tank.gas.get("rho", p=AMBIENT, T=ullage.wall_temperature) * volume,
-        )
+        floor = self._pressurant_floor(ullage.wall_temperature)
+        if self.state.vapour_mass > 0.0:
+            try:
+                above = self.tank.pressure(self.state) > AMBIENT
+            except (ValueError, PropertyError):
+                above = False
+            if above:
+                # Vapour holds the tank above atmosphere: the floor only keeps
+                # the pressurant from leaving (the vent takes vapour instead),
+                # never grows it. Grown with a cooling wall -- an atmosphere of
+                # air is heavier at 150 K than at 290 K -- it still added
+                # ~0.03 g/s of air to a tank at 20 psig of its own boil-off.
+                floor = min(floor, self.state.ullage.mass)
+        mass = max(ullage.mass, floor)
         if mass == ullage.mass:
             return ullage
         # Mass was floored, so the energy that went with it has to be restated
@@ -1248,13 +1570,19 @@ class BottleSim:
     filling: bool = False
     venting: bool = False
     target: float = from_psig(4500.0)
-    fill_seconds: float = 25.0
+    fill_seconds: float = 9.7
     #: Temperature of the cart's gas [K]; the session copies it in each tick.
     fill_supply_T: float = FILL_SUPPLY_T
     charged: bool = False
     """Whether this bottle has ever been filled. A note saying a bottle is
     "down to" fifteen psi is wrong before anybody has put gas in it -- it is
     not down to anything, it is where it started."""
+    #: Ledger for the solver tab, cumulative [kg]: what the built-in charge
+    #: put in, what the built-in dump took out beyond the network's draw, and
+    #: what the floor at atmosphere added back.
+    added_kg: float = 0.0
+    dumped_kg: float = 0.0
+    fixed_kg: float = 0.0
     #: Maximum allowable working pressure [Pa], 0 if the drawing gives none.
     mawp: float = 0.0
 
@@ -1267,7 +1595,18 @@ class BottleSim:
         """How full, against the target it is being filled to."""
         return min(max(self.pressure / self.target, 0.0), 1.0) if self.target else 0.0
 
-    def advance(self, dt: float, *, mdot_out: float, stirring: float = 1.0) -> None:
+    def advance(
+        self,
+        dt: float,
+        *,
+        mdot_out: float,
+        stirring: float = 1.0,
+        mdot_in: float = 0.0,
+        enthalpy_in: float = 0.0,
+    ) -> None:
+        """``mdot_in`` is gas the drawing itself delivers (a cart drawn on the
+        GSE page, charging through its own valves); zero for a bottle whose
+        GSE is not drawn, which is charged by ``filling`` instead."""
         if self.pressure > 2.0 * AMBIENT:
             self.charged = True
         # The GSE cart doing the filling is not on the drawing yet, so the fill
@@ -1281,6 +1620,7 @@ class BottleSim:
             span = max(self.fill_seconds, 1e-3)
             added = min(full.mass * dt / span, full.mass - self.state.mass)
             if added > 0.0:
+                self.added_kg += added
                 # Gas arrives from a bank at ambient temperature and at least
                 # the target pressure: its enthalpy is the bank's, whatever
                 # the bottle's wall has warmed to. The bottle still heats --
@@ -1299,14 +1639,26 @@ class BottleSim:
                 self.state = self.volume.step(self.state, rates, dt)
                 return
 
+        drawn = max(mdot_out, 0.0)
         if self.venting:
             mdot_out = max(mdot_out, self.state.mass / max(self.fill_seconds, 1e-3))
 
-        if self.state.mass <= 1e-6:
+        if self.state.mass <= 1e-6 and mdot_in <= 0.0:
             return
-        rates = self.volume.rates(self.state, mdot_out=max(mdot_out, 0.0))
+        self.dumped_kg += (max(mdot_out, 0.0) - drawn) * dt
+        if mdot_in > 0.0:
+            rates = self.volume.rates(
+                self.state,
+                mdot_out=max(mdot_out, 0.0),
+                mdot_in=mdot_in,
+                enthalpy_in=enthalpy_in,
+                stirring=stirring,
+            )
+        else:
+            rates = self.volume.rates(self.state, mdot_out=max(mdot_out, 0.0))
         stepped = self.volume.step(self.state, rates, dt)
         floor = self.volume.fluid.get("rho", p=AMBIENT, T=stepped.wall_temperature)
+        self.fixed_kg += max(floor * self.volume.volume - stepped.mass, 0.0)
         self.state = VesselState(
             mass=max(stepped.mass, floor * self.volume.volume),
             energy=stepped.energy,
@@ -1376,11 +1728,20 @@ class Session:
         *,
         state: str = "Idle",
         setup: Setup | None = None,
+        hookup: Hookup | None = None,
     ) -> None:
         self.id = uuid.uuid4().hex[:12]
         self.model = model
         self.machine = machine
         self.binding = binding
+        #: Which knob sets which regulator (feedtwin.session.hookup). None: the
+        #: one dome knob drives what it always drove, exactly as before.
+        self.hookup = hookup
+        #: Each knob's setting [psig], by knob id; the ``dome`` knob is
+        #: ``setup.dome_psi`` and is not kept here.
+        self.knobs: dict[str, float] = (
+            {k.id: k.psig for k in hookup.knobs} if hookup is not None else {}
+        )
         self.state = state if state in machine.states else machine.states[0]
         self.setup = setup or Setup()
         self.forced: dict[str, float] = {}
@@ -1410,6 +1771,15 @@ class Session:
         self.t = 0.0
         self.wall = time.monotonic()
         self.history: Deque[Sample] = deque(maxlen=HISTORY)
+        #: The solver tab: one record per tick (feedtwin.session.diagnostics).
+        self.solver_log: Deque[SolverRecord] = deque(maxlen=HISTORY)
+        self._tick: dict[str, float] = {}
+        self._boundary: frozenset[str] | None = None
+        self._crossed_in = 0.0
+        self._crossed_out = 0.0
+        self._inventory0: float | None = None
+        self._ledger0 = (0.0, 0.0, 0.0)
+        self._guard_J0 = 0.0
         self.assumptions: list[str] = []
         self._last_flows: dict[str, float] = {}
         # Warm start. Consecutive ticks are 50 ms apart and the network barely
@@ -1479,6 +1849,12 @@ class Session:
         self.bottles: dict[str, BottleSim] = {}
         self._build_vessels()
         self._fill_stubs = self._find_fill_stubs()
+        #: Vessels whose fill the drawing itself carries: a GSE page with the
+        #: cart's bottle or dewar plumbed to them. Their built-in fill (the
+        #: tanker load, the cart's COPV charge) steps aside and the network
+        #: fills them, or they would be filled twice. Empty on a drawing with
+        #: no GSE drawn, and then nothing changes.
+        self._drawn_fill: frozenset[str] = self._find_drawn_fills()
         #: Pressure relief valves (comps.relief) and where each one is: open or
         #: shut (its hysteresis), and its lift as the signal the solve reads.
         #: Empty on a drawing with no relief, and then nothing below runs.
@@ -1491,6 +1867,65 @@ class Session:
         self._relief_lift: dict[str, float] = {}
 
     # ------------------------------------------------------------ building
+
+    def _find_drawn_fills(self) -> frozenset[str]:
+        """Tanks a drawn dewar reaches, and bottles another drawn bottle or
+        dewar reaches, through the drawing's lines and valves (open or shut --
+        a valve is how the fill is commanded, not whether it exists) without
+        passing through another vessel -- from another page of the drawing,
+        which is where pid-designer puts the cart. Two flight bottles
+        manifolded together on the vehicle page are not one filling the other."""
+        built = self.model.built
+        net = built.network
+        types = {n.id: n.type for n in self.model.diagram.nodes}
+        pages = {n.id: n.page or "Main" for n in self.model.diagram.nodes}
+        place = {built.node_of.get(sid, sid): sid for sid in types}
+        neighbours: dict[str, set[str]] = {}
+        for branch in net.branches.values():
+            neighbours.setdefault(branch.upstream, set()).add(branch.downstream)
+            neighbours.setdefault(branch.downstream, set()).add(branch.upstream)
+
+        def reaches(starts: set[str], kinds: set[str], own: str) -> str:
+            seen, frontier = set(starts), list(starts)
+            while frontier:
+                here = frontier.pop()
+                for there in neighbours.get(here, ()):
+                    if there in seen:
+                        continue
+                    seen.add(there)
+                    symbol = place.get(there, "")
+                    if (
+                        symbol
+                        and symbol != own
+                        and types.get(symbol) in kinds
+                        and pages.get(symbol) != pages.get(own)
+                    ):
+                        return symbol
+                    if net.nodes[there].pressure is not None:
+                        continue  # another vessel, a vent, the chamber: stop
+                    frontier.append(there)
+            return ""
+
+        found: set[str] = set()
+        labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        for tank_id, ports in built.tanks.items():
+            supply = reaches({ports.ullage, ports.outlet}, {"DEWAR"}, tank_id)
+            if supply:
+                found.add(tank_id)
+                self.assumptions.append(
+                    f"{labels.get(tank_id, tank_id)} is loaded through the drawing "
+                    f"(from {labels.get(supply, supply)}): the built-in tanker load is off."
+                )
+        for bottle_id in self.bottles:
+            start = built.node_of.get(bottle_id, bottle_id)
+            supply = reaches({start}, {"KBOTTLE", "DEWAR"}, bottle_id)
+            if supply:
+                found.add(bottle_id)
+                self.assumptions.append(
+                    f"{labels.get(bottle_id, bottle_id)} is charged through the drawing "
+                    f"(from {labels.get(supply, supply)}): the cart's built-in charge is off."
+                )
+        return frozenset(found)
 
     def _build_vessels(self) -> None:
         """Turn the drawing's tanks and bottles into integrable vessels.
@@ -1548,6 +1983,7 @@ class Session:
                     self.setup.surface_layer_m if self.setup.stratification else 0.0
                 ),
                 surface_mixing=self.setup.surface_mixing,
+                wall_by_level=self.setup.ullage_wall_by_level,
                 ambient_conductance=_skin_conductance(
                     node, self.setup.ambient_leak, self.assumptions
                 ),
@@ -1633,7 +2069,14 @@ class Session:
                     temperature=ambient_T,
                 ),
                 node=node.id,
-                target=from_psig(self.setup.copv_target_psi) or rated,
+                # The fill target is the panel's; with none set, the drawing's
+                # own rated pressure. (`from_psig(0)` is an atmosphere, never
+                # falsy, so `or rated` here never fired.)
+                target=(
+                    from_psig(self.setup.copv_target_psi)
+                    if self.setup.copv_target_psi > 0.0
+                    else rated
+                ),
                 fill_seconds=self.setup.copv_fill_s,
                 charged=delivered,
                 mawp=_trip_limit(
@@ -1740,6 +2183,8 @@ class Session:
         self._guess = {}
         self._last_flows = {}
         self._last_isolated = frozenset()
+        # The inventory was set, not reached: the mass balance starts here.
+        self.reset_balance()
 
     def _ullage_wall_T0(self, tank_id: str, sim: TankSim) -> float | None:
         """The upper-wall T-0 temperature the setup asks of this tank [K], or
@@ -1823,6 +2268,7 @@ class Session:
             tank.leidenfrost_superheat = float(self.setup.leidenfrost_K)
             tank.boiling_onset = float(self.setup.boiling_onset_K)
             tank.surface_mixing = float(self.setup.surface_mixing)
+            tank.wall_by_level = bool(self.setup.ullage_wall_by_level)
             tank.surface_layer = (
                 float(self.setup.surface_layer_m) if self.setup.stratification else 0.0
             )
@@ -1903,27 +2349,32 @@ class Session:
         # dome pins it flat and silently switches the supply-pressure effect off
         # for the whole stand, which is the wrong sign to guess at and the one
         # people do guess at.
-        for loader in built.dome_loaders.values():
-            supply = self._loader_supply(loader)
-            if supply <= 0.0:
-                out[loader.signal] = from_psig(self.setup.dome_psi)
-                continue
-            conditions = built.network.conditions(
-                loader.supply_node,
-                supply,
-                {f"{loader.component.id}.dome": from_psig(self.setup.dome_psi)},
-            )
-            component = loader.component
-            if not isinstance(component, Regulator):
-                out[loader.signal] = from_psig(self.setup.dome_psi)
-                continue
-            out[loader.signal] = float(component.outlet_setpoint(0.0, conditions))
-        if not built.dome_loaders:
-            dome_signal = next(
-                (s for s in built.actuators.values() if s.endswith(".dome")), ""
-            )
-            if dome_signal:
-                out[dome_signal] = from_psig(self.setup.dome_psi)
+        if self.hookup is not None:
+            # Each knob sets its own regulators: a loader through its own
+            # outlet, as below; anything else through its dome signal, which a
+            # plain regulator reads as its setpoint.
+            labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+            for knob in self.hookup.knobs:
+                psig_set = (
+                    self.setup.dome_psi
+                    if knob.id == DOME
+                    else self.knobs.get(knob.id, knob.psig)
+                )
+                for regulator in knob.regulators:
+                    loader = built.dome_loaders.get(regulator)
+                    if loader is not None:
+                        out[loader.signal] = self._through_loader(loader, psig_set)
+                    elif regulator in labels:
+                        out[f"{labels[regulator]}.dome"] = from_psig(psig_set)
+        else:
+            for loader in built.dome_loaders.values():
+                out[loader.signal] = self._through_loader(loader, self.setup.dome_psi)
+            if not built.dome_loaders:
+                dome_signal = next(
+                    (s for s in built.actuators.values() if s.endswith(".dome")), ""
+                )
+                if dome_signal:
+                    out[dome_signal] = from_psig(self.setup.dome_psi)
 
         commanded = self.binding.positions_for(self.machine, self.state)
         for drawing_id, signal in built.actuators.items():
@@ -1936,6 +2387,20 @@ class Session:
             )
             out[signal] = self._slew(drawing_id, target, dt)
         return out
+
+    def _through_loader(self, loader: DomeLoader, psig_set: float) -> float:
+        """The dome a control regulator set to ``psig_set`` gives, from its
+        supply now [Pa]."""
+        built = self.model.built
+        supply = self._loader_supply(loader)
+        if supply <= 0.0 or not isinstance(loader.component, Regulator):
+            return from_psig(psig_set)
+        conditions = built.network.conditions(
+            loader.supply_node,
+            supply,
+            {f"{loader.component.id}.dome": from_psig(psig_set)},
+        )
+        return float(loader.component.outlet_setpoint(0.0, conditions))
 
     def _slew(self, drawing_id: str, target: float, dt: float) -> float:
         """Move one actuator toward ``target`` at its own travel rate."""
@@ -1983,17 +2448,31 @@ class Session:
                     out.add(branch_id)
         return frozenset(out)
 
-    def _coupling_timescale(self) -> float:
-        """Shortest regulator-ullage RC time constant on the stand [s], or 0.
+    def _coupling_timescale(
+        self,
+        signals: Mapping[str, float] | None = None,
+        dt: float = 0.0,
+        press: bool = True,
+    ) -> float:
+        """Shortest ullage RC time constant on the stand [s], or 0.
 
         ``C = V rho / p`` is the isothermal gas capacitance of an ullage -- how
-        much mass it takes to raise its pressure by a pascal. ``R`` is the slope
-        of the regulator feeding it, ``flow_droop / rated_flow``: how many
-        pascals the outlet gives up per kg/s drawn. Their product is the time
-        the pair takes to settle, and the smallest such product on the stand is
-        what the coupling step has to resolve. Line resistance is left out on
-        purpose: it only lengthens the constant, so ignoring it errs toward more
-        steps, never fewer.
+        much mass it takes to raise its pressure by a pascal. Two resistances
+        are paired with it, and the shorter product is what the coupling step
+        has to resolve.
+
+        The regulator's slope, ``flow_droop / rated_flow``: how many pascals
+        its outlet gives up per kg/s drawn. That is the regulator-ullage loop.
+
+        And the ullage's own press path (:meth:`_press_path_timescale`): what
+        the flow into the tank does when the *tank* moves, with the outlet node
+        next door held. Two tanks on one press manifold trade gas through
+        nothing but their solenoids, and on helium that is a few milliseconds
+        where the regulator's is tens. Stepped past it, each solve sent gas the
+        wrong way through a solenoid for a whole coupling step: the tank fell
+        15-30 psi in a quarter of a hundredth of a second, the other dumped
+        into it, and every LE4 helium burn plotted a 0.5-0.8 s sawtooth that
+        cost 170 N of mean thrust (2026-10-05).
         """
         slopes = []
         for branch in self.model.built.network.branches.values():
@@ -2004,9 +2483,7 @@ class Session:
             rated = comp.p.get("rated_flow", 0.0)
             if droop > 0.0 and rated > 0.0:
                 slopes.append(droop / rated)
-        if not slopes:
-            return 0.0
-        resistance = min(slopes)
+        resistance = min(slopes) if slopes else 0.0
         tau = float("inf")
         for sim in self.tanks.values():
             p = sim.pressure
@@ -2016,18 +2493,203 @@ class Session:
             if volume <= 0.0:
                 continue
             capacitance = sim.state.ullage.mass / p  # V rho / p, with V rho = m
-            tau = min(tau, capacitance * resistance)
+            if resistance > 0.0:
+                tau = min(tau, capacitance * resistance)
+            if press:
+                tau = min(
+                    tau, self._press_path_timescale(sim, capacitance, signals, dt)
+                )
         return tau if tau < float("inf") else 0.0
+
+    def _press_path_timescale(
+        self,
+        sim: TankSim,
+        capacitance: float,
+        signals: Mapping[str, float] | None,
+        dt: float = 0.0,
+    ) -> float:
+        """``C / G`` for one ullage while its tank is delivering liquid [s].
+
+        ``G`` is the ullage's admittance: the sum over the gas branches on it of
+        ``1 / (d dp / d mdot)``, each slope taken at the flow the last solve put
+        through it -- or at the flow the ullage needs to replace the liquid
+        leaving it, if that is more. Counting only the branch on the tank and
+        not what lies beyond it overstates ``G``, so it errs toward more steps.
+
+        Only while liquid is leaving. A tank at rest has no drain to outrun its
+        press path, and at zero flow a quadratic loss has zero slope: the
+        constant goes to zero and would spend the step limit on a pad hold that
+        a few grams of slosh cannot disturb.
+
+        And only while the tank rides its supply -- within ``supply_band`` of
+        the node feeding it, the band in which :meth:`TankSim.advance` clamps
+        the inflow. That is where a step's drain carries the tank across its
+        supply and the next solve sends its gas back out. A tank sitting
+        clearly under its supply cannot be carried across, and gets nothing
+        from the finer steps: the shipped GN2 stand burns 6-8 psi under its
+        manifold and traced identically either way, at twice the cost.
+
+        And only while the drain is enough to matter: over the tick, more
+        than :data:`PRESS_PATH_DRAIN_FRACTION` of that band. Below it the
+        drain cannot carry the tank across its supply, and what is left is a
+        nearly empty tank at an abort, with a trickle out and a trickle in --
+        whose zero-flow slope asked for 0.3 ms steps and stalled the panel.
+
+        Infinity when there is nothing to measure.
+        """
+        net = self.model.built.network
+        _, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+        volume = sim.tank.ullage_volume(sim.state)
+        if liquid_out <= 0.0 or volume <= 0.0:
+            return float("inf")
+        rho_liquid = max(sim.tank.liquid_density(sim.state), 1.0)
+        # Isothermal: the ullage pressure falls as p Q / V while it is unfed.
+        drained = sim.pressure * liquid_out / rho_liquid / volume * dt
+        # The press side only: gas branches whose far end is a free node of
+        # the network -- a press line, a manifold. A vent ends at atmosphere,
+        # a fixed pressure; counted, a venting tank read as riding its supply
+        # and its vent valve's slope at drain flow asked an Engine Abort for
+        # 0.3 ms steps.
+        paths = []
+        for branch_id, branch in net.branches.items():
+            if sim.ullage_node not in (branch.upstream, branch.downstream):
+                continue
+            if sim.outlet_node in (branch.upstream, branch.downstream):
+                continue  # the liquid column, not a gas path
+            far = (
+                branch.upstream
+                if branch.downstream == sim.ullage_node
+                else branch.downstream
+            )
+            if net.nodes[far].pressure is None:
+                paths.append((branch_id, branch))
+        supply = max(
+            (
+                self._guess.get(
+                    (
+                        branch.upstream
+                        if branch.downstream == sim.ullage_node
+                        else branch.downstream
+                    ),
+                    0.0,
+                )
+                for _, branch in paths
+            ),
+            default=0.0,
+        )
+        band = self.setup.supply_band * supply
+        if supply <= 0.0 or supply - sim.pressure > band:
+            return float("inf")
+        if drained < PRESS_PATH_DRAIN_FRACTION * band:
+            return float("inf")
+        rho_gas = sim.state.ullage.mass / volume
+        needed = rho_gas * liquid_out / rho_liquid
+        admittance = 0.0
+        for branch_id, branch in paths:
+            upstream = self._guess.get(branch.upstream)
+            if upstream is None or upstream <= 0.0:
+                continue
+            flow = max(abs(self._last_flows.get(branch_id, 0.0)), needed)
+            if flow <= 0.0:
+                continue
+            step = flow * PRESS_PATH_FD
+            try:
+                conditions = net.conditions(
+                    branch.upstream, upstream, dict(signals or {})
+                )
+                slope = (
+                    branch.component.total_dp(flow + step, conditions)
+                    - branch.component.total_dp(flow - step, conditions)
+                ) / (2.0 * step)
+            except (
+                Exception
+            ):  # noqa: BLE001 - a branch that cannot price it says nothing
+                continue
+            if slope > 0.0:
+                admittance += 1.0 / slope
+        return capacitance / admittance if admittance > 0.0 else float("inf")
 
     def _vessel_pressures(self) -> dict[str, float]:
         out = {sim.id: sim.pressure for sim in self.tanks.values()}
         out.update({b.id: b.pressure for b in self.bottles.values()})
         return out
 
+    def _ullage_storage(
+        self, dt: float, isolated: frozenset[str]
+    ) -> dict[str, tuple[float, float]]:
+        """Each ullage's closure over a ``dt`` coupling step, for the solve.
+
+        ``{ullage node: (C / dt, reference)}`` (``solve_steady(storage=...)``):
+        where the vessel lands with no gas exchanged -- liquid still leaving at
+        the last solve's rate, the ullage collapsing, a load still pouring --
+        and how many kg/s over the step it takes to move it a pascal from
+        there. Both read off the vessel itself, by trial steps on a copy, so
+        whatever it models (charge heating, collapse, vapour) is in the slope
+        the network sees.
+
+        Without this the solve holds each tank at its start-of-step pressure,
+        an explicit coupling of a tiny capacitance behind a huge conductance.
+        LE4's 0.41 L ullages behind Cv 4 press solenoids flip-flopped through
+        their shared manifold every coupling step: one tank 5 psi high dumping
+        40 g/s, the other taking 100 g/s and refusing nearly all of it at its
+        supply clip, the regulator drooping at a phantom 60 g/s and both tanks
+        parked 25 psi under lockup for as long as the valves stayed open.
+
+        The slope taken is the stiffer of gas in (at the arriving enthalpy)
+        and gas out: over-stating the vessel's stiffness only damps the
+        closure, under-stating it hands back some of the explicit coupling.
+        A tank cut off by shut valves gets none and stays a fixed boundary.
+        """
+        out: dict[str, tuple[float, float]] = {}
+        if dt <= 0.0:
+            return out
+        net = self.model.built.network
+        for sim in self.tanks.values():
+            node = sim.ullage_node
+            live = any(
+                branch_id not in isolated
+                for branch_id, branch in net.branches.items()
+                if node in (branch.upstream, branch.downstream)
+                and sim.outlet_node not in (branch.upstream, branch.downstream)
+            )
+            held = sim.state.ullage.mass + sim.state.vapour_mass
+            if not live or held <= 0.0:
+                continue
+            _, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+            enthalpy = self._pressurant_enthalpy(sim)
+
+            def land(gas_in: float = 0.0, gas_out: float = 0.0) -> float:
+                trial = copy.copy(sim)  # state is frozen; the copy owns its own
+                trial.advance(
+                    dt,
+                    mdot_liquid_out=liquid_out,
+                    mdot_gas_in=gas_in,
+                    mdot_gas_out=gas_out,
+                    enthalpy_gas_in=enthalpy,
+                )
+                return trial.pressure
+
+            probe = STORAGE_PROBE * held / dt
+            try:
+                reference = land()
+                slope = max(
+                    land(gas_in=probe) - reference, reference - land(gas_out=probe)
+                )
+            except Exception:  # noqa: BLE001 - a vessel that cannot price it
+                continue  # stays a fixed boundary, as it always was
+            if slope > 0.0 and reference > 0.0:
+                out[node] = (probe / slope, reference)
+        return out
+
     def _advance_once(
-        self, net: Network, signals: Mapping[str, float], dt: float
+        self,
+        net: Network,
+        signals: Mapping[str, float],
+        dt: float,
+        substeps: int = SUBSTEPS,
     ) -> SteadyResult:
         """One coupling step: solve the network, then move the vessels."""
+        given = signals
         self._apply_vessel_pressures()
         if self.setup.regulator_lockup_supply:
             # Here and not in signals(), which is the panel's valve state.
@@ -2061,6 +2723,7 @@ class Session:
             self._last_flows = {}
             self._last_isolated = isolated
 
+        storage = self._ullage_storage(dt, isolated)
         result = solve_steady(
             net,
             signals=signals,
@@ -2069,7 +2732,9 @@ class Session:
             raise_on_failure=False,
             guess=self._guess or None,
             isolate=dry,
+            storage=storage,
         )
+        self._note_solve(result)
         self._accept(result)
         if self._reliefs and result.converged:
             # A relief decided on the last step's pressures may be on the wrong
@@ -2084,6 +2749,7 @@ class Session:
                 if isolated != self._last_isolated:
                     self._last_flows = {}
                     self._last_isolated = isolated
+                    storage = self._ullage_storage(dt, isolated)
                 result = solve_steady(
                     net,
                     signals=signals,
@@ -2092,15 +2758,129 @@ class Session:
                     raise_on_failure=False,
                     guess=self._guess or None,
                     isolate=dry,
+                    storage=storage,
                 )
+                self._note_solve(result)
                 self._accept(result)
-        result = self._close_chamber(net, signals, dry, result)
+        result = self._close_chamber(net, signals, dry, result, storage)
         flows = self._last_flows or dict(result.flows)
+        # A tank that runs dry part-way through this step can give only what it
+        # holds, but the solve sees a fixed-pressure boundary and delivers the
+        # whole step's flow past it: on the ethalox stand, 17-25 g that reached
+        # the engine and left no vessel. So the step ends where the first tank
+        # does. Everything moves that far on these flows, and the rest of the
+        # step is solved again with that tank's outlet isolated, as every step
+        # after it is. A step on which no tank empties is the step it was.
+        span = self._dry_cut(flows, dt)
         if result.converged:
-            self._propagate_temperatures(result.pressures, flows, dt)
+            self._propagate_temperatures(result.pressures, flows, span)
 
-        self._move_vessels(flows, result.pressures, dt)
+        into, out = crossing(net, flows, self._boundary_nodes())
+        self._crossed_in += into * span
+        self._crossed_out += out * span
+        self._move_vessels(flows, result.pressures, span, substeps)
+        if span < dt:
+            return self._advance_once(net, given, dt - span, substeps)
         return result
+
+    def _dry_cut(self, flows: Mapping[str, float], dt: float) -> float:
+        """How much of a ``dt`` step the tanks can feed these ``flows`` [s].
+
+        ``dt`` unless a tank still feeding would be drained before the step
+        ends; then the time at which the first of them is. Only a tank above
+        :data:`DRY_MASS` counts: one below it is already isolated
+        (:meth:`_dry_branches`), so the remainder of a cut step cannot cut
+        again on the same tank.
+        """
+        span = dt
+        for sim in self.tanks.values():
+            held = sim.state.liquid_mass
+            if held <= DRY_MASS:
+                continue
+            _, leaving = self._split_at(sim.outlet_node, flows)
+            if leaving * span > held:
+                span = held / leaving
+        return span
+
+    def _note_solve(self, result: SteadyResult) -> None:
+        """Count one network solve into this tick's solver record."""
+        t = self._tick
+        t["solves"] = t.get("solves", 0.0) + 1.0
+        t["iterations"] = t.get("iterations", 0.0) + result.iterations
+        t["iterations_max"] = max(t.get("iterations_max", 0.0), result.iterations)
+        t["residual"] = max(t.get("residual", 0.0), result.residual_norm)
+        continuity = max((abs(v) for v in result.mass_residuals.values()), default=0.0)
+        t["continuity"] = max(t.get("continuity", 0.0), continuity)
+        if not result.converged:
+            t["failed"] = t.get("failed", 0.0) + 1.0
+
+    def _boundary_nodes(self) -> frozenset[str]:
+        if self._boundary is None:
+            vessels = {sim.ullage_node for sim in self.tanks.values()}
+            vessels |= {sim.outlet_node for sim in self.tanks.values()}
+            vessels |= {b.node for b in self.bottles.values()}
+            self._boundary = boundary_nodes(self.model.built.network, vessels)
+        return self._boundary
+
+    def inventory(self) -> float:
+        """Fluid held in every vessel: liquid, ullage gas, vapour, bottles [kg]."""
+        held = sum(
+            sim.state.liquid_mass + sim.state.ullage.mass + sim.state.vapour_mass
+            for sim in self.tanks.values()
+        )
+        return held + sum(b.state.mass for b in self.bottles.values())
+
+    def _ledger_totals(self) -> tuple[float, float, float]:
+        """``(added, removed, guards)`` the vessels booked themselves [kg]."""
+        added = sum(s.added_kg for s in self.tanks.values())
+        added += sum(b.added_kg for b in self.bottles.values())
+        removed = sum(b.dumped_kg for b in self.bottles.values())
+        guards = sum(s.fixed_kg for s in self.tanks.values())
+        guards += sum(b.fixed_kg for b in self.bottles.values())
+        return added, removed, guards
+
+    def reset_balance(self) -> None:
+        """Start the mass balance from the inventory as it stands: after the
+        stand is put somewhere directly (prime, a restored frame) rather than
+        reached through its boundary."""
+        self._crossed_in = self._crossed_out = 0.0
+        self._inventory0 = self.inventory()
+        self._ledger0 = self._ledger_totals()
+        self._guard_J0 = sum(s.fixed_J for s in self.tanks.values())
+
+    def _record_solver(self, couplings: int) -> None:
+        """Close this tick's solver record."""
+        if self._inventory0 is None:
+            self.reset_balance()
+        added, removed, guards = self._ledger_totals()
+        added -= self._ledger0[0]
+        removed -= self._ledger0[1]
+        guards -= self._ledger0[2]
+        crossed_in = self._crossed_in + added
+        crossed_out = self._crossed_out + removed
+        held = self.inventory()
+        t = self._tick
+        self.solver_log.append(
+            SolverRecord(
+                t=round(self.t, 4),
+                couplings=couplings,
+                iterations=int(t.get("iterations", 0.0)),
+                iterations_max=int(t.get("iterations_max", 0.0)),
+                residual=float(t.get("residual", 0.0)),
+                continuity=float(t.get("continuity", 0.0)),
+                converged=t.get("failed", 0.0) == 0.0,
+                chamber_residual_psi=float(t.get("chamber_gap", 0.0)) / PSI,
+                inventory_kg=held,
+                crossed_in_kg=crossed_in,
+                crossed_out_kg=crossed_out,
+                mass_error_kg=(held - float(self._inventory0 or 0.0))
+                - (crossed_in - crossed_out),
+                guard_kg=guards,
+                guard_J=sum(s.fixed_J for s in self.tanks.values())
+                - getattr(self, "_guard_J0", 0.0),
+            )
+        )
+        self._tick = {}
 
     def _relief_signals(
         self,
@@ -2163,6 +2943,7 @@ class Session:
         signals: Mapping[str, float],
         dry: frozenset[str],
         result: SteadyResult,
+        storage: Mapping[str, tuple[float, float]] | None = None,
     ) -> SteadyResult:
         """Find the chamber pressure the network and the engine agree on.
 
@@ -2214,7 +2995,9 @@ class Session:
                 raise_on_failure=False,
                 guess=self._guess or None,
                 isolate=dry,
+                storage=storage,
             )
+            self._note_solve(res)
             self._accept(res)
             return res
 
@@ -2249,18 +3032,23 @@ class Session:
         self._chamber_guess = p
         net.nodes[node].pressure = p
         self._last_chamber = eq
+        self._tick["chamber_gap"] = max(self._tick.get("chamber_gap", 0.0), abs(g))
         return result
 
     def _move_vessels(
-        self, flows: Mapping[str, float], pressures: Mapping[str, float], dt: float
+        self,
+        flows: Mapping[str, float],
+        pressures: Mapping[str, float],
+        dt: float,
+        substeps: int = SUBSTEPS,
     ) -> None:
         """Integrate every vessel over ``dt`` with the flows it is given."""
-        inner = dt / SUBSTEPS
+        inner = dt / substeps
         vented = {
             sim.id: self._vent_fraction(sim.ullage_node, flows)
             for sim in self.tanks.values()
         }
-        for _ in range(SUBSTEPS):
+        for _ in range(substeps):
             refused = 0.0
             sent: dict[str, float] = {}
             for sim in self.tanks.values():
@@ -2298,12 +3086,32 @@ class Session:
             # negative, so it vanished: joined straight to its press valves,
             # LE4's pair destroyed 7 g/s and emptied the COPV in its settle.
             to_bottles = min(refused, total)
+            # Gas the solve pushes *into* a bottle whose GSE is not drawn --
+            # back through a regulator sitting above lockup, a trickle -- has
+            # nowhere to go in a bottle model that only blows down, and was
+            # dropped by the clamp on its draw. It goes back to the tanks that
+            # sent it, like gas a tank refuses.
+            bounced = 0.0
             for b_id, bottle in self.bottles.items():
                 draw = draws[b_id]
+                if draw < 0.0 and b_id not in self._drawn_fill:
+                    bounced -= draw
+                    draw = 0.0
+                if b_id in self._drawn_fill and draw < 0.0:
+                    # Charged through the drawing: what the network delivers
+                    # arrives, priced where it came from.
+                    bottle.advance(
+                        inner,
+                        mdot_out=0.0,
+                        mdot_in=-draw,
+                        enthalpy_in=self._bottle_inflow_enthalpy(bottle),
+                        stirring=self.setup.fill_stirring,
+                    )
+                    continue
                 if to_bottles > 0.0 and total > 0.0 and draw > 0.0:
                     draw -= to_bottles * (draw / total)
                 bottle.advance(inner, mdot_out=draw, stirring=self.setup.fill_stirring)
-            excess = refused - to_bottles
+            excess = refused - to_bottles + bounced
             senders = sum(sent.values())
             if excess > 0.0 and senders > 0.0:
                 for sim in self.tanks.values():
@@ -2614,6 +3422,9 @@ class Session:
         self._relief_lift = dict(snap.relief_lift)
         while len(self.history) > snap.history:
             self.history.pop()
+        while self.solver_log and self.solver_log[-1].t > self.t + 1e-9:
+            self.solver_log.pop()
+        self.reset_balance()
 
     def _leave_replay(self) -> None:
         """A command has arrived: put the stand where the operator sees it.
@@ -2638,12 +3449,13 @@ class Session:
     def _integrate(self, dt: float) -> Sample:
         """Advance the stand by ``dt`` seconds and return where it is."""
         dt = max(min(dt, MAX_STEP), 1e-4)
+        self._tick = {}
         signals = self.signals(dt)
         net = self.model.built.network
         net.gravity = self.setup.body_acceleration
 
         for sim in self.tanks.values():
-            sim.filling = self._fills(sim)
+            sim.filling = self._fills(sim) and sim.id not in self._drawn_fill
             sim.full_fraction = self.setup.full_fraction
             sim.charge_gamma = self.setup.charge_gamma
             sim.supply_band = self.setup.supply_band
@@ -2655,6 +3467,15 @@ class Session:
                 self.setup.tank_fill_s if cryogen else self.setup.fuel_fill_s
             )
             sim.chill_seconds = self.setup.load_chill_s
+            sim.dewar_pressure = (
+                from_psig(self.setup.dewar_psi) if self.setup.dewar_psi > 0.0 else 0.0
+            )
+            sim.fill_line_bore = self.setup.dewar_line_bore_mm * 1e-3
+            sim.fill_line_length = self.setup.dewar_line_length_m
+            sim.fill_cv = self.setup.dewar_fill_cv
+        # The cart's vent valve, on every GSE vent the drawing does not size.
+        for branch in self.model.built.gse_vents:
+            net.branches[branch].component.p["Cv"] = self.setup.gse_vent_cv
         # The GSE side of the bottle is not on the drawing, so its fill and
         # vent are the table's own GSE actuators, read as the DAQ reads them:
         # `GSE High Press Control` charges it (GN2 High Press), `GSE High
@@ -2665,9 +3486,12 @@ class Session:
         # through a valve the table never opens there.
         opened = self.machine.open_actuators(self.state)
         for bottle in self.bottles.values():
-            bottle.filling = "GSE High Press Control" in opened
+            # A bottle the drawing charges (the cart drawn on its GSE page) is
+            # filled and dumped by the network, through the valves drawn there.
+            off_drawing = bottle.id not in self._drawn_fill
+            bottle.filling = off_drawing and "GSE High Press Control" in opened
             bottle.fill_supply_T = self.setup.fill_supply_T
-            bottle.venting = "GSE High Press Vent" in opened
+            bottle.venting = off_drawing and "GSE High Press Vent" in opened
             bottle.target = from_psig(self.setup.copv_target_psi)
             bottle.fill_seconds = self.setup.copv_fill_s
 
@@ -2688,7 +3512,7 @@ class Session:
         # ...and never coarser than the regulator-ullage time constant allows.
         # The change-based rule above reacts to motion it has already seen; the
         # time constant says how fast the loop *can* move, before it does.
-        tau = self._coupling_timescale()
+        tau = self._coupling_timescale(signals, dt, press=False)
         if tau > 0.0:
             coupling = max(coupling, int(dt / (self.setup.coupling_safety * tau)) + 1)
         # ...and never let one coupling step move more than MAX_COUPLED_CHANGE
@@ -2709,19 +3533,41 @@ class Session:
                     int(dt * rate / (inventory * self.setup.max_mass_step)) + 1,
                 )
         coupling = min(coupling, MAX_COUPLING_STEPS)
+        # ...and the press path's own constant (`_press_path_timescale`), last
+        # and apart. It is about how often the network is re-solved, not about
+        # how finely the vessels integrate: those were already stepped as
+        # finely as the rules above ask. So the extra solves it adds take
+        # fewer vessel sub-steps each, and every vessel step stays exactly as
+        # fine as it would have been without it. Four sub-steps of each of
+        # nine couplings had taken a guarded helium burn to 0.6 ms vessel steps
+        # and spent most of the tick on them. (Thinning the sub-steps of
+        # couplings the mass rule asked for instead moved the chamber
+        # benchmark by 13 psi: those are the vessels' own stiffness.)
+        vessel_couplings = coupling
+        press_tau = self._coupling_timescale(signals, dt)
+        if 0.0 < press_tau < tau or (tau <= 0.0 and press_tau > 0.0):
+            coupling = max(
+                coupling, int(dt / (self.setup.coupling_safety * press_tau)) + 1
+            )
+            coupling = min(coupling, MAX_COUPLING_STEPS)
         inner_dt = dt / coupling
+        substeps = max(1, -(-SUBSTEPS * vessel_couplings // coupling))
         before = self._vessel_pressures()
 
         result = None
         started = time.monotonic()
+        couplings_done = 0
         for index in range(coupling):
             remaining = coupling - index
+            couplings_done += 1
             # Out of time: fold what is left of the tick into one last step
             # rather than stalling the cockpit for the rest of the budget.
             if index and time.monotonic() - started > self.setup.tick_budget:
-                result = self._advance_once(net, signals, inner_dt * remaining)
+                result = self._advance_once(
+                    net, signals, inner_dt * remaining, substeps
+                )
                 break
-            result = self._advance_once(net, signals, inner_dt)
+            result = self._advance_once(net, signals, inner_dt, substeps)
 
         assert result is not None
         chamber = self._last_chamber
@@ -2750,6 +3596,7 @@ class Session:
         self.t += dt
         self._check_limits()
         self._burnout_check()
+        self._record_solver(couplings_done)
         sample = Sample(
             t=round(self.t, 4),
             state=self.state,
@@ -2843,6 +3690,18 @@ class Session:
             )
         except Exception:  # noqa: BLE001 - a property gap must not stop a tick
             return 0.0
+
+    def _bottle_inflow_enthalpy(self, bottle: BottleSim) -> float:
+        """Specific enthalpy of gas the drawing delivers into a bottle [J/kg]:
+        the walk's arrival at its node, else cart gas at the fill temperature."""
+        arrived = self.arriving_enthalpy.get(bottle.node)
+        if arrived is not None:
+            return float(arrived)
+        return float(
+            bottle.volume.fluid.get(
+                "h", p=max(bottle.pressure, AMBIENT), T=self.setup.fill_supply_T
+            )
+        )
 
     def _bottle_for(self, sim: TankSim) -> BottleSim | None:
         """The bottle feeding this ullage, if one is reachable.
@@ -3018,7 +3877,10 @@ class Session:
                     if p_up is None or p_up <= 0.0:
                         continue
                     try:
-                        fluid = _fluid(upstream.fluid)
+                        # The network's own instance: a fresh Fluid builds fresh
+                        # CoolProp states, and doing that per branch per sweep was
+                        # a third of a burning tick.
+                        fluid = net.fluid(upstream.fluid)
                         T_in = upstream.temperature
                         h = fluid.get("h", p=p_up, T=T_in)
                         # The line's own metal, if it has any and the run wants
@@ -3068,7 +3930,7 @@ class Session:
                     # h is conserved across the component; T falls out of the
                     # equation of state at this node's own pressure. That step
                     # is the Joule-Thomson effect.
-                    landed = _fluid(node.fluid).get("T", p=p_here, h=enthalpy)
+                    landed = net.fluid(node.fluid).get("T", p=p_here, h=enthalpy)
                 except (ValueError, PropertyError):
                     continue
                 if landed > 0.0 and abs(landed - node.temperature) > _TEMPERATURE_TOL:
@@ -3308,18 +4170,3 @@ class Session:
                     f"{bottle.fraction * 100:.0f}% of what it was filled to."
                 )
         return out
-
-
-#: One `Fluid` per species, for the hot paths. A `Fluid` keeps its CoolProp
-#: states and its memo of answered state points, so building a fresh one per
-#: lookup threw both away: the temperature walk built ~16,000 a stand-second
-#: during a fill, two CoolProp states with each, and that was most of why a
-#: fill ran at a fifth of real time.
-_FLUIDS: dict[str, Fluid] = {}
-
-
-def _fluid(species: str) -> Fluid:
-    fluid = _FLUIDS.get(species)
-    if fluid is None:
-        fluid = _FLUIDS[species] = Fluid(species)
-    return fluid

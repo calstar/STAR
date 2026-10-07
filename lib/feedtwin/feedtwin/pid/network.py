@@ -256,6 +256,13 @@ class BuiltNetwork:
     #: words like ``{"fuel", "press"}`` or ``{"lox", "main"}``. Empty for a
     #: valve whose job the topology does not settle. See :func:`_valve_roles`.
     valve_roles: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Branches of the disconnects read as GSE vents (see :func:`_gse_vents`)
+    #: whose size the drawing does not give. The valve that sets it is on the
+    #: cart, so a session sizes them from its own setup (``gse_vent_cv``).
+    gse_vents: tuple[str, ...] = ()
+    #: Paired disconnects read as mated couplings, by drawing id: where the
+    #: drawing's pages (rocket, GSE) join. See :func:`_mate_disconnects`.
+    mated: tuple[tuple[str, str], ...] = ()
 
 
 def _accepted_options(kind: str, options: Mapping[str, str]) -> dict[str, str]:
@@ -383,6 +390,9 @@ def build_network(
     unsized: list[tuple[str, str]] = []
     direct: list[tuple[str, str, str]] = []
     into_engine: dict[str, str] = {}
+    #: Every network node a drawn line landed on: what tells a disconnect's
+    #: plumbed side from its free one when it is mated (_mate_disconnects).
+    landed: set[str] = set()
 
     # Where the pressurant network and the vent stacks reach. Both are ullage
     # side, and a tank must not paint either with its contents.
@@ -613,6 +623,7 @@ def build_network(
             continue
         if upstream == downstream:
             continue
+        landed.update((upstream, downstream))
 
         kind, model = LINE_KINDS.get(edge.line_type, LINE_KINDS["pipe"])
         # Named apart from the symbol loop's `params`/`options` above: this
@@ -664,14 +675,26 @@ def build_network(
         net.add_branch(edge.id, component, upstream, downstream)
         branches_of[edge.id] = (edge.id,)
 
+    # 4a. Disconnects paired across the drawing's pages are mated: the rocket
+    #     half and the GSE half are one coupling, so their free sides are one
+    #     place. A drawing that pairs nothing builds exactly as before.
+    mates, mate_warnings = _mate_disconnects(diagram, net, landed)
+    warnings.extend(mate_warnings)
+    direct.extend(mates)
+    mated = tuple((a, b) for a, b in (tuple(m[0].split(":")[1:3]) for m in mates))
+
     if direct:
         edges_by_id = {e.id: e for e in diagram.edges}
         rename, shorted, kept = _join_direct(net, direct)
         for edge_id, upstream, downstream in kept:
             # Two fixed pressures -- a bottle straight into a tank -- cannot be
             # one place. The line stays a line, on the fallback tube.
-            line = edges_by_id[edge_id]
-            source, target = by_id[line.source], by_id[line.target]
+            if edge_id.startswith("mate:"):
+                _, a, b = edge_id.split(":")
+                source, target = by_id[a], by_id[b]
+            else:
+                line = edges_by_id[edge_id]
+                source, target = by_id[line.source], by_id[line.target]
             net.add_branch(
                 edge_id,
                 _instance(edge_id, "pipe", "darcy", {}, {}),
@@ -810,6 +833,7 @@ def build_network(
     #    disconnect on its top; see _gse_vents.
     roles = _valve_roles(net, diagram, actuators, tanks, fluids, engine_ports)
     gse = _gse_vents(net, diagram, tanks, fluids, engine_ports, roles)
+    gse_unsized = tuple(qd.id for qd, _ in gse if not {"Cv", "Cd"} & set(qd.params))
     if gse:
         for qd, _ in gse:
             actuators[qd.id] = f"{qd.label}.command"
@@ -828,7 +852,7 @@ def build_network(
             f"{'is' if len(gse) == 1 else 'are'} read as where the GSE vent "
             "couples: a valve to atmosphere the state machine's vent opens. The GSE side is not on the drawing, so "
             "its size is the disconnect's own Cv/Cd if it has one and the "
-            "fallback valve's otherwise. Draw the vent valve to say what it is."
+            "cart's vent valve (the session's setup) otherwise. Draw the vent valve to say what it is."
         )
 
     return BuiltNetwork(
@@ -843,7 +867,86 @@ def build_network(
         dome_loaders=built_loaders,
         warnings=tuple(warnings),
         valve_roles=roles,
+        gse_vents=gse_unsized,
+        mated=mated,
     )
+
+
+def _mate_disconnects(
+    diagram: Diagram, net: Network, landed: set[str]
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Paired quick-disconnects, as direct connections between their free sides.
+
+    pid-designer has no off-page connector. A line from the rocket page to the
+    GSE page is drawn as a disconnect on each page, the two paired through
+    ``options.pairedWith`` -- the same coupling the stand has, a half on the
+    vehicle and a half on the cart. Read separately, each half has a free side
+    and the two pages are two unconnected systems; a GSE drawing then cannot
+    feed the vehicle at all. Mated, the free sides are one place and the two
+    halves' own losses stay in series.
+
+    Pairing need not be written on both halves (pid-designer saves only the
+    half that was edited); two halves naming different partners are a drawing
+    error and are left unmated, said so. A half that has lines on both of its
+    sides, or none, has no free side to mate and is left as it is.
+
+    Returns ``("mate:<a>:<b>", free side of a, free side of b)`` per pair, in
+    the shape of the direct connections ``_join_direct`` takes.
+    """
+    by_id = {n.id: n for n in diagram.nodes}
+
+    def partner(node: PidNode) -> str:
+        found = (node.options.get("pairedWith") or "").strip()
+        return "" if found in {"", "none"} else found
+
+    pairs: set[tuple[str, str]] = set()
+    warnings: list[str] = []
+    for node in diagram.nodes:
+        if node.type != "QD":
+            continue
+        other = partner(node)
+        if not other:
+            continue
+        label = node.label or node.id
+        mate = by_id.get(other)
+        if mate is None or mate.type != "QD":
+            warnings.append(
+                f"{label} is paired with {other!r}, which is not a disconnect on "
+                "this drawing: left unmated."
+            )
+            continue
+        back = partner(mate)
+        if back and back != node.id:
+            warnings.append(
+                f"{label} is paired with {mate.label or mate.id}, which is paired "
+                f"with {back!r}: left unmated. Pair the two halves with each other."
+            )
+            continue
+        a, b = sorted((node.id, mate.id))
+        pairs.add((a, b))
+
+    out: list[tuple[str, str, str]] = []
+    for a, b in sorted(pairs):
+        free: dict[str, list[str]] = {}
+        for qd in (a, b):
+            ends = (f"{qd}.in", f"{qd}.out")
+            free[qd] = [e for e in ends if e in net.nodes and e not in landed]
+        lone = [q for q in (a, b) if len(free[q]) != 1]
+        if lone:
+            warnings.append(
+                f"{_and(sorted(by_id[q].label or q for q in lone))} "
+                f"{'has' if len(lone) == 1 else 'have'} no single free side to "
+                f"couple: {by_id[a].label or a} and {by_id[b].label or b} left unmated."
+            )
+            continue
+        out.append((f"mate:{a}:{b}", free[a][0], free[b][0]))
+        pages = {by_id[a].page or "Main", by_id[b].page or "Main"}
+        warnings.append(
+            f"{by_id[a].label or a} and {by_id[b].label or b} are paired, so they "
+            "are read as one mated coupling"
+            + (f" joining pages {_and(sorted(pages))}." if len(pages) > 1 else ".")
+        )
+    return out, warnings
 
 
 def _join_direct(

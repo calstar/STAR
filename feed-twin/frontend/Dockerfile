@@ -36,6 +36,8 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
 COPY pid-designer/frontend/src/components/pid/ /build/pid-designer/frontend/src/components/pid/
 COPY feed-twin/frontend/ .
+# The shared stand controls, at the path ../../lib reaches from here.
+COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
 RUN npm run build
 
 FROM node:22-alpine

@@ -26,7 +26,7 @@
 
 import type { ParamSpec } from './spec';
 import type { ParamValue, Provenance } from './params';
-import { UNITS } from './params';
+import { unitsFor } from './params';
 
 export interface Draft {
   value: string;
@@ -43,7 +43,7 @@ export const VERIFIED: ReadonlySet<Provenance> = new Set(['measured', 'manufactu
 export const isVerified = (source: Provenance) => VERIFIED.has(source);
 
 export function toDraft(spec: ParamSpec, existing?: ParamValue): Draft {
-  const units = UNITS[spec.dimension];
+  const units = unitsFor(spec);
   if (existing) {
     // A supply coefficient stored as N psi/1000psi reopens as "N per 1000".
     const per = spec.ratio ? (existing.unit === 'psi/1000psi' ? '1000' : existing.unit === 'psi/100psi' ? '100' : '1') : undefined;

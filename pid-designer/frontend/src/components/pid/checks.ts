@@ -5,7 +5,7 @@ import { J_ANCHOR, centreOfJunction, isJunction } from './junctions';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
 import { portsOf, portIsDrawn, CV_INLET } from './ports';
-import { toPa } from './params';
+import { toGaugePa as toPa } from './params';
 import { overlapOf } from './segments';
 import { drawnRoute, routesItself } from './lineRoute';
 import type { LineData } from './lineRoute';

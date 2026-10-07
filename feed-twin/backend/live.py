@@ -21,8 +21,15 @@ from dataclasses import dataclass, field
 from typing import Mapping
 
 from backend.assembly import Model
-from backend.run import PSI, Sample, _solve_instant, hold_tanks_at_regulator
+from backend.run import (
+    PSI,
+    Sample,
+    _solve_instant,
+    from_psig,
+    hold_tanks_at_regulator,
+)
 from backend.statemachine import Binding, StateMachine
+from feedtwin.session.hookup import Hookup
 
 #: Ceiling on how many steady solves one fire may ask for. A 60 s burn at 50 Hz
 #: would be 3000 network solves; the sample rate is reduced to fit rather than
@@ -38,6 +45,9 @@ class Stand:
     model: Model
     machine: StateMachine
     binding: Binding
+    #: Which knob sets which regulator, and the valve pins the binding used
+    #: (feedtwin.session.hookup). None: the session's old single dome knob.
+    hookup: Hookup | None = None
 
     def signals_for(
         self, state: str, forced: Mapping[str, float], dome_psi: float
@@ -56,12 +66,16 @@ class Stand:
 
         signals: dict[str, float] = {}
         for node in self.model.diagram.nodes:
+            # The dome as the network built it: the drawn control regulator's
+            # setpoint, written onto the loaded regulator as `dome_pressure` (or
+            # that regulator's own drawn dome). Absolute in SI.
             if node.type == "PR" and node.options.get("domeLoaded") == "yes":
-                setpoint = node.params.get("setpoint")
-                if setpoint is not None and dome_signal:
-                    signals[dome_signal] = setpoint.si
+                branch = self.model.built.network.branches.get(node.id)
+                drawn = branch.component.p.get("dome_pressure", 0.0) if branch else 0.0
+                if drawn > 0.0 and dome_signal:
+                    signals[dome_signal] = float(drawn)
         if dome_signal and dome_psi > 0.0:
-            signals[dome_signal] = dome_psi * PSI
+            signals[dome_signal] = from_psig(dome_psi)
 
         commanded = self.binding.positions_for(self.machine, state)
         for drawing_id, signal in built.actuators.items():

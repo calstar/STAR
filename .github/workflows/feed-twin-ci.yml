@@ -7,6 +7,9 @@ name: feed-twin CI
       # The physics core. Every number this app produces comes from it, so a
       # change there has to run these gates -- including the ones in the app.
       - 'lib/feedtwin/**'
+      # The document store stands live in, and its client half.
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       # EngineDesign's dependency set: the engine-design-compat job below proves
       # the physics core can be installed alongside it, so a change to what
       # EngineDesign pins has to re-run that proof.
@@ -20,6 +23,8 @@ name: feed-twin CI
     paths:
       - 'feed-twin/**'
       - 'lib/feedtwin/**'
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - 'EngineDesign/requirements-base.txt'
       - 'pid-designer/frontend/src/components/pid/**'
       - 'lib/stardesign-ui/**'
@@ -116,6 +121,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -e ../lib/feedtwin
+          pip install -e ../lib/stardesign
 
       - name: Verify imports
         working-directory: feed-twin

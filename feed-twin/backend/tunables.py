@@ -77,9 +77,11 @@ TUNABLES: tuple[Tunable, ...] = (
         "COPV charge time",
         "s",
         GROUPS[0],
-        "Seconds from empty to the high-press setting. 25 s is what GN2 High Press "
-        "takes on the stand (operator). The cart is not on the drawing, so this is "
-        "a time rather than a solved flow.",
+        "Seconds from empty to the high-press setting while the fill valve is open. "
+        "9.7 s is fitted to the 12 Sep pulse fill (daq_20260912_204917, 183 psi RMS; "
+        "the operator's 25 s was 1,489 psi RMS). The cart is not on the drawing, so "
+        "this is a rate rather than a solved flow, and it holds only with the GSE "
+        "bank well above the bottle.",
         low=1.0,
         high=3600.0,
         step=5.0,
@@ -149,7 +151,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "liquid stays in it. What is poured flashes on the warm wall and vents; on "
         "the stand that is about ten minutes of pouring (operator), compressed here "
         "so it can be watched. 0: liquid collects from the start and the wall chills "
-        "as it goes.",
+        "as it goes. Only with the dewar pressure at 0; a dewar chills in real time.",
         low=0.0,
         high=3600.0,
         step=5.0,
@@ -162,10 +164,79 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Seconds for the dewar transfer to reach the full fraction once the tank is "
         "chilled. The wall is near saturation by then; what heat it still has boils "
-        "LOX, which the vent has to carry.",
+        "LOX, which the vent has to carry. Only with the dewar pressure at 0; with a "
+        "dewar, the load takes as long as its line delivers.",
         low=1.0,
         high=3600.0,
         step=10.0,
+    ),
+    Tunable(
+        "dewar_psi",
+        "dewar_psi",
+        "LOX dewar pressure",
+        "psig",
+        GROUPS[1],
+        "What pushes the LOX load in: ~100 psig on the stand (operator). The load "
+        "is the dewar less the tank, through the fill line. While the wall is warm "
+        "everything that arrives boils into the ullage, so the tank climbs until the "
+        "vent carries what the dewar sends, more the faster it pours; once the wall "
+        "is at saturation the liquid collects. 0: the fixed-rate load and chill "
+        "time above.",
+        low=0.0,
+        high=500.0,
+        step=5.0,
+    ),
+    Tunable(
+        "dewar_fill_cv",
+        "dewar_fill_cv",
+        "Dewar valve Cv",
+        "Cv",
+        GROUPS[1],
+        "Everything on the fill line that is not tube: the dewar's liquid valve, the "
+        "LOX Fill valve, the disconnect -- in practice how far the dewar valve is "
+        "open. Calibrated: 0.013 tops LE4 out at 30 psig during the chill with a "
+        "Cv 0.5 vent, which is what the stand shows (operator). A clean 3/8 in line "
+        "pours ~0.7 kg/s, all of which boils on a warm wall, and the tank rides up "
+        "to the dewar.",
+        low=0.0,
+        high=10.0,
+        step=0.001,
+    ),
+    Tunable(
+        "dewar_line_bore_mm",
+        "dewar_line_bore_mm",
+        "Dewar line bore",
+        "mm",
+        GROUPS[1],
+        "3/8 in tube, 0.035 in wall (operator: 3/8 in lines for now).",
+        low=1.0,
+        high=50.0,
+        step=0.05,
+    ),
+    Tunable(
+        "dewar_line_length_m",
+        "dewar_line_length_m",
+        "Dewar line length",
+        "m",
+        GROUPS[1],
+        "Hose from the dewar to the tank's fill disconnect. Estimated; measure it.",
+        low=0.0,
+        high=100.0,
+        step=0.5,
+    ),
+    Tunable(
+        "gse_vent_cv",
+        "gse_vent_cv",
+        "Cart vent valve Cv",
+        "Cv",
+        GROUPS[1],
+        "The cart's vent valve, ~0.5 (operator). Sizes a tank vent the drawing leaves "
+        "to the GSE (a capped disconnect on the tank top, LE4's QD_OVA and QD_FVA) "
+        "when the disconnect carries no Cv or Cd of its own. Sets how high a LOX load "
+        "pushes the tank.",
+        low=0.01,
+        high=20.0,
+        step=0.05,
     ),
     Tunable(
         "full_fraction",
@@ -543,6 +614,18 @@ TUNABLES: tuple[Tunable, ...] = (
         "instead of the per-litre default. A value on the drawing always wins.",
         kind="flag",
         applies="reset",
+    ),
+    Tunable(
+        "ullage_wall_by_level",
+        "ullage_wall_by_level",
+        "Ullage meets the dry wall only",
+        "",
+        GROUPS[5],
+        "Scale a tank's ullage-to-wall conductance by the share of the wall above "
+        "the liquid. Off, a 95 % full LOX tank's ullage cooled against the whole "
+        "cold tank and a fresh press sagged 548 to 260 psig in six seconds of Ready.",
+        kind="flag",
+        applies="live",
     ),
     Tunable(
         "wall_hA_dT",

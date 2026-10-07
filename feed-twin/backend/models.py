@@ -20,6 +20,9 @@ class ArtifactOut(BaseModel):
     source: str
     notes: str = ""
     summary: dict[str, object] = Field(default_factory=dict)
+    #: An engine's EngineDesign card, as it describes itself; empty when the
+    #: engine has none and fires feedtwin's simplified model.
+    card: dict[str, object] = Field(default_factory=dict)
 
 
 class ImportResult(BaseModel):
@@ -27,6 +30,19 @@ class ImportResult(BaseModel):
     already_present: bool
     """True when the same bytes were already in the library. Not an error --
     saving from pid-designer twice in a session is normal."""
+    card_error: str = ""
+    """Why an engine came in without EngineDesign's card, when it did."""
+
+
+class FreshnessOut(BaseModel):
+    """Whether an artifact pulled from a design tool is still what that tool holds."""
+
+    artifact_id: str
+    tracked: bool
+    """Pulled from a design tool, so there is something to compare with."""
+    current: bool | None = None
+    """``None`` when the tool could not be asked."""
+    detail: str = ""
 
 
 class Actuator(BaseModel):
@@ -235,6 +251,10 @@ class TankOut(BaseModel):
     #: A cryogen load is still chilling the wall: what is poured flashes off
     #: and nothing collects yet. The card shows the wall temperature meanwhile.
     chilling: bool = False
+    #: What the load is delivering into the tank [g/s]: the dewar's flow
+    #: through its fill line, boiling on the wall or collecting. Zero when
+    #: nothing is loading.
+    fill_flow_g_s: float = 0.0
 
 
 class StudyTraceOut(BaseModel):
@@ -280,6 +300,9 @@ class StudyOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
     #: What the finished result was run with, so the view can label it.
     gases: list[str] = Field(default_factory=list)
+    #: The engine the study fired: the one selected in the cockpit.
+    engine_id: str = ""
+    engine_name: str = ""
     bigger: bool = False
     collapse: bool = False
     swept: bool = False
@@ -288,11 +311,24 @@ class StudyOut(BaseModel):
     line_walls: bool = False
 
 
+class LiveKnobOut(BaseModel):
+    """A knob as the GSE page draws it: its setting now, and what it turns."""
+
+    id: str
+    label: str
+    psig: float
+    low: float
+    high: float
+    regulators: list[str] = Field(default_factory=list)
+    """Labels of the regulators it sets."""
+
+
 class SessionOut(BaseModel):
     """One tick of a live stand."""
 
     id: str
     t: float
+    knobs: list[LiveKnobOut] = Field(default_factory=list)
     state: str
     reachable: list[str]
     converged: bool
@@ -350,3 +386,132 @@ class RunOut(BaseModel):
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one
     leg -- half an injector cannot be balanced."""
+
+
+class BurnTankOut(BaseModel):
+    id: str
+    label: str
+    side: str
+    start_psi: float
+    """Tank pressure when Fire was commanded [psig]."""
+    min_psi: float
+    """Lowest tank pressure at full flow [psig]."""
+    start_kg: float
+    end_kg: float
+
+
+class BurnOut(BaseModel):
+    """One burn, totalled from the stand's history (``feedtwin.session.report``).
+
+    Chamber pressure is gauge, like every pressure on the console.
+    """
+
+    start_s: float
+    end_s: float
+    duration_s: float
+    burning: bool
+    """Still lit at the newest sample: the numbers are running totals."""
+    impulse_Ns: float
+    thrust_mean_N: float
+    thrust_peak_N: float
+    thrust_min_N: float
+    pc_mean_psi: float
+    pc_min_psi: float
+    pc_max_psi: float
+    of_mean: float
+    of_min: float
+    of_max: float
+    isp_s: float
+    cstar_mps: float
+    oxidiser_kg: float
+    fuel_kg: float
+    stiffness_oxidiser_min: float
+    stiffness_fuel_min: float
+    extrapolated_steps: int
+    steps: int
+    tanks: list[BurnTankOut] = Field(default_factory=list)
+    engine_model: str = ""
+    """``card`` (EngineDesign's engine) or ``simplified`` (feedtwin's own)."""
+
+
+class BurnsOut(BaseModel):
+    engine_id: str
+    engine_model: str
+    burns: list[BurnOut]
+
+
+class KnobOut(BaseModel):
+    """A dial on the GSE page and the regulators (drawing ids) it sets [psig]."""
+
+    id: str
+    label: str
+    regulators: list[str] = Field(default_factory=list)
+    psig: float = 500.0
+    low: float = 0.0
+    high: float = 1000.0
+
+
+class HookupBody(BaseModel):
+    """What a person decided: pinned valves (actuator -> drawing id, "" for
+    none) and the knobs."""
+
+    valves: dict[str, str] = Field(default_factory=dict)
+    knobs: list[KnobOut] = Field(default_factory=list)
+
+
+class HookupValveOut(BaseModel):
+    id: str
+    label: str
+    page: str
+    role: list[str] = Field(default_factory=list)
+
+
+class HookupRegulatorOut(BaseModel):
+    id: str
+    label: str
+    kind: str
+    """``loader``, ``dome`` or ``plain`` (feedtwin.session.hookup.RegulatorInfo)."""
+    page: str
+    drawn_psig: float | None = None
+
+
+class HookupOut(BaseModel):
+    """A drawing's hookup, what the twin would suggest, and everything there is
+    to link: the state machine's actuators, the drawing's valves and regulators."""
+
+    lineage: str
+    saved: bool
+    hookup: HookupBody
+    suggested: HookupBody
+    actuators: list[str]
+    valves: list[HookupValveOut]
+    regulators: list[HookupRegulatorOut]
+    bound: dict[str, str]
+    unmatched: list[str]
+    uncommanded: list[str]
+    by_role: list[str]
+    by_user: list[str]
+    pages: list[str]
+    mated: list[list[str]]
+
+
+class SolverOut(BaseModel):
+    """The solver tab: one entry per tick (feedtwin.session.diagnostics).
+
+    Columns rather than rows, as the plots read them. ``summary`` is what the
+    headline says: is this run's arithmetic to be trusted.
+    """
+
+    t: list[float]
+    couplings: list[int]
+    iterations: list[int]
+    iterations_max: list[int]
+    residual: list[float]
+    continuity: list[float]
+    converged: list[bool]
+    chamber_residual_psi: list[float]
+    inventory_kg: list[float]
+    mass_error_kg: list[float]
+    guard_kg: list[float]
+    guard_J: list[float]
+    summary: dict[str, float] = Field(default_factory=dict)

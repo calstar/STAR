@@ -36,6 +36,8 @@ interface Props {
   running: boolean;
   onRunning: (on: boolean) => void;
   onRestart: () => void;
+  /** Skip the pad: loaded, charged, at lockup, in Ready. */
+  onT0: () => void;
   busy: boolean;
   /** Stand seconds per wall second; shown when the solver is not keeping up. */
   speed?: number;
@@ -60,6 +62,7 @@ export function TopBar({
   running,
   onRunning,
   onRestart,
+  onT0,
   busy,
   speed,
   channels,
@@ -137,7 +140,10 @@ export function TopBar({
 
         {/* Centre: the bars. Click one to silence its trace, as on the DAQ. */}
         <div
-          className="flex-[2] flex items-stretch justify-end gap-4 sm:gap-6 lg:gap-8 min-w-0"
+          // Right-aligned by the first bar's auto margin, not justify-end: a
+          // justify-end row that overflows pushes its first bars off the left
+          // edge where no scroll can reach them.
+          className="flex-[2] flex items-stretch gap-2 md:gap-4 lg:gap-8 min-w-0 overflow-x-auto [&>*:first-child]:ml-auto"
           style={{ maxWidth: '62vw' }}
         >
           {/* Pressure bars only. A thermocouple in a bar scaled to MEOP is
@@ -145,17 +151,25 @@ export function TopBar({
           {channels.filter((c) => (c.unit || 'psig') === 'psig').map((c) => {
             const { nop, meop } = limitsFor(c.tag);
             const silent = hidden[c.id];
-            const value = live?.pressure_psi[c.id];
+            // The engine's own chamber channel is not a drawn instrument: it
+            // reads off the live engine, so a stand with no PC transducer on
+            // its drawing still shows chamber pressure while it burns.
+            const value =
+              c.id === 'engine.pc' ? (live?.engine?.chamber_psi ?? null) : live?.pressure_psi[c.id];
             return (
               <button
                 key={c.id}
                 type="button"
                 title={silent ? 'Show on the plot' : 'Hide from the plot'}
                 onClick={() => onToggleChannel(c.id)}
-                className={`min-w-0 h-full flex-1 text-left rounded-lg transition-opacity hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/80 ${
+                className={`h-full flex-1 overflow-hidden text-left rounded-lg transition-opacity hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/80 ${
                   silent ? 'opacity-45' : 'opacity-100'
                 }`}
-                style={{ minWidth: '6%', maxWidth: '14%' }}
+                // A floor in pixels, not a percentage: at 6 % of a narrow
+                // window a bar was 25 px and its tag and reading ran into the
+                // next bar's. Narrower than this, the row clips rather than
+                // overlapping.
+                style={{ minWidth: 46, maxWidth: '14%' }}
               >
                 <PressureBar
                   label={c.tag.replace(/^PT-/, '')}
@@ -238,6 +252,14 @@ export function TopBar({
                 Reset
               </button>
             </div>
+            <button
+              onClick={onT0}
+              disabled={busy}
+              title="Skip the pad: both tanks loaded, the bottle charged to the COPV target, every tank at the lockup its regulator gives at the knobs as set, in Ready. Fire from here."
+              className="w-full rounded-lg border border-sky-700 bg-sky-950 py-1.5 text-[10px] font-bold uppercase tracking-wider text-sky-200 hover:bg-sky-900 disabled:opacity-50"
+            >
+              Jump to T-0
+            </button>
           </div>
         </div>
       </div>

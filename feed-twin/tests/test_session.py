@@ -94,12 +94,15 @@ def stand(*, engine: bool = False, **setup: float) -> Session:
     # wrong for a test, whose answer must not depend on what else the machine
     # was doing.
     # The load chill too: a test about a fill wants the liquid in, not thirty
-    # seconds of a wall chilling first (tested on its own below).
+    # seconds of a wall chilling first (tested on its own below). And the
+    # fixed-rate load rather than the dewar's, which takes minutes to chill
+    # a warm tank (tested in test_dewar_load.py).
     setup = {
         "chilldown": 0.0,
         "ambient_leak": 0.0,
         "tick_budget": 1e9,
         "load_chill_s": 0.0,
+        "dewar_psi": 0.0,
         **setup,
     }
     seeded = _seed()
@@ -187,16 +190,23 @@ def test_filling_a_tank_loads_it_and_leaves_the_other_alone() -> None:
 
 def test_a_tank_vents_while_it_fills() -> None:
     """Ox Fill opens the LOX vent. Without it the incoming liquid compresses the
-    ullage to hundreds of psi, which is why the vent is in the table. With
-    the wall boiling the LOX it meets (the helper loads a warm tank in five
-    seconds), the vent is passing tens of grams a second and the tank sits a
-    few tens of psi up -- still nowhere near a shut tank."""
+    ullage to hundreds of psi, which is why the vent is in the table: while the
+    helper's five-second load comes in, the vent passes the gas it displaces
+    and the tank stays near atmosphere.
+
+    And nothing else. This stand is thermally quiet (no wall-to-liquid heat,
+    no leak), so once it is full nothing boils. This test used to read the
+    vent *after* the fill and find 6.5 g/s there: air the vent took and the
+    pressurant floor put straight back, 5 g/s of it, booked as a guard."""
     session = stand()
-    hold(session, "Ox Fill", 12.0)
+    hold(session, "Ox Fill", 3.0)
     assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
     assert (
         session._last_flows.get("SV_LOX_VENT", 0.0) > 5.0e-3
-    ), "the vent is carrying boil-off"
+    ), "the vent carries the gas the liquid displaces"
+    hold(session, "Ox Fill", 9.0)
+    assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
+    assert abs(session.tanks["OXT"].fixed_kg) < 1e-3, "no gas created by the floor"
 
 
 def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
@@ -539,9 +549,9 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     calls: list[float] = []
     original = session._advance_once
 
-    def counting(net, signals, inner):  # type: ignore[no-untyped-def]
+    def counting(net, signals, inner, *rest):  # type: ignore[no-untyped-def]
         calls.append(inner)
-        return original(net, signals, inner)
+        return original(net, signals, inner, *rest)
 
     session._advance_once = counting  # type: ignore[method-assign]
     session.setup.tick_budget = 1e9  # the study setting: never fold
@@ -765,8 +775,10 @@ def test_a_shut_lox_tank_climbs_and_the_panel_says_why() -> None:
     assert session.tanks["OXT"].readouts()["wall_temperature_K"] > 150.0
     # Left shut on a 0.75 L ullage under a 293 K wall it runs to the oxygen
     # critical pressure -- the model's ceiling -- within seconds, and the
-    # note changes to "vent it".
-    hold(session, "Armed", 4.0)
+    # note changes to "vent it". ~4.4 s from shutting; it was 1.2 s while the
+    # pressurant floor was re-creating the air the vent had taken (26 g of it
+    # by the end of this fill), which pressed the ullage too.
+    hold(session, "Armed", 6.0)
     later = psi(session.tanks["OXT"].pressure)
     assert later > shut + 20.0, (shut, later)
     assert "Vent it" in "\n".join(session.history[-1].notes)
@@ -831,12 +843,19 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     the operator quotes. Bare, the same tank climbs faster. The difference
     is the whole point of the wrap. (Before the surface layer this read as
     "climbs into the teens then creeps": the whole leak boiled, then fifteen
-    kilograms of bulk had to warm.)"""
+    kilograms of bulk had to warm.)
+
+    At the vehicle's load (~40 % full), not 85 %. The leak reaches the ullage
+    only through the dry wall above the liquid; below it, it warms a subcooled
+    bulk that does not pressurise anything. Since the ullage stopped trading
+    heat with the whole tank's wall (Setup.ullage_wall_by_level, 2026-10-06)
+    an 85 % full tank shows the wrap as 1.3 psi in ten minutes -- true, and
+    too small to test -- and this load shows it as 5 psi in three."""
     from dataclasses import replace
 
     def shut(bare: bool) -> float:
         session = stand(chilldown=100.0, ambient_leak=8.0)
-        session.prime(fill_fraction=0.85, tank_psi=0.0, copv_psi=4500.0, state="Armed")
+        session.prime(fill_fraction=0.40, tank_psi=0.0, copv_psi=4500.0, state="Armed")
         ox = session.tanks["OXT"]
         if bare:
             ox.tank.ambient_conductance = 8.0

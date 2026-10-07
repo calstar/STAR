@@ -17,11 +17,82 @@ export interface Artifact {
   source: string;
   notes: string;
   summary: Record<string, unknown>;
+  /** An engine's EngineDesign card, as it describes itself; empty when the
+   *  engine fires feedtwin's simplified model. */
+  card?: EngineCardInfo | Record<string, never>;
 }
+
+export interface EngineCardInfo {
+  card_config_sha256: string;
+  card_center_psia: number;
+  card_ambient_pa: number;
+  card_within_tolerance: boolean;
+  /** Worst relative error against held-out EngineDesign solves. */
+  card_error: number;
+  /** Unix seconds. */
+  card_built: number;
+}
+
+export const hasCard = (a: Artifact) => Boolean(a.card && 'card_built' in a.card);
 
 export interface ImportResult {
   artifact: Artifact;
   already_present: boolean;
+  /** Why an engine came in without EngineDesign's card, when it did. */
+  card_error?: string;
+}
+
+export interface Freshness {
+  artifact_id: string;
+  tracked: boolean;
+  /** null when the design tool could not be asked. */
+  current: boolean | null;
+  detail: string;
+}
+
+/** One burn, totalled from the stand's history the way Layer X totals one.
+ *  Pressures are gauge, like the rest of the console. */
+export interface BurnTank {
+  id: string;
+  label: string;
+  side: string;
+  start_psi: number;
+  min_psi: number;
+  start_kg: number;
+  end_kg: number;
+}
+
+export interface Burn {
+  start_s: number;
+  end_s: number;
+  duration_s: number;
+  burning: boolean;
+  impulse_Ns: number;
+  thrust_mean_N: number;
+  thrust_peak_N: number;
+  thrust_min_N: number;
+  pc_mean_psi: number;
+  pc_min_psi: number;
+  pc_max_psi: number;
+  of_mean: number;
+  of_min: number;
+  of_max: number;
+  isp_s: number;
+  cstar_mps: number;
+  oxidiser_kg: number;
+  fuel_kg: number;
+  stiffness_oxidiser_min: number;
+  stiffness_fuel_min: number;
+  extrapolated_steps: number;
+  steps: number;
+  tanks: BurnTank[];
+  engine_model: string;
+}
+
+export interface Burns {
+  engine_id: string;
+  engine_model: string;
+  burns: Burn[];
 }
 
 export interface Actuator {
@@ -198,6 +269,8 @@ export interface TankState {
   surface_temperature_K?: number;
   /** A LOX load still chilling the wall: nothing collects yet. */
   chilling?: boolean;
+  /** What the load is delivering into the tank [g/s]. */
+  fill_flow_g_s?: number;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
   /** Which leg the tank is on, from what it holds. Empty on a bottle. */
@@ -213,6 +286,10 @@ export interface StandSetup {
   copv_fill_s: number;
   tank_fill_s: number;
   fuel_fill_s: number;
+  /** LOX dewar pressure [psig]; 0 loads at the fixed rate of tank_fill_s. */
+  dewar_psi: number;
+  /** Cv of the fill line's valves: in practice how far the dewar valve is open. */
+  dewar_fill_cv: number;
   /** The bottle arrives full and cold at the drawing's pressure, like a
    *  supplier's cylinder. Off (default), it starts empty and GN2 High Press
    *  fills it from GSE over copv_fill_s. */
@@ -251,6 +328,8 @@ export interface SessionState {
   setup: StandSetup;
   engine: EngineState | null;
   notes: string[];
+  /** The GSE page's knobs, from the drawing's hookup. */
+  knobs?: LiveKnob[];
   /** A run is being integrated ahead of the display; nothing advances yet. */
   computing: boolean;
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
@@ -291,6 +370,9 @@ export interface StudySweepPoint {
 
 export interface StudyState {
   running: boolean;
+  /** The engine the run fired: the cockpit's selection when it started. */
+  engine_id: string;
+  engine_name: string;
   progress: number;
   stage: string;
   error: string;
@@ -319,6 +401,8 @@ export interface StudyOptions {
   /** Heat the tube and its fittings give the gas passing through them. Needs
    * `wall_thickness` and `fitting_mass` on the drawing to do anything. */
   line_walls?: boolean;
+  /** The engine to fire: the one selected in the cockpit. Required. */
+  engine: string;
 }
 
 /** Where the COPV study has got to, and its last result. */
@@ -398,6 +482,18 @@ export const importFromSource = (
     body: JSON.stringify(doc),
   });
 
+/** (Re)build an engine's EngineDesign card. Takes EngineDesign 5-15 s. */
+export const buildCard = (id: string) =>
+  json<ImportResult>(`/api/library/${id}/card`, { method: 'POST' });
+
+/** Is a pulled artifact still what its design tool holds? */
+export const getFreshness = (id: string) =>
+  json<Freshness>(`/api/library/${id}/freshness`);
+
+/** Pull the design tool's working copy again, as a new artifact. */
+export const refreshArtifact = (id: string) =>
+  json<ImportResult>(`/api/library/${id}/refresh`, { method: 'POST' });
+
 export const removeArtifact = (id: string) =>
   json<{ removed: string }>(`/api/library/${id}`, { method: 'DELETE' });
 
@@ -435,8 +531,12 @@ const post = <T,>(url: string, body: unknown) =>
 /** Start a stand: tanks empty, everything at atmosphere. */
 export const openSession = (
   w: Where,
-  body: { state: string } & Record<string, number | boolean | string>,
+  body: { state: string } & Record<string, unknown>,
 ) => post<SessionState>(`/api/session?${query(w)}`, body);
+
+/** Skip the pad: tanks loaded, bottle charged, every tank at its regulator's
+ *  lockup at the knobs as set, in Ready. */
+export const sessionT0 = (id: string) => post<SessionState>(`/api/session/${id}/t0`, {});
 
 /** Advance the stand. Driven by the client, so it stops when nobody watches. */
 export const tickSession = (id: string, dt: number) =>
@@ -451,8 +551,96 @@ export const commandSession = (
     open?: boolean;
     release?: string;
     setup?: Partial<StandSetup>;
+    knob?: { id: string; value: number };
   },
 ) => post<SessionState>(`/api/session/${id}/command`, body);
+
+/** A dial on the GSE page and the regulators (drawing ids) it sets [psig]. */
+export interface KnobDef {
+  id: string;
+  label: string;
+  regulators: string[];
+  psig: number;
+  low: number;
+  high: number;
+}
+
+/** What a person decided about a drawing's controls. `valves` pins a table
+ *  actuator to a drawing valve ("" = no valve here); unpinned ones are matched
+ *  automatically. */
+export interface HookupBody {
+  valves: Record<string, string>;
+  knobs: KnobDef[];
+}
+
+export interface Hookup {
+  lineage: string;
+  saved: boolean;
+  hookup: HookupBody;
+  suggested: HookupBody;
+  actuators: string[];
+  valves: { id: string; label: string; page: string; role: string[] }[];
+  regulators: { id: string; label: string; kind: 'loader' | 'dome' | 'plain'; page: string; drawn_psig: number | null }[];
+  bound: Record<string, string>;
+  unmatched: string[];
+  uncommanded: string[];
+  by_role: string[];
+  by_user: string[];
+  pages: string[];
+  mated: string[][];
+}
+
+/** The id of the knob the session's dome setting drives. */
+export const DOME_KNOB = 'dome';
+
+export interface LiveKnob {
+  id: string;
+  label: string;
+  psig: number;
+  low: number;
+  high: number;
+  /** Labels of the regulators it sets. */
+  regulators: string[];
+}
+
+const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}`;
+
+export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+  json<Hookup>(`/api/hookup?${whereQuery(w)}`);
+
+export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }, body: HookupBody) =>
+  json<Hookup>(`/api/hookup?${whereQuery(w)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+  json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
+
+/** The solver tab: per tick, as columns (feedtwin.session.diagnostics). */
+export interface SolverTrace {
+  t: number[];
+  couplings: number[];
+  iterations: number[];
+  iterations_max: number[];
+  residual: number[];
+  continuity: number[];
+  converged: boolean[];
+  chamber_residual_psi: number[];
+  inventory_kg: number[];
+  mass_error_kg: number[];
+  guard_kg: number[];
+  guard_J: number[];
+  summary: Record<string, number>;
+}
+
+export const sessionSolver = (id: string, seconds = 300, maxPoints = 600) =>
+  json<SolverTrace>(`/api/session/${id}/solver?seconds=${seconds}&max_points=${maxPoints}`);
+
+/** Every burn still in the stand's history, oldest first. */
+export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burns`);
 
 /** The trace so far, in the shape the plots already read. */
 export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500) =>
@@ -531,6 +719,12 @@ export const CHANNEL_COLORS: Record<string, string> = {
   'PT-OX-DN': '#4169E1',
   'PT-FU-UP': '#FF4500',
   'PT-FU-DN': '#CC0000',
+  // The engine, in the console's own engine colours.
+  PC: '#F39C12',
+  Thrust: '#e2e2e2',
+  'O/F': '#9B59B6',
+  'LOX flow': '#38BDF8',
+  'Fuel flow': '#FF4500',
 };
 
 export const channelColor = (tag: string) => CHANNEL_COLORS[tag] ?? '#3498DB';
@@ -565,3 +759,137 @@ export const when = (iso: string) => {
   if (days < 7) return `${Math.floor(days)}d ago`;
   return new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
+
+// ---------------------------------------------------------------------- runs
+
+/** The stand document a run was fired on. */
+export interface RunStand {
+  id: string;
+  owner: string;
+  name: string;
+  updatedAt: string;
+  release: string;
+}
+
+export interface CodeVersion {
+  app: string;
+  library: string;
+  commit: string;
+  dirty: boolean;
+}
+
+/** One burn, as listed: outcome numbers and whether the solver kept up. */
+export interface RunSummary {
+  id: string;
+  owner: string;
+  user: string;
+  created: string;
+  label: string;
+  stand: RunStand | null;
+  engine_model: string;
+  outcome: Record<string, number | null>;
+  converged: boolean;
+  mass_error_ppm: number | null;
+  code: CodeVersion | null;
+}
+
+export interface RunRecord extends RunSummary {
+  inputs: Record<string, unknown>;
+  solver: Record<string, number>;
+  series: {
+    t: number[];
+    thrust_N: number[];
+    pc_psig: number[];
+    of: number[];
+    tanks: Record<string, number[]>;
+    labels: Record<string, string>;
+  };
+  clock: { start_s: number; end_s: number };
+  notes: string[];
+}
+
+export interface OutcomeDelta {
+  key: string;
+  label: string;
+  unit: string;
+  a: number | null;
+  b: number | null;
+  delta: number | null;
+  pct: number | null;
+}
+
+export interface RunDiff {
+  a: RunSummary;
+  b: RunSummary;
+  inputs: { key: string; group: string; a: unknown; b: unknown }[];
+  groups: string[];
+  code: { key: string; a: unknown; b: unknown }[];
+  outcome: OutcomeDelta[];
+}
+
+export interface Attribution {
+  key: string;
+  label: string;
+  unit: string;
+  a: number;
+  b: number;
+  total: number;
+  parts: { label: string; delta: number }[];
+  interaction: number;
+}
+
+export interface Rung {
+  label: string;
+  swapped: string[];
+  outcome: Record<string, number>;
+  notes: string[];
+  error: string;
+  wall_s: number;
+}
+
+export interface ExplainState {
+  running: boolean;
+  a?: string;
+  b?: string;
+  stage?: string;
+  done?: number;
+  total?: number;
+  rungs?: Rung[];
+  base?: Rung;
+  full?: Rung;
+  error?: string;
+  attribution?: Attribution[];
+  reproduction?: { run: string; key: string; recorded: number; replayed: number }[];
+}
+
+const ownerQ = (owner?: string | null) => (owner ? `owner=${encodeURIComponent(owner)}` : '');
+
+export const listRuns = (stand?: { id: string; owner?: string | null } | null) => {
+  const q = stand
+    ? `?stand=${encodeURIComponent(stand.id)}${stand.owner ? `&${ownerQ(stand.owner)}` : ''}`
+    : '';
+  return json<RunSummary[]>(`/api/twin/runs${q}`);
+};
+export const getRun = (id: string, owner?: string | null) =>
+  json<RunRecord>(`/api/twin/runs/${encodeURIComponent(id)}${owner ? `?${ownerQ(owner)}` : ''}`);
+export const diffRuns = (a: RunSummary, b: RunSummary) =>
+  json<RunDiff>(
+    `/api/twin/runs/diff?a=${a.id}&b=${b.id}&owner_a=${encodeURIComponent(a.owner)}&owner_b=${encodeURIComponent(b.owner)}`,
+  );
+export const explainRuns = (a: RunSummary, b: RunSummary) =>
+  post<ExplainState>('/api/twin/runs/explain', { a: a.id, b: b.id, owner_a: a.owner, owner_b: b.owner });
+export const explainStatus = () => json<ExplainState>('/api/twin/runs/explain');
+export const explainCancel = () => post<ExplainState>('/api/twin/runs/explain/cancel', {});
+export const recordRuns = (session: string, label = '') =>
+  post<RunSummary[]>(`/api/session/${session}/runs`, { label });
+
+/** What the model has been checked against (backend/version.py VALIDATION). */
+export interface Validation {
+  status: 'unvalidated' | 'calibrated' | 'validated';
+  label: string;
+  checked: string[];
+  not_checked: string[];
+}
+
+export const getVersion = () =>
+  json<CodeVersion & { validation: Validation }>('/api/version');

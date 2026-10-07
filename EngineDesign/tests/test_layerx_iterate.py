@@ -95,12 +95,13 @@ def test_a_design_patch_lands_and_is_bounded():
     from backend.routers.layerx import Settings, apply_design_patch
 
     cfg = load_config(CFG)
+    drawn = cfg.injector.geometry.oxidizer.d_jet
     patch = {"oxidizer": {"d_jet": 0.0017018, "orifice_l_over_d": 4.795}, "fuel": {"d_jet": 0.0015113}}
     out = apply_design_patch(cfg, patch)
     assert out.injector.geometry.oxidizer.d_jet == pytest.approx(0.0017018)
     assert out.injector.geometry.fuel.d_jet == pytest.approx(0.0015113)
     assert out.discharge["oxidizer"].orifice_l_over_d == pytest.approx(4.795)
-    assert cfg.injector.geometry.oxidizer.d_jet == pytest.approx(0.0016318401623160582)   # the design is not touched
+    assert cfg.injector.geometry.oxidizer.d_jet == drawn != 0.0017018   # the design is not touched
     with pytest.raises(Exception):
         Settings(drawing_id="x", design_patch={"oxidizer": {"d_jet": 0.5}})
     with pytest.raises(Exception):

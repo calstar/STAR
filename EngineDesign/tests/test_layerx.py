@@ -86,15 +86,16 @@ def test_dome_dial_matches_the_regulator_relation_by_hand(prepared, drawing):
 
     Every number is read off the drawing JSON directly, not through feedtwin:
     PR-DOME's dome_bias 50 psi, supply_coefficient 17 psi/1000 psi and
-    inlet_reference 4500 psi (absolute, as feedtwin reads "psi"). The bottle is
-    4500 psig, the gauge zero is 101325 Pa, and PR-CTRL adds no bias of its own.
+    inlet_reference 4500 psi -- gauge, as a drawing's bare "psi" on an absolute
+    pressure reads (docs/adr/0004). The bottle is 4500 psig, the gauge zero is
+    101325 Pa, and PR-CTRL adds no bias of its own.
     """
     nodes = {n["id"]: n for n in drawing.payload["nodes"]}
     dome_params = nodes["PR_D"]["data"]["params"]
     bias = dome_params["dome_bias"]["value"]
     spe = dome_params["supply_coefficient"]["value"] / 1000.0
-    reference = dome_params["inlet_reference"]["value"]
     atmosphere = 101325.0 / PSI
+    reference = dome_params["inlet_reference"]["value"] + atmosphere
     bottle_psia = 4500.0 + atmosphere
     by_hand = 578.0 - atmosphere - bias - spe * (reference - bottle_psia)
     assert prepared.derived["dome_psig"] == pytest.approx(by_hand, abs=1e-6)

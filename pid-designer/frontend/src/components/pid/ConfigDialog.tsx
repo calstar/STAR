@@ -3,7 +3,7 @@ import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
 import { COMPONENT_SPECS, LINE_SPECS, PEER_CHOICES } from './spec';
 import type { ComponentSpec, OptionSpec, ParamSpec, PortGroupSpec } from './spec';
-import { UNITS } from './params';
+import { pressureNote, unitsFor } from './params';
 import type { ParamValue } from './params';
 import { fromDraft, isVerified, pickProvenance, placeholderFor, toDraft } from './drafts';
 import type { Draft } from './drafts';
@@ -12,7 +12,7 @@ import type { PortInfo, PortKind } from './ports';
 import { defaultTemperatureK, speciesById } from './fluids';
 import { deriveLineParams, deriveParams, supplyCoefficient } from './derive';
 import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
-import { toPa } from './params';
+import { toAbsolutePa } from './params';
 import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
 import { fittingCount } from './segments';
@@ -150,7 +150,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     let why: string;
     if (tempSpec.auto === 'saturation') {
       const pv = fromDraft(pressureDraft);
-      k = saturationK(fluid, toPa(pv) ?? NaN);
+      k = saturationK(fluid, toAbsolutePa(pv) ?? NaN);
       why = pv ? `${SAT_REFERENCE}, at ${pv.value} ${pv.unit}` : SAT_REFERENCE;
       if (k === undefined) return;
     } else {
@@ -496,7 +496,7 @@ function OptionRow({ spec, value, peers, readOnly, onChange }: {
 function ParamRow({ spec, draft, readOnly, onChange }: {
   spec: ParamSpec; draft: Draft; readOnly: boolean; onChange: (p: Partial<Draft>) => void;
 }) {
-  const units = UNITS[spec.dimension];
+  const units = unitsFor(spec);
   const filled = draft.value.trim() !== '';
 
   // "17 psi rise per 1000 psi inlet drop": the datasheet's two numbers.
@@ -572,7 +572,7 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
           disabled={readOnly}
           onChange={e => onChange({ unit: e.target.value })}
           className={`${field} min-w-0`}
-          title={spec.dimension === 'pressure' ? 'absolute, not gauge' : undefined}
+          title={spec.dimension === 'pressure' ? pressureNote(spec.key) : undefined}
         >
           {units.map(u => <option key={u} value={u}>{u}</option>)}
         </select>

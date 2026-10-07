@@ -186,6 +186,9 @@ class Binding:
     #: Actuators bound by what the valve does rather than by its name -- see
     #: ``roles`` on :func:`bind`. Listed so a stand can say so.
     by_role: tuple[str, ...] = ()
+    #: Actuators a person pinned (``overrides`` on :func:`bind`), bound or
+    #: deliberately left unbound. Everything else was matched automatically.
+    by_user: tuple[str, ...] = ()
 
     def positions_for(self, machine: StateMachine, state: str) -> dict[str, float]:
         """Commanded positions keyed by drawing symbol id, for the solver."""
@@ -331,6 +334,7 @@ def bind(
     machine: StateMachine,
     valves: Mapping[str, str],
     roles: Mapping[str, frozenset[str]] | None = None,
+    overrides: Mapping[str, str] | None = None,
 ) -> Binding:
     """Join the machine's actuators to a drawing's valves by name.
 
@@ -350,15 +354,32 @@ def bind(
     tank's ullage, and that is what "Fuel Press" means. An actuator is bound by
     role only when exactly one unbound valve does exactly its job; names always
     win, and without ``roles`` the binding is what it always was.
+
+    ``overrides`` (actuator -> drawing id) is what a person decided, and wins
+    over both: those valves are taken first, and the automatic match works
+    around them. An empty id leaves that actuator unbound on purpose. A pin
+    naming a valve no longer on the drawing is ignored and the actuator is
+    matched automatically again -- a drawing that lost a valve must not leave a
+    main valve silently uncommanded. Without ``overrides`` nothing changes.
     """
     table = {name: _words(name) for name in machine.actuators}
     drawn = {sid: _words(label) for sid, label in valves.items()}
 
     to_symbol: dict[str, str] = {}
     taken: set[str] = set()
+    decided: set[str] = set()
+    for actuator, sid in (overrides or {}).items():
+        if actuator not in machine.actuators:
+            continue
+        if not sid:
+            decided.add(actuator)
+        elif sid in valves and sid not in taken:
+            to_symbol[actuator] = sid
+            taken.add(sid)
+            decided.add(actuator)
     for actuator in machine.actuators:
         wanted = table[actuator]
-        if not wanted:
+        if not wanted or actuator in decided:
             continue
         best: tuple[int, str, str] | None = None
         for sid, words in drawn.items():
@@ -386,7 +407,12 @@ def bind(
 
     by_role: list[str] = []
     for actuator in machine.actuators:
-        if actuator in to_symbol or not roles or not table[actuator]:
+        if (
+            actuator in to_symbol
+            or actuator in decided
+            or not roles
+            or not table[actuator]
+        ):
             continue
         fits = [
             sid
@@ -403,6 +429,7 @@ def bind(
         unmatched=tuple(a for a in machine.actuators if a not in to_symbol),
         uncommanded=tuple(sorted(set(valves) - taken)),
         by_role=tuple(by_role),
+        by_user=tuple(a for a in machine.actuators if a in decided),
     )
 
 

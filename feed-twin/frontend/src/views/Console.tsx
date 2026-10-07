@@ -14,6 +14,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { channelColor, fixed, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
@@ -91,7 +92,7 @@ function Vessel({
 }
 
 export function Console() {
-  const { model, machine, live, history, hidden, go, toggleValve, release, setup } = useStand();
+  const { model, machine, live, history, burns, hidden, go, toggleValve, release, setup } = useStand();
   const [window, setWindow] = useState(60);
 
   const plot = useMemo(() => {
@@ -117,6 +118,9 @@ export function Console() {
   }
   const engine = live.engine;
   const lit = engine !== null && engine.chamber_psi > 5;
+  const attached = Object.keys(model.engine).length > 0;
+  const simplified = model.engine.engine_model === 'simplified';
+  const lastBurn = burns?.burns.length ? burns.burns[burns.burns.length - 1] : null;
   const locked = Boolean(live.tripped);
 
   return (
@@ -161,7 +165,7 @@ export function Console() {
             <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-red-500" />
             {(
               [
-                ['Chamber', engine.chamber_psi, 'psi', '#F39C12', 0],
+                ['Chamber', engine.chamber_psi, 'psig', '#F39C12', 0],
                 ['Thrust', engine.thrust_N, 'N', '#e2e2e2', 0],
                 ['O/F', engine.mixture_ratio, '', '#9B59B6', 2],
                 ['Isp', engine.isp_s, 's', '#27AE60', 0],
@@ -175,7 +179,50 @@ export function Console() {
                 </div>
               </div>
             ))}
+            {simplified && (
+              <span
+                className="ml-auto self-start rounded bg-amber-900/50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300"
+                title="feedtwin's simplified engine, not EngineDesign's: no engine card. Build one in Library."
+              >
+                simplified
+              </span>
+            )}
           </div>
+        )}
+        {!lit && lastBurn && !lastBurn.burning && (
+          <Link
+            to="/engine"
+            title="The last burn, totalled. Open the Engine page for the traces."
+            className="bg-card flex min-w-[260px] flex-[1.4] items-center gap-4 rounded-lg border border-gray-800 px-3 py-2 hover:border-gray-600"
+          >
+            <span className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">Last burn</span>
+            {(
+              [
+                ['Impulse', lastBurn.impulse_Ns, 'N·s', '#e2e2e2', 0],
+                ['Thrust', lastBurn.thrust_mean_N, 'N', '#e2e2e2', 0],
+                ['Burn', lastBurn.duration_s, 's', '#e2e2e2', 2],
+                ['O/F', lastBurn.of_mean, '', '#9B59B6', 2],
+                ['Isp', lastBurn.isp_s, 's', '#27AE60', 0],
+              ] as const
+            ).map(([label, value, unit, color, places]) => (
+              <div key={label} className="min-w-0">
+                <div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
+                <div className="font-mono text-sm font-bold tabular-nums leading-tight" style={{ color }}>
+                  {fixed(value, places)}
+                  {unit && <span className="ml-1 text-[9px] font-normal text-text-muted">{unit}</span>}
+                </div>
+              </div>
+            ))}
+          </Link>
+        )}
+        {!attached && (
+          <Link
+            to="/library"
+            title="Without an engine the chamber is a fixed pressure: nothing burns, so there is no thrust to report. Pick an engine in Library."
+            className="bg-card flex items-center rounded-lg border border-dashed border-gray-700 px-3 py-2 text-[11px] text-text-muted hover:border-gray-500"
+          >
+            No engine on this stand
+          </Link>
         )}
       </div>
 

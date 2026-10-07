@@ -223,6 +223,7 @@ class Tank:
         boiling_onset: float = 0.0,
         surface_layer: float = 0.0,
         surface_mixing: float = 0.0,
+        wall_by_level: bool = False,
     ) -> None:
         self.liquid = liquid
         self.gas = gas
@@ -255,7 +256,17 @@ class Tank:
         #: Conductance per unit interface area between the layer and the bulk
         #: [W/(m^2.K)] -- conduction and whatever mixing there is.
         self.surface_mixing = surface_mixing
+        #: Scale the ullage-to-wall conductance by the share of the wall that is
+        #: dry -- the part the ullage actually touches. Off: ``wall_conductance``
+        #: is the whole tank's, at every fill, as before. On a 95 % full LOX
+        #: tank that is twenty times the dry wall, and a pressed ullage lost
+        #: half its pressure in six seconds of Ready.
+        self.wall_by_level = wall_by_level
         self._r_vapour: float | None = None
+        # The last level asked for, by the exact liquid volume it was asked at.
+        # A step asks the same question a dozen times, and each answer is a
+        # root solve on the geometry; an exact key keeps it bit-identical.
+        self._level_memo: tuple[float, float] = (-1.0, 0.0)
         self._critical: tuple[float, float] | None = None
 
     # --------------------------------------------------------------- geometry
@@ -288,7 +299,13 @@ class Tank:
 
     def level(self, state: TankState) -> float:
         """Height of the liquid surface above the tank's lowest point [m]."""
-        return level_of_volume(self.geometry, self.liquid_volume(state))
+        volume = self.liquid_volume(state)
+        memo = self._level_memo
+        if memo[0] == volume:
+            return memo[1]
+        level = level_of_volume(self.geometry, volume)
+        self._level_memo = (volume, level)
+        return level
 
     def interface_area(self, state: TankState) -> float:
         """Liquid surface area [m^2]. Falls away as a head empties."""
@@ -517,6 +534,14 @@ class Tank:
             ),
         )
 
+    def dry_wall_fraction(self, state: TankState) -> float:
+        """Share of the inner wall above the liquid [-]: what the ullage touches."""
+        total = self.geometry.wetted_area(self.geometry.height)
+        if total <= 0.0:
+            return 1.0
+        wet = self.geometry.wetted_area(self.level(state))
+        return min(max((total - wet) / total, 0.0), 1.0)
+
     def surface_mass(self, state: TankState, rho_l: float | None = None) -> float:
         """Liquid in the surface layer [kg]: a slab ``surface_layer`` deep over
         the interface, never more than the liquid there is."""
@@ -590,10 +615,11 @@ class Tank:
         )
         # `stirring` scales the still-gas conductance while a charge jet is
         # stirring the ullage; 1 is exactly the old behaviour.
+        conductance = self.wall_conductance
+        if self.wall_by_level and conductance > 0.0:
+            conductance *= self.dry_wall_fraction(state)
         q_wall = (
-            self.wall_conductance
-            * max(stirring, 0.0)
-            * (state.ullage.wall_temperature - T_gas)
+            conductance * max(stirring, 0.0) * (state.ullage.wall_temperature - T_gas)
         )
 
         q_liquid = self.collapse.heat_rate(

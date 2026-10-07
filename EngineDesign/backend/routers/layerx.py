@@ -8,6 +8,7 @@
     POST /api/layerx/pid-designer/import    pull one into this user's drawings
     POST /api/layerx/preflight              settings -> checks, derived plan, the engine link
     POST /api/layerx/card                   settings -> the engine card itself (feedtwin JSON)
+    POST /api/layerx/engine-card            any engine config (YAML) -> its card, for the feed-twin cockpit
     GET  /api/layerx/drawings/{id}/parameters   every drawing parameter, and this user's restatements
     PUT  /api/layerx/drawings/{id}/measurements this user's restated (measured) parameters
     POST /api/layerx/uncertainty            start an uncertainty sweep (background); returns its id
@@ -619,6 +620,24 @@ def engine_card(body: Settings, session: UserSession = Depends(get_session)) -> 
         failing = [c.label for c in prep.checks if c.status == "fail"]
         raise HTTPException(status_code=422, detail={"message": "No engine card.", "failing": failing})
     return _json_safe(prep.link.card.to_dict())
+
+
+class CardRequest(BaseModel):
+    yaml: str = Field(..., description="An engine config, as EngineDesign writes it")
+    center_psia: Optional[float] = None
+
+
+@router.post("/engine-card")
+def engine_card_for_config(body: CardRequest) -> Dict[str, Any]:
+    """The engine card for any engine config, sent as YAML: no session, no drawing. What the
+    feed-twin cockpit asks for when it imports an engine, so the stand fires EngineDesign's
+    engine rather than feedtwin's simplified one (``engine.layerx.card.card_for_config_text``)."""
+    from engine.layerx.card import card_for_config_text
+
+    try:
+        return _json_safe(card_for_config_text(body.yaml, center_psia=body.center_psia))
+    except Exception as exc:  # noqa: BLE001 - a config that will not build a card is the caller's to fix
+        raise HTTPException(status_code=422, detail=f"No engine card for that config: {type(exc).__name__}: {exc}")
 
 
 @router.post("/runs")

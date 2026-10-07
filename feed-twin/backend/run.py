@@ -85,10 +85,14 @@ def build_scenario(model: Model, options: RunOptions) -> tuple[Scenario, str]:
 
     signals: dict[str, float] = {}
     for node in model.diagram.nodes:
+        # The dome as the network built it: the drawn control regulator's
+        # setpoint, written onto the loaded regulator as `dome_pressure` (or
+        # that regulator's own drawn dome). Absolute in SI.
         if node.type == "PR" and node.options.get("domeLoaded") == "yes":
-            setpoint = node.params.get("setpoint")
-            if setpoint is not None and dome_signal:
-                signals[dome_signal] = setpoint.si
+            branch = model.built.network.branches.get(node.id)
+            drawn = branch.component.p.get("dome_pressure", 0.0) if branch else 0.0
+            if drawn > 0.0 and dome_signal:
+                signals[dome_signal] = float(drawn)
     if dome_signal and options.dome_psi > 0.0:
         signals[dome_signal] = from_psig(options.dome_psi)
 

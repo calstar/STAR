@@ -29,9 +29,11 @@ out of this app's store and hands them over.
 from __future__ import annotations
 
 import json
-from typing import Callable, Mapping
+from dataclasses import replace
+from typing import Any, Callable, Mapping
 
 from feedtwin.engine import EngineDesign
+from feedtwin.engine.card import EngineCard
 from feedtwin.engine.importer import EngineImportError, engine_from_config
 from feedtwin.pid import Diagram, DiagramError, read_diagram
 from feedtwin.session.model import (
@@ -63,6 +65,9 @@ __all__ = [
     "find_engine_reference",
     "load_diagram_artifact",
     "load_engine_artifact",
+    "load_engine_card",
+    "card_summary",
+    "SIMPLIFIED_ENGINE",
     "swap_fluids",
 ]
 
@@ -148,18 +153,91 @@ def assemble(
     # try a different engine on the same stand without editing the drawing.
     reference = engine_id or find_engine_reference(diagram)
     engine: EngineDesign | None = None
+    chamber = None
     resolved = ""
+    notes: list[str] = []
+    engine_meta: dict[str, Any] = {}
     if reference:
         engine = load_engine_artifact(library, reference)
         resolved = cea_cache or (cea_resolver(engine) if cea_resolver else "")
+        card, card_meta = load_engine_card(library, reference)
+        if fluid_swap:
+            # A card is the engine at its propellants' densities, burning. A
+            # cold flow swaps the fluids and burns nothing.
+            engine_meta = {"engine_model": "simplified", "why": "cold flow"}
+        elif card is not None:
+            try:
+                engine, chamber = card.install(engine)
+                engine_meta = {"engine_model": "card", **card_meta}
+            except ValueError as exc:
+                notes.append(
+                    f"The engine card stored with this engine does not fit it ({exc}); "
+                    "firing feedtwin's simplified engine instead. Rebuild the card in Library."
+                )
+                engine_meta = {"engine_model": "simplified", "why": "card does not fit"}
+        else:
+            notes.append(SIMPLIFIED_ENGINE)
+            engine_meta = {"engine_model": "simplified", "why": "no card"}
 
-    return assemble_model(
+    model = assemble_model(
         diagram,
         diagram_id=diagram_id,
         engine=engine,
         engine_reference=reference,
         cea_cache=resolved,
+        chamber=chamber,
         fluid_swap=fluid_swap,
         multiphase=multiphase,
-        meta={"diagram_name": artifact.name, "diagram_sha256": artifact.sha256},
+        meta={
+            "diagram_name": artifact.name,
+            "diagram_sha256": artifact.sha256,
+            **engine_meta,
+        },
     )
+    if notes:
+        model = replace(
+            model,
+            report=replace(model.report, warnings=(*notes, *model.report.warnings)),
+        )
+    return model
+
+
+#: Said on the report when an engine fires without EngineDesign's card.
+SIMPLIFIED_ENGINE = (
+    "The engine is feedtwin's simplified model (one orifice per side, c* straight "
+    "off the CEA table, no manifold or nozzle losses), not EngineDesign's: no engine "
+    "card is stored with it. On LE4 it read ~5 % low in thrust and ~10 % high in Isp "
+    "against EngineDesign. Build the card in Library."
+)
+
+
+def load_engine_card(
+    library: Library, engine_id: str
+) -> tuple[EngineCard | None, dict[str, Any]]:
+    """The EngineDesign card stored with an engine, and what it says about
+    itself; ``(None, {})`` when there is none or it cannot be read."""
+    try:
+        raw = library.attachment(engine_id, "card")
+    except LibraryError:
+        return None, {}
+    if raw is None:
+        return None, {}
+    try:
+        stored = json.loads(raw.decode("utf-8"))
+        card = EngineCard.from_dict(stored["card"])
+    except (ValueError, KeyError, TypeError):
+        return None, {}
+    return card, card_summary(stored)
+
+
+def card_summary(stored: Mapping[str, Any]) -> dict[str, Any]:
+    """What a stored card says about itself, small enough for a listing."""
+    provenance = (stored.get("card") or {}).get("provenance") or {}
+    return {
+        "card_config_sha256": stored.get("config_sha256", ""),
+        "card_center_psia": stored.get("center_psia"),
+        "card_ambient_pa": stored.get("ambient_pa"),
+        "card_within_tolerance": bool(stored.get("within_tolerance", False)),
+        "card_error": stored.get("envelope_worst"),
+        "card_built": provenance.get("built"),
+    }

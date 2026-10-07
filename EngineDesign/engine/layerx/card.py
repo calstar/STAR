@@ -516,3 +516,42 @@ def card_for(config: Any, *, center_pa: float, ambient_pa: float) -> Any:
         while len(_CACHE) > _CACHE_SIZE:
             _CACHE.popitem(last=False)
     return card
+
+
+# ------------------------------------------------------------------ a card for another tool
+
+
+def card_for_config_text(text: str, *, center_psia: Optional[float] = None) -> Dict[str, Any]:
+    """The engine card for an engine config given as YAML text: what the feed-twin cockpit asks
+    for when it imports an engine, so the stand fires the engine EngineDesign designed rather than
+    feedtwin's own simplified one.
+
+    Centred on the config's tank pressure (``lox_tank.initial_pressure_psi``) unless told
+    otherwise; the scan then covers 40-130 % of it, which is every dome the cockpit's regulator
+    can be set to. Sampled at the site's ambient (``environment.elevation``), as Layer X does.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+    from engine.pipeline.io import load_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "engine.yaml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+    if center_psia is None:
+        center_psia = float(getattr(config.lox_tank, "initial_pressure_psi", 0.0) or 0.0)
+    if not center_psia or center_psia <= 0.0:
+        raise ValueError("the config states no tank pressure (lox_tank.initial_pressure_psi) to centre the card on")
+    elevation = float(getattr(getattr(config, "environment", None), "elevation", 0.0) or 0.0)
+    ambient = compute_ambient_pressure_from_elevation(elevation) if elevation > 0 else 101325.0
+    card = card_for(config, center_pa=center_psia * PSI, ambient_pa=ambient)
+    return {
+        "card": card.to_dict(),
+        "config_sha256": config_fingerprint(config),
+        "center_psia": center_psia,
+        "ambient_pa": float(ambient),
+        "within_tolerance": bool(card.provenance.get("within_tolerance", False)),
+        "envelope_worst": float(card.fit.get("envelope_worst", float("nan"))),
+    }

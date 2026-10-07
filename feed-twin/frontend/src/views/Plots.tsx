@@ -10,6 +10,8 @@ import { channelColor, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { useStand } from '../stand';
 
+const PLOTTED = ['psig', 'K'];
+
 export function Plots() {
   const { history: result, live, hidden, toggleChannel } = useStand();
 
@@ -21,7 +23,9 @@ export function Plots() {
   // 550 psi on a shared axis is a dual-axis chart wearing a disguise: the two
   // traces cross wherever the scales happen to put them and the crossing means
   // nothing. Two measures of different scale get two charts.
-  const groups = ['psig', 'K'].flatMap((unit) => {
+  // The engine's own channels (thrust, O/F, flows) are on the Engine page;
+  // chamber pressure is a pressure and plots here with the tanks.
+  const groups = PLOTTED.flatMap((unit) => {
     const inUnit = result.channels.filter((c) => (c.unit || 'psig') === unit);
     if (inUnit.length === 0) return [];
     return [{
@@ -89,7 +93,7 @@ export function Plots() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {result.channels.map((c) => (
+        {result.channels.filter((c) => PLOTTED.includes(c.unit || 'psig')).map((c) => (
           <button
             key={c.id}
             type="button"

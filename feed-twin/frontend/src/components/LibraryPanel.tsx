@@ -10,6 +10,7 @@ import { useRef, useState } from 'react';
 import { SourcePanel } from './SourcePanel';
 import {
   bytes,
+  hasCard,
   when,
   importFile,
   removeArtifact,
@@ -51,9 +52,10 @@ export function LibraryPanel({
       try {
         const result = await importFile(kind, file);
         setNote(
-          result.already_present
+          (result.already_present
             ? `${result.artifact.name} was already imported — same file.`
-            : `Imported ${result.artifact.name}.`,
+            : `Imported ${result.artifact.name}.`) +
+            (result.card_error ? ` No EngineDesign card: ${result.card_error}` : ''),
         );
         onPick(kind, result.artifact.id);
       } catch (e) {
@@ -150,6 +152,20 @@ export function LibraryPanel({
                     }`}
                   >
                     <span className="truncate text-[13px]">{a.name}</span>
+                    {kind === 'engine' && (
+                      <span
+                        className={`shrink-0 rounded px-1 text-[10px] ${
+                          hasCard(a) ? 'text-emerald-400' : 'text-amber-400'
+                        }`}
+                        title={
+                          hasCard(a)
+                            ? "Fires EngineDesign's engine (its engine card), as Layer X does."
+                            : "No EngineDesign card: fires feedtwin's simplified engine. Build the card on the Engine page."
+                        }
+                      >
+                        {hasCard(a) ? 'card' : 'simplified'}
+                      </span>
+                    )}
                     <span className="num ml-auto shrink-0 text-[10.5px] text-[var(--dim)]">
                       {a.id.slice(0, 7)} · {when(a.imported_at)}
                     </span>

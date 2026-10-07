@@ -634,7 +634,7 @@ models = ["measured"]
 
 [regulator.params.setpoint]
 dimension = "pressure"
-description = "Outlet pressure the regulator holds at its reference inlet and zero flow. Absolute, not gauge — this library has no psig unit on purpose."
+description = "Outlet pressure the regulator holds at its reference inlet and zero flow. An absolute pressure: write psig or psia; on a drawing a bare psi reads as psig (feedtwin.model.pressure)."
 minimum = 0.0
 models = ["ideal", "droop", "curve"]
 
@@ -724,7 +724,7 @@ default = { value = 0.0, unit = "L", source = "default", reference = "unset — 
 
 [regulator.params.dome_pressure]
 dimension = "pressure"
-description = "Pressure loaded into the dome, for a dome-loaded regulator. Absolute. Zero means the unit is not dome-loaded and `setpoint` governs. Overridden at runtime by a `<id>.dome` signal, because on the stand this number is a hand on the control regulator and it moves during a test."
+description = "Pressure loaded into the dome, for a dome-loaded regulator. An absolute pressure (on a drawing a bare psi reads as psig). Zero means the unit is not dome-loaded and `setpoint` governs. Overridden at runtime by a `<id>.dome` signal, because on the stand this number is a hand on the control regulator and it moves during a test."
 minimum = 0.0
 models = ["ideal", "droop", "curve"]
 default = { value = 0.0, unit = "Pa", source = "default", reference = "not dome-loaded — `setpoint` governs." }
