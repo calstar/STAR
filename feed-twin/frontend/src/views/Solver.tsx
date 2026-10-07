@@ -154,7 +154,7 @@ export function Solver() {
           {panels.map((p) => (
             <div key={p.title} className="bg-card relative min-w-0 overflow-hidden rounded-lg border border-gray-800 p-3" title={p.hint}>
               <div className="mb-1 flex items-baseline gap-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{p.title}</span>
+                <span className="caps text-[11px]">{p.title}</span>
                 {/* An all-zero trace is a result, not a missing plot: say so in
                     the title, where it cannot sit on the axis. */}
                 {p.channels.every((c) => c.values.every((v) => v === 0)) && (
@@ -182,7 +182,7 @@ export function Solver() {
 function Stat({ label, value, good, hint }: { label: string; value: string; good?: boolean; hint?: string }) {
   return (
     <div title={hint}>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
+      <div className="caps text-[10px]">{label}</div>
       <div
         className={`font-mono text-[14px] tabular-nums ${
           good === undefined ? 'text-text' : good ? 'text-emerald-300' : 'text-amber-300'

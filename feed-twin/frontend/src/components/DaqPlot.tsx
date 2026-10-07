@@ -1,15 +1,16 @@
 /**
  * A plot that reads like the DAQ's.
  *
- * Same library (uPlot) and the same options as
- * `daq-server/.../components/plots/TimeSeriesPlot.tsx`: `T+ (s)` on x, grid
- * #555, ticks #777, axis labels in bold monospace, 3 px series, no point
- * markers, an x-only cursor, uPlot's own legend off and a row of pills under
- * the plot instead.
+ * Same library (uPlot) and the same behaviour as
+ * `daq-server/.../components/plots/TimeSeriesPlot.tsx`: `T+ (s)` on x, 3 px
+ * series, no point markers, an x-only cursor, uPlot's own legend off and a
+ * row of channel toggles under the plot instead. The ink is the console's --
+ * a hairline grid and small grey monospace ticks -- so the traces are the
+ * only colour on the panel.
  *
- * Kept deliberately in step. Somebody who has spent a night watching the real
- * one should not have to re-learn anything to read a simulated run, and the
- * two traces should be comparable by eye without a translation step.
+ * The behaviour is kept deliberately in step. Somebody who has spent a night
+ * watching the real one should not have to re-learn anything to read a
+ * simulated run, and the two traces should be comparable by eye.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +56,9 @@ interface Props {
  *  uPlot's own hook: every mouse move destroyed the uPlot instance that was
  *  reporting the move, so the readout could never show anything. */
 const NO_MARKS: { t: number; label: string }[] = [];
+
+/** Tick labels: small, monospace, the console's grey. */
+const AXIS_FONT = '11px "SF Mono", ui-monospace, Menlo, monospace';
 
 export function fmtAxisVal(value: number): string {
   const abs = Math.abs(value);
@@ -124,8 +128,8 @@ export function fmtReading(value: number): string {
   return value.toExponential(2).replace('e-', 'e−');
 }
 
-/** Width the y axis needs for its widest label [px]: bold 12 px monospace is
- *  ~7.3 px a character, plus the tick and gap. A fixed 60 px clipped
+/** Width the y axis needs for its widest label [px]: 11 px monospace is under
+ *  7.3 px a character, so this errs wide, plus the tick and gap. A fixed 60 px clipped
  *  "−1.8e−12". */
 export function axisWidth(labels: (string | null | undefined)[]): number {
   const widest = Math.max(0, ...labels.map((l) => (l ? l.length : 0)));
@@ -305,11 +309,11 @@ export function DaqPlot({
       axes: [
         {
           label: xLabel,
-          stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace',
-          labelFont: '12px system-ui',
+          stroke: '#7a7a7a',
+          grid: { show: true, stroke: '#1c1c1c', width: 1 },
+          ticks: { show: true, stroke: '#2a2a2a', width: 1 },
+          font: AXIS_FONT,
+          labelFont: AXIS_FONT,
           gap: 8,
           // 120 px between time labels suits the full-width console plot; a
           // half-width panel got one label. Scale with the plot's own width.
@@ -318,11 +322,11 @@ export function DaqPlot({
         },
         {
           label: yLabel,
-          stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace',
-          labelFont: '12px system-ui',
+          stroke: '#7a7a7a',
+          grid: { show: true, stroke: '#1c1c1c', width: 1 },
+          ticks: { show: true, stroke: '#2a2a2a', width: 1 },
+          font: AXIS_FONT,
+          labelFont: AXIS_FONT,
           size: (_u: uPlot, values: string[] | null) => axisWidth(values ?? []),
           gap: 5,
           // 80 px between labels suits the console's tall plot; a short
@@ -405,14 +409,17 @@ export function DaqPlot({
       return next;
     });
 
+  // Filling a panel, the canvas gets what the legend leaves. Sized from its
+  // own canvas instead, the host never shrank below the first 300 px and the
+  // legend ran out of the panel into whatever sat under it.
   return (
-    <div>
+    <div className={fill ? 'flex h-full min-h-0 flex-col' : undefined}>
       {shown.length === 0 ? (
-        <div style={{ height }} />
+        <div style={fill ? undefined : { height }} className={fill ? 'min-h-0 flex-1' : undefined} />
       ) : (
-        <div ref={hostRef} className="w-full" />
+        <div ref={hostRef} className={fill ? 'min-h-0 w-full flex-1 overflow-hidden' : 'w-full'} />
       )}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-3">
         {channels.map((c) => {
           const off = silenced.has(c.key);
           return (
@@ -421,27 +428,22 @@ export function DaqPlot({
               type="button"
               onClick={() => toggle(c.key)}
               aria-pressed={!off}
-              className={`flex flex-shrink-0 items-center gap-2 rounded-md border px-2 py-0.5 transition-opacity ${
-                off
-                  ? 'border-white/5 bg-transparent opacity-40'
-                  : 'border-white/5 bg-black/20'
+              className={`flex flex-shrink-0 items-center gap-2 py-0.5 transition-opacity ${
+                off ? 'opacity-35' : ''
               }`}
             >
               <span
                 aria-hidden
-                className="inline-block h-[2px] w-3 rounded-full"
-                style={{
-                  background: off ? 'var(--dim)' : c.color,
-                  boxShadow: off ? 'none' : `0 0 6px ${c.color}80`,
-                }}
+                className="inline-block h-[2px] w-3"
+                style={{ background: off ? 'var(--dim)' : c.color }}
               />
-              <span className="num text-[12px] font-semibold text-[var(--muted)]">
+              <span className="font-mono text-[12px] uppercase tracking-[0.08em] text-[var(--ink-3)]">
                 {c.tag}
               </span>
               {reading(c) !== null && (
                 <span
-                  className="num text-[12px] font-bold tabular-nums"
-                  style={{ color: off ? 'var(--dim)' : c.color }}
+                  className="font-mono text-[12px] tabular-nums"
+                  style={{ color: off ? 'var(--dim)' : 'var(--ink)' }}
                 >
                   {fmtReading(reading(c) as number)}
                 </span>
@@ -450,7 +452,7 @@ export function DaqPlot({
           );
         })}
         {at !== null && times[at] !== undefined && (
-          <span className="num ml-1 text-[12px] font-semibold tabular-nums text-[var(--dim)]">
+          <span className="ml-1 font-mono text-[12px] tabular-nums text-[var(--dim)]">
             @ {fmtReading(times[at])}
           </span>
         )}
@@ -462,12 +464,12 @@ export function DaqPlot({
             title={log && !onLog ? 'Nothing above zero to put on a log axis; shown linear.' : 'Log y axis'}
             // Lit only when the axis is log: asked for but impossible (nothing
             // above zero) it is dashed, and the tooltip says why.
-            className={`num ml-auto rounded-md border px-2 py-0.5 text-[12px] font-semibold transition-colors ${
+            className={`ml-auto border px-2 py-0.5 font-mono text-[12px] transition-colors ${
               onLog
                 ? 'border-[var(--accent)] text-[var(--accent)]'
                 : log
                   ? 'border-dashed border-white/20 text-[var(--dim)]'
-                  : 'border-white/5 text-[var(--dim)]'
+                  : 'border-[var(--line-strong)] text-[var(--dim)]'
             }`}
           >
             log

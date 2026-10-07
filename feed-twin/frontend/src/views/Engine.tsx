@@ -89,7 +89,7 @@ export function Engine() {
 
       {history?.balance && (
         <div className="bg-card rounded-lg border border-gray-800">
-          <h2 className="border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+          <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
             Mixture ratio
             <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
               the half the injector owns, and the half the stand does
@@ -146,7 +146,7 @@ function EngineHeader({
   return (
     <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-800 px-4 py-3">
       <div className="min-w-0">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Engine</div>
+        <div className="caps text-[10px]">Engine</div>
         <div className="truncate text-[15px] font-semibold" title={`${id}\nfrom ${source}`}>
           {name}
         </div>
@@ -224,7 +224,7 @@ function Tile({ label, value, unit, places, hint, color }: {
 }) {
   return (
     <div className="min-w-[110px] flex-1" title={hint}>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
+      <div className="caps text-[10px]">{label}</div>
       <div className="font-mono text-xl font-bold tabular-nums" style={{ color: color ?? '#e2e2e2' }}>
         {fixed(value, places)}
         {unit && <span className="ml-1 text-[11px] font-normal text-text-muted">{unit}</span>}
@@ -246,7 +246,7 @@ function BurnPanel({ burn }: { burn: Burn }) {
   const soft = (s: number) => s > 0 && s < SOFT;
   return (
     <div className="bg-card rounded-lg border border-gray-800">
-      <h2 className="flex items-baseline gap-2 border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+      <h2 className="flex items-baseline gap-2 border-b border-gray-800 px-4 py-2.5 caps">
         {burn.burning ? 'Burning' : 'Last burn'}
         <span className="font-normal normal-case tracking-normal text-gray-600">
           T+{fixed(burn.start_s, 2)} to {fixed(burn.end_s, 2)} s on the stand clock
@@ -387,7 +387,7 @@ function BurnPlots({ burn }: { burn: Burn }) {
 function EarlierBurns({ burns }: { burns: Burn[] }) {
   return (
     <div className="bg-card rounded-lg border border-gray-800">
-      <h2 className="border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+      <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
         Burns in this session
       </h2>
       <table className="w-full text-[12.5px]">

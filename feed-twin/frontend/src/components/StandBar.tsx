@@ -24,25 +24,17 @@ import {
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
-import { getVersion, type Validation } from '../api';
 import { standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, model, checkout, locked } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked } = useStand();
   const [documents, setDocuments] = useState<DesignMeta[]>([]);
   const [picking, setPicking] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [label, setLabel] = useState('');
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
-  const [validation, setValidation] = useState<Validation | null>(null);
-
-  useEffect(() => {
-    getVersion()
-      .then((v) => setValidation(v.validation))
-      .catch(() => undefined);
-  }, []);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
 
@@ -88,19 +80,13 @@ export function StandBar() {
     });
 
   return (
-    <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-800 bg-black/20 px-4 py-1.5 text-[12px]">
-      <span className="text-gray-500" title="A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Runs fired on it are kept with it.">
+    <div className="flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
+      <span className="caps text-[11px]" title="A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Runs fired on it are kept with it.">
         Stand
       </span>
       <button className={btn} onClick={() => { void list(); setPicking(true); }} title="Open, create, share or copy a stand">
         {standDoc ? standDoc.name : 'Not on a stand'}
       </button>
-      <span
-        className="text-gray-500"
-        title="The drawing the cockpit is running. Pick another in Library; saving the stand records it."
-      >
-        on <span className="text-gray-300">{model?.title ?? '—'}</span>
-      </span>
       {standDoc && (
         <>
           <CheckoutControl checkout={checkout} noun="stand" />
@@ -127,7 +113,7 @@ export function StandBar() {
                   if (e.key === 'Escape') setReleasing(false);
                 }}
                 placeholder="TRR rev B"
-                className="w-32 rounded border border-gray-700 bg-black/40 px-2 py-0.5 text-[12px] text-gray-200"
+                className="w-32 border border-gray-700 bg-black px-2 py-0.5 text-[12px] text-gray-200"
               />
               <button className={btn} onClick={() => void release()} disabled={!label.trim()}>
                 Save release
@@ -159,25 +145,6 @@ export function StandBar() {
         </>
       )}
       {error && <span className="text-red-400">{error}</span>}
-      {validation && (
-        <span
-          className={`ml-auto rounded border px-2 py-0.5 ${
-            validation.status === 'validated'
-              ? 'border-emerald-700 text-emerald-300'
-              : 'border-amber-700/70 text-amber-300'
-          }`}
-          title={[
-            'Checked:',
-            ...validation.checked.map((c) => `  • ${c}`),
-            '',
-            'Not yet checked:',
-            ...validation.not_checked.map((c) => `  • ${c}`),
-          ].join('\n')}
-        >
-          {validation.label}
-        </span>
-      )}
-
       {picking && (
         <ChangeModal
           open={picking}

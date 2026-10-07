@@ -254,7 +254,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
     <section>
       {!compact && (
         <div className="mb-2 flex flex-wrap items-baseline gap-3">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-text-muted">
+          <h2 className="caps">
             Pad sequence
           </h2>
           <span className="text-[11px] text-gray-600">
@@ -273,7 +273,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
 
       <div className={`bg-card rounded-lg border border-gray-800 ${compact ? 'flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-1.5' : 'px-4 py-3'}`}>
         {compact && (
-          <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Sequence</span>
+          <span className="caps text-[10px]">Sequence</span>
         )}
         <ol className={`flex flex-wrap ${compact ? 'gap-x-3 gap-y-1' : 'gap-x-5 gap-y-2'}`}>
           {phases.map((p, i) => {
@@ -294,7 +294,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
                     state === 'done'
                       ? 'bg-green-500'
                       : state === 'active'
-                        ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)]'
+                        ? 'bg-[var(--ink)]'
                         : 'bg-gray-700'
                   }`}
                 />

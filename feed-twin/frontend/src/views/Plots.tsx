@@ -48,7 +48,7 @@ export function Plots() {
   return (
     <div className="flex h-full flex-col gap-2 p-4">
       <div className="flex flex-wrap items-baseline gap-3">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="caps">
           Channel history
         </h2>
         <span className="text-[11.5px] text-gray-600">{result.message}</span>
@@ -78,7 +78,7 @@ export function Plots() {
           {groups.map((g) => (
             <div
               key={g.unit}
-              className="bg-card min-h-[220px] flex-1 rounded-lg border border-gray-800 p-3"
+              className="bg-card flex min-h-[220px] flex-1 flex-col rounded-lg border border-gray-800 p-3"
             >
               <DaqPlot
                 times={result.times_s}

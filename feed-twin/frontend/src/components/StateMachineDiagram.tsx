@@ -1,30 +1,24 @@
 /**
- * The Diablo state machine, drawn the way the DAQ draws it.
+ * The Diablo state machine, as a grid of buttons in the DAQ's rows.
  *
- * A copy of `daq-server/.../components/controls/StateMachineDiagram.tsx`:
- * the same grid of rounded nodes in the same rows -- Idle; Armed and the
- * fills; Press Standby and the presses; Vent and the vents; Calibrate and
- * Ready; Fire -- the same colours (blue where you are, green where you can
- * go, grey where you cannot), the same lanes behind the rows, the same
- * monospace capitals. An operator who has learned the real panel reads this
- * one without translating.
+ * The rows are the DAQ's (`daq-server/.../components/controls/
+ * StateMachineDiagram.tsx`): Idle; Armed and the fills; Press Standby and the
+ * presses; Vent and the vents; Calibrate and Ready. An operator who has
+ * learned the real panel finds a state where they expect it. Fire is not a
+ * square here -- it is the FIRE button in the Command panel -- and neither
+ * are the aborts.
  *
- * One difference, and it is the point of a twin: the reachable set is not a
- * hardcoded table, it is what the backend's machine says from the stand's
- * current state -- the same left-aligned reading of `diablo_transitions.csv`
- * the DAQ makes, ignition bypasses included. Clicking a green node commands
- * the transition. The aborts live in the top bar on the DAQ and here.
+ * The reachable set is not a hardcoded table: it is what the backend's
+ * machine says from the stand's current state, the same left-aligned reading
+ * of `diablo_transitions.csv` the DAQ makes. The current state is filled; a
+ * state you can go to is lit and clickable; the rest are dim and say why.
  */
 
+import type { ReactNode } from 'react';
 import type { SessionState, StateMachine } from '../api';
 
-const NW = 320;
-const NH = 115;
 const COLS = 5;
-const COL_GAP = 360;
-const ROW_GAP = 155;
-const PAD = 24;
-const ROW_COUNT = 6;
+const ROW_COUNT = 5;
 
 /** [row, col], the DAQ's layout. States the table has that this map does not
  *  are laid out after the last row so nothing is silently dropped. */
@@ -45,11 +39,10 @@ const STATE_POS: Record<string, [number, number]> = {
   'GN2 High Vent': [3, 4],
   Calibrate: [4, 0],
   Ready: [4, 1],
-  Fire: [5, 0],
 };
 
-/** The DAQ keeps these off the diagram; they are buttons in the top bar. */
-const OFF_DIAGRAM = /abort|debug/i;
+/** Commanded from the Command panel, not from the grid. */
+export const OFF_GRID = /^fire$|abort|debug/i;
 
 interface Props {
   machine: StateMachine;
@@ -57,102 +50,71 @@ interface Props {
   go: (state: string) => void;
   /** Commands are refused while the stand is tripped. */
   locked?: boolean;
+  /** Buttons for the header: the states the grid does not draw. */
+  actions?: ReactNode;
 }
 
-export default function StateMachineDiagram({ machine, live, go, locked = false }: Props) {
-  const states = machine.states.filter((s) => !OFF_DIAGRAM.test(s));
-  // Anything the table names that the DAQ's layout does not: a row below.
+export default function StateMachineDiagram({ machine, live, go, locked = false, actions }: Props) {
+  const states = machine.states.filter((s) => !OFF_GRID.test(s));
   const extra = states.filter((s) => STATE_POS[s] === undefined);
   const pos = (state: string): [number, number] =>
-    STATE_POS[state] ?? [ROW_COUNT, extra.indexOf(state)];
-  const rows = ROW_COUNT + (extra.length > 0 ? 1 : 0);
-  const nodeX = (state: string) => PAD + pos(state)[1] * COL_GAP;
-  const nodeY = (state: string) => PAD + pos(state)[0] * ROW_GAP;
+    STATE_POS[state] ?? [ROW_COUNT + Math.floor(extra.indexOf(state) / COLS), extra.indexOf(state) % COLS];
   const reachable = new Set(live.reachable);
-  const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + rows * ROW_GAP;
+  const rows = Math.max(1, ...states.map((st) => pos(st)[0] + 1));
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 px-3 py-1.5">
-        <h2 className="text-[10px] font-bold uppercase tracking-widest text-text-muted">
-          State Machine
-        </h2>
-        <span className="font-mono text-[10px]">
-          <span className="text-text-muted">CURRENT: </span>
-          <span className="font-bold text-blue-400">{live.state.toUpperCase()}</span>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-4 flex flex-shrink-0 items-baseline justify-between gap-4">
+        <h2 className="caps">State Machine</h2>
+        {actions && <span className="ml-auto flex items-center gap-2">{actions}</span>}
+        <span className="flex items-baseline gap-4">
+          <span className="caps">Current</span>
+          <span className="font-mono text-[17px] font-bold uppercase tracking-[0.14em] text-[var(--ink)]">
+            {live.state}
+          </span>
         </span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background p-1">
-        <svg
-          viewBox={`0 0 ${svgW} ${svgH}`}
-          className="min-h-0 flex-1"
-          style={{ display: 'block', width: '100%', height: '100%' }}
-          preserveAspectRatio="xMidYMin meet"
-        >
-          {Array.from({ length: rows }).map((_, rowIdx) => (
-            <rect
-              key={`lane-${rowIdx}`}
-              x={PAD - 16}
-              y={PAD + rowIdx * ROW_GAP - 18}
-              width={svgW - 2 * (PAD - 16)}
-              height={NH + 36}
-              fill="#020617"
-              opacity={rowIdx % 2 === 0 ? 0.35 : 0.2}
-            />
-          ))}
-          {states.map((state) => {
-            const active = state === live.state;
-            const canGo = !locked && reachable.has(state) && !active;
-            const fill = active ? '#2563EB' : canGo ? '#059669' : '#1F2937';
-            const stroke = active ? '#60A5FA' : canGo ? '#34D399' : '#374151';
-            const x = nodeX(state);
-            const y = nodeY(state);
-            return (
-              <g
-                key={state}
-                onClick={() => canGo && go(state)}
-                className={canGo ? 'cursor-pointer' : 'cursor-not-allowed'}
-                style={{ opacity: active || canGo ? 1 : 0.45 }}
-                role="button"
-                aria-disabled={!canGo}
-              >
-                <title>
-                  {active
-                    ? `${state} — current`
-                    : canGo
-                      ? `Go to ${state}`
-                      : `${state} is not reachable from ${live.state}`}
-                </title>
-                <rect
-                  x={x}
-                  y={y}
-                  width={NW}
-                  height={NH}
-                  rx={12}
-                  fill={fill}
-                  stroke={stroke}
-                  strokeWidth={active || canGo ? 2 : 1.5}
-                  style={{ transition: 'fill 0.15s, stroke 0.15s' }}
-                />
-                <text
-                  x={x + NW / 2}
-                  y={y + NH / 2 + 2}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fill="white"
-                  fontSize={32}
-                  fontWeight={active ? 700 : 600}
-                  fontFamily="ui-monospace, monospace"
-                  letterSpacing="0.05em"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
-                >
-                  {state.toUpperCase()}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
+      {/* Rows share the panel's height, so the squares grow with the window. */}
+      <div
+        className="grid min-h-0 flex-1 gap-2.5"
+        style={{
+          gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(40px, 1fr))`,
+        }}
+      >
+        {states.map((state) => {
+          const [row, col] = pos(state);
+          const active = state === live.state;
+          const canGo = !locked && reachable.has(state) && !active;
+          return (
+            <button
+              key={state}
+              type="button"
+              onClick={() => canGo && go(state)}
+              aria-disabled={!canGo}
+              aria-current={active ? 'step' : undefined}
+              title={
+                active
+                  ? `${state} — current`
+                  : canGo
+                    ? `Go to ${state}`
+                    : locked
+                      ? 'The stand is stopped; reset it first'
+                      : `${state} is not reachable from ${live.state}`
+              }
+              style={{ gridRow: row + 1, gridColumn: col + 1 }}
+              className={`flex min-h-0 items-center justify-center border px-2 py-2 text-center font-mono text-[13px] font-semibold uppercase leading-snug tracking-[0.14em] transition-colors ${
+                active
+                  ? 'cursor-default border-[var(--ink)] bg-[var(--ink)] text-black'
+                  : canGo
+                    ? 'cursor-pointer border-[#3d3d3d] bg-[#0d0d0d] text-[var(--ink)] hover:border-[#8a8a8a] hover:bg-[#1a1a1a]'
+                    : 'cursor-not-allowed border-[#1c1c1c] bg-[#080808] text-[#6a6a6a]'
+              }`}
+            >
+              {state}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

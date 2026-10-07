@@ -175,7 +175,7 @@ export function Study() {
     <div className="mx-auto flex max-w-7xl flex-col gap-3 p-4">
       <section className="bg-card rounded-lg border border-gray-800">
         <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-gray-800 px-4 py-2.5">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-text-muted">Study</h2>
+          <h2 className="caps">Study</h2>
           <span className="text-[13px]" title="Every case starts from this stand as the cockpit has it now.">
             on <b>{standName}</b> · {engine?.name ?? 'no engine'}
           </span>
@@ -638,7 +638,7 @@ function Results({ study }: { study: StudyState }) {
 
       {done.length > 0 && (
         <section className="bg-card overflow-x-auto rounded-lg border border-gray-800">
-          <h2 className="border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+          <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
             Results{' '}
             <span className="font-normal normal-case tracking-normal text-gray-600">
               on {study.stand} · {study.engine_name}
