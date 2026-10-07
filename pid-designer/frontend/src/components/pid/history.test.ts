@@ -284,7 +284,7 @@ const canvasCode = (start: string, names: string[]) => compiled(canvasStatement(
 const loadEffect = canvasCode(
   "// Load the selected diagram's working copy",
   ['useEffect', 'loadedId', 'api', 'diagramRef', 'migrate', 'seedIdsFrom', 'setNodes', 'setEdges', 'resetHistory',
-    'lastSaved', 'diagramKey'],
+    'lastSaved', 'diagramKey', 'landOnPage'],
 );
 const importCallback = canvasCode(
   'loadRef.current  = useCallback(',
@@ -326,7 +326,7 @@ async function openCanvas(opened: Promise<Graph>, versions: Record<string, Graph
     const lastSaved = React.useRef('');
     const readOnlyRef = React.useRef(false);
     loadEffect(React.useEffect, loadedId, server, { id: 'd' }, (g: Graph) => g, none, setNodes, setEdges,
-      hook.reset, lastSaved, 'd');
+      hook.reset, lastSaved, 'd', none);
     importCallback(React.useCallback, loadRef, readOnlyRef, hook.flush, same, none, setNodes, setEdges);
     restoreCallback(React.useCallback, restoreRef, readOnlyRef, server, { id: 'd' }, hook.flush, same, none, setNodes,
       setEdges, 'd');

@@ -24,6 +24,7 @@ import { snapOnDrop } from './snap';
 import { handleCentre } from './ports';
 import { carryBaseline, handleSignature } from './reseat';
 import { obstaclesByPage } from './routeGrid';
+import { listPages } from './pages';
 import type { ReseatOptions } from './reseat';
 import { canvasStatement, canvasStatements, compiled } from './canvasSource';
 
@@ -350,10 +351,30 @@ describe('the canvas importing and restoring', () => {
     return { out, setNodes: (n: Node[]) => { out.nodes = n; }, setEdges: (e: Edge[]) => { out.edges = e; }, seed: (n: Node[]) => { out.seeded = n; } };
   };
 
+  // LE4 is drawn on Rocket and GSE. Opened on Main, which it does not have, it
+  // looked like an empty diagram until somebody thought to click a page tab.
+  it('opens a diagram on a page it has', () => {
+    const on = (page: string, id = page) => ({ ...part(id, 0, 0), data: { ...part(id, 0, 0).data, page } });
+    const land = (page: string, nodes: Node[], declared: string[] = []) => {
+      let now = page;
+      const landOnPage = canvasCode('const landOnPage = useCallback(', null,
+        ['useCallback', 'listPages', 'declaredRef', 'pageRef', 'setPage'], 'landOnPage')(
+        useCallback, listPages, { current: declared }, { current: page }, (p: string) => { now = p; });
+      landOnPage(nodes);
+      return now;
+    };
+    expect(land('Main', [on('Rocket'), on('GSE')])).toBe('Rocket');
+    // A page it has, drawn on or only declared, is left alone.
+    expect(land('GSE', [on('Rocket'), on('GSE')])).toBe('GSE');
+    expect(land('Spare', [on('Rocket')], ['Spare'])).toBe('Spare');
+    // An empty diagram opens on Main, as it always did.
+    expect(land('GSE', [])).toBe('Main');
+  });
+
   it('opens a drawing brought up to date, and takes that as the drawing the autosave last saved', async () => {
     const effect = canvasCode("// Load the selected diagram's working copy", null,
       ['useEffect', 'loadedId', 'api', 'diagramRef', 'migrate', 'seedIdsFrom', 'setNodes', 'setEdges', 'resetHistory',
-        'lastSaved', 'diagramKey'], 'null');
+        'lastSaved', 'diagramKey', 'landOnPage'], 'null');
     const sent = { nodes: [part('Old', 0, 0)], edges: [] };
     const migrated = { nodes: [part('New', 0, 0)], edges: [E('New', 'r', 'New', 'l')] };
     const set = whatIsSet();
@@ -361,7 +382,7 @@ describe('the canvas importing and restoring', () => {
     let history: unknown = null;
     const opened = Promise.resolve(sent);
     effect((f: () => void) => f(), loadedId, { loadDiagram: () => opened, toStored: api.toStored }, { id: 'd' },
-      bringsUp(sent, migrated), set.seed, set.setNodes, set.setEdges, (g: unknown) => { history = g; }, lastSaved, 'd');
+      bringsUp(sent, migrated), set.seed, set.setNodes, set.setEdges, (g: unknown) => { history = g; }, lastSaved, 'd', () => {});
     await opened; await Promise.resolve();
     expect(set.out.nodes).toBe(migrated.nodes);
     expect(set.out.edges).toBe(migrated.edges);

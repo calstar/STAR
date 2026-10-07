@@ -248,6 +248,8 @@ function PIDCanvas({
   // would otherwise close over whichever page was current when it was built.
   const pageRef = useRef(page);
   pageRef.current = page;
+  const declaredRef = useRef(declaredPages);
+  declaredRef.current = declaredPages;
   const [colorMenu, setColorMenu] =
     useState<{ kind: 'node' | 'edge'; id: string; x: number; y: number } | null>(null);
   // Which symbol or line has its config open. Held as an id rather than the
@@ -338,6 +340,18 @@ function PIDCanvas({
   // The autosave on the wire, if one is: what `saveNowRef` waits for.
   const inFlight = useRef<Promise<unknown> | null>(null);
 
+  /**
+   * Open a diagram on a page it has.
+   *
+   * The page carries over from the last diagram, and starts as Main. A diagram
+   * drawn on Rocket and GSE has no Main, so it opened on an empty sheet and
+   * read as a blank diagram.
+   */
+  const landOnPage = useCallback((loaded: Node[]) => {
+    const here = listPages(loaded, declaredRef.current);
+    if (!here.includes(pageRef.current)) setPage(here[0]);
+  }, [setPage]);
+
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
     loadedId.current = null;
@@ -353,6 +367,7 @@ function PIDCanvas({
         // recorded as an edit on top of the empty canvas, and one Ctrl+Z too
         // many blanked the drawing -- which the autosave then saved.
         resetHistory(loaded);
+        landOnPage(loaded.nodes);
         // Seed the guard with what we just loaded, so opening a diagram does not
         // immediately save it straight back.
         lastSaved.current = JSON.stringify(api.toStored(loaded));
@@ -1413,6 +1428,10 @@ function PIDCanvas({
         snapToGrid
         snapGrid={SNAP}
         onMove={rememberViewport}
+        // React Flow's default floor is 0.5, which a full stand outgrows: Fit
+        // stopped at half size and the rest of the drawing stayed off screen.
+        minZoom={0.05}
+        maxZoom={4}
         defaultViewport={viewportsRef.current.get(viewKey) ?? { x: 0, y: 0, zoom: 1 }}
         colorMode={theme}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
