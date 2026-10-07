@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 import backend.main as api
-from backend import study
+from backend import benchmark_study as study
 from backend.assembly import engine_from_bytes
 from backend.main import _cea_for
 from backend.run import psig

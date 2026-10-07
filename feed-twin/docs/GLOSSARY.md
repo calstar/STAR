@@ -27,6 +27,6 @@ word, the twin uses it: **O/F**, not "mixture ratio" or MR.
 | **Guards** | Floors and clamps a vessel applies (a vent cannot pull below atmosphere). Booked, so the balance can tell a guard from a leak. |
 | **Attribution / Explain** | Which input moved a run's answer: both runs replayed from T-0, then one input group swapped at a time. |
 | **Interaction** | The part of a change the single swaps do not add up to: two inputs that matter together. |
-| **Study** | The COPV sizing study: scripted burns at the scheme the physics benchmark is stated at. |
+| **Study** | The open stand burned from T-0 once per case: each case is the stand as set with a few changes (COPV charge, a knob, bottle volume, fill, pressurant, any Configuration row), or a sweep of one. The He/GN2 benchmark the physics regimen checks is a separate, fixed study (`backend/benchmark_study.py`). |
 | **Layer X** | EngineDesign's forward mode over a burn: the same feed physics plus the engine analyses. See ADR 0005. |
 | **Validated** | Compared against the stand's own data and found to agree. Until then the chip says *Not validated against test data*. |

@@ -36,7 +36,7 @@ export const VIEWS = [
   { path: '/engine', label: 'Engine', hint: 'What the engine did: the burn totalled, its traces, and what set O/F' },
   { path: '/runs', label: 'Runs', hint: 'Every burn fired, kept with what it ran on: compare two, and see which input moved the answer' },
   { path: '/solver', label: 'Solver', hint: 'Residuals, continuity, chamber closure and the mass balance, tick by tick' },
-  { path: '/study', label: 'Study', hint: 'COPV sizing: run it, get the curves' },
+  { path: '/study', label: 'Study', hint: 'Your stand, burned from T-0 once per case: change the COPV, a knob, the bottle, the load, or sweep one' },
   { path: '/library', label: 'Library', hint: 'Import drawings and engines' },
   { path: '/report', label: 'Report', hint: 'What was read, what was assumed' },
 ] as const;

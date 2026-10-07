@@ -14,7 +14,7 @@ import pytest
 
 from backend.main import _cea_for, engine_from_bytes
 import backend.main as api
-import backend.study as study
+import backend.benchmark_study as study
 from feedtwin.comps.wall import stainless_capacity
 
 from tests.test_session_api import an_engine

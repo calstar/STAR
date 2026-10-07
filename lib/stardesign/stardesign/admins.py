@@ -26,6 +26,7 @@ ADMIN_EMAILS = (
     "aahilsyed72@berkeley.edu",
     "carlosbautista@berkeley.edu",
     "aidanrickert@berkeley.edu",
+    "manank_doshi@berkeley.edu",
 )
 
 

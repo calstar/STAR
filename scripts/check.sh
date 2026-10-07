@@ -43,12 +43,21 @@ gate() {
   fi
 }
 
-gate "lib: black"   $PY -m black --check lib/feedtwin
+# CI formats with the black lib/feedtwin/pyproject.toml pins. Another version
+# disagrees about a few files and fails this gate on formatting alone; point
+# BLACK at the pinned one (pip install black==<pin> into a venv) to match CI.
+BLACK=${BLACK:-$PY -m black}
+pinned=$(grep -o 'black==[0-9.]*' lib/feedtwin/pyproject.toml | head -1 | cut -d= -f3)
+have=$($BLACK --version 2>/dev/null | head -1 | grep -o '[0-9][0-9.]*' | head -1)
+if [ -n "$pinned" ] && [ "$have" != "$pinned" ]; then
+  echo "warning: black $have here; CI pins $pinned. Set BLACK to a black==$pinned to match CI."
+fi
+gate "lib: black"   $BLACK --check lib/feedtwin
 gate "lib: mypy"    bash -c "cd lib/feedtwin && $PY -m mypy"
 # ${MARK[@]+...}: an empty array is "unbound" to macOS's bash 3.2 under set -u,
 # which killed the full tier on its first gate.
 gate "lib: pytest"  $PY -m pytest lib/feedtwin/tests -q -p no:cacheprovider ${MARK[@]+"${MARK[@]}"}
-gate "app: black"   bash -c "cd feed-twin && $PY -m black --check backend tests"
+gate "app: black"   bash -c "cd feed-twin && $BLACK --check backend tests"
 gate "app: mypy"    bash -c "cd feed-twin && $PY -m mypy backend --strict --ignore-missing-imports"
 gate "app: pytest"  bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider ${MARK[@]+-m 'not slow'}"
 gate "physics benchmark" $PY scripts/physics_benchmark.py

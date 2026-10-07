@@ -127,7 +127,7 @@ export function Gse() {
         </h2>
         <div className="bg-card flex flex-wrap items-start justify-around gap-8 rounded-xl border border-gray-800 px-6 py-5">
           <Knob
-            label="GSE high press regulator"
+            label="COPV fill (built-in)"
             value={high}
             min={0}
             max={6000}
@@ -165,7 +165,8 @@ export function Gse() {
             ))}
         </div>
         <p className="mt-1 text-[11px] text-text-muted">
-          Which regulator each knob turns is set on the{' '}
+          COPV fill is the twin's own GSE fill (no fill regulator on the drawing). Which regulator each
+          other knob turns is set on the{' '}
           <Link to="/hookup" className="text-blue-400 hover:underline">
             Hookup
           </Link>{' '}

@@ -310,6 +310,13 @@ export function Hookup() {
             Held at the drawing's setting: {unknobbed.map((r) => r.label).join(', ')}
           </p>
         )}
+        <p
+          className="border-t border-gray-800 px-4 py-2 text-[12px] text-text-muted"
+          title="The GSE page's COPV knob is the twin's own fill: it fills every bottle to that pressure. Draw the GSE cart's high-press regulator and link it to a knob here, and that knob sets it instead."
+        >
+          The COPV fill knob on GSE Controls is the twin's built-in fill, not a regulator on this
+          drawing, so it is not listed here.
+        </p>
       </div>
     </div>
   );

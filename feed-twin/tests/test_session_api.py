@@ -331,7 +331,7 @@ def test_node_temperatures_are_live_not_frozen_at_build() -> None:
     from backend.statemachine import bind, load_machine
     from backend.assembly import assemble
     import backend.main as api
-    import backend.study as study
+    import backend.benchmark_study as study
 
     engine_id = an_engine()
     if study.find_diagram(api.library, "gn2") is None:
@@ -358,7 +358,7 @@ def test_joule_thomson_falls_out_of_enthalpy_conservation() -> None:
     regulator and re-solving T at the outlet pressure."""
     from backend.main import _cea_for, engine_from_bytes
     import backend.main as api
-    import backend.study as study
+    import backend.benchmark_study as study
 
     engine_id = an_engine()
     design = engine_from_bytes(api.library.path(engine_id).read_bytes(), name="e")

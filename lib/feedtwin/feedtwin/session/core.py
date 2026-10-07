@@ -59,7 +59,12 @@ from feedtwin.comps.correlations import (
     reynolds,
 )
 from feedtwin.comps.iec_gas import XT_TYPICAL
-from feedtwin.comps.regulator import LOCKUP_SUPPLY_SIGNAL, SEAT_XT_SIGNAL, Regulator
+from feedtwin.comps.regulator import (
+    LOCKUP_SUPPLY_SIGNAL,
+    SEAT_XT_SIGNAL,
+    SUPPLY_DATUM_SIGNAL,
+    Regulator,
+)
 from feedtwin.engine.balance import MixtureBalance
 from feedtwin.engine.chamber import MIN_CHAMBER_FLOW as ENGINE_MIN_CHAMBER_FLOW
 from feedtwin.engine.chamber import ChamberResult
@@ -683,6 +688,18 @@ class Setup:
     Off is the earlier behaviour, bit for bit, which the Study keeps for its
     benchmark (:func:`~feedtwin.session.burn.burn_setup`); on, against a
     regulator with no supply effect, it changes nothing."""
+    regulator_supply_datum: bool = True
+    """A regulator whose drawing gives a supply coefficient but no
+    ``inlet_reference`` is taken as set against a charged bottle: its supply
+    term is measured from :attr:`copv_target_psi`, so the tanks climb as the
+    bottle falls. **Assumed** -- the knob is set with the COPV full -- and the
+    session's assumptions say so for each regulator it applies to. Without it
+    the term has no datum and is zero, which reads as a regulator with no
+    supply effect (the LE4 drawings declare 14.7 psi per 1000 psi and no
+    datum: ~35 psi of tank rise over a burn, missing). A drawn
+    ``inlet_reference`` always wins; against a drawing with no supply
+    coefficient, or one that gives its datum, it changes nothing. Off is the
+    earlier behaviour, bit for bit, which the Study's benchmark keeps."""
     regulator_compressible_seat: bool = False
     """The regulator's wide-open seat seen as a gas sees it: IEC 60534-2-1's
     expansion factor ``Y = 1 - x / (3 F_gamma xT)`` and its choke at
@@ -2022,6 +2039,20 @@ class Session:
                 outlet_node=ports.outlet,
             )
 
+        if self.setup.regulator_supply_datum and self.setup.copv_target_psi > 0.0:
+            for branch_id, branch in net.branches.items():
+                reg = branch.component
+                if (
+                    isinstance(reg, Regulator)
+                    and reg.p.get("supply_coefficient", 0.0) > 0.0
+                    and reg.p.get("inlet_reference", 0.0) <= 0.0
+                ):
+                    self.assumptions.append(
+                        f"{branch_id} supply effect measured from the COPV charge, "
+                        f"{self.setup.copv_target_psi:.0f} psig (Setup; the drawing "
+                        "gives no inlet reference): set against a full bottle."
+                    )
+
         for node in self.model.diagram.nodes:
             if node.type not in {"KBOTTLE", "DEWAR"} or node.id not in net.nodes:
                 continue
@@ -2694,6 +2725,11 @@ class Session:
         if self.setup.regulator_lockup_supply:
             # Here and not in signals(), which is the panel's valve state.
             signals = {**signals, LOCKUP_SUPPLY_SIGNAL: 1.0}
+        if self.setup.regulator_supply_datum and self.setup.copv_target_psi > 0.0:
+            signals = {
+                **signals,
+                SUPPLY_DATUM_SIGNAL: from_psig(self.setup.copv_target_psi),
+            }
         if self.setup.regulator_compressible_seat:
             signals = {**signals, SEAT_XT_SIGNAL: float(self.setup.regulator_xT)}
         if self._reliefs:

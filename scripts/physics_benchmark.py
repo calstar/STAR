@@ -3,7 +3,7 @@
 
 Tier 1 and Tier 2.3 only -- the checks that are fast, deterministic and localise a
 fault to one component. The He/GN2 study (Tier 2.1/2.2) takes minutes and is run from
-the Study tab or `backend.study.run_study` directly; this covers the parts there is no
+`backend.benchmark_study.run_study` directly; this covers the parts there is no
 excuse for skipping.
 
     python3 scripts/physics_benchmark.py
@@ -320,7 +320,7 @@ def tier2_steady_fire() -> None:
     print("\n2.3  steady fire on the shipped stand")
     try:
         import backend.main as api
-        import backend.study as study
+        import backend.benchmark_study as study
         from backend.main import _cea_for, engine_from_bytes
     except Exception as exc:  # noqa: BLE001
         print(f"  [SKIP] feed-twin backend unavailable ({type(exc).__name__})")
@@ -517,7 +517,7 @@ def main() -> int:
         return 1
     print("all checks passed")
     print("\nTier 2.1/2.2 (the He/GN2 study) is not run here -- it takes minutes.")
-    print("Run it from the Study tab or backend.study.run_study at dt = 0.01.")
+    print("Run it with backend.benchmark_study.run_study at dt = 0.01.")
     return 0
 
 
