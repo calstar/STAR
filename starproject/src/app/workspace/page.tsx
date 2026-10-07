@@ -9,6 +9,8 @@ import { deleteProject, updateProject } from "@/lib/actions/projects";
 import { isAdmin, listAdmins } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { flatten, moveProblem, pathOf, totalTasks } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 
 export const dynamic = "force-dynamic";
 
@@ -18,15 +20,13 @@ export default async function WorkspacePage() {
   const admin = await isAdmin((await getCurrentUser()).email);
   if (!admin) redirect("/settings");
 
-  const [projects, subteams, admins] = await Promise.all([
+  const [projects, tree, subteams, admins] = await Promise.all([
     prisma.project.findMany({
       where: { archived: false },
       orderBy: [{ createdAt: "desc" }],
-      include: {
-        _count: { select: { tasks: true, children: { where: { archived: false } } } },
-        parent: { select: { name: true } },
-      },
+      include: { _count: { select: { tasks: true } } },
     }),
+    getProjectTree(),
     prisma.subteam.findMany({
       orderBy: { name: "asc" },
       include: { _count: { select: { tasks: true } } },
@@ -34,21 +34,14 @@ export default async function WorkspacePage() {
     listAdmins(),
   ]);
 
-  const parents = projects
-    .filter((p) => !p.parentId)
-    .map((p) => ({ id: p.id, name: p.name }));
+  // Any project can hold subprojects, at any depth; pickers show full paths
+  // in tree order ("LE4 › Engine › Spark igniter").
+  const parents = flatten(tree).map(({ node }) => ({ id: node.id, name: pathOf(tree, node.id) }));
 
-  // Tasks contributed by each parent's subprojects, so a parent's badge sums all
-  // tasks under it. (The delete message stays on the project's own count, since
-  // deleting a parent re-parents its subprojects rather than deleting them.)
-  const subprojectTasks = new Map<string, number>();
-  for (const p of projects) {
-    if (p.parentId)
-      subprojectTasks.set(
-        p.parentId,
-        (subprojectTasks.get(p.parentId) ?? 0) + p._count.tasks,
-      );
-  }
+  // A project's badge sums every task under it, at every level. (The delete
+  // message stays on the project's own count, since deleting a parent moves
+  // its subprojects to the top level rather than deleting them.)
+  const own = new Map(projects.map((p) => [p.id, p._count.tasks]));
 
   const heading = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
 
@@ -76,8 +69,8 @@ export default async function WorkspacePage() {
             key={p.id}
             href={`/projects/${p.id}`}
             color={p.color}
-            name={p.parent ? `${p.parent.name} › ${p.name}` : p.name}
-            taskCount={p._count.tasks + (subprojectTasks.get(p.id) ?? 0)}
+            name={pathOf(tree, p.id)}
+            taskCount={totalTasks(tree, p.id, (id) => own.get(id) ?? 0)}
             id={p.id}
             deleteAction={deleteProject}
             deleteMessage={`This permanently deletes the project and its ${p._count.tasks} task${
@@ -94,11 +87,15 @@ export default async function WorkspacePage() {
                 title="Edit project"
                 parent={{
                   id: p.parentId,
-                  options: parents.filter((o) => o.id !== p.id),
-                  locked:
-                    p._count.children > 0
-                      ? `Has ${p._count.children} subproject${p._count.children === 1 ? "" : "s"}, so it stays top-level.`
-                      : undefined,
+                  // Not itself or anything inside it — that would make a loop.
+                  // An archived current parent isn't in `parents`; list it anyway,
+                  // or the dialog would show "None" and saving would move it.
+                  options: [
+                    ...(p.parentId && !parents.some((o) => o.id === p.parentId)
+                      ? [{ id: p.parentId, name: `${pathOf(tree, p.parentId)} (archived)` }]
+                      : []),
+                    ...parents.filter((o) => moveProblem(tree, p.id, o.id) === null),
+                  ],
                 }}
               />
             }

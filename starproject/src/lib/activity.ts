@@ -55,12 +55,6 @@ export function dateLabel(d: Date | null): string {
 export function priorityLabel(p: string | null): string {
   return p ? p.charAt(0).toUpperCase() + p.slice(1) : "None";
 }
-export function projectLabel(p: {
-  name: string;
-  parent: { name: string } | null;
-}): string {
-  return p.parent ? `${p.parent.name} › ${p.name}` : p.name;
-}
 export function subteamLabel(name: string | null | undefined): string {
   return name ?? "No subteam";
 }

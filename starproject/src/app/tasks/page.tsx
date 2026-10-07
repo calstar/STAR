@@ -6,6 +6,8 @@ import {
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { flatten, pathOf } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
 import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
 
@@ -14,16 +16,16 @@ export const dynamic = "force-dynamic";
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ subteam?: string; mine?: string }>;
+  searchParams: Promise<{ subteam?: string; mine?: string; project?: string }>;
 }) {
-  const { subteam, mine } = await searchParams;
+  // `project` may list several ids (comma-separated) — the homepage links a
+  // subteam's card to its tasks across every project on that card.
+  const { subteam, mine, project } = await searchParams;
 
-  const [raw, projects, subteams, me, users] = await Promise.all([
+  const [raw, tree, subteams, me, users] = await Promise.all([
     prisma.task.findMany({
       include: {
-        project: {
-          select: { id: true, name: true, parent: { select: { name: true } } },
-        },
+        project: { select: { id: true, name: true } },
         subteam: { select: { id: true, name: true } },
         assignees: {
           select: { id: true, name: true, email: true, displayName: true },
@@ -36,11 +38,7 @@ export default async function TasksPage({
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
     }),
-    prisma.project.findMany({
-      where: { archived: false },
-      select: { id: true, name: true, parent: { select: { name: true } } },
-      orderBy: { name: "asc" },
-    }),
+    getProjectTree(),
     getSubteams(),
     getCurrentDbUser(),
     getTeamUsers(),
@@ -50,17 +48,15 @@ export default async function TasksPage({
     const { project, subteam: sub, ...rest } = t;
     return {
       ...rest,
-      projectName: project.parent
-        ? `${project.parent.name} › ${project.name}`
-        : project.name,
+      projectName: pathOf(tree, project.id) || project.name,
       subteamName: sub?.name ?? "",
       assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     };
   });
 
-  const projectOptions = projects.map((p) => ({
-    id: p.id,
-    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
+  const projectOptions = flatten(tree).map(({ node }) => ({
+    id: node.id,
+    label: pathOf(tree, node.id),
   }));
 
   return (
@@ -82,6 +78,7 @@ export default async function TasksPage({
           admin={await isAdmin(me.email)}
           currentUserId={me.id}
           initialSubteam={subteam}
+          initialProjects={project?.split(",").filter(Boolean)}
           initialMine={mine === "1"}
         />
       </div>

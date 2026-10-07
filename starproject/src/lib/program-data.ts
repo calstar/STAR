@@ -1,6 +1,8 @@
 import type { Prisma, TaskPriority } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
+import { ancestors, descendants, pathOf } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import {
   biggestTask,
   clampPhase,
@@ -42,6 +44,12 @@ export type ProgramSubteam = {
 export type Program = {
   id: string;
   name: string;
+  /** Where it sits on its card: 0 = the tracked project, 1 = a subproject,
+   * 2 = a subproject of that, and so on. */
+  depth: number;
+  /** Its name on the card — the path below the tracked project ("Engine ›
+   * Spark igniter"), or the tracked project's own name. */
+  path: string;
   description: string | null;
   color: string | null;
   phases: string[];
@@ -52,8 +60,8 @@ export type Program = {
 };
 
 /** A homepage card: a tracked top-level project and the systems it shows —
- * its subprojects, plus the project itself when subteams are tracked on it
- * directly (or when it has no subprojects at all). */
+ * everything under it, every level, plus the project itself when subteams
+ * are tracked on it directly (or when nothing is under it). */
 export type ProgramCardData = {
   root: Program;
   systems: Program[];
@@ -73,7 +81,10 @@ type ProjectWithStatus = Prisma.ProjectGetPayload<{ include: typeof statusInclud
 
 /** Build one project's status from its own tasks (never its subprojects' —
  * each subproject is its own system with its own line). */
-async function buildProgram(p: ProjectWithStatus): Promise<Program> {
+async function buildProgram(
+  p: ProjectWithStatus,
+  place: { depth: number; path: string },
+): Promise<Program> {
   const phases = phasesOf(p);
   const tasks = await prisma.task.findMany({
     where: {
@@ -132,6 +143,7 @@ async function buildProgram(p: ProjectWithStatus): Promise<Program> {
   return {
     id: p.id,
     name: p.name,
+    ...place,
     description: p.description,
     color: p.color,
     phases,
@@ -144,26 +156,38 @@ async function buildProgram(p: ProjectWithStatus): Promise<Program> {
 
 /** Everything the homepage's program cards need, in the admins' card order. */
 export async function getProgramCards(): Promise<ProgramCardData[]> {
-  const projects = await prisma.project.findMany({
-    where: { featured: true, archived: false, parentId: null },
-    orderBy: [{ trackOrder: "asc" }, { createdAt: "asc" }],
-    include: {
-      ...statusInclude,
-      children: {
-        where: { archived: false },
-        // Oldest subproject first; name breaks ties so the rows never shuffle.
-        orderBy: [{ createdAt: "asc" }, { name: "asc" }],
-        include: statusInclude,
-      },
-    },
+  const [tops, tree] = await Promise.all([
+    prisma.project.findMany({
+      where: { featured: true, archived: false, parentId: null },
+      orderBy: [{ trackOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
+    }),
+    getProjectTree(),
+  ]);
+  // Every project on every card, at any depth, in one query.
+  const below = new Map(tops.map((t) => [t.id, descendants(tree, t.id)]));
+  const ids = tops.flatMap((t) => [t.id, ...below.get(t.id)!.map((d) => d.id)]);
+  const rows = await prisma.project.findMany({
+    where: { id: { in: ids } },
+    include: statusInclude,
   });
+  const byId = new Map(rows.map((r) => [r.id, r]));
 
   return Promise.all(
-    projects.map(async (p) => {
-      const root = await buildProgram(p);
-      const children = await Promise.all(p.children.map(buildProgram));
-      const rootIsSystem = children.length === 0 || root.subteams.length > 0;
-      return { root, systems: rootIsSystem ? [root, ...children] : children };
+    tops.map(async (t) => {
+      const top = byId.get(t.id)!;
+      const root = await buildProgram(top, { depth: 0, path: top.name });
+      // Depth-first, so each subproject's own subprojects follow it.
+      const subs = await Promise.all(
+        below.get(t.id)!.map((d) =>
+          buildProgram(byId.get(d.id)!, {
+            depth: ancestors(tree, d.id).length,
+            path: pathOf(tree, d.id, t.id),
+          }),
+        ),
+      );
+      const rootIsSystem = subs.length === 0 || root.subteams.length > 0;
+      return { root, systems: rootIsSystem ? [root, ...subs] : subs };
     }),
   );
 }

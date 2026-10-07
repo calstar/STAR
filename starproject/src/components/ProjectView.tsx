@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Fragment } from "react";
 import { notFound } from "next/navigation";
 
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
@@ -7,6 +8,8 @@ import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { ancestors, descendants, pathOf } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
 import { getTeamUsers } from "@/lib/user";
 
@@ -22,11 +25,10 @@ export async function ProjectView({
   id: string;
   view: ProjectViewMode;
 }) {
-  const [project, users, subteams] = await Promise.all([
+  const [project, users, subteams, tree] = await Promise.all([
     prisma.project.findUnique({
       where: { id },
       include: {
-        parent: { select: { id: true, name: true } },
         children: {
           where: { archived: false },
           select: { id: true, name: true, color: true },
@@ -36,14 +38,18 @@ export async function ProjectView({
     }),
     getTeamUsers(),
     getSubteams(),
+    getProjectTree(),
   ]);
 
   if (!project) notFound();
 
-  // A parent project shows its own tasks plus every subproject's tasks; each
-  // task keeps its own projectId (so it opens in its own project) and carries a
-  // `subproject` tag when it isn't the parent's own.
-  const projectIds = [project.id, ...project.children.map((c) => c.id)];
+  // A project shows its own tasks plus those of everything under it, at every
+  // level; each task keeps its own projectId (so it opens in its own project)
+  // and carries a `subproject` tag — its path below this project — when it
+  // isn't this project's own.
+  const below = descendants(tree, project.id);
+  const projectIds = [project.id, ...below.map((d) => d.id)];
+  const crumbs = ancestors(tree, project.id);
   const rawTasks = await prisma.task.findMany({
     where: { projectId: { in: projectIds }, archived: false },
     include: {
@@ -68,7 +74,7 @@ export async function ProjectView({
     subproject:
       t.projectId === project.id
         ? null
-        : { name: t.project.name, color: t.project.color },
+        : { name: pathOf(tree, t.projectId, project.id) || t.project.name, color: t.project.color },
   }));
 
   const admin = await isAdmin((await getCurrentUser()).email);
@@ -76,15 +82,16 @@ export async function ProjectView({
   const header = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="min-w-0">
-        {project.parent && (
+        {crumbs.length > 0 && (
           <div className="mb-1 text-sm text-neutral-500 dark:text-neutral-400">
-            <Link
-              href={`/projects/${project.parent.id}`}
-              className="hover:underline"
-            >
-              {project.parent.name}
-            </Link>
-            <span className="mx-1">›</span>
+            {crumbs.map((a) => (
+              <Fragment key={a.id}>
+                <Link href={`/projects/${a.id}`} className="hover:underline">
+                  {a.name}
+                </Link>
+                <span className="mx-1">›</span>
+              </Fragment>
+            ))}
             <span>{project.name}</span>
           </div>
         )}
@@ -138,7 +145,7 @@ export async function ProjectView({
       users={users}
       admin={admin}
       header={header}
-      showSubproject={project.children.length > 0}
+      showSubproject={below.length > 0}
       showSubteam
       newTaskForm={
         <NewTaskForm projectId={project.id} users={users} subteams={subteams} />

@@ -6,6 +6,8 @@ import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { clampPhase, cleanLink, phasesOf } from "@/lib/program";
 import { seedSubteamPhases } from "@/lib/program-seed";
+import { descendants } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import { getCurrentDbUser } from "@/lib/user";
 import { isValidDateInput } from "@/lib/validation";
 
@@ -21,10 +23,10 @@ export async function setFeatured(projectId: string, featured: boolean) {
   await requireAdmin();
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { parentId: true, children: { select: { id: true } } },
+    select: { parentId: true },
   });
   if (!project) throw new Error("Project not found");
-  if (project.parentId) throw new Error("Track the parent project; its subprojects come with it");
+  if (project.parentId) throw new Error("Track the top-level project; everything under it comes with it");
   // A newly tracked project goes to the bottom, so it never pushes the main
   // program off the top of the page.
   const last = await prisma.project.aggregate({
@@ -38,7 +40,8 @@ export async function setFeatured(projectId: string, featured: boolean) {
       : { featured },
   });
   if (featured) {
-    for (const id of [projectId, ...project.children.map((c) => c.id)]) {
+    const tree = await getProjectTree();
+    for (const id of [projectId, ...descendants(tree, projectId).map((d) => d.id)]) {
       await seedSubteamPhases(id);
     }
   }
