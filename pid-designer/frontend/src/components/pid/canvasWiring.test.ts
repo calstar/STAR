@@ -359,7 +359,8 @@ describe('the canvas importing and restoring', () => {
       let now = page;
       const landOnPage = canvasCode('const landOnPage = useCallback(', null,
         ['useCallback', 'listPages', 'declaredRef', 'pageRef', 'setPage'], 'landOnPage')(
-        useCallback, listPages, { current: declared }, { current: page }, (p: string) => { now = p; });
+        useCallback, listPages, { current: declared }, { current: page }, (p: string) => { now = p; },
+      ) as (loaded: Node[]) => void;
       landOnPage(nodes);
       return now;
     };
