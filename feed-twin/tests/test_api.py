@@ -182,6 +182,32 @@ def test_the_model_names_every_valve_the_console_drives() -> None:
     assert all(t.startswith(("MV-", "SV-")) for t in tags)
 
 
+def test_the_model_says_which_sheet_everything_is_on() -> None:
+    """The console splits its panels by sheet, so the model has to say."""
+    shipped = client.get(f"/api/model?diagram={diagram_id()}").json()
+    # A one-sheet drawing: everything on Main.
+    assert set(shipped["pages"].values()) == {"Main"}
+
+    # The same stand drawn as Rocket and GSE.
+    blob = client.get(f"/api/diagram?diagram={diagram_id()}").json()
+    for n in blob["nodes"]:
+        n.setdefault("data", {})["page"] = "GSE" if n["id"] == "KB1" else "Rocket"
+    made = client.post(
+        "/api/library/diagrams",
+        files={
+            "file": ("two-sheet.json", json.dumps(blob).encode(), "application/json")
+        },
+    ).json()["artifact"]["id"]
+    try:
+        pages = client.get(f"/api/model?diagram={made}").json()["pages"]
+        assert pages["KB1"] == "GSE"
+        assert pages["SV_LOX_PRESS"] == "Rocket"
+        # The engine's own chamber channel is not drawn; it goes with the engine.
+        assert pages["engine.pc"] == pages["ENG"] == "Rocket"
+    finally:
+        client.delete(f"/api/library/{made}")
+
+
 def test_an_unknown_artifact_is_a_422_not_a_500() -> None:
     response = client.get("/api/model?diagram=deadbeef1234")
     assert response.status_code == 422

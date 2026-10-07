@@ -162,6 +162,9 @@ export interface ModelView {
   fluid_sets: string[];
   report: Report;
   engine: Record<string, unknown>;
+  /** Which sheet of the drawing each node is on, by node id. Absent from an
+   *  older server. */
+  pages?: Record<string, string>;
 }
 
 export interface EngineState {

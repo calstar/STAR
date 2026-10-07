@@ -17,17 +17,24 @@
  *
  * Nothing here is set by typing a number. The regulators are knobs on the
  * GSE tab; the model switches are on Configuration.
+ *
+ * A big stand overfills the strip, so Pressure, Tanks and Actuators each have
+ * a ⋯ that hides what is not being watched (lib/shown.ts). A hidden
+ * transducer leaves the plot too, and comes back by itself past NOP.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import PadSequence from '../components/PadSequence';
+import PanelMenu from '../components/PanelMenu';
 import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
+import { groupByPage } from '../lib/pages';
+import { NONE, readHidden, setAll, toggle, visible, writeHidden, type Hidden, type Panel } from '../lib/shown';
 
 const WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -234,6 +241,35 @@ export function Console() {
   } = useStand();
   const [window, setWindow] = useState(60);
 
+  // What the ⋯ menus hide, for this stand. Re-read when the drawing changes.
+  const diagramId = model?.diagram_id ?? '';
+  const [hiddenBy, setHiddenBy] = useState<Hidden>(NONE);
+  useEffect(() => {
+    setHiddenBy(diagramId ? readHidden(diagramId) : NONE);
+  }, [diagramId]);
+  const change = (next: Hidden) => {
+    setHiddenBy(next);
+    if (diagramId) writeHidden(diagramId, next);
+  };
+  const menuFor = (panel: Panel, ids: string[]) => ({
+    hidden: hiddenBy[panel],
+    onToggle: (id: string) => change(toggle(hiddenBy, panel, id)),
+    onAll: (show: boolean) => change(setAll(hiddenBy, panel, ids, show)),
+  });
+
+  // A transducer past NOP is drawn, bar and trace, whatever the menu says.
+  const pressures = live?.pressure_psi;
+  const chamber = live?.engine?.chamber_psi;
+  const pastNop = useMemo(() => {
+    const out = new Set<string>();
+    for (const c of history?.channels ?? []) {
+      const v = c.id === 'engine.pc' ? chamber : pressures?.[c.id];
+      if (v !== undefined && v !== null && v > limitsFor(c.tag).nop) out.add(c.id);
+    }
+    return out;
+  }, [history, pressures, chamber]);
+  const ptShown = (id: string) => visible(hiddenBy, 'pts', id, pastNop.has(id));
+
   const plot = useMemo(() => {
     if (!history) return { times: [] as number[], channels: [] as Channel[] };
     const cutoff = (history.times_s[history.times_s.length - 1] ?? 0) - window;
@@ -242,7 +278,7 @@ export function Console() {
     return {
       times: history.times_s.slice(start),
       channels: history.channels
-        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id])
+        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id))
         .map((c): Channel => ({
           key: c.id,
           tag: c.tag,
@@ -250,14 +286,19 @@ export function Console() {
           color: channelColor(c.tag),
         })),
     };
-  }, [history, hidden, window]);
+  }, [history, hidden, window, hiddenBy, pastNop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pressure bars only. A thermocouple in a bar scaled to MEOP is
   // meaningless -- temperature lives in its own panel on Pressure.
-  const gauges = useMemo(
+  const allGauges = useMemo(
     () => (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig'),
     [history],
   );
+  const gauges = allGauges.filter((c) => ptShown(c.id));
+  // The menus list items by sheet; the panels themselves do not split.
+  const gaugeList = groupByPage(allGauges, allGauges, (c) => c.id, model?.pages);
+  const vessels = [...(live?.tanks ?? []), ...(live?.bottles ?? [])];
+  const vesselList = groupByPage(vessels, vessels, (v) => v.id, model?.pages);
 
   if (!model || !live) {
     return <p className="caps p-8">Bringing the stand up…</p>;
@@ -318,7 +359,21 @@ export function Console() {
           style={{ height: 'clamp(190px, 24vh, 250px)' }}
         >
           <section className="flex min-h-0 min-w-0 flex-col py-4 pr-8">
-            <h2 className="caps mb-2 flex-shrink-0 text-[11px]">Pressure · psig</h2>
+            <div className="mb-2 flex flex-shrink-0 items-baseline justify-between">
+              <h2 className="caps text-[11px]">Pressure · psig</h2>
+              <PanelMenu
+                title="Pressure"
+                items={gaugeList.flatMap((g) =>
+                  g.items.map((c) => ({
+                    id: c.id,
+                    label: c.tag,
+                    forced: pastNop.has(c.id) ? 'Past NOP, so it shows anyway' : undefined,
+                    page: g.page,
+                  })),
+                )}
+                {...menuFor('pts', allGauges.map((c) => c.id))}
+              />
+            </div>
             {gauges.length > 0 ? (
               <div
                 className="grid min-h-0 flex-1 gap-x-2"
@@ -327,14 +382,23 @@ export function Console() {
                 {gauges.map(gauge)}
               </div>
             ) : (
-              <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
+              <p className="font-mono text-[12px] text-[var(--ink-3)]">
+                {allGauges.length > 0 ? 'Every transducer hidden. Show some from ⋯.' : 'Waiting for the first samples…'}
+              </p>
             )}
           </section>
 
           <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-4">
-            <h2 className="caps mb-2 flex-shrink-0 text-[11px]">Tanks</h2>
-            <div className="flex min-h-0 flex-1 flex-col justify-around gap-2">
-              {live.tanks.map((t: TankState) => (
+            <div className="mb-2 flex flex-shrink-0 items-baseline justify-between">
+              <h2 className="caps text-[11px]">Tanks</h2>
+              <PanelMenu
+                title="Tanks"
+                items={vesselList.flatMap((g) => g.items.map((v) => ({ id: v.id, label: v.label, page: g.page })))}
+                {...menuFor('tanks', [...live.tanks, ...live.bottles].map((v) => v.id))}
+              />
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col justify-around gap-2 overflow-y-auto">
+              {live.tanks.filter((t) => visible(hiddenBy, 'tanks', t.id)).map((t: TankState) => (
                 <Vessel
                   key={t.id}
                   label={t.label}
@@ -352,7 +416,7 @@ export function Console() {
                   colour={tankColour(t)}
                 />
               ))}
-              {live.bottles.map((b) => (
+              {live.bottles.filter((b) => visible(hiddenBy, 'tanks', b.id)).map((b) => (
                 <Vessel
                   key={b.id}
                   label={b.label}
@@ -458,6 +522,11 @@ export function Console() {
                   if (want !== (live.open[id] ?? false)) toggleValve(id);
                 }}
                 onRelease={release}
+                hidden={hiddenBy.actuators}
+                onToggleHidden={menuFor('actuators', []).onToggle}
+                onAllHidden={(show) =>
+                  change(setAll(hiddenBy, 'actuators', model.actuators.map((a) => a.id), show))
+                }
               />
             </section>
             <section className="flex min-h-0 flex-1 flex-col py-5">

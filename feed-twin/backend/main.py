@@ -23,7 +23,7 @@ import threading
 from dataclasses import asdict, dataclass, field, replace
 import time
 from pathlib import Path
-from typing import Any, Mapping, cast
+from typing import Any, Mapping, Sequence, cast
 
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
+from feedtwin.pid.document import PidNode
 from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
@@ -765,6 +766,18 @@ async def diagram_document(diagram: str) -> dict[str, list[Any]]:
     return {"nodes": document.get("nodes") or [], "edges": document.get("edges") or []}
 
 
+def _pages(nodes: Sequence[PidNode]) -> dict[str, str]:
+    """Which sheet each node is on, by id -- and the engine's own channels
+    (``engine.pc``) on the sheet its symbol is, since they are its readings
+    though not drawn instruments."""
+    pages = {n.id: n.page or "Main" for n in nodes}
+    engine = next((n for n in nodes if n.type == "ENGINE"), None)
+    if engine is not None:
+        for channel, *_ in ENGINE_CHANNELS:
+            pages[channel] = engine.page or "Main"
+    return pages
+
+
 @app.get("/api/model")
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire"
@@ -788,6 +801,7 @@ async def model_view(
         controls=CONTROLS,
         fluid_sets=sorted(FLUID_SETS),
         report=_report(model),
+        pages=_pages(model.diagram.nodes),
         engine=(
             {
                 **engine_summary(model.engine),
