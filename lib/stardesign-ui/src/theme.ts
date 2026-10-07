@@ -6,9 +6,9 @@
  * every consumer.
  *
  * These reference `--color-*` custom properties rather than fixed colours, so
- * each app renders them in its own palette. All three define the nine used
- * here; adding a tenth means adding it to all three `index.css` files, or the
- * component silently renders with no colour.
+ * each app renders them in its own palette. `tokens.css` is the canonical
+ * definition of all twelve; an app imports that file rather than redefining
+ * them, so there is one place these can drift out of sync, not three.
  */
 
 export const btn =
@@ -16,7 +16,11 @@ export const btn =
 export const primaryBtn =
   'inline-flex items-center gap-1 rounded border border-transparent bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-40';
 export const dangerBtn =
-  'inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-40';
+  'inline-flex items-center gap-1 rounded border border-[var(--color-danger)]/50 bg-[var(--color-danger)]/10 px-3 py-1 text-xs font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/20 disabled:opacity-40';
+export const warningBtn =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-warning)]/50 bg-[var(--color-warning)]/10 px-3 py-1 text-xs font-medium text-[var(--color-warning)] transition-colors hover:bg-[var(--color-warning)]/20 disabled:opacity-40';
+export const successBtn =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-success)]/50 bg-[var(--color-success)]/10 px-3 py-1 text-xs font-medium text-[var(--color-success)] transition-colors hover:bg-[var(--color-success)]/20 disabled:opacity-40';
 export const ghostBtn =
   'inline-flex items-center gap-1 rounded border border-transparent px-3 py-1 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:opacity-40';
 
