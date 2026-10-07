@@ -18,7 +18,7 @@ import pytest
 from fluids.fittings import Cv_to_K
 
 from feedtwin.comps import FlowConditions, build_component
-from feedtwin.comps.regulator import LOCKUP_SUPPLY_SIGNAL, IdealRegulator, Regulator
+from feedtwin.comps.regulator import SUPPLY_ZERO, IdealRegulator, Regulator
 from feedtwin.model import ComponentInstance, Param, Provenance
 from feedtwin.model.spec import SpecError
 from feedtwin.model.units import get_unit
@@ -42,9 +42,6 @@ def make(model: str = "droop", **overrides: object) -> Regulator:
             Provenance.MANUFACTURER,
             "Aqua 1092-50: 17 psi per 1000 psi inlet",
         ),
-        "inlet_reference": Param(
-            4500.0, "psi", Provenance.MANUFACTURER, "setpoint measured at 4500 psi"
-        ),
         "Cv": Param(0.8, "Cv", Provenance.MANUFACTURER, "datasheet"),
         "bore": Param(7.75, "mm", Provenance.MANUFACTURER, "3/8 seat"),
     }
@@ -62,12 +59,30 @@ def outlet(reg: Regulator, mdot: float, p_in: float) -> float:
     return p_in - reg.pressure_drop(mdot, flow)
 
 
+def gauge(psig: float) -> float:
+    """An inlet the way the stand reads it [psig] -> absolute [Pa]."""
+    return psig * PSI + SUPPLY_ZERO
+
+
 # ------------------------------------------------------- supply-pressure effect
 
 
-def test_outlet_is_the_setpoint_at_the_reference_inlet() -> None:
-    reg = make()
-    assert outlet(reg, 0.01, 4500 * PSI) == pytest.approx(500 * PSI, rel=1e-9)
+def test_the_supply_effect_is_measured_from_zero_inlet() -> None:
+    """dome + bias - S x inlet, the inlet in gauge: a 1092-50 loaded to 500 with
+    4000 psi of COPV behind it holds 500 + 50 - 4 x 14.7 = 491.2 psi. Not the
+    setpoint at some charge pressure and the effect only beyond it (the team,
+    2026-10-07)."""
+    reg = make(
+        supply_coefficient=Param(14.7, "psi/1000psi", M, "LE4 drawing"),
+        dome_pressure=Param(500.0, "psi", M, "dome"),
+        dome_bias=Param(50.0, "psi", M, "1092-50"),
+    )
+    assert outlet(reg, 0.01, gauge(4000.0)) == pytest.approx(491.2 * PSI, rel=1e-9)
+    # The law's own zero: what it would hold with nothing behind it.
+    empty = FlowConditions(
+        rho=1.2, mu=1.78e-5, p_upstream=gauge(0.0), temperature=293.15
+    )
+    assert reg.outlet_setpoint(0.0, empty) == pytest.approx(550.0 * PSI, rel=1e-9)
 
 
 def test_outlet_rises_as_the_bottle_empties() -> None:
@@ -82,10 +97,10 @@ def test_supply_effect_matches_the_datasheet_number() -> None:
     per_1000 = outlet(reg, 0.01, 3500 * PSI) - outlet(reg, 0.01, 4500 * PSI)
     assert per_1000 / PSI == pytest.approx(17.0, rel=1e-6)
 
-    # Over a real COPV decay, 4500 -> 1500 psi.
-    full = outlet(reg, 0.01, 1500 * PSI) / PSI
-    assert full == pytest.approx(500.0 + 3.0 * 17.0, rel=1e-6)
-    assert full == pytest.approx(551.0, abs=0.1)
+    # Over a real COPV decay, 4500 -> 1500 psig: 51 psi up, from 423.5 to 474.5.
+    full, empty = outlet(reg, 0.01, gauge(4500.0)), outlet(reg, 0.01, gauge(1500.0))
+    assert full / PSI == pytest.approx(500.0 - 4.5 * 17.0, rel=1e-9)
+    assert (empty - full) / PSI == pytest.approx(51.0, rel=1e-6)
 
 
 def test_the_datasheet_rate_can_be_written_three_ways() -> None:
@@ -106,12 +121,15 @@ def test_the_datasheet_rate_can_be_written_three_ways() -> None:
         make(supply_coefficient=Param(0.017, "-", M, "bare ratio"))
 
 
-def test_supply_effect_is_disabled_without_a_reference() -> None:
-    """A coefficient with no datum silently does nothing -- so check() says so."""
-    reg = make(inlet_reference=Param(0.0, "psi", Provenance.DEFAULT, "unset"))
-    assert outlet(reg, 0.01, 1500 * PSI) == pytest.approx(500 * PSI, rel=1e-9)
-    limits = [v.limit for v in reg.check()]
-    assert "inlet_reference" in limits
+def test_a_drawn_inlet_reference_is_not_used_and_is_flagged() -> None:
+    """An old drawing's ``inlet_reference`` still loads, moves nothing, and
+    check() says to drop it."""
+    drawn = make(inlet_reference=Param(4500.0, "psi", M, "COPV service pressure"))
+    plain = make()
+    for p_in in (gauge(0.0), gauge(1500.0), gauge(4500.0)):
+        assert outlet(drawn, 0.01, p_in) == outlet(plain, 0.01, p_in)
+    assert "inlet_reference" in [v.limit for v in drawn.check()]
+    assert "inlet_reference" not in [v.limit for v in plain.check()]
 
 
 # ------------------------------------------------------------------ flow droop
@@ -158,8 +176,12 @@ def test_the_two_effects_oppose_each_other() -> None:
         flow_droop=Param(51.0, "psi", Provenance.MANUFACTURER, "droop at rated"),
         rated_flow=Param(0.10, "kg/s", Provenance.MANUFACTURER, "rated"),
     )
-    # 3000 psi of decay lifts by 51; full rated flow pulls down by 51.
-    assert outlet(reg, 0.10, 1500 * PSI) == pytest.approx(500 * PSI, rel=1e-3)
+    # 1500 psi in the bottle holds it 25.5 under; full rated flow pulls 51 more.
+    assert outlet(reg, 0.10, gauge(1500.0)) / PSI == pytest.approx(423.5, rel=1e-3)
+    # Emptying the bottle by 3000 psi gives back exactly what rated flow costs.
+    assert outlet(reg, 0.10, gauge(1500.0)) == pytest.approx(
+        outlet(reg, 0.0001, gauge(4500.0)), rel=2e-3
+    )
 
 
 # --------------------------------------------------------------- limits
@@ -193,9 +215,11 @@ def test_a_regulator_never_raises_pressure() -> None:
 def test_lockup_sets_the_no_flow_outlet() -> None:
     """What a downstream relief valve actually sees between firings."""
     reg = make(lockup_rise=Param(25.0, "psi", Provenance.MANUFACTURER, "lockup"))
-    assert outlet(reg, 0.0, 4500 * PSI) == pytest.approx(525 * PSI, rel=1e-9)
-    # And it is above the setpoint the tank is sized around, which is the point.
-    assert outlet(reg, 0.0, 4500 * PSI) > reg.p["setpoint"]
+    # 500 - 4.5 x 17 + 25 of seat creep.
+    assert outlet(reg, 0.0, gauge(4500.0)) / PSI == pytest.approx(448.5, rel=1e-9)
+    # And it is above where the regulator holds while flowing, which is the point.
+    flow = FlowConditions(39.0, 1.78e-5, gauge(4500.0))
+    assert outlet(reg, 0.0, gauge(4500.0)) > reg.outlet_setpoint(0.0, flow)
 
 
 def test_saturation_is_reported_not_hidden() -> None:
@@ -250,16 +274,17 @@ def test_ideal_model_is_flat_and_named() -> None:
     assert not reg.is_saturated(5.0, GAS)
 
 
-def test_droop_and_ideal_agree_when_the_bottle_is_full() -> None:
-    assert outlet(make(), 0.01, 4500 * PSI) == pytest.approx(
+def test_droop_and_ideal_agree_with_no_supply_effect() -> None:
+    flat = make(supply_coefficient=Param(0.0, "psi/psi", M, "none"))
+    assert outlet(flat, 0.01, 4500 * PSI) == pytest.approx(
         outlet(make(model="ideal"), 0.01, 4500 * PSI), rel=1e-9
     )
 
 
 def test_diagnostics_report_the_droop_from_setpoint() -> None:
     reg = make()
-    out = reg.diagnostics(0.01, FlowConditions(39.0, 1.78e-5, 1500 * PSI))
-    assert out["droop_from_setpoint"] / PSI == pytest.approx(51.0, abs=0.1)
+    out = reg.diagnostics(0.01, FlowConditions(39.0, 1.78e-5, gauge(1500.0)))
+    assert out["droop_from_setpoint"] / PSI == pytest.approx(-25.5, abs=0.1)
     assert out["outlet_actual"] == pytest.approx(out["outlet_target"], rel=1e-9)
     assert out["saturated"] == 0.0
 
@@ -279,8 +304,9 @@ def test_a_dome_regulator_outlet_is_dome_plus_bias() -> None:
     """The 1092-50 delivers 50 psi above whatever its dome is loaded to."""
     reg = dome_loaded()
     assert reg.commanded_setpoint(GAS) / PSI == pytest.approx(500.0, rel=1e-9)
-    # And that, not the configured `setpoint`, is what it holds.
-    assert outlet(reg, 0.0001, 4500 * PSI) / PSI == pytest.approx(500.0, abs=0.1)
+    # And that, not the configured `setpoint`, is what it holds -- less 4.5 x 17
+    # for the bottle behind it.
+    assert outlet(reg, 0.0001, gauge(4500.0)) / PSI == pytest.approx(423.5, abs=0.1)
 
 
 def test_the_bias_is_not_folded_into_the_setpoint() -> None:
@@ -334,14 +360,16 @@ def test_droop_rides_on_the_dome_setting_not_on_the_configured_setpoint() -> Non
     flow = FlowConditions(
         rho=39.0,
         mu=1.78e-5,
-        p_upstream=4500 * PSI,
+        p_upstream=gauge(4500.0),
         signals={"PR-01.dome": 400.0 * PSI},
     )
     commanded = reg.commanded_setpoint(flow) / PSI
     assert commanded == pytest.approx(450.0)
-    # Half of rated flow costs half the droop, measured from the commanded value.
+    # Half of rated flow costs half the droop, measured from the commanded value
+    # (less the bottle's 4.5 x 17).
     dp = reg.pressure_drop(0.025, flow)
-    assert (4500 * PSI - dp) / PSI == pytest.approx(commanded - 10.0, abs=0.1)
+    held = (gauge(4500.0) - dp) / PSI
+    assert held == pytest.approx(commanded - 76.5 - 10.0, abs=0.1)
 
 
 def test_lockup_follows_the_dome() -> None:
@@ -350,77 +378,50 @@ def test_lockup_follows_the_dome() -> None:
     flow = FlowConditions(
         rho=39.0,
         mu=1.78e-5,
-        p_upstream=4500 * PSI,
+        p_upstream=gauge(4500.0),
         signals={"PR-01.dome": 400.0 * PSI},
     )
-    assert reg.lockup_pressure(flow) / PSI == pytest.approx(475.0, rel=1e-9)
+    assert reg.lockup_pressure(flow) / PSI == pytest.approx(475.0 - 76.5, rel=1e-9)
 
 
 # ------------------------------------------------- the outlet across zero flow
 
 
-def outlet_either_side(
-    reg: Regulator, p_in: float, follow: bool | None
-) -> tuple[float, float, float]:
+def outlet_either_side(reg: Regulator, p_in: float) -> tuple[float, float, float]:
     """Outlet just backwards, at, and just forwards of zero flow [psi]."""
-    signals = {} if follow is None else {LOCKUP_SUPPLY_SIGNAL: float(follow)}
-    flow = FlowConditions(
-        rho=39.0, mu=1.78e-5, p_upstream=p_in, temperature=293.15, signals=signals
-    )
+    flow = FlowConditions(rho=39.0, mu=1.78e-5, p_upstream=p_in, temperature=293.15)
     return tuple(  # type: ignore[return-value]
         (p_in - reg.total_dp(m, flow)) / PSI for m in (-1.0e-12, 0.0, 1.0e-12)
     )
 
 
-def test_by_default_lockup_leaves_out_the_supply_effect() -> None:
-    """The previous behaviour, pinned: forward of zero flow the outlet carries the
-    supply effect, and at or behind it, it does not. The step is ``S (p_ref - p_in)``.
-    """
-    reg = make()
-    for p_in, rise in ((2000.0, 42.5), (4600.0, -1.7)):
-        for follow in (None, False):
-            back, zero, ahead = outlet_either_side(reg, p_in * PSI, follow)
-            # 1e-12 kg/s backwards costs REVERSE_STIFFNESS * 1e-12 = 0.01 Pa.
-            assert back == pytest.approx(500.0, abs=1e-4)
-            assert zero == pytest.approx(500.0, abs=1e-6)
-            assert ahead == pytest.approx(500.0 + rise, abs=1e-6)
-
-
-def test_lockup_that_follows_supply_makes_the_outlet_continuous_at_zero_flow() -> None:
+def test_lockup_carries_the_supply_effect_so_the_outlet_is_continuous() -> None:
     """The supply effect is the inlet pushing on the poppet; it does not stop when the
-    flow does. Leaving it out of lockup puts a step in the branch the network solves.
-    On the GN2 stand that step was 1.7 kPa with the bottle 100 kPa over its reference,
-    the press manifold sat between the two tanks, inside the step, and the solve could
-    not get below 2.5e-5 of scaled residual. Late in a blowdown the step is 51 psi.
+    flow does. Leaving it out of lockup put a step of the whole supply term in the
+    branch at zero flow -- 76 psi with a full bottle, now that it is measured from
+    zero -- and a tank inside that step has no root.
     """
     reg = make()
-    for p_in, expected in ((2000.0, 542.5), (4600.0, 498.3)):
-        back, zero, ahead = outlet_either_side(reg, p_in * PSI, True)
+    for p_in, expected in ((2000.0, 466.0), (4500.0, 423.5)):
+        back, zero, ahead = outlet_either_side(reg, gauge(p_in))
         assert zero == pytest.approx(expected, abs=1e-6)
+        # 1e-12 kg/s backwards costs REVERSE_STIFFNESS * 1e-12 = 0.01 Pa.
         assert back == pytest.approx(zero, abs=1e-3)
         assert ahead == pytest.approx(zero, abs=1e-3)
 
 
-def test_lockup_that_follows_supply_still_adds_the_seat_creep() -> None:
+def test_lockup_still_adds_the_seat_creep() -> None:
     reg = make(lockup_rise=Param(25.0, "psi", M, "seat creep"))
-    _, zero, _ = outlet_either_side(reg, 2000.0 * PSI, True)
-    assert zero == pytest.approx(542.5 + 25.0, abs=1e-6)
+    _, zero, _ = outlet_either_side(reg, gauge(2000.0))
+    assert zero == pytest.approx(466.0 + 25.0, abs=1e-6)
 
 
-def test_lockup_that_follows_supply_changes_nothing_without_a_supply_effect() -> None:
-    """On, against a regulator that declares no supply effect, it must be inert:
-    no inlet reference, a zero coefficient, or the ideal model."""
+def test_with_no_supply_effect_lockup_is_the_setpoint() -> None:
+    """A zero coefficient or the ideal model: nothing comes off for the inlet."""
     zero = Param(0.0, "psi/psi", M, "none")
-    regulators = [
-        make(inlet_reference=Param(0.0, "psi", M, "none")),
-        make(supply_coefficient=zero),
-        make("ideal"),
-    ]
-    for reg in regulators:
-        for p_in in (900.0, 2000.0, 4500.0, 4600.0):
-            off = outlet_either_side(reg, p_in * PSI, None)
-            on = outlet_either_side(reg, p_in * PSI, True)
-            assert on == off
+    for reg in (make(supply_coefficient=zero), make("ideal")):
+        for p_in in (900.0, 2000.0, 4500.0):
+            assert outlet_either_side(reg, gauge(p_in))[1] == pytest.approx(500.0)
 
 
 def test_a_bias_with_no_dome_is_flagged() -> None:

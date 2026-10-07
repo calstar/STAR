@@ -96,8 +96,9 @@ for what the drawing does not settle.
 7. **Every hand-loaded regulator has a knob.**
    * `DOME` (Setup dome) on the dome's loader.
    * `CHARGE` (Setup `copv_target_psi`) on the regulator whose outlet reaches the
-     vehicle's bottle, so the COPV fill and the supply-pressure datum are one setting
-     whether the cart is drawn or not.
+     vehicle's bottle, so the COPV fill is one setting whether the cart is drawn or
+     not. (The supply effect has no datum: it is measured from zero inlet,
+     PHYSICS-BENCHMARK 4.11.)
    * A knob of its own for every other regulator the drawing gives no setting.
 8. **Binding: names, then the plumbing, and the plumbing can overrule a name.**
    * The team's line prefixes expand (FV, FF, OV, OF, HP/HPC, LP).

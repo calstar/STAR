@@ -48,7 +48,7 @@ CHAMBER_TOLERANCE_PSI = 0.02
 #: branch against a full COPV and left the card's injector drop 0.47 % off its own relation. It
 #: used to be a floor: below it the solve failed (41 of 51 steps held at 3e-5), because a carded
 #: injector leg signed its reverse-flow drop twice and a regulator at lockup stepped by its supply
-#: effect at zero flow. With both fixed and ``regulator_lockup_supply`` on, 1e-6 converges at every
+#: effect at zero flow. With both fixed (lockup now always carries the supply effect), 1e-6 converges at every
 #: step and the injector drop sits 0.007 % off. Measured on the 6.8 kN burn: +6.7 N·s (0.03 %) of
 #: impulse, +5 s of wall time.
 NETWORK_TOLERANCE = 1e-6
@@ -1154,8 +1154,7 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         # them): the rail shows them, read-only, so the setup on screen is the twin's.
         "feed_twin_thermal": {
             k: getattr(prep.setup, k) for k in ("ullage_collapse", "ullage_vapour", "chilldown", "line_walls",
-                                                "stratification", "wall_boiling", "chilldown_nucleate", "boiling_onset_K",
-                                                "regulator_lockup_supply")
+                                                "stratification", "wall_boiling", "chilldown_nucleate", "boiling_onset_K")
             if hasattr(prep.setup, k)},
         "stiffness_band": {"oxidiser": band("O"), "fuel": band("F")},
         "roles": roles,

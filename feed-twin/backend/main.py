@@ -86,7 +86,13 @@ from backend.models import (
 from backend.live import FireOptions, Stand, fire, solve_at
 from backend.run import PSI, Sample, psig
 from backend.session import Sample as SessionSample, Session, Setup
-from feedtwin.session.burn import BurnPlan, find_probes, jump_to_t0, run_burn
+from feedtwin.session.burn import (
+    BurnPlan,
+    find_probes,
+    jump_to_t0,
+    regulator_lockup,
+    run_burn,
+)
 from stardesign.userdata import slug_user
 from feedtwin.session.hookup import (
     CHARGE,
@@ -995,6 +1001,14 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
     ]
 
 
+def _lockup_psig(session: Session, tank_id: str) -> float | None:
+    """The regulator lockup feeding a vehicle tank right now [psig], or None."""
+    if tank_id in session.ground:
+        return None
+    lockup = regulator_lockup(session, tank_id)
+    return None if lockup is None else round(psig(lockup), 1)
+
+
 def _session_out(session: Session, sample: SessionSample) -> SessionOut:
     built = session.model.built
     signals_of = {d: s for d, s in built.actuators.items() if not s.endswith(".dome")}
@@ -1055,6 +1069,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
                 chilling=bool(values.get("chilling", 0.0)),
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
+                lockup_psi=_lockup_psig(session, sim.id),
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]

@@ -218,7 +218,8 @@ def test_the_dome_line_is_gated_by_its_valves(built: Any) -> None:
 
 @pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
 def test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts() -> None:
-    """Unloaded, the 1092 holds its 50 psi spring bias and no more. GN2 Low Press
+    """Unloaded, the 1092 holds its 50 psi spring bias less its supply effect --
+    with the COPV charged, less than nothing, so the tank does not press. GN2 Low Press
     opens DR-CTRL-G ("GSE Med Press Control") and the dome follows DR-REG-G; the
     next state shuts it and the dome keeps what is in it, as the stand keeps it
     through the burn with the GSE disconnected. The dome PT reads it."""
@@ -234,7 +235,11 @@ def test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts() -> None:
     for _ in range(20):
         session.step(0.5)
     fuel = session.tanks[ids["Eth-Tank"]]
-    assert psig(fuel.pressure) == pytest.approx(50.0, abs=8.0), "spring bias only"
+    copv = session.bottles[ids["COPV"]]
+    # dome + bias - S x inlet, S 14.7 psi per 1000 on the drawing (zero inlet).
+    supply = 14.7e-3 * psig(copv.pressure)
+    assert supply > 50.0, "a charged COPV outweighs the spring bias"
+    assert psig(fuel.pressure) == pytest.approx(0.0, abs=2.0), "unloaded: shut"
 
     session.state = "GN2 Low Press"
     for _ in range(4):
@@ -242,7 +247,10 @@ def test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts() -> None:
     session.state = "Fuel Press"
     for _ in range(30):
         session.step(0.5)
-    assert psig(fuel.pressure) > 540.0, "loaded: dome 500 + bias 50"
+    lockup = 500.0 + 50.0 - 14.7e-3 * psig(copv.pressure)
+    assert psig(fuel.pressure) == pytest.approx(
+        lockup, abs=8.0
+    ), "dome + bias - S x COPV"
     dome_pt = next(i for i in session.model.built.instruments if i.id == ids["DP-PT-R"])
     assert psig(session.history[-1].pressures[dome_pt.node]) == pytest.approx(500.0)
     assert ids["DR-CTRL-G"] not in session.forced

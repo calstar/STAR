@@ -43,12 +43,13 @@ pytestmark = pytest.mark.skipif(
     reason="helium drawing, tables, engine config or CEA table absent",
 )
 
-#: Restated fuel tank rating [psig]: above the 550 psig the tanks are primed to,
-#: below the ~558 psig the regulator's supply effect carries them to in a second.
-MAWP_PSIG = 553.0
+#: Restated fuel tank rating [psig]: above the 473.5 psig the tanks lock up at
+#: off a full bottle (500 + 50 - 17 x 4.5), below the ~490 psig the regulator's
+#: supply effect carries them to over the burn; crossed at about a second.
+MAWP_PSIG = 480.0
 
 PLAN = BurnPlan(
-    tank_psi=550.0, loads={"OXT": 6.0, "FUT": 4.0}, settle=False, lead_in_s=0.1,
+    tank_psi=473.5, loads={"OXT": 6.0, "FUT": 4.0}, settle=False, lead_in_s=0.1,
     horizon_s=2.0,
 )  # fmt: skip
 

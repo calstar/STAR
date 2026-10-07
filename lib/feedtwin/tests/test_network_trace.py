@@ -79,7 +79,6 @@ def _burn(network: bool, flip: tuple[str, ...] = (), **setup):  # type: ignore[n
 #: its own component to a few hundredths of a psi.
 TIGHT = {
     "network_tolerance": 1.0e-7,
-    "regulator_lockup_supply": True,
     "chamber_tolerance_psi": 0.02,
 }
 

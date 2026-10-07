@@ -82,22 +82,20 @@ def _check(prep, key):
 
 
 def test_dome_dial_matches_the_regulator_relation_by_hand(prepared, drawing):
-    """lockup = dome + atmosphere + bias + S (p_ref - p_bottle), all in psi.
+    """lockup = dome + atmosphere + bias - S x p_bottle (gauge), all in psi.
 
     Every number is read off the drawing JSON directly, not through feedtwin:
-    PR-DOME's dome_bias 50 psi, supply_coefficient 17 psi/1000 psi and
-    inlet_reference 4500 psi -- gauge, as a drawing's bare "psi" on an absolute
-    pressure reads (docs/adr/0004). The bottle is 4500 psig, the gauge zero is
-    101325 Pa, and PR-CTRL adds no bias of its own.
+    PR-DOME's dome_bias 50 psi and supply_coefficient 17 psi/1000 psi. The
+    supply effect is measured from zero inlet (the drawing's inlet_reference is
+    not read). The bottle is 4500 psig, the gauge zero is 101325 Pa, and
+    PR-CTRL adds no bias of its own.
     """
     nodes = {n["id"]: n for n in drawing.payload["nodes"]}
     dome_params = nodes["PR_D"]["data"]["params"]
     bias = dome_params["dome_bias"]["value"]
     spe = dome_params["supply_coefficient"]["value"] / 1000.0
     atmosphere = 101325.0 / PSI
-    reference = dome_params["inlet_reference"]["value"] + atmosphere
-    bottle_psia = 4500.0 + atmosphere
-    by_hand = 578.0 - atmosphere - bias - spe * (reference - bottle_psia)
+    by_hand = 578.0 - atmosphere - bias + spe * 4500.0
     assert prepared.derived["dome_psig"] == pytest.approx(by_hand, abs=1e-6)
     # And the relation run forward through the drawing's own components lands on the target.
     from feedtwin.session.gauge import from_psig

@@ -118,6 +118,11 @@ very bugs they were written for.
   says when EngineDesign has moved on. Compare the cockpit and Layer X only at the same T-0;
   `EngineDesign/tests/test_layerx_cockpit_parity.py` holds them together. Burns are totalled
   by `feedtwin.session.report`. See `docs/adr/0003-one-engine-one-burn.md`.
+- **The supply-pressure effect is measured from zero inlet**: outlet = dome + bias
+  - S x inlet (gauge), no datum, no setting (the team, 2026-10-07). A full 4,500 psig
+  bottle holds a 1092-50 at dome 500 to 473.5 psig, not 550; never assume lockup =
+  dome + bias. A drawn `inlet_reference` is ignored and warned. T-0 primes at the
+  regulator's lockup off the vehicle's bottle. See `docs/PHYSICS-BENCHMARK.md` 4.11.
 - **Pressures: absolute inside, gauge on the drawing, never ambiguous** (ADR 0004).
   A drawing's bare `psi` on an absolute pressure (tank, bottle, setpoint, dome, MAWP)
   reads as psig; `psia` says absolute; a chamber pressure on the ENGINE symbol is
@@ -146,9 +151,8 @@ very bugs they were written for.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
-  the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on), as is
-  `regulator_lockup_supply` (the regulator's supply-pressure effect at lockup);
-  `burn_setup` pins both off so the benchmark study is the scheme it was stated at.
+  the cockpit and Layer X since 2026-10-03 (the team: fitting heat is on);
+  `burn_setup` pins it off so the benchmark study is the scheme it was stated at.
   What is *not* modelled, on purpose, is
   soak: no heat transfer without flow, and no clock on how long a stand has sat. A
   wall starts at the temperature of the fluid its line holds at rest, which is where a

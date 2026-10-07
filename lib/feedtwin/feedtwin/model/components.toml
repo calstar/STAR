@@ -621,7 +621,7 @@ description = "Regulated side, typically a tank ullage."
 [regulator.curves.outlet_mdot]
 x_dimension = "mass_flow"
 y_dimension = "pressure"
-description = "Outlet pressure against mass flow, off a datasheet droop curve or a flow bench, measured at `inlet_reference`."
+description = "Outlet pressure against mass flow, off a datasheet droop curve or a flow bench. The supply-pressure effect is applied on top, from zero inlet."
 required = true
 models = ["curve"]
 
@@ -634,7 +634,7 @@ models = ["measured"]
 
 [regulator.params.setpoint]
 dimension = "pressure"
-description = "Outlet pressure the regulator holds at its reference inlet and zero flow. An absolute pressure: write psig or psia; on a drawing a bare psi reads as psig (feedtwin.model.pressure)."
+description = "Outlet pressure the regulator holds at zero flow and zero inlet; the supply-pressure effect comes off it as `supply_coefficient` times the inlet. An absolute pressure: write psig or psia; on a drawing a bare psi reads as psig (feedtwin.model.pressure)."
 minimum = 0.0
 models = ["ideal", "droop", "curve"]
 
@@ -647,10 +647,10 @@ default = { value = 0.0, unit = "psi/psi", source = "default", reference = "no s
 
 [regulator.params.inlet_reference]
 dimension = "pressure"
-description = "Inlet pressure at which `setpoint` was measured. The datum the supply coefficient is referenced to; without it the supply term has no meaning and is disabled."
+description = "Not used. The supply-pressure effect is measured from zero inlet -- outlet = dome + bias - supply_coefficient x inlet -- never from a charge pressure; a regulator that declares one is warned."
 minimum = 0.0
 models = ["droop", "curve"]
-default = { value = 0.0, unit = "Pa", source = "default", reference = "unset — supply-pressure effect disabled until a reference inlet is given." }
+default = { value = 0.0, unit = "Pa", source = "default", reference = "not used: the supply effect is measured from zero inlet." }
 
 [regulator.params.flow_droop]
 dimension = "pressure"

@@ -55,7 +55,9 @@ TUNABLES: tuple[Tunable, ...] = (
         "psig",
         GROUPS[0],
         "What the hand-loaded dome regulator is set to. The 1092-50 tank regulator "
-        "locks up 50 psi above it, so 500 here is 550 psig in the tanks.",
+        "locks up at this + its 50 psi bias - its supply effect x the COPV: 500 here "
+        "with 4,500 psig behind it at 17 psi per 1000 is 473.5 psig in the tanks, "
+        "climbing as the bottle falls.",
         low=0.0,
         high=6000.0,
         step=5.0,
@@ -778,39 +780,10 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[6],
         "Scaled residual the network solve must reach each step. Branches are judged "
         "against the bottle pressure, so 1e-4 (the console's and the Study's) is ~3 kPa "
-        "on a full COPV and leaves an injector drop a few tenths of a percent off. "
-        "Below ~3e-5 turn on 'Lockup carries supply effect' too, or a regulator at "
-        "lockup has no solution and the step holds its last flows.",
+        "on a full COPV and leaves an injector drop a few tenths of a percent off.",
         low=1.0e-8,
         high=1.0e-3,
         step=1.0e-6,
-    ),
-    Tunable(
-        "regulator_lockup_supply",
-        "regulator_lockup_supply",
-        "Lockup carries supply effect",
-        "",
-        GROUPS[6],
-        "On (the default): a regulator's no-flow outlet includes its supply-pressure effect, so the "
-        "outlet is continuous across zero flow. Off (the Study's benchmark setting): lockup "
-        "is dome + bias, which steps by 17 psi per 1000 psi of bottle away from the "
-        "reference -- 1.7 kPa full, 51 psi late in a blowdown -- and a tank sitting in "
-        "that step caps how tightly the network can solve.",
-        kind="flag",
-    ),
-    Tunable(
-        "regulator_supply_datum",
-        "regulator_supply_datum",
-        "Supply effect from the COPV charge",
-        "",
-        GROUPS[6],
-        "A regulator whose drawing gives a supply coefficient but no inlet reference "
-        "(the LE4 drawings: 14.7 psi per 1000 psi, no datum) is taken as set against a "
-        "charged bottle, so its outlet climbs from the COPV target as the bottle falls -- "
-        "~35-55 psi over a burn. Off, that regulator has no supply effect at all. Assumed "
-        "(the knob is set with the COPV full); put the inlet reference on the drawing and "
-        "the drawing's wins.",
-        kind="flag",
     ),
     Tunable(
         "ground_rests",

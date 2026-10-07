@@ -6,6 +6,24 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-07
+
+### Changed results
+- **The supply-pressure effect is measured from zero inlet**: outlet = dome + bias
+  - S x inlet (gauge) (`Regulator.supply_effect`). It was ``S (p_ref - p_in)`` with
+  ``p_ref`` a drawn `inlet_reference` or the COPV charge, which zeroed it at a full
+  bottle. A full 4,500 psig bottle now holds a 1092-50 at dome 500 to 473.5 psig, not
+  550. Benchmark tiers 2.1-2.4 re-baselined (docs/PHYSICS-BENCHMARK.md 4.11); LE4 (6)
+  at dome 500 primes at 483.7 psig (was 549.8) and makes 5,677 N at 1 s (was 6,305).
+- Lockup always carries the supply effect; `prime_at_t0` primes and settles at the
+  regulators' lockup off the vehicle's bottle (`tank_psi` is the fallback with no
+  regulator); `regulator_lockup` reads the vehicle's bottle, not a cart bank.
+
+### Removed
+- `Setup.regulator_supply_datum`, `Setup.regulator_lockup_supply` and their signals
+  (`SUPPLY_DATUM_SIGNAL`, `LOCKUP_SUPPLY_SIGNAL`). `inlet_reference` still loads, is
+  ignored, and `Regulator.check` warns.
+
 ## 0.2.0 — 2026-10-06
 
 ### Added

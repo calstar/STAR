@@ -357,14 +357,20 @@ def tier2_steady_fire() -> None:
     # been 550 psia, so the whole burn runs 14.7 psi higher in absolute terms
     # and chamber pressure follows (440.6 -> 452.1). The chamber value below is
     # absolute, as every pressure inside the model is.
-    check("chamber pressure (abs)", sample.chamber.pressure / PSI, 452.1, 3.0, "psia")
-    check("thrust", sample.chamber.thrust, 7730.0, 60.0, "N")
-    check("total mass flow", ox + fuel, 3.131, 0.03, "kg/s")
-    check("mixture ratio", ox / fuel, 1.695, 0.02)
+    # Re-baselined 2026-10-07: the supply-pressure effect is measured from zero
+    # inlet (dome + bias - S x inlet), not from the drawing's 4,500 psi
+    # "inlet_reference". Off a 4,500 psig bottle the 1092-50 locks the tanks up
+    # 17 x 4.5 = 76.5 psi lower, at 473.5 psig, and everything follows it:
+    # Pc 452.1 -> 399.9 (mass flow 0.890x, Pc 0.885x: a choked throat), thrust
+    # 7730 -> 6766, the drops roughly with flow squared, O/F unchanged.
+    check("chamber pressure (abs)", sample.chamber.pressure / PSI, 399.9, 3.0, "psia")
+    check("thrust", sample.chamber.thrust, 6766.0, 60.0, "N")
+    check("total mass flow", ox + fuel, 2.787, 0.03, "kg/s")
+    check("mixture ratio", ox / fuel, 1.702, 0.02)
     plumbing = drop("l_ox1") + drop("l_ox2")
     injector = drop("ENG.oxidiser.injector")
-    check("ox plumbing dp", plumbing, 19.0, 2.0, "psi")
-    check("ox injector dp", injector, 66.6, 3.0, "psi")
+    check("ox plumbing dp", plumbing, 15.1, 2.0, "psi")
+    check("ox injector dp", injector, 55.0, 3.0, "psi")
     truthy("the injector holds more than the plumbing", injector > plumbing, True)
 
 

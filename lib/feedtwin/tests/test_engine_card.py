@@ -347,7 +347,7 @@ def test_a_caller_can_ask_the_network_for_the_cards_drop_to_the_closures_toleran
         return result
 
     monkeypatch.setattr(core, "solve_steady", counted)
-    trace, design = _card_burn(network_tolerance=1.0e-6, regulator_lockup_supply=True)
+    trace, design = _card_burn(network_tolerance=1.0e-6)
     assert len(solves) > 40 and all(solves), f"{solves.count(False)} solves held"
     assert all(trace.converged)
     firing = [i for i, f in enumerate(trace.firing) if f]

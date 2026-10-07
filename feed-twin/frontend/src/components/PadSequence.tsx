@@ -45,11 +45,17 @@ const FULL = 0.95;
 /** Loaded means the fill has all but stopped. Strictly under FULL, because
  *  the fill lands *at* FULL and a threshold equal to it never fires. */
 const LOADED = 0.9;
-/** At pressure means at the dome setting. The regulator's spring bias locks
- *  the tank up *above* the dome, so this is reached with margin; 95% was not
- *  enough -- the guide moved on while the tank was still climbing, and the
- *  hot pressurant then collapsed onto the liquid with the solenoid shut. */
-const PRESSED = 1.0;
+/** At pressure means within this of the lockup its regulator gives now [psi]:
+ *  dome + bias less the supply effect of the bottle behind it, which with a
+ *  full COPV sits *below* the dome. Close, not 95 %: the guide once moved on
+ *  while the tank was still climbing, and the hot pressurant then collapsed
+ *  onto the liquid with the solenoid shut. */
+const PRESSED_PSI = 3;
+
+/** What a tank presses up to: its regulator's lockup now, or the dome when the
+ *  stand does not say. */
+const pressTarget = (t: TankState | undefined, dome: number) =>
+  t?.lockup_psi ?? dome;
 /** Charged means within 3% of the bottle target. */
 const CHARGED = 0.97;
 
@@ -112,16 +118,22 @@ const PHASES: Phase[] = [
     label: 'Press LOX',
     target: 'Ox Press',
     waiting: 'LOX tank coming up through the regulator',
-    done: (l, s) => (oxTank(l)?.pressure_psi ?? Infinity) >= PRESSED * s.dome,
-    progress: (l, s) => (oxTank(l)?.pressure_psi ?? 0) / s.dome,
+    done: (l, s) =>
+      (oxTank(l)?.pressure_psi ?? Infinity) >=
+      pressTarget(oxTank(l), s.dome) - PRESSED_PSI,
+    progress: (l, s) =>
+      (oxTank(l)?.pressure_psi ?? 0) / pressTarget(oxTank(l), s.dome),
   },
   {
     key: 'fuelpress',
     label: 'Press fuel',
     target: 'Fuel Press',
     waiting: 'fuel tank coming up through the regulator',
-    done: (l, s) => (fuelTank(l)?.pressure_psi ?? Infinity) >= PRESSED * s.dome,
-    progress: (l, s) => (fuelTank(l)?.pressure_psi ?? 0) / s.dome,
+    done: (l, s) =>
+      (fuelTank(l)?.pressure_psi ?? Infinity) >=
+      pressTarget(fuelTank(l), s.dome) - PRESSED_PSI,
+    progress: (l, s) =>
+      (fuelTank(l)?.pressure_psi ?? 0) / pressTarget(fuelTank(l), s.dome),
   },
   {
     key: 'topup',

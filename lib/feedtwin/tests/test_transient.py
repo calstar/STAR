@@ -521,7 +521,6 @@ def test_a_perfect_regulator_makes_its_branch_indeterminate() -> None:
     params = {
         "setpoint": Param(500.0, "psi", M, "x"),
         "supply_coefficient": Param(17.0, "psi/1000psi", M, "x"),
-        "inlet_reference": Param(4500.0, "psi", M, "x"),
         "Cv": Param(0.8, "Cv", M, "x"),
         "bore": Param(7.75, "mm", M, "x"),
     }
@@ -572,7 +571,6 @@ def full_system() -> TransientSystem:
             {
                 "setpoint": Param(500.0, "psi", M, "PR-01"),
                 "supply_coefficient": Param(17.0, "psi/1000psi", M, "Aqua 1092-50"),
-                "inlet_reference": Param(4500.0, "psi", M, "at 4500 psi"),
                 "flow_droop": Param(20.0, "psi", M, "at rated"),
                 "rated_flow": Param(0.05, "kg/s", M, "rated"),
                 "Cv": Param(0.8, "Cv", M, "datasheet"),

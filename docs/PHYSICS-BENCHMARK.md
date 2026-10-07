@@ -238,7 +238,7 @@ burned.
 
 **Every pressure in this tier is gauge (psig)**, because that is what the stand's
 transducers read and what the study traces report; a vented vessel is 0.0. The model
-underneath is absolute — the study primes at 550 psig, which is 564.7 psia — and the
+underneath is absolute — the study primes at 473.5 psig, which is 488.2 psia — and the
 only two places the two meet are `backend.run.psig` / `from_psig`. Differential
 pressures are the same in either.
 
@@ -262,16 +262,18 @@ hard-coded vessel walls on current code it already read differently). Second: th
 gauge convention landed the same day, so the prime moved from 550 psia to 550 psig and
 every number below is psig.
 
+Re-baselined 2026-10-07 (supply effect from zero inlet; the note below the table).
+
 | | GN2 | Helium |
 |---|---|---|
-| T-0 pressure | 550.0 psig | 550.0 psig |
-| ignition dip | **-35.2 psi** | **-12.9 psi** |
-| recovers to lockup | **never** | **t = 0.41 s** |
-| at t = 1 s | 528.0 | 557.6 |
-| at t = 4 s | 548.1 | 595.5 |
-| burn to depletion | 5.51 s | 5.20 s |
-| COPV remaining | 518 psig | 559 psig |
-| peak thrust | 8.10 kN | 8.80 kN |
+| T-0 pressure | 473.5 psig | 473.5 psig |
+| ignition dip | **-25.8 psi** | **-9.3 psi** |
+| back to T-0 lockup | **t = 2.5 s** | **t = 0.31 s** |
+| at t = 1 s | 459.1 | 479.8 |
+| at t = 4 s | 483.1 | 510.2 |
+| burn to depletion | 6.04 s | 5.85 s |
+| COPV remaining | 577 psig | 834 psig |
+| peak thrust | 7.24 kN | 7.77 kN |
 | failed ticks | **0** | **0** |
 
 Tolerance: **±2 psi and ±0.05 s.** Anything larger is a change in behaviour and needs
@@ -299,19 +301,35 @@ the pair split by that manifold exchange; dip -35.4 -> -34.6; the scratch crossi
 0.39 s, t = 4 s 595.8 -> 595.6, the rest unchanged. 0 failed ticks. Tier 2.3 moves 0.04
 psia. All inside tolerance; the table stands.
 
+**2026-10-07, the supply effect is measured from zero inlet** (the team:
+`outlet = dome + bias - S x inlet`, "it doesn't just start increasing after" the charge).
+The study drawings declare `inlet_reference = 4500 psi`, tagged *measured* and described
+as "the datum": it zeroed the effect at a full bottle. It is no longer read
+(`Regulator.supply_effect`; a drawing that declares one is warned). Off a 4,500 psig
+bottle the 1092-50 at dome 500 now locks up at 500 + 50 - 17 x 4.5 = **473.5 psig**, and
+the prime puts the tanks there (`prime_at_t0` asks the regulator, it no longer assumes
+dome + bias). Everything follows the 76.5 psi: less flow (0.89x), a shallower dip
+(droop is proportional to flow), longer burns, more bottle left. Old -> new: GN2 T-0
+550.0 -> 473.5, dip -34.6 -> -25.8, t = 1 s 528.1 -> 459.1, t = 4 s 548.4 -> 483.1, burn
+5.51 -> 6.04 s, COPV 520 -> 577, peak 8.09 -> 7.24 kN; helium T-0 550.0 -> 473.5, dip -12.5 ->
+-9.3, recovery 0.35 -> 0.31 s, t = 4 s 595.6 -> 510.2, burn 5.19 -> 5.85 s, COPV 564 -> 834,
+peak 8.79 -> 7.77 kN. GN2 now climbs back to its T-0 lockup at 2.5 s, where it used
+to fall short: the same supply effect per psi of bottle, against a regulator drooping less
+at the lower flow. 0 failed ticks.
+
 Three properties matter more than the individual numbers, because they are the
 physics rather than the arithmetic:
 
-1. **Both start at 550.0 psig** — dome 500 plus the 1092-50's 50 psi spring bias.
+1. **Both start at 473.5 psig** — dome 500 plus the 1092-50's 50 psi spring bias, less
+   its supply effect off the full bottle (17 psi per 1000 x 4,500 psig).
 2. **The trace drops at ignition, climbs, then blows down.** If pressure *rises* at
    ignition the supply-pressure effect or the lockup rise is missing from the
    drawing. This exact error shipped once.
-3. **Helium recovers lockup in under half a second; GN2 climbs back to within a few
-   psi of it and does not get there before the tanks run dry.** The recovery is the
-   supply-pressure effect lifting the setpoint as the bottle falls, an order of
-   magnitude slower on nitrogen. If GN2 recovers in under a second something has given
-   the regulator more capacity than it has; if helium stops recovering, the SPE has
-   been lost from the drawing.
+3. **Helium recovers lockup in about a third of a second; GN2 takes seconds (2.5 s).**
+   The recovery is the supply-pressure effect lifting the setpoint as the bottle falls,
+   an order of magnitude slower on nitrogen. If GN2 recovers in under a second something
+   has given the regulator more capacity than it has; if helium stops recovering, the
+   SPE has been lost from the drawing.
 
 ### 2.2 Full-physics expectations
 
@@ -323,10 +341,13 @@ Four traces, **all converged, 0 failed ticks.** Pressures psig. T-0 is now a *pr
 
 | case | T-0 | t = 1 s | t = 4 s | burn | COPV left |
 |---|---|---|---|---|---|
-| GN2 vapour+chilldown | 550.2 | 528.0 | 548.1 | 5.51 s | 518 |
-| GN2 + collapse | 548.5 | 528.0 | 547.9 | 5.51 s | 517 |
-| He vapour+chilldown | 549.7 | 557.6 | 595.5 | 5.20 s | 559 |
-| He + collapse | 548.1 | 557.7 | 595.6 | 5.20 s | 558 |
+| GN2 vapour+chilldown | 473.5 | 459.1 | 483.1 | 6.04 s | 577 |
+| GN2 + collapse | 472.6 | 459.1 | 483.1 | 6.04 s | 576 |
+| He vapour+chilldown | 473.5 | 479.8 | 510.2 | 5.85 s | 834 |
+| He + collapse | 472.9 | 479.9 | 510.3 | 5.85 s | 830 |
+
+Re-baselined 2026-10-07 with 2.1 (supply effect from zero inlet); the GN2 cases still
+sit together through the burn (0.0 psi at t = 1 s and 4 s).
 
 **The load-bearing assertion is the one people get wrong:**
 
@@ -344,18 +365,22 @@ means something is being recomputed per step that should be cached.
 
 ### 2.3 Steady fire on the shipped stand
 
-12 steps of 50 ms in `Fire` on `copv_study_gn2`, primed at 550 psig. Chamber pressure
+12 steps of 50 ms in `Fire` on `copv_study_gn2`, primed at lockup, 473.5 psig. Chamber pressure
 here is **absolute**, as every pressure inside the model is — `scripts/physics_benchmark.py`
 reads it off the chamber result, not off a gauge.
 
 | quantity | expected |
 |---|---|
-| chamber pressure (abs) | 452.1 psia |
-| thrust | 7730 N |
-| total flow | 3.131 kg/s |
-| O/F | 1.695 |
-| ox plumbing Δp | 19.0 psi |
-| injector Δp ox | 66.6 psi |
+| chamber pressure (abs) | 399.9 psia |
+| thrust | 6766 N |
+| total flow | 2.787 kg/s |
+| O/F | 1.702 |
+| ox plumbing Δp | 15.1 psi |
+| injector Δp ox | 55.0 psi |
+
+Re-baselined 2026-10-07 (supply effect from zero inlet, 2.1): the tanks 76.5 psi lower,
+Pc 452.1 -> 399.9 psia with mass flow 0.890x against Pc 0.885x, as a choked throat has it;
+the drops fall roughly with flow squared, and O/F stays put.
 
 **The shape matters more than the values: the injector must hold most of the drop.**
 If plumbing exceeds the injector, either the geometry is wrong or someone has
@@ -379,18 +404,24 @@ StudyRequest(gases=("gn2","he"), dt=0.05, horizon=14.0, line_walls=True)
 
 | case | ox at T-0 | ox min | ox at end | COPV left |
 |---|---|---|---|---|
-| GN2 walls off | 550.0 | 456.3 | 456.3 | 512 |
-| GN2 walls on | 550.0 | 515.5 | 515.5 | 615 |
-| He walls off | 550.0 | 545.4 | 551.0 | 559 |
-| He walls on | 550.0 | 545.4 | 604.9 | **768** |
+| GN2 walls off | 473.5 | 449.4 | 462.9 | 576 |
+| GN2 walls on | 473.5 | 449.8 | 495.9 | 751 |
+| He walls off | 473.5 | 470.5 | 527.6 | 834 |
+| He walls on | 473.5 | 470.5 | 524.6 | **1148** |
+
+Re-baselined 2026-10-07 with 2.1 (supply effect from zero inlet; the code before read
+550.0 / 460.8 / 460.8 / 520, 550.0 / 516.0 / 516.0 / 618, 550.0 / 545.8 / 555.2 / 563,
+550.0 / 545.8 / 605.0 / 770 on this run).
 
 **The two gases spend the heat differently, and that is the finding.**
 
-- **GN2 has lost regulator authority by the end** — the tank has fallen to 492 psi,
-  so tank pressure is set by what the bottle can still deliver. Wall heat therefore
-  shows up as tank pressure: **+59.2 psi at the end of the burn**.
-- **Helium is still in lockup** — the regulator is holding the setpoint, so tank
-  pressure cannot move. The heat shows up entirely as bottle reserve: **+209 psi**.
+- **GN2 is under its regulator by the end** — 463 psi against a 540 psi lockup off the
+  576 psig left in the bottle, so tank pressure is set by what the bottle can still
+  deliver. Wall heat therefore shows up as tank pressure: **+33 psi at the end of the
+  burn**, and +175 psi of bottle.
+- **Helium is still within a few psi of lockup** (528 against 536), so the heat shows
+  up as bottle reserve: **+314 psi**. The tank even ends 3 psi *lower* with the walls
+  on: more bottle left is a lower lockup, 17 psi per 1000.
 
 So neglecting the walls makes a nitrogen COPV look substantially more undersized than
 it is. Both cases are the same physics: warmer pressurant is less dense, so fewer
@@ -1061,26 +1092,40 @@ Re-check on any CoolProp upgrade: `lib/feedtwin/tests/test_props_chain.py`, whos
 `PAST_THE_TABLES` documents the window.
 
 
-### 4.11 A coefficient with no datum
+### 4.11 The supply effect is measured from zero inlet
 
-A regulator's supply-pressure effect is ``S (p_ref - p_in)``: a coefficient *and* the inlet
-pressure it is measured from. The LE4 drawings declare the 1092's 14.7 psi per 1000 psi and
-no `inlet_reference`, and with no datum the term was zero -- quietly, apart from one validator
-line -- so an LE4 burn held its tanks flat (488 -> 471 psig) while the bottle fell 3,700 psi,
-where TB 1031 puts the outlet ~55 psi higher. The operator read it straight off the plot: "it
-seems like it's totally ignoring the supply pressure effect".
+A regulator's supply-pressure effect is ``-S p_in``: **outlet = dome + bias - S x inlet**,
+the inlet in gauge. A 1092-50 loaded to 500 psi with 4,000 psi behind it at 14.7 psi per
+1000 holds 500 + 50 - 58.8 = 491.2 psi, and comes up as the bottle falls -- from the first
+gram, not from some charge pressure onwards (the team, 2026-10-07).
 
-`Setup.regulator_supply_datum` (on in the cockpit, a Configuration row, off in `burn_setup`)
-measures the term from the COPV charge, `copv_target_psi`, for a regulator whose drawing gives
-a coefficient and no datum: the knob is set against a full bottle. The session says so in its
-assumptions. A drawn datum always wins, and against a drawing with a datum or with no supply
-coefficient it changes nothing (`lib/feedtwin/tests/test_regulator_supply_datum.py`, both
-halves). LE4 (5) on the drilled 6800N: tanks 500 -> 509 psig after ignition instead of
-488 -> 471, thrust 6,204 -> 6,379 N instead of 6,194 -> 5,981 N; the climb flattens as the
-bottle nears 770 psig and the regulator runs out of drop. The Tier 2 study drawings declare
-their datum (4,500 psig), so the benchmark does not move.
+It took three tries, and the two wrong ones are worth knowing:
 
-When a declared coefficient seems to do nothing, check its datum before the solver.
+1. **A datum or nothing.** The term was ``S (p_ref - p_in)`` with ``p_ref`` the drawing's
+   `inlet_reference`. LE4's drawings declare the coefficient and no reference, so the
+   term was zero -- an LE4 burn held its tanks flat while the bottle fell 3,700 psi. The
+   operator: "it seems like it's totally ignoring the supply pressure effect".
+2. **The COPV charge as the datum** (`Setup.regulator_supply_datum`, 2026-10-07 morning;
+   the study drawings' "measured" 4,500 psi `inlet_reference` did the same). That put
+   the setpoint *at* a full bottle and the whole effect beyond it, so a full bottle read
+   dome + bias. The team: wrong -- the effect is there at 4,000 psi too, and the outlet
+   does not "just start increasing after that".
+
+Now `Regulator.supply_effect` is ``S (atmosphere - p_in)`` and nothing else: no datum, no
+setting. A drawn `inlet_reference` still loads and is warned and ignored; pid-designer no
+longer offers it. Lockup always carries the term (`lockup_pressure` is the zero-flow
+outlet), because leaving it out now steps the branch by the whole term at zero flow.
+`prime_at_t0` and `jump_to_t0` put the tanks at the lockup the regulator gives off the
+*vehicle's* bottle (a cart's 6K bank behind a shut valve is not what feeds it), and the
+cockpit sends each tank's live lockup so the pad guide presses to it, not to the dome.
+
+LE4 (6), dome 500, COPV 4,500 psig: T-0 549.8 -> 483.7 psig (= 550 - 14.7 x 4.5),
+thrust at 1 s 6,305 -> 5,677 N, the tanks still climbing ~14 psi over the burn. The
+same tank pressure as before needs a dome of ~566. The study tiers moved accordingly
+(2.1-2.4, 2026-10-07).
+
+When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
+before suspecting the solver.
 ---
 
 ## Reporting

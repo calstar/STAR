@@ -257,6 +257,10 @@ class TankOut(BaseModel):
     #: through its fill line, boiling on the wall or collecting. Zero when
     #: nothing is loading.
     fill_flow_g_s: float = 0.0
+    #: Where the regulator feeding this tank locks up right now [psig]:
+    #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
+    #: ``None`` for a tank no regulator feeds.
+    lockup_psi: float | None = None
 
 
 class StudyCaseOut(BaseModel):

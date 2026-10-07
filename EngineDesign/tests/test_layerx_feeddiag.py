@@ -233,7 +233,6 @@ REG_PARAMS = {
     "Cv": (0.8, "manufacturer: TB 1031"),
     "bore": (0.005842, "manufacturer: TB 1031"),
     "supply_coefficient": (0.017, "manufacturer: TB 1031"),
-    "inlet_reference": (4500.0 * PSI, "measured"),
     "flow_droop": (8.3 * PSI, "measured"),
     "rated_flow": (0.09646, "measured"),
     "dome_bias": (50.0 * PSI, "manufacturer"),
@@ -241,8 +240,12 @@ REG_PARAMS = {
 }
 
 
+#: Gauge zero [psia]: the supply effect is measured from zero inlet.
+ATM_PSIA = 101325.0 / PSI
+
+
 def _reg_target(p_in, mdot):
-    return 528.25 + 50.0 + 0.017 * (4500.0 - p_in) - 8.3 * mdot / 0.09646
+    return 528.25 + 50.0 + 0.017 * (ATM_PSIA - p_in) - 8.3 * mdot / 0.09646
 
 
 def test_regulator_law_split_and_wide_open_by_hand():
@@ -256,7 +259,7 @@ def test_regulator_law_split_and_wide_open_by_hand():
     reg = R.build_regulator(res, None, params=REG_PARAMS, gas="helium")
     assert "error" not in reg, reg
     # supply effect and droop at step 2, by hand
-    assert reg["spe_psi"][2] == pytest.approx(0.017 * (4500.0 - p_in[2]))
+    assert reg["spe_psi"][2] == pytest.approx(0.017 * (ATM_PSIA - p_in[2]))
     assert reg["droop_psi"][2] == pytest.approx(8.3 * 0.02 / 0.09646)
     assert reg["target_psia"][2] == pytest.approx(out_p[2])
     assert reg["residual_psi"][:3] == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)

@@ -58,10 +58,6 @@ def burn_setup(**changes: Any) -> Setup:
         # benchmark (docs/PHYSICS-BENCHMARK.md 2.x) is the scheme it was stated
         # at. A study case asks for line walls itself.
         "line_walls": False,
-        "regulator_lockup_supply": False,
-        # A drawing with no supply datum keeps its supply term at zero, as the
-        # benchmark was stated (the study drawings give theirs anyway).
-        "regulator_supply_datum": False,
         # The ullage against its dry wall only (2026-10-06): on in the library
         # and the cockpit, off here for the same reason as line walls.
         "ullage_wall_by_level": False,
@@ -124,8 +120,10 @@ class BurnPlan:
     """
 
     tank_psi: float = 550.0
-    """Tank pressure at prime [psig]. The settle then takes it to lockup, which
-    the regulator decides -- this is where it starts, not where it ends."""
+    """Tank pressure at prime [psig] when no regulator feeds the tanks. Where one
+    does, the tanks are primed and settled at the lockup it gives off the
+    charged bottle (:func:`regulator_lockup`): dome + bias - S x bottle, which
+    a fixed number here would miss by the supply effect."""
     copv_psi: float = 4500.0
     """Bottle at T-0 [psig]."""
     fill_fraction: float = 0.95
@@ -200,18 +198,36 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
     if plan.bottle_litres is not None:
         for bottle in session.bottles.values():
             bottle.volume.volume = plan.bottle_litres / 1e3
-    session.prime(
-        fill_fraction=plan.fill_fraction,
-        tank_psi=plan.tank_psi,
-        copv_psi=plan.copv_psi,
-        state=plan.ready_state,
-        hold_s=plan.hold_s,
-        loads=plan.loads,
-    )
+
+    def prime(tank_psi: float) -> None:
+        session.prime(
+            fill_fraction=plan.fill_fraction,
+            tank_psi=tank_psi,
+            copv_psi=plan.copv_psi,
+            state=plan.ready_state,
+            hold_s=plan.hold_s,
+            loads=plan.loads,
+        )
+
+    # Charge the bottle first: the regulator's lockup reads it. Then put the
+    # tanks at that lockup, unless the plan names one. A caller that already
+    # solved its dome for ``tank_psi`` (Layer X) lands within a hair of it and
+    # keeps its own number.
+    prime(plan.tank_psi)
+    tank_psi = plan.tank_psi
+    if plan.lockup_psi is None:
+        lockups = [
+            lockup
+            for tank_id in session.vehicle_tanks
+            if (lockup := regulator_lockup(session, tank_id)) is not None
+        ]
+        if lockups and abs(psig(min(lockups)) - plan.tank_psi) > 0.05:
+            tank_psi = psig(min(lockups))
+            prime(tank_psi)
     if not plan.settle:
         return True
 
-    lockup = plan.tank_psi if plan.lockup_psi is None else plan.lockup_psi
+    lockup = tank_psi if plan.lockup_psi is None else plan.lockup_psi
     for symbol in press_valves(session):
         session.set_valve(symbol, True)
     target = from_psig(lockup)
@@ -292,7 +308,11 @@ def regulator_lockup(session: Session, tank_id: str) -> float | None:
         frontier = nxt
     if regulator is None:
         return None
-    bottles = [b.pressure for b in session.bottles.values()]
+    # The vehicle's bottle: a cart's K-bottle bank sits at 6,000 psi behind a
+    # shut valve, and the supply effect reads the bottle that feeds the
+    # regulator, not the fullest one on the stand.
+    ground = session.ground
+    bottles = [b.pressure for k, b in session.bottles.items() if k not in ground]
     if not bottles:
         return None
     component = regulator.component

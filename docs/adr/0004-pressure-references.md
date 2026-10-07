@@ -60,7 +60,9 @@ the same drawn number meaning two things a few lines apart:
   bottle fill come from the panel (already psig). Where a drawn value reaches a burn,
   results move slightly. The Study's regulator `inlet_reference` shifts the
   supply-pressure effect by ~0.25 psi, which moves Tier 2.1 within tolerance (see
-  docs/PHYSICS-BENCHMARK.md §2.1). LE4 burns do not move.
+  docs/PHYSICS-BENCHMARK.md §2.1). LE4 burns do not move. (Since 2026-10-07
+  `inlet_reference` is not read at all: the supply effect is measured from zero
+  inlet, PHYSICS-BENCHMARK 4.11.)
 * The trip limit reads MAWP and burst as the drawing does. Burst over the safety factor
   divides the pressure across the wall, not the absolute.
 * **Known, not decided here:** Layer X judges MAWP against the *site* ambient (94 kPa at

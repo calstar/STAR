@@ -43,9 +43,8 @@ class StudyCase:
 
     label: str
     copv_psi: float | None = None
-    """Bottle at T-0 [psig]; ``None`` is the stand's COPV fill target. Also the
-    charge the regulators are taken as set against
-    (``Setup.regulator_supply_datum``)."""
+    """Bottle at T-0 [psig]; ``None`` is the stand's COPV fill target. A fuller
+    bottle locks the tanks up lower: the supply effect is ``-S x inlet``."""
     knobs: Mapping[str, float] = field(default_factory=dict)
     """Knob id -> setting [psig], over the stand's."""
     bottle_litres: float | None = None

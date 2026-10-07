@@ -3,8 +3,8 @@
 This is not the Study tab. The Study tab (:mod:`backend.study`) runs whatever
 stand the cockpit has open, at its own settings. This is the reproducible
 comparison ``docs/PHYSICS-BENCHMARK.md`` Tier 2.1/2.2 is stated against: the
-``copv_study_gn2``/``copv_study_he`` drawings, primed at 550 psig off a
-4,500 psig bottle, with the benchmark scheme (:func:`burn_setup`). Its numbers
+``copv_study_gn2``/``copv_study_he`` drawings, primed at the regulator's lockup
+off a 4,500 psig bottle (dome 500 + bias 50 - 17 x 4.5 = 473.5 psig), with the benchmark scheme (:func:`burn_setup`). Its numbers
 only mean what the benchmark says while every one of those stays put, which is
 why they are constants here and nowhere a person sets them. Run it with
 :func:`run_study`.
@@ -77,9 +77,11 @@ def find_diagram(library: Library, gas: str) -> str | None:
     return None
 
 
-#: Tank pressure at T-0 [psig]. Dome 500 plus the 1092-50's 50 psi spring bias.
-#: Gauge, like every number an operator sets or reads; the session converts.
-TANK_PSI = 550.0
+#: Where the prime starts [psig] before it is put at the regulator's lockup,
+#: which reads the bottle: dome 500 + the 1092-50's 50 - 17 x 4.5 = 473.5
+#: (:func:`feedtwin.session.burn.prime_at_t0`). Gauge, like every number an
+#: operator sets or reads; the session converts.
+TANK_PSI = 473.5
 DOME_PSI = 500.0
 COPV_PSI = 4500.0
 FILL_FRACTION = 0.95

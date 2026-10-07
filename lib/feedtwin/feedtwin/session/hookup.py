@@ -45,8 +45,7 @@ DOME = "dome"
 #: The knob the session's ``Setup.copv_target_psi`` drives: what the vehicle's
 #: pressurant bottle is charged to. With a fill regulator drawn on the cart it
 #: sets that regulator; with none, it is the built-in charge's target. One dial
-#: either way, so the supply-pressure datum (`Setup.regulator_supply_datum`)
-#: is always the charge.
+#: either way.
 CHARGE = "charge"
 
 #: Where a hand-loaded regulator's knob starts when the drawing gives it no
