@@ -4,7 +4,8 @@ Given the triangles of the selected outer surface and a detected axis, we build 
 radial envelope r(s): at each axial station, the radius of the airframe is the
 largest radial distance of any surface vertex there. Onshape tessellates with
 facet corners lying *on* the true surface, so a vertex's radius is an exact
-surface radius and the max over a thin band recovers r(s) with no bias.
+surface radius, so the outermost vertex in a thin band is a point on r(s) -- used
+at its own axial position, not the band's centre (see ``_stations``).
 
 From r(s) we produce exactly what ``barrowman_body`` needs:
 
@@ -42,30 +43,41 @@ class BodyProfile:
 
 
 def _stations(s: np.ndarray, rho: np.ndarray, n_stations: int) -> tuple[np.ndarray, np.ndarray]:
-    """Radial envelope: max rho per axial bin, empty bins interpolated."""
+    """Radial envelope: per axial bin, the vertex of largest radius, at its own ``s``.
+
+    Each station is a real surface point -- (s, rho) of the outermost vertex in the
+    bin -- not the bin maximum moved to the bin centre. On a nose, where the radius
+    grows through the bin, the centre placement put each radius half a bin too far
+    forward and over-filled the volume. Empty bins (a tube's interior, tessellated
+    only at its end rings) are simply skipped: the profile is piecewise-linear
+    between the stations either side, which is the faceted surface itself.
+
+    The two ends are the radius *at* the extreme axial position, not a copy of the
+    neighbouring bin's: copying gave a pointed nose a blunt tip as wide as the
+    first ~0.25% of the length (2.5 mm on BART).
+    """
     s_min, s_max = float(s.min()), float(s.max())
-    if s_max - s_min < 1e-12:
+    span = s_max - s_min
+    if span < 1e-12:
         raise ValueError("degenerate axial extent; the surface has no length")
 
     edges = np.linspace(s_min, s_max, n_stations + 1)
-    centres = 0.5 * (edges[:-1] + edges[1:])
-    # np.digitize -> bin index in [1, n_stations]; clamp the top edge in.
     idx = np.clip(np.digitize(s, edges) - 1, 0, n_stations - 1)
 
-    # Seed with -inf, not NaN: np.maximum propagates NaN and would wipe the bin.
-    r_grid = np.full(n_stations, -np.inf)
-    np.maximum.at(r_grid, idx, rho)
+    # Outermost vertex per bin: sort by (bin, rho) and take the last of each bin.
+    order = np.lexsort((rho, idx))
+    last = np.r_[idx[order][1:] != idx[order][:-1], True]
+    pick = order[last]
+    st_s, st_r = s[pick], rho[pick]
 
-    # Fill empty bins (still -inf) by linear interpolation over their centres,
-    # and clamp the ends so a leading/trailing empty bin takes its neighbour.
-    known = np.isfinite(r_grid)
-    if not known.any():
-        raise ValueError("no surface points fell into any station")
-    r_grid = np.interp(centres, centres[known], r_grid[known])
+    # The true end radii: the outermost vertex lying on each extreme plane.
+    eps = 1e-9 * span
+    r_nose = float(rho[s <= s_min + eps].max())
+    r_tail = float(rho[s >= s_max - eps].max())
 
-    # Prepend/append the true extremes so the span isn't truncated to bin centres.
-    s_grid = np.concatenate([[s_min], centres, [s_max]])
-    r_grid = np.concatenate([[r_grid[0]], r_grid, [r_grid[-1]]])
+    inner = (st_s > s_min + eps) & (st_s < s_max - eps)
+    s_grid = np.concatenate([[s_min], st_s[inner], [s_max]])
+    r_grid = np.concatenate([[r_nose], st_r[inner], [r_tail]])
     return s_grid, r_grid
 
 

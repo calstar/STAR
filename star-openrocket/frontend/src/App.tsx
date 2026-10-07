@@ -4,6 +4,8 @@ import starWordmark from './assets/star-wordmark.png'
 import {
   computeFlight,
   computeStability,
+  downloadMotorFile,
+  exportOrk,
   fetchFins,
   fetchManifest,
   fetchMotor,
@@ -17,6 +19,7 @@ import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
 import { defaultOrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
+import { toWireConfig } from './recovery/lib/serialise'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { ReadOnlyProvider } from '@stardesign-ui'
@@ -488,6 +491,46 @@ export default function App() {
     }
   }, [modelId, motorSel, outerFaces, finFaces, massOverrides, railLength])
 
+  // Export the design to OpenRocket: the same selection the stability result came
+  // from, plus the shared environment, rail and recovery devices. Reads the design,
+  // so it stays live without the checkout.
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const handleExportOrk = useCallback(async () => {
+    if (!modelId) return
+    setExportBusy(true)
+    setExportError(null)
+    try {
+      const wire = toWireConfig(recovery)
+      await exportOrk(modelId, {
+        outerFaces,
+        finFaces,
+        overrides: massOverrides,
+        motor: motorSel,
+        railLength,
+        inclination: flight.inclination,
+        heading: flight.heading,
+        site: wire.site,
+        wind: wire.wind,
+        devices: wire.devices,
+      })
+    } catch (exc) {
+      setExportError(exc instanceof Error ? exc.message : String(exc))
+    } finally {
+      setExportBusy(false)
+    }
+  }, [modelId, outerFaces, finFaces, massOverrides, motorSel, railLength, flight, recovery])
+
+  const handleDownloadMotorFile = useCallback(async () => {
+    if (!motorSel) return
+    setExportError(null)
+    try {
+      await downloadMotorFile(motorSel.motorId, motorSel.simfileId)
+    } catch (exc) {
+      setExportError(exc instanceof Error ? exc.message : String(exc))
+    }
+  }, [motorSel])
+
   // Open the motor-curves popup and fetch the selected motor's raw datafile.
   const handleViewMotorCurves = useCallback(async () => {
     if (!motorSel) return
@@ -804,6 +847,10 @@ export default function App() {
             showAssemblyCentroid={showAssemblyCentroid}
             onShowAssemblyCentroidChange={setShowAssemblyCentroid}
             onViewMotorCurves={handleViewMotorCurves}
+            onExportOrk={handleExportOrk}
+            onDownloadMotorFile={handleDownloadMotorFile}
+            exportBusy={exportBusy}
+            exportError={exportError}
           />
         </ResizableSidebar>
       </div>

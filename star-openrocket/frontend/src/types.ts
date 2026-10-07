@@ -1,5 +1,7 @@
 /** Shape of manifest.json, emitted by backend/onshape/build.py. */
 
+import type { Device } from './recovery/types/schema'
+
 export interface Material {
   name: string
   density: number
@@ -378,6 +380,12 @@ export interface FlightDynamicsRequest extends StabilityRequest {
   elevation?: number
   latitude?: number
   longitude?: number
+}
+
+/** POST .../export.ork: the stability selection plus everything the .ork's parachutes
+ *  and simulation carry. `devices` are the recovery wire devices (`toWireConfig`). */
+export interface OrkExportRequest extends FlightDynamicsRequest {
+  devices?: Device[]
 }
 
 export interface OnshapeDocument {

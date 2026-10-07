@@ -108,6 +108,11 @@ export interface StabilityPanelProps {
   onSetRailLength: (m: number) => void
   /** Open the motor-curves popup (thrust / weight / CG over time) for the selected motor. */
   onViewMotorCurves: () => void
+  /** Download the design as an OpenRocket .ork; and the selected motor's curve file. */
+  onExportOrk: () => void
+  onDownloadMotorFile: () => void
+  exportBusy: boolean
+  exportError: string | null
 }
 
 function formatMargin(margin: number | null): string {
@@ -152,6 +157,10 @@ export function StabilityPanel({
   railLength,
   onSetRailLength,
   onViewMotorCurves,
+  onExportOrk,
+  onDownloadMotorFile,
+  exportBusy,
+  exportError,
 }: StabilityPanelProps) {
   const { q, lab, num } = useUnits()
   // Face sets, the motor and its placement, and the rail length are all part of
@@ -300,6 +309,14 @@ export function StabilityPanel({
               </button>
               <button
                 type="button"
+                onClick={onDownloadMotorFile}
+                className={`${btn} px-2 py-0.5`}
+                title="The thrust curve as an .eng/.rse file, for an OpenRocket that does not have this motor"
+              >
+                .eng
+              </button>
+              <button
+                type="button"
                 onClick={() => setPickerOpen((v) => !v)}
                 disabled={readOnly}
                 className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
@@ -443,13 +460,27 @@ export function StabilityPanel({
 
       {/* ── Stability results ── */}
       <section className="border-b border-[var(--color-border)] p-3">
-        <div className="mb-2 flex items-center">
+        <div className="mb-2 flex items-center justify-between">
           <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
             Stability
           </span>
+          <button
+            type="button"
+            onClick={onExportOrk}
+            disabled={!result || exportBusy}
+            className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed disabled:opacity-40`}
+            title={
+              result
+                ? 'OpenRocket .ork with this airframe, fins, CG, motor, parachutes and launch conditions'
+                : 'Compute first'
+            }
+          >
+            {exportBusy ? 'Exporting…' : 'Export .ork'}
+          </button>
         </div>
 
         {error && <p className="mb-2 text-xs text-rose-400">{error}</p>}
+        {exportError && <p className="mb-2 text-xs text-rose-400">{exportError}</p>}
 
         {!result && !error && (
           <p className="text-xs text-[var(--color-text-muted)]">

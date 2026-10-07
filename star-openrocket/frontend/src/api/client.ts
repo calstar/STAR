@@ -13,6 +13,7 @@ import type {
   FlightResult,
   MotorDetail,
   MotorSearchResult,
+  OrkExportRequest,
   OuterSurfaceGuess,
   StabilityRequest,
   StabilityResult,
@@ -143,6 +144,42 @@ export async function computeStability(
   })
   if (!response.ok) await fail(url, response)
   return response.json() as Promise<StabilityResult>
+}
+
+/**
+ * Save a server response as a file. The browser download is driven from a blob so
+ * a 4xx keeps its `detail` (an <a href> to a POST cannot carry the body, and an
+ * error page would download as the file).
+ */
+async function download(url: string, init: RequestInit, fallbackName: string): Promise<string> {
+  const response = await fetch(url, init)
+  if (!response.ok) await fail(url, response)
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName
+  const href = URL.createObjectURL(await response.blob())
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(href)
+  return filename
+}
+
+/** Download the design as an OpenRocket .ork (shape, CP, CG, parachutes, launch conditions). */
+export function exportOrk(modelId: string, request: OrkExportRequest): Promise<string> {
+  return download(
+    `/api/models/${modelId}/export.ork`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) },
+    'rocket.ork',
+  )
+}
+
+/** Download a motor's thrust curve as the .eng/.rse OpenRocket loads. */
+export function downloadMotorFile(motorId: string, simfileId?: string | null): Promise<string> {
+  const query = simfileId ? `?simfileId=${encodeURIComponent(simfileId)}` : ''
+  return download(`/api/motors/${encodeURIComponent(motorId)}/file${query}`, {}, 'motor.eng')
 }
 
 /** Full detail for one motor: every datafile (Full/Basic) with its thrust/mass/CG curves. */
