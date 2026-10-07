@@ -41,8 +41,28 @@ export function seedIdsFrom(nodes: Node[]): void {
   _junction = Math.max(_junction, highest(ids, JUNCTION_RE));
 }
 
-export const nextNodeId = () => `node_${++_node}`;
-export const nextJunctionId = () => `junc_${++_junction}`;
+/**
+ * A random token per tab, ahead of the counter, since copies of the main diagram.
+ *
+ * Two people who copy main and each draw a valve would otherwise both get the
+ * next counter value -- `node_13` in each copy, for two different valves. Fine
+ * while the copies stay apart, but a merge back into main keys on id, and
+ * would read those as one valve edited two ways. The token differs per page
+ * load (36^6, ~2e9 values), so two tabs cannot mint the same id.
+ *
+ * Token plus counter rather than all-random, because the counter is what
+ * `withoutSpendingIds` rolls back: a drag's preview mints exactly the ids the
+ * kept drop will get, frame after frame. Existing ids are never rewritten, and
+ * the `node_` / `junc_` prefixes stay.
+ */
+const TAB = (() => {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('');
+})();
+
+export const nextNodeId = () => `node_${TAB}_${++_node}`;
+export const nextJunctionId = () => `junc_${TAB}_${++_junction}`;
 
 /**
  * Run `f`, and give back what it made with the counters where they were.

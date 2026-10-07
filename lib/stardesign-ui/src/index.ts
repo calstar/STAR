@@ -29,6 +29,7 @@ export type {
   DesignApiConfig,
   DesignMeta,
   DocRef,
+  FeaturedState,
   MicroVersion,
   PayloadCodec,
   ReleaseVersion,

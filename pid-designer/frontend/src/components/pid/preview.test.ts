@@ -387,12 +387,14 @@ describe('a preview is the line letting go draws', () => {
     const g: G = { nodes: [sym('A', 0, 0, ['l', 'r']), sym('B', 400, 0, ['l', 'r'])], edges: [E('A', 'r', 'B', 'l')] };
     const run = drawn(g.edges[0], g);
     const before = nextJunctionId();
-    const n = Number(before.slice('junc_'.length));
+    // `junc_<tab>_<n>`: the counter is the trailing number.
+    const [, stem, count] = /^(.*_)(\d+)$/.exec(before)!;
+    const n = Number(count);
     for (let i = 0; i < 5; i++) {
       const plan = resolveDrop({ kind: 'line', edgeId: 'A-B', at: P(200, 30), dir: P(1, 0), points: run }, P(200, 150 + 10 * i), {}, scene(g));
       expect(previewOf(plan, scene(g), { from: P(200, 30), to: P(200, 150) }).tees).toHaveLength(2);
     }
-    expect(nextJunctionId()).toBe(`junc_${n + 1}`);
+    expect(nextJunctionId()).toBe(`${stem}${n + 1}`);
   });
 });
 

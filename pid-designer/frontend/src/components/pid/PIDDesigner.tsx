@@ -35,7 +35,7 @@ import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
 import * as api from '../../api/diagrams';
 import { designApi, keyOf, refOf } from '../../api/diagrams';
-import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
+import type { DiagramMeta, DocRef, FeaturedState, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
 import { nodeTypes } from './nodes';
 import { manifoldShift } from './nodes/ManifoldNode';
 import { BranchableEdge, CARRY_RADIUS } from './BranchableEdge';
@@ -106,6 +106,21 @@ export type { Snapshot } from '../../api/diagrams';
 const ACTIVE_KEY = 'pid.activeDiagram.v2';
 const LEGACY_ACTIVE_KEY = 'pid.activeDiagramId';
 
+/** Two memories of the open diagram. `localStorage` is "the one you had open
+ *  last time"; `sessionStorage` is "the one this tab has open", which survives a
+ *  reload but not a new tab. The startup pick prefers this tab's, then the
+ *  team's main diagram, then last time's -- so a new tab opens on main and a
+ *  reload stays where you were. */
+function readTabActive(): DocRef | null {
+  try {
+    const raw = sessionStorage.getItem(ACTIVE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as DocRef) : null;
+    return parsed && typeof parsed.id === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function readActive(): DocRef | null {
   try {
     const raw = localStorage.getItem(ACTIVE_KEY);
@@ -122,8 +137,14 @@ function readActive(): DocRef | null {
 
 function writeActive(ref: DocRef | null): void {
   try {
-    if (ref) localStorage.setItem(ACTIVE_KEY, JSON.stringify({ id: ref.id, owner: ref.owner ?? null }));
-    else localStorage.removeItem(ACTIVE_KEY);
+    if (ref) {
+      const value = JSON.stringify({ id: ref.id, owner: ref.owner ?? null });
+      localStorage.setItem(ACTIVE_KEY, value);
+      sessionStorage.setItem(ACTIVE_KEY, value);
+    } else {
+      localStorage.removeItem(ACTIVE_KEY);
+      sessionStorage.removeItem(ACTIVE_KEY);
+    }
     localStorage.removeItem(LEGACY_ACTIVE_KEY);
   } catch {
     /* private mode / storage disabled -- the bar still works, it just forgets */
@@ -1593,6 +1614,9 @@ export function PIDDesigner() {
   const [showChange, setShowChange] = useState(false);
   // Name of a diagram that was unshared out from under us, or null.
   const [unshared, setUnshared] = useState<string | null>(null);
+  // The team's main diagram and whether we may choose it. Null until fetched,
+  // and stays null against a server without one.
+  const [featured, setFeatured] = useState<FeaturedState | null>(null);
 
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
   const saveNowRef        = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -1620,19 +1644,22 @@ export function PIDDesigner() {
       try {
         list = await api.listDiagrams();
       } catch { /* offline - fall through to create */ }
+      void api.getFeatured().then(setFeatured).catch(() => { /* no main: nothing to show */ });
       if (list.length === 0) {
         try {
           list = [await api.createDiagram('Untitled')];
         } catch { /* ignore */ }
       }
-      const remembered = readActive();
-      // Prefer your own diagrams in the fallback: `list` now includes diagrams
-      // shared with you, so list[0] could open someone else's on a machine with
-      // no remembered choice.
-      const match = remembered
-        ? list.find(d => keyOf(refOf(d)) === keyOf(remembered))
-        : undefined;
-      const pick = match ?? list.find(d => d.mine) ?? list[0];
+      const find = (r: DocRef | null) =>
+        r ? list.find(d => keyOf(refOf(d)) === keyOf(r)) : undefined;
+      // This tab's diagram (a reload), then the team's main one (a new tab),
+      // then whatever you had open last time. Prefer your own over list[0] in
+      // the last resort: the list holds other people's diagrams too.
+      const pick = find(readTabActive())
+        ?? list.find(d => d.featured)
+        ?? find(readActive())
+        ?? list.find(d => d.mine)
+        ?? list[0];
       setDiagrams(list);
       setActiveRef(pick ? refOf(pick) : null);
       if (pick) writeActive(refOf(pick));
@@ -1687,14 +1714,35 @@ export function PIDDesigner() {
     adopt(await api.copyDiagram(ref));
   }, [adopt]);
 
+  /** Open a diagram from Change -> Older. It is not in the list (that is why it
+   *  was in Older), so it joins the list for this session. */
+  const openOlder = useCallback((ref: DocRef, meta: DiagramMeta) => {
+    setDiagrams(ds => ds.some(d => keyOf(refOf(d)) === keyOf(ref)) ? ds : [...ds, meta]);
+    selectDiagram(ref);
+  }, [selectDiagram]);
+
+  /** Choose (or, with null, clear) the main diagram. Admins only -- the
+   *  server refuses anyone else. Re-lists, because which row is main and
+   *  which rows we may edit both change. */
+  const featureDiagram = useCallback(async (ref: DocRef | null, owner: string) => {
+    setFeatured(ref ? await api.setFeatured(ref, owner) : await api.clearFeatured());
+    setDiagrams(await api.listDiagrams());
+    setFeatured(await api.getFeatured());
+  }, []);
+
   // Taking the checkout re-loads the diagram first: sitting in read-only while
   // the holder saved leaves a stale view, and editing from there would
   // overwrite their work on the first autosave. The canvas remounts on
   // `reloadKey`, which is the simplest way to make it re-fetch.
   const [reloadKey, setReloadKey] = useState(0);
+  const activeMeta = diagrams.find(d => keyOf(refOf(d)) === activeKey);
+  // Absent from an older server, which only listed what you could edit.
+  const editable = activeMeta?.editable !== false;
   const checkout = useCheckout({
     api: designApi,
     ref: activeRef,
+    // The main diagram, for a non-admin: nothing to take, even locally.
+    editable,
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
     beforeRelease: useCallback(() => saveNowRef.current(), []),
     // On a developer's own machine the checkout has no colleague to protect,
@@ -1742,6 +1790,8 @@ export function PIDDesigner() {
         onSelect={selectDiagram}
         onOpenChange={() => setShowChange(true)}
         checkout={checkout}
+        editable={editable}
+        onCopyActive={async () => { if (activeRef) await copyDiagram(activeRef); }}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -1760,6 +1810,10 @@ export function PIDDesigner() {
           onShare={shareDiagram}
           onLeave={leaveDiagram}
           onCopy={copyDiagram}
+          openToAll={featured?.recentDays ? { recentDays: featured.recentDays } : undefined}
+          onOpen={openOlder}
+          featured={featured}
+          onFeature={featureDiagram}
         />
       )}
 
@@ -1772,9 +1826,10 @@ export function PIDDesigner() {
         footer={<button onClick={() => setUnshared(null)} className={primaryBtn}>OK</button>}
       >
         <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-          "{unshared}" was unshared from you, so it has stopped saving and you have been
-          moved to one of your own diagrams. Nothing was deleted - you can still take a
-          copy of it from <b>Change → View only</b>.
+          You can no longer edit "{unshared}" - it was unshared from you, or an admin
+          made it the team's main diagram - so it has stopped saving and you have been
+          moved to one of your own diagrams. Nothing was deleted, and you can still open
+          or copy it from <b>Change</b>.
         </p>
       </Modal>
       <PIDToolbar

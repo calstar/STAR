@@ -106,6 +106,17 @@ class UserData:
             d.mkdir(parents=True, exist_ok=True)
         return d
 
+    def site_dir(self, *, create: bool = False) -> Path:
+        """``<root>/.site/<app>``: settings that belong to the app, not a user.
+
+        Dot-prefixed so :meth:`all_users` -- which skips dot directories -- can
+        never mistake it for a person.
+        """
+        d = self._root() / ".site" / _sanitize(self.app, fallback=self.app)
+        if create:
+            d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def all_users(self, app: str | None = None) -> list[str]:
         """Every user slug that has data for ``app``, sorted. Never creates anything.
 
