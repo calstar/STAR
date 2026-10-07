@@ -138,6 +138,13 @@ export function axisWidth(labels: (string | null | undefined)[]): number {
  *  Computed here rather than left to uPlot: a log scale over a series with no
  *  positive sample has no range, uPlot lays the axis out from NaN, and the
  *  axis lands hundreds of pixels off the panel. */
+/** `m`×10^`e`, parsed from its decimal literal so it is the nearest double.
+ *  `10 ** -4` is 0.00009999999999999999 on some V8 builds (CI's Node), and a
+ *  decade a hair under itself is a tick the filter drops. */
+export function decade(e: number, m = 1): number {
+  return Number(`${m}e${e}`);
+}
+
 export function logRange(series: number[][]): [number, number] | null {
   let lo = Infinity;
   let hi = -Infinity;
@@ -153,13 +160,13 @@ export function logRange(series: number[][]): [number, number] | null {
   let a = Math.floor(Math.log10(lo));
   let b = Math.ceil(Math.log10(hi));
   if (b <= a) b = a + 1;
-  return [10 ** a, 10 ** b];
+  return [decade(a), decade(b)];
 }
 
 /** A step of 1, 2, 2.5 or 5 times a power of ten near `raw`. */
 export function niceStep(raw: number): number {
   if (!(raw > 0) || !Number.isFinite(raw)) return 1;
-  const p = 10 ** Math.floor(Math.log10(raw));
+  const p = decade(Math.floor(Math.log10(raw)));
   const m = raw / p;
   return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p;
 }
@@ -196,7 +203,7 @@ export function decadeSplits(min: number, max: number, most = 6): number[] {
   const out: number[] = [];
   for (let e = lo; e <= hi; e += step) {
     for (const m of mantissas) {
-      const v = m * 10 ** e;
+      const v = decade(e, m);
       if (v >= min * (1 - 1e-9) && v <= max * (1 + 1e-9)) out.push(v);
     }
   }

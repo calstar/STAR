@@ -22,7 +22,8 @@ from feedtwin.model import (
     measured,
 )
 
-CATALOG_TOML = textwrap.dedent("""
+CATALOG_TOML = textwrap.dedent(
+    """
     ["swagelok-ss-8bk-v51"]
     type = "valve"
     manufacturer = "Swagelok"
@@ -62,7 +63,8 @@ CATALOG_TOML = textwrap.dedent("""
     unit = "m"
     source = "estimated"
     reference = "placeholder; set per instance"
-    """)
+    """
+)
 
 
 @pytest.fixture()
@@ -133,7 +135,9 @@ def test_a_catalog_entry_missing_a_required_parameter_fails_at_load(
 ) -> None:
     """With the parameter named, rather than as a missing key mid-solve."""
     path = tmp_path / "incomplete.toml"
-    path.write_text(textwrap.dedent("""
+    path.write_text(
+        textwrap.dedent(
+            """
             ["half-a-valve"]
             type = "valve"
 
@@ -141,7 +145,9 @@ def test_a_catalog_entry_missing_a_required_parameter_fails_at_load(
             value = 1.0
             unit = "Cv"
             source = "estimated"
-            """))
+            """
+        )
+    )
     catalog = Catalog.from_file(path)
     with pytest.raises(ValueError, match="'bore' is required"):
         catalog.instantiate("SOL-01", "half-a-valve")
@@ -162,14 +168,18 @@ def test_a_part_must_declare_its_type(tmp_path: Path) -> None:
 def test_catalog_params_still_require_a_source(tmp_path: Path) -> None:
     """The rule holds inside a catalog file too, not only in code."""
     path = tmp_path / "sourceless.toml"
-    path.write_text(textwrap.dedent("""
+    path.write_text(
+        textwrap.dedent(
+            """
             ["a-part"]
             type = "pipe"
 
             ["a-part".params.bore]
             value = 0.01
             unit = "m"
-            """))
+            """
+        )
+    )
     with pytest.raises(ValueError, match="missing required field"):
         Catalog.from_file(path)
 
@@ -177,7 +187,9 @@ def test_catalog_params_still_require_a_source(tmp_path: Path) -> None:
 def test_catalogs_layer(tmp_path: Path, catalog: Catalog) -> None:
     """A shipped catalog, a team catalog, a campaign catalog -- in that order."""
     override = tmp_path / "campaign.toml"
-    override.write_text(textwrap.dedent("""
+    override.write_text(
+        textwrap.dedent(
+            """
             ["swagelok-ss-8bk-v51"]
             type = "valve"
             manufacturer = "Swagelok"
@@ -199,7 +211,9 @@ def test_catalogs_layer(tmp_path: Path, catalog: Catalog) -> None:
             unit = "Cv"
             source = "measured"
             reference = "CF-2026-11, after 40 cycles"
-            """))
+            """
+        )
+    )
     catalog.load(override)
     assert catalog.instantiate("SOL-01", "swagelok-ss-8bk-v51").si(
         "Cv"

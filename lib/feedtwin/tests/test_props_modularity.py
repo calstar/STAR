@@ -57,13 +57,17 @@ def test_a_species_can_be_added_at_runtime() -> None:
 def test_a_species_file_can_be_layered_on_top(tmp_path: Path) -> None:
     """A project can ship its own fluid table; later definitions win."""
     table = tmp_path / "extra_species.toml"
-    table.write_text(textwrap.dedent("""
+    table.write_text(
+        textwrap.dedent(
+            """
             [krypton]
             backend_fluid = "Krypton"
             aliases = ["kr"]
             roles = ["pressurant"]
             chain = ["heos"]
-            """))
+            """
+        )
+    )
 
     loaded = load_species_file(table)
     assert [s.name for s in loaded] == ["krypton"]
