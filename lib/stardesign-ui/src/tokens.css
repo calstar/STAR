@@ -1,0 +1,71 @@
+/**
+ * The shared color system for the STAR design tools.
+ *
+ * True black/white/gray, deliberately: every neutral below has R=G=B, so
+ * there is no blue (or any other) cast in any consuming app's chrome.
+ * Semantic color survives on purpose -- danger/warning/success carry real
+ * meaning the way a P&ID's own ink does, and each app's own domain color
+ * (fluid-line identity, chart series, etc.) is a separate decision that
+ * layers on top of this, never replaces it.
+ *
+ * Dark is the default (bare `:root`) so a consuming app that imports this
+ * before anything else never flashes the wrong theme on load; a stored
+ * preference flips `data-theme="light"` on `<html>` before React mounts.
+ * See colorScheme.ts for the toggle that sets the attribute, and
+ * ThemeToggle.tsx for the button that calls it.
+ *
+ * An app adopts this by adding one line to its own index.css:
+ *   @import "../../../lib/stardesign-ui/src/tokens.css";
+ * before its own `@import "tailwindcss"` (or after -- these are custom
+ * properties, not utility classes, so import order relative to Tailwind
+ * itself does not matter). An app is free to override any single value
+ * afterward for a deliberate, documented reason; overriding all of them
+ * defeats the point of sharing this file at all.
+ */
+:root {
+  --color-bg-primary: #0a0a0a;
+  --color-bg-secondary: #111111;
+  --color-bg-tertiary: #1c1c1c;
+  --color-border: #2e2e2e;
+  --color-text-primary: #f2f2f2;
+  --color-text-secondary: #a3a3a3;
+  --color-text-muted: #7a7a7a;
+  /* Deliberately a neutral, not a hue: a solid accent fill needs to read
+     against both a near-black and a near-white ground with the same
+     hardcoded white text (see theme.ts's primaryBtn), so it stays a fixed
+     mid-dark gray in both themes rather than inverting. */
+  --color-accent: #616161;
+  --color-accent-hover: #757575;
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-success: #4ade80;
+  /* Solid-fill variants: for a button whose entire background is this color
+     with hardcoded white text on top (bg-[var(--color-danger-solid)]
+     text-white), never the page-background-adaptive --color-danger above.
+     Those three flip to a *lighter* tint in dark mode for text-on-background
+     contrast, which is exactly wrong once the token IS the background and
+     white text sits on it directly -- white-on-#f87171 is under 3:1. These
+     three stay fixed (dark enough for white text) in both themes, the same
+     reasoning as --color-accent just above. */
+  --color-danger-solid: #dc2626;
+  --color-warning-solid: #b45309;
+  --color-success-solid: #15803d;
+}
+
+:root[data-theme='light'] {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f7f7f7;
+  --color-bg-tertiary: #ececec;
+  --color-border: #dcdcdc;
+  --color-text-primary: #0f0f0f;
+  --color-text-secondary: #525252;
+  --color-text-muted: #6b6b6b;
+  --color-accent: #404040;
+  --color-accent-hover: #262626;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+  --color-success: #16a34a;
+  --color-danger-solid: #dc2626;
+  --color-warning-solid: #b45309;
+  --color-success-solid: #15803d;
+}

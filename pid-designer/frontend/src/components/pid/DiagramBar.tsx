@@ -1,9 +1,8 @@
 import type { DiagramMeta, DocRef } from '../../api/diagrams';
 import { keyOf, refOf } from '../../api/diagrams';
 import { btn } from '../../lib/ui';
-import { CheckoutControl, CheckoutLostDialog } from '@stardesign-ui';
-import type { Checkout } from '@stardesign-ui';
-import type { Theme } from '../../lib/theme';
+import { CheckoutControl, CheckoutLostDialog, ThemeToggle } from '@stardesign-ui';
+import type { Checkout, Theme } from '@stardesign-ui';
 
 interface DiagramBarProps {
   diagrams: DiagramMeta[];
@@ -13,30 +12,6 @@ interface DiagramBarProps {
   checkout: Checkout;
   theme: Theme;
   onToggleTheme: () => void;
-}
-
-/** Sun for "switch to light," moon for "switch to dark" -- the icon shown is
- *  always the theme a click would go *to*, matching how this pairs of icons
- *  is read everywhere else. */
-function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]"
-      title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-    >
-      {theme === 'dark' ? (
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <circle cx="12" cy="12" r="4" strokeWidth={2} />
-          <path strokeLinecap="round" strokeWidth={2} d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-        </svg>
-      ) : (
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-        </svg>
-      )}
-    </button>
-  );
 }
 
 /** A thin strip above the toolbar: pick a diagram, or open the Change dialog to

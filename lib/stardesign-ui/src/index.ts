@@ -16,7 +16,10 @@ export {
 } from './CheckoutControl';
 export { useCheckout } from './useCheckout';
 export { ReadOnlyProvider, useReadOnly, useDisabled } from './readOnly';
-export { btn, primaryBtn, dangerBtn, ghostBtn, relativeTime } from './theme';
+export { btn, primaryBtn, dangerBtn, warningBtn, successBtn, ghostBtn, relativeTime } from './theme';
+export { getStoredTheme, getInitialTheme, applyTheme } from './colorScheme';
+export type { Theme } from './colorScheme';
+export { ThemeToggle } from './ThemeToggle';
 export { createDesignApi, keyOf, refOf, ApiError } from './api';
 export type { Checkout, UseCheckoutOptions } from './useCheckout';
 export type {

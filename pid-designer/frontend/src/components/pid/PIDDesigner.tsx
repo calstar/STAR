@@ -25,10 +25,12 @@ import '@xyflow/react/dist/style.css';
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
 import { DiagramBar } from './DiagramBar';
-import { ChangeModal, ReadOnlyProvider, isLocalHost, useCheckout, useReadOnly } from '@stardesign-ui';
+import {
+  ChangeModal, ReadOnlyProvider, isLocalHost, useCheckout, useReadOnly,
+  applyTheme, getInitialTheme, type Theme,
+} from '@stardesign-ui';
 import { Modal } from '../ui';
 import { primaryBtn } from '../../lib/ui';
-import { applyTheme, getInitialTheme, type Theme } from '../../lib/theme';
 import * as api from '../../api/diagrams';
 import { designApi, keyOf, refOf } from '../../api/diagrams';
 import type { DiagramMeta, DocRef, MicroVersion, ReleaseVersion, Snapshot } from '../../api/diagrams';
