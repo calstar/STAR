@@ -7,6 +7,8 @@ the way out, so neither side has to know the other's naming.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -257,58 +259,44 @@ class TankOut(BaseModel):
     fill_flow_g_s: float = 0.0
 
 
-class StudyTraceOut(BaseModel):
-    """One burn from the COPV study, sampled."""
+class StudyCaseOut(BaseModel):
+    """One study case: the stand with its changes, burned from T-0.
 
-    key: str
-    gas: str
+    Pressures are gauge. ``t`` is from Fire, negative through the lead-in."""
+
     label: str
-    litres: float
-    collapse: bool
-    t: list[float]
-    ox_psi: list[float]
-    fuel_psi: list[float]
-    copv_psi: list[float]
-    chamber_psi: list[float]
-    thrust_n: list[float]
-    converged: list[bool]
+    x: float | None = None
+    changes: list[str] = Field(default_factory=list)
+    t0: dict[str, Any] = Field(default_factory=dict)
+    t: list[float] = Field(default_factory=list)
+    tanks: dict[str, list[float]] = Field(default_factory=dict)
+    bottles: dict[str, list[float]] = Field(default_factory=dict)
+    chamber_psi: list[float] = Field(default_factory=list)
+    thrust_n: list[float] = Field(default_factory=list)
+    converged: list[bool] = Field(default_factory=list)
+    outcome: dict[str, Any] = Field(default_factory=dict)
     depleted_s: float | None = None
+    tripped: str = ""
     failed_ticks: int = 0
-
-
-class StudySweepOut(BaseModel):
-    gas: str
-    litres: float
-    cubic_inches: float
-    floor_psi: float
-    burn_s: float | None = None
-    failed_ticks: int = 0
+    notes: list[str] = Field(default_factory=list)
+    error: str = ""
 
 
 class StudyOut(BaseModel):
-    """Where the COPV study has got to, and what it has produced."""
+    """Where the study has got to, and the cases it has finished."""
 
     running: bool = False
     progress: float = 0.0
     stage: str = ""
     error: str = ""
-    #: Set once a run has finished; absent while one is in flight.
-    bottle_litres: float = 0.0
-    bottle_cubic_inches: float = 0.0
-    traces: list[StudyTraceOut] = Field(default_factory=list)
-    sweep: list[StudySweepOut] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-    #: What the finished result was run with, so the view can label it.
-    gases: list[str] = Field(default_factory=list)
-    #: The engine the study fired: the one selected in the cockpit.
-    engine_id: str = ""
+    stand: str = ""
+    """What it ran on: the stand's name, or the drawing's."""
     engine_name: str = ""
-    bigger: bool = False
-    collapse: bool = False
-    swept: bool = False
-    vapour: bool = False
-    chilldown: float = 0.0
-    line_walls: bool = False
+    sweep: str = ""
+    horizon_s: float = 0.0
+    planned: int = 0
+    cases: list[StudyCaseOut] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class LiveKnobOut(BaseModel):
@@ -432,6 +420,11 @@ class BurnOut(BaseModel):
     tanks: list[BurnTankOut] = Field(default_factory=list)
     engine_model: str = ""
     """``card`` (EngineDesign's engine) or ``simplified`` (feedtwin's own)."""
+    run_id: str = ""
+    """The run this burn was recorded as, once it has ended."""
+    series: dict[str, Any] | None = None
+    """The recorded traces (``t`` from ignition, ``thrust_N``, ``pc_psig``,
+    ``of``, ``tanks``, ``labels``), once recorded."""
 
 
 class BurnsOut(BaseModel):

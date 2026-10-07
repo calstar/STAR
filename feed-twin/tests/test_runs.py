@@ -214,6 +214,16 @@ def test_a_cockpit_burn_is_recorded_once_at_burnout() -> None:
         assert len(series["t"]) == len(series["thrust_N"]) > 10
         assert record["code"]["library"]
 
+        # The Engine tab keeps the burn once the history has rolled past it:
+        # the recorded one, with its run and its traces.
+        live = client.get(f"/api/session/{sid}/burns").json()["burns"]
+        assert [b["run_id"] for b in live] == [listed[0]["id"]]
+        session.history.clear()
+        kept = client.get(f"/api/session/{sid}/burns").json()["burns"]
+        assert len(kept) == 1 and kept[0]["run_id"] == listed[0]["id"]
+        assert kept[0]["impulse_Ns"] == record["outcome"]["impulse_Ns"]
+        assert kept[0]["series"]["thrust_N"] == series["thrust_N"]
+
         # Asked again, nothing new: a burn is recorded once.
         assert client.post(f"/api/session/{sid}/runs", json={}).json() == []
     finally:

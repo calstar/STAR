@@ -76,9 +76,8 @@ from backend.models import (
     ReportOut,
     RunOut,
     SessionOut,
+    StudyCaseOut,
     StudyOut,
-    StudySweepOut,
-    StudyTraceOut,
     SourceDocument,
     StateMachineOut,
     SourceOut,
@@ -104,10 +103,9 @@ from feedtwin.session.report import (
     finite,
 )
 from backend.version import VALIDATION, code_version
+from backend.tunables import TUNABLES
 from backend.tunables import describe as describe_tunables, parse_setup, wire_setup
-from backend.study import DIAGRAMS as STUDY_DIAGRAMS
-from backend.study import StudyRequest, StudyRunner
-from backend.study import find_diagram as find_study_diagram
+from backend.study import StudyCase, StudyRequest, StudyRunner
 from backend.statemachine import available as sm_available, bind, load_machine
 from backend import runs as run_records
 from backend import userdata
@@ -271,7 +269,11 @@ def _cea_for(engine: EngineDesign) -> str:
 
 
 def _assemble(
-    diagram_id: str, engine_id: str, fluid_set: str, multiphase: bool = False
+    diagram_id: str,
+    engine_id: str,
+    fluid_set: str,
+    multiphase: bool = False,
+    swap: Mapping[str, tuple[str, float]] | None = None,
 ) -> Model:
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
@@ -288,7 +290,7 @@ def _assemble(
             library,
             diagram_id,
             engine_id=engine_id,
-            fluid_swap=FLUID_SETS[fluid_set],
+            fluid_swap={**FLUID_SETS[fluid_set], **dict(swap or {})},
             cea_resolver=_cea_for,
             multiphase=multiphase,
         )
@@ -800,9 +802,10 @@ def _stand(
     fluid_set: str,
     machine: str,
     multiphase: bool = False,
+    swap: Mapping[str, tuple[str, float]] | None = None,
 ) -> "Stand":
     """A model with the stand's state machine bound to its valves."""
-    model = _assemble(diagram, engine, fluid_set, multiphase)
+    model = _assemble(diagram, engine, fluid_set, multiphase, swap)
     try:
         loaded = load_machine(machine)
     except (OSError, ValueError) as exc:
@@ -939,9 +942,15 @@ class _Opened:
     recorded: set[float] = field(default_factory=set)
     """Burn start times already recorded, so a rewind past one and a second
     falling edge does not record it twice."""
+    kept: list[dict[str, Any]] = field(default_factory=list)
+    """The recorded burns, ``{run_id, outcome, series}``, newest last: the
+    Engine tab keeps showing a burn after it leaves the session's history."""
 
 
 _OPENED: dict[str, _Opened] = {}
+
+#: Recorded burns a session keeps for its Engine tab.
+KEPT_BURNS = 20
 
 
 def _setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
@@ -1162,104 +1171,130 @@ _STUDY = StudyRunner()
 
 def _study_out() -> StudyOut:
     runner = _STUDY
-    result = runner.result
     request = runner.request
-    out = StudyOut(
+    cases = runner.result.cases if runner.result is not None else list(runner.partial)
+    return StudyOut(
         running=runner.running,
         progress=round(runner.progress, 3),
         stage=runner.stage,
         error=runner.error,
-        gases=list(request.gases) if request else [],
-        engine_id=runner.engine.get("id", ""),
-        engine_name=runner.engine.get("name", ""),
-        bigger=bool(request and request.bigger),
-        collapse=bool(request and request.collapse),
-        swept=bool(request and request.sweep),
-        vapour=bool(request and request.vapour),
-        chilldown=float(request.chilldown) if request else 0.0,
-        line_walls=bool(request and request.line_walls),
+        stand=request.stand if request else "",
+        engine_name=request.engine_name if request else "",
+        sweep=request.sweep if request else "",
+        horizon_s=request.horizon_s if request else 0.0,
+        planned=len(request.cases) if request else 0,
+        cases=[StudyCaseOut(**asdict(c)) for c in cases],
+        notes=list(runner.result.notes) if runner.result is not None else [],
     )
-    if result is not None:
-        out.bottle_litres = result.bottle_litres
-        out.bottle_cubic_inches = result.bottle_cubic_inches
-        out.notes = list(result.notes)
-        out.traces = [StudyTraceOut(**asdict(t)) for t in result.traces]
-        out.sweep = [StudySweepOut(**asdict(p)) for p in result.sweep]
+
+
+def _study_outcome(session: Session) -> dict[str, Any]:
+    """The study case's burn, totalled as the Engine tab and a run total it."""
+    history = list(session.history)
+    found = find_burns(history, find_probes(session).injector_inlet)
+    if not found:
+        return {}
+    longest = max(found, key=lambda b: b.duration_s)
+    model_kind = str(session.model.meta.get("engine_model", ""))
+    out = _burn_out(session, history, longest, model_kind).model_dump()
+    out.pop("series", None)
     return out
 
 
 @app.get("/api/study")
 async def study_status() -> StudyOut:
-    """Where the COPV study has got to, and its last result."""
+    """Where the study has got to, and the cases it has finished."""
     return _study_out()
 
 
 @app.post("/api/study")
 async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
-    """Run the COPV sizing study.
+    """Run a study on the stand a cockpit session has open.
 
-    Minutes, not seconds -- see :mod:`backend.study` for why accuracy costs wall
-    clock here. Started on a worker and collected by polling this endpoint.
+    ``{"session": id, "cases": [...], "horizon_s": s, "sweep": "what x is"}``.
+    Every case starts from the session's stand as it is now -- drawing,
+    engine, settings, hookup, knobs -- with the case's changes on top
+    (:class:`backend.study.StudyCase`). Minutes, not seconds; collected by
+    polling this endpoint.
     """
     settings = dict(body or {})
-    # `or` would be wrong here: an explicitly empty list is a mistake worth
-    # reporting, not a request for the default pair.
-    asked = settings.get("gases")
-    gases = tuple(str(g) for g in asked) if asked is not None else ("gn2", "he")
-    if not gases:
-        raise HTTPException(status_code=422, detail="pick at least one gas")
-    unknown = [g for g in gases if g not in STUDY_DIAGRAMS]
+    session_id = str(settings.get("session") or "")
+    if not session_id:
+        raise HTTPException(
+            status_code=422, detail="Open a stand in the cockpit first."
+        )
+    session = _session(session_id)
+    opened = _OPENED.get(session_id)
+    if opened is None:
+        raise HTTPException(
+            status_code=409, detail="Reset the stand, then run the study."
+        )
+    if session.model.engine is None:
+        raise HTTPException(
+            status_code=422,
+            detail="No engine on this stand: pick one in Library and the study fires it.",
+        )
+    raw_cases = settings.get("cases")
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise HTTPException(status_code=422, detail="Add at least one case.")
+    if len(raw_cases) > 40:
+        raise HTTPException(status_code=422, detail="40 cases at most in one study.")
+    try:
+        cases = tuple(StudyCase.parse(c, i) for i, c in enumerate(raw_cases))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    known = set(session.knobs) | {DOME}
+    stray = sorted({k for c in cases for k in c.knobs} - known)
+    if stray:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No knob {', '.join(stray)} on this stand. Knobs: "
+            f"{', '.join(sorted(known)) or 'none'}.",
+        )
+    keys = {t.key for t in TUNABLES}
+    unknown = sorted({k for c in cases for k in c.setup} - keys)
     if unknown:
         raise HTTPException(
-            status_code=422,
-            detail=f"no drawing for {', '.join(unknown)}. "
-            f"Known: {', '.join(sorted(STUDY_DIAGRAMS))}",
+            status_code=422, detail=f"No Configuration row {', '.join(unknown)}."
         )
-    missing = [
-        name
-        for gas, name in STUDY_DIAGRAMS.items()
-        if gas in gases and find_study_diagram(library, gas) is None
-    ]
-    if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f"the study drawings are not in the library: {', '.join(missing)}",
-        )
-    # The engine selected in the cockpit, always. It used to be whichever
-    # engine was imported last, silently: a drilled 6800N upload would quietly
-    # become the engine every later study burned.
-    engine_id = str(settings.get("engine") or "")
-    if not engine_id:
-        raise HTTPException(
-            status_code=422,
-            detail="No engine selected: pick one in Library and the study fires it.",
-        )
+    horizon = min(max(float(settings.get("horizon_s") or 20.0), 1.0), 120.0)
+    base = {
+        "diagram": opened.diagram,
+        "engine": opened.engine,
+        "fluid_set": opened.fluid_set,
+        "machine": opened.machine,
+        "multiphase": opened.multiphase,
+        "setup": wire_setup(session.setup),
+        "hookup": session.hookup.to_dict() if session.hookup is not None else {},
+        "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
+    }
+    engine_name = opened.engine
     try:
-        engine = library.get(engine_id)
-    except LibraryError as exc:
-        raise HTTPException(status_code=404, detail=f"No engine {engine_id!r}") from exc
-    if engine.kind != "engine":
-        raise HTTPException(status_code=422, detail=f"{engine.name} is not an engine")
-    design = engine_from_bytes(library.path(engine.id).read_bytes(), name=engine.name)
+        engine_name = library.get(opened.engine).name
+    except LibraryError:
+        pass
+    stand = (opened.stand or {}).get("name") or ""
+    if not stand:
+        try:
+            stand = library.get(opened.diagram).name
+        except LibraryError:
+            stand = opened.diagram
     request = StudyRequest(
-        gases=gases,
-        bigger=bool(settings.get("bigger")),
-        collapse=bool(settings.get("collapse")),
-        sweep=bool(settings.get("sweep")),
-        vapour=bool(settings.get("vapour")),
-        chilldown=min(max(float(settings.get("chilldown") or 0.0), 0.0), 5000.0),
-        line_walls=bool(settings.get("line_walls")),
+        base=base,
+        cases=cases,
+        horizon_s=horizon,
+        sweep=str(settings.get("sweep") or ""),
+        stand=str(stand),
+        engine_name=engine_name,
     )
-    if not _STUDY.start(
-        library, engine.id, _cea_for(design), request, engine_name=engine.name
-    ):
+    if not _STUDY.start(request, _session_from_inputs, _study_outcome):
         raise HTTPException(status_code=409, detail="a study is already running")
     return _study_out()
 
 
 @app.post("/api/study/cancel")
 async def cancel_study() -> StudyOut:
-    """Stop the run at its next case boundary, keeping what it has."""
+    """Stop at the end of the case running now, keeping the ones finished."""
     _STUDY.cancel()
     return _study_out()
 
@@ -1533,13 +1568,33 @@ async def session_burns(session_id: str) -> BurnsOut:
     if session.model.engine is None:
         return BurnsOut(engine_id="", engine_model="", burns=[])
     inlets = find_probes(session).injector_inlet
+    live = [
+        _burn_out(session, history, burn, model_kind)
+        for burn in find_burns(history, inlets)
+    ]
+    # A recorded burn carries its run and its traces, and stays listed after
+    # the history has rolled past it.
+    opened = _OPENED.get(session_id)
+    kept = {
+        round(float(k["outcome"]["start_s"]), 3): k
+        for k in (opened.kept if opened else [])
+    }
+    burns: list[BurnOut] = []
+    for out in live:
+        found = kept.pop(round(out.start_s, 3), None)
+        if found is not None:
+            out = out.model_copy(
+                update={"run_id": found["run_id"], "series": found["series"]}
+            )
+        burns.append(out)
+    burns.extend(
+        BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
+        for k in kept.values()
+    )
     return BurnsOut(
         engine_id=session.model.report.engine,
         engine_model=model_kind,
-        burns=[
-            _burn_out(session, history, burn, model_kind)
-            for burn in find_burns(history, inlets)
-        ],
+        burns=sorted(burns, key=lambda b: b.start_s),
     )
 
 
@@ -1860,6 +1915,14 @@ def _record_burns(
         owner = opened.stand["owner"] if opened.stand else opened.user
         saved.append(run_records.store.save(owner, record))
         opened.recorded.add(key)
+        opened.kept.append(
+            {
+                "run_id": record["id"],
+                "outcome": record["outcome"],
+                "series": record["series"],
+            }
+        )
+        del opened.kept[:-KEPT_BURNS]
     return saved
 
 
@@ -1880,23 +1943,27 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
         _log.exception("run not recorded for session %s", session.id)
 
 
-def _replay(
-    inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
-) -> tuple[dict[str, float], list[str]]:
-    """One run's inputs, burned headless from its T-0: the ladder's rung.
+def _session_from_inputs(
+    inputs: Mapping[str, Any], pressurant: str | None = None
+) -> Session:
+    """A fresh session on the stand a run record (or a study) describes: its
+    drawing, engine, fluids, settings, hookup and knobs, in Idle, the
+    automatic vent at burnout off.
 
-    The record's settings, hookup and knobs, its tanks loaded to their T-0
-    mass, primed at their mean T-0 pressure and settled by the regulators, the
-    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion. The
-    cockpit's automatic vent at burnout is off: it would act after the window
-    being compared.
+    ``pressurant`` swaps the gas in the bottle and the press lines (helium or
+    nitrogen, whichever the drawing has) for the other, at 293 K.
     """
+    swap: dict[str, tuple[str, float]] = {}
+    if pressurant:
+        other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
+        swap = {other: (pressurant, 293.15)}
     stand = _stand(
         str(inputs["diagram"]),
         str(inputs.get("engine") or ""),
         str(inputs.get("fluid_set") or "hotfire"),
         str(inputs.get("machine") or "diablo"),
         bool(inputs.get("multiphase")),
+        swap,
     )
     raw = inputs.get("hookup")
     drawn, _ = _hookup_for(str(inputs["diagram"]), stand.model)
@@ -1916,6 +1983,21 @@ def _replay(
     for knob, value in dict(inputs.get("knobs") or {}).items():
         if knob in session.knobs:
             session.knobs[knob] = float(value)
+    return session
+
+
+def _replay(
+    inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
+) -> tuple[dict[str, float], list[str]]:
+    """One run's inputs, burned headless from its T-0: the ladder's rung.
+
+    The record's settings, hookup and knobs, its tanks loaded to their T-0
+    mass, primed at their mean T-0 pressure and settled by the regulators, the
+    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion. The
+    cockpit's automatic vent at burnout is off: it would act after the window
+    being compared.
+    """
+    session = _session_from_inputs(inputs)
     t0 = dict(inputs.get("t0") or {})
     tanks = {k: v for k, v in dict(t0.get("tanks") or {}).items() if k in session.tanks}
     pressures = [float(v["psig"]) for v in tanks.values()]

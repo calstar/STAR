@@ -136,6 +136,14 @@ REVERSE_STIFFNESS = 1.0e10
 #: setpoint plus creep, as it always was. See :meth:`Regulator.lockup_pressure`.
 LOCKUP_SUPPLY_SIGNAL = "lockup_follows_supply"
 
+#: Signal carrying the inlet pressure a regulator's set point was adjusted at
+#: [Pa abs], for a regulator whose drawing gives a supply coefficient but no
+#: ``inlet_reference``. Without a datum the supply term is silently zero
+#: (:meth:`Regulator.validate` says so); the session sends the bottle's charge
+#: pressure when ``Setup.regulator_supply_datum`` is on. A drawn
+#: ``inlet_reference`` always wins.
+SUPPLY_DATUM_SIGNAL = "regulator_supply_datum"
+
 #: Signal that turns on the compressible seat, its value the xT a regulator
 #: that declares none takes. Opt-in (``Setup.regulator_compressible_seat``);
 #: absent or zero, the seat is the incompressible Cv law, as it always was.
@@ -193,11 +201,23 @@ class Regulator(HydraulicComponent):
             return dome + bias
         return self.p["setpoint"]
 
+    def supply_reference(self, flow: FlowConditions) -> float:
+        """The inlet pressure the supply term is measured from [Pa abs].
+
+        The drawing's ``inlet_reference`` when it gives one; otherwise the
+        datum the session sends (:data:`SUPPLY_DATUM_SIGNAL`), and zero -- no
+        supply term -- when it sends none.
+        """
+        drawn = self.p.get("inlet_reference", 0.0)
+        if drawn > 0.0:
+            return drawn
+        return self.signal(flow, SUPPLY_DATUM_SIGNAL, 0.0)
+
     def outlet_setpoint(self, mdot: float, flow: FlowConditions) -> float:
         """The pressure this regulator is trying to hold right now [Pa]."""
         p_set = self.commanded_setpoint(flow)
         supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.p.get("inlet_reference", 0.0)
+        reference = self.supply_reference(flow)
         droop = self.p.get("flow_droop", 0.0)
         rated = self.p.get("rated_flow", 0.0)
 
@@ -602,7 +622,7 @@ class CurveRegulator(Regulator):
         # one inlet pressure, and the correction to another is exactly what the
         # supply coefficient is for.
         supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.p.get("inlet_reference", 0.0)
+        reference = self.supply_reference(flow)
         if reference > 0.0:
             target += supply * (reference - flow.p_upstream)
         return target

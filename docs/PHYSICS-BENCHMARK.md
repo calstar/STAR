@@ -882,7 +882,7 @@ minutes: the leak reaches the ullage only through the dry wall. So
 ~40 % fill, where it is 5 psi in three minutes. Burns do not move: LE4 GN2 6,255 N
 (-2 N), helium unchanged, Tier 2.1 identical.
 
-**The Study keeps the old closures** (`backend/study.py` sets `stratification=False`,
+**The benchmark study keeps the old closures** (`backend/benchmark_study.py` sets `stratification=False`,
 `boiling_onset_K=0`, `chilldown_nucleate=0`): its tanks are primed chilled and the Tier 2
 expectations were set with a well-mixed liquid. Turn them on there deliberately, with a
 fresh baseline — with them on, the line-wall check `test_wall_heat_reaches_the_ullage` went
@@ -1017,6 +1017,27 @@ LN2 at 77 K is 14 K above the triple point — but a chilldown model that strays
 Re-check on any CoolProp upgrade: `lib/feedtwin/tests/test_props_chain.py`, whose
 `PAST_THE_TABLES` documents the window.
 
+
+### 4.11 A coefficient with no datum
+
+A regulator's supply-pressure effect is ``S (p_ref - p_in)``: a coefficient *and* the inlet
+pressure it is measured from. The LE4 drawings declare the 1092's 14.7 psi per 1000 psi and
+no `inlet_reference`, and with no datum the term was zero -- quietly, apart from one validator
+line -- so an LE4 burn held its tanks flat (488 -> 471 psig) while the bottle fell 3,700 psi,
+where TB 1031 puts the outlet ~55 psi higher. The operator read it straight off the plot: "it
+seems like it's totally ignoring the supply pressure effect".
+
+`Setup.regulator_supply_datum` (on in the cockpit, a Configuration row, off in `burn_setup`)
+measures the term from the COPV charge, `copv_target_psi`, for a regulator whose drawing gives
+a coefficient and no datum: the knob is set against a full bottle. The session says so in its
+assumptions. A drawn datum always wins, and against a drawing with a datum or with no supply
+coefficient it changes nothing (`lib/feedtwin/tests/test_regulator_supply_datum.py`, both
+halves). LE4 (5) on the drilled 6800N: tanks 500 -> 509 psig after ignition instead of
+488 -> 471, thrust 6,204 -> 6,379 N instead of 6,194 -> 5,981 N; the climb flattens as the
+bottle nears 770 psig and the regulator runs out of drop. The Tier 2 study drawings declare
+their datum (4,500 psig), so the benchmark does not move.
+
+When a declared coefficient seems to do nothing, check its datum before the solver.
 ---
 
 ## Reporting

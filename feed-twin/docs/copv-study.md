@@ -9,7 +9,9 @@ and helium?
 ignition and is back above it within two seconds. Neither reaches blowdown — the
 propellant runs out first, with 15–22% of the charge still in the bottle.
 
-Run it from the **Study** tab, or call `POST /api/study`.
+Run it with `backend.benchmark_study.run_study` (it is the benchmark's fixed
+study, not the Study tab: the Study tab burns whatever stand the cockpit has
+open, at its own settings).
 
 ## The hardware
 

@@ -39,7 +39,7 @@ export const VIEWS = [
   { path: '/engine', label: 'Engine', hint: 'What the engine did: the burn totalled, its traces, and what set O/F', accent: '#F39C12' },
   { path: '/runs', label: 'Runs', hint: 'Every burn fired, kept with what it ran on: compare two, and see which input moved the answer', accent: '#14B8A6' },
   { path: '/solver', label: 'Solver', hint: 'Residuals, continuity, chamber closure and the mass balance, tick by tick', accent: '#64748B' },
-  { path: '/study', label: 'Study', hint: 'COPV sizing: run it, get the curves', accent: '#22C55E' },
+  { path: '/study', label: 'Study', hint: 'Your stand, burned from T-0 once per case: change the COPV, a knob, the bottle, the load, or sweep one', accent: '#22C55E' },
   { path: '/library', label: 'Library', hint: 'Import drawings and engines', accent: '#9B59B6' },
   { path: '/report', label: 'Report', hint: 'What was read, what was assumed', accent: '#22D3EE' },
 ] as const;
@@ -50,7 +50,7 @@ function Nav() {
   const warnings = model?.report.warnings.length ?? 0;
 
   return (
-    <nav className="flex flex-shrink-0 items-stretch gap-1 border-b border-gray-800 bg-black/30 px-3">
+    <nav className="flex flex-shrink-0 items-stretch gap-1 overflow-x-auto border-b border-gray-800 bg-black/30 px-3">
       {VIEWS.map((v) => {
         const active = pathname === v.path;
         return (
@@ -58,7 +58,7 @@ function Nav() {
             key={v.path}
             to={v.path}
             title={v.hint}
-            className={`relative px-4 py-2 text-[13px] font-semibold tracking-wide transition-colors ${
+            className={`relative shrink-0 whitespace-nowrap px-3 py-2 text-[13px] font-semibold tracking-wide transition-colors xl:px-4 ${
               active ? 'text-white' : 'text-gray-500 hover:text-gray-300'
             }`}
           >
