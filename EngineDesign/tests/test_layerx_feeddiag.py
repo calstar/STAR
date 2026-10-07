@@ -757,8 +757,28 @@ def test_diagnostics_on_the_recorder_shape():
 
 @pytest.mark.skipif(os.environ.get("LAYERX_GOLDEN") != "1", reason="slow LE4 burn: set LAYERX_GOLDEN=1 to run it")
 def test_feed_diagnostics_on_the_le4_helium_burn(monkeypatch):
-    """The baseline design on copv_study_he, pad, default settings, with lib/feedtwin's network
-    recorder on, against the hand checks of AUDIT 9.6-9.7 and the baseline (section 8)."""
+    """The baseline design on copv_study_he, pad, at AUDIT 9.6's 578 psia lockup and otherwise
+    default settings, with lib/feedtwin's network recorder on, against the hand checks of AUDIT
+    9.6-9.7 and the baseline (section 8).
+
+    Re-baselined 2026-10-07. The AUDIT's figures are the 2026-10-02 twin: adiabatic lines, the
+    578 psia lockup the default was then. Three things have moved them since, each deliberate:
+
+    * 2026-10-03 (night), line walls on (Layer X CHANGELOG): the press path's metal warms the gas
+      the bottle's expansion cooled, so each ullage litre takes less helium. He used 0.0906 ->
+      0.0818 kg; the bottle ends ~220 psi fuller, so the regulator's supply effect (17 psi/1000
+      psi of inlet fall) is ~3.8 psi smaller and its outlet rise 47.1 -> 43.86 psi; the press flow
+      at 0.5 s is 0.01105 kg/s of 304 K gas, not 0.01121 of 298 K, so the solenoid drops are
+      1.704 / 1.393 psi (hand, Cv law at the twin's state: 1.7045 / 1.3935) and the regulator's
+      peak use 14.3 %, not the AUDIT's 17.8 %.
+    * 2026-10-06, the ullage storage closure (a35563ce, ``Session._ullage_storage``): the
+      momentum ratio's range 1.0283-1.0312 -> 1.0285-1.0315 (the press flow no longer held at the
+      start-of-step tank pressure); with the closure stubbed out it returns, as does SV-LOX-PRESS's
+      0.1 % (1.7060 -> 1.7045). The supply datum (35b98bf2) moves nothing here.
+    * 2026-10-07, the dome dial defaults to the drawn dome (b67edc93): 564.7 psia on this drawing.
+      At that lockup every figure here moves (SV-LOX-PRESS 1.609 psi: 4.0 % less helium, 2.4 %
+      thinner, dp ~ mdot^2/rho), and thrust never comes within 2 % of 7.2 kN. The lockup is stated
+      below so the hand checks stay at the point they were made."""
     import dataclasses
     import importlib.util
     from pathlib import Path
@@ -783,7 +803,8 @@ def test_feed_diagnostics_on_the_le4_helium_burn(monkeypatch):
     drawing = lb.find_drawing("copv_study_he")
     cfg = copy.deepcopy(config)
     runner = PintleEngineRunner(cfg)
-    prep = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id), [])
+    # AUDIT 9.6 A, Method: lockup 578 psia (not the drawn dome's 564.7, the default since 2026-10-07)
+    prep = prepare(cfg, runner, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=578.0), [])
     result = run_prepared(prep, runner=runner, replay=True, config=cfg)
     if not isinstance(result.get("network"), dict) or "nodes" not in result["network"]:
         result["network"] = fb.network_record(traces[-1])
@@ -794,30 +815,32 @@ def test_feed_diagnostics_on_the_le4_helium_burn(monkeypatch):
         assert not (isinstance(block, dict) and block.get("available") is False), (key, block)
     t = result["series"]["t"]
     k05 = min(range(len(t)), key=lambda i: abs(t[i] - 0.5))
-    # ladder: closes on node values; AUDIT 9.6 B2 at 0.5 s
+    # ladder: closes on node values; AUDIT 9.6 B2 at 0.5 s (1.72 / 1.42 there; 2026-10-07: see docstring)
     for side in ("ox", "fuel"):
         assert d["ladder"][side]["closes"], d["ladder"][side]["max_abs_residual_psi"]
     sol = {r["id"]: r for r in d["solenoids"]}
-    assert sol["SV_LOX_PRESS"]["dp_psi"][k05] == pytest.approx(1.72, abs=0.03)
-    assert sol["SV_FUEL_PRESS"]["dp_psi"][k05] == pytest.approx(1.42, abs=0.03)
+    assert sol["SV_LOX_PRESS"]["dp_psi"][k05] == pytest.approx(1.704, abs=0.03)
+    assert sol["SV_FUEL_PRESS"]["dp_psi"][k05] == pytest.approx(1.393, abs=0.03)
     assert sol["SV_LOX_PRESS"]["dp_iec_psi"][k05] == pytest.approx(sol["SV_LOX_PRESS"]["dp_psi"][k05], rel=0.01)
-    # regulator: on its drawn law; outlet rise is the supply effect less the droop (AUDIT C2: +47.1)
+    # regulator: on its drawn law; outlet rise is the supply effect less the droop (AUDIT C2: +47.1,
+    # adiabatic; 2026-10-07: +43.86 = SPE 44.66 - droop 0.80, line walls on)
     reg = d["regulator"]
     assert max(abs(x) for x, f in zip(reg["residual_psi"], result["series"]["firing"]) if f) < 0.05
-    assert reg["rise"]["outlet_rise_psi"] == pytest.approx(47.1, abs=0.5)
-    assert not reg["any_wide_open"] and 0.15 < reg["use_frac_max"] < 0.25
-    # pressurant: AUDIT 8 (0.0906 kg He used); helium warms across the regulator, as the twin walks it
+    assert reg["rise"]["outlet_rise_psi"] == pytest.approx(43.86, abs=0.5)
+    assert not reg["any_wide_open"] and reg["use_frac_max"] == pytest.approx(0.143, abs=0.005)
+    # pressurant: AUDIT 8 (0.0906 kg He used, adiabatic; 0.0818 with line walls, CHANGELOG
+    # 2026-10-03 night); helium warms across the regulator, as the twin walks it
     pr = d["pressurant"]
-    assert pr["species"] == "helium" and pr["used_kg"] == pytest.approx(0.0906, abs=0.001)
+    assert pr["species"] == "helium" and pr["used_kg"] == pytest.approx(0.0818, abs=0.001)
     live = [(a, b) for a, b, f in zip(pr["jt_dT_K"], pr["twin_dT_K"], result["series"]["firing"]) if f]
     assert all(a > 0 for a, _ in live) and max(abs(a - b) for a, b in live) < 0.05
     assert pr["margin_kg"] > 0
     # saturation and cavitation: AUDIT 9.5 4 (LOX >= ~540 psi of margin); K well above K_crit
     assert min(r["min_psi"] for r in d["saturation"]["nodes"] if r["side"] == "ox") > 500.0
     assert not d["cavitation"]["ox"]["cavitates"] and 3.0 < d["cavitation"]["ox"]["min_K"] < 4.0
-    # injector: AUDIT ledger #18, R 1.0311 -> 1.0279
+    # injector: AUDIT ledger #18, R 1.0311 -> 1.0279 (1.0315 -> 1.0285 since the 2026-10-06 ullage storage closure)
     lo, hi = d["injector"]["range"]["momentum_ratio"]
-    assert lo == pytest.approx(1.0279, abs=5e-4) and hi == pytest.approx(1.0311, abs=5e-4)
+    assert lo == pytest.approx(1.0285, abs=5e-4) and hi == pytest.approx(1.0315, abs=5e-4)
     # thrust shape: AUDIT 1 #5 / 9.7 #11 -- 29 steps within 2 % of 7.2 kN, first at 2.90 s
     ts = d["thrust_shape"]
     assert ts["t_first_at_target"] == pytest.approx(2.90, abs=0.051)
