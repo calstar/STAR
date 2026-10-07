@@ -14,9 +14,15 @@
  * HELD marks a valve a hand has taken from the state machine -- the one thing
  * a twin knows that a stand does not say -- and the header offers to hand
  * them all back.
+ *
+ * The ⋯ hides valves nobody is watching today. A hidden valve still shows
+ * while it is open or held: a valve you cannot see is not a valve you can
+ * forget is open.
  */
 
 import type { ModelView, SessionState, StateMachine } from '../api';
+import { groupByPage } from '../lib/pages';
+import PanelMenu from './PanelMenu';
 
 interface Props {
   model: ModelView;
@@ -25,12 +31,29 @@ interface Props {
   onSet: (id: string, open: boolean) => void;
   onRelease: () => void;
   locked?: boolean;
+  hidden?: string[];
+  onToggleHidden?: (id: string) => void;
+  onAllHidden?: (show: boolean) => void;
 }
 
-export default function ActuatorGrid({ model, machine, live, onSet, onRelease, locked = false }: Props) {
+export default function ActuatorGrid({
+  model,
+  machine,
+  live,
+  onSet,
+  onRelease,
+  locked = false,
+  hidden = [],
+  onToggleHidden,
+  onAllHidden,
+}: Props) {
   const roleOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(machine?.bound ?? {})) roleOf[symbol] = actuator;
   const opened = model.actuators.filter((a) => live.open[a.id]).length;
+  const urgent = (id: string) => (live.open[id] ?? false) || live.held.includes(id);
+  const drawn = model.actuators.filter((a) => !hidden.includes(a.id) || urgent(a.id));
+  // The menu lists them by sheet; the grid does not split.
+  const listed = groupByPage(model.actuators, model.actuators, (a) => a.id, model.pages);
 
   return (
     <div className="flex flex-col">
@@ -50,10 +73,26 @@ export default function ActuatorGrid({ model, machine, live, onSet, onRelease, l
           <span className="font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--ink-2)]">
             {opened} open
           </span>
+          {onToggleHidden && onAllHidden && (
+            <PanelMenu
+              title="Actuators"
+              items={listed.flatMap((g) =>
+                g.items.map((a) => ({
+                  id: a.id,
+                  label: roleOf[a.id] ?? a.tag,
+                  forced: urgent(a.id) ? 'Open or held, so it shows anyway' : undefined,
+                  page: g.page,
+                })),
+              )}
+              hidden={hidden}
+              onToggle={onToggleHidden}
+              onAll={onAllHidden}
+            />
+          )}
         </span>
       </div>
       <div className="grid grid-cols-4 gap-2">
-        {model.actuators.map((a) => {
+        {drawn.map((a) => {
           const open = live.open[a.id] ?? false;
           const held = live.held.includes(a.id);
           const role = roleOf[a.id];

@@ -102,6 +102,9 @@ class ModelView(BaseModel):
     fluid_sets: list[str]
     report: ReportOut
     engine: dict[str, object] = Field(default_factory=dict)
+    # Which sheet of the drawing each node is on, by node id. The console
+    # splits its panels by it when a stand spans more than one.
+    pages: dict[str, str] = Field(default_factory=dict)
 
 
 class Channel(BaseModel):
