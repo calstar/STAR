@@ -61,7 +61,7 @@ function Number_({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="caps text-[11px]">{label}</span>
       <span className="flex items-baseline gap-1.5">
         <input
           type="number"
@@ -122,7 +122,7 @@ export function Gse() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <section>
-        <h2 className="mb-1 text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="mb-1 caps">
           Hand-loaded regulators
         </h2>
         <div className="bg-card flex flex-wrap items-start justify-around gap-8 rounded-xl border border-gray-800 px-6 py-5">
@@ -175,7 +175,7 @@ export function Gse() {
       </section>
 
       <section>
-        <h2 className="mb-1 text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="mb-1 caps">
           The cart
         </h2>
         <div className="bg-card flex flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3">

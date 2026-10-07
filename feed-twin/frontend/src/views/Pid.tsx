@@ -49,7 +49,7 @@ export function Pid() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-shrink-0 flex-wrap items-baseline gap-3 px-4 py-2">
-        <span className="text-sm font-bold uppercase tracking-wider text-text-muted">
+        <span className="caps">
           {title}
         </span>
         {stand && live ? (
