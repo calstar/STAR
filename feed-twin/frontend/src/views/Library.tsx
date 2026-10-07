@@ -6,7 +6,7 @@ export function Library() {
   return (
     <div className="mx-auto max-w-5xl p-4">
       <div className="bg-card rounded-lg border border-gray-800">
-        <h2 className="border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
           Library
           <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
             drawings and engine configs, addressed by the hash of their own bytes

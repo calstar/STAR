@@ -15,11 +15,11 @@ interface Props {
 
 export default function TripOverlay({ message, onReset }: Props) {
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="mx-6 max-w-xl rounded-xl border-2 border-red-700 bg-[#160a0a] px-8 py-6 shadow-2xl">
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80">
+      <div className="mx-6 max-w-xl border border-[var(--color-danger)] bg-black px-8 py-6">
         <div className="mb-2 flex items-center gap-3">
           <span className="h-3 w-3 animate-pulse rounded-full bg-red-500" />
-          <h2 className="text-lg font-bold uppercase tracking-widest text-red-400">Overpressure</h2>
+          <h2 className="caps text-[15px] text-[var(--color-danger)]">Overpressure</h2>
         </div>
         <p className="text-[14px] leading-relaxed text-red-100">{message}</p>
         <p className="mt-3 text-[12px] leading-relaxed text-red-300/80">
@@ -30,7 +30,7 @@ export default function TripOverlay({ message, onReset }: Props) {
         <button
           type="button"
           onClick={onReset}
-          className="mt-4 rounded-lg bg-red-700 px-4 py-2 text-[13px] font-bold uppercase tracking-wider text-white hover:bg-red-600"
+          className="ctl mt-5 h-11 border-[var(--color-danger)] px-5 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-danger-solid)] hover:text-white"
         >
           Reset the stand
         </button>

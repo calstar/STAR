@@ -116,7 +116,7 @@ export function Hookup() {
     <div className="mx-auto flex max-w-6xl flex-col gap-3 p-4">
       <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-800 px-4 py-3">
         <div className="min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Hookup</div>
+          <div className="caps text-[10px]">Hookup</div>
           <div className="truncate text-[13px]" title="Kept for every version of this drawing, by where it comes from.">
             {data.lineage}
           </div>
@@ -156,7 +156,7 @@ export function Hookup() {
       </div>
 
       <div className="bg-card rounded-lg border border-gray-800">
-        <h2 className="border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
           Valves
           <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
             what each state-machine actuator opens on this drawing
@@ -211,7 +211,7 @@ export function Hookup() {
       </div>
 
       <div className="bg-card rounded-lg border border-gray-800">
-        <h2 className="flex items-baseline border-b border-gray-800 px-4 py-2.5 text-sm font-bold uppercase tracking-wider text-text-muted">
+        <h2 className="flex items-baseline border-b border-gray-800 px-4 py-2.5 caps">
           Knobs
           <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
             each a dial on the GSE page, and the regulators it sets

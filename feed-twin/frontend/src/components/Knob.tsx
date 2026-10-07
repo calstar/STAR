@@ -133,7 +133,7 @@ export default function Knob({
 
   return (
     <div className="flex flex-col items-center gap-1 select-none">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="caps text-[11px]">{label}</span>
       <svg
         ref={ref}
         width={size}
@@ -164,24 +164,24 @@ export default function Knob({
       >
         <defs>
           <radialGradient id={`knob-face-${label}`} cx="50%" cy="40%" r="60%">
-            <stop offset="0%" stopColor="#2a2a33" />
-            <stop offset="100%" stopColor="#101015" />
+            <stop offset="0%" stopColor="#1c1c1c" />
+            <stop offset="100%" stopColor="#0a0a0a" />
           </radialGradient>
         </defs>
         {/* travel */}
-        <path d={arc(cx, cy, r, START, START + SWEEP)} fill="none" stroke="#2f2f38" strokeWidth={6} strokeLinecap="round" />
+        <path d={arc(cx, cy, r, START, START + SWEEP)} fill="none" stroke="#262626" strokeWidth={6} strokeLinecap="round" />
         {/* set */}
-        <path d={arc(cx, cy, r, START, angle)} fill="none" stroke="#3B82F6" strokeWidth={6} strokeLinecap="round" />
+        <path d={arc(cx, cy, r, START, angle)} fill="none" stroke="#d0d0d0" strokeWidth={6} strokeLinecap="round" />
         {redFrom !== null && redFrom < START + SWEEP && (
-          <path d={arc(cx, cy, r, redFrom, START + SWEEP)} fill="none" stroke="#E74C3C" strokeWidth={6} strokeLinecap="round" opacity={0.7} />
+          <path d={arc(cx, cy, r, redFrom, START + SWEEP)} fill="none" stroke="#ef4444" strokeWidth={6} strokeLinecap="round" opacity={0.7} />
         )}
         {ticks.map((t, i) => {
           const a = polar(cx, cy, r - 9, t);
           const b = polar(cx, cy, r - (i % 5 === 0 ? 17 : 13), t);
-          return <line key={t} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#6b6b76" strokeWidth={i % 5 === 0 ? 2 : 1} />;
+          return <line key={t} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#575757" strokeWidth={i % 5 === 0 ? 2 : 1} />;
         })}
         {/* the handle */}
-        <circle cx={cx} cy={cy} r={r * 0.62} fill={`url(#knob-face-${label})`} stroke="#3a3a44" strokeWidth={2} />
+        <circle cx={cx} cy={cy} r={r * 0.62} fill={`url(#knob-face-${label})`} stroke="#333333" strokeWidth={2} />
         <line x1={tail.x} y1={tail.y} x2={tip.x} y2={tip.y} stroke="#e2e2e2" strokeWidth={3} strokeLinecap="round" />
         <circle cx={cx} cy={cy} r={3} fill="#e2e2e2" />
         <text

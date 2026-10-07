@@ -270,21 +270,12 @@ export function Study() {
   });
 
   return (
-    // The one view that produces a *document* rather than a live reading, so it
-    // gets document treatment: a ground that falls away at the edges, glass
-    // cards, and a column narrow enough to read. The live views stay identical
-    // to the DAQ on purpose (see index.css) -- this one is what gets exported,
-    // screenshotted and put in front of a review, and it should look it.
-    <div
-      className="flex flex-col gap-6 px-4 py-7"
-      style={{
-        background:
-          'radial-gradient(ellipse 900px 520px at 50% -8%, #1e1e28 0%, #171720 38%, var(--background) 78%)',
-        minHeight: '100%',
-      }}
-    >
+    // The one view that produces a *document* rather than a live reading: what
+    // gets exported, screenshotted and put in front of a review. It gets a
+    // column narrow enough to read; the ground is the console's black.
+    <div className="flex min-h-full flex-col gap-6 px-8 py-7">
       <header>
-        <h2 className="text-lg font-semibold text-white">COPV sizing study</h2>
+        <h2 className="caps text-[13px] text-[var(--ink)]">COPV sizing study</h2>
         <p className="mt-1 max-w-[86ch] text-[13px] leading-relaxed text-gray-400">
           Can the pressurant bottle hold the tanks at their regulated pressure for a whole burn, and
           does the answer differ between nitrogen and helium? Runs the real study drawings, primed to
@@ -312,7 +303,7 @@ export function Study() {
           className="flex items-center gap-2"
           title="The engine selected in the cockpit (Library). Change it there; the study fires whichever is selected when you press Run."
         >
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Engine</span>
+          <span className="caps text-[11px]">Engine</span>
           {selectedEngine ? (
             <span className="font-mono text-[13px] text-gray-200">{selectedEngine.name}</span>
           ) : (
@@ -320,13 +311,13 @@ export function Study() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Gas</span>
+          <span className="caps text-[11px]">Gas</span>
           <Check on={gases.gn2} onChange={(v) => setGases((g) => ({ ...g, gn2: v }))} label="GN2" accent={GAS.gn2.hue} />
           <Check on={gases.he} onChange={(v) => setGases((g) => ({ ...g, he: v }))} label="Helium" accent={GAS.he.hue} />
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Also</span>
+          <span className="caps text-[11px]">Also</span>
           <Check
             on={bigger}
             onChange={setBigger}
@@ -351,7 +342,7 @@ export function Study() {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+          <span className="caps text-[11px]">
             Thermal
           </span>
           <Check

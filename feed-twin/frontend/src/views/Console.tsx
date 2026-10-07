@@ -1,25 +1,32 @@
 /**
- * The console: the DAQ's unified dashboard, on a simulated stand.
+ * The console: the stand, run from one screen.
  *
- * Laid out as `daq-server/.../components/dashboard/UnifiedDashboard.tsx`
- * lays it out, because it is the same job and the same people: the pressure
- * bars in the top bar; the pressure history on the left with the DAQ's
- * window buttons; the 4x4 actuator grid and the state machine diagram
- * on the right. What a twin has that a stand does not -- propellant levels,
- * a bottle you can see empty, the engine while it burns -- sits in one row
- * along the top, small; the guide through the sequence along the bottom.
+ * Above the fold, sized to the window and nothing else. A short strip along
+ * the top, as the DAQ's top bar is: the transducers as bars, the vessels in
+ * brief, and the Command stack (FIRE, the abort, pause, reset, T-0). Under
+ * it, the room goes to what an operator watches: the live pressure plot, and
+ * the valves with the state machine beneath them. The pad sequence runs along
+ * the bottom edge.
+ *
+ * Below the fold, for when you want it: the engine -- live while it burns,
+ * the last burn totalled after -- and the stand's notes.
+ *
+ * Colour is identity. A pressure bar fills in its channel's trace colour, so
+ * the bar and its line on the plot are one thing; a vessel wears its fluid's.
+ * Amber and red still mean past NOP and past MEOP, and nothing else is either.
  *
  * Nothing here is set by typing a number. The regulators are knobs on the
- * GSE tab; the model switches are folded away there too.
+ * GSE tab; the model switches are on Configuration.
  */
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { channelColor, fixed, type TankState } from '../api';
+import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import PadSequence from '../components/PadSequence';
-import StateMachineDiagram from '../components/StateMachineDiagram';
+import PressureBar from '../components/PressureBar';
+import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
 
 const WINDOWS = [
@@ -29,10 +36,16 @@ const WINDOWS = [
   { label: '5min', seconds: 300 },
 ];
 
-const TANK_COLOUR = (t: TankState) =>
-  (t.side ? t.side === 'lox' : /lox|ox/i.test(t.label)) ? 'var(--color-lox)' : 'var(--color-fuel)';
+/** A vessel's colour: the trace colour of the channels on its leg, so the
+ *  tank, its bars and its lines on the plot agree. */
+const LOX = channelColor('PT-OX-UP');
+const FUEL = channelColor('PT-FU-UP');
+const GN2 = channelColor('PT-GN2-HI');
+const tankColour = (t: TankState) =>
+  (t.side ? t.side === 'lox' : /lox|ox/i.test(t.label)) ? LOX : FUEL;
 
-/** A vessel, drawn as the thing it is: a column of liquid, to scale. */
+/** A vessel, in one compact block: name and size, pressure, a thin fill bar,
+ *  and what it holds. Small on purpose -- the plot gets the room. */
 function Vessel({
   label,
   litres,
@@ -41,7 +54,6 @@ function Vessel({
   mass,
   temperature,
   colour,
-  gas = false,
   chilling = false,
 }: {
   label: string;
@@ -51,48 +63,175 @@ function Vessel({
   mass: number;
   temperature: number;
   colour: string;
-  gas?: boolean;
   chilling?: boolean;
 }) {
+  const pct = Math.min(Math.max(fill, 0), 1) * 100;
   return (
-    <div className="bg-card flex min-w-[150px] flex-1 gap-2.5 rounded-lg border border-gray-800 px-3 py-2">
-      <div className="relative h-[54px] w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/40">
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="h-2 w-2 flex-shrink-0" style={{ background: colour }} />
+          <span className="truncate font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ink)]">
+            {label}
+          </span>
+        </span>
+        <span className="flex-shrink-0 font-mono">
+          <span className="text-[17px] leading-none tabular-nums" style={{ color: colour }}>
+            {fixed(pressurePsi, 1)}
+          </span>
+          <span className="ml-1 text-[10px] uppercase text-[var(--ink-3)]">psig</span>
+        </span>
+      </div>
+      <div
+        className="relative mt-1.5 h-1 overflow-hidden"
+        style={{ background: `${colour}26` }}
+        title={`${fixed(fill * 100, 1)}% full`}
+      >
         <div
-          className="absolute bottom-0 w-full transition-[height] duration-200"
-          style={{ height: `${Math.min(Math.max(fill, 0), 1) * 100}%`, background: colour, opacity: gas ? 0.5 : 0.8 }}
+          className="absolute inset-y-0 left-0 transition-[width] duration-200"
+          style={{ width: `${pct}%`, background: colour }}
         />
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[10px] font-bold uppercase tracking-wider text-text-muted">
-          {label}
-          {litres !== undefined && litres > 0 && (
-            <span className="ml-1.5 font-normal normal-case tracking-normal text-gray-600">
-              {fixed(litres, litres < 10 ? 1 : 0)} L
-            </span>
-          )}
-        </div>
-        <div className="font-mono text-lg font-bold leading-tight tabular-nums" style={{ color: colour }}>
-          {fixed(pressurePsi, 1)}
-          <span className="ml-1 text-[9px] font-normal text-text-muted">PSIG</span>
-        </div>
-        <div className="font-mono text-[10px] leading-snug tabular-nums text-text-muted">
-          {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
-          {chilling && (
-            <span
-              className="ml-1 text-sky-400"
-              title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
-            >
-              chilling
-            </span>
-          )}
-        </div>
+      <div className="mt-1 truncate font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
+        {litres !== undefined && litres > 0 && `${fixed(litres, litres < 10 ? 1 : 0)} L · `}
+        {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
+        {chilling && (
+          <span
+            className="ml-1.5 uppercase tracking-[0.1em]"
+            style={{ color: colour }}
+            title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
+          >
+            chilling
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
+type Reading = readonly [label: string, value: number, unit: string, places: number, colour?: string];
+
+/** One reading, large: the engine card's unit. */
+function Big({ label, value, unit, places, colour }: { label: string; value: number; unit: string; places: number; colour?: string }) {
+  return (
+    <div className="min-w-0 border-l border-[var(--line)] px-6 first:border-l-0 first:pl-0">
+      <div className="caps text-[11px]">{label}</div>
+      <div className="mt-2 font-mono text-[30px] leading-none tabular-nums" style={{ color: colour ?? 'var(--ink)' }}>
+        {fixed(value, places)}
+        {unit && <span className="ml-1.5 text-[12px] uppercase tracking-[0.08em] text-[var(--ink-3)]">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Readings({ items }: { items: readonly Reading[] }) {
+  return (
+    <div className="grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+      {items.map(([label, value, unit, places, colour]) => (
+        <Big key={label} label={label} value={value} unit={unit} places={places} colour={colour} />
+      ))}
+    </div>
+  );
+}
+
+/** The engine, below the fold: live while it burns, the last burn after. */
+function EngineCard({
+  engine,
+  lit,
+  attached,
+  simplified,
+  name,
+  lastBurn,
+}: {
+  engine: EngineState | null;
+  lit: boolean;
+  attached: boolean;
+  simplified: boolean;
+  name: string;
+  lastBurn: Burn | null;
+}) {
+  return (
+    <section className="border border-[var(--line)] px-8 py-6">
+      <div className="mb-6 flex flex-wrap items-baseline gap-x-5 gap-y-1">
+        <h2 className="caps">Engine</h2>
+        {name && <span className="font-mono text-[13px] text-[var(--ink-2)]">{name}</span>}
+        {lit ? (
+          <span className="flex items-center gap-2 font-mono text-[12px] uppercase tracking-[0.16em] text-[var(--color-danger)]">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--color-danger)]" />
+            Burning
+          </span>
+        ) : (
+          lastBurn && !lastBurn.burning && <span className="caps text-[11px]">Last burn</span>
+        )}
+        {simplified && (
+          <span
+            className="font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--color-warning)]"
+            title="feedtwin's simplified engine, not EngineDesign's: no engine card. Build one in Library."
+          >
+            simplified model
+          </span>
+        )}
+        <Link to="/engine" className="ml-auto font-mono text-[12px] text-[var(--ink-3)] hover:text-[var(--ink)]">
+          Traces and O/F on Engine →
+        </Link>
+      </div>
+
+      {engine && lit ? (
+        <Readings
+          items={[
+            ['Chamber', engine.chamber_psi, 'psig', 0, channelColor('PC')],
+            ['Thrust', engine.thrust_N, 'N', 0],
+            ['O/F', engine.mixture_ratio, '', 2, channelColor('O/F')],
+            ['Isp', engine.isp_s, 's', 0, '#4ade80'],
+            ['LOX flow', engine.mdot_ox, 'kg/s', 3, LOX],
+            ['Fuel flow', engine.mdot_fuel, 'kg/s', 3, FUEL],
+          ]}
+        />
+      ) : !attached ? (
+        <Link
+          to="/library"
+          title="Without an engine the chamber is a fixed pressure: nothing burns, so there is no thrust to report."
+          className="font-mono text-[13px] text-[var(--ink-3)] hover:text-[var(--ink)]"
+        >
+          No engine on this stand. Pick one in Library →
+        </Link>
+      ) : lastBurn && !lastBurn.burning ? (
+        <Readings
+          items={[
+            ['Impulse', lastBurn.impulse_Ns, 'N·s', 0],
+            ['Thrust', lastBurn.thrust_mean_N, 'N', 0],
+            ['Burn', lastBurn.duration_s, 's', 2],
+            ['Chamber', lastBurn.pc_mean_psi, 'psig', 0, channelColor('PC')],
+            ['O/F', lastBurn.of_mean, '', 2, channelColor('O/F')],
+            ['Isp', lastBurn.isp_s, 's', 0, '#4ade80'],
+          ]}
+        />
+      ) : (
+        <p className="font-mono text-[13px] text-[var(--ink-3)]">Not lit. Fire from Command and the burn shows here.</p>
+      )}
+    </section>
+  );
+}
+
 export function Console() {
-  const { model, machine, live, history, burns, hidden, go, toggleValve, release, setup } = useStand();
+  const {
+    model,
+    machine,
+    live,
+    history,
+    burns,
+    hidden,
+    toggleChannel,
+    go,
+    toggleValve,
+    release,
+    setup,
+    busy,
+    running,
+    setRunning,
+    restart,
+    jumpToT0,
+  } = useStand();
   const [window, setWindow] = useState(60);
 
   const plot = useMemo(() => {
@@ -113,195 +252,280 @@ export function Console() {
     };
   }, [history, hidden, window]);
 
+  // Pressure bars only. A thermocouple in a bar scaled to MEOP is
+  // meaningless -- temperature lives in its own panel on Pressure.
+  const gauges = useMemo(
+    () => (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig'),
+    [history],
+  );
+
   if (!model || !live) {
-    return <p className="p-6 text-sm text-text-muted">Bringing the stand up…</p>;
+    return <p className="caps p-8">Bringing the stand up…</p>;
   }
   const engine = live.engine;
   const lit = engine !== null && engine.chamber_psi > 5;
   const attached = Object.keys(model.engine).length > 0;
   const simplified = model.engine.engine_model === 'simplified';
+  const engineName = typeof model.engine.name === 'string' ? model.engine.name : '';
   const lastBurn = burns?.burns.length ? burns.burns[burns.burns.length - 1] : null;
   const locked = Boolean(live.tripped);
+  const state = live.state;
+  const reachable = live.reachable;
+  const firing = /^fire$/i.test(state);
+  const canFire = !busy && !locked && (reachable.includes('Fire') || firing);
+  // Whatever the table can reach that the grid does not draw and the stack
+  // has no button for -- the GSE and emergency aborts, a debug state. Before,
+  // these were only in a "Go to…" dropdown; they must not become unreachable.
+  const others = reachable.filter((s) => OFF_GRID.test(s) && !/^fire$/i.test(s) && s !== 'Engine Abort');
+
+  const gauge = (c: (typeof gauges)[number]) => {
+    const { nop, meop } = limitsFor(c.tag);
+    const silent = hidden[c.id];
+    // The engine's own chamber channel is not a drawn instrument: it reads
+    // off the live engine, so a stand with no PC transducer still shows
+    // chamber pressure while it burns.
+    const value = c.id === 'engine.pc' ? (engine?.chamber_psi ?? null) : live.pressure_psi[c.id];
+    return (
+      <button
+        key={c.id}
+        type="button"
+        title={silent ? `Show ${c.tag} on the plot` : `Hide ${c.tag} from the plot`}
+        onClick={() => toggleChannel(c.id)}
+        aria-pressed={!silent}
+        className={`h-full min-h-0 min-w-0 transition-opacity ${silent ? 'opacity-35' : 'opacity-100'}`}
+      >
+        <PressureBar
+          label={c.tag.replace(/^PT-/, '')}
+          value={value ?? null}
+          nop={nop}
+          meop={meop}
+          tint={channelColor(c.tag)}
+          compact
+        />
+      </button>
+    );
+  };
 
   return (
-    <div className="flex min-h-full flex-col gap-2 p-3">
-      {/* The pressures are the bars in the top bar, as on the DAQ. What the
-          DAQ cannot show -- how full the tanks are, how much gas is left, the
-          engine while it burns -- goes first, where the eye lands. */}
-      <div className="flex flex-shrink-0 flex-wrap items-stretch gap-2">
-        {live.tanks.map((t) => (
-          <Vessel
-            key={t.id}
-            label={t.label}
-            litres={t.volume_L}
-            pressurePsi={t.pressure_psi}
-            fill={t.fill_fraction}
-            mass={t.liquid_mass_kg}
-            // Until liquid collects, what there is to watch is the metal.
-            temperature={
-              t.liquid_mass_kg > 0.001 || t.wall_temperature_K === undefined
-                ? t.liquid_temperature_K
-                : t.wall_temperature_K
-            }
-            chilling={t.chilling}
-            colour={TANK_COLOUR(t)}
-          />
-        ))}
-        {live.bottles.map((b) => (
-          <Vessel
-            key={b.id}
-            label={b.label}
-            litres={b.volume_L}
-            pressurePsi={b.pressure_psi}
-            fill={b.fill_fraction}
-            mass={b.liquid_mass_kg}
-            temperature={b.ullage_temperature_K}
-            colour="var(--color-gn2)"
-            gas
-          />
-        ))}
-        {engine && lit && (
-          <div className="bg-card flex min-w-[260px] flex-[1.4] items-center gap-4 rounded-lg border border-red-900/60 px-3 py-2">
-            <span className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-red-500" />
-            {(
-              [
-                ['Chamber', engine.chamber_psi, 'psig', '#F39C12', 0],
-                ['Thrust', engine.thrust_N, 'N', '#e2e2e2', 0],
-                ['O/F', engine.mixture_ratio, '', '#9B59B6', 2],
-                ['Isp', engine.isp_s, 's', '#27AE60', 0],
-              ] as const
-            ).map(([label, value, unit, color, places]) => (
-              <div key={label} className="min-w-0">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
-                <div className="font-mono text-base font-bold tabular-nums leading-tight" style={{ color }}>
-                  {fixed(value, places)}
-                  {unit && <span className="ml-1 text-[9px] font-normal text-text-muted">{unit}</span>}
-                </div>
-              </div>
-            ))}
-            {simplified && (
-              <span
-                className="ml-auto self-start rounded bg-amber-900/50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300"
-                title="feedtwin's simplified engine, not EngineDesign's: no engine card. Build one in Library."
+    // h-full is the scroll area's height: the fold below is exactly one
+    // window, and what follows it overflows into the scroll.
+    <div className="h-full px-8">
+      <div className="flex h-full min-h-[720px] flex-col">
+        {/* ── The strip: transducers, vessels, command. Short, as the DAQ's
+            top bar is, so the plot and the state machine get the height. ── */}
+        <div
+          className="grid flex-shrink-0 grid-cols-[minmax(0,1fr)_minmax(220px,260px)_minmax(260px,300px)] border-b border-[var(--line)]"
+          style={{ height: 'clamp(190px, 24vh, 250px)' }}
+        >
+          <section className="flex min-h-0 min-w-0 flex-col py-4 pr-8">
+            <h2 className="caps mb-2 flex-shrink-0 text-[11px]">Pressure · psig</h2>
+            {gauges.length > 0 ? (
+              <div
+                className="grid min-h-0 flex-1 gap-x-2"
+                style={{ gridTemplateColumns: `repeat(${gauges.length}, minmax(0, 1fr))` }}
               >
-                simplified
-              </span>
-            )}
-          </div>
-        )}
-        {!lit && lastBurn && !lastBurn.burning && (
-          <Link
-            to="/engine"
-            title="The last burn, totalled. Open the Engine page for the traces."
-            className="bg-card flex min-w-[260px] flex-[1.4] items-center gap-4 rounded-lg border border-gray-800 px-3 py-2 hover:border-gray-600"
-          >
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">Last burn</span>
-            {(
-              [
-                ['Impulse', lastBurn.impulse_Ns, 'N·s', '#e2e2e2', 0],
-                ['Thrust', lastBurn.thrust_mean_N, 'N', '#e2e2e2', 0],
-                ['Burn', lastBurn.duration_s, 's', '#e2e2e2', 2],
-                ['O/F', lastBurn.of_mean, '', '#9B59B6', 2],
-                ['Isp', lastBurn.isp_s, 's', '#27AE60', 0],
-              ] as const
-            ).map(([label, value, unit, color, places]) => (
-              <div key={label} className="min-w-0">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-text-muted">{label}</div>
-                <div className="font-mono text-sm font-bold tabular-nums leading-tight" style={{ color }}>
-                  {fixed(value, places)}
-                  {unit && <span className="ml-1 text-[9px] font-normal text-text-muted">{unit}</span>}
-                </div>
+                {gauges.map(gauge)}
               </div>
-            ))}
-          </Link>
-        )}
-        {!attached && (
-          <Link
-            to="/library"
-            title="Without an engine the chamber is a fixed pressure: nothing burns, so there is no thrust to report. Pick an engine in Library."
-            className="bg-card flex items-center rounded-lg border border-dashed border-gray-700 px-3 py-2 text-[11px] text-text-muted hover:border-gray-500"
-          >
-            No engine on this stand
-          </Link>
-        )}
-      </div>
+            ) : (
+              <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
+            )}
+          </section>
 
-      {/* The DAQ assumes a control-room monitor. On anything smaller the page
-          scrolls rather than crushing the plot and the diagram. */}
-      <div className="flex min-h-[400px] flex-1 gap-3">
-        <section className="bg-card flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border border-gray-800 p-3">
-          <div className="mb-2 flex flex-shrink-0 items-center justify-between">
-            <h2 className="text-[11px] font-bold uppercase tracking-widest text-text-muted">Pressure history</h2>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-medium text-text-muted">Window:</span>
-              {WINDOWS.map((w) => (
-                <button
-                  key={w.label}
-                  type="button"
-                  onClick={() => setWindow(w.seconds)}
-                  className={`rounded px-2 py-0.5 text-[11px] font-semibold transition-all ${
-                    window === w.seconds
-                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
-                  }`}
-                >
-                  {w.label}
-                </button>
+          <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-4">
+            <h2 className="caps mb-2 flex-shrink-0 text-[11px]">Tanks</h2>
+            <div className="flex min-h-0 flex-1 flex-col justify-around gap-2">
+              {live.tanks.map((t: TankState) => (
+                <Vessel
+                  key={t.id}
+                  label={t.label}
+                  litres={t.volume_L}
+                  pressurePsi={t.pressure_psi}
+                  fill={t.fill_fraction}
+                  mass={t.liquid_mass_kg}
+                  // Until liquid collects, what there is to watch is the metal.
+                  temperature={
+                    t.liquid_mass_kg > 0.001 || t.wall_temperature_K === undefined
+                      ? t.liquid_temperature_K
+                      : t.wall_temperature_K
+                  }
+                  chilling={t.chilling}
+                  colour={tankColour(t)}
+                />
+              ))}
+              {live.bottles.map((b) => (
+                <Vessel
+                  key={b.id}
+                  label={b.label}
+                  litres={b.volume_L}
+                  pressurePsi={b.pressure_psi}
+                  fill={b.fill_fraction}
+                  mass={b.liquid_mass_kg}
+                  temperature={b.ullage_temperature_K}
+                  colour={GN2}
+                />
               ))}
             </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {plot.times.length > 1 ? (
-              <DaqPlot times={plot.times} channels={plot.channels} yLabel="Pressure (psig)" fill />
-            ) : (
-              <p className="p-4 text-[12px] text-text-muted">Waiting for the first samples…</p>
-            )}
-          </div>
-        </section>
-
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-          <section className="bg-card flex-shrink-0 rounded-xl border border-gray-800 p-2">
-            <ActuatorGrid
-              model={model}
-              machine={machine}
-              live={live}
-              locked={locked}
-              onSet={(id, want) => {
-                if (want !== (live.open[id] ?? false)) toggleValve(id);
-              }}
-              onRelease={release}
-            />
           </section>
-          <section className="bg-card min-h-[260px] flex-1 overflow-hidden rounded-xl border border-gray-800 p-2">
-            {machine ? (
-              <StateMachineDiagram machine={machine} live={live} go={go} locked={locked} />
-            ) : (
-              <p className="p-4 text-[12px] text-text-muted">No state machine bound.</p>
-            )}
+
+          <section className="flex min-h-0 min-w-0 flex-col gap-2 border-l border-[var(--line)] py-4 pl-6">
+            {/* FIRE is a state you enter, not a canned run you play. It holds
+                until you leave it, exactly as the stand does. */}
+            <button
+              type="button"
+              onClick={() => go('Fire')}
+              disabled={!canFire || firing}
+              title={firing ? 'Firing' : reachable.includes('Fire') ? 'Go to Fire' : `Fire is not reachable from ${state}`}
+              className={`ctl min-h-0 flex-[1.4] text-[17px] tracking-[0.42em] ${
+                firing
+                  ? '!border-[var(--color-danger-solid)] !bg-[var(--color-danger-solid)] !text-white'
+                  : 'hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:text-white'
+              }`}
+            >
+              Fire
+            </button>
+            <button
+              type="button"
+              onClick={() => go('Engine Abort')}
+              disabled={busy}
+              className="ctl min-h-0 flex-[1.2] border-[var(--color-danger)] text-[15px] tracking-[0.34em] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:text-white"
+            >
+              Eng Abort
+            </button>
+            <div className="grid min-h-0 flex-1 grid-cols-3 gap-2">
+              <button type="button" onClick={() => setRunning(!running)} className="ctl text-[11px]">
+                {running ? 'Pause' : 'Run'}
+              </button>
+              <button type="button" onClick={restart} title="Empty the tanks and start over" className="ctl text-[11px]">
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={jumpToT0}
+                disabled={busy}
+                title="Skip the pad: both tanks loaded, the bottle charged to the COPV target, every tank at the lockup its regulator gives at the knobs as set, in Ready. Fire from here."
+                className="ctl text-[11px] tracking-[0.08em]"
+              >
+                T-0
+              </button>
+            </div>
           </section>
         </div>
+
+        {/* ── The room: the live plot, and the valves over the state machine ── */}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+          <section className="flex min-h-0 min-w-0 flex-col py-5 pr-8">
+            <div className="mb-3 flex flex-shrink-0 items-baseline justify-between gap-4">
+              <h2 className="caps">Pressure History</h2>
+              <div className="flex items-baseline gap-1">
+                {WINDOWS.map((w) => (
+                  <button
+                    key={w.label}
+                    type="button"
+                    onClick={() => setWindow(w.seconds)}
+                    aria-pressed={window === w.seconds}
+                    className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${
+                      window === w.seconds
+                        ? 'border-[var(--ink)] text-[var(--ink)]'
+                        : 'border-transparent text-[var(--ink-3)] hover:text-[var(--ink-2)]'
+                    }`}
+                  >
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Absolutely placed so the plot takes exactly what the panel
+                has, however tall the window makes it. */}
+            <div className="relative min-h-[200px] flex-1">
+              <div className="absolute inset-0">
+                {plot.times.length > 1 ? (
+                  <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} />
+                ) : (
+                  <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <div className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] pl-8">
+            <section className="flex-shrink-0 border-b border-[var(--line)] py-5">
+              <ActuatorGrid
+                model={model}
+                machine={machine}
+                live={live}
+                locked={locked}
+                onSet={(id, want) => {
+                  if (want !== (live.open[id] ?? false)) toggleValve(id);
+                }}
+                onRelease={release}
+              />
+            </section>
+            <section className="flex min-h-0 flex-1 flex-col py-5">
+              {machine ? (
+                <StateMachineDiagram
+                  machine={machine}
+                  live={live}
+                  go={go}
+                  locked={locked}
+                  actions={others.map((s) => (
+                    // The states the grid does not draw and Command has no
+                    // button for: the GSE and emergency aborts, a debug
+                    // state. They must not become unreachable.
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => go(s)}
+                      disabled={busy || locked}
+                      className={`ctl h-7 px-2.5 text-[10px] ${/abort/i.test(s) ? 'text-[var(--color-danger)]' : ''}`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                />
+              ) : (
+                <>
+                  <h2 className="caps">State Machine</h2>
+                  <p className="mt-4 font-mono text-[12px] text-[var(--ink-3)]">No state machine bound.</p>
+                </>
+              )}
+            </section>
+          </div>
+        </div>
+
+        {machine && (
+          <div className="flex-shrink-0 border-t border-[var(--line)] py-3">
+            <PadSequence live={live} machine={machine} setup={setup} go={go} hasEngine={engine !== null} compact />
+          </div>
+        )}
       </div>
 
-      {machine && (
-        <div className="flex-shrink-0">
-          <PadSequence live={live} machine={machine} setup={setup} go={go} hasEngine={engine !== null} compact />
-        </div>
-      )}
+      {/* ── Below the fold ── */}
+      <div className="flex flex-col gap-6 pb-10 pt-6">
+        <EngineCard
+          engine={engine}
+          lit={lit}
+          attached={attached}
+          simplified={simplified}
+          name={engineName}
+          lastBurn={lastBurn}
+        />
 
-      {(live.notes.length > 0 || (machine?.warnings.length ?? 0) > 0) && (
-        <div className="max-h-16 flex-shrink-0 overflow-auto">
-          {live.notes.map((n) => (
-            <p key={n} className="text-[11px] leading-snug text-amber-300">
-              {n}
-            </p>
-          ))}
-          {(machine?.warnings ?? []).map((w) => (
-            <p key={w} className="text-[10px] leading-snug text-amber-300/60">
-              {w}
-            </p>
-          ))}
-        </div>
-      )}
+        {(live.notes.length > 0 || (machine?.warnings.length ?? 0) > 0) && (
+          <section className="border border-[var(--line)] px-8 py-5 font-mono">
+            <h2 className="caps mb-3">Notes</h2>
+            {live.notes.map((n) => (
+              <p key={n} className="text-[12px] leading-relaxed text-[var(--color-warning)]">
+                {n}
+              </p>
+            ))}
+            {(machine?.warnings ?? []).map((w) => (
+              <p key={w} className="text-[12px] leading-relaxed text-[var(--color-warning)] opacity-60">
+                {w}
+              </p>
+            ))}
+          </section>
+        )}
+      </div>
     </div>
   );
 }

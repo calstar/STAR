@@ -1,75 +1,100 @@
 /**
- * The stand's top bar, laid out like the DAQ's.
+ * The header: the brand and the views on one line, the stand's vital signs on
+ * the next.
  *
- * Same regions in the same places: brand and clock on the left, the pressure
- * bars filling the middle, state and the abort stack on the right. An operator
- * who knows where to look on the real software knows where to look here, which
- * is the entire argument for not designing this screen freshly.
+ * The pressure bars and the FIRE / abort stack used to live here, on every
+ * view. They are the Console's now -- it is the one view an operator runs the
+ * stand from -- but the abort is not: every other view keeps the state and an
+ * ENG ABORT on the status line, because whatever page somebody is reading
+ * when a tank climbs, the way out has to be one click from it.
  *
- * Two things differ, and both are because this is a twin rather than a stand.
- * There is no connection state to a board, so that slot carries the solver's
- * instead — converged or not, and how long it took. And FIRE is a button that
- * runs a burn rather than a state you sit in, because nothing here is burning
- * propellant while you look at it.
+ * The slot the DAQ gives the board connection carries the solver's health,
+ * since a twin has no board: running, paused, slow motion and by how much,
+ * struggling, or stopped on an overpressure.
  */
 
 import { useEffect, useState } from 'react';
-import PressureBar from './PressureBar';
-import { limitsFor, type Channel, type SessionState } from '../api';
+import { Link, useLocation } from 'react-router-dom';
+import { getVersion, type Validation } from '../api';
+import { useStand } from '../stand';
+import { StandBar } from './StandBar';
 
-/** Colours the DAQ gives particular states. */
-const STATE_COLOR: Record<string, string> = {
-  Fire: 'text-red-400',
-  'Engine Abort': 'text-red-500',
-  'GSE Abort': 'text-red-500',
-  'Emergency Abort': 'text-red-500',
-  Vent: 'text-yellow-400',
-  Ready: 'text-green-400',
-  Armed: 'text-blue-400',
-  Idle: 'text-gray-400',
-};
-
-interface Props {
-  live: SessionState | null;
-  onState: (next: string) => void;
-  onAbort: () => void;
-  running: boolean;
-  onRunning: (on: boolean) => void;
-  onRestart: () => void;
-  /** Skip the pad: loaded, charged, at lockup, in Ready. */
-  onT0: () => void;
-  busy: boolean;
-  /** Stand seconds per wall second; shown when the solver is not keeping up. */
-  speed?: number;
-  channels: Channel[];
-  hidden: Record<string, boolean>;
-  onToggleChannel: (id: string) => void;
-  title: string;
+export interface View {
+  path: string;
+  label: string;
+  hint: string;
 }
 
 /** Mission time, the way a pad clock reads it. */
-function elapsed(t: number): string {
+export function elapsed(t: number): string {
   const whole = Math.max(Math.floor(t), 0);
   const m = Math.floor(whole / 60);
   const sec = whole % 60;
   return `T+${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
-export function TopBar({
-  live,
-  onState,
-  onAbort,
-  running,
-  onRunning,
-  onRestart,
-  onT0,
-  busy,
-  speed,
-  channels,
-  hidden,
-  onToggleChannel,
-  title,
-}: Props) {
+/** What the solver is doing, in the words the status line uses, and the dot. */
+function health(stand: ReturnType<typeof useStand>): { text: string; dot: string; pulse: boolean; title: string } {
+  const { live, busy, running, speed } = stand;
+  if (live?.tripped) return { text: 'Stopped · overpressure', dot: 'var(--color-danger)', pulse: true, title: live.tripped };
+  if (busy) return { text: 'Starting', dot: 'var(--color-warning)', pulse: true, title: 'Opening the stand' };
+  if (live?.computing) {
+    const pct = Math.round((live.progress ?? 0) * 100);
+    return { text: `Running sim · ${pct}%`, dot: 'var(--color-warning)', pulse: true, title: 'Integrating ahead for replay' };
+  }
+  if (!running) return { text: 'Paused', dot: 'var(--ink-3)', pulse: false, title: 'The stand clock is stopped' };
+  if (live?.replaying) return { text: 'Replaying', dot: 'var(--ink)', pulse: false, title: 'Playing back a run integrated ahead' };
+  if (!(live?.converged ?? false)) {
+    return { text: 'Solver struggling', dot: 'var(--color-danger)', pulse: false, title: 'The last step did not converge' };
+  }
+  const slow = speed !== undefined && speed < 0.85;
+  return {
+    text: slow ? `Running · ×${speed.toFixed(2)}` : 'Running',
+    dot: 'var(--color-success)',
+    pulse: false,
+    title: slow
+      ? `Slow motion: ${speed.toFixed(2)} stand seconds per wall second. The stand is too stiff to integrate in real time at the study's step; it runs slower rather than coarser.`
+      : 'Integrating in real time',
+  };
+}
+
+function ValidationBadge() {
+  const [validation, setValidation] = useState<Validation | null>(null);
+  useEffect(() => {
+    getVersion()
+      .then((v) => setValidation(v.validation))
+      .catch(() => undefined);
+  }, []);
+  if (!validation) return null;
+  const ok = validation.status === 'validated';
+  return (
+    <span
+      className="border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.18em]"
+      style={{
+        borderColor: ok ? 'var(--color-success)' : 'var(--color-warning)',
+        color: ok ? 'var(--color-success)' : 'var(--color-warning)',
+      }}
+      title={[
+        validation.label,
+        '',
+        'Checked:',
+        ...validation.checked.map((c) => `  • ${c}`),
+        '',
+        'Not yet checked:',
+        ...validation.not_checked.map((c) => `  • ${c}`),
+      ].join('\n')}
+    >
+      {validation.status}
+    </span>
+  );
+}
+
+export function TopBar({ views }: { views: readonly View[] }) {
+  const stand = useStand();
+  const { pathname } = useLocation();
+  const { live, model, busy } = stand;
+  const warnings = model?.report.warnings.length ?? 0;
+
   const [clock, setClock] = useState('');
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
@@ -78,191 +103,79 @@ export function TopBar({
     return () => clearInterval(id);
   }, []);
 
+  const h = health(stand);
   const state = live?.state ?? '—';
-  const converged = live?.converged ?? false;
-  const computing = live?.computing ?? false;
-  const replaying = live?.replaying ?? false;
-  const progress = Math.round((live?.progress ?? 0) * 100);
-  const stateColor = STATE_COLOR[state] ?? 'text-text';
-  const reachable = live?.reachable ?? [];
+  const onConsole = pathname === '/';
+  const title = model ? `${model.title}${model.report.coupled ? ' · coupled' : ''}` : '—';
 
   return (
-    <div
-      className="relative z-30 bg-card border-b border-gray-800 select-none flex-shrink-0"
-      style={{ height: '18vh', minHeight: 176, maxHeight: 260 }}
-    >
-      <div className="flex items-stretch h-full px-4 gap-2 py-2">
-        {/* Left: brand, solver health, clock, what is loaded */}
-        <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-3 border-r border-gray-800/60">
-          <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
-            FEED TWIN
-          </span>
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                live?.tripped
-                  ? 'bg-red-500 animate-pulse'
-                  : busy || computing
-                  ? 'bg-yellow-500 animate-pulse'
-                  : replaying
-                    ? 'bg-blue-400'
-                    : converged
-                      ? 'bg-green-500'
-                      : 'bg-red-500'
-              }`}
-            />
-            <span className="text-sm text-gray-300 font-semibold">
-              {live?.tripped
-                ? 'Stopped, overpressure'
-                : busy
-                ? 'Starting'
-                : computing
-                  ? `Running sim… ${progress}%`
-                  : !running
-                    ? 'Paused'
-                    : replaying
-                      ? 'Replaying'
-                      : converged
-                        ? speed !== undefined && speed < 0.85
-                          ? `Running, slow motion ×${speed.toFixed(2)}`
-                          : 'Running'
-                        : 'Solver struggling'}
-            </span>
-          </div>
-          {/* Mission time, not wall clock: what matters is how long this stand
-              has been up, and it stops when the sim is paused. */}
-          <span className="text-2xl font-mono text-white tabular-nums font-bold leading-tight">
-            {elapsed(live?.t ?? 0)}
-          </span>
-          <span className="text-[11px] font-mono text-gray-500 tabular-nums">{clock}</span>
-          <span className="text-xs text-gray-500 truncate max-w-[220px]">{title}</span>
-        </div>
-
-        {/* Centre: the bars. Click one to silence its trace, as on the DAQ. */}
-        <div
-          // Right-aligned by the first bar's auto margin, not justify-end: a
-          // justify-end row that overflows pushes its first bars off the left
-          // edge where no scroll can reach them.
-          className="flex-[2] flex items-stretch gap-2 md:gap-4 lg:gap-8 min-w-0 overflow-x-auto [&>*:first-child]:ml-auto"
-          style={{ maxWidth: '62vw' }}
-        >
-          {/* Pressure bars only. A thermocouple in a bar scaled to MEOP is
-              meaningless -- temperature lives in its own panel on Plots. */}
-          {channels.filter((c) => (c.unit || 'psig') === 'psig').map((c) => {
-            const { nop, meop } = limitsFor(c.tag);
-            const silent = hidden[c.id];
-            // The engine's own chamber channel is not a drawn instrument: it
-            // reads off the live engine, so a stand with no PC transducer on
-            // its drawing still shows chamber pressure while it burns.
-            const value =
-              c.id === 'engine.pc' ? (live?.engine?.chamber_psi ?? null) : live?.pressure_psi[c.id];
+    <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-4">
+      <div className="flex min-w-0 items-baseline gap-10">
+        <span className="flex-shrink-0 font-mono text-[17px] font-bold uppercase tracking-[0.42em] text-[var(--ink)]">
+          Feed Twin
+        </span>
+        <nav className="flex min-w-0 items-baseline gap-x-6 gap-y-1 overflow-x-auto">
+          {views.map((v) => {
+            const active = pathname === v.path;
             return (
-              <button
-                key={c.id}
-                type="button"
-                title={silent ? 'Show on the plot' : 'Hide from the plot'}
-                onClick={() => onToggleChannel(c.id)}
-                className={`h-full flex-1 overflow-hidden text-left rounded-lg transition-opacity hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/80 ${
-                  silent ? 'opacity-45' : 'opacity-100'
+              <Link
+                key={v.path}
+                to={v.path}
+                title={v.hint}
+                className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
+                  active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
                 }`}
-                // A floor in pixels, not a percentage: at 6 % of a narrow
-                // window a bar was 25 px and its tag and reading ran into the
-                // next bar's. Narrower than this, the row clips rather than
-                // overlapping.
-                style={{ minWidth: 46, maxWidth: '14%' }}
               >
-                <PressureBar
-                  label={c.tag.replace(/^PT-/, '')}
-                  value={value ?? null}
-                  nop={nop}
-                  meop={meop}
-                  compact
-                />
-              </button>
+                {v.label}
+                {v.path === '/report' && warnings > 0 && (
+                  <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
+                )}
+                {active && <span className="absolute inset-x-0 bottom-0 h-px bg-[var(--ink)]" />}
+              </Link>
             );
           })}
-        </div>
+        </nav>
+      </div>
 
-        {/* Right: state, transitions, fire and abort */}
-        <div className="w-full max-w-[420px] min-w-[300px] flex items-stretch justify-between gap-2 flex-shrink-0 pl-3 border-l border-gray-800/60 ml-auto">
-          <div className="flex flex-col justify-center items-center gap-1 flex-1 min-w-0">
-            <span className="text-[10px] xl:text-xs text-gray-400 uppercase tracking-widest font-bold">
-              State
-            </span>
-            <span
-              className={`text-lg xl:text-2xl font-bold font-mono tracking-wider text-center leading-tight ${stateColor}`}
-            >
-              {state.toUpperCase()}
-            </span>
-            <select
-              value=""
-              onChange={(e) => e.target.value && onState(e.target.value)}
-              disabled={busy || reachable.length === 0}
-              aria-label="Transition to state"
-              className="mt-1 w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[11px] text-gray-200 disabled:opacity-40"
-            >
-              <option value="">Go to…</option>
-              {reachable.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
+      <div className="flex min-h-[44px] flex-wrap items-center gap-x-7 gap-y-1 py-2 font-mono text-[13px] uppercase tracking-[0.08em]">
+        <span className="flex items-center gap-2 text-[var(--ink-2)]" title={h.title}>
+          <span
+            className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${h.pulse ? 'animate-pulse' : ''}`}
+            style={{ background: h.dot }}
+          />
+          {h.text}
+        </span>
+        {/* Mission time, not wall clock: how long this stand has been up. It
+            stops when the sim is paused. */}
+        <span className="font-semibold tabular-nums text-[var(--ink)]" title="Stand time since it was opened">
+          {elapsed(live?.t ?? 0)}
+        </span>
+        <span className="tabular-nums text-[var(--ink-3)]">{clock}</span>
+        <span className="max-w-[260px] truncate text-[var(--ink-2)]" title={title}>
+          {title}
+        </span>
+        <ValidationBadge />
 
-          <div className="flex flex-col justify-center gap-2 flex-1 min-w-[8rem] border-l border-gray-800/60 pl-2">
-            {/* FIRE is a state you enter, not a canned run you play. It holds
-                until you leave it, exactly as the stand does. */}
-            <button
-              onClick={() => onState('Fire')}
-              disabled={busy || !(reachable.includes('Fire') || state === 'Fire')}
-              title={
-                reachable.includes('Fire')
-                  ? 'Go to Fire'
-                  : `Fire is not reachable from ${state}`
-              }
-              className="w-full py-3 xl:py-4 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                         text-white font-bold text-xs xl:text-sm rounded-xl tracking-widest transition-colors
-                         shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-gray-800 disabled:border-gray-700
-                         disabled:text-gray-500 disabled:shadow-none disabled:cursor-not-allowed"
-            >
-              FIRE
-            </button>
-            <button
-              onClick={onAbort}
-              disabled={busy}
-              className="w-full py-2 xl:py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              ENG ABORT
-            </button>
-            <div className="grid grid-cols-2 gap-1">
+        <div className="ml-auto flex items-center gap-4 normal-case tracking-normal">
+          <StandBar />
+          {!onConsole && (
+            <span className="flex items-center gap-3 border-l border-[var(--line)] pl-4">
+              <span className="caps text-[11px]">State</span>
+              <span className="font-mono text-[13px] font-bold uppercase tracking-[0.12em] text-[var(--ink)]">
+                {state}
+              </span>
               <button
-                onClick={() => onRunning(!running)}
-                className="rounded-lg border border-gray-700 bg-gray-900 py-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-300 hover:bg-gray-800"
+                type="button"
+                onClick={() => stand.go('Engine Abort')}
+                disabled={busy}
+                className="ctl h-7 border-[var(--color-danger)] px-3 text-[11px] text-[var(--color-danger)] hover:bg-[var(--color-danger-solid)] hover:text-white"
               >
-                {running ? 'Pause' : 'Run'}
+                Eng Abort
               </button>
-              <button
-                onClick={onRestart}
-                title="Empty the tanks and start over"
-                className="rounded-lg border border-gray-700 bg-gray-900 py-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-300 hover:bg-gray-800"
-              >
-                Reset
-              </button>
-            </div>
-            <button
-              onClick={onT0}
-              disabled={busy}
-              title="Skip the pad: both tanks loaded, the bottle charged to the COPV target, every tank at the lockup its regulator gives at the knobs as set, in Ready. Fire from here."
-              className="w-full rounded-lg border border-sky-700 bg-sky-950 py-1.5 text-[10px] font-bold uppercase tracking-wider text-sky-200 hover:bg-sky-900 disabled:opacity-50"
-            >
-              Jump to T-0
-            </button>
-          </div>
+            </span>
+          )}
         </div>
       </div>
-    </div>
+    </header>
   );
 }
