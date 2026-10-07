@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   diffRuns,
   explainCancel,
@@ -81,6 +82,17 @@ export function Runs() {
     const id = window.setInterval(pull, 5000);
     return () => window.clearInterval(id);
   }, [pull]);
+
+  // Opened from the Engine tab on one burn: pick it once it is in the list.
+  const [params, setParams] = useSearchParams();
+  const wanted = params.get('run');
+  useEffect(() => {
+    if (!wanted) return;
+    const found = runs.find((r) => r.id === wanted);
+    if (!found) return;
+    setPicked([key(found)]);
+    setParams({}, { replace: true });
+  }, [wanted, runs, setParams]);
 
   const chosen = useMemo(
     () => picked.map((k) => runs.find((r) => key(r) === k)).filter((r): r is RunSummary => !!r),

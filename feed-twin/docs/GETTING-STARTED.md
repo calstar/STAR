@@ -67,8 +67,10 @@ When a burn ends it is **recorded** on its own. Nothing to remember.
 
 ## 5. Going further
 
-* **Study**: COPV sizing, helium against nitrogen, the scheme the physics
-  benchmark is stated at.
+* **Study**: your stand, burned from T-0 once per case. Every case starts as
+  the cockpit is set (COPV target, knobs, Configuration) and changes only the
+  cells you fill in; **Sweep…** writes one case per value. Results compare
+  tank, COPV, thrust and chamber traces and the burn totals side by side.
 * **Layer X** (EngineDesign): the same burn with the engine analyses
   (stability, thermal, flight, the optimiser). See
   [ADR 0005](../../docs/adr/0005-layer-x-stays-where-the-engine-is.md) for how
