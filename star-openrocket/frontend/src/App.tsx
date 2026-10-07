@@ -504,7 +504,10 @@ export default function App() {
       const wire = toWireConfig(recovery)
       await exportOrk(modelId, {
         outerFaces,
-        finFaces,
+        // Nothing picked yet (no Compute run) means auto-detect, not "no fins" --
+        // an empty list is the backend's explicit "this rocket has no fins".
+        finFaces: finFaces.length ? finFaces : null,
+        nFins: finCount || null,
         overrides: massOverrides,
         motor: motorSel,
         railLength,
@@ -519,15 +522,16 @@ export default function App() {
     } finally {
       setExportBusy(false)
     }
-  }, [modelId, outerFaces, finFaces, massOverrides, motorSel, railLength, flight, recovery])
+  }, [modelId, outerFaces, finFaces, finCount, massOverrides, motorSel, railLength, flight, recovery])
 
+  const [motorFileError, setMotorFileError] = useState<string | null>(null)
   const handleDownloadMotorFile = useCallback(async () => {
     if (!motorSel) return
-    setExportError(null)
+    setMotorFileError(null)
     try {
       await downloadMotorFile(motorSel.motorId, motorSel.simfileId)
     } catch (exc) {
-      setExportError(exc instanceof Error ? exc.message : String(exc))
+      setMotorFileError(exc instanceof Error ? exc.message : String(exc))
     }
   }, [motorSel])
 
@@ -709,6 +713,26 @@ export default function App() {
           disabled={!editable}
         />
 
+        {/* Export to OpenRocket, far right: it reads the whole design (CAD, motor,
+            recovery, environment), so it lives with the design rather than in
+            one tab's panel. Live without the checkout -- it only reads. */}
+        <div className="ml-auto flex items-center gap-2">
+          {exportError && (
+            <span className="max-w-xs truncate text-xs text-rose-400" title={exportError}>
+              {exportError}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleExportOrk}
+            disabled={!modelId || exportBusy}
+            title="Download an OpenRocket .ork: airframe, fins, CG, motor, parachutes and launch conditions"
+            className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exportBusy ? 'Exporting…' : 'Export .ork'}
+          </button>
+        </div>
+
         </div>
 
         {/* Versioned designs, as a full-width strip at the bottom of the header. */}
@@ -847,10 +871,8 @@ export default function App() {
             showAssemblyCentroid={showAssemblyCentroid}
             onShowAssemblyCentroidChange={setShowAssemblyCentroid}
             onViewMotorCurves={handleViewMotorCurves}
-            onExportOrk={handleExportOrk}
             onDownloadMotorFile={handleDownloadMotorFile}
-            exportBusy={exportBusy}
-            exportError={exportError}
+            motorFileError={motorFileError}
           />
         </ResizableSidebar>
       </div>

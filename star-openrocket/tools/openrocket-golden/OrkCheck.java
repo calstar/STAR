@@ -23,8 +23,8 @@ import java.io.InputStream;
 
 /**
  * Load an .ork in OpenRocket itself and print, as one JSON line, what its design
- * view shows: CP and CNa at the given Mach (default 0.3, AoA 0), and the CG and
- * mass of the structure and of the rocket at launch. Used by
+ * view shows: CP and CNa at the given Mach (default 0.3, AoA 0), the CG and mass
+ * of the structure and of the rocket at launch, and the structure's pitch inertia. Used by
  * tests/test_ork_openrocket.py to check the .ork export against the program
  * rather than against our port of it.
  *
@@ -75,10 +75,10 @@ public class OrkCheck {
         }
         System.out.printf(
             "{\"cp\": %.12g, \"cna\": %.12g, \"refLength\": %.12g, \"cgLaunch\": %.12g, "
-                + "\"massLaunch\": %.12g, \"cgStructure\": %.12g, \"massStructure\": %.12g, "
+                + "\"massLaunch\": %.12g, \"cgStructure\": %.12g, \"massStructure\": %.12g, \"inertiaStructure\": %.12g, \"spinInertiaStructure\": %.12g, "
                 + "\"hasMotor\": %b, \"finPoints\": %d, \"finArea\": %.12g, \"loadWarnings\": %d}%n",
             cp.x, cp.weight, fc.getRefLength(), launch.getCM().x, launch.getMass(),
-            structure.getCM().x, structure.getMass(), cfg.hasMotors(), finPoints, finArea,
+            structure.getCM().x, structure.getMass(), structure.getLongitudinalInertia(), structure.getRotationalInertia(), cfg.hasMotors(), finPoints, finArea,
             loader.getWarnings().size());
 
         for (RocketComponent c : doc.getRocket()) {

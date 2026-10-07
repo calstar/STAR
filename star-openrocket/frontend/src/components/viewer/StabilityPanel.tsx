@@ -108,11 +108,9 @@ export interface StabilityPanelProps {
   onSetRailLength: (m: number) => void
   /** Open the motor-curves popup (thrust / weight / CG over time) for the selected motor. */
   onViewMotorCurves: () => void
-  /** Download the design as an OpenRocket .ork; and the selected motor's curve file. */
-  onExportOrk: () => void
+  /** Download the selected motor's curve file (.eng/.rse). The .ork export is in the header. */
   onDownloadMotorFile: () => void
-  exportBusy: boolean
-  exportError: string | null
+  motorFileError: string | null
 }
 
 function formatMargin(margin: number | null): string {
@@ -157,10 +155,8 @@ export function StabilityPanel({
   railLength,
   onSetRailLength,
   onViewMotorCurves,
-  onExportOrk,
   onDownloadMotorFile,
-  exportBusy,
-  exportError,
+  motorFileError,
 }: StabilityPanelProps) {
   const { q, lab, num } = useUnits()
   // Face sets, the motor and its placement, and the rail length are all part of
@@ -359,6 +355,8 @@ export function StabilityPanel({
           </div>
         )}
 
+        {motorFileError && <p className="mb-1 text-xs text-rose-400">{motorFileError}</p>}
+
         {motorSel && (
           <>
             <div className="mb-1 flex items-center gap-2">
@@ -460,27 +458,13 @@ export function StabilityPanel({
 
       {/* ── Stability results ── */}
       <section className="border-b border-[var(--color-border)] p-3">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center">
           <span className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
             Stability
           </span>
-          <button
-            type="button"
-            onClick={onExportOrk}
-            disabled={!result || exportBusy}
-            className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed disabled:opacity-40`}
-            title={
-              result
-                ? 'OpenRocket .ork with this airframe, fins, CG, motor, parachutes and launch conditions'
-                : 'Compute first'
-            }
-          >
-            {exportBusy ? 'Exporting…' : 'Export .ork'}
-          </button>
         </div>
 
         {error && <p className="mb-2 text-xs text-rose-400">{error}</p>}
-        {exportError && <p className="mb-2 text-xs text-rose-400">{exportError}</p>}
 
         {!result && !error && (
           <p className="text-xs text-[var(--color-text-muted)]">

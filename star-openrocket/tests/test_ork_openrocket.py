@@ -31,7 +31,7 @@ from backend.onshape.aero.outer_surface import detect_outer_surface
 from backend.onshape.aero.stability import compute_stability
 from backend.onshape.aero.ork_export import LaunchConditions
 from physics.schema import Site
-from test_ork_export import DEVICES, PARTS, PROFILE, _export, rocket
+from test_ork_export import DEVICES, PARTS, PARTS_WITH_INERTIA, PROFILE, _export, rocket
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "openrocket-golden" / "OrkCheck.java"
 
@@ -94,6 +94,9 @@ def test_openrocket_reads_back_the_apps_cp_and_cg(orkcheck, tmp_path, section):
     # The CG and mass are the app's, exactly.
     assert got["cgStructure"] == pytest.approx(app.cg_from_nose, abs=1e-9)
     assert got["massStructure"] == pytest.approx(app.mass, rel=1e-12)
+    # Pitch inertia from the parts where they sit -- not from the placeholder
+    # airframe, which a lumped override would have left it to.
+    assert got["inertiaStructure"] == pytest.approx(plan.structure_inertia, rel=1e-9)
     assert not got["hasMotor"]
 
 
@@ -126,6 +129,40 @@ def test_openrocket_reads_back_the_recovery_and_launch_conditions(orkcheck, tmp_
     for z, wx, wy in cond["wind"]:
         assert -wx == pytest.approx(float(np.interp(z, PROFILE.heights_msl, PROFILE.u)), abs=1e-9)
         assert -wy == pytest.approx(float(np.interp(z, PROFILE.heights_msl, PROFILE.v)), abs=1e-9)
+
+
+def test_openrocket_inertia_is_the_parts_rigid_body_sum(orkcheck, tmp_path):
+    """Spin and pitch inertia, read back from OpenRocket, against the exact sum of the
+    parts' own tensors shifted to the structure CG -- the CAD's rigid-body inertia.
+
+    Pitch is OpenRocket's about one transverse axis (Iyy: the parts' own mean
+    transverse moment plus m(dx^2 + dz^2)), so the off-axis box's y offset is the
+    one place the two can differ; the test states which it compares.
+    """
+    from backend.onshape.aero.ork_export import export_from_cad
+
+    store = rocket()
+    faces = detect_outer_surface(store).faces
+    data, plan = export_from_cad(store, PARTS_WITH_INERTIA, faces)
+    path = tmp_path / "rocket.ork"
+    path.write_bytes(data)
+    got = orkcheck(path)[0]
+    assert got["inertiaStructure"] == pytest.approx(plan.structure_inertia, rel=1e-9)
+    assert got["spinInertiaStructure"] == pytest.approx(plan.structure_spin_inertia, rel=1e-9)
+
+    # The truth, straight from the tensors (axis along +z, rocket CG on it in x).
+    masses = np.array([p["mass"] for p in PARTS_WITH_INERTIA])
+    pos = np.array([p["centroidWorld"] for p in PARTS_WITH_INERTIA])
+    cg = (masses[:, None] * pos).sum(axis=0) / masses.sum()
+    tensor = sum(m * np.asarray(p["inertiaPerKgWorld"]).reshape(3, 3) for m, p in zip(masses, PARTS_WITH_INERTIA))
+    for m, r in zip(masses, pos - cg):
+        tensor = tensor + m * (r @ r * np.eye(3) - np.outer(r, r))
+    assert got["spinInertiaStructure"] == pytest.approx(tensor[2, 2], rel=1e-9)
+    # The box's own transverse moments differ (4e-4 vs 2e-4 per kg); OpenRocket
+    # keeps their mean. That is the whole of the difference allowed here.
+    box = PARTS_WITH_INERTIA[1]
+    allowed = box["mass"] * abs(4e-4 - 2e-4) / 2 + masses[1] * (pos[1] - cg)[1] ** 2
+    assert abs(got["inertiaStructure"] - (tensor[0, 0] + tensor[1, 1]) / 2) <= allowed
 
 
 @pytest.mark.parametrize("fixture", ["test1.eng", "test2.rse", "test3.rse"])

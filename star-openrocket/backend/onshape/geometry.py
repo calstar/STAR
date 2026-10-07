@@ -62,6 +62,33 @@ def volume_and_centroid(vertices: np.ndarray, indices: np.ndarray) -> tuple[floa
     return total, centroid
 
 
+def inertia_per_unit_mass(vertices: np.ndarray, indices: np.ndarray) -> np.ndarray | None:
+    """Inertia tensor about the volume centroid, per kg, of a closed uniform-density mesh.
+
+    Same origin-tetrahedron decomposition as ``volume_and_centroid``: each
+    tetrahedron (0, a, b, c) has second moment ``det/120 * (aa^T + bb^T + cc^T +
+    ss^T)`` with ``s = a + b + c`` and ``det = a . (b x c)`` (Tonon 2004), and the
+    signs cancel the outward-facing parts as they do for the volume. Shifted to the
+    centroid and divided by the volume, so multiplying by any mass gives the tensor
+    for that mass. ``None`` for a mesh with no volume.
+    """
+    if len(indices) == 0 or len(vertices) == 0:
+        return None
+    tris = vertices[indices]
+    a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+    det = np.einsum("ij,ij->i", a, np.cross(b, c))
+    volume = float(det.sum()) / 6.0
+    if abs(volume) < 1e-18:
+        return None
+    s = a + b + c
+    second = np.einsum("i,ij,ik->jk", det, a, a) + np.einsum("i,ij,ik->jk", det, b, b)
+    second += np.einsum("i,ij,ik->jk", det, c, c) + np.einsum("i,ij,ik->jk", det, s, s)
+    second /= 120.0
+    centroid = (det[:, None] * s).sum(axis=0) / 24.0 / volume
+    covariance = second / volume - np.outer(centroid, centroid)
+    return np.trace(covariance) * np.eye(3) - covariance
+
+
 def weld_vertices(points: np.ndarray, epsilon: float = 1e-7) -> tuple[np.ndarray, np.ndarray]:
     """Collapse duplicate vertices, returning unique points and an index array.
 

@@ -104,6 +104,28 @@ def _export(store, **kw):
     return export_from_cad(store, PARTS, faces, name="Synthetic", source="test", **kw)
 
 
+def _masses(root: ET.Element) -> list[tuple[str, float, float]]:
+    """(name, mass, axial CG from the nose) of every mass component in the file.
+
+    Airframe sections stack nose to tail, and a mass component's CG is the middle of
+    its length (``MassObject.getComponentCG``) -- the same reading OpenRocket does.
+    """
+    out, x0 = [], 0.0
+    for seg in root.find("rocket/subcomponents/stage/subcomponents"):
+        for mc in seg.findall("subcomponents/masscomponent"):
+            top = x0 + float(mc.findtext("axialoffset"))
+            out.append((mc.findtext("name"), float(mc.findtext("mass")),
+                        top + float(mc.findtext("packedlength")) / 2))
+        x0 += float(seg.findtext("length"))
+    return out
+
+
+def _mass_cg(root: ET.Element) -> tuple[float, float]:
+    ms = _masses(root)
+    total = sum(m for _, m, _ in ms)
+    return total, sum(m * x for _, m, x in ms) / total
+
+
 def _rocket_xml(data: bytes) -> ET.Element:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         assert zf.namelist() == ["rocket.ork"]
@@ -195,13 +217,21 @@ def test_exported_cp_and_cg_match_the_app():
     assert abs(plan.cp_ork - app.cp_from_nose) < 5e-4
     assert plan.structure_cg == pytest.approx(app.cg_from_nose, abs=1e-12)
     assert plan.structure_mass == pytest.approx(app.mass)
-    assert plan.warnings == []
+    # Nothing but the inertia note (these parts carry no recorded tensor).
+    assert [w for w in plan.warnings if "Rebuild the model" not in w] == []
 
-    stage = _rocket_xml(data).find("rocket/subcomponents/stage")
-    assert float(stage.findtext("overridemass")) == pytest.approx(app.mass)
-    assert float(stage.findtext("overridecg")) == pytest.approx(app.cg_from_nose)
-    assert stage.findtext("overridesubcomponentsmass") == "true"
-    assert stage.findtext("overridesubcomponentscg") == "true"
+    root = _rocket_xml(data)
+    stage = root.find("rocket/subcomponents/stage")
+    # No lumped override: the parts carry the mass, each at its own centroid...
+    assert stage.find("overridemass") is None
+    assert sorted(n for n, _, _ in _masses(root)) == ["occ:avionics", "occ:body"]
+    mass, cg = _mass_cg(root)
+    assert mass == pytest.approx(app.mass, rel=1e-12)
+    assert cg == pytest.approx(app.cg_from_nose, abs=1e-12)
+    # ...and every other component is a shape with its mass overridden to zero.
+    shapes = [c for c in stage.iter() if c.find("material") is not None or c.tag == "parachute"]
+    assert shapes and all(c.findtext("overridemass") == "0.0" for c in shapes)
+    assert all(c.findtext("overridesubcomponentsmass") == "false" for c in shapes)
 
     finset = stage.find(".//freeformfinset")
     assert finset.findtext("fincount") == "3"
@@ -237,7 +267,7 @@ def test_motor_is_mounted_at_its_placed_aft_end():
     app = compute_stability(store, PARTS, faces, motor=placement)
     data, plan = _export(store, motor_placement=placement, motor_record=motor)
 
-    # The stage override is the structure alone; OpenRocket adds the motor.
+    # The mass components are the structure alone; OpenRocket adds the motor.
     assert plan.structure_mass == pytest.approx(app.mass - motor.launch_mass)
     assert plan.launch_cg == pytest.approx(app.cg_from_nose, abs=1e-12)
 
@@ -257,6 +287,74 @@ def test_motor_is_mounted_at_its_placed_aft_end():
     assert fore + motor.length == pytest.approx(app.body_length + (-0.01), abs=1e-9)
 
 
+def test_part_sizes_come_from_their_geometry():
+    store = rocket()
+    _, plan = _export(store)
+    body = next(p for p in plan.parts if p.name == "occ:body")
+    assert body.length == pytest.approx(L_NOSE + L_TUBE, rel=1e-9)
+    assert body.radius == pytest.approx(R, rel=1e-3)
+    # A typed-in mass with no geometry still gets a (small) size, for its inertia.
+    avionics = next(p for p in plan.parts if p.name == "occ:avionics")
+    assert avionics.length == avionics.radius == 0.01
+
+
+# A thin tube the length of the airframe, and an off-axis avionics box, each with
+# the tensor Onshape would give (per kg, about the centroid, axis along +z).
+TUBE_L = L_NOSE + L_TUBE
+PARTS_WITH_INERTIA = [
+    {"key": "occ:body", "mass": 1.5, "centroidWorld": [0.0, 0.0, 0.62],
+     "inertiaPerKgWorld": np.diag([R * R / 2 + TUBE_L**2 / 12] * 2 + [R * R]).reshape(-1).tolist()},
+    {"key": "occ:avionics", "mass": 0.5, "centroidWorld": [0.02, -0.01, 0.35],
+     "inertiaPerKgWorld": np.diag([4e-4, 2e-4, 1e-4]).reshape(-1).tolist()},
+]
+
+
+def test_a_thin_tube_becomes_a_cylinder_with_its_exact_inertia():
+    from backend.onshape.aero.ork_export import cylinder_for_inertia
+
+    r, length = 0.05, 0.6
+    got_l, got_r = cylinder_for_inertia(r * r, r * r / 2 + length**2 / 12)
+    assert got_r == pytest.approx(math.sqrt(2) * r)
+    assert got_l == pytest.approx(length)
+
+
+def test_parts_carry_their_own_inertia_and_position():
+    from backend.onshape.aero.ork_export import part_masses
+
+    store = rocket()
+    core = aero_core(store, detect_outer_surface(store).faces)
+    parts = {p.name: p for p in part_masses(store, core.axis, core.profile.x_fore, PARTS_WITH_INERTIA)}
+    for spec in PARTS_WITH_INERTIA:
+        p = parts[spec["key"]]
+        tensor = np.asarray(spec["inertiaPerKgWorld"]).reshape(3, 3)
+        assert p.exact
+        assert p.rotational_unit_inertia == pytest.approx(tensor[2, 2])
+        assert p.longitudinal_unit_inertia == pytest.approx((tensor[0, 0] + tensor[1, 1]) / 2)
+    # Off the axis where the part is, so its m r^2 reaches OpenRocket's sums.
+    box = parts["occ:avionics"]
+    assert box.radial_position == pytest.approx(math.hypot(0.02, -0.01))
+    assert parts["occ:body"].radial_position == pytest.approx(0.0, abs=1e-9)
+
+
+def test_inertia_follows_a_typed_in_mass():
+    from backend.onshape.aero.ork_export import part_masses
+
+    store = rocket()
+    core = aero_core(store, detect_outer_surface(store).faces)
+    a = {p.name: p for p in part_masses(store, core.axis, core.profile.x_fore, PARTS_WITH_INERTIA)}
+    b = {p.name: p for p in part_masses(store, core.axis, core.profile.x_fore, PARTS_WITH_INERTIA,
+                                        overrides={"occ:avionics": 1.0})}
+    # Per-kg geometry is the part's; only the mass scales.
+    assert b["occ:avionics"].mass == 1.0
+    assert (b["occ:avionics"].length, b["occ:avionics"].radius) == (a["occ:avionics"].length, a["occ:avionics"].radius)
+
+
+def test_a_model_without_recorded_inertia_says_it_is_approximate():
+    _, plan = _export(rocket())  # PARTS has no inertiaPerKgWorld
+    assert not any(p.exact for p in plan.parts)
+    assert any("Rebuild the model" in w for w in plan.warnings)
+
+
 def test_massless_model_is_refused():
     store = rocket()
     faces = detect_outer_surface(store).faces
@@ -274,7 +372,7 @@ def test_export_endpoint_serves_a_zip(monkeypatch, tmp_path):
     assert resp.headers["content-disposition"] == 'attachment; filename="m1.ork"'
     root = _rocket_xml(resp.content)
     assert root.find(".//freeformfinset") is None
-    assert float(root.find(".//stage/overridemass").text) == pytest.approx(2.0)
+    assert _mass_cg(root)[0] == pytest.approx(2.0)
 
 
 def test_export_endpoint_422_without_mass(monkeypatch, tmp_path):
@@ -318,11 +416,11 @@ def test_parachutes_carry_the_drag_area_and_deployment():
 
 
 def test_parachutes_do_not_move_the_cg():
-    """Their mass sits under the stage override, so the CG stays the app's."""
+    """They carry no mass, so the CG stays the app's."""
     _, bare = _export(rocket())
     data, plan = _export(rocket(), launch=LaunchConditions(devices=DEVICES))
     assert plan.structure_cg == bare.structure_cg
-    assert float(_rocket_xml(data).find(".//stage/overridecg").text) == pytest.approx(bare.structure_cg)
+    assert _mass_cg(_rocket_xml(data))[1] == pytest.approx(bare.structure_cg, abs=1e-12)
 
 
 def test_profile_wind_is_written_level_for_level():

@@ -19,10 +19,17 @@ each piece becomes, and why that reproduces the numbers:
   CP. The set hangs off the airframe component under the fin's root leading edge,
   and ``FinSetCalc`` takes its body radius from that component there -- equal to the
   ``r_max`` the app uses whenever the fins sit on the full-diameter tube.
-* **Mass** -> the stage carries the CAD mass and CG as an override with
-  "override for all subcomponents" set (``MassCalculation.calculateStructure``),
-  so the placeholder materials below never reach the CG. Motors are added
-  separately by OpenRocket and are not covered by the override.
+* **Mass** -> one ``masscomponent`` per CAD part that has mass, at the part's own
+  centroid (off the axis too, when the part is), sized so its inertia is the
+  part's: see ``part_masses``.
+  Every other component (airframe sections, fins, motor mount, parachutes) is a
+  shape only, its mass overridden to zero. So the structure CG is the app's
+  mass-weighted mean of the same parts -- identical by construction -- and the
+  moments of inertia come from where the parts actually are. That is why this is
+  not a single stage-level override: ``MassCalculation.calculateStructure`` zeroes
+  overridden children's *mass* but keeps their *inertia*, which would leave the
+  pitch inertia to the placeholder materials. Motors are added separately by
+  OpenRocket from its own data.
 * **Motor** -> an ``innertube`` motor mount whose aft end is the placed motor's aft
   end, holding the motor by manufacturer, designation and digest. OpenRocket looks
   it up in its own database on load (``DatabaseMotorFinder``); the thrust curve is
@@ -32,8 +39,9 @@ each piece becomes, and why that reproduces the numbers:
   OpenRocket's drag area (``cd`` times the canopy area at ``diameter``) is the app's
   CdS. An ALTITUDE trigger stays an altitude deployment; a TIME trigger, measured
   from apogee, becomes an apogee deployment delayed by trigger + delay -- the same
-  mapping ``tools/openrocket-golden/README.md`` uses. Their masses are covered by
-  the stage override like everything else.
+  mapping ``tools/openrocket-golden/README.md`` uses. They carry zero mass: a
+  canopy modelled in the CAD is one of the parts above, and one that is not is not
+  in the app's CG either.
 * **Environment** -> a simulation whose conditions are the launch site, the pad
   atmosphere (OpenRocket's extended ISA re-fits from the pad temperature and
   pressure the same way ``physics.atmosphere`` does; a measured lapse rate has no
@@ -73,9 +81,13 @@ ORK_FILE_VERSION = "1.10"
 #: well under a millimetre (``ExportedRocket.body_cp`` reports the actual shift).
 PROFILE_TOLERANCE = 1e-4
 
-#: Wall thickness given to the airframe components. Mass is overridden, so this
-#: only keeps OpenRocket's geometry checks quiet; it does not feed CG.
+#: Wall thickness given to the airframe components. Their mass is overridden to
+#: zero, so this only keeps OpenRocket's geometry checks quiet.
 WALL = 0.002
+
+#: Axial length and radius given to a part with mass but no geometry (a mass typed
+#: in for something the CAD does not model). Only its inertia sees these.
+MASSLESS_GEOMETRY_SIZE = 0.01
 
 #: Radial clearance and wall of the generated motor-mount tube.
 MOUNT_CLEARANCE = 0.0005
@@ -109,6 +121,114 @@ class Segment:
     def volume(self) -> float:
         """Solid frustum volume, the way ``SymmetricComponent`` integrates a cone."""
         return math.pi / 3.0 * self.length * (self.r0**2 + self.r0 * self.r1 + self.r1**2)
+
+
+@dataclass(frozen=True)
+class PartMass:
+    """One CAD part as an OpenRocket mass component, axial positions from the nose."""
+
+    name: str
+    mass: float
+    x: float  # centroid, axial
+    length: float  # the cylinder is centred on ``x``
+    radius: float
+    #: Centroid's distance off the rocket axis, and its direction (degrees), as
+    #: OpenRocket's ``radialposition``/``radialdirection``.
+    radial_position: float = 0.0
+    radial_direction: float = 0.0
+    #: True when the size reproduces the part's inertia tensor; False when it is the
+    #: bounding-extent estimate (a model built before inertia was recorded).
+    exact: bool = False
+
+    @property
+    def longitudinal_unit_inertia(self) -> float:
+        """``MassObject.getLongitudinalUnitInertia``: a solid cylinder's."""
+        return (3 * self.radius**2 + self.length**2) / 12
+
+    @property
+    def rotational_unit_inertia(self) -> float:
+        """``MassObject.getRotationalUnitInertia``."""
+        return self.radius**2 / 2
+
+    @property
+    def offset_yz(self) -> tuple[float, float]:
+        """Where OpenRocket puts the centroid off-axis (``MassObject`` shiftY/shiftZ)."""
+        a = math.radians(self.radial_direction)
+        return self.radial_position * math.cos(a), self.radial_position * math.sin(a)
+
+
+def cylinder_for_inertia(spin: float, pitch: float) -> tuple[float, float]:
+    """(length, radius) of the solid cylinder with these inertias per kg about its centre.
+
+    OpenRocket models a mass component as a solid cylinder (``MassObject``): spin
+    ``r^2/2`` and pitch ``(3r^2 + L^2)/12``. Two sizes, two inertias, so the
+    cylinder can match any part: ``r^2 = 2 spin``, ``L^2 = 12 pitch - 6 spin``.
+    The second is never negative for a real body -- in any frame the two
+    transverse moments sum to at least the third (their excess is ``2 sum z^2 dm``),
+    so the mean transverse moment is at least half the spin one. A thin tube comes
+    out exactly: radius sqrt(2) r, its own length.
+    """
+    radius = math.sqrt(max(2.0 * spin, 0.0))
+    length = math.sqrt(max(12.0 * pitch - 6.0 * spin, 0.0))
+    return length, radius
+
+
+def part_masses(store, axis, x_nose: float, manifest_parts: list[dict],
+                overrides: dict[str, float] | None = None) -> list[PartMass]:
+    """Every part with mass: where it sits, and a cylinder with its inertia.
+
+    Mass and centroid are exactly what ``stability.compute_cg`` uses (manifest mass
+    or the override), so the parts' weighted mean is the app's CG. The inertia is
+    the part's own tensor about its centroid (``inertiaPerKgWorld``, from Onshape or
+    the mesh, times the mass in use): its moment about the rocket axis is the spin,
+    the mean of the two transverse moments the pitch -- OpenRocket keeps one of each
+    per component, so a lopsided part's difference between its transverse axes is
+    averaged, and nothing else is lost. Off-axis centroids are placed off-axis, which
+    is what puts their m r^2 into OpenRocket's spin and pitch sums.
+
+    A model built before inertia was recorded falls back to a cylinder the size of
+    the part's axial and radial extent, and is marked ``exact=False``.
+    """
+    overrides = overrides or {}
+    extent: dict[str, tuple[float, float, float]] = {}
+    for fg in store.iter_faces():
+        s, rho = axis.axial_radial(fg.triangles.reshape(-1, 3))
+        lo, hi, r = extent.get(fg.occurrence_key, (np.inf, -np.inf, 0.0))
+        extent[fg.occurrence_key] = (min(lo, float(s.min())), max(hi, float(s.max())), max(r, float(rho.max())))
+
+    d = axis.direction
+    u = np.cross(d, [1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])
+    u /= np.linalg.norm(u)
+    v = np.cross(d, u)
+
+    out = []
+    for p in manifest_parts:
+        m = overrides.get(p["key"], p["mass"])
+        if not (m > 0):
+            continue
+        rel = np.asarray(p["centroidWorld"], dtype=float) - axis.origin
+        x = float(rel @ d) - x_nose
+        off = rel - (rel @ d) * d
+        radial = float(np.linalg.norm(off))
+        direction = math.degrees(math.atan2(float(off @ v), float(off @ u))) if radial > 1e-9 else 0.0
+
+        per_kg = p.get("inertiaPerKgWorld")
+        if per_kg:
+            tensor = np.asarray(per_kg, dtype=float).reshape(3, 3)
+            spin = float(d @ tensor @ d)
+            pitch = (float(np.trace(tensor)) - spin) / 2.0
+            length, radius = cylinder_for_inertia(spin, pitch)
+            exact = True
+        elif p["key"] in extent:
+            lo, hi, r = extent[p["key"]]
+            length, radius, exact = max(hi - lo, 1e-4), max(r, 1e-4), False
+        else:
+            length = radius = MASSLESS_GEOMETRY_SIZE
+            exact = False
+        out.append(PartMass(name=str(p.get("name") or p["key"]), mass=float(m), x=x,
+                            length=length, radius=radius, radial_position=radial,
+                            radial_direction=direction, exact=exact))
+    return out
 
 
 def _douglas_peucker(x: np.ndarray, r: np.ndarray, tol: float) -> list[int]:
@@ -188,9 +308,15 @@ class ExportedRocket:
     cna_ork: float
     structure_mass: float
     structure_cg: float
+    #: The structure's pitch inertia about its own CG, as OpenRocket will compute it
+    #: from the mass components (kg m^2).
+    structure_inertia: float
+    #: ...and its spin (roll) inertia about the rocket axis.
+    structure_spin_inertia: float
     launch_mass: float
     launch_cg: float
     warnings: list[str] = field(default_factory=list)
+    parts: list[PartMass] = field(default_factory=list)
 
 
 def _fmt(v: float) -> str:
@@ -198,15 +324,39 @@ def _fmt(v: float) -> str:
 
 
 def _material(indent: str) -> str:
-    # Placeholder: every structural mass is replaced by the stage override.
+    # Placeholder: the component carries no mass (see _no_mass); this only names it.
     return f'{indent}<material type="bulk" density="1850.0" group="Composites">Fiberglass</material>\n'
+
+
+def _no_mass(indent: str) -> str:
+    """This component is shape only; its children keep their own mass."""
+    return (f"{indent}<overridemass>0.0</overridemass>\n"
+            f"{indent}<overridesubcomponentsmass>false</overridesubcomponentsmass>\n")
+
+
+def _mass_xml(part: PartMass, offset: float, indent: str) -> str:
+    i2 = indent + "  "
+    return (
+        f"{indent}<masscomponent>\n"
+        f"{i2}<name>{escape(part.name)}</name>\n"
+        f"{i2}<id>{uuid.uuid4()}</id>\n"
+        f'{i2}<axialoffset method="top">{_fmt(offset)}</axialoffset>\n'
+        f'{i2}<position type="top">{_fmt(offset)}</position>\n'
+        f"{i2}<packedlength>{_fmt(part.length)}</packedlength>\n"
+        f"{i2}<packedradius>{_fmt(part.radius)}</packedradius>\n"
+        f"{i2}<radialposition>{_fmt(part.radial_position)}</radialposition>\n"
+        f"{i2}<radialdirection>{_fmt(part.radial_direction)}</radialdirection>\n"
+        f"{i2}<mass>{_fmt(part.mass)}</mass>\n"
+        f"{i2}<masscomponenttype>masscomponent</masscomponenttype>\n"
+        f"{indent}</masscomponent>\n"
+    )
 
 
 def _segment_xml(seg: Segment, n: int, children: str, indent: str) -> str:
     i2 = indent + "  "
     body = f"{i2}<name>{'Body tube' if seg.is_tube else 'Section'} {n}</name>\n"
     body += f"{i2}<id>{uuid.uuid4()}</id>\n"
-    body += f"{i2}<finish>smooth</finish>\n" + _material(i2)
+    body += f"{i2}<finish>smooth</finish>\n" + _material(i2) + _no_mass(i2)
     body += f"{i2}<length>{_fmt(seg.length)}</length>\n"
     if seg.is_tube:
         body += f"{i2}<thickness>{_fmt(min(WALL, seg.r0))}</thickness>\n"
@@ -296,7 +446,8 @@ def _finset_xml(
         f'{i2}<angleoffset method="relative">0.0</angleoffset>\n'
         f'{i2}<axialoffset method="top">{_fmt(offset)}</axialoffset>\n'
         f'{i2}<position type="top">{_fmt(offset)}</position>\n'
-        f"{i2}<finish>smooth</finish>\n" + _material(i2) + f"{i2}<thickness>{_fmt(thickness)}</thickness>\n"
+        f"{i2}<finish>smooth</finish>\n" + _material(i2) + _no_mass(i2)
+        + f"{i2}<thickness>{_fmt(thickness)}</thickness>\n"
         f"{i2}<crosssection>{shape}</crosssection>\n"
         f"{i2}<cant>0.0</cant>\n"
         f"{i2}<filletradius>0.0</filletradius>\n"
@@ -333,7 +484,8 @@ def _mount_xml(motor: OrkMotor, offset: float, config_id: str, indent: str) -> s
         f"{i2}<name>Motor mount</name>\n"
         f"{i2}<id>{uuid.uuid4()}</id>\n"
         f'{i2}<axialoffset method="top">{_fmt(offset)}</axialoffset>\n'
-        f'{i2}<position type="top">{_fmt(offset)}</position>\n' + _material(i2) + f"{i2}<length>{_fmt(motor.length)}</length>\n"
+        f'{i2}<position type="top">{_fmt(offset)}</position>\n' + _material(i2) + _no_mass(i2)
+        + f"{i2}<length>{_fmt(motor.length)}</length>\n"
         f"{i2}<radialposition>0.0</radialposition>\n"
         f"{i2}<radialdirection>0.0</radialdirection>\n"
         f"{i2}<outerradius>{_fmt(r_out)}</outerradius>\n"
@@ -375,6 +527,7 @@ def plan_export(
     motor: OrkMotor | None = None,
     mach: float = 0.3,
     tol: float = PROFILE_TOLERANCE,
+    parts: list[PartMass] | None = None,
 ) -> ExportedRocket:
     """Lay the rocket out as OpenRocket components and predict what it will compute.
 
@@ -419,6 +572,27 @@ def plan_export(
 
     cp_ork, cna_ork = merge_cp(contributions)
 
+    parts = list(parts or [])
+    # What OpenRocket will sum (RigidBody.rebase): each component's own pitch
+    # inertia plus m (dx^2 + dz^2) about the structure CG, and spin plus m (dy^2 + dz^2).
+    total = sum(p.mass for p in parts)
+    cy = sum(p.mass * p.offset_yz[0] for p in parts) / total if total else 0.0
+    cz = sum(p.mass * p.offset_yz[1] for p in parts) / total if total else 0.0
+    structure_inertia = sum(
+        p.mass * (p.longitudinal_unit_inertia + (p.x - structure_cg) ** 2 + (p.offset_yz[1] - cz) ** 2)
+        for p in parts
+    )
+    structure_spin_inertia = sum(
+        p.mass * (p.rotational_unit_inertia + (p.offset_yz[0] - cy) ** 2 + (p.offset_yz[1] - cz) ** 2)
+        for p in parts
+    )
+    if parts and not all(p.exact for p in parts):
+        warnings.append(
+            f"{sum(not p.exact for p in parts)} part(s) have no recorded inertia (a model built "
+            "before it was stored); their masses are sized from their extent, so the "
+            "inertia is approximate. Rebuild the model to make it exact."
+        )
+
     launch_mass, launch_cg = structure_mass, structure_cg
     if motor is not None:
         motor_cg = motor.placed.fore_axial - x_nose + motor.launch_cgx
@@ -435,9 +609,12 @@ def plan_export(
         cna_ork=cna_ork,
         structure_mass=structure_mass,
         structure_cg=structure_cg,
+        structure_inertia=structure_inertia,
+        structure_spin_inertia=structure_spin_inertia,
         launch_mass=launch_mass,
         launch_cg=launch_cg,
         warnings=warnings,
+        parts=parts,
     )
 
 
@@ -447,8 +624,9 @@ def _comment(
     mm = 1000.0
     lines = [
         f"Exported by STAR OpenRocket from {source}.",
-        "Airframe, fins and mass come from the CAD; component materials are placeholders "
-        "and the stage mass/CG override replaces them all.",
+        "Airframe and fins come from the CAD as zero-mass shapes; every CAD part with "
+        f"mass is a mass component at its own centroid ({len(plan.parts)} parts), "
+        "sized to carry the part's own inertia.",
         f"STAR: CP {plan.cp_app * mm:.1f} mm from nose (Mach 0.3, AoA 0); "
         f"structure {plan.structure_mass:.4f} kg, CG {plan.structure_cg * mm:.1f} mm.",
         f"Expected in OpenRocket: CP {plan.cp_ork * mm:.1f} mm; CG {plan.launch_cg * mm:.1f} mm "
@@ -465,8 +643,8 @@ def _comment(
     if launch is not None:
         if launch.devices:
             lines.append(
-                "Parachutes: CdS, diameter and deployment from the Recovery tab; their "
-                "masses are inside the stage override."
+                "Parachutes: CdS, diameter and deployment from the Recovery tab; zero "
+                "mass here, as in the app's CG."
             )
         lines.append(
             "The 'STAR launch conditions' simulation carries the site, pad atmosphere, "
@@ -517,7 +695,8 @@ def _parachute_xml(dev, offset: float, packed_radius: float, indent: str) -> str
         f"{i2}<radialdirection>0.0</radialdirection>\n"
         f"{i2}<cd>{_fmt(dev.CdS / s0)}</cd>\n"
         f'{i2}<material type="surface" density="0.067" group="Fabrics">Ripstop nylon</material>\n'
-        f"{i2}<deployevent>{event}</deployevent>\n"
+        + _no_mass(i2)
+        + f"{i2}<deployevent>{event}</deployevent>\n"
         f"{i2}<deployaltitude>{_fmt(altitude)}</deployaltitude>\n"
         f"{i2}<deploydelay>{_fmt(delay)}</deploydelay>\n"
         f"{i2}<diameter>{_fmt(dev.D0)}</diameter>\n"
@@ -660,6 +839,11 @@ def write_ork(
         offset = fore - plan.segments[k].x0
         children[k] = children.get(k, "") + _mount_xml(motor, offset, config_id, ind + "    ")
 
+    for part in plan.parts:
+        k = _segment_at(plan.segments, part.x)
+        offset = part.x - part.length / 2 - plan.segments[k].x0
+        children[k] = children.get(k, "") + _mass_xml(part, offset, ind + "    ")
+
     devices = list(launch.devices) if launch else []
     if devices:
         # All canopies in the longest tube, stacked from its top.
@@ -698,10 +882,6 @@ def write_ork(
         "      <stage>\n"
         "        <name>Sustainer</name>\n"
         f"        <id>{uuid.uuid4()}</id>\n"
-        f"        <overridemass>{_fmt(plan.structure_mass)}</overridemass>\n"
-        "        <overridesubcomponentsmass>true</overridesubcomponentsmass>\n"
-        f"        <overridecg>{_fmt(plan.structure_cg)}</overridecg>\n"
-        "        <overridesubcomponentscg>true</overridesubcomponentscg>\n"
         "        <subcomponents>\n"
         + body
         + "        </subcomponents>\n"
@@ -772,5 +952,6 @@ def export_from_cad(
             placed=placed,
         )
 
-    plan = plan_export(core, core.cp_axial - x_nose, mass, structure_cg, motor)
+    parts = part_masses(store, core.axis, x_nose, manifest_parts, overrides)
+    plan = plan_export(core, core.cp_axial - x_nose, mass, structure_cg, motor, parts=parts)
     return write_ork(core, plan, name, source, section, motor, launch), plan

@@ -66,7 +66,6 @@ const VIEW_ONLY: Record<string, string> = {
   'StabilityPanel.tsx:onToggleIsolate': 'isolates the outer surface in the 3D view',
   'StabilityPanel.tsx:onViewMotorCurves': 'opens the thrust-curve popup',
   'StabilityPanel.tsx:onViewFlight': 'opens the flight-profile popup',
-  'StabilityPanel.tsx:onExportOrk': 'downloads the design as an .ork; reads it',
   'StabilityPanel.tsx:onDownloadMotorFile': "downloads the motor's curve file; reads it",
   'StabilityPanel.tsx:setPickerOpen((v) => !v)': 'opens/closes the motor list; picking one is gated',
   'MotorPicker.tsx:setQuery(e.target.value)': 'search box, local state',
