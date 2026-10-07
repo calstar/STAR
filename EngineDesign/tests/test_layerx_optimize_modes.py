@@ -177,8 +177,10 @@ def le4():
     pytest.importorskip("feedtwin")
     from engine.pipeline.io import load_config
 
-    return load_config(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs",
-                                    "ethalox_6800N.yaml"))
+    # The undrilled holes the hand numbers below are worked from, not the live
+    # design: configs/ethalox_6800N.yaml has since been drilled to 1.65 mm.
+    return load_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                                    "ethalox_6800N_undrilled_2026-10-04.yaml"))
 
 
 def _hardware(config, payload, **req):
