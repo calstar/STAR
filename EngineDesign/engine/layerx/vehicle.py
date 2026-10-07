@@ -16,31 +16,18 @@ whole drawing is the vehicle: every drawing that ran before reads exactly as it 
 from __future__ import annotations
 
 import copy
-from collections import defaultdict
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 
 def vehicle_ids(diagram: Any) -> Optional[FrozenSet[str]]:
-    """The ids of every symbol joined to an ENGINE by drawn lines, or None without an engine."""
-    engines = [n.id for n in diagram.nodes if n.type in ("ENGINE", "INJECTOR")]
-    if not engines:
-        return None
-    adjacent = defaultdict(set)
-    for edge in diagram.edges:
-        adjacent[edge.source].add(edge.target)
-        adjacent[edge.target].add(edge.source)
-    seen = set(engines)
-    stack = list(engines)
-    while stack:
-        for other in adjacent[stack.pop()]:
-            if other not in seen:
-                seen.add(other)
-                stack.append(other)
-    # Instruments clipped to a vehicle symbol (an RTD on a tank, a TC on the engine) belong with it.
-    for n in diagram.nodes:
-        if getattr(n, "attached_to", None) in seen:
-            seen.add(n.id)
-    return frozenset(seen)
+    """The ids of every symbol joined to an ENGINE by drawn lines, or None without an engine.
+
+    The physics library's rule (:func:`feedtwin.pid.roles.vehicle_ids`), so the cockpit and Layer X
+    never disagree about which tank is the vehicle's.
+    """
+    from feedtwin.pid.roles import vehicle_ids as library_vehicle_ids
+
+    return library_vehicle_ids(diagram)
 
 
 def on_vehicle(nodes: Iterable[Any], vehicle: Optional[FrozenSet[str]]) -> List[Any]:

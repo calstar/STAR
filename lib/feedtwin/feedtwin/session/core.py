@@ -80,7 +80,7 @@ from feedtwin.vessels.vapour import NoVapour, SaturatedVapour, latent_heat
 from feedtwin.vessels.tank import Tank, TankRates, TankState
 from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
-from feedtwin.pid.network import DomeLoader, propellant_side
+from feedtwin.pid.network import DomeLine, DomeLoader, propellant_side
 from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
 from feedtwin.session.hookup import CHARGE, DOME, Hookup
@@ -1791,6 +1791,14 @@ class Session:
         self.forced: dict[str, float] = {}
         #: Where each actuator actually is, as opposed to where it is told to be.
         self._positions: dict[str, float] = {}
+        #: The pressure shut in each gated dome (DomeLine), by the loaded
+        #: regulator's id [Pa abs]; atmosphere until something loads it.
+        self._dome_held: dict[str, float] = {}
+        #: Network node -> pressure for the dome lines, written over the solve's
+        #: own (it never sees a dome line: loading gas, not feed).
+        self._dome_readings: dict[str, float] = {}
+        #: Prime asks for the dome as loaded on the pad, not as it was.
+        self._dome_primed = False
         self._travel: dict[str, float] = {}
         #: The run computed ahead of the display. Each entry is the sample the
         #: operator will see and the stand's state at that instant, so a command
@@ -2087,8 +2095,15 @@ class Session:
                 ),
                 surface_mixing=self.setup.surface_mixing,
                 wall_by_level=self.setup.ullage_wall_by_level,
-                ambient_conductance=_skin_conductance(
-                    node, self.setup.ambient_leak, self.assumptions
+                # A dewar is vacuum-jacketed: its inner vessel takes no skin
+                # leak worth the name (and the drawing gives it no insulation
+                # to read one from).
+                ambient_conductance=(
+                    0.0
+                    if getattr(node, "drawn_as", "") == "DEWAR"
+                    else _skin_conductance(
+                        node, self.setup.ambient_leak, self.assumptions
+                    )
                 ),
                 ambient_temperature=self.setup.ambient_T,
                 # Boiling at a superheated wall is what makes a shut LOX tank
@@ -2131,16 +2146,37 @@ class Session:
                 # vehicle's load comes from, not another load.
                 sim = self.tanks[drawing_id]
                 loaded = sim._wanted()
+                # A dewar sits at its own pressure, built by its own circuit,
+                # with its liquid at saturation under it; a transfer tank is
+                # filled in the shop and pressed on the pad.
+                dewar = getattr(node, "drawn_as", "") == "DEWAR"
+                drawn = node.params.get("pressure")
+                held = drawn.si if (dewar and drawn is not None) else AMBIENT
                 sim.state = tank.initial_state(
-                    pressure=AMBIENT,
+                    pressure=held,
                     liquid_mass=loaded,
                     liquid_temperature=temperature,
+                    # The ullage is the model's pressurant, not the dewar's own
+                    # vapour; started cold it sits on nitrogen's saturation
+                    # line, where the property layer cannot price it.
                     gas_temperature=293.15,
+                    contact_time=PAD_HOLD_S if dewar else 0.0,
+                    split_wall=dewar,
                 )
+                if dewar:
+                    # Its inner vessel has held its liquid for days: all of
+                    # the metal is at the liquid's temperature. Started warm,
+                    # the wall boiled the LOX and the dewar climbed 650 psi in
+                    # a minute.
+                    sim.state = replace(
+                        sim.state,
+                        ullage=replace(sim.state.ullage, wall_temperature=temperature),
+                    )
                 self.assumptions.append(
                     f"{label} is ground support: it starts loaded, "
                     f"{loaded:.2f} kg ({self.setup.full_fraction:.0%} of its "
-                    f"{litres * 1e3:.1f} L, Setup), at atmosphere."
+                    f"{litres * 1e3:.1f} L, Setup), at "
+                    + (f"its drawn {psig(held):.0f} psig." if dewar else "atmosphere.")
                 )
 
         if self.setup.regulator_supply_datum and self.setup.copv_target_psi > 0.0:
@@ -2327,6 +2363,9 @@ class Session:
                 )
             bottle.charged = True
         self.state = state if state in self.machine.states else self.state
+        # T-0 has the dome loaded on the pad, whatever the line's valves are
+        # doing when the session is put there.
+        self._dome_primed = True
         self._guess = {}
         self._last_flows = {}
         self._last_isolated = frozenset()
@@ -2488,6 +2527,9 @@ class Session:
         """
         built = self.model.built
         out: dict[str, float] = {}
+        commanded = self.binding.positions_for(self.machine, self.state)
+        lines = {line.loader: line for line in built.dome_lines.values()}
+        self._dome_readings = {}
 
         # The dome, through the regulator that actually loads it. `dome_psi` is
         # the knob on the *control* regulator, not the dome pressure itself:
@@ -2515,12 +2557,20 @@ class Session:
                 for regulator in knob.regulators:
                     loader = built.dome_loaders.get(regulator)
                     if loader is not None:
-                        out[loader.signal] = self._through_loader(loader, psig_set)
+                        out[loader.signal] = self._gated_dome(
+                            lines.get(regulator),
+                            self._through_loader(loader, psig_set),
+                            commanded,
+                        )
                     elif regulator in labels:
                         out[f"{labels[regulator]}.dome"] = from_psig(psig_set)
         else:
             for loader in built.dome_loaders.values():
-                out[loader.signal] = self._through_loader(loader, self.setup.dome_psi)
+                out[loader.signal] = self._gated_dome(
+                    lines.get(loader.id),
+                    self._through_loader(loader, self.setup.dome_psi),
+                    commanded,
+                )
             if not built.dome_loaders:
                 dome_signal = next(
                     (s for s in built.actuators.values() if s.endswith(".dome")), ""
@@ -2528,7 +2578,7 @@ class Session:
                 if dome_signal:
                     out[dome_signal] = from_psig(self.setup.dome_psi)
 
-        commanded = self.binding.positions_for(self.machine, self.state)
+        self._dome_primed = False
         for drawing_id, signal in built.actuators.items():
             if signal.endswith(".dome"):
                 continue
@@ -2542,6 +2592,73 @@ class Session:
             )
             out[signal] = self._slew(drawing_id, target, dt)
         return out
+
+    def _gated_dome(
+        self, line: DomeLine | None, live: float, commanded: Mapping[str, float]
+    ) -> float:
+        """The dome a gated dome line gives: its loader's outlet while the line
+        is open between them, atmosphere once an open vent reaches the port
+        side, and otherwise what was shut in [Pa abs].
+
+        Walked from the dome port each tick, through what is open. A valve no
+        actuator drives passes (nothing on the stand shuts it); a vent valve
+        no actuator drives, and a hand valve nobody has opened, rest shut.
+        """
+        if line is None:
+            return live
+        built = self.model.built
+
+        def is_open(valve: str) -> bool:
+            if valve in self.forced:
+                return self.forced[valve] >= 0.5
+            if valve in commanded:
+                return commanded[valve] >= 0.5
+            if valve in built.hand_valves or valve in line.vents:
+                return built.rest.get(valve, 0.0) >= 0.5
+            return True
+
+        def region(starts: frozenset[str] | set[str]) -> set[str]:
+            reached: set[str] = set()
+            frontier = list(starts)
+            while frontier:
+                here = frontier.pop()
+                if here in reached:
+                    continue
+                reached.add(here)
+                if here in line.valves and not is_open(here):
+                    continue  # shut: its body is reached, nothing past it
+                frontier.extend(line.adjacent.get(here, ()))
+            return reached
+
+        port_side = region(line.ports)
+        if line.loader in port_side or self._dome_primed:
+            held = live
+        elif any(v in port_side and is_open(v) for v in line.vents):
+            held = AMBIENT
+        else:
+            held = self._dome_held.get(line.loaded, AMBIENT)
+        self._dome_held[line.loaded] = held
+        # What the line's transducers read: the dome on its side, the loader's
+        # outlet on the loader's side of a shut valve.
+        loader_side = region({line.loader}) - port_side
+        for symbols, value in ((port_side, held), (loader_side, live)):
+            for symbol in symbols:
+                for node in (
+                    built.node_of.get(symbol),
+                    f"{symbol}.in",
+                    f"{symbol}.out",
+                ):
+                    if node and node in built.network.nodes:
+                        self._dome_readings[node] = value
+        for instrument in built.instruments:
+            for symbols, value in ((port_side, held), (loader_side, live)):
+                if any(
+                    built.node_of.get(sym) == instrument.node
+                    or instrument.node in (f"{sym}.in", f"{sym}.out")
+                    for sym in symbols
+                ):
+                    self._dome_readings[instrument.node] = value
+        return held
 
     def _through_loader(self, loader: DomeLoader, psig_set: float) -> float:
         """The dome a control regulator set to ``psig_set`` gives, from its
@@ -3229,7 +3346,7 @@ class Session:
                     liquid_in = 0.0
                 # Pressurant leaving for another vessel, not a vent.
                 sent[sim.id] = gas_out * (1.0 - vented.get(sim.id, 0.0))
-                pressed, target, h_cart = self._supply_press(sim)
+                pressed, target, h_cart = self._supply_press(sim, inner)
                 taken = sim.advance(
                     inner,
                     mdot_liquid_out=liquid_out,
@@ -3400,7 +3517,9 @@ class Session:
             if note not in self.assumptions:
                 self.assumptions.append(note)
 
-    def _supply_press(self, sim: TankSim) -> tuple[float, float, float]:
+    def _supply_press(
+        self, sim: TankSim, dt: float = 0.0
+    ) -> tuple[float, float, float]:
         """The cart's press on a ground supply tank whose press line is not
         drawn: ``(rate [kg/s], target [Pa], arriving enthalpy [J/kg])``.
 
@@ -3416,14 +3535,19 @@ class Session:
         if drawn is None:
             return 0.0, 0.0, 0.0
         side = propellant_side(sim.tank.liquid.name)
-        opened = self.machine.open_actuators(self.state)
-        pressing = [
-            a
-            for a in opened
-            if {"fill", "press"} <= _words(a)
-            and side in _words(a)
-            and a not in self.binding.to_symbol
-        ]
+        if getattr(node, "drawn_as", "") == "DEWAR":
+            # A dewar's pressure-building circuit holds it whatever the table
+            # says: it is the dewar's own, not a valve on the stand.
+            pressing = ["its pressure-building circuit"]
+        else:
+            opened = self.machine.open_actuators(self.state)
+            pressing = [
+                a
+                for a in opened
+                if {"fill", "press"} <= _words(a)
+                and side in _words(a)
+                and a not in self.binding.to_symbol
+            ]
         if not pressing:
             return 0.0, 0.0, 0.0
         target = float(drawn.si)
@@ -3432,10 +3556,18 @@ class Session:
         if now >= target or held <= 0.0:
             return 0.0, target, 0.0
         wanted = held * (target / max(now, 1.0) - 1.0)
-        rate = wanted / max(self.setup.supply_press_s, 1e-3)
+        # A dewar's circuit is a regulator: it makes up the deficit as it opens
+        # (the vessel refuses what would carry it past). The cart's press line
+        # on a transfer tank takes its time.
+        span = dt if getattr(node, "drawn_as", "") == "DEWAR" and dt > 0.0 else 0.0
+        rate = wanted / max(span or self.setup.supply_press_s, 1e-3)
         h_cart = float(sim.tank.gas.get("h", p=target, T=self.setup.fill_supply_T))
         note = (
-            f"{sim.label} is pressed to its drawn {psig(target):.0f} psig while "
+            f"{sim.label} is held at its drawn {psig(target):.0f} psig by "
+            f"{pressing[0]} (not on the drawing; Setup supply_press_s "
+            f"{self.setup.supply_press_s:g} s)."
+            if pressing[0].startswith("its ")
+            else f"{sim.label} is pressed to its drawn {psig(target):.0f} psig while "
             f"{pressing[0]} is open, by the cart's press line (not on the "
             f"drawing; Setup supply_press_s {self.setup.supply_press_s:g} s)."
         )
@@ -3939,6 +4071,7 @@ class Session:
         pressures = dict(result.pressures)
         for node in held:
             pressures[node] = self._trapped.get(node, AMBIENT)
+        pressures.update(self._dome_readings)
         for node, value in result.pressures.items():
             if node not in held:
                 self._trapped[node] = value
@@ -4206,19 +4339,26 @@ class Session:
         # sweeps is plenty for a stand -- the longest path from a bottle to the
         # injector face is under a dozen branches -- and bounding it keeps a
         # recirculating drawing from spinning here.
+        # Which lines feed each node, in branch order. The flows are fixed for
+        # the whole walk, so this is worked out once rather than by asking
+        # every line on the stand about every node on every sweep.
+        feeding: dict[str, list[tuple[str, float, str]]] = {}
+        for branch_id, branch in net.branches.items():
+            mdot = flows.get(branch_id, 0.0)
+            if abs(mdot) < _TEMPERATURE_MIN_FLOW:
+                continue
+            source = branch.upstream if mdot > 0.0 else branch.downstream
+            sink = branch.downstream if mdot > 0.0 else branch.upstream
+            if source not in net.nodes:
+                continue
+            feeding.setdefault(sink, []).append((branch_id, mdot, source))
+
         for _ in range(_TEMPERATURE_SWEEPS):
             settled = True
             for node_id, node in net.nodes.items():
                 pinned = node_id in known
                 arriving: list[tuple[float, float]] = []
-                for branch_id, branch in net.branches.items():
-                    mdot = flows.get(branch_id, 0.0)
-                    if abs(mdot) < _TEMPERATURE_MIN_FLOW:
-                        continue
-                    source = branch.upstream if mdot > 0.0 else branch.downstream
-                    sink = branch.downstream if mdot > 0.0 else branch.upstream
-                    if sink != node_id or source not in net.nodes:
-                        continue
+                for branch_id, mdot, source in feeding.get(node_id, ()):
                     upstream = net.nodes[source]
                     p_up = pressures.get(source)
                     if p_up is None or p_up <= 0.0:

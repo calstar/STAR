@@ -64,13 +64,35 @@ for what the drawing does not settle.
    The twin only acts when that changes, so a hand on the P&ID in between is kept.
 5. **Every valve has a resting position.**
    * Actuated (SOL, ROT, MOV): the drawing's `failState`.
-   * Hand (MAN): `options.normalPosition` when drawn. Otherwise shut if one side is open
-     to atmosphere (vent, bleed, dump) and open if plumbed both sides (isolation).
+   * Hand (MAN): **shut**, every one, until a person opens it (the team's rule,
+     2026-10-07). The exception is a valve the drawing marks `normalPosition: open`.
 
-   Hand valves are turned on the P&ID and never offered to the table.
+   Hand valves are turned on the P&ID and never offered to the table. The crew's
+   transfer valve on a drawn load (4) is a hand valve the twin opens for the load.
 6. **Dome lines are loading, not feed.** Lines on a `dome` handle are not plumbing. The
    loader is the one regulator the dome line reaches through junctions, valves and paired
    disconnects. A loader with no setting is set by the dome knob.
+6a. **Dome-line valves gate the dome.** When the dome line has valves on it
+    (`BuiltNetwork.dome_lines`), the session walks it each tick from the dome port:
+    * through valves that are open, the dome follows its loader;
+    * past an open vent, the dome drains to atmosphere and the regulator holds its
+      spring bias;
+    * otherwise the dome keeps what was shut in.
+
+    An inline valve no actuator drives passes; a vent no actuator drives rests shut.
+    The cart's valve on the line is the table's "GSE Med Press Control". The line's
+    transducers read the dome, and T-0 starts with it loaded. On LE4 (6):
+    * GN2 Low Press opens DR-CTRL-G and loads DPR_HP's dome from DR-REG-G;
+    * Ready shuts it and the dome holds 500 psig;
+    * before that, the tanks lock up at the 50 psi bias alone.
+6b. **A dewar holding liquid is a supply tank.** A DEWAR whose drawn temperature is
+    below its fluid's critical point is read as a TANK on the ground side:
+    * it starts loaded, at its drawn pressure, its metal at the liquid's temperature;
+    * it has no skin leak, being vacuum-jacketed;
+    * its pressure-building circuit holds its drawn pressure;
+    * the flight tank it reaches is loaded through the drawing.
+
+    A dewar used as a gas source, warm or above critical, stays the gas bottle it was.
 7. **Every hand-loaded regulator has a knob.**
    * `DOME` (Setup dome) on the dome's loader.
    * `CHARGE` (Setup `copv_target_psi`) on the regulator whose outlet reaches the
@@ -98,24 +120,25 @@ for what the drawing does not settle.
     95% fill, then shuts FF-MAN-Output. The tank loses exactly what the flight tank gains,
     less a few grams of evaporation.
   * Ten actuators bind with no hookup saved.
+  * GN2 Low Press loads the dome through DR-CTRL-G, which then holds it.
+  * With its LOX fill line drawn, Ox Fill loads the flight LOX tank from the dewar
+    (8.45 kg in ~10 s through Cv-4 fallback valves). Your drawing's line still dead-ends,
+    so it keeps the built-in dewar load until it's finished.
+* Layer X reads the vehicle through `feedtwin.pid.roles` (`engine/layerx/vehicle.py`
+  delegates), and passes its dome hookup through `open_session`.
 * Shipped and one-page drawings are unchanged: none has a hand valve, a motorised valve,
   a second page or a dome-handle line. `physics_benchmark.py`, the Layer X parity test and
   both suites pass unchanged.
 * `lib/feedtwin/tests/test_rocket_and_gse.py` holds it, against the team's drawing as a
   fixture, with each check red-checked.
 
-## Not yet (phase 2)
+## Not yet
 
-* **A dewar is a liquid supply,** not a gas bottle. It still keeps its old start, and the
-  LOX load still comes from `Setup.dewar_psi`.
-* **Dome-line valves should gate the dome.** DR-CTRL-G and DR-CTRL-R shut should trap the
-  dome at its last pressure. The loader drives it continuously today, and the dome-line
-  PT reads the dead line.
-* **Say it on the drawing.** pid-designer should let a valve name its DAQ actuator
-  (`options.actuator`) and a hand valve its normal position (`options.normalPosition`,
-  read already). Then the binding is the drawing's, and inference fills only the gaps.
-* **Layer X** should take `feedtwin.pid.roles` in place of `engine/layerx/vehicle.py`
-  (same rule, one implementation).
+* **The drawing should name each valve's DAQ actuator** (`options.actuator` in
+  pid-designer), so the binding is the drawing's and inference fills only the gaps.
+  Deferred by the team; names, prefixes and the plumbing do it until then.
+* **A "normally open" choice on hand valves in pid-designer.** The twin reads
+  `options.normalPosition` already; the symbol's dialog does not offer it yet.
 
 ## LE4 (6): what the drawing is missing
 

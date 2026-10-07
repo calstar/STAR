@@ -55,12 +55,21 @@ def test_the_transfer_tank_supplies_the_flight_fuel_tank(built: Any) -> None:
     assert built.supplies == {ids["Fuel Transfer Tank"]: frozenset({ids["Eth-Tank"]})}
 
 
-def test_hand_vents_rest_shut_and_inline_hand_valves_open(built: Any) -> None:
+def test_every_hand_valve_rests_shut(built: Any) -> None:
+    """Vents, bleeds and inline isolation alike: shut until a hand opens it."""
     ids = _ids()
-    for vent in ("FV-MAN", "FF-MAN-Vent", "DR-MV", "HP-Down-MAN"):
-        assert ids[vent] in built.hand_valves
-        assert built.rest[ids[vent]] == 0.0, vent
-    assert built.rest[ids["FF-MAN-Output"]] == 1.0
+    for valve in ("FV-MAN", "FF-MAN-Vent", "DR-MV", "HP-Down-MAN", "FF-MAN-Output"):
+        assert ids[valve] in built.hand_valves
+        assert built.rest[ids[valve]] == 0.0, valve
+
+
+def test_a_hand_valve_drawn_normally_open_rests_open() -> None:
+    payload = _payload()
+    for node in payload["nodes"]:
+        if node["data"]["label"] == "FF-MAN-Output":
+            node["data"].setdefault("options", {})["normalPosition"] = "open"
+    built = build_network(read_diagram(payload, name="LE4 (6)"))
+    assert built.rest[_ids()["FF-MAN-Output"]] == 1.0
 
 
 def test_a_motorised_valve_is_a_commanded_valve(built: Any) -> None:
@@ -174,5 +183,127 @@ def test_the_pad_charges_the_copv_and_loads_fuel_through_the_drawing() -> None:
     # check is the balance below.
     assert start_cart - cart.state.liquid_mass == pytest.approx(load, abs=5e-3)
     assert psig(cart.pressure) == pytest.approx(150.0, abs=2.0)
+    last = session.solver_log[-1]
+    assert abs(last.mass_error_kg - last.guard_kg) < 1e-3
+
+
+# ----------------------------------------------------------------- the dome line
+
+
+def _session(payload: Any | None = None) -> Any:
+    from feedtwin.session import assemble_model, load_machine
+    from feedtwin.session.burn import open_session
+    from feedtwin.session.hookup import suggest
+
+    model = assemble_model(
+        read_diagram(payload or _payload(), name="LE4 (6)"), diagram_id="le4"
+    )
+    return open_session(
+        model, load_machine(tables=TABLES), hookup=suggest(model, 500.0, 4500.0)
+    )
+
+
+def test_the_dome_line_is_gated_by_its_valves(built: Any) -> None:
+    ids = _ids()
+    line = built.dome_lines[ids["DPR_HP"]]
+    assert line.loader == ids["DR-REG-G"]
+    assert line.valves == frozenset(
+        ids[v] for v in ("DR-CTRL-G", "DR-CTRL-R", "DR-MV", "DR-Vent")
+    )
+    assert line.vents == frozenset({ids["DR-MV"], ids["DR-Vent"]})
+    assert built.valve_roles[ids["DR-CTRL-G"]] == frozenset(
+        {"gse", "med", "press", "control"}
+    )
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts() -> None:
+    """Unloaded, the 1092 holds its 50 psi spring bias and no more. GN2 Low Press
+    opens DR-CTRL-G ("GSE Med Press Control") and the dome follows DR-REG-G; the
+    next state shuts it and the dome keeps what is in it, as the stand keeps it
+    through the burn with the GSE disconnected. The dome PT reads it."""
+    from feedtwin.session.gauge import psig
+
+    ids = _ids()
+    session = _session()
+    assert session.binding.to_symbol["GSE Med Press Control"] == ids["DR-CTRL-G"]
+    session.state = "GN2 High Press"
+    for _ in range(40):
+        session.step(0.5)
+    session.state = "Fuel Press"
+    for _ in range(20):
+        session.step(0.5)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    assert psig(fuel.pressure) == pytest.approx(50.0, abs=8.0), "spring bias only"
+
+    session.state = "GN2 Low Press"
+    for _ in range(4):
+        session.step(0.5)
+    session.state = "Fuel Press"
+    for _ in range(30):
+        session.step(0.5)
+    assert psig(fuel.pressure) > 540.0, "loaded: dome 500 + bias 50"
+    dome_pt = next(i for i in session.model.built.instruments if i.id == ids["DP-PT-R"])
+    assert psig(session.history[-1].pressures[dome_pt.node]) == pytest.approx(500.0)
+    assert ids["DR-CTRL-G"] not in session.forced
+    assert psig(session._dome_held[ids["DPR_HP"]]) == pytest.approx(500.0)
+
+
+# ------------------------------------------------------- the dewar is a supply
+
+
+def _with_lox_fill_drawn() -> Any:
+    """LE4 (6) with its LOX fill line finished, as ADR 0006 asks of the drawing:
+    the fill valve's junction to the fill manifold, the manifold to OF-QDA, and
+    the LOX vent disconnects paired."""
+    payload = _payload()
+
+    def line(i: str, s: str, sh: str, t: str, th: str) -> dict[str, Any]:
+        return {
+            "id": i,
+            "source": s,
+            "sourceHandle": sh,
+            "target": t,
+            "targetHandle": th,
+            "type": "smoothstep",
+            "data": {},
+        }
+
+    ids = _ids()
+    payload["edges"] += [
+        line("fix-1", "junc_85", "r", "junc_86", "r"),
+        line("fix-2", ids["OF-Manifold"], "in", ids["OF-QDA"], "r"),
+    ]
+    for node in payload["nodes"]:
+        if node["data"]["label"] == "OV-QD-A":
+            node["data"].setdefault("options", {})["pairedWith"] = ids["QD-OV-B"]
+    return payload
+
+
+def test_a_liquid_dewar_is_a_supply_tank() -> None:
+    built = build_network(read_diagram(_with_lox_fill_drawn(), name="LE4 (6)"))
+    ids = _ids()
+    assert ids["LOX-DW-350 PSI"] in built.tanks
+    assert built.supplies[ids["LOX-DW-350 PSI"]] == frozenset({ids["LOX-Tank"]})
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_ox_fill_loads_the_flight_lox_tank_from_the_dewar() -> None:
+    from feedtwin.session.gauge import psig
+
+    ids = _ids()
+    session = _session(_with_lox_fill_drawn())
+    dewar, lox = session.tanks[ids["LOX-DW-350 PSI"]], session.tanks[ids["LOX-Tank"]]
+    assert psig(dewar.pressure) == pytest.approx(50.0, abs=0.5)
+    start = dewar.state.liquid_mass
+    session.state = "Ox Fill"
+    for _ in range(40):
+        session.step(0.5)
+    assert lox.state.liquid_mass == pytest.approx(lox._wanted(), rel=0.03)
+    assert start - dewar.state.liquid_mass >= lox.state.liquid_mass
+    session.state = "Armed"
+    for _ in range(40):
+        session.step(0.5)
+    assert psig(dewar.pressure) == pytest.approx(50.0, abs=5.0), "its own circuit"
     last = session.solver_log[-1]
     assert abs(last.mass_error_kg - last.guard_kg) < 1e-3

@@ -271,7 +271,7 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
             )
         )
 
-    nodes = [_gas_tank_as_bottle(n) for n in nodes]
+    nodes = [_liquid_dewar_as_tank(_gas_tank_as_bottle(n)) for n in nodes]
 
     known = {n.id for n in nodes}
     dangling = [e.id for e in edges if e.source not in known or e.target not in known]
@@ -313,6 +313,35 @@ def _gas_tank_as_bottle(node: PidNode) -> PidNode:
     if not temperature.si > critical:
         return node
     return replace(node, type="KBOTTLE", drawn_as="TANK")
+
+
+def _liquid_dewar_as_tank(node: PidNode) -> PidNode:
+    """A dewar holding liquid is a liquid supply: read it as a tank.
+
+    A LOX dewar was read as a pressurant bottle -- a gas volume -- which the
+    GN2 High Press charge then tried to pump to 4,500 psig, and which no fill
+    line could draw liquid from. As a tank it holds its liquid under its own
+    ullage, and on the ground-support side of a drawing it is the supply the
+    flight tank is loaded from (``BuiltNetwork.supplies``).
+
+    Only when the drawing says so: fluid and temperature stated, the
+    temperature below the fluid's critical point. A dewar used as a gas source
+    (warm, or above critical) is left as drawn.
+    """
+    if node.type != "DEWAR" or not node.fluid:
+        return node
+    temperature = node.params.get("temperature")
+    if temperature is None:
+        return node
+    try:
+        from feedtwin.props import Fluid
+
+        critical = Fluid(node.fluid).critical_temperature
+    except Exception:  # noqa: BLE001 - an unknown fluid is the reader's to report
+        return node
+    if not temperature.si < critical:
+        return node
+    return replace(node, type="TANK", drawn_as="DEWAR")
 
 
 def load_diagram(path: str | Path) -> Diagram:

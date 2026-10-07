@@ -214,10 +214,10 @@ def test_commandable_valves_are_found() -> None:
 def test_a_manual_valve_is_turned_by_hand_never_by_the_table() -> None:
     """A hand valve is not something a state machine can command: it is turned
     on the P&ID, and the binding never offers it to an actuator. Plumbed both
-    sides, it rests open (an isolation valve)."""
+    sides or not, it rests shut until a hand opens it."""
     built = build_network(read_diagram(minimal(), name="minimal"))
     assert built.hand_valves == frozenset({"V1"})
-    assert built.rest["V1"] == 1.0
+    assert built.rest["V1"] == 0.0
     assert built.valve_roles.get("V1") is None
 
 

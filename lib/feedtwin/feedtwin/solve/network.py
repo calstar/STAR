@@ -388,6 +388,11 @@ class Network:
             b.downstream for b in self.branches.values()
         }
         for node_id in sorted(set(self.nodes) - touched):
+            if self.nodes[node_id].pressure is not None:
+                # A vessel's port with nothing drawn on it -- a dewar's top whose
+                # only line is a relief with no set pressure -- is a boundary
+                # nobody reads: harmless, and not a reason to refuse the stand.
+                continue
             problems.append(
                 f"  node {node_id!r} has no branches attached; it cannot take part"
             )

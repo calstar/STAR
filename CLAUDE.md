@@ -132,8 +132,9 @@ very bugs they were written for.
   `feedtwin.pid.roles` (the ENGINE's drawn-line component; a paired QD is the boundary).
   A cart TANK is a supply (pre-loaded, never tanker-loaded, its fed flight tank's load
   stands aside); a cart K-bottle arrives full; built-in charges and loads stand in only
-  for what is *not* drawn. Hand valves rest shut with a side open to atmosphere, open
-  inline, and are never bound to the table; MOVs are actuated. Lines on a regulator's
+  for what is *not* drawn. Every hand valve rests shut (unless drawn `normalPosition: open`)
+  and is never bound to the table; MOVs are actuated. A liquid DEWAR is a supply tank;
+  dome-line valves gate the dome (open to the loader: live; open vent: drained; else held). Lines on a regulator's
   `dome` handle are loading, not feed. Every hand-loaded regulator gets a knob (`DOME`,
   `CHARGE` = `copv_target_psi`, or its own). Before adding a Hookup-tab workaround, ask
   what the drawing should say instead.

@@ -171,11 +171,11 @@ VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "RV"})
 ACTUATED_VALVE_TYPES = frozenset({"ROT", "SOL", "MOV"})
 
 #: Valves a person turns. Never commanded by the state machine -- the table
-#: does not know a hand valve exists -- but turned on the P&ID by hand, and
-#: resting where the drawing (``options.normalPosition``) or the plumbing puts
-#: them: a hand valve with one side open to atmosphere is a vent, a bleed or a
-#: dump, and those are shut until somebody opens them; one plumbed on both
-#: sides is an isolation valve, open. They used to have no position at all,
+#: does not know a hand valve exists -- but turned on the P&ID by hand. Every
+#: one rests **shut** until somebody opens it (the team's rule, 2026-10-07: a
+#: hand valve is shut unless the procedure opens it, as the crew opens the fuel
+#: transfer valve for Fuel Fill), unless the drawing says
+#: ``options.normalPosition: open``. They used to have no position at all,
 #: which a valve reads as wide open: every hand bleed on a GSE page was a
 #: permanent hole to atmosphere, and a fuel tank vented through its cart's hand
 #: vent could never hold press.
@@ -253,6 +253,30 @@ class DomeLoader:
 
 
 @dataclass(frozen=True, slots=True)
+class DomeLine:
+    """A dome-loading line drawn with valves on it: the loader, the line's
+    symbols and how they join, and which of them gate or vent it.
+
+    The dome follows its loader only while the line is open between them.
+    Shut, the dome holds what was in it -- which is how a stand loads its
+    regulator on the pad and then keeps it through the burn with the GSE
+    disconnected -- and an open vent on the regulator's side empties it.
+    """
+
+    #: The dome-loaded regulator, and the hand-loaded one that loads it.
+    loaded: str
+    loader: str
+    #: The line as drawn: symbol -> the symbols it joins (paired disconnects
+    #: joined to their mates). The loaded regulator itself is not in it.
+    adjacent: Mapping[str, frozenset[str]]
+    #: What is drawn on the regulator's dome port: where a walk starts.
+    ports: frozenset[str]
+    #: Commandable valves on the line, and those of them open to atmosphere.
+    valves: frozenset[str]
+    vents: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
 class BuiltNetwork:
     """A network, plus everything needed to draw and drive it."""
 
@@ -297,6 +321,8 @@ class BuiltNetwork:
     #: fuel transfer tank piped through a mated disconnect into the flight
     #: tank's fill port. Supply tank id -> the vehicle tanks it reaches.
     supplies: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Dome lines with valves on them, by the dome-loaded regulator's id.
+    dome_lines: Mapping[str, DomeLine] = field(default_factory=dict)
 
 
 def _accepted_options(kind: str, options: Mapping[str, str]) -> dict[str, str]:
@@ -780,13 +806,22 @@ def build_network(
             )
             branches_of.pop(symbol_id, None)
 
+    # Dome lines with valves on them: the valves gate the dome (DomeLine).
+    # Their symbols are loading gas, read off the drawing, not vents of feed.
+    dome_lines = _dome_lines(diagram, dome_loaders)
+    on_dome_lines = {sid for line in dome_lines.values() for sid in line.adjacent}
+
     # 4b. A valve with one side unplumbed is a vent to atmosphere.
     #
     #     Read off the drawing rather than demanded as a second statement of it
     #     -- see VENTING_VALVE_TYPES for why, and for how the two tools came to
     #     disagree about this.
     for node in diagram.nodes:
-        if node.type not in VENTING_VALVE_TYPES or node.id in dome_loaders:
+        if (
+            node.type not in VENTING_VALVE_TYPES
+            or node.id in dome_loaders
+            or node.id in on_dome_lines
+        ):
             continue
         if node.id not in net.branches:
             continue  # never became a branch (instrument clip, annotation)
@@ -819,19 +854,14 @@ def build_network(
     resting_shut: list[str] = []
     for valve_id in sorted(hand):
         drawn = str(by_id[valve_id].options.get("normalPosition", "") or "")
-        if drawn in {"open", "closed"}:
-            rest[valve_id] = 1.0 if drawn == "open" else 0.0
-            continue
-        # A hand valve open to atmosphere on one side is a vent, a bleed or a
-        # dump: shut until a person opens it. Plumbed both sides: isolation.
-        rest[valve_id] = 0.0 if valve_id in vent_ids else 1.0
-        if valve_id in vent_ids:
+        rest[valve_id] = 1.0 if drawn == "open" else 0.0
+        if drawn != "open":
             resting_shut.append(by_id[valve_id].label or valve_id)
     if resting_shut:
         warnings.append(
-            f"{len(resting_shut)} hand valve(s) open to atmosphere are read as "
-            f"shut until opened by hand: {', '.join(resting_shut)}. Give a hand "
-            "valve its normal position on the drawing to say otherwise."
+            f"{len(resting_shut)} hand valve(s) rest shut until opened by hand: "
+            f"{', '.join(resting_shut)}. A hand valve that stands open draws "
+            "normalPosition: open."
         )
 
     if vents:
@@ -910,7 +940,7 @@ def build_network(
 
     # 6. A tank with no vent valve drawn is vented through the GSE, beyond a
     #    disconnect on its top; see _gse_vents.
-    # 6a. Vehicle and ground support (feedtwin.pid.roles), and which ground
+    # 6b. Vehicle and ground support (feedtwin.pid.roles), and which ground
     #     tanks load a vehicle tank through the drawing.
     vehicle = vehicle_ids(diagram)
     ground = ground_ids(diagram)
@@ -926,6 +956,7 @@ def build_network(
         ground=ground,
         shut=shut_by_hand,
     )
+    roles.update(_dome_valve_roles(dome_lines, ground))
     gse = _gse_vents(net, diagram, tanks, fluids, engine_ports, roles)
     gse_unsized = tuple(qd.id for qd, _ in gse if not {"Cv", "Cd"} & set(qd.params))
     if gse:
@@ -942,6 +973,7 @@ def build_network(
             ground=ground,
             shut=shut_by_hand,
         )
+        roles.update(_dome_valve_roles(dome_lines, ground))
         warnings.append(
             f"No vent valve is drawn on {_and(sorted(t for _, t in gse))}, "
             f"so {_and(sorted(qd.label for qd, _ in gse))} on the tank top "
@@ -969,6 +1001,7 @@ def build_network(
         hand_valves=frozenset(hand),
         vehicle=None if not ground else vehicle,
         supplies=supplies,
+        dome_lines=dome_lines,
     )
 
 
@@ -1635,6 +1668,92 @@ def _build_dome_loader(
     return DomeLoader(
         id=node.id, component=component, signal=signal, supply_node=supply
     )
+
+
+def _dome_lines(
+    diagram: Diagram,
+    loaders: Mapping[str, str],
+) -> dict[str, DomeLine]:
+    """The dome lines drawn from a dome port with a valve on them.
+
+    Walked from the line on the regulator's ``dome`` handle, through junctions,
+    valves, instruments and paired disconnects, to the loader; stopping at
+    vessels, the engine and reliefs, as :func:`_dome_loaders` walks it. A line
+    with no valve on it has nothing to gate: the dome follows its loader as it
+    always did, and none is returned for it.
+    """
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    for node in diagram.nodes:
+        mate = str(node.options.get("pairedWith", "") or "").strip()
+        if node.type == "QD" and mate and mate != "none" and mate in by_id:
+            adjacent.setdefault(node.id, set()).add(mate)
+            adjacent.setdefault(mate, set()).add(node.id)
+    barrier = {"TANK", "KBOTTLE", "DEWAR", "RV", "VENT"} | ENGINE_TYPES
+    out: dict[str, DomeLine] = {}
+    for loader, loaded in loaders.items():
+        ports = frozenset(
+            edge.target if edge.source == loaded else edge.source
+            for edge in diagram.edges
+            if (edge.source == loaded and edge.source_handle == DOME_HANDLE)
+            or (edge.target == loaded and edge.target_handle == DOME_HANDLE)
+        )
+        if not ports:
+            continue
+        seen: set[str] = set()
+        frontier = list(ports)
+        while frontier:
+            here = frontier.pop()
+            if here in seen or here not in by_id or here == loaded:
+                continue
+            seen.add(here)
+            if here == loader or by_id[here].type in barrier:
+                continue
+            frontier.extend(adjacent.get(here, ()))
+        if loader not in seen:
+            continue
+        valves = frozenset(
+            sid
+            for sid in seen
+            if by_id[sid].type in ACTUATED_VALVE_TYPES | HAND_VALVE_TYPES
+        )
+        if not valves:
+            continue
+        # A valve with one line drawn to it vents the line: read off the
+        # drawing, since the flow network never sees a dome line.
+        lines_on = {
+            sid: sum(1 for e in diagram.edges if sid in (e.source, e.target))
+            for sid in valves
+        }
+        out[loaded] = DomeLine(
+            loaded=loaded,
+            loader=loader,
+            adjacent={
+                sid: frozenset(o for o in adjacent.get(sid, ()) if o in seen)
+                for sid in seen
+            },
+            ports=ports,
+            valves=valves,
+            vents=frozenset(v for v in valves if lines_on[v] == 1),
+        )
+    return out
+
+
+def _dome_valve_roles(
+    lines: Mapping[str, DomeLine], ground: frozenset[str]
+) -> dict[str, frozenset[str]]:
+    """The cart's valve on a dome line is the table's "GSE Med Press Control":
+    the medium-pressure circuit that loads the regulator's dome, between the
+    high-pressure charge and the low-pressure pneumatics."""
+    out: dict[str, frozenset[str]] = {}
+    for line in lines.values():
+        for valve in line.valves - line.vents:
+            if valve in ground:
+                out[valve] = frozenset({"gse", "med", "press", "control"})
+    return out
 
 
 def _hand_loaded(node: PidNode) -> bool:
