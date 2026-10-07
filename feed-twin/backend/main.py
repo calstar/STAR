@@ -89,6 +89,7 @@ from backend.session import Sample as SessionSample, Session, Setup
 from feedtwin.session.burn import BurnPlan, find_probes, jump_to_t0, run_burn
 from stardesign.userdata import slug_user
 from feedtwin.session.hookup import (
+    CHARGE,
     DOME,
     Hookup,
     binding as hookup_binding,
@@ -846,7 +847,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool]:
     try:
         lineage = _lineage(library.get(diagram_id))
     except LibraryError:
-        return suggest_hookup(model, Setup().dome_psi), False
+        return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
     stored = library.record(HOOKUPS, lineage)
     if stored is not None:
         try:
@@ -854,7 +855,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool]:
             return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True
         except (ValueError, KeyError, TypeError):
             pass
-    return suggest_hookup(model, Setup().dome_psi), False
+    return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
 
 
 #: Instrument types that read a temperature rather than a pressure.
@@ -980,7 +981,11 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
             psig=(
                 session.setup.dome_psi
                 if k.id == DOME
-                else session.knobs.get(k.id, k.psig)
+                else (
+                    session.setup.copv_target_psi
+                    if k.id == CHARGE
+                    else session.knobs.get(k.id, k.psig)
+                )
             ),
             low=k.low,
             high=k.high,
@@ -1243,7 +1248,7 @@ async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
         cases = tuple(StudyCase.parse(c, i) for i, c in enumerate(raw_cases))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    known = set(session.knobs) | {DOME}
+    known = set(session.knobs) | {DOME, CHARGE}
     stray = sorted({k for c in cases for k in c.knobs} - known)
     if stray:
         raise HTTPException(
@@ -1366,6 +1371,8 @@ async def command_session(
             ) from exc
         if found.id == DOME:
             session.setup = _setup({"dome": value}, session.setup)
+        elif found.id == CHARGE:
+            session.setup = _setup({"copv_target": value}, session.setup)
         else:
             session.knobs[found.id] = value
     if "valve" in settings:
@@ -1483,7 +1490,9 @@ def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> Hook
         lineage=_lineage(library.get(diagram)),
         saved=saved,
         hookup=_hookup_body(hookup),
-        suggested=_hookup_body(suggest_hookup(model, Setup().dome_psi)),
+        suggested=_hookup_body(
+            suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
+        ),
         actuators=list(stand.machine.actuators),
         valves=[
             HookupValveOut(id=v.id, label=v.label, page=v.page, role=list(v.role))

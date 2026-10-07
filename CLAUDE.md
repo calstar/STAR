@@ -128,6 +128,15 @@ very bugs they were written for.
   drawing's **hookup** (`feedtwin.session.hookup`, the Hookup tab), kept per drawing
   lineage. With none saved it is `suggest()`, which is the old behaviour bit for bit.
   Never hard-code a valve or regulator tag; see `docs/integration/gse-pages-and-hookup.md`.
+- **The drawing wires the twin** (ADR 0006). Vehicle vs ground support is
+  `feedtwin.pid.roles` (the ENGINE's drawn-line component; a paired QD is the boundary).
+  A cart TANK is a supply (pre-loaded, never tanker-loaded, its fed flight tank's load
+  stands aside); a cart K-bottle arrives full; built-in charges and loads stand in only
+  for what is *not* drawn. Hand valves rest shut with a side open to atmosphere, open
+  inline, and are never bound to the table; MOVs are actuated. Lines on a regulator's
+  `dome` handle are loading, not feed. Every hand-loaded regulator gets a knob (`DOME`,
+  `CHARGE` = `copv_target_psi`, or its own). Before adding a Hookup-tab workaround, ask
+  what the drawing should say instead.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,

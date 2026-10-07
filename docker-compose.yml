@@ -158,6 +158,13 @@ services:
       # leaves this unset and can still build on demand. Regenerate offline via
       # .github/workflows/regenerate-cea-cache.yml.
       ED_ALLOW_CEA_BUILD: "0"
+      # Layer X's "From pid-designer" lists and fetches drawings from the
+      # pid-designer API over the compose network, forwarding the caller's
+      # X-Auth-Email. Unset, it falls back to 127.0.0.1:8001 -- inside this
+      # container that is the engine-design container itself, so the drawing
+      # picker reported "pid-designer is not answering". feed-twin-api already
+      # points here the same way.
+      PID_DESIGNER_URL: http://pid-designer-api:8001
       # Per-user saved configs + working copies live here (a mounted volume).
       # See userdata.py.
       USERDATA_DIR: /data
@@ -218,13 +225,6 @@ services:
       # pid-designer/backend/directory.py. Unset is fine: the roster then
       # falls back to whoever already has data on the shared volume.
       AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
-      # Who may choose and edit the main diagram is a fixed list in
-      # lib/stardesign/stardesign/admins.py. STAR_ADMINS (comma-separated
-      # emails) adds to it without a commit.
-      STAR_ADMINS: ${STAR_ADMINS:-}
-      # Other people's diagrams quieter than this move from the dropdown to
-      # Change -> Older. They still open there.
-      PID_RECENT_DAYS: ${PID_RECENT_DAYS:-10}
       # Diagram version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS). The apps machine is
       # not on EC2, so these are IAM access keys, not an instance role.
@@ -392,9 +392,6 @@ services:
     volumes:
       # SQLite + original CAD files + thumbnails. Back this up.
       - parts_data:/data
-      # admins.txt, re-read on change. The directory, not the file: git replaces
-      # files on pull (new inode) and a single-file mount would keep the old one.
-      - ./parts-hub/config:/app/config:ro
 
   # ── DAQ Run Viewer ───────────────────────────────────────────────────────
   # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One
@@ -437,38 +434,6 @@ services:
   # the test-stand hardware, so they run natively under systemd -- see
   # daq-server/deploy/systemd/. Caddy proxies to them on the host; the routes
   # are in deploy/caddy/Caddyfile.
-
-  # ── Server analytics agent ───────────────────────────────────────────────
-  # Samples this box and pushes to the hub on the EC2 box
-  # (analytics.starberkeley.org/api/ingest), which serves the panel. Read-only
-  # views of the host only: /proc, /, the cgroup tree, the Docker socket,
-  # auto-update's state file, and the journal -- the DAQ server runs natively
-  # under systemd user units (sensor-*), so its logs are there, not in Docker.
-  # Idles until ANALYTICS_APPS_TOKEN is set. See server-analytics/README.md.
-  analytics-agent:
-    image: ghcr.io/calstar/star-analytics:${STAR_IMAGE_TAG:-latest}
-    build:
-      context: ./server-analytics
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    command: ["agent"]
-    environment:
-      HOST_NAME: apps
-      HUB_URL: ${ANALYTICS_HUB_URL:-https://analytics.starberkeley.org}
-      ANALYTICS_TOKEN: ${ANALYTICS_APPS_TOKEN:-}
-      JOURNAL_DIR: /host/journal
-      JOURNAL_UNIT_PREFIXES: sensor-
-      GOMEMLIMIT: 40MiB
-    volumes:
-      - /proc:/host/proc:ro
-      - /:/host/root:ro
-      - /sys/fs/cgroup:/host/cgroup:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/star-auto-update:/host/auto-update:ro
-      - /var/log/journal:/host/journal:ro
-    mem_limit: 64m
-    memswap_limit: 64m   # == mem_limit -> no swap; OOM this container alone
-    cpus: 0.1
 
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:

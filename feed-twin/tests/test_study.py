@@ -82,7 +82,7 @@ def test_a_case_changes_only_what_it_says() -> None:
         ({"copv_psi": -5}, "COPV"),
         ({"bottle_litres": 0}, "bottle"),
         ({"fill_fraction": 1.5}, "fill"),
-        ({"copv_psi": "lots"}, ""),
+        ({"copv_psi": "lots"}, "convert"),
     ],
 )
 def test_a_bad_case_is_refused_with_what_is_wrong(

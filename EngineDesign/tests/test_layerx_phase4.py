@@ -119,9 +119,10 @@ def test_bounds_carry_their_reasons(config, drawing):
     prep = prepare(config, None, drawing, LayerXSettings(drawing_id=drawing.id, ack_gn2_condensation=True))
     v = {x.key: x for x in opt.default_variables(prep, config)}
     lock = v["lockup_psia"]
-    # The fixture locks up at 548.7 psia; +15 % is 631, the requirements cap tanks at 600.
+    # The floor is 85 % of the lockup the run starts from (the drawing's dome since 2026-10-07);
+    # +15 % is above 600, so the requirements cap the tanks at 600.
     assert lock.hi == pytest.approx(600.0) and "max_lox_tank_pressure_psi" in lock.basis
-    assert lock.lo == round(548.7 * 0.85)
+    assert lock.lo == round(prep.derived["target_lockup_psia"] * 0.85)
     assert v["copv_psig"].hi == pytest.approx(4500.0) and "the bottle pressure the drawing states" in v["copv_psig"].basis
     assert "assumed" in lock.basis and "assumed" in v["copv_psig"].basis
     assert not v["copv_volume_L"].enabled

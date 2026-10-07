@@ -21,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { keyOf, type DocRef } from '@stardesign-ui';
+import { keyOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { standApi, type StandPayload } from './stands';
 import {
   commandSession,
@@ -90,6 +90,16 @@ interface StandValue {
   closeStand: () => void;
   /** The cockpit's configuration as a stand document's payload. */
   snapshot: () => Promise<StandPayload>;
+  /** The stand's checkout: who may change what is saved in it. */
+  checkout: Checkout;
+  /** On a stand you have not taken: its configuration is read only. Running it
+   *  (states, valves, T-0, Fire) is never locked -- that is operating the
+   *  stand, not changing it. */
+  locked: boolean;
+  /** The stand's own hookup, when it has one for the drawing on screen. */
+  standHookup: Record<string, unknown> | null;
+  /** Change the stand's hookup (kept with the stand; Save writes it). */
+  setStandHookup: (hookup: Record<string, unknown>) => void;
 }
 
 /** A stand document, open. */
@@ -146,6 +156,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [generation, setGeneration] = useState(0);
   const [standDoc, setStandDoc] = useState<OpenStand | null>(readStand);
+  // Taking the checkout must not reload the stand: that would reopen the
+  // session and throw away the run on screen.
+  const checkout = useCheckout({ api: standApi, ref: standDoc?.ref ?? null, reload: () => undefined });
+  const locked = Boolean(standDoc) && !checkout.held;
   /** The open stand's hookup and knobs, applied to every fresh session on it. */
   const standPayload = useRef<StandPayload | null>(null);
 
@@ -410,6 +424,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const refuse = () =>
+    setError('Read only: take the stand (top bar) to change its settings. Running it is not locked.');
+
   const value: StandValue = {
     artifacts,
     model,
@@ -424,6 +441,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     where,
     setup,
     setSetup: (patch) => {
+      if (locked) return refuse();
       const next = { ...setup, ...patch } as StandSetup;
       setSetupState(next);
       void command({ setup: patch });
@@ -431,11 +449,18 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setRunning,
     hidden,
     toggleChannel: (id) => setHidden((h) => ({ ...h, [id]: !h[id] })),
-    pick: (kind, id) => (kind === 'diagram' ? setDiagram(id) : setEngine(id)),
+    pick: (kind, id) => {
+      if (locked) return refuse();
+      if (kind === 'diagram') setDiagram(id);
+      else setEngine(id);
+    },
     go: (state) => void command({ state }),
     toggleValve: (id) =>
       void command({ valve: id, open: !(live?.open[id] ?? false) }),
-    turnKnob: (id, value) => void command({ knob: { id, value } }),
+    turnKnob: (id, value) => {
+      if (locked) return refuse();
+      void command({ knob: { id, value } });
+    },
     release: () => void command({ release: '*' }),
     restart: () => {
       wantFresh.current = true;
@@ -479,6 +504,20 @@ export function StandProvider({ children }: { children: ReactNode }) {
       } catch {
         // Nothing to forget.
       }
+    },
+    checkout,
+    locked,
+    standHookup:
+      standPayload.current?.diagram === diagram &&
+      standPayload.current?.hookup &&
+      Object.keys(standPayload.current.hookup).length
+        ? standPayload.current.hookup
+        : null,
+    setStandHookup: (hookup) => {
+      if (locked || !standPayload.current) return refuse();
+      standPayload.current = { ...standPayload.current, diagram, hookup };
+      wantFresh.current = true;
+      setGeneration((g) => g + 1);
     },
     snapshot: async () => {
       const hookup = await getHookup(where).catch(() => null);

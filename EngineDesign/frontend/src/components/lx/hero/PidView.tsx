@@ -12,6 +12,7 @@ import { useEffect, useMemo, type CSSProperties } from 'react';
 import type { LayerXResult } from '../../../api/layerx';
 import { NotComputed } from '../ui';
 import { useUnits } from '../units';
+import './hero.css';
 import { parseDrawing, type DrawingDocument } from './drawing';
 import { useCursorIndexOr, useDrawingDocument } from './hooks';
 import { at } from './contract';
@@ -54,25 +55,48 @@ function mainPage(nodes: Node[]): string {
   return best;
 }
 
-export function PidView({ result, drawingId, doc, height = 460 }: {
-  result: LayerXResult;
+/** Choosing a symbol on the drawing: the candidates lit, everything else dimmed, a click picks. */
+export interface PidPick {
+  ids: string[];
+  chosen?: string | null;
+  onPick: (id: string) => void;
+}
+
+export function PidView({ result, drawingId, doc, height = 460, pick }: {
+  /** The burn whose numbers are written beside each symbol. None: the drawing alone (choosing a part). */
+  result?: LayerXResult | null;
   drawingId: string;
   doc?: DrawingDocument | null;
   height?: number;
+  pick?: PidPick;
 }) {
   const loaded = useDrawingDocument(drawingId, doc);
   const raw = loaded.state === 'ready' ? loaded.value.document : null;
   const view = useMemo(() => {
     if (!raw) return null;
     const flow = migrate({ nodes: (raw.nodes ?? []) as Node[], edges: (raw.edges ?? []) as Edge[] });
-    return applyPage(flow.nodes, flow.edges, mainPage(flow.nodes));
-  }, [raw]);
-  const net = useMemo(() => (raw ? buildNetView(parseDrawing(raw), result) : null), [raw, result]);
+    // Picking: the page the candidates are on (a GSE page can outnumber the vehicle's).
+    const candidatePage = pick?.ids.length
+      ? pageOf((flow.nodes.find((n) => n.id === pick.ids[0])?.data ?? {}) as { page?: string })
+      : null;
+    const paged = applyPage(flow.nodes, flow.edges, candidatePage ?? mainPage(flow.nodes));
+    if (!pick) return paged;
+    const lit = new Set(pick.ids);
+    return {
+      ...paged,
+      nodes: paged.nodes.map((n) => ({
+        ...n,
+        className: [n.className, lit.has(n.id) ? (n.id === pick.chosen ? 'lx-pick lx-pick-chosen' : 'lx-pick') : 'lx-pick-dim']
+          .filter(Boolean).join(' '),
+      })),
+    };
+  }, [raw, pick]);
+  const net = useMemo(() => (raw && result ? buildNetView(parseDrawing(raw), result) : null), [raw, result]);
 
   if (loaded.state === 'error') {
     return <NotComputed height={240}><span title={loaded.error}>The drawing is not available</span></NotComputed>;
   }
-  if (!view || !net || !raw) return <NotComputed height={260}>Loading the drawing</NotComputed>;
+  if (!view || !raw || (result && !net)) return <NotComputed height={260}>Loading the drawing</NotComputed>;
   return (
     <div className="lx-pid relative min-w-0 overflow-hidden rounded" style={{ ...THEME, height }}>
       <ReadOnlyProvider readOnly>
@@ -99,16 +123,17 @@ export function PidView({ result, drawingId, doc, height = 460 }: {
               minZoom={0.2}
               proOptions={{ hideAttribution: true }}
               style={{ background: 'transparent' }}
+              onNodeClick={pick ? (_e, n) => { if (pick.ids.includes(n.id)) pick.onPick(n.id); } : undefined}
             >
               <DrawnRoutes><AttachmentLayer nodes={view.nodes} edges={view.edges} /></DrawnRoutes>
               <VentLayer nodes={view.nodes} edges={view.edges} />
-              <Readouts doc={raw} net={net} />
+              {net && <Readouts doc={raw} net={net} />}
               <FitOnResize />
             </ReactFlow>
           </FluidProvider>
         </ReactFlowProvider>
       </ReadOnlyProvider>
-      {net.source === 'series' && (
+      {net?.source === 'series' && (
         <span className="pointer-events-none absolute left-2 top-2 z-[6] text-[11px] text-[var(--lx-text-3)]"
               title="This run did not record the feed network: the numbers are read from the bottle, regulator and tank series.">
           network not recorded
@@ -118,15 +143,21 @@ export function PidView({ result, drawingId, doc, height = 460 }: {
   );
 }
 
-/** The whole drawing in view whenever the panel changes size, not only when it first mounts. */
+/** The whole drawing in view whenever the panel changes size, not only when it first mounts --
+ *  and once more after the nodes have measured, which a drawing opened in a dialog needs (its
+ *  first fit ran against nodes with no size yet). */
 function FitOnResize() {
   const { fitView } = useReactFlow();
   const w = useStore((st) => st.width);
   const h = useStore((st) => st.height);
   const ready = useStore((st) => st.nodeLookup.size > 0);
+  const measured = useStore((st) => {
+    for (const n of st.nodeLookup.values()) if (!n.hidden && !n.measured?.width) return false;
+    return st.nodeLookup.size > 0;
+  });
   useEffect(() => {
     if (w > 0 && h > 0 && ready) void fitView({ padding: 0.06 });
-  }, [w, h, ready, fitView]);
+  }, [w, h, ready, measured, fitView]);
   return null;
 }
 

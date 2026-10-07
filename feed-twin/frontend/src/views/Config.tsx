@@ -155,7 +155,7 @@ function Row({
 }
 
 export function Config() {
-  const { live, setup, setSetup } = useStand();
+  const { live, setup, setSetup, locked: readOnly } = useStand();
   const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -163,7 +163,8 @@ export function Config() {
       .then(setTunables)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
-  const locked = Boolean(live?.tripped);
+  // Tripped, or a stand you have not taken: the settings are the stand's.
+  const locked = Boolean(live?.tripped) || readOnly;
   const groups = Array.from(new Set(tunables.map((t) => t.group)));
 
   return (

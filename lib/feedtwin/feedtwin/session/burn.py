@@ -33,7 +33,9 @@ from feedtwin.session.core import PAD_HOLD_S, Sample, Session, Setup
 from feedtwin.session.gauge import PSI, from_psig, psig
 from feedtwin.session.model import Model
 from feedtwin.session.network_trace import NetworkTrace
-from feedtwin.session.statemachine import StateMachine, bind
+from feedtwin.session.hookup import Hookup
+from feedtwin.session.hookup import binding as hookup_binding
+from feedtwin.session.statemachine import StateMachine
 
 #: Called after every step of a burn with ``(clock, sample, firing)``. The
 #: session itself is live at that moment, so a recorder may read it directly.
@@ -78,7 +80,11 @@ OPENED = "session_opened"
 
 
 def open_session(
-    model: Model, machine: StateMachine, *, setup: Setup | None = None
+    model: Model,
+    machine: StateMachine,
+    *,
+    setup: Setup | None = None,
+    hookup: Hookup | None = None,
 ) -> Session:
     """A session on ``model``, its valves bound to ``machine`` by label.
 
@@ -97,14 +103,14 @@ def open_session(
         )
     if isinstance(model.meta, dict):
         model.meta[OPENED] = True
-    labels = {
-        n.id: n.label for n in model.diagram.nodes if n.id in model.built.actuators
-    }
+    # The cockpit's own binding (names, the plumbing, the hookup's pins): one
+    # rule for both, so a stand binds the same wherever it is run.
     return Session(
         model,
         machine,
-        bind(machine, labels, roles=model.built.valve_roles),
+        hookup_binding(model, machine, hookup),
         setup=setup,
+        hookup=hookup,
     )
 
 
@@ -225,14 +231,16 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
             return False
         within = all(
             abs(sim.pressure - target) < plan.settle_band_psi * PSI
-            for sim in session.tanks.values()
+            for sim in (session.tanks[t] for t in session.vehicle_tanks)
         )
         steady = steady + 1 if within else 0
         if steady >= plan.settle_steps and elapsed >= plan.settle_min_s:
             break
     session.release()
     if steady < plan.settle_steps:
-        worst = max(abs(psig(sim.pressure) - lockup) for sim in session.tanks.values())
+        worst = max(
+            abs(psig(session.tanks[t].pressure) - lockup) for t in session.vehicle_tanks
+        )
         session.assumptions.append(
             f"T-0 not settled: after {plan.settle_max_s:.0f} s a tank is "
             f"{worst:.1f} psi from lockup; the burn starts off its datum."
@@ -342,7 +350,7 @@ def jump_to_t0(
     )
     lockups = {
         tank_id: lockup
-        for tank_id in session.tanks
+        for tank_id in session.vehicle_tanks
         if (lockup := regulator_lockup(session, tank_id)) is not None
     }
     tank_psi = fallback_psi
@@ -365,9 +373,9 @@ def jump_to_t0(
         notes.append(
             f"No regulator feeds the tanks; primed at {fallback_psi:.0f} psig."
         )
-    for tank_id, sim in session.tanks.items():
+    for tank_id in session.vehicle_tanks:
         if lockups and tank_id not in lockups:
-            notes.append(f"{sim.label}: no regulator upstream.")
+            notes.append(f"{session.tanks[tank_id].label}: no regulator upstream.")
     return T0(
         lockup_psi={k: round(psig(v), 1) for k, v in lockups.items()},
         tank_psi=round(tank_psi, 1),
@@ -433,9 +441,11 @@ def burn(
     instead of ~24,000 on the LE4 audit's restated fuel tank (AUDIT.md 5.2).
     """
     started = time.perf_counter()
+    # The vehicle's tanks: a cart's transfer tank running low is not a burn
+    # ending.
     watched = [
         session.tanks[tank_id]
-        for tank_id in (plan.tanks or tuple(session.tanks))
+        for tank_id in (plan.tanks or session.vehicle_tanks)
         if tank_id in session.tanks
     ]
     steps = 0

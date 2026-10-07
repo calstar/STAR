@@ -23,26 +23,26 @@ describe('pressure', () => {
     expect(stand.fmt(stand.p(578.4))).toBe(`578${NBSP}psia`);
   });
 
-  it('psig subtracts the gauge zero: the provider default, or the run\'s own', () => {
-    expect(stand.p(578.4, 'gauge').value).toBeCloseTo(578.4 - STD_ATM_PSIA, 9);
-    expect(stand.p(578.4, 'gauge').unit).toBe('psig');
-    expect(stand.p(578.4, 'gauge', 12.5).value).toBeCloseTo(565.9, 9);
+  it('is absolute even where a caller asks for gauge (2026-10-07: everything psia)', () => {
+    expect(stand.p(578.4, 'gauge').value).toBeCloseTo(578.4, 9);
+    expect(stand.p(578.4, 'gauge').unit).toBe('psia');
+    expect(stand.p(578.4, 'gauge', 12.5).value).toBeCloseTo(578.4, 9);
     const atAltitude = makeUnits(DEFAULT_SYSTEM, 12.5);
-    expect(atAltitude.p(578.4, 'gauge').value).toBeCloseTo(565.9, 9);
+    expect(atAltitude.p(578.4, 'gauge').value).toBeCloseTo(578.4, 9);
   });
 
-  it('bar(a) and bar(g) to 0.1 bar', () => {
+  it('bar(a) to 0.1 bar, gauge requests included', () => {
     const a = si.p(578.4);
     expect(a.unit).toBe('bar(a)');
     expect(a.digits).toBe(1);
     expect(a.value).toBeCloseTo(578.4 / 14.503773773, 6);
     expect(si.fmt(a)).toBe(`39.9${NBSP}bar(a)`);
     const g = si.p(578.4, 'gauge');
-    expect(g.unit).toBe('bar(g)');
-    expect(g.value).toBeCloseTo((578.4 - STD_ATM_PSIA) / PSI_PER_BAR, 9);
-    // One atmosphere absolute is 1.01325 bar(a), and zero gauge.
+    expect(g.unit).toBe('bar(a)');
+    expect(g.value).toBeCloseTo(578.4 / PSI_PER_BAR, 9);
+    // One atmosphere absolute is 1.01325 bar(a), asked for as gauge or not.
     expect(si.p(STD_ATM_PSIA).value).toBeCloseTo(1.01325, 9);
-    expect(si.p(STD_ATM_PSIA, 'gauge').value).toBeCloseTo(0, 12);
+    expect(si.p(STD_ATM_PSIA, 'gauge').value).toBeCloseTo(1.01325, 9);
   });
 
   it('a drop carries no gauge zero and one more digit', () => {

@@ -112,8 +112,19 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
         except Exception:  # noqa: BLE001 - a summary never fails a listing
             return None
 
+    from engine.layerx.vehicle import vehicle_ids
+
+    # Tanks and bottles on the vehicle only; a GSE page's transfer tank and cart bottles are listed
+    # apart, as ground support (engine.layerx.vehicle).
+    vehicle = vehicle_ids(diagram)
+    ground: List[Dict[str, Any]] = []
     tanks, bottles, regulators, engines, valves = [], [], [], [], []
     for node in diagram.nodes:
+        if node.type in ("TANK", "KBOTTLE", "DEWAR") and vehicle is not None and node.id not in vehicle:
+            volume = node.params.get("volume")
+            ground.append({"id": node.id, "label": node.label, "fluid": node.fluid, "type": node.type,
+                           "volume_L": (volume.si * 1e3) if volume is not None else None})
+            continue
         if node.type == "TANK":
             volume = node.params.get("volume")
             tanks.append({
@@ -140,7 +151,7 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
             })
         elif node.type in ("ENGINE", "INJECTOR"):
             engines.append({"id": node.id, "label": node.label})
-        elif node.is_inline and node.type in ("SOL", "MAN", "ROT", "MOV", "BV", "AV"):
+        elif node.is_inline and node.type in ("SOL", "MAN", "ROT", "BV", "AV"):
             valves.append({"id": node.id, "label": node.label, "type": node.type})
     return {
         "readable": True,
@@ -151,6 +162,7 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
         "regulators": regulators,
         "engines": engines,
         "valves": len(valves),
+        "ground_support": ground,
     }
 
 

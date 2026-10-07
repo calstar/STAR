@@ -30,6 +30,7 @@ question, the code is the answer.
 | [0003](0003-one-engine-one-burn.md) | One engine, one burn: feed-twin fires EngineDesign's engine | Proposed (1–4 built) |
 | [0004](0004-pressure-references.md) | Pressure references: absolute inside, gauge on the drawing | Accepted |
 | [0005](0005-layer-x-stays-where-the-engine-is.md) | Layer X stays where the engine is; the Stand and the Run are shared | Proposed |
+| [0006](0006-the-drawing-wires-the-twin.md) | The drawing wires the twin: vehicle and cart, hand valves, knobs, binding | Accepted |
 
 ## Format
 

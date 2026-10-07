@@ -106,6 +106,9 @@ class Settings(BaseModel):
     drawing_id: str
     tank_pressure_psia: Optional[float] = Field(default=None, gt=14.0, lt=5000.0)
     copv_pressure_psig: Optional[float] = Field(default=None, gt=0.0, lt=12000.0)
+    copv_pressure_psia: Optional[float] = Field(default=None, gt=14.0, lt=12000.0)
+    dome_psia: Optional[float] = Field(default=None, gt=14.0, lt=5000.0)
+    dome_regulator: Optional[str] = Field(default=None, max_length=200)
     load: str = Field(default="config", pattern="^(config|fill)$")
     fill_fraction: float = Field(default=0.95, gt=0.05, lt=0.99)
     dry_kg: float = Field(default=0.001, ge=0.0005, le=2.0)

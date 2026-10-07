@@ -34,11 +34,11 @@ describe('a chart given in model units', () => {
     for (const t of y.ticks) expect(Math.abs(t / y.step - Math.round(t / y.step))).toBeLessThan(1e-9);
   });
 
-  it('reads gauge against the given zero', () => {
+  it('stays absolute where a chart asks for gauge (everything psia)', () => {
     const u = makeUnits(DEFAULT_SYSTEM, 14.7);
     const d = inUnits(tank, { kind: 'pressure', pressure: 'gauge' }, u);
-    expect(d.yUnit).toBe('psig');
-    expect(d.series[0].values[0]).toBeCloseTo(578 - 14.7, 9);
+    expect(d.yUnit).toBe('psia');
+    expect(d.series[0].values[0]).toBeCloseTo(578, 9);
   });
 
   it('renders its scale in bar under a bar unit system', () => {

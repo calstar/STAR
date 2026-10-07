@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { layerx, DEFAULT_SETTINGS, type Check, type Drawing, type PidDocument } from '../../api/layerx';
+import { createPortal } from 'react-dom';
+import { layerx, DEFAULT_SETTINGS, type Check, type DomeCandidate, type Drawing, type PidDocument } from '../../api/layerx';
 import { useViewState } from '../../lib/viewState';
 import { ParametersPanel } from '../layerx/ParametersPanel';
+import { Modal } from '../ui';
+import { PidView } from './hero/PidView';
 import type { GlossaryKey } from './glossary';
 import { Hint } from './pages/kit';
 import { Button, Field, Menu, MenuItem, MenuLabel, Segmented, STATUS_GLYPH, STATUS_VAR, Term, Toggle } from './ui';
 import { NBSP, STD_ATM_PSIA, useUnits } from './units';
-import { heliumTwin, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
+import { bottleFillPsia, heliumTwin, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
 
 /**
  * The left rail: setup only (docs/layerx/GUI-SPEC.md, Layout). The drawing, how the stand is set
@@ -127,6 +130,56 @@ function DrawingFacts({ d }: { d: Drawing }) {
         </div>
       )}
     </dl>
+  );
+}
+
+/**
+ * Which regulator the dome dial sets. The feed twin chooses as its cockpit's dome knob does (a dome
+ * loader if one is drawn, else the dome-loaded regulator); here a person can name another, from the
+ * list or by clicking it on the drawing, when the names on the drawing do not say which is which.
+ */
+function DomeRegulatorRow({ job }: { job: LayerXJob }) {
+  const u = useUnits();
+  const [picking, setPicking] = useState(false);
+  const d = job.derived;
+  const cands = (d?.dome_candidates as DomeCandidate[] | undefined) ?? [];
+  const current = (d?.dome_regulator as string | null | undefined) ?? null;
+  const label = (d?.dome_regulator_label as string | null | undefined) ?? null;
+  if (!job.drawing || (!cands.length && !label)) return null;
+  const choose = (id: string | null) => job.setSettings((st) => ({ ...st, dome_regulator: id }));
+  const kindWord = (k: DomeCandidate['kind']) => (k === 'loader' ? 'loads a dome' : k === 'dome' ? 'dome-loaded' : 'setpoint');
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <RowLabel>
+        <Hint text="The regulator the dome dial sets. Chosen as the feed twin's cockpit does; pick another if the drawing's names do not say which it is.">
+          Dome regulator
+        </Hint>
+      </RowLabel>
+      <Menu label={<span className="truncate">{label ?? 'none'}{job.settings.dome_regulator ? '' : ' (auto)'}</span>}
+            size="sm" align="end" minWidth={240} title="The regulator the dome dial sets">
+        <MenuLabel>Regulators a dial can set</MenuLabel>
+        <MenuItem checked={!job.settings.dome_regulator} onClick={() => choose(null)} note="the feed twin's choice">Automatic</MenuItem>
+        {cands.map((c) => (
+          <MenuItem key={c.id} checked={job.settings.dome_regulator === c.id} onClick={() => choose(c.id)}
+                    note={`${c.page}, ${kindWord(c.kind)}`}
+                    right={c.drawn_psia === null ? undefined : <span className="lx-num">{u.fmt(u.p(c.drawn_psia))}</span>}>
+            {c.label}
+          </MenuItem>
+        ))}
+        <MenuItem onClick={() => setPicking(true)}>Pick on the drawing…</MenuItem>
+      </Menu>
+      {picking && job.settings.drawing_id && createPortal(
+        <Modal open onClose={() => setPicking(false)} width="w-[min(1000px,96vw)]" title="Click the regulator the dome dial sets"
+               footer={<button type="button" onClick={() => setPicking(false)}
+                               className="ml-auto rounded-md border border-[var(--color-border)] px-3 py-1.5 text-sm text-[var(--color-text-secondary)]">Cancel</button>}>
+          <p className="mb-2 text-[12px] text-[var(--lx-text-3)]">Ringed: the regulators a dial can set. The current one is green.</p>
+          <PidView drawingId={job.settings.drawing_id} height={560}
+                   pick={{ ids: cands.map((c) => c.id), chosen: current,
+                           onPick: (id) => { choose(id); setPicking(false); } }} />
+        </Modal>,
+        document.body,
+      )}
+    </div>
   );
 }
 
@@ -335,11 +388,13 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
     );
   }
 
+  // Every pressure on the rail is absolute (2026-10-07): dome, tank lockup and bottle on one scale.
   const tankScale = u.scale('pressure', { pressure: 'abs' });
-  // The bottle's dial is gauge against the standard atmosphere (api/layerx.ts): psig in, psig out.
-  const bottleScale = u.scale('pressure', { pressure: 'gauge', gaugeZeroPsia: STD_ATM_PSIA });
-  const drawnPsig = typeof derived?.copv_drawn_psig === 'number' ? (derived.copv_drawn_psig as number) : null;
-  const domePsig = typeof derived?.dome_psig === 'number' ? derived.dome_psig : null;
+  const num = (v: unknown) => (typeof v === 'number' ? v : null);
+  const drawnBottle = num(derived?.copv_drawn_psia);
+  const domeDrawn = num(derived?.dome_drawn_psia);
+  const domeNow = num(derived?.dome_psia);
+  const lockupNow = num(derived?.target_lockup_psia);
   const loads = derived?.loads_kg && derived.roles ? derived.loads_kg : null;
 
   return (
@@ -393,25 +448,36 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
         </Section>
 
         <Section id="before" title="Before firing" step="before" highlight={highlight === 'before'}>
+          {/* The dome dial and the tank lockup are one setting seen two ways: type either and the
+              other follows (the last one typed wins). Neither typed: the dial drawn on the regulator. */}
+          <Field label="Dome" termKey="domeSetting" scale={tankScale}
+                 value={settings.dome_psia ?? (settings.tank_pressure_psia === null || settings.tank_pressure_psia === undefined ? domeDrawn : null) ?? domeNow}
+                 defaultValue={domeDrawn ?? undefined}
+                 placeholder={settings.tank_pressure_psia !== null && settings.tank_pressure_psia !== undefined ? 'from tank' : 'drawing'}
+                 allowEmpty min={STD_ATM_PSIA}
+                 onCommit={(v) => job.setSettings((st) => ({
+                   ...st,
+                   dome_psia: v === null || (domeDrawn !== null && Math.abs(v - domeDrawn) < 1e-9) ? null : v,
+                   tank_pressure_psia: v === null ? st.tank_pressure_psia : null,
+                 }))} />
           <Field label="Tank pressure" termKey="tankPressure" scale={tankScale}
-                 value={settings.tank_pressure_psia ?? job.configTankPsia}
-                 defaultValue={job.configTankPsia ?? undefined}
-                 placeholder="design" allowEmpty min={14.7}
-                 onCommit={(v) => set('tank_pressure_psia', v === null || (job.configTankPsia !== null && Math.abs(v - job.configTankPsia) < 1e-9) ? null : v)} />
-          {domePsig !== null && (
-            <div className="-mt-1 flex justify-between pl-5 text-[11px] text-[var(--lx-text-3)]">
-              <Term k="domeSetting">Dome</Term>
-              <span className="lx-num">{u.fmt(u.p(domePsig + STD_ATM_PSIA, 'gauge', STD_ATM_PSIA))}</span>
-            </div>
-          )}
-          <Field label="Bottle fill" termKey="bottleFill" scale={bottleScale}
-                 value={(settings.copv_pressure_psig ?? drawnPsig) === null ? null : (settings.copv_pressure_psig ?? drawnPsig)! + STD_ATM_PSIA}
-                 defaultValue={drawnPsig === null ? undefined : drawnPsig + STD_ATM_PSIA}
+                 value={settings.tank_pressure_psia ?? lockupNow}
+                 placeholder="from dome" allowEmpty min={14.7}
+                 onCommit={(v) => job.setSettings((st) => ({
+                   ...st,
+                   tank_pressure_psia: v,
+                   dome_psia: v === null ? st.dome_psia : null,
+                 }))} />
+          <DomeRegulatorRow job={job} />
+          <Field label="Bottle fill" termKey="bottleFill" scale={tankScale}
+                 value={bottleFillPsia(settings, derived)}
+                 defaultValue={drawnBottle ?? undefined}
                  placeholder="drawing" allowEmpty min={STD_ATM_PSIA}
-                 onCommit={(v) => {
-                   const psig = v === null ? null : v - STD_ATM_PSIA;
-                   set('copv_pressure_psig', psig === null || (drawnPsig !== null && Math.abs(psig - drawnPsig) < 1e-9) ? null : psig);
-                 }} />
+                 onCommit={(v) => job.setSettings((st) => ({
+                   ...st,
+                   copv_pressure_psia: v === null || (drawnBottle !== null && Math.abs(v - drawnBottle) < 1e-9) ? null : v,
+                   copv_pressure_psig: null,
+                 }))} />
           <div className="flex items-center justify-between gap-2">
             <RowLabel>
               <Hint text="The gas in the bottle and everything it presses, swapped on the drawing for this burn. The regulator's droop and line data stay as measured with the drawing's own gas.">

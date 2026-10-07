@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { DOME_KNOB, type LiveKnob, type StandSetup } from '../api';
+import { CHARGE_KNOB, DOME_KNOB, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
 import { useStand } from '../stand';
 
@@ -102,13 +102,16 @@ function HookupKnob({ knob, disabled }: { knob: LiveKnob; disabled: boolean }) {
 }
 
 export function Gse() {
-  const { live, setup, setSetup } = useStand();
+  const { live, setup, setSetup, locked: readOnly } = useStand();
   const set = (patch: Partial<StandSetup>) => setSetup(patch);
   const commitDome = useCallback((v: number) => setSetup({ dome: v }), [setSetup]);
   const commitHigh = useCallback((v: number) => setSetup({ copv_target: v }), [setSetup]);
   const [dome, setDome] = useCommitted(setup.dome, commitDome);
   const [high, setHigh] = useCommitted(setup.copv_target, commitHigh);
-  const locked = Boolean(live?.tripped);
+  // Tripped, or a stand you have not taken: where the knobs sit is saved with
+  // the stand, so turning them is changing it.
+  const locked = Boolean(live?.tripped) || readOnly;
+  const chargeKnob = live?.knobs?.find((k) => k.id === CHARGE_KNOB);
 
   const reading = (pattern: RegExp) => {
     if (!live) return undefined;
@@ -127,7 +130,7 @@ export function Gse() {
         </h2>
         <div className="bg-card flex flex-wrap items-start justify-around gap-8 rounded-xl border border-gray-800 px-6 py-5">
           <Knob
-            label="COPV fill (built-in)"
+            label={chargeKnob?.label ?? 'COPV fill (built-in)'}
             value={high}
             min={0}
             max={6000}
@@ -159,14 +162,16 @@ export function Gse() {
             />
           ) : null}
           {(live?.knobs ?? [])
-            .filter((k) => k.id !== DOME_KNOB && k.regulators.length > 0)
+            .filter((k) => k.id !== DOME_KNOB && k.id !== CHARGE_KNOB && k.regulators.length > 0)
             .map((k) => (
               <HookupKnob key={k.id} knob={k} disabled={locked} />
             ))}
         </div>
         <p className="mt-1 text-[11px] text-text-muted">
-          COPV fill is the twin's own GSE fill (no fill regulator on the drawing). Which regulator each
-          other knob turns is set on the{' '}
+          {chargeKnob
+            ? `COPV fill sets ${chargeKnob.regulators.join(', ')} on the drawing. `
+            : "COPV fill is the twin's own GSE fill (no fill regulator on the drawing). "}
+          Which regulator each other knob turns is set on the{' '}
           <Link to="/hookup" className="text-blue-400 hover:underline">
             Hookup
           </Link>{' '}
@@ -178,7 +183,10 @@ export function Gse() {
         <h2 className="mb-1 text-sm font-bold uppercase tracking-wider text-text-muted">
           The cart
         </h2>
-        <div className="bg-card flex flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3">
+        <fieldset
+          disabled={locked}
+          className="bg-card m-0 flex min-w-0 flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3 disabled:opacity-60"
+        >
           <Number_ label="COPV charge" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
           <Number_ label="Fuel load" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
           <span title="What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. 0: a fixed-rate load over the LOX load time.">
@@ -209,7 +217,7 @@ export function Gse() {
             />
             Bottle arrives full
           </label>
-        </div>
+        </fieldset>
       </section>
 
     </div>

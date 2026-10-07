@@ -1,0 +1,5547 @@
+{
+  "nodes": [
+    {
+      "id": "node_1",
+      "type": "TANK",
+      "position": {
+        "x": 380,
+        "y": 160
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "COPV",
+        "fluidType": "default",
+        "options": {
+          "material": "copv",
+          "insulation": "none",
+          "portsTop": "1",
+          "portsBottom": "1"
+        },
+        "page": "Rocket",
+        "params": {
+          "pressure": {
+            "value": 4000,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 293,
+            "unit": "K",
+            "source": "default",
+            "reference": "room temperature, 20 °C"
+          },
+          "volume": {
+            "value": 4.69,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 15000,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 870,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "rule of mixtures: carbon fibre 740, epoxy 1160 J/(kg.K) (PMC12430415), 60 % fibre by volume; liner excluded — UNVERIFIED"
+          }
+        },
+        "ports": {
+          "t": {
+            "kind": "plug"
+          }
+        },
+        "fluid": "nitrogen",
+        "labelOffset": {
+          "x": -65.16234785285441,
+          "y": 37.88769478958859
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_2",
+      "type": "PR",
+      "position": {
+        "x": 390,
+        "y": 450
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "DPR_HP",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "domeLoaded": "yes"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "params": {
+          "dome_pressure": {
+            "value": 535,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "dome_bias": {
+            "value": 50,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "Cv": {
+            "value": 0.8,
+            "unit": "Cv",
+            "source": "estimated"
+          },
+          "supply_coefficient": {
+            "value": 14.7,
+            "unit": "psi/1000psi",
+            "source": "estimated",
+            "reference": "14.7 psi outlet rise per 1000 psi inlet drop"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -69.58954638174248,
+          "y": 30.9986425371202
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_3",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 410,
+        "y": 290
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "Gn2-MFLD",
+        "fluidType": "default",
+        "options": {
+          "outlets": "4",
+          "orientation": "vertical"
+        },
+        "page": "Rocket",
+        "rotation": 0,
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 19.112305303094736,
+          "y": 97.15693683893198
+        },
+        "geometry": {
+          "width": 20,
+          "height": 120,
+          "positions": {
+            "in": 0.03571428571428571,
+            "p": 0.8857142857142857,
+            "p2": 0.3,
+            "p3": 0.6785714285714286,
+            "p4": 0.5464285714285714
+          }
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 20,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_6",
+      "type": "RTD",
+      "position": {
+        "x": 450,
+        "y": 190
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_P",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_1",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 30.53648521894688,
+          "y": 11.90576672346236
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_8",
+      "type": "RV",
+      "position": {
+        "x": 290,
+        "y": 370
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV-HPF",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Rocket",
+        "params": {
+          "set_pressure": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -8.774682082641894,
+          "y": 66.77468208264189
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_10",
+      "type": "PT",
+      "position": {
+        "x": 450,
+        "y": 260
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "PT-HP-1",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Rocket",
+        "rotation": 0,
+        "labelOffset": {
+          "x": 52.17487865006005,
+          "y": 21.875086678528533
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_11",
+      "type": "PT",
+      "position": {
+        "x": 520,
+        "y": 510
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "DP-PT-R",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": 51.03391824683417,
+          "y": 28.132973386563584
+        },
+        "ports": {},
+        "rotation": 180
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_12",
+      "type": "SOL",
+      "position": {
+        "x": 520,
+        "y": 400
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "DR-CTRL-R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "rotation": 270,
+        "labelOffset": {
+          "x": 43.48403657340427,
+          "y": 21.240928268210258
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_13",
+      "type": "QD",
+      "position": {
+        "x": 520,
+        "y": 330
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "DR-QD-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": "node_o5qqb5_135"
+        },
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "rotation": 270,
+        "labelOffset": {
+          "x": 57.5478902797872,
+          "y": 19.76125176877349
+        }
+      },
+      "hidden": false,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_15",
+      "type": "TANK",
+      "position": {
+        "x": 380,
+        "y": 720
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "Eth-Tank",
+        "fluidType": "default",
+        "options": {
+          "material": "al6061",
+          "insulation": "none",
+          "portsTop": "2",
+          "portsBottom": "2"
+        },
+        "page": "Rocket",
+        "params": {
+          "pressure": {
+            "value": 585,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 293,
+            "unit": "K",
+            "source": "default",
+            "reference": "room temperature, 20 °C"
+          },
+          "volume": {
+            "value": 8.19,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 1500,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_mass": {
+            "value": 8,
+            "unit": "lbm",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 897,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "NIST cryogenic materials data, Al 6061-T6 specific heat at 300 K"
+          }
+        },
+        "ports": {},
+        "fluid": "ethanol",
+        "labelOffset": {
+          "x": -68.68843066665345,
+          "y": 40.64769777122308
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_16",
+      "type": "SOL",
+      "position": {
+        "x": 390,
+        "y": 630
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "FU_SOL_R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 4,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -71.06276815759767,
+          "y": 14
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_18",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 280,
+        "y": 600
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "FU-MFLD",
+        "fluidType": "default",
+        "options": {
+          "outlets": "3",
+          "orientation": "horizontal"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -25.843964187441063,
+          "y": 127.95744477839301
+        },
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 90,
+          "height": 20,
+          "positions": {
+            "in": 0.45,
+            "p": 0.9545454545454546,
+            "p2": 0.7818181818181819,
+            "p3": 0.65
+          }
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 20,
+        "height": 90
+      }
+    },
+    {
+      "id": "node_19",
+      "type": "RV",
+      "position": {
+        "x": 160,
+        "y": 660
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV-F",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -0.6489120354543059,
+          "y": 65.67554685323097
+        },
+        "params": {
+          "set_pressure": {
+            "value": 750,
+            "unit": "psi",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_49",
+      "type": "JUNCTION",
+      "position": {
+        "x": 415,
+        "y": 575
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_49",
+        "page": "Rocket",
+        "along": {
+          "t": 0.6492537313432836,
+          "in": "t",
+          "out": "b",
+          "from": "node_2",
+          "to": "node_16",
+          "ends": {
+            "a": {
+              "x": 370,
+              "y": 543
+            },
+            "b": {
+              "x": 420,
+              "y": 627
+            }
+          },
+          "home": {
+            "a": {
+              "x": 370,
+              "y": 543
+            },
+            "b": {
+              "x": 420,
+              "y": 627
+            },
+            "at": {
+              "x": 420,
+              "y": 580
+            }
+          }
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_22",
+      "type": "TANK",
+      "position": {
+        "x": 380,
+        "y": 1080
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "LOX-Tank",
+        "fluidType": "default",
+        "options": {
+          "material": "al6061",
+          "insulation": "fiberglass_r13",
+          "portsTop": "2",
+          "portsBottom": "2"
+        },
+        "page": "Rocket",
+        "params": {
+          "pressure": {
+            "value": 585,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 90.19,
+            "unit": "K",
+            "source": "default",
+            "reference": "NIST WebBook: oxygen normal boiling point"
+          },
+          "volume": {
+            "value": 8.19,
+            "unit": "L",
+            "source": "estimated"
+          },
+          "burst_pressure": {
+            "value": 1500,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "wall_mass": {
+            "value": 8,
+            "unit": "lbm",
+            "source": "estimated"
+          },
+          "insulation_thickness": {
+            "value": 0.5,
+            "unit": "in",
+            "source": "estimated"
+          },
+          "wall_capacity": {
+            "value": 897,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "NIST cryogenic materials data, Al 6061-T6 specific heat at 300 K"
+          },
+          "insulation_conductivity": {
+            "value": 0.039,
+            "unit": "W/(m.K)",
+            "source": "default",
+            "reference": "Owens Corning R-13 unfaced batt, 3.5 in: k = 0.0889 m / (13 × 0.1761 m²·K/W)"
+          }
+        },
+        "ports": {},
+        "fluid": "oxygen",
+        "labelOffset": {
+          "x": 45.186605612856695,
+          "y": 81.9181702576015
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_23",
+      "type": "SOL",
+      "position": {
+        "x": 440,
+        "y": 950
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "OU_SOL_R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 4,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_24",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 280,
+        "y": 950
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MF-3",
+        "fluidType": "default",
+        "options": {
+          "outlets": "3",
+          "orientation": "vertical"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -27.151714680584345,
+          "y": 131.74809039182497
+        },
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 90,
+          "height": 20,
+          "positions": {
+            "in": 0.45454545454545453,
+            "p": 0.7772727272727272,
+            "p2": 0.6318181818181818,
+            "p3": 0.9545454545454546
+          }
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 20,
+        "height": 90
+      }
+    },
+    {
+      "id": "node_27",
+      "type": "RV",
+      "position": {
+        "x": 150,
+        "y": 1010
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "RV_O",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "Rocket",
+        "params": {
+          "set_pressure": {
+            "value": 750,
+            "unit": "psi",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -3.579222947601668,
+          "y": 66.77436467290656
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_29",
+      "type": "RTD",
+      "position": {
+        "x": 460,
+        "y": 1120
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "OX-RTD-3",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_22",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 35.682691665640014,
+          "y": 9.30636141099876
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_30",
+      "type": "RTD",
+      "position": {
+        "x": 460,
+        "y": 1040
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "OX-RTD-1",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_22",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 36.90369756304432,
+          "y": 10.527367308403068
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_31",
+      "type": "RTD",
+      "position": {
+        "x": 460,
+        "y": 1080
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "OX-RTD-2",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_22",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 38.735206409150784,
+          "y": 9.306361410998761
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_32",
+      "type": "QD",
+      "position": {
+        "x": 520,
+        "y": 1200
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "OF-QDB",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": "node_126"
+        },
+        "page": "Rocket",
+        "rotation": 180,
+        "params": {},
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_36",
+      "type": "ENGINE",
+      "position": {
+        "x": 380,
+        "y": 1380
+      },
+      "data": {
+        "componentType": "ENGINE",
+        "label": "ENG-1",
+        "fluidType": "default",
+        "options": {
+          "engineConfig": ""
+        },
+        "page": "Rocket",
+        "params": {
+          "chamber_pressure": {
+            "value": 385,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "chamber_temperature": {
+            "value": 3000,
+            "unit": "K",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 72,
+        "height": 120
+      }
+    },
+    {
+      "id": "node_37",
+      "type": "ROT",
+      "position": {
+        "x": 370,
+        "y": 1250
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "OM-R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 20,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_38",
+      "type": "ROT",
+      "position": {
+        "x": 370,
+        "y": 890
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "FM-R",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "failState": "closed"
+        },
+        "page": "Rocket",
+        "rotation": 90,
+        "params": {
+          "Cv": {
+            "value": 20,
+            "unit": "Cv",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -50.97623768350972,
+          "y": 23.077071396066557
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_39",
+      "type": "PT",
+      "position": {
+        "x": 260,
+        "y": 530
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "FU-PT-R",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -66.88423336677401,
+          "y": -6.35261226313407
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_43",
+      "type": "TC",
+      "position": {
+        "x": 460,
+        "y": 1400
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-1",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_36",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 30.091899178330806,
+          "y": 10.726480657335355
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_44",
+      "type": "TC",
+      "position": {
+        "x": 460,
+        "y": 1440
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC-2",
+        "fluidType": "default",
+        "options": {
+          "size": "small"
+        },
+        "attachedTo": "node_36",
+        "page": "Rocket",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": 31.527750084234462,
+          "y": 12.885555974937706
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 36,
+        "height": 36
+      }
+    },
+    {
+      "id": "node_45",
+      "type": "REGION",
+      "position": {
+        "x": 80,
+        "y": 140
+      },
+      "width": 690,
+      "height": 1410,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "Rocket",
+        "page": "Rocket",
+        "color": "#eab308"
+      },
+      "resizing": false,
+      "hidden": true,
+      "measured": {
+        "width": 690,
+        "height": 1410
+      }
+    },
+    {
+      "id": "node_46",
+      "type": "PT",
+      "position": {
+        "x": 260,
+        "y": 860
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "OU-PT-R",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -74.69360143605964,
+          "y": 22.365025988114915
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_47",
+      "type": "REGION",
+      "position": {
+        "x": 90,
+        "y": 380
+      },
+      "width": 350,
+      "height": 310,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "OX Vent",
+        "page": "GSE",
+        "color": "#3b82f6"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 350,
+        "height": 310
+      }
+    },
+    {
+      "id": "node_48",
+      "type": "REGION",
+      "position": {
+        "x": 90,
+        "y": 720
+      },
+      "width": 350,
+      "height": 310,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "Fuel Vent",
+        "page": "GSE",
+        "color": "#f97316"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 350,
+        "height": 310
+      }
+    },
+    {
+      "id": "node_52",
+      "type": "QD",
+      "position": {
+        "x": 520,
+        "y": 830
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD-FFB",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_o5qqb5_143"
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -9.689389305374597,
+          "y": 63.8599177859585
+        },
+        "params": {},
+        "ports": {}
+      },
+      "hidden": true,
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_55",
+      "type": "REGION",
+      "position": {
+        "x": 1700,
+        "y": 380
+      },
+      "width": 980,
+      "height": 320,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "OX Fill",
+        "page": "GSE",
+        "color": "#3b82f6"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 980,
+        "height": 320
+      }
+    },
+    {
+      "id": "node_56",
+      "type": "REGION",
+      "position": {
+        "x": 480,
+        "y": 140
+      },
+      "width": 1180,
+      "height": 640,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "High-Press GSE",
+        "page": "GSE",
+        "color": "#ef4444"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 1180,
+        "height": 640
+      }
+    },
+    {
+      "id": "node_57",
+      "type": "REGION",
+      "position": {
+        "x": 480,
+        "y": 850
+      },
+      "width": 1180,
+      "height": 440,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "Low-Press GSE",
+        "page": "GSE",
+        "color": "#a855f7"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 1180,
+        "height": 440
+      }
+    },
+    {
+      "id": "node_58",
+      "type": "MAN",
+      "position": {
+        "x": 300,
+        "y": 420
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "OV-MAN",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "params": {
+          "Cd": {
+            "value": 1,
+            "unit": "-",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_60",
+      "type": "MAN",
+      "position": {
+        "x": 300,
+        "y": 770
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "FV-MAN",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "params": {
+          "Cd": {
+            "value": 1,
+            "unit": "-",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_61",
+      "type": "SOL",
+      "position": {
+        "x": 300,
+        "y": 910
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "FV-SOL",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "params": {
+          "Cd": {
+            "value": 0.5,
+            "unit": "-",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_62",
+      "type": "DEWAR",
+      "position": {
+        "x": 1740,
+        "y": 550
+      },
+      "data": {
+        "componentType": "DEWAR",
+        "label": "LOX-DW-350 PSI",
+        "fluidType": "default",
+        "options": {},
+        "fluid": "oxygen",
+        "page": "GSE",
+        "rotation": 0,
+        "labelOffset": {
+          "x": -14.72003193114556,
+          "y": 95.67927545070322
+        },
+        "params": {
+          "pressure": {
+            "value": 50,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 103.79,
+            "unit": "K",
+            "source": "default",
+            "reference": "NIST WebBook saturation curve, interpolated in log p, at 50 psi"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 80,
+        "height": 80
+      }
+    },
+    {
+      "id": "node_63",
+      "type": "KBOTTLE",
+      "position": {
+        "x": 530,
+        "y": 500
+      },
+      "data": {
+        "componentType": "KBOTTLE",
+        "label": "6K-GN2",
+        "fluidType": "default",
+        "options": {},
+        "fluid": "nitrogen",
+        "page": "GSE",
+        "rotation": 0,
+        "labelOffset": {
+          "x": -21.413010393008477,
+          "y": 107.48757291328693
+        },
+        "params": {
+          "pressure": {
+            "value": 6000,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "volume": {
+            "value": 49,
+            "unit": "L",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 40,
+        "height": 90
+      }
+    },
+    {
+      "id": "node_64",
+      "type": "QD",
+      "position": {
+        "x": 750,
+        "y": 490
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "HP-QD-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": "",
+          "service": "fluid"
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_65",
+      "type": "QD",
+      "position": {
+        "x": 830,
+        "y": 490
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "HP-QD-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "pairedWith": "node_64"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_66",
+      "type": "KBOTTLE",
+      "position": {
+        "x": 600,
+        "y": 1020
+      },
+      "data": {
+        "componentType": "KBOTTLE",
+        "label": "2K-GN2",
+        "fluidType": "default",
+        "options": {},
+        "fluid": "nitrogen",
+        "page": "GSE",
+        "params": {
+          "pressure": {
+            "value": 2000,
+            "unit": "psi",
+            "source": "measured"
+          },
+          "volume": {
+            "value": 49,
+            "unit": "L",
+            "source": "estimated"
+          }
+        },
+        "ports": {},
+        "labelOffset": {
+          "x": -19.143526220439654,
+          "y": 104.39425895118241
+        }
+      },
+      "measured": {
+        "width": 40,
+        "height": 90
+      }
+    },
+    {
+      "id": "node_67",
+      "type": "PR",
+      "position": {
+        "x": 620,
+        "y": 490
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "PR-1",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "domeLoaded": "no"
+        },
+        "page": "GSE",
+        "rotation": 0
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_68",
+      "type": "PG",
+      "position": {
+        "x": 570,
+        "y": 420
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "6K-Gauge",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "labelOffset": {
+          "x": -79.9587226684082,
+          "y": 22.869748928395772
+        },
+        "params": {
+          "range_max": {
+            "value": 6000,
+            "unit": "psi",
+            "source": "estimated"
+          }
+        },
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_58",
+      "type": "JUNCTION",
+      "position": {
+        "x": 595,
+        "y": 515
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_58",
+        "page": "GSE",
+        "along": {
+          "t": 0.6136363636363636,
+          "in": "l",
+          "out": "r",
+          "from": "node_63",
+          "to": "node_67",
+          "ends": {
+            "a": {
+              "x": 573,
+              "y": 520
+            },
+            "b": {
+              "x": 617,
+              "y": 520
+            }
+          },
+          "home": {
+            "a": {
+              "x": 573,
+              "y": 520
+            },
+            "b": {
+              "x": 617,
+              "y": 520
+            },
+            "at": {
+              "x": 600,
+              "y": 520
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_69",
+      "type": "PG",
+      "position": {
+        "x": 670,
+        "y": 420
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "HP-Gauge",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "labelOffset": {
+          "x": 51.24270739520597,
+          "y": 21.71885919099565
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_59",
+      "type": "JUNCTION",
+      "position": {
+        "x": 695,
+        "y": 515
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_59",
+        "page": "GSE",
+        "along": {
+          "t": 0.265625,
+          "in": "l",
+          "out": "r",
+          "from": "node_67",
+          "to": "node_64",
+          "ends": {
+            "a": {
+              "x": 683,
+              "y": 520
+            },
+            "b": {
+              "x": 747,
+              "y": 520
+            }
+          },
+          "home": {
+            "a": {
+              "x": 683,
+              "y": 520
+            },
+            "b": {
+              "x": 747,
+              "y": 520
+            },
+            "at": {
+              "x": 700,
+              "y": 520
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_70",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 960,
+        "y": 510
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "HP-Up-Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "5",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 150,
+          "height": 20,
+          "positions": {
+            "in": 0.9705882352941176,
+            "p": 0.8676470588235294,
+            "p2": 0.7735294117647059,
+            "p3": 0.6735294117647059,
+            "p4": 0.5764705882352941,
+            "p5": 0.4676470588235294
+          }
+        },
+        "labelOffset": {
+          "x": 13,
+          "y": -20.5
+        }
+      },
+      "measured": {
+        "width": 150,
+        "height": 20
+      }
+    },
+    {
+      "id": "node_71",
+      "type": "MAN",
+      "position": {
+        "x": 955,
+        "y": 590
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "HP-Up-MAN",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": -52.5,
+          "y": -13.5
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_72",
+      "type": "PT",
+      "position": {
+        "x": 987,
+        "y": 660
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "HP-Up-PT",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "rotation": 180
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_73",
+      "type": "RV",
+      "position": {
+        "x": 1021,
+        "y": 580
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "HP-Up-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": 18,
+          "y": 89.5
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_74",
+      "type": "ROT",
+      "position": {
+        "x": 1140,
+        "y": 580
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "HP-Up-ROT",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -24.5,
+          "y": 73.5
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_75",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 1340,
+        "y": 510
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "HP-Down-Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "5",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 150,
+          "height": 20,
+          "positions": {
+            "in": 0.9705882352941176,
+            "p": 0.8676470588235294,
+            "p2": 0.7735294117647059,
+            "p3": 0.6735294117647059,
+            "p4": 0.5764705882352941,
+            "p5": 0.4676470588235294
+          }
+        },
+        "labelOffset": {
+          "x": 0.42188566122504767,
+          "y": -20.5
+        }
+      },
+      "measured": {
+        "width": 150,
+        "height": 20
+      }
+    },
+    {
+      "id": "node_76",
+      "type": "SOL",
+      "position": {
+        "x": 1210,
+        "y": 490
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "HPC_SOL",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -16.578114338774952,
+          "y": -22.59366897468963
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_77",
+      "type": "MAN",
+      "position": {
+        "x": 1335,
+        "y": 590
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "HP-Down-MAN",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": -84,
+          "y": -24
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_78",
+      "type": "PT",
+      "position": {
+        "x": 1367,
+        "y": 660
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "HP-Down-PT",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 5000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: high-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "rotation": 180
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_79",
+      "type": "RV",
+      "position": {
+        "x": 1401,
+        "y": 580
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "HP-Down-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": 19,
+          "y": 91
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_80",
+      "type": "ROT",
+      "position": {
+        "x": 1520,
+        "y": 580
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "HP-Down-ROT",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -24.5,
+          "y": 73.5
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_60",
+      "type": "JUNCTION",
+      "position": {
+        "x": 545,
+        "y": 475
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_60",
+        "page": "Rocket",
+        "along": {
+          "t": 0.38636363636363635,
+          "in": "t",
+          "out": "b",
+          "from": "node_12",
+          "to": "node_11",
+          "ends": {
+            "a": {
+              "x": 550,
+              "y": 463
+            },
+            "b": {
+              "x": 550,
+              "y": 507
+            }
+          },
+          "home": {
+            "a": {
+              "x": 550,
+              "y": 463
+            },
+            "b": {
+              "x": 550,
+              "y": 517
+            },
+            "at": {
+              "x": 550,
+              "y": 480
+            }
+          }
+        }
+      },
+      "hidden": true,
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_83",
+      "type": "PG",
+      "position": {
+        "x": 640,
+        "y": 950
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "PG",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "labelOffset": {
+          "x": -13.576056196257362,
+          "y": -16.349550696651136
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_84",
+      "type": "QD",
+      "position": {
+        "x": 710,
+        "y": 1010
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "LP-QD-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": ""
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_85",
+      "type": "QD",
+      "position": {
+        "x": 800,
+        "y": 1010
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "LP-QD-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": ""
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_62",
+      "type": "JUNCTION",
+      "position": {
+        "x": 665,
+        "y": 1035
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_62",
+        "page": "GSE",
+        "along": {
+          "t": 0.6351351351351351,
+          "in": "r",
+          "out": "l",
+          "from": "node_84",
+          "to": "node_66",
+          "ends": {
+            "a": {
+              "x": 717,
+              "y": 1040
+            },
+            "b": {
+              "x": 643,
+              "y": 1040
+            }
+          },
+          "home": {
+            "a": {
+              "x": 717,
+              "y": 1040
+            },
+            "b": {
+              "x": 643,
+              "y": 1040
+            },
+            "at": {
+              "x": 670,
+              "y": 1040
+            }
+          }
+        },
+        "color": "#a855f7"
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_89",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 1060,
+        "y": 1027
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "LP-Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "6",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": 33.45633717754417,
+          "y": -32.456337177544164
+        },
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 200,
+          "height": 20,
+          "positions": {
+            "in": 0.9705882352941176,
+            "p": 0.9117647058823529,
+            "p2": 0.8235294117647058,
+            "p3": 0.7352941176470589,
+            "p4": 0.6470588235294118,
+            "p5": 0.4772727272727273,
+            "p6": 0.5659090909090909
+          }
+        }
+      },
+      "measured": {
+        "width": 200,
+        "height": 20
+      }
+    },
+    {
+      "id": "node_90",
+      "type": "PR",
+      "position": {
+        "x": 950,
+        "y": 1010
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "LP-PR",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "domeLoaded": "no"
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_91",
+      "type": "PG",
+      "position": {
+        "x": 870,
+        "y": 930
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "LP-Up-PT",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "labelOffset": {
+          "x": -15.65569929575559,
+          "y": -17.3500789536659
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_66",
+      "type": "JUNCTION",
+      "position": {
+        "x": 895,
+        "y": 1035
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_66",
+        "page": "GSE",
+        "along": {
+          "t": 0.7238805970149254,
+          "in": "r",
+          "out": "l",
+          "from": "node_90",
+          "to": "node_85",
+          "ends": {
+            "a": {
+              "x": 997,
+              "y": 1040
+            },
+            "b": {
+              "x": 863,
+              "y": 1040
+            }
+          },
+          "home": {
+            "a": {
+              "x": 997,
+              "y": 1040
+            },
+            "b": {
+              "x": 863,
+              "y": 1040
+            },
+            "at": {
+              "x": 900,
+              "y": 1040
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_93",
+      "type": "VALVE_BANK",
+      "position": {
+        "x": 1295,
+        "y": 987
+      },
+      "data": {
+        "componentType": "VALVE_BANK",
+        "label": "Solenoid Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "4"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": 22.45666915941608,
+          "y": -28.68762224875115
+        }
+      },
+      "measured": {
+        "width": 180,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_94",
+      "type": "SOL",
+      "position": {
+        "x": 1049,
+        "y": 1150
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "LP-SOL-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -19.65004905727649,
+          "y": 93.33125613215951
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_95",
+      "type": "PT",
+      "position": {
+        "x": 1088,
+        "y": 1070
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "LP-PT",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "rotation": 180,
+        "labelOffset": {
+          "x": -9.108341509546088,
+          "y": 59.42090283114179
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_96",
+      "type": "PG",
+      "position": {
+        "x": 1126,
+        "y": 1160
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "LP-PG",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "rotation": 180
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_97",
+      "type": "RV",
+      "position": {
+        "x": 1180,
+        "y": 1150
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "LP-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": 7.000000000000002,
+          "y": 95
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_98",
+      "type": "MAN",
+      "position": {
+        "x": 1260,
+        "y": 1090
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "LP-MAN-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 0
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_74",
+      "type": "JUNCTION",
+      "position": {
+        "x": 1225,
+        "y": 1045
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_74",
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_100",
+      "type": "RV",
+      "position": {
+        "x": 1750,
+        "y": 470
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "LOX-DW-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -22.06044650603083,
+          "y": -48.069857038995046
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_101",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 1900,
+        "y": 580
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "MF-4",
+        "fluidType": "default",
+        "options": {
+          "outlets": "3",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 90,
+          "height": 20,
+          "positions": {
+            "in": 0.9545454545454546,
+            "p": 0.13636363636363635,
+            "p2": 0.2772727272727273,
+            "p3": 0.45454545454545453
+          }
+        }
+      },
+      "measured": {
+        "width": 90,
+        "height": 20
+      }
+    },
+    {
+      "id": "node_102",
+      "type": "PT",
+      "position": {
+        "x": 1940,
+        "y": 420
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "OF-PT",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": 51.07485559288745,
+          "y": 20.19619394756735
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_103",
+      "type": "MAN",
+      "position": {
+        "x": 1900,
+        "y": 490
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "OF-MAN-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": -80.18898114906125,
+          "y": -17.474521371735833
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_104",
+      "type": "MAN",
+      "position": {
+        "x": 2090,
+        "y": 560
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "OF-MAN-Fill",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -34.381871666431394,
+          "y": 57.659732619081225
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_105",
+      "type": "REGION",
+      "position": {
+        "x": 1700,
+        "y": 800
+      },
+      "width": 980,
+      "height": 490,
+      "zIndex": -1,
+      "data": {
+        "componentType": "REGION",
+        "label": "Fuel Fill",
+        "page": "GSE",
+        "color": "#8f8f8f"
+      },
+      "resizing": false,
+      "measured": {
+        "width": 980,
+        "height": 490
+      }
+    },
+    {
+      "id": "node_106",
+      "type": "TANK",
+      "position": {
+        "x": 2054,
+        "y": 970
+      },
+      "data": {
+        "componentType": "TANK",
+        "label": "Fuel Transfer Tank",
+        "fluidType": "default",
+        "options": {
+          "material": "al6061",
+          "insulation": "none",
+          "portsTop": "1",
+          "portsBottom": "1"
+        },
+        "page": "GSE",
+        "params": {
+          "pressure": {
+            "value": 150,
+            "unit": "psi",
+            "source": "estimated"
+          },
+          "temperature": {
+            "value": 293,
+            "unit": "K",
+            "source": "default",
+            "reference": "room temperature, 20 °C"
+          },
+          "wall_capacity": {
+            "value": 897,
+            "unit": "J/(kg.K)",
+            "source": "default",
+            "reference": "NIST cryogenic materials data, Al 6061-T6 specific heat at 300 K"
+          }
+        },
+        "ports": {},
+        "fluid": "ethanol",
+        "labelOffset": {
+          "x": -118,
+          "y": 29
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 100
+      }
+    },
+    {
+      "id": "node_107",
+      "type": "MAN",
+      "position": {
+        "x": 2054,
+        "y": 860
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "FF-MAN-Input",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_109",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 2194,
+        "y": 940
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "FF-Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "6",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 180,
+          "height": 20,
+          "positions": {
+            "in": 0.975,
+            "p": 0.925,
+            "p2": 0.8275,
+            "p3": 0.7275,
+            "p4": 0.635,
+            "p5": 0.5375,
+            "p6": 0.475
+          }
+        },
+        "labelOffset": {
+          "x": 51,
+          "y": -28
+        },
+        "color": "#f97316"
+      },
+      "measured": {
+        "width": 180,
+        "height": 20
+      }
+    },
+    {
+      "id": "junc_77",
+      "type": "JUNCTION",
+      "position": {
+        "x": 2079,
+        "y": 945
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_77",
+        "page": "GSE",
+        "along": {
+          "t": 0.6136363636363636,
+          "in": "t",
+          "out": "b",
+          "from": "node_107",
+          "to": "node_106",
+          "ends": {
+            "a": {
+              "x": 2084,
+              "y": 923
+            },
+            "b": {
+              "x": 2084,
+              "y": 967
+            }
+          },
+          "home": {
+            "a": {
+              "x": 2084,
+              "y": 923
+            },
+            "b": {
+              "x": 2084,
+              "y": 967
+            },
+            "at": {
+              "x": 2084,
+              "y": 950
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_110",
+      "type": "RV",
+      "position": {
+        "x": 2174,
+        "y": 1000
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "FF-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": -40.89251624657713,
+          "y": 64.5
+        },
+        "color": "#f97316"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_111",
+      "type": "MAN",
+      "position": {
+        "x": 2253,
+        "y": 1040
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "FF-MAN-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -34.81272847162977,
+          "y": 87.58143785518693
+        },
+        "color": "#f97316"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_112",
+      "type": "SOL",
+      "position": {
+        "x": 2329,
+        "y": 1040
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "FF-SOL-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "rotation": 90
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_114",
+      "type": "PT",
+      "position": {
+        "x": 2314,
+        "y": 1150
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "FF-PT",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "rotation": 180
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_115",
+      "type": "PG",
+      "position": {
+        "x": 2194,
+        "y": 1150
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "FF-PG",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "rotation": 180
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_116",
+      "type": "QD",
+      "position": {
+        "x": 2444,
+        "y": 920
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "FF-QD-Pressure",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": ""
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -32.71429593100984,
+          "y": 63.12605082082391
+        },
+        "color": "#f97316"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_79",
+      "type": "JUNCTION",
+      "position": {
+        "x": 2439,
+        "y": 945
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_79",
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_117",
+      "type": "MAN",
+      "position": {
+        "x": 2054,
+        "y": 1160
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "FF-MAN-Dump",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": -104.96251342406528,
+          "y": 49.36424699573459
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_118",
+      "type": "MAN",
+      "position": {
+        "x": 1984,
+        "y": 1090
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "FF-MAN-Output",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -36.231530363002385,
+          "y": 58.21417629053873
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_80",
+      "type": "JUNCTION",
+      "position": {
+        "x": 2079,
+        "y": 1115
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_80",
+        "page": "GSE",
+        "along": {
+          "t": 0.5595236394133349,
+          "in": "t",
+          "out": "b",
+          "from": "node_106",
+          "to": "node_117",
+          "ends": {
+            "a": {
+              "x": 2084,
+              "y": 1073
+            },
+            "b": {
+              "x": 2084,
+              "y": 1157
+            }
+          },
+          "home": {
+            "a": {
+              "x": 2084,
+              "y": 1073
+            },
+            "b": {
+              "x": 2084,
+              "y": 1157
+            },
+            "at": {
+              "x": 2084,
+              "y": 1120
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_120",
+      "type": "MOV",
+      "position": {
+        "x": 300,
+        "y": 580
+      },
+      "data": {
+        "componentType": "MOV",
+        "label": "OV-MOT",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_123",
+      "type": "MANIFOLD",
+      "position": {
+        "x": 2290,
+        "y": 580
+      },
+      "data": {
+        "componentType": "MANIFOLD",
+        "label": "OF-Manifold",
+        "fluidType": "default",
+        "options": {
+          "outlets": "3",
+          "orientation": "horizontal"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "geometry": {
+          "width": 90,
+          "height": 20,
+          "positions": {
+            "in": 0.9545454545454546,
+            "p": 0.13636363636363635,
+            "p2": 0.2772727272727273,
+            "p3": 0.45454545454545453
+          }
+        },
+        "color": "#3b82f6"
+      },
+      "measured": {
+        "width": 90,
+        "height": 20
+      }
+    },
+    {
+      "id": "junc_85",
+      "type": "JUNCTION",
+      "position": {
+        "x": 2285,
+        "y": 585
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_85",
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_124",
+      "type": "MAN",
+      "position": {
+        "x": 2290,
+        "y": 470
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "OF-MAN-Dump",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": -125.95550704041136,
+          "y": 12.31605209787243
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_125",
+      "type": "MOV",
+      "position": {
+        "x": 2390,
+        "y": 460
+      },
+      "data": {
+        "componentType": "MOV",
+        "label": "OF-MOT-Dump",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_86",
+      "type": "JUNCTION",
+      "position": {
+        "x": 2575,
+        "y": 585
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_86",
+        "page": "GSE"
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_126",
+      "type": "QD",
+      "position": {
+        "x": 2580,
+        "y": 560
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "OF-QDA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": "node_32"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_128",
+      "type": "PG",
+      "position": {
+        "x": 1010,
+        "y": 930
+      },
+      "data": {
+        "componentType": "PG",
+        "label": "LP-Down-PT",
+        "fluidType": "default",
+        "options": {},
+        "page": "GSE",
+        "labelOffset": {
+          "x": -21.121113289690722,
+          "y": -22.17880700764605
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_88",
+      "type": "JUNCTION",
+      "position": {
+        "x": 1035,
+        "y": 1035
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_88",
+        "page": "GSE",
+        "along": {
+          "t": 0.6136367685902082,
+          "in": "l",
+          "out": "r",
+          "from": "node_90",
+          "to": "node_89",
+          "ends": {
+            "a": {
+              "x": 1013,
+              "y": 1040
+            },
+            "b": {
+              "x": 1057,
+              "y": 1040
+            }
+          },
+          "home": {
+            "a": {
+              "x": 1013,
+              "y": 1040
+            },
+            "b": {
+              "x": 1057,
+              "y": 1040
+            },
+            "at": {
+              "x": 1040,
+              "y": 1040
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_129",
+      "type": "PR",
+      "position": {
+        "x": 900,
+        "y": 400
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "DR-REG-G",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cv",
+          "domeLoaded": "no"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": 52.149182479169674,
+          "y": 24.49905802280538
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_89",
+      "type": "JUNCTION",
+      "position": {
+        "x": 925,
+        "y": 515
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_89",
+        "page": "GSE",
+        "along": {
+          "t": 0.578125,
+          "in": "l",
+          "out": "r",
+          "from": "node_65",
+          "to": "node_70",
+          "ends": {
+            "a": {
+              "x": 893,
+              "y": 520
+            },
+            "b": {
+              "x": 957,
+              "y": 520
+            }
+          },
+          "home": {
+            "a": {
+              "x": 893,
+              "y": 520
+            },
+            "b": {
+              "x": 957,
+              "y": 520
+            },
+            "at": {
+              "x": 930,
+              "y": 520
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_130",
+      "type": "RV",
+      "position": {
+        "x": 1260,
+        "y": 210
+      },
+      "data": {
+        "componentType": "RV",
+        "label": "DR-RV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": 38.27290403173768,
+          "y": -21.061957914551456
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_131",
+      "type": "PT",
+      "position": {
+        "x": 900,
+        "y": 210
+      },
+      "data": {
+        "componentType": "PT",
+        "label": "DR-PT-G",
+        "fluidType": "default",
+        "options": {},
+        "params": {
+          "range_max": {
+            "value": 1000,
+            "unit": "psi",
+            "source": "default",
+            "reference": "palette: low-pressure transducer"
+          }
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -81.49689446721197,
+          "y": 24.8660714011276
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_132",
+      "type": "SOL",
+      "position": {
+        "x": 970,
+        "y": 290
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "DR-CTRL-G",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -20.145186347335827,
+          "y": 75.42177795210037
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_90",
+      "type": "JUNCTION",
+      "position": {
+        "x": 925,
+        "y": 315
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_90",
+        "page": "GSE",
+        "along": {
+          "t": 0.4253731343283582,
+          "in": "t",
+          "out": "b",
+          "from": "node_o5qqb5_131",
+          "to": "node_o5qqb5_129",
+          "ends": {
+            "a": {
+              "x": 930,
+              "y": 263
+            },
+            "b": {
+              "x": 930,
+              "y": 397
+            }
+          },
+          "home": {
+            "a": {
+              "x": 930,
+              "y": 263
+            },
+            "b": {
+              "x": 930,
+              "y": 397
+            },
+            "at": {
+              "x": 930,
+              "y": 320
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_134",
+      "type": "SOL",
+      "position": {
+        "x": 1040,
+        "y": 210
+      },
+      "data": {
+        "componentType": "SOL",
+        "label": "DR-Vent",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "failState": "closed"
+        },
+        "page": "GSE",
+        "rotation": 90,
+        "labelOffset": {
+          "x": 38.61737925997073,
+          "y": -21.414127248458065
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_135",
+      "type": "QD",
+      "position": {
+        "x": 1330,
+        "y": 290
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "DR-QD-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "fluid",
+          "pairedWith": "node_13"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -16.10888976050187,
+          "y": 70.87985249103471
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_92",
+      "type": "JUNCTION",
+      "position": {
+        "x": 1065,
+        "y": 315
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_92",
+        "page": "GSE",
+        "along": {
+          "t": 0.9036458333333334,
+          "in": "r",
+          "out": "l",
+          "from": "node_o5qqb5_135",
+          "to": "node_o5qqb5_132",
+          "ends": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            }
+          },
+          "home": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            },
+            "at": {
+              "x": 1070,
+              "y": 320
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "junc_o5qqb5_93",
+      "type": "JUNCTION",
+      "position": {
+        "x": 1285,
+        "y": 315
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_93",
+        "page": "GSE",
+        "along": {
+          "t": 0.3307291666666667,
+          "in": "r",
+          "out": "l",
+          "from": "node_o5qqb5_135",
+          "to": "node_o5qqb5_132",
+          "ends": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            }
+          },
+          "home": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            },
+            "at": {
+              "x": 1290,
+              "y": 320
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_136",
+      "type": "MAN",
+      "position": {
+        "x": 1150,
+        "y": 210
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "DR-MV",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd"
+        },
+        "page": "GSE",
+        "rotation": 270,
+        "labelOffset": {
+          "x": 41.502159782478834,
+          "y": -18.285180294976747
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_94",
+      "type": "JUNCTION",
+      "position": {
+        "x": 1175,
+        "y": 315
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_94",
+        "page": "GSE",
+        "along": {
+          "t": 0.6171875,
+          "in": "r",
+          "out": "l",
+          "from": "node_o5qqb5_135",
+          "to": "node_o5qqb5_132",
+          "ends": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            }
+          },
+          "home": {
+            "a": {
+              "x": 1417,
+              "y": 320
+            },
+            "b": {
+              "x": 1033,
+              "y": 320
+            },
+            "at": {
+              "x": 1180,
+              "y": 320
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_137",
+      "type": "QD",
+      "position": {
+        "x": 270,
+        "y": 292
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD-PF-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_o5qqb5_138"
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -16,
+          "y": -17.5
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_138",
+      "type": "QD",
+      "position": {
+        "x": 1560,
+        "y": 490
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD-PF-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_o5qqb5_137"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {},
+        "labelOffset": {
+          "x": -9.825079518092076,
+          "y": -23.919922891858135
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_139",
+      "type": "QD",
+      "position": {
+        "x": 160,
+        "y": 598
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "FV-QD-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_o5qqb5_140"
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -16.648189345484262,
+          "y": -23.208854537999244
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_140",
+      "type": "QD",
+      "position": {
+        "x": 120,
+        "y": 840
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "FV-QD-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_o5qqb5_139"
+        },
+        "page": "GSE",
+        "labelOffset": {
+          "x": -12.91850445882608,
+          "y": 70.91850445882608
+        },
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_95",
+      "type": "JUNCTION",
+      "position": {
+        "x": 276,
+        "y": 865
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_95",
+        "page": "GSE",
+        "along": {
+          "t": 0.49999999754898194,
+          "in": "t",
+          "out": "b",
+          "from": "node_60",
+          "to": "node_61",
+          "ends": {
+            "a": {
+              "x": 297,
+              "y": 800
+            },
+            "b": {
+              "x": 297,
+              "y": 940
+            }
+          },
+          "home": {
+            "a": {
+              "x": 297,
+              "y": 800
+            },
+            "b": {
+              "x": 297,
+              "y": 940
+            },
+            "at": {
+              "x": 281,
+              "y": 870
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_141",
+      "type": "QD",
+      "position": {
+        "x": 130,
+        "y": 510
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "OV-QD-A",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": ""
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "junc_o5qqb5_96",
+      "type": "JUNCTION",
+      "position": {
+        "x": 276,
+        "y": 535
+      },
+      "data": {
+        "componentType": "JUNCTION",
+        "label": "junc_o5qqb5_96",
+        "page": "GSE",
+        "along": {
+          "t": 0.5520832599905756,
+          "in": "t",
+          "out": "b",
+          "from": "node_58",
+          "to": "node_120",
+          "ends": {
+            "a": {
+              "x": 297,
+              "y": 450
+            },
+            "b": {
+              "x": 297,
+              "y": 610
+            }
+          },
+          "home": {
+            "a": {
+              "x": 297,
+              "y": 450
+            },
+            "b": {
+              "x": 297,
+              "y": 610
+            },
+            "at": {
+              "x": 281,
+              "y": 540
+            }
+          }
+        }
+      },
+      "measured": {
+        "width": 10,
+        "height": 10
+      }
+    },
+    {
+      "id": "node_o5qqb5_142",
+      "type": "QD",
+      "position": {
+        "x": 150,
+        "y": 949
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD-OV-B",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": ""
+        },
+        "page": "Rocket",
+        "labelOffset": {
+          "x": -14.361743776893935,
+          "y": -19.339688648617383
+        }
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_o5qqb5_143",
+      "type": "QD",
+      "position": {
+        "x": 1850,
+        "y": 1090
+      },
+      "data": {
+        "componentType": "QD",
+        "label": "QD-FFA",
+        "fluidType": "default",
+        "options": {
+          "flowCoefficient": "Cd",
+          "service": "hydraulic",
+          "pairedWith": "node_52"
+        },
+        "page": "GSE",
+        "params": {},
+        "ports": {}
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "source": "node_1",
+      "sourceHandle": "b",
+      "target": "node_3",
+      "targetHandle": "in",
+      "id": "node_1-node_3",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_3",
+      "sourceHandle": "p4",
+      "target": "node_2",
+      "targetHandle": "l",
+      "id": "node_3-node_2",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_15",
+      "sourceHandle": "t2",
+      "target": "node_16",
+      "targetHandle": "r",
+      "id": "node_15-node_16",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "id": "node_3-junc_40",
+      "source": "node_3",
+      "sourceHandle": "p3",
+      "target": "node_8",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "id": "node_12-node_13",
+      "source": "node_12",
+      "sourceHandle": "r",
+      "target": "node_13",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "id": "node_2-junc_49",
+      "source": "node_2",
+      "sourceHandle": "r",
+      "target": "junc_49",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "params": {
+          "length": {
+            "value": 0.055,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "bore": {
+            "value": 10.2108,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": -0.051561358569496805,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "fitting_count": {
+            "value": 1,
+            "unit": "-",
+            "source": "default",
+            "reference": "counted from the fittings on this run"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe",
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 10.2108,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 25.21,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.2108,
+                "lengthMm": 29.92367002544278,
+                "bendDiameters": 3.7313432835820888,
+                "angleDeg": 45.00000000000001
+              }
+            ]
+          }
+        ],
+        "sketch": {
+          "boreMm": 10.2108,
+          "legs": [
+            {
+              "id": "leg_1",
+              "to": {
+                "x": 1.2862342866764734e-15,
+                "y": 21.005799999999997
+              }
+            },
+            {
+              "id": "leg_2",
+              "to": {
+                "x": 12.572358569496815,
+                "y": 33.57815856949681
+              }
+            },
+            {
+              "id": "leg_3",
+              "to": {
+                "x": 12.572358569496817,
+                "y": 51.561358569496804
+              }
+            }
+          ],
+          "bends": [
+            {
+              "atLeg": 0,
+              "radiusMm": 38.099999999999994
+            }
+          ],
+          "sections": [],
+          "unit": "in"
+        },
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "id": "junc_49-node_16",
+      "source": "junc_49",
+      "sourceHandle": "b",
+      "target": "node_16",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "id": "junc_49-junc_48",
+      "source": "junc_49",
+      "sourceHandle": "r",
+      "target": "node_23",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "params": {
+          "length": {
+            "value": 0.817,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "bore": {
+            "value": 10.921999999999999,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": -0.8029517354603677,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "fitting_count": {
+            "value": 3,
+            "unit": "-",
+            "source": "default",
+            "reference": "counted from the fittings on this run"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe",
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 10.921999999999999,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 727.08,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442775,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45
+              },
+              {
+                "id": "fit_2",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442878,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45.000000000000156
+              },
+              {
+                "id": "fit_3",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442878,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45.000000000000156
+              }
+            ]
+          }
+        ],
+        "sketch": {
+          "boreMm": 10.921999999999999,
+          "legs": [
+            {
+              "id": "leg_1",
+              "to": {
+                "x": -25.665571994015636,
+                "y": 25.66557199401564
+              }
+            },
+            {
+              "id": "leg_2",
+              "to": {
+                "x": -25.665571994015597,
+                "y": 730.4393719940156
+              }
+            },
+            {
+              "id": "leg_3",
+              "to": {
+                "x": -5.909008527663417,
+                "y": 750.1959354603677
+              }
+            },
+            {
+              "id": "leg_4",
+              "to": {
+                "x": -5.9090085276634134,
+                "y": 802.9517354603677
+              }
+            }
+          ],
+          "bends": [
+            {
+              "atLeg": 0,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 1,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 2,
+              "radiusMm": 38.099999999999994
+            }
+          ],
+          "sections": [],
+          "unit": "in"
+        },
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "t2",
+      "target": "node_23",
+      "targetHandle": "r",
+      "id": "node_22-node_23",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "b2",
+      "target": "node_32",
+      "targetHandle": "r",
+      "id": "node_22-node_32",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_10",
+      "sourceHandle": "b",
+      "target": "node_3",
+      "targetHandle": "p2",
+      "id": "node_10-node_3",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "b",
+      "target": "node_37",
+      "targetHandle": "l",
+      "id": "node_22-node_37",
+      "data": {
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_37",
+      "sourceHandle": "r",
+      "target": "node_36",
+      "targetHandle": "t",
+      "id": "node_37-node_36",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_38",
+      "sourceHandle": "r",
+      "target": "node_36",
+      "targetHandle": "fuel",
+      "id": "node_38-node_36",
+      "data": {
+        "offset": 0,
+        "params": {
+          "length": {
+            "value": 0.386,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "bore": {
+            "value": 10.921999999999999,
+            "unit": "mm",
+            "source": "estimated",
+            "reference": "from the centerline sketch"
+          },
+          "roughness": {
+            "value": 0.03,
+            "unit": "mm",
+            "source": "default",
+            "reference": "Farshad (2001) electropolished stainless, 0.030 mm, via fluids.roughness_Farshad — measured on Cr13, not 316 — UNVERIFIED"
+          },
+          "elevation_change": {
+            "value": -0.36586574162327024,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          },
+          "fitting_count": {
+            "value": 3,
+            "unit": "-",
+            "source": "default",
+            "reference": "counted from the fittings on this run"
+          }
+        },
+        "options": {
+          "material": "ss316_polished",
+          "hose": "no"
+        },
+        "ports": {},
+        "lineType": "pipe",
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 10.921999999999999,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 296.47,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442775,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45
+              },
+              {
+                "id": "fit_2",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442775,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 45
+              },
+              {
+                "id": "fit_3",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 10.921999999999999,
+                "lengthMm": 29.923670025442753,
+                "bendDiameters": 3.488372093023256,
+                "angleDeg": 44.999999999999964
+              }
+            ]
+          }
+        ],
+        "sketch": {
+          "boreMm": 10.921999999999999,
+          "legs": [
+            {
+              "id": "leg_1",
+              "to": {
+                "x": 3.110602869834277e-15,
+                "y": 50.8
+              }
+            },
+            {
+              "id": "leg_2",
+              "to": {
+                "x": -25.14471713899362,
+                "y": 75.94471713899362
+              }
+            },
+            {
+              "id": "leg_3",
+              "to": {
+                "x": -25.144717138993606,
+                "y": 329.9447171389936
+              }
+            },
+            {
+              "id": "leg_4",
+              "to": {
+                "x": 10.776307345282994,
+                "y": 365.86574162327025
+              }
+            }
+          ],
+          "bends": [
+            {
+              "atLeg": 0,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 1,
+              "radiusMm": 38.099999999999994
+            },
+            {
+              "atLeg": 2,
+              "radiusMm": 38.099999999999994
+            }
+          ],
+          "sections": [],
+          "unit": "in"
+        }
+      },
+      "hidden": true
+    },
+    {
+      "id": "node_15-node_38",
+      "source": "node_15",
+      "sourceHandle": "b",
+      "target": "node_38",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "segments": [
+          {
+            "id": "seg_1",
+            "method": "itemised",
+            "standard": "tube",
+            "bore": {
+              "value": 0,
+              "unit": "mm",
+              "source": "estimated",
+              "reference": "from the centerline sketch"
+            },
+            "length": {
+              "value": 429.54,
+              "unit": "mm",
+              "source": "measured",
+              "reference": "from the centerline sketch"
+            },
+            "lengthBasis": "tube",
+            "fittings": [
+              {
+                "id": "fit_1",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442778,
+                "angleDeg": 45.00000000000001
+              },
+              {
+                "id": "fit_2",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442778,
+                "angleDeg": 45.00000000000001
+              },
+              {
+                "id": "fit_3",
+                "kind": "bend",
+                "count": 1,
+                "boreMm": 0,
+                "lengthMm": 29.923670025442775,
+                "angleDeg": 45
+              }
+            ]
+          }
+        ],
+        "params": {
+          "length": {
+            "value": 0.519,
+            "unit": "m",
+            "source": "measured",
+            "reference": "from the centerline sketch"
+          }
+        }
+      },
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_15",
+      "sourceHandle": "t",
+      "target": "node_18",
+      "targetHandle": "in",
+      "id": "node_15-node_18",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_39",
+      "sourceHandle": "b",
+      "target": "node_18",
+      "targetHandle": "p",
+      "id": "node_39-node_18",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_27",
+      "sourceHandle": "r",
+      "target": "node_24",
+      "targetHandle": "p2",
+      "id": "node_27-node_24",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_22",
+      "sourceHandle": "t",
+      "target": "node_24",
+      "targetHandle": "in",
+      "id": "node_22-node_24",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_46",
+      "sourceHandle": "b",
+      "target": "node_24",
+      "targetHandle": "p3",
+      "id": "node_46-node_24",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "id": "node_15-junc_53",
+      "source": "node_15",
+      "sourceHandle": "b2",
+      "target": "node_52",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "id": "node_18-node_19",
+      "source": "node_18",
+      "sourceHandle": "p3",
+      "target": "node_19",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {},
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_64",
+      "sourceHandle": "r",
+      "target": "node_65",
+      "targetHandle": "l",
+      "id": "node_64-node_65",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_63",
+      "sourceHandle": "r",
+      "target": "junc_58",
+      "targetHandle": "l",
+      "id": "node_63-junc_58",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_58",
+      "sourceHandle": "r",
+      "target": "node_67",
+      "targetHandle": "l",
+      "id": "junc_58-node_67",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_58-node_68",
+      "source": "junc_58",
+      "sourceHandle": "t",
+      "target": "node_68",
+      "targetHandle": "b",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_67",
+      "sourceHandle": "r",
+      "target": "junc_59",
+      "targetHandle": "l",
+      "id": "node_67-junc_59",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_59",
+      "sourceHandle": "r",
+      "target": "node_64",
+      "targetHandle": "l",
+      "id": "junc_59-node_64",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_69-junc_59",
+      "source": "node_69",
+      "sourceHandle": "b",
+      "target": "junc_59",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_71-node_70",
+      "source": "node_71",
+      "sourceHandle": "r",
+      "target": "node_70",
+      "targetHandle": "p",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_72",
+      "sourceHandle": "b",
+      "target": "node_70",
+      "targetHandle": "p2",
+      "id": "node_72-node_70",
+      "data": {}
+    },
+    {
+      "id": "node_70-node_73",
+      "source": "node_70",
+      "sourceHandle": "p3",
+      "target": "node_73",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_70",
+      "sourceHandle": "p4",
+      "target": "node_74",
+      "targetHandle": "l",
+      "id": "node_70-node_74",
+      "data": {}
+    },
+    {
+      "id": "node_70-node_76",
+      "source": "node_70",
+      "sourceHandle": "p5",
+      "target": "node_76",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_76",
+      "sourceHandle": "r",
+      "target": "node_75",
+      "targetHandle": "in",
+      "id": "node_76-node_75",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_75",
+      "sourceHandle": "p",
+      "target": "node_77",
+      "targetHandle": "r",
+      "id": "node_75-node_77",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_75",
+      "sourceHandle": "p2",
+      "target": "node_78",
+      "targetHandle": "b",
+      "id": "node_75-node_78",
+      "data": {}
+    },
+    {
+      "id": "node_75-node_79",
+      "source": "node_75",
+      "sourceHandle": "p3",
+      "target": "node_79",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_75",
+      "sourceHandle": "p4",
+      "target": "node_80",
+      "targetHandle": "l",
+      "id": "node_75-node_80",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_12",
+      "sourceHandle": "l",
+      "target": "junc_60",
+      "targetHandle": "t",
+      "id": "node_12-junc_60",
+      "data": {
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_60",
+      "sourceHandle": "b",
+      "target": "node_11",
+      "targetHandle": "b",
+      "id": "junc_60-node_11",
+      "data": {
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "id": "node_2-junc_60",
+      "source": "node_2",
+      "sourceHandle": "dome",
+      "target": "junc_60",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      },
+      "hidden": true
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_85",
+      "sourceHandle": "l",
+      "target": "node_84",
+      "targetHandle": "r",
+      "id": "node_85-node_84",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "id": "node_84-junc_62",
+      "source": "node_84",
+      "sourceHandle": "l",
+      "target": "junc_62",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "color": "#a855f7"
+      }
+    },
+    {
+      "id": "junc_62-node_66",
+      "source": "junc_62",
+      "sourceHandle": "l",
+      "target": "node_66",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "color": "#a855f7"
+      }
+    },
+    {
+      "id": "node_83-junc_62",
+      "source": "node_83",
+      "sourceHandle": "b",
+      "target": "junc_62",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_90",
+      "sourceHandle": "l",
+      "target": "junc_66",
+      "targetHandle": "r",
+      "id": "node_90-junc_66",
+      "data": {
+        "offset": 0,
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_95",
+      "sourceHandle": "b",
+      "target": "node_89",
+      "targetHandle": "p2",
+      "id": "node_95-node_89",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_96",
+      "sourceHandle": "b",
+      "target": "node_89",
+      "targetHandle": "p3",
+      "id": "node_96-node_89",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_97",
+      "sourceHandle": "l",
+      "target": "node_89",
+      "targetHandle": "p4",
+      "id": "node_97-node_89",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_89",
+      "sourceHandle": "p",
+      "target": "node_94",
+      "targetHandle": "l",
+      "id": "node_89-node_94",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_93",
+      "sourceHandle": "in",
+      "target": "node_89",
+      "targetHandle": "p5",
+      "id": "node_93-node_89",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "id": "node_98-junc_74",
+      "source": "node_98",
+      "sourceHandle": "l",
+      "target": "junc_74",
+      "targetHandle": "b",
+      "type": "smoothstep",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_100",
+      "sourceHandle": "r",
+      "target": "node_62",
+      "targetHandle": "t",
+      "id": "node_100-node_62",
+      "data": {}
+    },
+    {
+      "id": "node_62-node_101",
+      "source": "node_62",
+      "sourceHandle": "r",
+      "target": "node_101",
+      "targetHandle": "in",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_101-node_103",
+      "source": "node_101",
+      "sourceHandle": "p",
+      "target": "node_103",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_101",
+      "sourceHandle": "p2",
+      "target": "node_102",
+      "targetHandle": "b",
+      "id": "node_101-node_102",
+      "data": {}
+    },
+    {
+      "id": "node_101-node_104",
+      "source": "node_101",
+      "sourceHandle": "p3",
+      "target": "node_104",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_91-junc_66",
+      "source": "node_91",
+      "sourceHandle": "b",
+      "target": "junc_66",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "color": "#a855f7",
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_66",
+      "sourceHandle": "l",
+      "target": "node_85",
+      "targetHandle": "r",
+      "id": "junc_66-node_85",
+      "data": {
+        "offset": 0,
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_107",
+      "sourceHandle": "r",
+      "target": "junc_77",
+      "targetHandle": "t",
+      "id": "node_107-junc_77",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_77",
+      "sourceHandle": "b",
+      "target": "node_106",
+      "targetHandle": "t",
+      "id": "junc_77-node_106",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_109-junc_77",
+      "source": "node_109",
+      "sourceHandle": "in",
+      "target": "junc_77",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_109",
+      "sourceHandle": "p",
+      "target": "node_110",
+      "targetHandle": "r",
+      "id": "node_109-node_110",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_111",
+      "sourceHandle": "l",
+      "target": "node_109",
+      "targetHandle": "p3",
+      "id": "node_111-node_109",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "id": "node_114-node_109",
+      "source": "node_114",
+      "sourceHandle": "b",
+      "target": "node_109",
+      "targetHandle": "p4",
+      "type": "smoothstep",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_109",
+      "sourceHandle": "p5",
+      "target": "node_112",
+      "targetHandle": "l",
+      "id": "node_109-node_112",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_109",
+      "sourceHandle": "p2",
+      "target": "node_115",
+      "targetHandle": "b",
+      "id": "node_109-node_115",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "id": "node_109-junc_79",
+      "source": "node_109",
+      "sourceHandle": "p6",
+      "target": "junc_79",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "color": "#f97316"
+      }
+    },
+    {
+      "id": "node_106-junc_80",
+      "source": "node_106",
+      "sourceHandle": "b",
+      "target": "junc_80",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_80-node_117",
+      "source": "junc_80",
+      "sourceHandle": "b",
+      "target": "node_117",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_118-junc_80",
+      "source": "node_118",
+      "sourceHandle": "r",
+      "target": "junc_80",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_104-junc_85",
+      "source": "node_104",
+      "sourceHandle": "r",
+      "target": "junc_85",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_123",
+      "sourceHandle": "p",
+      "target": "node_124",
+      "targetHandle": "l",
+      "id": "node_123-node_124",
+      "data": {
+        "color": "#3b82f6"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_123",
+      "sourceHandle": "p2",
+      "target": "node_125",
+      "targetHandle": "l",
+      "id": "node_123-node_125",
+      "data": {
+        "color": "#3b82f6"
+      }
+    },
+    {
+      "id": "node_123-junc_86",
+      "source": "node_123",
+      "sourceHandle": "p3",
+      "target": "junc_86",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "color": "#3b82f6"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_90",
+      "sourceHandle": "r",
+      "target": "junc_88",
+      "targetHandle": "l",
+      "id": "node_90-junc_88",
+      "data": {
+        "color": "#a855f7",
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_88",
+      "sourceHandle": "r",
+      "target": "node_89",
+      "targetHandle": "in",
+      "id": "junc_88-node_89",
+      "data": {
+        "color": "#a855f7",
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_128-junc_88",
+      "source": "node_128",
+      "sourceHandle": "b",
+      "target": "junc_88",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "color": "#a855f7"
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_65",
+      "sourceHandle": "r",
+      "target": "junc_o5qqb5_89",
+      "targetHandle": "l",
+      "id": "node_65-junc_o5qqb5_89",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_o5qqb5_89",
+      "sourceHandle": "r",
+      "target": "node_70",
+      "targetHandle": "in",
+      "id": "junc_o5qqb5_89-node_70",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_o5qqb5_129-junc_o5qqb5_89",
+      "source": "node_o5qqb5_129",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_89",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_o5qqb5_131",
+      "sourceHandle": "b",
+      "target": "junc_o5qqb5_90",
+      "targetHandle": "t",
+      "id": "node_o5qqb5_131-junc_o5qqb5_90",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "type": "smoothstep",
+      "source": "junc_o5qqb5_90",
+      "sourceHandle": "b",
+      "target": "node_o5qqb5_129",
+      "targetHandle": "r",
+      "id": "junc_o5qqb5_90-node_o5qqb5_129",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_o5qqb5_132-junc_o5qqb5_90",
+      "source": "node_o5qqb5_132",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_90",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "junc_o5qqb5_92-node_o5qqb5_132",
+      "source": "junc_o5qqb5_92",
+      "sourceHandle": "l",
+      "target": "node_o5qqb5_132",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_o5qqb5_134-junc_o5qqb5_92",
+      "source": "node_o5qqb5_134",
+      "sourceHandle": "r",
+      "target": "junc_o5qqb5_92",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_o5qqb5_135-junc_o5qqb5_93",
+      "source": "node_o5qqb5_135",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_93",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_o5qqb5_93-node_o5qqb5_130",
+      "source": "junc_o5qqb5_93",
+      "sourceHandle": "t",
+      "target": "node_o5qqb5_130",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "junc_o5qqb5_93-junc_o5qqb5_94",
+      "source": "junc_o5qqb5_93",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_94",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "junc_o5qqb5_94-junc_o5qqb5_92",
+      "source": "junc_o5qqb5_94",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_92",
+      "targetHandle": "r",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0
+      }
+    },
+    {
+      "id": "node_o5qqb5_136-junc_o5qqb5_94",
+      "source": "node_o5qqb5_136",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_94",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_o5qqb5_137",
+      "sourceHandle": "r",
+      "target": "node_3",
+      "targetHandle": "p",
+      "id": "node_o5qqb5_137-node_3",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_75",
+      "sourceHandle": "p5",
+      "target": "node_o5qqb5_138",
+      "targetHandle": "l",
+      "id": "node_75-node_o5qqb5_138",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_o5qqb5_139",
+      "sourceHandle": "r",
+      "target": "node_18",
+      "targetHandle": "p2",
+      "id": "node_o5qqb5_139-node_18",
+      "data": {}
+    },
+    {
+      "id": "node_60-junc_o5qqb5_95",
+      "source": "node_60",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_95",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "waypoints": [
+          {
+            "x": 281,
+            "y": 800
+          }
+        ],
+        "viaRun": true
+      }
+    },
+    {
+      "id": "junc_o5qqb5_95-node_61",
+      "source": "junc_o5qqb5_95",
+      "sourceHandle": "b",
+      "target": "node_61",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "waypoints": [
+          {
+            "x": 281,
+            "y": 940
+          }
+        ],
+        "viaRun": true
+      }
+    },
+    {
+      "id": "node_o5qqb5_140-junc_o5qqb5_95",
+      "source": "node_o5qqb5_140",
+      "sourceHandle": "r",
+      "target": "junc_o5qqb5_95",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "id": "node_58-junc_o5qqb5_96",
+      "source": "node_58",
+      "sourceHandle": "l",
+      "target": "junc_o5qqb5_96",
+      "targetHandle": "t",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "waypoints": [
+          {
+            "x": 281,
+            "y": 450
+          }
+        ],
+        "viaRun": true
+      }
+    },
+    {
+      "id": "junc_o5qqb5_96-node_120",
+      "source": "junc_o5qqb5_96",
+      "sourceHandle": "b",
+      "target": "node_120",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {
+        "offset": 0,
+        "waypoints": [
+          {
+            "x": 281,
+            "y": 610
+          }
+        ],
+        "viaRun": true
+      }
+    },
+    {
+      "id": "node_o5qqb5_141-junc_o5qqb5_96",
+      "source": "node_o5qqb5_141",
+      "sourceHandle": "r",
+      "target": "junc_o5qqb5_96",
+      "targetHandle": "l",
+      "type": "smoothstep",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_o5qqb5_142",
+      "sourceHandle": "r",
+      "target": "node_24",
+      "targetHandle": "p",
+      "id": "node_o5qqb5_142-node_24",
+      "data": {}
+    },
+    {
+      "type": "smoothstep",
+      "source": "node_o5qqb5_143",
+      "sourceHandle": "r",
+      "target": "node_118",
+      "targetHandle": "l",
+      "id": "node_o5qqb5_143-node_118",
+      "data": {}
+    }
+  ]
+}

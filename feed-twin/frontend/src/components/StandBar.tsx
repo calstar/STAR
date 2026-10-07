@@ -12,14 +12,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  ApiError,
   ChangeModal,
   CheckoutControl,
+  CheckoutLostDialog,
   btn,
   keyOf,
   primaryBtn,
   refOf,
   relativeTime,
-  useCheckout,
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
@@ -28,7 +29,7 @@ import { standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, model } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, model, checkout, locked } = useStand();
   const [documents, setDocuments] = useState<DesignMeta[]>([]);
   const [picking, setPicking] = useState(false);
   const [releasing, setReleasing] = useState(false);
@@ -44,10 +45,6 @@ export function StandBar() {
   }, []);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
-  // Taking the checkout must not reload the stand: that would reopen the
-  // session and throw away the run on screen. Saving writes the cockpit as it
-  // is, which is what a person pressing Save means.
-  const checkout = useCheckout({ api: standApi, ref, reload: () => undefined });
 
   const list = useCallback(async () => {
     try {
@@ -66,21 +63,24 @@ export function StandBar() {
     try {
       await work();
     } catch (e) {
+      // Somebody else has it now: say so the way pid-designer does.
+      if (e instanceof ApiError && e.status === 423) checkout.lost();
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  // Saving needs the stand taken, as an edit does: Save used to take it
+  // silently and overwrite whatever its holder had just saved.
   const save = () =>
     act(async () => {
-      if (!ref) return;
-      if (!checkout.held) await checkout.take();
+      if (!ref || !checkout.held) return;
       await standApi.autosave(ref, await snapshot());
       setSaved(new Date().toISOString());
     });
 
   const release = () =>
     act(async () => {
-      if (!ref || !label.trim()) return;
+      if (!ref || !label.trim() || !checkout.held) return;
       await standApi.createRelease(ref, label.trim(), await snapshot());
       setReleasing(false);
       setLabel('');
@@ -104,7 +104,16 @@ export function StandBar() {
       {standDoc && (
         <>
           <CheckoutControl checkout={checkout} noun="stand" />
-          <button className={primaryBtn} onClick={() => void save()} disabled={checkout.busy} title="Write the cockpit's drawing, engine, settings, hookup and knobs into this stand">
+          <button
+            className={primaryBtn}
+            onClick={() => void save()}
+            disabled={checkout.busy || !checkout.held}
+            title={
+              checkout.held
+                ? "Write the cockpit's drawing, engine, settings, hookup and knobs into this stand"
+                : 'Take the stand to save it'
+            }
+          >
             Save
           </button>
           {releasing ? (
@@ -125,7 +134,12 @@ export function StandBar() {
               </button>
             </span>
           ) : (
-            <button className={btn} onClick={() => setReleasing(true)} title="Freeze the cockpit as a named, immutable version of this stand">
+            <button
+              className={btn}
+              onClick={() => setReleasing(true)}
+              disabled={!checkout.held}
+              title={checkout.held ? 'Freeze the cockpit as a named, immutable version of this stand' : 'Take the stand to save a release'}
+            >
               Save as release…
             </button>
           )}
@@ -133,6 +147,15 @@ export function StandBar() {
             Close
           </button>
           {saved && <span className="text-gray-500" title={saved}>saved {relativeTime(saved)}</span>}
+          {locked && (
+            <span
+              className="text-amber-300/80"
+              title="Configuration, knobs, the hookup, the drawing and the engine are the stand's: take it to change them. States, valves, T-0 and Fire are operating it, and are never locked."
+            >
+              settings read only · running is not
+            </span>
+          )}
+          <CheckoutLostDialog checkout={checkout} noun="stand" name={standDoc.name} />
         </>
       )}
       {error && <span className="text-red-400">{error}</span>}

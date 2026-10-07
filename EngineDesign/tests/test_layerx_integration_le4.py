@@ -18,7 +18,8 @@ Every burn records the whole feed network (``result.network``, DATA-CONTRACT 2, 
 the blocks that read it (ladder, regulator, solenoids, saturation, the pressurant floor, the stability
 block's start window) must all be there, and agree with the AUDIT's own hand figures for this burn.
 
-* **The AUDIT's trip** (section 5, #1): TK-FUEL's MAWP restated to 600 psi. Before the wiring Layer X
+* **The AUDIT's trip** (section 5, #1): TK-FUEL's MAWP restated (600 psi in the AUDIT, 585 psi since
+  the default lockup became the drawing's dome). Before the wiring Layer X
   integrated the frozen stand to the 14 s horizon (99,478 N s, "Horizon reached", no trip). Now the
   burn stops where the tank crosses 614.7 psia (~3.1 s): its impulse, delivered impulse and burn time
   end there, it carries ``tripped``, a ``fail`` event keyed ``trip``, ``converged`` false, and a bad
@@ -38,7 +39,7 @@ from typing import Any, Dict
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-03d.json"
+BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-07.json"
 
 pytestmark = [
     pytest.mark.skipif(os.environ.get("LAYERX_GOLDEN") != "1",
@@ -79,8 +80,10 @@ FINITE = {
     "stability": ("start_window_s",),
 }
 NEEDS_NETWORK = ("ladder", "regulator", "solenoids", "saturation")
-#: The full LE4 he_pad burn: 24,236.0 N s (docs/layerx/baseline-2026-10-03d.json).
-FULL_IMPULSE_NS = 24236.034725891644
+#: The full LE4 he_pad burn: 24,244.2 N s (docs/layerx/baseline-2026-10-07.json).
+FULL_IMPULSE_NS = 24244.24118762319
+#: The restated fuel-tank MAWP that trips he_pad late in its rise (the AUDIT's 600 psi, moved with the lockup).
+TRIP_MAWP_PSI = 585.0
 
 
 def _script():
@@ -135,9 +138,12 @@ def he_flight():
 def he_trip():
     from engine.layerx.measurements import Override
 
-    restated = Override(target="node:FUT", parameter="MAWP", value=600.0, unit="psi",
+    # The AUDIT restated 600 psi against the design's 578 psia lockup (tank 578 -> 619 psia, trip at
+    # 614.7 psia ~3.1 s in). Since 2026-10-07 the default lockup is the drawing's dome, 564.7 psia here
+    # (tank 565 -> 603 psia), which 600 psi never trips: 585 psi trips at the same point of the rise.
+    restated = Override(target="node:FUT", parameter="MAWP", value=TRIP_MAWP_PSI, unit="psi",
                         source="AUDIT 5.2 what-if (not a measurement)")
-    return _burn("he_pad_fuel_mawp_600", overrides=[restated])
+    return _burn("he_pad_fuel_mawp_585", overrides=[restated])
 
 
 # ---------------------------------------------------------------- he_pad
@@ -301,7 +307,7 @@ def test_the_audits_trip_stops_the_burn_at_the_trip(he_trip, he_pad):
     r = he_trip["result"]
     trip = r["tripped"]
     assert trip["vessel"] == "FUT" and trip["kind"] == "tank"
-    assert trip["mawp_psia"] == pytest.approx(600.0 + 101325.0 / 6894.757293168361, abs=1e-6)
+    assert trip["mawp_psia"] == pytest.approx(TRIP_MAWP_PSI + 101325.0 / 6894.757293168361, abs=1e-6)
     assert 2.5 < trip["t"] < r["summary"]["burn_time_s"] + 1e-9 < 3.4
     s, dv = r["summary"], r["delivered"]["summary"]
     # Not the 4x horizon artefact (99,478 N s over 14.000 s): the impulse stops at the trip.

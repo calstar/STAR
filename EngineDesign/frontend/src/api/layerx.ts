@@ -1,9 +1,9 @@
 /**
  * Layer X: the feed system and the engine, burned together (backend/routers/layerx.py).
  *
- * Every pressure here is absolute (psia). The feed twin's gauge zero is the standard
- * atmosphere and the launch site is not, so nothing crosses this boundary as psig except
- * the COPV dial setting, which is what a person reads off the bottle's gauge.
+ * Every pressure the page shows is absolute (psia). The feed twin's gauge zero is the standard
+ * atmosphere and the launch site is not. The rail sends psia too (2026-10-07); `copv_pressure_psig`
+ * survives only for settings saved before then and for the optimiser, which still writes it.
  */
 
 import { API_BASE } from './client';
@@ -14,7 +14,13 @@ export type EngineModel = 'card' | 'calibrated' | 'native';
 export interface LayerXSettings {
   drawing_id: string;
   tank_pressure_psia?: number | null;
+  /** Older saved settings and the optimiser; the rail writes copv_pressure_psia. */
   copv_pressure_psig?: number | null;
+  copv_pressure_psia?: number | null;
+  /** The dome dial [psia]. Set, the tank lockup follows from it; null: the drawing's dial. */
+  dome_psia?: number | null;
+  /** Drawing id of the regulator the dome dial sets; null: the feed twin's own choice. */
+  dome_regulator?: string | null;
   load: 'config' | 'fill';
   fill_fraction: number;
   /** Liquid left in a tank when the burn is over [kg]; 0.001 burns the tanks dry. */
@@ -78,6 +84,9 @@ export type DesignPatch = Partial<Record<'oxidizer' | 'fuel', { d_jet?: number; 
 export const DEFAULT_SETTINGS: Omit<LayerXSettings, 'drawing_id'> = {
   tank_pressure_psia: null,
   copv_pressure_psig: null,
+  copv_pressure_psia: null,
+  dome_psia: null,
+  dome_regulator: null,
   load: 'config',
   fill_fraction: 0.95,
   dry_kg: 0.001,
@@ -183,6 +192,16 @@ export interface Calibration {
   tank_psia_F?: number;
 }
 
+/** A regulator a dome dial could set (feedtwin.session.hookup.regulators). */
+export interface DomeCandidate {
+  id: string;
+  label: string;
+  /** loader: sets another's dome; dome: dome-loaded with no loader drawn; plain: a setpoint. */
+  kind: 'loader' | 'dome' | 'plain';
+  page: string;
+  drawn_psia: number | null;
+}
+
 export interface Preflight {
   ok: boolean;
   checks: Check[];
@@ -190,6 +209,14 @@ export interface Preflight {
     target_lockup_psia?: number;
     dome_psig?: number;
     copv_psig?: number;
+    copv_psia?: number;
+    copv_drawn_psia?: number | null;
+    dome_psia?: number;
+    dome_source?: string;
+    dome_regulator?: string | null;
+    dome_regulator_label?: string | null;
+    dome_drawn_psia?: number | null;
+    dome_candidates?: DomeCandidate[];
     loads_kg?: Record<string, number> | null;
     roles?: { oxidiser: string; fuel: string };
     ambient_pa?: number;
@@ -685,7 +712,8 @@ type Result<T> = { data?: T; error?: string; status?: number };
 
 /** The rail's names for the settings, so a refused value reads as the field the person typed in. */
 const FIELD_NAME: Record<string, string> = {
-  tank_pressure_psia: 'Tank pressure (psia)', copv_pressure_psig: 'Bottle fill (psig)', fill_fraction: 'Fill fraction',
+  tank_pressure_psia: 'Tank pressure (psia)', copv_pressure_psig: 'Bottle fill (psig)', copv_pressure_psia: 'Bottle fill (psia)',
+  dome_psia: 'Dome (psia)', dome_regulator: 'Dome regulator', fill_fraction: 'Fill fraction',
   dry_kg: 'Unusable propellant (kg)', chilldown: 'Tank wall heat transfer', hold_s: 'Loaded before T-0 (s)', dt: 'Time step (s)',
   horizon_s: 'Max burn (s)', liftoff_mass_kg: 'Liftoff mass (kg)', drawing_id: 'Drawing', thrust_N: 'Thrust (N)', of: 'O/F',
   lo: 'from', hi: 'to', n: 'points', x: 'sweep', y: 'and', settings: '',

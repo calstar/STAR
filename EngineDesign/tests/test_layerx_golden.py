@@ -1,6 +1,6 @@
 """LE4 golden burn: Layer X's pad helium baseline must not move.
 
-The reference is ``docs/layerx/baseline-2026-10-03d.json``, written by
+The reference is ``docs/layerx/baseline-2026-10-07.json``, written by
 ``scripts/layerx_baseline.py`` (case ``he_pad``: LE4 on the ``copv_study_he`` hot-fire drawing, on
 the pad, erosion replay on, every other ``LayerXSettings`` field at its default). The overnight rule
 is that a change moving the LE4 baseline by more than 1 % is reported; this test is what notices.
@@ -64,7 +64,7 @@ from typing import Any, Dict, Tuple
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = Path(os.environ.get("LAYERX_GOLDEN_BASELINE") or (ROOT / "docs" / "layerx" / "baseline-2026-10-03d.json"))
+BASELINE = Path(os.environ.get("LAYERX_GOLDEN_BASELINE") or (ROOT / "docs" / "layerx" / "baseline-2026-10-07.json"))
 CASE = "he_pad"
 
 pytestmark = [

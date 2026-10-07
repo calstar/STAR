@@ -32,7 +32,7 @@ feedtwin = pytest.importorskip("feedtwin", reason="lib/feedtwin is not installed
 from engine.layerx.prepare import PSI  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-03d.json"
+BASELINE = ROOT / "docs" / "layerx" / "baseline-2026-10-07.json"
 HE = "copv_study_he"
 SLOW = os.environ.get("LAYERX_GOLDEN") == "1"
 

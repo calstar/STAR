@@ -613,6 +613,9 @@ export interface Hookup {
 
 /** The id of the knob the session's dome setting drives. */
 export const DOME_KNOB = 'dome';
+/** The knob that sets the COPV charge (Setup copv_target): the drawn fill
+ *  regulator when the cart is on the drawing, the built-in charge when not. */
+export const CHARGE_KNOB = 'charge';
 
 export interface LiveKnob {
   id: string;

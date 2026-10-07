@@ -83,6 +83,23 @@ _SYNONYM = {
     "pressurant": "gn2",
 }
 
+#: A stand's line prefixes, each standing for more than one word. "FV-SOL" is
+#: the fuel vent solenoid and "FF-SOL-Vent" the fuel *fill* (transfer tank)
+#: vent; "HPC_SOL" is the high press control solenoid the table calls "GSE High
+#: Press Control". "OF" is the ox-fill *line*, so it names the propellant only:
+#: OF-MOT-Dump is the dump on that line, not its fill valve.
+_EXPAND: dict[str, tuple[str, ...]] = {
+    "fv": ("fuel", "vent"),
+    "ff": ("fuel", "fill"),
+    "ov": ("lox", "vent"),
+    "of": ("lox",),
+    "hpc": ("high", "press", "control"),
+    "hp": ("high", "press"),
+    "lp": ("low", "press"),
+    "mp": ("med", "press"),
+    "ctrl": ("control",),
+}
+
 #: Words that name a propellant. Two names that disagree on one of these are
 #: different actuators however much else they share -- "LOX Vent" must never
 #: bind to a fuel valve just because both are vents.
@@ -116,6 +133,9 @@ def _words(text: str) -> frozenset[str]:
             continue
         if part in _SYNONYM:
             out.add(_SYNONYM[part])
+            continue
+        if part in _EXPAND:
+            out.update(_EXPAND[part])
             continue
         pieces = _split(part)
         out.update(pieces if pieces is not None else [part])
@@ -381,7 +401,16 @@ def bind(
         wanted = table[actuator]
         if not wanted or actuator in decided:
             continue
-        best: tuple[int, str, str] | None = None
+        # The plumbing outranks a name it contradicts: when exactly one free
+        # valve does this actuator's job, a name match that does not is passed
+        # over. A cart's LOX vent drawn on a disconnect nobody paired goes
+        # nowhere, while the tank-top disconnect is the vent that works.
+        doers = [
+            sid
+            for sid in valves
+            if sid not in taken and roles is not None and roles.get(sid) == wanted
+        ]
+        best: tuple[int, int, str, str] | None = None
         for sid, words in drawn.items():
             if sid in taken:
                 continue
@@ -398,12 +427,21 @@ def bind(
             # Vent" happily binds to "LOX Main" on a drawing with no vent.
             if overlap < len(wanted):
                 continue
-            score = (overlap, valves[sid], sid)
+            if (
+                roles is not None
+                and len(doers) == 1
+                and doers[0] != sid
+                and roles.get(sid) != wanted
+            ):
+                continue
+            # The closest name wins: "Fuel Vent" is FV-SOL, not FF-SOL-Vent,
+            # which has every word of it and "fill" besides.
+            score = (overlap, -len(words - wanted), valves[sid], sid)
             if best is None or score > best:
                 best = score
         if best is not None:
-            to_symbol[actuator] = best[2]
-            taken.add(best[2])
+            to_symbol[actuator] = best[3]
+            taken.add(best[3])
 
     by_role: list[str] = []
     for actuator in machine.actuators:

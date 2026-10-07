@@ -26,7 +26,10 @@ const AUTO = '__auto__';
 const NONE = '__none__';
 
 export function Hookup() {
-  const { where, restart } = useStand();
+  const { where, restart, standDoc, standHookup, setStandHookup, locked } = useStand();
+  // On a stand, the hookup is the stand's: kept and shared with it, saved by
+  // the stand's Save. Off one, it is the drawing's own, kept in the library.
+  const onStand = Boolean(standDoc);
   const [data, setData] = useState<HookupData | null>(null);
   const [draft, setDraft] = useState<HookupBody | null>(null);
   const [error, setError] = useState('');
@@ -37,12 +40,14 @@ export function Hookup() {
     setError('');
     getHookup(where)
       .then((h) => {
-        setData(h);
-        setDraft(structuredClone(h.hookup));
+        const own = standHookup as unknown as HookupBody | null;
+        const shown = own ? { ...h, hookup: own, saved: true } : h;
+        setData(shown);
+        setDraft(structuredClone(shown.hookup));
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where.diagram, where.engine]);
+  }, [where.diagram, where.engine, standHookup]);
 
   const dirty = useMemo(
     () => Boolean(data && draft && JSON.stringify(data.hookup) !== JSON.stringify(draft)),
@@ -57,6 +62,13 @@ export function Hookup() {
     return v ? `${v.label}${data.pages.length > 1 ? ` · ${v.page}` : ''}` : id;
   };
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
+
+  const keep = (hookup: HookupBody) => {
+    if (!data) return;
+    setData({ ...data, hookup, saved: true });
+    setDraft(structuredClone(hookup));
+    setStandHookup(hookup as unknown as Record<string, unknown>);
+  };
 
   const act = async (run: () => Promise<HookupData>) => {
     setBusy(true);
@@ -129,15 +141,21 @@ export function Hookup() {
           className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
             data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
           }`}
-          title={data.saved ? 'Saved for this drawing.' : 'Nothing saved: this is what the twin matched by itself.'}
+          title={
+            onStand
+              ? "The stand's own hookup."
+              : data.saved
+                ? 'Saved for this drawing.'
+                : 'Nothing saved: this is what the twin matched by itself.'
+          }
         >
-          {data.saved ? 'Saved' : 'Suggested'}
+          {onStand && standHookup ? 'On the stand' : data.saved ? 'Saved' : 'Suggested'}
         </span>
         <div className="ml-auto flex gap-2">
           <button
             type="button"
-            disabled={busy || !data.saved}
-            onClick={() => void act(() => resetHookup(where))}
+            disabled={busy || !data.saved || locked}
+            onClick={() => (onStand ? keep(data.suggested) : void act(() => resetHookup(where)))}
             title="Forget what was saved and go back to the twin's own matching."
             className="rounded bg-gray-700 px-3 py-1 text-[12px] font-semibold text-white hover:bg-gray-600 disabled:opacity-40"
           >
@@ -145,9 +163,15 @@ export function Hookup() {
           </button>
           <button
             type="button"
-            disabled={busy || (!dirty && data.saved)}
-            onClick={() => void act(() => saveHookup(where, draft))}
-            title="Keep this hookup for the drawing. The stand restarts with it."
+            disabled={busy || (!dirty && data.saved) || locked}
+            onClick={() => (onStand ? keep(draft) : void act(() => saveHookup(where, draft)))}
+            title={
+              locked
+                ? 'Take the stand to change its hookup'
+                : onStand
+                  ? "Keep this hookup with the stand (the stand's Save writes it). The cockpit restarts with it."
+                  : 'Keep this hookup for the drawing. The cockpit restarts with it.'
+            }
             className="rounded bg-blue-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
           >
             {busy ? 'Saving…' : 'Save'}
@@ -310,13 +334,15 @@ export function Hookup() {
             Held at the drawing's setting: {unknobbed.map((r) => r.label).join(', ')}
           </p>
         )}
-        <p
-          className="border-t border-gray-800 px-4 py-2 text-[12px] text-text-muted"
-          title="The GSE page's COPV knob is the twin's own fill: it fills every bottle to that pressure. Draw the GSE cart's high-press regulator and link it to a knob here, and that knob sets it instead."
-        >
-          The COPV fill knob on GSE Controls is the twin's built-in fill, not a regulator on this
-          drawing, so it is not listed here.
-        </p>
+        {!draft.knobs.some((k) => k.id === 'charge') && (
+          <p
+            className="border-t border-gray-800 px-4 py-2 text-[12px] text-text-muted"
+            title="The GSE page's COPV knob is the twin's own fill. Draw the cart's high-press regulator and its line to the COPV, and that regulator gets the knob."
+          >
+            The COPV fill knob on GSE Controls is the twin's built-in fill: no regulator on this
+            drawing charges the COPV.
+          </p>
+        )}
       </div>
     </div>
   );
