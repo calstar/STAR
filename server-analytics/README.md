@@ -139,3 +139,4 @@ large.
 | `JOURNAL_DIR` | agent | — | unset means no journald logs |
 | `JOURNAL_UNIT_PREFIXES` | agent | `sensor-` | user units whose logs to ship |
 | `SAMPLE_INTERVAL`, `PUSH_INTERVAL` | agent | `15s`, `30s` | |
+| `PEAK_INTERVAL` | agent | `1s` | how often CPU and memory are read between samples, so the peak lines catch spikes shorter than a sample |

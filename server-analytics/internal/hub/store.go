@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS host_samples (
 	cpu REAL, cores INTEGER, mem_used INTEGER, mem_total INTEGER,
 	swap_used INTEGER, swap_total INTEGER, load1 REAL, load5 REAL, load15 REAL,
 	disk_used INTEGER, disk_total INTEGER, net_rx REAL, net_tx REAL, uptime REAL,
+	cpu_max REAL, mem_max INTEGER,
 	PRIMARY KEY (host, ts)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS host_rollups (
@@ -31,7 +32,7 @@ CREATE TABLE IF NOT EXISTS host_rollups (
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS container_samples (
 	host TEXT NOT NULL, name TEXT NOT NULL, ts INTEGER NOT NULL,
-	cpu REAL, mem_used INTEGER,
+	cpu REAL, mem_used INTEGER, cpu_max REAL, mem_max INTEGER,
 	PRIMARY KEY (host, name, ts)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS container_rollups (
@@ -72,7 +73,33 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate adds the columns a database created before them lacks. Rows written
+// before have NULL there, and every reader falls back with COALESCE.
+func migrate(db *sql.DB) error {
+	for _, c := range []struct{ table, column, kind string }{
+		{"host_samples", "cpu_max", "REAL"},
+		{"host_samples", "mem_max", "INTEGER"},
+		{"container_samples", "cpu_max", "REAL"},
+		{"container_samples", "mem_max", "INTEGER"},
+	} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.kind); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -88,19 +115,23 @@ func (s *Store) Ingest(b *wire.Batch, now int64) error {
 	}
 	defer tx.Rollback()
 
-	hs, err := tx.Prepare(`INSERT OR REPLACE INTO host_samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	hs, err := tx.Prepare(`INSERT OR REPLACE INTO host_samples (host, ts, cpu, cores, mem_used, mem_total,
+		swap_used, swap_total, load1, load5, load15, disk_used, disk_total, net_rx, net_tx, uptime,
+		cpu_max, mem_max) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer hs.Close()
 	for _, x := range b.Samples {
 		if _, err := hs.Exec(b.Host, x.TS, x.CPU, x.Cores, x.MemUsed, x.MemTotal, x.SwapUsed, x.SwapTotal,
-			x.Load1, x.Load5, x.Load15, x.DiskUsed, x.DiskTotal, x.NetRx, x.NetTx, x.Uptime); err != nil {
+			x.Load1, x.Load5, x.Load15, x.DiskUsed, x.DiskTotal, x.NetRx, x.NetTx, x.Uptime,
+			max(x.CPUMax, x.CPU), max(x.MemMax, x.MemUsed)); err != nil {
 			return err
 		}
 	}
 
-	cs, err := tx.Prepare(`INSERT OR REPLACE INTO container_samples VALUES (?,?,?,?,?)`)
+	cs, err := tx.Prepare(`INSERT OR REPLACE INTO container_samples (host, name, ts, cpu, mem_used, cpu_max, mem_max)
+		VALUES (?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -115,7 +146,7 @@ func (s *Store) Ingest(b *wire.Batch, now int64) error {
 	defer cur.Close()
 	for _, x := range b.Containers {
 		if x.State == "running" {
-			if _, err := cs.Exec(b.Host, x.Name, x.TS, x.CPU, x.MemUsed); err != nil {
+			if _, err := cs.Exec(b.Host, x.Name, x.TS, x.CPU, x.MemUsed, max(x.CPUMax, x.CPU), max(x.MemMax, x.MemUsed)); err != nil {
 				return err
 			}
 		}
