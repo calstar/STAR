@@ -1,6 +1,6 @@
 /**
  * The Recovery tab of STAR OpenRocket: the merged recovery calculator rendered
- * as seven subtabs. Controlled component -- App owns the `recovery` slice of the
+ * as subtabs. Controlled component -- App owns the `recovery` slice of the
  * unified design and passes it in via `ui`/`onChange`; this file keeps only the
  * active-subtab UI state. All panels stay mounted (inactive ones `hidden`) so a
  * half-filled device card survives a subtab switch, matching the standalone app.
@@ -13,8 +13,9 @@ import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
 import { CrosscheckPanel } from './components/crosscheck/CrosscheckPanel'
 import { DriftPanel } from './components/drift/DriftPanel'
+import { EjectionPanel } from './components/ejection/EjectionPanel'
 
-type Tab = 'recovery' | 'corners' | 'study' | 'drift' | 'crosscheck'
+type Tab = 'recovery' | 'corners' | 'study' | 'drift' | 'ejection' | 'crosscheck'
 
 const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
   { id: 'recovery', label: 'Setup & Basic Run', hint: 'Descent, loads and off-nominal cases',
@@ -25,6 +26,9 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
     accent: 'border-amber-500 text-amber-400' },
   { id: 'drift', label: 'Drift', hint: 'Downwind drift and landing point under recovery',
     accent: 'border-sky-500 text-sky-400' },
+  { id: 'ejection', label: 'Ejection & Pins',
+    hint: 'Shear pins, black powder charges and avionics-bay vent holes',
+    accent: 'border-emerald-500 text-emerald-400' },
   { id: 'crosscheck', label: 'Cross-check',
     hint: 'This tool vs OpenRocket vs the recovery mastersheet',
     accent: 'border-rose-500 text-rose-400' },
@@ -53,6 +57,16 @@ export function RecoveryTab({ ui, onChange, design }: Props) {
     if (v !== ui.vehicle) onChange({ ...ui, vehicle: v })
   }, [apogeeFromDesign, massFromDesign, lateralFromDesign,
       design.apogee, design.massKg, design.lateralVelocity, design.lateralBearing, ui, onChange])
+
+  // The same for the Ejection & Pins burnout mass and drag.
+  const { burnoutFromDesign } = ui.sources
+  useEffect(() => {
+    if (!burnoutFromDesign) return
+    let e = ui.ejection
+    if (design.burnoutMass != null && e.m_burnout !== design.burnoutMass) e = { ...e, m_burnout: design.burnoutMass }
+    if (design.burnoutDrag != null && e.D_burnout !== design.burnoutDrag) e = { ...e, D_burnout: design.burnoutDrag }
+    if (e !== ui.ejection) onChange({ ...ui, ejection: e })
+  }, [burnoutFromDesign, design.burnoutMass, design.burnoutDrag, ui, onChange])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
@@ -86,6 +100,9 @@ export function RecoveryTab({ ui, onChange, design }: Props) {
           </div>
           <div className={tab === 'drift' ? '' : 'hidden'}>
             <DriftPanel ui={ui} onChange={onChange} />
+          </div>
+          <div className={tab === 'ejection' ? '' : 'hidden'}>
+            <EjectionPanel ui={ui} onChange={onChange} design={design} />
           </div>
           <div className={tab === 'crosscheck' ? '' : 'hidden'}>
             <CrosscheckPanel ui={ui} />

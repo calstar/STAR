@@ -21,8 +21,8 @@
  * that might not match the inputs shown beside them.
  */
 
-import type { UiConfig, UiDevice, UiStudyAxis } from '../types/schema'
-import { defaultUiConfig, nextUid } from './serialise'
+import type { EjectionInputs, UiConfig, UiDevice, UiJoint, UiStudyAxis } from '../types/schema'
+import { blankJoint, defaultUiConfig, nextUid } from './serialise'
 
 /** Versioned, so a future shape change can be ignored rather than crash on. */
 export const STORAGE_KEY = 'recovery-calculator.config.v1'
@@ -92,6 +92,10 @@ export function reviveUiConfig(raw: string | null): UiConfig | null {
     sources: { ...base.sources, ...(saved.sources ?? {}) },
     wind: saved.wind ?? base.wind,
     airframeBound: saved.airframeBound === 'broadside' ? 'broadside' : base.airframeBound,
+    // Designs saved before the Ejection & Pins page have none, and open on its
+    // defaults. Each joint is merged onto a blank one, so a joint field added
+    // later is defaulted rather than left undefined.
+    ejection: reviveEjection(saved.ejection, base.ejection),
   }
 }
 
@@ -112,5 +116,20 @@ export function saveUiConfig(ui: UiConfig): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(ui))
   } catch {
     /* private mode, quota, or no storage at all. Not worth a dialog. */
+  }
+}
+
+function reviveEjection(saved: Partial<EjectionInputs> | undefined,
+                        base: EjectionInputs): EjectionInputs {
+  if (!saved || typeof saved !== 'object') return base
+  return {
+    ...base,
+    ...saved,
+    joints: Array.isArray(saved.joints)
+      ? saved.joints
+          .filter((j) => j && typeof j === 'object')
+          .map((j: UiJoint) => ({ ...blankJoint(j.name ?? 'Joint', j.role ?? 'other'), ...j }))
+      : base.joints,
+    vent: { ...base.vent, ...(saved.vent ?? {}) },
   }
 }
