@@ -41,6 +41,7 @@ from feedtwin.pid import (
 )
 
 from backend.library import Artifact, Library, LibraryError
+from backend.overrides import Applied, apply_overrides
 
 
 class AssemblyError(ValueError):
@@ -79,6 +80,10 @@ class AssemblyReport:
     actuators: int = 0
     assumptions: tuple[Assumption, ...] = ()
     warnings: tuple[str, ...] = ()
+    overrides: tuple[Applied, ...] = ()
+    """Operator overrides that took effect (see :mod:`backend.overrides`).
+    Part of the record for the same reason the artifact hashes are: a run on
+    an overridden drawing is not a run on the drawing."""
 
     @property
     def unchecked(self) -> int:
@@ -222,10 +227,13 @@ def assemble(
     cea_cache: str = "",
     cea_resolver: Callable[[EngineDesign], str] | None = None,
     multiphase: bool = False,
+    overrides: Mapping[str, Any] | None = None,
 ) -> Model:
     """Read, resolve, build, and audit. The whole import in one call.
 
     Args:
+        overrides: One drawing's entry from the override store. Applied to the
+            drawing before anything reads it, and listed on the report.
         cea_cache: An explicit combustion table. Direct and unconditional.
         cea_resolver: Called with the imported engine to *find* one, when which
             table is wanted depends on what the engine burns. Inverted this way
@@ -237,6 +245,9 @@ def assemble(
     """
     artifact = library.get(diagram_id)
     diagram = load_diagram_artifact(library, diagram_id)
+    applied: tuple[Applied, ...] = ()
+    if overrides:
+        diagram, applied = apply_overrides(diagram, overrides)
 
     if fluid_swap:
         diagram = _swap_fluids(diagram, fluid_swap)
@@ -318,6 +329,7 @@ def assemble(
         actuators=len(built.actuators),
         assumptions=assumptions,
         warnings=tuple(warnings),
+        overrides=applied,
     )
 
     return Model(

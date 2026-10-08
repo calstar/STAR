@@ -81,7 +81,7 @@ function Vessel({
 }
 
 export function Console() {
-  const { model, machine, live, history, hidden, go, toggleValve, release, setup } = useStand();
+  const { model, machine, live, history, hidden, consoleHidden, go, toggleValve, release, setup } = useStand();
   const [window, setWindow] = useState(60);
 
   const plot = useMemo(() => {
@@ -92,7 +92,7 @@ export function Console() {
     return {
       times: history.times_s.slice(start),
       channels: history.channels
-        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id])
+        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && !consoleHidden[c.id])
         .map((c): Channel => ({
           key: c.id,
           tag: c.tag,
@@ -100,13 +100,16 @@ export function Console() {
           color: channelColor(c.tag),
         })),
     };
-  }, [history, hidden, window]);
+  }, [history, hidden, consoleHidden, window]);
 
   if (!model || !live) {
     return <p className="p-6 text-sm text-text-muted">Bringing the stand up…</p>;
   }
   const engine = live.engine;
   const lit = engine !== null && engine.chamber_psi > 5;
+  // What the team hid on the P&ID tab. The stand still simulates it; the
+  // console just does not spend room on it.
+  const shown = { ...model, actuators: model.actuators.filter((a) => !consoleHidden[a.id]) };
   const locked = Boolean(live.tripped);
 
   return (
@@ -115,7 +118,7 @@ export function Console() {
           DAQ cannot show -- how full the tanks are, how much gas is left, the
           engine while it burns -- goes first, where the eye lands. */}
       <div className="flex flex-shrink-0 flex-wrap items-stretch gap-2">
-        {live.tanks.map((t) => (
+        {live.tanks.filter((t) => !consoleHidden[t.id]).map((t) => (
           <Vessel
             key={t.id}
             label={t.label}
@@ -127,7 +130,7 @@ export function Console() {
             colour={TANK_COLOUR(t.label)}
           />
         ))}
-        {live.bottles.map((b) => (
+        {live.bottles.filter((b) => !consoleHidden[b.id]).map((b) => (
           <Vessel
             key={b.id}
             label={b.label}
@@ -199,7 +202,7 @@ export function Console() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
           <section className="bg-card flex-shrink-0 rounded-xl border border-gray-800 p-2">
             <ActuatorGrid
-              model={model}
+              model={shown}
               machine={machine}
               live={live}
               locked={locked}

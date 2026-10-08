@@ -23,11 +23,13 @@ import {
 } from 'react';
 import {
   commandSession,
+  getConsoleHidden,
   getModel,
   getStateMachine,
   listArtifacts,
   openSession,
   sessionHistory,
+  setConsoleHidden,
   tickSession,
   type Artifact,
   type ModelView,
@@ -63,6 +65,10 @@ interface StandValue {
   setRunning: (on: boolean) => void;
   hidden: Record<string, boolean>;
   toggleChannel: (id: string) => void;
+  /** Symbols hidden from the console for everyone, set on the P&ID tab. The
+   *  `hidden` above is this browser's click-to-silence and stays local. */
+  consoleHidden: Record<string, boolean>;
+  hideOnConsole: (id: string, hide: boolean) => void;
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
@@ -105,6 +111,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     ambient_leak: 8,
   });
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [consoleHidden, setConsoleHiddenState] = useState<Record<string, boolean>>({});
   const [generation, setGeneration] = useState(0);
 
   const where: Where = { diagram, engine, fluidSet: 'hotfire', machine: 'diablo' };
@@ -211,6 +218,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         ]);
         if (cancelled) return;
         setModel(view);
+        setConsoleHiddenState(Object.fromEntries((view.console_hidden ?? []).map((id) => [id, true])));
         setMachine(sm);
         session.current = first.id;
         try {
@@ -304,6 +312,32 @@ export function StandProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(id);
   }, [live?.id]);
 
+  /** What the console hides is the team's, so another operator's change has to
+   *  arrive here without a reload. A few seconds late is fine; it is layout. */
+  useEffect(() => {
+    if (!diagram) return undefined;
+    const pull = () =>
+      getConsoleHidden(diagram)
+        .then(({ hidden: ids }) => setConsoleHiddenState(Object.fromEntries(ids.map((id) => [id, true]))))
+        .catch(() => undefined);
+    const id = window.setInterval(pull, 5000);
+    return () => window.clearInterval(id);
+  }, [diagram]);
+
+  const hideOnConsole = useCallback(
+    (id: string, hide: boolean) => {
+      if (!diagram) return;
+      setConsoleHiddenState((h) => ({ ...h, [id]: hide }));
+      setConsoleHidden(diagram, id, hide)
+        .then(({ hidden: ids }) => setConsoleHiddenState(Object.fromEntries(ids.map((i) => [i, true]))))
+        .catch((e: unknown) => {
+          setConsoleHiddenState((h) => ({ ...h, [id]: !hide }));
+          setError(e instanceof Error ? e.message : String(e));
+        });
+    },
+    [diagram],
+  );
+
   const command = useCallback(
     async (body: Parameters<typeof commandSession>[1]) => {
       if (!session.current) return;
@@ -341,6 +375,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setRunning,
     hidden,
     toggleChannel: (id) => setHidden((h) => ({ ...h, [id]: !h[id] })),
+    consoleHidden,
+    hideOnConsole,
     pick: (kind, id) => (kind === 'diagram' ? setDiagram(id) : setEngine(id)),
     go: (state) => void command({ state }),
     toggleValve: (id) =>

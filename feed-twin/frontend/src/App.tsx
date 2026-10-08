@@ -78,7 +78,7 @@ function Shell() {
   const stand = useStand();
   const { model, live, history, busy, error, running, speed } = stand;
 
-  const channels = (history?.channels ?? []).map((c) => ({
+  const channels = (history?.channels ?? []).filter((c) => !stand.consoleHidden[c.id]).map((c) => ({
     ...c,
     color: channelColor(c.tag),
   }));
