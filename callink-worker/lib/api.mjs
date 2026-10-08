@@ -32,6 +32,8 @@ export function starproject() {
     /** true once per admin press of "Sign in to CalLink". */
     loginRequested: async () => (await call('GET', '/api/worker/login')).login === true,
     reportLogin: (state, note) => call('POST', '/api/worker/login', { state, note }),
+    /** CalLink's financeAccount objects, as read at `asOf`. */
+    accounts: (accounts, asOf) => call('POST', '/api/worker/accounts', { accounts, asOf }),
     async receipt(url) {
       const r = await fetch(base + url, { headers: { authorization: `Bearer ${WORKER_TOKEN}` }, signal: AbortSignal.timeout(60_000) });
       if (!r.ok) throw new Error(`GET ${url} -> ${r.status}`);

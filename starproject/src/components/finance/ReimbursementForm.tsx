@@ -67,15 +67,21 @@ export function ReimbursementForm({
   defaults,
   seededFrom,
   accountEmail,
+  projects,
+  subteams,
 }: {
   defaults: ProfileDefaults;
   /** CalLink request number the payee details were taken from, if any. */
   seededFrom: string | null;
   accountEmail: string;
+  projects: { id: string; label: string }[];
+  subteams: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [subteamId, setSubteamId] = useState("");
   const [payee, setPayee] = useState(defaults);
   const [expenditureAction, setExpenditureAction] = useState<(typeof EXPENDITURE_ACTIONS)[number]>("Direct Deposit");
   const [specialInstructions, setSpecialInstructions] = useState("");
@@ -113,6 +119,8 @@ export function ReimbursementForm({
     const payload = {
       subject,
       description,
+      projectId,
+      subteamId,
       payee: {
         firstName: payee.firstName,
         lastName: payee.lastName,
@@ -145,7 +153,7 @@ export function ReimbursementForm({
         top.current?.scrollIntoView({ behavior: "smooth" });
         return;
       }
-      router.push(`/finance?r=${out.number}`);
+      router.push(`/reimbursements?r=${out.number}`);
     } catch {
       setFormError("Couldn't reach the server. Your entries are still here; try again.");
     } finally {
@@ -171,6 +179,28 @@ export function ReimbursementForm({
           <Field label="Description (optional)" error={errors.description}>
             <textarea className={control} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Project" error={errors.projectId} hint="What the purchase was for. Not sent to CalLink.">
+              <select className={control} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">No project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Subteam" error={errors.subteamId}>
+              <select className={control} value={subteamId} onChange={(e) => setSubteamId(e.target.value)}>
+                <option value="">No subteam</option>
+                {subteams.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
         </div>
       </div>
 

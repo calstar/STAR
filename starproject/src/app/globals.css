@@ -264,3 +264,35 @@ html {
   text-decoration: line-through;
   opacity: 0.7;
 }
+
+/* Finance charts. Categorical slots in fixed order, each stepped for its surface
+   (validated: adjacent CVD ΔE ≥ 8.4, normal-vision ≥ 19.3 in both modes); the
+   legend and the table beside each chart carry identity, never colour alone. */
+.viz {
+  --viz-surface: #ffffff;
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-other: #8a8a87;
+  --viz-untagged: #d4d4d1;
+  --viz-approved: #2a78d6;
+  --viz-pending: #86b6ef;
+  --viz-grid: #ececea;
+}
+.dark .viz {
+  --viz-surface: #171717;
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-other: #8a8a87;
+  --viz-untagged: #4a4a47;
+  --viz-approved: #3987e5;
+  --viz-pending: #1c5cab;
+  --viz-grid: #2a2a28;
+}

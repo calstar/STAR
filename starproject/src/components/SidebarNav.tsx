@@ -56,11 +56,18 @@ function IconActivity() {
     </svg>
   );
 }
-function IconFinance() {
+function IconReceipt() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" />
       <path d="M14.5 8.5h-3.75a1.75 1.75 0 0 0 0 3.5h2.5a1.75 1.75 0 0 1 0 3.5H9.5M12 7v1.5M12 15.5V17" />
+    </svg>
+  );
+}
+function IconBank() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" />
     </svg>
   );
 }
@@ -294,6 +301,7 @@ export function SidebarNav({
   const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
   const isSubteams = pathname === "/subteams" || pathname.startsWith("/subteams/");
   const isActivity = pathname === "/activity";
+  const isReimbursements = pathname.startsWith("/reimbursements");
   const isFinance = pathname.startsWith("/finance");
 
   // Shared between the desktop rail (which alone may be `collapsed`) and the
@@ -313,7 +321,8 @@ export function SidebarNav({
           <NavLink href="/tasks?mine=1" label="My tasks" icon={<IconCheck />} active={isMyTasks} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/tasks" label="Tasks" icon={<IconList />} active={isTasks} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/activity" label="Activity" icon={<IconActivity />} active={isActivity} collapsed={collapsed} onClick={onNavigate} />
-          <NavLink href="/finance" label="Finance" icon={<IconFinance />} active={isFinance} collapsed={collapsed} onClick={onNavigate} />
+          <NavLink href="/reimbursements" label="Reimbursements" icon={<IconReceipt />} active={isReimbursements} collapsed={collapsed} onClick={onNavigate} />
+          {isAdmin && <NavLink href="/finance" label="Finance" icon={<IconBank />} active={isFinance} collapsed={collapsed} onClick={onNavigate} />}
           {collapsed && (
             <>
               <NavLink href="/projects" label="Projects" icon={<IconFolder />} active={isProjects} collapsed onClick={onNavigate} />

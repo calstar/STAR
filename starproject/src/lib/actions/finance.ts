@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { canRequestLogin } from "@/lib/finance/login";
-import { getFinanceDetail, getViewer, type FinanceDetail } from "@/lib/finance/queries";
+import { canTag, getFinanceDetail, getViewer, type FinanceDetail } from "@/lib/finance/queries";
 import { canTransition, type Actor } from "@/lib/finance/status";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -49,7 +49,7 @@ async function move(
   await prisma.reimbursementEvent.create({
     data: { reimbursementId: id, kind: event.kind, fromStatus: r.status, toStatus: to, note: event.note, actorId: user.id },
   });
-  revalidatePath("/finance");
+  revalidatePath("/reimbursements");
   return { ok: true };
 }
 
@@ -91,6 +91,30 @@ export async function resolveNeedsCheck(id: string, filed: boolean): Promise<Res
   );
 }
 
+/** Say what a reimbursement was for (the Finance tab's breakdown). Empty clears it. */
+export async function tagReimbursement(id: string, tags: { projectId?: string | null; subteamId?: string | null }): Promise<Result> {
+  const viewer = await getViewer();
+  const r = await prisma.reimbursement.findUnique({ where: { id }, select: { createdById: true } });
+  if (!r) return { error: "That reimbursement no longer exists." };
+  if (!canTag(viewer, r)) return { error: "Only an admin or whoever filed it can change this." };
+  const data: { projectId?: string | null; subteamId?: string | null } = {};
+  if (tags.projectId !== undefined) {
+    if (tags.projectId && !(await prisma.project.findUnique({ where: { id: tags.projectId }, select: { id: true } }))) {
+      return { error: "That project no longer exists." };
+    }
+    data.projectId = tags.projectId || null;
+  }
+  if (tags.subteamId !== undefined) {
+    if (tags.subteamId && !(await prisma.subteam.findUnique({ where: { id: tags.subteamId }, select: { id: true } }))) {
+      return { error: "That subteam no longer exists." };
+    }
+    data.subteamId = tags.subteamId || null;
+  }
+  await prisma.reimbursement.update({ where: { id }, data });
+  revalidatePath("/finance");
+  return { ok: true };
+}
+
 /** Admins: ask callink-worker to sign in to CalLink, which sends the Duo push. */
 export async function requestCallinkLogin(): Promise<Result> {
   const user = await getCurrentDbUser();
@@ -103,6 +127,6 @@ export async function requestCallinkLogin(): Promise<Result> {
     where: { id: "callink" },
     data: { loginState: "requested", loginRequestedAt: now, loginRequestedBy: user.email, loginUpdatedAt: now, loginNote: null },
   });
-  revalidatePath("/finance");
+  revalidatePath("/reimbursements");
   return { ok: true };
 }
