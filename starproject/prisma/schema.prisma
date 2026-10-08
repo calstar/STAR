@@ -46,6 +46,8 @@ model User {
   createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
   approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
   reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
+  financeAccounts        FinanceAccount[]     @relation("FinanceAccountUpdatedBy")
+  plannedIncome          PlannedIncome[]      @relation("PlannedIncomeCreatedBy")
 }
 
 model Project {
@@ -78,6 +80,8 @@ model Project {
   phases        String[]       @default([])
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
+
+  reimbursements Reimbursement[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -88,10 +92,12 @@ model Subteam {
   color     String?
   createdAt DateTime @default(now())
 
-  tasks      Task[]
-  digestSubs DigestSubscription[]
+  tasks         Task[]
+  digestSubs    DigestSubscription[]
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
+
+  reimbursements Reimbursement[]
 }
 
 // Where one subteam is in a featured project's phase list. `phase` indexes
@@ -313,13 +319,20 @@ model Reimbursement {
   createdBy      User?   @relation("ReimbursementCreatedBy", fields: [createdById], references: [id])
 
   approvedById String?
-  approvedBy   User?     @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
-  approvedAt   DateTime?
-  reviewNote   String?
-  leaseUntil   DateTime? // the worker's claim expires here
-  needsCheck   Boolean   @default(false) // the worker may have filed it but could not confirm
-  attempts     Int       @default(0)
-  lastError    String?
+  approvedBy   User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+
+  // What the money went to, for the Finance tab's spending breakdown. The member
+  // picks them on the form; an admin tags imported requests in the detail card.
+  projectId  String?
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  subteamId  String?
+  subteam    Subteam?  @relation(fields: [subteamId], references: [id], onDelete: SetNull)
+  approvedAt DateTime?
+  reviewNote String?
+  leaseUntil DateTime? // the worker's claim expires here
+  needsCheck Boolean   @default(false) // the worker may have filed it but could not confirm
+  attempts   Int       @default(0)
+  lastError  String?
 
   callinkId            Int?      @unique
   callinkRequestNumber String?
@@ -341,6 +354,8 @@ model Reimbursement {
   @@index([status])
   @@index([payeeEmail])
   @@index([submitterEmail])
+  @@index([projectId])
+  @@index([subteamId])
 }
 
 // The payee's address, phone and UID. Kept apart so list queries never select
@@ -451,4 +466,42 @@ model WorkerStatus {
   loginRequestedBy String?
   loginUpdatedAt   DateTime?
   loginNote        String?
+}
+
+// ---- the Finance tab (admins only) -----------------------------------------------
+
+// Money the team holds. A CalLink account (callinkAccountId set) is written only by
+// callink-worker, from the balance CalLink shows on a request's detail; its
+// SUMMARY account is the STAR total. Every other account is typed in by an admin.
+model FinanceAccount {
+  id               String   @id @default(cuid())
+  name             String
+  callinkAccountId Int?     @unique
+  balanceCents     Int
+  availableCents   Int? // CalLink's "available funds"; null for manual accounts
+  balanceAsOf      DateTime
+  note             String?
+  archived         Boolean  @default(false)
+  updatedById      String?
+  updatedBy        User?    @relation("FinanceAccountUpdatedBy", fields: [updatedById], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// Income the team expects in a school year (dues, sponsors, grants, ASUC), and
+// whether it has arrived.
+model PlannedIncome {
+  id          String    @id @default(cuid())
+  schoolYear  Int // the year it starts in: 2026 is 2026-27
+  source      String
+  amountCents Int
+  expectedOn  DateTime? @db.Date
+  received    Boolean   @default(false)
+  note        String?
+  createdById String?
+  createdBy   User?     @relation("PlannedIncomeCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([schoolYear])
 }

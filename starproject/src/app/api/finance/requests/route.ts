@@ -47,6 +47,13 @@ export async function POST(req: Request) {
   }
   const input = parsed.data;
 
+  const [project, subteam] = await Promise.all([
+    input.projectId ? prisma.project.findUnique({ where: { id: input.projectId }, select: { id: true } }) : null,
+    input.subteamId ? prisma.subteam.findUnique({ where: { id: input.subteamId }, select: { id: true } }) : null,
+  ]);
+  if (input.projectId && !project) return fail("Some fields need fixing.", { projectId: "That project no longer exists" });
+  if (input.subteamId && !subteam) return fail("Some fields need fixing.", { subteamId: "That subteam no longer exists" });
+
   // One receipt per item: CalLink takes one file per item.
   const receipts: { fileName: string; mimeType: string; data: Uint8Array<ArrayBuffer> }[] = [];
   const fieldErrors: Record<string, string> = {};
@@ -76,6 +83,8 @@ export async function POST(req: Request) {
         status: "pending_approval",
         subject: input.subject,
         description: input.description ?? null,
+        projectId: project?.id ?? null,
+        subteamId: subteam?.id ?? null,
         specialInstructions: input.specialInstructions ?? null,
         expenditureAction: input.expenditureAction,
         directDepositSignedUp: input.expenditureAction === "Direct Deposit" ? input.directDepositSignedUp : null,

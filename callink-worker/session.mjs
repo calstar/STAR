@@ -67,7 +67,7 @@ try {
     // "trust this browser" question if Duo asks it. A browser Duo remembers goes
     // straight through with no push, so only say a push is waiting once Duo shows
     // one, or once we've sat on Duo long enough that it must be waiting for something.
-    // (callink-worker relays the "approve the Duo push" line to the /finance banner.)
+    // (callink-worker relays the "approve the Duo push" line to the /reimbursements banner.)
     const deadline = Date.now() + DUO_WAIT_MS;
     const pushAssumedAt = Date.now() + DUO_PUSH_ASSUME_MS;
     let announced = false;

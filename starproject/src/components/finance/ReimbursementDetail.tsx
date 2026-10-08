@@ -1,6 +1,7 @@
 "use client";
 
 import { CopyLinkButton } from "@/components/CopyLinkButton";
+import { ReimbursementTags, type TagOptions } from "@/components/finance/ReimbursementTags";
 import { StatusPill } from "@/components/finance/StatusPill";
 import { callinkRequestUrl } from "@/lib/finance/callink-import";
 import { formatItemDate as itemDate, formatWhen as when } from "@/lib/finance/dates";
@@ -37,16 +38,21 @@ function Field({ name, children }: { name: string; children: React.ReactNode }) 
 export function ReimbursementDetail({
   data,
   actions,
+  tagOptions,
+  onTagged,
 }: {
   data: FinanceDetail;
   /** The admin/owner buttons, when the viewer has any. */
   actions?: React.ReactNode;
+  /** Projects and subteams to pick from, when the viewer may tag it. */
+  tagOptions?: TagOptions;
+  onTagged?: () => void;
 }) {
   const d = data;
   return (
     <div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pr-10 text-sm text-neutral-500 dark:text-neutral-400">
-        <span>Finance</span>
+        <span>Reimbursements</span>
         <span>/</span>
         <span>{d.source === "callink" ? "Imported from CalLink" : "Filed in STARProject"}</span>
         <span className="ml-auto">
@@ -107,6 +113,19 @@ export function ReimbursementDetail({
               )}
             </Field>
             {d.category && d.category !== "Reimbursement" && <Field name="Category">{d.category}</Field>}
+            <div className="col-span-2">
+              <Field name="Project / subteam">
+                {d.can.tag && tagOptions ? (
+                  <ReimbursementTags data={d} options={tagOptions} onChanged={onTagged} />
+                ) : (
+                  <>
+                    {d.projectLabel ?? "No project"}
+                    <span className="text-neutral-400"> · </span>
+                    {d.subteamName ?? "No subteam"}
+                  </>
+                )}
+              </Field>
+            </div>
           </div>
         </div>
 

@@ -5,7 +5,7 @@ import { jsonBody, requireWorker } from "@/lib/finance/worker-route";
 
 export const dynamic = "force-dynamic";
 
-/** The worker says whether its CalLink session is alive; admins see it on /finance. */
+/** The worker says whether its CalLink session is alive; admins see it on /reimbursements. */
 export async function POST(req: Request) {
   const denied = requireWorker(req);
   if (denied) return denied;
