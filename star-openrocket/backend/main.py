@@ -40,6 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .deadline import ComputeBudgetMiddleware
+from .reqlog import RequestLogMiddleware, log_fin_planform, log_startup
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -84,6 +85,7 @@ _motor_db = MotorDB(CACHE_ROOT / "motors")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log_startup()
     # Recovery calculator: load the parachute catalogue once at startup (121 rows
     # of committed CSV) so a malformed table fails loudly at boot, not per request.
     try:
@@ -104,6 +106,8 @@ app = FastAPI(title="STAR OpenRocket API", version="1.0.0", lifespan=lifespan)
 # stay outermost or a 422 would reach the browser as an opaque network error
 # rather than the message naming the field.
 app.add_middleware(ComputeBudgetMiddleware)
+# Outside the budget so a request killed by it still logs its done line.
+app.add_middleware(RequestLogMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -376,6 +380,11 @@ def fins(model_id: str):
             pf = extract_fin_planform(fin_geo, axis, profile.r_max)
             count = pf.n_fins
             planforms = [planform_outline_3d(pf, axis, az) for az in pf.azimuths]
+            log_fin_planform(
+                f"fins {model_id}", n=pf.n_fins, root=pf.root_chord, tip=pf.tip_chord,
+                sweep=pf.sweep, span=pf.span, body_length=abs(profile.x_aft - profile.x_fore),
+                body_radius=profile.r_max, azimuths=pf.azimuths,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -436,6 +445,14 @@ def stability(model_id: str, request: StabilityRequest):
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if result.n_fins:
+        log_fin_planform(
+            f"stability {model_id} ({'picked' if fin_faces is not None else 'auto'} faces)",
+            n=result.n_fins, root=result.fin_root_chord, tip=result.fin_tip_chord,
+            sweep=result.fin_sweep, span=result.fin_span, body_length=result.body_length,
+            body_radius=result.r_max, symmetric=result.fin_symmetric,
+        )
 
     if motor_block is not None:
         motor_block["cgFromNose"] = result.motor_cg_from_nose
