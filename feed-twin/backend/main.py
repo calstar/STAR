@@ -138,6 +138,7 @@ def _who(request: Request) -> str:
     """The caller, as Caddy names them; the local dev user otherwise."""
     return request.headers.get("X-Auth-Email") or "local"
 
+
 #: Where a CEA table is looked for. Absent, the chamber falls back to a constant
 #: c* and says so in the warnings.
 CEA_SEARCH = [
@@ -665,7 +666,6 @@ async def model_view(
     )
 
 
-
 # ------------------------------------------------------------------ drawing
 #
 # What was pulled from the drawing, what the operator typed over it, and what
@@ -673,7 +673,9 @@ async def model_view(
 
 
 def _value(p: Param) -> ParamValue:
-    return ParamValue(value=p.value, unit=p.unit, source=p.source.value, reference=p.reference)
+    return ParamValue(
+        value=p.value, unit=p.unit, source=p.source.value, reference=p.reference
+    )
 
 
 def _same_dimension(unit: str) -> list[str]:
@@ -709,7 +711,11 @@ async def drawing_view(
     by_label = {n.label: n.id for n in raw.diagram.nodes if n.label}
     assumed: dict[str, dict[str, ParamValue]] = {}
     for a in raw.report.assumptions:
-        element = a.component if raw.diagram.node(a.component) else by_label.get(a.component, a.component)
+        element = (
+            a.component
+            if raw.diagram.node(a.component)
+            else by_label.get(a.component, a.component)
+        )
         assumed.setdefault(element, {})[a.parameter] = ParamValue(
             value=a.value, unit=a.unit, source=a.source, reference=a.reference
         )
@@ -759,10 +765,18 @@ async def drawing_view(
                 if was is None:
                     stale = drawn is not None
                 else:
-                    stale = drawn is None or (drawn.value, drawn.unit) != (was["value"], was["unit"])
+                    stale = drawn is None or (drawn.value, drawn.unit) != (
+                        was["value"],
+                        was["unit"],
+                    )
             base = _value(drawn) if drawn is not None else fill
             effective = (
-                ParamValue(value=override.value, unit=override.unit, source=override.source, reference=override.reference)
+                ParamValue(
+                    value=override.value,
+                    unit=override.unit,
+                    source=override.source,
+                    reference=override.reference,
+                )
                 if override is not None and not locked
                 else base
             )
@@ -868,7 +882,9 @@ async def set_override(
                     f"drawing gives {parameter} in {declared.unit}.",
                 )
         except UnknownUnit as exc:
-            raise HTTPException(status_code=422, detail=f"unknown unit {unit!r}") from exc
+            raise HTTPException(
+                status_code=422, detail=f"unknown unit {unit!r}"
+            ) from exc
     try:
         entry = overrides.set_param(
             key,

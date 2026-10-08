@@ -264,7 +264,8 @@ def apply_overrides(
     edges = tuple(
         (
             replace(e, params=overlay(e.id, e.params))
-            if e.id in params and not (e.segments.segments and SUPERSEDED_BY_SEGMENTS & set(params[e.id]))
+            if e.id in params
+            and not (e.segments.segments and SUPERSEDED_BY_SEGMENTS & set(params[e.id]))
             else e
         )
         for e in diagram.edges
