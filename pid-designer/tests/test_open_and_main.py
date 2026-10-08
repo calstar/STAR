@@ -1,7 +1,10 @@
-"""pid-designer as it ships: open to all, a recent window, an admin-only main.
+"""The shared router's open mode: open to all, a recent window, an admin-only main.
 
-test_diagrams.py pins the shared router's closed model (creator plus share
-list); this file is the configuration pid-designer actually runs:
+pid-designer ran this until it moved to the curated STAR collection (see
+test_star_and_access.py). The mode is still in :mod:`stardesign.documents` for
+any app that wants it, so the fixture below switches pid's store back to it and
+these tests keep guarding it. test_diagrams.py pins the closed model (creator
+plus share list). In this one:
 
 * every diagram is editable by everyone -- checkouts, not ownership, stop two
   people saving at once;
@@ -31,6 +34,7 @@ from stardesign import admins  # noqa: E402
 
 from backend.main import app  # noqa: E402
 from backend.routers import pid as documents  # noqa: E402
+from test_star_and_access import CURATED_ROUTES  # noqa: E402
 
 A = {"X-Auth-Email": "alice@berkeley.edu"}
 B = {"X-Auth-Email": "bob@berkeley.edu"}
@@ -46,6 +50,10 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
     monkeypatch.setenv("STAR_ADMINS", "admin@berkeley.edu")
     monkeypatch.setattr(documents.store, "micro_interval", 0)
+    monkeypatch.setattr(documents.store, "open_to_all", True)
+    monkeypatch.setattr(documents.store, "recent_days", 10)
+    monkeypatch.setattr(documents.store, "main_admin_only", True)
+    monkeypatch.setattr(documents.store, "curated", False)
     documents.store.last_micro.clear()
 
 
@@ -158,6 +166,7 @@ def test_only_an_admin_can_choose_the_main_diagram(client):
     assert _feature(client, a_id, headers=B).status_code == 403
     assert client.get(FEATURED, headers=B).json() == {
         "featured": None, "isAdmin": False, "recentDays": documents.store.recent_days,
+        "curated": False,
     }
 
     r = _feature(client, a_id)
@@ -209,7 +218,9 @@ _ON_MAIN = {
     "get_release": ("GET", "/release/0.1", None, True),
 }
 _NOT_DOC_SCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
-                   "rescue_document", "get_featured", "set_featured", "clear_featured"}
+                   "rescue_document", "get_featured", "set_featured", "clear_featured",
+                   # Registered because pid runs curated; this mode never offers them.
+                   *CURATED_ROUTES}
 
 
 def test_every_route_says_whether_it_writes_the_main_diagram():

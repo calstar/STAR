@@ -23,6 +23,7 @@ export { ThemeToggle } from './ThemeToggle';
 export { createDesignApi, keyOf, refOf, ApiError } from './api';
 export type { Checkout, UseCheckoutOptions } from './useCheckout';
 export type {
+  AccessRequest,
   BrowseGroup,
   CheckoutState,
   DesignApi,

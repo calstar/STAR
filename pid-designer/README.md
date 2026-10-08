@@ -171,17 +171,34 @@ Deploy + AWS setup (bucket, versioning, lifecycle, IAM keys) is in
 ## API
 
 All routes are under `/api/pid` (plus `/api/health`). Identity is the
-`X-Auth-Email` header (or `local` in dev). A diagram lives in its creator's
-folder, but that is only *where it lives*, not a privilege level: everyone on its
-`sharedWith` list is an equal editor, and any diagram can be viewed and copied by
-anyone. A diagram someone else owns is addressed with `?owner=<email>`, which the
-server reads as a claim to be an editor and refuses (403) if you are not one.
+`X-Auth-Email` header (or `local` in dev).
+
+Who sees and edits what (the store's `curated` mode -- see
+`lib/stardesign/README.md`):
+
+- **STAR diagrams** are chosen by admins (the list in
+  `lib/stardesign/stardesign/admins.py`, plus `STAR_ADMINS`). Everyone sees
+  them. One may be the **main** diagram, which a new tab opens on.
+- Everyone else sees their own diagrams and those shared with them. **Admins see
+  and can edit everything** (Change -> STAR / Other).
+- A diagram is edited by its creator, its `sharedWith` list, and admins. Only the
+  creator or an admin may share it.
+- Anyone who can see a diagram may **request edit access**; the creator or an
+  admin approves (the requester joins `sharedWith`) or denies. Pending requests
+  show as a badge on Change.
+
+A diagram someone else owns is addressed with `?owner=<email>`.
 
 | Method & path | Purpose |
 |---|---|
-| `GET  /diagrams/browse` | everyone else's diagrams, grouped by owner (the view-only tree) |
-| `POST /diagrams/copy` | `{owner, id}` -> your own copy, with fresh history and no share list |
-| `PUT  /diagrams/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta) |
+| `POST /diagrams/copy` | `{owner, id}` -> your own copy of a diagram you can see, with fresh history and no share list |
+| `PUT  /diagrams/{id}/share` | replace the editor list `{sharedWith: [email]}` (whole list, not a delta). Creator or admin |
+| `PUT/DELETE /diagrams/{id}/star` | add to / take out of STAR. Admins only; taking main out also unsets main |
+| `PUT/DELETE /diagrams/featured` | choose / clear the main diagram `{owner, id}`. Admins only; choosing also stars it |
+| `POST/DELETE /diagrams/{id}/access` | request edit access, or withdraw your request |
+| `POST /diagrams/{id}/access/approve` | `{email}` -> they join `sharedWith`. Creator or admin |
+| `POST /diagrams/{id}/access/deny` | `{email}` -> request dropped, nothing granted. Creator or admin |
+| `GET  /diagrams/requests` | pending requests the caller may answer |
 | `DELETE /diagrams/{id}/share/me` | remove yourself from a diagram shared with you |
 | `GET  /users` | who a diagram can be shared with (see backend/directory.py) |
 | `POST /diagrams/{id}/checkout` | take the write token (423 if someone else has it) |
