@@ -817,6 +817,9 @@ def make_router(store: DesignStore, prefix: str, sub: str = "") -> APIRouter:
                     {**r, "name": names.get(r["email"]) or r["email"]} for r in requests
                 ] if manage else [],
                 "requestedByMe": any(r["email"] == viewer for r in requests),
+                # An admin may edit everything, so `editable` cannot tell a
+                # design shared with them from anyone else's; the Mine tab can.
+                "sharedWithMe": owner != viewer and _is_shared(record, viewer),
             }
         return {
             **record,

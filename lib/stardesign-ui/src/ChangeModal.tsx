@@ -23,10 +23,10 @@
  * design passes `featured`; admins then get Make main / Unset main.
  *
  * A curated app (pid-designer) passes `curated`. The tabs become **STAR** -- the
- * designs admins chose for everyone -- and **Other** (for an admin, everyone
- * else's; for anyone else, their own and those shared with them). Sharing is
- * the creator's or an admin's; anyone else may ask to edit, and the requests
- * head the dialog for whoever can answer them.
+ * designs admins chose for everyone -- **Mine** -- your own and those shared
+ * with you -- and, for an admin, **Other**: everyone else's. Sharing is the
+ * creator's or an admin's; anyone else may ask to edit, and the requests head
+ * the dialog for whoever can answer them.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -35,8 +35,9 @@ import type { BrowseGroup, DesignApi, DesignMeta, DocRef, FeaturedState, TeamUse
 import { btn, ghostBtn, primaryBtn, relativeTime } from './theme';
 import { Modal } from './Modal';
 
-/** In a curated app, `editable` is the STAR tab and `viewonly` is Other. */
-type Tab = 'editable' | 'viewonly';
+/** In a curated app, `editable` is the STAR tab, `mine` is Mine, and
+ *  `viewonly` is Other (admins only). */
+type Tab = 'editable' | 'mine' | 'viewonly';
 
 interface Props<T> {
   open: boolean;
@@ -158,10 +159,14 @@ export function ChangeModal<T>({
   const removed = (d: DesignMeta) =>
     (d.sharedWith ?? []).filter((e) => !shareSel.some((s) => s.toLowerCase() === e.toLowerCase()));
 
-  // Curated, the one list splits across the two tabs; otherwise the first tab
-  // is the whole list and the second is the browse tree.
+  // Curated, the one list splits across the tabs; otherwise the first tab is
+  // the whole list and the second is the browse tree. Anyone but an admin is
+  // only ever sent their own and those shared with them, so for them every
+  // non-STAR row is Mine -- which also covers a server too old to say.
+  const isMine = (d: DesignMeta) => !!d.mine || !!d.sharedWithMe || !featured?.isAdmin;
   const rows = curated
-    ? documents.filter((d) => (tab === 'editable') === !!d.star)
+    ? documents.filter((d) =>
+        tab === 'editable' ? !!d.star : !d.star && (tab === 'mine') === isMine(d))
     : documents;
 
   const tabBtn = (t: Tab) =>
@@ -177,9 +182,16 @@ export function ChangeModal<T>({
         <button className={tabBtn('editable')} onClick={() => { setTab('editable'); reset(); }}>
           {curated ? 'STAR' : openToAll ? 'Recent' : 'Editable'}
         </button>
-        <button className={tabBtn('viewonly')} onClick={() => { setTab('viewonly'); reset(); }}>
-          {curated ? (featured?.isAdmin ? 'Other' : 'Yours') : openToAll ? 'Older' : 'View only'}
-        </button>
+        {curated && (
+          <button className={tabBtn('mine')} onClick={() => { setTab('mine'); reset(); }}>
+            Mine
+          </button>
+        )}
+        {(!curated || featured?.isAdmin) && (
+          <button className={tabBtn('viewonly')} onClick={() => { setTab('viewonly'); reset(); }}>
+            {curated ? 'Other' : openToAll ? 'Older' : 'View only'}
+          </button>
+        )}
       </div>
 
       {error && <p className="mb-2 text-xs text-red-500">{error}</p>}
@@ -225,8 +237,12 @@ export function ChangeModal<T>({
           {curated && tab === 'editable' ? (
             <p className="mb-2 text-[10px] text-[var(--color-text-muted)]">
               {admin
-                ? `The ${noun}s everyone sees. Star one in Other; Make main picks the one a new tab opens on.`
+                ? `The ${noun}s everyone sees. Star one in Mine or Other; Make main picks the one a new tab opens on.`
                 : `The team's ${noun}s. Ask to edit one, or take your own copy.`}
+            </p>
+          ) : curated && tab === 'viewonly' ? (
+            <p className="mb-2 text-[10px] text-[var(--color-text-muted)]">
+              {`Everyone else's ${noun}s. You are an admin, so you can open and edit any of them.`}
             </p>
           ) : creating ? (
             <div className="mb-2 flex items-center gap-2">
@@ -258,7 +274,11 @@ export function ChangeModal<T>({
 
           {rows.length === 0 && (
             <p className="py-3 text-xs text-[var(--color-text-muted)]">
-              {curated && tab === 'editable' ? `No STAR ${noun}s yet.` : `No ${noun}s yet.`}
+              {curated && tab === 'editable'
+                ? `No STAR ${noun}s yet.`
+                : curated && tab === 'mine'
+                  ? `Nothing of yours or shared with you yet.`
+                  : `No ${noun}s yet.`}
             </p>
           )}
 
