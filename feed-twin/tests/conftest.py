@@ -65,3 +65,23 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if item.path.name in SLOW_MODULES or item.name.split("[")[0] in SLOW_TESTS:
             item.add_marker(pytest.mark.slow)
+
+
+# ------------------------------------------------------- the shipped drawings
+@pytest.fixture(autouse=True)
+def _shipped_drawings_stay() -> None:
+    """Every test starts with the shipped drawings in its library.
+
+    The library is content-addressed, so a test that uploads a shipped file
+    (``backend/diagrams/ethalox_stand.json``) gets the seeded artifact back,
+    and removing "its" upload afterwards removes the seed -- for every later
+    test in that worker. test_study's ``stand`` fixture did, and
+    test_overrides' ``stand_id()`` then found no Ethalox Stand whenever the
+    two shared a worker (2026-10-09). Seeding again is idempotent; it runs
+    only when one is missing.
+    """
+    from backend import main
+
+    have = {a.source for a in main.library.list("diagram")}
+    if any(f"shipped:{p.name}" not in have for p in main.SEEDS.glob("*.json")):
+        main._seed()
