@@ -131,9 +131,11 @@ export function TopBar({ views }: { views: readonly View[] }) {
           {groups.map((g, i) => (
             <span
               key={g.name}
-              className={`flex flex-shrink-0 items-baseline gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-5' : ''}`}
+              className={`flex flex-shrink-0 items-baseline gap-x-3.5 min-[1400px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 min-[1400px]:pl-5' : ''}`}
             >
-              <span className="caps pb-1.5 text-[9px] text-[var(--ink-4)]">{g.name}</span>
+              {/* The group's name where there is room; the divider says it
+                  on a laptop, where the names wrapped the nav onto two rows. */}
+              <span className="caps hidden pb-1.5 text-[9px] text-[var(--ink-4)] min-[1400px]:inline">{g.name}</span>
               {g.views.map((v) => {
                 const active = pathname === v.path;
                 return (

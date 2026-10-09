@@ -489,8 +489,8 @@ export function Console() {
             )}
           </section>
 
-          <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-4">
-            <div className="mb-2 flex flex-shrink-0 items-baseline justify-between">
+          <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-3">
+            <div className="mb-1.5 flex flex-shrink-0 items-baseline justify-between">
               <h2 className="caps text-[11px]">Tanks</h2>
               <PanelMenu
                 title="Tanks"
@@ -498,7 +498,7 @@ export function Console() {
                 {...menuFor('tanks', vessels.map((v) => v.id))}
               />
             </div>
-            <div className="flex min-h-0 flex-1 flex-col justify-around gap-2 overflow-y-auto">
+            <div className="flex min-h-0 flex-1 flex-col justify-around gap-1.5 overflow-y-auto">
               {vessels.filter((v) => visible(hiddenBy, 'tanks', v.id)).map((v) => (
                 <div key={v.id} {...dragProps('tanks', v.id, vesselIds)} className="cursor-grab" title="Drag to reorder">
                   {bottleIds.has(v.id) ? (
