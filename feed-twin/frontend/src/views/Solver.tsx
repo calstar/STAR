@@ -5,8 +5,9 @@
  * plot of every residual against time, each divided by its own convergence
  * criterion so a single dashed line at 1 means "converged below here"; the
  * iteration log beside it, a row per tick, newest at the bottom; and the
- * report monitors -- iterations, the mass balance, the guards -- small along
- * the bottom. A verdict across the top says it in words first.
+ * report monitors -- iterations, the mass balance, the clamps -- small along
+ * the bottom. Four checks across the top, PASS or FAIL, numbers on hover (the
+ * operator, 2026-10-09: "just make it checks ... no bloat").
  *
  * It used to be six separate plots in six units, which a person had to read
  * all of to learn that everything was fine (the operator, 2026-10-09: "a
@@ -96,39 +97,37 @@ export function Solver() {
     for (let i = trace.converged.length - 1; i >= 0; i -= 1) if (!trace.converged[i]) return trace.t[i];
     return null;
   })();
+  // Four checks, a word and PASS or FAIL each; the numbers are in the hover.
   const checks = [
     {
       key: 'newton',
+      label: 'Converged',
       ok: failed === 0,
-      label: 'Every solve converged',
-      bad:
-        `${fixed(failed, 0)} of ${fixed(s.ticks ?? 0, 0)} ticks did not converge` +
-        (lastFail !== null ? `, the last at ${fixed(lastFail, 1)} s` : ''),
-      hint: 'A tick that does not converge holds the last good flows; its frame is an extrapolation, not a solution.',
+      hint:
+        failed === 0
+          ? `All ${fixed(s.ticks ?? 0, 0)} ticks converged.`
+          : `${fixed(failed, 0)} of ${fixed(s.ticks ?? 0, 0)} ticks did not converge` +
+            (lastFail !== null ? `, the last at ${fixed(lastFail, 1)} s.` : '.'),
     },
     {
       key: 'mass',
+      label: 'Mass balance',
       ok: Math.abs(unexplainedPpm) <= MASS_PPM_OK,
-      label: `Mass kept · ${fixed(Math.abs(unexplainedPpm), 2)} ppm unexplained`,
-      bad: `Mass not kept · ${fixed(unexplainedPpm, 1)} ppm unexplained`,
-      hint: `Mass no vessel booked and no boundary carried: ${(s.unexplained_kg ?? 0).toExponential(2)} kg against ${fixed(s.throughput_kg ?? 0, 3)} kg through the boundary. Under ${MASS_PPM_OK} ppm reads as kept; more is a leak in the model.`,
+      hint: `${fixed(unexplainedPpm, 2)} ppm of the mass that moved is unaccounted for (limit ${MASS_PPM_OK}).`,
     },
     {
       key: 'chamber',
+      label: 'Chamber',
       ok: (s.worst_chamber_psi ?? 0) <= chamberTol,
-      label: `Chamber closed · worst ${exp(s.worst_chamber_psi ?? 0)} psi`,
-      bad: `Chamber left open · worst ${exp(s.worst_chamber_psi ?? 0)} psi (tolerance ${chamberTol} psi)`,
-      hint: 'How far the flow the feed delivers and the chamber pressure it makes were left apart. Zero without an engine lit.',
+      hint: `Worst chamber pressure mismatch ${exp(s.worst_chamber_psi ?? 0)} psi (limit ${chamberTol}).`,
     },
     {
-      key: 'guards',
+      key: 'clamps',
+      label: 'Clamps',
       ok: Math.abs(s.guard_ppm ?? 0) <= GUARD_PPM_OK,
-      label: `Guards quiet · ${fixed(Math.abs(s.guard_ppm ?? 0), 0)} ppm`,
-      bad: `Guards busy · ${fixed(s.guard_ppm ?? 0, 0)} ppm of throughput`,
-      hint: `What the vessels' floors and clamps changed (${fmtReading(s.guard_kg ?? 0)} kg, ${fmtReading(s.guard_J ?? 0)} J), booked so the balance can tell them from a leak. Each is physics -- a vent cannot pull below atmosphere -- but past ${GUARD_PPM_OK} ppm they are doing a model's work.`,
+      hint: `The tank model's clamps changed ${fixed(Math.abs(s.guard_ppm ?? 0), 0)} ppm of the mass that moved (${fmtReading(s.guard_kg ?? 0)} kg, ${fmtReading(s.guard_J ?? 0)} J; limit ${GUARD_PPM_OK}).`,
     },
   ];
-  const trusted = checks.every((c) => c.ok);
 
   const monitor: Channel[] = [
     {
@@ -171,24 +170,17 @@ export function Solver() {
 
   return (
     <div className="flex flex-col gap-3 p-4">
-      {/* The verdict, in words, before any plot. */}
-      <div
-        className={`flex flex-wrap items-center gap-x-8 gap-y-2 border px-5 py-3 ${
-          trusted ? 'border-emerald-900/70 bg-emerald-950/20' : 'border-amber-900/70 bg-amber-950/20'
-        }`}
-      >
-        <div>
-          <div className={`font-mono text-[15px] font-semibold ${trusted ? 'text-emerald-300' : 'text-amber-300'}`}>
-            {trusted ? 'The arithmetic holds' : 'Read the traces with care'}
-          </div>
-          <div className="text-[11px] text-text-muted">
-            {fixed(s.ticks ?? 0, 0)} ticks · last {fixed(trace.t[trace.t.length - 1] ?? 0, 1)} s
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border border-gray-800 px-5 py-3">
         {checks.map((c) => (
-          <span key={c.key} className="flex items-center gap-2 font-mono text-[12px]" title={c.hint}>
-            <span className={c.ok ? 'text-emerald-400' : 'text-amber-400'}>{c.ok ? '✓' : '✗'}</span>
-            <span className={c.ok ? 'text-[var(--ink-2)]' : 'text-amber-300'}>{c.ok ? c.label : c.bad}</span>
+          <span key={c.key} className="flex items-center gap-2 font-mono text-[12.5px]" title={c.hint}>
+            <span className="text-[var(--ink-2)]">{c.label}</span>
+            <span
+              className={`rounded px-1.5 py-px text-[11px] font-semibold ${
+                c.ok ? 'bg-emerald-950/60 text-emerald-300' : 'bg-red-950/60 text-red-300'
+              }`}
+            >
+              {c.ok ? 'PASS' : 'FAIL'}
+            </span>
           </span>
         ))}
       </div>
@@ -199,11 +191,9 @@ export function Solver() {
         <>
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
             <section className="bg-card min-w-0 border border-gray-800 p-3">
-              <div className="mb-1 flex flex-wrap items-baseline gap-x-3">
-                <span className="caps text-[11px]">Residuals</span>
-                <span className="text-[11px] text-text-muted">
-                  each ÷ its criterion — under the dashed line is converged. Spikes at a valve or a state change are
-                  normal; they should come back down.
+              <div className="mb-1">
+                <span className="caps text-[11px]" title="Each residual divided by its own limit: below the dashed line is converged.">
+                  Residuals
                 </span>
               </div>
               <DaqPlot
@@ -234,8 +224,8 @@ export function Solver() {
               minSpan={5}
             />
             <Monitor
-              title="Mass balance (kg, cumulative)"
-              hint="Unexplained: mass no vessel booked and no boundary carried -- a leak in the model; it should sit at zero. Guards: what the vessels' floors and clamps added or removed, booked so they can be told from a leak. Both restart when the stand is put somewhere directly (T-0)."
+              title="Mass balance (kg)"
+              hint="Unexplained: mass nothing accounts for -- it should stay at zero. Clamps: mass the tank model added or removed to keep a tank valid. Both restart at T-0."
               times={trace.t}
               channels={[
                 {
@@ -244,15 +234,15 @@ export function Solver() {
                   values: trace.mass_error_kg.map((e, i) => e - (trace.guard_kg[i] ?? 0)),
                   color: '#EF4444',
                 },
-                { key: 'guard_kg', tag: 'guards', values: trace.guard_kg, color: '#F59E0B' },
+                { key: 'guard_kg', tag: 'clamps', values: trace.guard_kg, color: '#F59E0B' },
               ]}
               minSpan={1e-9}
             />
             <Monitor
-              title="Guard energy (J, cumulative)"
-              hint="Ullage energy the vessels' guards added or removed beyond what their rates said."
+              title="Clamp energy (J)"
+              hint="Energy the tank model added to or removed from the ullages to keep a tank valid (e.g. never below atmosphere). It should stay near zero."
               times={trace.t}
-              channels={[{ key: 'guard_J', tag: 'guards', values: trace.guard_J, color: '#F59E0B' }]}
+              channels={[{ key: 'guard_J', tag: 'clamps', values: trace.guard_J, color: '#F59E0B' }]}
               minSpan={1e-6}
             />
           </div>
@@ -316,7 +306,6 @@ function IterationLog({
     <section className="bg-card flex min-h-0 min-w-0 flex-col border border-gray-800 p-3" style={{ maxHeight: 430 }}>
       <div className="mb-1 flex items-baseline gap-2">
         <span className="caps text-[11px]">Iteration log</span>
-        <span className="text-[11px] text-text-muted">÷ criterion, newest last</span>
       </div>
       <div
         ref={box}
