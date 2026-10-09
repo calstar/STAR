@@ -17,32 +17,36 @@ fluids:
     boiling_point: 351.4
     molecular_weight: 46.07
     bulk_modulus_pa: 1060000000.0   # ethanol @ ~293 K, standard handbook value (stability feed-acoustics)
+    critical_temperature: 514.71   # K, CoolProp Ethanol -- chug time-lag evaporation constant (Leonardi 2017 eq. 9)
   oxidizer:
     name: LOX
     density: 1140.0
-    viscosity: 0.00018
+    viscosity: 0.000200         # Pa s, CoolProp Oxygen 90 K: 1.96e-4 at 0.15 MPa, 2.03e-4 at 4 MPa (was 1.8e-4)
     surface_tension: 0.013
     vapor_pressure: 101325.0
-    specific_heat: 2300.0
+    specific_heat: 1700.0       # J/(kg K), CoolProp Oxygen 90 K: 1699 (was 2300, not LOX)
     thermal_conductivity: 0.15
     temperature: 90.0
     latent_heat: 213000.0
     boiling_point: 90.2
     molecular_weight: 32.0
-    bulk_modulus_pa: 1500000000.0    # order-of-magnitude LOX; refine via test T5
-# Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
-#
-# These are NOT free constants: the schema defaults (R=360, T=3500) are LOX/CH4 values, and
-# were being applied verbatim to ethalox. Read off cea_cache_LOX_Ethanol_3D.npz at the design
-# point (MR 1.35, averaged over Pc 300-600 psi), where the truth is Tc=3094 K and R=389 J/kgK
-# -- i.e. the methalox default overstated Tc by 13% and understated R by 8%.
-#
-# The injector solve runs before CEA chamber state exists, so a representative value is the
-# design (see SMDConfig). Representative for THIS propellant, at ITS mixture ratio.
+    bulk_modulus_pa: 940000000.0     # Pa, CoolProp Oxygen 90 K rho*a^2: 0.938e9 at 0.15 MPa, 0.983e9 at 4 MPa (was an order-of-magnitude 1.5e9)
+    critical_temperature: 154.60   # K, CoolProp Oxygen -- chug time-lag evaporation constant (Leonardi 2017 eq. 9)
+# Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)) and the
+# evaporation model. A propellant switch re-reads them from the CEA table at the design's own O/F
+# and target Pc (config_switch.derive_chamber_gas); these are the fallback when the table is not
+# on disk, at the design point below. CEA (rocketcea, equilibrium) at O/F 1.5, 430 psia:
+# Tc 3225.5 K, M 22.25 -> R 373.7. (The old 389 / 3094 were O/F 1.35 at 600 psia.)
 spray:
   smd:
-    chamber_gas_R: 389.0    # J/(kg*K), LOX/Ethanol @ MR 1.35
-    chamber_gas_T: 3094.0   # K,        LOX/Ethanol @ MR 1.35
+    chamber_gas_R: 373.7    # J/(kg*K), LOX/Ethanol @ O/F 1.5, 430 psia
+    chamber_gas_T: 3225.5   # K,        LOX/Ethanol @ O/F 1.5, 430 psia
+
+# Design O/F a propellant switch sets. CEA c* peaks at O/F 1.55 (1725.8 m/s at 430 psia) and
+# ambient Isp at 1.70; 1.5 is the fuel-rich side of the c* peak (1725.3 m/s, -0.03 %), cooler on an
+# ablative/graphite chamber, and the 6500 N design point. Stoichiometric is 96/46.07 = 2.08.
+design_requirements:
+  optimal_of_ratio: 1.5
 
 # NOTE: no feed_system here on purpose. The feed lines are VEHICLE PLUMBING, not a property
 # of the propellant -- switching ethalox <-> methalox must not silently resize your tubing.

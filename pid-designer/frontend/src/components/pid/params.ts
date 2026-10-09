@@ -83,23 +83,65 @@ export const UNITS: Record<Dimension, string[]> = {
   pressure_ratio:   ['psi/1000psi', 'psi/100psi', 'psi/psi', 'bar/bar'],
 };
 
-/** Pressures are absolute. Said in the UI, next to the field. */
-export const ABSOLUTE_NOTE = 'absolute, not gauge';
+/**
+ * Pressures that are a difference between two places. The same in psig and
+ * psia, so they are offered only the bare units. Mirrors
+ * `feedtwin.model.pressure.DIFFERENCE`, which is what feed-twin reads by.
+ */
+export const PRESSURE_DIFFERENCES: ReadonlySet<string> = new Set([
+  'dome_bias', 'set_pressure', 'reseat_pressure', 'cracking_pressure',
+  'flow_droop', 'lockup_rise', 'min_inlet_differential',
+]);
 
-/** Pascals per unit, for the pressures the dialog offers. Absolute throughout. */
-const PA_PER: Record<string, number> = {
-  Pa: 1, kPa: 1e3, MPa: 1e6, bar: 1e5, atm: 101325, psi: 6894.757293168361,
+/** Symbols whose pressures are quoted absolute: the chamber. */
+const ABSOLUTE_SYMBOLS: ReadonlySet<string> = new Set(['ENGINE', 'INJECTOR']);
+
+const ABSOLUTE_UNITS = ['psi', 'psig', 'psia', 'bar', 'barg', 'bara', 'kPa', 'MPa', 'Pa', 'atm'];
+const DIFFERENCE_UNITS = ['psi', 'bar', 'kPa', 'MPa', 'Pa'];
+
+/** The units a field offers: a difference cannot carry a gauge or absolute reference. */
+export function unitsFor(spec: { key: string; dimension: Dimension }): string[] {
+  if (spec.dimension !== 'pressure') return UNITS[spec.dimension];
+  return PRESSURE_DIFFERENCES.has(spec.key) ? DIFFERENCE_UNITS : ABSOLUTE_UNITS;
+}
+
+/** What a pressure field's unit means, said next to it. */
+export function pressureNote(key: string, symbol = ''): string {
+  if (PRESSURE_DIFFERENCES.has(key)) return 'a difference: the same in psig and psia';
+  if (ABSOLUTE_SYMBOLS.has(symbol)) return 'absolute unless psig: a chamber pressure is quoted psia';
+  return 'gauge unless psia: a bare psi reads as psig, as the dial does';
+}
+
+/** One standard atmosphere [Pa]: what a gauge reads zero at. */
+const ATM = 101325;
+
+/** Pascals per unit, and whether the unit names its reference. */
+const PA_PER: Record<string, { k: number; ref: '' | 'a' | 'g' }> = {
+  Pa: { k: 1, ref: '' }, kPa: { k: 1e3, ref: '' }, MPa: { k: 1e6, ref: '' },
+  bar: { k: 1e5, ref: '' }, psi: { k: 6894.757293168361, ref: '' },
+  psia: { k: 6894.757293168361, ref: 'a' }, bara: { k: 1e5, ref: 'a' },
+  psig: { k: 6894.757293168361, ref: 'g' }, barg: { k: 1e5, ref: 'g' },
+  atm: { k: 101325, ref: 'a' },
 };
 
 /**
- * A pressure in pascals, or nothing if its unit is not one this file knows.
+ * A pressure as a gauge reads it [Pa], or nothing if its unit is not one this
+ * file knows. Bare units are gauge (or a difference, which is the same thing
+ * against the atmosphere); an absolute one gives up an atmosphere.
  *
- * For comparing two pressures on the drawing -- a relief against a MAWP --
- * which is only meaningful once both are in the same unit. Nothing here is
- * offered to the solver; feed-twin converts for itself.
+ * For comparing two pressures on the drawing -- a relief against a burst
+ * pressure -- which is only meaningful once both are on one reference. Nothing
+ * here is offered to the solver; feed-twin converts for itself, by the same rule.
  */
-export function toPa(p: ParamValue | undefined): number | undefined {
+export function toGaugePa(p: ParamValue | undefined): number | undefined {
   if (!p) return undefined;
-  const k = PA_PER[p.unit];
-  return k === undefined ? undefined : p.value * k;
+  const u = PA_PER[p.unit];
+  if (u === undefined) return undefined;
+  return p.value * u.k - (u.ref === 'a' ? ATM : 0);
+}
+
+/** An absolute pressure [Pa], for a property lookup (saturation at a dewar). */
+export function toAbsolutePa(p: ParamValue | undefined): number | undefined {
+  const gauge = toGaugePa(p);
+  return gauge === undefined ? undefined : gauge + ATM;
 }

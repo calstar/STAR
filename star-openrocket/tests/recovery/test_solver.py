@@ -18,6 +18,8 @@ from physics.schema import (
     TriggerKind,
     Vehicle,
 )
+from pydantic import ValidationError
+
 from physics.solver import LOAD_DT, integrate
 
 # ISA temperature at the FAR pad, so the eq (7) re-fit stays the identity
@@ -209,3 +211,129 @@ def test_three_device_configuration_works():
     ])
     run = integrate(cfg, "axial")
     assert all(s.stretched for s in run.states)
+
+
+# --- the work budget -------------------------------------------------------
+
+
+def test_a_canopy_that_is_not_a_canopy_is_refused_before_the_solver():
+    """The typo must be refused by the schema, in microseconds, not integrated.
+
+    Both of these are reachable by typing into the form: a drag area entered
+    where the diameter goes, or a value pasted in the wrong unit. Neither had
+    an upper bound at all -- `CdS` and `D0` were `gt=0.0` and nothing else --
+    so the integrator was asked to find a descent that does not exist. It does
+    not refuse: it takes smaller and smaller steps, for tens of seconds,
+    pinning a core per case while the GUI re-runs on every keystroke.
+    """
+    # A billion square metres: caught by the absolute cap on CdS.
+    with pytest.raises(ValidationError, match="less than or equal to 20000"):
+        _dev("drogue", 1143851243.2142286, D0=0.6)
+
+    # A 313 m canopy: caught by the absolute cap on D0.
+    with pytest.raises(ValidationError, match="less than or equal to 200"):
+        _dev("drogue", 1235.6104320000002, D0=313.5122)
+
+    # 1000 m^2 on a 0.6 m drogue clears BOTH absolute caps and is still not a
+    # canopy -- 3500x its own projected area. This is the case only the ratio
+    # bound catches, and it is the shape of every real typo: one field wrong,
+    # its neighbour right.
+    with pytest.raises(ValidationError, match="projected area"):
+        _dev("drogue", 1000.0, D0=0.6)
+
+    # The worked example's own devices must still build, or the bound is wrong.
+    assert _dev("drogue", 0.15, D0=0.6).CdS == 0.15
+    assert _dev("main", 2.489, D0=1.601, m_c=0.213).CdS == 2.489
+
+
+def test_the_solver_still_refuses_what_the_schema_lets_through():
+    """The work budget is the backstop, and it has to stay reachable.
+
+    The schema bounds what a canopy can be; it cannot bound how hard the
+    resulting descent is to integrate. A 150 m canopy at the ratio cap is a
+    legal config and still cannot be solved, so the budget -- not the schema
+    -- is what stops it, and this asserts that layer is still load-bearing.
+    """
+    cfg = _cfg([_dev("drogue", 20000.0, D0=150.0,
+                     kind=TriggerKind.TIME, value=2.0)])
+    with pytest.raises(ValueError, match="did not converge to a descent"):
+        integrate(cfg, "axial")
+
+
+def test_the_budget_leaves_a_real_configuration_far_from_the_cap():
+    """The guard must refuse only the unphysical, so assert the headroom.
+
+    The worked example is the canonical run; if it ever lands near the cap,
+    the cap is wrong and this goes red before a user meets it as a 422.
+    """
+    from physics import solver
+
+    calls = [0]
+    real = solver.make_deriv
+
+    def counting(*args, **kwargs):
+        f = real(*args, **kwargs)
+
+        def wrapped(t_, y_):
+            calls[0] += 1
+            return f(t_, y_)
+
+        return wrapped
+
+    solver.make_deriv = counting
+    try:
+        integrate(load_config(), "axial")
+    finally:
+        solver.make_deriv = real
+
+    assert calls[0] > 0, "the counter never ran, so this test proves nothing"
+    assert calls[0] < solver.DERIV_BUDGET / 10, (
+        f"the canonical run costs {calls[0]:,} evaluations against a budget "
+        f"of {solver.DERIV_BUDGET:,} -- less than 10x headroom"
+    )
+
+
+# --- the load-sample cap ---------------------------------------------------
+
+
+def test_a_descent_needing_too_many_load_samples_is_refused():
+    """The backstop for anything that reaches the solver around the schema.
+
+    The measured failure: `h_a = 1e9` ran for 428 SECONDS and returned success.
+    RK45 takes large steps on a smooth trajectory, so it passed the evaluation
+    budget and then built a four-million-sample load grid -- and that grid is a
+    handful of single C calls that nothing can interrupt once entered, so it
+    has to be refused before the allocation.
+
+    `H_A_MAX` now refuses that apogee at the schema, earlier and with a better
+    message, so this cap is no longer reachable over HTTP. It is reachable
+    exactly the way the corner sweep used to reach past `CDS_MAX`: pydantic
+    does not validate assignment, so anything that mutates a built Config --
+    a script, a notebook, `cases.sweep` before it re-validated -- lands here
+    with no field check at all. That is the layer this guards, so that is how
+    it is tested.
+    """
+    cfg = load_config()
+    cfg.vehicle.h_a = 1e9          # exactly what setattr still permits
+    with pytest.raises(ValueError, match="load samples"):
+        integrate(cfg, "axial")
+
+
+def test_the_canonical_run_is_far_under_the_sample_cap():
+    """Guards the cap being set too low -- it must never refuse a real descent."""
+    from physics.solver import LOAD_DT, MAX_LOAD_SAMPLES
+
+    run = integrate(load_config(), "axial")
+    used = run.t_ground / LOAD_DT
+    assert used < MAX_LOAD_SAMPLES / 5, (
+        "the worked example needs %.0f samples against a cap of %s -- under 5x "
+        "headroom" % (used, format(MAX_LOAD_SAMPLES, ","))
+    )
+
+
+def test_t_max_still_covers_the_slowest_descent_anyone_would_fly():
+    """Guards the T_MAX reduction from 100,000 s. A 120 km apogee coming down
+    under drogue alone at ~30 m/s is ~4,000 s."""
+    from physics.solver import T_MAX
+
+    assert T_MAX >= 5.0 * 4_000.0

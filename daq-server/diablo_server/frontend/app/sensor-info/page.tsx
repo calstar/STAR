@@ -593,7 +593,7 @@ export default function SensorInfoPage() {
 
         {/* ── TC (Thermocouples – board 51) ────────────────────────────────── */}
         <SensorTable
-          title="TC — Thermocouples, K-type (Board 51)"
+          title="TC — Thermocouples, K-type"
           color="#F59E0B"
           headers={['Channel', 'ADC Code', 'Temp (derived)', 'Frontend Rate']}
         >
@@ -611,7 +611,7 @@ export default function SensorInfoPage() {
 
         {/* ── RTD (board 31) ───────────────────────────────────────────────── */}
         <SensorTable
-          title="RTD — Pt1000 Temperature (Board 31)"
+          title="RTD — Pt1000 Temperature"
           color="#10B981"
           headers={['Channel', 'ADC Code', 'Temp', 'Frontend Rate']}
         >
@@ -626,9 +626,9 @@ export default function SensorInfoPage() {
           ))}
         </SensorTable>
 
-        {/* ── LC (Load Cells – board 41) ───────────────────────────────────── */}
+        {/* ── LC (Load Cells — every enabled LC board; rows name their board) ── */}
         <SensorTable
-          title="LC — Load Cells (Board 41)"
+          title="LC — Load Cells"
           color="#3B82F6"
           headers={['Channel', 'ADC Code', 'Force (derived)', 'Frontend Rate']}
         >
@@ -645,7 +645,7 @@ export default function SensorInfoPage() {
 
         {/* ── ENC (Encoders – board 61) ────────────────────────────────────── */}
         <SensorTable
-          title="ENC — Magnetic Encoders (Board 61)"
+          title="ENC — Magnetic Encoders"
           color="#7C3AED"
           headers={['Channel', 'Raw counts', 'Angle (12-bit → °)', 'Frontend Rate']}
         >

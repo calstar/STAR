@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -21,6 +22,7 @@
 
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
+#include "comms/messages/sensor/EnvironmentalMessage.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
 #include "daq-protocol.h"
 #include "fsw/BoardTypeWire.hpp"
@@ -114,7 +116,9 @@ using BoardType = fsw::config::ActiveBoardKind;
 struct BoardConfig {
     BoardType type;
     std::string ip;
-    int num_sensors;
+    /** How many channels this board is told to sample — the length of its
+     *  active_connectors list, which is the only statement of that. Log-only here. */
+    int active_channels;
     bool enabled;
     int board_id;  // Added board_id
 };
@@ -193,6 +197,8 @@ static void load_board_map_from_config(const std::string& config_path,
             return BoardType::ACTUATOR;
         if (t == "ENCODER")
             return BoardType::ENCODER;
+        if (t == "ENVIRONMENTAL")
+            return BoardType::ENVIRONMENTAL;
         return BoardType::UNKNOWN;
     };
     for (const auto& b : c.boards) {
@@ -201,7 +207,8 @@ static void load_board_map_from_config(const std::string& config_path,
         BoardType bt = kind(b.type);
         if (bt == BoardType::UNKNOWN)
             continue;
-        BoardConfig bc{bt, b.ip, b.num_sensors, b.enabled, b.board_id};
+        BoardConfig bc{bt, b.ip, static_cast<int>(b.active_connectors.size()), b.enabled,
+                       b.board_id};
         board_map[b.ip] = bc;
         // Index the board by its config-IP host octet for the loopback fallback (see BoardByOctet).
         if (out_board_by_octet && b.enabled) {
@@ -237,6 +244,8 @@ static BoardType discovery_board_type_to_enum(uint8_t t) {
             return BoardType::ACTUATOR;
         case 6:
             return BoardType::ENCODER;
+        case fsw::daq_wire::kEnvironmental:
+            return BoardType::ENVIRONMENTAL;
         default:
             return BoardType::UNKNOWN;
     }
@@ -256,6 +265,8 @@ static uint8_t config_board_type_to_wire_u8(BoardType t) {
             return fsw::daq_wire::kActuator;
         case BoardType::ENCODER:
             return 6;
+        case BoardType::ENVIRONMENTAL:
+            return fsw::daq_wire::kEnvironmental;
         default:
             return fsw::daq_wire::kUnknown;
     }
@@ -322,6 +333,8 @@ int main(int argc, char* argv[]) {
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+    // A database restart must reach the socket error/reconnect path, not kill the bridge.
+    signal(SIGPIPE, SIG_IGN);
 
     // ── Board IP → Type mapping from config ([boards.*]), DB host/port, network sensor_port ──
     std::map<std::string, BoardConfig> board_map;
@@ -333,9 +346,14 @@ int main(int argc, char* argv[]) {
     ServerHeartbeatConfig hb_config;
     fsw::time::TimeSyncConfig time_sync_cfg;
     uint16_t log_backend_port = 8092;  // [logs] backend_udp_port default
-    load_board_map_from_config(config_path, board_map, &board_by_octet, db_host, db_port,
-                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
-                               &log_backend_port);
+    try {
+        load_board_map_from_config(config_path, board_map, &board_by_octet, db_host, db_port,
+                                   &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
+                                   &log_backend_port);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "FATAL: " << error.what() << std::endl;
+        return 1;
+    }
     std::cout << "[TimeSync] mode="
               << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"
                                                                                     : "arrival")
@@ -379,10 +397,13 @@ int main(int argc, char* argv[]) {
             case BoardType::ENCODER:
                 type_str = "ENCODER";
                 break;
+            case BoardType::ENVIRONMENTAL:
+                type_str = "ENVIRONMENTAL";
+                break;
             default:
                 break;
         }
-        std::cout << "  " << ip << " → " << type_str << " (" << cfg.num_sensors << " sensors)"
+        std::cout << "  " << ip << " → " << type_str << " (" << cfg.active_channels << " channels)"
                   << (cfg.enabled ? " ✅" : " ❌") << std::endl;
     }
 
@@ -472,7 +493,8 @@ int main(int argc, char* argv[]) {
     // Boards need SENSOR_CONFIG to transition from WaitingForServer → Active and start streaming.
     int proactive_count = 0;
     for (const auto& [ip, cfg] : board_map) {
-        if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
+        if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR ||
+            cfg.type == BoardType::ENVIRONMENTAL)
             continue;
         daq::BoardHeartbeatPacket synthetic{};
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
@@ -528,6 +550,7 @@ int main(int argc, char* argv[]) {
     const auto& act_boards = active_boards[BoardType::ACTUATOR];
     const auto& tc_boards = active_boards[BoardType::TC];
     const auto& rtd_boards = active_boards[BoardType::RTD];
+    const auto& env_boards = active_boards[BoardType::ENVIRONMENTAL];
     const auto& lc_boards = active_boards[BoardType::LC];
     const auto& enc_boards = active_boards[BoardType::ENCODER];
 
@@ -551,6 +574,7 @@ int main(int argc, char* argv[]) {
             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
+        fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
@@ -603,6 +627,34 @@ int main(int argc, char* argv[]) {
 
         auto batch = pipeline.poll();
         if (!batch.has_value()) {
+            if (auto env = pipeline.get_last_environmental()) {
+                const BoardConfig* cfg =
+                    resolve_board_config_by_source_ip(env->source_ip, board_map, board_by_octet);
+                const bool configured =
+                    cfg && cfg->type == BoardType::ENVIRONMENTAL && cfg->board_id > 0 &&
+                    cfg->board_id <= 255 &&
+                    std::any_of(env_boards.begin(), env_boards.end(), [&](const auto& board) {
+                        return board.board_id == cfg->board_id &&
+                               std::find(board.channels.begin(), board.channels.end(), 1) !=
+                                   board.channels.end();
+                    });
+                if (configured) {
+                    ++packet_count;
+                    ++packets_per_board[env->source_ip];
+                    const uint64_t timestamp_ns =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+                    const comms::messages::sensor::EnvironmentalMessage msg(
+                        timestamp_ns, env->temperature_c, env->pressure_pa, env->humidity_rh,
+                        env->sample_timestamp_ms);
+                    if (elodin_connected && elodin_client.is_connected() &&
+                        elodin_client.publish({0x25, static_cast<uint8_t>(cfg->board_id)}, msg))
+                        ++elodin_publish_count;
+                    else
+                        ++elodin_drop_count;
+                }
+            }
             // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that
             // board
             auto hb = pipeline.get_last_heartbeat();
@@ -698,6 +750,8 @@ int main(int argc, char* argv[]) {
                             act_boards);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
                                                                                config_board_ids);
+                        fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client,
+                                                                                   env_boards);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client,
                                                                                config_board_ids);
                     }

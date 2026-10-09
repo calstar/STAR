@@ -1,504 +1,810 @@
 /**
- * The COPV study, on a button.
+ * The study: the stand you have open, burned from T-0 once per case.
  *
- * This ran for a week as a scratchpad script and it decided a piece of
- * hardware — so it is a view now, because a number worth quoting six months
- * later has to be reproducible by pressing a button rather than by finding the
- * right file in /tmp.
+ * Every case starts from the cockpit as it is -- drawing, engine, the
+ * Configuration tab, the hookup, the knobs, the COPV fill target -- and changes
+ * only what its row says. A blank cell is the stand's own value, shown grey.
+ * A sweep writes the rows for you, one per value. Nothing here is a number of
+ * the view's own.
  *
- * It is the one view that is not live. A burn resolved honestly costs about a
- * minute of wall clock per case (see `backend/study.py` for why), so the run
- * happens on a worker and this polls it. The trade is stated rather than
- * hidden: you wait, and in exchange the traces have no numerical noise in them.
+ * T-0 is Jump to T-0's: tanks loaded, bottle at the charge, each tank at the
+ * lockup its regulator gives at the knobs. A case is the burn the console
+ * would fly from there, on the console's own numerics.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   cancelStudy,
+  fixed,
   getStudy,
+  getTunables,
   startStudy,
+  type StudyCaseIn,
+  type StudyCaseOut,
   type StudyState,
-  type StudyTrace,
+  type Tunable,
 } from '../api';
 import { StudyChart, type Series } from '../components/StudyChart';
+import { useStand } from '../stand';
 
-/** Gas colours, carried everywhere: the pills, the plots, the table.
- *
- *  Green and purple rather than the obvious green/amber — the pair was checked
- *  for colour-vision separation (ΔE 19 under deuteranopia, 32 normal) because
- *  GN2-against-helium *is* the comparison this view exists to make, and a
- *  reader who cannot tell the two traces apart has no view at all.
- *
- *  One hue per gas, and the *tank* is carried by line style — solid ox, dashed
- *  fuel. A lighter tint of the same hue was the earlier answer and it was the
- *  wrong one: four tints of two hues is four things to tell apart at a glance,
- *  where two hues and two line styles is two. It also means nothing here is
- *  identified by colour alone. */
-const GAS = {
-  gn2: { label: 'GN2', hue: '#27AE60' },
-  he: { label: 'Helium', hue: '#9B59B6' },
-} as const;
+/** Case colours, in this order and never cycled: the dataviz reference
+ *  palette's dark steps, validated on this surface (CVD ΔE 8.4, normal 19.3). */
+const CASE_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 
-type GasKey = keyof typeof GAS;
-
-const isGas = (k: string): k is GasKey => k === 'gn2' || k === 'he';
-
-/** Samples whose solve did not converge are dropped, not drawn.
- *
- *  A tick that failed is not a measurement of anything, and a single spurious
- *  dip is enough to make a reader mistrust a plot that is otherwise exact. */
-function clean(trace: StudyTrace, field: 'ox_psi' | 'fuel_psi' | 'copv_psi' | 'chamber_psi') {
-  const t: number[] = [];
-  const v: number[] = [];
-  trace.t.forEach((when, i) => {
-    if (!trace.converged[i]) return;
-    t.push(when);
-    v.push(trace[field][i]);
-  });
-  return { t, v };
+/** A sweep is a magnitude: one hue, light to dark. */
+function ramp(i: number, n: number): string {
+  const a = [0x9e, 0xc5, 0xf7];
+  const b = [0x1a, 0x4f, 0x9c];
+  const f = n > 1 ? i / (n - 1) : 0;
+  return `rgb(${a.map((c, k) => Math.round(c + (b[k] - c) * f)).join(',')})`;
 }
 
-function Check({
-  on,
+const colorOf = (i: number, n: number, sweep: boolean) =>
+  sweep || n > CASE_COLORS.length ? ramp(i, n) : CASE_COLORS[i];
+
+type SweepVar = 'copv_psi' | 'bottle_litres' | 'fill_fraction' | `knob:${string}`;
+
+const STORE = 'feedtwin.study.cases';
+
+interface Saved {
+  cases: StudyCaseIn[];
+  sweep: string;
+  horizon: number;
+}
+
+const load = (): Saved => {
+  try {
+    const raw = window.localStorage.getItem(STORE);
+    if (raw) return JSON.parse(raw) as Saved;
+  } catch {
+    /* a fresh list */
+  }
+  return { cases: [{ label: 'As set' }], sweep: '', horizon: 20 };
+};
+
+const save = (state: Saved) => {
+  try {
+    window.localStorage.setItem(STORE, JSON.stringify(state));
+  } catch {
+    /* per-viewer convenience only */
+  }
+};
+
+/** A number cell: blank is the stand's value, shown as the placeholder. */
+function NumberCell({
+  value,
+  placeholder,
   onChange,
-  label,
-  hint,
-  accent,
-  disabled,
+  width = 'w-20',
+  title,
 }: {
-  on: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-  hint?: string;
-  accent?: string;
-  disabled?: boolean;
+  value: number | null | undefined;
+  placeholder: string;
+  onChange: (v: number | null) => void;
+  width?: string;
+  title?: string;
 }) {
+  const [text, setText] = useState(value == null ? '' : String(value));
+  useEffect(() => setText(value == null ? '' : String(value)), [value]);
   return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={on}
-      disabled={disabled}
-      onClick={() => onChange(!on)}
-      title={hint}
-      className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-[13px] font-semibold transition-colors ${
-        on
-          ? 'border-white/15 bg-white/10 text-white'
-          : 'border-white/5 bg-black/20 text-gray-500 hover:text-gray-300'
-      } ${disabled ? 'cursor-not-allowed opacity-40' : ''}`}
-    >
-      <span
-        aria-hidden
-        className={`grid h-3.5 w-3.5 flex-shrink-0 place-items-center rounded-[3px] border ${
-          on ? 'border-transparent' : 'border-gray-600'
-        }`}
-        style={{ background: on ? (accent ?? '#3498DB') : 'transparent' }}
-      >
-        {on && (
-          <svg viewBox="0 0 10 10" className="h-2.5 w-2.5" fill="none" stroke="#0d0d12" strokeWidth="2">
-            <path d="M1.5 5.2 4 7.6 8.6 2.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        )}
-      </span>
-      {label}
-    </button>
+    <input
+      type="text"
+      inputMode="decimal"
+      value={text}
+      placeholder={placeholder}
+      title={title}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        const t = text.trim();
+        if (!t) return onChange(null);
+        const v = Number(t);
+        if (Number.isFinite(v)) onChange(v);
+        else setText(value == null ? '' : String(value));
+      }}
+      className={`${width} rounded border border-gray-700 bg-transparent px-1.5 py-0.5 text-right font-mono text-[12.5px] tabular-nums placeholder:text-gray-600 focus:border-blue-500 focus:outline-none`}
+    />
   );
 }
 
 export function Study() {
-  const [gases, setGases] = useState<Record<GasKey, boolean>>({ gn2: true, he: true });
-  const [bigger, setBigger] = useState(false);
-  const [collapse, setCollapse] = useState(false);
-  const [sweep, setSweep] = useState(false);
-  const [vapour, setVapour] = useState(false);
-  const [chilldown, setChilldown] = useState(false);
-  const [lineWalls, setLineWalls] = useState(false);
+  const { live, setup, artifacts, where, standDoc } = useStand();
   const [study, setStudy] = useState<StudyState | null>(null);
+  const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
-  const timer = useRef(0);
+  const initial = useRef(load());
+  const [cases, setCases] = useState<StudyCaseIn[]>(initial.current.cases);
+  const [sweepLabel, setSweepLabel] = useState(initial.current.sweep);
+  const [horizon, setHorizon] = useState(initial.current.horizon);
 
-  const poll = useCallback(async () => {
-    try {
-      setStudy(await getStudy());
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+  useEffect(() => save({ cases, sweep: sweepLabel, horizon }), [cases, sweepLabel, horizon]);
+
+  useEffect(() => {
+    getTunables().then(setTunables).catch(() => undefined);
   }, []);
 
+  // Poll while a run is going; once otherwise, to pick up the last result.
   useEffect(() => {
-    void poll();
-  }, [poll]);
+    let stop = false;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const next = await getStudy();
+        if (stop) return;
+        setStudy(next);
+        if (next.running) timer = window.setTimeout(tick, 1500);
+      } catch (e) {
+        if (!stop) setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    tick();
+    return () => {
+      stop = true;
+      window.clearTimeout(timer);
+    };
+  }, [study?.running]);
 
-  // Poll only while something is in flight; a finished study is static.
-  useEffect(() => {
-    if (!study?.running) return undefined;
-    timer.current = window.setInterval(() => void poll(), 700);
-    return () => window.clearInterval(timer.current);
-  }, [study?.running, poll]);
+  const knobs = live?.knobs ?? [];
+  const engine = artifacts.find((a) => a.id === where.engine);
+  const drawing = artifacts.find((a) => a.id === where.diagram);
+  const bottle = live?.bottles[0];
+  const standName = standDoc?.name ?? drawing?.name ?? 'no stand';
+  const knobValue = (id: string) => (id === 'dome' ? setup.dome : knobs.find((k) => k.id === id)?.psig);
+  const fill = Number(setup.full_fraction ?? 0.95);
 
-  const chosen = (Object.keys(gases) as GasKey[]).filter((g) => gases[g]);
+  const edit = (i: number, patch: Partial<StudyCaseIn>) =>
+    setCases((all) => all.map((c, k) => (k === i ? { ...c, ...patch } : c)));
 
   const run = async () => {
+    if (!live) return;
+    setError('');
     try {
-      setError('');
-      setStudy(
-        await startStudy({
-          gases: chosen,
-          bigger,
-          collapse,
-          sweep,
-          vapour,
-          // A bare stainless tank in film boiling is 50-200 W/(m^2.K). The
-          // checkbox picks the low end deliberately: it is the conservative
-          // member of the range, and naming the number in the label beats a
-          // tick box that silently means something.
-          chilldown: chilldown ? 50 : 0,
-          line_walls: lineWalls,
-        }),
-      );
+      setStudy(await startStudy({ session: live.id, cases, horizon_s: horizon, sweep: sweepLabel || undefined }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const stop = async () => {
-    try {
-      setStudy(await cancelStudy());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const running = study?.running ?? false;
-  const traces = study?.traces ?? [];
-  const shown = useMemo(
-    () => traces.filter((t) => isGas(t.gas) && gases[t.gas as GasKey]),
-    [traces, gases],
-  );
-  const asBuilt = shown.filter((t) => t.key.endsWith('_asbuilt'));
-  const others = shown.filter((t) => !t.key.endsWith('_asbuilt'));
-
-  /** Tank pressure: ox and fuel, per gas, on the as-built bottle. */
-  const tank = useMemo<Series[]>(
-    () =>
-      asBuilt.flatMap((t) => {
-        const g = GAS[t.gas as GasKey];
-        const ox = clean(t, 'ox_psi');
-        const fuel = clean(t, 'fuel_psi');
-        return [
-          { key: `${t.key}-ox`, label: `${g.label} ox`, color: g.hue, ...ox },
-          { key: `${t.key}-fu`, label: `${g.label} fuel`, color: g.hue, dashed: true, ...fuel },
-        ];
-      }),
-    [asBuilt],
-  );
-
-  const copv = useMemo<Series[]>(
-    () =>
-      asBuilt.map((t) => ({
-        key: `${t.key}-copv`,
-        label: GAS[t.gas as GasKey].label,
-        color: GAS[t.gas as GasKey].hue,
-        ...clean(t, 'copv_psi'),
-      })),
-    [asBuilt],
-  );
-
-  const chamber = useMemo<Series[]>(
-    () =>
-      asBuilt.map((t) => ({
-        key: `${t.key}-pc`,
-        label: GAS[t.gas as GasKey].label,
-        color: GAS[t.gas as GasKey].hue,
-        ...clean(t, 'chamber_psi'),
-      })),
-    [asBuilt],
-  );
-
-  /** The other bottles, tank pressure only, so the comparison is one line each. */
-  const compare = useMemo<Series[]>(
-    () =>
-      others.map((t) => ({
-        key: `${t.key}-ox`,
-        label: t.label,
-        color: GAS[t.gas as GasKey].hue,
-        dashed: t.collapse,
-        ...clean(t, 'ox_psi'),
-      })),
-    [others],
-  );
-
-  /** Floor against bottle volume — the sizing curve. */
-  const sizing = useMemo<Series[]>(() => {
-    const points = (study?.sweep ?? []).filter((p) => isGas(p.gas) && gases[p.gas as GasKey]);
-    const byGas = new Map<GasKey, { t: number[]; v: number[] }>();
-    for (const p of points) {
-      const g = p.gas as GasKey;
-      if (!byGas.has(g)) byGas.set(g, { t: [], v: [] });
-      byGas.get(g)!.t.push(p.cubic_inches);
-      byGas.get(g)!.v.push(p.floor_psi);
-    }
-    return [...byGas.entries()].map(([g, s]) => ({
-      key: `sweep-${g}`,
-      label: GAS[g].label,
-      color: GAS[g].hue,
-      ...s,
-    }));
-  }, [study?.sweep, gases]);
-
-  const summary = asBuilt.map((t) => {
-    const good = t.ox_psi.filter((_, i) => t.converged[i] && t.t[i] > 0.3);
-    const start = t.ox_psi[0];
-    const step = Math.min(...t.ox_psi.filter((_, i) => t.t[i] > 0 && t.t[i] < 0.25 && t.converged[i]));
-    return {
-      gas: t.gas as GasKey,
-      start,
-      step: start - step,
-      floor: Math.min(...good),
-      peak: Math.max(...good),
-      end: t.ox_psi[t.ox_psi.length - 1],
-      burn: t.depleted_s,
-      copvLeft: t.copv_psi[t.copv_psi.length - 1],
-    };
-  });
+  const running = Boolean(study?.running);
+  const blocked = !live
+    ? 'Open a stand in the cockpit first.'
+    : !engine
+      ? 'No engine on this stand: pick one in Library.'
+      : '';
 
   return (
-    // The one view that produces a *document* rather than a live reading, so it
-    // gets document treatment: a ground that falls away at the edges, glass
-    // cards, and a column narrow enough to read. The live views stay identical
-    // to the DAQ on purpose (see index.css) -- this one is what gets exported,
-    // screenshotted and put in front of a review, and it should look it.
-    <div
-      className="flex flex-col gap-6 px-4 py-7"
-      style={{
-        background:
-          'radial-gradient(ellipse 900px 520px at 50% -8%, #1e1e28 0%, #171720 38%, var(--background) 78%)',
-        minHeight: '100%',
-      }}
-    >
-      <header>
-        <h2 className="text-lg font-semibold text-white">COPV sizing study</h2>
-        <p className="mt-1 max-w-[86ch] text-[13px] leading-relaxed text-gray-400">
-          Can the pressurant bottle hold the tanks at their regulated pressure for a whole burn, and
-          does the answer differ between nitrogen and helium? Runs the real study drawings, primed to
-          T&#8209;0, and burns.{' '}
-          {study && study.bottle_litres > 0 && (
-            <span className="text-gray-300">
-              Bottle: {study.bottle_litres} L / {study.bottle_cubic_inches} in³.
-            </span>
-          )}
-        </p>
-      </header>
-
-      <section className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-lg border border-gray-800 bg-card px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Gas</span>
-          <Check on={gases.gn2} onChange={(v) => setGases((g) => ({ ...g, gn2: v }))} label="GN2" accent={GAS.gn2.hue} />
-          <Check on={gases.he} onChange={(v) => setGases((g) => ({ ...g, he: v }))} label="Helium" accent={GAS.he.hue} />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Also</span>
-          <Check
-            on={bigger}
-            onChange={setBigger}
-            label="8 L bottle"
-            hint="A bottle well past the knee, to show the as-built one already is"
-            disabled={running}
-          />
-          <Check
-            on={collapse}
-            onChange={setCollapse}
-            label="Ullage collapse"
-            hint="Transient conduction into the cold liquid. A lower bound — condensation is not modelled"
-            disabled={running}
-          />
-          <Check
-            on={sweep}
-            onChange={setSweep}
-            label="Volume sweep"
-            hint="Five more bottles per gas. Slow — this is the one that takes ten minutes"
-            disabled={running}
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-            Thermal
+    <div className="mx-auto flex max-w-7xl flex-col gap-3 p-4">
+      <section className="bg-card rounded-lg border border-gray-800">
+        <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-gray-800 px-4 py-2.5">
+          <h2 className="caps">Study</h2>
+          <span className="text-[13px]" title="Every case starts from this stand as the cockpit has it now.">
+            on <b>{standName}</b> · {engine?.name ?? 'no engine'}
           </span>
-          <Check
-            on={vapour}
-            onChange={setVapour}
-            label="Ullage vapour"
-            hint="Propellant boils into the ullage and carries its own partial pressure. Changes the shape of a cryogenic vent; negligible for a storable. Off by default — it is the more fragile model"
-            disabled={running}
-          />
-          <Check
-            on={lineWalls}
-            onChange={setLineWalls}
-            label="Line walls"
-            hint="The tube and its fittings give the gas their own heat on the way past. Worth ~50 psi of tank pressure late in a nitrogen burn, and a much fuller bottle on either gas. Needs wall thickness and fitting mass on the drawing"
-            disabled={running}
-          />
-          <Check
-            on={chilldown}
-            onChange={setChilldown}
-            label="Chilldown 50 W/m²K"
-            hint="The wetted face of the tank wall. A warm wall dumps heat into the liquid, which with ullage vapour on is what boils a cryogen off during a load"
-            disabled={running}
-          />
-        </div>
-
-        <div className="ml-auto flex items-center gap-3">
-          {running ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-yellow-500" />
-                <span className="text-[13px] font-semibold text-gray-300">
-                  {study?.stage || 'running'} · {Math.round((study?.progress ?? 0) * 100)}%
-                </span>
-              </div>
-              <div className="h-1.5 w-40 overflow-hidden rounded-full bg-black/40">
-                <div
-                  className="h-full rounded-full bg-yellow-500 transition-[width] duration-500"
-                  style={{ width: `${Math.round((study?.progress ?? 0) * 100)}%` }}
-                />
-              </div>
+          <span className="text-[12px] text-text-muted" title="The stand's own values. A blank cell in a case is this value.">
+            COPV {fixed(Number(setup.copv_target), 0)} psig ·{' '}
+            {knobs.length
+              ? knobs.map((k) => `${k.label} ${fixed(knobValue(k.id) ?? k.psig, 0)} psig`).join(' · ')
+              : `dome ${fixed(Number(setup.dome), 0)} psig`}{' '}
+            · fill {fixed(fill * 100, 0)} % · {bottle?.label ?? 'bottle'} as drawn
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <label className="text-[12px] text-text-muted" title="A case stops here if no tank has run dry.">
+              Horizon <NumberCell value={horizon} placeholder="20" width="w-14" onChange={(v) => setHorizon(v ?? 20)} /> s
+            </label>
+            {running ? (
               <button
                 type="button"
-                onClick={() => void stop()}
-                className="rounded-md border border-red-900/60 bg-red-950/40 px-3 py-1.5 text-[13px] font-semibold text-red-300 hover:bg-red-950/70"
+                onClick={() => cancelStudy().then(setStudy)}
+                className="rounded border border-gray-600 px-3 py-1 text-[13px] hover:bg-gray-800"
               >
-                Stop
+                Cancel
               </button>
-            </>
-          ) : (
+            ) : (
+              <button
+                type="button"
+                onClick={run}
+                disabled={Boolean(blocked) || cases.length === 0}
+                title={blocked || `Burn ${cases.length} case${cases.length === 1 ? '' : 's'} from T-0`}
+                className="rounded bg-blue-600 px-3 py-1 text-[13px] font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Run {cases.length} case{cases.length === 1 ? '' : 's'}
+              </button>
+            )}
+          </div>
+        </header>
+
+        <CaseTable
+          cases={cases}
+          knobs={knobs.map((k) => ({ id: k.id, label: k.label, psig: knobValue(k.id) ?? k.psig }))}
+          setup={setup}
+          fill={fill}
+          tunables={tunables}
+          bottleLabel={bottle?.label ?? 'Bottle'}
+          onEdit={edit}
+          onRemove={(i) => setCases((all) => all.filter((_, k) => k !== i))}
+        />
+        <div className="flex flex-wrap items-center gap-2 border-t border-gray-800 px-4 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              setCases((all) => [...all, { label: `Case ${all.length + 1}` }]);
+              setSweepLabel('');
+            }}
+            className="rounded border border-gray-700 px-2.5 py-0.5 text-[12.5px] hover:bg-gray-800"
+          >
+            + Case
+          </button>
+          <SweepBuilder
+            knobs={knobs.map((k) => ({ id: k.id, label: k.label }))}
+            onBuild={(built, label) => {
+              setCases(built);
+              setSweepLabel(label);
+            }}
+          />
+          {cases.length > 1 && (
             <button
               type="button"
-              onClick={() => void run()}
-              disabled={!chosen.length}
-              className="rounded-md bg-blue-600 px-5 py-2 text-[13px] font-bold uppercase tracking-wide text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => {
+                setCases([{ label: 'As set' }]);
+                setSweepLabel('');
+              }}
+              className="ml-auto text-[12px] text-text-muted hover:text-red-400"
             >
-              Run study
+              Clear cases
             </button>
           )}
         </div>
-
-        <p className="w-full text-[12px] text-gray-500">
-          About a minute of compute per case
-          {chosen.length > 0 && (
-            <>
-              {' '}— this run is{' '}
-              <span className="text-gray-300">
-                {chosen.length * (1 + (bigger ? 1 : 0) + (collapse ? 1 : 0) + (sweep ? 5 : 0))} case
-                {chosen.length * (1 + (bigger ? 1 : 0) + (collapse ? 1 : 0) + (sweep ? 5 : 0)) === 1 ? '' : 's'}
-              </span>
-            </>
-          )}
-          . The coupling steps below the regulator–ullage time constant, which is what keeps the
-          traces free of tick-rate noise and what makes it slow.
-        </p>
       </section>
 
       {(error || study?.error) && (
-        <p className="rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-2 text-[13px] text-red-300">
+        <div className="rounded border border-red-900 bg-red-950/40 px-3 py-2 text-[13px] text-red-300">
           {error || study?.error}
-        </p>
+        </div>
       )}
 
-      {study?.notes?.map((n) => (
-        <p key={n} className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-4 py-2 text-[13px] text-amber-300">
-          {n}
-        </p>
-      ))}
+      {study && (running || study.cases.length > 0) && <Results study={study} />}
+    </div>
+  );
+}
 
-      {!traces.length && !running && (
-        <p className="rounded-lg border border-dashed border-gray-800 px-4 py-10 text-center text-[13px] text-gray-500">
-          No run yet. Pick the gases and press Run study.
-        </p>
+function CaseTable({
+  cases,
+  knobs,
+  setup,
+  fill,
+  tunables,
+  bottleLabel,
+  onEdit,
+  onRemove,
+}: {
+  cases: StudyCaseIn[];
+  knobs: { id: string; label: string; psig: number }[];
+  setup: Record<string, number | boolean>;
+  fill: number;
+  tunables: Tunable[];
+  bottleLabel: string;
+  onEdit: (i: number, patch: Partial<StudyCaseIn>) => void;
+  onRemove: (i: number) => void;
+}) {
+  const th = 'px-2 py-1.5 text-left font-semibold whitespace-nowrap';
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12.5px]">
+        <thead className="text-text-muted">
+          <tr>
+            <th className={th}>Case</th>
+            <th className={th} title="Bottle at T-0. Also the charge the regulators are taken as set against.">
+              COPV (psig)
+            </th>
+            {knobs.map((k) => (
+              <th key={k.id} className={th} title={`Knob: ${k.label}`}>
+                {k.label.replace(/\s*\(.*\)$/, '')} (psig)
+              </th>
+            ))}
+            <th className={th} title={`${bottleLabel} volume`}>
+              Bottle (L)
+            </th>
+            <th className={th} title="Liquid over tank volume at T-0">
+              Fill (%)
+            </th>
+            <th className={th} title="The gas in the bottle and press lines">
+              Pressurant
+            </th>
+            <th className={th} title="Any row of the Configuration tab, changed for this case">
+              Settings
+            </th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {cases.map((c, i) => (
+            <tr key={i} className="border-t border-gray-800/60 align-top">
+              <td className="px-2 py-1">
+                <input
+                  value={c.label}
+                  onChange={(e) => onEdit(i, { label: e.target.value })}
+                  className="w-36 rounded border border-gray-700 bg-transparent px-1.5 py-0.5 focus:border-blue-500 focus:outline-none"
+                />
+              </td>
+              <td className="px-2 py-1">
+                <NumberCell
+                  value={c.copv_psi}
+                  placeholder={fixed(Number(setup.copv_target), 0)}
+                  onChange={(v) => onEdit(i, { copv_psi: v })}
+                />
+              </td>
+              {knobs.map((k) => (
+                <td key={k.id} className="px-2 py-1">
+                  <NumberCell
+                    value={c.knobs?.[k.id]}
+                    placeholder={fixed(k.psig, 0)}
+                    onChange={(v) => {
+                      const next = { ...(c.knobs ?? {}) };
+                      if (v == null) delete next[k.id];
+                      else next[k.id] = v;
+                      onEdit(i, { knobs: next });
+                    }}
+                  />
+                </td>
+              ))}
+              <td className="px-2 py-1">
+                <NumberCell
+                  value={c.bottle_litres}
+                  placeholder="drawn"
+                  width="w-16"
+                  onChange={(v) => onEdit(i, { bottle_litres: v })}
+                />
+              </td>
+              <td className="px-2 py-1">
+                <NumberCell
+                  value={c.fill_fraction == null ? null : Math.round(c.fill_fraction * 1000) / 10}
+                  placeholder={fixed(fill * 100, 0)}
+                  width="w-14"
+                  onChange={(v) => onEdit(i, { fill_fraction: v == null ? null : v / 100 })}
+                />
+              </td>
+              <td className="px-2 py-1">
+                <select
+                  value={c.pressurant ?? ''}
+                  onChange={(e) =>
+                    onEdit(i, { pressurant: (e.target.value || null) as StudyCaseIn['pressurant'] })
+                  }
+                  className="rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5"
+                >
+                  <option value="">as drawn</option>
+                  <option value="helium">helium</option>
+                  <option value="nitrogen">nitrogen</option>
+                </select>
+              </td>
+              <td className="px-2 py-1">
+                <SettingsCell
+                  value={c.setup ?? {}}
+                  setup={setup}
+                  tunables={tunables}
+                  onChange={(next) => onEdit(i, { setup: next })}
+                />
+              </td>
+              <td className="px-2 py-1 text-right">
+                <button
+                  type="button"
+                  onClick={() => onRemove(i)}
+                  aria-label={`Remove ${c.label}`}
+                  className="px-1 text-gray-500 hover:text-red-400"
+                >
+                  ×
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Rows the case table has its own columns for. */
+const OWN_COLUMNS = ['dome', 'copv_target', 'full_fraction'];
+
+function SettingsCell({
+  value,
+  setup,
+  tunables,
+  onChange,
+}: {
+  value: Record<string, number | boolean>;
+  setup: Record<string, number | boolean>;
+  tunables: Tunable[];
+  onChange: (next: Record<string, number | boolean>) => void;
+}) {
+  const byKey = useMemo(() => new Map(tunables.map((t) => [t.key, t])), [tunables]);
+  const free = tunables.filter((t) => !(t.key in value) && !OWN_COLUMNS.includes(t.key));
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {Object.entries(value).map(([key, v]) => {
+        const t = byKey.get(key);
+        return (
+          <span
+            key={key}
+            title={t?.explains}
+            className="inline-flex items-center gap-1 rounded border border-gray-700 px-1.5 py-0.5 text-[11.5px]"
+          >
+            {t?.label ?? key}
+            {t?.kind === 'flag' ? (
+              <input
+                type="checkbox"
+                checked={Boolean(v)}
+                onChange={(e) => onChange({ ...value, [key]: e.target.checked })}
+              />
+            ) : (
+              <NumberCell
+                value={Number(v)}
+                placeholder={String(setup[key] ?? '')}
+                width="w-16"
+                onChange={(n) => onChange({ ...value, [key]: n ?? Number(setup[key] ?? 0) })}
+              />
+            )}
+            {t?.unit ? <span className="text-gray-500">{t.unit}</span> : null}
+            <button
+              type="button"
+              aria-label={`Drop ${key}`}
+              onClick={() => {
+                const next = { ...value };
+                delete next[key];
+                onChange(next);
+              }}
+              className="text-gray-500 hover:text-red-400"
+            >
+              ×
+            </button>
+          </span>
+        );
+      })}
+      <select
+        value=""
+        onChange={(e) => {
+          const t = byKey.get(e.target.value);
+          if (t) onChange({ ...value, [t.key]: setup[t.key] ?? t.default });
+        }}
+        className="max-w-[9rem] rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5 text-[11.5px] text-text-muted"
+        title="Change a Configuration row for this case"
+      >
+        <option value="">+ setting</option>
+        {free.map((t) => (
+          <option key={t.key} value={t.key}>
+            {t.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function SweepBuilder({
+  knobs,
+  onBuild,
+}: {
+  knobs: { id: string; label: string }[];
+  onBuild: (cases: StudyCaseIn[], label: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [what, setWhat] = useState<SweepVar>('copv_psi');
+  const [values, setValues] = useState('3000, 3500, 4000, 4500');
+  const options: { key: SweepVar; label: string; unit: string }[] = [
+    { key: 'copv_psi', label: 'COPV charge', unit: 'psig' },
+    ...knobs.map((k) => ({
+      key: `knob:${k.id}` as SweepVar,
+      label: k.label.replace(/\s*\(.*\)$/, ''),
+      unit: 'psig',
+    })),
+    { key: 'bottle_litres', label: 'Bottle volume', unit: 'L' },
+    { key: 'fill_fraction', label: 'Fill', unit: '%' },
+  ];
+  const chosen = options.find((o) => o.key === what) ?? options[0];
+  const parsed = values.trim()
+    ? values
+        .split(/[,\s]+/)
+        .filter(Boolean)
+        .map(Number)
+        .filter((v) => Number.isFinite(v))
+    : [];
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded border border-gray-700 px-2.5 py-0.5 text-[12.5px] hover:bg-gray-800"
+        title="Write one case per value of one quantity"
+      >
+        Sweep…
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 rounded border border-gray-700 px-2 py-1 text-[12.5px]">
+      Sweep
+      <select
+        value={what}
+        onChange={(e) => setWhat(e.target.value as SweepVar)}
+        className="rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5"
+      >
+        {options.map((o) => (
+          <option key={o.key} value={o.key}>
+            {o.label} ({o.unit})
+          </option>
+        ))}
+      </select>
+      over
+      <input
+        value={values}
+        onChange={(e) => setValues(e.target.value)}
+        className="w-56 rounded border border-gray-700 bg-transparent px-1.5 py-0.5 font-mono"
+        title="Values, separated by commas or spaces"
+      />
+      <button
+        type="button"
+        disabled={parsed.length === 0}
+        onClick={() => {
+          onBuild(
+            parsed.map((v): StudyCaseIn => {
+              const base: StudyCaseIn = { label: `${chosen.label} ${v} ${chosen.unit}`, x: v };
+              if (what === 'copv_psi') return { ...base, copv_psi: v };
+              if (what === 'bottle_litres') return { ...base, bottle_litres: v };
+              if (what === 'fill_fraction') return { ...base, fill_fraction: v / 100 };
+              return { ...base, knobs: { [what.slice(5)]: v } };
+            }),
+            `${chosen.label} (${chosen.unit})`,
+          );
+          setOpen(false);
+        }}
+        className="rounded bg-gray-700 px-2 py-0.5 hover:bg-gray-600 disabled:opacity-40"
+      >
+        Write {parsed.length} cases
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-300">
+        ×
+      </button>
+    </span>
+  );
+}
+
+/** Lowest tank pressure once the ignition step has passed, converged steps only. */
+const lowOf = (c: StudyCaseOut): number | null => {
+  const settled = c.t.map((t, i) => (t > 0.3 && c.converged[i] ? i : -1)).filter((i) => i >= 0);
+  let low = Infinity;
+  for (const v of Object.values(c.tanks)) for (const i of settled) low = Math.min(low, v[i]);
+  return Number.isFinite(low) ? low : null;
+};
+
+function Results({ study }: { study: StudyState }) {
+  const done = study.cases;
+  const sweep = Boolean(study.sweep);
+  const n = Math.max(study.planned, done.length);
+  const colors = done.map((_, i) => colorOf(i, n, sweep));
+
+  const series = (pick: (c: StudyCaseOut) => [string, number[]][]): Series[] =>
+    done.flatMap((c, i) =>
+      c.error
+        ? []
+        : pick(c).map(([name, values], k): Series => {
+            const t: number[] = [];
+            const v: number[] = [];
+            c.t.forEach((when, j) => {
+              if (!c.converged[j]) return;
+              t.push(when);
+              v.push(values[j]);
+            });
+            return {
+              key: `${i}.${name}`,
+              label: name ? `${c.label} · ${name}` : c.label,
+              // Endpoint text: the swept value, or the case's name, short.
+              tag: `${sweep && c.x != null ? String(c.x) : c.label.slice(0, 16)}${name ? ` ${name.slice(0, 3)}` : ''}`,
+              color: colors[i],
+              dashed: k > 0,
+              t,
+              v,
+            };
+          }),
+    );
+
+  const tankNames = Object.keys(done.find((c) => !c.error)?.tanks ?? {});
+  const headers = [
+    '',
+    'Case',
+    'Changed',
+    'T-0 tanks (psig)',
+    'Burn (s)',
+    'Impulse (N·s)',
+    'Thrust (N)',
+    'Tank low (psig)',
+    'COPV end (psig)',
+    'O/F',
+    '',
+  ];
+
+  return (
+    <>
+      {study.running && (
+        <div className="bg-card rounded-lg border border-gray-800 px-4 py-2 text-[13px]">
+          <div className="mb-1 flex justify-between text-text-muted">
+            <span>{study.stage}</span>
+            <span>
+              {done.length} of {study.planned}
+            </span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded bg-gray-800">
+            <div className="h-full bg-blue-500 transition-all" style={{ width: `${study.progress * 100}%` }} />
+          </div>
+        </div>
       )}
 
-      {summary.length > 0 && (
-        <section className="overflow-x-auto rounded-lg border border-gray-800 bg-card">
-          <table className="w-full text-[13px] tabular-nums">
-            <thead>
-              <tr className="border-b border-gray-800 text-left text-[11px] uppercase tracking-wider text-gray-500">
-                <th className="px-4 py-2 font-semibold">As built</th>
-                <th className="px-4 py-2 text-right font-semibold">Lockup</th>
-                <th className="px-4 py-2 text-right font-semibold">Ignition step</th>
-                <th className="px-4 py-2 text-right font-semibold">Floor</th>
-                <th className="px-4 py-2 text-right font-semibold">Peak</th>
-                <th className="px-4 py-2 text-right font-semibold">At depletion</th>
-                <th className="px-4 py-2 text-right font-semibold">Burn</th>
-                <th className="px-4 py-2 text-right font-semibold">COPV left</th>
+      {done.length > 0 && (
+        <section className="bg-card overflow-x-auto rounded-lg border border-gray-800">
+          <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
+            Results{' '}
+            <span className="font-normal normal-case tracking-normal text-gray-600">
+              on {study.stand} · {study.engine_name}
+            </span>
+          </h2>
+          <table className="w-full text-[12.5px]">
+            <thead className="text-text-muted">
+              <tr>
+                {headers.map((h, i) => (
+                  <th key={i} className={`px-3 py-1.5 font-semibold ${i < 3 || i === 10 ? 'text-left' : 'text-right'}`}>
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody>
-              {summary.map((r) => (
-                <tr key={r.gas} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-2 font-semibold" style={{ color: GAS[r.gas].hue }}>
-                    {GAS[r.gas].label}
-                  </td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.start.toFixed(0)} psig</td>
-                  <td className="px-4 py-2 text-right text-gray-300">−{r.step.toFixed(0)} psig</td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.floor.toFixed(0)} psig</td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.peak.toFixed(0)} psig</td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.end.toFixed(0)} psig</td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.burn ? `${r.burn} s` : '—'}</td>
-                  <td className="px-4 py-2 text-right text-gray-300">{r.copvLeft.toFixed(0)} psig</td>
-                </tr>
-              ))}
+            <tbody className="tabular-nums">
+              {done.map((c, i) => {
+                const bottle = Object.values(c.bottles)[0];
+                const low = lowOf(c);
+                return (
+                  <tr key={i} className="border-t border-gray-800/60">
+                    <td className="px-3 py-1">
+                      <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: colors[i] }} />
+                    </td>
+                    <td className="px-3 py-1">{c.label}</td>
+                    <td className="px-3 py-1 text-text-muted">{c.changes.join(', ')}</td>
+                    <td
+                      className="px-3 py-1 text-right font-mono"
+                      title="Where the tanks start: the lockup their regulator gives at T-0"
+                    >
+                      {c.t0.tank_psi != null ? fixed(c.t0.tank_psi, 0) : '–'}
+                    </td>
+                    <td
+                      className="px-3 py-1 text-right font-mono"
+                      title={c.depleted_s == null ? 'Reached the horizon with no tank dry' : 'To the first tank dry'}
+                    >
+                      {c.depleted_s != null ? fixed(c.depleted_s, 2) : c.error ? '–' : `>${fixed(study.horizon_s, 0)}`}
+                    </td>
+                    <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.impulse_Ns ?? NaN, 0)}</td>
+                    <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.thrust_mean_N ?? NaN, 0)}</td>
+                    <td className="px-3 py-1 text-right font-mono" title="Lowest tank pressure after the first 0.3 s">
+                      {low != null ? fixed(low, 0) : '–'}
+                    </td>
+                    <td className="px-3 py-1 text-right font-mono">
+                      {bottle?.length ? fixed(bottle[bottle.length - 1], 0) : '–'}
+                    </td>
+                    <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.of_mean ?? NaN, 3)}</td>
+                    <td className="px-3 py-1 text-[12px]">
+                      {c.error ? (
+                        <span className="text-red-400" title={c.error}>
+                          failed
+                        </span>
+                      ) : c.tripped ? (
+                        <span className="text-amber-400" title={c.tripped}>
+                          tripped
+                        </span>
+                      ) : c.failed_ticks ? (
+                        <span className="text-amber-400" title={`${c.failed_ticks} step(s) did not converge`}>
+                          {c.failed_ticks} unconverged
+                        </span>
+                      ) : (
+                        <span title={c.notes.join('\n')} className="cursor-help text-gray-500">
+                          notes
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          {study.notes.length > 0 && (
+            <p className="border-t border-gray-800 px-4 py-2 text-[12px] text-text-muted">{study.notes.join(' ')}</p>
+          )}
         </section>
       )}
 
-      <StudyChart
-        title="Tank pressure"
-        caption="Half a second of mains-shut hold first, so the ignition step has a datum. The tanks sit at lockup; the mains crack and pressure steps down as regulator droop and press-line loss appear together; then it climbs as the bottle decays and the regulator's supply-pressure effect lifts the dome with it."
-        series={tank}
-        yLabel="tank psig"
-        rules={[
-          { y: 550, label: '550 psig lockup' },
-          { x: 0, label: 'mains open' },
-        ]}
-      />
-
-      <StudyChart
-        title="COPV blowdown"
-        caption="What is left in the bottle. Both gases hold the same number of moles at 4500 psi within half a percent, so this is a picture of demand, not of capacity."
-        series={copv}
-        yLabel="bottle psig"
-        area
-      />
-
-      <StudyChart
-        title="Chamber pressure"
-        caption="What the tank pressure buys. Zero during the mains-shut lead-in, then the burn."
-        series={chamber}
-        yLabel="chamber psig"
-        area
-      />
-
-      {compare.length > 0 && (
-        <StudyChart
-          title="Other bottles and options"
-          caption="LOX tank pressure only, one line per case, so the comparison against the as-built run above is a single trace each."
-          series={compare}
-          yLabel="psig"
-        />
+      {done.some((c) => !c.error) && (
+        <div className="grid gap-3 xl:grid-cols-2">
+          <Figure>
+            <StudyChart
+              title="Tank pressure"
+              caption={tankNames.length > 1 ? `${tankNames[0]} solid, ${tankNames.slice(1).join(', ')} dashed` : ''}
+              yLabel="psig"
+              series={series((c) => Object.entries(c.tanks))}
+            />
+          </Figure>
+          <Figure>
+            <StudyChart
+              title="COPV pressure"
+              caption=""
+              yLabel="psig"
+              series={series((c) =>
+                Object.values(c.bottles)
+                  .slice(0, 1)
+                  .map((v): [string, number[]] => ['', v]),
+              )}
+            />
+          </Figure>
+          <Figure>
+            <StudyChart title="Thrust" caption="" yLabel="N" series={series((c) => [['', c.thrust_n]])} />
+          </Figure>
+          <Figure>
+            <StudyChart
+              title="Chamber pressure"
+              caption=""
+              yLabel="psig"
+              series={series((c) => [['', c.chamber_psi]])}
+            />
+          </Figure>
+        </div>
       )}
 
-      {sizing.length > 0 && (
+      {sweep && done.filter((c) => !c.error && c.x != null).length > 1 && <SweepFigures study={study} />}
+    </>
+  );
+}
+
+function Figure({ children }: { children: ReactNode }) {
+  return <div className="bg-card rounded-lg border border-gray-800 p-3">{children}</div>;
+}
+
+function SweepFigures({ study }: { study: StudyState }) {
+  const points = study.cases
+    .filter((c) => !c.error && c.x != null)
+    .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
+  const one = (label: string, read: (c: StudyCaseOut) => number | null | undefined): Series => {
+    const t: number[] = [];
+    const v: number[] = [];
+    for (const c of points) {
+      const y = read(c);
+      if (y == null || !Number.isFinite(y)) continue;
+      t.push(c.x as number);
+      v.push(y);
+    }
+    return { key: label, label, color: CASE_COLORS[0], t, v };
+  };
+  return (
+    <div className="grid gap-3 xl:grid-cols-3">
+      <Figure>
         <StudyChart
-          title="Bottle size against the floor it holds"
-          caption="Lowest tank pressure once the ignition transient has settled, against COPV volume at a fixed 4500 psi charge. The as-built cylinder is included at its real volume, so the knee can be read against the hardware rather than interpolated to it."
-          series={sizing}
+          title="Lowest tank pressure"
+          caption="after the first 0.3 s"
           yLabel="psig"
-          xLabel="COPV volume (in³)"
+          xLabel={study.sweep}
+          series={[one('Tank low', lowOf)]}
         />
-      )}
+      </Figure>
+      <Figure>
+        <StudyChart
+          title="Impulse"
+          caption=""
+          yLabel="N·s"
+          xLabel={study.sweep}
+          series={[one('Impulse', (c) => c.outcome.impulse_Ns)]}
+        />
+      </Figure>
+      <Figure>
+        <StudyChart
+          title="Burn time"
+          caption="to the first tank dry"
+          yLabel="s"
+          xLabel={study.sweep}
+          series={[one('Burn', (c) => c.depleted_s)]}
+        />
+      </Figure>
     </div>
   );
 }

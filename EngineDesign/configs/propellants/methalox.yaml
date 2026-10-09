@@ -17,19 +17,21 @@ fluids:
     boiling_point: 111.65
     molecular_weight: 16.04
     bulk_modulus_pa: null   # TODO: LCH4 near NBP — measure/source before trusting feed acoustics for fuel side
+    critical_temperature: 190.56    # K, CoolProp Methane — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
   oxidizer:
     name: LOX
     density: 1140.0
-    viscosity: 0.00018
+    viscosity: 0.000200         # Pa s, CoolProp Oxygen 90 K: 1.96e-4 at 0.15 MPa, 2.03e-4 at 4 MPa (was 1.8e-4)
     surface_tension: 0.013
     vapor_pressure: 101325.0
-    specific_heat: 2300.0
+    specific_heat: 1700.0       # J/(kg K), CoolProp Oxygen 90 K: 1699 (was 2300, not LOX)
     thermal_conductivity: 0.15
     temperature: 90.0
     latent_heat: 213000.0      # J/kg, standard LOX (was _LOX_HFG_DEFAULT in stability/analysis.py)
     boiling_point: 90.2        # K, standard LOX (was _LOX_TBOIL_DEFAULT)
     molecular_weight: 32.0
-    bulk_modulus_pa: 1500000000.0     # order-of-magnitude LOX (was hardcoded in stability/report.py); refine via test T5
+    bulk_modulus_pa: 940000000.0     # Pa, CoolProp Oxygen 90 K rho*a^2: 0.938e9 at 0.15 MPa, 0.983e9 at 4 MPa (was an order-of-magnitude 1.5e9)
+    critical_temperature: 154.60      # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
 # Chamber-gas properties for the Ingebo aerodynamic Weber number (rho_g = Pc/(R*T)).
 # Every preset states these explicitly: the SMDConfig schema defaults (R=360, T=3500) are a
 # single hardcoded pair that cannot be right for three different propellants, and leaving a
@@ -40,6 +42,11 @@ spray:
   smd:
     chamber_gas_R: 426.1    # J/(kg*K), LOX/CH4 @ MR 2.8
     chamber_gas_T: 3293.0   # K,        LOX/CH4 @ MR 2.8
+# Design O/F a propellant switch sets: 2.8, the point the chamber gas above is read at. CEA c*
+# peaks at O/F 2.75 (1857.3 m/s at 430 psia).
+design_requirements:
+  optimal_of_ratio: 2.8
+
 combustion:
   cea:
     ox_name: LOX

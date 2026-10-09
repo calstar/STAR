@@ -7,16 +7,27 @@ name: feed-twin CI
       # The physics core. Every number this app produces comes from it, so a
       # change there has to run these gates -- including the ones in the app.
       - 'lib/feedtwin/**'
+      # The document store stands live in, and its client half.
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       # EngineDesign's dependency set: the engine-design-compat job below proves
       # the physics core can be installed alongside it, so a change to what
       # EngineDesign pins has to re-run that proof.
       - 'EngineDesign/requirements-base.txt'
+      # The P&ID is pid-designer's canvas compiled into this app, so a change
+      # there has to prove this app still builds and draws it.
+      - 'pid-designer/frontend/src/components/pid/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/feed-twin-ci.yml'
   pull_request:
     paths:
       - 'feed-twin/**'
       - 'lib/feedtwin/**'
+      - 'lib/stardesign/**'
+      - 'lib/stardesign-ui/**'
       - 'EngineDesign/requirements-base.txt'
+      - 'pid-designer/frontend/src/components/pid/**'
+      - 'lib/stardesign-ui/**'
       - '.github/workflows/feed-twin-ci.yml'
   workflow_dispatch:
 
@@ -75,7 +86,11 @@ jobs:
       # 0.14 us, measured). A stiff transient evaluates properties millions of
       # times, and nothing about the slow spelling looks wrong in review.
       - name: Tests
-        run: python -m pytest lib/feedtwin/tests -q
+        run: python -m pytest lib/feedtwin/tests -q -n auto
+
+      # Timed on its own: the parallel run above skips it (busy cores).
+      - name: Timing budgets
+        run: python -m pytest lib/feedtwin/tests/test_props_performance.py -q
 
   backend:
     name: Backend (imports + tests)
@@ -87,10 +102,8 @@ jobs:
     # tests had never once run here -- the job was cancelled at 15.2 minutes
     # the first time it got that far, which reads as a failure and is not one.
     #
-    # `-n auto` with pytest-xdist takes it to about 7 minutes and the suite
-    # passes clean under it; not adopted yet because a physics suite sharing a
-    # library directory deserves more than one green parallel run before CI
-    # depends on it.
+    # `-n auto` with pytest-xdist takes it to about 7 minutes; adopted
+    # 2026-10-07 once both suites had passed clean under it locally.
     timeout-minutes: 45
 
     steps:
@@ -110,6 +123,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -e ../lib/feedtwin
+          pip install -e ../lib/stardesign
 
       - name: Verify imports
         working-directory: feed-twin
@@ -123,7 +137,9 @@ jobs:
         # runs them. It arrives transitively with httpx today -- named here
         # anyway, because a transitive dependency that disappears would turn an
         # async test gate into a silent no-op rather than a failure.
-        run: pip install pytest httpx anyio black mypy
+        # black pinned to match lib/feedtwin's dev extra and daq-server-ci;
+        # see lib/feedtwin/pyproject.toml for why a floating formatter broke CI.
+        run: pip install pytest pytest-xdist httpx anyio black==25.11.0 mypy
 
       # The app gets the same lint and type gates as the library. It is a small
       # shell today, which is exactly why holding the line is cheap -- the time
@@ -145,7 +161,7 @@ jobs:
       # 00 claims both environments; both are checked.
       - name: Run tests
         working-directory: feed-twin
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q -n auto
 
   # Phase 00's other exit criterion: the physics core has to be installable
   # alongside EngineDesign, because Layer X will import it in that process
@@ -225,7 +241,7 @@ jobs:
 
       # Only the pure logic is tested, and deliberately: `src/lib/series.ts` is
       # the one part of this frontend that can be *wrong* rather than merely
-      # ugly. Rendering assertions on a layout that is still moving would cost
+      # ugly -- that, and that the drawing keeps pid-designer's palette. Rendering assertions on a layout that is still moving would cost
       # more to maintain than they catch.
       - name: Unit tests
         working-directory: feed-twin/frontend

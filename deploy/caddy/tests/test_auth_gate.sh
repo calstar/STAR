@@ -16,7 +16,7 @@ CADDYFILE="$(cd "$(dirname "${1:-$HERE/../Caddyfile}")" && pwd)/$(basename "${1:
 NET="caddyauthtest$$"; PORT="${TEST_PORT:-9080}"; FAIL=0
 VHOST=openrocket.starberkeley.org
 
-cleanup(){ docker rm -f ct-caddy ct-auth ct-api ct-fe >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
+cleanup(){ docker rm -f ct-caddy ct-auth ct-api ct-fe ct-parts >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
 trap cleanup EXIT
 cleanup; docker network create "$NET" >/dev/null
 
@@ -26,6 +26,7 @@ stub(){ docker run -d --rm --name "$1" --network "$NET" --network-alias "$2" \
 stub ct-auth auth 5000 auth
 stub ct-api  star-openrocket-api 8002 app
 stub ct-fe   star-openrocket-frontend 4177 app
+stub ct-parts parts-hub 8080 app
 
 docker run -d --rm --name ct-caddy --network "$NET" -p "$PORT":80 \
   -e SCHEME=http -e BASE_DOMAIN=starberkeley.org \
@@ -56,6 +57,15 @@ echo "--- identity comes from auth, never from the client ---"
 CODE=$(req /api/whoami -H 'Cookie: session=good'); check "identity injected by auth" 200 "x-auth-email=real@berkeley.edu"
 CODE=$(req /api/whoami -H 'Cookie: session=good' -H 'X-Auth-Email: forged@evil.com'); check "forged header overwritten" 200 "x-auth-email=real@berkeley.edu"
 CODE=$(req /api/whoami -H 'X-Auth-Email: forged@evil.com'); check "forged header without session refused" 401
+
+echo "--- parts: hub gated, /panel/ public by design, identity never passed to it ---"
+VHOST=parts.starberkeley.org
+CODE=$(req /);                  check "parts GET /,        no cookie"  401
+CODE=$(req /api/hub/parts);     check "parts hub API,      no cookie"  401
+CODE=$(req /panel/);            check "parts GET /panel/,  no cookie"  200 "parts-hub"
+CODE=$(req /panel/api/catalog -H 'X-Auth-Email: forged@evil.com'); check "panel never sees a client identity" 200 "x-auth-email=<none>"
+CODE=$(req /panel/api/catalog -H 'Cookie: session=good'); check "panel never sees a STAR identity either" 200 "x-auth-email=<none>"
+CODE=$(req /panelx);            check "only the /panel/ prefix is open" 401
 
 rm -f "$BODY"
 [ "$FAIL" = 0 ] && echo "all assertions passed" || echo "FAILURES -- the site is not gated the way it looks"

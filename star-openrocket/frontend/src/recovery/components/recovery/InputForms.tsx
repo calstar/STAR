@@ -65,7 +65,7 @@ export function VehicleForm({ value, onChange, design, sources, onSourcesChange 
   sources: InputSources
   onSourcesChange: (s: InputSources) => void
 }) {
-  const { num } = useUnits()
+  const { num, dec } = useUnits()
   const set = <K extends keyof Vehicle>(k: K, v: Vehicle[K]) =>
     onChange({ ...value, [k]: v })
 
@@ -124,7 +124,14 @@ export function VehicleForm({ value, onChange, design, sources, onSourcesChange 
           />
         </Field>
         <Field label="Lateral bearing" hint="deg toward (0=N, 90=E)">
-          <NumberInput value={value.v_lat_dir ?? 0} onChange={(v) => set('v_lat_dir', v ?? 0)}
+          {/* A bearing has no Kind -- degrees are degrees in both systems -- so
+              it needs `display` spelled out or the box shows the raw double.
+              The flight solver hands back 353.83678035725484, and the Units
+              tab's precision has to bound that like it bounds everything else.
+              Focusing still reveals the number in full. */}
+          <NumberInput value={value.v_lat_dir ?? 0}
+                       display={dec(value.v_lat_dir ?? 0)}
+                       onChange={(v) => set('v_lat_dir', v ?? 0)}
                        min={0} max={360} step={5} disabled={sources.lateralFromDesign} />
         </Field>
         <Field label="Airframe diameter" kind="length">

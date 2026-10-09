@@ -3,7 +3,9 @@ import {
   ClientOutbox,
   FlushPacer,
   mergeWindows,
+  linkStatus,
   SOCKET_IDLE_BYTES,
+  STARVED_LAG_MS,
   type OutboxWindow,
 } from '../client-outbox.js';
 
@@ -215,5 +217,72 @@ describe('lag stays within the budget on a slow link', () => {
       if (tick > 1000) maxLag = Math.max(maxLag, now - lastFlush);
     }
     expect(maxLag).toBeLessThanOrEqual(TARGET * 2);
+  });
+});
+
+
+describe('linkStatus — what the operator is told about a link', () => {
+  const T = 1_800_000_000_000;
+
+  it('a client that has never been delivered to is not flagged (the connect race)', () => {
+    const st = linkStatus({
+      lastDeliveredTsMs: null, nowMs: T, resolutionRatio: 1, squeezeDropped: false,
+    });
+    expect(st.lagMs).toBe(0);
+    expect(st.throttled).toBe(false);
+  });
+
+  it('reports rising lag and throttling with NO flush having occurred', () => {
+    // The regression. Status used to be assigned only after the shouldFlush gate and an
+    // empty-drain check, so a client too backed-up to flush kept throttled:false,
+    // lagMs:0, resolutionPct:100 — and the badge showed green "Live data at full
+    // resolution" for the worst-off client on the rig.
+    const st = linkStatus({
+      lastDeliveredTsMs: T, nowMs: T + 5000, resolutionRatio: 0.02, squeezeDropped: false,
+    });
+    expect(st.lagMs).toBe(5000);
+    expect(st.throttled).toBe(true);
+    expect(st.resolutionPct).toBe(2);
+  });
+
+  it('a healthy link reads clean', () => {
+    const st = linkStatus({
+      lastDeliveredTsMs: T, nowMs: T + 100, resolutionRatio: 1, squeezeDropped: false,
+    });
+    expect(st.throttled).toBe(false);
+    expect(st.resolutionPct).toBe(100);
+    expect(st.lagMs).toBe(100);
+  });
+
+  it('ordinary throttling is still reported via squeezeDropped, below the lag backstop', () => {
+    const st = linkStatus({
+      lastDeliveredTsMs: T, nowMs: T + 200, resolutionRatio: 0.4, squeezeDropped: true,
+    });
+    expect(st.throttled).toBe(true);
+    expect(st.lagMs).toBeLessThan(STARVED_LAG_MS);
+  });
+
+  it('normal pacing does not trip the backstop', () => {
+    // The pacer's own design allows up to 2x TARGET between flushes; a client sitting at
+    // the target must not be branded starved.
+    const st = linkStatus({
+      lastDeliveredTsMs: T, nowMs: T + 1500, resolutionRatio: 1, squeezeDropped: false,
+    });
+    expect(st.throttled).toBe(false);
+  });
+
+  it('clamps a nonsense resolution ratio into 0..100', () => {
+    expect(linkStatus({
+      lastDeliveredTsMs: T, nowMs: T, resolutionRatio: 5, squeezeDropped: false,
+    }).resolutionPct).toBe(100);
+    expect(linkStatus({
+      lastDeliveredTsMs: T, nowMs: T, resolutionRatio: -1, squeezeDropped: false,
+    }).resolutionPct).toBe(0);
+  });
+
+  it('never reports negative lag if a timestamp runs ahead of now', () => {
+    expect(linkStatus({
+      lastDeliveredTsMs: T + 500, nowMs: T, resolutionRatio: 1, squeezeDropped: false,
+    }).lagMs).toBe(0);
   });
 });

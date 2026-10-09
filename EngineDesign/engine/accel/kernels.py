@@ -1,13 +1,12 @@
-"""Numba port of the C ed_evaluate impinging inner-loop physics.
+"""Numba mirror of the Python injector solve (impinging and pintle) and the CEA lookup.
 
-Faithful mirror of engine/native/src/{ed_injector_impinging,ed_discharge,ed_feed_loss,
-ed_spray,ed_combustion_physics,ed_cea,ed_nozzle,ed_chamber,ed_cooling,ed_evaluate,
-ed_root_find}.c for the config class the accelerated path handles: impinging
-injector, advanced/exponential combustion, ablative cooling (film/regen fall back
-to Python, as the C kernel also refuses them).
+All state arrives as one flat float64 vector built by params.extract_params, plus the CEA tables
+as plain arrays -- @njit sees no Python objects.
 
-All state arrives as one flat float64 vector built by params.build_params, plus
-the CEA tables as plain arrays -- @njit sees no Python objects.
+injector_solve / injector_solve_pintle / _dpf mirror the Python injector exactly (one closure
+pass with Cd untouched, the K_exit exit dump, A_hydraulic, pintle's fixed-K x*, the back-channel
+ring network hole by hole), and that is what accel.solve serves on the default path. The chamber
+(c* efficiency, ablative liner, nozzle, Pc root) is engine/accel/chamber.py.
 """
 from __future__ import annotations
 
@@ -19,13 +18,21 @@ from engine.accel.params import _IDX, NP, extract_params
 
 globals().update(_IDX)          # param indices as module-level int constants
 
+# Lichtarowicz (1965) Re law + counterbore entrance K: the Python model's own constants, so the
+# kernel cannot drift from engine.core.discharge.
+from engine.core.discharge import (
+    LICHTAROWICZ_RE_A as LICH_RE_A, LICHTAROWICZ_RE_B as LICH_RE_B,
+    LICHTAROWICZ_RE_C as LICH_RE_C, LICHTAROWICZ_RE_D as LICH_RE_D,
+    LICHTAROWICZ_RE_E as LICH_RE_E, COUNTERBORE_ENTRANCE_K as COUNTERBORE_K,
+)
+
 # physical constants (ed_phys_const.h)
 # physical constants (ed_phys_const.h)
 PI = np.pi
 G0 = 9.80665
 P_SEA = 101325.0
 # ed_cooling.c / ed_phys_const.h
-RANKINE_PER_K = 1.8; HUZEL_COEFF = 46.6e-10; LB_S_PER_IN2_TO_PA_S = 6894.76
+RANKINE_PER_K = 1.8; HUZEL_COEFF = 46.6e-10; LBM_PER_IN_S_TO_PA_S = 0.45359237 / 0.0254  # Huzel fit is lbm/(in s)
 STEFAN = 5.670374419e-8; MIN_DENS = 0.01; EPS_SMALL = 1e-6; EPS_TINY = 1e-8
 NU_LAMINAR = 4.36; NU_TURB_COEF = 0.023; NU_TURB_RE_EXP = 0.8; NU_TURB_PR_EXP = 0.4
 PRANDTL = 0.8
@@ -96,12 +103,29 @@ def _cd_inf_orifice(d_hyd, cdinf, geom, dref, dmin, exps, logg, cdmax, cdfloor):
     return _clip(cd, cdfloor, cdmax)
 
 @njit(cache=True)
+def _cd_lichtarowicz_re(cd_u, Re, x):
+    """engine.core.discharge.cd_lichtarowicz_re (Lichtarowicz, Duggins & Markland 1965)."""
+    lg = np.log10(LICH_RE_E*Re)
+    inv = (1.0/cd_u
+           + LICH_RE_A*(1.0 + LICH_RE_B*x)/Re
+           - LICH_RE_C*x/(1.0 + LICH_RE_D*lg*lg))
+    return 1.0/inv
+
+@njit(cache=True)
 def _cd_from_re(Re, P_in, T_in, d_hyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg,
-                cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT):
+                cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu):
     cd_inf_eff = _cd_inf_orifice(d_hyd, cdinf, geom, dref, dmin, exps, logg, cdmax, cdfloor)
     if Re <= 0.0:
         return cdmin
-    cd = cd_inf_eff - aRe/np.sqrt(Re if Re > 1e-6 else 1e-6)
+    if lod > 0.0:
+        cd = _cd_lichtarowicz_re(cdu, Re, lod)
+        if beta > 0.0:
+            b4 = beta**4
+            cd = 1.0/np.sqrt((1.0 - b4)/cd**2 + b4*(1.0 + COUNTERBORE_K))
+        if cd > 0.98:
+            cd = 0.98
+    else:
+        cd = cd_inf_eff - aRe/np.sqrt(Re if Re > 1e-6 else 1e-6)
     if upc != 0.0 and np.isfinite(P_in) and Pref > 0.0:
         cd *= 1.0 + aP*(P_in/Pref - 1.0)
     if utc != 0.0 and np.isfinite(T_in) and Tref > 0.0:
@@ -109,7 +133,18 @@ def _cd_from_re(Re, P_in, T_in, d_hyd, cdinf, aRe, cdmin, geom, dref, dmin, exps
     return _clip(cd, cdmin, cd_inf_eff)
 
 @njit(cache=True)
-def _dpf(mdot, rho, din, ah, k0, k1, phi, P_tank):
+def _dpf(mdot, rho, ah, k0, k1, phi, P_tank, kx, dex):
+    """feed_loss.delta_p_feed: K_eff(P) velocity head on A_hydraulic plus the exit dump.
+
+    dp = K_eff (rho/2) (mdot/(rho A_hyd))^2 + K_exit (rho/2) (mdot/(rho A_exit))^2, with
+    A_exit the d_exit bore when one is declared and A_hyd otherwise. The passage is ALWAYS
+    A_hydraulic (the schema derives it from d_inlet), never pi d_inlet^2/4: a twin line
+    declares the summed area, and the bore-derived area overstated its loss 4x.
+
+    k0 arrives with the itemised fittings already summed in (params._feed). The Colebrook
+    friction path (feed_system.<side>.roughness_m) is NOT mirrored -- it needs mu per call --
+    and accel.can_handle hands those configs to Python.
+    """
     if phi == PHI_NONE:
         keff = k0
     elif phi == PHI_SQRTP:
@@ -118,20 +153,22 @@ def _dpf(mdot, rho, din, ah, k0, k1, phi, P_tank):
         keff = k0 + k1*np.log(P_tank)
     else:
         return np.nan
-    A = PI*(din*0.5)**2 if din > 0.0 else ah
+    A = ah
     if not (A > 0.0) or not (rho > 0.0) or mdot < 0.0:
         return np.nan
+    Ax = PI*(dex*0.5)**2 if dex > 0.0 else A
     v = mdot/(rho*A)
-    dp = keff*(rho*0.5)*v*v
+    vx = mdot/(rho*Ax)
+    dp = keff*(rho*0.5)*v**2 + kx*(rho*0.5)*vx**2
     return 0.0 if dp < 0.0 else dp
 
 @njit(cache=True)
 def _bern(mdot_seed, dP, Pi, rho, area, dhyd, mu, Tin, cd_cap,
-          cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT):
+          cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu):
     if dP <= 0.0:
-        c0 = _cd_from_re(0.0, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT)
+        c0 = _cd_from_re(0.0, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu)
         return 0.0, c0 if c0 < cd_cap else cd_cap
-    cdlo = _cd_from_re(0.0, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT)
+    cdlo = _cd_from_re(0.0, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu)
     cdlo = cdlo if cdlo < cd_cap else cd_cap
     m = mdot_seed if mdot_seed > 1e-18 else cdlo*area*np.sqrt(2.0*rho*dP)
     cd = cdlo
@@ -139,7 +176,7 @@ def _bern(mdot_seed, dP, Pi, rho, area, dhyd, mu, Tin, cd_cap,
         m_was = m
         u = m/(rho*area) if area > 0.0 else 0.0
         Re = _reynolds(rho, u, dhyd, mu)
-        cd = _cd_from_re(Re, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT)
+        cd = _cd_from_re(Re, Pi, Tin, dhyd, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu)
         cd = cd if cd < cd_cap else cd_cap
         m = cd*area*np.sqrt(2.0*rho*dP)
         denom = np.abs(m_was) if np.abs(m_was) > 1e-18 else 1e-18
@@ -149,21 +186,248 @@ def _bern(mdot_seed, dP, Pi, rho, area, dhyd, mu, Tin, cd_cap,
 
 
 @njit(cache=True)
-def _ingebo(d_jet, u_rel, rho_l, mu_l, sigma, rho_g, C):
-    if d_jet <= 0 or u_rel <= 0 or sigma <= 0 or rho_g <= 0 or rho_l <= 0 or mu_l <= 0 or C <= 0:
+def _stream_state(m, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                  cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc):
+    dpf = _dpf(m, rho, AH, K0, K1, PHI, P_tank, KX, DEX)
+    Pi = P_tank - dpf
+    u = m/(rho*A) if A > 0.0 else 0.0
+    Re = _reynolds(rho, u, dh, mu)
+    cd = _cd_from_re(Re, Pi, Tin, dh, cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu)
+    cd = cd if cd < cd_cap else cd_cap
+    if cc > 0.0 and pv == pv and Pi > Pc:
+        # Cavitating orifice (Nurick 1976), mirrors impinging._stream_flow.cd_of
+        K = (Pi - pv)/(Pi - Pc)
+        cdc = cc*np.sqrt(K if K > 0.0 else 0.0)
+        cd = cd if cd < cdc else cdc
+    dpi = Pi - Pc
+    mb = cd*A*np.sqrt(2.0*rho*dpi) if dpi > 0.0 else 0.0
+    return m - mb, cd, Pi, dpf, (dpi if dpi > 0.0 else 0.0)
+
+
+@njit(cache=True)
+def _stream_flow(Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                 cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc):
+    """Mirrors impinging._stream_flow: Illinois false position on [0, Cd_cap A sqrt(2 rho (P_tank - Pc))]."""
+    if not (A > 0.0) or not (P_tank > Pc):
+        g, cd, Pi, dpf, dpi = _stream_state(0.0, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                                            cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc)
+        return 0.0, cd, Pi, dpf, dpi
+    hi = cd_cap*A*np.sqrt(2.0*rho*(P_tank - Pc))
+    a = 0.0; b = hi
+    ga = _stream_state(a, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                       cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc)[0]
+    gb = _stream_state(b, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                       cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc)[0]
+    tol = 1e-13*hi
+    if gb <= 0.0:
+        m = b
+    elif ga >= 0.0:
+        m = a
+    else:
+        side = 0
+        m = b
+        for _ in range(200):
+            m = (a*gb - b*ga)/(gb - ga)
+            gm = _stream_state(m, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                               cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc)[0]
+            if abs(gm) <= tol or b - a <= tol:
+                break
+            if gm > 0.0:
+                b = m; gb = gm
+                if side == -1:
+                    ga *= 0.5
+                side = -1
+            else:
+                a = m; ga = gm
+                if side == 1:
+                    gb *= 0.5
+                side = 1
+    g, cd, Pi, dpf, dpi = _stream_state(m, Pc, P_tank, rho, A, dh, mu, Tin, cd_cap, AH, K0, K1, PHI, KX, DEX,
+                                        cdinf, aRe, cdmin, geom, dref, dmin, exps, logg, cdmax, cdfloor, upc, Pref, aP, utc, Tref, aT, lod, beta, cdu, pv, cc)
+    return m, cd, Pi, dpf, dpi
+
+
+@njit(cache=True)
+def _churchill_f(Re, rel_rough):
+    """impinging._churchill_f: Darcy friction, Churchill (1977)."""
+    if not (Re > 0.0):
+        return 0.0
+    A = (2.457*np.log(1.0/((7.0/Re)**0.9 + 0.27*rel_rough)))**16
+    B = (37530.0/Re)**16
+    return 8.0*((8.0/Re)**12 + 1.0/(A + B)**1.5)**(1.0/12.0)
+
+
+@njit(cache=True)
+def _cd_side(P, side, Re, P_in, Pc, cd_cap):
+    """impinging._stream_flow.cd_of for one stream: Cd(Re, P_in) capped, then the Nurick limit."""
+    if side == 0:
+        cd = _cd_from_re(Re, P_in, P[T_O], P[DJO], P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM],
+                         P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR],
+                         P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT], P[DO_LOD],
+                         P[DO_BETA], P[DO_CDU])
+        pv = P[VP_O]; cc = P[CC_O]
+    else:
+        cd = _cd_from_re(Re, P_in, P[T_F], P[DJF], P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM],
+                         P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR],
+                         P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT], P[DF_LOD],
+                         P[DF_BETA], P[DF_CDU])
+        pv = P[VP_F]; cc = P[CC_F]
+    cd = cd if cd < cd_cap else cd_cap
+    if cc > 0.0 and pv == pv and P_in > Pc:
+        K = (P_in - pv)/(P_in - Pc)
+        cdc = cc*np.sqrt(K if K > 0.0 else 0.0)
+        cd = cd if cd < cdc else cdc
+    return cd
+
+
+@njit(cache=True)
+def _net_march(P, side, m_total, P_port, Pc, cd_cap, holes):
+    """impinging._RingManifold.march: one branch of the dividing-flow ring, hole by hole.
+
+    Fills ``holes`` with each hole's flow (port first); returns (stream total, flow-weighted Cd)."""
+    if side == 0:
+        b = NET_O; rho = P[RHO_O]; mu = P[MU_O]
+    else:
+        b = NET_F; rho = P[RHO_F]; mu = P[MU_F]
+    n_ports = P[b + 1]; h = int(P[b + 2]); A_ch = P[b + 3]; D_h = P[b + 4]; s = P[b + 5]
+    eps = P[b + 6]; scale = P[b + 7]; A_hole = P[b + 8]; d_hole = P[b + 9]
+    K_ent = P[b + 10]; C_R = P[b + 11]
+    mb = m_total/(2.0*n_ports)
+    u = mb/(rho*A_ch)
+    p = P_port - (1.0 + K_ent)*0.5*rho*u*u
+    s_q = 0.0; s_cq = 0.0; cd0 = 0.0
+    for j in range(h):
+        seg = 0.5*s if j == 0 else s
+        Re_ch = rho*abs(u)*D_h/mu
+        p -= _churchill_f(Re_ch, eps)*(seg/D_h)*0.5*rho*u*abs(u)
+        dp = p - Pc
+        q = 0.0
+        if dp > 0.0:
+            q = _cd_side(P, side, 0.0, p, Pc, cd_cap)*A_hole*np.sqrt(2.0*rho*dp)
+            for _ in range(3):   # the hole's Cd at its own Reynolds number
+                Re_h = rho*(q/(rho*A_hole))*d_hole/mu
+                q = _cd_side(P, side, Re_h, p, Pc, cd_cap)*A_hole*np.sqrt(2.0*rho*dp)
+        if dp > 0.0 and q > 0.0:
+            c = q/(A_hole*np.sqrt(2.0*rho*dp))
+        else:
+            c = _cd_side(P, side, 0.0, p, Pc, cd_cap)
+        if j == 0:
+            cd0 = c
+        mb -= q
+        u_new = mb/(rho*A_ch)
+        p += C_R*0.5*rho*(u*u - u_new*u_new)
+        u = u_new
+        holes[j] = q
+        s_q += q
+        s_cq += c*q
+    total = 2.0*n_ports*scale*s_q
+    return total, (s_cq/s_q if s_q > 0.0 else cd0)
+
+
+@njit(cache=True)
+def _stream_state_net(m, Pc, P_tank, side, A, cd_cap, P, holes):
+    """impinging._stream_flow.state with a ring network."""
+    if side == 0:
+        dpf = _dpf(m, P[RHO_O], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank, P[FO_KX], P[FO_DEX])
+    else:
+        dpf = _dpf(m, P[RHO_F], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank, P[FF_KX], P[FF_DEX])
+    Pi = P_tank - dpf
+    dpi = Pi - Pc
+    mb, cd = _net_march(P, side, m, Pi, Pc, cd_cap, holes)
+    return m - mb, cd, Pi, dpf, (dpi if dpi > 0.0 else 0.0)
+
+
+@njit(cache=True)
+def _stream_flow_net(Pc, P_tank, side, A, cd_cap, P, holes):
+    """impinging._stream_flow with ``network``: the same Illinois root on the stream total; the
+    last state evaluated is the root's, so ``holes`` ends holding the solved per-hole flows."""
+    rho = P[RHO_O] if side == 0 else P[RHO_F]
+    if not (A > 0.0) or not (P_tank > Pc):
+        g, cd, Pi, dpf, dpi = _stream_state_net(0.0, Pc, P_tank, side, A, cd_cap, P, holes)
+        return 0.0, cd, Pi, dpf, dpi
+    hi = cd_cap*A*np.sqrt(2.0*rho*(P_tank - Pc))
+    a = 0.0; b = hi
+    ga = _stream_state_net(a, Pc, P_tank, side, A, cd_cap, P, holes)[0]
+    gb = _stream_state_net(b, Pc, P_tank, side, A, cd_cap, P, holes)[0]
+    tol = 1e-13*hi
+    if gb <= 0.0:
+        m = b
+    elif ga >= 0.0:
+        m = a
+    else:
+        side_ = 0
+        m = b
+        for _ in range(200):
+            m = (a*gb - b*ga)/(gb - ga)
+            gm = _stream_state_net(m, Pc, P_tank, side, A, cd_cap, P, holes)[0]
+            if abs(gm) <= tol or b - a <= tol:
+                break
+            if gm > 0.0:
+                b = m; gb = gm
+                if side_ == -1:
+                    ga *= 0.5
+                side_ = -1
+            else:
+                a = m; ga = gm
+                if side_ == 1:
+                    gb *= 0.5
+                side_ = 1
+    g, cd, Pi, dpf, dpi = _stream_state_net(m, Pc, P_tank, side, A, cd_cap, P, holes)
+    return m, cd, Pi, dpf, dpi
+
+
+@njit(cache=True)
+def _tn4222(d_jet, v_jet, rho_l, mu_l, sigma, rho_g, scale, prop):
+    """Mirrors spray.smd_impinging_tn4222 (NACA TN 4222, dV = Vj) times smd_scale."""
+    if d_jet <= 0 or v_jet <= 0 or sigma <= 0 or rho_g <= 0 or rho_l <= 0 or mu_l <= 0:
         return d_jet
-    We_g = rho_g*u_rel*u_rel*d_jet/sigma
-    Re_l = rho_l*u_rel*d_jet/mu_l
-    p = We_g*Re_l
-    if p <= 0:
-        return d_jet
-    return C*d_jet*p**(-0.25)
+    dj = d_jet/0.0254
+    vj = v_jet/0.3048
+    d30 = dj/(2.64*np.sqrt(dj*vj) + 0.97*dj*vj)*0.0254
+    d32 = (5.0/3.915)*d30
+    if prop != 0.0:
+        rho_air = 29.3*3386.389/(287.05*((82.0 - 32.0)*5.0/9.0 + 273.15))
+        ratio = (sigma*mu_l/rho_l)/(0.0197*3.8e-4/684.0)
+        d32 = d32*(rho_g/rho_air)**(-0.25)*ratio**0.25
+    return scale*d32
 
 @njit(cache=True)
 def _lefebvre(d_or, We, Oh, C, m, p):
     if We <= 0 or d_or <= 0:
         return d_or
     return C*d_or*We**(-m)*(1.0+Oh)**p
+
+@njit(cache=True)
+def _tau_evap(D32, rho_l, Lv, Tb, Tc, Pc, rho_ch, cp_g, C_ev, ev_model, K_legacy):
+    """Droplet evaporation time [s]. ONE definition, shared by every kernel site.
+
+    The kernel used to hardcode the legacy fixed-K law (tau = K*D32^2) at the impinging and
+    pintle injector-solve sites while the Python reference
+    (engine/core/injectors/impinging.py) used the DERIVED Spalding constant, which is the
+    schema default (spray.evaporation.model = "derived"). x_star gates the Cd-reduction
+    loop, so the two paths disagreed on mass flow: measured 9.7% on thrust and 8.7% on Pc
+    for a shipped config. The A/B parity suite missed it because it sweeps tank pressure at
+    fixed geometry and never diffs x_star.
+
+    Derived branch (matches _evap_k_derived on the Python side):
+        B_M  = cp_g (Tc - Tb) / Lv          Spalding mass-transfer number
+        D_v  = 2e-5 (Tc/300)^1.75 (101325/Pc)   binary diffusivity, same scaling law
+        k_ev = C_ev (8 rho_ch D_v / rho_l) ln(1 + B_M)
+        tau  = D32^2 / k_ev
+    Falls back to the legacy law when the model is off or an input is missing, so a config
+    that does not declare the derived model is bit-identical to before.
+    """
+    if D32 <= 0.0:
+        return 0.0
+    if ev_model > 0.5 and Lv > 0.0 and Tb > 0.0 and rho_l > 0.0 and Pc > 0.0 and Tc > 0.0:
+        D_v = 2.0e-5*(Tc/300.0)**1.75*(101325.0/Pc)
+        if D_v > 0.0:
+            B_M = cp_g*max(0.0, Tc - Tb)/Lv
+            k_ev = C_ev*(8.0*rho_ch*D_v/rho_l)*np.log1p(B_M)
+            if k_ev > 0.0:
+                return (D32*D32)/k_ev
+    return K_legacy*D32*D32
+
 
 @njit(cache=True)
 def _ohnesorge(mu, rho, sigma, d):
@@ -186,7 +450,6 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
     rho_F = P[RHO_F]; mu_F = P[MU_F]; sig_F = P[SIG_F]; tF = P[T_F]
     djo = P[DJO]; djf = P[DJF]; nO = int(P[NO]); nF = int(P[NF])
     A_O = nO*PI*(djo*0.5)**2; A_F = nF*PI*(djf*0.5)**2
-    max_iter = int(P[SV_CLMAX]); Cd_red = P[SV_CLCDRED]
     Cd_O_eff = _cd_inf_orifice(djo, P[DO_CDINF], P[DO_GEOM], P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR])
     Cd_F_eff = _cd_inf_orifice(djf, P[DF_CDINF], P[DF_GEOM], P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR])
     imp_sep = _clip(P[ANG_O] + P[ANG_F], 1.0, 179.0)
@@ -200,63 +463,43 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
     ti_O = 0.1; ti_F = 0.1
     u_O = 0.0; u_F = 0.0
     constraints_ok = 0
+    # Per-hole flows along one branch of each back-channel ring (empty for a plenum).
+    holes_O = np.zeros(int(P[NET_O_H]) if P[NET_O] > 0.0 else 0)
+    holes_F = np.zeros(int(P[NET_F_H]) if P[NET_F] > 0.0 else 0)
 
-    for iteration in range(max_iter):
+    # ONE pass (impinging.py): Cd is orifice geometry and Reynolds number, not a lever for the
+    # spray constraints. A We/x* violation is reported (constraints_ok = 0), never traded for a
+    # smaller Cd -- the old loop multiplied Cd by closure.Cd_reduction_factor per violation.
+    # The loop shape is kept so the body below reads as before; it runs exactly once.
+    for iteration in range(1):
         n_iter = iteration + 1
-        mo = mdot_O; mf = mdot_F
-        for fp in range(1, 151):
-            mo_prev = mo; mf_prev = mf
-            dpf_O = _dpf(mo, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
-            dpf_F = _dpf(mf, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
-            Pi_O = P_tank_O - dpf_O; Pi_F = P_tank_F - dpf_F
-            dpi_O = Pi_O - Pc if Pi_O - Pc > 0 else 0.0
-            dpi_F = Pi_F - Pc if Pi_F - Pc > 0 else 0.0
-            if Pi_O < Pc:
-                mo_new = 0.0
-            else:
-                mo_new, _c = _bern(mo, dpi_O, Pi_O, rho_O, A_O, djo, mu_O, tO, Cd_O_eff,
-                    P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM], P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR], P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT])
-            if Pi_F < Pc:
-                mf_new = 0.0
-            else:
-                mf_new, _c = _bern(mf, dpi_F, Pi_F, rho_F, A_F, djf, mu_F, tF, Cd_F_eff,
-                    P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM], P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR], P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT])
-            w = 0.35
-            mo = mo_prev + w*(mo_new - mo_prev)
-            mf = mf_prev + w*(mf_new - mf_prev)
-            dpf_O = _dpf(mo, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
-            dpf_F = _dpf(mf, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
-            Pi_O = P_tank_O - dpf_O; Pi_F = P_tank_F - dpf_F
-            dpi_O = Pi_O - Pc if Pi_O - Pc > 0 else 0.0
-            dpi_F = Pi_F - Pc if Pi_F - Pc > 0 else 0.0
-            if Pi_O < Pc:
-                Cd_O = _cd_from_re(0.0, Pi_O, tO, djo, P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM], P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR], P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT])
-                Cd_O = Cd_O if Cd_O < Cd_O_eff else Cd_O_eff
-            else:
-                u_o2 = mo/(rho_O*A_O) if A_O > 0 else 0.0
-                Re_o2 = _reynolds(rho_O, u_o2, djo, mu_O)
-                Cd_O = _cd_from_re(Re_o2, Pi_O, tO, djo, P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM], P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR], P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT])
-                Cd_O = Cd_O if Cd_O < Cd_O_eff else Cd_O_eff
-            if Pi_F < Pc:
-                Cd_F = _cd_from_re(0.0, Pi_F, tF, djf, P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM], P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR], P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT])
-                Cd_F = Cd_F if Cd_F < Cd_F_eff else Cd_F_eff
-            else:
-                u_f2 = mf/(rho_F*A_F) if A_F > 0 else 0.0
-                Re_f2 = _reynolds(rho_F, u_f2, djf, mu_F)
-                Cd_F = _cd_from_re(Re_f2, Pi_F, tF, djf, P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM], P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR], P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT])
-                Cd_F = Cd_F if Cd_F < Cd_F_eff else Cd_F_eff
-            den_o = max(abs(mo_prev), abs(mo)); den_o = den_o if den_o > 1e-18 else 1e-18
-            den_f = max(abs(mf_prev), abs(mf)); den_f = den_f if den_f > 1e-18 else 1e-18
-            if abs(mo - mo_prev)/den_o < 1e-6 and abs(mf - mf_prev)/den_f < 1e-6:
-                break
+        if P[NET_O] > 0.0:
+            mo, Cd_O, Pi_O, dpf_O, dpi_O = _stream_flow_net(Pc, P_tank_O, 0, A_O, Cd_O_eff, P, holes_O)
+        else:
+            mo, Cd_O, Pi_O, dpf_O, dpi_O = _stream_flow(
+                Pc, P_tank_O, rho_O, A_O, djo, mu_O, tO, Cd_O_eff,
+                P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P[FO_KX], P[FO_DEX],
+                P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM], P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR], P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT], P[DO_LOD], P[DO_BETA], P[DO_CDU], P[VP_O], P[CC_O])
+        if P[NET_F] > 0.0:
+            mf, Cd_F, Pi_F, dpf_F, dpi_F = _stream_flow_net(Pc, P_tank_F, 1, A_F, Cd_F_eff, P, holes_F)
+        else:
+            mf, Cd_F, Pi_F, dpf_F, dpi_F = _stream_flow(
+                Pc, P_tank_F, rho_F, A_F, djf, mu_F, tF, Cd_F_eff,
+                P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P[FF_KX], P[FF_DEX],
+                P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM], P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR], P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT], P[DF_LOD], P[DF_BETA], P[DF_CDU], P[VP_F], P[CC_F])
         mdot_O = mo; mdot_F = mf
         u_O = mdot_O/(rho_O*A_O) if A_O > 0 else 0.0
         u_F = mdot_F/(rho_F*A_F) if A_F > 0 else 0.0
         u_rel = np.sqrt(u_O*u_O + u_F*u_F - 2.0*u_O*u_F*np.cos(imp_angle))
         rho_gas = Pc/(P[SP_GASR]*P[SP_GAST]); rho_gas = rho_gas if rho_gas > 1e-6 else 1e-6
         if P[SP_SMDMODEL] == SMD_INGEBO:
-            D32_O = _ingebo(djo, u_rel, rho_O, mu_O, sig_O, rho_gas, P[SP_SMDCING])
-            D32_F = _ingebo(djf, u_rel, rho_F, mu_F, sig_F, rho_gas, P[SP_SMDCING])
+            D32_O = _tn4222(djo, u_O, rho_O, mu_O, sig_O, rho_gas, P[SP_SMDSCALE], P[SP_SMDPROP])
+            D32_F = _tn4222(djf, u_F, rho_F, mu_F, sig_F, rho_gas, P[SP_SMDSCALE], P[SP_SMDPROP])
+            # Measured D32 replaces the correlation where it was measured (impinging.py).
+            if P[D32M_O] > 0.0 and u_O > 0.0:
+                D32_O = P[D32M_O]
+            if P[D32M_F] > 0.0 and u_F > 0.0:
+                D32_F = P[D32M_F]
             We_O = rho_gas*u_rel*u_rel*djo/sig_O if sig_O > 0 else np.inf
             We_F = rho_gas*u_rel*u_rel*djf/sig_F if sig_F > 0 else np.inf
         else:
@@ -271,7 +514,13 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
             Oh_O = _ohnesorge(mu_O, rho_O, sig_O, djo); Oh_F = _ohnesorge(mu_F, rho_F, sig_F, djf)
             D32_O = _lefebvre(djo, weO, Oh_O, P[SP_SMDC], P[SP_SMDM], P[SP_SMDP])
             D32_F = _lefebvre(djf, weF, Oh_F, P[SP_SMDC], P[SP_SMDM], P[SP_SMDP])
-        te_O = P[SP_EVAPK]*D32_O*D32_O; te_F = P[SP_EVAPK]*D32_F*D32_F
+        # Shared with the Python reference via _tau_evap -- see its docstring. rho_gas is
+        # the chamber gas density computed above from P[SP_GASR]*P[SP_GAST].
+        _Tc_ev = P[SP_GAST]
+        te_O = _tau_evap(D32_O, rho_O, P[LAT_O], P[RHO_O_BOIL], _Tc_ev, Pc, rho_gas,
+                         P[EV_CPGAS], P[EV_CEVAP], P[EV_MODEL], P[SP_EVAPK])
+        te_F = _tau_evap(D32_F, rho_F, P[LAT_F], P[RHO_F_BOIL], _Tc_ev, Pc, rho_gas,
+                         P[EV_CPGAS], P[EV_CEVAP], P[EV_MODEL], P[SP_EVAPK])
         # x* is a TRANSPORT length, so it takes the momentum-weighted axial velocity of the
         # collided pair, not u_rel (the jet-to-jet closing speed, which belongs in the Ingebo
         # Weber number). Mirrors spray.spray_axial_velocity() on the Python path; using u_rel
@@ -290,10 +539,6 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
             constraints_ok = 0
         if P[SP_EVAPUSE] != 0 and x_star >= P[SP_EVAPXLIM]:
             constraints_ok = 0
-        if constraints_ok:
-            break
-        Cd_O_eff *= Cd_red; Cd_F_eff *= Cd_red
-        Cd_O_eff = max(Cd_O_eff, P[DO_CDMIN]); Cd_F_eff = max(Cd_F_eff, P[DF_CDMIN])
 
     # Shear-layer turbulence. impinging.py calls _injector_turbulence_fields with
     # the FINAL velocities (:612), so Re and the ti_mix weighting are consistent
@@ -314,406 +559,8 @@ def injector_solve(P, P_tank_O, P_tank_F, Pc):
         if den > 0 and num >= 0:
             mom_R = np.sqrt(num/den)
     if not (np.isfinite(mdot_O) and np.isfinite(mdot_F)) or mdot_F <= 0.0:
-        return (0.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F)
-    return (1.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F)
-
-
-@njit(cache=True)
-def _gasification(Tc, Pc, tau_res, SMD, L_eff, cp_g, rho_g, U_slip, T_star_cap):
-    rho_l = GAS_RHO_L; cp_l = GAS_CP_L; T_inj = GAS_T_INJ; mu_g = GAS_MU; Pr = PRANDTL
-    D = SMD if SMD > D_MIN_GAS else D_MIN_GAS
-    D_sq = D*D
-    dT_safe = max(200.0, 0.10*Tc)
-    T_star_upper = min(T_star_cap, Tc - dT_safe)
-    T_star_lower = T_inj + 50.0
-    T_star = _clip(T_star_upper, T_star_lower, Tc - dT_safe)
-    k_g = mu_g*cp_g/Pr
-    D_m = D_M_REF*(Tc/D_M_TREF)**1.75*(D_M_PREF/(Pc if Pc > 1e3 else 1e3))
-    Us = min(abs(U_slip), U_SLIP_CAP); Us = max(Us, 0.1)
-    Re = rho_g*Us*D/(mu_g if mu_g > 1e-10 else 1e-10)
-    Sc = mu_g/(rho_g*(D_m if D_m > 1e-12 else 1e-12))
-    Nu = 2.0 + 0.6*np.sqrt(max(Re, 0.0))*Pr**(1.0/3.0)
-    Sh = 2.0 + 0.6*np.sqrt(max(Re, 0.0))*Sc**(1.0/3.0)
-    dT_initial = Tc - T_inj; dT_final = Tc - T_star
-    if dT_final <= 0 or dT_initial <= dT_final:
-        tau_heat = 1e-9
-    else:
-        tau_heat = (rho_l*cp_l*D_sq)/(6.0*Nu*k_g)*np.log(dT_initial/dT_final)
-    energy_available = cp_g*(Tc - T_star)
-    energy_required = energy_available + L_eff
-    Phi = _clip(energy_available/max(energy_required, 1e-6), 1e-6, 1.0)
-    denom = 6.0*rho_g*D_m*Sh*Phi
-    tau_gasify = np.inf if denom <= 0 else (rho_l*D_sq)/denom
-    th = max(tau_heat, 1e-12); tg = max(tau_gasify, 1e-12)
-    tau_vap = 1.0/(1.0/th + 1.0/tg)
-    if tau_vap <= 0 or not np.isfinite(tau_vap):
-        return 1.0
-    return 1.0 - np.exp(-tau_res/tau_vap)
-
-@njit(cache=True)
-def _spray_length_frac(P, Pc, Tc, rho_ch, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, Ac, At, Lstar):
-    """Fraction of the chamber that is spray rather than burning gas (0 when unavailable).
-
-    Mirrors the Python path: the propellant is not gaseous until it has flown to the
-    impingement point, the sheet has broken up, and the droplets have evaporated:
-
-        L_imp = |D_pitch_O - D_pitch_F|/2 / (tan th_O + tan th_F),  D_pitch = n*spacing/pi
-        L_b   = (d^2/(4 L_imp)) * sqrt(rho_l/rho_g)                 (KH on a thin sheet)
-        x*    = u_axial * D32^2 / k_evap                            (d^2-law)
-        u_axial = momentum-weighted axial resultant of the collision
-
-    Only what remains downstream of that is combustion volume. Returns 0.0 whenever any input
-    is missing so the caller keeps the old whole-chamber behaviour rather than guessing.
-    """
-    spo = P[SPO]; spf = P[SPF]
-    nO = P[NO]; nF = P[NF]
-    if spo <= 0.0 or spf <= 0.0 or nO <= 0.0 or nF <= 0.0 or Ac <= 0.0 or Lstar <= 0.0:
-        return 0.0
-    aO = P[ANG_O]; aF = P[ANG_F]
-    tan_sum = np.tan(np.deg2rad(aO)) + np.tan(np.deg2rad(aF))
-    if tan_sum <= 1e-9:
-        return 0.0
-    DpO = nO*spo/np.pi
-    DpF = nF*spf/np.pi
-    dr = 0.5*abs(DpO - DpF)
-    L_imp = dr/tan_sum
-    # Coincident rings (dr = 0, e.g. equal n and equal spacing) leave the standoff undefined, but
-    # the droplets still have to evaporate. The Python reference treats a non-finite L_imp as 0
-    # and KEEPS x_star:  vaporization_length_total = (L_imp if isfinite else 0) + L_b + x_star.
-    # Returning 0 here discarded the entire evaporation length, so the kernel reported a spray
-    # fraction of 0 on every equal-spacing config -- the whole 9.2-9.6% Pc gap against Python.
-    if not np.isfinite(L_imp) or L_imp < 0.0:
-        L_imp = 0.0
-
-    d_avg = 0.5*(P[DJO] + P[DJF])
-    rho_l_avg = 0.5*(P[RHO_O] + P[RHO_F])
-    L_b = 0.0
-    # L_b divides by the standoff, so it needs a real one -- matching the reference, which
-    # guards on `np.isfinite(L_imp) and L_imp > 0`.
-    if d_avg > 0.0 and rho_ch > 1e-4 and L_imp > 0.0:
-        h = (d_avg*d_avg)/(4.0*L_imp)
-        L_b = h*np.sqrt(rho_l_avg/rho_ch)
-        if L_b > 20.0*d_avg:
-            L_b = 20.0*d_avg
-
-    mt = mdot_O + mdot_F
-    if mt <= 0.0:
-        return 0.0
-    u_ax = (mdot_O*u_O*np.cos(np.deg2rad(aO)) + mdot_F*u_F*np.cos(np.deg2rad(aF)))/mt
-    if u_ax <= 0.0 or not np.isfinite(u_ax):
-        return 0.0
-
-    # evaporation constant: derived when the propellant data is there, else legacy fixed K
-    cp_g = P[EV_CPGAS]; C_ev = P[EV_CEVAP]
-    D_v = 2.0e-5*(Tc/300.0)**1.75*(101325.0/Pc) if Pc > 0.0 else 0.0
-    x_star = 0.0
-    for i in range(2):
-        if i == 0:
-            D32 = D32_O; rho_l = P[RHO_O]; Lv = P[LAT_O]; Tb = P[RHO_O_BOIL]
-        else:
-            D32 = D32_F; rho_l = P[RHO_F]; Lv = P[LAT_F]; Tb = P[RHO_F_BOIL]
-        if D32 <= 0.0:
-            continue
-        k_ev = 0.0
-        if P[EV_MODEL] > 0.5 and Lv > 0.0 and Tb > 0.0 and rho_l > 0.0 and D_v > 0.0:
-            B_M = cp_g*max(0.0, Tc - Tb)/Lv
-            k_ev = C_ev*(8.0*rho_ch*D_v/rho_l)*np.log1p(B_M)
-        if k_ev > 0.0:
-            tau_ev = (D32*D32)/k_ev
-        else:
-            tau_ev = P[SP_EVAPK]*D32*D32      # legacy tau = K*D32^2
-        xs = u_ax*tau_ev
-        if xs > x_star:
-            x_star = xs
-
-    L_ch = Lstar*At/Ac
-    if L_ch <= 0.0:
-        return 0.0
-    f = (L_imp + L_b + x_star)/L_ch
-    if f < 0.0:
-        f = 0.0
-    if f > 0.90:
-        f = 0.90
-    return f
-
-
-
-@njit(cache=True)
-def _ea_norm_from_mr(MR):
-    """Normalised activation energy, continuous in MR.
-
-    Verbatim mirror of combustion_physics._ea_norm_from_mr. Plateaus 12 / 10 / 8 with a C1
-    smoothstep across +/-0.10 MR of the 1.5 and 3.0 boundaries. The old hard `if` branches put
-    a 38% step in tau_chem at exactly MR = 1.5, which is where canonical/impinging.yaml sits.
-    Keep in sync with the Python side or the parity gate fails.
-    """
-    w = 0.10
-    if not np.isfinite(MR):
-        return 10.0
-    if MR <= 1.5 - w:
-        return 12.0
-    if MR < 1.5 + w:
-        t = (MR - (1.5 - w))/(2.0*w)
-        return 12.0 - 2.0*(t*t*(3.0 - 2.0*t))
-    if MR <= 3.0 - w:
-        return 10.0
-    if MR < 3.0 + w:
-        t = (MR - (3.0 - w))/(2.0*w)
-        return 10.0 - 2.0*(t*t*(3.0 - 2.0*t))
-    return 8.0
-
-
-@njit(cache=True)
-def _eta_advanced(P, Lstar, Pc, Tc, gamma, R, MR, Ac, At, Dinj, mdot_total,
-                  u_F, u_O, D32_O, D32_F, mom_R, R_opt, use_mom_penalty,
-                  mdot_O_in, mdot_F_in):
-    if R <= 0 or Tc <= 0 or Ac <= 0 or At <= 0 or Dinj <= 0 or Lstar <= 0 or mdot_total <= 0:
-        return -1.0
-    rho_ch = Pc/(R*Tc)
-    U_bulk = mdot_total/(rho_ch*Ac)
-    G_throat = mdot_total/At
-    # EFFECTIVE residence time: the spray zone downstream of the face is not combustion volume.
-    # Matches compute_combustion_state() on the Python path. Without this the optimizer sees a
-    # residence time that credits the whole chamber, which over-predicts combustion efficiency
-    # and rewards growing L* to buy time the model was already double-counting.
-    tau_res = (Lstar*rho_ch)/G_throat
-    # SPRAY-ZONE CORRECTION -- computed, but NOT applied inside the chamber solve. Enable with
-    # EV_APPLY_TAURES > 0 once the feedback below is handled.
-    #
-    # _eta_advanced runs inside the Pc bracketing, so shrinking tau_res here shrinks eta, which
-    # shrinks c*, which raises the demanded mass flow -- and the spray fraction itself grows with
-    # Pc (k_evap ~ D_v ~ 1/Pc), so the loop is self-reinforcing. Measured: accelerator fallback
-    # to the Python path went 35% -> 91% of candidates (68% even clamped at 0.5), because the
-    # supply/demand root stops existing. That is a ~3x slowdown of every optimisation for a
-    # correction the solver cannot digest in this position.
-    #
-    # The correction IS applied on the Python path, at the outer efficiency call rather than
-    # inside the bracketing, where it does not feed back. Making it work here needs the spray
-    # length evaluated at a fixed reference state (or the solve reformulated), not a clamp.
-    _sf = _spray_length_frac(P, Pc, Tc, rho_ch, mdot_O_in, mdot_F_in, u_O, u_F,
-                             D32_O, D32_F, Ac, At, Lstar)
-    if P[EV_APPLY_TAURES] > 0.5:
-        tau_res = tau_res*(1.0 - _sf)
-    U_rms = np.sqrt(0.5*(u_F*u_F + u_O*u_O))
-    if not np.isfinite(U_rms) or U_rms < 0 or U_rms > CS_U_RMS_CAP:
-        return -1.0
-    dU = abs(u_F - u_O)
-    U_mix = np.sqrt(dU*dU + CS_C_U*U_rms*U_rms)
-    if not np.isfinite(U_mix) or U_mix <= 0:
-        return -1.0
-    cp_g = gamma*R/(gamma - 1.0) if gamma > 1.0 else GAS_CP_G
-    # eta_Lstar
-    model = int(P[C_MODEL])
-    if model == EFF_CONSTANT:
-        eta_L = 1.0 - P[C_C]
-    elif model == EFF_LINEAR:
-        eta_L = _clip(1.0 - P[C_C]*(1.0 - Lstar/1.0), 0.0, 1.0)
-    else:
-        o_ok = D32_O > 0 and np.isfinite(D32_O); f_ok = D32_F > 0 and np.isfinite(D32_F)
-        if o_ok and f_ok:
-            if np.isfinite(MR) and MR > 0:
-                SMD = (MR/(1.0+MR))*D32_O + (1.0/(1.0+MR))*D32_F
-            else:
-                SMD = 0.5*(D32_O + D32_F)
-        elif o_ok:
-            SMD = D32_O
-        elif f_ok:
-            SMD = D32_F
-        else:
-            return -1.0
-        if SMD <= 0:
-            return -1.0
-        U_slip = max(U_bulk, U_mix)
-        eta_L = _gasification(Tc, Pc, tau_res, SMD, P[LAT_F], cp_g, rho_ch, U_slip, P[C_TSTARCAP])
-    # eta_kinetics
-    Ea_norm = _ea_norm_from_mr(MR)
-    pf = (P[C_TAUREFP]/(Pc if Pc > 1e5 else 1e5))**P[C_NPRESS]
-    Tc_eff = Tc
-    if P[C_HASFLOOR] != 0 and np.isfinite(P[C_TAUFLOOR]) and P[C_TAUFLOOR] > 0:
-        Tc_eff = max(Tc_eff, P[C_TAUFLOOR])
-    exp_arg = _clip(Ea_norm*(P[C_TAUREFT]/max(Tc_eff, 1000.0) - 1.0), -20.0, 20.0)
-    tau_chem = P[C_TAUREF]*pf*np.exp(exp_arg)
-    Da = np.inf if tau_chem <= 0 else tau_res/tau_chem
-    eta_k = 1.0 - np.exp(-np.sqrt(Da))
-    # eta_mixing (Rupe) -- IMPINGING ONLY.
-    #
-    # combustion_physics.py:1183-1200 deliberately applies NO momentum-mixing
-    # penalty for pintle: momentum_ratio_R is None there, and TMR is explicitly
-    # NOT substituted for it (different quantity, different scale -- doing so
-    # crushes eta_mix). So pintle gets eta_m = Em_peak flat. This is an explicit
-    # flag rather than a branch on mom_R validity, because the impinging path
-    # RELIES on invalid mom_R -> -1.0 -> NaN -> bail; a lenient branch here would
-    # silently change impinging results.
-    if use_mom_penalty == 0.0:
-        eta_m = P[C_EMPEAK]
-    else:
-        if not (mom_R > 0.0 and np.isfinite(mom_R)):
-            return -1.0
-        Ro = R_opt if (R_opt > 0 and np.isfinite(R_opt)) else 1.0
-        sig = P[C_SIGMA] if (P[C_SIGMA] > 0 and np.isfinite(P[C_SIGMA])) else 1.5
-        z = np.log(mom_R/Ro)
-        eta_m = P[C_EMPEAK]*np.exp(-(z*z)/(2.0*sig*sig))
-    eta_total = eta_L*eta_k*eta_m
-    if not np.isfinite(eta_total):
-        return -1.0
-    return eta_total
-
-@njit(cache=True)
-def _gas_viscosity_huzel(T_K, M):
-    """ed_gas_viscosity_huzel: Huzel-Huang gas viscosity correlation."""
-    mu_lb_s_in2 = HUZEL_COEFF*np.sqrt(M)*(T_K*RANKINE_PER_K)**0.6
-    return mu_lb_s_in2*LB_S_PER_IN2_TO_PA_S
-
-
-@njit(cache=True)
-def _chamber_wetted_area(P):
-    """ed_chamber_wetted_area: frustum when both sub-lengths present, else cylinder."""
-    d = P[G_DCHAM]
-    if d <= 0:
-        d = 0.08                      # matches Python's final fallback
-    if d < 1e-6:
-        d = 1e-6
-    area_cross = PI*(d*0.5)*(d*0.5)
-    circumference = PI*d
-    if P[G_LCYL] > 0 and P[G_LCONTR] > 0:
-        area_cyl = circumference*P[G_LCYL]
-        r1 = d*0.5
-        A_t = P[G_AT] if P[G_AT] > 0 else area_cross/3.0
-        r2 = np.sqrt(A_t/PI)
-        slant = np.sqrt((r1-r2)*(r1-r2) + P[G_LCONTR]*P[G_LCONTR])
-        return area_cyl + PI*(r1+r2)*slant
-    return circumference*P[G_LEN]
-
-
-@njit(cache=True)
-def _hot_wall_flux(P, Pc, Tc, gamma, R, M, mdot_total, wall_T):
-    """estimate_hot_wall_heat_flux -> (q_total, q_conv, q_rad).
-
-    NOTE the diameter: this uses the REGEN block's chamber_inner_diameter, while
-    _cooling_evaluate's bulk-velocity term uses geom.chamber_diameter. They are
-    different numbers and ed_cooling.c:43 vs :151 keeps them distinct -- do not
-    collapse them.
-    """
-    d = P[K_DREGEN]
-    A_cross = PI*d*d/4.0
-    rho_g = max(Pc/(R*max(Tc, 1.0)), MIN_DENS)
-    V_g = mdot_total/(rho_g*A_cross)
-    mu_g = _gas_viscosity_huzel(Tc, M) if (M > 0 and Tc > 0) else P[K_HGMU]
-    k_g = P[K_HGK]
-    cp_g = gamma*R/max(gamma-1.0, EPS_SMALL)
-    Pr_g = P[K_HGPR] if P[K_HGPR] > 0 else (mu_g*cp_g/max(k_g, EPS_SMALL))
-    Re_g = rho_g*V_g*d/max(mu_g, EPS_TINY)
-    if Re_g < 2000.0:
-        Nu_g = NU_LAMINAR
-    else:
-        Nu_g = NU_TURB_COEF*Re_g**NU_TURB_RE_EXP*Pr_g**NU_TURB_PR_EXP
-    h_g = Nu_g*k_g/d
-    Taw = Tc*P[K_RECOV]
-    dT = max(Taw - wall_T, 0.0)
-    q_conv = h_g*dT
-    qr = P[K_EMISHOT]*P[K_VIEWF]*STEFAN*(Tc**4 - wall_T**4)
-    q_rad = max(qr, 0.0)
-    return q_conv + q_rad, q_conv, q_rad
-
-
-@njit(cache=True)
-def _ablative_heat_removed(P, surface_T, area, ti, q_conv, q_rad, gas_mdot):
-    """compute_ablative_response -> heat_removed (cooling_power)."""
-    if P[K_ABLEN] == 0 or area <= 0:
-        return 0.0
-    turb = 1.0
-    if ti > 0 and P[AB_TIREF] > 0:
-        ratio = (ti/P[AB_TIREF])**P[AB_TIEXP]
-        turb = 1.0 + P[AB_TISENS]*ratio
-    turb = _clip(turb, 1.0, P[AB_TIMAX])
-
-    below_pyro = surface_T < P[AB_TPYRO]
-    use_physics = False
-    convective_reduction = 1.0
-    if below_pyro:
-        convective_reduction = 1.0
-    elif P[AB_USEPHYS] != 0 and gas_mdot > 0:
-        use_physics = True
-    else:
-        convective_reduction = 1.0 - _clip(P[AB_BLOWEFF], 0.0, 1.0)
-
-    T_sink = P[AB_SINKFB] if P[AB_TAMB] < P[AB_SINKMIN] else P[AB_TAMB]
-    radiative_relief = max(P[AB_EMIS]*STEFAN*(surface_T**4 - T_sink**4), 0.0)
-
-    if use_physics:
-        q_conv_prov = q_conv*turb
-        q_total_prov = max(q_conv_prov + q_rad - radiative_relief, 0.0)
-        if q_total_prov > 0:
-            dT_pyro = max(surface_T - P[AB_TPYRO], 0.0)
-            energy_per_mass = P[AB_HABL] + P[AB_CP]*dT_pyro
-            if energy_per_mass > 0:
-                mass_flux_prov = q_total_prov/max(energy_per_mass, EPS_SMALL)
-                m_dot_pyro = mass_flux_prov*area
-                B = m_dot_pyro/max(gas_mdot, EPS_SMALL)
-                blow = 1.0/(1.0 + P[AB_BLOWC]*B)
-                convective_reduction = max(blow, P[AB_BLOWMIN])
-            else:
-                convective_reduction = 1.0
-        else:
-            convective_reduction = 1.0
-
-    q_conv_eff = q_conv*turb*convective_reduction
-    effective_heat_flux = max(q_conv_eff + q_rad - radiative_relief, 0.0)
-    if below_pyro or effective_heat_flux <= 0:
-        return 0.0
-    dT_pyro = max(surface_T - P[AB_TPYRO], 0.0)
-    if P[AB_HABL] + P[AB_CP]*dT_pyro <= 0:
-        return 0.0
-    return effective_heat_flux*area
-
-
-@njit(cache=True)
-def _cooling_evaluate(P, Pc, mdot_total, Tc, gamma, R, M):
-    """ed_cooling_evaluate -> (ok, cooling_eff, effective_Tc).
-
-    ok==0 mirrors C's ED_ERR_NOT_IMPLEMENTED (film/regen enabled), which the
-    caller turns into a Python fallback rather than a wrong number.
-    """
-    if mdot_total <= 0:
-        return 1.0, 1.0, Tc
-    if P[K_FILMEN] != 0 or P[K_REGENEN] != 0:
-        return 0.0, 1.0, Tc                 # not ported -> fall back to Python
-    if P[K_USECOUP] == 0 or P[K_ABLEN] == 0:
-        return 1.0, 1.0, Tc
-
-    d = P[G_DCHAM]
-    if d <= 0:
-        d = 0.08
-    if d < 1e-6:
-        d = 1e-6
-    area_cross = PI*(d*0.5)*(d*0.5)
-    rho_g = max(Pc/(R*max(Tc, 1.0)), 1e-6)
-    velocity_g = mdot_total/(rho_g*area_cross)
-    mu_g = _gas_viscosity_huzel(Tc, M) if (M > 0 and Tc > 0) else P[K_HGMU]
-    Re_g = rho_g*velocity_g*d/max(mu_g, 1e-8)
-
-    ti = 0.05
-    if Re_g > 0:
-        ti = _clip(0.16*Re_g**(-0.125), 0.02, 0.25)
-    ti = max(ti, _clip(P[K_TI], 0.0, 0.5))
-
-    # hot-wall flux uses Tc_ideal (film disabled => effective_Tc == Tc here)
-    q_total, q_conv, q_rad = _hot_wall_flux(P, Pc, Tc, gamma, R, M, mdot_total, P[AB_TSURF])
-    abl_area = _chamber_wetted_area(P)*_clip(P[AB_COV], 0.0, 1.0)
-    heat_removed = _ablative_heat_removed(P, P[AB_TSURF], abl_area, ti, q_conv, q_rad, mdot_total)
-
-    effective_Tc = Tc
-    cp = gamma*R/max(gamma-1.0, EPS_SMALL)
-    if heat_removed > 0 and mdot_total > 0:
-        delta_T = heat_removed/max(mdot_total*cp, EPS_SMALL)
-        effective_Tc = max(effective_Tc - delta_T, 1.0)
-
-    cooling_eff = 1.0
-    if heat_removed > 0:
-        available = mdot_total*cp*max(effective_Tc, 1.0)
-        if available > 0:
-            cooling_eff = _clip(1.0 - heat_removed/available, P[K_EFFFLOOR], 1.0)
-    return 1.0, cooling_eff, effective_Tc
+        return (0.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F, holes_O, holes_F)
+    return (1.0, mdot_O, mdot_F, u_O, u_F, D32_O, D32_F, mom_R, Cd_O, Cd_F, Pi_O, Pi_F, dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, u_rel, x_star, float(constraints_ok), float(n_iter), ti_O, ti_F, holes_O, holes_F)
 
 
 @njit(cache=True)
@@ -759,8 +606,8 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
 
     for iteration in range(max_iter):
         n_iter = iteration + 1
-        dpf_bal_O = _dpf(mdot_O, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
-        dpf_bal_F = _dpf(mdot_F, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
+        dpf_bal_O = _dpf(mdot_O, rho_O, P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O, P[FO_KX], P[FO_DEX])
+        dpf_bal_F = _dpf(mdot_F, rho_F, P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F, P[FF_KX], P[FF_DEX])
         Pi_O = P_tank_O - dpf_bal_O
         Pi_F = P_tank_F - dpf_bal_F
         dpi_O = Pi_O - Pc if Pi_O - Pc > 0.0 else 0.0
@@ -776,10 +623,10 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
         Re_F = _reynolds(rho_F, u_F, dh_F, mu_F)
         cO = _cd_from_re(Re_O, Pi_O, tO, dh_O, P[DO_CDINF], P[DO_ARE], P[DO_CDMIN], P[DO_GEOM],
                          P[DO_DREF], P[DO_DMIN], P[DO_EXPS], P[DO_LOGG], P[DO_CDMAX], P[DO_CDFLOOR],
-                         P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT])
+                         P[DO_UPC], P[DO_PREF], P[DO_AP], P[DO_UTC], P[DO_TREF], P[DO_AT], P[DO_LOD], P[DO_BETA], P[DO_CDU])
         cF = _cd_from_re(Re_F, Pi_F, tF, dh_F, P[DF_CDINF], P[DF_ARE], P[DF_CDMIN], P[DF_GEOM],
                          P[DF_DREF], P[DF_DMIN], P[DF_EXPS], P[DF_LOGG], P[DF_CDMAX], P[DF_CDFLOOR],
-                         P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT])
+                         P[DF_UPC], P[DF_PREF], P[DF_AP], P[DF_UTC], P[DF_TREF], P[DF_AT], P[DF_LOD], P[DF_BETA], P[DF_CDU])
         Cd_O = cO if cO < Cd_O_eff else Cd_O_eff
         Cd_F = cF if cF < Cd_F_eff else Cd_F_eff
 
@@ -803,8 +650,12 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
         ti_F = 0.16*(Re_F**(-0.125)) if Re_F > 0 else 0.1
         ti_O = _clip(ti_O, 0.02, 0.3); ti_F = _clip(ti_F, 0.02, 0.3)
 
-        te = P[SP_EVAPK]*D32*D32
-        x_star = V_rel*te                       # both streams share D32
+        # pintle.py prices evaporation with the legacy fixed-K law, tau = K*D32^2, on both
+        # streams (spray.tau_evap), NOT the derived Spalding constant the impinging solve uses.
+        # This site used _tau_evap's derived branch, so x* -- which gates pintle's Cd-reduction
+        # loop -- read 0.09% off Python on canonical/pintle.yaml. Both streams share D32.
+        te = P[SP_EVAPK]*(D32**2)
+        x_star = V_rel*te
         if P[SP_USETURB] != 0.0:
             v_tot = u_O + u_F if u_O + u_F > 1e-6 else 1e-6
             ti_mix = _clip((ti_O*u_O + ti_F*u_F)/v_tot, 0.02, 0.35)
@@ -815,8 +666,8 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
         # correct final values". This deliberately makes the reported
         # delta_p_feed inconsistent with the P_inj used in the balance above,
         # which came from the previous iteration's mdot. Faithful, not tidy.
-        dpf_O = _dpf(mdot_O, rho_O, P[FO_DIN], P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O)
-        dpf_F = _dpf(mdot_F, rho_F, P[FF_DIN], P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F)
+        dpf_O = _dpf(mdot_O, rho_O, P[FO_AH], P[FO_K0], P[FO_K1], P[FO_PHI], P_tank_O, P[FO_KX], P[FO_DEX])
+        dpf_F = _dpf(mdot_F, rho_F, P[FF_AH], P[FF_K0], P[FF_K1], P[FF_PHI], P_tank_F, P[FF_KX], P[FF_DEX])
 
         constraints_ok = 1
         if We_O < P[SP_WEMIN] or We_F < P[SP_WEMIN]:
@@ -832,10 +683,10 @@ def injector_solve_pintle(P, P_tank_O, P_tank_F, Pc):
     if not (np.isfinite(mdot_O) and np.isfinite(mdot_F) and mdot_F > 0.0):
         return (0.0, mdot_O, mdot_F, u_O, u_F, D32, D32, np.nan, Cd_O, Cd_F, Pi_O, Pi_F,
                 dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, V_rel, x_star,
-                float(constraints_ok), float(n_iter), ti_O, ti_F)
+                float(constraints_ok), float(n_iter), ti_O, ti_F, np.zeros(0), np.zeros(0))
     return (1.0, mdot_O, mdot_F, u_O, u_F, D32, D32, np.nan, Cd_O, Cd_F, Pi_O, Pi_F,
             dpi_O, dpi_F, A_O, A_F, dpf_O, dpf_F, We_O, We_F, V_rel, x_star,
-            float(constraints_ok), float(n_iter), ti_O, ti_F)
+            float(constraints_ok), float(n_iter), ti_O, ti_F, np.zeros(0), np.zeros(0))
 
 
 @njit(cache=True)
@@ -847,228 +698,5 @@ def _solve_injector(P, P_O, P_F, Pc):
 
 
 @njit(cache=True)
-def _residual(Pc, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F):
-    if not (np.isfinite(Pc) and Pc > 0):
-        return np.nan
-    (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
-     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit, tiO, tiF) = _solve_injector(P, P_O, P_F, Pc)
-    if ok == 0:
-        return np.nan
-    mdot_supply = mO + mF
-    MR = mO/mF
-    cs_id, cf_id, tc, gm, Rg, Mg, cfv = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
-    if not (cs_id > 0 and np.isfinite(cs_id)):
-        return np.nan
-    Lstar = P[G_LSTAR] if P[G_LSTAR] > 0 else (P[G_VOL]/P[G_AT] if P[G_AT] > 0 else 0.0)
-    # Characteristic injector diameter for the mixing models, matching
-    # chamber_solver._infer_injector_diameter: d_jet for impinging,
-    # d_pintle_tip for pintle (P[DJO] is zero on a pintle config).
-    Dinj = P[DJO] if P[INJ_TYPE] != 0.0 else P[PIN_DTIP]
-    Ac = PI*(P[G_DCHAM]*0.5)**2
-    if P[C_ROPT] > 0.0:
-        R_opt = P[C_ROPT]
-    else:
-        sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
-        R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_supply, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0, mO, mF)
-    if eta_total < 0:
-        return np.nan
-    cok, cooling_eff, _tc_eff = _cooling_evaluate(P, Pc, mdot_supply, tc, gm, Rg, Mg)
-    if cok == 0.0:
-        return np.nan
-    eta_final = eta_total*cooling_eff
-    if not (np.isfinite(eta_final) and eta_final > 0.0 and eta_final <= 1.0):
-        return np.nan
-    cstar_actual = eta_final*cs_id
-    mdot_demand = Pc*P[G_AT]/cstar_actual
-    r = mdot_supply - mdot_demand
-    return r if np.isfinite(r) else np.nan
-
-@njit(cache=True)
 def _sign(x):
     return -1.0 if x < 0 else (1.0 if x > 0 else 0.0)
-
-@njit(cache=True)
-def _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F, a, b, xtol, rtol, maxit):
-    fa = _residual(a, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-    fb = _residual(b, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-    if not np.isfinite(fa) or not np.isfinite(fb):
-        return np.nan
-    if fa == 0.0:
-        return a
-    if fb == 0.0:
-        return b
-    if _sign(fa) == _sign(fb):
-        return np.nan
-    c = a; fc = fa; d = b - a; e = d
-    for _ in range(maxit):
-        if _sign(fb) == _sign(fc):
-            c = a; fc = fa; d = b - a; e = d
-        if abs(fc) < abs(fb):
-            a = b; b = c; c = a; fa = fb; fb = fc; fc = fa
-        tol = 2.0*rtol*abs(b) + 0.5*xtol
-        m = 0.5*(c - b)
-        if fb == 0.0 or abs(m) <= tol:
-            return b
-        if abs(e) < tol or abs(fa) <= abs(fb):
-            d = m; e = m
-        else:
-            s = fb/fa
-            if a == c:
-                p = 2.0*m*s; q = 1.0 - s
-            else:
-                qa = fa/fc; r = fb/fc
-                p = s*(2.0*m*qa*(qa - r) - (b - a)*(r - 1.0))
-                q = (qa - 1.0)*(r - 1.0)*(s - 1.0)
-            if p > 0.0:
-                q = -q
-            else:
-                p = -p
-            if 2.0*p < min(3.0*m*q - abs(tol*q), abs(e*q)):
-                e = d; d = p/q
-            else:
-                d = m; e = m
-        a = b; fa = fb
-        if abs(d) > tol:
-            b += d
-        else:
-            b += tol if m > 0.0 else -tol
-        fb = _residual(b, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-        if not np.isfinite(fb):
-            return np.nan
-    return b
-
-@njit(cache=True)
-def _solve_exit_mach(eps, g):
-    tol = 1e-10
-    if eps > 10.0:
-        pref = ((g+1.0)/(g-1.0))**((g+1.0)/4.0); Mg = pref*eps**((g-1.0)/2.0)
-    elif eps > 1.5:
-        Mg = 1.0 + np.sqrt(2.0*(eps-1.0)/(g+1.0))
-    else:
-        Mg = 1.0 + 0.5*(eps-1.0)
-    M = max(Mg, 1.0+1e-6)
-    for _ in range(50):
-        term = (2.0/(g+1.0))*(1.0+(g-1.0)/2.0*M*M)
-        A = (1.0/M)*term**((g+1.0)/(2.0*(g-1.0)))
-        err = A - eps
-        if abs(err) < tol:
-            return M
-        num = 2.0*(M*M-1.0); den = M*(2.0+(g-1.0)*M*M); dA = A*(num/den)
-        if abs(dA) < 1e-12:
-            M = M*(0.99 if err > 0 else 1.01)
-        else:
-            step = _clip(err/dA, -0.5*M, 0.5*M); M = M - step
-        if M <= 1.0:
-            M = 1.0 + 1e-6
-    return M
-
-@njit(cache=True)
-def evaluate_core(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F, Pa):
-    """Returns (ok, Pc, F, Isp, MR, cstar_actual, gamma, Tc, mdot_total, v_exit, Cf_actual)."""
-    # Search window and bracket scan: VERBATIM mirror of engine/core/chamber_solver.py
-    # (PC_CHOKE_FLOOR_PA, PC_MIN_TOTAL_DROP_FRAC, ChamberSolver._highest_sign_change). The parity
-    # gate requires the two root-finds to agree, so change both or neither.
-    Pc_min = 2.0*101325.0
-    Pc_max = min(P_O, P_F)*(1.0 - 0.02)
-    Pc_min = max(Pc_min, P[SV_PCMIN]); Pc_max = min(Pc_max, P[SV_PCMAX])
-    if Pc_max <= Pc_min:
-        return (0.0,)*22
-    xtol = P[SV_TOL]; rtol = P[SV_TOL]*1e-3; maxit = int(P[SV_MAXIT]) if P[SV_MAXIT] > 0 else 100
-    rmin = _residual(Pc_min, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-    rmax = _residual(Pc_max, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-    if not np.isfinite(rmin) or not np.isfinite(rmax):
-        return (0.0,)*22
-    # The residual is not monotonic in Pc: it is negative near the choking floor (barely flowing,
-    # the spurious crossing), positive through the operating range, and negative again once the
-    # injector drop gets small. The physical operating point is the HIGHEST-Pc root, so scan from
-    # Pc_max down for the first sign change and bracket Brent inside it. Endpoint-only tests
-    # missed interior roots (measured on canonical/impinging: -0.214 at 1 bar, +0.76 at 20 bar,
-    # -0.96 at 27.4 bar, root at 23.75 bar) and a whole-window Brent picked the spurious low one.
-    _n = 32
-    _lo = 0.0; _hi = 0.0; _found = False
-    _pb = Pc_max; _rb = rmax
-    for _i in range(_n - 1, -1, -1):
-        _pa = Pc_min + (Pc_max - Pc_min)*(_i/_n)
-        _ra = rmin if _i == 0 else _residual(_pa, P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F)
-        if np.isfinite(_ra) and np.isfinite(_rb) and _sign(_ra) != _sign(_rb):
-            _lo = _pa; _hi = _pb; _found = True
-            break
-        _pb = _pa; _rb = _ra
-    if not _found:
-        return (0.0,)*22
-    Pc = _brentq(P, Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, P_O, P_F,
-                 _lo, _hi, xtol, rtol, maxit)
-    if not np.isfinite(Pc):
-        return (0.0,)*22
-    # recompute converged state
-    (ok, mO, mF, uO, uF, D32O, D32F, momR, CdO, CdF, PiO, PiF, dpiO, dpiF, AgO, AgF,
-     dpfO, dpfF, WeO, WeF, urel, xstar, constr, nit, tiO, tiF) = _solve_injector(P, P_O, P_F, Pc)
-    if ok == 0:
-        return (0.0,)*22
-    mdot_total = mO + mF; MR = mO/mF
-    cs_id, cf_id, tc, gm, Rg, Mg, cfv = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
-    Lstar = P[G_LSTAR] if P[G_LSTAR] > 0 else (P[G_VOL]/P[G_AT] if P[G_AT] > 0 else 0.0)
-    Dinj = P[DJO] if P[INJ_TYPE] != 0.0 else P[PIN_DTIP]
-    Ac = PI*(P[G_DCHAM]*0.5)**2
-    if P[C_ROPT] > 0.0:
-        R_opt = P[C_ROPT]
-    else:
-        sO = np.sin(P[ANG_O]*PI/180.0); sF = np.sin(P[ANG_F]*PI/180.0)
-        R_opt = np.sqrt(sF/sO) if (sO > 0 and sF > 0) else 1.0
-    eta_total = _eta_advanced(P, Lstar, Pc, tc, gm, Rg, MR, Ac, P[G_AT], Dinj, mdot_total, uF, uO, D32O, D32F, momR, R_opt, 1.0 if P[INJ_TYPE] != 0.0 else 0.0, mO, mF)
-    # Cooling at the converged point, matching the residual. C reports
-    # eta_cstar = eta_total*cooling_eff and derives cstar_actual from THAT
-    # (ed_chamber.c:91-92), so report eta_final here, not eta_total.
-    cok, cooling_eff, Tc_eff = _cooling_evaluate(P, Pc, mdot_total, tc, gm, Rg, Mg)
-    if cok == 0.0:
-        return (0.0,)*22
-    eta_final = eta_total*cooling_eff
-    cstar_actual = eta_final*cs_id
-    # nozzle CEA at converged point (Pa ignored in 3D lookup)
-    cs2, cf2, tc2, gm2, Rg2, Mg2, cfv2 = cea_eval(Pcg, MRg, epsg, cstar, Cf, Tc_t, gam, Rt, Mt, Cfv, MR, Pc, P[G_EPS])
-    if not np.isfinite(cfv2):
-        return (0.0,)*22
-    M_exit = _solve_exit_mach(P[G_EPS], gm2)
-    factor = 1.0 + (gm2-1.0)/2.0*M_exit*M_exit
-    T_exit = tc2/factor
-    P_exit = Pc*factor**(-gm2/(gm2-1.0))
-    v_exit = M_exit*np.sqrt(gm2*Rg2*T_exit)
-    thr = 2.0/(gm2+1.0)
-    T_throat = tc2*thr
-    P_throat = Pc*thr**(gm2/(gm2-1.0))
-    F = P[G_NOZZEFF]*cfv2*Pc*P[G_AT] - Pa*P[G_AE]
-    if not np.isfinite(F):
-        return (0.0,)*22
-    Isp = F/(mdot_total*G0)
-    Cf_actual = F/(Pc*P[G_AT])
-    # Index 7 is Tc_IDEAL (EdEvaluateResult.Tc = ch.Tc_ideal, ed_evaluate.c:89) and
-    # index 21 is Tc_EFFECTIVE (out->Tc_effective = ch.Tc, :111). The wrapper dict's
-    # "Tc" must use the EFFECTIVE one -- native_injector.py:538 does, and it feeds
-    # comprehensive_stability_analysis. They are equal only while cooling is off.
-    return (1.0, Pc, F, Isp, MR, cstar_actual, gm, tc, mdot_total, v_exit, Cf_actual,
-            mO, mF, cs_id, eta_final, Rg2, P_exit, P_throat, T_exit, T_throat, cf2,
-            Tc_eff)
-
-
-
-
-# ---- Python wrappers matching native_injector -------------------------------
-class NumbaEvaluator:
-    """Parity/bench helper: core physics only (Pc, F, Isp, ...)."""
-    def __init__(self, config, cache):
-        self.P = extract_params(config)
-        self.cea = cea_arrays(cache)
-
-    def chamber_solve(self, P_O, P_F):
-        r = evaluate_core(self.P, *self.cea, float(P_O), float(P_F), 101325.0)
-        return float(r[1]) if r[0] else None
-
-    def evaluate(self, P_O, P_F, Pa=101325.0):
-        r = evaluate_core(self.P, *self.cea, float(P_O), float(P_F), float(Pa))
-        if not r[0]:
-            return None
-        (_, Pc, F, Isp, MR, csa, gm, tc, mdt, vex, cfa,
-         mO, mF, cs_id, eta, Rg, Pex, Pth, Tex, Tth, cf_id, tc_eff) = r
-        return {"Pc": Pc, "F": F, "Isp": Isp, "MR": MR, "cstar_actual": csa,
-                "gamma": gm, "Tc": tc_eff, "mdot_total": mdt, "v_exit": vex, "Cf_actual": cfa}

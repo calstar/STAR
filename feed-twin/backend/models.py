@@ -7,6 +7,8 @@ the way out, so neither side has to know the other's naming.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,9 @@ class ArtifactOut(BaseModel):
     source: str
     notes: str = ""
     summary: dict[str, object] = Field(default_factory=dict)
+    #: An engine's EngineDesign card, as it describes itself; empty when the
+    #: engine has none and fires feedtwin's simplified model.
+    card: dict[str, object] = Field(default_factory=dict)
 
 
 class ImportResult(BaseModel):
@@ -27,41 +32,25 @@ class ImportResult(BaseModel):
     already_present: bool
     """True when the same bytes were already in the library. Not an error --
     saving from pid-designer twice in a session is normal."""
+    card_error: str = ""
+    """Why an engine came in without EngineDesign's card, when it did."""
 
 
-class Symbol(BaseModel):
-    id: str
-    tag: str
-    type: str
-    x: float
-    y: float
-    fluid: str = ""
-    role: str = "component"
+class FreshnessOut(BaseModel):
+    """Whether an artifact pulled from a design tool is still what that tool holds."""
 
-
-class Line(BaseModel):
-    id: str
-    source: str
-    target: str
-    kind: str = "pipe"
-    fluid: str = ""
+    artifact_id: str
+    tracked: bool
+    """Pulled from a design tool, so there is something to compare with."""
+    current: bool | None = None
+    """``None`` when the tool could not be asked."""
+    detail: str = ""
 
 
 class Actuator(BaseModel):
     id: str
     tag: str
     signal: str
-
-
-class ControlSpec(BaseModel):
-    key: str
-    label: str
-    unit: str
-    default: float
-    minimum: float
-    maximum: float
-    step: float
-    note: str = ""
 
 
 class AssumptionOut(BaseModel):
@@ -96,19 +85,20 @@ class ReportOut(BaseModel):
 
 
 class ModelView(BaseModel):
-    """Everything needed to draw the schematic, without solving anything."""
+    """The assembly, described without solving anything. The drawing itself is
+    `/api/diagram`."""
 
     diagram_id: str
     engine_id: str = ""
     title: str
-    symbols: list[Symbol]
-    lines: list[Line]
     actuators: list[Actuator]
-    controls: list[ControlSpec]
-    fluid_sets: list[str]
     report: ReportOut
     engine: dict[str, object] = Field(default_factory=dict)
-    #: Symbols the team has hidden from the console. Shared, not per browser.
+    # Which sheet of the drawing each node is on, by node id. The console
+    # splits its panels by it when a stand spans more than one.
+    pages: dict[str, str] = Field(default_factory=dict)
+    #: What the team has hidden from the console, by node id. Shared, not per
+    #: browser; set from the console's menus or the P&ID tab.
     console_hidden: list[str] = Field(default_factory=list)
 
 
@@ -197,16 +187,6 @@ class SourceDocument(BaseModel):
     releases: list[str] = Field(default_factory=list)
 
 
-class ActuatorOut(BaseModel):
-    """A valve on the drawing, and what the state machine calls it."""
-
-    id: str
-    tag: str
-    signal: str
-    role: str = ""
-    """The state machine's name for it, empty when nothing commands it."""
-
-
 class StateMachineOut(BaseModel):
     """The stand's states, its legal moves, and how it binds to this drawing."""
 
@@ -254,57 +234,73 @@ class TankOut(BaseModel):
     #: What the drawing says the vessel holds [L], so the panel shows what it
     #: is simulating -- a 44 L K-bottle does not blow down like a 4.7 L COPV.
     volume_L: float = 0.0
+    #: ``lox`` or ``fuel`` -- which leg the tank is on, from what it holds. The
+    #: pad guide used to find the LOX tank by "ox" in its label, and LE4's are
+    #: TK-2 and TK-3: it watched the empty fuel tank for the LOX load forever.
+    side: str = ""
+    #: A cryogen load is still chilling the wall: what is poured flashes off
+    #: and nothing collects yet. The card shows the wall temperature meanwhile.
+    chilling: bool = False
+    #: What the load is delivering into the tank [g/s]: the dewar's flow
+    #: through its fill line, boiling on the wall or collecting. Zero when
+    #: nothing is loading.
+    fill_flow_g_s: float = 0.0
+    #: Where the regulator feeding this tank locks up right now [psig]:
+    #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
+    #: ``None`` for a tank no regulator feeds.
+    lockup_psi: float | None = None
 
 
-class StudyTraceOut(BaseModel):
-    """One burn from the COPV study, sampled."""
+class StudyCaseOut(BaseModel):
+    """One study case: the stand with its changes, burned from T-0.
 
-    key: str
-    gas: str
+    Pressures are gauge. ``t`` is from Fire, negative through the lead-in."""
+
     label: str
-    litres: float
-    collapse: bool
-    t: list[float]
-    ox_psi: list[float]
-    fuel_psi: list[float]
-    copv_psi: list[float]
-    chamber_psi: list[float]
-    thrust_n: list[float]
-    converged: list[bool]
+    x: float | None = None
+    changes: list[str] = Field(default_factory=list)
+    t0: dict[str, Any] = Field(default_factory=dict)
+    t: list[float] = Field(default_factory=list)
+    tanks: dict[str, list[float]] = Field(default_factory=dict)
+    bottles: dict[str, list[float]] = Field(default_factory=dict)
+    chamber_psi: list[float] = Field(default_factory=list)
+    thrust_n: list[float] = Field(default_factory=list)
+    converged: list[bool] = Field(default_factory=list)
+    outcome: dict[str, Any] = Field(default_factory=dict)
     depleted_s: float | None = None
+    tripped: str = ""
     failed_ticks: int = 0
-
-
-class StudySweepOut(BaseModel):
-    gas: str
-    litres: float
-    cubic_inches: float
-    floor_psi: float
-    burn_s: float | None = None
-    failed_ticks: int = 0
+    notes: list[str] = Field(default_factory=list)
+    error: str = ""
 
 
 class StudyOut(BaseModel):
-    """Where the COPV study has got to, and what it has produced."""
+    """Where the study has got to, and the cases it has finished."""
 
     running: bool = False
     progress: float = 0.0
     stage: str = ""
     error: str = ""
-    #: Set once a run has finished; absent while one is in flight.
-    bottle_litres: float = 0.0
-    bottle_cubic_inches: float = 0.0
-    traces: list[StudyTraceOut] = Field(default_factory=list)
-    sweep: list[StudySweepOut] = Field(default_factory=list)
+    stand: str = ""
+    """What it ran on: the stand's name, or the drawing's."""
+    engine_name: str = ""
+    sweep: str = ""
+    horizon_s: float = 0.0
+    planned: int = 0
+    cases: list[StudyCaseOut] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-    #: What the finished result was run with, so the view can label it.
-    gases: list[str] = Field(default_factory=list)
-    bigger: bool = False
-    collapse: bool = False
-    swept: bool = False
-    vapour: bool = False
-    chilldown: float = 0.0
-    line_walls: bool = False
+
+
+class LiveKnobOut(BaseModel):
+    """A knob as the GSE page draws it: its setting now, and what it turns."""
+
+    id: str
+    label: str
+    psig: float
+    low: float
+    high: float
+    regulators: list[str] = Field(default_factory=list)
+    """Labels of the regulators it sets."""
 
 
 class SessionOut(BaseModel):
@@ -312,13 +308,14 @@ class SessionOut(BaseModel):
 
     id: str
     t: float
+    knobs: list[LiveKnobOut] = Field(default_factory=list)
     state: str
     reachable: list[str]
     converged: bool
     pressure_psi: dict[str, float]
     """Instrument readings [psig]. Gauge, like the transducers on the stand: a
     vented line reads 0.0. Every `*_psi` on this API is gauge; the model
-    underneath is absolute (see backend.run.psig)."""
+    underneath is absolute (see feedtwin.session.gauge.psig)."""
     temperature_K: dict[str, float] = Field(default_factory=dict)
     node_psi: dict[str, float]
     flow_kg_s: dict[str, float]
@@ -329,49 +326,158 @@ class SessionOut(BaseModel):
     setup: dict[str, float | bool] = Field(default_factory=dict)
     engine: "EngineState | None" = None
     notes: list[str] = Field(default_factory=list)
-    #: A run is being integrated ahead of the display; nothing advances yet.
-    computing: bool = False
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a
     #: reset clears it.
     tripped: str | None = None
-    #: Fraction of that run finished, 0..1.
-    progress: float = 0.0
-    #: The display is serving a run computed ahead, at wall-clock pace.
-    replaying: bool = False
     #: Hash of the operator overrides this stand was built with. A drawing
     #: view whose hash differs is waiting on a Reset.
     overrides_hash: str = ""
 
 
-class Frame(BaseModel):
-    t: float
-    pressure_psi: dict[str, float]
-    temperature_K: dict[str, float] = Field(default_factory=dict)
-    node_psi: dict[str, float] = Field(default_factory=dict)
-    flow_kg_s: dict[str, float] = Field(default_factory=dict)
-    open: dict[str, bool] = Field(default_factory=dict)
-    engine: EngineState | None = None
-
-
 class RunOut(BaseModel):
-    diagram_id: str
-    engine_id: str = ""
-    fluid_set: str
-    state: str = ""
-    """The state machine state this was solved in."""
+    """A session's trace, in the shape the plots read."""
 
-    converged: bool
     message: str
-    elapsed_s: float
     times_s: list[float]
     channels: list[Channel]
-    frames: list[Frame]
-    controls: dict[str, float] = Field(default_factory=dict)
-    report: ReportOut
     balance: BalanceOut | None = None
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one
     leg -- half an injector cannot be balanced."""
+
+
+class BurnTankOut(BaseModel):
+    id: str
+    label: str
+    side: str
+    start_psi: float
+    """Tank pressure when Fire was commanded [psig]."""
+    min_psi: float
+    """Lowest tank pressure at full flow [psig]."""
+    start_kg: float
+    end_kg: float
+
+
+class BurnOut(BaseModel):
+    """One burn, totalled from the stand's history (``feedtwin.session.report``).
+
+    Chamber pressure is gauge, like every pressure on the console.
+    """
+
+    start_s: float
+    end_s: float
+    duration_s: float
+    burning: bool
+    """Still lit at the newest sample: the numbers are running totals."""
+    impulse_Ns: float
+    thrust_mean_N: float
+    thrust_peak_N: float
+    thrust_min_N: float
+    pc_mean_psi: float
+    pc_min_psi: float
+    pc_max_psi: float
+    of_mean: float
+    of_min: float
+    of_max: float
+    isp_s: float
+    cstar_mps: float
+    oxidiser_kg: float
+    fuel_kg: float
+    stiffness_oxidiser_min: float
+    stiffness_fuel_min: float
+    extrapolated_steps: int
+    steps: int
+    tanks: list[BurnTankOut] = Field(default_factory=list)
+    engine_model: str = ""
+    """``card`` (EngineDesign's engine) or ``simplified`` (feedtwin's own)."""
+    run_id: str = ""
+    """The run this burn was recorded as, once it has ended."""
+    series: dict[str, Any] | None = None
+    """The recorded traces (``t`` from ignition, ``thrust_N``, ``pc_psig``,
+    ``of``, ``tanks``, ``labels``), once recorded."""
+
+
+class BurnsOut(BaseModel):
+    engine_id: str
+    engine_model: str
+    burns: list[BurnOut]
+
+
+class KnobOut(BaseModel):
+    """A dial on the GSE page and the regulators (drawing ids) it sets [psig]."""
+
+    id: str
+    label: str
+    regulators: list[str] = Field(default_factory=list)
+    psig: float = 500.0
+    low: float = 0.0
+    high: float = 1000.0
+
+
+class HookupBody(BaseModel):
+    """What a person decided: pinned valves (actuator -> drawing id, "" for
+    none) and the knobs."""
+
+    valves: dict[str, str] = Field(default_factory=dict)
+    knobs: list[KnobOut] = Field(default_factory=list)
+
+
+class HookupValveOut(BaseModel):
+    id: str
+    label: str
+    page: str
+    role: list[str] = Field(default_factory=list)
+
+
+class HookupRegulatorOut(BaseModel):
+    id: str
+    label: str
+    kind: str
+    """``loader``, ``dome`` or ``plain`` (feedtwin.session.hookup.RegulatorInfo)."""
+    page: str
+    drawn_psig: float | None = None
+
+
+class HookupOut(BaseModel):
+    """A drawing's hookup, what the twin would suggest, and everything there is
+    to link: the state machine's actuators, the drawing's valves and regulators."""
+
+    lineage: str
+    saved: bool
+    hookup: HookupBody
+    suggested: HookupBody
+    actuators: list[str]
+    valves: list[HookupValveOut]
+    regulators: list[HookupRegulatorOut]
+    bound: dict[str, str]
+    unmatched: list[str]
+    uncommanded: list[str]
+    by_role: list[str]
+    by_user: list[str]
+    pages: list[str]
+    mated: list[list[str]]
+
+
+class SolverOut(BaseModel):
+    """The solver tab: one entry per tick (feedtwin.session.diagnostics).
+
+    Columns rather than rows, as the plots read them. ``summary`` is what the
+    headline says: is this run's arithmetic to be trusted.
+    """
+
+    t: list[float]
+    couplings: list[int]
+    iterations: list[int]
+    iterations_max: list[int]
+    residual: list[float]
+    continuity: list[float]
+    converged: list[bool]
+    chamber_residual_psi: list[float]
+    inventory_kg: list[float]
+    mass_error_kg: list[float]
+    guard_kg: list[float]
+    guard_J: list[float]
+    summary: dict[str, float] = Field(default_factory=dict)
 
 
 # ------------------------------------------------------------------ drawing

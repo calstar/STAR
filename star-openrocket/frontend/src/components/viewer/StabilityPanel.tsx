@@ -44,8 +44,12 @@ function UnitField({ value, onChange, kind, min }: {
   // Every use of this writes a design field (motor aft offset, rail length), so
   // it goes read-only with the design rather than each call site remembering.
   const disabled = useDisabled()
-  const [editing, setEditing] = useState(false)
-  const shown = editing ? val(value, kind) : forInput(value, kind)
+  // The characters typed, held for as long as the box has focus. Showing the
+  // parsed number back instead rewrites the box under the caret on every
+  // keystroke and makes a `0` impossible to delete -- see `NumberInput`, which
+  // this is the design-side twin of.
+  const [draft, setDraft] = useState<string | null>(null)
+  const shown = draft ?? forInput(value, kind)
   return (
     <input
       type="number"
@@ -53,9 +57,10 @@ function UnitField({ value, onChange, kind, min }: {
       min={min}
       disabled={disabled}
       value={shown}
-      onFocus={() => setEditing(true)}
-      onBlur={() => setEditing(false)}
+      onFocus={() => setDraft(String(val(value, kind)))}
+      onBlur={() => setDraft(null)}
       onChange={(e) => {
+        setDraft(e.target.value)
         const t = e.target.value.trim()
         onChange(t === '' ? 0 : si(Number(t), kind))
       }}
@@ -103,6 +108,9 @@ export interface StabilityPanelProps {
   onSetRailLength: (m: number) => void
   /** Open the motor-curves popup (thrust / weight / CG over time) for the selected motor. */
   onViewMotorCurves: () => void
+  /** Download the selected motor's curve file (.eng/.rse). The .ork export is in the header. */
+  onDownloadMotorFile: () => void
+  motorFileError: string | null
 }
 
 function formatMargin(margin: number | null): string {
@@ -147,6 +155,8 @@ export function StabilityPanel({
   railLength,
   onSetRailLength,
   onViewMotorCurves,
+  onDownloadMotorFile,
+  motorFileError,
 }: StabilityPanelProps) {
   const { q, lab, num } = useUnits()
   // Face sets, the motor and its placement, and the rail length are all part of
@@ -295,6 +305,14 @@ export function StabilityPanel({
               </button>
               <button
                 type="button"
+                onClick={onDownloadMotorFile}
+                className={`${btn} px-2 py-0.5`}
+                title="The thrust curve as an .eng/.rse file, for an OpenRocket that does not have this motor"
+              >
+                .eng
+              </button>
+              <button
+                type="button"
                 onClick={() => setPickerOpen((v) => !v)}
                 disabled={readOnly}
                 className={`${btn} px-2 py-0.5 disabled:cursor-not-allowed`}
@@ -336,6 +354,8 @@ export function StabilityPanel({
             />
           </div>
         )}
+
+        {motorFileError && <p className="mb-1 text-xs text-rose-400">{motorFileError}</p>}
 
         {motorSel && (
           <>

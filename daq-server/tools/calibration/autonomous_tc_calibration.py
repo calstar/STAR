@@ -54,12 +54,18 @@ def _default_board_ip():
     return "192.168.2.103"
 
 
-def _default_num_sensors():
+def _default_connectors():
+    """The channels this board samples, from active_connectors.
+
+    That list is the config's only statement of which channels exist, and it need
+    not be contiguous — a board may declare {1, 2, 6} — so callers iterate it
+    rather than counting it.
+    """
     if _cfg_loaded:
         b = get_board_by_type("TC")
         if b:
-            return b.get("num_sensors", 10)
-    return 10
+            return [int(c) for c in b.get("active_connectors", []) or []]
+    return list(range(1, 10 + 1))
 
 
 def _default_calibration_dir():
@@ -170,11 +176,10 @@ class AutonomousTCCalibrator:
         logger.info(f"🌡️  CH{ch} → {temp_c:.1f} °C")
 
     def set_reference_all(self, temp_c, n=None):
-        if n is None:
-            n = _default_num_sensors()
-        for ch in range(1, n + 1):
+        channels = _default_connectors() if n is None else list(range(1, n + 1))
+        for ch in channels:
             self.reference_temps[ch] = temp_c
-        logger.info(f"🌡️  All channels (1-{n}) → {temp_c:.1f} °C")
+        logger.info(f"🌡️  TC channels {channels} → {temp_c:.1f} °C")
 
     def start(self):
         self.running = True

@@ -218,7 +218,7 @@ _ON_MAIN = {
     "get_release": ("GET", "/release/0.1", None, True),
 }
 _NOT_DOC_SCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
-                   "get_featured", "set_featured", "clear_featured",
+                   "rescue_document", "get_featured", "set_featured", "clear_featured",
                    # Registered because pid runs curated; this mode never offers them.
                    *CURATED_ROUTES}
 
@@ -274,6 +274,20 @@ def test_a_dangling_main_pointer_locks_nothing(client, tmp_path):
     b_id = _create(client, B)
     assert client.get(FEATURED, headers=B).json()["featured"] is None
     assert _save(client, B, b_id, [{"id": "ok"}], params={}).status_code == 200
+
+
+def test_edits_refused_on_the_main_diagram_can_be_rescued(client):
+    """A non-admin's save to main is refused; /rescue keeps what they had as a
+    diagram of their own, which they can edit."""
+    a_id = _create(client, A)
+    _release(client, A, a_id)
+    _feature(client, a_id)
+    r = client.post(f"{BASE}/{a_id}/rescue", headers=B, params=OWNER_A,
+                    json={"nodes": [{"id": "kept"}], "edges": []})
+    assert r.status_code == 200, r.text
+    rescued = r.json()
+    assert rescued["mine"] and rescued["editable"] and not rescued["featured"]
+    assert _save(client, B, rescued["id"], [{"id": "kept"}, {"id": "more"}], params={}).status_code == 200
 
 
 # ── copies of the main diagram ───────────────────────────────────────────────

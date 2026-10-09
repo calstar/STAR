@@ -1,0 +1,23 @@
+// Scratch: a margin bar's jump (store.focus) rings the place on the schematic; Tab opens a card.
+import { chromium } from 'playwright';
+const OUT = new URL('./shots/', import.meta.url).pathname;
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const errors = [];
+page.on('pageerror', (e) => errors.push(e.message));
+page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+await page.goto('http://localhost:5173/e2e-scratch/hero.html?theme=dark&w=1104&match=1', { waitUntil: 'load', timeout: 60000 });
+await page.waitForSelector('svg[aria-label="Feed system schematic"]', { timeout: 60000 });
+await page.waitForTimeout(1000);
+await page.evaluate(() => window.__store.focus(1.0, 'lox_tank'));
+await page.waitForTimeout(150);
+console.log('rings', await page.locator('.lx-hero-focus').count());
+await page.screenshot({ path: `${OUT}hero-focus-ring.png`, clip: { x: 0, y: 0, width: 1150, height: 450 } });
+await page.waitForTimeout(1800);
+console.log('rings after', await page.locator('.lx-hero-focus').count());
+await page.locator('rect[aria-label="MV-OX"]').focus();
+await page.waitForTimeout(200);
+console.log('card', await page.locator('[role="tooltip"]').innerText());
+await page.screenshot({ path: `${OUT}hero-keyboard-card.png`, clip: { x: 0, y: 0, width: 1150, height: 450 } });
+console.log(errors.length ? errors.join('\n') : 'no console errors');
+await browser.close();

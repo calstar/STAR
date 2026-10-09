@@ -27,6 +27,8 @@ import numpy as np
 from operator import attrgetter as _attrgetter
 from types import SimpleNamespace
 
+from engine.core.injectors.layout import effective_discharge
+
 # Enum mappings -- mirror native_injector._PHI / _INJ / _EFF_MODEL.
 _PHI = {"none": 0, "sqrtP": 1, "logP": 2}
 _INJ = {"pintle": 0, "impinging": 1, "coaxial": 2}
@@ -38,10 +40,25 @@ def _ns(**kw):
 
 
 def _discharge(c):
-    """Mirrors native_injector._fill_discharge."""
+    # (resolved by engine.core.injectors.layout.effective_discharge before it gets here)
+    """Mirrors native_injector._fill_discharge.
+
+    When the config declares an orifice INLET geometry, resolve it here and hand the kernel
+    the finished Cd_inf with the diameter scaling switched OFF. The kernel has no notion of
+    inlet treatment, so passing the raw Cd_inf would leave it on the old diameter path while
+    Python used the inlet value -- a fresh Python/kernel divergence of exactly the kind that
+    the x_star evaporation split already cost this codebase 9.7% of thrust.
+    """
+    from engine.core.discharge import cd_inf_from_inlet_geometry, lichtarowicz_re_inputs
+    _cd_inlet = cd_inf_from_inlet_geometry(c)
+    _lich = lichtarowicz_re_inputs(c)
+    _lod, _beta, _cdu = (0.0, 0.0, 0.0) if _lich is None else (
+        _lich[1], float(_lich[2] or 0.0), _lich[0])
+    _cd_inf = float(_cd_inlet) if _cd_inlet is not None else float(c.Cd_inf)
+    _use_geom = 0 if _cd_inlet is not None else int(bool(c.use_geometry_cd))
     return _ns(
-        Cd_inf=float(c.Cd_inf), a_Re=float(c.a_Re), Cd_min=float(c.Cd_min),
-        use_geometry_cd=int(bool(c.use_geometry_cd)),
+        Cd_inf=_cd_inf, a_Re=float(c.a_Re), Cd_min=float(c.Cd_min),
+        use_geometry_cd=_use_geom,
         d_ref_m=float(c.d_ref_m), d_min_m=float(c.d_min_m),
         cd_small_hole_exponent=float(c.cd_small_hole_exponent),
         cd_large_hole_log_gain=float(c.cd_large_hole_log_gain),
@@ -50,7 +67,13 @@ def _discharge(c):
         P_ref=float(c.P_ref), a_P=float(c.a_P),
         use_temperature_correction=int(bool(c.use_temperature_correction)),
         T_ref=float(c.T_ref), a_T=float(c.a_T),
+        lich_l_over_d=_lod, lich_beta=_beta, lich_cd_u=_cdu,
     )
+
+
+def _feed_fittings_K(c):
+    from engine.pipeline.feed_loss import fittings_K
+    return fittings_K(c)
 
 
 def _feed(c):
@@ -58,8 +81,23 @@ def _feed(c):
     return _ns(
         d_inlet=float(getattr(c, "d_inlet", 0.0) or 0.0),
         A_hydraulic=float(getattr(c, "A_hydraulic", 0.0) or 0.0),
-        K0=float(c.K0), K1=float(c.K1), phi_type=_PHI[c.phi_type],
+        # Itemised fittings add to K0 on the line velocity head (feed_loss.fittings_K, same
+        # summation order); no fittings => K0 exactly. roughness_m configs never get here
+        # (accel.can_handle hands them to Python).
+        K0=(float(c.K0) + _feed_fittings_K(c)) if getattr(c, "fittings", None) else float(c.K0),
+        K1=float(c.K1), phi_type=_PHI[c.phi_type],
+        # Exit dump into the manifold (feed_loss.delta_p_feed): same falsy reads as Python.
+        K_exit=float(getattr(c, "K_exit", 0.0) or 0.0),
+        d_exit=float(getattr(c, "d_exit", None) or 0.0),
     )
+
+
+def _cav(config):
+    """Vena-contracta Cc per stream for the Nurick cavitation limit (discharge.contraction_coefficient)."""
+    from engine.core.discharge import contraction_coefficient, inlet_radius_ratio_of
+    from engine.core.injectors.layout import effective_discharge
+    return _ns(cc_O=contraction_coefficient(inlet_radius_ratio_of(effective_discharge(config, "oxidizer"))),
+               cc_F=contraction_coefficient(inlet_radius_ratio_of(effective_discharge(config, "fuel"))))
 
 
 def _fluid(f):
@@ -76,6 +114,9 @@ def _fluid(f):
         # Boiling point feeds the Spalding transfer number B_M in the derived evaporation
         # constant. 0 => the kernel falls back to the legacy fixed-K path for that stream.
         boiling_point=float(getattr(f, "boiling_point", 0.0) or 0.0),
+        # Cavitation limit (impinging._stream_flow): vapour pressure; NaN => no limit.
+        vapor_pressure=(float(f.vapor_pressure) if getattr(f, "vapor_pressure", None) is not None
+                        else float("nan")),
     )
 
 
@@ -212,6 +253,26 @@ def _imp(b):
     )
 
 
+_NET_ZERO = _ns(enabled=0, n_ports=0, h=0, A_ch=0.0, D_h=0.0, s=0.0, eps=0.0, scale=0.0,
+                A_hole=0.0, d_hole=0.0, K_ent=0.0, C_R=0.0)
+
+
+def _net(config, side):
+    """The stream's back-channel ring (impinging._RingManifold), read off the very object the
+    Python injector builds, so the kernel marches the same branch; zeros for a plenum."""
+    from engine.core.injectors.impinging import _ring_manifold_for
+    fl = config.fluids[side]
+    b = getattr(config.injector.geometry, side)
+    net = _ring_manifold_for(config, side, float(fl.density), float(fl.viscosity),
+                             b.n_elements, b.d_jet)
+    if net is None:
+        return _NET_ZERO
+    return _ns(enabled=1, n_ports=int(net.n_ports), h=int(net.h), A_ch=float(net.A_ch),
+               D_h=float(net.D_h), s=float(net.s), eps=float(net.eps), scale=float(net.scale),
+               A_hole=float(net.A_hole), d_hole=float(net.d_hole), K_ent=float(net.K_ent),
+               C_R=float(net.C_R))
+
+
 def build_state(config):
     """Pure-Python equivalent of native_injector.build_state.
 
@@ -229,9 +290,11 @@ def build_state(config):
     # branch on injector.type, so the unused half is never read.
     if inj_type == _INJ["impinging"]:
         imp_O, imp_F, pin = _imp(g.oxidizer), _imp(g.fuel), _PIN_ZERO
+        net_O, net_F = _net(config, "oxidizer"), _net(config, "fuel")
     elif inj_type == _INJ["pintle"]:
         _z = _ns(n_elements=0, d_jet=0.0, impingement_angle=0.0, spacing=0.0)
         imp_O, imp_F, pin = _z, _z, _pintle(g)
+        net_O = net_F = _NET_ZERO
     else:
         raise NotImplementedError(f"injector type {config.injector.type!r} not ported")
 
@@ -241,7 +304,8 @@ def build_state(config):
         # here instead would change results on configs that carry the stale key.
         smd_model=1,
         smd_C=float(sp.smd.C), smd_m=float(sp.smd.m), smd_p=float(sp.smd.p),
-        smd_C_ingebo=float(sp.smd.C_ingebo),
+        smd_scale=float(getattr(sp.smd, "smd_scale", 1.0) or 1.0),
+        smd_property_scaling=float(bool(getattr(sp.smd, "smd_property_scaling", True))),
         # Falsy check, not `is None`: we_corr_max of 0.0 and null both -> 0.0.
         smd_we_corr_max=float(getattr(sp.smd, "we_corr_max", None))
         if getattr(sp.smd, "we_corr_max", None) else 0.0,
@@ -261,6 +325,9 @@ def build_state(config):
         evap_C_evap=float(getattr(sp.evaporation, "C_evap", 1.562)),
         evap_cp_gas=float(getattr(sp.evaporation, "cp_gas", 2200.0)),
         evap_apply_tau_res=1.0 if getattr(sp.evaporation, "apply_tau_res_correction", False) else 0.0,
+        # measurements.d32_*_um (impinging.py replaces the TN 4222 D32 where it was measured)
+        d32_measured_O=float(getattr(sp.smd, "d32_measured_O", None) or 0.0),
+        d32_measured_F=float(getattr(sp.smd, "d32_measured_F", None) or 0.0),
     )
 
     solver = _ns(
@@ -275,8 +342,11 @@ def build_state(config):
     return _ns(
         injector=_ns(type=inj_type, imp_O=imp_O, imp_F=imp_F),
         pin=pin,
-        discharge_O=_discharge(config.discharge["oxidizer"]),
-        discharge_F=_discharge(config.discharge["fuel"]),
+        net_O=net_O, net_F=net_F,
+        # Same resolution the Python injector uses, so Cd cannot diverge between the paths.
+        discharge_O=_discharge(effective_discharge(config, "oxidizer")),
+        discharge_F=_discharge(effective_discharge(config, "fuel")),
+        cav=_cav(config),
         feed_O=_feed(config.feed_system["oxidizer"]),
         feed_F=_feed(config.feed_system["fuel"]),
         fluid_O=_fluid(config.fluids["oxidizer"]),
@@ -317,7 +387,7 @@ _NAMES = [
     "FO_DIN", "FO_AH", "FO_K0", "FO_K1", "FO_PHI",
     "FF_DIN", "FF_AH", "FF_K0", "FF_K1", "FF_PHI",
     # spray
-    "SP_SMDMODEL", "SP_SMDC", "SP_SMDM", "SP_SMDP", "SP_SMDCING", "SP_SMDWECORR",
+    "SP_SMDMODEL", "SP_SMDC", "SP_SMDM", "SP_SMDP", "SP_SMDSCALE", "SP_SMDWECORR",
     "SP_GASR", "SP_GAST", "SP_ANGMODEL", "SP_ANGK", "SP_ANGN", "SP_WEMIN",
     "SP_EVAPK", "SP_EVAPXLIM", "SP_EVAPUSE",
     # solver
@@ -354,6 +424,22 @@ _NAMES = [
     "RHO_O_BOIL", "RHO_F_BOIL",      # boiling points, for the Spalding transfer number
     "LAT_O",                         # oxidiser latent heat (LAT_F already present)
     "EV_MODEL", "EV_CEVAP", "EV_CPGAS", "EV_APPLY_TAURES",
+    # feed-line exit dump (K_exit on the d_exit bore; feed_loss.delta_p_feed)
+    "FO_KX", "FO_DEX", "FF_KX", "FF_DEX",
+    # NACA TN 4222 property transfer on/off (spray.smd.smd_property_scaling)
+    "SP_SMDPROP",
+    # Lichtarowicz (1965) Re law (discharge.cd_from_re): L/d (0 => legacy a_Re form), the
+    # counterbore approach beta (0 => plenum-fed), and the orifice's pre-approach Cd_u.
+    "DO_LOD", "DO_BETA", "DO_CDU", "DF_LOD", "DF_BETA", "DF_CDU",
+    # Nurick cavitation limit: vapour pressure (NaN => none) and contraction coefficient
+    "VP_O", "VP_F", "CC_O", "CC_F",
+    # back-channel ring manifold per stream (impinging._RingManifold; NET_x = 0 => plenum)
+    "NET_O", "NET_O_PORTS", "NET_O_H", "NET_O_ACH", "NET_O_DH", "NET_O_S", "NET_O_EPS",
+    "NET_O_SCALE", "NET_O_AHOLE", "NET_O_DHOLE", "NET_O_KENT", "NET_O_CR",
+    "NET_F", "NET_F_PORTS", "NET_F_H", "NET_F_ACH", "NET_F_DH", "NET_F_S", "NET_F_EPS",
+    "NET_F_SCALE", "NET_F_AHOLE", "NET_F_DHOLE", "NET_F_KENT", "NET_F_CR",
+    # measured D32 [m] (0 => the TN 4222 correlation)
+    "D32M_O", "D32M_F",
 ]
 _IDX = {n: i for i, n in enumerate(_NAMES)}
 globals().update(_IDX)                      # module-level int constants for njit
@@ -402,6 +488,8 @@ def _build_path_table():
         "RHO_F": "fluid_F.density", "MU_F": "fluid_F.viscosity",
         "SIG_F": "fluid_F.surface_tension", "T_F": "fluid_F.temperature",
         "LAT_F": "fluid_F.latent_heat",
+        "VP_O": "fluid_O.vapor_pressure", "VP_F": "fluid_F.vapor_pressure",
+        "CC_O": "cav.cc_O", "CC_F": "cav.cc_F",
         "LAT_O": "fluid_O.latent_heat",
         "RHO_O_BOIL": "fluid_O.boiling_point",
         "RHO_F_BOIL": "fluid_F.boiling_point",
@@ -420,13 +508,15 @@ def _build_path_table():
                          ("DREF","d_ref_m"),("DMIN","d_min_m"),("EXPS","cd_small_hole_exponent"),
                          ("LOGG","cd_large_hole_log_gain"),("CDMAX","cd_inf_max"),("CDFLOOR","cd_inf_min_geom"),
                          ("UPC","use_pressure_correction"),("PREF","P_ref"),("AP","a_P"),
-                         ("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T")):
+                         ("UTC","use_temperature_correction"),("TREF","T_ref"),("AT","a_T"),
+                         ("LOD","lich_l_over_d"),("BETA","lich_beta"),("CDU","lich_cd_u")):
             paths[f"{pre}_{suf}"] = f"{side}.{fld}"
     for pre, side in (("FO", "feed_O"), ("FF", "feed_F")):
-        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type")):
+        for suf, fld in (("DIN","d_inlet"),("AH","A_hydraulic"),("K0","K0"),("K1","K1"),("PHI","phi_type"),
+                         ("KX","K_exit"),("DEX","d_exit")):
             paths[f"{pre}_{suf}"] = f"{side}.{fld}"
     for suf, fld in (("SMDMODEL","smd_model"),("SMDC","smd_C"),("SMDM","smd_m"),("SMDP","smd_p"),
-                     ("SMDCING","smd_C_ingebo"),("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),
+                     ("SMDSCALE","smd_scale"),("SMDWECORR","smd_we_corr_max"),("GASR","chamber_gas_R"),
                      ("GAST","chamber_gas_T"),("ANGMODEL","spray_angle_model"),("ANGK","spray_angle_k"),
                      ("ANGN","spray_angle_n"),("WEMIN","we_min"),("EVAPK","evap_K"),
                      ("EVAPXLIM","evap_x_star_limit"),("EVAPUSE","evap_use_constraint")):
@@ -476,8 +566,17 @@ def _build_path_table():
     for name, fld in (("PIN_SMDC","pintle_C"),("PIN_SMDB","pintle_B"),
                       ("PIN_SMDN","pintle_n"),("PIN_SMDP","pintle_p"),
                       ("SP_USETURB","use_turbulence_corrections"),
-                      ("SP_PENGAIN","turbulence_penetration_gain")):
+                      ("SP_PENGAIN","turbulence_penetration_gain"),
+                      ("SP_SMDPROP","smd_property_scaling")):
         paths[name] = f"spray.{fld}"
+    for pre, side in (("NET_O", "net_O"), ("NET_F", "net_F")):
+        paths[pre] = f"{side}.enabled"
+        for suf, fld in (("PORTS", "n_ports"), ("H", "h"), ("ACH", "A_ch"), ("DH", "D_h"),
+                         ("S", "s"), ("EPS", "eps"), ("SCALE", "scale"), ("AHOLE", "A_hole"),
+                         ("DHOLE", "d_hole"), ("KENT", "K_ent"), ("CR", "C_R")):
+            paths[f"{pre}_{suf}"] = f"{side}.{fld}"
+    paths["D32M_O"] = "spray.d32_measured_O"
+    paths["D32M_F"] = "spray.d32_measured_F"
     missing = set(_NAMES) - set(paths)
     assert not missing, f"param(s) with no source path: {sorted(missing)}"
     return paths

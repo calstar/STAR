@@ -46,6 +46,18 @@ function getCalibrationsDir(): string {
 export function livePath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.json');
 }
+/**
+ * The live load-cell tare state, written by the calibration service and read here to apply the
+ * display subtraction. Lives beside the cubic store on purpose — same directory, same atomic
+ * write discipline, same "read the file to learn the answer" contract, because [0x46,0x00] is
+ * one-way and the service never sends a reply.
+ *
+ * NOT the per-run record: that is <dbDir>/lc_tare.jsonl, appended by lc-tare.ts. This file is
+ * overwritten on every change and removed at session start, so it cannot serve as a record.
+ */
+export function tarePath(): string {
+  return path.join(getCalibrationsDir(), 'lc_tare.json');
+}
 function defaultPath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.default.json');
 }
@@ -126,8 +138,13 @@ function stripToBlank(json: any): any {
       ch.status = 'uncalibrated';
     }
   }
+  // Both namespaces. The lc_* maps exist because PT and LC share a logical-channel space
+  // (see SensorKind in CubicCalibrationStore.hpp); leaving them out would give a "blank"
+  // profile that still carried every load cell's curve.
   for (const k of ['calibration_adc_norm_min', 'calibration_adc_norm_scale',
-                   'calibration_poly_coeffs', 'calibration_polynomials']) {
+                   'calibration_poly_coeffs', 'calibration_polynomials',
+                   'lc_calibration_adc_norm_min', 'lc_calibration_adc_norm_scale',
+                   'lc_calibration_poly_coeffs', 'lc_calibration_polynomials']) {
     if (k in out) out[k] = {};
   }
   return out;

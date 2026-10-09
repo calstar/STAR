@@ -1,0 +1,41 @@
+name: callink-worker CI
+
+'on':
+  push:
+    paths:
+      - 'callink-worker/**'
+      - '.github/workflows/callink-worker-ci.yml'
+  pull_request:
+    paths:
+      - 'callink-worker/**'
+      - '.github/workflows/callink-worker-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: callink-worker-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: callink-worker/package-lock.json
+      - name: Install dependencies
+        working-directory: callink-worker
+        # The tests need no browser; skip Playwright's download.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+      - name: Syntax check
+        working-directory: callink-worker
+        run: for f in *.mjs lib/*.mjs tools/*.mjs; do node --check "$f"; done
+      - name: Test
+        working-directory: callink-worker
+        run: npm test

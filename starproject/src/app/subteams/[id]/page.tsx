@@ -7,6 +7,7 @@ import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { getProjectOptions } from "@/lib/projects";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -45,11 +46,7 @@ export default async function SubteamPage({
       },
     }),
     getTeamUsers(),
-    prisma.project.findMany({
-      where: { archived: false },
-      select: { id: true, name: true, parent: { select: { name: true } } },
-      orderBy: { name: "asc" },
-    }),
+    getProjectOptions(),
   ]);
 
   if (!subteam) notFound();
@@ -65,10 +62,7 @@ export default async function SubteamPage({
     subproject: { name: t.project.name, color: t.project.color },
   }));
 
-  const projectOptions = projects.map((p) => ({
-    id: p.id,
-    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
-  }));
+  const projectOptions = projects;
 
   const header = (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">

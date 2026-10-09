@@ -18,9 +18,16 @@ name: Publish app images
       - 'lib/stardesign-ui/**'
       - 'pid-designer/**'
       - 'star-openrocket/**'
+      - 'feed-twin/**'
+      # The feed twin's backend compiles against this shared physics core,
+      # so a change to it has to rebuild the image too.
+      - 'lib/feedtwin/**'
       - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
       - 'starproject/**'
+      - 'callink-worker/**'
+      - 'parts-hub/**'
+      - 'server-analytics/**'
       - '.github/workflows/publish-apps.yml'
   workflow_dispatch:
 
@@ -55,10 +62,20 @@ jobs:
           # calculator merged into the Onshape viewer, so it carries both.
           - { name: openrocket-api,               context: .,                           dockerfile: ./star-openrocket/Dockerfile.api }
           - { name: openrocket-frontend,          context: .,                           dockerfile: ./star-openrocket/frontend/Dockerfile }
+          # Feed system twin. Repo root for the same reason as the others: the
+          # backend is built on lib/feedtwin, the physics core it shares with
+          # EngineDesign.
+          - { name: feed-twin-api,                context: .,                           dockerfile: ./feed-twin/Dockerfile.api }
+          - { name: feed-twin-frontend,           context: .,                           dockerfile: ./feed-twin/frontend/Dockerfile }
           # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).
           - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
           # STARProject: one Next.js image serves pages + /api and runs migrations on start.
           - { name: starproject,                  context: ./starproject,               dockerfile: ./starproject/Dockerfile }
+          # Files Finance-tab reimbursements on CalLink (Playwright image).
+          - { name: callink-worker,               context: ./callink-worker,            dockerfile: ./callink-worker/Dockerfile }
+          - { name: parts-hub,                    context: ./parts-hub,                 dockerfile: ./parts-hub/Dockerfile }
+          # Server analytics: one image, hub on EC2 and an agent on each box.
+          - { name: analytics,                    context: ./server-analytics,          dockerfile: ./server-analytics/Dockerfile }
     steps:
       - uses: actions/checkout@v4
 

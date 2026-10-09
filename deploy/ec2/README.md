@@ -11,6 +11,7 @@ as every other app. **OpenProject is retired** to the `legacy` compose profile
 Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000                         (login)
                                       └▶ caddy:80 ─ forward_auth → auth:5000/verify
                                                   └ reverse_proxy → starproject:3000 → starproject-db
+                                                  └ reverse_proxy → analytics:8080   (server analytics)
 ```
 
 ## Switch to STARProject (retire OpenProject)
@@ -53,6 +54,14 @@ OpenProject vars in `.env` (`OPENPROJECT_SECRET_KEY_BASE`, SES creds), then
 `docker compose --profile legacy up -d openproject`. Its data is intact on the
 external `openproject_pgdata` / `openproject_assets` volumes (+ S3 backups).
 
+## Server analytics
+
+`analytics.starberkeley.org` (services `analytics` and `analytics-agent`) shows
+this box and the apps box: usage over time, containers, and logs. It is open to
+STARProject admins only. The one-time setup (two tokens, an internal secret and
+a tunnel hostname) is in [`server-analytics/README.md`](../../server-analytics/README.md#setting-it-up).
+Until that is done, both services start and idle, so they never block a deploy.
+
 ## Auto-deploy on merge to `main`
 
 Same mechanism as the apps box — a systemd timer runs
@@ -87,11 +96,34 @@ Two things specific to this box:
 Pause it any time with `sudo systemctl disable --now star-auto-update.timer`;
 `cat /var/lib/star-auto-update/state` shows what is currently deployed.
 
+## Finance: the CalLink worker
+
+`callink-worker` files approved reimbursements from STARProject's Finance tab on
+CalLink, and pushes CalLink's request history back every night. It signs in as a
+CalNet account, so CalLink's session needs a Duo approval roughly once a day. Admins
+see on /finance when it runs out, and its **Sign in to CalLink** button has the worker
+sign in: Duo pushes to the account owner's phone, and approving it renews the 24 h.
+A press the worker doesn't take up within 2 minutes lapses, so no push arrives late.
+
+```bash
+# one-time: STARPROJECT_WORKER_TOKEN and CALLINK_CALNET_* in .env, then
+docker compose up -d starproject callink-worker
+docker compose exec callink-worker node session.mjs login    # or the button on /finance; approve the Duo push
+docker compose exec callink-worker node push.mjs             # first import of CalLink's history
+docker compose logs -f callink-worker
+```
+
+It starts **dry**: it claims each approved request, checks the whole CalLink form
+and hands the job back without filing. Set `CALLINK_WORKER_FLAGS=--live` in `.env`
+and `docker compose up -d callink-worker` when you want it to file. It never files a
+request twice: it looks for the request's `[STAR R-n]` tag on CalLink first, and a
+filing it can't confirm goes to an admin ("Needs check") instead of back in the queue.
+
 ## STARProject backups (S3)
 
 `starproject-backup.sh` `pg_dump`s the `starproject-db` Postgres to
-`s3://star-starproject-backups/db/<stamp>.dump` (DB-only — the app has no uploads
-volume). Auth is the instance IAM role. One-time AWS setup mirrors the OpenProject
+`s3://star-starproject-backups/db/<stamp>.dump`. Everything is in Postgres,
+including reimbursement receipts (bytea), so there is no uploads volume. Auth is the instance IAM role. One-time AWS setup mirrors the OpenProject
 bucket (see "S3 backups" below): create a versioned private bucket
 `star-starproject-backups`, grant the instance role List/Get/Put (not Delete) on
 it, and add a lifecycle rule. Then install the timer:

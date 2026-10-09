@@ -1,9 +1,11 @@
 import type { StabilityRichPayload } from './types';
 import { VizCard, MUTED, STABLE, UNSTABLE } from './shared';
 
-const STREAM_COLORS = { O: '#38bdf8', F: '#a78bfa' };
-const X_MIN = 0.08;
-const X_MAX = 0.45;
+const STREAM_COLORS: Record<string, string> = { O: '#38bdf8', F: '#a78bfa' };
+
+/** Fallback sweep window when the backend did not send one (old payloads). */
+const DEFAULT_X_MIN = 0.08;
+const DEFAULT_X_MAX = 0.45;
 
 interface Props {
   data: StabilityRichPayload;
@@ -23,20 +25,28 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const etaF = designF?.eta_inj ?? data.assumptions.eta_inj_F;
   const tauF = designF?.tau_theta_c ?? tauO;
 
-  // Dominant chug pole (folded in from the former s-plane map): σ = growth rate, ω = 2πf.
-  const sigma = data.chug.pole?.real ?? data.chug.alpha ?? NaN;
-  const omega = data.chug.pole?.imag ?? (data.chug.freq_hz ?? 0) * 2 * Math.PI;
-  const poleFinite = Number.isFinite(sigma) && Number.isFinite(omega);
-  const poleStable = sigma < 0;
-  const poleFreqHz = omega / (2 * Math.PI);
-  const decayMs = poleStable && Math.abs(sigma) > 1 ? (1000 / Math.abs(sigma)).toFixed(0) : null;
-  const zeta = data.chug.zeta;
-  const zetaStr = typeof zeta === 'number' && Number.isFinite(zeta) ? ` · ζ=${zeta.toFixed(3)}` : '';
+  // Stream identity comes from the config, never from this file. The labels used to read
+  // "O (LOX)" and "F (fuel)" on every engine, including ones burning neither.
+  const nameO = designO?.fluid ?? data.assumptions.fluid_O ?? 'oxidizer';
+  const nameF = designF?.fluid ?? data.assumptions.fluid_F ?? 'fuel';
+  const phaseO = designO?.phase ?? data.assumptions.phase_O;
+  const phaseF = designF?.phase ?? data.assumptions.phase_F;
+  const lagModel = data.chug.lag_model ?? data.assumptions.time_lag_model;
 
+  // Sweep window follows the design point (backend-supplied), so the dots stay on the chart.
+  const [X_MIN, X_MAX] = data.chug.eta_window ?? [DEFAULT_X_MIN, DEFAULT_X_MAX];
+
+  // The design in the boundary's own frame (mass-weighted stiffness and lag, both scaled from the
+  // design): one point, nominal mixing lag, and a second at the mixing lag the gate is taken at.
+  const dp = data.chug.design_point;
+  const system = dp != null && Number.isFinite(dp.eta) && Number.isFinite(dp.tau_theta_c);
+  const gateY = dp?.gate_tau_theta_c;
   const yMax = Math.max(
-    ...boundary.map(([, t]) => t),
-    tauO,
-    tauF,
+    // The curve can run far above the design where the injector is stiff; cap the view at a few
+    // times the design so the design end of the chart stays readable.
+    ...(system
+      ? [Math.min(Math.max(...boundary.map(([, t]) => t), 1), 4 * Math.max(dp!.tau_theta_c, gateY ?? 0, 1)), dp!.tau_theta_c, gateY ?? 0]
+      : [...boundary.map(([, t]) => t), tauO, tauF]),
     1,
   ) * 1.12;
 
@@ -50,16 +60,20 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const toY = (tau: number) => pad.t + plotH - (tau / yMax) * plotH;
 
   const boundaryPts = boundary
-    .map(([eta, tau]) => `${toX(eta)},${toY(tau)}`)
+    .map(([eta, tau]) => `${toX(eta)},${toY(Math.min(tau, yMax))}`)
     .join(' ');
 
   const yTicks = [0, yMax * 0.33, yMax * 0.66, yMax].map((v) => Math.round(v * 10) / 10);
-  const xTicks = [0.1, 0.2, 0.3, 0.4];
+  const xTicks = Array.from({ length: 4 }, (_, i) => X_MIN + ((X_MAX - X_MIN) * (i + 0.5)) / 4);
 
   return (
     <VizCard
-      title="Injector stiffness map"
-      subtitle="Stiffer injector (higher η_inj) and shorter lag (lower τ/θ_c) → more stable; dominant chug pole below"
+      title="Chug stability boundary — stiffness vs lag"
+      subtitle="Below the red curve is stable."
+      info={<>
+        <span className="block">Chug is one loop through both streams, so the design is one point: x is the flow-weighted injector ΔP/Pc, y the flow-weighted combustion lag over the gas residence time θ_c. The curve is where the loop's gain margin reaches 1 when every drop (x) or every lag (y) is scaled from this design.</span>
+        <span className="block">Raise injector ΔP to move right; a finer spray shortens the lag and moves down. Lags in the table are in ms: {lagModel === 'd2_law' ? 'the quiescent d²-law droplet lifetime' : 'τ = τ_at + τ_vap + τ_mix (Leonardi et al., Acta Astronautica 139, 2017)'}.</span>
+      </>}
     >
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: H }}>
         {/* grid */}
@@ -89,7 +103,7 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
               strokeDasharray="3 3"
             />
             <text x={toX(t)} y={H - 22} fill={MUTED} fontSize={9} textAnchor="middle">
-              {t.toFixed(1)}
+              {t.toFixed(2)}
             </text>
           </g>
         ))}
@@ -121,15 +135,24 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
           />
         )}
 
-        {/* design dots */}
-        <circle cx={toX(etaO)} cy={toY(tauO)} r={7} fill={STREAM_COLORS.O} stroke="#fff" strokeWidth={1.5} />
-        <text x={toX(etaO) + 10} y={toY(tauO) + 4} fill={STREAM_COLORS.O} fontSize={9}>
-          O
-        </text>
-        <circle cx={toX(etaF)} cy={toY(tauF)} r={7} fill={STREAM_COLORS.F} stroke="#fff" strokeWidth={1.5} />
-        <text x={toX(etaF) + 10} y={toY(tauF) + 4} fill={STREAM_COLORS.F} fontSize={9}>
-          F
-        </text>
+        {system ? (
+          <>
+            {gateY != null && Number.isFinite(gateY) && (
+              <>
+                <line x1={toX(dp!.eta)} y1={toY(dp!.tau_theta_c)} x2={toX(dp!.eta)} y2={toY(gateY)} stroke="#e2e8f0" strokeDasharray="2 2" />
+                <circle cx={toX(dp!.eta)} cy={toY(gateY)} r={6} fill="none" stroke="#e2e8f0" strokeWidth={1.5} />
+                <text x={toX(dp!.eta) + 9} y={toY(gateY) + 4} fill="#e2e8f0" fontSize={9}>gate</text>
+              </>
+            )}
+            <circle cx={toX(dp!.eta)} cy={toY(dp!.tau_theta_c)} r={6} fill="#e2e8f0" stroke="#0f172a" strokeWidth={1.5} />
+            <text x={toX(dp!.eta) + 9} y={toY(dp!.tau_theta_c) + 4} fill="#e2e8f0" fontSize={9}>design</text>
+          </>
+        ) : (
+          <>
+            <circle cx={toX(etaO)} cy={toY(tauO)} r={7} fill={STREAM_COLORS.O} stroke="#fff" strokeWidth={1.5} />
+            <circle cx={toX(etaF)} cy={toY(tauF)} r={7} fill={STREAM_COLORS.F} stroke="#fff" strokeWidth={1.5} />
+          </>
+        )}
       </svg>
 
       {/* legend below plot — no overlap with axis title */}
@@ -137,76 +160,63 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-5 h-0.5 bg-red-500 rounded" /> marginal boundary
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: STREAM_COLORS.O }} /> O (LOX)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: STREAM_COLORS.F }} /> F (fuel)
-        </span>
+        {system && (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-200" /> design, nominal mixing lag
+            {gateY != null && <><span className="inline-block w-2.5 h-2.5 rounded-full border border-slate-200 ml-2" /> at the gate's mixing lag ({(dp!.gate_mixing_fraction ?? 0).toFixed(2)})</>}
+          </span>
+        )}
       </div>
 
       <p className="text-xs text-[var(--color-text-secondary)]">
-        O η={etaO.toFixed(2)} F η={etaF.toFixed(2)} · margin{' '}
+        {system ? <>mean η = {dp!.eta.toFixed(3)} (O {etaO.toFixed(2)}, F {etaF.toFixed(2)})</> : <>O η={etaO.toFixed(2)} F η={etaF.toFixed(2)}</>}
+        {' · gain margin '}
         <span style={{ color: data.chug.margin >= 1.05 ? STABLE : UNSTABLE }}>
           {data.chug.margin.toFixed(3)}
         </span>
-        <span className="opacity-70"> (below red = stable)</span>
+        <span className="opacity-70"> at the gate, {(data.chug.gain_margin_nominal ?? NaN).toFixed(3)} nominal</span>
       </p>
 
-      {/* Dominant chug pole — confirms the sign & frequency behind the margin (former s-plane card). */}
-      {poleFinite ? (
-        <p className="text-[11px] mt-1 font-mono" style={{ color: poleStable ? STABLE : UNSTABLE }}>
-          pole {poleStable ? 'stable' : 'unstable'} σ={sigma.toFixed(1)} ω={omega.toFixed(0)} rad/s (
-          {poleFreqHz.toFixed(0)} Hz)
-          {zetaStr}
-          {decayMs != null ? ` · e-fold ≈ ${decayMs} ms` : ''}
-        </p>
-      ) : (
-        <p className="text-[11px] mt-1 text-[var(--color-text-secondary)] opacity-70">
-          pole data unavailable for this evaluation
-        </p>
-      )}
 
-      {/* per-stream coordinates that put the dots on the map */}
+      {/* Per-stream coordinates, and the lag decomposition that produced the y coordinate.
+          τ is a sum (Leonardi 2017 eq. 5), so showing only the total hides which term to attack. */}
       <table className="w-full mt-3 text-[11px]">
         <thead>
           <tr className="text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
             <th className="font-medium text-left pb-1">stream</th>
-            <th className="font-medium text-right pb-1">η_inj = ΔP/Pc</th>
+            <th className="font-medium text-right pb-1">η_inj</th>
+            <th className="font-medium text-right pb-1" title="atomization lag">τ_at</th>
+            <th className="font-medium text-right pb-1" title="vaporization lag">τ_vap</th>
+            <th className="font-medium text-right pb-1" title="mixing lag">τ_mix</th>
             <th className="font-medium text-right pb-1">τ / θ_c</th>
           </tr>
         </thead>
         <tbody>
           {[
-            { stream: 'O (LOX)', eta: etaO, tau: tauO, color: STREAM_COLORS.O },
-            { stream: 'F (fuel)', eta: etaF, tau: tauF, color: STREAM_COLORS.F },
-          ].map((s) => (
-            <tr key={s.stream}>
-              <td className="py-0.5">
-                <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: s.color }} />
-                <span className="text-[var(--color-text-primary)]">{s.stream}</span>
-              </td>
-              <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{s.eta.toFixed(2)}</td>
-              <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{s.tau.toFixed(2)}</td>
-            </tr>
-          ))}
+            { key: 'O', label: nameO, phase: phaseO, eta: etaO, tau: tauO, color: STREAM_COLORS.O, d: designO },
+            { key: 'F', label: nameF, phase: phaseF, eta: etaF, tau: tauF, color: STREAM_COLORS.F, d: designF },
+          ].map((s) => {
+            const ms = (v: number | null | undefined) =>
+              typeof v === 'number' && Number.isFinite(v) ? (v * 1000).toFixed(2) : '—';
+            return (
+              <tr key={s.key}>
+                <td className="py-0.5">
+                  <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: s.color }} />
+                  <span className="text-[var(--color-text-primary)]">{s.label}</span>
+                  {s.phase === 'gas' && (
+                    <span className="ml-1 text-[9px] text-[var(--color-text-secondary)]">gas</span>
+                  )}
+                </td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{s.eta.toFixed(2)}</td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{ms(s.d?.tau_atom_s)}</td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{ms(s.d?.tau_vap_s)}</td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{ms(s.d?.tau_mix_s)}</td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-primary)]">{s.tau.toFixed(2)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-
-      <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
-        Each dot is a propellant stream at its injector stiffness (x) and combustion lag (y). Dots
-        below/right of the red marginal boundary are stable - the farther from the curve, the more
-        chug margin. To push a stream safer: <span className="text-[var(--color-text-primary)]">raise injector ΔP</span>{' '}
-        (η_inj → moves right) or <span className="text-[var(--color-text-primary)]">atomize finer</span>{' '}
-        (smaller SMD shortens the lag → moves down).
-      </p>
-      {poleFinite && (
-        <p className="text-[10px] text-[var(--color-text-secondary)] mt-1 leading-snug">
-          The pole is the actual root of the chug loop: σ&lt;0 means any chug oscillation decays
-          {decayMs != null ? `, shrinking ~3× every ${decayMs} ms` : ''}. ζ is its damping ratio
-          (higher = better damped).
-        </p>
-      )}
     </VizCard>
   );
 }

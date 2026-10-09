@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
+import math
 import numpy as np
 import pandas as pd
 import io
@@ -35,8 +36,18 @@ def convert_numpy(obj):
         return [convert_numpy(item) for item in obj]
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif isinstance(obj, (np.integer, np.floating)):
+    elif isinstance(obj, np.floating):
+        # NaN/Inf are legal model outputs (a lag model that does not define K_v, a margin
+        # that could not be evaluated) but json.dumps rejects them outright --
+        # "Out of range float values are not JSON compliant" -- which surfaced as a blanket
+        # HTTP 500 on forward evaluation. Emit JSON null instead, so a missing number reads
+        # as missing rather than taking the whole response down.
+        v = obj.item()
+        return v if math.isfinite(v) else None
+    elif isinstance(obj, np.integer):
         return obj.item()
+    elif isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
     elif isinstance(obj, np.bool_):
         return bool(obj)
     else:
@@ -803,10 +814,8 @@ def segments_to_dict_list(segments: List[PressureSegment]) -> List[dict]:
         
         end_p = seg.end_pressure_psi * PSI_TO_PA
         
-        # Ensure decreasing pressure
-        if end_p > start_p:
-            end_p = start_p * 0.95
-        
+        # A segment may rise or fall as typed: blowdown, a regulated stand's slow climb, a
+        # pressurant schedule -- the curve is the user's, not a feed-system model's.
         result.append({
             "length_ratio": seg.length_ratio,
             "type": seg.type,
@@ -960,11 +969,11 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
             # Generate pressure curves from segments (Pa)
             lox_curve_pa = generate_pressure_curve_from_segments(
                 lox_seg_dicts,
-                n_points=request.n_points,
+                n_points=request.n_points, allow_rise=True, exact_ends=True,
             )
             fuel_curve_pa = generate_pressure_curve_from_segments(
                 fuel_seg_dicts,
-                n_points=request.n_points,
+                n_points=request.n_points, allow_rise=True, exact_ends=True,
             )
             
             # Convert to psi for the API
@@ -1017,7 +1026,7 @@ async def preview_curve(request: PreviewSegmentsRequest):
         seg_dicts = segments_to_dict_list(request.segments)
         curve_pa = generate_pressure_curve_from_segments(
             seg_dicts,
-            n_points=request.n_points,
+            n_points=request.n_points, allow_rise=True, exact_ends=True,
         )
         curve_psi = (curve_pa * PA_TO_PSI).tolist()
         normalized_time = np.linspace(0, 1, request.n_points).tolist()

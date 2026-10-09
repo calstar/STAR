@@ -126,3 +126,27 @@ def test_welded_cube_volume_survives_indexing():
     volume, centroid = volume_and_centroid(unique, indices.reshape(-1, 3))
     assert abs(volume) == pytest.approx(1.0, rel=1e-12)
     assert centroid == pytest.approx([0.5, 0.5, 0.5], abs=1e-12)
+
+
+def test_inertia_of_a_solid_cylinder_is_the_closed_form():
+    from backend.onshape.geometry import inertia_per_unit_mass, weld_vertices
+    from test_aero_body import surface_of_revolution
+
+    r, length = 0.05, 0.4
+    z = np.r_[0.0, np.linspace(0.0, length, 50), length]
+    tris = surface_of_revolution(z, np.r_[0.0, np.full(50, r), 0.0], segments=512)
+    # Moved and turned: about the centroid, the tensor only rotates.
+    angle = 0.7
+    rot = np.array([[1, 0, 0], [0, np.cos(angle), -np.sin(angle)], [0, np.sin(angle), np.cos(angle)]])
+    pts = tris.reshape(-1, 3) @ rot.T + [1.0, -2.0, 3.0]
+    verts, flat = weld_vertices(pts)
+    got = inertia_per_unit_mass(verts, flat.reshape(-1, 3))
+    expected = rot @ np.diag([(3 * r * r + length**2) / 12] * 2 + [r * r / 2]) @ rot.T
+    assert got == pytest.approx(expected, rel=1e-4, abs=1e-9)
+
+
+def test_inertia_of_an_open_mesh_is_none():
+    from backend.onshape.geometry import inertia_per_unit_mass
+
+    flat_square = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
+    assert inertia_per_unit_mass(flat_square, np.array([[0, 1, 2], [0, 2, 3]])) is None

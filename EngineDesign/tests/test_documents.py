@@ -355,7 +355,10 @@ _DOC_SCOPED = {
 }
 
 #: Not design-scoped: no doc id, or exists precisely to reach configs you cannot edit.
-_UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document"}
+#: `rescue_document` sits with copy: it reads only the source's name and writes
+#: a new design into the caller's own list, never into the source.
+_UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
+             "rescue_document"}
 
 
 def _call(client, name, doc_id, headers, params):

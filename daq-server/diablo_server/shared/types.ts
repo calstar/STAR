@@ -42,6 +42,7 @@ export enum SensorType {
   ACT = 'ACT',
   TC = 'TC',
   RTD = 'RTD',
+  ENV = 'ENV',
   LC = 'LC',
 }
 
@@ -130,6 +131,23 @@ export interface StateUpdate {
   stateName: string;
   timestamp: number;
   debugMode?: boolean; // Debug mode status
+  /**
+   * Which states the sequencer will currently accept, bit N = state id N.
+   *
+   * The sequencer has always computed this and masked out anything it would refuse — states whose
+   * script failed to load, and states whose sensor gate is currently unsatisfied. The backend
+   * decoded it and then dropped it, so the GUI offered every state as pressable and an operator
+   * only discovered a refusal by pressing it. Optional because a client may connect before the
+   * first sequencer publish; treat undefined as "no opinion", never as "nothing allowed".
+   */
+  allowedBitmask?: number;
+  /**
+   * State id -> why it cannot be entered, from the sequencer's SCRIPTS report.
+   *
+   * The bitmask says which states are unavailable; this says why, so a greyed button can explain
+   * itself on hover instead of just being dead.
+   */
+  stateRefusalReasons?: Record<number, string>;
 }
 
 // Command payload
@@ -298,7 +316,9 @@ export type CalibrationCommandType =
   | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
   | 'clear_cubic_channel' // drop a channel's cubic points and revert to the factory cubic
   | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
-  | 'new_calibration';    // unified: start fresh for a channel; service routes clear by config model
+  | 'new_calibration'     // unified: start fresh for a channel; service routes clear by config model
+  | 'tare_lc'             // load cell: display-only zero at the current load; never enters the fit
+  | 'clear_tare_lc';      // load cell: drop the tare, back to absolute
 
 export interface CalibrationCommand {
   commandType: CalibrationCommandType;
@@ -321,10 +341,31 @@ export interface CubicCalibrationPoint {
  * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
  * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
  */
+/**
+ * How the last capture on a channel went.
+ *
+ * A capture is a mean over a ~1 s window. If the reading was still moving inside it — the
+ * button pressed while a load settled — the mean sits between two values and belongs to
+ * neither. The point is recorded anyway and `settled` is false, so the UI can say so.
+ */
+export interface CubicCaptureQuality {
+  t: number;             // unix seconds
+  adc: number;
+  n: number;             // samples averaged
+  windowMs: number;
+  spreadAdc: number;     // max - min across the window
+  driftAdc: number;      // |mean(2nd half) - mean(1st half)|
+  driftZ: number;        // driftAdc in standard errors of the window's own noise
+  settled: boolean;
+}
+
 export interface CubicCalibrationChannel {
   boardId: number;
   connector: number;              // 1-based board-local connector
   logicalCh: number;              // (slot-1)*10 + connector (PTCalibrationManager key)
+  // Which logical-channel namespace this channel's curve is filed under. PT and LC share the
+  // logical space (board 22 and board 42 are both slot 2), so the maps are split by kind.
+  kind?: 'PT' | 'LC';
   role: string;                   // may be empty; the UI supplies it from sensor config
   active_model: 'cubic' | 'robust' | 'physics';  // the model this uid streams (config truth)
   numPoints: number;
@@ -341,12 +382,16 @@ export interface CubicCalibrationChannel {
   // Robust uids only: (adc, psi) samples of the live robust model, for the overlay curve. Cubic
   // uids draw their curve from polyCoeffs instead, so this is absent for them.
   fitCurve?: { adc: number; psi: number }[];
+  // Absent until this channel has been captured at least once since the service loaded it.
+  last_capture?: CubicCaptureQuality;
 }
 
 /** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
 export interface CubicCalibrationPayload {
   cubic_state?: Record<string, CubicCalibrationChannel>;
-  [key: string]: unknown;  // also carries calibration_polynomials/poly_coeffs/norm maps
+  // also carries calibration_polynomials/poly_coeffs/norm maps, and their lc_-prefixed
+  // counterparts for load cells (PT and LC share a logical-channel space)
+  [key: string]: unknown;
 }
 
 // ── Board / heartbeat status ───────────────────────────────────────────────────

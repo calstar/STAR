@@ -14,6 +14,8 @@ import {
 } from "@/lib/activity";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
+import { pathOf } from "@/lib/project-tree";
+import { getProjectTree } from "@/lib/projects";
 import { notifyAssignment } from "@/lib/notifications";
 import { STATUS_LABEL, archivedForStatusChange } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
@@ -27,6 +29,7 @@ import {
 
 // What updateTask / moveTask re-read so activities can render human values.
 const withNames = {
+  project: { select: { name: true } },
   assignees: { select: { id: true, name: true, email: true, displayName: true } },
   subteam: { select: { name: true } },
 } as const;
@@ -146,6 +149,10 @@ export async function updateTask(formData: FormData) {
     const v = formData.get("subteamId");
     data.subteam = v ? { connect: { id: String(v) } } : { disconnect: true };
   }
+  if (formData.has("projectId")) {
+    const v = z.string().min(1).parse(formData.get("projectId"));
+    data.project = { connect: { id: v } };
+  }
   if (formData.has("dueDate")) {
     const v = String(formData.get("dueDate") ?? "");
     if (!isValidDateInput(v)) throw new Error("Enter a valid due date with a 4-digit year.");
@@ -163,6 +170,8 @@ export async function updateTask(formData: FormData) {
     include: withNames,
   });
   revalidatePath(`/projects/${task.projectId}`);
+  if (old.projectId !== task.projectId)
+    revalidatePath(`/projects/${old.projectId}`);
   revalidatePath("/tasks");
 
   // Log each changed field (skip description — long/noisy).
@@ -211,6 +220,15 @@ export async function updateTask(formData: FormData) {
     for (const a of addedAssignees) await logAssignee("assigned", userLabel(a));
     for (const a of removedAssignees)
       await logAssignee("unassigned", userLabel(a));
+  }
+  if (formData.has("projectId") && old.projectId !== task.projectId) {
+    // Full paths, so "Engine › Spark igniter → Avionics" reads unambiguously.
+    const tree = await getProjectTree();
+    await log(
+      "project",
+      pathOf(tree, old.projectId) || old.project.name,
+      pathOf(tree, task.projectId) || task.project.name,
+    );
   }
   if (formData.has("subteamId") && old.subteamId !== task.subteamId)
     await log(

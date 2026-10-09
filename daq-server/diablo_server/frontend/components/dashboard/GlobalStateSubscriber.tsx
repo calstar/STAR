@@ -84,6 +84,22 @@ export default function GlobalStateSubscriber() {
             appendBoardLog(p as BoardLogPayload);
         });
 
+        // A refused command, said out loud.
+        //
+        // The backend already reports every rejection this way — a transition the sequencer
+        // refused, an actuator command, extend-fire, a bad hold duration, controls locked — and
+        // until now nothing on the dashboard subscribed, so websocket.ts dropped the payload and
+        // the operator saw the button do nothing at all. On 2026-09-16 a state refused for
+        // "GN2 High has produced no reading yet" took a journal dive to find.
+        //
+        // One-shot, not ongoing: a rejected click is an event that happened, not a condition that
+        // persists, so it carries no key and nothing ever needs to clear it.
+        const u12 = ws.on(MessageType.ERROR, (p: unknown) => {
+            const message = (p as { message?: string })?.message;
+            if (!message) return;
+            updateNotification({ category: 'error', message, timestampMs: Date.now() });
+        });
+
         // Backfill cumulative log counters so the Boards tab shows totals before the next packet.
         fetch(`${getApiBaseUrl()}/api/board-logs/stats`)
             .then((r) => (r.ok ? r.json() : null))
@@ -98,7 +114,7 @@ export default function GlobalStateSubscriber() {
 
         return () => {
             console.log('[WS] GlobalStateSubscriber cleanup');
-            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); u10(); u11();
+            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); u10(); u11(); u12();
         };
     }, [
         updateSensor, updateState, updateActuator, updateConnectionStatus,

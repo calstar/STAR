@@ -147,6 +147,8 @@ def solve_steady(
     signals: Mapping[str, float] | None = None,
     guess: Mapping[str, float] | None = None,
     isolate: Iterable[str] | None = None,
+    storage: Mapping[str, tuple[float, float]] | None = None,
+    report: bool = True,
 ) -> SteadyResult:
     """Solve a network for its steady operating point.
 
@@ -174,6 +176,24 @@ def solve_steady(
             so a scenario's timeline reaches the physics without the solver
             knowing what any particular signal means. Omitted, each component
             falls back to its own default, which for a valve is fully open.
+        storage: Boundary nodes to close implicitly, as ``{node id:
+            (admittance [kg/s per Pa], reference pressure [Pa])}``. A vessel
+            behind a wide line is a boundary only for as long as the flow it
+            receives cannot move it; when it can, the step that holds it at
+            its start-of-step pressure is an explicit coupling, and a small
+            ullage behind a Cv 4 solenoid flip-flops against it. A node listed
+            here becomes an unknown with a storage term in its mass balance,
+            ``inflow - demand - admittance * (p - reference) = 0``: backward
+            Euler on the vessel, where ``reference`` is where it would land
+            with no flow and ``admittance`` is ``C / dt``. Its solved pressure
+            is the vessel's end-of-step pressure. Nodes not fixed, or with no
+            branch left carrying flow, are ignored; omitted, nothing changes.
+        report: Fill the result's per-branch report -- ``diagnostics``,
+            ``regularised_branches``, ``violations``, ``stack`` -- which takes
+            one more evaluation of every branch at the answer. A live session
+            reads none of it and solves a few hundred times a second of stand,
+            so it asks for none; pressures, flows and the mass residuals are
+            the same either way.
 
     Returns:
         A :class:`SteadyResult`, including mass-conservation residuals whether
@@ -199,6 +219,8 @@ def solve_steady(
 
     free = [n for n in network.free_nodes if n not in stub_nodes]
     branch_ids = [b for b in network.branches if b not in stub_branches]
+    stores = _stores(network, storage, branch_ids)
+    free += list(stores)
     node_index = {n: i for i, n in enumerate(free)}
     branch_index = {b: len(free) + i for i, b in enumerate(branch_ids)}
     n_unknowns = len(free) + len(branch_ids)
@@ -218,11 +240,17 @@ def solve_steady(
             started,
             stubs,
             isolated,
+            report=report,
         )
 
     x = _initial_guess(network, free, branch_ids, initial_flow)
+    for node_id in stores:
+        # A stored node starts where its vessel is; a guess is for free nodes.
+        x[node_index[node_id]] = network.nodes[node_id].pressure or 0.0
     if guess:
         for node_id, row in node_index.items():
+            if node_id in stores:
+                continue
             value = guess.get(node_id)
             if value is not None and value > 0.0:
                 x[row] = value
@@ -232,7 +260,7 @@ def solve_steady(
                 x[row] = value
     scale = _row_scales(network, free, branch_ids, initial_flow)
 
-    rows, cols = _incidence_pattern(network, node_index, branch_index)
+    rows, cols = _incidence_pattern(network, node_index, branch_index, stores)
 
     converged = False
     residual = np.zeros(n_unknowns)
@@ -248,7 +276,7 @@ def solve_steady(
         try:
             branch_rows = _branch_rows(network, x, node_index, branch_index, signals)
             residual = _assemble_residual(
-                network, x, node_index, branch_index, branch_rows
+                network, x, node_index, branch_index, branch_rows, stores
             )
         except Exception:  # noqa: BLE001
             # Same contract as the update below: a component refusing the point
@@ -286,7 +314,18 @@ def solve_steady(
                 converged = False
                 break
             raise ConvergenceError(
-                _result(network, x, False, iterations, norm, started, stubs, isolated),
+                _result(
+                    network,
+                    x,
+                    False,
+                    iterations,
+                    norm,
+                    started,
+                    stubs,
+                    isolated,
+                    stores,
+                    report=report,
+                ),
                 "the residual converged on a state with a non-physical "
                 f"pressure ({min(x[: len(free)]) / 1e5:.3g} bar absolute). A "
                 "branch is almost certainly stiff enough to have thrown the "
@@ -294,7 +333,9 @@ def solve_steady(
                 "or a relief valve.",
             )
 
-        jac = _jacobian(network, node_index, branch_index, branch_rows, rows, cols)
+        jac = _jacobian(
+            network, node_index, branch_index, branch_rows, rows, cols, stores
+        )
 
         try:
             step = splu(jac).solve(-residual)
@@ -309,7 +350,18 @@ def solve_steady(
                 converged = False
                 break
             raise ConvergenceError(
-                _result(network, x, False, iterations, norm, started, stubs, isolated),
+                _result(
+                    network,
+                    x,
+                    False,
+                    iterations,
+                    norm,
+                    started,
+                    stubs,
+                    isolated,
+                    stores,
+                    report=report,
+                ),
                 f"the Jacobian could not be factorised ({exc}). This usually "
                 "means a node with no path to a fixed pressure.",
             ) from exc
@@ -325,6 +377,7 @@ def solve_steady(
                 branch_index,
                 signals,
                 unresolvable,
+                stores,
             )
         except Exception:  # noqa: BLE001 - see below
             # A property call refusing mid-update is a failed solve, not a
@@ -335,7 +388,18 @@ def solve_steady(
             break
 
     norm = _scaled_norm(residual, scale, unresolvable)
-    result = _result(network, x, converged, iterations, norm, started, stubs, isolated)
+    result = _result(
+        network,
+        x,
+        converged,
+        iterations,
+        norm,
+        started,
+        stubs,
+        isolated,
+        stores,
+        report=report,
+    )
 
     if not converged and raise_on_failure:
         raise ConvergenceError(
@@ -350,6 +414,35 @@ def solve_steady(
 # ---------------------------------------------------------------------------
 # assembly
 # ---------------------------------------------------------------------------
+
+
+def _stores(
+    network: Network,
+    storage: Mapping[str, tuple[float, float]] | None,
+    branch_ids: list[str],
+) -> dict[str, tuple[float, float]]:
+    """The ``storage`` entries that take part in this solve, in a fixed order.
+
+    A boundary node with a positive admittance and at least one branch still
+    carrying flow. One cut off by shut valves keeps its fixed pressure, so a
+    stand with everything shut solves exactly as it would without storage.
+    """
+    if not storage:
+        return {}
+    live = {
+        end
+        for b in branch_ids
+        for end in (network.branches[b].upstream, network.branches[b].downstream)
+    }
+    return {
+        node_id: (float(admittance), float(reference))
+        for node_id, (admittance, reference) in storage.items()
+        if node_id in network.nodes
+        and network.nodes[node_id].is_fixed
+        and node_id in live
+        and admittance > 0.0
+        and reference > 0.0
+    }
 
 
 def _initial_guess(
@@ -432,10 +525,14 @@ def _scaled_norm(
 def _pressure_at(
     network: Network, x: np.ndarray, node_index: dict[str, int], node_id: str
 ) -> float:
-    node = network.nodes[node_id]
-    if node.pressure is not None:
-        return node.pressure
-    return float(x[node_index[node_id]])
+    # The unknowns first: a stored boundary is one for the length of a solve.
+    row = node_index.get(node_id)
+    if row is not None:
+        return float(x[row])
+    pressure = network.nodes[node_id].pressure
+    if pressure is None:
+        raise KeyError(node_id)
+    return pressure
 
 
 @dataclass(frozen=True, slots=True)
@@ -482,18 +579,25 @@ def _branch_row(
     available = p_up - p_dn
     ceiling = component.flow_ceiling(conditions)
 
-    def choked_row() -> _BranchRow:
+    def choked_row(limit: float | None = None) -> _BranchRow:
         # Choked: the flow is pinned and downstream pressure is decoupled. The
         # ceiling is proportional to upstream pressure, which is the only
         # pressure this row depends on at all.
-        assert ceiling is not None
+        pinned = ceiling if limit is None else limit
+        assert pinned is not None
         return _BranchRow(
-            residual=_CHOKE_STIFFNESS * (ceiling - mdot),
+            residual=_CHOKE_STIFFNESS * (pinned - mdot),
             d_mdot=-_CHOKE_STIFFNESS,
-            d_p_up=_CHOKE_STIFFNESS * (ceiling / p_up if p_up > 0.0 else 0.0),
+            d_p_up=_CHOKE_STIFFNESS * (pinned / p_up if p_up > 0.0 else 0.0),
             d_p_dn=0.0,
             choked=True,
         )
+
+    # A component that pins its own flow at this drop (the opt-in compressible
+    # regulator seat, choked wide open). None for everything else.
+    pinned = component.pinned_flow(available, conditions)
+    if pinned is not None:
+        return choked_row(pinned)
 
     # The component reads the pressures and says the drop has carried it past
     # its critical ratio (or, for a regulator, that it has shut -- ceiling 0).
@@ -567,16 +671,11 @@ def _assemble_residual(
     node_index: dict[str, int],
     branch_index: dict[str, int],
     rows: dict[str, _BranchRow],
+    stores: Mapping[str, tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Mass balances plus already-built branch rows. No component evaluation."""
     residual = np.zeros(len(x))
-
-    for node_id, row in node_index.items():
-        total = -network.nodes[node_id].demand
-        for branch, sign in network.branches_at(node_id):
-            if branch.id in branch_index:
-                total += sign * x[branch_index[branch.id]]
-        residual[row] = total
+    _mass_rows(network, x, node_index, branch_index, stores, residual)
 
     for branch_id, row in branch_index.items():
         residual[row] = rows[branch_id].residual
@@ -590,17 +689,11 @@ def _residuals(
     node_index: dict[str, int],
     branch_index: dict[str, int],
     signals: Mapping[str, float] | None = None,
+    stores: Mapping[str, tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Residual from scratch. Used where the derivatives are not wanted."""
     residual = np.zeros(len(x))
-
-    for node_id, row in node_index.items():
-        total = -network.nodes[node_id].demand
-        for branch, sign in network.branches_at(node_id):
-            # Pruned stubs carry zero flow and contribute nothing to a balance.
-            if branch.id in branch_index:
-                total += sign * x[branch_index[branch.id]]
-        residual[row] = total
+    _mass_rows(network, x, node_index, branch_index, stores, residual)
 
     rows = _branch_rows(network, x, node_index, branch_index, signals)
     for branch_id, row in branch_index.items():
@@ -609,8 +702,33 @@ def _residuals(
     return residual
 
 
+def _mass_rows(
+    network: Network,
+    x: np.ndarray,
+    node_index: dict[str, int],
+    branch_index: dict[str, int],
+    stores: Mapping[str, tuple[float, float]] | None,
+    residual: np.ndarray,
+) -> None:
+    """Fill the mass-balance rows of ``residual``: inflow minus demand, minus
+    what a stored node keeps (``admittance * (p - reference)``)."""
+    for node_id, row in node_index.items():
+        total = -network.nodes[node_id].demand
+        for branch, sign in network.branches_at(node_id):
+            # Pruned stubs carry zero flow and contribute nothing to a balance.
+            if branch.id in branch_index:
+                total += sign * x[branch_index[branch.id]]
+        if stores and node_id in stores:
+            admittance, reference = stores[node_id]
+            total -= admittance * (x[row] - reference)
+        residual[row] = total
+
+
 def _incidence_pattern(
-    network: Network, node_index: dict[str, int], branch_index: dict[str, int]
+    network: Network,
+    node_index: dict[str, int],
+    branch_index: dict[str, int],
+    stores: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[list[int], list[int]]:
     """Row and column indices of every structurally non-zero Jacobian entry.
 
@@ -636,6 +754,11 @@ def _incidence_pattern(
         rows.append(row)
         cols.append(row)
 
+    # A stored node's balance depends on its own pressure.
+    for node_id in stores or ():
+        rows.append(node_index[node_id])
+        cols.append(node_index[node_id])
+
     return rows, cols
 
 
@@ -646,6 +769,7 @@ def _jacobian(
     branch_rows: dict[str, _BranchRow],
     rows: list[int],
     cols: list[int],
+    stores: Mapping[str, tuple[float, float]] | None = None,
 ) -> csc_matrix:
     values: list[float] = []
 
@@ -669,6 +793,9 @@ def _jacobian(
             slope = -MIN_BRANCH_SLOPE if slope <= 0.0 else MIN_BRANCH_SLOPE
         values.append(slope)
 
+    for admittance, _reference in (stores or {}).values():
+        values.append(-admittance)
+
     n = len(node_index) + len(branch_index)
     return csc_matrix((values, (rows, cols)), shape=(n, n))
 
@@ -683,6 +810,7 @@ def _damped_update(
     branch_index: dict[str, int],
     signals: Mapping[str, float] | None = None,
     ignore: np.ndarray | None = None,
+    stores: Mapping[str, tuple[float, float]] | None = None,
 ) -> np.ndarray:
     """Take the largest fraction of the Newton step that improves things.
 
@@ -705,7 +833,7 @@ def _damped_update(
         if np.all(trial[: len(node_index)] > 0.0):
             try:
                 trial_residual = _residuals(
-                    network, trial, node_index, branch_index, signals
+                    network, trial, node_index, branch_index, signals, stores
                 )
             except Exception:
                 trial_residual = None
@@ -740,6 +868,9 @@ def _result(
     started: float,
     stubs: list[DeadEnd],
     isolated: set[str],
+    stores: Mapping[str, tuple[float, float]] | None = None,
+    *,
+    report: bool = True,
 ) -> SteadyResult:
     """Package a solution vector as a result.
 
@@ -758,6 +889,7 @@ def _result(
     stub_nodes = {d.node for d in stubs}
     stub_branches = {d.branch for d in stubs} | isolated
     free = [n for n in network.free_nodes if n not in stub_nodes]
+    free += list(stores or ())
     solved = [b for b in network.branches if b not in stub_branches]
 
     node_index = {n: i for i, n in enumerate(free)}
@@ -818,8 +950,15 @@ def _result(
             # behind its cracking pressure -- leaves the stub genuinely
             # undefined. Report the live end's pressure and say it is an upper
             # bound.
+            #
+            # So does a shut valve. A stub reached only across one (a leg
+            # between two shut valves, a capped line behind one) holds whatever
+            # was trapped in it, not the pressure across the seat -- and a ball
+            # valve's drop at zero flow is identically zero, so the test above
+            # never caught it: a transducer there followed the tank.
             if (
                 branch.component.pressure_drop(0.0, conditions) > 0.0
+                or dead.branch in isolated
                 or dead.live_end in indeterminate_nodes
             ):
                 # Undefined-ness travels. A regulator with nothing drawing
@@ -843,17 +982,47 @@ def _result(
             break
         pending = deferred
 
+    # One pass over the branches, in their order, so each node's sum is taken
+    # in the order `branches_at` gives -- the same number, without walking
+    # every branch once per node.
+    totals = {node_id: -network.nodes[node_id].demand for node_id in free}
+    for branch in network.branches.values():
+        flow = flows.get(branch.id, 0.0)
+        if branch.downstream in totals:
+            totals[branch.downstream] += flow
+        if branch.upstream in totals:
+            totals[branch.upstream] -= flow
     mass_residuals: dict[str, float] = {}
     for node_id in free:
-        total = -network.nodes[node_id].demand
-        for branch, sign in network.branches_at(node_id):
-            total += sign * flows.get(branch.id, 0.0)
+        total = totals[node_id]
+        if stores and node_id in stores:
+            admittance, reference = stores[node_id]
+            total -= admittance * (pressures[node_id] - reference)
         mass_residuals[node_id] = total
 
     diagnostics: dict[str, dict[str, float]] = {}
     regularised: list[str] = []
     choked: list[str] = []
-    branch_rows = _branch_rows(network, x, node_index, branch_index)
+    if not report:
+        return SteadyResult(
+            pressures=pressures,
+            flows=flows,
+            converged=converged,
+            iterations=iterations,
+            residual_norm=norm,
+            mass_residuals=mass_residuals,
+            dead_ends=sorted(stub_branches),
+            indeterminate_dead_ends=sorted(indeterminate),
+            indeterminate_nodes=sorted(indeterminate_nodes),
+            elapsed=time.perf_counter() - started,
+        )
+    try:
+        branch_rows = _branch_rows(network, x, node_index, branch_index)
+    except Exception:  # noqa: BLE001 - the report must not fail the solve
+        # Classifying branches (regularised, choked) re-evaluates every one at
+        # the answer. A correlation refusing there is a reporting gap, not a
+        # failed solve: before this guard it escaped a solve asked not to raise.
+        branch_rows = {}
     for branch_id, branch in network.branches.items():
         conditions = network.conditions(
             branch.upstream, pressures.get(branch.upstream, 0.0) or 1.0e5
@@ -864,7 +1033,7 @@ def _result(
             )
         except Exception:
             diagnostics[branch_id] = {}
-        if branch_id in branch_index:
+        if branch_id in branch_rows:
             row = branch_rows[branch_id]
             if row.choked:
                 choked.append(branch_id)

@@ -504,20 +504,115 @@ def test_beat_alone_survives_the_ttl_but_idling_does_not(client, monkeypatch):
     assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
 
 
-def test_a_lapsed_hold_cannot_be_beaten_back_to_life(client, monkeypatch):
-    """Beating is a refresh, not a resurrection.
+def _lapse(monkeypatch):
+    """Everything held is now stale; `_unlapse` makes fresh holds count again."""
+    monkeypatch.setattr(documents.store, "lock_ttl", 0)
 
-    Once the hold has gone the design is free and someone else may already have
-    taken it, so a client that could beat its way back would reintroduce exactly
-    the two-holders case checkouts exist to prevent. 423 here is what makes the
-    lost-checkout dialog offer "Take it back" rather than silently re-beating.
+
+def _unlapse(monkeypatch):
+    monkeypatch.setattr(documents.store, "lock_ttl", 900)
+
+
+def test_a_lapsed_hold_nobody_took_is_reclaimed_by_its_holders_next_save(client, monkeypatch):
+    """A lapse with nobody waiting is not a conflict, and must not cost the edit.
+
+    The way work was lost: step away past ``lock_ttl`` (a shut laptop, a tab in
+    the background), come back, keep editing -- and every save came back 423,
+    the editor went read only, and the edits stayed on screen and nowhere else.
+    Nobody else had touched the design. Every content write needs the checkout,
+    so if nobody has taken it since it lapsed on you, nobody can have changed
+    it, and your save is safe to accept.
     """
     doc_id = _create(client)
     _share(client, doc_id, [B["X-Auth-Email"]])
-    client.post(f"{BASE}/{doc_id}/checkout", headers=A)
+    _lapse(monkeypatch)
 
-    monkeypatch.setattr(documents.store, "lock_ttl", 1)
-    time.sleep(1.05)
-    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
-    # and it really was free, not merely unbeatable
+    assert _save(client, doc_id, A, nodes=[{"id": "after-the-lapse"}]).status_code == 200
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json()["nodes"] == [{"id": "after-the-lapse"}]
+    # ...and the save took the hold back: it is A's again, not merely written.
+    _unlapse(monkeypatch)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 423
+
+
+def test_a_lapsed_hold_nobody_took_is_reclaimed_by_a_beat(client, monkeypatch):
+    """Coming back and touching the canvas is the same claim as saving."""
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    _lapse(monkeypatch)
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 200
+    _unlapse(monkeypatch)
+    assert client.get(f"{BASE}/{doc_id}/checkout", headers=A).json()["lockedByMe"] is True
+
+
+def test_a_lapsed_hold_is_still_free_to_anyone_until_its_holder_acts(client, monkeypatch):
+    """Reclaiming must not undo what lapsing is for: an idle hold is freed, and
+    the first person to act on it -- holder or not -- gets it."""
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    _lapse(monkeypatch)
     assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+    _unlapse(monkeypatch)
+    # B has it now, so the old holder is refused, beat or save.
+    assert client.post(f"{BASE}/{doc_id}/checkout/beat", headers=A).status_code == 423
+    assert _save(client, doc_id, A, nodes=[{"id": "stale"}]).status_code == 423
+
+
+def test_a_lapse_is_not_reclaimed_after_someone_else_held_it_in_between(client, monkeypatch):
+    """B took it and gave it back; B may have saved in between, so A's view is
+    stale and A's save would overwrite B. Refused, even though it is free."""
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    _lapse(monkeypatch)
+    assert client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A).status_code == 200
+    _unlapse(monkeypatch)
+    assert _save(client, doc_id, B, params=OWNER_A, nodes=[{"id": "bobs"}]).status_code == 200
+    _free(client, doc_id, headers=B, params=OWNER_A)
+
+    assert _save(client, doc_id, A, nodes=[{"id": "stale"}]).status_code == 423
+    assert client.get(f"{BASE}/{doc_id}/load", headers=A).json()["nodes"] == [{"id": "bobs"}]
+
+
+def test_a_released_design_is_not_reclaimed_by_a_late_save(client):
+    """Release is deliberate. A save arriving after it (a slow request, a second
+    tab) must not quietly take the design back."""
+    doc_id = _create(client)
+    _free(client, doc_id)
+    assert _save(client, doc_id, A).status_code == 423
+
+
+# ── keeping what a refused save carried ──────────────────────────────────────
+
+
+def test_a_refused_save_can_be_kept_as_a_design_of_your_own(client, monkeypatch):
+    """When the design really has gone to someone else, the edits still exist --
+    on the screen of the person who lost it. ``/rescue`` stores them as a new
+    design in that person's own list, so pressing "Take it back" (which reloads)
+    or closing the tab no longer throws them away."""
+    doc_id = _create(client)
+    _share(client, doc_id, [B["X-Auth-Email"]])
+    _lapse(monkeypatch)
+    client.post(f"{BASE}/{doc_id}/checkout", headers=B, params=OWNER_A)
+    _unlapse(monkeypatch)
+    mine = [{"id": "FM_SOL_G", "data": {"params": {"Cv": {"value": 20, "unit": "Cv"}}}}]
+    assert _save(client, doc_id, A, nodes=mine).status_code == 423
+
+    r = client.post(f"{BASE}/{doc_id}/rescue", headers=A, json={"nodes": mine, "edges": []})
+    assert r.status_code == 200, r.text
+    kept = r.json()
+    assert kept["id"] != doc_id
+    assert "Feed system" in kept["name"] and "unsaved" in kept["name"]
+    assert client.get(f"{BASE}/{kept['id']}/load", headers=A).json()["nodes"] == mine
+    # It is A's, A can keep working on it, and the shared design is untouched.
+    assert kept["id"] in [d["id"] for d in client.get(BASE, headers=A).json()]
+    assert client.get(f"{BASE}/{kept['id']}/checkout", headers=A).json()["lockedByMe"] is True
+    assert client.get(f"{BASE}/{doc_id}/load", headers=B, params=OWNER_A).json()["nodes"] != mine
+
+
+def test_rescuing_needs_only_read_access(client):
+    """Someone unshared mid-edit has lost write access too; they can still keep
+    what they typed."""
+    doc_id = _create(client)
+    r = client.post(f"{BASE}/{doc_id}/rescue", headers=B, params=OWNER_A,
+                    json={"nodes": [{"id": "n"}], "edges": []})
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] in [d["id"] for d in client.get(BASE, headers=B).json()]

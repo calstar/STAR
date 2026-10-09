@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 /**
  * Boards / Heartbeats page: **every** card must show State ACTIVE (only pass state). Also CONNECTED,
- * numeric Heartbeat Hz (not ---), Self Test ALL PASSED. Align settle with sensor-info E2E.
+ * numeric Heartbeat Hz (not ---), Self Test ALL PASSED (N/A for environmental).
  */
 const SETTLE_MS = Math.max(0, parseInt(process.env.E2E_SETTLE_MS ?? '5000', 10) || 5000);
 
@@ -87,11 +87,10 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         failures.push('Heartbeat --- (expected numeric Hz)');
       }
 
-      if (selfTest !== 'ALL PASSED') {
+      const expectedSelfTest = card.getAttribute('data-board-type') === 'ENVIRONMENTAL' ? 'N/A' : 'ALL PASSED';
+      if (selfTest !== expectedSelfTest) {
         failures.push(
-          selfTest === 'UNTESTED'
-            ? 'Self Test UNTESTED (expected ALL PASSED)'
-            : `Self Test ${selfTest || '(missing)'} (expected ALL PASSED)`,
+          `Self Test ${selfTest || '(missing)'} (expected ${expectedSelfTest})`,
         );
       }
 
@@ -108,7 +107,7 @@ function formatBoardIssues(result: BoardHeartbeatResult): string {
 
   if (cardCount > 0) {
     lines.push(
-      `Rendered board cards: ${cardCount}. Pass = every card: Status CONNECTED, State ACTIVE, Heartbeat Hz, Self Test ALL PASSED.`,
+      `Rendered board cards: ${cardCount}. Pass = every card: Status CONNECTED, State ACTIVE, Heartbeat Hz, Self Test ALL PASSED (N/A for environmental).`,
     );
     lines.push('');
   }
@@ -151,7 +150,7 @@ function assertBoardHeartbeatPass(result: BoardHeartbeatResult): void {
 }
 
 test.describe('Boards / Heartbeats page', () => {
-  test('every board card is CONNECTED, State ACTIVE, heartbeat Hz, and Self Test ALL PASSED when stack is up', async ({
+  test('every board card is connected, active, and has the supported self-test status', async ({
     page,
   }) => {
     await page.goto('/boards');

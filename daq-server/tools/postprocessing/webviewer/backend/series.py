@@ -57,7 +57,7 @@ from typing import Iterable, Iterator
 import numpy as np
 import pandas as pd
 
-from . import export_cache, run_config
+from . import export_cache, lc_tare, run_config
 from .naming import classify
 
 
@@ -152,6 +152,18 @@ def load_series(
 
     With time_source="sensor" the x-axis is the row's own sample time where the publisher
     stamps a real clock, falling back to the DB's write time where it does not."""
+    # A tared load-cell channel is derived, not exported: read its absolute twin and replay the
+    # run's tare record over it. Done here because this is the one place a component name becomes
+    # data, so series, long CSV, wide CSV and the whole-run download all get it with no signature
+    # change — and cannot disagree with each other, which a per-request toggle would allow.
+    tared = component.endswith(lc_tare.TARED_SUFFIX)
+    if tared:
+        entity = component[: -len(lc_tare.TARED_SUFFIX)]
+        if not lc_tare.load(run_id).get(entity):
+            # No recorded tare for this channel: the component does not exist for this run.
+            raise FileNotFoundError(f"component not in run: {component}")
+        component = f"{entity}.{lc_tare.GROSS_FIELD}"
+
     df = pd.read_parquet(_parquet_path(run_id, component))
     value_col = next(c for c in df.columns if c != "time")
     t = _epoch_seconds(df["time"])
@@ -164,7 +176,13 @@ def load_series(
         if own is not None and len(own[0]) == len(t):
             t = own[0]
     order = np.argsort(t, kind="stable")
-    return t[order], v[order]
+    t, v = t[order], v[order]
+    if tared:
+        # After the sort and after the clock substitution: the sidecar stamps wall-clock, which is
+        # the same clock the sensor axis uses. On the DB axis the same instant sits a few ms later
+        # (write latency), which shifts where the step lands by less than one sample.
+        v = lc_tare.apply(run_id, entity, t, v)
+    return t, v
 
 
 def _slice(t: np.ndarray, v: np.ndarray, start, end) -> tuple[np.ndarray, np.ndarray]:

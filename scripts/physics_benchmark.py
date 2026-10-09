@@ -3,7 +3,7 @@
 
 Tier 1 and Tier 2.3 only -- the checks that are fast, deterministic and localise a
 fault to one component. The He/GN2 study (Tier 2.1/2.2) takes minutes and is run from
-the Study tab or `backend.study.run_study` directly; this covers the parts there is no
+`backend.benchmark_study.run_study` directly; this covers the parts there is no
 excuse for skipping.
 
     python3 scripts/physics_benchmark.py
@@ -320,14 +320,18 @@ def tier2_steady_fire() -> None:
     print("\n2.3  steady fire on the shipped stand")
     try:
         import backend.main as api
-        import backend.study as study
+        import backend.benchmark_study as study
         from backend.main import _cea_for, engine_from_bytes
     except Exception as exc:  # noqa: BLE001
         print(f"  [SKIP] feed-twin backend unavailable ({type(exc).__name__})")
         return
-    engines = api.library.list("engine")
+    # The engine the expectations below were stated with: the shipped one, by
+    # source -- never "the newest", which is whatever somebody imported last
+    # (on 2026-10-06 a drilled 6800N upload moved every number here and read
+    # as a physics regression).
+    engines = [a for a in api.library.list("engine") if a.source == "shipped"]
     if not engines or study.find_diagram(api.library, "gn2") is None:
-        print("  [SKIP] the library has no engine or no gn2 study drawing")
+        print("  [SKIP] the library has no shipped engine or no gn2 study drawing")
         return
 
     engine = engines[0]
@@ -353,14 +357,20 @@ def tier2_steady_fire() -> None:
     # been 550 psia, so the whole burn runs 14.7 psi higher in absolute terms
     # and chamber pressure follows (440.6 -> 452.1). The chamber value below is
     # absolute, as every pressure inside the model is.
-    check("chamber pressure (abs)", sample.chamber.pressure / PSI, 452.1, 3.0, "psia")
-    check("thrust", sample.chamber.thrust, 7730.0, 60.0, "N")
-    check("total mass flow", ox + fuel, 3.131, 0.03, "kg/s")
-    check("mixture ratio", ox / fuel, 1.695, 0.02)
+    # Re-baselined 2026-10-07: the supply-pressure effect is measured from zero
+    # inlet (dome + bias - S x inlet), not from the drawing's 4,500 psi
+    # "inlet_reference". Off a 4,500 psig bottle the 1092-50 locks the tanks up
+    # 17 x 4.5 = 76.5 psi lower, at 473.5 psig, and everything follows it:
+    # Pc 452.1 -> 399.9 (mass flow 0.890x, Pc 0.885x: a choked throat), thrust
+    # 7730 -> 6766, the drops roughly with flow squared, O/F unchanged.
+    check("chamber pressure (abs)", sample.chamber.pressure / PSI, 399.9, 3.0, "psia")
+    check("thrust", sample.chamber.thrust, 6766.0, 60.0, "N")
+    check("total mass flow", ox + fuel, 2.787, 0.03, "kg/s")
+    check("mixture ratio", ox / fuel, 1.702, 0.02)
     plumbing = drop("l_ox1") + drop("l_ox2")
     injector = drop("ENG.oxidiser.injector")
-    check("ox plumbing dp", plumbing, 19.0, 2.0, "psi")
-    check("ox injector dp", injector, 66.6, 3.0, "psi")
+    check("ox plumbing dp", plumbing, 15.1, 2.0, "psi")
+    check("ox injector dp", injector, 55.0, 3.0, "psi")
     truthy("the injector holds more than the plumbing", injector > plumbing, True)
 
 
@@ -513,7 +523,7 @@ def main() -> int:
         return 1
     print("all checks passed")
     print("\nTier 2.1/2.2 (the He/GN2 study) is not run here -- it takes minutes.")
-    print("Run it from the Study tab or backend.study.run_study at dt = 0.01.")
+    print("Run it with backend.benchmark_study.run_study at dt = 0.01.")
     return 0
 
 

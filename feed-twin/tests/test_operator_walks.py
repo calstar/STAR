@@ -22,7 +22,7 @@ import random
 
 import pytest
 
-from backend.run import PSI, psig
+from feedtwin.session.gauge import PSI, psig
 from backend.session import Session
 from tests.test_session import stand
 
@@ -108,14 +108,16 @@ def loaded(session: Session) -> None:
     go(session, "Armed")
     go(session, "Ox Fill")
     run(session, 6.0)
-    assert tank(session, "OXT").state.liquid_mass > 10.0, "LOX should have loaded"
+    lox = tank(session, "OXT")
+    assert lox.state.liquid_mass >= 0.97 * lox._wanted(), "LOX should have loaded"
     assert tank(session, "FUT").state.liquid_mass == 0.0, "only the LOX tank fills"
     go(session, "Armed")
     go(session, "Fuel Fill")
     run(session, 6.0)
+    fuel = tank(session, "FUT")
     assert (
-        tank(session, "FUT").state.liquid_mass > 5.0
-    ), "ethanol should have loaded (6.5 kg at 95%)"
+        fuel.state.liquid_mass >= 0.97 * fuel._wanted()
+    ), "ethanol should have loaded (its fire load)"
     go(session, "Armed")
     go(session, "Press Standby")
 
@@ -128,12 +130,14 @@ def charged(session: Session) -> None:
 
 
 def pressed(session: Session) -> None:
+    # Six seconds: loaded with a fire load the LOX tank keeps ~9 L of ullage,
+    # which the regulator brings to lockup in about four.
     go(session, "Ox Press")
-    run(session, 3.0)
+    run(session, 6.0)
     assert p_tank(session, "OXT") > LOCKUP - 10.0, p_tank(session, "OXT")
     go(session, "Press Standby")
     go(session, "Fuel Press")
-    run(session, 3.0)
+    run(session, 6.0)
     assert p_tank(session, "FUT") > LOCKUP - 10.0, p_tank(session, "FUT")
     go(session, "Press Standby")
 
@@ -395,10 +399,11 @@ class TestIgnitionPathsTheTableAllows:
         go(session, "Fire")
         run(session, 0.1)
         # Fire opens the press solenoids too, so the tanks come up *during*
-        # the start rather than before it. On 0.4-0.75 L ullages that takes
-        # well under a second, so the starved start is the first tick or two.
+        # the start rather than before it. Loaded with a fire load the LOX
+        # ullage is ~9 L and takes seconds: the chamber stutters out through
+        # 0.3-0.8 s and is still climbing at 3 s, so it is read there.
         starved = chamber_psi(session)
-        run(session, 1.9)
+        run(session, 2.9)
         settled = chamber_psi(session)
         assert settled > 300.0, settled
         assert starved < 0.8 * settled, (starved, settled)
@@ -415,6 +420,10 @@ class TestGoingRoundAgain:
         charged(session)
         for _ in range(2):
             pressed(session)
+            # The gas already past the shut press valve finishes into the tank in the first
+            # half second (26 mg on the fuel side, 37 mg with line walls warming it, then flat
+            # to the microgram): that is the press ending, not a leak. The leak test starts after.
+            run(session, 0.5)
             held = {key: tank(session, key).state.ullage.mass for key in ("OXT", "FUT")}
             run(session, 5.0)
             for key in ("OXT", "FUT"):

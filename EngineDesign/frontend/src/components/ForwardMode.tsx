@@ -1,17 +1,25 @@
 import { useState, useCallback, useEffect } from 'react';
-import { evaluate } from '../api/client';
+import { engineIdentity, configFingerprint } from '../lib/engineIdentity';
+import { evaluate, updateConfig } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
-import { ResultsDisplay } from './ResultsDisplay';
+import { ForwardView } from './forward/ForwardView';
+import type { ForwardReport, MeasuredValue } from '../lib/forwardReport';
+import type { TimeSeriesData } from '../api/client';
+import { loadTimeSeriesResults, TIMESERIES_UPDATED_EVENT } from '../utils/timeseriesSession';
+import type { StoredTimeSeriesResults } from '../utils/timeseriesSession';
 import { useDesignSlice } from '../lib/designState';
 import { useReadOnly } from '@stardesign-ui';
 import { StabilityPanel } from './stability/StabilityPanel';
+import { VaporizationProfile } from './stability/VaporizationProfile';
 import type { StabilityOverrides } from './stability/types';
 
 interface ForwardModeProps {
   config: EngineConfig | null;
+  /** A measurement saved here changes the config: every tab sees it. */
+  onConfigUpdated?: (config: EngineConfig) => void;
 }
 
-export function ForwardMode({ config }: ForwardModeProps) {
+export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
   // Use config's initial pressures if available, falling back to sensible defaults
   const loxConfig = config?.lox_tank as Record<string, unknown> | undefined;
   const fuelConfig = config?.fuel_tank as Record<string, unknown> | undefined;
@@ -21,7 +29,15 @@ export function ForwardMode({ config }: ForwardModeProps) {
   const [loxPressure, setLoxPressure] = useState<string>(defaultLox);
   const [fuelPressure, setFuelPressure] = useState<string>(defaultFuel);
   const [results, setResults] = useState<RunnerResults | null>(null);
-  const [ambientPressure, setAmbientPressure] = useState<number | null>(null);
+  const [report, setReport] = useState<ForwardReport | null>(null);
+  // The latest Time-Series run: the burn behind the headline ranges and the plots over time.
+  const [burn, setBurn] = useState<StoredTimeSeriesResults | null>(() => loadTimeSeriesResults());
+  useEffect(() => {
+    const on = (e: Event) => setBurn((e as CustomEvent<StoredTimeSeriesResults>).detail ?? loadTimeSeriesResults());
+    window.addEventListener(TIMESERIES_UPDATED_EVENT, on);
+    return () => window.removeEventListener(TIMESERIES_UPDATED_EVENT, on);
+  }, []);
+  const [, setAmbientPressure] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [designWarning, setDesignWarning] = useState<string | null>(null);
@@ -37,6 +53,11 @@ export function ForwardMode({ config }: ForwardModeProps) {
     stabilityOverrides: [stabilityOverrides, setStabilityOverrides],
   });
 
+  // What makes a displayed result belong to a DIFFERENT engine (see lib/engineIdentity).
+  // Seeded from the current config, so the first render adopts rather than clearing.
+  const identityKey = engineIdentity(config);
+  const [lastIdentity, setLastIdentity] = useState(identityKey);
+
   // Update defaults when config changes
   useEffect(() => {
     if (config) {
@@ -50,6 +71,30 @@ export function ForwardMode({ config }: ForwardModeProps) {
       }
     }
   }, [config]);
+
+  // Drop a result that describes the previous propellant or injector.
+  //
+  // The tabs stay mounted (hidden, not unmounted), so nothing cleared `results` on a switch: after
+  // methalox -> ethalox the Combustion stability panel kept showing methane's frequencies, lags,
+  // radar and verdict, while the tank pressures beside it had already moved to the new config. It
+  // read as a report about the engine now on screen. The sensitivity overrides survived too, so a
+  // methane-tuned SMD was silently applied to ethanol on the next evaluation.
+  //
+  // Done during render rather than in an effect: this is React's "adjusting state when a prop
+  // changes" pattern, which re-renders before committing instead of painting the stale panel once
+  // and then clearing it. An effect would show the previous propellant's numbers for a frame.
+  if (config && identityKey !== lastIdentity) {
+    setLastIdentity(identityKey);
+    setResults(null);
+    setReport(null);
+    setBurn(null);
+    setAmbientPressure(null);
+    setError(null);
+    setStabilityOverrides({});
+    setDesignWarning(
+      'Propellant or injector changed — previous results cleared. Run Evaluate to analyse the new engine.',
+    );
+  }
 
   const handleEvaluate = useCallback(async (overridePatch?: StabilityOverrides) => {
     const lox = parseFloat(loxPressure);
@@ -80,11 +125,13 @@ export function ForwardMode({ config }: ForwardModeProps) {
     if (result.error) {
       setError(result.error);
       setResults(null);
+      setReport(null);
       setAmbientPressure(null);
       setDesignWarning(null);
     } else if (result.data) {
       // Results come directly from runner.evaluate() - same format as Streamlit UI
       setResults(result.data.results);
+      setReport(result.data.report ?? null);
       // Store ambient pressure from response (computed from config elevation)
       setAmbientPressure(result.data.inputs.ambient_pressure_pa);
       // "Warn + flag for re-solve": chamber seeded for a different injector/propellant than is live
@@ -112,6 +159,9 @@ export function ForwardMode({ config }: ForwardModeProps) {
     );
   }
 
+  // A burn belongs to the design it ran on: another version's burn is not shown as this one's.
+  const burnCurrent = !!burn && (!burn.configFingerprint || burn.configFingerprint === configFingerprint(config));
+  const burnData: TimeSeriesData | null = burnCurrent ? burn!.data : null;
   return (
     <div className="space-y-6">
       {/* Input section */}
@@ -200,19 +250,48 @@ export function ForwardMode({ config }: ForwardModeProps) {
             <span>{designWarning}</span>
           </div>
         )}
+        {burn && !burnCurrent && report && (
+          <div className="mt-4 p-3 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-secondary)] text-sm">
+            The last Time-Series run was made on another version of this design; run it again to see the burn here.
+          </div>
+        )}
       </div>
 
-      {/* Results section */}
-      <ResultsDisplay results={results} isLoading={isLoading} targetExitPressure={ambientPressure} />
-
-      <StabilityPanel
-        data={results?.stability_rich as import('./stability/types').StabilityRichPayload | undefined}
-        interactive
-        overrides={stabilityOverrides}
-        onOverridesChange={setStabilityOverrides}
-        onReevaluate={() => handleEvaluate(stabilityOverrides)}
-        isLoading={isLoading}
-      />
+      {report ? (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-6 py-7">
+          <ForwardView
+            report={report}
+            burn={burnData}
+            burnWhen={burn?.timestamp ?? null}
+            measurements={((config as unknown as { measurements?: Record<string, MeasuredValue | null> }).measurements) ?? {}}
+            readOnly={readOnly}
+            onSaveMeasurements={async (patch) => {
+              const r = await updateConfig({ measurements: patch } as unknown as Partial<EngineConfig>);
+              if (r.error) return r.error;
+              if (r.data?.config) onConfigUpdated?.(r.data.config);
+              await handleEvaluate();
+              return null;
+            }}
+            extras={{
+              spray: results?.stability_rich
+                ? <div className="max-w-2xl"><VaporizationProfile data={results.stability_rich as unknown as import("./stability/types").StabilityRichPayload} /></div>
+                : null,
+              stability: <StabilityPanel
+                data={results?.stability_rich as import('./stability/types').StabilityRichPayload | undefined}
+                interactive
+                overrides={stabilityOverrides}
+                onOverridesChange={setStabilityOverrides}
+                onReevaluate={() => handleEvaluate(stabilityOverrides)}
+                isLoading={isLoading}
+              />,
+            }}
+          />
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-[var(--color-border)] px-6 py-14 text-center text-sm text-[var(--color-text-secondary)]">
+          {isLoading ? 'Solving the engine at these tank pressures…' : 'Set the tank pressures and evaluate.'}
+        </div>
+      )}
     </div>
   );
 }

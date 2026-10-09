@@ -19,9 +19,19 @@ from backend.main import app
 client = TestClient(app)
 
 
+#: The drawing these tests are written against: the shipped GN2 study stand.
+#: Picked by name, never "the first drawing in the library": other tests upload
+#: theirs, and under ``pytest -n`` one landed first and a walkthrough pressed a
+#: different stand.
+DRAWING_SOURCE = "shipped:copv_study_gn2.json"
+
+
 def ids() -> tuple[str, str]:
     library = client.get("/api/library").json()
-    diagram = next(a for a in library if a["kind"] == "diagram")["id"]
+    drawings = [a for a in library if a["kind"] == "diagram"]
+    diagram = next(
+        (a for a in drawings if a.get("source") == DRAWING_SOURCE), drawings[0]
+    )["id"]
     engine = next((a for a in library if a["kind"] == "engine"), {"id": ""})["id"]
     return diagram, engine
 
@@ -293,16 +303,17 @@ def test_the_gauges_stay_at_atmosphere_while_idle() -> None:
 
 
 def an_engine() -> str:
-    """An engine in the test library, imported if the seed did not bring one.
+    """The 7000N doublet in the test library, imported here.
 
     The suite runs against a temp store (see conftest) which the shipped
     *drawings* seed into but no engine does, so a test needing one has to supply
     it rather than skip -- a skipped test is not a test.
+
+    Always this engine, never "whichever engine is in the library": other tests
+    upload theirs, and under ``pytest -n`` which one a worker met first decided
+    the fire load a walkthrough pressed. The store keys an artifact by its
+    bytes, so importing it again returns the same one.
     """
-    library = client.get("/api/library").json()
-    existing = next((a for a in library if a["kind"] == "engine"), None)
-    if existing:
-        return existing["id"]
     config = (
         Path(__file__).resolve().parents[2]
         / "EngineDesign"
@@ -331,7 +342,7 @@ def test_node_temperatures_are_live_not_frozen_at_build() -> None:
     from backend.statemachine import bind, load_machine
     from backend.assembly import assemble
     import backend.main as api
-    import backend.study as study
+    import backend.benchmark_study as study
 
     engine_id = an_engine()
     if study.find_diagram(api.library, "gn2") is None:
@@ -358,7 +369,7 @@ def test_joule_thomson_falls_out_of_enthalpy_conservation() -> None:
     regulator and re-solving T at the outlet pressure."""
     from backend.main import _cea_for, engine_from_bytes
     import backend.main as api
-    import backend.study as study
+    import backend.benchmark_study as study
 
     engine_id = an_engine()
     design = engine_from_bytes(api.library.path(engine_id).read_bytes(), name="e")
@@ -378,3 +389,38 @@ def test_joule_thomson_falls_out_of_enthalpy_conservation() -> None:
     assert -34.0 < drop["gn2"] < -26.0, f"N2 should cool ~30 K, got {drop['gn2']:.1f}"
     assert 8.0 < drop["he"] < 22.0, f"He should warm, got {drop['he']:.1f}"
     assert drop["he"] > 0.0 > drop["gn2"], "the two gases must move opposite ways"
+
+
+def test_each_tank_says_which_leg_it_is_on() -> None:
+    """The pad guide finds the LOX tank by this. It used to match "ox" in the
+    label, and on a drawing tagged TK-2 / TK-3 it watched the empty fuel tank
+    for the LOX load forever."""
+    state = open_session()
+    sides = {t["label"]: t["side"] for t in state["tanks"]}
+    assert sorted(sides.values()) == ["fuel", "lox"], sides
+    assert all(b["side"] == "" for b in state["bottles"])
+
+
+def test_a_lox_loads_chilldown_can_be_skipped() -> None:
+    """Nobody rehearsing waits out the minutes a LOX load spends chilling the
+    wall (the team, 2026-10-08). ``skip_chill`` puts it where the chill leaves
+    it and the pour collects from there; an unknown tank is a 404."""
+    sid = open_session()["id"]
+    command(sid, state="Armed")
+    command(sid, state="Ox Fill")
+    for _ in range(4):
+        state = tick(sid)
+    lox = next(t for t in state["tanks"] if t["side"] == "lox")
+    assert lox["chilling"] and lox["liquid_mass_kg"] == 0.0
+
+    lox = next(t for t in command(sid, skip_chill=True)["tanks"] if t["side"] == "lox")
+    assert not lox["chilling"] and lox["wall_temperature_K"] < 100.0
+    for _ in range(8):
+        state = tick(sid)
+    lox = next(t for t in state["tanks"] if t["side"] == "lox")
+    assert not lox["chilling"] and lox["liquid_mass_kg"] > 0.0
+
+    unknown = client.post(
+        f"/api/session/{sid}/command", json={"skip_chill": "no-such-tank"}
+    )
+    assert unknown.status_code == 404

@@ -14,6 +14,7 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync, copyFileSync } from
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { clearTareFile, setRunDir } from './lc-tare.js';
 
 // daq-server repo root (…/daq-server), from …/daq-server/diablo_server/backend/{src,dist}.
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -168,6 +169,15 @@ export class ServiceController {
       // Never start onto a not-yet-torn-down previous run — a lingering daq_bridge
       // still owns :5006 and the new one would crash-loop. Wait for a clean slate.
       await waitUntilSettled(pipelineUnits(true));
+      // Every session begins with every load cell reading absolute.
+      //
+      // This must sit between waitUntilSettled and the start below, and nowhere else. Earlier —
+      // beside snapshotRunConfig, say — the PREVIOUS run's calibration_service may still be
+      // alive; it holds its tares in memory and rewrites the file from them on its next periodic
+      // save or clean shutdown, so the unlink silently fails to clear. Only here is every
+      // process confirmed gone and the next one not yet started.
+      clearTareFile();
+      setRunDir(dbDir);
       await runSystemctl('start', pipelineUnits(simulated));
       // A run isn't real unless the DB actually came up. If elodin-db is missing/broken,
       // sensor-elodin hard-fails (AssertPathExists) or crash-loops — without this check the
@@ -181,6 +191,15 @@ export class ServiceController {
       }
     } else {
       console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
+      // Mock mode is a second lifecycle: the pipeline is already up, so there is no
+      // service-is-down window and the unlink above would race a live writer. Clear the file AND
+      // tell the running service to drop its in-memory tares. The fire-and-forget weakness of
+      // that command is acceptable here precisely because the service IS up to receive it.
+      //
+      // Doing this only in the systemd branch would leave every dev and test session inheriting
+      // the previous session's tares — and mock is the mode the tests run in.
+      clearTareFile();
+      setRunDir(dbDir);
       // In mock mode the pipeline is already running; only the simulator is ours
       // to start/stop for the run.
       if (simulated) this.spawnSimulator();

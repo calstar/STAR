@@ -21,8 +21,8 @@ import pytest
 
 from backend.assembly import assemble
 from backend.library import Library
-from backend.run import PSI
-from backend.session import AMBIENT, Session, Setup
+from feedtwin.session.gauge import PSI
+from backend.session import AMBIENT_T, Session, Setup
 from backend.statemachine import bind, load_machine
 
 CEA = (
@@ -93,7 +93,18 @@ def stand(*, engine: bool = False, **setup: float) -> Session:
     # steps it has no time for into one, which is right for a panel and
     # wrong for a test, whose answer must not depend on what else the machine
     # was doing.
-    setup = {"chilldown": 0.0, "ambient_leak": 0.0, "tick_budget": 1e9, **setup}
+    # The load chill too: a test about a fill wants the liquid in, not thirty
+    # seconds of a wall chilling first (tested on its own below). And the
+    # fixed-rate load rather than the dewar's, which takes minutes to chill
+    # a warm tank (tested in test_dewar_load.py).
+    setup = {
+        "chilldown": 0.0,
+        "ambient_leak": 0.0,
+        "tick_budget": 1e9,
+        "load_chill_s": 0.0,
+        "dewar_psi": 0.0,
+        **setup,
+    }
     seeded = _seed()
     library = Library()
     diagram = library.get(seeded["diagram"])
@@ -179,16 +190,74 @@ def test_filling_a_tank_loads_it_and_leaves_the_other_alone() -> None:
 
 def test_a_tank_vents_while_it_fills() -> None:
     """Ox Fill opens the LOX vent. Without it the incoming liquid compresses the
-    ullage to hundreds of psi, which is why the vent is in the table. With
-    the wall boiling the LOX it meets (the helper loads a warm tank in five
-    seconds), the vent is passing tens of grams a second and the tank sits a
-    few tens of psi up -- still nowhere near a shut tank."""
+    ullage to hundreds of psi, which is why the vent is in the table: while the
+    helper's five-second load comes in, the vent passes the gas it displaces
+    and the tank stays near atmosphere.
+
+    And nothing else. This stand is thermally quiet (no wall-to-liquid heat,
+    no leak), so once it is full nothing boils. This test used to read the
+    vent *after* the fill and find 6.5 g/s there: air the vent took and the
+    pressurant floor put straight back, 5 g/s of it, booked as a guard."""
     session = stand()
-    hold(session, "Ox Fill", 12.0)
+    hold(session, "Ox Fill", 3.0)
     assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
     assert (
         session._last_flows.get("SV_LOX_VENT", 0.0) > 5.0e-3
-    ), "the vent is carrying boil-off"
+    ), "the vent carries the gas the liquid displaces"
+    hold(session, "Ox Fill", 9.0)
+    assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
+    assert abs(session.tanks["OXT"].fixed_kg) < 1e-3, "no gas created by the floor"
+
+
+def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
+    """LOX poured into a room-temperature tank flashes on the wall and vents;
+    nothing collects until the metal is down at saturation. The wall falls at
+    the rate that takes it from the room to the liquid in `load_chill_s`, and
+    what it gives up is the LOX flashed: Q / h_fg, h_fg from CoolProp here
+    rather than from the model."""
+    import CoolProp.CoolProp as CP
+
+    session = stand(load_chill_s=10.0)
+    ox = session.tanks["OXT"]
+    start = ox.state.ullage.wall_temperature
+    assert start > 280.0
+    hold(session, "Ox Fill", 5.0)
+    assert ox.chilling
+    assert ox.state.liquid_mass == 0.0, "nothing collects while the wall is warm"
+    wall = ox.state.ullage.wall_temperature
+    rate = (AMBIENT_T - ox.state.liquid_temperature) / 10.0
+    assert start - wall == pytest.approx(rate * 5.0, rel=0.05)
+    T_liquid = ox.state.liquid_temperature
+    vapour = CP.PropsSI("H", "T", T_liquid, "Q", 1, "Oxygen")
+    h_fg = vapour - CP.PropsSI("H", "T", T_liquid, "Q", 0, "Oxygen")
+    capacity = ox.tank.wall_mass * ox.tank.wall_capacity
+    assert ox.chill_boiled == pytest.approx(capacity * (start - wall) / h_fg, rel=1e-3)
+    assert "chilling down" in "\n".join(session.history[-1].notes)
+
+    hold(session, "Ox Fill", 8.0)
+    assert not ox.chilling
+    saturation = CP.PropsSI("T", "P", ox.pressure, "Q", 0, "Oxygen")
+    assert ox.state.ullage.wall_temperature <= saturation + ox.tank.boiling_onset + 1.0
+    assert ox.state.liquid_mass > 0.5, "once chilled, the load collects"
+
+
+def test_with_no_load_chill_the_liquid_collects_from_the_first_second() -> None:
+    """Zero is the model before the chill existed: liquid from the start, and
+    the wall left to chill as the load goes."""
+    session = stand(load_chill_s=0.0)
+    hold(session, "Ox Fill", 1.0)
+    ox = session.tanks["OXT"]
+    assert not ox.chilling and ox.chill_boiled == 0.0
+    assert ox.state.liquid_mass > 0.5
+    assert ox.state.ullage.wall_temperature > 250.0
+
+
+def test_the_fuel_load_has_nothing_to_chill() -> None:
+    session = stand(load_chill_s=30.0)
+    hold(session, "Fuel Fill", 1.0)
+    fuel = session.tanks["FUT"]
+    assert not fuel.chilling
+    assert fuel.state.liquid_mass > 0.1
 
 
 # ---------------------------------------------------------------- pressing
@@ -263,7 +332,8 @@ def test_firing_burns_propellant_at_a_sensible_mixture_ratio() -> None:
 
     ox_before = session.tanks["OXT"].state.liquid_mass
     fuel_before = session.tanks["FUT"].state.liquid_mass
-    hold(session, "Fire", 4.0)
+    # Mid-burn: a fire load runs dry in under four seconds.
+    hold(session, "Fire", 1.5)
     chamber = session.history[-1].chamber
     assert chamber is not None
 
@@ -480,9 +550,9 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     calls: list[float] = []
     original = session._advance_once
 
-    def counting(net, signals, inner):  # type: ignore[no-untyped-def]
+    def counting(net, signals, inner, *rest):  # type: ignore[no-untyped-def]
         calls.append(inner)
-        return original(net, signals, inner)
+        return original(net, signals, inner, *rest)
 
     session._advance_once = counting  # type: ignore[method-assign]
     session.setup.tick_budget = 1e9  # the study setting: never fold
@@ -502,107 +572,6 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     )
     assert mod.COUPLING_SAFETY <= 1.0
     assert sum(calls) == pytest.approx(min(dt, mod.MAX_STEP), rel=1e-9)
-
-
-# ---------------------------------------------------- computed ahead, replayed
-
-
-def test_a_precomputed_run_replays_in_order_without_integrating() -> None:
-    """The burn is integrated ahead at study accuracy and handed back a frame
-    at a time, so the panel gets a real-time, noise-free run for the price of a
-    short wait before it. During replay `step` must not integrate: the frames
-    it returns are the buffered ones, in stand-time order, paced by dt.
-    """
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    frames = session.precompute(horizon=0.6, dt=0.02)
-    assert frames >= 20 and not session.computing and session.replaying
-    end_t = session.t  # the stand itself is at the END of the run
-    buffered = {
-        round(f.t, 6) for f, _ in session._replay
-    }  # before replay consumes them
-    ts = []
-    for _ in range(12):
-        ts.append(session.step(0.05).t)
-    assert ts == sorted(ts) and ts[0] < ts[-1] < end_t + 1e-9
-    assert session.t == end_t, "replay integrated the stand further"
-    # Each shown frame is one that was buffered, not a fresh solve.
-    assert all(round(t, 6) in buffered for t in ts)
-    # The buffer is spent; the stand carries on live from where the run ended.
-    assert not session.replaying
-    assert session.step(0.05).t > end_t
-
-
-def test_a_command_during_replay_restores_the_stand_to_the_frame_shown() -> None:
-    """An abort mid-replay must act on the stand the operator is looking at,
-    not on the one four seconds further into the future that the precompute
-    left behind. Every buffered frame therefore carries the stand's state at
-    that instant, and a command restores it before it does anything else.
-    """
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    session.precompute(horizon=0.6, dt=0.02)
-    for _ in range(5):
-        shown = session.step(0.05)
-    assert session.t > shown.t + 0.1, "the stand should be well ahead of the display"
-    ox = next(iter(session.tanks.values()))
-    shown_mass = (
-        shown.tanks[ox.id]["liquid_kg"] if "liquid_kg" in shown.tanks[ox.id] else None
-    )
-
-    session.set_valve(next(iter(session.model.built.actuators)), False)
-
-    assert session.t == pytest.approx(
-        shown.t
-    ), "stand not restored to the shown instant"
-    assert not session._replay and not session.replaying
-    assert session.history[-1].t == pytest.approx(shown.t), "history not truncated"
-    if shown_mass is not None:
-        assert ox.state.liquid_mass == pytest.approx(shown_mass, rel=1e-9)
-    # ...and it carries on live from there.
-    nxt = session.step(0.05)
-    assert nxt.t > shown.t and session.t == pytest.approx(nxt.t)
-
-
-def test_a_command_while_computing_cancels_the_run_and_acts_on_the_held_frame() -> None:
-    """An abort during "running sim" must never be refused, and must act on the
-    stand the operator is looking at -- the frame held since the run began, not
-    the future the thread has integrated to. So a command cancels the run at
-    its next step, restores the stand to that frame, and goes through.
-    """
-    import threading
-
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    held = session.step(0.05)
-    session.state = "Fire"
-    worker = threading.Thread(
-        target=session.precompute, args=(30.0,), kwargs={"dt": 0.02}
-    )
-    worker.start()
-    # Let it get a few frames in, and confirm the display is holding.
-    for _ in range(50):
-        if len(session._replay) >= 3:
-            break
-        import time as _t
-
-        _t.sleep(0.05)
-    assert session.computing and session.step(0.05).t == held.t
-    assert session.t > held.t, "the thread should have integrated ahead"
-
-    target = next(
-        s for s in session.machine.targets(session.state) if "abort" in s.lower()
-    )
-    session.command_state(target)  # must not raise
-    worker.join(timeout=30)
-    assert not session.computing and not session.replaying
-    assert session.state == target
-    assert session.t == pytest.approx(held.t), "not restored to the held frame"
-    assert session.step(0.05).t > held.t, "and it carries on live from there"
 
 
 # ---------------------------------------------------- the operator's report
@@ -706,8 +675,10 @@ def test_a_shut_lox_tank_climbs_and_the_panel_says_why() -> None:
     assert session.tanks["OXT"].readouts()["wall_temperature_K"] > 150.0
     # Left shut on a 0.75 L ullage under a 293 K wall it runs to the oxygen
     # critical pressure -- the model's ceiling -- within seconds, and the
-    # note changes to "vent it".
-    hold(session, "Armed", 4.0)
+    # note changes to "vent it". ~4.4 s from shutting; it was 1.2 s while the
+    # pressurant floor was re-creating the air the vent had taken (26 g of it
+    # by the end of this fill), which pressed the ullage too.
+    hold(session, "Armed", 6.0)
     later = psi(session.tanks["OXT"].pressure)
     assert later > shut + 20.0, (shut, later)
     assert "Vent it" in "\n".join(session.history[-1].notes)
@@ -772,12 +743,19 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     the operator quotes. Bare, the same tank climbs faster. The difference
     is the whole point of the wrap. (Before the surface layer this read as
     "climbs into the teens then creeps": the whole leak boiled, then fifteen
-    kilograms of bulk had to warm.)"""
+    kilograms of bulk had to warm.)
+
+    At the vehicle's load (~40 % full), not 85 %. The leak reaches the ullage
+    only through the dry wall above the liquid; below it, it warms a subcooled
+    bulk that does not pressurise anything. Since the ullage stopped trading
+    heat with the whole tank's wall (Setup.ullage_wall_by_level, 2026-10-06)
+    an 85 % full tank shows the wrap as 1.3 psi in ten minutes -- true, and
+    too small to test -- and this load shows it as 5 psi in three."""
     from dataclasses import replace
 
     def shut(bare: bool) -> float:
         session = stand(chilldown=100.0, ambient_leak=8.0)
-        session.prime(fill_fraction=0.85, tank_psi=0.0, copv_psi=4500.0, state="Armed")
+        session.prime(fill_fraction=0.40, tank_psi=0.0, copv_psi=4500.0, state="Armed")
         ox = session.tanks["OXT"]
         if bare:
             ox.tank.ambient_conductance = 8.0

@@ -1,0 +1,59 @@
+name: Parts Hub CI
+
+# parts-hub/ is the STAR Parts Hub (parts library + Onshape insert panel). The
+# tests run against a fake Onshape (no credentials), including the local STEP
+# thumbnail renderer. The image build mirrors publish-apps.yml with push: false,
+# so a broken Dockerfile fails the PR rather than the deploy.
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true (matches the repo's
+# other workflows).
+'on':
+  push:
+    paths:
+      - 'parts-hub/**'
+      - '.github/workflows/parts-hub-ci.yml'
+  pull_request:
+    paths:
+      - 'parts-hub/**'
+      - '.github/workflows/parts-hub-ci.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: parts-hub-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Type-check + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: parts-hub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: parts-hub/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  docker-image:
+    name: Docker image (parts-hub)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./parts-hub
+          file: ./parts-hub/Dockerfile
+          push: false
+          cache-from: type=gha,scope=parts-hub

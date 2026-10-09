@@ -46,7 +46,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "calibration/CaptureWindow.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
+#include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
@@ -123,6 +125,8 @@ std::unordered_map<uint16_t, double> g_lc_pga_gain;
  *  of pt_calibration/robust_manager (PT and LC uids share the store; their board_id ranges never
  *  collide, but nothing else tags which kind a uid is). */
 std::set<uint16_t> g_lc_uids;
+/** Board ids of every LC board, so a connector outside active_connectors still routes as LC. */
+std::set<uint8_t> g_lc_board_ids;
 
 }  // namespace
 
@@ -449,6 +453,21 @@ static double convert_lc_adc_to_force(int32_t adc_raw, double sensitivity_mv_per
 static void signalHandler(int /*sig*/) {
     std::cout << "\n[CalibrationService] Caught signal, shutting down..." << std::endl;
     running = false;
+}
+
+/** Monotonic now, in ns. The capture window judges liveness on OUR clock and never the
+ *  board's, so a board whose clock is skewed or has just reset cannot make a dead channel
+ *  look live (or a live one look stale). */
+/** Wall-clock unix seconds, for stamping a record a human will read. */
+static double unix_now() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+static uint64_t mono_ns() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 
 /**
@@ -866,8 +885,16 @@ int main(int argc, char* argv[]) {
     // feeds both this cubic fit and the robust learner.
     fsw::calibration::CubicCalibrationStore cubic_store(
         "scripts/calibration/calibrations/cubic_calibration.json");
-    std::unordered_map<uint16_t, std::deque<int32_t>> pt_adc_ring;  // recent raw ADC per uid
-    constexpr size_t kPtAdcRingMax = 128;                           // ~0.5 s of samples at ~250 Hz
+    // Load-cell tares: display-only offsets the backend subtracts on the way to the browser.
+    // Deliberately NOT part of the cubic store — a tare is not a calibration point, and folding
+    // one in as a captured zero would tilt the whole fit rather than shift its intercept.
+    // Cleared by the backend at session start (while this service is down); survives a restart
+    // inside a session. See LcTareStore.hpp.
+    fsw::calibration::LcTareStore lc_tare_store("scripts/calibration/calibrations/lc_tare.json");
+    // What a capture records. Bounded in TIME, not in samples: the old 128-sample ring was
+    // sized for a 250 Hz PT and spanned 9.3 s on a 13.7 Hz load cell, so a capture taken
+    // soon after a load change averaged the old load in. See CaptureWindow.hpp.
+    fsw::calibration::CaptureWindow capture_window;
     for (const auto& bc : pt_boards) {
         for (uint8_t local_ch : bc.channels) {
             const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
@@ -876,7 +903,8 @@ int main(int argc, char* argv[]) {
             const auto rit = g_uid_role.find(uid);
             const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
             cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
-                                         pt_model_name(pt_model_for(uid)));
+                                         pt_model_name(pt_model_for(uid)),
+                                         fsw::calibration::SensorKind::PT);
         }
     }
 
@@ -886,7 +914,9 @@ int main(int argc, char* argv[]) {
     // discriminant apply_capture/apply_clear/reload_live_store use to route a store entry to
     // lc_calibration instead of pt_calibration/robust_manager.
     g_lc_uids.clear();
+    g_lc_board_ids.clear();
     for (const auto& bc : lc_boards) {
+        g_lc_board_ids.insert(bc.board_id);
         for (uint8_t local_ch : bc.channels) {
             const uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
             const uint8_t log_ch =
@@ -895,7 +925,8 @@ int main(int argc, char* argv[]) {
             const std::string role = rit != g_uid_role.end() ? rit->second : std::string();
             g_lc_uids.insert(uid);
             cubic_store.register_channel(uid, bc.board_id, local_ch, log_ch, role,
-                                         lc_model_name(lc_model_for(uid)));
+                                         lc_model_name(lc_model_for(uid)),
+                                         fsw::calibration::SensorKind::LC);
         }
     }
 
@@ -1022,6 +1053,46 @@ int main(int argc, char* argv[]) {
         // boards' vent-to-safe gate tracks the new calibration within a broadcast cycle.
         write_abort_thresholds();
     };
+    // adc -> kg exactly as the LC publish path computes it (see the 0x23 branch): the cubic fit
+    // if this uid streams one, else the datasheet physics conversion. A tare offset is derived
+    // through the SAME model selection the live sample goes through, so flipping a uid between
+    // cubic and physics carries its tare correctly instead of being a fourth special case.
+    auto lc_eval_for = [&](uint16_t uid) -> fsw::calibration::LcTareStore::Evaluator {
+        return [&, uid](double adc) -> double {
+            uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
+            if (board_number == 0)
+                board_number = 10;
+            const uint8_t connector = static_cast<uint8_t>(uid % 100);
+            const uint8_t lc_log_ch =
+                fsw::calibration::pt_logical_calibration_channel(board_number, connector);
+            const int32_t code = static_cast<int32_t>(adc);
+            const bool cubic_ok = lc_calibration.is_calibrated(lc_log_ch);
+            const double kg_cubic = cubic_ok ? lc_calibration.calculate(lc_log_ch, code) : 0.0;
+            const double kg_phys = convert_lc_adc_to_force(
+                code, lc_sensitivity_for(uid, lc_sensitivity_mv_per_v),
+                lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
+            return select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
+        };
+    };
+    // Re-derive a standing tare's kilograms from the ADC code it was taken at. Called from EVERY
+    // site that can change an LC curve; miss one and the stand carries an offset computed against
+    // a curve that no longer exists — the "tank reads 2 kg after a better fit" bug.
+    //
+    // curves_trusted tracks the cubic store: if its file could not be read, every curve here is a
+    // fallback, and persisting an offset derived from one would replace a good number with a
+    // confident wrong one.
+    auto recompute_tare = [&](uint16_t uid) {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_tare_store.recompute(uid, lc_eval_for(uid));
+        lc_tare_store.save();
+    };
+    auto recompute_all_tares = [&]() {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        lc_tare_store.recompute_all([&](uint16_t u) {
+            return lc_eval_for(u);
+        });
+        lc_tare_store.save();
+    };
     // LC capture: cubic fit only — no robust learner (LC doesn't need drift-learning) and no abort
     // thresholds (a PT-only concept; abort_pts names PT roles).
     auto apply_lc_capture = [&](uint16_t uid, double adc_avg, double ref) {
@@ -1031,11 +1102,42 @@ int main(int argc, char* argv[]) {
             lc_calibration.set_calibration(cch->logical_ch, fsw::calibration::PolynomialCalibration(
                                                                 fit.A, fit.B, fit.C, fit.D, "kg"));
         cubic_store.save();
+        // The curve just moved under any standing tare on this channel.
+        recompute_tare(uid);
     };
     // Every capture/clear is routed by uid kind (g_lc_uids), so cmd_type 0/3/4/5/6 in the
     // CalibrationCommand handler below work unchanged for both PT and LC uids.
+    // One capture decision for every command that takes one (Zero, Zero-All, cmd 1, 3, 5).
+    // Each used to open-code the same unbounded mean with its own last-value fallback; that
+    // fallback is gone, because a capture that cannot be substantiated by fresh data must not
+    // become a point on a live stand.
+    auto take_capture = [&](uint16_t uid, const char* what) -> fsw::calibration::CaptureResult {
+        const fsw::calibration::CaptureResult r = capture_window.capture(uid, mono_ns());
+        if (!r.ok) {
+            std::cout << "[Cal] " << what << " uid=" << static_cast<int>(uid) << " REJECTED ("
+                      << r.reason << "): newest sample " << r.age_ms << "ms old, " << r.n
+                      << " in last " << fsw::calibration::kCaptureWindowMs << "ms" << std::endl;
+        }
+        return r;
+    };
+    // The fields that would have made the 2026-09-13 load-cell failure obvious at the time.
+    auto capture_detail = [](const fsw::calibration::CaptureResult& r) {
+        std::ostringstream o;
+        o << "n=" << r.n << " span=" << r.span_ms << "ms age=" << r.age_ms << "ms adc=" << r.adc_avg
+          << " spread=" << r.spread << " drift=" << r.drift << " z=" << r.drift_z
+          << (r.settled ? "" : " UNSETTLED");
+        return o.str();
+    };
+
+    // g_lc_uids only holds connectors in active_connectors, so an LC channel outside that list
+    // used to fall through to the PT path and write a PT logical channel. The board id settles
+    // the kind regardless of which connectors are declared.
+    auto is_lc_uid = [&](uint16_t uid) {
+        return g_lc_uids.count(uid) > 0 ||
+               g_lc_board_ids.count(static_cast<uint8_t>(uid / 100)) > 0;
+    };
     auto apply_capture = [&](uint16_t uid, double adc_avg, double ref) {
-        if (g_lc_uids.count(uid))
+        if (is_lc_uid(uid))
             apply_lc_capture(uid, adc_avg, ref);
         else
             apply_pt_capture(uid, adc_avg, ref);
@@ -1059,9 +1161,12 @@ int main(int argc, char* argv[]) {
             lc_calibration.clear_calibration(cch->logical_ch);
         cubic_store.clear_channel(uid);
         cubic_store.save();
+        // A cleared channel falls back to the physics conversion, which is a different curve.
+        // The tare survives and re-derives through it, so the same load still reads zero.
+        recompute_tare(uid);
     };
     auto apply_clear = [&](uint16_t uid) {
-        if (g_lc_uids.count(uid))
+        if (is_lc_uid(uid))
             apply_lc_clear(uid);
         else
             apply_pt_clear(uid);
@@ -1108,7 +1213,7 @@ int main(int argc, char* argv[]) {
             if (cch == nullptr)
                 continue;
             const bool fit_ok = fit != nullptr && fit->valid;
-            if (g_lc_uids.count(uid)) {
+            if (is_lc_uid(uid)) {
                 // LC: cubic fit only, no robust baseline to reseed.
                 if (fit_ok)
                     lc_calibration.set_calibration(cch->logical_ch,
@@ -1137,7 +1242,7 @@ int main(int argc, char* argv[]) {
         // ones), so the merged UI can show "what robust would look like" before you switch to it.
         // LC has no robust display.
         for (uint16_t uid : cubic_store.uids()) {
-            if (g_lc_uids.count(uid))
+            if (is_lc_uid(uid))
                 continue;
             const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
             if (cch != nullptr && !cch->points.empty())
@@ -1146,6 +1251,10 @@ int main(int argc, char* argv[]) {
         // Whole-rig cal just (re)loaded — startup or a live profile swap (cmd 7). Emit the abort
         // thresholds from it so the boards' vent-to-safe gate matches the newly active calibration.
         write_abort_thresholds();
+        // Every LC curve may have just changed, so every standing tare's kilograms are stale.
+        // This is why the tare file is loaded BEFORE the first call to this lambda: recomputing
+        // an empty map does nothing, and the stale offsets would then survive all session.
+        recompute_all_tares();
         return loaded;
     };
 
@@ -1153,11 +1262,42 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
                  "calibration_backups/calibration_backup_*.json mtime)"
               << std::endl;
+    // Resume standing tares BEFORE the live store reload below, not after.
+    //
+    // Ordering is load-bearing. reload_live_store() ends by recomputing every tare against the
+    // curves it just applied; if the tare file were read after that call, the recompute would run
+    // over an empty map and never happen. The case that bites is a calibration profile swapped on
+    // disk while this service was down: the offsets on disk belong to the old curves, and without
+    // the startup recompute a tared tank reads a wrong nonzero at rest with nothing to explain it.
+    const size_t tares_loaded = lc_tare_store.load();
+    if (tares_loaded > 0)
+        std::cout << "[Calibration] LC tare: resumed " << tares_loaded
+                  << " standing tare(s) from lc_tare.json" << std::endl;
+
     // Resume previously captured points + learned robust state from disk.
     const size_t cubic_loaded = reload_live_store(/*restore_learned=*/true);
     if (cubic_loaded > 0)
         std::cout << "[Calibration] Cubic: resumed " << cubic_loaded
                   << " channel(s) from cubic_calibration.json" << std::endl;
+    // Audit, not a second recompute: by here every restored tare should already have been
+    // re-derived by the reload above, so the expected answer is zero. A non-zero answer means a
+    // curve moved without its recompute running — most likely this file was read after the
+    // reload rather than before it — and the offsets it just fixed were being applied against a
+    // curve that no longer exists. Self-healing, but never silently.
+    {
+        lc_tare_store.set_curves_trusted(!cubic_store.load_failed());
+        const size_t stale = lc_tare_store.recompute_stale([&](uint16_t u) {
+            return lc_eval_for(u);
+        });
+        if (stale > 0) {
+            std::cout << "[Calibration] LC tare: WARNING — " << stale
+                      << " tare(s) were stale against the live curves and have been re-derived. "
+                         "A curve changed without recomputing its tare; check that lc_tare_store"
+                         ".load() still runs BEFORE the first reload_live_store()."
+                      << std::endl;
+            lc_tare_store.save();
+        }
+    }
     // Always persist at startup so the record (with each channel's active_model) exists immediately
     // — the UI / cal_model_select read it before any capture.
     cubic_store.save();
@@ -1258,6 +1398,10 @@ int main(int argc, char* argv[]) {
                 elodin_client.set_recv_timeout_ms(3000);
                 last_resubscribe = std::chrono::steady_clock::now();
                 last_packet_time = std::chrono::steady_clock::now();
+                // Samples either side of the gap are not a continuous record; averaging
+                // across it would blend pre-disconnect codes into the next capture.
+                capture_window.clear();
+                last_adc_map.clear();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
             continue;
@@ -1329,72 +1473,63 @@ int main(int argc, char* argv[]) {
                     // A "zero" is just a captured reference point at 0 (psi or kg): it feeds the
                     // same shared fit as any other capture, persists, and naturally averages
                     // repeated zeroes — capturing real zero-drift over time rather than assuming a
-                    // uniform tare. Physics sensors take no points, so they're skipped.
-                    auto is_physics = [&](uint16_t uid) -> bool {
-                        return g_lc_uids.count(uid) ? lc_model_for(uid) == LcModel::Physics
-                                                    : pt_model_for(uid) == PtModel::Physics;
-                    };
-                    auto avg_adc = [&](uint16_t uid, double& out) -> bool {
-                        auto rit = pt_adc_ring.find(uid);
-                        if (rit != pt_adc_ring.end() && !rit->second.empty()) {
-                            double sum = 0.0;
-                            for (int32_t a : rit->second)
-                                sum += static_cast<double>(a);
-                            out = sum / static_cast<double>(rit->second.size());
-                            return true;
-                        }
-                        auto lit = last_adc_map.find(uid);
-                        if (lit != last_adc_map.end()) {
-                            out = static_cast<double>(lit->second);
-                            return true;
-                        }
-                        return false;
-                    };
+                    // uniform tare. Physics sensors are captured too: the point is stored, not
+                    // applied.
                     int zeroed = 0;
                     if (sensor_id == 0) {  // All sensors
-                        for (auto const& [id, val] : last_adc_map) {
-                            (void)val;
-                            if (is_physics(id))
-                                continue;  // datasheet zero; no points
-                            double adc_avg = 0.0;
-                            if (!avg_adc(id, adc_avg))
+                        // Enumerate sensors that are actually SENDING, not every uid ever seen.
+                        // Iterating a last-value map zeroed channels whose board had gone away,
+                        // from codes of unbounded age.
+                        std::vector<uint16_t> skipped;
+                        for (uint16_t id : capture_window.uids()) {
+                            // Physics sensors are captured too. The point does not change what
+                            // physics streams — that stays the datasheet conversion — but it is
+                            // recorded in the shared store, so a sensor can be calibrated while in
+                            // physics mode and switched to cubic or robust afterwards with its
+                            // points already there. Skipping them meant the only way to collect
+                            // points was to change a sensor's mode first, mid-campaign.
+                            const fsw::calibration::CaptureResult r = take_capture(id, "Zero All");
+                            if (!r.ok) {
+                                skipped.push_back(id);
                                 continue;
-                            apply_capture(id, adc_avg, 0.0);
+                            }
+                            apply_capture(id, r.adc_avg, 0.0);
                             ++zeroed;
                         }
-                        std::cout << "[Cal] Zero All: captured 0 on " << zeroed << " PT/LC sensors"
-                                  << std::endl;
+                        std::cout << "[Cal] Zero All: captured 0 on " << zeroed << " PT/LC sensors";
+                        if (!skipped.empty()) {
+                            std::cout << "; skipped " << skipped.size() << " with no fresh data (";
+                            for (size_t i = 0; i < skipped.size(); i++)
+                                std::cout << (i ? " " : "") << static_cast<int>(skipped[i]);
+                            std::cout << ")";
+                        }
+                        std::cout << std::endl;
                     } else {
-                        double adc_avg = 0.0;
-                        if (!is_physics(sensor_id) && avg_adc(sensor_id, adc_avg)) {
-                            apply_capture(sensor_id, adc_avg, 0.0);
+                        const fsw::calibration::CaptureResult r = take_capture(sensor_id, "Zero");
+                        if (r.ok) {
+                            apply_capture(sensor_id, r.adc_avg, 0.0);
                             ++zeroed;
                         }
                         std::cout << "[Cal] Zero: captured 0 on uid " << static_cast<int>(sensor_id)
                                   << " (" << zeroed << ")" << std::endl;
                     }
                 } else if (cmd_type == 1) {  // Capture Reference
-                    if (last_adc_map.count(sensor_id)) {
-                        robust_manager.update_calibration(sensor_id, last_adc_map[sensor_id],
-                                                          ref_val);
+                    // Through the same window as every other capture: this used to feed the
+                    // robust learner one last-value sample of unbounded age.
+                    const fsw::calibration::CaptureResult r =
+                        take_capture(sensor_id, "Capture ref");
+                    if (r.ok) {
+                        robust_manager.update_calibration(sensor_id,
+                                                          static_cast<int32_t>(r.adc_avg), ref_val);
                     }
                 } else if (cmd_type == 2) {  // Save
                     robust_manager.save_adjustments(adjustments_path, &uid_role);
                     std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
                 } else if (cmd_type == 3) {  // Capture cubic point (operator-built factory cubic)
-                    bool have_adc = false;
-                    double adc_avg = 0.0;
-                    auto rit = pt_adc_ring.find(sensor_id);
-                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
-                        double sum = 0.0;
-                        for (int32_t a : rit->second)
-                            sum += static_cast<double>(a);
-                        adc_avg = sum / static_cast<double>(rit->second.size());
-                        have_adc = true;
-                    } else if (last_adc_map.count(sensor_id)) {
-                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
-                        have_adc = true;
-                    }
+                    const fsw::calibration::CaptureResult cr =
+                        take_capture(sensor_id, "Cubic capture");
+                    const bool have_adc = cr.ok;
+                    const double adc_avg = cr.adc_avg;
                     if (have_adc) {
                         // Legacy cubic capture is now a shared capture (feeds cubic + robust).
                         apply_capture(sensor_id, adc_avg, ref_val);
@@ -1409,24 +1544,19 @@ int main(int argc, char* argv[]) {
                     std::cout << "[Cal] Cubic cleared uid=" << static_cast<int>(sensor_id)
                               << std::endl;
                 } else if (cmd_type == 5) {  // Unified capture point — routed by configured model
-                    bool have_adc = false;
-                    double adc_avg = 0.0;
-                    auto rit = pt_adc_ring.find(sensor_id);
-                    if (rit != pt_adc_ring.end() && !rit->second.empty()) {
-                        double sum = 0.0;
-                        for (int32_t a : rit->second)
-                            sum += static_cast<double>(a);
-                        adc_avg = sum / static_cast<double>(rit->second.size());
-                        have_adc = true;
-                    } else if (last_adc_map.count(sensor_id)) {
-                        adc_avg = static_cast<double>(last_adc_map[sensor_id]);
-                        have_adc = true;
-                    }
-                    if (have_adc) {
-                        apply_capture(sensor_id, adc_avg, ref_val);
+                    const fsw::calibration::CaptureResult cr = take_capture(sensor_id, "Capture");
+                    if (cr.ok) {
+                        apply_capture(sensor_id, cr.adc_avg, ref_val);
+                        // Recorded either way; `settled` is how the GUI flags a capture taken
+                        // while the reading was still moving.
+                        cubic_store.note_capture(sensor_id,
+                                                 fsw::calibration::CaptureQuality{
+                                                     true, unix_now(), cr.adc_avg, cr.n,
+                                                     fsw::calibration::kCaptureWindowMs, cr.spread,
+                                                     cr.drift, cr.drift_z, cr.settled});
                         std::cout << "[Cal] Capture uid=" << static_cast<int>(sensor_id) << " ("
-                                  << pt_model_name(pt_model_for(sensor_id)) << ") adc=" << adc_avg
-                                  << " psi=" << ref_val << std::endl;
+                                  << pt_model_name(pt_model_for(sensor_id)) << ") "
+                                  << capture_detail(cr) << " ref=" << ref_val << std::endl;
                     } else {
                         std::cout << "[Cal] Capture: no ADC seen yet for uid "
                                   << static_cast<int>(sensor_id) << std::endl;
@@ -1439,9 +1569,69 @@ int main(int argc, char* argv[]) {
                     // A calibration profile was loaded / a blank was created on disk by the
                     // backend; re-read the live store and re-apply it to the running stream (reset
                     // + reseed robust from the new profile). No session restart needed.
+                    // The capture window is deliberately NOT cleared here: it holds raw ADC
+                    // counts, which are calibration-independent, so dropping them would only
+                    // make the next capture fail for no reason.
                     const size_t n = reload_live_store(/*restore_learned=*/false);
                     std::cout << "[Cal] Reloaded live calibration store (" << n
                               << " channel(s)) after profile swap" << std::endl;
+                } else if (cmd_type == 8) {  // LC tare — display only, never touches the fit
+                    // ref_val: 0 = set, 1 = clear. sensor_id 0 = every LC channel.
+                    //
+                    // A tare is NOT a captured zero, and this is the one command where that
+                    // distinction is the whole point. Zero-All (cmd 0) records a real 0 kg
+                    // reference point into the shared fit, which is correct for a vented PT and
+                    // wrong for a load cell holding a tank: that tank is not at 0 kg, so the
+                    // point would be false and, because the fit is least-squares over every
+                    // point, it would tilt the whole cubic rather than shift its intercept.
+                    const bool clearing = ref_val >= 0.5f;
+                    std::vector<uint16_t> targets;
+                    if (sensor_id == 0) {
+                        if (clearing) {
+                            targets = lc_tare_store.uids();
+                        } else {
+                            // Only channels actually streaming can be tared — same rule Zero-All
+                            // uses. A uid in a last-value map may have had its board go away.
+                            for (uint16_t id : capture_window.uids())
+                                if (is_lc_uid(id))
+                                    targets.push_back(id);
+                        }
+                    } else if (is_lc_uid(sensor_id)) {
+                        targets.push_back(sensor_id);
+                    } else {
+                        std::cout << "[Cal] Tare: uid " << static_cast<int>(sensor_id)
+                                  << " is not a load cell — ignored" << std::endl;
+                    }
+
+                    size_t done = 0;
+                    for (uint16_t id : targets) {
+                        if (clearing) {
+                            lc_tare_store.clear(id);
+                            ++done;
+                            continue;
+                        }
+                        // Through the capture window, never last_adc_map: a tare taken from a
+                        // stale code silently biases every reading on the channel for the rest
+                        // of the run, which is the same failure take_capture exists to refuse.
+                        const fsw::calibration::CaptureResult r = take_capture(id, "Tare");
+                        if (!r.ok)
+                            continue;
+                        const uint8_t board_id = static_cast<uint8_t>(id / 100);
+                        const uint8_t connector = static_cast<uint8_t>(id % 100);
+                        if (lc_tare_store.set(id,
+                                              fsw::calibration::lc_tare_entity(board_id, connector),
+                                              r.adc_avg, lc_eval_for(id))) {
+                            ++done;
+                            const fsw::calibration::LcTare* t = lc_tare_store.tare_for(id);
+                            std::cout << "[Cal] Tare uid=" << static_cast<int>(id) << " "
+                                      << capture_detail(r)
+                                      << " offset=" << (t != nullptr ? t->offset_kg : 0.0) << "kg"
+                                      << std::endl;
+                        }
+                    }
+                    lc_tare_store.save();
+                    std::cout << "[Cal] " << (clearing ? "Tare clear" : "Tare") << ": " << done
+                              << " load cell(s)" << std::endl;
                 }
             }
             continue;
@@ -1478,6 +1668,9 @@ int main(int argc, char* argv[]) {
         // Parse 21-byte raw sensor payload directly (ADS1262 etc. use signed 32-bit codes at +12)
         const uint8_t* p = pkt_buf + 8;
         const uint64_t ts_ns = *reinterpret_cast<const uint64_t*>(p);
+        // Arrival on our own monotonic clock, read once per packet: ts_ns says how samples
+        // are SPACED, rx_ns says whether the sensor is still talking to us.
+        const uint64_t rx_ns = mono_ns();
         const uint8_t ch_payload = p[8];
         const uint8_t ch_eff = block_offset;
         if (ch_payload != ch_eff && type_hi == 0x20) {
@@ -1514,12 +1707,7 @@ int main(int argc, char* argv[]) {
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
             last_adc_map[uid] = cal_adc;
-            {  // feed the capture ADC ring so a capture averages a short window
-                auto& ring = pt_adc_ring[uid];
-                ring.push_back(cal_adc);
-                if (ring.size() > kPtAdcRingMax)
-                    ring.pop_front();
-            }
+            capture_window.push(uid, cal_adc, ts_ns, rx_ns);
 
             const uint8_t pt_log_ch =
                 fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
@@ -1613,12 +1801,7 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = resolve_lc_sensor_uid(type_lo, ch_eff, lc_boards);
 
             last_adc_map[uid] = adc_i32;
-            {  // feed the shared capture ADC ring so a capture averages a short window
-                auto& ring = pt_adc_ring[uid];
-                ring.push_back(adc_i32);
-                if (ring.size() > kPtAdcRingMax)
-                    ring.pop_front();
-            }
+            capture_window.push(uid, adc_i32, ts_ns, rx_ns);
 
             const uint8_t lc_log_ch =
                 fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);

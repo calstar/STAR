@@ -14,6 +14,7 @@ import {
   type EngineConfig,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
+import { configFingerprint } from '../lib/engineIdentity';
 import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
@@ -315,7 +316,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveTimeSeriesResults(newResults);
+      saveTimeSeriesResults(newResults, configFingerprint(config));
     }
   }, [duration, nSteps, loxProfile, fuelProfile]);
 
@@ -343,7 +344,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveTimeSeriesResults(newResults);
+      saveTimeSeriesResults(newResults, configFingerprint(config));
     }
   }, [segmentDuration, nPoints, loxSegments, fuelSegments]);
 
@@ -390,7 +391,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveTimeSeriesResults(newResults);
+      saveTimeSeriesResults(newResults, configFingerprint(config));
     }
   }, [
     segmentDuration,
@@ -434,7 +435,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveTimeSeriesResults(newResults);
+      saveTimeSeriesResults(newResults, configFingerprint(config));
 
       // If it was a YAML config file, fetch and update the config
       const isConfigFile = uploadedFile.name.endsWith('.yaml') || uploadedFile.name.endsWith('.yml');

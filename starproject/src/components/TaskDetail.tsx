@@ -2,7 +2,7 @@
 
 import type { TaskStatus } from "@prisma/client";
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { ActivityItem, renderActivity, timeAgo } from "@/components/ActivityLine";
 import { BlockedBadge } from "@/components/BlockedBadge";
@@ -14,6 +14,7 @@ import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
 import { DueDateInput } from "@/components/fields/DueDateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
+import { ProjectSelect } from "@/components/fields/ProjectSelect";
 import { EditableTitle } from "@/components/fields/EditableTitle";
 import { StatusSelect } from "@/components/fields/StatusSelect";
 import { SubteamSelect } from "@/components/fields/SubteamSelect";
@@ -29,7 +30,7 @@ function pill(status: TaskStatus): string {
 
 export function TaskDetail({ data }: { data: TaskDetailData }) {
   const { openTask, refresh } = useTaskModal();
-  const { task, users, candidates, subteams } = data;
+  const { task, users, candidates, subteams, projects, projectAncestors } = data;
   const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -57,17 +58,17 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           Projects
         </Link>
         <span>/</span>
-        {task.project.parent && (
-          <>
+        {projectAncestors.map((a) => (
+          <Fragment key={a.id}>
             <Link
-              href={`/projects/${task.project.parent.id}`}
+              href={`/projects/${a.id}`}
               className="min-w-0 max-w-full truncate hover:underline"
             >
-              {task.project.parent.name}
+              {a.name}
             </Link>
             <span>›</span>
-          </>
-        )}
+          </Fragment>
+        ))}
         <Link
           href={`/projects/${task.project.id}`}
           className="min-w-0 max-w-full truncate hover:underline"
@@ -75,7 +76,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           {task.project.name}
         </Link>
         <span className="ml-auto">
-          <CopyLinkButton taskId={task.id} />
+          <CopyLinkButton value={task.id} />
         </span>
       </div>
 
@@ -121,6 +122,17 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               <div className="mt-1 [&_input]:min-h-11 [&_input]:w-full sm:[&_input]:min-h-0 sm:[&_input]:w-auto">
                 <DueDateInput taskId={task.id} value={due} />
               </div>
+            </div>
+          </div>
+          <div className="mt-3">
+            <p className={label}>Project</p>
+            <div className="mt-1">
+              <ProjectSelect
+                taskId={task.id}
+                value={task.projectId}
+                projects={projects}
+                onMoved={(projectId) => openTask(projectId, task.id)}
+              />
             </div>
           </div>
           <div className="mt-3">

@@ -1,15 +1,28 @@
 /**
- * Actuator controls, the DAQ's 4x4 grid.
+ * The actuators: a compact grid, each cell a valve's name and a switch that
+ * says what it is.
  *
- * A copy of `daq-server/.../components/controls/ActuatorControlByName.tsx`
- * laid out as `UnifiedDashboard` lays it out: sixteen slots, each a small
- * card with the actuator's name, a state dot, and Open/Close. Where the DAQ
- * shows the coil current, this shows the table's role for the valve and a
- * HELD marker when a hand has overridden the state machine -- the one thing
- * a twin knows that a stand does not say.
+ * Named by what the state machine calls it ("LOX Press"), which is how an
+ * operator thinks of a valve; the drawing's tag (SV-LOX-PRESS) is the
+ * tooltip. A valve the table does not name shows its tag. The switch reads
+ * the valve's state and flips it: what it says is what the valve is, and
+ * clicking it is the command to make it the other thing.
+ *
+ * Kept short on purpose -- four across, a row per four valves -- so the plot
+ * and the state machine get the height.
+ *
+ * HELD marks a valve a hand has taken from the state machine -- the one thing
+ * a twin knows that a stand does not say -- and the header offers to hand
+ * them all back.
+ *
+ * The ⋯ hides valves nobody is watching today. A hidden valve still shows
+ * while it is open or held: a valve you cannot see is not a valve you can
+ * forget is open.
  */
 
 import type { ModelView, SessionState, StateMachine } from '../api';
+import { groupByPage } from '../lib/pages';
+import PanelMenu from './PanelMenu';
 
 interface Props {
   model: ModelView;
@@ -18,94 +31,103 @@ interface Props {
   onSet: (id: string, open: boolean) => void;
   onRelease: () => void;
   locked?: boolean;
+  hidden?: string[];
+  onToggleHidden?: (id: string) => void;
+  onAllHidden?: (show: boolean) => void;
 }
 
-export default function ActuatorGrid({ model, machine, live, onSet, onRelease, locked = false }: Props) {
+export default function ActuatorGrid({
+  model,
+  machine,
+  live,
+  onSet,
+  onRelease,
+  locked = false,
+  hidden = [],
+  onToggleHidden,
+  onAllHidden,
+}: Props) {
   const roleOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(machine?.bound ?? {})) roleOf[symbol] = actuator;
-  // The DAQ draws sixteen slots because the stand has sixteen channels. The
-  // drawing says how many this stand has; the rest of the column goes to the
-  // state machine.
-  const slots = Math.max(4, Math.ceil(model.actuators.length / 4) * 4);
+  const opened = model.actuators.filter((a) => live.open[a.id]).length;
+  const urgent = (id: string) => (live.open[id] ?? false) || live.held.includes(id);
+  const drawn = model.actuators.filter((a) => !hidden.includes(a.id) || urgent(a.id));
+  // The menu lists them by sheet; the grid does not split.
+  const listed = groupByPage(model.actuators, model.actuators, (a) => a.id, model.pages);
 
   return (
     <div className="flex flex-col">
-      <div className="mb-1 flex flex-shrink-0 items-center justify-between">
-        <h2 className="text-[10px] font-bold uppercase leading-none tracking-widest text-text-muted">
-          Actuator Controls
-        </h2>
-        {live.held.length > 0 && (
-          <button
-            type="button"
-            onClick={onRelease}
-            className="rounded border border-blue-800 bg-blue-950/50 px-2 py-0.5 text-[10px] font-semibold text-blue-300 hover:bg-blue-900/60"
-          >
-            Release {live.held.length} held → {live.state}
-          </button>
-        )}
+      <div className="mb-3 flex flex-shrink-0 items-baseline justify-between gap-3">
+        <h2 className="caps">Actuators</h2>
+        <span className="flex items-baseline gap-3">
+          {live.held.length > 0 && (
+            <button
+              type="button"
+              onClick={onRelease}
+              className="ctl h-6 px-2 text-[10px]"
+              title="Hand every held valve back to the state machine"
+            >
+              Release {live.held.length} held → {live.state}
+            </button>
+          )}
+          <span className="font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--ink-2)]">
+            {opened} open
+          </span>
+          {onToggleHidden && onAllHidden && (
+            <PanelMenu
+              title="Actuators"
+              items={listed.flatMap((g) =>
+                g.items.map((a) => ({
+                  id: a.id,
+                  label: roleOf[a.id] ?? a.tag,
+                  forced: urgent(a.id) ? 'Open or held, so it shows anyway' : undefined,
+                  page: g.page,
+                })),
+              )}
+              hidden={hidden}
+              onToggle={onToggleHidden}
+              onAll={onAllHidden}
+            />
+          )}
+        </span>
       </div>
-      <div className="grid grid-cols-4 gap-1">
-        {Array.from({ length: slots }, (_, i) => {
-          const a = model.actuators[i];
-          if (!a) {
-            return <div key={`empty-${i}`} className="rounded border border-gray-800/50 bg-gray-900/30" />;
-          }
+      <div className="grid grid-cols-4 gap-2">
+        {drawn.map((a) => {
           const open = live.open[a.id] ?? false;
           const held = live.held.includes(a.id);
           const role = roleOf[a.id];
           return (
-            <div
+            <button
               key={a.id}
-              className="relative flex flex-col gap-0.5 rounded border border-gray-700 bg-background p-1 transition-colors hover:border-gray-600"
+              type="button"
+              disabled={locked}
+              onClick={() => onSet(a.id, !open)}
+              aria-pressed={open}
+              title={`${a.tag}${role ? ` — ${role}` : ' — not in the table'}: ${open ? 'open, click to close' : 'closed, click to open'}${
+                held ? '. Held by hand: the state machine is not commanding it until the next transition.' : ''
+              }`}
+              className={`flex min-w-0 items-center justify-between gap-2 border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                open
+                  ? 'border-[var(--color-success)] bg-[#0b140e] hover:bg-[#10201a]'
+                  : 'border-[var(--line-strong)] hover:border-[#5a5a5a] hover:bg-[#111]'
+              }`}
             >
-              <div className="absolute right-0.5 top-0.5 flex items-center gap-0.5">
-                {held && (
-                  <span
-                    title="Held by hand — the state machine is not commanding this until the next transition"
-                    className="font-mono text-[8px] leading-none text-blue-400"
-                  >
-                    HELD
-                  </span>
-                )}
-                <div className={`h-2 w-2 flex-shrink-0 rounded-full ${open ? 'bg-green-500' : 'bg-red-500'}`} />
-              </div>
-              <div className="flex items-center overflow-hidden pr-4">
-                <h3 className="truncate text-[9px] font-bold uppercase leading-tight tracking-wider text-text xl:text-[10px]">
-                  {a.tag}
-                </h3>
-              </div>
-              <div className="flex items-center overflow-hidden">
-                <span className="truncate font-mono text-[9px] text-text-muted">
-                  {role ?? 'not in the table'}
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-[14px] font-semibold text-[var(--ink)]">{role ?? a.tag}</span>
+                <span
+                  className={`mt-0.5 font-mono text-[10px] uppercase leading-none tracking-[0.14em] ${
+                    open ? 'text-[var(--color-success)]' : 'text-[var(--ink-3)]'
+                  }`}
+                >
+                  {open ? 'Open' : 'Closed'}
+                  {held && <span className="ml-1.5 text-[var(--color-warning)]">· held</span>}
                 </span>
-              </div>
-              <div className="grid grid-cols-2 gap-0.5">
-                <button
-                  type="button"
-                  disabled={locked}
-                  onClick={() => onSet(a.id, true)}
-                  className={`rounded py-1 text-[8px] font-bold uppercase leading-none tracking-wider transition-all xl:text-[9px] ${
-                    open
-                      ? 'bg-green-700 text-white ring-1 ring-green-400'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  } disabled:cursor-not-allowed disabled:opacity-50`}
-                >
-                  Open
-                </button>
-                <button
-                  type="button"
-                  disabled={locked}
-                  onClick={() => onSet(a.id, false)}
-                  className={`rounded py-1 text-[8px] font-bold uppercase leading-none tracking-wider transition-all xl:text-[9px] ${
-                    !open
-                      ? 'bg-red-700 text-white ring-1 ring-red-400'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  } disabled:cursor-not-allowed disabled:opacity-50`}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
+              </span>
+              <span
+                className="h-2 w-2 flex-shrink-0 rounded-full"
+                style={{ background: open ? 'var(--color-success)' : 'var(--ink-4)' }}
+              />
+            </button>
           );
         })}
       </div>

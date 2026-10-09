@@ -22,7 +22,10 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': {
-        target: 'http://localhost:8001',
+        // Follows the same override dev.sh honours for the API itself, so a
+        // second checkout can run its own pair of servers on other ports
+        // rather than proxying into the first one's backend.
+        target: `http://localhost:${process.env.PID_DESIGNER_API_PORT ?? 8001}`,
         changeOrigin: true,
       },
     },

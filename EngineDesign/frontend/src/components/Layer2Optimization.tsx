@@ -812,7 +812,7 @@ export function Layer2Optimization({
                         results.summary.thrust_curve_time.length > 0 && results.summary.of_curve_values.length > 0 && (
                             <div className="mt-6">
                                 <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    O/F Ratio (Mixture Ratio) Curve (Time Series, No Ablation/Oxidation)
+                                    O/F Ratio Curve (Time Series, No Ablation/Oxidation)
                                 </h4>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -1315,7 +1315,7 @@ export function Layer2Optimization({
                                 {/* Mixture Ratio */}
                                 <div className="p-4 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
                                     <h5 className="text-sm font-semibold mb-3 text-[var(--color-text-primary)]">
-                                        Mixture Ratio (MR) {controllerLoading && <span className="text-purple-400 text-xs">(Live)</span>}
+                                        O/F Ratio {controllerLoading && <span className="text-purple-400 text-xs">(Live)</span>}
                                     </h5>
                                     <ResponsiveContainer width="100%" height={200}>
                                         <LineChart data={(controllerResults ? controllerResults.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({
@@ -1324,10 +1324,10 @@ export function Layer2Optimization({
                                         }))}>
                                             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
                                             <XAxis dataKey="time" unit=" s" stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} />
-                                            <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} label={{ value: 'MR', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }} />
+                                            <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} label={{ value: 'O/F', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }} />
                                             <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }} />
                                             <Legend />
-                                            <Line type="monotone" dataKey="MR" name="Mixture Ratio" stroke="#eab308" strokeWidth={2} dot={false} />
+                                            <Line type="monotone" dataKey="MR" name="O/F" stroke="#eab308" strokeWidth={2} dot={false} />
                                         </LineChart>
                                     </ResponsiveContainer>
                                 </div>

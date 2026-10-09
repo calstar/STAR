@@ -55,8 +55,20 @@ inlet, written
 
     supply_coefficient = { value = 17, unit = "psi/1000psi" }
 
-Over a COPV decay from 4500 to 1500 psi that moves a 500 psi setpoint to 551 psi
--- about 6% on chamber pressure, and the wrong sign to guess at.
+It is measured from **zero inlet**, not from a full bottle: the outlet is
+
+.. code-block:: text
+
+    p_out = p_dome + bias - S . p_in            (p_in gauge)
+
+so a 1092-50 loaded to 500 psi with 4000 psi behind it holds
+``500 + 50 - 4 x 17 = 482`` psi, and it climbs from there as the bottle falls
+-- from the first gram, not from some charge pressure onwards. (The team,
+2026-10-07. An earlier version measured the term from an ``inlet_reference``
+or the COPV charge, which zeroed it at a full bottle and put the whole effect
+on the far side of that pressure.) Over a COPV decay from 4500 to 1500 psi it
+moves the outlet up 51 psi -- about 6% on chamber pressure, and the wrong sign
+to guess at.
 
 The unit matters more than it looks. Outlet-pressure-per-inlet-pressure is
 dimensionless by arithmetic, and an earlier version of this module took it as a
@@ -117,6 +129,7 @@ from feedtwin.comps.base import (
     Violation,
     register_builder,
 )
+from feedtwin.comps.iec_gas import XT_TYPICAL, GasCv, iec_gamma, is_gas
 from feedtwin.model.spec import SpecError
 
 #: Resistance a regulator shows to reverse flow [Pa/(kg/s)].
@@ -128,6 +141,24 @@ from feedtwin.model.spec import SpecError
 #: one-way constraint is a complementarity problem and this network solve is
 #: not one.
 REVERSE_STIFFNESS = 1.0e10
+
+#: Where the supply-pressure effect is measured from [Pa abs]: zero gauge
+#: inlet. ``p_out = p_dome + bias - S (p_in - this)``.
+SUPPLY_ZERO = 101325.0
+
+#: Signal that turns on the compressible seat, its value the xT a regulator
+#: that declares none takes. A session sends it while
+#: ``Setup.regulator_compressible_seat`` is on (the default since 2026-10-08);
+#: absent or zero, the seat is the incompressible Cv law, as it always was.
+SEAT_XT_SIGNAL = "regulator_seat_xT"
+
+SEAT_MODEL_NAME = "regulator seat, compressible (IEC 60534-2-1)"
+SEAT_MODEL_SOURCE = (
+    "IEC 60534-2-1:2011, Industrial-process control valves - Part 2-1: Flow "
+    "capacity - Sizing equations for fluid flow under installed conditions: "
+    "W = N6 C Y sqrt(x p1 rho1), Y = 1 - x/(3 F_gamma xT), F_gamma = gamma/1.40, "
+    "choked at x >= F_gamma xT"
+)
 
 
 def _dynamic_head(mdot: float, bore: float, rho: float) -> float:
@@ -147,7 +178,7 @@ class Regulator(HydraulicComponent):
 
     .. code-block:: text
 
-        p_set  +  S . (p_in_ref - p_in)        supply-pressure effect
+        p_set  -  S . p_in                     supply-pressure effect, p_in gauge
                -  D . (|mdot| / mdot_rated)    flow droop
 
     clamped by two physical limits: it can never raise pressure, and it can
@@ -173,17 +204,22 @@ class Regulator(HydraulicComponent):
             return dome + bias
         return self.p["setpoint"]
 
+    def supply_effect(self, flow: FlowConditions) -> float:
+        """The supply-pressure term [Pa]: ``-S p_in``, the inlet in gauge.
+
+        Measured from zero inlet, never from a charge pressure: at 4000 psi a
+        1092-50 sits ``4 x 17`` psi under dome plus bias, and comes up as the
+        bottle falls.
+        """
+        supply = self.p.get("supply_coefficient", 0.0)
+        return supply * (SUPPLY_ZERO - flow.p_upstream)
+
     def outlet_setpoint(self, mdot: float, flow: FlowConditions) -> float:
         """The pressure this regulator is trying to hold right now [Pa]."""
-        p_set = self.commanded_setpoint(flow)
-        supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.p.get("inlet_reference", 0.0)
         droop = self.p.get("flow_droop", 0.0)
         rated = self.p.get("rated_flow", 0.0)
 
-        target = p_set
-        if reference > 0.0:
-            target += supply * (reference - flow.p_upstream)
+        target = self.commanded_setpoint(flow) + self.supply_effect(flow)
         if rated > 0.0:
             target -= droop * (abs(mdot) / rated)
         return target
@@ -195,9 +231,121 @@ class Regulator(HydraulicComponent):
         until the poppet seals. It matters because lockup, not setpoint, is what
         a downstream relief valve and a burst disc actually see between firings,
         and on a dome-loaded unit it moves with the dome.
+
+        The base is the outlet the regulator holds at zero flow,
+        ``outlet_setpoint(0)``, so it carries the supply-pressure effect: the
+        inlet pushing on the poppet does not stop when the flow does, and the
+        branch is continuous across zero flow. (Leaving it out stepped the
+        branch by the whole supply term at zero flow, and a tank inside that
+        step had no root.)
         """
-        base = self.commanded_setpoint(flow) if flow is not None else self.p["setpoint"]
-        return base + self.p.get("lockup_rise", 0.0)
+        if flow is None:
+            return self.p["setpoint"] + self.p.get("lockup_rise", 0.0)
+        return self.outlet_setpoint(0.0, flow) + self.p.get("lockup_rise", 0.0)
+
+    # ------------------------------------------------------------- the seat
+
+    def _gas_seat(self, flow: FlowConditions) -> GasCv | None:
+        """The seat as IEC 60534-2-1 sees a gas, or None for the old law.
+
+        On only when the session sends :data:`SEAT_XT_SIGNAL` (the opt-in) and
+        the inlet is a gas. The drawing's own ``xT`` wins over the signal's.
+        """
+        xT_signal = self.signal(flow, SEAT_XT_SIGNAL, 0.0)
+        if xT_signal <= 0.0 or not is_gas(flow):
+            return None
+        xT = float(self.p.get("xT", xT_signal))
+        return GasCv(float(self.p["Cv"]), float(self.p["bore"]), xT)
+
+    def _seat_dp(self, magnitude: float, flow: FlowConditions) -> float:
+        """Drop the wide-open seat takes at ``magnitude`` [Pa]."""
+        seat = self._gas_seat(flow)
+        if seat is None:
+            # Incompressible: K rho v^2 / 2 at the inlet density. No expansion
+            # factor and no choke -- see AUDIT.md 5.3; 25 % high on GN2 near
+            # burnout. Off is this, exactly.
+            return Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
+                magnitude, self.p["bore"], flow.rho
+            )
+        return seat.drop(magnitude, flow.p_upstream, flow.rho, iec_gamma(flow))
+
+    def seat_capacity(
+        self, flow: FlowConditions, xT: float = XT_TYPICAL
+    ) -> float | None:
+        """Choked gas flow through the wide-open seat [kg/s], IEC 60534-2-1.
+
+        What the regulator can pass at this inlet whatever is downstream: a
+        diagnostic (how close to wide open a burn runs), on whichever seat law
+        the solve uses. The drawing's ``xT`` wins over ``xT``. None for a liquid.
+        """
+        if not is_gas(flow):
+            return None
+        seat = GasCv(
+            float(self.p["Cv"]), float(self.p["bore"]), float(self.p.get("xT", xT))
+        )
+        return seat.capacity(flow.p_upstream, flow.rho, iec_gamma(flow))
+
+    def pinned_flow(self, dp_available: float, flow: FlowConditions) -> float | None:
+        """The choked flow, when the compressible seat is wide open and choked.
+
+        Wide open: the downstream is below what the regulator would hold even at
+        that flow, ``p_in - target(W_c)``. Choked: the drop ratio is past
+        ``F_gamma xT``. Both, and the flow is the seat's capacity whatever
+        downstream does. Never with the seat off (the old law has no choke).
+        """
+        seat = self._gas_seat(flow)
+        if seat is None:
+            return None
+        gamma = iec_gamma(flow)
+        p_in = flow.p_upstream
+        capacity = seat.capacity(p_in, flow.rho, gamma)
+        if capacity <= 0.0:
+            return None
+        wide_open = p_in - self.outlet_setpoint(capacity, flow)
+        if dp_available >= max(seat.x_critical(gamma) * p_in, wide_open):
+            return capacity
+        return None
+
+    def seat_model(self, xT: float = XT_TYPICAL) -> dict[str, object]:
+        """The run record's ``model`` block for the compressible seat."""
+        param = self.instance.params.get("xT")
+        cv = self.instance.params.get("Cv")
+        inputs: dict[str, object] = {
+            "xT": (
+                {
+                    "value": param.value,
+                    "unit": param.unit,
+                    "provenance": f"{param.source.value}: {param.reference}",
+                }
+                if param is not None
+                else {
+                    "value": xT,
+                    "unit": "-",
+                    "provenance": "assumed: IEC 60534 typical",
+                }
+            ),
+        }
+        if cv is not None:
+            inputs["Cv"] = {
+                "value": cv.value,
+                "unit": cv.unit,
+                "provenance": f"{cv.source.value}: {cv.reference}",
+            }
+        return {
+            "name": SEAT_MODEL_NAME,
+            "source": SEAT_MODEL_SOURCE,
+            "assumptions": [
+                "the wide-open seat is a control valve of the regulator's Cv",
+                "gamma is the ideal-gas ratio of specific heats (cp/cv at 1 kPa)",
+                "scale from the Cv definition (fluids Cv_to_K), so x -> 0 is the "
+                "incompressible law exactly",
+                "only the wide-open (saturated) regulator is affected; while it "
+                "regulates, its outlet is the droop law",
+            ],
+            "inputs": inputs,
+        }
+
+    # ---------------------------------------------------------- the branch
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
         p_in = flow.p_upstream
@@ -210,9 +358,7 @@ class Regulator(HydraulicComponent):
         # The most the seat can pass wide open sets the floor on the drop. Below
         # that the regulator is saturated: it is a hole, not a regulator, and
         # the outlet is whatever the line gives it.
-        seat_dp = Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
-            magnitude, self.p["bore"], flow.rho
-        )
+        seat_dp = self._seat_dp(magnitude, flow)
 
         target = self.outlet_setpoint(mdot, flow)
         required = p_in - target
@@ -294,9 +440,7 @@ class Regulator(HydraulicComponent):
         """
         if mdot == 0.0:
             return False
-        seat_dp = Cv_to_K(self.p["Cv"], self.p["bore"]) * _dynamic_head(
-            abs(mdot), self.p["bore"], flow.rho
-        )
+        seat_dp = self._seat_dp(abs(mdot), flow)
         return seat_dp > (flow.p_upstream - self.outlet_setpoint(mdot, flow))
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
@@ -366,14 +510,17 @@ class Regulator(HydraulicComponent):
                     "term has no scale and is silently doing nothing.",
                 )
             )
-        reference = self.p.get("inlet_reference", 0.0)
-        if self.p.get("supply_coefficient", 0.0) > 0.0 and reference <= 0.0:
+        if self.instance.params.get("inlet_reference") is not None and (
+            self.p.get("inlet_reference", 0.0) > 0.0
+        ):
             out.append(
                 Violation(
                     self.id,
                     "inlet_reference",
-                    "supply_coefficient is set but inlet_reference is zero, so "
-                    "the supply term has no datum and is silently doing nothing.",
+                    "inlet_reference is not used: the supply-pressure effect is "
+                    "measured from zero inlet (dome + bias - S x inlet), not from "
+                    "a charge pressure. Drop it from the drawing.",
+                    severity="warning",
                 )
             )
         if (
@@ -463,14 +610,8 @@ class CurveRegulator(Regulator):
         # A dome-loaded unit's curve is measured at one dome setting; moving the
         # dome shifts the whole curve by the same amount.
         target += self.commanded_setpoint(flow) - self.p["setpoint"]
-        # The supply term still applies: a datasheet droop curve is measured at
-        # one inlet pressure, and the correction to another is exactly what the
-        # supply coefficient is for.
-        supply = self.p.get("supply_coefficient", 0.0)
-        reference = self.p.get("inlet_reference", 0.0)
-        if reference > 0.0:
-            target += supply * (reference - flow.p_upstream)
-        return target
+        # The supply term still applies, from zero inlet like the droop form's.
+        return target + self.supply_effect(flow)
 
 
 def _measured_regulator(instance: object) -> HydraulicComponent:

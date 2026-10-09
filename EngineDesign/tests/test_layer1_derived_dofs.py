@@ -510,8 +510,11 @@ def test_impingement_target_defaults_to_four_jet_diameters():
     import engine.optimizer.layers.layer1_static_optimization as L1
 
     assert "layer1_impingement_Ld_target" in DesignRequirementsConfig.model_fields
+    from engine.core.injectors.layout import impingement_ld_band
+    # The default is a value, not a string in the source: resolve it the way Layer 1 does.
+    assert impingement_ld_band({}).target == 4.0
     src = inspect.getsource(L1.run_layer1_optimization)
-    assert '"layer1_impingement_Ld_target", 4.0' in src
+    assert "impingement_ld_band(" in src, "Layer 1 must resolve the band through the shared resolver"
 
 
 def test_fuel_spacing_is_solved_to_hit_the_target_exactly():
@@ -648,17 +651,17 @@ def test_momentum_gate_is_symmetric_and_widened():
     A one-sided gate failed tilt-balanced designs, which sit at R ~ 1.05: every other check
     green, pressure_candidate_valid False.
     """
-    import inspect
     import engine.optimizer.layers.layer1_static_optimization as L1
 
-    src = inspect.getsource(L1.run_layer1_optimization)
-    assert "_mom_slack" in src
-    assert "1.0 - (1.0 - float(layer1_impinging_R_mom_lo)) * _mom_slack" in src
-
-    # the widening itself
-    lo, hi, slack = 0.95, 1.05, 3.0
-    assert max(0.0, 1.0 - (1.0 - lo) * slack) == pytest.approx(0.85)
-    assert 1.0 + (hi - 1.0) * slack == pytest.approx(1.15)
+    # Symmetric about 1, on the configured band by default (L1-09: the old 3x default slack
+    # passed R = 1.15 against a stated [0.95, 1.05] and printed the unwidened band).
+    ok, band = L1._layer1_momentum_gate(1.049, 0.95, 1.05)
+    assert ok and band == pytest.approx((0.95, 1.05))
+    assert not L1._layer1_momentum_gate(1.0508, 0.95, 1.05)[0]
+    assert not L1._layer1_momentum_gate(0.9492, 0.95, 1.05)[0]
+    # an explicit layer1_momentum_gate_safe_slack still widens it, symmetrically
+    ok, band = L1._layer1_momentum_gate(1.10, 0.95, 1.05, slack=3.0)
+    assert ok and band == pytest.approx((0.85, 1.15))
 
 
 def test_pinned_dimensions_get_no_cma_std_floor():

@@ -9,6 +9,12 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
+    src/config/SensorTables.cpp
+    src/script/Lexer.cpp
+    src/script/Parser.cpp
+    src/script/Validate.cpp
+    src/script/Slug.cpp
+    src/script/ScriptConfig.cpp
     src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
     src/time/BoardClockSync.cpp
@@ -19,6 +25,8 @@ set(FSW_SOURCES
     src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
+    src/calibration/LcTareStore.cpp
+    src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp
@@ -57,6 +65,10 @@ target_link_libraries(fsw_daq_lib
 )
 
 # C++ unit tests
+add_executable(test_environmental_config test/test_environmental_config.cpp)
+target_link_libraries(test_environmental_config fsw_daq_lib)
+add_test(NAME environmental_config COMMAND test_environmental_config)
+
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -73,9 +85,36 @@ target_link_libraries(test_board_clock_sync
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
 
+add_executable(test_capture_window test/test_capture_window.cpp)
+target_include_directories(test_capture_window PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_capture_window
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME capture_window COMMAND test_capture_window)
+
+add_executable(test_lc_tare test/test_lc_tare.cpp)
+target_include_directories(test_lc_tare PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_lc_tare
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME lc_tare COMMAND test_lc_tare)
+
+add_executable(test_cubic_store_namespace test/test_cubic_store_namespace.cpp)
+target_include_directories(test_cubic_store_namespace PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_cubic_store_namespace
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME cubic_store_namespace COMMAND test_cubic_store_namespace)
+
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
 )
@@ -86,6 +125,43 @@ target_include_directories(test_fire_lifecycle PRIVATE
 target_link_libraries(test_fire_lifecycle
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME fire_lifecycle COMMAND test_fire_lifecycle)
+
+add_executable(test_state_script
+    test/test_state_script.cpp
+)
+target_include_directories(test_state_script PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_state_script
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME state_script COMMAND test_state_script)
+
+add_executable(test_sensor_tables
+    test/test_sensor_tables.cpp
+)
+target_include_directories(test_sensor_tables PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_sensor_tables
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME sensor_tables COMMAND test_sensor_tables)
+
+add_executable(test_pressure_feed
+    test/test_pressure_feed.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_pressure_feed PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_pressure_feed
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+# The fake db binds an OS-assigned port, so this does not need RUN_SERIAL. The staleness case
+# waits out kMaxAgeMs, which is what sets the timeout.
+add_test(NAME pressure_feed COMMAND test_pressure_feed)
+set_tests_properties(pressure_feed PROPERTIES TIMEOUT 60)
 
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
@@ -99,6 +175,29 @@ target_include_directories(test_actuator_delays PRIVATE
 target_link_libraries(test_actuator_delays
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME actuator_delays COMMAND test_actuator_delays)
+# RUN_SERIAL: every assertion here is a wall-clock measurement taken off the wire ("commanded at
+# 1415 ms, want ~1400"), with tolerances in the tens of milliseconds. Run beside another
+# timing-heavy test it overshoots and fails on the machine rather than on the code — which it did,
+# reproducibly, under `ctest --parallel` while passing standalone every time. It also binds a fixed
+# UDP port. Every other test that measures time on the wire was already marked; these two were the
+# holdouts.
+set_tests_properties(actuator_delays PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
+add_executable(test_script_positions
+    test/test_script_positions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_include_directories(test_script_positions PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_script_positions
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME script_positions COMMAND test_script_positions)
+# RUN_SERIAL: binds a fixed UDP port, and every case is a wall-clock measurement that a loaded
+# box would skew.
+set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
@@ -107,6 +206,9 @@ add_executable(test_sequencer_elodin
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -126,6 +228,9 @@ add_executable(test_hold_rules
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
 )
 target_include_directories(test_hold_rules PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -134,6 +239,57 @@ target_include_directories(test_hold_rules PRIVATE
 target_link_libraries(test_hold_rules
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME hold_rules COMMAND test_hold_rules)
+# RUN_SERIAL, for the same reason as actuator_delays: this measures hold windows against
+# millisecond bounds (>= 990 && <= 1100, >= 1490 && <= 1600) off a real SequencerService, and a
+# loaded box pushes it straight past them. It binds a fixed UDP port too.
+set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+
+add_executable(test_script_states
+    test/test_script_states.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_script_states PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_script_states
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+# WORKING_DIRECTORY: SequencerService::init resolves config/ by trying "", "../", "../../" from
+# cwd, and ctest's default cwd is three levels too deep. RUN_SERIAL: binds a fixed UDP port.
+add_test(NAME script_states COMMAND test_script_states)
+# TIMEOUT 300: each case brings a whole SequencerService up and down, and there are ~25 of them,
+# so this runs ~2 minutes on a quiet box. A 180 s budget was close enough to turn a slow machine
+# into a red build.
+set_tests_properties(script_states PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 300 RUN_SERIAL TRUE)
+
+add_executable(test_script_runtime
+    test/test_script_runtime.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_script_runtime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_script_runtime
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME script_runtime COMMAND test_script_runtime)
+set_tests_properties(script_runtime PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 180 RUN_SERIAL TRUE)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.
@@ -188,6 +344,9 @@ foreach(seq_test test_sequencer_concurrency test_abort_ordering)
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

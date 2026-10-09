@@ -1,9 +1,15 @@
-import type { RunnerResults } from '../api/client';
+import { useEffect, useState } from 'react';
+import type { RunnerResults, EngineConfig, InjectorLayout } from '../api/client';
+import { getInjectorLayout } from '../api/client';
+import { drawingModel } from '../lib/injectorDrawing';
 
 interface ResultsDisplayProps {
   results: RunnerResults | null;
   isLoading?: boolean;
   targetExitPressure?: number | null;  // Ambient pressure (target for nozzle exit)
+  /** Needed for the injector-geometry block: pitch circles and standoff are derived from
+   *  the design variables, not returned by /api/evaluate. */
+  config?: EngineConfig | null;
 }
 
 // Unit conversion constants
@@ -84,7 +90,22 @@ function Section({ title, children, icon }: SectionProps) {
   );
 }
 
-export function ResultsDisplay({ results, isLoading, targetExitPressure }: ResultsDisplayProps) {
+export function ResultsDisplay({ results, isLoading, targetExitPressure, config }: ResultsDisplayProps) {
+  // Injector layout for the config these results came from. Derived by the backend
+  // (engine/core/injectors/layout.py), the same derivation the Geometry tab draws.
+  // Kept with the config it was fetched for, so a stale layout is never shown for a new config.
+  const [fetchedLayout, setFetchedLayout] = useState<{ for: unknown; layout: InjectorLayout | null } | null>(null);
+  const isImpinging = String((config?.injector as Record<string, unknown> | undefined)?.type ?? '')
+    .toLowerCase() === 'impinging';
+  useEffect(() => {
+    if (!config || !isImpinging) return;
+    let live = true;
+    getInjectorLayout(config as Record<string, unknown>).then((r) => {
+      if (live) setFetchedLayout({ for: config, layout: r.data ?? null });
+    });
+    return () => { live = false; };
+  }, [config, isImpinging]);
+  const injectorLayout = isImpinging && fetchedLayout && fetchedLayout.for === config ? fetchedLayout.layout : null;
   if (isLoading) {
     return (
       <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
@@ -161,7 +182,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
             color="yellow"
           />
           <MetricCard
-            label="Mixture Ratio (O/F)"
+            label="O/F Ratio"
             value={formatNumber(results.MR, 3)}
             unit=""
             color="purple"
@@ -485,30 +506,46 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
             </div>
 
             {/* Chugging Analysis */}
-            {stability.chugging && Object.keys(stability.chugging).length > 0 && (
-              <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-                <div className="text-sm font-medium text-yellow-400 mb-3">Combustion Stability - Chugging</div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  {stability.chugging.frequency !== undefined && (
-                    <SmallMetric label="Frequency" value={formatNumber(stability.chugging.frequency, 1)} unit="Hz" />
-                  )}
-                  {stability.chugging.stability_margin !== undefined && (
-                    <SmallMetric 
-                      label="Stability Margin" 
-                      value={formatNumber(stability.chugging.stability_margin, 3)} 
-                      unit="" 
-                      colorClass={stability.chugging.stability_margin > 0 ? 'text-green-400' : 'text-red-400'}
-                    />
-                  )}
-                  {stability.chugging.tau_residence !== undefined && (
-                    <SmallMetric label="τ Residence" value={formatNumber(stability.chugging.tau_residence * 1000, 2)} unit="ms" />
-                  )}
-                  {stability.chugging.Lstar !== undefined && (
-                    <SmallMetric label="L*" value={formatNumber(stability.chugging.Lstar * 1000, 1)} unit="mm" />
-                  )}
+            {stability.chugging && Object.keys(stability.chugging).length > 0 && (() => {
+              const ch = stability.chugging;
+              const gate = 1.05;
+              const gateColor = (v?: number) => (v !== undefined && v >= gate ? 'text-green-400' : 'text-red-400');
+              return (
+                <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="text-sm font-medium text-yellow-400 mb-3">Combustion Stability - Chugging</div>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    {ch.frequency !== undefined && (
+                      <SmallMetric label="Frequency" value={formatNumber(ch.frequency, 1)} unit="Hz" />
+                    )}
+                    {ch.stability_margin !== undefined && (
+                      <SmallMetric
+                        label="Gain margin (gate: worst mixing lag)"
+                        value={formatNumber(ch.stability_margin, 3)}
+                        unit={`vs ${gate}`}
+                        colorClass={gateColor(ch.stability_margin)}
+                      />
+                    )}
+                    {ch.chug_gain_margin !== undefined && (
+                      <SmallMetric label="Gain margin (nominal mixing lag)" value={formatNumber(ch.chug_gain_margin, 3)} unit=""
+                                   colorClass={gateColor(ch.chug_gain_margin)} />
+                    )}
+                    {ch.theta_c !== undefined && Number.isFinite(ch.theta_c) ? (
+                      <SmallMetric label="θ_c gas residence (ρV/ṁ)" value={formatNumber(ch.theta_c * 1000, 2)} unit="ms" />
+                    ) : ch.tau_residence !== undefined && (
+                      <SmallMetric label="L*/c* (not the residence time)" value={formatNumber(ch.tau_residence * 1000, 2)} unit="ms" />
+                    )}
+                    {ch.Lstar !== undefined && (
+                      <SmallMetric label="L*" value={formatNumber(ch.Lstar * 1000, 1)} unit="mm" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-snug">
+                    Chug is the feed–injector–chamber loop; its gain margin is 1 at neutral stability and the
+                    design must clear {gate}. The mixing lag is unmeasured, so the gate takes the worst margin
+                    across its band. The detailed cards are under Combustion stability below.
+                  </p>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Acoustic Modes */}
             {stability.acoustic && Object.keys(stability.acoustic).length > 0 && (
@@ -525,7 +562,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
                   )}
                   {stability.acoustic.transverse_modes && stability.acoustic.transverse_modes.length > 0 && (
                     <div>
-                      <div className="text-xs text-[var(--color-text-secondary)] mb-1">Transverse Modes</div>
+                      <div className="text-xs text-[var(--color-text-secondary)] mb-1">Transverse, radial and mixed modes</div>
                       <div className="text-sm text-[var(--color-text-primary)]">
                         {stability.acoustic.transverse_modes.slice(0, 5).map((f: number) => `${f.toFixed(0)} Hz`).join(', ')}
                       </div>
@@ -538,50 +575,46 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
               </div>
             )}
 
-            {/* Feed System Stability */}
-            {stability.feed_system && Object.keys(stability.feed_system).length > 0 && (
-              <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-                <div className="text-sm font-medium text-cyan-400 mb-3">Feed System Stability</div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                  {stability.feed_system.pogo_frequency !== undefined && (
-                    <SmallMetric label="POGO Frequency" value={formatNumber(stability.feed_system.pogo_frequency, 1)} unit="Hz" />
-                  )}
-                  {stability.feed_system.surge_frequency !== undefined && (
-                    <SmallMetric label="Surge Frequency" value={formatNumber(stability.feed_system.surge_frequency, 1)} unit="Hz" />
-                  )}
-                  {stability.feed_system.stability_margin !== undefined && (
-                    <SmallMetric
-                      label="Feed Margin"
-                      value={formatNumber(stability.feed_system.stability_margin, 2)}
-                      unit=""
-                      colorClass={stability.feed_system.stability_margin > 1.0 ? 'text-green-400' : 'text-red-400'}
-                    />
-                  )}
-                  {stability.feed_system.water_hammer_margin !== undefined && (
-                    <SmallMetric
-                      label="Water Hammer Margin"
-                      value={formatNumber(stability.feed_system.water_hammer_margin, 2)}
-                      unit=""
-                      colorClass={stability.feed_system.water_hammer_margin >= 1.0 ? 'text-green-400' : 'text-yellow-400'}
-                    />
-                  )}
-                  {stability.feed_system.water_hammer_pressure !== undefined && (
-                    <SmallMetric
-                      label="Water Hammer Spike"
-                      value={formatNumber(stability.feed_system.water_hammer_pressure / 6894.76, 0)}
-                      unit="psi"
-                    />
-                  )}
+            {/* Feed-line acoustics and water hammer (not a stability margin: chug is above) */}
+            {stability.feed_system && Object.keys(stability.feed_system).length > 0 && (() => {
+              const fs = stability.feed_system;
+              const lines = fs.feed_lines
+                ? (['oxidizer', 'fuel'] as const).filter((k) => fs.feed_lines![k]).map((k) => [k === 'oxidizer' ? 'LOX line' : 'Fuel line', fs.feed_lines![k]!] as const)
+                : [['Oxidizer line', fs] as const];
+              return (
+                <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="text-sm font-medium text-cyan-400 mb-3">Feed lines</div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {lines.map(([name, ln]) => (
+                      <div key={name}>
+                        <div className="text-xs text-[var(--color-text-secondary)] mb-1">
+                          {name}{ln.length_m !== undefined ? ` · ${formatNumber(ln.length_m, 3)} m` : ''}
+                          {ln.sound_speed !== undefined ? ` · wave speed ${formatNumber(ln.sound_speed, 0)} m/s` : ''}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {ln.pogo_frequency !== undefined && (
+                            <SmallMetric label="Quarter-wave (tank open)" value={formatNumber(ln.pogo_frequency, 0)} unit="Hz" />
+                          )}
+                          {ln.surge_frequency !== undefined && (
+                            <SmallMetric label="Half-wave" value={formatNumber(ln.surge_frequency, 0)} unit="Hz" />
+                          )}
+                          {ln.water_hammer_pressure !== undefined && (
+                            <SmallMetric label="Water hammer (instant stop)" value={formatNumber(ln.water_hammer_pressure / 6894.76, 0)} unit="psi" />
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-snug">
+                    The line&apos;s own acoustic modes, for spotting a coincidence with the chug or chamber
+                    frequencies; the feed-coupled stability margin is the chug gain margin above. Water
+                    hammer is a <span className="font-medium">valve transient</span>, the Joukowsky spike ρ·a·v
+                    for an instantaneous stop (an upper bound; a closure slower than 2L/a gives less). It is
+                    not a combustion mode and does not enter the stability verdict.
+                  </p>
                 </div>
-                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-snug">
-                  Water hammer is a <span className="font-medium">valve transient</span> (Joukowsky
-                  spike ρ·a·v for an instantaneous stop - worst case), not a combustion-stability
-                  mode: it does not enter the stability score. Margin = available feed ΔP ÷ spike;
-                  values &lt; 1 mean an instant valve slam could exceed the feed pressure budget -
-                  mitigate with slower valve closure, accumulators, or larger lines.
-                </p>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Issues */}
             {stability.issues && stability.issues.length > 0 && (
@@ -609,6 +642,119 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
           </div>
         </Section>
       )}
+
+      {/* ---------------------------------------------------------------------------------
+          INJECTOR AND SPRAY.
+
+          /api/evaluate already returns 61 diagnostic keys; this view rendered a handful of
+          them, so Forward Mode showed a strictly smaller picture of the same engine than
+          Layer 1 did -- no SMD, no Weber numbers, no discharge coefficients, no momentum
+          ratio. Nothing here is recomputed: every number is read straight off the solver,
+          and the effective SMD uses the same mass-flux blend Layer 1 uses
+          (MR/(1+MR)*D32_O + 1/(1+MR)*D32_F, _impinging_smd_penalty_with_angle).
+          --------------------------------------------------------------------------------- */}
+      {(() => {
+        // Values here are mixed number/string/boolean, so keep it unknown and narrow at use.
+        const d = (results as unknown as Record<string, unknown>).diagnostics as
+          Record<string, unknown> | undefined;
+        if (!d) return null;
+        const num = (k: string): number | undefined => {
+          const v = d[k];
+          return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+        };
+        const d32o = num('D32_O');
+        const d32f = num('D32_F');
+        const mr = num('MR') ?? results.MR;
+        const smdEff = (d32o !== undefined && d32f !== undefined && mr && mr > 0)
+          ? (mr / (1 + mr)) * d32o + (1 / (1 + mr)) * d32f
+          : (d32o ?? d32f);
+        const aEff = (num('A_eff_O') ?? 0) + (num('A_eff_F') ?? 0);
+        const areaRatio = results.A_throat ? aEff / results.A_throat : undefined;
+        const um = (m: number | undefined) => (m === undefined ? '—' : formatNumber(m * 1e6, 1));
+        const mm = (m: number | undefined) => (m === undefined ? '—' : formatNumber(m * 1e3, 3));
+        return (
+          <Section
+            title="Injector & Spray"
+            icon={<svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <SmallMetric label="Effective SMD (mass-flux weighted)" value={um(smdEff)} unit="µm" colorClass="text-cyan-400" />
+              <SmallMetric label="SMD — oxidizer" value={um(d32o)} unit="µm" colorClass="text-cyan-400" />
+              <SmallMetric label="SMD — fuel" value={um(d32f)} unit="µm" colorClass="text-orange-400" />
+              <SmallMetric label="Impingement Angle (effective)" value={formatNumber(num('impingement_angle_deg'), 1)} unit="deg" colorClass="text-indigo-400" />
+              <SmallMetric label="Momentum Ratio R" value={formatNumber(num('momentum_ratio_R'), 4)} unit="" />
+              <SmallMetric label="Effective Injector Area / A_throat" value={formatNumber(areaRatio, 4)} unit="" />
+              <SmallMetric label="x* (evaporation length)" value={mm(num('x_star'))} unit="mm" />
+              <SmallMetric label="Jet-to-jet relative velocity" value={formatNumber(num('u_rel'), 1)} unit="m/s" />
+              <SmallMetric label="Cd — oxidizer" value={formatNumber(num('Cd_O'), 4)} unit="" colorClass="text-cyan-400" />
+              <SmallMetric label="Cd — fuel" value={formatNumber(num('Cd_F'), 4)} unit="" colorClass="text-orange-400" />
+              {(() => {
+                // Nurick cavitation margin K / K_crit; under 1 the vena contracta boils and the
+                // orifice can flip. Reported by runner.evaluate, changes no flow.
+                const cav = (results as unknown as Record<string, unknown>).injector_cavitation as
+                  Record<string, { margin?: number }> | undefined;
+                const col = (m?: number) => (m === undefined || !Number.isFinite(m) ? 'text-[var(--color-text-primary)]'
+                  : m < 1 ? 'text-red-400' : m < 1.3 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]');
+                return (['O', 'F'] as const).map((k) => cav?.[k]?.margin !== undefined && (
+                  <SmallMetric key={k} label={`Cavitation margin — ${k === 'O' ? 'oxidizer' : 'fuel'}`}
+                               value={formatNumber(cav[k].margin as number, 2)} unit="K/K_crit" colorClass={col(cav[k].margin)} />
+                ));
+              })()}
+              <SmallMetric label="d_jet — oxidizer" value={mm(num('d_jet_O'))} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="d_jet — fuel" value={mm(num('d_jet_F'))} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Weber — oxidizer" value={formatNumber(num('We_O'), 0)} unit="" colorClass="text-cyan-400" />
+              <SmallMetric label="Weber — fuel" value={formatNumber(num('We_F'), 0)} unit="" colorClass="text-orange-400" />
+              <SmallMetric label="Bulk velocity — oxidizer" value={formatNumber(num('v_O_bulk'), 1)} unit="m/s" colorClass="text-cyan-400" />
+              <SmallMetric label="Bulk velocity — fuel" value={formatNumber(num('v_F_bulk'), 1)} unit="m/s" colorClass="text-orange-400" />
+              <SmallMetric label="Elements — oxidizer" value={formatNumber(num('momentum_ratio_n_elements_O'), 0)} unit="" />
+              <SmallMetric label="Elements — fuel" value={formatNumber(num('momentum_ratio_n_elements_F'), 0)} unit="" />
+              {/* spray_quality_good is We >= We_min and x* < spray.evaporation.x_star_limit, a fixed
+                  config number rather than this chamber: named for what it is. Vaporization against
+                  the chamber is the Vaporization length card. */}
+              <SmallMetric label="We ≥ min and x* < config limit" value={d.spray_quality_good === true ? 'yes' : d.spray_quality_good === false ? 'no' : '—'} unit="" colorClass="text-[var(--color-text-secondary)]" />
+              <SmallMetric label="Injector type" value={String(d.injector_type ?? '—')} unit="" />
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ---------------------------------------------------------------------------------
+          INJECTOR GEOMETRY. Pitch circles, standoff and web are pure geometry from the
+          design variables -- the solver does not return them, so they are derived here with
+          the SAME backend layout the Chamber Geometry drawing uses, rather than a second copy.
+          --------------------------------------------------------------------------------- */}
+      {(() => {
+        if (!injectorLayout) return null;
+        const bore = injectorLayout.inputs.bore_diameter;
+        const { g } = drawingModel(injectorLayout);
+        const MM = 1000;
+        const f2 = (v: number) => formatNumber(v, 2);
+        return (
+          <Section
+            title="Injector Geometry"
+            icon={<svg className="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" strokeWidth={2} /><circle cx="12" cy="12" r="3.5" strokeWidth={2} /></svg>}
+          >
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <SmallMetric label="Doublets" value={String(g.n)} unit="" />
+              <SmallMetric label="Angular pitch" value={f2(360 / Math.max(1, g.n))} unit="deg" />
+              <SmallMetric label="Included angle" value={f2(g.included)} unit="deg" colorClass={g.included > 90 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]'} />
+              <SmallMetric label="Chamber bore" value={f2(bore * MM)} unit="mm" />
+              <SmallMetric label="Pitch circle — oxidizer" value={f2(g.dPitchO * MM)} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="Pitch circle — fuel" value={f2(g.dPitchF * MM)} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Ring offset dr" value={f2(g.dr * MM)} unit="mm" />
+              <SmallMetric label="Impingement standoff" value={formatNumber(g.lImp * MM, 3)} unit="mm" />
+              <SmallMetric label="Standoff L/d" value={f2(g.lOverD)} unit="" />
+              <SmallMetric label="Impingement circle" value={f2(2 * g.rImp * MM)} unit="mm" />
+              <SmallMetric label="Chamber area fed" value={formatNumber(g.coreFrac * 100, 1)} unit="%" colorClass={g.coreFrac < 0.25 ? 'text-yellow-400' : 'text-[var(--color-text-primary)]'} />
+              <SmallMetric label="Web — oxidizer" value={f2(g.webO * MM)} unit="mm" colorClass="text-cyan-400" />
+              <SmallMetric label="Web — fuel" value={f2(g.webF * MM)} unit="mm" colorClass="text-orange-400" />
+              <SmallMetric label="Centre clear circle" value={f2(g.centreClear * MM)} unit="mm" />
+              <SmallMetric label="Wall land" value={f2(g.wallLand * MM)} unit="mm" />
+              <SmallMetric label="Face incidence (steepest jet)" value={f2(90 - Math.max(g.inner.impingement_angle, g.outer.impingement_angle))} unit="deg" />
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* Additional Thermodynamic Properties */}
       <Section

@@ -27,72 +27,73 @@ export interface RtdLcRowConfig {
   label: string;
 }
 
-export function buildTcDataFromBoards(boards: Record<string, unknown>): TcRowConfig[] {
-  const out: TcRowConfig[] = [];
-  for (const board of Object.values(boards)) {
-    const b = board as Record<string, unknown>;
-    if (b.type !== 'TC' || b.enabled === false) continue;
-    const boardId = typeof b.board_id === 'number' ? b.board_id : 51;
-    const bn = elodinSlotFromBoardId(boardId);
-    const ref = Math.min(2, Math.max(0, (b.voltage_reference as number) ?? 0));
-    const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+/** A sense channel with everything a pane needs to name it and tell it from its twin. */
+export interface SenseRowConfig extends TcRowConfig {
+  /** Config board_id (41, 42, …) — what the boards panel and config page show. */
+  boardId: number;
+  /** Elodin slot (board_id % 10, 0 → 10) — the number inside the entity name. */
+  boardNumber: number;
+  channel: number;
+}
+
+const DEFAULT_BOARD_ID: Record<SenseType, number> = { TC: 51, RTD: 31, LC: 41 };
+
+export type SenseType = 'TC' | 'RTD' | 'LC';
+
+/**
+ * Every enabled board of `type`, one row per declared connector, board-scoped.
+ *
+ * Two boards of the same type routinely declare the SAME connector number — two LC
+ * boards each reporting on channel 1, say. Their entities differ (LC1.CH1 vs LC2.CH1)
+ * because the entity carries the board slot, but a label of "LC Ch1" does not, and a
+ * generic key of "LC_Cal.CH1" does not either: the store's alias table maps that one
+ * name onto BOTH board streams and hands back whichever it finds first. A pane that
+ * builds its rows from bare channel numbers therefore renders the same board twice —
+ * two rows, identical readings, moving together (seen on the stand 2026-09-13 with LC
+ * 41 and 42 plugged in at once). Board-scope the entity AND the label, always.
+ */
+export function buildSenseRowsFromBoards(
+  boards: Record<string, unknown>,
+  type: SenseType,
+): SenseRowConfig[] {
+  const matching = Object.values(boards)
+    .map((b) => b as Record<string, unknown>)
+    .filter((b) => b.type === type && b.enabled !== false);
+  // Only disambiguate when there is something to disambiguate — a single-board rig keeps
+  // the short labels every existing pane and screenshot uses.
+  const multiBoard = matching.length > 1;
+
+  const out: SenseRowConfig[] = [];
+  for (const b of matching) {
+    const boardId = typeof b.board_id === 'number' ? b.board_id : DEFAULT_BOARD_ID[type];
+    const boardNumber = elodinSlotFromBoardId(boardId);
+    const voltageReference = Math.min(2, Math.max(0, (b.voltage_reference as number) ?? 0));
+    const active: number[] = Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : [];
     for (const ch of active) {
       out.push({
-        entity: `TC${bn}.CH${ch}`,
-        calEntity: `TC${bn}_Cal.CH${ch}`,
-        label: `TC Ch${ch}`,
-        voltageReference: ref,
+        entity: `${type}${boardNumber}.CH${ch}`,
+        calEntity: `${type}${boardNumber}_Cal.CH${ch}`,
+        label: multiBoard ? `${type}${boardId} Ch${ch}` : `${type} Ch${ch}`,
+        voltageReference,
+        boardId,
+        boardNumber,
+        channel: ch,
       });
     }
   }
   return out;
+}
+
+export function buildTcDataFromBoards(boards: Record<string, unknown>): TcRowConfig[] {
+  return buildSenseRowsFromBoards(boards, 'TC');
 }
 
 export function buildRtdDataFromBoards(boards: Record<string, unknown>): RtdLcRowConfig[] {
-  const out: RtdLcRowConfig[] = [];
-  for (const board of Object.values(boards)) {
-    const b = board as Record<string, unknown>;
-    if (b.type !== 'RTD' || b.enabled === false) continue;
-    const boardId = typeof b.board_id === 'number' ? b.board_id : 31;
-    const bn = elodinSlotFromBoardId(boardId);
-    const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 4 }, (_, i) => i + 1);
-    for (const ch of active) {
-      out.push({
-        entity: `RTD${bn}.CH${ch}`,
-        calEntity: `RTD${bn}_Cal.CH${ch}`,
-        label: `RTD Ch${ch}`,
-      });
-    }
-  }
-  return out;
+  return buildSenseRowsFromBoards(boards, 'RTD');
 }
 
 export function buildLcDataFromBoards(boards: Record<string, unknown>): RtdLcRowConfig[] {
-  const out: RtdLcRowConfig[] = [];
-  for (const board of Object.values(boards)) {
-    const b = board as Record<string, unknown>;
-    if (b.type !== 'LC' || b.enabled === false) continue;
-    const boardId = typeof b.board_id === 'number' ? b.board_id : 41;
-    const bn = elodinSlotFromBoardId(boardId);
-    const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 4 }, (_, i) => i + 1);
-    for (const ch of active) {
-      out.push({
-        entity: `LC${bn}.CH${ch}`,
-        calEntity: `LC${bn}_Cal.CH${ch}`,
-        label: `LC Ch${ch}`,
-      });
-    }
-  }
-  return out;
+  return buildSenseRowsFromBoards(boards, 'LC');
 }
 
 export interface EncoderRowConfig {
@@ -125,9 +126,7 @@ export function buildEncoderDataFromBoards(
     const boardId = typeof b.board_id === 'number' ? b.board_id : 61;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 2 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `ENC${bn}.CH${ch}`,
@@ -153,9 +152,7 @@ export function buildActChannelsFromBoards(boards: Record<string, unknown>): {
     const boardId = typeof b.board_id === 'number' ? b.board_id : 11;
     const bn = elodinSlotFromBoardId(boardId);
     const active: number[] =
-      Array.isArray(b.active_connectors) && (b.active_connectors as number[]).length > 0
-        ? (b.active_connectors as number[])
-        : Array.from({ length: (b.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+      (Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : []);
     for (const ch of active) {
       out.push({
         entity: `ACT${bn}.CH${ch}`,

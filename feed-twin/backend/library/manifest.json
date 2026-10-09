@@ -284,5 +284,132 @@
    },
    "engineConfig": ""
   }
+ },
+ {
+  "id": "dd9c8e1b1bd5",
+  "kind": "engine",
+  "name": "ethalox doublet 7000N",
+  "sha256": "dd9c8e1b1bd5f3699f4c3489358403bf0fb2bf3470fd09dfec41beef0cc27a28",
+  "size": 17781,
+  "imported_at": "2026-10-03T22:50:20+00:00",
+  "source": "shipped",
+  "filename": "dd9c8e1b1bd5.yaml",
+  "notes": "",
+  "summary": {}
+ },
+ {
+  "id": "17eb4fb87b59",
+  "kind": "diagram",
+  "name": "LE4",
+  "sha256": "17eb4fb87b5947c90b3684f71276afa5330f657515167ce003665d84a893c257",
+  "size": 39093,
+  "imported_at": "2026-10-03T22:55:57+00:00",
+  "source": "upload",
+  "filename": "17eb4fb87b59.json",
+  "notes": "",
+  "summary": {
+   "symbols": 32,
+   "lines": 28,
+   "kinds": {
+    "TANK": 3,
+    "PR": 1,
+    "MANIFOLD": 3,
+    "RTD": 4,
+    "QD": 6,
+    "RV": 3,
+    "PT": 4,
+    "JUNCTION": 2,
+    "SOL": 5,
+    "ENGINE": 1
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "b3beb1e9a6ce",
+  "kind": "diagram",
+  "name": "LE4 (1)",
+  "sha256": "b3beb1e9a6ce2022e4311d562ebc463ffd0494e4b7ba6e2fe1dbcccc8907433d",
+  "size": 38284,
+  "imported_at": "2026-10-04T00:48:58+00:00",
+  "source": "upload",
+  "filename": "b3beb1e9a6ce.json",
+  "notes": "",
+  "summary": {
+   "symbols": 32,
+   "lines": 28,
+   "kinds": {
+    "TANK": 3,
+    "PR": 1,
+    "MANIFOLD": 3,
+    "RTD": 4,
+    "QD": 6,
+    "RV": 3,
+    "PT": 4,
+    "JUNCTION": 2,
+    "SOL": 3,
+    "ENGINE": 1,
+    "ROT": 2
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "de84d2b664b5",
+  "kind": "diagram",
+  "name": "LE4 e2e",
+  "sha256": "de84d2b664b501c099bfe6ad4fa681c77bf3ccb53fe5f34e0e69fd2b56701461",
+  "size": 29218,
+  "imported_at": "2026-10-04T08:37:23+00:00",
+  "source": "pid-designer:local/le4-e2e@working copy",
+  "filename": "de84d2b664b5.json",
+  "notes": "",
+  "summary": {
+   "symbols": 32,
+   "lines": 28,
+   "kinds": {
+    "TANK": 3,
+    "PR": 1,
+    "MANIFOLD": 3,
+    "RTD": 4,
+    "QD": 6,
+    "RV": 3,
+    "PT": 4,
+    "JUNCTION": 2,
+    "SOL": 3,
+    "ENGINE": 1,
+    "ROT": 2
+   },
+   "engineConfig": ""
+  }
+ },
+ {
+  "id": "5e3ad223770b",
+  "kind": "diagram",
+  "name": "LE4 (3)",
+  "sha256": "5e3ad223770be64c8a1cb9db5d529547bc27852e6a13697d02f6d7a25814ecc8",
+  "size": 38544,
+  "imported_at": "2026-10-04T23:05:42+00:00",
+  "source": "upload",
+  "filename": "5e3ad223770b.json",
+  "notes": "",
+  "summary": {
+   "symbols": 32,
+   "lines": 28,
+   "kinds": {
+    "TANK": 3,
+    "PR": 1,
+    "MANIFOLD": 3,
+    "RTD": 4,
+    "QD": 6,
+    "RV": 3,
+    "PT": 4,
+    "JUNCTION": 2,
+    "SOL": 3,
+    "ENGINE": 1,
+    "ROT": 2
+   },
+   "engineConfig": ""
+  }
  }
 ]

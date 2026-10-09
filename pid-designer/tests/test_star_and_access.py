@@ -352,3 +352,17 @@ def test_admin_requests_can_be_seen_on_diagrams_admins_cannot_otherwise_share(cl
     assert _answer(client, ADMIN, b_id, "carol@berkeley.edu", "approve",
                    params={"owner": "bob@berkeley.edu"}).status_code == 200
     assert _edit(client, C, b_id, params={"owner": "bob@berkeley.edu"}) == 200
+
+
+def test_someone_unshared_mid_edit_can_still_rescue_their_edits(client):
+    """Unshared from a private diagram, they lose sight of it as well as edit
+    rights -- and what they typed must still be theirs to keep."""
+    a_id = _create(client, A)
+    _share(client, A, a_id, ["bob@berkeley.edu"])
+    _share(client, A, a_id, [])
+    assert client.get(f"{BASE}/{a_id}/load", headers=B, params=OWNER_A).status_code == 403
+    r = client.post(f"{BASE}/{a_id}/rescue", headers=B, params=OWNER_A,
+                    json={"nodes": [{"id": "typed"}], "edges": []})
+    assert r.status_code == 200, r.text
+    assert r.json()["mine"] is True
+    assert client.get(f"{BASE}/{r.json()['id']}/load", headers=B).json()["nodes"] == [{"id": "typed"}]

@@ -33,6 +33,7 @@ export declare enum SensorType {
     ACT = "ACT",
     TC = "TC",
     RTD = "RTD",
+    ENV = "ENV",
     LC = "LC"
 }
 export declare enum SystemState {
@@ -101,6 +102,23 @@ export interface StateUpdate {
     stateName: string;
     timestamp: number;
     debugMode?: boolean;
+    /**
+     * Which states the sequencer will currently accept, bit N = state id N.
+     *
+     * The sequencer has always computed this and masked out anything it would refuse — states whose
+     * script failed to load, and states whose sensor gate is currently unsatisfied. The backend
+     * decoded it and then dropped it, so the GUI offered every state as pressable and an operator
+     * only discovered a refusal by pressing it. Optional because a client may connect before the
+     * first sequencer publish; treat undefined as "no opinion", never as "nothing allowed".
+     */
+    allowedBitmask?: number;
+    /**
+     * State id -> why it cannot be entered, from the sequencer's SCRIPTS report.
+     *
+     * The bitmask says which states are unavailable; this says why, so a greyed button can explain
+     * itself on hover instead of just being dead.
+     */
+    stateRefusalReasons?: Record<number, string>;
 }
 export interface CommandPayload {
     commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode' | 'extend_fire' | 'set_countdown_target' | 'session_start' | 'session_stop' | 'session_extend';
@@ -233,7 +251,7 @@ export interface CalibrationStatusPayload {
     calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration' | 'tare_lc' | 'clear_tare_lc';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
@@ -251,10 +269,28 @@ export interface CubicCalibrationPoint {
  * captured `points` as a scatter and overlays the curve by evaluating `polyCoeffs` over
  * `((adc - adcNormMin)/adcNormScale)^i` — no fitting in the browser.
  */
+/**
+ * How the last capture on a channel went.
+ *
+ * A capture is a mean over a ~1 s window. If the reading was still moving inside it — the
+ * button pressed while a load settled — the mean sits between two values and belongs to
+ * neither. The point is recorded anyway and `settled` is false, so the UI can say so.
+ */
+export interface CubicCaptureQuality {
+    t: number;
+    adc: number;
+    n: number;
+    windowMs: number;
+    spreadAdc: number;
+    driftAdc: number;
+    driftZ: number;
+    settled: boolean;
+}
 export interface CubicCalibrationChannel {
     boardId: number;
     connector: number;
     logicalCh: number;
+    kind?: 'PT' | 'LC';
     role: string;
     active_model: 'cubic' | 'robust' | 'physics';
     numPoints: number;
@@ -277,6 +313,7 @@ export interface CubicCalibrationChannel {
         adc: number;
         psi: number;
     }[];
+    last_capture?: CubicCaptureQuality;
 }
 /** Body of GET /api/cubic_calibration: the service's cubic_calibration.json, keyed by uid. */
 export interface CubicCalibrationPayload {

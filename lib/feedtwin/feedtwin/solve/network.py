@@ -127,7 +127,16 @@ class Network:
     hazard. See :func:`feedtwin.comps.elements.conditions_from_fluid`.
     """
 
+    gravity: float = 9.80665
+    """Acceleration along the elevation axis that liquid columns feel [m/s^2].
+    Standard gravity unless a caller sets it -- a vehicle in flight, through
+    :attr:`feedtwin.session.core.Setup.body_acceleration`. Every branch's static
+    head uses it, through :class:`~feedtwin.comps.base.FlowConditions`."""
+
     _fluids: dict[str, Fluid] = field(default_factory=dict, repr=False)
+    _stubs: dict[tuple[object, ...], tuple[DeadEnd, ...]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     # ------------------------------------------------------------ construction
 
@@ -212,8 +221,30 @@ class Network:
 
         The returned order is safe to back-fill in reverse -- each entry's live
         end is either solved or an earlier entry.
+
+        Remembered per shut set, wiring and which nodes are boundaries: a live
+        session asks the same question every solve, and peeling a two-page
+        stand costs a millisecond each time.
         """
-        removed = set(exclude or ())
+        key = (
+            frozenset(exclude or ()),
+            tuple((b.id, b.upstream, b.downstream) for b in self.branches.values()),
+            tuple(
+                (node_id, node.is_fixed or node.demand != 0.0)
+                for node_id, node in self.nodes.items()
+            ),
+        )
+        known = self._stubs.get(key)
+        if known is not None:
+            return list(known)
+        found = self._peel(set(key[0]))
+        if len(self._stubs) >= 64:
+            self._stubs.clear()
+        self._stubs[key] = tuple(found)
+        return found
+
+    def _peel(self, removed: set[str]) -> list[DeadEnd]:
+        """:meth:`dead_ends`, worked out."""
         remaining = {b: v for b, v in self.branches.items() if b not in removed}
         found: list[DeadEnd] = []
 
@@ -264,17 +295,73 @@ class Network:
                     ),
                     None,
                 )
-                if bridge is None:
-                    continue
-                live = (
-                    bridge.downstream if bridge.upstream == node_id else bridge.upstream
-                )
-                found.append(DeadEnd(node=node_id, branch=bridge.id, live_end=live))
-                peeled = True
-                break
+                if bridge is not None:
+                    live = (
+                        bridge.downstream
+                        if bridge.upstream == node_id
+                        else bridge.upstream
+                    )
+                    found.append(DeadEnd(node=node_id, branch=bridge.id, live_end=live))
+                    peeled = True
+                    break
+                # No shut valve touches it, but it was not always alone: it is
+                # the last node of an *island* -- a run cut off by a shut valve
+                # further along (a dome solenoid, then a capped QD). Peeled from
+                # both ends, the stubs met here and left it with neither an
+                # equation nor a live end. Its live end is across the shut valve
+                # that cut the island off; walk the peeled stubs to find it.
+                deadend = self._island_exit(node_id, found, removed)
+                if deadend is not None:
+                    found.append(deadend)
+                    peeled = True
+                    break
 
             if not peeled:
                 return found
+
+    def _island_exit(
+        self, node_id: str, found: list[DeadEnd], removed: set[str]
+    ) -> DeadEnd | None:
+        """A stub entry for the last node of an island, or ``None``.
+
+        Walks the branches already peeled, starting at ``node_id``, to the first
+        node a removed branch (a shut valve) touches, and takes the live end
+        across that branch -- the pressure the island would see if the valve
+        opened, which is what a stub hung off a shut valve already reads. An
+        island with no shut valve on it at all has no pressure to inherit; it
+        is given its own peeled neighbour, and the back-fill reports it as
+        undefined rather than the solve failing.
+        """
+        peeled = {d.branch for d in found}
+        seen = {node_id}
+        queue = [node_id]
+        while queue:
+            here = queue.pop(0)
+            for branch in self.branches.values():
+                if here not in (branch.upstream, branch.downstream):
+                    continue
+                other = (
+                    branch.downstream if branch.upstream == here else branch.upstream
+                )
+                if branch.id in removed:
+                    return DeadEnd(node=node_id, branch=branch.id, live_end=other)
+                if branch.id in peeled and other not in seen:
+                    seen.add(other)
+                    queue.append(other)
+        incident = next(
+            (
+                b
+                for b in self.branches.values()
+                if b.id in peeled and node_id in (b.upstream, b.downstream)
+            ),
+            None,
+        )
+        if incident is None:
+            return None
+        other = (
+            incident.downstream if incident.upstream == node_id else incident.upstream
+        )
+        return DeadEnd(node=node_id, branch=incident.id, live_end=other)
 
     def fluid(self, name: str) -> Fluid:
         """A cached :class:`~feedtwin.props.Fluid`, one per species."""
@@ -298,6 +385,7 @@ class Network:
             signals,
             multiphase=self.multiphase,
             phase=node.phase,
+            gravity=self.gravity,
         )
 
     # ------------------------------------------------------------- validation
@@ -325,6 +413,11 @@ class Network:
             b.downstream for b in self.branches.values()
         }
         for node_id in sorted(set(self.nodes) - touched):
+            if self.nodes[node_id].pressure is not None:
+                # A vessel's port with nothing drawn on it -- a dewar's top whose
+                # only line is a relief with no set pressure -- is a boundary
+                # nobody reads: harmless, and not a reason to refuse the stand.
+                continue
             problems.append(
                 f"  node {node_id!r} has no branches attached; it cannot take part"
             )

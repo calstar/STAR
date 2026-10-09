@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ActivityFilters } from "@/components/ActivityFilters";
 import { renderActivity, timeAgo } from "@/components/ActivityLine";
 import { prisma } from "@/lib/db";
+import { getProjectOptions } from "@/lib/projects";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -41,18 +42,11 @@ export default async function ActivityPage({
     }),
     prisma.activity.count({ where }),
     getTeamUsers(),
-    prisma.project.findMany({
-      where: { archived: false },
-      select: { id: true, name: true, parent: { select: { name: true } } },
-      orderBy: { name: "asc" },
-    }),
+    getProjectOptions(),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const projectOptions = projects.map((p) => ({
-    id: p.id,
-    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
-  }));
+  const projectOptions = projects;
 
   // Build a page URL that preserves the active filters.
   const pageHref = (p: number) => {

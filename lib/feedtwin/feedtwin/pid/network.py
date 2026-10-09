@@ -34,13 +34,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from typing import Mapping
+from typing import Callable, Iterable, Mapping
 
 from feedtwin.comps import HydraulicComponent, build_component
 from feedtwin.model.component import ComponentInstance
 from feedtwin.model.param import Param, Provenance
 from feedtwin.model.segments import LineSegment
 from feedtwin.pid.document import Diagram, DiagramError, PidEdge, PidNode
+from feedtwin.pid.roles import ground_ids, vehicle_ids
 from feedtwin.solve.network import Network
 from feedtwin.vessels.geometry import cylindrical_from_volume, level_of_volume
 
@@ -49,6 +50,7 @@ BRANCH_KINDS: dict[str, tuple[str, str]] = {
     "MAN": ("valve", "cv"),
     "ROT": ("valve", "cv"),
     "SOL": ("valve", "cv"),
+    "MOV": ("valve", "cv"),
     "PR": ("regulator", "droop"),
     "RV": ("valve", "cv"),
     "CV": ("check_valve", "cv"),
@@ -67,6 +69,7 @@ LINE_KINDS: dict[str, tuple[str, str]] = {
 #: produce an answer with a visible hole in it, not a confident number.
 FALLBACKS: dict[str, dict[str, tuple[float, str]]] = {
     "valve": {"Cv": (4.0, "Cv"), "bore": (9.5, "mm")},
+    "relief_valve": {"Cv": (4.0, "Cv"), "bore": (9.5, "mm")},
     "check_valve": {
         "Cv": (4.0, "Cv"),
         "bore": (9.5, "mm"),
@@ -114,6 +117,10 @@ SINK_TYPES = frozenset({"ENGINE", "INJECTOR", "VENT"})
 #: Conflating them tried to build an injector face onto a vent stack.
 ENGINE_TYPES = frozenset({"ENGINE", "INJECTOR"})
 
+#: pid-designer's name for a dome-loaded regulator's loading port
+#: (``components/pid/ports.ts``: ``['l', 'r', 'dome']``).
+DOME_HANDLE = "dome"
+
 #: Where the system discharges to atmosphere. A vent valve with nothing on its
 #: downstream side is a dead end that carries no flow, so venting does nothing
 #: -- which is the difference between a tank that blows down when you open its
@@ -156,7 +163,23 @@ DEFAULT_TANK_LITRES = 0.0175
 #: or a blanked tee branch is a plug, and plugs are not drawn -- inferring an
 #: open boundary from one would model a tank venting through a fitting that
 #: holds pressure.
-VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "RV"})
+VENTING_VALVE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "RV"})
+
+#: Valves the state machine can command: solenoid, rotary-actuated and
+#: motorised. Each rests where the drawing's ``failState`` puts it (shut unless
+#: it says "open") until the table commands it.
+ACTUATED_VALVE_TYPES = frozenset({"ROT", "SOL", "MOV"})
+
+#: Valves a person turns. Never commanded by the state machine -- the table
+#: does not know a hand valve exists -- but turned on the P&ID by hand. Every
+#: one rests **shut** until somebody opens it (the team's rule, 2026-10-07: a
+#: hand valve is shut unless the procedure opens it, as the crew opens the fuel
+#: transfer valve for Fuel Fill), unless the drawing says
+#: ``options.normalPosition: open``. They used to have no position at all,
+#: which a valve reads as wide open: every hand bleed on a GSE page was a
+#: permanent hole to atmosphere, and a fuel tank vented through its cart's hand
+#: vent could never hold press.
+HAND_VALVE_TYPES = frozenset({"MAN"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +253,30 @@ class DomeLoader:
 
 
 @dataclass(frozen=True, slots=True)
+class DomeLine:
+    """A dome-loading line drawn with valves on it: the loader, the line's
+    symbols and how they join, and which of them gate or vent it.
+
+    The dome follows its loader only while the line is open between them.
+    Shut, the dome holds what was in it -- which is how a stand loads its
+    regulator on the pad and then keeps it through the burn with the GSE
+    disconnected -- and an open vent on the regulator's side empties it.
+    """
+
+    #: The dome-loaded regulator, and the hand-loaded one that loads it.
+    loaded: str
+    loader: str
+    #: The line as drawn: symbol -> the symbols it joins (paired disconnects
+    #: joined to their mates). The loaded regulator itself is not in it.
+    adjacent: Mapping[str, frozenset[str]]
+    #: What is drawn on the regulator's dome port: where a walk starts.
+    ports: frozenset[str]
+    #: Commandable valves on the line, and those of them open to atmosphere.
+    valves: frozenset[str]
+    vents: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
 class BuiltNetwork:
     """A network, plus everything needed to draw and drive it."""
 
@@ -250,6 +297,32 @@ class BuiltNetwork:
     #: Control regulators that set a dome, by drawing id. See :class:`DomeLoader`.
     dome_loaders: Mapping[str, DomeLoader] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
+    #: What each commandable valve does, read off the network: drawing id to
+    #: words like ``{"fuel", "press"}`` or ``{"lox", "main"}``. Empty for a
+    #: valve whose job the topology does not settle. See :func:`_valve_roles`.
+    valve_roles: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Branches of the disconnects read as GSE vents (see :func:`_gse_vents`)
+    #: whose size the drawing does not give. The valve that sets it is on the
+    #: cart, so a session sizes them from its own setup (``gse_vent_cv``).
+    gse_vents: tuple[str, ...] = ()
+    #: Paired disconnects read as mated couplings, by drawing id: where the
+    #: drawing's pages (rocket, GSE) join. See :func:`_mate_disconnects`.
+    mated: tuple[tuple[str, str], ...] = ()
+    #: Where each commandable valve rests until something commands it, 0..1, by
+    #: drawing id: an actuated valve at its ``failState``, a hand valve at its
+    #: ``normalPosition`` or where its plumbing puts it (HAND_VALVE_TYPES).
+    rest: Mapping[str, float] = field(default_factory=dict)
+    #: Hand valves, by drawing id: turned by a person, never by the table.
+    hand_valves: frozenset[str] = frozenset()
+    #: Drawing ids on the vehicle (:func:`feedtwin.pid.roles.vehicle_ids`);
+    #: ``None`` when the drawing is one piece, which is all vehicle.
+    vehicle: frozenset[str] | None = None
+    #: Ground-support tanks that load a vehicle tank through the drawing: a
+    #: fuel transfer tank piped through a mated disconnect into the flight
+    #: tank's fill port. Supply tank id -> the vehicle tanks it reaches.
+    supplies: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Dome lines with valves on them, by the dome-loaded regulator's id.
+    dome_lines: Mapping[str, DomeLine] = field(default_factory=dict)
 
 
 def _accepted_options(kind: str, options: Mapping[str, str]) -> dict[str, str]:
@@ -325,8 +398,10 @@ def _instance(
                 Provenance.DEFAULT,
                 f"not on the drawing; feed-twin fallback for a {kind}",
             )
-    return build_component(
-        ComponentInstance.build(
+    from feedtwin.model.spec import SpecError
+
+    try:
+        instance = ComponentInstance.build(
             tag,
             kind,
             filled,
@@ -334,7 +409,11 @@ def _instance(
             model=model,
             segments=segments,
         )
-    )
+    except SpecError as exc:
+        # The spec knows the kind ("valve"), not which one; on a drawing with
+        # five solenoids that is no help. Named here, where the tag is known.
+        raise SpecError(f"{tag}: {exc}") from exc
+    return build_component(instance)
 
 
 def build_network(
@@ -366,12 +445,26 @@ def build_network(
     tanks: dict[str, TankPorts] = {}
     placements: list[Placement] = []
     actuators: dict[str, str] = {}
+    rest: dict[str, float] = {}
+    hand: set[str] = set()
     warnings: list[str] = []
     vents: list[str] = []
+    vent_ids: set[str] = set()
+    unsized: list[tuple[str, str]] = []
+    direct: list[tuple[str, str, str]] = []
+    into_engine: dict[str, str] = {}
+    #: Every network node a drawn line landed on: what tells a disconnect's
+    #: plumbed side from its free one when it is mated (_mate_disconnects).
+    landed: set[str] = set()
 
     # Where the pressurant network and the vent stacks reach. Both are ullage
     # side, and a tank must not paint either with its contents.
-    _vent_side = _vent_reach(diagram)
+    # A relief valve (an RV with a set pressure) drawn straight onto a tank
+    # relieves its ullage, whatever is drawn beyond it; see _tank_reliefs.
+    # So is whatever is drawn off a tank's top port; see _top_port_reach.
+    _vent_side = (
+        _vent_reach(diagram) | _tank_reliefs(diagram) | _top_port_reach(diagram)
+    )
     fluids, temperatures = _fluid_of(diagram, _pressurant_reach(diagram) | _vent_side)
     # Which symbols the pressurant network reaches without passing through a
     # tank. Topology, not fluid identity: on a cold flow the ox tank holds LN2
@@ -380,12 +473,27 @@ def build_network(
     pressurant = _pressurant_reach(diagram)
     # What the gas supplies hold. Every ullage on the drawing is filled with
     # this, whatever the tanks below them contain.
+    # A K-bottle first: a dewar is a liquid supply (a LOX dewar listed before
+    # the cart's nitrogen made every ullage on the drawing oxygen), and only a
+    # drawing whose only gas source is a dewar takes its species.
     pressurant_species = next(
-        (n.fluid for n in diagram.nodes if n.type in {"KBOTTLE", "DEWAR"} and n.fluid),
-        default_fluid,
+        (n.fluid for n in diagram.nodes if n.type == "KBOTTLE" and n.fluid),
+        next(
+            (n.fluid for n in diagram.nodes if n.type == "DEWAR" and n.fluid),
+            default_fluid,
+        ),
     )
-    # Vent lines are ullage lines too; see _vent_reach.
-    ullage_side = pressurant | _vent_reach(diagram)
+    # Vent lines are ullage lines too; see _vent_reach. So is a tank's relief.
+    ullage_side = pressurant | _vent_side
+
+    for node in diagram.nodes:
+        if node.drawn_as == "TANK":
+            warnings.append(
+                f"{node.label or node.id} is drawn as a TANK but holds {node.fluid} "
+                "above its critical temperature, so it can only be gas: read as the "
+                "pressurant supply (a Pressurant bottle, KBOTTLE). Draw it as one to "
+                "make that explicit."
+            )
 
     # 1. Places. Sources are boundaries; junctions and manifolds are free.
     sources = [n for n in diagram.nodes if n.is_source]
@@ -473,6 +581,19 @@ def build_network(
         if not node.is_inline or node.id in dome_loaders:
             continue
         kind, model = _kind_and_model(node)
+        if node.type == "RV" and kind != "relief_valve":
+            # A relief valve is shut until its set pressure, and with no set
+            # pressure it never lifts -- which, for the network, is a branch
+            # that is not there. It used to be built as a plain Cv valve that is
+            # always open: a hole to atmosphere on every tank it guards, so a
+            # stand could not hold press at all. Its lines now end at a capped
+            # port, exactly like a shut valve's.
+            warnings.append(
+                f"{node.label} is a relief valve with no set_pressure, so it is "
+                "read as shut -- a relief that never lifts. Give it a "
+                "set_pressure (and its Cv) to model one that lifts and reseats."
+            )
+            continue
         fluid = fluids.get(node.id, default_fluid)
         temperature = _temperature(node, temperatures.get(node.id, default_temperature))
         upstream, downstream = f"{node.id}.in", f"{node.id}.out"
@@ -487,24 +608,41 @@ def build_network(
                 "dome_bias",
                 Param(50.0, "psi", Provenance.DEFAULT, "dome-loaded; bias unstated"),
             )
+            loaded_by = None
             for loader, loaded_id in dome_loaders.items():
                 if loaded_id != node.id:
                     continue
                 setpoint = by_id[loader].params.get("setpoint")
                 if setpoint is not None:
                     params["dome_pressure"] = setpoint
-                    actuators[loader] = f"{node.label}.dome"
-                    built_loaders[loader] = _build_dome_loader(
-                        by_id[loader], f"{node.label}.dome", diagram, node_of
-                    )
+                elif not _hand_loaded(by_id[loader]):
+                    continue
+                # A loader with no setpoint on the drawing is hand-loaded: the
+                # dome knob sets it, through its own outlet.
+                actuators[loader] = f"{node.label}.dome"
+                built_loaders[loader] = _build_dome_loader(
+                    by_id[loader], f"{node.label}.dome", diagram, node_of
+                )
+                loaded_by = loader
+            if loaded_by is None:
+                # Nothing drawn loads the dome -- it is filled through a QD, or
+                # off-drawing -- so the dome is the operator's setting, and its
+                # signal is how they set it: the cockpit's dome knob and Layer
+                # X's lockup solve both drive `<tag>.dome`. Without it the dome
+                # sat at the drawn value whatever the knob said.
+                actuators[node.id] = f"{node.label}.dome"
         component = _instance(node.label, kind, model, params, options)
         net.add_branch(node.id, component, upstream, downstream)
         branches_of[node.id] = (node.id,)
         placements.append(
             Placement(node.id, node.label, node.type, node.x, node.y, fluid)
         )
-        if node.type in {"ROT", "SOL"}:
+        if node.type in ACTUATED_VALVE_TYPES:
             actuators[node.id] = f"{node.label}.command"
+            rest[node.id] = 1.0 if options.get("failState") == "open" else 0.0
+        elif node.type in HAND_VALVE_TYPES:
+            actuators[node.id] = f"{node.label}.command"
+            hand.add(node.id)
 
     # 3. Instruments observe. They join the network at the place they clip to.
     for node in diagram.nodes:
@@ -523,7 +661,9 @@ def build_network(
 
     # 4. Lines. An end that landed on an inline symbol is redirected to that
     #    symbol's own node -- into it if the line arrives, out of it if the
-    #    line leaves.
+    #    line leaves. Unless the direction leaves a symbol one-sided and the
+    #    ports say better; see _sides_by_port.
+    plumbing: list[PidEdge] = []
     for edge in diagram.edges:
         source = by_id.get(edge.source)
         target = by_id.get(edge.target)
@@ -535,13 +675,41 @@ def build_network(
             continue
         if edge.source in dome_loaders or edge.target in dome_loaders:
             continue  # a dome line, not a flow path
+        if (source.type == "PR" and edge.source_handle == DOME_HANDLE) or (
+            target.type == "PR" and edge.target_handle == DOME_HANDLE
+        ):
+            # Drawn onto a regulator's dome port: loading gas, not feed. It
+            # used to land on the regulator's inlet or outlet like any line,
+            # which plumbed the dome-control line -- through its solenoids and
+            # the mated disconnects, back to the GSE control regulator -- into
+            # the tank press manifold.
+            continue
+        plumbing.append(edge)
+    by_port, port_warnings = _sides_by_port(diagram, plumbing)
+    warnings.extend(port_warnings)
 
-        upstream = _attach(source, target, ullage_side, tanks, outgoing=True)
-        downstream = _attach(target, source, ullage_side, tanks, outgoing=False)
+    for edge in plumbing:
+        source = by_id[edge.source]
+        target = by_id[edge.target]
+        upstream = _attach(
+            source,
+            target,
+            ullage_side,
+            tanks,
+            outgoing=by_port.get((edge.id, source.id), True),
+        )
+        downstream = _attach(
+            target,
+            source,
+            ullage_side,
+            tanks,
+            outgoing=by_port.get((edge.id, target.id), False),
+        )
         if upstream not in net.nodes or downstream not in net.nodes:
             continue
         if upstream == downstream:
             continue
+        landed.update((upstream, downstream))
 
         kind, model = LINE_KINDS.get(edge.line_type, LINE_KINDS["pipe"])
         # Named apart from the symbol loop's `params`/`options` above: this
@@ -561,11 +729,87 @@ def build_network(
             line_options = _accepted_options(kind, edge.options)
             warnings.extend(edge.segments.warnings)
             warnings.extend(_superseded_warnings(edge))
+        elif kind in {"pipe", "flex_hose"} and not (
+            "length" in line_params or "bore" in line_params
+        ):
+            # A line with no size is a direct connection: two parts drawn
+            # apart that are screwed together on the stand, a tank's port
+            # into its valve. It has no length to lose pressure over, so it is
+            # not a branch -- its two ends are one place (see _join_direct).
+            # It used to be solved as the fallback tube, 1 m of 9.5 mm, which
+            # cost a drawn tank-valve-engine feed 94 psi it does not have.
+            if engine is not None and (
+                source.type in ENGINE_TYPES or target.type in ENGINE_TYPES
+            ):
+                # Straight into the injector: the leg starts at this end.
+                into_engine[edge.id] = (
+                    upstream if target.type in ENGINE_TYPES else downstream
+                )
+            else:
+                direct.append((edge.id, upstream, downstream))
+            continue
+        elif kind in {"pipe", "flex_hose"} and not (
+            "length" in line_params and "bore" in line_params
+        ):
+            # Half a size: the half the drawing left out is the fallback's.
+            unsized.append(
+                (edge.id, f"{source.label or source.id} -> {target.label or target.id}")
+            )
         component = _instance(
             edge.id, kind, model, line_params, line_options, segments=segments
         )
         net.add_branch(edge.id, component, upstream, downstream)
         branches_of[edge.id] = (edge.id,)
+
+    # 4a. Disconnects paired across the drawing's pages are mated: the rocket
+    #     half and the GSE half are one coupling, so their free sides are one
+    #     place. A drawing that pairs nothing builds exactly as before.
+    mates, mate_warnings = _mate_disconnects(diagram, net, landed)
+    warnings.extend(mate_warnings)
+    direct.extend(mates)
+    mated = tuple((a, b) for a, b in (tuple(m[0].split(":")[1:3]) for m in mates))
+
+    if direct:
+        edges_by_id = {e.id: e for e in diagram.edges}
+        rename, shorted, kept = _join_direct(net, direct)
+        for edge_id, upstream, downstream in kept:
+            # Two fixed pressures -- a bottle straight into a tank -- cannot be
+            # one place. The line stays a line, on the fallback tube.
+            if edge_id.startswith("mate:"):
+                _, a, b = edge_id.split(":")
+                source, target = by_id[a], by_id[b]
+            else:
+                line = edges_by_id[edge_id]
+                source, target = by_id[line.source], by_id[line.target]
+            net.add_branch(
+                edge_id,
+                _instance(edge_id, "pipe", "darcy", {}, {}),
+                upstream,
+                downstream,
+            )
+            branches_of[edge_id] = (edge_id,)
+            unsized.append(
+                (edge_id, f"{source.label or source.id} -> {target.label or target.id}")
+            )
+        node_of = {k: rename.get(v, v) for k, v in node_of.items()}
+        instruments = [replace(i, node=rename.get(i.node, i.node)) for i in instruments]
+        built_loaders = {
+            k: replace(v, supply_node=rename.get(v.supply_node, v.supply_node))
+            for k, v in built_loaders.items()
+        }
+        into_engine = {k: rename.get(v, v) for k, v in into_engine.items()}
+        for symbol_id in shorted:
+            shown = by_id[symbol_id].label if symbol_id in by_id else symbol_id
+            warnings.append(
+                f"{shown or symbol_id} has both sides joined "
+                "directly to the same place, so it carries nothing and is left out."
+            )
+            branches_of.pop(symbol_id, None)
+
+    # Dome lines with valves on them: the valves gate the dome (DomeLine).
+    # Their symbols are loading gas, read off the drawing, not vents of feed.
+    dome_lines = _dome_lines(diagram, dome_loaders)
+    on_dome_lines = {sid for line in dome_lines.values() for sid in line.adjacent}
 
     # 4b. A valve with one side unplumbed is a vent to atmosphere.
     #
@@ -573,7 +817,11 @@ def build_network(
     #     -- see VENTING_VALVE_TYPES for why, and for how the two tools came to
     #     disagree about this.
     for node in diagram.nodes:
-        if node.type not in VENTING_VALVE_TYPES or node.id in dome_loaders:
+        if (
+            node.type not in VENTING_VALVE_TYPES
+            or node.id in dome_loaders
+            or node.id in on_dome_lines
+        ):
             continue
         if node.id not in net.branches:
             continue  # never became a branch (instrument clip, annotation)
@@ -585,6 +833,10 @@ def build_network(
             if other is not branch
             for end in (other.upstream, other.downstream)
         }
+        # Joined straight into the engine: plumbed, by an injector leg that is
+        # added below. Missing this read a LOX main drawn into the engine as a
+        # vent and dumped the tank overboard at 14 kg/s.
+        attached |= set(into_engine.values())
         free = [
             port
             for port in (branch.upstream, branch.downstream)
@@ -597,6 +849,20 @@ def build_network(
             continue
         net.nodes[free[0]] = replace(port, pressure=AMBIENT)
         vents.append(node.label or node.id)
+        vent_ids.add(node.id)
+
+    resting_shut: list[str] = []
+    for valve_id in sorted(hand):
+        drawn = str(by_id[valve_id].options.get("normalPosition", "") or "")
+        rest[valve_id] = 1.0 if drawn == "open" else 0.0
+        if drawn != "open":
+            resting_shut.append(by_id[valve_id].label or valve_id)
+    if resting_shut:
+        warnings.append(
+            f"{len(resting_shut)} hand valve(s) rest shut until opened by hand: "
+            f"{', '.join(resting_shut)}. A hand valve that stands open draws "
+            "normalPosition: open."
+        )
 
     if vents:
         warnings.append(
@@ -629,6 +895,31 @@ def build_network(
         net.nodes[ports.ullage].phase = "gas"
         net.nodes[ports.outlet].phase = "liquid"
 
+    if unsized:
+
+        def wet(edge_id: str) -> bool:
+            branch = net.branches.get(edge_id)
+            return branch is not None and "liquid" in (
+                net.nodes[branch.upstream].phase,
+                net.nodes[branch.downstream].phase,
+            )
+
+        feeds = [name for edge_id, name in unsized if wet(edge_id)]
+        tube = FALLBACKS["pipe"]
+        warnings.append(
+            f"{len(unsized)} line(s) give only part of their size, or join two "
+            "fixed pressures directly, and are solved with feed-twin's fallback "
+            f"tube for what is missing ({tube['length'][0]:g} m of "
+            f"{tube['bore'][0]:g} mm)"
+            + (
+                f". Propellant lines among them, which set what the engine "
+                f"sees: {', '.join(feeds)}"
+                if feeds
+                else ""
+            )
+            + f". All: {', '.join(name for _, name in unsized)}. Give them their size."
+        )
+
     # 5. The engine. Without one it stays a fixed pressure boundary, which is
     #    the honest thing to be: nobody has said what is on the end of the pipe.
     #    With one, its injector face is real -- the lines that arrived at the
@@ -637,9 +928,60 @@ def build_network(
     engine_ports: dict[str, str] = {}
     if engine is not None:
         engine_ports, engine_warnings = _attach_engine(
-            net, diagram, engine, fluids, temperatures, default_temperature
+            net,
+            diagram,
+            engine,
+            fluids,
+            temperatures,
+            default_temperature,
+            into_engine=into_engine,
         )
         warnings.extend(engine_warnings)
+
+    # 6. A tank with no vent valve drawn is vented through the GSE, beyond a
+    #    disconnect on its top; see _gse_vents.
+    # 6b. Vehicle and ground support (feedtwin.pid.roles), and which ground
+    #     tanks load a vehicle tank through the drawing.
+    vehicle = vehicle_ids(diagram)
+    ground = ground_ids(diagram)
+    supplies = _supplies(net, tanks, ground)
+    shut_by_hand = frozenset(v for v in hand if rest.get(v, 1.0) < 0.5)
+    roles = _valve_roles(
+        net,
+        diagram,
+        actuators,
+        tanks,
+        fluids,
+        engine_ports,
+        ground=ground,
+        shut=shut_by_hand,
+    )
+    roles.update(_dome_valve_roles(dome_lines, ground))
+    gse = _gse_vents(net, diagram, tanks, fluids, engine_ports, roles)
+    gse_unsized = tuple(qd.id for qd, _ in gse if not {"Cv", "Cd"} & set(qd.params))
+    if gse:
+        for qd, _ in gse:
+            actuators[qd.id] = f"{qd.label}.command"
+        roles = _valve_roles(
+            net,
+            diagram,
+            actuators,
+            tanks,
+            fluids,
+            engine_ports,
+            gse=frozenset(qd.id for qd, _ in gse),
+            ground=ground,
+            shut=shut_by_hand,
+        )
+        roles.update(_dome_valve_roles(dome_lines, ground))
+        warnings.append(
+            f"No vent valve is drawn on {_and(sorted(t for _, t in gse))}, "
+            f"so {_and(sorted(qd.label for qd, _ in gse))} on the tank top "
+            f"{'is' if len(gse) == 1 else 'are'} read as where the GSE vent "
+            "couples: a valve to atmosphere the state machine's vent opens. The GSE side is not on the drawing, so "
+            "its size is the disconnect's own Cv/Cd if it has one and the "
+            "cart's vent valve (the session's setup) otherwise. Draw the vent valve to say what it is."
+        )
 
     return BuiltNetwork(
         network=net,
@@ -652,7 +994,504 @@ def build_network(
         actuators=actuators,
         dome_loaders=built_loaders,
         warnings=tuple(warnings),
+        valve_roles=roles,
+        gse_vents=gse_unsized,
+        mated=mated,
+        rest=rest,
+        hand_valves=frozenset(hand),
+        vehicle=None if not ground else vehicle,
+        supplies=supplies,
+        dome_lines=dome_lines,
     )
+
+
+def _mate_disconnects(
+    diagram: Diagram, net: Network, landed: set[str]
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Paired quick-disconnects, as direct connections between their free sides.
+
+    pid-designer has no off-page connector. A line from the rocket page to the
+    GSE page is drawn as a disconnect on each page, the two paired through
+    ``options.pairedWith`` -- the same coupling the stand has, a half on the
+    vehicle and a half on the cart. Read separately, each half has a free side
+    and the two pages are two unconnected systems; a GSE drawing then cannot
+    feed the vehicle at all. Mated, the free sides are one place and the two
+    halves' own losses stay in series.
+
+    Pairing need not be written on both halves (pid-designer saves only the
+    half that was edited); two halves naming different partners are a drawing
+    error and are left unmated, said so. A half that has lines on both of its
+    sides, or none, has no free side to mate and is left as it is.
+
+    Returns ``("mate:<a>:<b>", free side of a, free side of b)`` per pair, in
+    the shape of the direct connections ``_join_direct`` takes.
+    """
+    by_id = {n.id: n for n in diagram.nodes}
+
+    def partner(node: PidNode) -> str:
+        found = (node.options.get("pairedWith") or "").strip()
+        return "" if found in {"", "none"} else found
+
+    pairs: set[tuple[str, str]] = set()
+    warnings: list[str] = []
+    for node in diagram.nodes:
+        if node.type != "QD":
+            continue
+        other = partner(node)
+        if not other:
+            continue
+        label = node.label or node.id
+        mate = by_id.get(other)
+        if mate is None or mate.type != "QD":
+            warnings.append(
+                f"{label} is paired with {other!r}, which is not a disconnect on "
+                "this drawing: left unmated."
+            )
+            continue
+        back = partner(mate)
+        if back and back != node.id:
+            warnings.append(
+                f"{label} is paired with {mate.label or mate.id}, which is paired "
+                f"with {back!r}: left unmated. Pair the two halves with each other."
+            )
+            continue
+        a, b = sorted((node.id, mate.id))
+        pairs.add((a, b))
+
+    out: list[tuple[str, str, str]] = []
+    for a, b in sorted(pairs):
+        free: dict[str, list[str]] = {}
+        for qd in (a, b):
+            ends = (f"{qd}.in", f"{qd}.out")
+            free[qd] = [e for e in ends if e in net.nodes and e not in landed]
+        lone = [q for q in (a, b) if len(free[q]) != 1]
+        if lone:
+            warnings.append(
+                f"{_and(sorted(by_id[q].label or q for q in lone))} "
+                f"{'has' if len(lone) == 1 else 'have'} no single free side to "
+                f"couple: {by_id[a].label or a} and {by_id[b].label or b} left unmated."
+            )
+            continue
+        out.append((f"mate:{a}:{b}", free[a][0], free[b][0]))
+        pages = {by_id[a].page or "Main", by_id[b].page or "Main"}
+        warnings.append(
+            f"{by_id[a].label or a} and {by_id[b].label or b} are paired, so they "
+            "are read as one mated coupling"
+            + (f" joining pages {_and(sorted(pages))}." if len(pages) > 1 else ".")
+        )
+    return out, warnings
+
+
+def _join_direct(
+    net: Network, direct: list[tuple[str, str, str]]
+) -> tuple[dict[str, str], list[str], list[tuple[str, str, str]]]:
+    """Make each direct connection's two ends one network node.
+
+    Where one end is a fixed pressure -- a tank port, a bottle, atmosphere --
+    the joined place keeps it: a valve screwed into a tank sees the tank. Two
+    fixed pressures cannot be one place, so such a line is handed back to be
+    built as a line. Returns the renaming (merged node -> the node it became),
+    the branches left joining a place to itself (dropped), and the lines kept.
+    """
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        while parent.get(node, node) != node:
+            node = parent[node]
+        return node
+
+    kept: list[tuple[str, str, str]] = []
+    for edge_id, a, b in direct:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            continue
+        a_fixed = net.nodes[ra].pressure is not None
+        b_fixed = net.nodes[rb].pressure is not None
+        if a_fixed and b_fixed:
+            kept.append((edge_id, a, b))
+            continue
+        if b_fixed:
+            ra, rb = rb, ra
+        parent[rb] = ra
+
+    rename = {node: find(node) for node in parent}
+    shorted: list[str] = []
+    for branch_id, branch in list(net.branches.items()):
+        branch.upstream = rename.get(branch.upstream, branch.upstream)
+        branch.downstream = rename.get(branch.downstream, branch.downstream)
+        if branch.upstream == branch.downstream:
+            del net.branches[branch_id]
+            shorted.append(branch_id)
+    for node in rename:
+        net.nodes.pop(node, None)
+    kept = [(e, rename.get(a, a), rename.get(b, b)) for e, a, b in kept]
+    return rename, shorted, kept
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+#: Propellant species read as the oxidiser side of a stand; everything else a
+#: tank holds is fuel. Matches the state machines' vocabulary ("LOX ...").
+_OXIDISERS = frozenset({"oxygen", "nitrousoxide", "n2o", "hydrogenperoxide"})
+
+
+def _valve_roles(
+    net: Network,
+    diagram: Diagram,
+    actuators: Mapping[str, str],
+    tanks: Mapping[str, TankPorts],
+    fluids: Mapping[str, str],
+    engine_ports: Mapping[str, str],
+    *,
+    gse: frozenset[str] = frozenset(),
+    ground: frozenset[str] = frozenset(),
+    shut: frozenset[str] = frozenset(),
+) -> dict[str, frozenset[str]]:
+    """What each commandable valve does, from what its two sides reach.
+
+    A valve between the regulated supply and a tank's ullage *is* that tank's
+    press valve, whatever the drawing calls it; one between a tank's outlet and
+    the engine is its main; one between an ullage and atmosphere is its vent.
+    A state machine names its valves in a crew's words ("Fuel Press") and a
+    drawing in a draughtsman's ("FU_SOL_R"), and when the words do not meet the
+    plumbing still does -- so this is what lets a drawing nobody wrote for the
+    table still be driven by it (see :func:`feedtwin.session.statemachine.bind`).
+
+    Each side is walked through pipes, fittings, manifolds, regulators and check
+    valves, but not through another commandable valve or a relief, and stops at
+    the first fixed pressure it meets. A valve whose sides do not settle one job
+    gets no role; nothing is guessed. ``gse`` names disconnects read as GSE
+    vents (see :func:`_gse_vents`), which are commandable valves here too.
+    """
+    # Valves stop a walk; a dome-loaded regulator carries a `.dome` signal and
+    # is an actuator too, but the press line runs through it.
+    valves = {n.id for n in diagram.nodes if n.type in ACTUATED_VALVE_TYPES} | gse
+    # A hand valve resting shut separates what is either side of it, as an
+    # actuated valve does; one resting open is a length of pipe.
+    stops = valves | shut | {n.id for n in diagram.nodes if n.type == "RV"}
+    reach = _reacher(net, diagram, tanks, engine_ports, stops)
+    dewars = {n.id for n in diagram.nodes if n.type == "DEWAR"}
+
+    def side(tank: str) -> str:
+        return _side(tank, diagram, fluids)
+
+    def job(
+        a: dict[str, set[str]], b: dict[str, set[str]], on_ground: bool = False
+    ) -> frozenset[str] | None:
+        # Ground support first: a cart tank's press and vent are "fill" press
+        # and vent ("Fuel Fill Press"), not the flight tank's, and the valve
+        # that lets the cart's propellant into a flight tank is its fill.
+        flight_in = {t for t in a["ullage"] | a["outlet"] if t not in ground}
+        if (
+            len(flight_in) == 1
+            and ({t for t in b["outlet"] if t in ground} or (b["supply"] & dewars))
+            and not b["engine"]
+        ):
+            return frozenset({side(next(iter(flight_in))), "fill"})
+        if len(a["ullage"]) == 1 and next(iter(a["ullage"])) in ground:
+            tank = next(iter(a["ullage"]))
+            if b["supply"] and not a["supply"]:
+                return frozenset({side(tank), "fill", "press"})
+            if b["ambient"] and not (a["supply"] or b["supply"]):
+                return frozenset({side(tank), "fill", "vent"})
+        if (
+            len(a["outlet"]) == 1
+            and b["ambient"]
+            and not (a["ullage"] or a["supply"] or b["supply"])
+            and on_ground
+        ):
+            return frozenset({side(next(iter(a["outlet"]))), "dump"})
+        if len(a["ullage"]) == 1 and b["supply"] and not a["supply"]:
+            return frozenset({side(next(iter(a["ullage"]))), "press"})
+        if len(a["outlet"]) == 1 and b["engine"]:
+            return frozenset({side(next(iter(a["outlet"]))), "main"})
+        if len(a["ullage"]) == 1 and b["ambient"] and not (a["supply"] or b["supply"]):
+            return frozenset({side(next(iter(a["ullage"]))), "vent"})
+        if (
+            a["supply"]
+            and b["ambient"]
+            and not any(a[k] or b[k] for k in ("ullage", "outlet"))
+        ):
+            return frozenset({"gn2", "vent"})
+        return None
+
+    roles: dict[str, frozenset[str]] = {}
+    for drawing_id in actuators:
+        if drawing_id not in valves or drawing_id not in net.branches:
+            continue
+        # The branch's own ends: a valve joined directly to a tank has the
+        # tank's node for a side, not "<id>.in".
+        branch = net.branches[drawing_id]
+        a, b = reach(branch.upstream), reach(branch.downstream)
+        here = drawing_id in ground
+        found = job(a, b, here) or job(b, a, here)
+        if found:
+            roles[drawing_id] = found
+    return roles
+
+
+Reach = Callable[[str], dict[str, set[str]]]
+
+
+def _supplies(
+    net: Network, tanks: Mapping[str, TankPorts], ground: frozenset[str]
+) -> dict[str, frozenset[str]]:
+    """Ground tanks that load a vehicle tank, and the vehicle tanks each reaches.
+
+    Walked on the built network -- so across mated disconnects -- from the
+    ground tank's outlet, through every branch (a fill valve is how the load is
+    commanded, not whether the line exists), stopping at any fixed pressure.
+    A vehicle tank met on the way is loaded from it.
+    """
+    if not ground:
+        return {}
+    adjacent: dict[str, list[str]] = {}
+    for branch in net.branches.values():
+        adjacent.setdefault(branch.upstream, []).append(branch.downstream)
+        adjacent.setdefault(branch.downstream, []).append(branch.upstream)
+    port_of = {}
+    for tank_id, ports in tanks.items():
+        port_of[ports.ullage] = tank_id
+        port_of[ports.outlet] = tank_id
+    out: dict[str, frozenset[str]] = {}
+    for tank_id, ports in tanks.items():
+        if tank_id not in ground:
+            continue
+        reached: set[str] = set()
+        seen = {ports.outlet}
+        frontier = [ports.outlet]
+        while frontier:
+            here = frontier.pop()
+            for there in adjacent.get(here, ()):
+                if there in seen:
+                    continue
+                seen.add(there)
+                owner = port_of.get(there)
+                if owner is not None and owner not in ground:
+                    reached.add(owner)
+                if net.nodes[there].pressure is not None:
+                    continue
+                frontier.append(there)
+        if reached:
+            out[tank_id] = frozenset(reached)
+    return out
+
+
+def _reacher(
+    net: Network,
+    diagram: Diagram,
+    tanks: Mapping[str, TankPorts],
+    engine_ports: Mapping[str, str],
+    stops: set[str] | frozenset[str],
+) -> Reach:
+    """A walk from one network node to the fixed pressures it meets.
+
+    Through every branch but ``stops``, stopping at each boundary, and sorting
+    what it met into tank ullages and outlets, supplies, the engine and
+    atmosphere.
+    """
+    adjacent: dict[str, list[str]] = {}
+    for branch in net.branches.values():
+        if branch.id in stops:
+            continue
+        adjacent.setdefault(branch.upstream, []).append(branch.downstream)
+        adjacent.setdefault(branch.downstream, []).append(branch.upstream)
+
+    ullage = {ports.ullage: tank for tank, ports in tanks.items()}
+    outlet = {ports.outlet: tank for tank, ports in tanks.items()}
+    supply = {n.id for n in diagram.nodes if n.type in {"KBOTTLE", "DEWAR"}}
+    engine = {n.id for n in diagram.nodes if n.type in ENGINE_TYPES}
+    if engine_ports.get("chamber"):
+        engine.add(engine_ports["chamber"])
+
+    def reach(start: str) -> dict[str, set[str]]:
+        found: dict[str, set[str]] = {
+            "ullage": set(),
+            "outlet": set(),
+            "supply": set(),
+            "engine": set(),
+            "ambient": set(),
+        }
+        seen = {start}
+        queue = [start]
+        while queue:
+            here = queue.pop()
+            node = net.nodes.get(here)
+            if node is not None and node.pressure is not None:
+                if here in ullage:
+                    found["ullage"].add(ullage[here])
+                elif here in outlet:
+                    found["outlet"].add(outlet[here])
+                elif here in supply:
+                    found["supply"].add(here)
+                elif here in engine:
+                    found["engine"].add(here)
+                elif abs(node.pressure - AMBIENT) < 1.0:
+                    found["ambient"].add(here)
+                if here != start:
+                    continue  # a boundary: what lies beyond it is somebody else's
+            for nxt in adjacent.get(here, ()):
+                if nxt not in seen:
+                    seen.add(nxt)
+                    queue.append(nxt)
+        return found
+
+    return reach
+
+
+def propellant_side(species: str) -> str:
+    """``lox`` or ``fuel``: which leg of a stand a propellant is on, in the
+    state machines' words. The cockpit asks this rather than reading a tank's
+    label, which on LE4 is "TK-3" and says nothing."""
+    compact = species.lower().replace(" ", "").replace("-", "")
+    return "lox" if compact in _OXIDISERS else "fuel"
+
+
+def _side(tank: str, diagram: Diagram, fluids: Mapping[str, str]) -> str:
+    """``lox`` or ``fuel``: which leg of the stand a tank is on."""
+    by_id = {n.id: n for n in diagram.nodes}
+    return propellant_side(
+        fluids.get(tank, "") or (by_id[tank].fluid if tank in by_id else "")
+    )
+
+
+def _gse_vents(
+    net: Network,
+    diagram: Diagram,
+    tanks: Mapping[str, TankPorts],
+    fluids: Mapping[str, str],
+    engine_ports: Mapping[str, str],
+    roles: Mapping[str, frozenset[str]],
+) -> list[tuple[PidNode, str]]:
+    """Disconnects on a tank's top that are where its GSE vent couples.
+
+    A flight tank often carries no vent valve of its own: the vent line comes
+    off the ground cart through a quick-disconnect on the tank's top manifold,
+    and the valve that opens it is on the cart. The drawing then shows a QD
+    with nothing beyond it -- LE4's QD_OVA and QD_FVA. Read as capped, which a
+    disconnected QD is, the tank cannot vent at all: the pad's fill boils its
+    ullage up to the critical pressure and the sequence never gets past it.
+
+    So a QD is read as the GSE vent, a valve to atmosphere, when all of these
+    hold, and otherwise stays capped exactly as before:
+
+    * one of its ends is plumbed and the other is not;
+    * the plumbed end reaches one tank's ullage and nothing else fixed -- no
+      outlet, no supply, no engine, no atmosphere (a vent already drawn);
+    * no commandable valve on the drawing already vents that leg; and
+    * it is the only such QD on that tank.
+
+    Returns each QD read this way with the tank it vents. The network is
+    edited in place: the QD's branch becomes a valve and its free end
+    atmosphere.
+    """
+    by_id = {n.id: n for n in diagram.nodes}
+    labels = {n.id: n.label or n.id for n in diagram.nodes}
+    vented = {
+        next(iter(role - {"vent"}))
+        for role in roles.values()
+        if "vent" in role and len(role) == 2
+    }
+    stops = {n.id for n in diagram.nodes if n.type in {"ROT", "SOL", "RV"}}
+    candidates: dict[str, list[tuple[PidNode, str]]] = {}
+    for node in diagram.nodes:
+        if node.type != "QD" or node.id not in net.branches:
+            continue
+        branch = net.branches[node.id]
+        attached = {
+            end
+            for other in net.branches.values()
+            if other is not branch
+            for end in (other.upstream, other.downstream)
+        }
+        ends = (branch.upstream, branch.downstream)
+        free = [end for end in ends if end not in attached]
+        if len(free) != 1 or net.nodes[free[0]].pressure is not None:
+            continue
+        plumbed = ends[1] if free[0] == ends[0] else ends[0]
+        found = _reacher(net, diagram, tanks, engine_ports, stops | {node.id})(plumbed)
+        if len(found["ullage"]) != 1 or any(
+            found[k] for k in ("outlet", "supply", "engine", "ambient")
+        ):
+            continue
+        tank = next(iter(found["ullage"]))
+        if _side(tank, diagram, fluids) in vented:
+            continue
+        candidates.setdefault(tank, []).append((node, free[0]))
+
+    out: list[tuple[PidNode, str]] = []
+    for tank, found_qds in candidates.items():
+        if len(found_qds) != 1:
+            continue  # which of them the cart couples to is not on the drawing
+        node, vent_end = found_qds[0]
+        model = "cd" if "Cd" in node.params else "cv"
+        net.branches[node.id].component = _instance(
+            node.label, "valve", model, node.params, node.options
+        )
+        net.nodes[vent_end] = replace(
+            net.nodes[vent_end], pressure=AMBIENT, phase="gas"
+        )
+        out.append((node, labels.get(tank, tank)))
+    return out
+
+
+#: Which side of a two-port symbol each of pid-designer's ports is. Its inline
+#: symbols (SOL, MAN, ROT, RV, CV, QD, PR) all have exactly ``l`` and ``r``, and
+#: its check valve's artwork and checks both say ``l`` is the inlet
+#: (``CV_INLET`` in its ``ports.ts``). For a symmetric valve the choice only has
+#: to put the two lines on different sides.
+PORT_SIDES: Mapping[str, bool] = {"l": False, "r": True}  # True: the outlet
+
+
+def _sides_by_port(
+    diagram: Diagram, plumbing: list[PidEdge]
+) -> tuple[dict[tuple[str, str], bool], list[str]]:
+    """Where a line's direction cannot say which side of a symbol it is on.
+
+    A line's direction is read as flow -- out of the symbol it leaves, into the
+    one it reaches -- which is right for a drawing authored in flow order and is
+    kept wherever it works. But pid-designer's lines have no direction ("walking
+    any line in either direction", its ``checks.ts``); ``source`` is only the
+    end the mouse started at. Draw a press line from the tank to its solenoid
+    and both of the solenoid's lines *arrive*: both land on its inlet, the
+    outlet hangs open, and step 4b reads the press valve as a vent from the
+    regulator to atmosphere.
+
+    So where direction leaves one side of an inline symbol with nothing on it,
+    and every line on the symbol says which of its ports it was drawn on, the
+    port decides instead. Nothing else changes: a symbol with lines on both
+    sides reads exactly as before, ports or no ports.
+
+    Returns ``{(edge id, node id): outgoing}`` overrides, and one warning per
+    symbol read this way.
+    """
+    ends: dict[str, list[tuple[str, bool, str]]] = {}
+    for edge in plumbing:
+        ends.setdefault(edge.source, []).append((edge.id, True, edge.source_handle))
+        ends.setdefault(edge.target, []).append((edge.id, False, edge.target_handle))
+
+    overrides: dict[tuple[str, str], bool] = {}
+    warnings: list[str] = []
+    for node in diagram.nodes:
+        here = ends.get(node.id, [])
+        if not node.is_inline or len(here) < 2:
+            continue
+        if len({outgoing for _, outgoing, _ in here}) != 1:
+            continue  # lines on both sides already: the direction works
+        ports = {port for _, _, port in here}
+        if ports != set(PORT_SIDES):
+            continue  # nothing to read, or not pid-designer's two ports
+        for edge_id, _, port in here:
+            overrides[(edge_id, node.id)] = PORT_SIDES[port]
+        drawn = "into" if not here[0][1] else "out of"
+        warnings.append(
+            f"{node.label or node.id}: every line was drawn {drawn} it, so its "
+            "inlet and outlet were read from the ports the lines were drawn on "
+            "(l in, r out)."
+        )
+    return overrides, warnings
 
 
 def _attach(
@@ -690,6 +1529,11 @@ def _reach(diagram: Diagram, start: frozenset[str]) -> frozenset[str]:
     pressurant side of a tank and its liquid side are different places, and a
     search that walked straight through would call the whole system one.
     """
+    return _walk(diagram, [n.id for n in diagram.nodes if n.type in start])
+
+
+def _walk(diagram: Diagram, starts: Iterable[str]) -> frozenset[str]:
+    """These symbols and everything they reach short of a vessel or an engine."""
     adjacency: dict[str, list[str]] = {}
     for edge in diagram.edges:
         adjacency.setdefault(edge.source, []).append(edge.target)
@@ -697,7 +1541,7 @@ def _reach(diagram: Diagram, start: frozenset[str]) -> frozenset[str]:
     types = {n.id: n.type for n in diagram.nodes}
 
     seen: set[str] = set()
-    queue = [n.id for n in diagram.nodes if n.type in start]
+    queue = list(starts)
     seen.update(queue)
     while queue:
         current = queue.pop(0)
@@ -730,6 +1574,68 @@ def _vent_reach(diagram: Diagram) -> frozenset[str]:
     return _reach(diagram, AMBIENT_TYPES)
 
 
+def _top_port_reach(diagram: Diagram) -> frozenset[str]:
+    """What is drawn off a tank's top port, and what that reaches short of a
+    vessel.
+
+    Topology alone reads a tank line as ullage when it reaches a supply or
+    atmosphere. A manifold on the tank's top carrying only a transducer, a
+    capped vent disconnect and a relief reaches neither, so it landed on the
+    tank's *liquid outlet*: LE4's LOX vent manifold read as full of liquid, its
+    transducer read the outlet, and the disconnect the GSE vents through could
+    only ever have dumped LOX. The port the line was drawn on says where it is.
+    Only an upright tank's ``t`` ports (a turned-over tank's ``b`` ports) are
+    read this way; at any other turn the port says nothing about up, and
+    topology decides as before.
+    """
+    tanks = {n.id: n for n in diagram.nodes if n.type == "TANK"}
+    types = {n.id: n.type for n in diagram.nodes}
+
+    def on_top(tank: PidNode, handle: str) -> bool:
+        side, number = handle[:1], handle[1:]
+        if side not in {"t", "b"} or not (number == "" or number.isdigit()):
+            return False
+        if tank.rotation == 0.0:
+            return side == "t"
+        if tank.rotation == 180.0:
+            return side == "b"
+        return False
+
+    starts: set[str] = set()
+    for edge in diagram.edges:
+        for end, handle, other in (
+            (edge.source, edge.source_handle, edge.target),
+            (edge.target, edge.target_handle, edge.source),
+        ):
+            tank = tanks.get(end)
+            if tank is None or not on_top(tank, handle):
+                continue
+            if types.get(other) not in {"TANK", "ENGINE", "INJECTOR"}:
+                starts.add(other)
+    return _walk(diagram, starts) if starts else frozenset()
+
+
+def _tank_reliefs(diagram: Diagram) -> frozenset[str]:
+    """Relief valves -- RVs that declare a ``set_pressure`` -- drawn onto a tank.
+
+    They relieve the ullage. A relief exhausting through its own free port has
+    no VENT symbol for :func:`_vent_reach` to find, so without this its line
+    landed on the tank's *outlet* and the relief would have dumped liquid. An RV
+    with no set pressure is not a relief model and keeps its old attachment.
+    """
+    tanks = {n.id for n in diagram.nodes if n.type == "TANK"}
+    reliefs = {
+        n.id for n in diagram.nodes if n.type == "RV" and "set_pressure" in n.params
+    }
+    found: set[str] = set()
+    for edge in diagram.edges:
+        if edge.source in reliefs and edge.target in tanks:
+            found.add(edge.source)
+        elif edge.target in reliefs and edge.source in tanks:
+            found.add(edge.target)
+    return frozenset(found)
+
+
 def _build_dome_loader(
     node: PidNode,
     signal: str,
@@ -743,12 +1649,15 @@ def _build_dome_loader(
     the whole reason its outlet moves during a burn.
     """
     supply = ""
-    for edge in diagram.edges:
-        other = (
-            edge.source
-            if edge.target == node.id
-            else edge.target if edge.source == node.id else ""
-        )
+    # Its inlet port first: on a dome line drawn through solenoids and a mated
+    # disconnect, the first line found can be the dome side.
+    touching = sorted(
+        (e for e in diagram.edges if node.id in (e.source, e.target)),
+        key=lambda e: (e.target_handle if e.target == node.id else e.source_handle)
+        != "l",
+    )
+    for edge in touching:
+        other = edge.source if edge.target == node.id else edge.target
         if other and other in node_of:
             supply = node_of[other]
             break
@@ -759,6 +1668,98 @@ def _build_dome_loader(
     return DomeLoader(
         id=node.id, component=component, signal=signal, supply_node=supply
     )
+
+
+def _dome_lines(
+    diagram: Diagram,
+    loaders: Mapping[str, str],
+) -> dict[str, DomeLine]:
+    """The dome lines drawn from a dome port with a valve on them.
+
+    Walked from the line on the regulator's ``dome`` handle, through junctions,
+    valves, instruments and paired disconnects, to the loader; stopping at
+    vessels, the engine and reliefs, as :func:`_dome_loaders` walks it. A line
+    with no valve on it has nothing to gate: the dome follows its loader as it
+    always did, and none is returned for it.
+    """
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    for node in diagram.nodes:
+        mate = str(node.options.get("pairedWith", "") or "").strip()
+        if node.type == "QD" and mate and mate != "none" and mate in by_id:
+            adjacent.setdefault(node.id, set()).add(mate)
+            adjacent.setdefault(mate, set()).add(node.id)
+    barrier = {"TANK", "KBOTTLE", "DEWAR", "RV", "VENT"} | ENGINE_TYPES
+    out: dict[str, DomeLine] = {}
+    for loader, loaded in loaders.items():
+        ports = frozenset(
+            edge.target if edge.source == loaded else edge.source
+            for edge in diagram.edges
+            if (edge.source == loaded and edge.source_handle == DOME_HANDLE)
+            or (edge.target == loaded and edge.target_handle == DOME_HANDLE)
+        )
+        if not ports:
+            continue
+        seen: set[str] = set()
+        frontier = list(ports)
+        while frontier:
+            here = frontier.pop()
+            if here in seen or here not in by_id or here == loaded:
+                continue
+            seen.add(here)
+            if here == loader or by_id[here].type in barrier:
+                continue
+            frontier.extend(adjacent.get(here, ()))
+        if loader not in seen:
+            continue
+        valves = frozenset(
+            sid
+            for sid in seen
+            if by_id[sid].type in ACTUATED_VALVE_TYPES | HAND_VALVE_TYPES
+        )
+        if not valves:
+            continue
+        # A valve with one line drawn to it vents the line: read off the
+        # drawing, since the flow network never sees a dome line.
+        lines_on = {
+            sid: sum(1 for e in diagram.edges if sid in (e.source, e.target))
+            for sid in valves
+        }
+        out[loaded] = DomeLine(
+            loaded=loaded,
+            loader=loader,
+            adjacent={
+                sid: frozenset(o for o in adjacent.get(sid, ()) if o in seen)
+                for sid in seen
+            },
+            ports=ports,
+            valves=valves,
+            vents=frozenset(v for v in valves if lines_on[v] == 1),
+        )
+    return out
+
+
+def _dome_valve_roles(
+    lines: Mapping[str, DomeLine], ground: frozenset[str]
+) -> dict[str, frozenset[str]]:
+    """The cart's valve on a dome line is the table's "GSE Med Press Control":
+    the medium-pressure circuit that loads the regulator's dome, between the
+    high-pressure charge and the low-pressure pneumatics."""
+    out: dict[str, frozenset[str]] = {}
+    for line in lines.values():
+        for valve in line.valves - line.vents:
+            if valve in ground:
+                out[valve] = frozenset({"gse", "med", "press", "control"})
+    return out
+
+
+def _hand_loaded(node: PidNode) -> bool:
+    """A regulator the drawing gives no setting at all: set by a hand on its
+    knob, not by a number on the sheet (GSE regulators usually are)."""
+    return node.type == "PR" and not ({"setpoint", "dome_pressure"} & set(node.params))
 
 
 def _dome_loaders(diagram: Diagram) -> dict[str, str]:
@@ -776,6 +1777,48 @@ def _dome_loaders(diagram: Diagram) -> dict[str, str]:
         for a, b in ((edge.source, edge.target), (edge.target, edge.source)):
             if a in regulators and a not in loaded and b in loaded:
                 out[a] = b
+    # A dome line is often longer than one line: the control regulator on the
+    # GSE cart, its solenoid, a mated disconnect, the vehicle's dome solenoid,
+    # then the dome port. Walk it from the port -- the line drawn on the
+    # regulator's ``dome`` handle -- through junctions, valves and paired
+    # disconnects, and the one regulator it reaches is the loader. Stops at
+    # vessels, the engine and reliefs; more than one regulator is ambiguous and
+    # left as the operator's knob.
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    for node in diagram.nodes:
+        mate = str(node.options.get("pairedWith", "") or "").strip()
+        if node.type == "QD" and mate and mate != "none" and mate in by_id:
+            adjacent.setdefault(node.id, set()).add(mate)
+            adjacent.setdefault(mate, set()).add(node.id)
+    barrier = {"TANK", "KBOTTLE", "DEWAR", "RV", "VENT"} | ENGINE_TYPES
+    for b in sorted(loaded - set(out.values())):
+        starts = [
+            edge.target if edge.source == b else edge.source
+            for edge in diagram.edges
+            if (edge.source == b and edge.source_handle == DOME_HANDLE)
+            or (edge.target == b and edge.target_handle == DOME_HANDLE)
+        ]
+        found: set[str] = set()
+        seen = {b}
+        frontier = list(starts)
+        while frontier:
+            here = frontier.pop()
+            if here in seen or here not in by_id:
+                continue
+            seen.add(here)
+            kind = by_id[here].type
+            if kind == "PR":
+                found.add(here)
+                continue
+            if kind in barrier:
+                continue
+            frontier.extend(adjacent.get(here, ()))
+        if len(found) == 1:
+            out[found.pop()] = b
     return out
 
 
@@ -786,6 +1829,8 @@ def _attach_engine(
     fluids: Mapping[str, str],
     temperatures: Mapping[str, float],
     default_temperature: float,
+    *,
+    into_engine: Mapping[str, str] = {},
 ) -> tuple[dict[str, str], list[str]]:
     """Replace the engine boundary with a real injector face and chamber.
 
@@ -834,7 +1879,9 @@ def _attach_engine(
             if edge.target == symbol.id
             else edge.target if edge.source == symbol.id else None
         )
-        if other is None or edge.id not in net.branches:
+        if other is None or (
+            edge.id not in net.branches and edge.id not in into_engine
+        ):
             continue
         species = fluids.get(other, "")
         if species == ox_species:
@@ -855,6 +1902,14 @@ def _attach_engine(
             )
             continue
 
+        if edge.id in into_engine:
+            # Drawn straight into the engine with no line between: the
+            # injector leg starts at the part it is joined to.
+            branch_id = f"{symbol.id}.{side}.injector"
+            if branch_id not in net.branches:
+                net.add_branch(branch_id, leg, into_engine[edge.id], chamber)
+            ports[side] = branch_id
+            continue
         face = f"{symbol.id}.{side}"
         if face not in net.nodes:
             # The face is at the temperature of the line arriving at it, not
@@ -989,14 +2044,23 @@ def _tank_warnings(
         )
         return out
 
-    if node.params.get("temperature") is not None:
-        return out
-
     try:
         from feedtwin.props import Fluid
 
         probe = Fluid(fluid)
         if probe.phase(p=pressure, T=temperature).is_liquid_like:
+            return out
+        if node.params.get("temperature") is not None:
+            # Stated, and still a gas: not a missing temperature but a vessel
+            # of gas drawn with the propellant-tank symbol. pid-designer offers
+            # "copv" as a tank *wall material*, which makes this easy to do --
+            # and then nothing on the drawing supplies the press lines.
+            out.append(
+                f"{label} holds {fluid} at {temperature:.0f} K, which is a gas, "
+                "and is drawn as a TANK, so it is read as a propellant tank and "
+                "nothing on the drawing supplies the press lines. If it is the "
+                "pressurant, draw it as a Pressurant bottle (KBOTTLE)."
+            )
             return out
         saturation = probe.get("T", p=pressure, q=0.0)
     except Exception:  # noqa: BLE001 - a property gap must not stop a build
@@ -1023,6 +2087,10 @@ def _kind_and_model(node: PidNode) -> tuple[str, str]:
     full-open valve, which is what a QD is hydraulically.
     """
     kind, model = BRANCH_KINDS[node.type]
+    if node.type == "RV" and "set_pressure" in node.params:
+        # A relief that says when it lifts is a relief. One that does not stays
+        # the Cv valve it always was (and build_network says so).
+        return "relief_valve", "spring"
     has_cd = "Cd" in node.params
     has_cv = "Cv" in node.params
     if node.type == "QD" and (has_cd or has_cv):
@@ -1034,6 +2102,10 @@ def _kind_and_model(node: PidNode) -> tuple[str, str]:
 
 def _pressure(node: PidNode) -> float | None:
     param = node.params.get("pressure")
+    if param is None and node.type in ENGINE_TYPES:
+        # pid-designer's engine symbol asks for "Chamber pressure" and saves it
+        # as `chamber_pressure`; the drawings written by hand say `pressure`.
+        param = node.params.get("chamber_pressure")
     return param.si if param is not None else None
 
 

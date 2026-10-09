@@ -39,8 +39,18 @@ bool SensorCalibrationManager::load_from_json(const std::string& json_path) {
     }
     // Coefficients live under "calibration_polynomials" when present, else at the top level
     // ({"1": [c0, c1, ...], ...}).
+    //
+    // A load cell reads its OWN namespace first. PT and LC share a logical-channel space
+    // (slot 2 connector 1 is channel 11 for both a PT board 22 and an LC board 42), so a
+    // single map let one overwrite the other — a load cell's curve landed on a 5000 psi
+    // transducer's channel on 2026-09-13. The lc_ map is written separately now; the fallback
+    // chain keeps files written before that split readable.
+    const std::string own_key =
+        sensor_type_ == "LC" ? "lc_calibration_polynomials" : "calibration_polynomials";
     const nlohmann::json& poly =
-        (root.contains("calibration_polynomials") && root["calibration_polynomials"].is_object())
+        (root.contains(own_key) && root[own_key].is_object() && !root[own_key].empty())
+            ? root[own_key]
+        : (root.contains("calibration_polynomials") && root["calibration_polynomials"].is_object())
             ? root["calibration_polynomials"]
             : root;
     if (!poly.is_object())

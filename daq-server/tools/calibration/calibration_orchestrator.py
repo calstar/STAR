@@ -64,6 +64,7 @@ try:
         get_boards,
         build_orchestrator_key_to_packet_ch,
         is_current_loop_board,
+        active_connectors as board_active_connectors,
     )
 
     _cfg_loaded = True
@@ -138,7 +139,10 @@ class SensorTypeInfo:
     ref_prompt: str
     board_ip: Optional[str]
     udp_port: int
-    num_sensors: int
+    # The connectors this board samples, straight from active_connectors — the config's
+    # only statement of which channels exist. Not a count: a board may declare {1, 2, 6},
+    # so anything that walks channels must walk this list, never range(1, n + 1).
+    connectors: List[int]
     calibration_dir: Path
     enabled: bool
 
@@ -146,28 +150,30 @@ class SensorTypeInfo:
 def _build_sensor_types() -> Dict[str, SensorTypeInfo]:
     types = {}
     defs = {
-        "PT": ("PSI", "pressure (PSI)", "192.168.2.101", 10),
-        "TC": ("°C", "temperature (°C)", "192.168.2.103", 10),
-        "RTD": ("°C", "temperature (°C)", "192.168.2.104", 4),
-        "LC": ("lbs", "force (lbs)", "192.168.2.102", 4),
+        "PT": ("PSI", "pressure (PSI)", "192.168.2.101", list(range(1, 11))),
+        "TC": ("°C", "temperature (°C)", "192.168.2.103", list(range(1, 11))),
+        "RTD": ("°C", "temperature (°C)", "192.168.2.104", list(range(1, 5))),
+        "LC": ("lbs", "force (lbs)", "192.168.2.102", list(range(1, 5))),
     }
     base_cal = Path(__file__).parent / "calibrations"
-    for name, (unit, prompt, fallback_ip, fallback_n) in defs.items():
-        ip, n, port, enabled = fallback_ip, fallback_n, 5006, True
+    for name, (unit, prompt, fallback_ip, fallback_conns) in defs.items():
+        ip, conns, port, enabled = fallback_ip, fallback_conns, 5006, True
         cal_dir = base_cal / name.lower() if name != "PT" else base_cal
         if _cfg_loaded:
             port = get_sensor_port()
             b = get_board_by_type(name)
             if b:
                 ip = b.get("ip", fallback_ip)
-                n = b.get("num_sensors", fallback_n)
+                conns = board_active_connectors(b) or fallback_conns
                 enabled = b.get("enabled", True)
             cc = get_calibration_config(name.lower())
             jd = cc.get("json_dir")
             if jd:
                 cal_dir = resolve_path(jd)
         cal_dir.mkdir(parents=True, exist_ok=True)
-        types[name] = SensorTypeInfo(name, unit, prompt, ip, port, n, cal_dir, enabled)
+        types[name] = SensorTypeInfo(
+            name, unit, prompt, ip, port, conns, cal_dir, enabled
+        )
     return types
 
 
@@ -307,7 +313,7 @@ class CalibrationOrchestrator:
             if not boards:
                 # Fallback: use single board info from SensorTypeInfo
                 board_ip = info.board_ip or "unknown"
-                active = list(range(1, info.num_sensors + 1))  # Default: all connectors
+                active = list(info.connectors)
                 self.active_connectors[(stype, board_ip)] = active
                 self.board_ip_to_type[board_ip] = stype
                 logger.info(
@@ -329,16 +335,9 @@ class CalibrationOrchestrator:
                         continue
                     board_ip = board.get("ip", info.board_ip or "unknown")
                     board_name = board.get("name", "unknown")
-                    num_sensors = board.get("num_sensors", info.num_sensors)
-
-                    # Get active connectors for this specific board
-                    active = list(range(1, num_sensors + 1))  # Default: all connectors
-                    if "active_connectors" in board:
-                        active_cfg = board.get("active_connectors", [])
-                        if active_cfg:  # If specified, use only those
-                            active = [
-                                int(c) for c in active_cfg if 1 <= int(c) <= num_sensors
-                            ]
+                    # active_connectors is the board's whole channel list; a board with
+                    # an empty one samples nothing, so there is no range to fall back to.
+                    active = board_active_connectors(board)
 
                     self.active_connectors[(stype, board_ip)] = active
                     self.board_ip_to_type[board_ip] = stype
@@ -752,7 +751,7 @@ class CalibrationOrchestrator:
         print("        ALL channels benefit via hierarchical Bayesian transfer.")
         print(f"{'─'*72}")
         types_str = ", ".join(
-            f"{n}({i.num_sensors}ch)" for n, i in self.sensor_types.items()
+            f"{n}({len(i.connectors)}ch)" for n, i in self.sensor_types.items()
         )
         print(f"  Sensors: {types_str}")
         print(f"  IP map:  {self.ip_to_type}")
@@ -777,7 +776,7 @@ class CalibrationOrchestrator:
                 val = float(parts[2])
                 if stype in self.sensor_types:
                     info = self.sensor_types[stype]
-                    for ch in range(1, info.num_sensors + 1):
+                    for ch in info.connectors:
                         self.references[(stype, ch)] = val
                     print(f"  ✅ {stype} all → {val} {info.unit}")
                 else:
@@ -1432,9 +1431,9 @@ class CalibrationOrchestrator:
         print(f"{'─'*78}")
         for stype, info in self.sensor_types.items():
             print(
-                f"  {stype} ({info.unit})  board={info.board_ip}  ch={info.num_sensors}"
+                f"  {stype} ({info.unit})  board={info.board_ip}  ch={len(info.connectors)}"
             )
-            for ch in range(1, info.num_sensors + 1):
+            for ch in info.connectors:
                 key = (stype, ch)
                 rcf = self.robust[key]
                 buf = self.live_adc.get(key)

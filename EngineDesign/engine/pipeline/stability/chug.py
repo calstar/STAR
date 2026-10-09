@@ -37,17 +37,23 @@ from engine.pipeline.stability import core
 @dataclass
 class Regulator:
     """Dome-regulator model. Z_reg(s) is a high-pass: ~0 below the corner (regulated), -> Z_hf above
-    (regulator can't keep up). Z_hf defaults to 0 = perfect source (optimistic baseline). The forcing
-    bound ``max_excursion_pa`` is reported, NOT used in the characteristic equation.  [Phys §6.1]
+    (regulator can't keep up). Z_hf = 0 means the regulator is NOT MODELLED: the feed sees an ideal
+    pressure source, which is what a dome regulator plus ullage is at the ~100 Hz chug band. The
+    forcing bound ``max_excursion_pa`` is reported, NOT used in the characteristic equation.  [Phys §6.1]
     """
     corner_hz: float = 3.0
-    Z_hf: float = 0.0          # Pa·s/kg, high-frequency series impedance (ASSUMED; measure T6)
-    max_excursion_pa: float = 0.0   # forcing bound (reporting only; the "±14 psi" assumption)
+    Z_hf: float = 0.0          # Pa·s/kg, high-frequency series impedance (unset until the T6 step test)
+    max_excursion_pa: float = 0.0   # forcing bound (reporting only)
     enabled: bool = True
+
+    @property
+    def modelled(self) -> bool:
+        """True only when the regulator can change the loop: enabled AND a measured Z_hf."""
+        return bool(self.enabled and self.Z_hf > 0.0)
 
     def impedance(self, s: complex) -> complex:
         """Series impedance Z_reg(s) [Pa·s/kg]. High-pass toward Z_hf above the corner."""
-        if not self.enabled or self.Z_hf <= 0.0:
+        if not self.modelled:
             return 0.0 + 0.0j
         wc = 2.0 * np.pi * max(self.corner_hz, 1e-6)
         return complex(self.Z_hf) * (s / wc) / (1.0 + s / wc)
@@ -93,9 +99,17 @@ class ChugChamber:
     Lstar: float
     gamma: float
     theta_factor: float = 1.0   # O(1) calibration on theta_c (mass vs mass+energy) [Phys §3.1]
+    R_gas: Optional[float] = None   # J/(kg K), chamber gas constant; with T_c gives theta from the state
+    T_c: Optional[float] = None     # K, chamber temperature the rest of the model uses
 
     def theta_c(self) -> float:
-        return self.theta_factor * core.chamber_residence_time(self.Lstar, self.cstar, self.gamma)
+        """Gas residence time m_gas/mdot. From the chamber state, L* c*/(R T), when R and T are
+        given; otherwise the ideal-c* identity L*/(Gamma^2 c*)."""
+        if self.R_gas is not None and self.T_c is not None and self.R_gas > 0 and self.T_c > 0:
+            th = core.chamber_residence_time_from_state(self.Lstar, self.cstar, self.R_gas, self.T_c)
+        else:
+            th = core.chamber_residence_time(self.Lstar, self.cstar, self.gamma)
+        return self.theta_factor * th
 
     def K_c(self) -> float:
         return core.chamber_gain(self.cstar, self.A_t)
@@ -141,7 +155,7 @@ def _open_loop_grid(omega: np.ndarray, streams: List[ChugStream], chamber: ChugC
     for st in streams:
         G = st.G_inj()
         Zr = 0.0 + 0.0j
-        if with_regulator and st.regulator.enabled and st.regulator.Z_hf > 0.0:
+        if with_regulator and st.regulator.modelled:
             wc = 2.0 * np.pi * max(st.regulator.corner_hz, 1e-6)
             Zr = complex(st.regulator.Z_hf) * (s_arr / wc) / (1.0 + s_arr / wc)
         Zf = Zr + st.inertance() * s_arr + st.resistance() + (1.0 / G if G > 0 else np.inf)
@@ -178,57 +192,70 @@ def _freq_grid(f_lo: float = 2.0, f_hi: float = 2000.0, n: int = 200) -> np.ndar
     return _freq_grid_cached(f_lo, f_hi, n)
 
 
+def _negative_axis_crossings(omega: np.ndarray, L: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """(omega_c, |L|_c) where L(iw) crosses the negative real axis: Im L changes sign with Re L < 0.
+
+    Every such crossing is a phase of -pi - 2*pi*k. Testing the unwrapped phase against -pi alone
+    (the old rule) misses k >= 1, where a slow second stream can put the loop's largest gain.
+    """
+    im, re = L.imag, L.real
+    i0, i1 = im[:-1], im[1:]
+    hits = np.flatnonzero((i0 == 0.0) | (i0 * i1 < 0.0))
+    if hits.size == 0:
+        return np.empty(0), np.empty(0)
+    di = im[hits] - im[hits + 1]
+    safe = di != 0.0
+    frac = np.where(safe, im[hits] / np.where(safe, di, 1.0), 0.0)
+    re_c = re[hits] + frac * (re[hits + 1] - re[hits])
+    w_c = omega[hits] + frac * (omega[hits + 1] - omega[hits])
+    neg = re_c < 0.0
+    return w_c[neg], -re_c[neg]
+
+
 def chug_margin_fast(streams: List[ChugStream], chamber: ChugChamber,
                      *, with_regulator: bool = True,
                      f_lo: float = 2.0, f_hi: float = 2000.0) -> Dict[str, float]:
     """Fast chug margin via the Nyquist gain margin of L(iw). No root-find.  [Phys §3.2 fast form]
 
-    Char. eq 1+L=0 => instability when L(iw) passes through -1. At the **phase crossover** (where L is
-    real-negative, angle = -180 deg), the gain margin GM = 1/|L| < 1 means encirclement => unstable.
+    Char. eq 1+L=0 => instability when L(iw) encircles -1. L is open-loop stable (chamber and feed
+    poles are real and negative; delays add none), so the loop is stable when L stays inside the
+    unit circle wherever it crosses the negative real axis: GM = 1 / max |L| over ALL those
+    crossings (phase -pi, -3pi, ...), and GM < 1 means encirclement.
 
-    Returns dict: ``gain_margin`` (>1 stable), ``stable`` (bool), ``f_chug_hz`` (phase-crossover freq,
-    the chug-frequency estimate), ``phase_margin_deg``, ``margin`` (= gain_margin, gate-facing).
+    Returns dict: ``gain_margin`` (>1 stable), ``stable`` (bool), ``f_chug_hz`` (frequency of the
+    worst crossing, the chug-frequency estimate), ``crossings_hz`` (every negative-axis crossing,
+    for seeding the root-find), ``phase_margin_deg``, ``margin`` (= gain_margin).
     """
     omega = _freq_grid(f_lo, f_hi)
     L = _open_loop_grid(omega, streams, chamber, with_regulator=with_regulator)
     phase = np.unwrap(np.angle(L))
     mag = np.abs(L)
 
-    # Phase crossover: angle crosses -180 deg (-pi). Find sign changes of (phase + pi).
-    target = -np.pi
-    g = phase - target
     gm_best = np.inf
     f_pc = float("nan")
-    # Vectorised sign-change scan. argmin returns the FIRST minimum, matching the
-    # scalar loop's strict `gm < gm_best` (which also kept the earliest tie).
-    g0, g1 = g[:-1], g[1:]
-    hits = np.flatnonzero((g0 == 0.0) | (g0 * g1 < 0.0))
-    if hits.size:
-        dg = g[hits] - g[hits + 1]
-        safe = dg != 0.0
-        frac = np.where(safe, g[hits] / np.where(safe, dg, 1.0), 0.0)
-        w_c = omega[hits] + frac * (omega[hits + 1] - omega[hits])
-        mag_c = mag[hits] + frac * (mag[hits + 1] - mag[hits])
-        pos = mag_c > 0
-        gm = np.where(pos, 1.0 / np.where(pos, mag_c, 1.0), np.inf)
-        k = int(np.argmin(gm))          # worst-case (smallest) gain margin
-        gm_best = float(gm[k])
+    w_c, mag_c = _negative_axis_crossings(omega, L)
+    if w_c.size:
+        k = int(np.argmax(mag_c))       # worst-case (smallest) gain margin; first on a tie
+        gm_best = float(1.0 / mag_c[k]) if mag_c[k] > 0 else np.inf
         f_pc = float(w_c[k] / (2.0 * np.pi))
 
-    # Phase margin at gain crossover (|L|=1), if any
+    # Phase margin: the smallest angular distance to the negative real axis over every gain
+    # crossover (|L| = 1). Wrapped, so a crossover near -3pi reads as near 0, not -360 deg.
     pm_deg = float("nan")
     h = mag - 1.0
     h0, h1 = h[:-1], h[1:]
     gain_hits = np.flatnonzero((h0 == 0.0) | (h0 * h1 < 0.0))
     if gain_hits.size:
-        i = int(gain_hits[0])           # scalar loop broke at the FIRST crossing
-        dh = h[i] - h[i + 1]
-        frac = h[i] / dh if dh != 0 else 0.0
-        ph_c = phase[i] + frac * (phase[i + 1] - phase[i])
-        pm_deg = float(np.degrees(ph_c - target))  # phase above -180
+        dh = h[gain_hits] - h[gain_hits + 1]
+        frac = np.where(dh != 0.0, h[gain_hits] / np.where(dh != 0.0, dh, 1.0), 0.0)
+        ph_c = phase[gain_hits] + frac * (phase[gain_hits + 1] - phase[gain_hits])
+        dist = np.mod(ph_c + np.pi, 2.0 * np.pi)          # angle above the negative axis, [0, 2pi)
+        dist = np.where(dist > np.pi, dist - 2.0 * np.pi, dist)
+        pm_deg = float(np.degrees(dist[np.argmin(np.abs(dist))]))
 
     if not np.isfinite(gm_best):
-        # No phase crossover in band: stable if |L|<1 throughout (no encirclement possible)
+        # No negative-axis crossing in band. Conservative: 1/max|L| (the old behaviour), which can
+        # only understate the margin.
         gm_best = float(1.0 / max(mag.max(), 1e-12))
         gm_best = max(gm_best, 1.0) if mag.max() < 1.0 else gm_best
 
@@ -237,6 +264,7 @@ def chug_margin_fast(streams: List[ChugStream], chamber: ChugChamber,
         "gain_margin": float(gm_best),
         "stable": bool(stable),
         "f_chug_hz": float(f_pc),
+        "crossings_hz": [float(w / (2.0 * np.pi)) for w in w_c],
         "phase_margin_deg": pm_deg,
         "margin": float(gm_best),
     }
@@ -253,7 +281,10 @@ def _solve_dominant_root(streams: List[ChugStream], chamber: ChugChamber,
 
     def residual(x):
         s = complex(x[0], x[1])
-        F = chug_characteristic(s, streams, chamber, with_regulator=with_regulator)
+        # fsolve probes far into the left half-plane, where exp(-s*tau) overflows; that trial
+        # point is simply rejected, so the warning is noise.
+        with np.errstate(over="ignore", invalid="ignore"):
+            F = chug_characteristic(s, streams, chamber, with_regulator=with_regulator)
         return [F.real, F.imag]
 
     w0 = omega_seed if (np.isfinite(omega_seed) and omega_seed > 0) else 2 * np.pi * 100.0
@@ -274,6 +305,22 @@ def _solve_dominant_root(streams: List[ChugStream], chamber: ChugChamber,
     return best
 
 
+def _dominant_root(streams: List[ChugStream], chamber: ChugChamber, fast_res: Dict[str, float],
+                   *, with_regulator: bool = True) -> Tuple[float, float, float]:
+    """The most unstable root of F(s) = 0: seeded at every negative-real-axis crossing of L(iw)
+    (``fast_res``, from ``chug_margin_fast``), the largest alpha kept. (alpha, omega, |F|)."""
+    seeds = [2 * np.pi * f for f in fast_res.get("crossings_hz", []) if np.isfinite(f) and f > 0]
+    if not seeds:
+        f0 = fast_res.get("f_chug_hz", float("nan"))
+        seeds = [2 * np.pi * f0 if np.isfinite(f0) else 2 * np.pi * 100.0]
+    best = (float("nan"), float("nan"), float("inf"))
+    for w0 in seeds:
+        a, w, r = _solve_dominant_root(streams, chamber, with_regulator=with_regulator, omega_seed=w0)
+        if np.isfinite(a) and (not np.isfinite(best[0]) or a > best[0]):
+            best = (a, w, r)
+    return best
+
+
 def _dominant_driver(streams: List[ChugStream], s: complex) -> str:
     """Heuristic: which feed term dominates |Z_feed| at the root -> the limiting physics."""
     drivers = {"feed_inertance": 0.0, "feed_resistance": 0.0, "injector_stiffness": 0.0, "regulator": 0.0}
@@ -286,25 +333,158 @@ def _dominant_driver(streams: List[ChugStream], s: complex) -> str:
     return max(drivers, key=drivers.get)
 
 
+def damping_ratio(sigma: float, omega: float) -> float:
+    """Damping ratio of a complex pole ``s = sigma + j*omega``: ``zeta = -sigma / |s|``.
+
+    This is the standard definition — the cosine of the pole's angle from the negative real axis —
+    and it is what a constant-zeta ray on a root locus means. (An earlier version of this module
+    reported ``-sigma/omega``, which is ``zeta/sqrt(1-zeta^2)``: indistinguishable below zeta ~ 0.1
+    and 15 % off by zeta = 0.5, so a pole plotted against its own reported zeta did not sit on the
+    ray. Fixed here so the diagram and the number agree.)
+    """
+    mag = float(np.hypot(sigma, omega))
+    if not np.isfinite(mag) or mag <= 0:
+        return float("nan")
+    return float(-sigma / mag)
+
+
+def _solve_root_near(streams: List[ChugStream], chamber: ChugChamber, s0: complex,
+                     *, with_regulator: bool = True) -> Tuple[float, float, float]:
+    """Single-seed Newton solve for the root of F(s)=0 nearest ``s0``. (alpha, omega, |F|).
+
+    The continuation step of the root locus: each point seeds from its predecessor, so one fsolve
+    per point is enough. ``_solve_dominant_root`` fans out over nine seeds because it has no
+    predecessor to start from; doing that per locus point would cost ~40x for no extra accuracy.
+    """
+    from scipy.optimize import fsolve
+
+    def residual(x):
+        with np.errstate(over="ignore", invalid="ignore"):
+            F = chug_characteristic(complex(x[0], x[1]), streams, chamber,
+                                    with_regulator=with_regulator)
+        return [F.real, F.imag]
+
+    try:
+        sol, _, ier, _ = fsolve(residual, [s0.real, s0.imag], full_output=True)
+    except Exception:
+        return float("nan"), float("nan"), float("inf")
+    if ier != 1:
+        return float("nan"), float("nan"), float("inf")
+    resF = abs(complex(*residual(sol)))
+    if resF > 1e-6 or sol[1] <= 0:
+        return float("nan"), float("nan"), float("inf")
+    return float(sol[0]), float(sol[1]), float(resF)
+
+
+def mean_eta(streams: List[ChugStream]) -> float:
+    """Mass-flow-weighted injector stiffness of the streams."""
+    m = sum(max(float(s.mdot), 0.0) for s in streams)
+    return float(sum(float(s.mdot) * float(s.eta_inj) for s in streams) / m) if m > 0 else float("nan")
+
+
+def chug_root_locus(streams: List[ChugStream], chamber: ChugChamber,
+                    *, eta_values: Optional[np.ndarray] = None,
+                    with_regulator: bool = True, scale_design: bool = False) -> List[Dict[str, float]]:
+    """Track the dominant chug pole through the s-plane as injector stiffness sweeps.
+
+    This is a root locus in the textbook sense: ``eta_inj = dP_inj/Pc`` is the swept gain, and each
+    returned point is the eigenvalue ``s = sigma + j*omega`` of the closed-loop characteristic
+    equation ``1 + L(s) = 0`` at that gain. The imaginary axis is the stability boundary — the
+    branch crosses it where the loop goes neutrally stable, and the crossing frequency is the chug
+    frequency the engine would ring at.
+
+    Solved by continuation from the softest injector upward, each point seeded on its predecessor,
+    which is the standard way to follow a branch rather than re-discover it. Honest caveat: on every
+    case tried so far (lags 0.8-9 ms, feed runs 0.08-1.5 m, eta from 0.02 to 1.2) a single fixed seed
+    found the same branch, so the continuation is insurance against branch-hopping rather than a
+    demonstrated fix for it. ``test_locus_is_continuous_in_frequency`` checks the OUTPUT is a branch;
+    it does not, and cannot currently, distinguish the two seeding strategies.
+
+    ``scale_design``: each value is the streams' mass-weighted mean stiffness, reached by scaling
+    every stream's OWN drop by one factor, so the design (unequal drops and all) sits exactly on
+    the branch at its own mean. Off, every stream is set to the same eta.
+
+    Returns points in ascending ``eta`` with keys ``eta``, ``real``, ``imag``, ``f_hz``, ``zeta``.
+    Points where the branch could not be followed are dropped, so the caller gets a clean polyline.
+    """
+    import copy
+    eta0 = mean_eta(streams) if scale_design else float("nan")
+
+    if eta_values is None:
+        eta_values = np.linspace(0.05, 0.60, 28)
+    etas = np.asarray(sorted(float(e) for e in eta_values if np.isfinite(e) and e > 0))
+    if etas.size == 0:
+        return []
+
+    def scaled(eta: float) -> List[ChugStream]:
+        out = []
+        for st in streams:
+            st2 = copy.copy(st)
+            st2.eta_inj = float(st.eta_inj) * eta / eta0 if scale_design else float(eta)
+            out.append(st2)
+        return out
+
+    # Seed the branch from the fast tier's phase crossover at the softest injector, where the loop
+    # is most strongly coupled and the dominant root is least ambiguous.
+    seed_streams = scaled(etas[0])
+    fast = chug_margin_fast(seed_streams, chamber, with_regulator=with_regulator)
+    w0 = 2 * np.pi * fast["f_chug_hz"] if np.isfinite(fast["f_chug_hz"]) else 2 * np.pi * 100.0
+    s_prev = complex(0.0, w0)
+
+    pts: List[Dict[str, float]] = []
+    for eta in etas:
+        st = scaled(eta)
+        a, w, res = _solve_root_near(st, chamber, s_prev, with_regulator=with_regulator)
+        # The branch that matters is the DOMINANT root (the one chug_growth_rate reports for the
+        # design). Following one seed from the softest injector can stay on a subdominant root:
+        # on a design with LOX at eta 0.25 and fuel at 0.10 it passed the design at -79 s^-1,
+        # 50 Hz while the design's own pole was -40 s^-1, 23 Hz. So each point also runs the
+        # dominant-root search and keeps whichever root grows faster.
+        ad, wd, rd = _dominant_root(st, chamber, chug_margin_fast(st, chamber, with_regulator=with_regulator),
+                                    with_regulator=with_regulator)
+        if np.isfinite(ad) and np.isfinite(wd) and wd > 0 and (not np.isfinite(a) or ad > a + 1e-9):
+            a, w, res = ad, wd, rd
+        if not (np.isfinite(a) and np.isfinite(w) and w > 0):
+            # Lost the branch: re-acquire from the frequency scan rather than abandoning the sweep.
+            f2 = chug_margin_fast(st, chamber, with_regulator=with_regulator)
+            if not np.isfinite(f2["f_chug_hz"]):
+                continue
+            a, w, res = _solve_root_near(st, chamber, complex(0.0, 2 * np.pi * f2["f_chug_hz"]),
+                                         with_regulator=with_regulator)
+            if not (np.isfinite(a) and np.isfinite(w) and w > 0):
+                continue
+        s_prev = complex(a, w)
+        pts.append({
+            "eta": float(eta), "real": float(a), "imag": float(w),
+            "f_hz": float(w / (2 * np.pi)), "zeta": damping_ratio(a, w),
+        })
+    return pts
+
+
 def chug_growth_rate(streams: List[ChugStream], chamber: ChugChamber,
                      *, with_regulator: bool = True) -> Dict[str, float]:
     """Rich chug analysis: dominant growth rate alpha and frequency from root-find of (3.3).
 
-    Returns dict: ``alpha`` [1/s], ``f_chug_hz``, ``zeta`` (= -alpha/omega), ``margin`` (= 1+zeta),
-    ``stable``, ``alpha_no_reg`` (Z_reg=0 comparison), ``driver``, ``residual``.
+    The root-find is seeded at EVERY negative-real-axis crossing of L(iw) and keeps the root with
+    the largest alpha; seeding only at the -pi crossing found a stable root while a -3pi one grew.
+
+    Returns dict: ``alpha`` [1/s], ``f_chug_hz``, ``zeta`` (= -alpha/|s|), ``margin`` (= 1+zeta),
+    ``stable``, ``regulator_status``, ``alpha_no_reg`` (only when a regulator is modelled; None
+    otherwise), ``driver``, ``residual``.
     """
     fast = chug_margin_fast(streams, chamber, with_regulator=with_regulator)
-    omega_seed = 2 * np.pi * fast["f_chug_hz"] if np.isfinite(fast["f_chug_hz"]) else 2 * np.pi * 100.0
 
-    alpha, omega, resF = _solve_dominant_root(streams, chamber, with_regulator=with_regulator,
-                                              omega_seed=omega_seed)
+    def dominant(with_reg: bool, fast_res: Dict[str, float]) -> Tuple[float, float, float]:
+        return _dominant_root(streams, chamber, fast_res, with_regulator=with_reg)
+
+    alpha, omega, resF = dominant(with_regulator, fast)
     out: Dict[str, float] = {
         "alpha": alpha,
         "f_chug_hz": float(omega / (2 * np.pi)) if np.isfinite(omega) else float("nan"),
         "residual": resF,
     }
     if np.isfinite(alpha) and np.isfinite(omega) and omega > 0:
-        zeta = -alpha / omega
+        zeta = damping_ratio(alpha, omega)
         out["zeta"] = float(zeta)
         out["margin"] = float(1.0 + zeta)
         out["stable"] = bool(alpha < 0.0)
@@ -316,10 +496,14 @@ def chug_growth_rate(streams: List[ChugStream], chamber: ChugChamber,
         out["stable"] = bool(fast["stable"])
         out["driver"] = "unknown"
 
-    # Regulator contribution: solve again with Z_reg = 0 for the with/without comparison
-    if with_regulator:
-        a_nr, _, _ = _solve_dominant_root(streams, chamber, with_regulator=False, omega_seed=omega_seed)
+    # Regulator: a with/without comparison only means something when Z_reg is modelled. With
+    # Z_hf unset both solves are the same equation, and printing two equal alphas implied a check
+    # that never happened.
+    if with_regulator and any(st.regulator.modelled for st in streams):
+        out["regulator_status"] = "modelled"
+        a_nr, _, _ = dominant(False, chug_margin_fast(streams, chamber, with_regulator=False))
         out["alpha_no_reg"] = a_nr
     else:
-        out["alpha_no_reg"] = alpha
+        out["regulator_status"] = "not_modelled"
+        out["alpha_no_reg"] = None
     return out

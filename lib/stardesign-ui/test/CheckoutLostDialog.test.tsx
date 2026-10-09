@@ -71,6 +71,20 @@ describe('when the hold has gone', () => {
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Dana');
   });
 
+  it('says where the edits that could not be saved were kept', () => {
+    const savedAs = 'LE4 (unsaved changes, 2026-10-03 17:40 UTC)';
+    render(<CheckoutLostDialog checkout={lost({ holderName: 'Dana', savedAs })} noun="diagram" />);
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent(savedAs);
+    // ...and no longer claims they exist only on screen.
+    expect(dialog).not.toHaveTextContent(/still on screen/i);
+  });
+
+  it('still warns that edits are only on screen when nothing was kept', () => {
+    render(<CheckoutLostDialog checkout={lost({ holderName: 'Dana' })} noun="design" />);
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/still on screen/i);
+  });
+
   it('marks the tab, so it is visible from another one', () => {
     // The dialog only helps if you are looking at the page. The title is what reaches
     // someone who is in a different tab entirely.

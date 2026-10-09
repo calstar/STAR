@@ -3,7 +3,7 @@ import { Modal } from '../ui';
 import { btn, primaryBtn } from '../../lib/ui';
 import { COMPONENT_SPECS, LINE_SPECS, PEER_CHOICES } from './spec';
 import type { ComponentSpec, OptionSpec, ParamSpec, PortGroupSpec } from './spec';
-import { UNITS } from './params';
+import { pressureNote, unitsFor } from './params';
 import type { ParamValue } from './params';
 import { fromDraft, isVerified, pickProvenance, placeholderFor, toDraft } from './drafts';
 import type { Draft } from './drafts';
@@ -12,7 +12,7 @@ import type { PortInfo, PortKind } from './ports';
 import { defaultTemperatureK, speciesById } from './fluids';
 import { deriveLineParams, deriveParams, supplyCoefficient } from './derive';
 import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
-import { toPa } from './params';
+import { toAbsolutePa } from './params';
 import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
 import { fittingCount } from './segments';
@@ -83,7 +83,15 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const [partNumber, setPartNumber] = useState(data.partNumber ?? '');
   const [segments, setSegments] = useState<LineSegment[]>([]);
   const [geometry, setGeometry] = useState<ManifoldGeometry | undefined>(undefined);
+  // The Geometry editor's layout, when somebody has moved something in it.
+  // Kept apart from `geometry`, which is what the editor opens on: fed back
+  // into it, every drag would become the editor's new starting point.
+  const [geometryEdit, setGeometryEdit] = useState<ManifoldGeometry | undefined>(undefined);
   const [sketch, setSketch] = useState<Sketch | null>(null);
+  // How many times the fields above have been filled from `data`. Zero means
+  // not yet: they start empty and an effect fills them after the first render,
+  // so anything that reads them once, on mount, has to wait for this.
+  const [loaded, setLoaded] = useState(0);
 
   const spec: ComponentSpec | undefined =
     kind === 'edge' ? LINE_SPECS.pipe : COMPONENT_SPECS[type];
@@ -96,7 +104,9 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     setPorts({ ...(data.ports ?? {}) });
     setSegments(data.segments ? structuredClone(data.segments) : []);
     setGeometry(data.geometry ? structuredClone(data.geometry) : undefined);
+    setGeometryEdit(undefined);
     setSketch(data.sketch ? structuredClone(data.sketch) : null);
+    setLoaded(n => n + 1);
   }, [open, data]);
 
   useEffect(() => {
@@ -140,7 +150,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
     let why: string;
     if (tempSpec.auto === 'saturation') {
       const pv = fromDraft(pressureDraft);
-      k = saturationK(fluid, toPa(pv) ?? NaN);
+      k = saturationK(fluid, toAbsolutePa(pv) ?? NaN);
       why = pv ? `${SAT_REFERENCE}, at ${pv.value} ${pv.unit}` : SAT_REFERENCE;
       if (k === undefined) return;
     } else {
@@ -233,7 +243,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       partNumber: partNumber.trim() || undefined,
       ...(kind === 'edge' ? { lineType, segments: savedSegments.length ? savedSegments : undefined,
         sketch: sketch && sketch.legs.length ? sketch : undefined } : {}),
-      ...(geometry ? { geometry } : {}),
+      ...((geometryEdit ?? geometry) ? { geometry: geometryEdit ?? geometry } : {}),
     });
     onClose();
   };
@@ -404,12 +414,20 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           </div>
         )}
 
-        {type === 'MANIFOLD' && (
+        {/* Mounted once the dialog holds this manifold's own geometry and
+            options, and afresh each time it is filled from the drawing. The
+            editor starts its draft from what it is given on mount; mounted on
+            the dialog's first render it was given nothing, started from a
+            default block that was not the one drawn, and so opened with
+            an edit before anything was moved, and a save that moved every port. */}
+        {type === 'MANIFOLD' && loaded > 0 && (
           <ManifoldEditor
+            key={loaded}
             outlets={Number(options.outlets ?? 4)}
+            orientation={options.orientation}
             geometry={geometry}
             ports={ports}
-            onSave={setGeometry}
+            onChange={(draft, edited) => setGeometryEdit(edited ? draft : undefined)}
           />
         )}
 
@@ -478,7 +496,7 @@ function OptionRow({ spec, value, peers, readOnly, onChange }: {
 function ParamRow({ spec, draft, readOnly, onChange }: {
   spec: ParamSpec; draft: Draft; readOnly: boolean; onChange: (p: Partial<Draft>) => void;
 }) {
-  const units = UNITS[spec.dimension];
+  const units = unitsFor(spec);
   const filled = draft.value.trim() !== '';
 
   // "17 psi rise per 1000 psi inlet drop": the datasheet's two numbers.
@@ -554,7 +572,7 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
           disabled={readOnly}
           onChange={e => onChange({ unit: e.target.value })}
           className={`${field} min-w-0`}
-          title={spec.dimension === 'pressure' ? 'absolute, not gauge' : undefined}
+          title={spec.dimension === 'pressure' ? pressureNote(spec.key) : undefined}
         >
           {units.map(u => <option key={u} value={u}>{u}</option>)}
         </select>

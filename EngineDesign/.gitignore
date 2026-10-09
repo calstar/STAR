@@ -66,6 +66,12 @@ Thumbs.db
 # Include all source directories
 !engine/
 !engine/**
+
+# ...but not the native kernel's build output. `!engine/**` un-ignores everything under
+# engine/, which swept 607 CMake artifacts (objects, generated makefiles, compiler probes)
+# into `git add engine/`. The C sources themselves live outside these directories.
+engine/native/build/
+engine/native/build_*/
 !ui/
 !ui/**
 !copv/

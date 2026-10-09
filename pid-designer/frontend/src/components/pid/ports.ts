@@ -1,4 +1,4 @@
-import type { Edge, Node } from '@xyflow/react';
+import type { Edge, Node, Position, XYPosition } from '@xyflow/react';
 import type { PIDNodeData } from './types';
 
 /**
@@ -105,6 +105,9 @@ export const portKind = (data: PIDNodeData | undefined, id: string): PortKind =>
 export const portIsDrawn = (data: PIDNodeData | undefined, id: string) =>
   portKind(data, id) !== 'plug';
 
+/** The most stations a 5/2 solenoid manifold is drawn with. */
+export const VALVE_BANK_MAX = 10;
+
 /**
  * Every port a component has, by id.
  *
@@ -141,7 +144,7 @@ export function portsOf(node: Node): string[] {
     // the R key is for.
     case 'QD':
       return ['l', 'r'];
-    case 'MAN': case 'ROT': case 'SOL': case 'RV': case 'CV':
+    case 'MAN': case 'ROT': case 'SOL': case 'MOV': case 'RV': case 'CV':
       return ['l', 'r'];
     case 'PR':
       return d?.options?.domeLoaded === 'yes' ? ['l', 'r', 'dome'] : ['l', 'r'];
@@ -152,6 +155,8 @@ export function portsOf(node: Node): string[] {
       ];
     case 'MANIFOLD':
       return ['in', ...portIds('p', count('outlets', 4))];
+    case 'VALVE_BANK':
+      return ['in', ...portIds('p', Math.min(VALVE_BANK_MAX, count('outlets', 4)))];
     case 'ENGINE':
       return ['fuel', 'ox', 't'];
     case 'KBOTTLE':
@@ -166,3 +171,46 @@ export function portsOf(node: Node): string[] {
 /** The ports actually drawn: everything except the plugged ones. */
 export const drawnPortsOf = (node: Node) =>
   portsOf(node).filter(id => portIsDrawn(dataOf(node), id));
+
+// ── Where React Flow measured a port ─────────────────────────────────────────
+
+/**
+ * A measurement to the nearest thousandth of a pixel: finer than any place a
+ * port is ever put, coarser than the noise in measuring one. React Flow reads
+ * a handle off the screen and divides by the zoom, and at any zoom but one
+ * that leaves its place a hundred-thousandth of a pixel off -- differently
+ * at every zoom. Taken as it came, the noise was written into the tees and
+ * corners seated on it, a stored shape no longer fitted ports measured again
+ * at another zoom, and an undo gave back a drawing that differed from the
+ * one it was.
+ */
+export const measured = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * A place on the drawing to a thousandth of a pixel (`measured`): for
+ * whatever writes one worked out from a line as drawn, which React Flow
+ * draws from the handles as it measured them, noise and all.
+ */
+export const measuredAt = (p: XYPosition): XYPosition => ({ x: measured(p.x), y: measured(p.y) });
+
+/** A handle as React Flow measured it: relative to its node, and the side it is on. */
+export interface HandleBox { x: number; y: number; width: number; height: number; position: Position }
+
+/**
+ * Where a line meets a measured handle on a node at `at`: the handle's
+ * outer edge in the direction it faces, which is where React Flow itself
+ * anchors a line (`getHandlePosition`), to a thousandth of a pixel.
+ */
+export function handleEnd(at: XYPosition, hb: HandleBox): { x: number; y: number; side: Position } {
+  const side = hb.position;
+  return {
+    x: measured(at.x + hb.x + (side === 'right' ? hb.width : side === 'left' ? 0 : hb.width / 2)),
+    y: measured(at.y + hb.y + (side === 'bottom' ? hb.height : side === 'top' ? 0 : hb.height / 2)),
+    side,
+  };
+}
+
+/** A measured handle's centre on a node at `at`, to a thousandth of a pixel. */
+export function handleCentre(at: XYPosition, hb: HandleBox): { x: number; y: number; side: Position } {
+  return { x: measured(at.x + hb.x + hb.width / 2), y: measured(at.y + hb.y + hb.height / 2), side: hb.position };
+}

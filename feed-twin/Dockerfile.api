@@ -32,6 +32,11 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install /feedtwin
 # import works inside this container.
 RUN python -c "import feedtwin; print('feedtwin', feedtwin.__version__)"
 
+# The shared design store: stands are documents in it, shared and versioned
+# the way pid-designer's diagrams are.
+COPY lib/stardesign/ /stardesign/
+RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
+
 COPY feed-twin/backend/ ./backend/
 
 ENV PYTHONPATH=/app

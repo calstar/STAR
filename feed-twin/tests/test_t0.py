@@ -13,10 +13,10 @@ from __future__ import annotations
 import pytest
 
 import backend.main as api
-from backend import study
+from backend import benchmark_study as study
 from backend.assembly import engine_from_bytes
 from backend.main import _cea_for
-from backend.run import psig
+from feedtwin.session.gauge import psig
 from tests.test_session_api import an_engine
 
 
@@ -65,7 +65,7 @@ class TestTheStudyReachesLockup:
     @pytest.mark.parametrize("gas", ["gn2", "he"])
     def test_every_thermal_model_on_settles_at_lockup(self, gas: str) -> None:
         session = all_thermal(gas)
-        notes = [a for a in session.assumptions if "did not settle" in a]
+        notes = [a for a in session.assumptions if "T-0 not settled" in a]
         assert notes == [], notes
         for sim in session.tanks.values():
             assert abs(psig(sim.pressure) - study.TANK_PSI) < study.SETTLE_BAND, (

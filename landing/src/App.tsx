@@ -33,6 +33,15 @@ function IconCAD() {
     </svg>
   );
 }
+function IconValve() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12h5M17 12h5" />
+      <path d="M7 7v10l10-10v10z" />
+      <path d="M12 12V6M9.5 6h5" />
+    </svg>
+  );
+}
 function IconBoard() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -47,6 +56,15 @@ function IconChart() {
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 3v18h18" />
       <path d="M7 14l3.5-4 3 3L21 7" />
+    </svg>
+  );
+}
+function IconServer() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="7" rx="1.5" />
+      <rect x="3" y="14" width="18" height="7" rx="1.5" />
+      <path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" />
     </svg>
   );
 }
@@ -204,6 +222,30 @@ const APPS: AppCard[] = [
       'Open to any Berkeley login. Pulling or building CAD from Onshape is limited to approved users (shared API credits) — contact Aidan for import access.',
   },
   {
+    id: 'feed-twin',
+    href: 'https://feed-twin.starberkeley.org',
+    label: 'Feed System Twin',
+    subdomain: 'feed-twin.starberkeley.org',
+    description:
+      'Transient model of the whole propellant feed system — COPV through regulator, tanks, lines, valves and injector to the chamber. Imports schematics and engine configs straight from the P&ID Designer and Engine Design. Early build: the physics lands over the coming phases, so today it reports the stack it is running.',
+    icon: <IconValve />,
+    colorClass: 'card-orange',
+    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
+    iconColor: '#fdba74',
+  },
+  {
+    id: 'parts-hub',
+    href: 'https://parts.starberkeley.org',
+    label: 'STAR Parts Hub',
+    subdomain: 'parts.starberkeley.org',
+    description:
+      'The team parts library: upload vendor CAD with part numbers, costs, links and specs, then search and insert parts straight into Onshape assemblies from the STAR Parts panel.',
+    icon: <IconCAD />,
+    colorClass: 'card-green',
+    iconBg: 'linear-gradient(135deg, #15803d 0%, #22c55e 100%)',
+    iconColor: '#86efac',
+  },
+  {
     id: 'starproject',
     href: 'https://project.starberkeley.org',
     label: 'STAR Project',
@@ -214,6 +256,19 @@ const APPS: AppCard[] = [
     colorClass: 'card-indigo',
     iconBg: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
     iconColor: '#a5b4fc',
+  },
+  {
+    id: 'server-analytics',
+    href: 'https://analytics.starberkeley.org',
+    label: 'Server Analytics',
+    subdomain: 'analytics.starberkeley.org',
+    description:
+      'CPU, memory, disk, uptime and container health for the EC2 and RFS servers over time, plus their logs and the DAQ server\'s.',
+    icon: <IconServer />,
+    colorClass: 'card-slate',
+    iconBg: 'linear-gradient(135deg, #334155 0%, #64748b 100%)',
+    iconColor: '#cbd5e1',
+    restricted: 'STAR Project admins only.',
   },
 ] as const;
 

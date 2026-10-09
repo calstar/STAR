@@ -47,8 +47,9 @@ def test_conical_nose_matches_openrocket():
     r = R * z / L  # cone
     frac, cna = _cp_fraction_and_cna(z, r)
     assert abs(cna - 2.0) < 1e-3
-    # Measured error vs OpenRocket's 0.66667 is ~0.02%; this leaves headroom.
-    assert abs(frac - 2.0 / 3.0) < 1e-3
+    # Exact: every profile station is a surface vertex at its own axial position,
+    # and a cone is linear between them. (Placing each at its bin centre was ~0.02%.)
+    assert abs(frac - 2.0 / 3.0) < 1e-9
 
 
 def test_ogive_nose_matches_openrocket():
@@ -59,5 +60,6 @@ def test_ogive_nose_matches_openrocket():
     r[0] = 0.0  # exact tip
     frac, cna = _cp_fraction_and_cna(z, r)
     assert abs(cna - 2.0) < 1e-3
-    # OpenRocket asserts 0.46216·L; measured error is ~0.01%. Tight on purpose.
-    assert abs(frac - 0.46216) < 1e-3, f"ogive cp/L = {frac:.5f}, expected 0.46216"
+    # OpenRocket asserts 0.46216·L, to five places; measured error is 5e-5, i.e.
+    # within that rounding. Tight on purpose.
+    assert abs(frac - 0.46216) < 1e-4, f"ogive cp/L = {frac:.5f}, expected 0.46216"

@@ -252,6 +252,70 @@ jobs:
           push: false
           cache-from: type=gha,scope=${{ matrix.name }}
 
+  # The .ork export, opened in OpenRocket itself (tests/test_ork_openrocket.py).
+  # The main gate skips these -- it has no JDK and no OpenRocket -- so without
+  # this job the only check that the *program* reads back the app's CP and CG
+  # would never run. REQUIRE_OPENROCKET turns that skip into a failure here, so
+  # a broken download cannot pass as green.
+  #
+  # The jar is the 24.12 release pinned everywhere else (physics/openrocket.py,
+  # tools/openrocket-golden/README.md), checked against its SHA-256 before use and
+  # cached so the 83 MB download happens once. The test suite's socket block is
+  # unaffected: the download is a workflow step, not a test.
+  openrocket-check:
+    name: OpenRocket reads the .ork export
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENROCKET_VERSION: '24.12'
+      OPENROCKET_SHA256: 4959b72f52f5f607941e9722abbb7b7f0c4a38ebbbf84204a329db9f31c4f897
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: star-openrocket/requirements-ci.txt
+
+    - name: Install dependencies (CI subset)
+      run: |
+        pip install -r requirements-ci.txt
+        pip install -e ../lib/stardesign
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: Cache OpenRocket jar
+      id: orjar
+      uses: actions/cache@v4
+      with:
+        path: ~/openrocket
+        key: openrocket-${{ env.OPENROCKET_VERSION }}-${{ env.OPENROCKET_SHA256 }}
+
+    - name: Download OpenRocket
+      if: steps.orjar.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/openrocket
+        curl -fsSL -o ~/openrocket/OpenRocket.jar \
+          "https://github.com/openrocket/openrocket/releases/download/release-${OPENROCKET_VERSION}/OpenRocket-${OPENROCKET_VERSION}.jar"
+
+    - name: Verify jar
+      run: echo "${OPENROCKET_SHA256}  $HOME/openrocket/OpenRocket.jar" | sha256sum -c -
+
+    - name: Run the OpenRocket checks
+      env:
+        REQUIRE_OPENROCKET: '1'
+      run: |
+        OPENROCKET_JAR=$HOME/openrocket/OpenRocket.jar \
+          python -m pytest tests/test_ork_openrocket.py --timeout=600 -q -rs
+
   # Aggregate status, mirroring engine-design-ci.yml's summary job.
   star-openrocket-summary:
     name: STAR OpenRocket Summary
@@ -262,6 +326,7 @@ jobs:
       - backend-smoke
       - frontend
       - docker-image
+      - openrocket-check
     if: always()
 
     steps:
@@ -279,3 +344,4 @@ jobs:
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Docker images (build, no push) | ${{ needs.docker-image.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| OpenRocket reads the .ork export | ${{ needs.openrocket-check.result }} |" >> $GITHUB_STEP_SUMMARY

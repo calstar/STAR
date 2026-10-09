@@ -412,3 +412,38 @@ def test_repressurisation_resets_the_interface_clock(
     assert tank.rates(young).heat_to_liquid == pytest.approx(
         10.0 * tank.rates(old_state).heat_to_liquid, rel=1e-9
     )
+
+
+def test_a_step_carries_what_it_does_not_integrate(
+    lox: Fluid, gn2: Fluid, geometry: CylindricalTank
+) -> None:
+    """A field added to the state later rides through a step untouched.
+
+    Built field by field, the step returned a plain :class:`TankState` and
+    reset anything it did not list -- how ``vapour_mass`` was once zeroed every
+    step (docs/PHYSICS-BENCHMARK.md 4.3). A subclass stands in for that field.
+    """
+    from dataclasses import dataclass, fields
+
+    from feedtwin.vessels.tank import TankState
+
+    @dataclass(frozen=True, slots=True)
+    class Grown(TankState):
+        added_later: float = 0.0
+
+    tank = Tank(lox, gn2, geometry)
+    start = tank.initial_state(
+        pressure=500 * PSI,
+        liquid_mass=9.0,
+        liquid_temperature=90.0,
+        gas_temperature=293.15,
+    )
+    state = Grown(
+        **{f.name: getattr(start, f.name) for f in fields(start)}, added_later=7.0
+    )
+    stepped = tank.step(state, tank.rates(state, mdot_liquid_out=1.0), 1e-3)
+
+    assert isinstance(stepped, Grown) and stepped.added_later == 7.0
+    plain = tank.step(start, tank.rates(start, mdot_liquid_out=1.0), 1e-3)
+    assert stepped.liquid_mass == plain.liquid_mass < start.liquid_mass
+    assert stepped.ullage == plain.ullage

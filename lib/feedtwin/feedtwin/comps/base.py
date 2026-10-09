@@ -104,6 +104,23 @@ class FlowConditions:
     signals: Mapping[str, float] = field(default_factory=dict)
     """Control inputs -- ``{"command": 0.4}`` for a part-open valve."""
 
+    gravity: float = 9.80665
+    """Acceleration the liquid column feels along the line's elevation axis
+    [m/s^2]: standard gravity on a stand, the vehicle's proper acceleration
+    (thrust less drag, over mass) in flight. Static head is ``rho * this * dz``.
+    The default is :data:`feedtwin.vessels.volume.GRAVITY` exactly, so nothing
+    that does not set it changes."""
+
+    gamma_ideal: float = 0.0
+    """Ideal-gas ratio of specific heats, cp/cv at 1 kPa and :attr:`temperature`.
+
+    What IEC 60534-2-1's ``F_gamma = gamma / 1.40`` is built from (its gamma is
+    a tabulated ideal-gas property: nitrogen 1.40, helium 1.66), as opposed to
+    :attr:`gamma`, the real-gas value at the inlet. Filled by
+    :func:`~feedtwin.comps.elements.conditions_from_fluid` for gas-priced nodes
+    only; zero for a liquid or when unknown. Read only by the components that
+    opt into :mod:`feedtwin.comps.iec_gas`."""
+
     def signal(self, name: str, default: float = 1.0) -> float:
         return float(self.signals.get(name, default))
 
@@ -260,6 +277,19 @@ class HydraulicComponent:
         A ceiling changes what equation the network solver writes for this
         branch, which is why it lives on the base class rather than inside the
         one component that has one. See :meth:`is_choked`.
+        """
+        return None
+
+    def pinned_flow(self, dp_available: float, flow: FlowConditions) -> float | None:
+        """A flow this component pins at this drop, whatever downstream does.
+
+        ``None`` -- every component here but an opt-in one -- leaves the branch to
+        :meth:`flow_ceiling` and :meth:`is_choked`. A component whose choked
+        flow depends on *which* way it is past its limit returns the flow here:
+        the compressible regulator seat (:mod:`feedtwin.comps.regulator`) is
+        both a regulator that shuts (pinned at zero, by the ceiling) and a seat
+        that chokes wide open (pinned at its capacity, by this). The solver asks
+        this first and writes ``mdot = pinned`` when it answers.
         """
         return None
 

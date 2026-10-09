@@ -313,6 +313,18 @@ export function createDesignApi<T>({ base, usersPath, codec }: DesignApiConfig<T
         json<{ ok: boolean; micro: boolean }>(r),
       ),
 
+    /**
+     * Keep edits a save was refused for (423: the checkout went to someone
+     * else) as a new design in your own list, checked out to you. Nothing is
+     * written into the design they were meant for. Call it before going read
+     * only: "Take it back" reloads the shared copy and closing the tab drops
+     * the screen, and either one used to be the last of those edits.
+     */
+    rescue: (ref: DocRef, payload: T) =>
+      fetch(url(ref, '/rescue'), post(codec.toBody(payload))).then((r) =>
+        json<DesignMeta>(r),
+      ),
+
     /** Best-effort final snapshot on tab close. sendBeacon survives page unload. */
     flush: (ref: DocRef, payload: T): void => {
       const body = JSON.stringify(codec.toBody(payload));

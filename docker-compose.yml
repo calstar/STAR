@@ -70,6 +70,7 @@ services:
       - feed-twin-frontend
       - star-openrocket-api
       - star-openrocket-frontend
+      - parts-hub
       - daq-viewer
       - landing
 
@@ -157,6 +158,13 @@ services:
       # leaves this unset and can still build on demand. Regenerate offline via
       # .github/workflows/regenerate-cea-cache.yml.
       ED_ALLOW_CEA_BUILD: "0"
+      # Layer X's "From pid-designer" lists and fetches drawings from the
+      # pid-designer API over the compose network, forwarding the caller's
+      # X-Auth-Email. Unset, it falls back to 127.0.0.1:8001 -- inside this
+      # container that is the engine-design container itself, so the drawing
+      # picker reported "pid-designer is not answering". feed-twin-api already
+      # points here the same way.
+      PID_DESIGNER_URL: http://pid-designer-api:8001
       # Per-user saved configs + working copies live here (a mounted volume).
       # See userdata.py.
       USERDATA_DIR: /data
@@ -217,10 +225,6 @@ services:
       # pid-designer/backend/directory.py. Unset is fine: the roster then
       # falls back to whoever already has data on the shared volume.
       AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
-      # Who may choose the STAR diagrams, see every diagram and approve edit
-      # access is a fixed list in lib/stardesign/stardesign/admins.py.
-      # STAR_ADMINS (comma-separated emails) adds to it without a commit.
-      STAR_ADMINS: ${STAR_ADMINS:-}
       # Diagram version history (microversions + releases) in S3. Empty bucket ->
       # history falls back to the local volume (dev/no-AWS). The apps machine is
       # not on EC2, so these are IAM access keys, not an instance role.
@@ -265,6 +269,16 @@ services:
       # drop what people have imported -- and so a result from last month can
       # still name the exact artifact it ran on.
       FEEDTWIN_LIBRARY: /data/feed-twin/library
+      # Stands (and the runs made on them): per-user documents on the same
+      # volume, under <user>/stand -- shared, checked out and versioned like
+      # pid-designer's diagrams. See feed-twin/backend/routers/stands.py.
+      USERDATA_DIR: /data
+      AUTH_USERS_URL: ${AUTH_USERS_URL:-${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}}
+      FEEDTWIN_S3_BUCKET: ${FEEDTWIN_S3_BUCKET:-}
+      FEEDTWIN_S3_PREFIX: ${FEEDTWIN_S3_PREFIX:-stand}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       # Where the siblings live inside the compose network. This is the whole
       # integration: with these set, importing a P&ID is picking one out of a
       # list rather than exporting a file and uploading it. The caller's
@@ -344,6 +358,41 @@ services:
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
+  # ── STAR Parts Hub ───────────────────────────────────────────────────────
+  # The team's CAD parts library, plus the "STAR Parts" panel inside Onshape
+  # assemblies. One container: Node serves the hub UI, its API and the panel.
+  # The hub sits behind the usual gate; /panel/* deliberately does not (it runs
+  # inside Onshape's iframe and authenticates with Onshape OAuth) -- see the
+  # Caddyfile. Setup runbook: parts-hub/DEPLOY.md.
+  parts-hub:
+    image: ghcr.io/calstar/star-parts-hub:${STAR_IMAGE_TAG:-latest}
+    build:
+      context: ./parts-hub
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Drawing thumbnails of big STEP files briefly needs a lot of memory.
+    mem_limit: 2g
+    memswap_limit: 2g   # == mem_limit -> no swap; OOM this container alone
+    environment:
+      # Always https: Cloudflare terminates TLS even when Caddy runs SCHEME=http.
+      PUBLIC_BASE_URL: https://parts.${BASE_DOMAIN:-starberkeley.org}
+      OAUTH_REDIRECT_URL: https://parts.${BASE_DOMAIN:-starberkeley.org}/panel/oauth/callback
+      # Read + Write key pair: the hub imports parts and creates versions in the
+      # library document. A read-only pair fails with "Invalid API key state".
+      ONSHAPE_ACCESS_KEY: ${PARTS_ONSHAPE_ACCESS_KEY:-${ONSHAPE_ACCESS_KEY:-}}
+      ONSHAPE_SECRET_KEY: ${PARTS_ONSHAPE_SECRET_KEY:-${ONSHAPE_SECRET_KEY:-}}
+      # The "STAR Parts" OAuth app (Onshape Enterprise settings -> Developer).
+      ONSHAPE_CLIENT_ID: ${PARTS_ONSHAPE_CLIENT_ID:-}
+      ONSHAPE_CLIENT_SECRET: ${PARTS_ONSHAPE_CLIENT_SECRET:-}
+      LIBRARY_DOCUMENT_ID: ${PARTS_LIBRARY_DOCUMENT_ID:-}
+      # Same reasoning as JWT_SECRET: no required-variable guard here, it would
+      # break every other compose command. The app exits with a clear list of
+      # what is missing instead.
+      SESSION_SECRET: ${PARTS_SESSION_SECRET:-}
+    volumes:
+      # SQLite + original CAD files + thumbnails. Back this up.
+      - parts_data:/data
+
   # ── DAQ Run Viewer ───────────────────────────────────────────────────────
   # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One
   # container: FastAPI serves both /api and the built SPA on 8420. It reads the
@@ -410,3 +459,6 @@ volumes:
   # Keyed by X-Auth-Email inside. See */backend/userdata.py and the sharing
   # section of */backend/routers/documents.py.
   userdata:
+  # STAR Parts Hub: its SQLite database, the uploaded CAD files and thumbnails.
+  # Not a cache -- back it up (parts-hub/README.md, "Data and backups").
+  parts_data:

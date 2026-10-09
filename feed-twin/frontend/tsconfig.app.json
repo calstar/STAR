@@ -16,11 +16,20 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* No @stardesign-ui alias yet. This app adopts the shared design-tool UI in
-       Phase 09, when scenarios become shared documents; until then there is
-       nothing to share and the alias (plus the react/react-dom pins the shared
-       source needs, because it sits outside this project) would be dead config.
-       Copy them from pid-designer/frontend when that phase lands. */
+    /* pid-designer's canvas and the shared design-tool UI it imports, compiled
+       from source by this app. The matching runtime aliases, and the pins to
+       this app's own React and React Flow, are in vite.config.ts. */
+    "baseUrl": ".",
+    "paths": {
+      "@pid/*": ["../../pid-designer/frontend/src/components/pid/*"],
+      "@stardesign-ui": ["../../lib/stardesign-ui/src/index.ts"],
+      "@stardesign-ui/*": ["../../lib/stardesign-ui/src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "@xyflow/react": ["./node_modules/@xyflow/react"]
+    },
 
     /* Linting */
     "strict": true,
@@ -30,5 +39,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src", "../../lib/stardesign-ui/src"]
 }

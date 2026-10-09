@@ -48,6 +48,9 @@ class BodyMass:
     volume: float
     centroid: list[float]
     has_mass: bool
+    #: Inertia tensor about the centroid, row-major 3x3, Part Studio frame, kg m^2.
+    #: All zeros when ``has_mass`` is false.
+    inertia: list[float] | None = None
 
 
 @dataclass
@@ -93,6 +96,7 @@ def fetch_source_bodies(
             volume=_scalar(body.get("volume")),
             centroid=list((body.get("centroid") or [0.0, 0.0, 0.0])[:3]),
             has_mass=bool(body.get("hasMass")),
+            inertia=(list(body["inertia"][:9]) if len(body.get("inertia") or []) >= 9 else None),
         )
     return bodies
 

@@ -7,7 +7,9 @@ import { Frame } from './Frame';
 import { turn } from '../route';
 import { fmtParam } from '../fmt';
 
-const W = 60, H = 60;
+/** The regulator's box: what its dome port is placed from before it is measured. */
+export const PR_W = 60, PR_H = 60;
+const W = PR_W, H = PR_H;
 
 /**
  * A pressure regulator.

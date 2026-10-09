@@ -16,18 +16,19 @@ table is needed.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from feedtwin.model.param import Param, Provenance
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
 from feedtwin.model.segments import LineLoss
 from feedtwin.pid.errors import DiagramError as DiagramError
 from feedtwin.pid.segments import read_segments
 
 #: Component types that carry mass between two points. Everything else is
 #: either a place (a tank, a junction) or an observer (a transducer).
-INLINE_TYPES = frozenset({"MAN", "ROT", "SOL", "PR", "RV", "CV", "QD"})
+INLINE_TYPES = frozenset({"MAN", "ROT", "SOL", "MOV", "PR", "RV", "CV", "QD"})
 
 #: Types that declare a fluid and a pressure: where a solve starts.
 SOURCE_TYPES = frozenset({"TANK", "KBOTTLE", "DEWAR"})
@@ -66,6 +67,12 @@ class PidNode:
     params: Mapping[str, Param] = field(default_factory=dict)
     options: Mapping[str, str] = field(default_factory=dict)
     ports: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    drawn_as: str = ""
+    """The symbol the drawing used, when it is read as another -- see
+    :func:`_gas_tank_as_bottle`. Empty when the symbol is read as drawn."""
+    rotation: float = 0.0
+    """Degrees the symbol is turned on the drawing. A tank's ``t`` ports are on
+    its top only while it is upright."""
 
     @property
     def is_inline(self) -> bool:
@@ -123,12 +130,12 @@ class Diagram:
 
     @property
     def pages(self) -> list[str]:
-        seen = {n.page for n in self.nodes if n.page}
-        return sorted(seen)
+        """Page names; a node with none is on "Main", as pid-designer reads it."""
+        return sorted({n.page or "Main" for n in self.nodes})
 
     def on_page(self, page: str) -> Diagram:
         """The drawing restricted to one page, with dangling edges dropped."""
-        nodes = tuple(n for n in self.nodes if not n.page or n.page == page)
+        nodes = tuple(n for n in self.nodes if (n.page or "Main") == page)
         keep = {n.id for n in nodes}
         edges = tuple(e for e in self.edges if e.source in keep and e.target in keep)
         return Diagram(nodes=nodes, edges=edges, name=f"{self.name}#{page}")
@@ -137,7 +144,7 @@ class Diagram:
 _PROVENANCE = {p.value: p for p in Provenance}
 
 
-def _params(raw: Any, where: str) -> dict[str, Param]:
+def _params(raw: Any, where: str, symbol: str = "") -> dict[str, Param]:
     """Read a ``{name: {value, unit, source, reference}}`` block.
 
     A parameter with no ``source`` is refused rather than defaulted. The drawing
@@ -160,10 +167,14 @@ def _params(raw: Any, where: str) -> dict[str, Param]:
         try:
             out[str(name)] = Param(
                 value=float(entry["value"]),
-                unit=str(entry.get("unit", "-")),
+                # A bare "psi" on an absolute pressure is gauge, as on the dial;
+                # a difference may not carry a reference (feedtwin.model.pressure).
+                unit=drawn_unit(str(name), str(entry.get("unit", "-")), symbol),
                 source=_PROVENANCE[source],
                 reference=str(entry.get("reference", "")),
             )
+        except PressureReferenceError as exc:
+            raise DiagramError(f"{where}: {exc}") from exc
         except (KeyError, TypeError, ValueError) as exc:
             raise DiagramError(f"{where}: parameter {name!r} is malformed ({exc})")
     return out
@@ -183,6 +194,13 @@ def _ports(raw: Any) -> dict[str, dict[str, str]]:
         if isinstance(entry, Mapping):
             out[str(port_id)] = {str(k): str(v) for k, v in entry.items()}
     return out
+
+
+def _rotation(raw: Any) -> float:
+    try:
+        return float(raw or 0.0) % 360.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagram:
@@ -217,9 +235,14 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
                 role=str(data.get("fluidType", "") or "").strip().lower(),
                 page=str(data.get("page", "") or ""),
                 attached_to=str(data.get("attachedTo", "") or ""),
-                params=_params(data.get("params"), f"{name}:{node_id}"),
+                params=_params(
+                    data.get("params"),
+                    f"{name}:{node_id}",
+                    str(data.get("componentType", raw.get("type", ""))),
+                ),
                 options=_options(data.get("options")),
                 ports=_ports(data.get("ports")),
+                rotation=_rotation(data.get("rotation", raw.get("rotation"))),
             )
         )
 
@@ -248,6 +271,8 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
             )
         )
 
+    nodes = [_liquid_dewar_as_tank(_gas_tank_as_bottle(n)) for n in nodes]
+
     known = {n.id for n in nodes}
     dangling = [e.id for e in edges if e.source not in known or e.target not in known]
     if dangling:
@@ -257,6 +282,66 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
         )
 
     return Diagram(nodes=tuple(nodes), edges=tuple(edges), name=name)
+
+
+def _gas_tank_as_bottle(node: PidNode) -> PidNode:
+    """A TANK that can only hold gas is the pressurant supply: read it as one.
+
+    pid-designer offers ``copv`` as a tank *wall material*, so a COPV is easily
+    drawn with the propellant-tank symbol. Read as drawn it supplies nothing --
+    the press lines land on the tanks' liquid side -- and a stand cannot even
+    open, because a propellant tank starts from a saturated liquid that does not
+    exist above the critical point.
+
+    Only when the drawing itself rules out a liquid: the fluid and the
+    temperature are both stated, and the temperature is above that fluid's
+    critical temperature. A LOX tank that merely forgot its temperature is left
+    alone (and warned about as a missing temperature, which is what it is).
+    Nothing is invented -- the pressure, fluid and volume are the drawing's own.
+    """
+    if node.type != "TANK" or not node.fluid:
+        return node
+    temperature = node.params.get("temperature")
+    if temperature is None:
+        return node
+    try:
+        from feedtwin.props import Fluid
+
+        critical = Fluid(node.fluid).critical_temperature
+    except Exception:  # noqa: BLE001 - an unknown fluid is the reader's to report
+        return node
+    if not temperature.si > critical:
+        return node
+    return replace(node, type="KBOTTLE", drawn_as="TANK")
+
+
+def _liquid_dewar_as_tank(node: PidNode) -> PidNode:
+    """A dewar holding liquid is a liquid supply: read it as a tank.
+
+    A LOX dewar was read as a pressurant bottle -- a gas volume -- which the
+    GN2 High Press charge then tried to pump to 4,500 psig, and which no fill
+    line could draw liquid from. As a tank it holds its liquid under its own
+    ullage, and on the ground-support side of a drawing it is the supply the
+    flight tank is loaded from (``BuiltNetwork.supplies``).
+
+    Only when the drawing says so: fluid and temperature stated, the
+    temperature below the fluid's critical point. A dewar used as a gas source
+    (warm, or above critical) is left as drawn.
+    """
+    if node.type != "DEWAR" or not node.fluid:
+        return node
+    temperature = node.params.get("temperature")
+    if temperature is None:
+        return node
+    try:
+        from feedtwin.props import Fluid
+
+        critical = Fluid(node.fluid).critical_temperature
+    except Exception:  # noqa: BLE001 - an unknown fluid is the reader's to report
+        return node
+    if not temperature.si < critical:
+        return node
+    return replace(node, type="TANK", drawn_as="DEWAR")
 
 
 def load_diagram(path: str | Path) -> Diagram:

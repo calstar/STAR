@@ -2,6 +2,7 @@
 
 # Build artifacts
 build/
+build-ns/
 *.o
 *.a
 *.so
@@ -220,6 +221,9 @@ config/config.toml
 config/state_machine_actuators.csv
 config/state_machine_actuator_delays.csv
 config/state_transitions.csv
+# Deployed dynamic-state scripts — copied out of the active profile's scripts/ dir the same
+# way, by the same deploy. The tracked source is config/profiles/<name>/scripts/.
+config/scripts/
 
 # RLS state the calibration service auto-saves next to whatever calibration dir it is
 # reading. tools/calibration/calibrations/adjustments.json is the checked-in seed; the copy
@@ -230,7 +234,16 @@ scripts/calibration/calibrations/adjustments.json
 # Clear. cubic_calibration.default.json (NOT ignored) is the tracked seed the service copies here
 # on first run when this file is missing; promote a good cal into it via promote_default.sh.
 scripts/calibration/calibrations/cubic_calibration.json
+# Live load-cell tare state, written by calibration_service and cleared by the backend at session
+# start. Operator display state for one session on one stand — never a thing to commit, and there
+# is no tracked seed for it (absent == every load cell reads absolute, which is the right default).
+scripts/calibration/calibrations/lc_tare.json
 
 # Raw-ADC abort thresholds the calibration service regenerates from the live cal on every
 # capture/clear/reload (uid target_psi raw_adc), read by config_broadcast. Runtime-derived, per-rig.
 scripts/calibration/calibrations/abort_thresholds.txt
+
+# Which named profile THIS box has loaded. Machine-local: the profiles/*.json snapshots
+# beside it are tracked and shared, but a pull must not tell another rig that a
+# calibration it has never loaded is the active one.
+scripts/calibration/calibrations/profiles/.active

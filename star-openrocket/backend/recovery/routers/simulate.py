@@ -182,7 +182,15 @@ def run_sweep(config: Config, case: str = Query("nominal"),
     # to 8 against corners at 6 and 12). Without it the chart shows only
     # extremes, and there is nothing to read "how far from nominal is this"
     # against -- which is the question the sweep exists to answer.
-    ref = evaluate(config, "axial", case, atm=_atmosphere(config))
+    # Wrapped like `sweep()` above. This call runs the same physics and can be
+    # refused the same way -- a config the solver will not converge on, or one
+    # whose descent needs more load samples than it is allowed. Left bare, that
+    # ValueError escaped as a 500, so the one endpoint most likely to provoke a
+    # refusal was also the one that reported it as "the server broke".
+    try:
+        ref = evaluate(config, "axial", case, atm=_atmosphere(config))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     nominal_payload = {
         "F_design": ref.design.F_design,
         "F_peak": ref.design.governing_value,

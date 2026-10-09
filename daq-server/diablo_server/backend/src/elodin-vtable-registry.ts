@@ -34,60 +34,156 @@ export function computeMsgId(typeName: string): [number, number] {
     return [xorHash & 0xFF, (xorHash >>> 8) & 0xFF];
 }
 
-// ── VTable binary encoding ──────────────────────────────────────────────────
-
-interface VTableFieldDef {
-    offset: number;
-    size: number;
-    type: string;
-    component: string;
-}
-
-function encodeVTable(config: {
-    packetId: [number, number];
-    fields: VTableFieldDef[];
-}): Buffer {
-    const buffer = Buffer.alloc(1024);
-    let off = 0;
-
-    buffer.writeUInt8(config.packetId[0], off++);
-    buffer.writeUInt8(config.packetId[1], off++);
-    buffer.writeUInt8(config.fields.length, off++);
-
-    const typeMap: Record<string, number> = {
-        u64: 0, f64: 1, f32: 2, u32: 3, i32: 4, u8: 5,
-    };
-
-    for (const field of config.fields) {
-        buffer.writeUInt32LE(field.offset, off); off += 4;
-        buffer.writeUInt32LE(field.size, off); off += 4;
-        buffer.writeUInt8(typeMap[field.type] ?? 0, off++);
-        const componentBytes = Buffer.from(field.component, 'utf-8');
-        buffer.writeUInt8(componentBytes.length, off++);
-        componentBytes.copy(buffer, off);
-        off += componentBytes.length;
-    }
-
-    return buffer.subarray(0, off);
-}
+// VTable *schema* registration used to live here (encodeVTable + the controller and
+// actuator-commanded tables). It was dead in both senses: nothing called it, and the
+// bytes it produced were rejected by elodin-db — 5x "postcard Serde Deserialization
+// Error" for the controller tables, 20x "Hit the end of buffer" for the actuator ones.
+// The "✅ Registered" it logged only ever meant socket.write() returned true. The C++
+// services own schema registration; this module only subscribes to packet ids.
 
 // ── VTableStream subscriptions (board-namespaced IDs, config + fallbacks) ───
 
-/** Subscribed [high,low] keys — avoids duplicate subs on 5s retry (duplicate delivery / inflated rates). */
+/** Subscribed [high,low] keys — avoids duplicate subs on 5s retry.
+ *
+ *  Duplicate delivery is a REAL hazard here and the reason this set exists: the DB spawns
+ *  a fresh stream task per VTableStream message with no dedupe, so re-subscribing a live
+ *  table doubles its rate. What is NOT a hazard, despite an earlier comment here, is
+ *  replay — handle_vtable_stream's RealTimeStage waits on the next write and sends only
+ *  latest(), so a subscribe never re-sends stored history. Verified against elodin-db.
+ *
+ *  That distinction is what makes retry safe: a REJECTED subscription spawned no stream,
+ *  so re-sending it cannot duplicate anything. Rejected pairs are removed from this set by
+ *  noteSubscriptionRejected() and re-sent by the next scheduled pass. */
 const subscribedVTableStreamPairs = new Set<string>();
+
+/** requestId → pair key, for subscriptions whose reply has not come back yet.
+ *
+ *  Holds exactly one pass's ids, and a pass never sends more than the id space. The wire
+ *  request id is a single byte
+ *  (elodin-client.ts writes `requestId & 0xff` at offset 7 and reads it back with readUInt8),
+ *  so 1..255 is the entire space — it cannot be widened without changing the DB protocol.
+ *  This used to be a counter rotating over that space while the pass sent 4485 subscriptions,
+ *  so the map was overwritten ~17x and, once a pass finished, described only the LAST 255
+ *  pairs sent. Every rejection was therefore attributed to the wrong pair: the genuinely
+ *  refused table stayed marked as subscribed and was never retried (silent for the whole
+ *  session — this is the "started a session, no data" bug), while an innocent table was
+ *  un-marked and re-subscribed. registerVTables now caps a pass at SUBSCRIPTION_REQ_ID_SPACE
+ *  and queues the remainder, so an id in flight names exactly one pair. */
+const pendingSubscriptionReqIds = new Map<number, string>();
+
+/** Subscription IDs available after reserving one byte value for the response fence. */
+export const SUBSCRIPTION_REQ_ID_SPACE = 254; // Reserve 255 for the response fence.
+let subscriptionGeneration = 0;
+let runningPass: Promise<SubscriptionPassResult> | null = null;
+/** Attempts before a pair is parked as "no publisher is ever going to register this". */
+export const MAX_PAIR_ATTEMPTS = 12;
+
+/** Pairs the DB has actually delivered a packet for. A table cannot be streaming and
+ *  refusing its own subscription at the same time, so a rejection naming one of these is
+ *  provably a misattribution — and re-sending it would spawn a SECOND stream task for a live
+ *  table, doubling its rate (the hazard documented above). Guarding on delivery makes that
+ *  structurally impossible rather than merely unlikely. */
+const deliveredPairs = new Set<string>();
+/** Rejected pairs awaiting a retry, with their backoff. */
+const rejectedPairs = new Map<string, { attempts: number; nextAttemptMs: number }>();
+/** Pairs that exhausted MAX_PAIR_ATTEMPTS — stop asking, and stop logging about it. */
+const parkedPairs = new Set<string>();
+/** Rejections seen since the last pass logged a summary, so one line replaces thousands. */
+let refusalsSinceLastPass = 0;
+const refusedPairsSinceLastPass = new Set<string>();
+
+/** Injectable clock, so backoff is testable without fake timers fighting the await. */
+let nowFn: () => number = () => Date.now();
+export function setClockForTests(fn: () => number): void {
+    nowFn = fn;
+}
+
+/** Backoff for attempt n: 5s, 10s, 20s, 40s, then 60s. */
+function backoffMs(attempts: number): number {
+    return Math.min(60_000, 5_000 * 2 ** Math.max(0, attempts - 1));
+}
+
+/** Record that the DB delivered a packet for this pair. */
+export function notePairDelivered(high: number, low: number): void {
+    deliveredPairs.add(`${high},${low}`);
+}
 
 /** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
 export function clearSubscriptionState(): void {
+    subscriptionGeneration++;
+    runningPass = null;
     subscribedVTableStreamPairs.clear();
+    pendingSubscriptionReqIds.clear();
+    deliveredPairs.clear();
+    rejectedPairs.clear();
+    parkedPairs.clear();
+    refusalsSinceLastPass = 0;
+    refusedPairsSinceLastPass.clear();
+}
+
+/**
+ * Handle an ErrorResponse from the DB (ElodinClient 'dbError').
+ *
+ * The startup race this exists for: the backend subscribes to everything the moment it
+ * connects, but the pipeline services register their VTables when THEY start — the
+ * sequencer registered _SEQUENCER_STATE 3 s after the backend had already subscribed to
+ * it. The DB answers "invalid msg id" and drops the subscription; nothing retried, so the
+ * GUI froze on a stale state for the rest of the session while sensor data flowed
+ * perfectly. Un-marking the pair lets the existing resubscribe pass pick it up once the
+ * table exists.
+ */
+export function noteSubscriptionRejected(requestId: number, description: string): void {
+    const key = pendingSubscriptionReqIds.get(requestId);
+    if (key === undefined) return;
+    pendingSubscriptionReqIds.delete(requestId);
+
+    // A pair the DB is actively streaming cannot also be refusing its subscription, so this
+    // reply belongs to some other pair whose id we no longer hold. Dropping it costs nothing;
+    // acting on it would un-mark a live table and re-subscribe it, doubling its delivery rate.
+    if (deliveredPairs.has(key)) return;
+
+    if (!subscribedVTableStreamPairs.delete(key)) return;
+
+    const state = rejectedPairs.get(key) ?? { attempts: 0, nextAttemptMs: 0 };
+    state.attempts += 1;
+    state.nextAttemptMs = nowFn() + backoffMs(state.attempts);
+    rejectedPairs.set(key, state);
+
+    refusalsSinceLastPass += 1;
+    refusedPairsSinceLastPass.add(key);
+
+    if (state.attempts >= MAX_PAIR_ATTEMPTS) {
+        parkedPairs.add(key);
+        rejectedPairs.delete(key);
+        const [high, low] = key.split(',').map(Number);
+        console.warn(
+            `[Elodin] giving up on [0x${high.toString(16).padStart(2, '0')}, ` +
+            `0x${low.toString(16).padStart(2, '0')}] after ${state.attempts} attempts: ` +
+            `${description} — no publisher registers this table`,
+        );
+    }
+}
+
+/** Drain the per-pass refusal tally, so registerVTables can log one line instead of thousands. */
+function takeRefusalSummary(): { count: number; pairs: string[] } {
+    const out = { count: refusalsSinceLastPass, pairs: [...refusedPairsSinceLastPass] };
+    refusalsSinceLastPass = 0;
+    refusedPairsSinceLastPass.clear();
+    return out;
 }
 
 /**
  * Build packet IDs to subscribe: config.toml boards (32-slot low-byte scheme) + dev fallbacks +
  * controller / sequencer / heartbeat / self-test / calibration command.
  */
-function buildVTableStreamSubscriptionList(): Array<[number, number]> {
+export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[number, number]> {
     const subscriptions: Array<[number, number]> = [];
     const seen = new Set<string>();
+    /** Raw config board_id values — the low byte of heartbeat and self-test tables. NOT the
+     *  `% 10` slot used by sensor tables: daq_bridge registers those two per config board id. */
+    const configBoardIds: number[] = [];
+    /** Config actuator boards, for the commanded-state tables below. */
+    const actuatorBoards: Array<{ boardNumber: number; channels: number[] }> = [];
     const addUnique = (high: number, low: number): void => {
         const key = `${high},${low}`;
         if (!seen.has(key)) {
@@ -117,29 +213,34 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
         // Cached: this runs on every Elodin connect and on up to 24 resubscribe retries per
         // connection, so a plain readConfig() here was a repeated file read + TOML parse on a
         // reconnect storm. Invalidated at deploy.
-        const cfg = readDeployedConfig();
+        const cfg = (cfgIn ?? readDeployedConfig()) as { boards?: unknown };
         const boards = (cfg.boards || {}) as Record<string, unknown>;
         for (const [, raw] of Object.entries(boards)) {
             const b = raw as Record<string, unknown>;
             if (b.enabled === false) continue;
             const t = String(b.type ?? '').toUpperCase();
             const id = Number(b.board_id ?? b.id ?? 0);
-            if (!Number.isFinite(id) || id <= 0) continue;
+            if (!Number.isInteger(id) || id <= 0 || id > 255) continue;
             const mod = id % 10;
             const boardNumberRaw = mod === 0 ? 10 : mod;
             const boardNumber = ((boardNumberRaw - 1) % 8) + 1;
-            const n = Number(b.num_sensors ?? 0);
+            // active_connectors (active_connections is the older spelling) is the only
+            // statement of which channels exist. No 1..num_sensors fallback: a board with an
+            // empty list samples nothing, so registering entities for it would invent sensors.
             const rawConnectors = Array.isArray(b.active_connectors) && (b.active_connectors as unknown[]).length > 0
                 ? (b.active_connectors as unknown[])
-                : Array.isArray(b.active_connections) && (b.active_connections as unknown[]).length > 0
+                : Array.isArray(b.active_connections)
                     ? (b.active_connections as unknown[])
                     : [];
-            const active = rawConnectors.length > 0
-                ? rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10)
-                : n > 0
-                    ? Array.from({ length: Math.min(10, n) }, (_, i) => i + 1)
-                    : [];
+            const active = rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10);
             if (active.length === 0) continue;
+            // Heartbeat/self-test are registered per CONFIG board id, whatever the type.
+            configBoardIds.push(id);
+
+            if (t === 'ENVIRONMENTAL') {
+                if (active.includes(1)) addUnique(0x25, id);
+                continue;
+            }
 
             const typeHi =
                 t === 'PT' ? 0x20
@@ -151,6 +252,7 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
                                         : -1;
             if (t === 'ACTUATOR') {
                 addActuatorBoard(boardNumber, active);
+                actuatorBoards.push({ boardNumber, channels: active });
                 continue;
             }
             if (typeHi < 0) continue;
@@ -160,18 +262,30 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
         console.warn('[VTableStream] config-driven subscriptions failed, using fallbacks only:', e);
     }
 
-    addBoard(0x20, 1, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    addBoard(0x20, 2, [1, 2, 3, 4]);
-    addActuatorBoard(2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    addActuatorBoard(4, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    addBoard(0x21, 1, [2, 3, 4, 5]);
-    addBoard(0x22, 1, [1, 2, 3, 4]);
-    addBoard(0x23, 2, [1, 2, 6]);
-    addBoard(0x24, 1, [1, 2]);
+    // Dev fallbacks ONLY when the config told us nothing. They used to run unconditionally,
+    // alongside a perfectly good config, which invented sensors the deployed rig does not have
+    // — addBoard(0x23, 2, [1, 2, 6]) subscribes LC2 CH2 and CH6 where the config declares
+    // active_connectors = [1]. Every such pair is refused forever and, before the windowing
+    // below, each refusal corrupted the attribution of a real one.
+    if (configBoardIds.length === 0) {
+        addBoard(0x20, 1, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        addBoard(0x20, 2, [1, 2, 3, 4]);
+        addActuatorBoard(2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        addActuatorBoard(4, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        addBoard(0x21, 1, [2, 3, 4, 5]);
+        addBoard(0x22, 1, [1, 2, 3, 4]);
+        addBoard(0x23, 2, [1, 2, 6]);
+        addBoard(0x24, 1, [1, 2]);
+    }
 
-    for (let bn = 1; bn <= 4; bn++) {
-        for (let ch = 1; ch <= 10; ch++) {
-            addUnique(0x32, (bn - 1) * 0x20 + ch);
+    // Actuator commanded state [0x32, …], same low-byte scheme as the raw table.
+    if (actuatorBoards.length > 0) {
+        for (const { boardNumber, channels } of actuatorBoards) {
+            for (const ch of channels) addUnique(0x32, (boardNumber - 1) * 0x20 + ch);
+        }
+    } else {
+        for (let bn = 1; bn <= 4; bn++) {
+            for (let ch = 1; ch <= 10; ch++) addUnique(0x32, (bn - 1) * 0x20 + ch);
         }
     }
 
@@ -183,9 +297,18 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
 
     // Heartbeats [0x10, board_id] use the low byte as config board_id.
     // Self-test uses [0x60+sensor_id, board_id] — one VTable per sensor per board.
-    for (let i = 1; i <= 255; i++) {
-        addUnique(0x10, i);
-        for (let s = 0x60; s <= 0x6F; s++) addUnique(s, i);
+    //
+    // Over the CONFIGURED board ids only. This used to sweep 1..255 x 17 high bytes = 4335
+    // pairs, but daq_bridge registers these two families only for boards that are in the
+    // config, so with 13 boards exactly 221 of those 4335 can ever exist and the other 4114
+    // are refused on every single pass, forever. That bulk is what overflowed the one-byte
+    // request id space and broke rejection attribution for the real tables.
+    const heartbeatBoardIds = configBoardIds.length > 0
+        ? configBoardIds
+        : Array.from({ length: 255 }, (_, i) => i + 1);
+    for (const id of heartbeatBoardIds) {
+        addUnique(0x10, id);
+        for (let s = 0x60; s <= 0x6F; s++) addUnique(s, id);
     }
 
     addUnique(0x46, 0x00);
@@ -197,188 +320,123 @@ function buildVTableStreamSubscriptionList(): Array<[number, number]> {
  * Register VTableStream interest with Elodin (MSG to VTableStream). DAQ/calibration
  * services own VTableMsg schema registration; we only subscribe to packet IDs.
  */
-export async function registerVTables(client: ElodinClient): Promise<boolean> {
+export interface SubscriptionPassResult {
+    sent: number;
+    skipped: number;
+    parked: number;
+    /** Pairs due this pass that did not fit in the request-id space; send them next pass. */
+    remaining: number;
+    /** Earliest backoff deadline still outstanding, or null when nothing is waiting. */
+    nextAttemptMs: number | null;
+}
+
+/** `cfg` is for tests: omitted, the deployed config is read (see buildVTableStreamSubscriptionList). */
+export function registerVTables(client: ElodinClient, cfg?: unknown): Promise<SubscriptionPassResult> {
+    if (runningPass) return runningPass;
+    const generation = subscriptionGeneration;
+    runningPass = subscribeVTables(client, cfg, generation).finally(() => {
+        if (generation === subscriptionGeneration) runningPass = null;
+    });
+    return runningPass;
+}
+
+async function subscribeVTables(client: ElodinClient, cfg: unknown, generation: number): Promise<SubscriptionPassResult> {
+    const empty: SubscriptionPassResult = { sent: 0, skipped: 0, parked: parkedPairs.size, remaining: 0, nextAttemptMs: null };
     if (!client.isConnected()) {
         console.warn('⚠️ Cannot subscribe VTableStreams — Elodin client not connected');
-        return false;
+        return empty;
     }
 
-    console.log('📡 VTableStream subscriptions (config + fallbacks)...');
-
     try {
-        const subscriptions = buildVTableStreamSubscriptionList();
+        const subscriptions = buildVTableStreamSubscriptionList(cfg);
         const vtableStreamMsgId = computeMsgId('VTableStream');
-        console.log(`   VTableStream msg_id: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
 
-        // Do NOT clear subscribedVTableStreamPairs here — calling registerVTables every 5s
-        // (via scheduleResubscribe) would otherwise re-send all 276 subscriptions, causing
-        // Elodin to replay all stored data on every retry and flooding the event loop.
-        // Subscriptions are only cleared on disconnect (clearSubscriptionState), so each
-        // retry only sends subscriptions not yet successfully sent this connection.
-
-        let successCount = 0;
+        // Do NOT clear subscribedVTableStreamPairs here — this runs every few seconds, and
+        // re-sending a live subscription spawns a SECOND DB stream task for that table.
+        // Pairs are cleared only on disconnect (clearSubscriptionState).
+        const now = nowFn();
+        const due: Array<[number, number]> = [];
         let skippedCount = 0;
         for (const [high, low] of subscriptions) {
             const key = `${high},${low}`;
-            if (subscribedVTableStreamPairs.has(key)) {
+            if (subscribedVTableStreamPairs.has(key) || parkedPairs.has(key)) {
                 skippedCount++;
                 continue;
             }
+            const backoff = rejectedPairs.get(key);
+            if (backoff && backoff.nextAttemptMs > now) {
+                skippedCount++;
+                continue;
+            }
+            due.push([high, low]);
+        }
+
+        // At most one id-space worth of subscriptions per pass, and the ids stay pinned to
+        // their pairs for the WHOLE pass. An id in flight therefore names exactly one pair,
+        // which is the property that makes a rejection attributable at all.
+        //
+        // Anything over the limit waits for the next pass rather than reusing a live id. That
+        // is the whole fix: the old code sent all 4485 in one go, rotating ids over 255, so
+        // 4230 of them were unattributable by construction. A remainder costs one extra pass;
+        // reusing an id costs a table that is never retried.
+        const batch = due.slice(0, SUBSCRIPTION_REQ_ID_SPACE);
+        const remaining = due.length - batch.length;
+        pendingSubscriptionReqIds.clear();
+        let successCount = 0;
+        let reqId = 1;
+        for (const [high, low] of batch) {
+            const key = `${high},${low}`;
             const payload = Buffer.alloc(2);
             payload.writeUInt8(high, 0);
             payload.writeUInt8(low, 1);
-            const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload);
+            const thisId = reqId++;
+            pendingSubscriptionReqIds.set(thisId, key);
+            subscribedVTableStreamPairs.add(key);
+            const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload, thisId);
             if (ok) {
-                subscribedVTableStreamPairs.add(key);
                 successCount++;
-                if (successCount <= 5) {
-                    console.log(`   ✅ VTableStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
-                }
             } else {
-                console.error(`   ❌ VTableStream send failed: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+                throw new Error(`VTableStream send failed: [${high}, ${low}]`);
             }
         }
 
-        console.log(`   ✅ VTableStream: sent ${successCount} new, skipped ${skippedCount} already subscribed (${subscriptions.length} total)`);
-        console.log('   (Heartbeats [0x10] and sensor rows are TABLE packets once daq_bridge / calibration_service publish.)');
-        return successCount > 0;
+        // The DB processes this fence after every subscription in the batch.
+        // No later pass may reuse request IDs until that response arrives.
+        if (batch.length > 0) await client.flushSubscriptionRequests();
+        if (generation !== subscriptionGeneration) return empty;
+
+        // One aggregated line. Per-rejection warns produced 1.1M journal lines in four hours.
+        const refused = takeRefusalSummary();
+        if (refused.count > 0) {
+            const sample = refused.pairs.slice(0, 5)
+                .map((k) => { const [h, l] = k.split(',').map(Number); return `[0x${h.toString(16).padStart(2, '0')}, 0x${l.toString(16).padStart(2, '0')}]`; })
+                .join(' ');
+            console.warn(
+                `[Elodin] ${refused.count} subscription refusal(s) over ${refused.pairs.length} pair(s) ` +
+                `since the last pass — will retry with backoff. First: ${sample}` +
+                (parkedPairs.size > 0 ? ` (${parkedPairs.size} parked)` : ''),
+            );
+        }
+
+        let nextAttemptMs: number | null = null;
+        for (const s of rejectedPairs.values()) {
+            if (nextAttemptMs === null || s.nextAttemptMs < nextAttemptMs) nextAttemptMs = s.nextAttemptMs;
+        }
+
+        if (successCount > 0) {
+            console.log(
+                `📡 VTableStream: sent ${successCount} new, skipped ${skippedCount}` +
+                (remaining > 0 ? `, ${remaining} queued for the next pass` : '') +
+                ` (${subscriptions.length} total, ${parkedPairs.size} parked)`,
+            );
+        }
+        return { sent: successCount, skipped: skippedCount, parked: parkedPairs.size, remaining, nextAttemptMs };
     } catch (error) {
         console.error('❌ VTableStream subscription error:', error);
-        return false;
-    }
-}
-
-// ── Controller VTable registration ──────────────────────────────────────────
-
-export async function registerControllerVTables(client: ElodinClient): Promise<boolean> {
-    if (!client.isConnected()) return false;
-    console.log('📡 Registering controller VTables...');
-
-    try {
-        const vtableMsgId = computeMsgId('VTableMsg');
-
-        const vtables = [
-            {
-                name: 'Actuation', vtable: encodeVTable({
-                    packetId: [0x40, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'CONTROLLER.actuation.timestamp_ns' },
-                        { offset: 8, size: 4, type: 'f32', component: 'CONTROLLER.actuation.duty_F' },
-                        { offset: 12, size: 4, type: 'f32', component: 'CONTROLLER.actuation.duty_O' },
-                        { offset: 16, size: 1, type: 'u8', component: 'CONTROLLER.actuation.u_F_on' },
-                        { offset: 17, size: 1, type: 'u8', component: 'CONTROLLER.actuation.u_O_on' },
-                        { offset: 18, size: 1, type: 'u8', component: 'CONTROLLER.actuation.valid' },
-                    ],
-                })
-            },
-            {
-                name: 'Diagnostics', vtable: encodeVTable({
-                    packetId: [0x41, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'CONTROLLER.diagnostics.timestamp_ns' },
-                        { offset: 8, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.F_ref' },
-                        { offset: 16, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.MR_ref' },
-                        { offset: 24, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.F_estimated' },
-                        { offset: 32, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.MR_estimated' },
-                        { offset: 40, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.P_ch' },
-                        { offset: 48, size: 8, type: 'f64', component: 'CONTROLLER.diagnostics.cost' },
-                        { offset: 56, size: 4, type: 'i32', component: 'CONTROLLER.diagnostics.solver_iters' },
-                        { offset: 60, size: 1, type: 'u8', component: 'CONTROLLER.diagnostics.safety_filtered' },
-                        { offset: 61, size: 1, type: 'u8', component: 'CONTROLLER.diagnostics.cutoff_active' },
-                    ],
-                })
-            },
-            {
-                name: 'Measurement', vtable: encodeVTable({
-                    packetId: [0x42, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'CONTROLLER.measurement.timestamp_ns' },
-                        { offset: 8, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_copv' },
-                        { offset: 16, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_reg' },
-                        { offset: 24, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_u_fuel' },
-                        { offset: 32, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_u_ox' },
-                        { offset: 40, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_d_fuel' },
-                        { offset: 48, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_d_ox' },
-                        { offset: 56, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_ch_mp1' },
-                        { offset: 64, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_ch_mp2' },
-                    ],
-                })
-            },
-            {
-                name: 'StateTransition', vtable: encodeVTable({
-                    packetId: [0x43, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'CONTROLLER.state.timestamp_ns' },
-                        { offset: 8, size: 1, type: 'u8', component: 'CONTROLLER.state.from_state' },
-                        { offset: 9, size: 1, type: 'u8', component: 'CONTROLLER.state.to_state' },
-                        { offset: 10, size: 1, type: 'u8', component: 'CONTROLLER.state.reason' },
-                    ],
-                })
-            },
-            {
-                name: 'FireState', vtable: encodeVTable({
-                    packetId: [0x44, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'CONTROLLER.fire.timestamp_ns' },
-                        { offset: 8, size: 1, type: 'u8', component: 'CONTROLLER.fire.fire_active' },
-                        { offset: 9, size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_F' },
-                        { offset: 13, size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_O' },
-                    ],
-                })
-            },
-            {
-                name: 'SequencerState', vtable: encodeVTable({
-                    packetId: [0x50, 0x00],
-                    fields: [
-                        { offset: 0, size: 8, type: 'u64', component: 'SEQUENCER.state.timestamp_ns' },
-                        { offset: 8, size: 1, type: 'u8', component: 'SEQUENCER.state.current_state' },
-                        { offset: 12, size: 4, type: 'u32', component: 'SEQUENCER.state.allowed_bitmask' },
-                        { offset: 16, size: 1, type: 'u8', component: 'SEQUENCER.state.debug_mode' },
-                    ],
-                })
-            },
-        ];
-
-        let count = 0;
-        for (const { name, vtable } of vtables) {
-            if (client.sendRawMessage(vtableMsgId, ElodinPacketType.MSG, vtable)) {
-                count++;
-                console.log(`   ✅ ${name}`);
-            }
+        if (generation === subscriptionGeneration) {
+            clearSubscriptionState();
+            client.disconnect();
         }
-        console.log(`   Registered ${count}/${vtables.length} controller VTables`);
-        return count > 0;
-    } catch (error) {
-        console.error('❌ Controller VTable registration error:', error);
-        return false;
+        return empty;
     }
-}
-
-// ── Actuator Commanded VTables ──────────────────────────────────────────────
-
-export async function registerActuatorCommandedVTables(
-    client: ElodinClient,
-    actuatorChannelToEntityMap: Record<number, string>,
-): Promise<boolean> {
-    if (!client.isConnected()) return false;
-    const vtableMsgId = computeMsgId('VTableMsg');
-    let count = 0;
-    for (let ch = 1; ch <= 20; ch++) {
-        const entity = actuatorChannelToEntityMap[ch] || `ACT.CH${ch}`;
-        const vt = encodeVTable({
-            packetId: [0x32, ch],
-            fields: [
-                { offset: 0, size: 8, type: 'u64', component: `${entity}.timestamp_ns` },
-                { offset: 8, size: 1, type: 'u8', component: `${entity}.channel_id` },
-                { offset: 9, size: 1, type: 'u8', component: `${entity}.actuator_state_commanded` },
-            ],
-        });
-        if (client.sendRawMessage(vtableMsgId, ElodinPacketType.MSG, vt)) {
-            count++;
-        }
-    }
-    if (count > 0) {
-        console.log(`   ✅ Registered ${count} actuator commanded VTables [0x32]`);
-    }
-    return count > 0;
 }

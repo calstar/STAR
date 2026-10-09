@@ -147,8 +147,8 @@ discovery_timeout_seconds = 30
 type = "PT"
 pt_type = "0-5V ratiometric"
 ip = "192.168.2.21"
+mac = "4a:27:e2:3a:d5:49"              # DHCP reservation MAC (lowercase aa:bb:...). Blank = no static lease yet; fill from the lease table, see deploy/README.md "DHCP".
 send_port = 5005
-num_sensors = 10
 board_id = 21
 enabled = true
 enable_serial_printing = 0
@@ -161,8 +161,8 @@ active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 type = "PT"
 pt_type = "4-20 mA absolute"
 ip = "192.168.2.22"
+mac = "da:3b:da:4c:fb:6d"
 send_port = 5005
-num_sensors = 10
 board_id = 22
 enabled = true
 enable_serial_printing = 1
@@ -174,11 +174,12 @@ hp_pt_sense_resistor_ohms = 120
 
 [boards.actuator_board]
 type = "ACTUATOR"
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 ip = "192.168.2.11"
+mac = "4a:27:e2:88:39:5d"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 11
 enabled = false
 enable_serial_printing = 1
@@ -187,11 +188,12 @@ voltage_reference = 0
 
 [boards.actuator_board_2]
 type = "ACTUATOR"
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 ip = "192.168.2.12"
+mac = "3e:84:27:cc:20:9d"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 12
 enabled = true
 enable_serial_printing = 1
@@ -201,11 +203,12 @@ voltage_reference = 0
 
 [boards.actuator_board_3]
 type = "ACTUATOR"
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 ip = "192.168.2.13"
+mac = ""
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 13
 enabled = false
 enable_serial_printing = 1
@@ -214,11 +217,12 @@ voltage_reference = 0
 
 [boards.actuator_board_4]
 type = "ACTUATOR"
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 ip = "192.168.2.14"
+mac = "da:3b:da:4d:fe:b5"
 send_port = 5005
 listen_port = 5005
 num_actuators = 10
-num_sensors = 10
 board_id = 14
 enabled = true
 enable_serial_printing = 1
@@ -228,8 +232,8 @@ voltage_reference = 0
 [boards.lc_board]
 type = "LC"
 ip = "192.168.2.41"
+mac = "46:1b:f6:91:06:ed"
 send_port = 5005
-num_sensors = 4
 board_id = 41
 enabled = false
 enable_serial_printing = 1
@@ -241,8 +245,8 @@ active_connectors = [ 1, 2, 3 ]
 [boards.lc_board_2]
 type = "LC"
 ip = "192.168.2.42"
+mac = "36:85:18:70:fd:31"
 send_port = 5005
-num_sensors = 4
 board_id = 42
 enabled = true
 enable_serial_printing = 1
@@ -254,8 +258,8 @@ active_connectors = [ 1, 2, 6 ]
 [boards.tc_board]
 type = "TC"
 ip = "192.168.2.51"
+mac = ""
 send_port = 5005
-num_sensors = 10
 board_id = 51
 enabled = true
 enable_serial_printing = 1
@@ -267,21 +271,21 @@ active_connectors = [ 2, 3, 4, 5 ]
 [boards.tc_board_2]
 type = "TC"
 ip = "192.168.2.52"
+mac = ""
 send_port = 5005
-num_sensors = 10
 board_id = 52
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [ ]
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.rtd_board]
 type = "RTD"
 ip = "192.168.2.31"
+mac = "4a:27:e2:3a:ad:71"
 send_port = 5005
-num_sensors = 4
 board_id = 31
 enabled = true
 enable_serial_printing = 1
@@ -293,22 +297,35 @@ active_connectors = [ 1, 2, 3, 4 ]
 [boards.rtd_board_2]
 type = "RTD"
 ip = "192.168.2.32"
+mac = ""
 send_port = 5005
-num_sensors = 4
 board_id = 32
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [ ]
+active_connectors = [ 1, 2, 3, 4 ]
+
+# One BME280 supplies temperature, absolute pressure, and humidity on logical connector 1.
+[boards.environmental_board]
+type = "ENVIRONMENTAL"
+ip = "192.168.2.25"
+send_port = 5005
+board_id = 25
+enabled = true
+enable_serial_printing = 0
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1 ]
 
 [boards.encoder_board]
 type = "ENCODER"
 ip = "192.168.2.61"
+mac = ""
 send_port = 5005
 listen_port = 5005
-num_sensors = 2
 board_id = 61
 enabled = true
 enable_serial_printing = 0

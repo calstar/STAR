@@ -12,6 +12,7 @@ import math
 import os
 
 import pytest
+from pydantic import ValidationError
 
 from physics.atmosphere import Atmosphere
 from physics.constants import G0
@@ -488,3 +489,98 @@ def test_58_delay_is_a_segment_not_an_offset():
     # ...and speed must be strictly increasing through it.
     v = abs(run.traj.v[mask])
     assert v[-1] > v[0]
+
+
+# --- what counts as a rocket, a pad and a sky ------------------------------
+#
+# Every bound below was `gt=0.0` and nothing else until a mistyped canopy made
+# the app hang. The ODE (dynamics.py) is k = rho*CdS/(2m)*|v_rel|, so each of
+# these is a stiffness multiplier and any one of them can make the integrator
+# grind for minutes. Measured before the bounds existed, against 0.07 s for the
+# real vehicle: h_a=1e9 ran 428 s, d_body=1e6 ran 7.1 s, p_pad=1e12 ran 3.5 s.
+
+
+def _vehicle(**over):
+    base = dict(m=5.67, h_a=914.0, d_body=0.1016, l_body=1.44)
+    base.update(over)
+    return Vehicle(**base)
+
+
+def test_an_apogee_beyond_the_atmosphere_is_refused():
+    _vehicle(h_a=119_000.0)                      # a 119 km shot still builds
+    with pytest.raises(ValidationError):
+        _vehicle(h_a=1e9)
+
+
+def test_an_airframe_the_size_of_a_building_is_refused():
+    with pytest.raises(ValidationError):
+        _vehicle(d_body=1e6)
+    with pytest.raises(ValidationError):
+        _vehicle(l_body=1e9)
+
+
+def test_a_length_typed_in_millimetres_is_caught_by_the_fineness_ratio():
+    """The bound no single-field cap can see: one field in the wrong unit next
+    to one that is right. 1.44 m entered as 1440 mm clears `l_body <= 50`? No --
+    but 0.1016 m entered as 101.6 mm clears `d_body <= 2` only as 0.1016, and a
+    1.44 x 101.6 m airframe is a disc. Both directions must fail."""
+    with pytest.raises(ValidationError, match="fineness"):
+        _vehicle(d_body=1.44, l_body=1.0)        # wider than it is long
+    with pytest.raises(ValidationError, match="fineness"):
+        _vehicle(d_body=0.01, l_body=44.0)       # a 4400:1 needle
+
+
+def test_the_real_vehicle_is_nowhere_near_any_of_these_bounds():
+    """Guards the bounds being set too tight: the worked example must build,
+    and so must a 100 km space shot, which FAR actually hosts."""
+    v = _vehicle()
+    assert 5.0 <= v.l_body / v.d_body <= 25.0
+    _vehicle(h_a=100_000.0, m=200.0, d_body=0.61, l_body=10.0)
+
+
+def test_a_mass_in_grams_is_refused():
+    """`m` DIVIDES the drag term, so unlike every other field the dangerous
+    typo is a small one: grams read as kilograms multiplies the step count by
+    a million."""
+    with pytest.raises(ValidationError):
+        _vehicle(m=1e-9)
+
+
+def test_a_pad_temperature_in_celsius_is_refused():
+    """The sneakiest typo here, because 20 is a plausible-looking number: 20 K
+    is ~14x the air density and a genuinely stiff ODE."""
+    Site(T_pad=293.15)                            # kelvin is fine
+    with pytest.raises(ValidationError):
+        Site(T_pad=20.0)
+
+
+def test_a_pad_pressure_in_millibar_is_refused():
+    Site(p_pad=94_155.6)                          # FAR's station pressure
+    with pytest.raises(ValidationError):
+        Site(p_pad=1013.25)                       # mbar typed raw
+
+
+def test_infinities_and_nans_never_reach_the_solver():
+    """pydantic allows inf/NaN by default, and `inf` satisfies every `gt=0`
+    bound in the schema. `m = inf` used to run to completion and return a
+    descent whose every load was NaN, reported as a successful run."""
+    for field in ("m", "h_a", "d_body", "l_body"):
+        with pytest.raises(ValidationError):
+            _vehicle(**{field: math.inf})
+    for field in ("z0", "v0", "v_lat", "v_lat_dir"):
+        with pytest.raises(ValidationError):
+            _vehicle(**{field: math.nan})
+
+
+def test_a_pad_state_is_bounded_exactly_like_the_site_it_replaces():
+    """`study._apply` copies a PadState onto the Site wholesale, so anything
+    this accepts the Site accepts. `lapse` was bounded on one and not the
+    other."""
+    from physics.schema import PadState
+
+    with pytest.raises(ValidationError):
+        PadState(label="x", lapse=-1e6)
+    with pytest.raises(ValidationError):
+        PadState(label="x", T_pad=20.0)
+    with pytest.raises(ValidationError):
+        PadState(label="x", p_pad=1013.25)

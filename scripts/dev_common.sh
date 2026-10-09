@@ -129,6 +129,39 @@ _dev_run_preflight() {
   fi
 }
 
+# Wait until every declared service port accepts a connection, so the URLs we
+# print are actually usable.
+#
+# Without this the summary appeared the instant tmux had spawned the panes. Vite
+# serves in about a second but a Python API can take several (EngineDesign's
+# backend.main is ~6 s: numba warm plus the router graph). Open the UI inside
+# that window and a frontend that probes health once on mount latches "backend
+# not connected" and stays there until a manual reload -- the single most common
+# "it broke again" after ./dev.sh --restart.
+#
+# Best-effort: on timeout we print anyway with a note, never block the developer.
+_dev_wait_ready() {
+  local timeout="${DEV_READY_TIMEOUT:-45}"
+  local i port label deadline=$(( SECONDS + timeout )) pending=1
+  [ "${#DEV_SERVICE_PORTS[@]}" -gt 0 ] || return 0
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    pending=0
+    for i in "${!DEV_SERVICE_PORTS[@]}"; do
+      port="${DEV_SERVICE_PORTS[$i]}"
+      _dev_port_open "$port" || pending=1
+    done
+    [ "$pending" -eq 0 ] && return 0
+    sleep 0.5
+  done
+  echo ""
+  for i in "${!DEV_SERVICE_PORTS[@]}"; do
+    port="${DEV_SERVICE_PORTS[$i]}"
+    label="${DEV_SERVICE_LABELS[$i]}"
+    _dev_port_open "$port" || echo "  note: $label (port $port) not answering yet after ${timeout}s — check ./dev.sh --logs"
+  done
+  return 0
+}
+
 _dev_print_summary() {
   local i
   echo ""
@@ -193,6 +226,7 @@ _dev_start() {
   if [ "$attach" = "1" ]; then
     exec tmux attach -t "$DEV_SESSION"
   fi
+  _dev_wait_ready
   _dev_print_summary
 }
 

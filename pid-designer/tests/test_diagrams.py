@@ -364,7 +364,10 @@ _DOC_SCOPED = {
 }
 
 #: Not diagram-scoped: no doc id, or exists precisely to reach diagrams you cannot edit.
+#: `rescue_document` sits with copy: it reads only the source's name and writes
+#: a new design into the caller's own list, never into the source.
 _UNSCOPED = {"list_documents", "browse_documents", "create_document", "copy_document",
+             "rescue_document",
              # The main-diagram pointer: admin-gated, covered in test_open_and_main.py.
              "get_featured", "set_featured", "clear_featured",
              # Curated mode's STAR set and access requests: their own matrix in

@@ -17,8 +17,10 @@ import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
   getActiveProfilePath, readStateCsv, writeStateCsv, isStateCsvName, STATE_CSVS,
+  readStateScript, writeStateScript, listStateScripts,
   undeployedChanges,
 } from './routes/config-profiles.js';
+import { checkStateScript } from './routes/script-check.js';
 import {
   listCalibrationProfiles,
   saveCalibrationProfile,
@@ -34,6 +36,7 @@ import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
+import { currentTares } from './lc-tare.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -56,6 +59,23 @@ export interface SensorConfigEntry {
   entity: string;
   /** Calibrated entity string, e.g. "PT1_Cal.CH1" */
   calEntity: string;
+}
+
+/**
+ * How many enabled boards of this type the rig has.
+ *
+ * A generated role name ("LC Ch1") says nothing about which board it came from, and two
+ * boards of one type routinely declare the same connector — two LC boards each reporting
+ * on channel 1. The calibration page and the GUI list these names, so with a twin present
+ * the name has to carry the board_id or the operator is picking blind.
+ */
+function enabledBoardCount(boards: Record<string, any>, type: string): number {
+  return Object.values(boards).filter((b: any) => b?.type === type && b?.enabled !== false).length;
+}
+
+/** Generated role for a board with no [sensor_roles_<board>] section. */
+function generatedRole(type: string, boardId: number, ch: number, multiBoard: boolean): string {
+  return multiBoard ? `${type}${boardId} Ch${ch}` : `${type} Ch${ch}`;
 }
 
 function asBoardId(raw: unknown, fallback: number): number {
@@ -150,6 +170,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  const manyRtdBoards = enabledBoardCount(boards, 'RTD') > 1;
   // RTD boards: sensor_roles_<boardKey> or active_connectors with role "RTD ChN"
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
@@ -160,9 +181,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     const boardIp: string = board.ip || '';
     const boardRolesKey = `sensor_roles_${boardKey}`;
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
-    const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-      ? (board.active_connectors as number[])
-      : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+    const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
 
     const boardNumber = elodinSlotFromBoardId(boardId);
     if (rolesSection && typeof rolesSection === 'object') {
@@ -186,7 +205,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
         sensors.push({
           type: 'RTD',
           id: ch,
-          role: `RTD Ch${ch}`,
+          role: generatedRole('RTD', boardId, ch, manyRtdBoards),
           boardId,
           boardIp,
           isHpPt: false,
@@ -198,6 +217,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  const manyLcBoards = enabledBoardCount(boards, 'LC') > 1;
   // LC boards: from active_connectors when no sensor_roles_<boardKey>; role "LC ChN"
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
@@ -227,14 +247,12 @@ function buildSensorConfig(): SensorConfigEntry[] {
         });
       }
     } else {
-      const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
-        ? (board.active_connectors as number[])
-        : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+      const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
       for (const ch of active) {
         sensors.push({
           type: 'LC',
           id: ch,
-          role: `LC Ch${ch}`,
+          role: generatedRole('LC', boardId, ch, manyLcBoards),
           boardId,
           boardIp,
           isHpPt: false,
@@ -468,6 +486,18 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
               // Which state the characterization hold drives. A flag, not a name — the operator
               // may rename or move it and every client follows without a code change.
               isFlow: e.is_flow === true,
+              // A non-empty script_file is what makes a state dynamic — there is no separate flag
+              // that could disagree with it. The panel needs this because a dynamic state is not a
+              // latch: it runs, and it leaves on its own, so leaving it is a different gesture.
+              //
+              // The script TEXT is deliberately not here. The control page has no use for it, and
+              // the config editor reads it from /api/state-script.
+              isDynamic: typeof e.script_file === 'string' && e.script_file.trim() !== '',
+              scriptTimeoutMs: typeof e.script_timeout_ms === 'number' ? e.script_timeout_ms : null,
+              scriptReturnTarget:
+                typeof e.script_return_target === 'string' ? e.script_return_target : null,
+              scriptTimeoutTarget:
+                typeof e.script_timeout_target === 'string' ? e.script_timeout_target : null,
               // Absent coordinates mean "not on the control panel" — no separate hidden flag.
               panelRow: typeof e.panel_row === 'number' ? e.panel_row : null,
               panelCol: typeof e.panel_col === 'number' ? e.panel_col : null,
@@ -539,6 +569,75 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           } catch (error: any) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Invalid CSV' }));
+          }
+        });
+      } else if (url.pathname === '/api/state-script' && req.method === 'GET') {
+        // One dynamic-state script from the ACTIVE PROFILE, or the list of them. Read-only, so no
+        // operator gate — same posture as /api/state-csv and /api/config/export.
+        try {
+          const which = url.searchParams.get('name');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(which === null
+            ? JSON.stringify({ scripts: listStateScripts() })
+            : JSON.stringify({ name: which, source: readStateScript(String(which)) }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read script' }));
+        }
+      } else if (url.pathname === '/api/state-script' && req.method === 'POST') {
+        // Write a script into the active profile; deploy when idle. Same freeze rule as a config
+        // save — during a session it stays a draft, applied at the next session start.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const which = String(url.searchParams.get('name') || '');
+            const stateName = String(url.searchParams.get('state') || '');
+            if (!stateName) throw new Error('state is required');
+
+            // Syntax-checked before it is written, by the sequencer's own parser. A check that
+            // could not run (no build yet) does not block the save — the sequencer re-checks at
+            // startup and is the authority either way.
+            const check = await checkStateScript(body, stateName);
+            if (!check.ok) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Script has errors', diagnostics: check.diagnostics }));
+              return;
+            }
+
+            const sessionActive = sessionManager.getStatus().active;
+            const deployed = writeStateScript(which, body, !sessionActive);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: true,
+              deployed,
+              checked: !check.unavailable,
+              message: deployed ? 'Saved and applied' : 'Saved as draft (applies at next session start)',
+            }));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid script' }));
+          }
+        });
+      } else if (url.pathname === '/api/state-script/check' && req.method === 'POST') {
+        // Debounced syntax check from the editor, without saving.
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const stateName = String(url.searchParams.get('state') || '');
+            if (!stateName) throw new Error('state is required');
+            const check = await checkStateScript(body, stateName);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(check));
+          } catch (error: any) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Check failed' }));
           }
         });
       } else if (url.pathname === '/api/config/validate' && req.method === 'GET') {
@@ -797,6 +896,19 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         } else {
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
+      } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
+        // The live load-cell tares, for the UI to badge tared channels and show their offsets.
+        //
+        // Read from the same file the stream subtraction uses, so the badge and the number on
+        // the plot can never disagree. This is the authoritative source for tare UI state — do
+        // NOT let the page assume a tare landed because it sent the command; [0x46,0x00] carries
+        // no reply, so only the file says whether the service accepted it.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        try {
+          res.end(JSON.stringify({ tares: currentTares() }));
+        } catch {
+          res.end(JSON.stringify({ tares: [] }));
         }
       } else if (url.pathname === '/api/feed-char/results') {
         /**

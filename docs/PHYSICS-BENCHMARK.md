@@ -238,8 +238,8 @@ burned.
 
 **Every pressure in this tier is gauge (psig)**, because that is what the stand's
 transducers read and what the study traces report; a vented vessel is 0.0. The model
-underneath is absolute — the study primes at 550 psig, which is 564.7 psia — and the
-only two places the two meet are `backend.run.psig` / `from_psig`. Differential
+underneath is absolute — the study primes at 473.5 psig, which is 488.2 psia — and the
+only two places the two meet are `feedtwin.session.gauge.psig` / `from_psig`. Differential
 pressures are the same in either.
 
 This is the headline regression. Run it after any change to the solver, the
@@ -262,34 +262,74 @@ hard-coded vessel walls on current code it already read differently). Second: th
 gauge convention landed the same day, so the prime moved from 550 psia to 550 psig and
 every number below is psig.
 
+Re-baselined 2026-10-07 (supply effect from zero inlet; the note below the table).
+
 | | GN2 | Helium |
 |---|---|---|
-| T-0 pressure | 550.0 psig | 550.0 psig |
-| ignition dip | **-35.2 psi** | **-12.9 psi** |
-| recovers to lockup | **never** | **t = 0.41 s** |
-| at t = 1 s | 528.0 | 557.6 |
-| at t = 4 s | 548.1 | 595.5 |
-| burn to depletion | 5.51 s | 5.20 s |
-| COPV remaining | 518 psig | 559 psig |
-| peak thrust | 8.10 kN | 8.80 kN |
+| T-0 pressure | 473.5 psig | 473.5 psig |
+| ignition dip | **-25.8 psi** | **-9.3 psi** |
+| back to T-0 lockup | **t = 2.5 s** | **t = 0.31 s** |
+| at t = 1 s | 459.1 | 479.8 |
+| at t = 4 s | 483.1 | 510.2 |
+| burn to depletion | 6.04 s | 5.85 s |
+| COPV remaining | 577 psig | 834 psig |
+| peak thrust | 7.24 kN | 7.77 kN |
 | failed ticks | **0** | **0** |
 
 Tolerance: **±2 psi and ±0.05 s.** Anything larger is a change in behaviour and needs
 an explanation, not a shrug — and the explanation goes *here*, next to the number.
 
+**2026-10-06, drawings read gauge** (`feedtwin.model.pressure`). A drawing's bare
+"psi" on an absolute pressure now reads as psig, as its own notes say ("COPV service
+pressure", "500 psig operating"). The Study's drawings change in one place that
+reaches a burn: the regulator's `inlet_reference` (4500 psi) sits 14.7 psi higher, so
+the supply-pressure effect lifts the outlet ~0.25 psi. GN2: T-0 550.0 -> 550.7, dip
+-34.9 -> -35.4, scratch "recovers" 3.67 -> 3.79 s. Helium: dip -12.9 -> -12.7,
+recovery 0.38 -> 0.36 s. All inside tolerance; the table stands.
+
+**2026-10-06, ullages solved with the network** (`solve_steady(storage=...)`,
+`Session._ullage_storage`). Each ullage is an unknown in the coupling step's solve, tied
+to the gas it receives by the vessel's own response over the step (backward Euler), not
+a boundary held at its start-of-step pressure. Two 0.41 L ullages behind LE4's Cv 4
+solenoids used to flip-flop through their manifold every step while a collapsing LOX
+tank was held on the regulator: 100 g/s into one tank, almost all refused at its supply
+clip, the regulator drooping at a phantom 60 g/s and both tanks parked 25 psi under
+lockup. GN2: T-0 550.7/549.5 (ox/fuel) -> 550.0/550.0, because the settle no longer leaves
+the pair split by that manifold exchange; dip -35.4 -> -34.6; the scratch crossing of 550
+(3.74 s) is gone, so "never" now holds literally; t = 1 s 528.3 -> 528.1, t = 4 s 548.8 ->
+548.4; burn, COPV and thrust unchanged. Helium: dip -12.7 -> -12.5, recovery 0.40 ->
+0.39 s, t = 4 s 595.8 -> 595.6, the rest unchanged. 0 failed ticks. Tier 2.3 moves 0.04
+psia. All inside tolerance; the table stands.
+
+**2026-10-07, the supply effect is measured from zero inlet** (the team:
+`outlet = dome + bias - S x inlet`, "it doesn't just start increasing after" the charge).
+The study drawings declare `inlet_reference = 4500 psi`, tagged *measured* and described
+as "the datum": it zeroed the effect at a full bottle. It is no longer read
+(`Regulator.supply_effect`; a drawing that declares one is warned). Off a 4,500 psig
+bottle the 1092-50 at dome 500 now locks up at 500 + 50 - 17 x 4.5 = **473.5 psig**, and
+the prime puts the tanks there (`prime_at_t0` asks the regulator, it no longer assumes
+dome + bias). Everything follows the 76.5 psi: less flow (0.89x), a shallower dip
+(droop is proportional to flow), longer burns, more bottle left. Old -> new: GN2 T-0
+550.0 -> 473.5, dip -34.6 -> -25.8, t = 1 s 528.1 -> 459.1, t = 4 s 548.4 -> 483.1, burn
+5.51 -> 6.04 s, COPV 520 -> 577, peak 8.09 -> 7.24 kN; helium T-0 550.0 -> 473.5, dip -12.5 ->
+-9.3, recovery 0.35 -> 0.31 s, t = 4 s 595.6 -> 510.2, burn 5.19 -> 5.85 s, COPV 564 -> 834,
+peak 8.79 -> 7.77 kN. GN2 now climbs back to its T-0 lockup at 2.5 s, where it used
+to fall short: the same supply effect per psi of bottle, against a regulator drooping less
+at the lower flow. 0 failed ticks.
+
 Three properties matter more than the individual numbers, because they are the
 physics rather than the arithmetic:
 
-1. **Both start at 550.0 psig** — dome 500 plus the 1092-50's 50 psi spring bias.
+1. **Both start at 473.5 psig** — dome 500 plus the 1092-50's 50 psi spring bias, less
+   its supply effect off the full bottle (17 psi per 1000 x 4,500 psig).
 2. **The trace drops at ignition, climbs, then blows down.** If pressure *rises* at
    ignition the supply-pressure effect or the lockup rise is missing from the
    drawing. This exact error shipped once.
-3. **Helium recovers lockup in under half a second; GN2 climbs back to within a few
-   psi of it and does not get there before the tanks run dry.** The recovery is the
-   supply-pressure effect lifting the setpoint as the bottle falls, an order of
-   magnitude slower on nitrogen. If GN2 recovers in under a second something has given
-   the regulator more capacity than it has; if helium stops recovering, the SPE has
-   been lost from the drawing.
+3. **Helium recovers lockup in about a third of a second; GN2 takes seconds (2.5 s).**
+   The recovery is the supply-pressure effect lifting the setpoint as the bottle falls,
+   an order of magnitude slower on nitrogen. If GN2 recovers in under a second something
+   has given the regulator more capacity than it has; if helium stops recovering, the
+   SPE has been lost from the drawing.
 
 ### 2.2 Full-physics expectations
 
@@ -301,10 +341,13 @@ Four traces, **all converged, 0 failed ticks.** Pressures psig. T-0 is now a *pr
 
 | case | T-0 | t = 1 s | t = 4 s | burn | COPV left |
 |---|---|---|---|---|---|
-| GN2 vapour+chilldown | 550.2 | 528.0 | 548.1 | 5.51 s | 518 |
-| GN2 + collapse | 548.5 | 528.0 | 547.9 | 5.51 s | 517 |
-| He vapour+chilldown | 549.7 | 557.6 | 595.5 | 5.20 s | 559 |
-| He + collapse | 548.1 | 557.7 | 595.6 | 5.20 s | 558 |
+| GN2 vapour+chilldown | 473.5 | 459.1 | 483.1 | 6.04 s | 577 |
+| GN2 + collapse | 472.6 | 459.1 | 483.1 | 6.04 s | 576 |
+| He vapour+chilldown | 473.5 | 479.8 | 510.2 | 5.85 s | 834 |
+| He + collapse | 472.9 | 479.9 | 510.3 | 5.85 s | 830 |
+
+Re-baselined 2026-10-07 with 2.1 (supply effect from zero inlet); the GN2 cases still
+sit together through the burn (0.0 psi at t = 1 s and 4 s).
 
 **The load-bearing assertion is the one people get wrong:**
 
@@ -322,18 +365,22 @@ means something is being recomputed per step that should be cached.
 
 ### 2.3 Steady fire on the shipped stand
 
-12 steps of 50 ms in `Fire` on `copv_study_gn2`, primed at 550 psig. Chamber pressure
+12 steps of 50 ms in `Fire` on `copv_study_gn2`, primed at lockup, 473.5 psig. Chamber pressure
 here is **absolute**, as every pressure inside the model is — `scripts/physics_benchmark.py`
 reads it off the chamber result, not off a gauge.
 
 | quantity | expected |
 |---|---|
-| chamber pressure (abs) | 452.1 psia |
-| thrust | 7730 N |
-| total flow | 3.131 kg/s |
-| O/F | 1.695 |
-| ox plumbing Δp | 19.0 psi |
-| injector Δp ox | 66.6 psi |
+| chamber pressure (abs) | 399.9 psia |
+| thrust | 6766 N |
+| total flow | 2.787 kg/s |
+| O/F | 1.702 |
+| ox plumbing Δp | 15.1 psi |
+| injector Δp ox | 55.0 psi |
+
+Re-baselined 2026-10-07 (supply effect from zero inlet, 2.1): the tanks 76.5 psi lower,
+Pc 452.1 -> 399.9 psia with mass flow 0.890x against Pc 0.885x, as a choked throat has it;
+the drops fall roughly with flow squared, and O/F stays put.
 
 **The shape matters more than the values: the injector must hold most of the drop.**
 If plumbing exceeds the injector, either the geometry is wrong or someone has
@@ -357,18 +404,24 @@ StudyRequest(gases=("gn2","he"), dt=0.05, horizon=14.0, line_walls=True)
 
 | case | ox at T-0 | ox min | ox at end | COPV left |
 |---|---|---|---|---|
-| GN2 walls off | 550.0 | 456.3 | 456.3 | 512 |
-| GN2 walls on | 550.0 | 515.5 | 515.5 | 615 |
-| He walls off | 550.0 | 545.4 | 551.0 | 559 |
-| He walls on | 550.0 | 545.4 | 604.9 | **768** |
+| GN2 walls off | 473.5 | 449.4 | 462.9 | 576 |
+| GN2 walls on | 473.5 | 449.8 | 495.9 | 751 |
+| He walls off | 473.5 | 470.5 | 527.6 | 834 |
+| He walls on | 473.5 | 470.5 | 524.6 | **1148** |
+
+Re-baselined 2026-10-07 with 2.1 (supply effect from zero inlet; the code before read
+550.0 / 460.8 / 460.8 / 520, 550.0 / 516.0 / 516.0 / 618, 550.0 / 545.8 / 555.2 / 563,
+550.0 / 545.8 / 605.0 / 770 on this run).
 
 **The two gases spend the heat differently, and that is the finding.**
 
-- **GN2 has lost regulator authority by the end** — the tank has fallen to 492 psi,
-  so tank pressure is set by what the bottle can still deliver. Wall heat therefore
-  shows up as tank pressure: **+59.2 psi at the end of the burn**.
-- **Helium is still in lockup** — the regulator is holding the setpoint, so tank
-  pressure cannot move. The heat shows up entirely as bottle reserve: **+209 psi**.
+- **GN2 is under its regulator by the end** — 463 psi against a 540 psi lockup off the
+  576 psig left in the bottle, so tank pressure is set by what the bottle can still
+  deliver. Wall heat therefore shows up as tank pressure: **+33 psi at the end of the
+  burn**, and +175 psi of bottle.
+- **Helium is still within a few psi of lockup** (528 against 536), so the heat shows
+  up as bottle reserve: **+314 psi**. The tank even ends 3 psi *lower* with the walls
+  on: more bottle left is a lower lockup, 17 psi per 1000.
 
 So neglecting the walls makes a nitrogen COPV look substantially more undersized than
 it is. Both cases are the same physics: warmer pressurant is less dense, so fewer
@@ -497,16 +550,53 @@ of 550 psig (He 547.3, GN2 547.8), ullage ≈ 288 K, and an ignition dip within 
 of the baseline's. The tank↔tank slosh itself (±5 g/s, ~1 psi at the inner step) is
 the explicit-coupling artefact of §2.1's RC note, not physics.
 
+**The same artefact, grown into a sawtooth (2026-10-05).** On LE4 -- one regulator, one
+manifold, two press solenoids -- every helium burn ran a 15-30 psi, 0.5-0.8 s
+sawtooth with gas going tank to tank backwards through the manifold; GN2 was smooth.
+The coupling guard only knew the regulator-ullage constant (~27 ms on helium) and
+stepped at 25 ms, but two ullages on one manifold exchange gas through their
+solenoids alone, and that constant is 2-8 ms on helium. A solve that found one tank a
+tenth of a psi above the manifold sent its gas *out* for the whole step while its
+liquid drained; it fell 15 psi, the other dumped into it, and the two traded the error
+indefinitely. `Session._press_path_timescale` adds `C / G` for each ullage (`G` from the slopes of
+its press-side gas branches -- far end a free node, so never a vent -- at the solved flow
+or the flow that replaces the liquid, whichever is more). Three gates keep it from
+costing where it buys nothing: liquid must be leaving; the tank must ride its supply,
+within `supply_band` of it (the shipped GN2 stand burns 6-8 psi under its manifold and
+traced identically either way, at twice the cost); and the tick's drain must cover a
+tenth of that band (without it a nearly empty tank at Engine Abort read 0.3 ms and the
+API random-walk test crawled for an hour). LE4 helium drawn: 6,579 → 6,726 N mean, LOX
+min 519 → 552 psia, identical to a forced 2 ms step (6,954 vs 6,953 N on the proposed
+holes). GN2 +5 N. This tier: unchanged within tolerance (He dip −12.9, recovery 0.37 →
+0.38 s) but 160 s instead of 96 s for both gases at dt = 10 ms -- the study's helium
+rides lockup, so the guard runs there too. feed-twin suite 26:38 → 27:56.
+
+**Then made cheap (2026-10-06).** Console speed on LE4 (cockpit Setup, 20 ms ticks,
+wall seconds per simulated second): helium Fire 1.01 before the guard, 6.85 with it;
+GN2 1.03 → 1.63. Three changes took it to helium 0.61 and GN2 0.23 -- faster than real
+time, and faster than before the guard -- with the burn numbers unmoved (LE4 He 6,953.0
+N, GN2 5,833.9 N; this tier identical, 38 s for both gases at dt = 10 ms):
+(1) the temperature walk built a fresh `Fluid` -- fresh CoolProp states -- per branch per
+sweep, a third of a burning tick; it now uses `Network.fluid`. (2) `Tank.level` keeps
+its last root solve by exact liquid volume. (3) Couplings the press-path term adds take
+proportionally fewer vessel sub-steps, so each vessel step is exactly as fine as without
+it; couplings the mass rule asks for keep theirs (thinning those moved §1's chamber
+check by 13 psi). Test:
+`lib/feedtwin/tests/test_press_path_coupling.py`, which rings again without the term.
+**If a helium trace saws, check the coupling step against this before the physics.**
+
 ### 2.5 Toggle discipline
 
 Every optional physics model must satisfy both:
 
 1. **Off is byte-identical.** `line_walls=False` reproduces the baseline trace
-   exactly, not to a tolerance. Where an option changes which quantity is read —
-   `_pressurant_enthalpy` reads the walked arrival instead of the bottle — that read
-   must be gated on the toggle, because an adiabatic walk agrees with the bottle only
-   to the walk's own convergence tolerance, and "agrees to a tolerance" is not
-   "unchanged".
+   exactly, not to a tolerance. Where an option changes which quantity is read, that
+   read must be gated on the toggle, because "agrees to a tolerance" is not
+   "unchanged". (Not every read an option once changed stays gated: the walked
+   arrival enthalpy at an ullage was first read only with line walls on, and is now
+   read always, because the bottle's enthalpy was the wrong price for gas that came
+   from the other tank — 2.4c item 5. That change was a fix to the baseline, made
+   with a fresh baseline, not an option.)
 2. **On, with nothing declared, is also byte-identical.** A drawing that never gave
    `wall_thickness` or `fitting_mass` has no metal, so the option must be inert rather
    than subtly perturbing. Gate on the model having something to do, not just on the
@@ -545,9 +635,15 @@ test's expectation — the second is the measurement.
 With a main valve shut, the leg beyond it must **hold its own pressure** and not
 track the tank down. Known-good: `MVO.out` sits at 14.7 psi while the tank vents.
 
-There is a related open defect — a leg that is a genuine *dead end* is back-filled
-from the node across the shut branch, and the hold-last-value guard does not arm for
-a plain valve because its `pressure_drop(0.0)` is identically zero. Check both.
+A leg that is a genuine *dead end* behind a shut valve -- a capped line, the run
+between two shut valves -- **holds what was trapped in it**. It is back-filled from
+the node across the shut branch (an upper bound), and the solve flags it undefined so
+the session shows the last value it read, atmosphere on a stand never pressed. The
+flag used to arm only for a component holding a drop at zero flow (a check valve
+behind its crack), and a plain valve's `pressure_drop(0.0)` is identically zero, so a
+transducer behind a shut ball valve followed the tank. Fixed 2026-10-08: a stub
+reached across a shut or isolated branch is flagged
+(`test_audit_regressions.py::test_a_leg_behind_a_shut_valve_is_flagged`). Check both.
 
 ### 3.3 Vents must exist at all
 
@@ -563,7 +659,8 @@ it (`components/pid/vents.ts`) and feedtwin now reads the same rule. Assert:
 ### 3.4 The state machine must fail closed
 
 `can_go` on a state whose row could not be parsed must refuse every non-abort target,
-while **aborts stay reachable**. The shipped Diablo table has 10 malformed rows; that
+while **aborts stay reachable**. The shipped Diablo table has 9 rows one cell short
+(the DAQ's own copy, 10); they are read left-aligned as the DAQ reads them, and that
 is expected and documented in `feed-twin/backend/statemachines/NEEDS-REPAIR.md`.
 
 Assert specifically: **`Idle → Armed → Fire` is refused.** That two-move path to
@@ -586,8 +683,10 @@ the LOX tank before anybody armed; see `NEEDS-REPAIR.md`). Asserted:
 
 ### 3.6 A filled bottle sags — by how much is the open number
 
-`GN2 High Press` charges the bottle from GSE in `copv_fill_s` (25 s, the stand's own
-pace). That is an **adiabatic charge**: 10 kg of N₂ into 44 L lands at 382 K in 25 s
+`GN2 High Press` charges the bottle from GSE in `copv_fill_s` (9.7 s since 2026-10-05,
+fitted to the 12 Sep pulse fill, `daq_20260912_204917`, 183 psi RMS; it was the operator's
+25 s, which reached 1,430 psig where the stand reached 3,515; the table below was
+computed at 25 s). That is an **adiabatic charge**: 10 kg of N₂ into 44 L lands at 382 K in 25 s
 and 342 K in 300 s (γ·T_supply is 410 K; the wall takes the rest), then sags toward
 its steel — ~10 psi/s after a 25 s fill — and every tank pressed from it inherits the
 heat (fuel ullage 411 K at 550 psig, collapsing to 480 in 6 s; 344 K and 517 from a
@@ -634,7 +733,8 @@ it); GSE Abort (GSE High Press Vent dumps the bottle — GSE-side fill and vent 
 driven by the table's own `GSE High Press Control` / `GSE High Press Vent` actuators,
 not by the state's name); Engine Abort from Fire (mains open, as the table says);
 Emergency Abort → Idle (nothing moves); hand holds defeating a press until released;
-Fire straight from Fuel Press (one of the seven bypasses — it burns, and warns); and a
+Fire straight from Fuel Press (one of the six bypasses left in the twin's table, seven
+in the DAQ's — it burns, and warns); and a
 200-move seeded random walk over the table. After every step: no NaN, nothing below
 vacuum, no inventory below zero, and **every commanded valve is where the table says
 unless a hand holds it**.
@@ -651,10 +751,13 @@ Until 2026-09-11 the console ran with vapour off, chilldown off and no ambient h
 leak, so a loaded LOX tank with its vent shut sat at whatever it had been pressed to
 forever. The operator knows a shut LOX tank climbs. Defaults are now: collapse on,
 **vapour on, wall-to-liquid 100 W/(m²·K), an 8 W/(m²·K) air film on the tank skin in
-series with the insulation the drawing declares, wall boiling on** (library defaults
-unchanged: all off). The shipped LOX tank declares **an inch of fiberglass** (operator;
-`insulation_thickness` 25.4 mm, `insulation_conductivity` 0.04 W/(m·K)), so its skin
-passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on 0.47 m² of skin at 200 K —
+series with the insulation the drawing declares, wall boiling on** (the library's
+`Setup` carries these same on-values; only the vessel-level `Tank` constructor defaults
+them off, collapse aside, and the Study and Layer X turn them off through `burn_setup`
+and their own collapse/vapour/chilldown arguments). The shipped LOX tank declares **an
+inch of fiberglass** (operator; `insulation_thickness` 25.4 mm, `insulation_conductivity`
+0.04 W/(m·K)), so its skin passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on
+0.47 m² of skin at 200 K —
 a bare tank sees 450 W. A chilled, insulated LOX tank shut at atmosphere climbs to
 ~15 psig in ten seconds and then creeps (the leak barely holds the wall above saturation
 once the pressure has lifted it); a bare one runs on at a few psi a second. The tank
@@ -758,6 +861,49 @@ operator would read. The console itself is the DAQ's dashboard (pressure cards, 
 with the DAQ's window buttons, the actuator grid, the state diagram driven by the
 backend's reachable set); nothing on it is set by typing.
 
+### 3.10b Keeping up: the tick, the cart, the capped port (2026-10-07)
+
+The operator: "during fire it was like 0.4x or worse". LE4 (6), the two-page drawing
+with the cart drawn (69 nodes, 57 branches; the vehicle alone is 24 and 21), measured
+in-process per 4 s of stand. Three causes, none of them the physics of the burn:
+
+* **The panel waited 200 ms after every reply.** The pump in `feed-twin/frontend/src/stand.tsx`
+  scheduled the next tick 200 ms after the last one *landed*, and a tick carries at most
+  0.25 s, so a server needing 100 ms per tick ran 0.25 / 0.30 = 0.8x however fast it was;
+  at 250 ms, 0.55x. The period is now measured from the start of the tick.
+* **The cart was integrated through the burn.** Three cart tanks and bottles stepped every
+  sub-step, two-thirds of the network solved, with every cart valve shut. `Setup.ground_rests`
+  (on; "Simplified GSE" in Configuration): a cart vessel nothing flows through is not
+  integrated, and while the engine burns the cart with no open path to the vehicle leaves
+  the solve (`Session._rest_ground`). The burn is unchanged to the bit: full LE4 (6) burn
+  impulse 32,025.99 N·s on and off (`test_while_the_engine_burns_the_cart_rests_and_the_burn_is_the_same`).
+  The cart's passive thermal drift while it sits idle is the one thing given up.
+* **A capped port was priced as a press path.** `_press_path_timescale` counted every gas
+  branch on an ullage whose far end is free, including the wide fitting under the fuel
+  tank's top QD that ends at a cap. Priced at the drain flow its slope is near zero, so
+  the first steps of Fire asked for 0.07 ms couplings: 281 in one 20 ms step, 0.85 s before
+  the first frame of the burn. Shut and stub branches are no longer paths
+  (`test_ignition_is_not_stepped_on_a_capped_port`, red-checked: 64 couplings in one step).
+  LE4 (6) burn impulse 32,026.58 → 32,025.99 N·s. Tier 2.1 on the benchmark library,
+  dt 10 ms: every trace within 0.31 psi of the code before (COPV 1.3 psi, thrust 11 N at
+  one instant), helium recovery 0.35 → 0.36 s, GN2 and helium t = 4 s 548.4 / 595.6 →
+  548.4 / 595.5. Inside tolerance; the table stands.
+
+Plus exact-key caches that change no number: dead-end peeling per shut set and wiring
+(`Network.dead_ends`), the tank's liquid density and ullage properties per state, and
+`solve_steady(report=False)` for the session, which reads no per-branch diagnostics.
+
+| LE4 (6) | before | after |
+|---|---|---|
+| Fuel Fill, compute | 4.1x | 10.5x |
+| Ready, compute | 1.9x | 4.6x |
+| Fire, compute | 2.3x | 4.1x |
+| ignition tick (0.2 s) | 854 ms | 137 ms |
+| panel in Ready / Fire, pump simulated in-process | 0.73x / 0.77x | 0.97x / 0.97x |
+
+If the console falls behind again, time `Session.step` against the tick endpoint before
+touching the physics: the panel's own pacing has cost more than the solve once already.
+
 ### 3.11 A shut LOX tank climbs at tens of psi a minute, and why
 
 The operator: "lox boiloff pressure goes up wayyy too fast, it's usually only like 20
@@ -794,13 +940,33 @@ warms the ullage, the ullage warms the surface, the surface sets the pressure
 tank, 1.3 W/(m²·K) skin, dry wall 200 K: tens of psi/min, still ≥ 30 % of that in the second
 half-minute; the old closure jumps and stalls to under a fifth). On the cockpit stand, primed and shut under the fiberglass, that
 is ~26 psi/min over three minutes (`test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one`;
-bare is faster). A tank whose hardware has all cooled creeps at a psi or two a minute,
+bare is faster; at the vehicle's ~40 % fill since 2026-10-06, see below). A tank whose hardware has all cooled creeps at a psi or two a minute,
 which is what a dewar does. The leak (an inch of
 fiberglass; the un-insulated feed plumbing is not on the drawing), the layer depth and the
 wall mass set the numbers; the tank's own shut-vent trace calibrates them, and each is one
 row on the Configuration tab.
 
-**The Study keeps the old closures** (`backend/study.py` sets `stratification=False`,
+**The ullage meets the dry wall only** (2026-10-06, `Setup.ullage_wall_by_level`, on in the
+cockpit and the library `Setup`, pinned off by `burn_setup`). A tank's `wall_conductance` is
+the whole tank's hA. It was applied to the ullage at every fill, so a 0.8 L ullage on a
+95 % full LOX tank cooled against fifteen litres of cold wall. A freshly pressed tank sat in
+Ready fell 548 -> 260 psig in six seconds; the operator's eyeball is ~30 s. Scaled by the
+dry share of the wall it takes ~15 s at 95 % full and ~25 s at the vehicle's 6.6 kg load
+(`lib/feedtwin/tests/test_ullage_dry_wall.py`).
+
+What is left of the gap is the surface term. `ConductionCollapse` prices the heat into
+the liquid with the liquid's effusivity alone. For warm gas resting on a cold surface the
+gas side limits it, by roughly the ratio of the two effusivities (~15x for N2 over LOX).
+That is the next lever, and it moves the Study's collapse case, so it waits for a Ready-hold
+DAQ trace to fit against.
+
+The same change shrinks the wrap's effect on a shut tank at 85 % full to ~1 psi in ten
+minutes: the leak reaches the ullage only through the dry wall. So
+`test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one` now runs at the vehicle's
+~40 % fill, where it is 5 psi in three minutes. Burns do not move: LE4 GN2 6,255 N
+(-2 N), helium unchanged, Tier 2.1 identical.
+
+**The benchmark study keeps the old closures** (`backend/benchmark_study.py` sets `stratification=False`,
 `boiling_onset_K=0`, `chilldown_nucleate=0`): its tanks are primed chilled and the Tier 2
 expectations were set with a well-mixed liquid. Turn them on there deliberately, with a
 fresh baseline — with them on, the line-wall check `test_wall_heat_reaches_the_ullage` went
@@ -811,6 +977,22 @@ phase of the chilldown is ~2 min at h = 100, so a vent shut straight after a 120
 finds the wetted wall at ~230 K and it boils hard (that is regime 1 working as it should).
 The pad guide's Load LOX phase waits for the wall; the wall mass, material and film
 coefficient are Configuration rows because they are the unknowns.
+
+**A load chills the tank before it holds any liquid** (2026-10-04, operator: "the lox
+tank never fills with any kg of lox until chilled"). LOX poured into a 293 K tank flashes
+on the wall and vents; on the stand that is about ten minutes of pouring before anything
+collects. The cockpit compresses it to `Setup.load_chill_s` (30 s, a Configuration row):
+while a cryogen load runs into a tank holding no liquid, the wall falls at
+`(293 K - T_liquid) / load_chill_s` to saturation at the tank's pressure plus the boiling
+onset, the heat it gives up is LOX flashed (`Q / h_fg`, booked in `TankSim.chill_boiled`),
+and only then does the load collect. The flashed oxygen leaves with the vent rather than
+pressing the ullage -- compressed twentyfold it would be twenty times the real vent flow.
+Before this, a load filled from the first second onto a warm wall: on LE4 a three-minute
+load left the 3.6 kg wall at 190 K, and shutting the vent ran the tank to the oxygen
+critical pin in ten seconds. With it the same load ends at 90.5 K and the shut tank climbs
+~17 psi in its first minute and a psi or two a minute after. `load_chill_s = 0` is the old
+model exactly (`test_with_no_load_chill_the_liquid_collects_from_the_first_second`); the
+Study and Layer X never fill a tank, so neither sees it.
 
 Also in this round, at the operator's direction: **Fire ends in Vent** when a tank runs dry
 (`Setup.auto_vent`, `Session._burnout_check`; the table's `Fire` row gained `Vent`), the
@@ -919,6 +1101,41 @@ LN2 at 77 K is 14 K above the triple point — but a chilldown model that strays
 Re-check on any CoolProp upgrade: `lib/feedtwin/tests/test_props_chain.py`, whose
 `PAST_THE_TABLES` documents the window.
 
+
+### 4.11 The supply effect is measured from zero inlet
+
+A regulator's supply-pressure effect is ``-S p_in``: **outlet = dome + bias - S x inlet**,
+the inlet in gauge. A 1092-50 loaded to 500 psi with 4,000 psi behind it at 14.7 psi per
+1000 holds 500 + 50 - 58.8 = 491.2 psi, and comes up as the bottle falls -- from the first
+gram, not from some charge pressure onwards (the team, 2026-10-07).
+
+It took three tries, and the two wrong ones are worth knowing:
+
+1. **A datum or nothing.** The term was ``S (p_ref - p_in)`` with ``p_ref`` the drawing's
+   `inlet_reference`. LE4's drawings declare the coefficient and no reference, so the
+   term was zero -- an LE4 burn held its tanks flat while the bottle fell 3,700 psi. The
+   operator: "it seems like it's totally ignoring the supply pressure effect".
+2. **The COPV charge as the datum** (`Setup.regulator_supply_datum`, 2026-10-07 morning;
+   the study drawings' "measured" 4,500 psi `inlet_reference` did the same). That put
+   the setpoint *at* a full bottle and the whole effect beyond it, so a full bottle read
+   dome + bias. The team: wrong -- the effect is there at 4,000 psi too, and the outlet
+   does not "just start increasing after that".
+
+Now `Regulator.supply_effect` is ``S (atmosphere - p_in)`` and nothing else: no datum, no
+setting. A drawn `inlet_reference` still loads and is warned and ignored; pid-designer no
+longer offers it. Lockup always carries the term (`lockup_pressure` is the zero-flow
+outlet), because leaving it out now steps the branch by the whole term at zero flow.
+`prime_at_t0` and `jump_to_t0` put the tanks at the lockup the regulator gives off the
+*vehicle's* bottle (a cart's 6K bank behind a shut valve is not what feeds it), and the
+cockpit sends each tank's live lockup so the pad guide presses to it, not to the dome.
+
+LE4 (6), dome 500, COPV 4,500 psig: T-0 549.8 -> 483.7 psig (= 550 - 14.7 x 4.5),
+thrust at 1 s 6,305 -> 5,677 N, the tanks still climbing ~14 psi over the burn. The
+same tank pressure as before needs a dome of ~566. The study tiers moved accordingly
+(2.1-2.4, 2026-10-07).
+
+When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
+before suspecting the solver.
 ---
 
 ## Reporting

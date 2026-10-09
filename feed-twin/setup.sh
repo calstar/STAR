@@ -79,6 +79,7 @@ pip install --quiet -r requirements.txt
 # CoolProp is a large wheel, so this step is the slow one on a cold venv.
 info "Installing the physics core (CoolProp, fluids, ht — this takes a minute)"
 pip install --quiet -e ../lib/feedtwin
+pip install --quiet -e ../lib/stardesign
 python -c "import feedtwin; print('  feedtwin', feedtwin.__version__)"
 ok "Backend requirements installed"
 deactivate

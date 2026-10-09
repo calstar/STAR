@@ -59,7 +59,15 @@ engine = [
 ]
 dev = [
     "pytest>=8",
-    "black>=24",
+    # Runs the suite across cores (`-n auto`): CI and scripts/check.sh use it.
+    "pytest-xdist>=3.6",
+    # Pinned, not floating. A formatter resolved by `>=` is a moving gate: black
+    # 26 reformats `textwrap.dedent("""...""")` arguments differently from 25, so
+    # `black>=24` here and `black==25.11.0` in daq-server-ci.yml made the SAME
+    # four test files pass one workflow and fail the other, with no formatting
+    # that satisfied both. 25.11.0 is the repo-wide pin; the reason it is not 26
+    # is in .github/workflows/daq-server-ci.yml (macOS system Python 3.9).
+    "black==25.11.0",
     "mypy>=1.11",
     "types-PyYAML>=6.0",
     "PyYAML>=6.0",
@@ -107,3 +115,10 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["CoolProp.*", "fluids.*", "ht.*", "scipy.*", "yaml"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# Tests that integrate a whole burn or minutes of stand time. The fast tier
+# (`scripts/check.sh`, `pytest -m "not slow"`) skips them; CI runs everything.
+markers = [
+    "slow: integrates a whole burn or minutes of stand time; skipped by the fast tier",
+]

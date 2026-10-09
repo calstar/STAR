@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
-import { portId, portIds, portsOf, drawnPortsOf, portKind, instrumentTaps } from './ports';
+import { portId, portIds, portsOf, drawnPortsOf, portKind, instrumentTaps, handleCentre, handleEnd } from './ports';
+import { Position } from '@xyflow/react';
 import { COMPONENT_DEFS } from './types';
 import { COMPONENT_SPECS } from './spec';
 
@@ -153,5 +154,18 @@ describe('what a disconnect has', () => {
 
   it('leaves a junction with four, because a tee branches', () => {
     expect(portsOf(node('JUNCTION'))).toEqual(['t', 'b', 'l', 'r']);
+  });
+});
+
+describe('a port where React Flow measured it', () => {
+  it('is where a line meets it, rid of the measuring noise every zoom but one leaves on it', () => {
+    // Read off the screen at 1.7 and divided back: a hundred-thousandth of a
+    // pixel off, and differently off at every zoom.
+    const at = { x: 100.0000143612, y: 49.9999856387 };
+    const hb = { x: 57.0000053854, y: 27, width: 6, height: 6.0000071806, position: Position.Right };
+    expect(handleEnd(at, hb)).toEqual({ x: 163, y: 80, side: Position.Right });
+    expect(handleCentre(at, hb)).toEqual({ x: 160, y: 80, side: Position.Right });
+    // A port that really is off the grid stays where it is, to the thousandth.
+    expect(handleEnd({ x: 239.197, y: 0 }, { ...hb, x: 57 }).x).toBe(302.197);
   });
 });

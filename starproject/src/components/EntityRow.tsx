@@ -23,7 +23,7 @@ export function EntityRow({
   deleteAction,
   deleteMessage,
   editSlot,
-  indent = false,
+  depth = 0,
 }: {
   href: string;
   color: string | null;
@@ -37,13 +37,17 @@ export function EntityRow({
   deleteMessage?: string;
   /** Optional control (e.g. an Edit button) shown left of Delete, above the link. */
   editSlot?: React.ReactNode;
-  indent?: boolean;
+  /** How deep in the project tree: 0 = top level, each level indents a step. */
+  depth?: number;
 }) {
+  const indent = depth > 0;
   return (
     <li
       className={`relative flex flex-col gap-1 hover:bg-neutral-50 dark:hover:bg-neutral-800 sm:flex-row sm:items-center sm:justify-between sm:gap-0 ${
-        indent ? "py-2.5 pl-10 pr-4" : "p-4"
+        indent ? "py-2.5 pr-4" : "p-4"
       }`}
+      // Each level steps in 1.5rem, starting from the old single indent (2.5rem).
+      style={indent ? { paddingLeft: `${1 + depth * 1.5}rem` } : undefined}
     >
       {/* Overlay link fills the row. Non-interactive content sits *below* it (no
           `relative`) so the link captures clicks and shows the pointer cursor;

@@ -20,6 +20,7 @@ try:
         l_star_default,
         chamber_diameter_default,
         diameter_exit_default,
+        area_chamber_calc,
     )
 except ImportError:
     # Fallback for when running as script
@@ -31,8 +32,10 @@ except ImportError:
         l_star_default,
         chamber_diameter_default,
         diameter_exit_default,
+        area_chamber_calc,
     )
 from engine.pipeline.cea_cache import CEACache
+from engine.core.nozzle import nozzle_stagnation_loss
 from engine.pipeline.config_schemas import CEAConfig
 
 # Default CEA cache file path (relative to project root)
@@ -59,6 +62,7 @@ def solve_chamber_geometry_with_cea(
     steps: int = 200,
     export_dxf: Optional[str] = None,
     verbose: bool = False,
+    theta: float = theta_default,
 ) -> Tuple[np.ndarray, list, float, Dict[str, Any]]:
     """
     Solve for chamber geometry using CEA lookup table to find corrected Cf.
@@ -212,9 +216,10 @@ def solve_chamber_geometry_with_cea(
             
             Cf_ideal = cea_props.get("Cf_ideal", Cf_ideal_initial_guess)
             
-            # Apply nozzle efficiency correction to get corrected Cf
-            # This matches what the pipeline uses: Cf = nozzle_efficiency * Cf_ideal
-            Cf = nozzle_efficiency * Cf_ideal
+            # Delivered coefficient on the runner's basis (engine.core.nozzle.calculate_thrust):
+            # F = zeta_n Cf_vac P0 At - Pa Ae, P0 = Pc/kappa, so per (Pc At):
+            kappa = nozzle_stagnation_loss(area_chamber_calc(diameter_inner) / A_throat, cea_props["gamma"])
+            Cf = nozzle_efficiency * cea_props["Cf_vac"] / kappa - Pa * eps / pc_design
             
             # Validate Cf_ideal is finite and positive
             if not np.isfinite(Cf_ideal) or Cf_ideal <= 0:
@@ -323,8 +328,8 @@ def solve_chamber_geometry_with_cea(
         cea_props_final = cea_cache.eval(MR, pc_design, Pa, None)
     
     Cf_ideal_final = cea_props_final.get("Cf_ideal", Cf / nozzle_efficiency if nozzle_efficiency > 0 else Cf)
-    # Apply nozzle efficiency correction to get corrected Cf
-    Cf_final = nozzle_efficiency * Cf_ideal_final
+    kappa_final = nozzle_stagnation_loss(area_chamber_calc(diameter_inner) / A_throat, cea_props_final["gamma"])
+    Cf_final = nozzle_efficiency * cea_props_final["Cf_vac"] / kappa_final - Pa * eps_final / pc_design
     
     # Final validation: Verify the converged solution is self-consistent
     # Check that F = Cf_final * Pc * A_throat (within tolerance)
@@ -369,6 +374,7 @@ def solve_chamber_geometry_with_cea(
         diameter_inner=diameter_inner,
         diameter_exit=diameter_exit,
         l_star=l_star,
+        theta=theta,
         do_plot=do_plot,
         color_segments=color_segments,
         steps=steps,
@@ -565,11 +571,12 @@ def solved_chamber_plot(
     volume_chamber: float,
     lstar: float,
     chamber_diameter: float,
-    length: float,
+    length: Optional[float],
     do_plot: bool = False,
     color_segments: bool = False,
     steps: int = 200,
     export_dxf: Optional[str] = None,
+    theta: float = theta_default,
 ) -> Tuple[np.ndarray, list, Dict[str, float]]:
     """
     Generate chamber geometry plot from fully-constrained parameters.
@@ -590,9 +597,10 @@ def solved_chamber_plot(
         Characteristic length [m]
     chamber_diameter : float
         Chamber inner diameter [m]
-    length : float
-        Total chamber length (cylindrical + contraction) [m]
-        Note: This does NOT include the small arc to the throat
+    length : float or None
+        Stored barrel + cone length [m], checked against the volume only: the barrel is
+        drawn from ``volume_chamber``. Face to throat adds the 1.5 Rt entrance arc
+        (lengths['face_to_throat']).
     do_plot : bool, optional
         Whether to generate plot (default: False)
     color_segments : bool, optional
@@ -621,11 +629,15 @@ def solved_chamber_plot(
     
     # Generate nozzle using the rao function
     from engine.core.chamber_geometry import generate_nozzle
-    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(area_throat, area_exit, steps=steps)
+    nozzle_pts, nozzle_x_first, nozzle_y_first = generate_nozzle(
+        area_throat, area_exit, steps=steps, theta=theta)
     
     # Calculate chamber sections
-    # The nozzle entrance radius (nozzle_y_first) is where the contraction cone meets the nozzle
-    theta_contraction = np.pi / 4  # 45 degrees
+    # The nozzle entrance radius (nozzle_y_first) is where the contraction cone meets the nozzle.
+    # This was hardcoded to 45 deg, which made the Chamber Geometry tab's fast path draw a
+    # 45 deg convergent no matter what the config asked for -- a second copy of the contour
+    # that never got the theta-general fix in chamber_geometry.py.
+    theta_contraction = float(theta)
     
     # Calculate contraction length using the helper function
     from engine.core.chamber_geometry import contraction_length_horizontal_calc
@@ -635,8 +647,17 @@ def solved_chamber_plot(
         theta=theta_contraction,
     )
     
-    # Calculate cylindrical length from total length
-    cylindrical_length = length - contraction_length_horizontal
+    # Barrel length from the declared volume, the same construction the generator uses: a
+    # stored `length` goes stale (it did after the 6.5 kN k-scaling, drawing L* 1.0035).
+    from engine.core.chamber_geometry import chamber_length_calc
+    cylindrical_length = chamber_length_calc(volume_chamber, area_throat, contraction_ratio, theta_contraction)
+    if length is not None and abs((cylindrical_length + contraction_length_horizontal) - length) > 1e-4:
+        import warnings
+        warnings.warn(
+            f"stored chamber length {length*1000:.2f} mm disagrees with the declared volume "
+            f"({(cylindrical_length + contraction_length_horizontal)*1000:.2f} mm barrel + cone); "
+            f"drawing from the volume"
+        )
     
     # Validate lengths
     if cylindrical_length <= 0:
@@ -654,23 +675,25 @@ def solved_chamber_plot(
     # Calculate chamber radius
     r_c = np.sqrt(area_chamber / np.pi)
     
-    # Calculate where cylindrical section starts
-    # The 45° contraction line connects (x_cyl_start, r_c) to (nozzle_x_first, nozzle_y_first)
-    x_cyl_start = nozzle_x_first + nozzle_y_first - r_c
+    # Calculate where cylindrical section starts.
+    # The convergent runs from (x_cyl_start, r_c) down to (nozzle_x_first, nozzle_y_first)
+    # over a horizontal run of (r_c - y_first)*cot(theta). At theta = 45 deg this reduces to
+    # the old x_first + y_first - r_c.
+    x_cyl_start = nozzle_x_first - (r_c - nozzle_y_first) * np.tan(np.pi / 2 - theta_contraction)
     
     # Generate cylindrical section (constant radius)
     x_cyl_end = x_cyl_start - cylindrical_length
     x_cyl = np.linspace(x_cyl_end, x_cyl_start, steps)
     y_cyl = np.full_like(x_cyl, r_c)
     
-    # Generate contraction section (45° line)
+    # Generate contraction section at half-angle theta
     x_contraction = np.linspace(x_cyl_start, nozzle_x_first, steps)
-    y_contraction = r_c - x_contraction + x_cyl_start
+    y_contraction = r_c - (x_contraction - x_cyl_start) * np.tan(theta_contraction)
     
     # Combine all sections: cylindrical -> contraction -> nozzle
     chamber_pts = np.vstack([
         np.column_stack((x_cyl, y_cyl)),
-        np.column_stack((x_contraction[1:], y_contraction[1:])),  # Skip first point to avoid duplicate
+        np.column_stack((x_contraction[1:-1], y_contraction[1:-1])),  # both ends are shared vertices
         nozzle_pts  # Nozzle already starts at the connection point
     ])
     
@@ -803,8 +826,10 @@ def solved_chamber_plot(
     lengths = {
         'cylindrical': cylindrical_length,
         'contraction': contraction_length_horizontal,
-        'total': total_chamber_length
+        'total': total_chamber_length,            # barrel + cone
+        'entrance_arc': 1.5 * np.sqrt(area_throat / np.pi) * np.sin(theta_contraction),
     }
+    lengths['face_to_throat'] = total_chamber_length + lengths['entrance_arc']
     
     return chamber_pts, table_data, lengths
 

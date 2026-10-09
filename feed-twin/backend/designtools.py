@@ -292,3 +292,68 @@ async def fetch(
     where = f"{owner}/{doc_id}" if owner else doc_id
     stamp = f"release {release}" if release else "working copy"
     return tool.extract(body), f"{tool.key}:{where}@{stamp}"
+
+
+# ------------------------------------------------------------------ engine cards
+#
+# feedtwin's own engine is deliberately simple: an orifice per side and
+# ``p_c = mdot c* / A_t`` with ``c*`` straight off the CEA table. EngineDesign's
+# is not: a ring manifold, the plate's passages, spray, mixing and wall-heat
+# efficiency, the nozzle's real exit. Fired through the same drawing, the two
+# disagreed by ~5 % in thrust and ~10 % in Isp on LE4 -- and the cockpit, flying
+# the simple one, could never agree with Layer X, which flies EngineDesign's.
+# A card is EngineDesign's engine sampled once and tabulated
+# (``feedtwin.engine.card``); with one attached, the cockpit fires the engine
+# that was designed.
+
+#: Building a card is a few hundred EngineDesign solves: ~5-15 s.
+CARD_TIMEOUT = 180.0
+
+
+async def engine_card(
+    config: bytes, headers: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """EngineDesign's engine card for an engine config (YAML bytes).
+
+    Returns EngineDesign's answer: ``card`` (``EngineCard.to_dict``), the
+    config fingerprint, the pressure and ambient it was centred on and its
+    measured error.
+    """
+    tool = tools()["engine-design"]
+    url = f"{tool.base_url}/api/layerx/engine-card"
+    try:
+        async with httpx.AsyncClient(
+            timeout=CARD_TIMEOUT,
+            headers=forwarded(headers or {}),
+            transport=transport,
+        ) as client:
+            response = await client.post(url, json={"yaml": config.decode("utf-8")})
+            response.raise_for_status()
+            answer = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text[:400]
+        raise DesignToolError(
+            f"{tool.label} could not build an engine card "
+            f"({exc.response.status_code}): {detail}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise DesignToolError(
+            f"could not reach {tool.label} at {tool.base_url} for an engine card "
+            f"({exc}). Set ENGINE_DESIGN_URL if it is somewhere else."
+        ) from exc
+    if not isinstance(answer, Mapping) or "card" not in answer:
+        raise DesignToolError(f"{tool.label} returned no engine card")
+    return dict(answer)
+
+
+def parse_source(source: str) -> tuple[str, str, str, str] | None:
+    """``(tool key, owner, doc id, release)`` from an artifact's ``source``,
+    as :func:`fetch` wrote it; ``None`` for anything else (an upload, a
+    shipped file). ``release`` is empty for a working copy."""
+    key, sep, rest = source.partition(":")
+    if not sep or key not in tools() or "@" not in rest:
+        return None
+    where, _, stamp = rest.rpartition("@")
+    owner, _, doc_id = where.rpartition("/")
+    release = stamp[len("release ") :] if stamp.startswith("release ") else ""
+    return key, owner, doc_id, release

@@ -107,3 +107,22 @@ Read it in this order:
    easy to apply to the wrong component, and ISA mode silently overrides the
    launch conditions you typed.
 3. **Only then**, a bug in the port.
+
+## The .ork export, checked in OpenRocket
+
+`backend/onshape/aero/ork_export.py` writes the CAD rocket as an `.ork`, and
+`backend/motors/write.py` writes the selected thrust curve as an `.eng`/`.rse`.
+`OrkCheck.java` loads either in OpenRocket itself, headless, and prints what it
+reads: CP, CNa and CG for an `.ork` (plus each parachute and the simulation's launch
+conditions), or the digest for a motor file. `tests/test_ork_openrocket.py` drives
+it, and skips unless both of these are present:
+
+```bash
+export OPENROCKET_JAR=/path/to/OpenRocket-24.12.jar   # the release jar, same pin as above
+export JAVA_HOME=/path/to/jdk-17                       # or javac/java on PATH
+.venv/bin/python -m pytest tests/test_ork_openrocket.py -q
+```
+
+That test is how two silent failures were found: OpenRocket swapping a 96-point
+fin outline for its default fin (`FreeformFinSet.intersects` false-positives on
+collinear points), and a handful of catalogue curves OpenRocket refuses to load.

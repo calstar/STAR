@@ -125,16 +125,18 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       return { w, h };
     };
 
-    /** Windowed cache read with the per-point transform applied (null → NaN). */
+    /** Windowed cache read with the per-point transform applied.
+     *  Emits null, not NaN — see applyTransform in TimeSeriesPlot for why uPlot needs
+     *  null to draw a gap rather than a straight segment across it. */
     const readData = (): uPlot.AlignedData | null => {
       const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
       if (!cached || cached.time.length === 0) return null;
       const t = transformRef.current;
       const vData = cached.values.map((arr) =>
         arr.map((v) => {
-          if (!Number.isFinite(v)) return NaN;
+          if (!Number.isFinite(v)) return null;
           const out = t(v);
-          return out === null || !Number.isFinite(out) ? NaN : out;
+          return out === null || !Number.isFinite(out) ? null : out;
         })
       );
       return [cached.time, ...vData];

@@ -664,7 +664,7 @@ export function Layer3Optimization({
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
                                 <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
-                                    Mixture Ratio (O/F)
+                                    O/F Ratio
                                 </h3>
                                 <div className="h-[300px] w-full">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -679,7 +679,7 @@ export function Layer3Optimization({
                                             <XAxis dataKey="time" unit="s" stroke="var(--color-text-secondary)" tick={{ fontSize: 12 }} />
                                             <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 12 }} label={{ value: 'O/F Ratio', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }} />
                                             <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }} />
-                                            <Line type="monotone" dataKey="mr" name="Mixture Ratio" stroke="#eab308" strokeWidth={2} dot={false} isAnimationActive={false} />
+                                            <Line type="monotone" dataKey="mr" name="O/F" stroke="#eab308" strokeWidth={2} dot={false} isAnimationActive={false} />
                                         </LineChart>
                                     </ResponsiveContainer>
                                 </div>

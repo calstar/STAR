@@ -45,11 +45,17 @@ const FULL = 0.95;
 /** Loaded means the fill has all but stopped. Strictly under FULL, because
  *  the fill lands *at* FULL and a threshold equal to it never fires. */
 const LOADED = 0.9;
-/** At pressure means at the dome setting. The regulator's spring bias locks
- *  the tank up *above* the dome, so this is reached with margin; 95% was not
- *  enough -- the guide moved on while the tank was still climbing, and the
- *  hot pressurant then collapsed onto the liquid with the solenoid shut. */
-const PRESSED = 1.0;
+/** At pressure means within this of the lockup its regulator gives now [psi]:
+ *  dome + bias less the supply effect of the bottle behind it, which with a
+ *  full COPV sits *below* the dome. Close, not 95 %: the guide once moved on
+ *  while the tank was still climbing, and the hot pressurant then collapsed
+ *  onto the liquid with the solenoid shut. */
+const PRESSED_PSI = 3;
+
+/** What a tank presses up to: its regulator's lockup now, or the dome when the
+ *  stand does not say. */
+const pressTarget = (t: TankState | undefined, dome: number) =>
+  t?.lockup_psi ?? dome;
 /** Charged means within 3% of the bottle target. */
 const CHARGED = 0.97;
 
@@ -59,7 +65,11 @@ const CHARGED = 0.97;
 const WARM_WALL_K = 30;
 const CRYOGENIC_K = 150;
 
-const isOx = (t: TankState) => /lox|ox/i.test(t.id) || /lox|ox/i.test(t.label);
+/** By what the tank holds; the label only when the backend did not say. LE4's
+ *  tanks are TK-2 and TK-3, and matching "ox" in a label watched the empty fuel
+ *  tank for the LOX load forever. */
+const isOx = (t: TankState) =>
+  t.side ? t.side === 'lox' : /lox|ox/i.test(t.id) || /lox|ox/i.test(t.label);
 const chilled = (t: TankState | undefined) =>
   t === undefined ||
   t.liquid_temperature_K >= CRYOGENIC_K ||
@@ -108,16 +118,22 @@ const PHASES: Phase[] = [
     label: 'Press LOX',
     target: 'Ox Press',
     waiting: 'LOX tank coming up through the regulator',
-    done: (l, s) => (oxTank(l)?.pressure_psi ?? Infinity) >= PRESSED * s.dome,
-    progress: (l, s) => (oxTank(l)?.pressure_psi ?? 0) / s.dome,
+    done: (l, s) =>
+      (oxTank(l)?.pressure_psi ?? Infinity) >=
+      pressTarget(oxTank(l), s.dome) - PRESSED_PSI,
+    progress: (l, s) =>
+      (oxTank(l)?.pressure_psi ?? 0) / pressTarget(oxTank(l), s.dome),
   },
   {
     key: 'fuelpress',
     label: 'Press fuel',
     target: 'Fuel Press',
     waiting: 'fuel tank coming up through the regulator',
-    done: (l, s) => (fuelTank(l)?.pressure_psi ?? Infinity) >= PRESSED * s.dome,
-    progress: (l, s) => (fuelTank(l)?.pressure_psi ?? 0) / s.dome,
+    done: (l, s) =>
+      (fuelTank(l)?.pressure_psi ?? Infinity) >=
+      pressTarget(fuelTank(l), s.dome) - PRESSED_PSI,
+    progress: (l, s) =>
+      (fuelTank(l)?.pressure_psi ?? 0) / pressTarget(fuelTank(l), s.dome),
   },
   {
     key: 'topup',
@@ -227,18 +243,18 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
       setAuto(false);
       return;
     }
-    if (inTarget || !legal || live.computing) return;
+    if (inTarget || !legal) return;
     const stamp = `${live.state}>${hop}`;
     if (commanded.current === stamp) return;
     commanded.current = stamp;
     go(hop);
-  }, [auto, current, inTarget, legal, hop, live.state, live.computing, go]);
+  }, [auto, current, inTarget, legal, hop, live.state, go]);
 
   return (
     <section>
       {!compact && (
         <div className="mb-2 flex flex-wrap items-baseline gap-3">
-          <h2 className="text-sm font-bold uppercase tracking-wider text-text-muted">
+          <h2 className="caps">
             Pad sequence
           </h2>
           <span className="text-[11px] text-gray-600">
@@ -257,7 +273,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
 
       <div className={`bg-card rounded-lg border border-gray-800 ${compact ? 'flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-1.5' : 'px-4 py-3'}`}>
         {compact && (
-          <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Sequence</span>
+          <span className="caps text-[10px]">Sequence</span>
         )}
         <ol className={`flex flex-wrap ${compact ? 'gap-x-3 gap-y-1' : 'gap-x-5 gap-y-2'}`}>
           {phases.map((p, i) => {
@@ -278,7 +294,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
                     state === 'done'
                       ? 'bg-green-500'
                       : state === 'active'
-                        ? 'bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)]'
+                        ? 'bg-[var(--ink)]'
                         : 'bg-gray-700'
                   }`}
                 />
@@ -327,7 +343,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
               </span>
               <button
                 type="button"
-                disabled={!legal || live.computing}
+                disabled={!legal}
                 onClick={() => go(hop)}
                 title={legal ? undefined : `${hop} is not reachable from ${live.state} right now`}
                 className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all ${

@@ -28,7 +28,7 @@ from . import mass as mass_mod
 from .assembly import AssemblyWalk, Occurrence, SourceKey, walk_assembly
 from .bodydetails import FaceSurface, fetch_source_surfaces
 from .client import OnshapeClient, OnshapeError
-from .geometry import transform_point, volume_and_centroid
+from .geometry import inertia_per_unit_mass, transform_point, volume_and_centroid
 from .geometry_store import write_geometry
 from .glb import GLBBuilder, MeshKey
 from .mass import AssemblyTotals, BodyMass, Material
@@ -71,6 +71,11 @@ class PartRecord:
     material: Material | None
     material_defaulted: bool
     has_geometry: bool
+    #: Inertia per kg about the centroid, row-major 3x3, assembly frame (m^2): the
+    #: tensor for any mass is this times the mass, so a mass typed in the viewer
+    #: still gets the part's real distribution. None when neither Onshape nor the
+    #: mesh can give one.
+    inertia_per_kg_world: list[float] | None = None
 
 
 @dataclass
@@ -285,6 +290,7 @@ def _resolve_parts(
 
         records.append(
             PartRecord(
+                inertia_per_kg_world=_inertia_per_kg_world(body, mesh, occ, report),
                 occurrence=occ,
                 part_name=data.part_names.get(occ.part_id),
                 mass=part_mass,
@@ -300,6 +306,44 @@ def _resolve_parts(
         )
 
     return records
+
+
+def _physical(tensor: np.ndarray) -> bool:
+    """Principal moments positive and each at most the sum of the other two."""
+    if not np.allclose(tensor, tensor.T, rtol=1e-6, atol=1e-15):
+        return False
+    a, b, c = np.linalg.eigvalsh(tensor)
+    return a > 0 and c <= a + b + 1e-12 * c
+
+
+def _inertia_per_kg_world(body: BodyMass, mesh, occ, report: BuildReport) -> list[float] | None:
+    """The part's inertia per kg about its centroid, rotated into the assembly frame.
+
+    Onshape's tensor where the part has a material (it is about the centroid: the
+    response's own numbers are far too small to be about the Part Studio origin);
+    otherwise the mesh's at uniform density, which is what Onshape would return the
+    moment the part got a material. Rotation only: inertia about the centroid does
+    not move with a translation.
+    """
+    if body.has_mass and body.mass > 0 and body.inertia is not None:
+        local = np.asarray(body.inertia, dtype=np.float64).reshape(3, 3) / body.mass
+    elif mesh is not None:
+        # Only a closed tessellation integrates to a real tensor. The same volume
+        # check _mesh_centroid applies, plus the tensor being physically possible
+        # (principal moments positive, each at most the sum of the other two): a
+        # mesh that fails either gives no inertia rather than a wrong one.
+        mesh_volume, _ = volume_and_centroid(mesh.vertices, mesh.indices)
+        if body.volume <= 0 or abs(abs(mesh_volume) - body.volume) / body.volume > 0.02:
+            report.warn(f"{occ.name}: mesh is not closed enough to give an inertia; none recorded.")
+            return None
+        local = inertia_per_unit_mass(mesh.vertices, mesh.indices)
+        if local is None or not _physical(local):
+            report.warn(f"{occ.name}: mesh inertia is not physical; none recorded.")
+            return None
+    else:
+        return None
+    rot = np.asarray(occ.transform, dtype=np.float64).reshape(4, 4)[:3, :3]
+    return (rot @ local @ rot.T).reshape(-1).tolist()
 
 
 def _mesh_centroid(
@@ -450,6 +494,8 @@ def _build_manifest(
                 "volume": p.volume,
                 "centroidLocal": p.centroid_local,
                 "centroidWorld": p.centroid_world,
+                # Per kg, about the centroid, assembly frame; see PartRecord.
+                "inertiaPerKgWorld": p.inertia_per_kg_world,
                 "transform": p.occurrence.transform,
                 "hasGeometry": p.has_geometry,
             }

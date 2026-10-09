@@ -155,7 +155,7 @@ function Row({
 }
 
 export function Config() {
-  const { live, setup, setSetup } = useStand();
+  const { live, setup, setSetup, locked: readOnly } = useStand();
   const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -163,13 +163,14 @@ export function Config() {
       .then(setTunables)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
-  const locked = Boolean(live?.tripped);
+  // Tripped, or a stand you have not taken: the settings are the stand's.
+  const locked = Boolean(live?.tripped) || readOnly;
   const groups = Array.from(new Set(tunables.map((t) => t.group)));
 
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="max-w-3xl">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-text-muted">Every number the twin assumes</h2>
+        <h2 className="caps">Every number the twin assumes</h2>
         <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
           Rest on a row for two seconds and it says what the number accounts for and where it came from. Edit
           a value and the running stand uses it; rows marked <span className="font-mono text-[10px] uppercase">on reset</span>{' '}

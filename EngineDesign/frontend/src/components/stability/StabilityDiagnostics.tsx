@@ -1,6 +1,7 @@
 import type { StabilityRichPayload } from './types';
 import { STABLE, UNSTABLE, MARGINAL, MUTED } from './shared';
 import { useViewState } from '../../lib/viewState';
+import { Hint } from '../Hint';
 
 const STATE_COLOR: Record<string, string> = {
   stable: STABLE,
@@ -58,9 +59,7 @@ export function StabilityDiagnostics({ data }: { data: StabilityRichPayload }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-[var(--color-border)]">
         {/* What's limiting you */}
         <div className="bg-[var(--color-bg-secondary)] p-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] mb-3">
-            What&apos;s limiting you
-          </h4>
+          <h4 className="text-xs text-[var(--color-text-secondary)] mb-2.5">Limiting</h4>
           <ul className="space-y-2">
             {d.findings.map((f, i) => (
               <li key={i} className="flex gap-2 text-xs text-[var(--color-text-primary)]">
@@ -76,9 +75,7 @@ export function StabilityDiagnostics({ data }: { data: StabilityRichPayload }) {
 
         {/* What you can do */}
         <div className="bg-[var(--color-bg-secondary)] p-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] mb-3">
-            What you can do
-          </h4>
+          <h4 className="text-xs text-[var(--color-text-secondary)] mb-2.5">Levers</h4>
           {d.actions.length === 0 ? (
             <p className="text-xs text-[var(--color-text-secondary)]">
               No design changes needed - keep monitoring during hot fire.
@@ -87,17 +84,9 @@ export function StabilityDiagnostics({ data }: { data: StabilityRichPayload }) {
             <ul className="space-y-2.5">
               {d.actions.map((a, i) => (
                 <li key={i} className="text-xs">
-                  <div className="flex items-start gap-2">
+                  <Hint text={a.rationale}>
                     <span className="text-[var(--color-text-primary)] leading-snug">{a.text}</span>
-                    {a.lever && (
-                      <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
-                        {a.lever}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[var(--color-text-secondary)] mt-0.5 leading-snug opacity-90">
-                    {a.rationale}
-                  </p>
+                  </Hint>
                 </li>
               ))}
             </ul>

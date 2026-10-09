@@ -223,6 +223,7 @@ class Tank:
         boiling_onset: float = 0.0,
         surface_layer: float = 0.0,
         surface_mixing: float = 0.0,
+        wall_by_level: bool = False,
     ) -> None:
         self.liquid = liquid
         self.gas = gas
@@ -255,8 +256,24 @@ class Tank:
         #: Conductance per unit interface area between the layer and the bulk
         #: [W/(m^2.K)] -- conduction and whatever mixing there is.
         self.surface_mixing = surface_mixing
+        #: Scale the ullage-to-wall conductance by the share of the wall that is
+        #: dry -- the part the ullage actually touches. Off: ``wall_conductance``
+        #: is the whole tank's, at every fill, as before. On a 95 % full LOX
+        #: tank that is twenty times the dry wall, and a pressed ullage lost
+        #: half its pressure in six seconds of Ready.
+        self.wall_by_level = wall_by_level
         self._r_vapour: float | None = None
+        # The last level asked for, by the exact liquid volume it was asked at.
+        # A step asks the same question a dozen times, and each answer is a
+        # root solve on the geometry; an exact key keeps it bit-identical.
+        self._level_memo: tuple[float, float] = (-1.0, 0.0)
         self._critical: tuple[float, float] | None = None
+        # Same idea for the properties a step reads over and over: the liquid
+        # density by the exact temperature it was asked at, and the ullage's
+        # properties by the state they were read off. A TankState is frozen, so
+        # holding it as the key is exact; this only skips asking again.
+        self._density_memo: tuple[float, float] = (-1.0, 0.0)
+        self._ullage_memo: tuple[TankState | None, dict[str, float]] = (None, {})
 
     # --------------------------------------------------------------- geometry
 
@@ -288,7 +305,13 @@ class Tank:
 
     def level(self, state: TankState) -> float:
         """Height of the liquid surface above the tank's lowest point [m]."""
-        return level_of_volume(self.geometry, self.liquid_volume(state))
+        volume = self.liquid_volume(state)
+        memo = self._level_memo
+        if memo[0] == volume:
+            return memo[1]
+        level = level_of_volume(self.geometry, volume)
+        self._level_memo = (volume, level)
+        return level
 
     def interface_area(self, state: TankState) -> float:
         """Liquid surface area [m^2]. Falls away as a head empties."""
@@ -311,9 +334,19 @@ class Tank:
         spuriously. Either way, continuing would report a pressure from a state
         this model does not represent.
         """
+        known, values = self._ullage_memo
+        if known is state:
+            cached = values.get(prop)
+            if cached is not None:
+                return cached
+        else:
+            values = {}
+            self._ullage_memo = (state, values)
         rho = state.ullage.mass / self.ullage_volume(state)
         try:
-            return self.gas.get(prop, rho=rho, u=state.ullage.specific_energy())
+            value = self.gas.get(prop, rho=rho, u=state.ullage.specific_energy())
+            values[prop] = value
+            return value
         except (ValueError, PropertyError) as exc:
             raise UllageCondensed(
                 f"{self.gas.name} ullage at {rho:.4g} kg/m^3 and "
@@ -410,7 +443,13 @@ class Tank:
         pressure the liquid is not actually at risks landing outside a tabular
         backend's envelope for no gain.
         """
-        return self.liquid.get("rho", T=state.liquid_temperature, q=0.0)
+        T = state.liquid_temperature
+        memo = self._density_memo
+        if memo[0] == T:
+            return memo[1]
+        rho = self.liquid.get("rho", T=T, q=0.0)
+        self._density_memo = (T, rho)
+        return rho
 
     def liquid_thermal(self, state: TankState) -> LiquidThermal:
         T = state.liquid_temperature
@@ -420,15 +459,17 @@ class Tank:
             heat_capacity=self.liquid.get("cp", T=T, q=0.0),
         )
 
-    def outlet_pressure(self, state: TankState) -> float:
+    def outlet_pressure(self, state: TankState, gravity: float = GRAVITY) -> float:
         """Pressure at the tank outlet [Pa]: ullage plus the liquid column.
 
         The head a full tank adds is not negligible against a feed-system
         budget -- a metre of LOX is about 1.6 psi -- and it decays over a burn,
         so a model that leaves it out predicts a drifting error rather than a
-        constant one.
+        constant one. ``gravity`` is what the column feels along the tank's
+        axis: standard gravity on a stand, several times it in a vehicle under
+        thrust.
         """
-        return self.pressure(state) + self.liquid_density(state) * GRAVITY * self.level(
+        return self.pressure(state) + self.liquid_density(state) * gravity * self.level(
             state
         )
 
@@ -515,6 +556,14 @@ class Tank:
             ),
         )
 
+    def dry_wall_fraction(self, state: TankState) -> float:
+        """Share of the inner wall above the liquid [-]: what the ullage touches."""
+        total = self.geometry.wetted_area(self.geometry.height)
+        if total <= 0.0:
+            return 1.0
+        wet = self.geometry.wetted_area(self.level(state))
+        return min(max((total - wet) / total, 0.0), 1.0)
+
     def surface_mass(self, state: TankState, rho_l: float | None = None) -> float:
         """Liquid in the surface layer [kg]: a slab ``surface_layer`` deep over
         the interface, never more than the liquid there is."""
@@ -588,10 +637,11 @@ class Tank:
         )
         # `stirring` scales the still-gas conductance while a charge jet is
         # stirring the ullage; 1 is exactly the old behaviour.
+        conductance = self.wall_conductance
+        if self.wall_by_level and conductance > 0.0:
+            conductance *= self.dry_wall_fraction(state)
         q_wall = (
-            self.wall_conductance
-            * max(stirring, 0.0)
-            * (state.ullage.wall_temperature - T_gas)
+            conductance * max(stirring, 0.0) * (state.ullage.wall_temperature - T_gas)
         )
 
         q_liquid = self.collapse.heat_rate(
@@ -865,9 +915,22 @@ class Tank:
         )
 
     def step(self, state: TankState, rates: TankRates, dt: float) -> TankState:
-        """One explicit Euler step. Phase 07 replaces this with a real integrator."""
-        return TankState(
-            ullage=VesselState(
+        """One explicit Euler step.
+
+        Explicit on purpose, and stable only because the caller makes it so:
+        the session sub-steps the vessels, sizes its coupling from the
+        regulator-ullage time constant and the ullage's mass, and closes the
+        press path implicitly inside the network solve (ullage storage).
+
+        Rebuilt with ``replace``: a field added to :class:`TankState` later is
+        carried through the step rather than reset to its default every step,
+        which is how ``vapour_mass`` was once zeroed (docs/PHYSICS-BENCHMARK.md
+        4.3).
+        """
+        return replace(
+            state,
+            ullage=replace(
+                state.ullage,
                 mass=state.ullage.mass + rates.ullage.mass * dt,
                 energy=state.ullage.energy + rates.ullage.energy * dt,
                 wall_temperature=state.ullage.wall_temperature

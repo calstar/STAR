@@ -37,13 +37,15 @@ if _APP_ROOT not in _sys.path:
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+
+from .deadline import ComputeBudgetMiddleware
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 # The shared environment models: the flight-dynamics ascent now flies through the
 # same site atmosphere and wind the recovery descent integrates (physics/ library).
 from physics.atmosphere import Atmosphere  # noqa: E402
-from physics.schema import Site, WindInput  # noqa: E402
+from physics.schema import Device, Site, WindInput  # noqa: E402
 from physics.site import FAR_ELEV_M  # noqa: E402
 
 from .onshape.aero.axis import Axis
@@ -57,6 +59,8 @@ from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
 from .onshape.aero.flight import simulate_flight
 from .onshape.aero.rocketpy_flight import simulate_flight_dynamics
+from .onshape.aero.ork_export import LaunchConditions, export_from_cad
+from .motors.write import write_motor_file
 from .onshape.aero.stability import MotorPlacement, compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
@@ -90,6 +94,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="STAR OpenRocket API", version="1.0.0", lifespan=lifespan)
+
+# Added BEFORE CORS so it ends up INSIDE it: add_middleware inserts at position
+# 0 and the stack wraps in reverse, so the last added is outermost. CORS has to
+# stay outermost or a 422 would reach the browser as an opaque network error
+# rather than the message naming the field.
+app.add_middleware(ComputeBudgetMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -276,6 +286,13 @@ class FlightDynamicsRequest(StabilityRequest):
     site: Site | None = None
 
 
+class OrkExportRequest(FlightDynamicsRequest):
+    """Everything the .ork carries: the stability selection, the launch conditions,
+    and the recovery devices (the same objects /api/simulate takes)."""
+
+    devices: list[Device] = Field(default_factory=list, max_length=8)
+
+
 def _model_dir(model_id: str) -> Path:
     if "/" in model_id or "\\" in model_id or model_id.startswith("."):
         raise HTTPException(status_code=400, detail="invalid model id")
@@ -304,7 +321,15 @@ def _axis_payload(axis: Axis) -> dict:
 
 
 @app.get("/api/models/{model_id}/outer-surface")
-async def outer_surface(model_id: str):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def outer_surface(model_id: str):
     """Auto-detected outer airframe faces, for the approval UI to seed from."""
     store = _load_store(_model_dir(model_id))
     try:
@@ -318,7 +343,15 @@ async def outer_surface(model_id: str):
 
 
 @app.get("/api/models/{model_id}/fins")
-async def fins(model_id: str):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def fins(model_id: str):
     """Auto-detected fin faces + count, for the approval UI to seed from."""
     store = _load_store(_model_dir(model_id))
     try:
@@ -350,7 +383,15 @@ async def fins(model_id: str):
 
 
 @app.post("/api/models/{model_id}/stability")
-async def stability(model_id: str, request: StabilityRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def stability(model_id: str, request: StabilityRequest):
     """CG, CoP and static margin from an approved outer-surface selection."""
     model_dir = _model_dir(model_id)
     store = _load_store(model_dir)
@@ -422,8 +463,88 @@ async def stability(model_id: str, request: StabilityRequest):
     }
 
 
+@app.post("/api/models/{model_id}/export.ork")
+# Sync `def` for the same reason as /stability above: a mesh walk and a Barrowman
+# sweep, run in a worker thread so the event loop stays free.
+def export_ork(model_id: str, request: OrkExportRequest):
+    """The same selection /stability computes, as an OpenRocket .ork download.
+
+    Shape, CP and CG are the point (see aero/ork_export.py); the recovery devices,
+    site, rail and wind ride along as parachutes and a simulation. The file's comment
+    records the CP and CG OpenRocket should show, so a mismatch is visible there.
+    """
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+
+    faces = [(f.key, f.faceId) for f in request.outerFaces]
+    if not faces:
+        faces = detect_outer_surface(store).faces
+    axis = None
+    if request.axis is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(request.axis.origin, dtype=float),
+            direction=np.asarray(request.axis.direction, dtype=float)
+            / (np.linalg.norm(request.axis.direction) or 1.0),
+        )
+    fin_faces = (
+        [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    )
+
+    motor_placement, _ = _resolve_motor(request.motor)
+    motor_record = (
+        _motor_db.get_motor(request.motor.motorId, request.motor.simfileId)
+        if request.motor is not None
+        else None
+    )
+
+    source = manifest.get("source", {})
+    name = source.get("documentName") or source.get("assemblyName") or model_id
+    try:
+        data, _ = export_from_cad(
+            store,
+            manifest_parts=manifest.get("parts", []),
+            outer_faces=faces,
+            axis=axis,
+            overrides=request.overrides,
+            fin_faces=fin_faces,
+            n_fins=request.nFins,
+            motor_placement=motor_placement,
+            motor_record=motor_record,
+            name=name,
+            source=f"{name} / {source.get('assemblyName', '')} @ {source.get('microversionId', '')}",
+            launch=LaunchConditions(
+                devices=request.devices,
+                site=request.site,
+                wind=request.wind,
+                rail_length=request.railLength,
+                inclination=request.inclination,
+                heading=request.heading,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    filename = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name).strip() or "rocket"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.ork"'},
+    )
+
+
 @app.post("/api/models/{model_id}/flight")
-async def flight(model_id: str, request: StabilityRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def flight(model_id: str, request: StabilityRequest):
     """Ascent flight profile (altitude/velocity/acceleration + static margin over time).
 
     A motor is required. 1-DOF, thrust minus weight, no drag yet (see aero/flight.py), so the
@@ -514,7 +635,15 @@ async def flight(model_id: str, request: StabilityRequest):
 
 
 @app.post("/api/models/{model_id}/flight-dynamics")
-async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
+# Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
+# a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
+# route runs it directly ON the event loop, where it blocks every other request
+# in the process for its whole duration. That is what made `/api/health` time
+# out while one bad descent was being integrated, which made the GUI report the
+# backend as down while it was up and busy. FastAPI runs a sync `def` route in
+# a worker thread instead (`run_in_threadpool`), so the loop stays free to
+# answer. There is nothing awaited in the body; the conversion is the keyword.
+def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
     """6-DOF ascent via RocketPy: full trajectory, stability, loads and drift to apogee.
 
     Requires a motor and the optional ``rocketpy`` dependency. Aero uses native
@@ -741,6 +870,27 @@ async def get_motor(motor_id: str):
             for s in simfiles
         ],
     }
+
+
+@app.get("/api/motors/{motor_id}/file")
+def motor_file(motor_id: str, simfileId: str | None = Query(None, max_length=64)):
+    """One motor datafile as an .eng/.rse OpenRocket can load (see motors/write.py).
+
+    The .ork references its motor by digest; this is the curve behind that digest,
+    for an OpenRocket whose database does not have it.
+    """
+    motor = _motor_db.get_motor(motor_id, simfileId)
+    if motor is None:
+        raise HTTPException(status_code=404, detail=f"unknown motor {motor_id}")
+    try:
+        filename, text = write_motor_file(motor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=text,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # -- Onshape browsing ---------------------------------------------------------

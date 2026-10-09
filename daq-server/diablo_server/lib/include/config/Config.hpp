@@ -159,6 +159,42 @@ struct StateDef {  // one per [[states]]
     /** Marks the state the characterization hold drives. A flag rather than a name in [flow], so
      *  renaming the state cannot break it. First one wins, as with is_boot. */
     bool is_flow = false;
+
+    // ── Dynamic states ────────────────────────────────────────────────────────────────────────
+    //
+    // A state with a script runs it on entry: the CSV column is applied first, putting every valve
+    // in a defined position, and the script then layers on top.
+    //
+    // There is deliberately NO `is_dynamic` flag. A non-empty script_file is what makes a state
+    // dynamic, for the reason [fire] demonstrates the other way: when a flag and the data it
+    // describes are separate, they can disagree, and the disagreement is silent.
+
+    /** Script filename inside the profile's scripts/ directory, e.g. "copv_press.script".
+     *
+     *  A bare filename, never a path — it arrives from operator-editable config and the backend
+     *  writes files at this name, so it must match ^[A-Za-z0-9_-]+\.script$ with no separators and
+     *  no "..". Empty means this state is not dynamic.
+     *
+     *  The script lives beside config.toml rather than inside it because writeConfig() is a full
+     *  TOML re-stringify that destroys every comment and all layout on each save. Out of the TOML,
+     *  a script survives a config save byte-for-byte and diffs cleanly. */
+    std::string script_file;
+
+    /** Wall-clock ceiling for the whole script, in milliseconds. Mandatory for a dynamic state:
+     *  an unbounded script has no safe degraded mode, so config that omits it leaves the state not
+     *  enterable rather than enterable-and-unbounded. */
+    uint32_t script_timeout_ms = 0;
+
+    /** Where the state lands when the script runs off its end without calling transition_to.
+     *  Mandatory. Unreachable when every path ends in an explicit transition_to, and required
+     *  anyway — it is the backstop for the path the author did not think about. */
+    std::string script_return_target;
+
+    /** Where the state lands when script_timeout_ms expires. Mandatory, and deliberately NOT
+     *  defaulted to script_return_target: a runaway may want somewhere more conservative than a
+     *  clean finish, and a safety landing that appears by default is the kind that is wrong
+     *  silently. */
+    std::string script_timeout_target;
 };
 
 // [actuator_roles] value ["NC"|"NO", channel, board_id, controller_role?]
@@ -187,7 +223,6 @@ struct BoardConfig {
     std::string ip;
     int board_id = -1;  // board_id, with legacy "id" fallback
     bool enabled = true;
-    int num_sensors = 10;
     int num_actuators = 0;
     uint16_t send_port = 5005;
     uint16_t listen_port = 5005;
@@ -195,7 +230,19 @@ struct BoardConfig {
     int voltage_reference = 0;
     bool necessary_for_abort = false;
     bool designated_survivor = false;
-    std::vector<int> active_connectors;  // empty -> caller expands to 1..num_sensors
+    /** Connector ids this board samples — the ONLY statement of which channels exist.
+     *
+     *  These are identifiers, not a range: {1, 3, 5, 7} is ordinary, and getAdcChannel()
+     *  maps each id to hardware, so an id above the count is normal. It goes on the wire
+     *  verbatim as SensorConfigPacket's `N x uint8_t sensor_id`, and the packet's
+     *  `num_sensors` byte is simply N — the firmware reads it as `active_count` and loops
+     *  over the ids (see LC_Hotfire collect_chunk_impl).
+     *
+     *  There used to be a separate config-only `num_sensors` that meant "expand to 1..N
+     *  when this list is empty". Nothing on the wire or in firmware carried that meaning,
+     *  and having both let a board declare {1, 2, 6} beside num_sensors = 4, which no
+     *  layer defined. Empty now means no channels, which is what it reads like. */
+    std::vector<int> active_connectors;
 
     // PT-specific (feeds pt_boards()):
     std::string pt_type;  // "" if absent
@@ -266,7 +313,8 @@ struct Config {
     const std::map<std::string, double>* pga_gain_for(const std::string& section_key) const;
 };
 
-/** Parse config.toml at `path`. On any error, logs and returns a default-constructed Config. */
+/** Parse config.toml. Invalid environmental identities throw std::invalid_argument;
+ * other read/parse errors log and return a default-constructed Config. */
 Config load(const std::string& path);
 
 /** Parse config from an in-memory TOML string (SequencerService / ActuatorCommander hold it so). */

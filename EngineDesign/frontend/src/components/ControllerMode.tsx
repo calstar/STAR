@@ -758,7 +758,7 @@ export function ControllerMode({ config }: ControllerModeProps) {
               {/* Mixture Ratio */}
               <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                 <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">
-                  Mixture Ratio {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
+                  O/F Ratio {isLoading && <span className="text-green-400 text-xs">(Live)</span>}
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart margin={{ top: 5, right: 20, left: 10, bottom: 20 }} data={(results ? results.time : realtimeData.map(d => d.time || 0)).map((t, i) => ({

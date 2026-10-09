@@ -20,6 +20,15 @@ injector:
       # (L/d = 5, mid-band). Both rings previously sat on the SAME 38.2 mm circle, which
       # gives a radial offset of zero -- the two jets of a doublet never converge at all.
       spacing: 0.013191
+  # How the plug is machined -- what the layout draws for an undeclared plate, declared so Layer 1
+  # checks the same face and back (the stand injector's, configs/ethalox_6500N.yaml).
+  plate:
+    face: contoured
+    back: channels
+    channel_floor: flat
+  # Centre spark igniter, 1/2 NPT (operator, 2026-09-25): reserves the centre of the face.
+  igniter:
+    thread: 1/2 NPT
 feed_system:
   # 3/8" NPT on BOTH branches. `line_size` names the fitting; d_inlet and A_hydraulic are
   # derived from it (FEED_LINE_SIZES in config_schemas.py), so bore and area cannot drift
@@ -156,16 +165,21 @@ graphite_insert:
   reference_diffusivity_pressure: 1000000.0
 stainless_steel_case: null
 discharge:
+  # Drilled doublet holes, sharp entry, L/d 4: the passage the layout draws (SP-8089 3.1.2.2,
+  # L/d >= 4). Cd 0.793 = 0.827 - 0.0085 L/d (Lichtarowicz, Duggins & Markland 1965). The
+  # Cd_inf / d_ref_m block is the thin-plate model, used only when no inlet is declared.
   fuel:
     Cd_inf: 0.6
     a_Re: 0.18
     Cd_min: 0.35
     use_geometry_cd: true
     d_ref_m: 0.002
-    cd_small_hole_exponent: 0.2
+    cd_small_hole_exponent: 0.0
     cd_large_hole_log_gain: 0.015
     cd_inf_max: 0.62
     cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    orifice_l_over_d: 4.0
     d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
@@ -179,10 +193,12 @@ discharge:
     Cd_min: 0.35
     use_geometry_cd: true
     d_ref_m: 0.002
-    cd_small_hole_exponent: 0.2
+    cd_small_hole_exponent: 0.0
     cd_large_hole_log_gain: 0.015
     cd_inf_max: 0.62
     cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    orifice_l_over_d: 4.0
     d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
@@ -302,7 +318,9 @@ solver:
   max_iterations: 100
   closure:
     max_iterations: 6
-    Cd_reduction_factor: 0.95
+    # 1.0: the impinging solve no longer shrinks Cd when a closure loop misses (test_closure_keeps_cd);
+    # 0.95 only reached the numba kernel, which still multiplies by it.
+    Cd_reduction_factor: 1.0
     tolerance: 0.0001
 optimizer:
   mode: hybrid_cma_blocks
@@ -413,7 +431,10 @@ design_requirements:
   injector_dp_ratio_F_max: 0.4
   feed_pressure_model: dome_regulated
   W_geom_ao_af_momentum: 3500.0
-  W_MOM: 30000.0
+  # 75, the code default. At 30000 the R band became a hard constraint that outranks the O/F
+  # requirement (default.yaml has the measured case: a 643 psi fuel tank for a design that
+  # closes at 582). The band still reaches the objective and the sign-off gate.
+  W_MOM: 75.0
   impinging_momentum_R_min: 0.95
   impinging_momentum_R_max: 1.05
   layer1_momentum_log_deadband_rel: null
@@ -437,7 +458,32 @@ design_requirements:
   layer1_tank_equal_scale_psi: 100.0
   W_IMP_GEOM: 1500.0
   layer1_exit_pressure_inside_quad_scale: 0.38
-  layer1_impinging_n_doublets_max: 20
+  # 30: the 6500 N stand design needs 24, and a 20 cap parked blank runs on the cap.
+  layer1_impinging_n_doublets_max: 30
+  # ---- Injector-face guards, on for a new design (DEF-05). Unset, each is inert and the ring
+  # radius is a flat direction: a blank run parked the LOX ring inside the throat diameter and
+  # passed every gate.
+  # Spray centroid at the equal-area radius 1/sqrt(2) of the bore, +/- 0.08 (the band also holds
+  # 2/3, the mean radius of a uniform disc): as much face area inboard of the rings as outboard.
+  layer1_injector_spray_radius_frac: 0.7071
+  layer1_injector_spray_radius_tol: 0.08
+  # 1/2 in plate = layout.PLATE_THICKNESS_DEFAULT, so the optimizer checks the plate the drawing draws.
+  layer1_injector_plate_thickness_m: 0.0127
+  # Machining limits the operator set on the stand injector (configs/ethalox_6500N.yaml): 2 mm land
+  # between holes on a ring, 8 mm from the outer holes to the bore, drill entry no shallower than
+  # 40 deg to the face, a 4 mm feed passage behind each orifice, jets at least 40 deg off the axis.
+  layer1_injector_min_web_m: 0.002
+  layer1_injector_wall_clearance_m: 0.008
+  layer1_injector_min_face_incidence_deg: 40.0
+  layer1_injector_counterbore_dia_m: 0.004
+  layer1_impinging_jet_angle_min_deg: 40.0
+  # Element pitch sqrt(A_chamber/n) <= 22.5 mm (operator, 6500 N): nothing else charges for
+  # spreading a fixed element count over a bigger face (Rupe mixing sees only momentum).
+  layer1_max_element_pitch_m: 0.0225
+  # The outward spray tilt allowed comes from the design's own geometry: the fan may not reach the
+  # liner inside 1.5 chamber lengths (schema default margin).
+  layer1_resultant_tilt_from_reach: true
+  layer1_enforce_ring_geometry: true
   layer1_random_seed: null
   layer1_cma_warmstart_trials: 16
   layer1_cma_warmstart_sigma_frac: 0.04

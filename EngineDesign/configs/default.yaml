@@ -1,6 +1,9 @@
+# LOX / methane. Named so a propellant switch knows what it is switching FROM (DEF-06).
+propellant_preset: methalox
 fluids:
   fuel:
     name: Methane
+    critical_temperature: 190.56   # K, CoolProp Methane — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     density: 422.6
     viscosity: 0.00012
     surface_tension: 0.0134
@@ -13,16 +16,22 @@ fluids:
     molecular_weight: 16.04
   oxidizer:
     name: LOX
+    critical_temperature: 154.60   # K, CoolProp Oxygen — chug time-lag evaporation constant (Leonardi 2017 eq. 9)
     density: 1140.0
-    viscosity: 0.00018
+    viscosity: 0.000200         # Pa s, CoolProp Oxygen 90 K: 1.96e-4 at 0.15 MPa, 2.03e-4 at 4 MPa
     surface_tension: 0.013
     vapor_pressure: 101325.0
-    specific_heat: 2300.0
+    specific_heat: 1700.0       # J/(kg K), CoolProp Oxygen 90 K: 1699
     thermal_conductivity: 0.15
     temperature: 90.0
-    latent_heat: null
-    boiling_point: null
-    molecular_weight: null
+    # Stability-only inputs (droplet vaporization lag); the forward performance path does not read
+    # them, so filling them in cannot move thrust/Isp or the golden anchors. Left null, the chug
+    # model silently substituted these same handbook numbers on every evaluation of the default
+    # config and reported three fallbacks it should never have needed.
+    latent_heat: 213000.0     # J/kg, NIST oxygen at 1 atm
+    boiling_point: 90.19      # K,    NIST oxygen at 1 atm
+    molecular_weight: 32.0    # g/mol
+    bulk_modulus_pa: 940000000.0    # Pa, CoolProp Oxygen 90 K rho*a^2: 0.938e9 at 0.15 MPa, 0.983e9 at 4 MPa
 injector:
   type: impinging
   geometry:
@@ -37,6 +46,15 @@ injector:
       d_jet: 0.002
       impingement_angle: 60.0
       spacing: 0.006
+  # How the plug is machined -- what the layout draws for an undeclared plate, declared so Layer 1
+  # checks the same face and back (the stand injector's, configs/ethalox_6500N.yaml).
+  plate:
+    face: contoured
+    back: channels
+    channel_floor: flat
+  # Centre spark igniter, 1/2 NPT (operator, 2026-09-25): reserves the centre of the face.
+  igniter:
+    thread: 1/2 NPT
 feed_system:
   # 3/8" NPT on BOTH branches. `line_size` names the fitting; d_inlet and A_hydraulic are
   # derived from it (FEED_LINE_SIZES in config_schemas.py), so bore and area cannot drift
@@ -173,18 +191,21 @@ graphite_insert:
   reference_diffusivity_pressure: 1000000.0
 stainless_steel_case: null
 discharge:
-  # Thin-plate impinging jet holes: Cd_inf baseline at d_ref_m (2 mm), scaled by d_jet in the solver.
-  # ASME/ISO sharp-orifice high-Re asymptote ≈ 0.60; LOX and fuel use the same correlation.
+  # Drilled doublet holes, sharp entry, L/d 4: the passage the layout draws (SP-8089 3.1.2.2,
+  # L/d >= 4). Cd 0.793 = 0.827 - 0.0085 L/d (Lichtarowicz, Duggins & Markland 1965). The
+  # Cd_inf / d_ref_m block is the thin-plate model, used only when no inlet is declared.
   fuel:
     Cd_inf: 0.6
     a_Re: 0.18
     Cd_min: 0.35
     use_geometry_cd: true
     d_ref_m: 0.002
-    cd_small_hole_exponent: 0.20
+    cd_small_hole_exponent: 0.0
     cd_large_hole_log_gain: 0.015
     cd_inf_max: 0.62
     cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    orifice_l_over_d: 4.0
     d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
@@ -198,10 +219,12 @@ discharge:
     Cd_min: 0.35
     use_geometry_cd: true
     d_ref_m: 0.002
-    cd_small_hole_exponent: 0.20
+    cd_small_hole_exponent: 0.0
     cd_large_hole_log_gain: 0.015
     cd_inf_max: 0.62
     cd_inf_min_geom: 0.48
+    inlet_geometry: sharp
+    orifice_l_over_d: 4.0
     d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
@@ -220,8 +243,8 @@ spray:
   smd:
     model: ingebo
     C_ingebo: 3.9
-    chamber_gas_R: 360.0
-    chamber_gas_T: 3500.0
+    # chamber_gas_R/T come from the propellant preset (LOX/CH4 at O/F 2.8: 426.1 / 3293 K, CEA).
+    # The 360 / 3500 that sat here were roughly LOX/RP-1, not methane.
     # Legacy Lefebvre params (used only if model: lefebvre)
     C: 0.5
     m: 0.6
@@ -323,7 +346,9 @@ solver:
   max_iterations: 100
   closure:
     max_iterations: 6
-    Cd_reduction_factor: 0.95
+    # 1.0: the impinging solve no longer shrinks Cd when a closure loop misses (test_closure_keeps_cd);
+    # 0.95 only reached the numba kernel, which still multiplies by it.
+    Cd_reduction_factor: 1.0
     tolerance: 0.0001
 optimizer:
   mode: hybrid_cma_blocks
@@ -429,12 +454,19 @@ design_requirements:
   fuel_tank_capacity_kg: null
   copv_free_volume_L: 4.5
   copv_free_volume_m3: null
-  injector_dp_ratio_O_min: 0.15
-  injector_dp_ratio_O_max: 0.35
-  injector_dp_ratio_F_min: 0.15
-  injector_dp_ratio_F_max: 0.35
+  # 0.20-0.40: the band this file has always been evaluated at (the loader used to rewrite the
+  # 0.15-0.35 written here, DEF-10). Written as used, so nothing rewrites it.
+  injector_dp_ratio_O_min: 0.2
+  injector_dp_ratio_O_max: 0.4
+  injector_dp_ratio_F_min: 0.2
+  injector_dp_ratio_F_max: 0.4
   W_geom_ao_af_momentum: 3500.0
-  W_MOM: 30000.0
+  # 75.0 is the code default (layer1_static_optimization.py:5451). The old 30000/120000
+  # dated from when R was the hard ablative guard; that guard was replaced by the spray
+  # resultant-tilt gate, but the weights were never brought back down. At 30000+ the
+  # superseded R band acts as a hard constraint AND outranks W_OF, which manufactured a
+  # fuel-tank requirement of 643 psi for a design point that closes at 582.
+  W_MOM: 75.0
   impinging_momentum_R_min: 0.95
   impinging_momentum_R_max: 1.05
   # Sauter mean diameter (atomization) objective: two-sided deadband around the target.
@@ -454,19 +486,40 @@ design_requirements:
   # `spacing` variable a real job; zero when the layout is comfortable.
   W_IMP_GEOM: 1500.0
   layer1_impinging_angle_deg_min: 55.0
-  # 100, not 90: at 90 this band acts as a near-hard constraint that outranks the O/F target.
-  # Reaching a lower O/F needs a bigger fuel jet, which rebalances the spray resultant to ~92 deg
-  # included -- costing 400*(92-90.5)^2 = 900 objective points against only ~102 for simply
-  # landing at the wrong O/F. Measured on the ethalox doublet: raising 90 -> 100 took the residual
-  # from 75-133 to 0.5-2.0, moved O/F from +5.1% to +2.3% off target, and LOWERED both dP/Pc
-  # (0.29 -> 0.26) and tank pressure (557 -> 543 psi). The optimizer picks 100-104 deg unaided
-  # when allowed, and the pintle->impinging seed geometry already starts at 110 deg included.
-  layer1_impinging_angle_deg_max: 100.0
+  # 90: the included angle past which the layout warns of face heating (SP-8089;
+  # layout.FACE_HEATING_INCLUDED_DEG). 100 was chosen when W_OF was a third of W_THRUST and the
+  # band outranked the O/F target; with W_OF at parity (below) the canonical runs at 90.
+  layer1_impinging_angle_deg_max: 90.0
   W_IMPINGING_ANGLE: 400.0
   W_IMPINGING_JET_ASYM: 180.0
   layer1_impinging_jet_angle_max_asym_deg: 26.0
   layer1_exit_pressure_inside_quad_scale: 0.38
-  layer1_impinging_n_doublets_max: 20
+  # 30: the 6500 N stand design needs 24, and a 20 cap parked blank runs on the cap.
+  layer1_impinging_n_doublets_max: 30
+  # ---- Injector-face guards, on for a new design (DEF-05). Unset, each is inert and the ring
+  # radius is a flat direction: a blank run parked the LOX ring inside the throat diameter and
+  # passed every gate.
+  # Spray centroid at the equal-area radius 1/sqrt(2) of the bore, +/- 0.08 (the band also holds
+  # 2/3, the mean radius of a uniform disc): as much face area inboard of the rings as outboard.
+  layer1_injector_spray_radius_frac: 0.7071
+  layer1_injector_spray_radius_tol: 0.08
+  # 1/2 in plate = layout.PLATE_THICKNESS_DEFAULT, so the optimizer checks the plate the drawing draws.
+  layer1_injector_plate_thickness_m: 0.0127
+  # Machining limits the operator set on the stand injector (configs/ethalox_6500N.yaml): 2 mm land
+  # between holes on a ring, 8 mm from the outer holes to the bore, drill entry no shallower than
+  # 40 deg to the face, a 4 mm feed passage behind each orifice, jets at least 40 deg off the axis.
+  layer1_injector_min_web_m: 0.002
+  layer1_injector_wall_clearance_m: 0.008
+  layer1_injector_min_face_incidence_deg: 40.0
+  layer1_injector_counterbore_dia_m: 0.004
+  layer1_impinging_jet_angle_min_deg: 40.0
+  # Element pitch sqrt(A_chamber/n) <= 22.5 mm (operator, 6500 N): nothing else charges for
+  # spreading a fixed element count over a bigger face (Rupe mixing sees only momentum).
+  layer1_max_element_pitch_m: 0.0225
+  # The outward spray tilt allowed comes from the design's own geometry: the fan may not reach the
+  # liner inside 1.5 chamber lengths (schema default margin).
+  layer1_resultant_tilt_from_reach: true
+  layer1_enforce_ring_geometry: true
   layer1_random_seed: null
   layer1_cma_warmstart_trials: 16
   layer1_cma_warmstart_sigma_frac: 0.04
@@ -479,7 +532,9 @@ design_requirements:
   W_DP_HIGH: 25000.0
   layer1_infeasibility_gate_eps: 0.002
   layer1_W_THRUST: 60000.0
-  layer1_W_OF: 20000.0
+  # Parity with thrust, as in configs/canonical/impinging.yaml: at 20000 the thrust term
+  # outweighed O/F 3:1 and dragged the design to the c* peak (asked 1.20, got 1.494).
+  layer1_W_OF: 60000.0
   layer1_W_OF_low_MR_scale: 1.0
   layer1_W_OF_high_MR_scale: 1.0
   layer1_of_validation_tol: null

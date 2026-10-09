@@ -39,6 +39,7 @@ services:
     depends_on:
       - auth
       - starproject
+      - analytics
 
   # ── STARProject (task tracker) ───────────────────────────────────────────
   # Next.js standalone server + its own Postgres. Auth is Caddy's job
@@ -59,10 +60,40 @@ services:
       # On EC2 the AWS SDK uses the instance IAM role, so no access keys here.
       SES_FROM: ${STARPROJECT_SES_FROM:-}
       CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+      # Lets the analytics hub read the admin list (/api/internal/admins). Unset
+      # means the route refuses everyone, and so analytics admits nobody.
+      INTERNAL_API_SECRET: ${STARPROJECT_INTERNAL_SECRET:-}
       AWS_REGION: ${AWS_REGION:-us-east-2}
+      # callink-worker's key to /api/worker/*. Unset or short, that API refuses
+      # everything (fails closed), so leaving it blank just leaves Finance unfiled.
+      WORKER_TOKEN: ${STARPROJECT_WORKER_TOKEN:-}
     depends_on:
       starproject-db:
         condition: service_healthy
+
+  # Files approved Finance-tab reimbursements on CalLink and keeps STARProject's
+  # copy of CalLink current (nightly scrape). Talks to starproject over this
+  # network, not through Caddy. Signed in with a CalNet account that needs a Duo
+  # approval about once a day:
+  #   docker compose exec callink-worker node session.mjs login   # then tap Duo
+  # Dry by default (checks each form, files nothing); set CALLINK_WORKER_FLAGS=--live
+  # in .env to file for real. /data holds the session, the scrape (payee PII) and
+  # the filing journal; it is rebuilt by a login and a scrape, so it isn't backed up.
+  callink-worker:
+    image: ghcr.io/calstar/star-callink-worker:latest
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    environment:
+      STARPROJECT_URL: http://starproject:3000
+      WORKER_TOKEN: ${STARPROJECT_WORKER_TOKEN:-}
+      CALNET_USERNAME: ${CALLINK_CALNET_USERNAME:-}
+      CALNET_PASSWORD: ${CALLINK_CALNET_PASSWORD:-}
+      CALLINK_WORKER_FLAGS: ${CALLINK_WORKER_FLAGS:-}
+    volumes:
+      - callink_data:/data
+    depends_on:
+      - starproject
 
   starproject-db:
     image: postgres:16
@@ -99,6 +130,57 @@ services:
           echo "*/15 * * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/email-batch >/proc/1/fd/1 2>&1"
         } > /etc/crontabs/root
         crond -f -l 8
+
+  # ── Server analytics (analytics.starberkeley.org) ───────────────────────
+  # The hub stores what each box's agent pushes (SQLite on analytics_data) and
+  # serves the panel. Caddy cookie-gates it except /api/ingest, which the hub
+  # authenticates by per-host bearer token; the hub itself admits only
+  # STARProject's admins, read from starproject over this network. No host
+  # mounts and no Docker socket: it is the internet-facing half. Sized small on
+  # purpose -- see server-analytics/README.md for the budget.
+  analytics:
+    image: ghcr.io/calstar/star-analytics:latest
+    pull_policy: always
+    restart: unless-stopped
+    command: ["hub"]
+    user: "65534:65534"
+    environment:
+      # Empty entries are hosts not set up yet; the hub skips them.
+      ANALYTICS_AGENT_TOKENS: ec2:${ANALYTICS_EC2_TOKEN:-},apps:${ANALYTICS_APPS_TOKEN:-}
+      STARPROJECT_URL: http://starproject:3000
+      STARPROJECT_INTERNAL_SECRET: ${STARPROJECT_INTERNAL_SECRET:-}
+      GOMEMLIMIT: 64MiB
+    volumes:
+      - analytics_data:/data
+    mem_limit: 96m
+    memswap_limit: 96m
+    cpus: 0.25
+
+  # This box's agent. Read-only views of the host: /proc for CPU, memory, load,
+  # uptime and network; / for disk usage; the cgroup tree for per-container CPU
+  # and memory; the Docker socket for the container list and logs; and
+  # auto-update's state file for the last deploy. It never writes to any of them.
+  analytics-agent:
+    image: ghcr.io/calstar/star-analytics:latest
+    pull_policy: always
+    restart: unless-stopped
+    command: ["agent"]
+    environment:
+      HOST_NAME: ec2
+      HUB_URL: http://analytics:8080
+      ANALYTICS_TOKEN: ${ANALYTICS_EC2_TOKEN:-}
+      GOMEMLIMIT: 40MiB
+    volumes:
+      - /proc:/host/proc:ro
+      - /:/host/root:ro
+      - /sys/fs/cgroup:/host/cgroup:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/star-auto-update:/host/auto-update:ro
+    mem_limit: 64m
+    memswap_limit: 64m
+    cpus: 0.1
+    depends_on:
+      - analytics
 
   # ── OpenProject (LEGACY — retired) ───────────────────────────────────────
   # Replaced by STARProject. Kept only for rollback: the `legacy` profile means
@@ -183,6 +265,11 @@ volumes:
   # STARProject's Postgres data — the live task-tracker DB. Back this up (see
   # starproject-backup.sh + the systemd timer).
   starproject_pg:
+  # callink-worker's CalLink session, scrape and filing journal (see the service).
+  callink_data:
+  # Server analytics: 48 h of raw samples, 90 days of 5-minute rollups, 3 days
+  # of logs (capped at 200 MB). Losing it loses history, nothing else.
+  analytics_data:
   caddy_data:
   caddy_config:
   # LEGACY (OpenProject): external so Compose attaches the data already on the

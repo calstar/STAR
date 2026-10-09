@@ -145,7 +145,9 @@ set the dynamics:
    \tag{3.1}
    $$
 
-   (Derivation: $m_{gas}=P_cV_c/R_gT_c$, $\dot m_{out}=P_cA_t/c^*$, and $R_gT_c=\Gamma^2 c^{*2}$.) Note
+   (Derivation: $m_{gas}=P_cV_c/R_gT_c$, $\dot m_{out}=P_cA_t/c^*$, and $R_gT_c=\Gamma^2 c^{*2}$. The
+   last identity holds for the ideal $c^*$ only; with the delivered $c^*$ the code uses the mass
+   balance itself, $\theta_c=L^*c^*/(R_gT_c)$, which is $\eta_{c^*}^2$ shorter — 9 % on the 6500 N.) Note
    $L^*/c^*$ — the quantity the current code computes — is the *scale* of $\theta_c$, but it is the
    chamber **time constant**, not "the chug frequency"; the present model has the right ingredient
    assembled wrongly (plan §A2). **[UNCERTAINTY]** a mass-only vs mass+energy linearization shifts the
@@ -241,12 +243,13 @@ matching (3.3) against a 1-D acoustic limit in `chug.py`.
 
 For a cylindrical chamber the eigenfrequencies are (Harrje & Reardon [3]; Culick [4]):
 
-- **Longitudinal** (injector ≈ closed, choked throat ≈ near-closed/admittance end). The code uses the
-  open–closed quarter-wave set $f_{nL}=(2n-1)\,a/(4L_{ch})$. A choked nozzle is closer to a *pressure
-  node with finite admittance* than an ideal open end; the half-wave set $f_{nL}=n\,a/(2L_{ch})$ is
-  the other bound. **[UNCERTAINTY]** the true longitudinal eigenvalue lies between these and depends
-  on the nozzle admittance (Crocco–Monti); we will carry the nozzle-admittance correction in the rich
-  model and keep the quarter-wave estimate (current behavior) for the fast model.
+- **Longitudinal** (rigid injector face, choked nozzle): the closed-closed half-wave set
+  $f_{nL}=n\,a/(2L_{ch})$ — the $q$-branch of the closed-cylinder formula
+  $f=\tfrac a2\sqrt{(q/L)^2+(\alpha_{mn}/\pi R)^2}$ (Harrje & Reardon [3], ch. 1). A compact choked
+  nozzle has normalised admittance $Y=(\gamma-1)\bar M_e/2$ (Crocco; Marble & Candel 1977), about
+  0.005 at $\bar M_e=0.07$, so $\tan(kL)=iY$ gives $\mathrm{Re}(kL)=n\pi$ exactly and the admittance
+  only damps the mode ($\alpha_{noz}=aY/L$, §4.2). The code used the open–closed quarter-wave set
+  $(2n-1)a/(4L)$ until 2026-09-26, which put 1L a factor 2 low (6500 N: 2214 Hz instead of 4428 Hz).
 - **Tangential / radial** (transverse): $f_{mT}=\alpha_{mn}\,a/(\pi D_{ch})$ with $\alpha_{mn}$ the
   roots of $J_m'$. The first tangential (1T) uses $\alpha_{10}=1.8412$. **The current code uses the
   pressure-Bessel roots $J_m$ (2.405, …) rather than the hard-wall velocity roots $J_m'$ (1.841, …);
@@ -259,7 +262,7 @@ Frequencies alone say nothing about stability. Following Culick's modal energy b
 $n$–$\tau$ response (2.1), each mode's growth rate is
 
 $$
-\alpha \;=\; \underbrace{\frac{(\gamma-1)}{2\,E_m}\,\bar q\, n\,\sin(\omega\tau_{sens})\,\Lambda_{q\psi}}_{\text{combustion driving}} \;-\; \underbrace{\big(\alpha_{noz}+\alpha_{visc}+\alpha_{inj}+\alpha_{2\phi}\big)}_{\text{damping}},
+\alpha \;=\; \underbrace{\frac{(\gamma-1)}{2\,E_m}\,\bar q\, n\,\big(1-\cos\omega\tau_{sens}\big)\,\Lambda_{q\psi}}_{\text{combustion driving}} \;-\; \underbrace{\big(\alpha_{noz}+\alpha_{visc}+\alpha_{inj}+\alpha_{2\phi}\big)}_{\text{damping}},
 \tag{4.1}
 $$
 
@@ -267,8 +270,25 @@ $$
 lag (§5, not the chug transport lag), $\Lambda_{q\psi}\!\propto\!\int_{flame}\!\psi\,\hat q\,\mathrm dV/E_m$
 is the heat-release–mode-shape overlap, $E_m$ the modal energy, and the damping terms are nozzle radiation
 (Bell–Zinn nozzle admittance), viscous/boundary losses, injector-face acoustic admittance, and
-two-phase (droplet drag/evaporation) damping. The combustion term carries the $\sin(\omega\tau)$
-phase factor from (2.1): the same $\tau$ from §5 sets whether a mode is driven or damped.
+two-phase (droplet drag/evaporation) damping. The combustion term is the part of (2.1) **in phase
+with** $p'$ — the Rayleigh integral $\langle p'q'\rangle\propto n(1-\cos\omega\tau)\ge0$, largest at
+$\omega\tau=\pi$ and zero at $2\pi$ (Crocco's stability bucket). The quadrature part $n\sin\omega\tau$
+shifts the frequency and does no work; the code took it until 2026-09-26, which booked combustion as
+*damping* over half of every $2\pi$ of $\omega\tau$.
+
+Closed-form damping terms (the code, `core.py`): nozzle $\alpha_{noz}=w\,aY/L$ with $w=1$ for
+longitudinal and $\tfrac12$ for transverse modes (the compact admittance is a lower bound for
+transverse modes); side-wall Kirchhoff layer $\alpha_{visc}=(\omega\delta_\nu/D)[1+(\gamma-1)/\sqrt{Pr}]$,
+$\delta_\nu=\sqrt{2\nu/\omega}$. The injector-face and two-phase terms have no closed form and remain
+stated fractions of $\pi f$ (0.02, 0.03) with no source. They dominate the budget.
+
+**How it is used.** Each mode carries two margins, both 1 at neutral stability: damping/driving at
+the model's $\tau_{sens}$, and damping/driving at $\omega\tau=\pi$, which is Crocco's $n_{min}/n$.
+Neither discriminates designs: $\omega\tau_{sens}$ is tens of radians and $\chi$ is uncalibrated, so
+the first flips with a few percent of $\tau$; the second is set by $\gamma$, $n$, the overlap and the
+two uncalibrated fractions. The acoustic verdict is therefore **reported, not gated** by default
+(`stability.acoustic_gate: report_only`); HF stability is rated by test — $\ge25$ kHz $P_c$, pulse or
+bomb — as Harrje & Reardon [3] prescribe. `nominal_phase` and `worst_phase` gate on the two margins.
 
 **[UNCERTAINTY]** Quantitative damping coefficients (especially two-phase and injector admittance)
 are the weakest part of a-priori acoustic prediction. The rich model will report **per-mode growth
@@ -279,6 +299,17 @@ than a single false-precision "stable/unstable" verdict.
 
 ## 5. The sensitive time lag for an impinging LOX/CH₄ spray
 
+> **SUPERSEDED for the chug transport lag — see [`chug-double-time-lag.md`](chug-double-time-lag.md).**
+> This section's closing simplification, $\tau_{tot}\approx\tau_{vap}$, is the assumption the code
+> shipped, and measuring it against the GH2/LOX chug rig of Leonardi et al. (2017) showed it costs a
+> factor of ~6 in combined frequency and boundary error. The chug loop now uses the double-time-lag
+> decomposition $\tau_{atom}+\tau_{vap}+\tau_{mix}$ with a phase-aware rule (a gaseous propellant
+> carries only $\tau_{mix}$), and $\tau_{vap}$ comes from the L17 eq. 9 evaporation constant rather
+> than the $d^2$-law below. The $d^2$-law remains selectable as `stability.time_lag_model: d2_law`,
+> and §5.1–5.2 still describe it accurately. The **acoustic** sensitive lag $\tau_{sens}$ is
+> unchanged in form, but is now taken off whichever *liquid* stream is rate-limiting rather than off
+> the oxidizer by position.
+
 This is the bridge between the spray/atomization model (already in the code: Ingebo SMD) and
 stability. For a **liquid bipropellant with both propellants injected as liquid jets**, the rate-
 limiting step of the conversion time is almost always **droplet vaporization** (Priem & Heidmann,
@@ -288,8 +319,10 @@ $$
 \tau_{tot} \;=\; \tau_{atomize} + \tau_{vap} + \tau_{mix} + \tau_{chem},
 $$
 
-with $\tau_{chem}\ll$ the others for LOX/CH₄ at chamber conditions, and $\tau_{atomize},\tau_{mix}$
-small for a well-impinged doublet. Thus $\tau_{tot}\approx\tau_{vap}$.
+with $\tau_{chem}\ll$ the others for LOX/CH₄ at chamber conditions. This document previously
+concluded that $\tau_{atomize},\tau_{mix}$ are small for a well-impinged doublet and therefore that
+$\tau_{tot}\approx\tau_{vap}$; the benchmark above contradicts that for $\tau_{mix}$, which is
+comparable to $\tau_{vap}$, not small against it.
 
 ### 5.1 Vaporization time from the $d^2$-law
 
@@ -451,8 +484,12 @@ P_{tank}(t) \;=\; P_{set} \;+\; \underbrace{0.010\,\big(P_{in,0}-P_{in}(t)\big)}
 \tag{6.2}
 $$
 
-i.e. a **near-constant setpoint with a slow ~10 psi/1000-psi-inlet upward drift**, plus a bounded
-dynamic ripple — *not* the monotonic decaying blowdown the code currently assumes. A genuine drop only
+i.e. a **near-constant setpoint with a slow upward drift** — *not* the monotonic decaying blowdown.
+The drift ratio is the regulator's own (`design_requirements.regulator_supply_pressure_effect`; Aqua
+1092 datasheet 0.010, TB 1031 ~0.017) acting on the COPV's blowdown history. $\delta P_{dyn}$ is not
+modelled until T6 measures it: `feed_pressure_model.py` used to add a synthetic ±9 psi two-sine ripple
+and an inlet that ended below the setpoint; both are gone, and an inlet that falls below outlet plus
+the regulator's minimum differential now raises instead of drawing a flat line. A genuine drop only
 occurs at end-of-burn if the **COPV supply falls below the regulator's dropout/lockup** (it can no
 longer maintain setpoint). The forward-mode and time-varying solvers must use (6.2), not the blowdown
 decay, for this engine (plan §B). This is the modeling gap the user flagged.

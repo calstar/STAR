@@ -11,6 +11,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <STAR_EthernetOTA.h>
 #include <Wire.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
@@ -23,7 +24,6 @@
 #endif
 #include "firmware_hash.h"
 #include "hotfire_config.h"
-#include "hotfire_ota.h"
 #include "sense_config.h"
 
 // ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ static IPAddress serverIP(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
 static constexpr int serverPort = HOTFIRE_SERVER_PORT;
 
 static EthernetUDP udp;
-static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
+static StarOTA::Server otaServer(HOTFIRE_OTA_PORT);
 
 static std::vector<daq::SensorDataChunkCollection> dataChunks;
 static unsigned long lastHeartbeatMs = 0;
@@ -310,10 +310,10 @@ void setup() {
 }
 
 void loop() {
-    // OTA check
-    EthernetClient otaClient = otaServer.available();
-    if (otaClient)
-        hotfire_handleOTA(otaClient);
+    // OTA check — blocks only if a client connects; on success the board
+    // reboots into the new image and never returns here.
+    otaServer.poll();
+    StarOTA::printTestMessage();
 
     switch (boardState) {
         case State::Setup: {

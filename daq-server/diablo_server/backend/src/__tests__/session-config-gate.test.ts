@@ -109,6 +109,18 @@ describe('the gate lets a clean profile through', () => {
 });
 
 describe('the gate refuses a broken profile', () => {
+  it.each([
+    '[boards.env]\ntype = "ENVIRONMENTAL"\nboard_id = 256\n',
+    '[boards.env]\ntype = "ENVIRONMENTAL"\nboard_id = 25\n' +
+      '[boards.other_env]\ntype = "ENVIRONMENTAL"\nboard_id = 25\n',
+  ])('does not deploy invalid environmental identities', async (boards) => {
+    writeProfile(CLEAN_PROFILE + boards);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(validateActiveProfile().issues.some((i) => i.page === 'boards' && i.level === 'error')).toBe(true);
+    expect(sessionManager.getStatus().active).toBe(false);
+    expect(deployed()).toBe('# deployed-marker\n');
+  });
+
   // A duplicate state id: the later entry wins and the earlier state silently disappears.
   const BROKEN = CLEAN_PROFILE.replace('id = 3\nname = "Fire"', 'id = 1\nname = "Fire"');
 
@@ -162,6 +174,54 @@ describe('the gate refuses a broken profile', () => {
     await sessionManager.start(false, 60_000, true);
     expect(sessionManager.getStatus().active).toBe(true);
     expect(deployed()).toBe('# deployed-marker\n');   // still untouched
+    await sessionManager.stop();
+  });
+});
+
+// ── Telling clients the deploy happened ──────────────────────────────────────
+// Session start is the ONE moment a profile edited during a run becomes what the rig will
+// actually use. The api-server edit routes call deployActiveProfile() and then
+// onConfigUpdated(); this path called deployActiveProfile() with nothing after it, so
+// /api/states served the new state immediately while every open tab kept the list it had
+// cached at page load — the state diagram silently disagreed with the rig until someone
+// reloaded. Observed on the stand 2026-09-12 with a state added mid-session.
+describe('a deploy at session start announces itself', () => {
+  it('fires the config-deployed hook after the profile reaches config.toml', async () => {
+    const deployedHook = vi.fn();
+    sessionManager.init(() => {}, () => {}, () => {}, deployedHook);
+    writeProfile(CLEAN_PROFILE);
+
+    await sessionManager.start(false, 60_000);
+    expect(deployedHook).toHaveBeenCalledTimes(1);
+    expect(deployed()).toContain('Fuel Press');   // and it ran AFTER the deploy landed
+    await sessionManager.stop();
+  });
+
+  it('does not fire when the gate refuses the start — nothing was deployed', async () => {
+    const deployedHook = vi.fn();
+    sessionManager.init(() => {}, () => {}, () => {}, deployedHook);
+    writeProfile(CLEAN_PROFILE.replace('id = 3\nname = "Fire"', 'id = 1\nname = "Fire"'));
+
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(deployedHook).not.toHaveBeenCalled();
+  });
+
+  it('does not fire for a simulated run, which never deploys the profile', async () => {
+    const deployedHook = vi.fn();
+    sessionManager.init(() => {}, () => {}, () => {}, deployedHook);
+    writeProfile(CLEAN_PROFILE);
+
+    await sessionManager.start(false, 60_000, true);
+    expect(deployedHook).not.toHaveBeenCalled();
+    await sessionManager.stop();
+  });
+
+  it('a throwing hook does not fail the session — the deploy already succeeded', async () => {
+    sessionManager.init(() => {}, () => {}, () => {}, () => { throw new Error('boom'); });
+    writeProfile(CLEAN_PROFILE);
+
+    await sessionManager.start(false, 60_000);
+    expect(sessionManager.getStatus().active).toBe(true);
     await sessionManager.stop();
   });
 });

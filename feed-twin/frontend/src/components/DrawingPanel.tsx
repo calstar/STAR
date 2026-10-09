@@ -17,11 +17,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   clearOverride,
-  getDrawing,
+  getDrawingData,
   setOverride,
   type DrawingElement,
   type DrawingParam,
-  type DrawingView,
+  type DrawingData,
   type ParamValue,
 } from '../api';
 import { useStand } from '../stand';
@@ -131,7 +131,7 @@ function EditForm({
             type="button"
             onClick={() => setSource(s)}
             className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${
-              source === s ? (SOURCE_STYLE[s] ?? '') + ' bg-white/5' : 'border-gray-800 text-gray-500 hover:text-gray-300'
+              source === s ? (SOURCE_STYLE[s] ?? '') + ' bg-white/5' : 'border-[var(--line)] text-gray-500 hover:text-gray-300'
             }`}
           >
             {s}
@@ -187,7 +187,7 @@ function ParamRow({
   const under = drawing ?? assumed;
 
   return (
-    <li className="border-t border-gray-800/60 px-2 py-1.5 text-[12px]">
+    <li className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[12px]">
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-gray-300" title={param.name}>
           {param.name}
@@ -294,7 +294,7 @@ function ElementCard({
   const assumed = el.params.filter((p) => !p.override && !p.drawing && p.assumed).length;
 
   return (
-    <li className="rounded-md border border-gray-800 bg-black/20">
+    <li className="rounded-md border border-[var(--line)] bg-black/20">
       <div className="flex items-center gap-2 px-2 py-1.5">
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           <span className="w-2 shrink-0 font-mono text-[10px] text-gray-600">{open ? '−' : '+'}</span>
@@ -326,7 +326,7 @@ function ElementCard({
             }
             className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider transition-colors ${
               consoleHidden
-                ? 'border-gray-800 text-gray-600 hover:text-gray-300'
+                ? 'border-[var(--line)] text-gray-600 hover:text-gray-300'
                 : 'border-green-900/70 text-green-400 hover:border-green-700'
             }`}
           >
@@ -349,7 +349,7 @@ function ElementCard({
             </p>
           )}
           {el.params.length === 0 ? (
-            <p className="border-t border-gray-800/60 px-2 py-1.5 text-[11.5px] text-gray-600">
+            <p className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[11.5px] text-gray-600">
               No numbers on this one — the drawing places it and the model reads nothing else.
             </p>
           ) : (
@@ -376,7 +376,7 @@ type Filter = 'all' | 'console' | 'changed' | 'filled';
 
 export function DrawingPanel() {
   const { where, live, consoleHidden, hideOnConsole, restart } = useStand();
-  const [view, setView] = useState<DrawingView | null>(null);
+  const [view, setView] = useState<DrawingData | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState('');
@@ -386,7 +386,7 @@ export function DrawingPanel() {
   const load = useCallback(async () => {
     if (!where.diagram) return;
     try {
-      setView(await getDrawing(where.diagram, where.engine, where.fluidSet));
+      setView(await getDrawingData(where.diagram, where.engine, where.fluidSet));
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -436,7 +436,7 @@ export function DrawingPanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex-shrink-0 border-b border-gray-800 px-3 py-2">
+      <div className="flex-shrink-0 border-b border-[var(--line)] px-3 py-2">
         <div className="flex items-baseline gap-2">
           <h2 className="text-[11px] font-bold uppercase tracking-widest text-text-muted">From the drawing</h2>
           <span className="ml-auto truncate font-mono text-[10px] text-gray-600" title={view.source}>
@@ -512,7 +512,7 @@ export function DrawingPanel() {
             sources={view.override_sources}
             locked={locked}
             consoleHidden={consoleHidden[el.id] ?? el.console_hidden}
-            onConsole={(hide) => hideOnConsole(el.id, hide)}
+            onConsole={(hide) => hideOnConsole([el.id], hide)}
             onSave={(p, v) => save(el, p, v)}
             onRevert={(p) => revert(el, p)}
           />

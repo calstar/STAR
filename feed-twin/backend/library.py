@@ -214,6 +214,74 @@ class Library:
         self._write([updated if a.id == artifact.id else a for a in self._read()])
         return updated
 
+    # ------------------------------------------------------------ attachments
+    #
+    # Things derived *from* an artifact by another tool, kept beside it: an
+    # engine's card from EngineDesign. Not artifacts themselves -- they are not
+    # content the user imported, and the artifact's id stays the hash of what
+    # was imported -- but stored next to its blob so removing the artifact
+    # removes them.
+
+    def _attachment(self, artifact_id: str, name: str) -> Path:
+        self.get(artifact_id)
+        if not name.replace("_", "").replace("-", "").isalnum():
+            raise LibraryError(f"attachment name {name!r} is not a plain word")
+        return self.blobs / f"{artifact_id}.{name}.json"
+
+    def attach(self, artifact_id: str, name: str, data: bytes) -> None:
+        """Store ``data`` as this artifact's ``name`` attachment, replacing any."""
+        path = self._attachment(artifact_id, name)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(data)
+        temporary.replace(path)
+
+    def attachment(self, artifact_id: str, name: str) -> bytes | None:
+        """This artifact's ``name`` attachment, or ``None`` when it has none."""
+        path = self._attachment(artifact_id, name)
+        return path.read_bytes() if path.exists() else None
+
+    def detach(self, artifact_id: str, name: str) -> None:
+        path = self._attachment(artifact_id, name)
+        if path.exists():
+            path.unlink()
+
+    # --------------------------------------------------------------- records
+    #
+    # What a person decided about a *lineage* of artifacts rather than one
+    # artifact: the hookup of a drawing's valves and knobs. Keyed by where the
+    # drawing comes from (pid-designer document, shipped file, upload name),
+    # so saving the drawing again -- a new artifact by content -- keeps it.
+
+    def _record(self, kind: str, key: str) -> Path:
+        if not kind.replace("_", "").isalnum():
+            raise LibraryError(f"record kind {kind!r} is not a plain word")
+        folder = self.root / kind
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}.json"
+
+    def put_record(self, kind: str, key: str, data: dict[str, object]) -> None:
+        path = self._record(kind, key)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"key": key, **data}, indent=1), encoding="utf-8"
+        )
+        temporary.replace(path)
+
+    def record(self, kind: str, key: str) -> dict[str, object] | None:
+        path = self._record(kind, key)
+        if not path.exists():
+            return None
+        try:
+            found = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        return found if isinstance(found, dict) and found.get("key") == key else None
+
+    def drop_record(self, kind: str, key: str) -> None:
+        path = self._record(kind, key)
+        if path.exists():
+            path.unlink()
+
     def remove(self, artifact_id: str) -> None:
         artifacts = self._read()
         kept = [a for a in artifacts if a.id != artifact_id]
@@ -224,6 +292,8 @@ class Library:
         blob = self.blobs / gone.filename
         if blob.exists():
             blob.unlink()
+        for attached in self.blobs.glob(f"{artifact_id}.*.json"):
+            attached.unlink()
 
     def clear(self) -> None:
         """Empty the store. For tests; there is no route that calls this."""

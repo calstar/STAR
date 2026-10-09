@@ -14,7 +14,7 @@ import pytest
 
 from backend.main import _cea_for, engine_from_bytes
 import backend.main as api
-import backend.study as study
+import backend.benchmark_study as study
 from feedtwin.comps.wall import stainless_capacity
 
 from tests.test_session_api import an_engine
@@ -54,17 +54,32 @@ class TestOffIsOff:
         """
         assert burn(a_stand(walls=False)) == burn(a_stand(walls=False))
 
-    def test_no_metal_on_the_drawing_means_no_effect(self) -> None:
+    def test_no_metal_on_the_drawing_means_no_effect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A line with no `wall_thickness` and no `fitting_mass` has no metal to
         give, so the toggle is inert on a drawing that never declared any --
         which is every drawing anybody has made until now.
+
+        The metal is taken away where the session builds it, so the stand is
+        primed and settled without it too. Clearing it after `a_stand` -- what
+        this did -- let the settle run with walls, and once the settle carried
+        any flow the two stands started T-0 apart.
         """
+        from backend.session import Session
+
         session = a_stand(walls=True)
-        for wall in session.walls.values():
-            wall.mass  # built from the drawing
+        assert session.walls, "the study drawing declares line metal"
+        real = Session._build_line_walls
+
+        def no_metal(self: Session) -> None:
+            real(self)
+            self.walls.clear()
+            self.wall_temperature.clear()
+
+        monkeypatch.setattr(Session, "_build_line_walls", no_metal)
         stripped = a_stand(walls=True)
-        stripped.walls.clear()
-        stripped.wall_temperature.clear()
+        monkeypatch.undo()
         assert burn(stripped) == burn(a_stand(walls=False))
 
 

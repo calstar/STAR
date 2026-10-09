@@ -71,4 +71,13 @@ describe('toStored', () => {
     expect('selected' in out).toBe(false)
     expect(out.source).toBe('node_1')
   })
+
+  it('drops which ends of a line the canvas offered for carrying', () => {
+    // The canvas marks each line it hands React Flow with the ends that may
+    // be carried to another port; the drawing never has that.
+    const before = toStored({ nodes: [], edges: [edge()] })
+    const [out] = toStored({ nodes: [], edges: [edge({ reconnectable: 'source' })] }).edges
+    expect('reconnectable' in out).toBe(false)
+    expect(JSON.stringify({ nodes: [], edges: [out] })).toBe(JSON.stringify(before))
+  })
 })

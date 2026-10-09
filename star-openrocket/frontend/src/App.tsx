@@ -4,6 +4,8 @@ import starWordmark from './assets/star-wordmark.png'
 import {
   computeFlight,
   computeStability,
+  downloadMotorFile,
+  exportOrk,
   fetchFins,
   fetchManifest,
   fetchMotor,
@@ -17,6 +19,7 @@ import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
 import { defaultOrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
+import { toWireConfig } from './recovery/lib/serialise'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { ReadOnlyProvider } from '@stardesign-ui'
@@ -488,6 +491,50 @@ export default function App() {
     }
   }, [modelId, motorSel, outerFaces, finFaces, massOverrides, railLength])
 
+  // Export the design to OpenRocket: the same selection the stability result came
+  // from, plus the shared environment, rail and recovery devices. Reads the design,
+  // so it stays live without the checkout.
+  const [exportBusy, setExportBusy] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const handleExportOrk = useCallback(async () => {
+    if (!modelId) return
+    setExportBusy(true)
+    setExportError(null)
+    try {
+      const wire = toWireConfig(recovery)
+      await exportOrk(modelId, {
+        outerFaces,
+        // Nothing picked yet (no Compute run) means auto-detect, not "no fins" --
+        // an empty list is the backend's explicit "this rocket has no fins".
+        finFaces: finFaces.length ? finFaces : null,
+        nFins: finCount || null,
+        overrides: massOverrides,
+        motor: motorSel,
+        railLength,
+        inclination: flight.inclination,
+        heading: flight.heading,
+        site: wire.site,
+        wind: wire.wind,
+        devices: wire.devices,
+      })
+    } catch (exc) {
+      setExportError(exc instanceof Error ? exc.message : String(exc))
+    } finally {
+      setExportBusy(false)
+    }
+  }, [modelId, outerFaces, finFaces, finCount, massOverrides, motorSel, railLength, flight, recovery])
+
+  const [motorFileError, setMotorFileError] = useState<string | null>(null)
+  const handleDownloadMotorFile = useCallback(async () => {
+    if (!motorSel) return
+    setMotorFileError(null)
+    try {
+      await downloadMotorFile(motorSel.motorId, motorSel.simfileId)
+    } catch (exc) {
+      setMotorFileError(exc instanceof Error ? exc.message : String(exc))
+    }
+  }, [motorSel])
+
   // Open the motor-curves popup and fetch the selected motor's raw datafile.
   const handleViewMotorCurves = useCallback(async () => {
     if (!motorSel) return
@@ -666,6 +713,26 @@ export default function App() {
           disabled={!editable}
         />
 
+        {/* Export to OpenRocket, far right: it reads the whole design (CAD, motor,
+            recovery, environment), so it lives with the design rather than in
+            one tab's panel. Live without the checkout -- it only reads. */}
+        <div className="ml-auto flex items-center gap-2">
+          {exportError && (
+            <span className="max-w-xs truncate text-xs text-rose-400" title={exportError}>
+              {exportError}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleExportOrk}
+            disabled={!modelId || exportBusy}
+            title="Download an OpenRocket .ork: airframe, fins, CG, motor, parachutes and launch conditions"
+            className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exportBusy ? 'Exporting…' : 'Export .ork'}
+          </button>
+        </div>
+
         </div>
 
         {/* Versioned designs, as a full-width strip at the bottom of the header. */}
@@ -804,6 +871,8 @@ export default function App() {
             showAssemblyCentroid={showAssemblyCentroid}
             onShowAssemblyCentroidChange={setShowAssemblyCentroid}
             onViewMotorCurves={handleViewMotorCurves}
+            onDownloadMotorFile={handleDownloadMotorFile}
+            motorFileError={motorFileError}
           />
         </ResizableSidebar>
       </div>

@@ -16,15 +16,47 @@ import { serverNowMs } from '@/lib/plot-time';
 
 const RATE_WINDOW_MS = 3000; // rolling window for Hz computation
 
-/** Hide readouts / stop synthetic plot extension if no SENSOR_UPDATE for this long.
+/** Hide READOUTS if the newest sample is older than this. Plots no longer use it —
+ *  data-cache.ts ends each line at its own last sample instead (see its gap constants).
  *
- *  Measured on the SERVER timeline, not local arrival time. The backend may be
- *  shedding resolution for a slow client (see backend client-outbox.ts), which
- *  delivers fewer, chunkier batches of *current* data — on arrival time that
- *  would blink "stale" between batches even though the samples are fresh. The
- *  question this answers is "how old is the newest sample?", not "how long since
- *  a packet landed?". */
+ *  Measured on the SERVER timeline, not local arrival time. The comment here used to
+ *  claim that alone protected a throttled client from blinking. It does not:
+ *  serverNowMs() advances on EVERY inbound envelope and on the 1 Hz CONNECTION_STATUS
+ *  broadcast, not on sensor samples, so its "now" edge keeps moving while the samples
+ *  lag — which reduces this check to `lagMs < 1500`. The backend meanwhile paces a
+ *  throttled client to a lag target of exactly 1500 ms (DEFAULT_TARGET_LAG_MS), so the
+ *  two numbers met with zero margin and every burst crossed the line. Hence the
+ *  allowance below, which is the margin that was missing. */
 export const SENSOR_DATA_STALE_MS = 1500;
+
+/** Extra staleness budget for THIS client's measured delivery lag, from
+ *  CONNECTION_STATUS. Pushed in by the store (see setDeliveryLagAllowanceMs) rather than
+ *  read from it: store.ts imports this module, so the dependency may not run the other
+ *  way. */
+let _deliveryLagAllowanceMs = 0;
+
+/**
+ * Record this client's reported delivery lag as extra staleness budget.
+ *
+ * 2x because the pacer only flushes once the socket has fully drained, so the newest
+ * sample's age sawtooths between `lagMs` and `lagMs + drainInterval`; the outbox's own
+ * design test allows up to 2x the target between flushes. +250 ms covers ordinary jitter,
+ * and the whole thing is capped so a pathological report cannot disable staleness.
+ */
+export function setDeliveryLagAllowanceMs(lagMs: number | null | undefined): void {
+  // No usable report means no claim about this link, so no allowance — distinct from a
+  // REPORTED lag of 0, which is a healthy link that still deserves the jitter margin.
+  if (typeof lagMs !== 'number' || !Number.isFinite(lagMs) || lagMs < 0) {
+    _deliveryLagAllowanceMs = 0;
+    return;
+  }
+  _deliveryLagAllowanceMs = Math.min(5000, 2 * lagMs + 250);
+}
+
+/** The staleness window in force right now: the base plus this link's allowance. */
+export function staleWindowMs(): number {
+  return SENSOR_DATA_STALE_MS + _deliveryLagAllowanceMs;
+}
 
 /** Boards / Heartbeats pane only: longer window than sensor grid (lower update rate; avoids flicker). */
 export const BOARD_LIVE_TELEMETRY_STALE_MS = 3000;
@@ -127,12 +159,22 @@ export function getSensorRate(entity: string, component: string): number {
   return smoothed;
 }
 
-/** True if this exact `entity.component` key's newest sample is younger than
- *  SENSOR_DATA_STALE_MS on the server timeline. */
+/** Test helper: this module holds cross-test state (rate buffers, last-update stamps and
+ *  the delivery-lag allowance). Precedent: resetPlotTimeForTests, resetEncoderAcceptTimestampsForTests. */
+export function resetSensorRateForTests(): void {
+  _timestamps.clear();
+  _lastUpdate.clear();
+  _emaRate.clear();
+  _deliveryLagAllowanceMs = 0;
+  _lastPrune = 0;
+}
+
+/** True if this exact `entity.component` key's newest sample is younger than the current
+ *  staleness window (base + this link's delivery-lag allowance) on the server timeline. */
 export function isSensorKeyFresh(key: string): boolean {
   const t = _lastUpdate.get(key);
   if (t == null || !Number.isFinite(t)) return false;
-  return serverNowMs() - t < SENSOR_DATA_STALE_MS;
+  return serverNowMs() - t < staleWindowMs();
 }
 
 /**

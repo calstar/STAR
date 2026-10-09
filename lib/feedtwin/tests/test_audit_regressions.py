@@ -172,7 +172,8 @@ def test_a_chain_that_truly_cannot_report_constants_says_so() -> None:
 # --------------------------------------------------- catalogued curves
 
 
-CATALOG = textwrap.dedent("""
+CATALOG = textwrap.dedent(
+    """
     ["hose-8an-600"]
     type = "flex_hose"
     manufacturer = "Aeroquip"
@@ -196,7 +197,8 @@ CATALOG = textwrap.dedent("""
     y_unit = "bar"
     source = "measured"
     reference = "CF-2026-03, 9 points"
-    """)
+    """
+)
 
 
 def test_a_part_can_carry_measured_flow_data(tmp_path: Path) -> None:
@@ -406,3 +408,45 @@ def test_an_indeterminate_stub_is_flagged() -> None:
     result = solve_steady(net)
     assert result.converged
     assert "CV-01" in result.indeterminate_dead_ends
+
+
+def test_a_leg_behind_a_shut_valve_is_flagged() -> None:
+    """A capped leg behind a shut valve holds what was trapped in it.
+
+    The check above asks the component for a drop at zero flow, and a shut ball
+    valve has none: its ``pressure_drop(0)`` is identically zero. So the leg
+    was back-filled from the manifold across the seat and reported as a
+    reading -- a transducer there followed the plenum it is shut off from
+    (docs/PHYSICS-BENCHMARK.md 3.2). Open, the same leg is an ordinary stub on
+    the manifold and reads it.
+    """
+    from feedtwin.model import Param as P
+
+    net = _stub_network()
+    net.add_node("sv_out", "nitrogen", 293.0)
+    net.add_node("cap", "nitrogen", 293.0)
+    valve = build_component(
+        ComponentInstance.build(
+            "SV-01",
+            "valve",
+            {"Cv": P(1.0, "Cv", M, ""), "bore": P(6.0, "mm", M, "")},
+        )
+    )
+    net.add_branch("SV-01", valve, "MAN-01", "sv_out")
+    leg = build_component(
+        ComponentInstance.build(
+            "p_leg",
+            "pipe",
+            {"length": P(0.3, "m", M, ""), "bore": P(6.0, "mm", M, "")},
+        )
+    )
+    net.add_branch("p_leg", leg, "sv_out", "cap")  # type: ignore[arg-type]
+
+    shut = solve_steady(net, signals={"SV-01.command": 0.0})
+    assert shut.converged
+    assert {"sv_out", "cap"} <= set(shut.indeterminate_nodes)
+
+    opened = solve_steady(net, signals={"SV-01.command": 1.0})
+    assert opened.converged
+    assert not {"sv_out", "cap"} & set(opened.indeterminate_nodes)
+    assert opened.pressures["cap"] == pytest.approx(opened.pressures["MAN-01"])

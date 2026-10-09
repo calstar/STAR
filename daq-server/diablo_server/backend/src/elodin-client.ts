@@ -20,6 +20,20 @@ export interface ElodinPacketHeader {
   requestId: number;
 }
 
+/** postcard String: varint byte-length then UTF-8. */
+function decodePostcardString(buf: Buffer): string {
+  let n = 0, shift = 0, i = 0;
+  while (i < buf.length) {
+    const b = buf[i++];
+    n |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+  }
+  return buf.subarray(i, i + n).toString('utf8');
+}
+
+const RECONNECT_MS = 5000;
+
 export class ElodinClient extends EventEmitter {
   private socket: Socket | null = null;
   private host: string;
@@ -31,6 +45,11 @@ export class ElodinClient extends EventEmitter {
   private writeQueue: Buffer[] = [];
   private drainPending: boolean = false;
   private processingPackets: boolean = false;
+  /** Set by disconnect(): no reconnects until connect() is called again. */
+  private stopped: boolean = false;
+  /** Consecutive failed attempts since the last successful connect, for quiet retry logs. */
+  private failedAttempts: number = 0;
+  private lastFailure: string | null = null;
 
   get connected(): boolean {
     return this._connected;
@@ -48,18 +67,32 @@ export class ElodinClient extends EventEmitter {
   }
 
   async connect(): Promise<boolean> {
+    // An explicit connect() re-arms reconnects that disconnect() turned off.
+    this.stopped = false;
     if (this._connected) {
       return true;
     }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // Any attempt still in flight is superseded; its handlers check identity and go quiet.
+    this.socket?.destroy();
 
     return new Promise((resolve) => {
       let connectTimeout: NodeJS.Timeout | null = null;
+      let wasConnected = false;
+      const sock = new Socket();
+      this.socket = sock;
+      // Events from a socket this client has since replaced (or let go of) must not touch
+      // the current connection's state.
+      const current = () => this.socket === sock;
       try {
-        this.socket = new Socket();
-        this.socket.setNoDelay(true); // Disable Nagle's algorithm for low latency
-        this.socket.setKeepAlive(true, 60000); // Keep connection alive
+        sock.setNoDelay(true); // Disable Nagle's algorithm for low latency
+        sock.setKeepAlive(true, 60000); // Keep connection alive
 
-        this.socket.on('data', (data: Buffer) => {
+        sock.on('data', (data: Buffer) => {
+          if (!current()) return;
           if (!this.hasReceivedData) {
             console.log(`[ElodinClient] First data chunk: ${data.length} bytes`);
             this.hasReceivedData = true;
@@ -68,53 +101,83 @@ export class ElodinClient extends EventEmitter {
         });
 
         connectTimeout = setTimeout(() => {
-          if (!this._connected) {
-            console.error(`[ElodinClient] Connection timeout to ${this.host}:${this.port}`);
-            this.socket?.destroy();
+          if (!this._connected && current()) {
+            this.noteFailure('timeout');
+            sock.destroy();
             resolve(false);
           }
         }, 5000);
 
-        this.socket.on('connect', () => {
+        sock.on('connect', () => {
           if (connectTimeout) clearTimeout(connectTimeout);
+          if (!current()) return;
+          wasConnected = true;
           this._connected = true;
+          const after = this.failedAttempts > 0 ? ` after ${this.failedAttempts} failed attempt(s)` : '';
+          this.failedAttempts = 0;
+          this.lastFailure = null;
           this.emit('connected');
-          console.log(`[ElodinClient] Connected to ${this.host}:${this.port}`);
+          console.log(`[ElodinClient] Connected to ${this.host}:${this.port}${after}`);
           resolve(true);
         });
 
-        this.socket.on('error', (error: Error) => {
+        sock.on('error', (error: Error) => {
           if (connectTimeout) clearTimeout(connectTimeout);
-          const err = error as any;
-          console.error(`[ElodinClient] Socket error: ${err.code || err.message}`);
+          if (!current()) return;
+          const err = error as NodeJS.ErrnoException;
+          if (wasConnected) {
+            console.error(`[ElodinClient] Socket error: ${err.code || err.message}`);
+          } else {
+            this.noteFailure(err.code || err.message);
+          }
           this._connected = false;
           resolve(false);
-          this.scheduleReconnect();
+          // 'close' always follows 'error' and schedules the retry.
         });
 
-        this.socket.on('close', () => {
-          console.log('[ElodinClient] Connection closed');
+        sock.on('close', () => {
+          if (connectTimeout) clearTimeout(connectTimeout);
+          resolve(false);
+          if (!current()) return;
           this._connected = false;
           this.writeQueue = [];
           this.drainPending = false;
-          this.emit('disconnected');
+          this.buffer = Buffer.alloc(0);
+          // Only a connection that was up can go down. A refused attempt used to land here
+          // too, logging "Connection closed" and emitting 'disconnected' every 5 s for a DB
+          // that had never been reachable.
+          if (wasConnected) {
+            console.log('[ElodinClient] Connection closed');
+            this.emit('disconnected');
+          }
           this.scheduleReconnect();
         });
 
-        try {
-          this.socket.connect(this.port, this.host);
-        } catch (connectError) {
-          console.error('[ElodinClient] Failed to initiate connection:', connectError);
-          clearTimeout(connectTimeout);
-          resolve(false);
-        }
+        sock.connect(this.port, this.host);
       } catch (error) {
+        if (connectTimeout) clearTimeout(connectTimeout);
         console.error('[ElodinClient] Failed to connect:', error);
         this._connected = false;
         this.scheduleReconnect();
         resolve(false);
       }
     });
+  }
+
+  /**
+   * Log a failed attempt only when it says something new: the first failure, or a different
+   * reason than the last. A DB that is down on purpose (no session) used to produce four
+   * lines every five seconds, indefinitely.
+   */
+  private noteFailure(reason: string): void {
+    if (this.failedAttempts === 0 || reason !== this.lastFailure) {
+      console.warn(
+        `[ElodinClient] Cannot reach ${this.host}:${this.port} (${reason}); ` +
+          `retrying every ${RECONNECT_MS / 1000} s, repeats not logged`,
+      );
+    }
+    this.failedAttempts++;
+    this.lastFailure = reason;
   }
 
   // Never drop the whole buffer on overload — trim oldest tail only at hard cap.
@@ -192,6 +255,27 @@ export class ElodinClient extends EventEmitter {
 
       const payload = packet.subarray(8);
 
+      // GetEarliestTimestamp is an ordered, read-only fence for subscription batches.
+      if (header.ty === ElodinPacketType.MSG && header.requestId === 255 &&
+          header.packetId[0] === 0xE0 && header.packetId[1] === 0x17) {
+        this.emit('subscriptionFence');
+        processed++;
+        continue;
+      }
+
+      // ErrorResponse [224,29]: the DB's reply when it refuses a message — a rejected
+      // VTableStream subscription ("invalid msg id") or an unparseable VTableMsg. It was
+      // being dropped by the data-packet filter below, so every refusal in the system was
+      // silent: the sequencer-state subscription sent 3 s before the sequencer registered
+      // its table was rejected, and nothing ever retried it or said so. The header's
+      // requestId is echoed from the message that caused it, which is what lets the
+      // registry work out WHICH subscription was refused.
+      if (header.packetId[0] === 0xE0 && header.packetId[1] === 0x1D) {
+        this.emit('dbError', header.requestId, decodePostcardString(payload));
+        processed++;
+        continue;
+      }
+
       // Elodin can deliver stream rows as ty=TABLE(1) or ty=MSG(0) depending on path/version.
       // Accept TABLE always; accept MSG only for known data packet families to avoid
       // flooding the event loop with registration/control chatter.
@@ -228,13 +312,18 @@ export class ElodinClient extends EventEmitter {
    * Send raw message to Elodin DB
    * Used for VTable registration and other low-level protocol messages
    */
-  sendRawMessage(packetId: [number, number], packetType: ElodinPacketType, payload: Buffer): boolean {
+  sendRawMessage(
+    packetId: [number, number],
+    packetType: ElodinPacketType,
+    payload: Buffer,
+    requestId = 0,
+  ): boolean {
     if (!this.connected || !this.socket) {
       return false;
     }
 
     try {
-      const header = this.createHeader(packetType, payload.length, packetId);
+      const header = this.createHeader(packetType, payload.length, packetId, requestId);
       const packet = Buffer.concat([header, payload]);
 
       // If drain is pending, queue the packet rather than dropping it
@@ -273,6 +362,36 @@ export class ElodinClient extends EventEmitter {
     return this.sendRawMessage(packetId, ElodinPacketType.TABLE, payload);
   }
 
+  /**
+   * Elodin 0.16.1 handles requests serially and writes subscription errors before
+   * answering GetEarliestTimestamp. Its reply proves all preceding requests were
+   * handled, including successful subscriptions that have not produced data yet.
+   * Request ID 255 is reserved for this fence; callers must serialize batches.
+   */
+  flushSubscriptionRequests(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.off('subscriptionFence', onFence);
+        this.off('dbError', onError);
+        this.off('disconnected', onDisconnect);
+        if (error) reject(error); else resolve();
+      };
+      const onFence = () => finish();
+      const onError = (id: number, description: string) => {
+        if (id === 255) finish(new Error(`Subscription fence rejected: ${description}`));
+      };
+      const onDisconnect = () => finish(new Error('Disconnected during subscription batch'));
+      const timer = setTimeout(() => finish(new Error('Subscription fence timed out')), 5000);
+      this.once('subscriptionFence', onFence);
+      this.on('dbError', onError);
+      this.once('disconnected', onDisconnect);
+      if (!this.sendRawMessage([0xE0, 0x16], ElodinPacketType.MSG, Buffer.alloc(0), 255)) {
+        finish(new Error('Could not send subscription fence'));
+      }
+    });
+  }
+
   sendCommand(commandType: 'state_transition' | 'actuator', data: unknown): boolean {
     if (!this.connected || !this.socket) {
       return false;
@@ -299,14 +418,19 @@ export class ElodinClient extends EventEmitter {
     }
   }
 
-  private createHeader(type: ElodinPacketType, payloadLength: number, packetId: [number, number] = [0, 0]): Buffer {
+  private createHeader(
+    type: ElodinPacketType,
+    payloadLength: number,
+    packetId: [number, number] = [0, 0],
+    requestId = 0,
+  ): Buffer {
     const header = Buffer.alloc(8);
     const totalLen = 8 + payloadLength;
     header.writeUInt32LE(totalLen - 4, 0); // Elodin len = total - 4
     header.writeUInt8(type, 4);
     header.writeUInt8(packetId[0], 5);
     header.writeUInt8(packetId[1], 6);
-    header.writeUInt8(0, 7); // requestId
+    header.writeUInt8(requestId & 0xff, 7);
     return header;
   }
 
@@ -330,20 +454,26 @@ export class ElodinClient extends EventEmitter {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) {
+    if (this.reconnectTimer || this.stopped) {
       return;
     }
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (!this.connected) {
-        console.log('[ElodinClient] Reconnecting...');
+      if (!this.connected && !this.stopped) {
+        if (this.failedAttempts === 0) console.log('[ElodinClient] Reconnecting...');
         this.connect();
       }
-    }, 5000); // Reconnect after 5 seconds
+    }, RECONNECT_MS);
   }
 
+  /**
+   * Close the connection and stay closed until the next connect(). Before `stopped`, the
+   * socket's own 'close' handler re-armed the reconnect timer this had just cleared, so a
+   * client could not be shut down.
+   */
   disconnect(): void {
+    this.stopped = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -352,12 +482,19 @@ export class ElodinClient extends EventEmitter {
     this.writeQueue = [];
     this.drainPending = false;
 
-    if (this.socket) {
-      this.socket.destroy();
-      this.socket = null;
-    }
-
+    const wasConnected = this._connected;
+    const sock = this.socket;
+    // Detach first: the destroyed socket's handlers see they are no longer current and do
+    // nothing, so the 'disconnected' below is the only one.
+    this.socket = null;
     this._connected = false;
+    this.failedAttempts = 0;
+    this.lastFailure = null;
+    sock?.destroy();
+    if (wasConnected) {
+      console.log('[ElodinClient] Disconnected');
+      this.emit('disconnected');
+    }
   }
 
   isConnected(): boolean {

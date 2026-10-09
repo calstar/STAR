@@ -100,7 +100,10 @@ def test_forwards_only_the_session_cookie(monkeypatch):
     (req,) = calls
     assert req.full_url == "https://auth.example.org/users"
     assert req.get_header("Cookie") == "session=abc123"
-    assert set(req.headers) == {"Cookie"}
+    # The static User-Agent below is required because Cloudflare blocks urllib's
+    # default signature; it carries nothing from the request, so the "the caller's
+    # own cookie and nothing else" property this test guards still holds.
+    assert set(req.headers) == {"Cookie", "User-agent"}
 
 
 @pytest.mark.parametrize("boom", [

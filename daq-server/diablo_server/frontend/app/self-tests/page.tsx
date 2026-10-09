@@ -125,7 +125,7 @@ export default function SelfTestsPage() {
     useEffect(() => {
         fetch(`${getApiBaseUrl()}/api/config`)
             .then((r) => (r.ok ? r.json() : null))
-            .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; num_sensors?: number }> } } | null) => {
+            .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[] }> } } | null) => {
                 const boards = data?.config?.boards;
                 if (!boards || typeof boards !== 'object') return;
                 const next: Record<number, ConfigBoardMeta> = {};
@@ -135,7 +135,7 @@ export default function SelfTestsPage() {
                     if (!Number.isFinite(boardId) || boardId <= 0) return;
                     const connectors = Array.isArray(b.active_connectors) && b.active_connectors.length > 0
                         ? b.active_connectors.map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0)
-                        : Array.from({ length: Math.max(0, Number(b.num_sensors) || 0) }, (_, i) => i + 1);
+                        : [];
                     next[boardId] = { connectors };
                 });
                 setBoardMetaById(next);

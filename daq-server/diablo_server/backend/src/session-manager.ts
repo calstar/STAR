@@ -16,6 +16,7 @@ import { ServiceController, getSessionServiceMode } from './service-controller.j
 import { loadSession, saveSession } from './session-state.js';
 import { deployActiveProfile } from './routes/config-profiles.js';
 import { validateActiveProfile, ConfigIssuesError } from './config-validation.js';
+import { resetTareState, setRunDir } from './lc-tare.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -87,6 +88,15 @@ class SessionManager {
    *  pristine config baseline (else boards keep a stale heartbeat timestamp and
    *  read "---" instead of the disconnected baseline shown on fresh startup). */
   private onStopped: () => void = () => {};
+  /** Fired after the active profile is deployed at session start, so the backend can rebuild
+   *  its config-derived caches and tell open browsers to refetch. Without it a profile edited
+   *  during a run reached config.toml here and no client ever heard about it. */
+  private onConfigDeployed: () => void = () => {};
+  /** Fired once the run pipeline is up, so the backend can tell a RUNNING calibration service to
+   *  drop its in-memory load-cell tares. The file itself is already gone by then (the controller
+   *  unlinks it while the service is down), but in mock mode the service never went down and
+   *  would rewrite the file from memory on its next save. */
+  private onSessionStarted: () => void = () => {};
 
   private active = false;
   private dbDir: string | null = null;
@@ -97,10 +107,18 @@ class SessionManager {
   private warnTimers: NodeJS.Timeout[] = [];
   private stopTimer: NodeJS.Timeout | null = null;
 
-  init(broadcast: Broadcast, notify: Notify, onStopped: () => void = () => {}): void {
+  init(
+    broadcast: Broadcast,
+    notify: Notify,
+    onStopped: () => void = () => {},
+    onConfigDeployed: () => void = () => {},
+    onSessionStarted: () => void = () => {},
+  ): void {
     this.broadcast = broadcast;
     this.notify = notify;
     this.onStopped = onStopped;
+    this.onConfigDeployed = onConfigDeployed;
+    this.onSessionStarted = onSessionStarted;
     if (!this.enabled) return;
     // Recover a session that outlived a backend restart.
     const persisted = loadSession();
@@ -124,6 +142,16 @@ class SessionManager {
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /**
+   * Whether elodin-db and the C++ services (actuator_service among them) exist right now.
+   * Only systemd mode starts and stops them per run; with session control off (the launch-site
+   * laptop) or in mock mode they are up for the backend's whole life. Gate anything that dials
+   * the pipeline on this, or it spends every idle minute retrying a port nothing listens on.
+   */
+  pipelineExpected(): boolean {
+    return this.mode !== 'systemd' || this.active;
   }
 
   /** True when an active run is fed by the board simulator (drives the "Simulated Data" badge). */
@@ -264,6 +292,15 @@ class SessionManager {
     if (!this.simulated) {
       try {
         deployActiveProfile();
+        // Config has just changed on disk. Rebuild the backend's derived caches and tell
+        // every open browser to refetch — this is the ONE moment a profile edited during a
+        // run becomes what the rig will actually use, and until now nothing announced it, so
+        // open tabs kept showing the previous config's states until someone reloaded.
+        try {
+          this.onConfigDeployed();
+        } catch (e) {
+          console.warn('Config-deployed handler threw:', e);
+        }
       } catch (e) {
         const detail = (e as Error)?.message ?? String(e);
         console.error('❌ Failed to deploy active profile at session start:', detail);
@@ -275,6 +312,7 @@ class SessionManager {
       }
     }
     await this.controller.start(this.dbDir, this.simulated);
+    this.onSessionStarted();
     this.active = true;
     this.scheduleTimers();
     this.persist();
@@ -317,6 +355,10 @@ class SessionManager {
     this.simulated = false;
     this.persist();
     this.emit();
+    // Forget the tare: there is no run to record against any more, and a held offset would
+    // otherwise be applied to the next run's first poll interval before the file check notices.
+    setRunDir(null);
+    resetTareState();
     this.onStopped(); // revert board status to the disconnected baseline
   }
 

@@ -105,8 +105,8 @@ class CoaxialInjector(InjectorModel):
         for iteration in range(max_iter):
             # Feed loss fixed-point iteration
             for feed_iter in range(3):
-                delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O)
-                delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F)
+                delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O, mu=mu_O)
+                delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F, mu=mu_F)
                 if config.regen_cooling is not None and config.regen_cooling.enabled:
                     delta_p_regen = delta_p_regen_channels(
                         mdot_F,

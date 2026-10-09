@@ -15,10 +15,10 @@
  *   bash test/test_integration.sh --only=sensor_data
  *
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
- * cal_stability, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
+ * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation, config_validate — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate, environmental — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -32,6 +32,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import { spawnSync } from 'child_process';
 import * as net from 'net';
+import { createSocket } from 'node:dgram';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
@@ -94,10 +95,11 @@ function parseOnlyTests(): Set<string> | null {
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
+    'cal_lc_tare',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
-    'config_validate',
+    'config_validate', 'environmental',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -109,6 +111,10 @@ function parseOnlyTests(): Set<string> | null {
 }
 
 const ONLY_TESTS = parseOnlyTests();
+if (ONLY_TESTS?.has('environmental') && !IS_THIN) {
+  console.error('Environmental checks require --backend=thin');
+  process.exit(1);
+}
 
 /**
  * Read a log file until it contains every needle, or the timeout expires; returns whatever it
@@ -1480,6 +1486,71 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
       }
     }
 
+    // ── Script Test: a dynamic state, end to end ─────────────────────────────────────────────
+    // A dynamic state runs an operator-written script on entry and leaves of its own accord. The
+    // hermetic tests measure the valve timing on the wire; what only the full stack shows is that
+    // the whole chain agrees — the script file deployed with the profile, the sequencer parsed it
+    // at startup and made the state enterable, the interpreter ran on its own thread, and the
+    // transition IT requested came back out through Elodin like any other.
+    //
+    // Both ways of getting this wrong look identical from here: a script that never deployed, and
+    // a state the sequencer refused at load, are both just a button that does nothing. Which is
+    // why the entry check and the auto-return check are separate assertions.
+    {
+      const scriptStateId = Number(process.env.INTEGRATION_SCRIPT_STATE_ID ?? '');
+      const scriptOpenMs = Number(process.env.INTEGRATION_SCRIPT_OPEN_MS ?? '');
+      const hubId = (SystemState as any).PRESS_STANDBY as number | undefined;
+      if (!Number.isFinite(scriptStateId) || !scriptStateId || !hubId) {
+        console.log('  ⚠️  no dynamic state configured for this run — skipping the script check');
+      } else {
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: hubId } },
+        });
+        try {
+          await waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+            (p) => p.currentState === hubId);
+        } catch { /* asserted below by the entry check */ }
+
+        const enteredScript = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+          (p) => p.currentState === scriptStateId);
+        send(ws, {
+          type: MessageType.SEND_COMMAND,
+          timestamp: Date.now(),
+          payload: { commandType: 'state_transition', data: { state: scriptStateId } },
+        });
+
+        let enteredAt = 0;
+        try {
+          const { receivedAt } = await enteredScript;
+          enteredAt = receivedAt;
+          // Entering at all is the load-time half: a script that failed to parse, or whose file
+          // did not deploy, leaves the state not enterable and this transition is refused.
+          assert(true, `[Script] entered the dynamic state (script holds ~${scriptOpenMs} ms)`);
+        } catch (err: any) {
+          assert(false, `[Script] could not enter the dynamic state — did the script deploy and parse? ${err.message}`);
+        }
+
+        if (enteredAt) {
+          try {
+            const back = await waitForMessage(ws, MessageType.STATE_UPDATE,
+              scriptOpenMs + 10000, (p) => p.currentState === hubId);
+            const ran = back.receivedAt - enteredAt;
+            // The script's own transition_to brought us back, not the timeout — which is set to
+            // 15 s precisely so the two cannot be confused. Generous upper bound for a loaded CI
+            // runner; the point is that the script RAN and left on its own.
+            assert(ran >= scriptOpenMs - 300 && ran <= scriptOpenMs + 4000,
+              `[Script] the script ran its delay and transitioned itself out: ${ran} ms (script holds ${scriptOpenMs} ms)`);
+            assert(ran < 14000,
+              `[Script] it left via its own transition_to, not by hitting the 15 s timeout (${ran} ms)`);
+          } catch (err: any) {
+            assert(false, `[Script] the dynamic state never returned to the hub: ${err.message}`);
+          }
+        }
+      }
+    }
+
     const fireCfg = readFireConfig();
     if (!fireCfg) {
       console.log('  ⚠️  [fire] section not found in the test config — skipping fire lifecycle');
@@ -2123,6 +2194,136 @@ function readCalRecord(uid: number): Record<string, unknown> | null {
     const j = JSON.parse(fs.readFileSync(`${dir}/cubic_calibration.json`, 'utf-8'));
     return (j?.cubic_state?.[String(uid)] as Record<string, unknown>) ?? null;
   } catch { return null; }
+}
+
+// Read the service's lc_tare.json entry for a cal entity (fresh on every tare/recompute/clear).
+function readTareRecord(entity: string): Record<string, unknown> | null {
+  const dir = findCalDir();
+  if (!dir) return null;
+  try {
+    const j = JSON.parse(fs.readFileSync(`${dir}/lc_tare.json`, 'utf-8'));
+    const tares = Array.isArray(j?.tares) ? j.tares : [];
+    return (tares.find((t: Record<string, unknown>) => t.entity === entity) as Record<string, unknown>) ?? null;
+  } catch { return null; }
+}
+
+/** Mean of a component's SENSOR_UPDATE values over `ms`, or null if none arrived. */
+async function meanOf(ws: WebSocket, entity: string, component: string, ms: number): Promise<number | null> {
+  const vals: number[] = [];
+  await new Promise<void>((resolve) => {
+    const handler = (data: WebSocket.Data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== MessageType.SENSOR_UPDATE) return;
+        const p = msg.payload;
+        if (p?.entity === entity && p?.component === component && Number.isFinite(p.value)) vals.push(p.value);
+      } catch { /* ignore */ }
+    };
+    ws.on('message', handler);
+    setTimeout(() => { ws.removeListener('message', handler); resolve(); }, ms);
+  });
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+// ── Test: the load-cell tare, end to end through every process in the stack ──────────────────
+//
+// This is the only check that exercises the whole loop the feature actually lives in:
+//   WS client → backend → Elodin [0x46,0x00] → calibration_service → lc_tare.json
+//           → backend mtime poll → force_kg_tared over WS → back to this client.
+//
+// Four things are asserted, each of which is a wrong number an operator would otherwise believe:
+//   1. an untared channel's tared trace equals its absolute one (a 0 offset is not a dead stream);
+//   2. after a tare the tared trace sits at ~0 while force_kg KEEPS reading the real load —
+//      Elodin's archive stays absolute, which is the premise the whole design rests on;
+//   3. a capture that moves the curve RE-DERIVES the offset from the stored ADC code rather than
+//      leaving the kilograms it was first computed with. That is the "tank reads 2 kg after a
+//      better fit" bug, and this is the only place it is proved through the real service;
+//   4. clearing returns the tared trace to absolute.
+async function testLcTare(ws: WebSocket): Promise<void> {
+  console.log('\n⚖️  Test 22: LC tare end-to-end (display tared, archive absolute)');
+  const CH = 1, BOARD = 42, UID = BOARD * 100 + CH;       // lc_board_2, active_connectors incl. 1
+  const ENTITY = 'LC2_Cal.CH1';
+  const SETTLE_MS = 2500;
+
+  // This channel is put in CUBIC mode by test_integration.sh. That matters: on the datasheet
+  // physics conversion (every load cell's default) a capture cannot move the curve at all, so
+  // the re-derivation this test exists to prove would be unobservable. Build a curve first.
+  const captureAt = async (ref: number) => {
+    for (let i = 0; i < 10; i++) {
+      send(ws, { type: 'calibration_command', timestamp: Date.now(),
+        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+      await sleep(120);
+    }
+    await sleep(1500);
+  };
+  await captureAt(100);
+
+  // ── 1. untared: the derived trace must equal the absolute one ──────────────
+  const grossBefore = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  const taredBefore = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  if (grossBefore === null || taredBefore === null) {
+    assert(false, `cal_lc_tare: no ${ENTITY} force_kg/force_kg_tared traffic (gross=${grossBefore} tared=${taredBefore})`);
+    return;
+  }
+  assert(Math.abs(grossBefore - taredBefore) < 0.5,
+    `cal_lc_tare: untared, tared trace tracks absolute (gross ${grossBefore.toFixed(2)} vs tared ${taredBefore.toFixed(2)})`);
+
+  // ── 2. tare: display goes to ~0, archive keeps the real load ───────────────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+  let rec: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  if (!rec) { assert(false, `cal_lc_tare: service wrote no tare for ${ENTITY} (uid ${UID})`); return; }
+  const offset1 = rec.offset_kg as number;
+  const adcAtTare = rec.adc_at_tare as number;
+  console.log(`  tared: offset=${offset1?.toFixed?.(3)}kg adc_at_tare=${adcAtTare}`);
+  assert(Number.isFinite(offset1), `cal_lc_tare: offset is a finite number (${offset1})`);
+
+  const grossAfter = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  const taredAfter = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  assert(taredAfter !== null && Math.abs(taredAfter) < 0.5,
+    `cal_lc_tare: tared trace reads ~0 at the tared load (${taredAfter?.toFixed(3)} kg)`);
+  assert(grossAfter !== null && Math.abs(grossAfter - grossBefore) < 0.5,
+    `cal_lc_tare: force_kg stays ABSOLUTE — the archive never sees the tare (${grossBefore.toFixed(2)} → ${grossAfter?.toFixed(2)})`);
+
+  // ── 3. the re-cal case: a moved curve must re-derive the offset ────────────
+  // Capture at a reference far from the first batch, so the fit moves and the SAME ADC code now
+  // evaluates to something else. A tare that had stored KILOGRAMS would keep offset1 here, and
+  // the unchanged physical load would stop reading zero — the "tank reads 2 kg after a better
+  // fit" bug, observed through the real service rather than a unit-test stub.
+  await captureAt(250);
+  let rec2: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) {
+    rec2 = readTareRecord(ENTITY);
+    if (rec2 && (rec2.offset_kg as number) !== offset1) break;
+    await sleep(400);
+  }
+  const offset2 = rec2?.offset_kg as number;
+  console.log(`  after re-cal: offset=${offset2?.toFixed?.(3)}kg adc_at_tare=${rec2?.adc_at_tare}`);
+  assert(rec2 !== null && (rec2.adc_at_tare as number) === adcAtTare,
+    `cal_lc_tare: adc_at_tare is the stored truth and does not move (${adcAtTare} → ${rec2?.adc_at_tare})`);
+  assert(Number.isFinite(offset2) && offset2 !== offset1,
+    `cal_lc_tare: a changed curve RE-DERIVES the offset (${offset1?.toFixed?.(3)} → ${offset2?.toFixed?.(3)} kg) — not a stale kg value`);
+  const taredRecal = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  assert(taredRecal !== null && Math.abs(taredRecal) < 0.5,
+    `cal_lc_tare: the same load still reads ~0 under the new curve (${taredRecal?.toFixed(3)} kg)`);
+
+  // ── 4. clear: back to absolute ─────────────────────────────────────────────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'clear_tare_lc', sensorId: CH, boardId: BOARD } });
+  let gone = false;
+  for (let i = 0; i < 12; i++) { if (!readTareRecord(ENTITY)) { gone = true; break; } await sleep(400); }
+  assert(gone, 'cal_lc_tare: clearing removes the tare from the store');
+  const taredCleared = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
+  const grossCleared = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
+  assert(taredCleared !== null && grossCleared !== null && Math.abs(taredCleared - grossCleared) < 0.5,
+    `cal_lc_tare: cleared, tared trace tracks absolute again (${taredCleared?.toFixed(2)} vs ${grossCleared?.toFixed(2)})`);
+
+  // Leave the shared cubic store as we found it.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  await sleep(1500);
 }
 
 // ── Test: one capture feeds BOTH the cubic fit and the robust learner (shared points) ─
@@ -3060,6 +3261,107 @@ async function testBoardLogMode(_ws: WebSocket): Promise<void> {
       : `Board 60 should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
 }
 
+// Existing packet type 13: version, board milliseconds, Celsius, absolute Pa, %RH.
+function environmentalPacket(temperature = -12.5, pressure = 101325, humidity = 45.25): Buffer {
+  const packet = Buffer.alloc(18);
+  packet[0] = 13;
+  packet.writeUInt32LE(123456, 2);
+  packet.writeFloatLE(temperature, 6);
+  packet.writeUInt32LE(pressure, 10);
+  packet.writeFloatLE(humidity, 14);
+  return packet;
+}
+
+async function testEnvironmentalDataFlow(ws: WebSocket): Promise<void> {
+  console.log('\n🌡️ Environmental UDP → Elodin → WebSocket, including malformed packets');
+  // The standard integration config contains ENV25. The isolated recovery harness
+  // uses the same ID on 127.0.0.1 so it needs no macOS loopback alias.
+  const sourceIp = process.env.TEST_ENVIRONMENTAL_SOURCE_IP ?? '127.0.0.25';
+  if (!/^127\./.test(sourceIp)) throw new Error('Environmental test source must be loopback');
+  const udp = createSocket('udp4');
+  const updates: Array<{ entity: string; component: string; value: number; timestamp: number }> = [];
+  let connected = false;
+  const receive = (raw: WebSocket.RawData) => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === MessageType.SENSOR_UPDATE) {
+      for (const row of Array.isArray(message.payload) ? message.payload : [message.payload]) {
+        if (row.entity === 'ENV25') updates.push(row);
+      }
+    }
+    if (message.type === MessageType.BOARD_STATUS_UPDATE) {
+      connected ||= message.payload.boards.some((b: any) =>
+        b.id === 25 && b.type === 'ENVIRONMENTAL' && b.connected);
+    }
+  };
+  const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const send = (packet: Buffer) => new Promise<void>((resolve, reject) => {
+    udp.send(packet, TEST_DAQ_UDP_PORT, '127.0.0.1', error => error ? reject(error) : resolve());
+  });
+  const expected = { temperature_c: -12.5, pressure_pa: 101325, humidity_rh: 45.25 };
+  const hasValues = () => Object.entries(expected).every(([component, value]) =>
+    updates.some(row => row.component === component && row.value === value &&
+      Math.abs(row.timestamp - Date.now()) < 10000));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      udp.once('error', reject);
+      udp.bind(0, sourceIp, resolve);
+    });
+    ws.on('message', receive);
+    const heartbeat = Buffer.alloc(41);
+    heartbeat[0] = 1;
+    heartbeat[38] = 25;
+    heartbeat[40] = 2;
+    const deadline = Date.now() + 20000;
+    do {
+      await send(environmentalPacket());
+      await send(heartbeat);
+      await pause(200);
+    } while ((!hasValues() || !connected) && Date.now() < deadline);
+    assert(hasValues(), 'ENV25 delivers Celsius, absolute Pa, %RH and epoch timestamps');
+    assert(connected, 'ENV25 heartbeat reaches the board-status stream');
+    if (!hasValues()) return; // Do not pass rejection checks against a dead data path.
+
+    const badVersion = environmentalPacket(777, 222222, 88);
+    badVersion[1] = 99;
+    const cases: Array<[string, Buffer]> = [
+      ['version', badVersion],
+      ['truncated', environmentalPacket(777, 222222, 88).subarray(0, 17)],
+      ['oversized', Buffer.concat([environmentalPacket(777, 222222, 88), Buffer.from([0])])],
+      ['humidity above 100', environmentalPacket(777, 222222, 101)],
+      ['negative humidity', environmentalPacket(777, 222222, -1)],
+      ['zero pressure', environmentalPacket(777, 0, 88)],
+      ['NaN temperature', environmentalPacket(NaN, 222222, 88)],
+      ['infinite temperature', environmentalPacket(Infinity, 222222, 88)],
+      ['NaN humidity', environmentalPacket(777, 222222, NaN)],
+    ];
+    await pause(500); // Drain the valid packet before measuring rejection.
+    for (const [name, packet] of cases) {
+      const before = updates.length;
+      // Repetition spans backend flush windows. Sentinel extrema survive GUI
+      // downsampling even while the standard simulator publishes normal readings.
+      for (let i = 0; i < 6; i++) { await send(packet); await pause(200); }
+      await pause(500);
+      const received = updates.slice(before);
+      assert(!received.some(row => !Number.isFinite(row.value) || row.value === null ||
+        row.value === 777 || row.value === 222222 || row.value === 88 ||
+        (row.component === 'pressure_pa' && row.value === 0) ||
+        (row.component === 'humidity_rh' && (row.value < 0 || row.value > 100))),
+      `Environmental ${name} packet is rejected`);
+      if (process.env.TEST_ENVIRONMENTAL_EXCLUSIVE === '1') {
+        assert(received.length === 0, `Environmental ${name} produces no updates without a simulator`);
+      }
+    }
+    updates.length = 0;
+    const recoveryDeadline = Date.now() + 10000;
+    do { await send(environmentalPacket()); await pause(200); }
+    while (!hasValues() && Date.now() < recoveryDeadline);
+    assert(hasValues(), 'Valid environmental readings still arrive after malformed packets');
+  } finally {
+    ws.off('message', receive);
+    udp.close();
+  }
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -3158,6 +3460,10 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_shared_points')) await testSharedPoints(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    // Injected packets are not in the simulator's counters. Keep this after
+    // conservation and the other read-only checks against simulator ground truth.
+    if (IS_THIN && runTest('environmental')) await testEnvironmentalDataFlow(ws);
   } finally {
     ws.close();
   }

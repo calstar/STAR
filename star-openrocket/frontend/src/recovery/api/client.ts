@@ -54,7 +54,15 @@ const SETTINGS_TIMEOUT_MS = 3000
  * triggers against the start altitude -- then quietly showing fake output
  * would hide the one thing worth seeing.
  */
-export type FailureKind = 'unreachable' | 'rejected'
+/**
+ * `unreachable` means there is no backend there. `timeout` means there IS one
+ * and it did not answer in time -- a slow run, or a box with nothing left to
+ * give. They are different facts and the distinction is load-bearing: a
+ * timeout used to be reported as `unreachable`, so one slow simulate latched
+ * `backendUp = false` and the results panel told the user to go and start a
+ * backend that was already running.
+ */
+export type FailureKind = 'unreachable' | 'timeout' | 'rejected'
 
 export interface ApiResponse<T> {
   data?: T
@@ -129,7 +137,8 @@ async function request<T>(
       error: timedOut
         ? `no response from the backend within ${timeoutMs / 1000} s`
         : err instanceof Error ? err.message : 'Network error',
-      kind: 'unreachable',
+      // A timeout is NOT evidence that the backend is absent -- see FailureKind.
+      kind: timedOut ? 'timeout' : 'unreachable',
     }
   }
 }
@@ -192,6 +201,14 @@ export async function simulate(config: Config): Promise<ApiResponse<Result>> {
     body: JSON.stringify(config),
   })
   if (res.data) return res
+
+  // A timeout says this RUN was too slow, not that the backend is gone. Falling
+  // back to the fixture here would replace the user's numbers with placeholders
+  // and print "the backend is not running. Start it with ./dev.sh" at someone
+  // whose backend is up -- which is what a single heavy config used to do.
+  // Surface it instead, and leave `backendUp` alone so the next edit still
+  // tries for real.
+  if (res.kind === 'timeout') return res
 
   if (res.kind === 'rejected') {
     // A 5xx is genuinely ambiguous. It is either the backend throwing on this

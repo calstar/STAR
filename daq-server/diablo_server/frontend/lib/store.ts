@@ -32,7 +32,7 @@ import {
   BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
-import { recordSensorUpdate, isSensorKeyFresh } from './sensor-rate';
+import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -62,6 +62,10 @@ interface SensorSystemState {
   lastSensorFlushMs?: number; // Date.now() at last flush — for latency/freshness display
   actuators: Map<number, ActuatorUpdate>;
   currentState: SystemState | null;
+  /** Bit N set = the sequencer will currently accept state id N. null until it first publishes. */
+  allowedStateMask: number | null;
+  /** State id -> why it cannot be entered right now. */
+  stateRefusalReasons: Record<number, string>;
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
@@ -76,8 +80,6 @@ interface SensorSystemState {
   boards: Record<number, BoardStatus>;
   /** From config [adc]; used by sense conversions (TC ref, actuator threshold). */
   voltageRefNominals: VoltageRefNominals;
-  /** Load cell zero offsets (lbf) by cal entity e.g. LC_Cal.CH1. Display = raw_lbf - offset. Persisted to localStorage. */
-  loadCellZeroOffsets: Record<string, number>;
   notifications: NotificationEntry[];
   /** Per-board live diagnostic log lines (ring buffer; accumulates while app is open). */
   boardLogs: Record<number, BoardLogLine[]>;
@@ -85,7 +87,6 @@ interface SensorSystemState {
   boardLogStats: Record<number, BoardLogTotals>;
 
   updateSensor: (update: SensorUpdate) => void;
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
@@ -109,19 +110,6 @@ interface SensorSystemState {
   pressureHistoryHiddenEntities: Record<string, true>;
   togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
   clearPressureHistoryHidden: () => void;
-}
-
-const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
-
-function loadStoredLcZeroOffsets(): Record<string, number> {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LC_ZERO_STORAGE_KEY) : null;
-    if (raw) {
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      if (parsed && typeof parsed === 'object') return parsed;
-    }
-  } catch (_) { /* ignore */ }
-  return {};
 }
 
 // ── Dynamic alias system ─────────────────────────────────────────────────────
@@ -172,7 +160,7 @@ export function buildAliasesFromConfig(config: any): void {
   const ptComponents = ['pressure_psi', 'raw_adc_counts', 'raw_adc', 'current_ma', 'sense_voltage', 'excitation_voltage'];
   const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const rtdComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
-  const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
+  const lcComponents = ['force_kg', 'force_kg_tared', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
   const actCmdComponents = ['actuator_state_commanded'];
 
@@ -218,7 +206,9 @@ export function buildAliasesFromConfig(config: any): void {
     const activeChannels: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
-        : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+        // No num_sensors fallback: active_connectors is the only statement of which channels
+        // exist, and an empty list means none (see Config.hpp).
+        : [];
 
     // Look for sensor_roles_<boardKey> section in config
     const rolesKey = `sensor_roles_${boardKey}`;
@@ -290,6 +280,19 @@ export function buildAliasesFromConfig(config: any): void {
       addAlias(`ENC1.${entityName}.raw_angle`, `ENC1.CH${channel}.raw_angle`);
       addAlias(`ENC1_Cal.${entityName}.position_deg`, `ENC1_Cal.CH${channel}.position_deg`);
     }
+  }
+
+  // A generic key that resolves to more than one board's stream is a coin flip: the
+  // lookup returns whichever candidate has data first, so a pane built on bare channel
+  // numbers renders one board twice. Panes are board-scoped now (buildSenseRowsFromBoards);
+  // say so loudly if one is not, because on the stand this looks like a dead sensor, not
+  // like a naming bug (two LC boards on connector 1, 2026-09-13).
+  const ambiguous = Object.entries(aliases).filter(([, v]) => v.length > 1);
+  if (ambiguous.length > 0) {
+    console.warn(
+      `[Store] ${ambiguous.length} ambiguous generic sensor key(s) — two enabled boards claim the same channel. ` +
+      `Panes must use board-scoped entities. e.g. ${ambiguous[0][0]} → ${ambiguous[0][1].join(', ')}`
+    );
   }
 
   ALIASES = aliases;
@@ -390,6 +393,8 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   // asserted a state the rig had not reported and named the wrong one on a rig that renumbered.
   // Consumers already fall back through bootStateId().
   currentState: null,
+  allowedStateMask: null,
+  stateRefusalReasons: {},
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,
@@ -402,7 +407,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   boardLogs: {},
   boardLogStats: {},
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
-  loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
   pressureHistoryHiddenEntities: {},
 
@@ -422,20 +426,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   clearPressureHistoryHidden: () => set({ pressureHistoryHiddenEntities: {} }),
-
-  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
-    set((s) => {
-      const next = { ...s.loadCellZeroOffsets };
-      if (offsetLbf == null) delete next[calEntity];
-      else next[calEntity] = offsetLbf;
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(LC_ZERO_STORAGE_KEY, JSON.stringify(next));
-        } catch (_) { /* ignore */ }
-      }
-      return { loadCellZeroOffsets: next };
-    });
-  },
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -479,6 +469,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
     // Back-compat for legacy LC panes expecting force_lbf / force_n.
     // Backend now publishes canonical force_kg.
+    //
+    // These stay derived from ABSOLUTE force_kg, never from force_kg_tared. They are
+    // archive-comparable legacy aliases with no consumers outside the alias list, and silently
+    // re-taring them would produce "why does the N readout disagree with the kg readout" with
+    // nothing in the code pointing at the cause.
     if (update.component === 'force_kg') {
       const lbf = update.value * 2.2046226218;
       const n = update.value * 9.80665;
@@ -522,11 +517,20 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     set((s) => ({
       currentState: update.currentState,
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
+      // Undefined means "this publish carried no opinion", not "nothing is allowed" — an older
+      // backend or a client that connected before the sequencer's first publish must not have
+      // every button greyed out. Keep what we had.
+      allowedStateMask: update.allowedBitmask !== undefined ? update.allowedBitmask : s.allowedStateMask,
+      stateRefusalReasons: update.stateRefusalReasons ?? s.stateRefusalReasons,
       actuatorCommandedOverrides: {}, // clear overrides on state change so new state's expected positions apply
     }));
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
+    // Feed this link's measured lag to the staleness rule. A throttled client is paced to
+    // ~1500 ms by design, which is exactly what the readout window called stale — so
+    // without this the numbers dash out on every burst even though the data is current.
+    setDeliveryLagAllowanceMs(status.lagMs);
     set({ connectionStatus: status });
   },
 
@@ -765,12 +769,19 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (kg) with zero offset applied. Use for display: displayKg = raw - offset. */
+/**
+ * Load cell force (kg) as the operator should read it: tared when a tare is standing, absolute
+ * otherwise. The backend derives `force_kg_tared` and always publishes it — a 0 offset when
+ * untared — so there is no arithmetic here and no way for this to disagree with the plots.
+ *
+ * Use `useSensorValue(calEntity, 'force_kg')` directly where ABSOLUTE weight is required. The
+ * calibration page is the one that must: the operator types the true weight of a known mass, and
+ * a tared reading beside that input is how a false point gets into the fit.
+ */
 export function useLoadCellForceKg(calEntity: string): number | null {
-  const raw = useSensorValue(calEntity, 'force_kg');
-  const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
-  if (raw == null || !Number.isFinite(raw)) return null;
-  return raw - offset;
+  const v = useSensorValue(calEntity, 'force_kg_tared');
+  if (v == null || !Number.isFinite(v)) return null;
+  return v;
 }
 
 /** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */

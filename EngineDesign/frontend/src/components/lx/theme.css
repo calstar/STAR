@@ -1,0 +1,178 @@
+/*
+ * Layer X tokens and base type. docs/layerx/GUI-SPEC.md, "Tokens", is the source; theme.test.ts
+ * checks every text and data colour here against WCAG AA on the grounds it is drawn on.
+ *
+ * Scoped under `.lx` so nothing leaks into the rest of the app. A Layer X root is
+ *   <div class="lx" data-theme="dark">  (or "light")
+ * and every popover is rendered inside it, so it inherits these.
+ *
+ * All of it sits in Tailwind's `base` cascade layer, under `utilities`: a component's own class
+ * (an outline offset, a font size on one element) wins over these defaults, as it should. Unlayered,
+ * these rules would beat every utility regardless of specificity.
+ */
+
+@layer base {
+  .lx[data-theme="dark"] {
+    color-scheme: dark;
+    --lx-bg: #0c0e11;
+    --lx-surface: #13161a;
+    --lx-surface-2: #1a1e24;
+    --lx-line: #262b33;
+    --lx-line-strong: #353c47;
+    --lx-text: #e7eaee;
+    --lx-text-2: #a7afba;
+    --lx-text-3: #808a98;
+    --lx-accent: #8f9cff;
+    /* Text on a filled accent (the primary button). The dark accent is light, so the ink is dark. */
+    --lx-on-accent: #0c0e11;
+    --lx-cursor: #e7eaee;
+    --lx-lox: #5fb0f5;
+    --lx-fuel: #e9a55a;
+    --lx-gas: #4cc3b5;
+    --lx-hot: #ff7b54;
+    --lx-ok: #3fb950;
+    --lx-warn: #e3b341;
+    --lx-bad: #f85149;
+    /* A selected segment or a pressed control, raised off surface-2. */
+    --lx-raised: #262c35;
+    --lx-shadow-pop: 0 8px 24px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(0 0 0 / 0.2);
+    /* The timeline's firing span: opaque, so the rail does not show through it. */
+    --lx-firing: color-mix(in srgb, var(--lx-hot) 30%, var(--lx-surface));
+    --lx-firing-edge: color-mix(in srgb, var(--lx-hot) 46%, var(--lx-surface));
+  }
+
+  .lx[data-theme="light"] {
+    color-scheme: light;
+    --lx-bg: #f6f7f9;
+    --lx-surface: #ffffff;
+    --lx-surface-2: #f0f2f5;
+    --lx-line: #e2e5ea;
+    --lx-line-strong: #cdd2da;
+    --lx-text: #13161a;
+    --lx-text-2: #4a5260;
+    --lx-text-3: #646d7a;
+    --lx-accent: #4452d9;
+    --lx-on-accent: #ffffff;
+    --lx-cursor: #13161a;
+    --lx-lox: #1d6fc9;
+    --lx-fuel: #a8621a;
+    --lx-gas: #0d8478;
+    --lx-hot: #cf4a1c;
+    --lx-ok: #1a7f37;
+    --lx-warn: #9a6700;
+    --lx-bad: #cf222e;
+    --lx-raised: #ffffff;
+    --lx-shadow-pop: 0 8px 24px rgb(16 24 40 / 0.12), 0 0 0 1px rgb(16 24 40 / 0.04);
+    /* On white a 30 % wash reads as pink noise: a lighter fill with a defined edge. */
+    --lx-firing: color-mix(in srgb, var(--lx-hot) 20%, var(--lx-surface));
+    --lx-firing-edge: color-mix(in srgb, var(--lx-hot) 62%, var(--lx-surface));
+  }
+
+  /* Derived tokens: the same recipe in both themes, so they follow the base colours. */
+  .lx {
+    --lx-font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --lx-font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --lx-radius: 6px;
+    --lx-radius-chip: 4px;
+    --lx-control-h: 28px;
+    /* Status washes: a limit band on a chart (6 %), a badge or zone on a bar (14 %). */
+    --lx-ok-band: color-mix(in srgb, var(--lx-ok) 6%, transparent);
+    --lx-warn-band: color-mix(in srgb, var(--lx-warn) 6%, transparent);
+    --lx-bad-band: color-mix(in srgb, var(--lx-bad) 6%, transparent);
+    --lx-ok-soft: color-mix(in srgb, var(--lx-ok) 14%, transparent);
+    --lx-warn-soft: color-mix(in srgb, var(--lx-warn) 16%, transparent);
+    --lx-bad-soft: color-mix(in srgb, var(--lx-bad) 14%, transparent);
+    --lx-accent-soft: color-mix(in srgb, var(--lx-accent) 16%, transparent);
+    /* A margin bar's track: the amber band and the region past the red line. */
+    --lx-warn-zone: color-mix(in srgb, var(--lx-warn) 40%, transparent);
+    --lx-bad-zone: color-mix(in srgb, var(--lx-bad) 18%, transparent);
+    /* The danger button's border. */
+    --lx-bad-line: color-mix(in srgb, var(--lx-bad) 55%, transparent);
+    /* The compared run, on every chart: grey, 1 px, 70 %. */
+    --lx-ghost: var(--lx-text-3);
+
+    background: var(--lx-bg);
+    color: var(--lx-text);
+    font-family: var(--lx-font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    font-feature-settings: 'cv11' 1; /* Inter's single-storey a reads calmer at 13 px */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Every number: JetBrains Mono, tabular so columns and a scrubbed value do not jitter, and a plain
+     zero (the slashed one reads as noise in a dense table). */
+  .lx .lx-num,
+  .lx.lx-num {
+    font-family: var(--lx-font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'zero' 0;
+    letter-spacing: 0;
+  }
+
+  /* The small type roles, for pages that are not built from lx/ui. */
+  .lx .lx-label { font-size: 12px; color: var(--lx-text-2); }
+  .lx .lx-caption { font-size: 11px; color: var(--lx-text-3); }
+  .lx .lx-unit { font-family: var(--lx-font-sans); font-size: 11px; color: var(--lx-text-3); font-weight: 400; }
+
+  /* One focus ring for every control: keyboard only, never on a mouse click. */
+  .lx :focus { outline: none; }
+  .lx :focus-visible {
+    outline: 2px solid var(--lx-accent);
+    outline-offset: 2px;
+  }
+  /* Inputs show focus on their own border (the ring would sit on top of the inline unit). */
+  .lx input:focus-visible,
+  .lx textarea:focus-visible,
+  .lx select:focus-visible {
+    outline: 2px solid var(--lx-accent);
+    outline-offset: -1px;
+  }
+
+  .lx ::selection { background: color-mix(in srgb, var(--lx-accent) 32%, transparent); }
+
+  /* Number inputs: no spinner arrows; the field is typed, not clicked. */
+  .lx input[type='number']::-webkit-outer-spin-button,
+  .lx input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .lx input[type='number'] { -moz-appearance: textfield; appearance: textfield; }
+
+  /* A short flash for a margin bar's jump target and the time cursor's focus marker. */
+  @keyframes lx-flash {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+  .lx .lx-flash { animation: lx-flash 900ms ease-out 1 forwards; }
+
+  /* The measured-vs-predicted table (layerx/Measured.tsx, until it is rebuilt here): every DAQ
+     channel picker one width, whatever its longest channel name. */
+  .lx .lx-measured td > select { width: 100%; max-width: 19rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lx *,
+    .lx *::before,
+    .lx *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Scrollbars: thin hairlines that match the panels. Outside the layer on purpose: index.css styles
+   ::-webkit-scrollbar unlayered, and an unlayered rule beats any layered one. */
+.lx, .lx * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lx-line-strong) transparent;
+}
+.lx ::-webkit-scrollbar { width: 8px; height: 8px; }
+.lx ::-webkit-scrollbar-track { background: transparent; }
+.lx ::-webkit-scrollbar-thumb {
+  background: var(--lx-line-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.lx ::-webkit-scrollbar-thumb:hover { background-color: var(--lx-text-3); }

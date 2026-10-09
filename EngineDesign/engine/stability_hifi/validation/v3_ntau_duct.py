@@ -76,12 +76,14 @@ relation, root-found in pole-free product form (V2's lesson):
 Phase convention worth knowing (physics finding, verified numerically three ways):
 with the pure-delay coupling (7a), the Rayleigh driving of a mode goes as
 +cos(omega*tau) — in-phase heat release drives, anti-phase damps — because the
-cycle-averaged p'q' is |p_hat|^2 * cos(omega*tau). The sin(omega*tau) rule used by the
-suite's lumped model (engine/pipeline/stability/acoustic.py) belongs to the DIFFERENCE
-form of the Crocco response, n*[p'(t) - p'(t-tau)], whose transfer n*(1-e^{-i*omega*tau})
-has imaginary part n*sin(omega*tau). Both are legitimate n-tau models but their
-instability tau-bands sit a quarter-period apart; comparisons between this framework
-and the lumped tier must translate conventions first.
+cycle-averaged p'q' is |p_hat|^2 * cos(omega*tau): the REAL part of the transfer. The
+lumped model (engine/pipeline/stability/acoustic.py) uses the DIFFERENCE form of the
+Crocco response, n*[p'(t) - p'(t-tau)], whose transfer n*(1-e^{-i*omega*tau}) has real
+part n*(1 - cos(omega*tau)) -- driving everywhere, most at omega*tau = pi. (It took the
+imaginary part, n*sin, until 2026-09-26; that is the quadrature component and does no
+work.) The two forms differ by the instantaneous n*p'(t) term, so their tau-bands are
+not the same; comparisons between this framework and the lumped tier must translate
+conventions first.
 """
 
 from __future__ import annotations

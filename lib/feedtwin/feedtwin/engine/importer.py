@@ -83,6 +83,21 @@ def _optional(config: Mapping[str, Any], path: str, default: float = 0.0) -> flo
 
 
 def _discharge(block: Mapping[str, Any] | None) -> DischargeModel:
+    """One side's discharge block, read literally.
+
+    EngineDesign does not read it literally. Its ``load_config`` re-stamps the
+    injector type's baseline over the Cd fields on every load
+    (``engine.pipeline.config_switch.apply_injector_type``; impinging: Cd_inf
+    0.60, a_Re 0.18, Cd_min 0.35, geometry Cd on, small-hole exponent 0.20),
+    keeping only a declared ``use_geometry_cd`` and the correction settings.
+    So this agrees with EngineDesign only where the block *is* that baseline --
+    every shipped ethalox config and LE4's engine -- and not on the older
+    methalox configs, nor on ``default.yaml``'s exponent of 0.0 (which the
+    ``or 0.20`` below happens to read as EngineDesign does). Matching
+    EngineDesign's schema defaults instead was tried and is wrong for the same
+    reason (2026-10-08). The engine card carries EngineDesign's own Cd; this is
+    the simplified engine's.
+    """
     if not isinstance(block, Mapping):
         return DischargeModel()
     return DischargeModel(
@@ -287,6 +302,13 @@ def engine_from_config(
         "here is an upper bound"
     )
 
+    fire_load: dict[str, float] = {}
+    for side, key in (("lox", "lox_tank.mass"), ("fuel", "fuel_tank.mass")):
+        mass = _optional(config, key)
+        if mass > 0.0:
+            fire_load[side] = mass
+            provenance[f"fire_load.{side}"] = f"config {key}"
+
     return EngineDesign(
         name=name,
         nozzle_efficiency=nozzle_efficiency,
@@ -299,6 +321,7 @@ def engine_from_config(
         design_chamber_pressure=chamber_pressure,
         design_mixture_ratio=mixture_ratio,
         design_thrust=thrust,
+        fire_load=fire_load,
         provenance=provenance,
         warnings=tuple(warnings),
     )

@@ -1,0 +1,14 @@
+{
+  "name": "callink-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Files STARProject reimbursements on CalLink and scrapes CalLink's request history",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "playwright": "1.63.0"
+  }
+}

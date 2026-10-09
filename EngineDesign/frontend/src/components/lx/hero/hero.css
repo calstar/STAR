@@ -1,0 +1,24 @@
+/* The hero (schematic + engine section). Tokens only; nothing here sets a colour of its own. */
+
+/* A margin bar was clicked and points at something on the schematic: a ring that fades. */
+.lx .lx-hero-focus {
+  animation: lx-hero-ring 1600ms ease-out forwards;
+  pointer-events: none;
+}
+@keyframes lx-hero-ring {
+  0%, 40% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lx .lx-hero-focus { animation: none; }
+}
+
+/* Hover targets: no focus ring on the invisible hit shape; the element's own halo shows it. */
+.lx .lx-hero-hit { outline: none; cursor: default; }
+.lx .lx-hero-hit:focus-visible { outline: none; }
+
+/* Choosing a part on the drawing (PidView's pick mode): candidates ringed, the rest dimmed. */
+.lx-pid .react-flow__node.lx-pick-dim { opacity: 0.28; }
+.lx-pid .react-flow__node.lx-pick { cursor: pointer; outline: 2px solid var(--lx-accent, #4452d9); outline-offset: 4px; border-radius: 6px; }
+.lx-pid .react-flow__node.lx-pick:hover { outline-width: 3px; }
+.lx-pid .react-flow__node.lx-pick-chosen { outline-color: var(--lx-ok, #22a05a); }

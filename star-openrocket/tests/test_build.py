@@ -280,3 +280,57 @@ def test_geometry_store_face_triangles_are_world_frame(built):
     sel = [(faces[0].occurrence_key, faces[0].face_id)]
     got = store.faces_for(sel)
     assert [(g.occurrence_key, g.face_id) for g in got] == sel
+
+
+def _onshape_inertia(part):
+    """Onshape's tensor for this part, straight from the fixture responses."""
+    for path in sorted((FIXTURES := __import__("pathlib").Path(__file__).parent / "fixtures").glob("source_*_mass.json")):
+        body = json.loads(path.read_text()).get("bodies", {}).get(part["partId"])
+        if body and abs(body["mass"][0] - part["mass"]) < 1e-12:
+            return np.asarray(body["inertia"][:9], dtype=np.float64).reshape(3, 3)
+    return None
+
+
+def test_inertia_is_onshapes_per_kg_in_the_assembly_frame(built):
+    """Every weighed part carries Onshape's tensor / mass, rotated by its placement.
+
+    Per kg so a mass typed in the viewer scales it; rotation only, because a tensor
+    about the centroid does not move with a translation.
+    """
+    manifest, _ = built
+    checked = 0
+    for part in manifest["parts"]:
+        if part["mass"] <= 0:
+            continue
+        onshape = _onshape_inertia(part)
+        if onshape is None:
+            continue
+        rot = np.asarray(part["transform"], dtype=np.float64).reshape(4, 4)[:3, :3]
+        got = np.asarray(part["inertiaPerKgWorld"]).reshape(3, 3) * part["mass"]
+        assert got == pytest.approx(rot @ onshape @ rot.T, rel=1e-12, abs=1e-15)
+        checked += 1
+    assert checked > 0
+
+
+def test_parts_without_material_get_their_inertia_from_the_mesh(built):
+    """Onshape returns zeros for them; the mesh at uniform density is what a material
+    would give, so a mass assigned later still gets the part's distribution."""
+    manifest, _ = built
+    from_mesh = 0
+    for part in manifest["parts"]:
+        if part["materialDefaulted"] and part["hasGeometry"]:
+            if part["inertiaPerKgWorld"] is None:
+                continue  # an open tessellation: no inertia rather than a wrong one
+            tensor = np.asarray(part["inertiaPerKgWorld"]).reshape(3, 3)
+            a, b, c = np.linalg.eigvalsh(tensor)
+            assert a > 0 and c <= a + b
+            from_mesh += 1
+    assert from_mesh > 0
+
+
+def test_an_open_mesh_records_no_inertia_and_says_so(built):
+    manifest, _ = built
+    missing = [p["name"] for p in manifest["parts"]
+               if p["materialDefaulted"] and p["hasGeometry"] and p["inertiaPerKgWorld"] is None]
+    for name in missing:
+        assert any(name in w and "inertia" in w for w in manifest["warnings"])

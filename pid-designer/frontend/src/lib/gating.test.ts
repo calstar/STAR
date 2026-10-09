@@ -207,12 +207,18 @@ describe('every diagram-editing control is gated on the checkout', () => {
     const src = Object.entries(files).find(([p]) => p.endsWith('/BranchableEdge.tsx'))?.[1]
     expect(src, 'BranchableEdge.tsx not found').toBeTruthy()
 
-    const handler = src!.slice(src!.indexOf('const onClickBranch'))
-    const guard = handler.slice(0, handler.indexOf('\n  }'))
-    expect(
-      /if \(!armed/.test(guard),
-      'onClickBranch must return early unless the junction tool is armed',
-    ).toBe(true)
+    //
+    // The press on a line now does two things, and only one of them rewrites
+    // the graph: with the tool armed, or Alt held, it puts a tee in; otherwise
+    // it starts a pull, which does nothing until the pointer has moved. So the
+    // tee goes in behind exactly one guard, and nowhere else in the handler.
+    const handler = src!.slice(src!.indexOf('const onPointerDown'))
+    const body = handler.slice(0, handler.indexOf('\n  }, ['))
+    const guardAt = body.indexOf('if (armed || e.altKey)')
+    expect(guardAt, 'onPointerDown must guard the tee on the tool being armed or Alt held').toBeGreaterThan(-1)
+    const placeAt = body.indexOf('placeJunction(')
+    expect(placeAt, 'the tee must go in inside that guard').toBeGreaterThan(guardAt)
+    expect(body.indexOf('placeJunction(', placeAt + 1), 'and only there').toBe(-1)
   })
 
   it('keeps every exemption pointing at a real file', () => {

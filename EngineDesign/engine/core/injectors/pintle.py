@@ -115,8 +115,8 @@ class PintleInjector(InjectorModel):
             for feed_iter in range(3):
                 # Calculate feed losses with current mass flows
                 # CRITICAL: Recalculate on each iteration to ensure consistency
-                delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O)
-                delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F)
+                delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O, mu=mu_O)
+                delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F, mu=mu_F)
                 
                 # CRITICAL: Ensure feed loss is calculated - if it's still 0.0 with non-zero flow, something is wrong
                 if delta_p_feed_O == 0.0 and mdot_O > 0.01:
@@ -125,8 +125,8 @@ class PintleInjector(InjectorModel):
                     warnings.warn(f"[WARNING] LOX feed loss is 0.0 with mdot_O={mdot_O:.4f} kg/s. Check feed system config (K0={K0_val}, K_eff should be > 0).")
             
             # CRITICAL: Ensure final feed losses are stored (recalculate one more time after loop)
-            delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O)
-            delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F)
+            delta_p_feed_O = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O, mu=mu_O)
+            delta_p_feed_F_base = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F, mu=mu_F)
             if config.regen_cooling is not None and config.regen_cooling.enabled:
                 delta_p_regen = delta_p_regen_channels(
                     mdot_F,
@@ -278,8 +278,8 @@ class PintleInjector(InjectorModel):
 
             # CRITICAL: Recalculate feed losses one final time with converged mass flows
             # to ensure diagnostics have the correct final values
-            delta_p_feed_O_final = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O)
-            delta_p_feed_F_base_final = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F)
+            delta_p_feed_O_final = delta_p_feed(mdot_O, rho_O, feed_O, P_tank_O, mu=mu_O)
+            delta_p_feed_F_base_final = delta_p_feed(mdot_F, rho_F, feed_F, P_tank_F, mu=mu_F)
             if config.regen_cooling is not None and config.regen_cooling.enabled:
                 delta_p_regen_final = delta_p_regen_channels(
                     mdot_F,

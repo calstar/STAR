@@ -2,8 +2,12 @@
  * Copied from the DAQ (diablo_server/frontend/components/plots/PressureBar.tsx).
  *
  * Verbatim in every part that decides what an operator sees: the non-linear
- * scale, where the NOP and MEOP lines sit, the colour thresholds. A
- * re-implementation would drift on exactly those.
+ * scale, where the NOP and MEOP lines sit, the thresholds at which the bar
+ * changes colour. A re-implementation would drift on exactly those. What is
+ * not the DAQ's is the drawing: an outlined capsule in the console's
+ * monochrome, neutral below NOP, amber above it, red above MEOP, and the
+ * limit rules run the width of the column so a row of bars reads as one
+ * gauge.
  *
  * Three of its props are declared there and never read — `unit`, `showLabels`,
  * and one derived value. They are wired up here rather than deleted, because
@@ -19,9 +23,13 @@ interface PressureBarProps {
   nop?: number;
   meop?: number;
   color?: string;
+  /** The fill while the reading is under NOP -- the channel's trace colour,
+   *  so a bar and its line on the plot are the same thing. Above NOP the
+   *  DAQ's amber and red still take over; `color` overrides even those. */
+  tint?: string;
   unit?: string;
   showLabels?: boolean; // Show NOP/MEOP labels on this bar (default true)
-  compact?: boolean;    // Reduced font sizes for use in tight spaces (e.g. TopBar)
+  compact?: boolean;    // Reduced font sizes for use in tight spaces
 }
 
 function fmtPressure(v: number): string {
@@ -80,15 +88,14 @@ function PressureBar({
   nop = 500,
   meop = 700,
   color,
+  tint = '#d9d9d9',
   unit = 'psig',
   showLabels = true,
   compact = false,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
 
-  // Memoize calculations based on value - will recalculate when value changes
-  // The useSensorValue hook now properly triggers re-renders when values update
-  const { sane, nopPct, meopPct, displayHeight, barColor } = useMemo(() => {
+  const { sane, nopPct, meopPct, displayHeight, barColor, level } = useMemo(() => {
     const maxVal = Math.max(meop * 1.3, 1000);
     const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
     const clampedDisplayValue = Math.max(0, displayValue);
@@ -99,79 +106,85 @@ function PressureBar({
     const displayHeight = sane && value !== null && value !== 0
       ? Math.max(valuePct, minVisibleHeight)
       : valuePct;
-    const barColor = color || (sane && displayValue > meop ? '#E74C3C' : sane && displayValue > nop ? '#F39C12' : '#27AE60');
+    const level = sane && displayValue > meop ? 'meop' : sane && displayValue > nop ? 'nop' : 'ok';
+    const barColor = color || (level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : tint);
 
-    return { sane, nopPct, meopPct, displayHeight, barColor };
-  }, [displayValue, value, nop, meop, color]);
+    return { sane, nopPct, meopPct, displayHeight, barColor, level };
+  }, [displayValue, value, nop, meop, color, tint]);
+
+  const readout = level === 'meop' ? '#f87171' : level === 'nop' ? '#e5b53a' : 'var(--ink)';
+  /** Width kept to the right of the capsule for the limit numbers [px].
+   *  Seven bars leave a column too narrow to set "4500" beside a centred
+   *  capsule; laid over it, the number vanished into the fill. So the
+   *  capsule shares its column with a gutter, and the numbers live there. */
+  const GUTTER = showLabels ? 32 : 0;
+
+  const limit = (pct: number, v: number, tone: string) => (
+    <div className="pointer-events-none absolute inset-x-0" style={{ bottom: `${pct.toFixed(2)}%` }}>
+      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.6 }} />
+      {showLabels && (
+        <span
+          className="absolute right-0 top-1 pl-1.5 font-mono text-[10px] leading-none tabular-nums"
+          style={{ color: tone, width: GUTTER }}
+        >
+          {isFinite(v) && Math.abs(v) < 1e21 ? v.toFixed(0) : v}
+        </span>
+      )}
+    </div>
+  );
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
-      {/* Label — viewport-relative so it scales with screen */}
+    <div className="flex h-full min-h-0 w-full select-none flex-col">
+      {/* The tag and the reading centre on the capsule, not on the column. */}
       <div
-        className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'clamp(8px, 1.1vh, 22px)' } : { fontSize: 'clamp(12px, 1.8vh, 28px)' }}
+        className={`flex-shrink-0 truncate pb-3 text-center font-mono uppercase tracking-[0.08em] text-[var(--ink-2)] ${
+          compact ? 'text-[11px]' : 'text-[12px]'
+        }`}
+        style={{ paddingRight: GUTTER }}
+        title={label}
       >
         {label}
       </div>
 
-      {/* Bar — takes all remaining space; min height as % of viewport */}
-      <div
-        className="relative w-full flex-1 rounded-xl border border-white/10 overflow-hidden min-h-0 bg-black/40 shadow-inner"
-        style={{ maxHeight: '100%', minHeight: compact ? '6vh' : undefined }}
-      >
-        {sane && value !== null && (
+      <div className="relative min-h-0 w-full flex-1">
+        {/* The capsule. Its fill is inside the outline, so the limit rules,
+            which are laid out against the full column height, sit where the
+            DAQ puts them to within the outline's pixel. */}
+        <div className="absolute inset-y-0 left-0 flex justify-center" style={{ right: GUTTER }}>
           <div
-            className="absolute bottom-0 w-full rounded-sm"
+            className="relative h-full w-[72%] max-w-[52px] overflow-hidden border"
             style={{
-              height: `${displayHeight}%`,
-              background: barColor,
-              boxShadow: `0 0 15px ${barColor}80`,
-              minHeight: value !== null && value !== 0 ? '2px' : '0px',
-              transition: 'height 0.05s ease-out',
-              opacity: value !== null && value !== 0 ? 0.8 : 0.3,
+              borderRadius: 9,
+              borderColor: level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)',
+              // A faint wash of the channel's colour, so an empty bar still
+              // says which trace it is.
+              background: color ? undefined : `${tint}12`,
             }}
-          />
-        )}
-
-        {/* MEOP threshold line with centered value label */}
-        {showLabels && <div
-          className="absolute w-full pointer-events-none flex flex-col items-center"
-          style={{ bottom: `${meopPct.toFixed(2)}%` }}
-        >
-          <span
-            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
           >
-            {typeof meop === 'number' && isFinite(meop) && Math.abs(meop) < 1e21 ? meop.toFixed(0) : meop}
-          </span>
-          <div className="w-full border-t-2 border-dashed border-red-500/85" />
-        </div>}
-
-        {/* NOP threshold line with centered value label */}
-        {showLabels && <div
-          className="absolute w-full pointer-events-none flex flex-col items-center"
-          style={{ bottom: `${nopPct.toFixed(2)}%` }}
-        >
-          <span
-            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
-          >
-            {typeof nop === 'number' && isFinite(nop) && Math.abs(nop) < 1e21 ? nop.toFixed(0) : nop}
-          </span>
-          <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
-        </div>}
+            {sane && value !== null && (
+              <div
+                className="absolute bottom-0 w-full"
+                style={{
+                  height: `${displayHeight}%`,
+                  background: barColor,
+                  minHeight: value !== 0 ? '2px' : '0px',
+                  transition: 'height 0.05s ease-out',
+                  opacity: value !== 0 ? 0.85 : 0.3,
+                }}
+              />
+            )}
+          </div>
+        </div>
+        {limit(meopPct, meop, '#ef4444')}
+        {limit(nopPct, nop, '#e5b53a')}
       </div>
 
-      <div className="flex-shrink-0 text-center leading-none mt-1">
-        <div
-          className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'clamp(10px, 1.3vh, 28px)' } : { color: barColor, fontSize: 'clamp(14px, 1.8vh, 28px)' }}
-        >
-          {value !== null ? fmtPressure(value) : '---'}
-        </div>
-        {!compact && (
-          <div className="text-[10px] text-text-muted mt-0.5">{unit}</div>
-        )}
+      <div
+        className={`flex-shrink-0 whitespace-nowrap pt-3 text-center font-mono leading-none tabular-nums ${compact ? 'text-[18px]' : 'text-[clamp(16px,1.35vw,24px)]'}`}
+        style={{ color: readout, paddingRight: GUTTER }}
+        title={`${unit}`}
+      >
+        {value !== null ? fmtPressure(value) : '---'}
       </div>
     </div>
   );

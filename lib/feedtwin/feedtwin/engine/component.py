@@ -9,10 +9,11 @@ Layer-1 optimisation rather than off a drawing.
 
 The **engine** is not a component at all. It is a boundary condition, and a
 circular one: chamber pressure depends on the flows, and the flows depend on
-chamber pressure through the injector's pressure difference. That loop is closed
-by :class:`EngineCoupling`, which iterates the network solve to a self-consistent
-chamber pressure -- the same coupled injector-to-chamber solve EngineDesign
-performs, done here around a whole feed system instead of around two pressures.
+chamber pressure through the injector's pressure difference. The session closes
+that loop each coupling step (``Session._close_chamber``), root-finding the
+chamber pressure the network and the engine agree on -- the same coupled
+injector-to-chamber solve EngineDesign performs, done here around a whole feed
+system instead of around two pressures.
 
 Why the loop is worth having
 ----------------------------
@@ -28,7 +29,6 @@ chamber more than to its tanks.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
 
 from feedtwin.comps.base import (
     FlowConditions,
@@ -36,7 +36,6 @@ from feedtwin.comps.base import (
     InfeasibleOperatingPoint,
     Violation,
 )
-from feedtwin.engine.chamber import Chamber, ChamberResult
 from feedtwin.engine.design import EngineDesign, InjectorSide
 from feedtwin.model.component import ComponentInstance
 
@@ -64,11 +63,30 @@ class InjectorLeg(HydraulicComponent):
         return self.instance.id
 
     def effective_area(self, mdot: float, flow: FlowConditions) -> float:
-        """``Cd . A`` at this operating point [m^2]."""
+        """``Cd . A`` at this operating point [m^2].
+
+        With an engine card it is recovered from the card's pressure drop at the
+        density this leg sees, so the diagnostics and the mixture balance read
+        the same injector the solve used."""
+        card = self.side.card
+        if card is not None:
+            phi = card.capacity(abs(mdot), flow.p_upstream)
+            return phi / math.sqrt(2.0 * flow.rho) if flow.rho > 0.0 else 0.0
         cd = self.side.cd_at(mdot, flow.rho, flow.mu, pressure=flow.p_upstream)
         return cd * self.side.area
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
+        card = self.side.card
+        if card is not None:
+            # The card is the injector, inlet node to chamber, including the
+            # discharge into the manifold the drawing's line does not model.
+            #
+            # A magnitude, like every other pressure_drop: total_dp puts the
+            # sign on. The card's own relation is signed, and passing that
+            # through signed it twice, so a leg run backwards gained pressure
+            # and the network had no root whenever the chamber closure tried a
+            # chamber above that leg's tank.
+            return card.pressure_drop(abs(mdot), flow.p_upstream)
         magnitude = abs(mdot)
         if magnitude == 0.0:
             return 0.0
@@ -111,73 +129,6 @@ class InjectorLeg(HydraulicComponent):
                 )
             )
         return out
-
-
-@dataclass(slots=True)
-class EngineCoupling:
-    """Closes the chamber-pressure loop around a network solve.
-
-    Args:
-        chamber: The chamber physics.
-        node: Network node representing the chamber. Its pressure is *set* by
-            this coupling, so it must be a fixed-pressure node.
-        oxidiser_branch: Branch carrying oxidiser into the chamber node.
-        fuel_branch: Branch carrying fuel into the chamber node.
-        relaxation: Under-relaxation for the first step and the fallback when
-            the secant slope is unusable, in ``(0, 1]``. Plain relaxation alone
-            converges linearly and needs twenty-odd network solves per
-            right-hand-side evaluation, which an implicit integrator calling the
-            RHS ten thousand times cannot afford.
-        tolerance: Convergence tolerance on chamber pressure, **relative**.
-            Absolute would mean something different on a 20 bar chamber and a
-            200 bar one.
-        max_iterations: Cap. Exceeding it is reported, not raised -- a
-            non-converging chamber loop is a design finding, usually an
-            injector too soft for its feed system, and the last iterate says
-            more about it than an exception would.
-    """
-
-    chamber: Chamber
-    node: str
-    oxidiser_branch: str
-    fuel_branch: str
-    relaxation: float = 0.5
-    tolerance: float = 1.0e-5
-    max_iterations: int = 40
-    result: ChamberResult | None = field(default=None, init=False)
-    iterations: int = field(default=0, init=False)
-    converged: bool = field(default=True, init=False)
-
-    def evaluate(self, mdot_oxidiser: float, mdot_fuel: float) -> float:
-        """Chamber pressure implied by these flows. One evaluation of ``g``."""
-        self.result = self.chamber.evaluate(mdot_oxidiser, mdot_fuel)
-        return self.result.pressure
-
-    def update(self, mdot_oxidiser: float, mdot_fuel: float, guess: float) -> float:
-        """One relaxed step. Kept for direct use and as the secant's fallback."""
-        target = self.evaluate(mdot_oxidiser, mdot_fuel)
-        return guess + self.relaxation * (target - guess)
-
-    def outputs(self) -> dict[str, float]:
-        """Everything a firing trace wants, per sample."""
-        if self.result is None:
-            return {}
-        r = self.result
-        return {
-            "chamber_pressure": r.pressure,
-            "mdot_total": r.mdot_total,
-            "mdot_oxidiser": r.mdot_oxidiser,
-            "mdot_fuel": r.mdot_fuel,
-            "mixture_ratio": r.mixture_ratio,
-            "cstar": r.combustion.cstar,
-            "chamber_temperature": r.combustion.temperature,
-            "gamma": r.combustion.gamma,
-            "thrust": r.thrust,
-            "specific_impulse": r.specific_impulse,
-            "loop_iterations": float(self.iterations),
-            "loop_converged": 1.0 if self.converged else 0.0,
-            "outside_combustion_table": 1.0 if r.combustion.extrapolated else 0.0,
-        }
 
 
 def injector_legs(

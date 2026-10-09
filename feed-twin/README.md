@@ -6,16 +6,21 @@ temperature at every node, takes real hardware parameters down to individual
 fittings, and is designed so the same schematic can display simulated physics,
 replayed test data, or a live DAQ stream.
 
-## Status: Phase 00 — foundations
+## Status
 
-**Nothing is simulated yet.** This phase built the shape: the package boundary,
-the dependency set, the dev and deploy scaffolding, and the CI gates. The
-physics starts in Phase 01 (real-gas properties) and the first pressures come
-out of Phase 04 (the steady network solver).
+The stand runs: real-gas vessels and lines, regulators, the state machine, the
+engine (EngineDesign's card, or the twin's simplified one), live in a cockpit
+laid out like the DAQ. Stands are shared, versioned documents; every burn is
+recorded with what it ran on, and two runs can be diffed and their difference
+attributed to inputs (Runs tab). The solver's residuals and the mass balance
+are on their own tab.
 
-What works today: the backend serves `/api/health` and `/api/version`, the
-frontend displays the physics stack the API is running on, and CI proves the
-library imports in both environments and builds in both containers.
+**Not validated against test data.** The physics is checked against outside
+references (`scripts/physics_benchmark.py`, `docs/PHYSICS-BENCHMARK.md`) and
+Layer X, but not yet against the stand's own DAQ traces.
+
+New here: [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md), then the
+[glossary](docs/GLOSSARY.md).
 
 ## Architecture
 
@@ -99,6 +104,6 @@ decision rather than an oversight:
 |---|---|---|
 | `lib/stardesign` wiring | Phase 09 | Scenarios become shared documents then; wiring the store in before there is anything to store is dead code. |
 | Caddy route, compose service | Phase 09 | Nothing worth deploying yet. |
-| `@xyflow/react`, the canvas | Phase 10 | Comes from `lib/feed-canvas`, so the DAQ GUI can import it too. |
+| `lib/feed-canvas` | Phase 10 | The P&ID page already draws with pid-designer's own canvas (`DrawingView`, through the `@pid` alias in `vite.config.ts`); moving it to a shared library, so the DAQ GUI can import it too, is what is left. |
 | `vitest` | Phase 10 | No UI logic to test; `tsc -b` is the real gate until there is. |
 | P&ID import | Phase 11 | Needs the component model (Phase 02) to import *into*. |
