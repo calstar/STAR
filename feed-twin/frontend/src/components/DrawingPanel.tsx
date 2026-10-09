@@ -12,6 +12,11 @@
  * drawing's name, so they survive a re-import and read the same in every
  * browser. An override made before the drawing changed the number underneath
  * it is flagged rather than quietly winning.
+ *
+ * It is also the hookup, symbol by symbol: whether the console shows it, what
+ * the console calls it, and which state-machine actuator drives a valve
+ * (lib/useHookup.ts, shared with the Hookup page, which keeps the regulator
+ * knobs). Names and wiring are saved together from the bar at the top.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -24,6 +29,7 @@ import {
   type DrawingData,
   type ParamValue,
 } from '../api';
+import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 
 /** Another operator's override should show up without a reload. */
@@ -85,7 +91,13 @@ function EditForm({
   const [saving, setSaving] = useState(false);
 
   const n = Number(value);
-  const ready = value.trim() !== '' && Number.isFinite(n) && unit && source && reference.trim();
+  // Every number on the stand says where it came from: no default source.
+  const missing = [
+    !(value.trim() !== '' && Number.isFinite(n)) && 'a value',
+    !source && 'a source',
+    !reference.trim() && 'a reference',
+  ].filter(Boolean) as string[];
+  const ready = missing.length === 0 && Boolean(unit);
 
   async function save() {
     if (!ready) return;
@@ -124,7 +136,10 @@ function EditForm({
           ))}
         </select>
       </div>
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={`mr-1 text-[10px] uppercase tracking-wider ${source ? 'text-gray-500' : 'text-amber-300'}`}>
+          source
+        </span>
         {sources.map((s) => (
           <button
             key={s}
@@ -141,17 +156,20 @@ function EditForm({
       <input
         type="text"
         value={reference}
-        placeholder="Where it came from: the gauge, the datasheet, the reasoning"
+        placeholder="Reference: the datasheet, the gauge, the reasoning"
         onChange={(e) => setReference(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') void save();
           if (e.key === 'Escape') onCancel();
         }}
-        className={field}
+        className={`${field} ${reference.trim() ? '' : 'border-amber-900/70'}`}
         aria-label="reference"
       />
       {error && <p className="text-[11px] text-red-300">{error}</p>}
       <div className="flex items-center justify-end gap-1.5">
+        {missing.length > 0 && (
+          <span className="mr-auto text-[11px] text-amber-300">Needs {missing.join(', ')}</span>
+        )}
         <button type="button" onClick={onCancel} className="rounded px-2 py-0.5 text-[11px] text-gray-400 hover:text-white">
           Cancel
         </button>
@@ -159,10 +177,9 @@ function EditForm({
           type="button"
           disabled={!ready || saving}
           onClick={() => void save()}
-          title={ready ? '' : 'A value, a source and a reference'}
           className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {saving ? 'Saving…' : 'Override'}
+          {saving ? 'Saving…' : 'Save'}
         </button>
       </div>
     </div>
@@ -268,6 +285,17 @@ function ParamRow({
   );
 }
 
+/** The symbol's hookup: its console name, and the actuator that drives it
+ *  when it is a valve the state machine can drive. */
+interface Wiring {
+  alias: string;
+  onAlias: (name: string) => void;
+  /** The state machine's actuators, when this is a valve one can drive. */
+  actuators?: string[];
+  driver: string;
+  onDrive: (actuator: string) => void;
+}
+
 function ElementCard({
   el,
   open,
@@ -276,6 +304,7 @@ function ElementCard({
   locked,
   consoleHidden,
   onConsole,
+  wiring,
   onSave,
   onRevert,
 }: {
@@ -286,6 +315,7 @@ function ElementCard({
   locked: boolean;
   consoleHidden: boolean;
   onConsole: (hide: boolean) => void;
+  wiring: Wiring | null;
   onSave: (p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => Promise<void>;
   onRevert: (p: DrawingParam) => Promise<void>;
 }) {
@@ -299,7 +329,17 @@ function ElementCard({
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           <span className="w-2 shrink-0 font-mono text-[10px] text-gray-600">{open ? '−' : '+'}</span>
           <span className={`truncate text-[12.5px] ${consoleHidden ? 'text-gray-500' : 'text-gray-100'}`}>{el.tag}</span>
+          {wiring?.alias && (
+            <span className="truncate text-[11.5px] text-gray-400" title="Its name on the console">
+              “{wiring.alias}”
+            </span>
+          )}
           <span className="shrink-0 font-mono text-[10px] text-gray-600">{el.type}</span>
+          {wiring?.actuators && wiring.driver && (
+            <span className="shrink-0 truncate font-mono text-[10px] text-sky-300/80" title="The state-machine actuator that drives it">
+              ← {wiring.driver}
+            </span>
+          )}
           {overridden > 0 && (
             <span className="shrink-0 rounded bg-blue-950/60 px-1 font-mono text-[9px] text-blue-300">
               {overridden} override{overridden > 1 ? 's' : ''}
@@ -316,26 +356,59 @@ function ElementCard({
           )}
         </button>
         {el.on_console && (
-          <button
-            type="button"
-            onClick={() => onConsole(!consoleHidden)}
+          <label
+            className="flex shrink-0 cursor-pointer items-center gap-1 text-[10.5px] text-gray-400"
             title={
               consoleHidden
-                ? `Hidden from the console for everyone${el.hidden_by ? ` (by ${el.hidden_by})` : ''}. Click to show.`
-                : 'Shown on the console. Click to hide it for everyone.'
+                ? `Not on the console${el.hidden_by ? ` (hidden by ${el.hidden_by})` : ''}. Shared with everyone on this drawing.`
+                : 'On the console. Shared with everyone on this drawing.'
             }
-            className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider transition-colors ${
-              consoleHidden
-                ? 'border-[var(--line)] text-gray-600 hover:text-gray-300'
-                : 'border-green-900/70 text-green-400 hover:border-green-700'
-            }`}
           >
-            {consoleHidden ? 'hidden' : 'on console'}
-          </button>
+            <input
+              type="checkbox"
+              checked={!consoleHidden}
+              onChange={(e) => onConsole(!e.target.checked)}
+              className="accent-blue-500"
+            />
+            console
+          </label>
         )}
       </div>
       {open && (
         <div className="pb-1">
+          {wiring && (
+            <div className="flex flex-col gap-1 border-t border-[var(--line)]/60 px-2 py-1.5">
+              <label className="flex items-center gap-2 text-[11px] text-gray-500">
+                <span className="w-20 shrink-0">Console name</span>
+                <input
+                  type="text"
+                  value={wiring.alias}
+                  placeholder={el.tag}
+                  disabled={locked}
+                  onChange={(e) => wiring.onAlias(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-gray-700 bg-black/60 px-1.5 py-0.5 text-[12px] text-white placeholder:text-gray-600 disabled:opacity-50"
+                />
+              </label>
+              {wiring.actuators && (
+                <label className="flex items-center gap-2 text-[11px] text-gray-500">
+                  <span className="w-20 shrink-0">Driven by</span>
+                  <select
+                    value={wiring.driver}
+                    disabled={locked}
+                    onChange={(e) => wiring.onDrive(e.target.value)}
+                    className="min-w-0 flex-1 rounded border border-gray-700 bg-black/60 px-1 py-0.5 text-[12px] text-white disabled:opacity-50"
+                  >
+                    <option value="">Nothing (by hand)</option>
+                    {wiring.actuators.map((a) => (
+                      <option key={a} value={a}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
           {el.segments > 0 && (
             <p className="px-2 pb-1 text-[11px] text-gray-500">
               Itemised run: {el.segments} segment{el.segments > 1 ? 's' : ''}, read from the drawing.
@@ -376,6 +449,7 @@ type Filter = 'all' | 'console' | 'changed' | 'filled';
 
 export function DrawingPanel() {
   const { where, live, consoleHidden, hideOnConsole, restart } = useStand();
+  const hookup = useHookup();
   const [view, setView] = useState<DrawingData | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -421,6 +495,31 @@ export function DrawingPanel() {
     return <p className="p-3 text-[12px] text-gray-500">{error || 'Reading the drawing…'}</p>;
   }
 
+  // The hookup, symbol by symbol. A valve the state machine can drive is one
+  // the hookup lists, or one an actuator is bound to now (rocket only, the
+  // rocket's capped vent disconnect).
+  const drivable = new Set([
+    ...(hookup.data?.valves.map((v) => v.id) ?? []),
+    ...Object.values(hookup.data?.bound ?? {}),
+  ]);
+  const wiringOf = (el: DrawingElement): Wiring | null => {
+    const { data, draft } = hookup;
+    if (!data || !draft || !el.on_console) return null;
+    return {
+      alias: draft.aliases?.[el.id] ?? '',
+      onAlias: (name) => hookup.setAlias(el.id, name),
+      actuators: drivable.has(el.id) ? data.actuators : undefined,
+      driver: hookup.driverOf(el.id),
+      onDrive: (actuator) => hookup.drive(el.id, actuator),
+    };
+  };
+  const undriven = hookup.data && hookup.draft
+    ? hookup.data.actuators.filter((a) => {
+        const pinned = hookup.draft?.valves[a];
+        return pinned === undefined ? !hookup.data?.bound[a] : !pinned;
+      })
+    : [];
+
   const save = async (el: DrawingElement, p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => {
     await setOverride({ diagram: view.diagram_id, element: el.id, parameter: p.name, ...v });
     await load();
@@ -438,15 +537,40 @@ export function DrawingPanel() {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex-shrink-0 border-b border-[var(--line)] px-3 py-2">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-[11px] font-bold uppercase tracking-widest text-text-muted">From the drawing</h2>
+          <h2
+            className="text-[11px] font-bold uppercase tracking-widest text-text-muted"
+            title="Every symbol on the drawing: whether the console shows it, what it calls it, what drives it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they're shared with everyone and follow the drawing when it's re-imported."
+          >
+            Symbols
+          </h2>
           <span className="ml-auto truncate font-mono text-[10px] text-gray-600" title={view.source}>
             {view.key}
           </span>
         </div>
-        <p className="mt-1 text-[11px] leading-snug text-gray-500">
-          What feed-twin read and what it uses. Overrides stay here and never touch the drawing in pid-designer.
-          They're shared with everyone and follow the drawing when it's re-imported.
-        </p>
+        {hookup.dirty && (
+          <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
+            <span className="flex-1 text-[11px] text-blue-200">
+              {hookup.namesOnly ? 'Unsaved names' : 'Unsaved wiring — saving restarts the stand'}
+            </span>
+            <button
+              type="button"
+              onClick={hookup.discard}
+              className="rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:text-white"
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              disabled={hookup.busy || hookup.locked}
+              onClick={hookup.save}
+              title={hookup.locked ? 'Take the stand to change its hookup' : hookup.onStand ? 'Kept with the stand' : 'Kept for this drawing'}
+              className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
+            >
+              {hookup.busy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        )}
+        {hookup.error && <p className="mt-1 text-[11px] text-red-300">{hookup.error}</p>}
         {pending && (
           <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
             <span className="flex-1 text-[11px] text-blue-200">
@@ -473,7 +597,7 @@ export function DrawingPanel() {
           {(
             [
               ['all', 'All'],
-              ['console', 'On console'],
+              ['console', 'Console'],
               ['changed', `Overridden${total ? ` · ${total}` : ''}`],
               ['filled', 'Filled in'],
             ] as const
@@ -513,10 +637,19 @@ export function DrawingPanel() {
             locked={locked}
             consoleHidden={consoleHidden[el.id] ?? el.console_hidden}
             onConsole={(hide) => hideOnConsole([el.id], hide)}
+            wiring={wiringOf(el)}
             onSave={(p, v) => save(el, p, v)}
             onRevert={(p) => revert(el, p)}
           />
         ))}
+        {undriven.length > 0 && filter === 'all' && !query && (
+          <li
+            className="mt-2 px-2 py-1 text-[11px] leading-snug text-gray-500"
+            title="State-machine actuators no valve on this drawing answers to. Pick one under 'Driven by' on a valve to wire it."
+          >
+            Driving nothing: {undriven.join(', ')}
+          </li>
+        )}
         {view.orphaned.length > 0 && (
           <li className="mt-2 rounded-md border border-amber-900/50 px-2 py-1.5 text-[11px] leading-snug text-amber-300/80">
             Kept for symbols this version of the drawing doesn't have: {view.orphaned.join(', ')}. They come back

@@ -32,9 +32,13 @@ The console, used end to end overnight. Pressures here in psia.
 
 ### Changed
 - The console's bottom pad strip is gone (it repeated the state machine).
-- Hookup: which valves and transducers the console shows (and their names) comes
-  first; the actuator binding is "Wiring" under it, and shows the rocket's own matches
-  with the GSE ignored. Its PT list runs in the console's order.
+- The P&ID tab's symbol panel is the hookup, symbol by symbol: a console checkbox, a
+  console name, and the actuator that drives each valve, saved from one bar (wiring
+  restarts the stand); "Driving nothing" lists actuators no valve answers to. Its
+  override form says what it still needs (a source, a reference) instead of a grey
+  button. The Hookup page keeps the regulator knobs.
+- Solver: four checks across the top -- Converged, Mass balance, Chamber, Clamps --
+  PASS or FAIL, numbers on hover; "guards" are "clamps" on screen.
 - The P&ID reads out transducers, gauges, vessels and the engine (temperature on RTDs
   and thermocouples), not every symbol.
 - A transducer the drawing gives no limits for draws no limit lines (the tag guess put

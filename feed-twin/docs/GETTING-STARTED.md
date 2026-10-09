@@ -37,10 +37,12 @@ Without a stand the cockpit still works. Its runs then go in your own list.
   in because the drawing left it blank, and (folded) how it read the drawing.
   The tab's number counts only the first. Fix it on the drawing
   (pid-designer), not here.
-* **Hookup**: which valves and transducers the console shows and what it calls
-  them (first), which actuator opens which valve (**Wiring**), and which knob
-  loads which regulator. Imported drawings are matched by name; check them.
-  With the GSE ignored, Wiring shows the rocket's own matches.
+* **P&ID → Symbols**: every symbol on the drawing. Tick **console** to show it
+  on the console, give it a **console name**, and for a valve pick the
+  state-machine actuator that **drives** it; Save at the top (wiring restarts
+  the stand). Its numbers are here too: **edit** one to override it, with a
+  source and a reference. Imported drawings are matched by name; check them.
+* **Hookup**: which knob on GSE Controls sets which regulator.
 * **GSE Controls → Ignore the drawn GSE**: run the rocket alone, filled by the
   built-in charge and loads at the settings on that page, when the cart on the
   drawing is more than you need.

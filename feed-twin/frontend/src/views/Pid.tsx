@@ -105,7 +105,7 @@ export function Pid() {
           aria-expanded={panel}
           className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
         >
-          {panel ? 'Hide drawing data' : 'Show drawing data'}
+          {panel ? 'Hide symbols' : 'Symbols'}
         </button>
       </div>
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
