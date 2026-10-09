@@ -1816,6 +1816,7 @@ async def session_history(
     if max_points > 0 and len(kept) > max_points:
         stride = -(-len(kept) // max_points)
         kept = kept[::-1][::stride][::-1]
+    limits = _channel_limits(session)
     return RunOut(
         message=f"live session, {len(kept)} samples",
         times_s=[s.t for s in kept],
@@ -1829,12 +1830,80 @@ async def session_history(
                     if i.type in THERMAL_INSTRUMENTS
                     else [round(psig(s.pressures.get(i.node, 0.0)), 2) for s in kept]
                 ),
+                **limits.get(i.id, {}),
             )
             for i in built.instruments
         ]
-        + (_engine_channels(kept) if session.model.engine is not None else []),
+        + [
+            c.model_copy(update=limits.get(c.id, {}))
+            for c in (_engine_channels(kept) if session.model.engine is not None else [])
+        ],
         balance=_session_balance(session),
     )
+
+
+#: The chamber's bar turns amber this far over the engine's design chamber
+#: pressure, and red this far over: a display band, not a limit of the engine
+#: (it has no MAWP on the drawing). The DAQ's fixed 400 / 500 psig made a
+#: nominal 7 kN burn read amber from ignition to burnout.
+PC_NOP_OVER_DESIGN = 1.10
+PC_MEOP_OVER_DESIGN = 1.25
+
+
+def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
+    """Each pressure channel's amber and red lines [psig], from what it reads.
+
+    A transducer on a vessel: amber above the operating pressure the drawing
+    gives the vessel, red above the pressure the stand trips at (its MAWP).
+    The chamber: bands over the engine's design chamber pressure. Anything
+    else -- a line, a dome -- is left to the console's guess by tag. The
+    guesses were all there was, and a COPV transducer tagged HP-1 read red at
+    1,800 psig against the propellant tanks' 700.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    params = {n.id: n.params for n in session.model.diagram.nodes}
+
+    def drawn(vessel_id: str) -> float | None:
+        param = params.get(vessel_id, {}).get("pressure")
+        return psig(param.si) if param is not None else None
+
+    for inst in session.model.built.instruments:
+        if inst.type in THERMAL_INSTRUMENTS:
+            continue
+        for sim in session.tanks.values():
+            if inst.node in (sim.ullage_node, sim.outlet_node) and sim.mawp > 0.0:
+                nop = drawn(sim.id)
+                meop = psig(sim.mawp)
+                out[inst.id] = {
+                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
+                    "meop": round(meop, 1),
+                    "limits": f"{sim.label}: "
+                    + (f"operating {nop:.0f} psig on the drawing · " if nop is not None else "")
+                    + f"trips at {meop:.0f} psig (MAWP)",
+                }
+        for bottle in session.bottles.values():
+            if inst.node == bottle.node and bottle.mawp > 0.0:
+                nop = drawn(bottle.id)
+                meop = psig(bottle.mawp)
+                out[inst.id] = {
+                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
+                    "meop": round(meop, 1),
+                    "limits": f"{bottle.label}: "
+                    + (f"charged to {nop:.0f} psig on the drawing · " if nop is not None else "")
+                    + f"trips at {meop:.0f} psig (MAWP)",
+                }
+    engine = session.model.engine
+    design = getattr(engine, "design_chamber_pressure", 0.0) if engine is not None else 0.0
+    if design > 0.0:
+        pc = psig(design)
+        out["engine.pc"] = {
+            "nop": round(pc * PC_NOP_OVER_DESIGN, 1),
+            "meop": round(pc * PC_MEOP_OVER_DESIGN, 1),
+            "limits": f"design chamber {pc:.0f} psig · amber 10 % over, red 25 % over",
+        }
+    # A missing NOP falls back on the tag's own, which may sit over a drawn
+    # MEOP: say nothing rather than draw red under amber.
+    return {k: v for k, v in out.items() if v.get("meop") is not None}
 
 
 #: How far back the Engine page's O/F split looks for a sample that flowed.

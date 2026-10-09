@@ -116,6 +116,13 @@ class Channel(BaseModel):
     tag: str
     unit: str
     values: list[float]
+    #: Where the console's bar turns amber and red [psig], from what the
+    #: transducer reads (main._channel_limits); absent, the console falls back
+    #: on the DAQ's guesses by tag.
+    nop: float | None = None
+    meop: float | None = None
+    #: Where those two came from, for the bar's hover.
+    limits: str = ""
 
 
 class EngineState(BaseModel):

@@ -193,6 +193,13 @@ export interface Channel {
   tag: string;
   unit: string;
   values: number[];
+  /** Amber and red lines [psig] from what the transducer reads (the drawn
+   *  operating pressure and MAWP of its vessel, the engine's design Pc).
+   *  Absent: `limitsFor` guesses by tag. */
+  nop?: number | null;
+  meop?: number | null;
+  /** Where they came from, for a hover. */
+  limits?: string;
 }
 
 /** A sibling design tool this instance can import from. */
@@ -797,6 +804,15 @@ export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500) =>
  *  reads these from its sensor config; a drawing does not carry them yet, so
  *  a high-pressure tag gets bottle limits and everything else tank limits.
  *  Wrong limits are worse than none, so both are stated. */
+/** A channel's amber and red lines: the drawing's, where the backend found
+ *  them, else the DAQ's guess by tag (which never sits a NOP over its MEOP). */
+export function limitsOf(c: Pick<Channel, 'tag' | 'nop' | 'meop'>): { nop: number; meop: number } {
+  const guess = limitsFor(c.tag);
+  const meop = c.meop ?? guess.meop;
+  const nop = c.nop ?? Math.min(guess.nop, meop * 0.85);
+  return { nop, meop };
+}
+
 export function limitsFor(tag: string): { nop: number; meop: number } {
   const upper = tag.toUpperCase();
   if (upper.includes('HI') || upper.includes('HIGH')) return { nop: 4500, meop: 5000 };

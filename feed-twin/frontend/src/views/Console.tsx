@@ -29,7 +29,7 @@
 
 import { useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
+import { channelColor, fixed, limitsOf, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { PadGuideLine, usePadGuide } from '../components/PadSequence';
@@ -319,7 +319,7 @@ export function Console() {
     for (const c of history?.channels ?? []) {
       if (ground.has(c.id)) continue;
       const v = c.id === 'engine.pc' ? chamber : pressures?.[c.id];
-      if (v !== undefined && v !== null && v > limitsFor(c.tag).nop) out.add(c.id);
+      if (v !== undefined && v !== null && v > limitsOf(c).nop) out.add(c.id);
     }
     return out;
   }, [history, pressures, chamber, ground]);
@@ -384,7 +384,7 @@ export function Console() {
   const others = reachable.filter((s) => OFF_GRID.test(s) && !/^fire$/i.test(s) && s !== 'Engine Abort');
 
   const gauge = (c: (typeof gauges)[number]) => {
-    const { nop, meop } = limitsFor(c.tag);
+    const { nop, meop } = limitsOf(c);
     const silent = hidden[c.id];
     // The engine's own chamber channel is not a drawn instrument: it reads
     // off the live engine, so a stand with no PC transducer still shows
@@ -395,7 +395,7 @@ export function Console() {
         key={c.id}
         type="button"
         {...dragProps('pts', c.id, gaugeIds)}
-        title={`${nameOf(c.id, c.tag)}${nameOf(c.id, c.tag) !== c.tag ? ` (${c.tag} on the P&ID)` : ''}: click to ${silent ? 'show on' : 'hide from'} the plot, drag to reorder`}
+        title={`${nameOf(c.id, c.tag)}${nameOf(c.id, c.tag) !== c.tag ? ` (${c.tag} on the P&ID)` : ''}\nAmber over ${fixed(nop, 0)}, red over ${fixed(meop, 0)} psig${c.limits ? ` — ${c.limits}` : ' (guessed from the tag)'}\nClick to ${silent ? 'show on' : 'hide from'} the plot, drag to reorder`}
         onClick={() => toggleChannel(c.id)}
         aria-pressed={!silent}
         className={`h-full min-h-0 min-w-0 transition-opacity ${silent ? 'opacity-35' : 'opacity-100'}`}
