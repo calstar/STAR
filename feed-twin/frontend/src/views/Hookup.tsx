@@ -26,6 +26,7 @@ import {
   type KnobDef,
 } from '../api';
 import { groupByPage } from '../lib/pages';
+import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
 
 const AUTO = '__auto__';
@@ -44,6 +45,7 @@ export function Hookup() {
     setAliases,
     consoleHidden,
     hideOnConsole,
+    consoleOrder,
     setup,
   } = useStand();
   // Rocket only: the wiring shown is what the stand runs on the rocket alone.
@@ -91,7 +93,15 @@ export function Hookup() {
   const actuatorOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(data.bound)) actuatorOf[symbol] = actuator;
   // The transducers the console draws, as the stand reports them.
-  const channels = (history?.channels ?? []).filter((c) => ['psig', 'K', ''].includes(c.unit ?? ''));
+  // In the console's order (dragged on its strip), pressures before
+  // temperatures, as the console and Plots draw them.
+  const channels = ['psig', 'K'].flatMap((unit) =>
+    ordered(
+      (history?.channels ?? []).filter((c) => (c.unit || 'psig') === unit),
+      consoleOrder.pts,
+      (c) => c.id,
+    ),
+  );
 
   const setAlias = (id: string, value: string) => {
     const aliases = { ...(draft.aliases ?? {}) };
