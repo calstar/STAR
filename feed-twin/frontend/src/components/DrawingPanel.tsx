@@ -19,7 +19,7 @@
  * knobs). Names and wiring are saved together from the bar at the top.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   clearOverride,
   getDrawingData,
@@ -203,8 +203,15 @@ function ParamRow({
   const { override, drawing, assumed, effective } = param;
   const under = drawing ?? assumed;
 
+  // Where the number came from, on hover: a sentence under every number
+  // buried the numbers.
+  const why = override
+    ? ''
+    : !drawing && assumed
+      ? `Not on the drawing; the library filled it in. ${assumed.reference}`
+      : (drawing?.reference ?? '');
   return (
-    <li className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[12px]">
+    <li className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[12px]" title={why || undefined}>
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-gray-300" title={param.name}>
           {param.name}
@@ -258,16 +265,6 @@ function ParamRow({
           . Keep it, or revert to the drawing.
         </p>
       )}
-      {!override && !drawing && assumed && (
-        <p className="mt-0.5 pl-2 text-[11px] leading-snug text-gray-500">
-          Not on the drawing; the library filled it in. {assumed.reference}
-        </p>
-      )}
-      {!override && drawing?.reference && (
-        <p className="mt-0.5 truncate pl-2 text-[11px] text-gray-600" title={drawing.reference}>
-          {drawing.reference}
-        </p>
-      )}
       {param.locked && <p className="mt-0.5 pl-2 text-[11px] text-gray-600">{param.locked}</p>}
 
       {editing && (
@@ -290,8 +287,9 @@ function ParamRow({
 interface Wiring {
   alias: string;
   onAlias: (name: string) => void;
-  /** The state machine's actuators, when this is a valve one can drive. */
-  actuators?: string[];
+  /** The state machine's actuators, when this is a valve one can drive,
+   *  each with the valve it drives now ('' for none). */
+  actuators?: { name: string; now: string }[];
   driver: string;
   onDrive: (actuator: string) => void;
 }
@@ -305,6 +303,8 @@ function ElementCard({
   consoleHidden,
   onConsole,
   wiring,
+  cut,
+  focused,
   onSave,
   onRevert,
 }: {
@@ -316,6 +316,9 @@ function ElementCard({
   consoleHidden: boolean;
   onConsole: (hide: boolean) => void;
   wiring: Wiring | null;
+  /** Off the stand: the cart, with the drawn GSE ignored. */
+  cut: boolean;
+  focused: boolean;
   onSave: (p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => Promise<void>;
   onRevert: (p: DrawingParam) => Promise<void>;
 }) {
@@ -324,7 +327,10 @@ function ElementCard({
   const assumed = el.params.filter((p) => !p.override && !p.drawing && p.assumed).length;
 
   return (
-    <li className="rounded-md border border-[var(--line)] bg-black/20">
+    <li
+      id={`symbol-${el.id}`}
+      className={`rounded-md border bg-black/20 ${focused ? 'border-blue-500/70' : 'border-[var(--line)]'}`}
+    >
       <div className="flex items-center gap-2 px-2 py-1.5">
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           <span className="w-2 shrink-0 font-mono text-[10px] text-gray-600">{open ? '−' : '+'}</span>
@@ -355,13 +361,13 @@ function ElementCard({
             </span>
           )}
         </button>
-        {el.on_console && (
+        {el.on_console && !cut && (
           <label
             className="flex shrink-0 cursor-pointer items-center gap-1 text-[10.5px] text-gray-400"
             title={
               consoleHidden
-                ? `Not on the console${el.hidden_by ? ` (hidden by ${el.hidden_by})` : ''}. Shared with everyone on this drawing.`
-                : 'On the console. Shared with everyone on this drawing.'
+                ? `Not on the Console tab${el.hidden_by ? ` (hidden by ${el.hidden_by})` : ''}. Tick to show it there, for everyone on this drawing.`
+                : 'On the Console tab, for everyone on this drawing. Untick to hide it.'
             }
           >
             <input
@@ -376,7 +382,12 @@ function ElementCard({
       </div>
       {open && (
         <div className="pb-1">
-          {wiring && (
+          {cut && el.on_console && (
+            <p className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[11px] text-gray-500">
+              On the cart, which is not simulated while the drawn GSE is ignored (GSE Controls).
+            </p>
+          )}
+          {wiring && !cut && (
             <div className="flex flex-col gap-1 border-t border-[var(--line)]/60 px-2 py-1.5">
               <label className="flex items-center gap-2 text-[11px] text-gray-500">
                 <span className="w-20 shrink-0">Console name</span>
@@ -400,8 +411,9 @@ function ElementCard({
                   >
                     <option value="">Nothing (by hand)</option>
                     {wiring.actuators.map((a) => (
-                      <option key={a} value={a}>
-                        {a}
+                      <option key={a.name} value={a.name}>
+                        {a.name}
+                        {a.now ? ` — now on ${a.now}` : ''}
                       </option>
                     ))}
                   </select>
@@ -445,10 +457,29 @@ function ElementCard({
   );
 }
 
+/** A card, with its group's heading above it when it is the group's first. */
+function ElementGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <>
+      {title && (
+        <li className="px-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-gray-500">{title}</li>
+      )}
+      {children}
+    </>
+  );
+}
+
 type Filter = 'all' | 'console' | 'changed' | 'filled';
 
-export function DrawingPanel() {
-  const { where, live, consoleHidden, hideOnConsole, restart } = useStand();
+export function DrawingPanel({
+  focus = null,
+  onFocus = () => undefined,
+}: {
+  /** The symbol to open: clicked on the drawing, or opened here. */
+  focus?: string | null;
+  onFocus?: (id: string | null) => void;
+} = {}) {
+  const { where, live, consoleHidden, hideOnConsole, restart, model } = useStand();
   const hookup = useHookup();
   const [view, setView] = useState<DrawingData | null>(null);
   const [error, setError] = useState('');
@@ -473,6 +504,25 @@ export function DrawingPanel() {
     return () => window.clearInterval(id);
   }, [load]);
 
+  // A symbol clicked on the drawing opens here, in view, whatever the list
+  // was filtered to.
+  const scrollTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focus) return;
+    setOpen({ [focus]: true });
+    setQuery('');
+    setFilter('all');
+    scrollTo.current = focus;
+  }, [focus]);
+  useEffect(() => {
+    if (!scrollTo.current) return;
+    const el = document.getElementById(`symbol-${scrollTo.current}`);
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      scrollTo.current = null;
+    }
+  });
+
   const locked = Boolean(live?.tripped);
   const pending = view !== null && live !== null && (live.overrides_hash ?? '') !== view.overrides_hash;
   const total = view?.elements.reduce((n, e) => n + e.params.filter((p) => p.override).length, 0) ?? 0;
@@ -481,7 +531,9 @@ export function DrawingPanel() {
     if (!view) return [];
     const q = query.trim().toLowerCase();
     return view.elements.filter((el) => {
-      if (el.kind === 'line' && !showLines && filter !== 'changed') return false;
+      // Lines and junctions only on request: a junction carries nothing to set.
+      if ((el.kind === 'line' || el.type === 'JUNCTION') && !showLines && filter !== 'changed' && el.id !== focus)
+        return false;
       if (q && !`${el.tag} ${el.type} ${el.id} ${el.params.map((p) => p.name).join(' ')}`.toLowerCase().includes(q))
         return false;
       if (filter === 'console') return el.on_console;
@@ -489,7 +541,7 @@ export function DrawingPanel() {
       if (filter === 'filled') return el.params.some((p) => !p.override && !p.drawing && p.assumed);
       return true;
     });
-  }, [view, query, filter, showLines]);
+  }, [view, query, filter, showLines, focus]);
 
   if (!view) {
     return <p className="p-3 text-[12px] text-gray-500">{error || 'Reading the drawing…'}</p>;
@@ -508,7 +560,13 @@ export function DrawingPanel() {
     return {
       alias: draft.aliases?.[el.id] ?? '',
       onAlias: (name) => hookup.setAlias(el.id, name),
-      actuators: drivable.has(el.id) ? data.actuators : undefined,
+      actuators: drivable.has(el.id)
+        ? data.actuators.map((a) => {
+            // Where it is now, when that is another valve: picking it moves it.
+            const now = hookup.valveOf(a);
+            return { name: a, now: now && now !== el.id ? hookup.valveLabel(now).split(' · ')[0] : '' };
+          })
+        : undefined,
       driver: hookup.driverOf(el.id),
       onDrive: (actuator) => hookup.drive(el.id, actuator),
     };
@@ -519,6 +577,16 @@ export function DrawingPanel() {
         return pinned === undefined ? !hookup.data?.bound[a] : !pinned;
       })
     : [];
+
+  // With the drawn GSE ignored the stand is the rocket alone: the cart's
+  // symbols are not in it, so nothing set on them shows on the console.
+  const rocketOnly = Boolean(live?.setup?.ignore_gse) && Boolean(model?.pages);
+  const isCut = (el: DrawingElement) => rocketOnly && el.kind === 'symbol' && !(el.id in (model?.pages ?? {}));
+  // What a person comes here for first -- what the console shows, its names,
+  // what drives a valve -- then everything else, then the cart.
+  const groupOf = (el: DrawingElement) => (isCut(el) ? 2 : el.on_console ? 0 : 1);
+  const grouped = [...shown].sort((a, b) => groupOf(a) - groupOf(b));
+  const GROUP_TITLES = ['Instruments, tanks & valves', 'Other symbols', 'Cart — not simulated (rocket only)'];
 
   const save = async (el: DrawingElement, p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => {
     await setOverride({ diagram: view.diagram_id, element: el.id, parameter: p.name, ...v });
@@ -547,6 +615,10 @@ export function DrawingPanel() {
             {view.key}
           </span>
         </div>
+        <p className="mt-1 text-[11px] leading-snug text-gray-500">
+          Click a symbol here or on the drawing. Tick <span className="text-gray-300">console</span> to show it
+          on the Console, give it a name, or pick what drives a valve.
+        </p>
         {hookup.dirty && (
           <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
             <span className="flex-1 text-[11px] text-blue-200">
@@ -606,6 +678,14 @@ export function DrawingPanel() {
               key={k}
               type="button"
               onClick={() => setFilter(k)}
+              title={
+                {
+                  all: 'Every symbol',
+                  console: 'Instruments, tanks and the valves the console can show',
+                  changed: 'Numbers somebody overrode here',
+                  filled: 'Numbers the drawing left blank and the library filled in',
+                }[k]
+              }
               className={`rounded px-1.5 py-0.5 text-[10.5px] font-semibold ${
                 filter === k ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'
               }`}
@@ -620,27 +700,39 @@ export function DrawingPanel() {
               onChange={(e) => setShowLines(e.target.checked)}
               className="accent-blue-500"
             />
-            lines
+            lines & junctions
           </label>
         </div>
       </div>
 
       <ul className="m-0 flex min-h-0 flex-1 list-none flex-col gap-1 overflow-auto p-2">
         {shown.length === 0 && <li className="p-2 text-[12px] text-gray-600">Nothing matches.</li>}
-        {shown.map((el) => (
+        {grouped.map((el, i) => (
+          <ElementGroup key={el.id} title={i === 0 || groupOf(grouped[i - 1]) !== groupOf(el) ? GROUP_TITLES[groupOf(el)] : ''}>
           <ElementCard
-            key={el.id}
             el={el}
             open={Boolean(open[el.id])}
-            onOpen={() => setOpen((o) => ({ ...o, [el.id]: !o[el.id] }))}
+            onOpen={() => {
+              // One open at a time: it is the one ringed on the drawing.
+              const opening = !open[el.id];
+              setOpen(opening ? { [el.id]: true } : {});
+              if (opening) onFocus(el.id);
+              else if (focus === el.id) onFocus(null);
+            }}
+            cut={isCut(el)}
+            focused={focus === el.id}
             sources={view.override_sources}
             locked={locked}
-            consoleHidden={consoleHidden[el.id] ?? el.console_hidden}
+            // The stand's list is the whole truth (it is what the console
+            // draws). Falling back on this panel's copy -- reloaded every 10 s
+            // -- showed a box ticked back on as still off until then.
+            consoleHidden={Boolean(consoleHidden[el.id])}
             onConsole={(hide) => hideOnConsole([el.id], hide)}
-            wiring={wiringOf(el)}
+            wiring={isCut(el) ? null : wiringOf(el)}
             onSave={(p, v) => save(el, p, v)}
             onRevert={(p) => revert(el, p)}
           />
+          </ElementGroup>
         ))}
         {undriven.length > 0 && filter === 'all' && !query && (
           <li
@@ -648,6 +740,7 @@ export function DrawingPanel() {
             title="State-machine actuators no valve on this drawing answers to. Pick one under 'Driven by' on a valve to wire it."
           >
             Driving nothing: {undriven.join(', ')}
+            {rocketOnly && ' (the cart’s are not simulated, rocket only)'}
           </li>
         )}
         {view.orphaned.length > 0 && (

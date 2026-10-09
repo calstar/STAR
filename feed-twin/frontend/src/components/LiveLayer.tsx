@@ -41,9 +41,11 @@ interface Props {
   valves: ReadonlySet<string>;
   /** Valves held by hand, overriding the sequence. */
   held: ReadonlySet<string>;
+  /** The symbol open in the P&ID tab's panel: ringed, so it is found. */
+  focus?: string | null;
 }
 
-export function LiveLayer({ frame, lines, valves, held }: Props) {
+export function LiveLayer({ frame, lines, valves, held, focus = null }: Props) {
   const nodes = useNodes();
   const routes = useDrawnRoutes(lines);
   if (!frame) return null;
@@ -65,6 +67,21 @@ export function LiveLayer({ frame, lines, valves, held }: Props) {
           .filter((n) => valves.has(n.id))
           .map((n) => (
             <ValveRing key={n.id} node={n} open={frame.open[n.id] ?? false} held={held.has(n.id)} />
+          ))}
+        {shown
+          .filter((n) => n.id === focus)
+          .map((n) => (
+            <rect
+              key="focus"
+              x={n.position.x - 12}
+              y={n.position.y - 12}
+              width={n.measured!.width! + 24}
+              height={n.measured!.height! + 24}
+              rx={12}
+              fill="none"
+              stroke="#60A5FA"
+              strokeWidth={2.5}
+            />
           ))}
       </svg>
       {shown.map((n) => {

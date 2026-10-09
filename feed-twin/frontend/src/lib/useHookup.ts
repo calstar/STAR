@@ -105,6 +105,12 @@ export function useHookup() {
     return '';
   };
 
+  /** The valve an actuator drives under the draft, '' for none. */
+  const valveOf = (actuator: string): string => {
+    if (!data || !draft) return '';
+    return actuator in draft.valves ? draft.valves[actuator] : (data.bound[actuator] ?? '');
+  };
+
   /** Have `actuator` drive `valve` ('' : nothing drives it). Whatever drove
    *  it before is pinned to no valve, so two actuators never fight over one. */
   const drive = (valve: string, actuator: string) => {
@@ -141,6 +147,7 @@ export function useHookup() {
     discard,
     setAlias,
     driverOf,
+    valveOf,
     drive,
     valveLabel,
   };
