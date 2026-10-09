@@ -120,6 +120,17 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `get_program_board` | The homepage program board: tracked projects, systems, subteam phases, milestones | read |
+| `get_project_program` | One project's phases, subteam phases, milestones, featured flag | read |
+| `set_featured` | Track / untrack a top-level project on the homepage | admins only, idempotent |
+| `set_phases` | Replace a project's phase list (`[]` = defaults) | admins only, idempotent |
+| `set_subteam_phase` | Move a subteam to a phase (adds it to the card) | idempotent |
+| `untrack_subteam` | Drop a subteam's row from a card | admins only, destructive |
+| `add_milestone` | Add a dated milestone (program-wide or a subteam's) | write |
+| `set_milestone_done` | Tick / untick a milestone | idempotent |
+| `set_milestone_link` | Set or clear a milestone's http(s) link | idempotent |
+| `delete_milestone` | Delete a milestone | destructive |
+| `set_card_order` | Re-order the homepage cards (all featured top-level ids) | admins only, idempotent |
 
 Modules append their tools here as they land.
 
