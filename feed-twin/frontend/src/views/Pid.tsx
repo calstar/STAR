@@ -121,6 +121,7 @@ export function Pid() {
                 frame={{
                   t: live.t,
                   pressure_psi: live.pressure_psi,
+                  temperature_K: live.temperature_K,
                   node_psi: live.node_psi,
                   flow_kg_s: live.flow_kg_s,
                   open: live.open,

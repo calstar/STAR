@@ -184,6 +184,8 @@ export interface EngineState {
 export interface Frame {
   t: number;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
@@ -357,6 +359,8 @@ export interface SessionState {
   reachable: string[];
   converged: boolean;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
