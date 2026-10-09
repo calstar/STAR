@@ -8,6 +8,8 @@ import { tasksWriteTools } from "./tasks-write";
 import { projectTools } from "./projects";
 import { programTools } from "./program";
 import { settingsTools } from "./settings";
+import { subteamTools } from "./subteams";
+import { userTools } from "./users";
 import { opsTools } from "./ops";
 
 // Every tool module the server registers. One line per module; a new area of
@@ -17,6 +19,8 @@ export const TOOL_MODULES: ToolModule[] = [
   tasksReadTools,
   tasksWriteTools,
   projectTools,
+  subteamTools,
+  userTools,
   programTools,
   settingsTools,
   adminTools,

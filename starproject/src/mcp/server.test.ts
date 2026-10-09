@@ -29,7 +29,15 @@ const ADMIN_ONLY = [
   "list_notification_log",
 ];
 
-const DESTRUCTIVE = ["delete_task", "delete_project", "delete_milestone", "remove_admin", "revoke_api_token", "untrack_subteam"];
+const DESTRUCTIVE = [
+  "delete_task",
+  "delete_project",
+  "delete_subteam",
+  "delete_milestone",
+  "remove_admin",
+  "revoke_api_token",
+  "untrack_subteam",
+];
 
 type Listed = Awaited<ReturnType<Client["listTools"]>>["tools"];
 
