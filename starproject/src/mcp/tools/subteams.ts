@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { createSubteam, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
+import { createSubteamReturningId, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
 import { prisma } from "@/lib/db";
 import { getProjectTree } from "@/lib/projects";
 import { subteamCreateSchema } from "@/lib/validation";
@@ -173,27 +173,8 @@ export const subteamTools: ToolModule = (server) => {
       annotations: WRITE,
     },
     async ({ name, color }) => {
-      // The action returns nothing and names are not unique, so the new row is
-      // found by difference: the rows carrying this (trimmed) name before the
-      // call are excluded afterwards. A retry after a timeout therefore gets its
-      // own row, and a concurrent create of the same name is reported rather
-      // than guessed at.
-      const stored = name.trim();
-      const before = await prisma.subteam.findMany({ where: { name: stored }, select: { id: true } });
-      await createSubteam(toFormData({ name, color }));
-      const added = await prisma.subteam.findMany({
-        where: { name: stored, id: { notIn: before.map((s) => s.id) } },
-        orderBy: { createdAt: "desc" },
-        select: { id: true },
-      });
-      if (added.length === 0) throw new Error("Subteam was not created");
-      if (added.length > 1) {
-        throw new Error(
-          `Created a subteam named "${stored}", but another with that name appeared at the same time; ` +
-            `see list_subteams (new ids: ${added.map((s) => s.id).join(", ")})`,
-        );
-      }
-      return readSubteamRow(added[0].id);
+      const { id } = await createSubteamReturningId(toFormData({ name, color }));
+      return readSubteamRow(id);
     },
   );
 
