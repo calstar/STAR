@@ -64,7 +64,9 @@ export async function authenticateBearer(authorization: string | null | undefine
   }
   return {
     ok: true,
-    identity: { email: row.user.email, name: row.user.name ?? row.user.email },
+    // An empty name is "unknown"; getCurrentDbUser leaves the stored name alone
+    // rather than overwriting it with a placeholder.
+    identity: { email: row.user.email, name: row.user.name ?? "" },
     userId: row.userId,
     tokenId: row.id,
   };
