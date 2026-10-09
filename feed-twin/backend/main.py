@@ -177,7 +177,7 @@ def _console_hidden(diagram_id: str) -> set[str]:
 
 def _who(request: Request) -> str:
     """Who is asking, the way every other route here names them."""
-    return userdata.store.current_user(request)
+    return str(userdata.store.current_user(request))
 
 
 #: Where a CEA table is looked for. Absent, the chamber falls back to a constant
