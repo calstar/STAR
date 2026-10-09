@@ -349,7 +349,8 @@ def _report(model: Model) -> ReportOut:
 
 def _applied(model: Model) -> tuple[Applied, ...]:
     """The operator overrides that took effect on this assembly."""
-    return tuple(model.meta.get("overrides") or ())  # type: ignore[arg-type]
+    applied = model.meta.get("overrides")
+    return applied if isinstance(applied, tuple) else ()
 
 
 def _leg_out(side: SideBalance, chamber_pressure: float) -> LegOut:
