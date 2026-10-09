@@ -271,6 +271,17 @@ defineTool(server, "archive_task", {
 | `delete_subteam` | Delete a subteam; its tasks keep existing with no subteam; returns `tasksDetached` | admins only; destructive |
 | `list_users` | Everyone who has signed in (the assignee picker's team): id, email, name, displayName, isAdmin, createdAt, openTaskCount | read |
 | `get_user` | One user by `userId` or `email` (exactly one): the same summary plus `assignedTaskCount`, `archivedTaskCount`, `tasksByStatus`. Never settings or tokens | read |
+| `list_reimbursements` | The Finance table, newest first, with the page's filters: `status` (a display-status key), `mine`, `review` (needs an admin), `search` | read |
+| `get_reimbursement` | One reimbursement by R-number: fields, items + receipts, timeline, `can`; PII and receipt links redacted unless you are the payee, the filer or an admin | read |
+| `get_payee_defaults` | What the New reimbursement form pre-fills for you (saved profile, else your newest CalLink request, else account) | read |
+| `file_reimbursement` | File a reimbursement like the form: the form's fields plus `receipts` (base64 PDF/PNG/JPEG, one per item, under 4 MB); lands as `pending_approval` | write; same code path as `POST /api/finance/requests` |
+| `approve_reimbursement` | Queue a pending reimbursement for the CalLink worker | admins only; write |
+| `reject_reimbursement` | Reject a pending reimbursement with a reason (≤1000 chars) | admins only; destructive (final) |
+| `retry_reimbursement` | Put a failed filing back in the queue | admins only; write |
+| `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin also when approved or failed | destructive (final) |
+| `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`) | admins only; write |
+| `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
+| `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
 
 Modules append their tools here as they land.
 
