@@ -2892,11 +2892,28 @@ class Session:
             if sim.state.liquid_mass > DRY_MASS:
                 continue
             filling = self._fill_lines.get(sim.id, frozenset())
+            here = self._last_pressures.get(sim.outlet_node, sim.pressure)
             for branch_id, branch in net.branches.items():
+                if sim.outlet_node not in (branch.upstream, branch.downstream):
+                    continue
                 if branch_id in filling:
-                    continue  # the line it is loaded through: open to a dry tank
-                if sim.outlet_node in (branch.upstream, branch.downstream):
-                    out.add(branch_id)
+                    # The line it is loaded through stays open to a dry tank --
+                    # while it can push liquid *in*. An open branch flows both
+                    # ways: with a dump open on the far side (LE4's FD-ROT-G,
+                    # which nothing commands and rests open), the dry tank
+                    # "drained" through it at ~0.5 kg/s for as long as the stand
+                    # ran, and the vessel's floor re-made every gram -- 20 kg
+                    # of propellant from nothing in 40 s. Judged on the last
+                    # solve's pressures, not its flow: a flow test on a shut
+                    # branch reads zero and never reopens.
+                    far = (
+                        branch.upstream
+                        if branch.downstream == sim.outlet_node
+                        else branch.downstream
+                    )
+                    if self._last_pressures.get(far, 0.0) > here:
+                        continue
+                out.add(branch_id)
         return frozenset(out)
 
     def _firing(self) -> bool:

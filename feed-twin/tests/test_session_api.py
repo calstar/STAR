@@ -103,9 +103,15 @@ def test_garbage_setup_is_ignored_rather_than_fatal() -> None:
 
 def test_a_huge_step_is_clamped() -> None:
     """A tab that was in the background for a minute must resume, not integrate
-    a minute of stand in one explicit step."""
+    a minute of stand in one explicit step. Time warp lets a tick carry a few
+    seconds (MAX_TICK_S), but as the session's own small steps."""
+    from backend.main import MAX_TICK_S
+
     state = open_session()
-    assert tick(state["id"], dt=1.0e6)["t"] < 5.0
+    after = tick(state["id"], dt=1.0e6)
+    assert after["t"] <= MAX_TICK_S + 0.01
+    solver = client.get(f"/api/session/{state['id']}/solver").json()
+    assert solver["summary"]["ticks"] >= 0.8 * MAX_TICK_S / 0.02, "one big step"
 
 
 @pytest.mark.parametrize("dt", [-1.0, 0.0, 1e-12])

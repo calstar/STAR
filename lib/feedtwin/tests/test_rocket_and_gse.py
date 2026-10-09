@@ -494,3 +494,34 @@ def test_the_cart_regulators_drawn_with_settings_get_knobs_at_them() -> None:
     assert knobs[DOME].psig == pytest.approx(535.0)
     assert knobs[CHARGE].psig == pytest.approx(3750.0)
     assert knobs[ids["LP-PR"]].psig == pytest.approx(150.0)
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_dry_tank_does_not_drain_back_through_its_fill_line() -> None:
+    """The flight fuel tank's fill line stays open to it when dry, so it can be
+    loaded -- but only while the far side can push liquid in. With a dump open
+    beyond it (LE4's FD-ROT-G, uncommanded and resting open; here the cart's
+    hand dump and transfer valve opened), the dry tank "drained" through the
+    line forever and the vessel's floor re-made the mass: ~0.46 kg/s of
+    propellant from nothing, booked as guard."""
+    from feedtwin.session.burn import jump_to_t0
+
+    ids = _ids()
+    payload = _payload()
+    for node in payload["nodes"]:
+        if node["data"]["label"] == "FF-MAN-Dump":
+            node["data"].setdefault("options", {})["normalPosition"] = "open"
+    session = _session(payload)
+    jump_to_t0(session, copv_psi=4000.0, fill_fraction=0.95)
+    session.release(ids["FF-MAN-Output"])
+    session.set_valve(ids["FF-MAN-Output"], True)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    for _ in range(300):  # 15 s: the tank drains through the dump, then is dry
+        session.step(0.05)
+    assert fuel.state.liquid_mass == pytest.approx(0.0, abs=1e-3)
+    guard = session.solver_log[-1].guard_kg
+    for _ in range(200):  # 10 s dry
+        session.step(0.05)
+    last = session.solver_log[-1]
+    assert last.guard_kg - guard < 0.05, "the floor is re-making propellant"
+    assert abs(last.mass_error_kg - last.guard_kg) < 1e-6
