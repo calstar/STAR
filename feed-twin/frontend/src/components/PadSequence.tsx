@@ -18,10 +18,16 @@
  * bypass in it does not have the guide suggesting it.
  *
  * Fire is never taken automatically. The auto-sequence stops at Ready.
+ *
+ * Drawn inside the State Machine panel (2026-10-09): the state to press is
+ * ringed on the grid and one line says what is happening. It used to be a
+ * strip along the bottom of the console with its own button for the next
+ * state -- a second state machine, one button wide.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { fixed, type SessionState, type StandSetup, type StateMachine, type TankState } from '../api';
+import { Link } from 'react-router-dom';
+import { fixed, type Burn, type SessionState, type StandSetup, type StateMachine, type TankState } from '../api';
 
 interface Phase {
   key: string;
@@ -42,9 +48,10 @@ interface Phase {
 /** Where a fill stops: the session's FULL_FRACTION -- a 5 % ullage, which is
  *  how the stand is loaded (6.5 kg of ethanol plus 5 %). */
 const FULL = 0.95;
-/** Loaded means the fill has all but stopped. Strictly under FULL, because
- *  the fill lands *at* FULL and a threshold equal to it never fires. */
-const LOADED = 0.9;
+/** Loaded means the load has all but stopped: this share of what it fills
+ *  the tank to. Strictly under 1, because the load lands *at* its target and
+ *  a threshold equal to it never fires. */
+const LOADED_OF_TARGET = 0.95;
 /** At pressure means within this of the lockup its regulator gives now [psi]:
  *  dome + bias less the supply effect of the bottle behind it, which with a
  *  full COPV sits *below* the dome. Close, not 95 %: the guide once moved on
@@ -75,10 +82,16 @@ const chilled = (t: TankState | undefined) =>
   t.liquid_temperature_K >= CRYOGENIC_K ||
   t.wall_temperature_K === undefined ||
   t.wall_temperature_K - t.liquid_temperature_K < WARM_WALL_K;
+/** How far through its load a tank is, 0..1: against what the load fills it
+ *  to (the engine's fire load, which T-0 and the pad load), or the full
+ *  fraction from an older server. A 6.75 kg fire load is 73 % of LE4's LOX
+ *  tank; read against 90 %, every T-0 "slipped". */
+const loaded = (t: TankState) =>
+  t.load_kg && t.load_kg > 0 ? Math.min(t.liquid_mass_kg / t.load_kg, 1) : Math.min(t.fill_fraction / FULL, 1);
 /** 0..1 through the load: the fill first, then the chilldown. */
 const loadProgress = (t: TankState | undefined) => {
   if (!t) return 0;
-  const fill = Math.min(t.fill_fraction / FULL, 1);
+  const fill = loaded(t);
   if (fill < 1 || chilled(t)) return fill;
   const excess = (t.wall_temperature_K ?? t.liquid_temperature_K) - t.liquid_temperature_K;
   // 293 K wall on 90 K LOX is the start of the chilldown; WARM_WALL_K the end.
@@ -93,23 +106,23 @@ const PHASES: Phase[] = [
     key: 'ox',
     label: 'Load LOX',
     target: 'Ox Fill',
-    waiting: 'LOX arriving from the tanker, then the wall chilling down — keep venting until it is cold',
-    done: (l) => (oxTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(oxTank(l)),
+    waiting: 'LOX loading; the wall chills first, so keep venting',
+    done: (l) => (oxTank(l) ? loaded(oxTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(oxTank(l)),
     progress: (l) => loadProgress(oxTank(l)),
   },
   {
     key: 'fuel',
     label: 'Load fuel',
     target: 'Fuel Fill',
-    waiting: 'fuel arriving from the tanker',
-    done: (l) => (fuelTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(fuelTank(l)),
+    waiting: 'fuel loading',
+    done: (l) => (fuelTank(l) ? loaded(fuelTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(fuelTank(l)),
     progress: (l) => loadProgress(fuelTank(l)),
   },
   {
     key: 'charge',
     label: 'Charge COPV',
     target: 'GN2 High Press',
-    waiting: 'bottle charging from the GSE cart',
+    waiting: 'COPV charging',
     done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
   },
@@ -117,7 +130,7 @@ const PHASES: Phase[] = [
     key: 'oxpress',
     label: 'Press LOX',
     target: 'Ox Press',
-    waiting: 'LOX tank coming up through the regulator',
+    waiting: 'LOX tank pressing up to lockup',
     done: (l, s) =>
       (oxTank(l)?.pressure_psi ?? Infinity) >=
       pressTarget(oxTank(l), s.dome) - PRESSED_PSI,
@@ -128,7 +141,7 @@ const PHASES: Phase[] = [
     key: 'fuelpress',
     label: 'Press fuel',
     target: 'Fuel Press',
-    waiting: 'fuel tank coming up through the regulator',
+    waiting: 'fuel tank pressing up to lockup',
     done: (l, s) =>
       (fuelTank(l)?.pressure_psi ?? Infinity) >=
       pressTarget(fuelTank(l), s.dome) - PRESSED_PSI,
@@ -139,7 +152,7 @@ const PHASES: Phase[] = [
     key: 'topup',
     label: 'Top up COPV',
     target: 'GN2 High Press',
-    waiting: 'bottle back to target after pressing',
+    waiting: 'COPV back up to its charge',
     done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
   },
@@ -164,6 +177,11 @@ const PHASES: Phase[] = [
 /** States the guide never routes through on its own. */
 const NEVER_VIA = (s: string) => /fire|abort|vent/i.test(s);
 
+/** The aborts. The table's only way out of one is often through another
+ *  (Engine Abort reaches GSE Abort, and only GSE Abort reaches Idle), so the
+ *  guide walks abort to abort on the way out -- never into one. */
+const ABORT = (s: string) => /abort/i.test(s);
+
 /** Past the point of no return on the table: from here the only ways back to
  *  a fill or a press go through Vent or an abort, so the loading phases are
  *  taken as read and the guide stops re-checking them. A tank that has sagged
@@ -173,7 +191,8 @@ const COMMITTED = (s: string) => /^(calibrate|ready|fire)$/i.test(s);
 /**
  * First hop of the shortest legal path from `from` to `to`, or '' if there is
  * none that avoids Fire, Vent and the aborts. The target itself may be Fire —
- * that is the last step — but nothing is routed *through* it.
+ * that is the last step — but nothing is routed *through* it. From inside an
+ * abort the path may step to another abort, which is how the table leaves one.
  */
 function firstHop(machine: StateMachine, from: string, to: string): string {
   if (from === to) return '';
@@ -183,7 +202,7 @@ function firstHop(machine: StateMachine, from: string, to: string): string {
     const here = queue.shift() as string;
     for (const next of machine.transitions[here] ?? []) {
       if (prev.has(next)) continue;
-      if (next !== to && NEVER_VIA(next)) continue;
+      if (next !== to && NEVER_VIA(next) && !(ABORT(here) && ABORT(next))) continue;
       prev.set(next, here);
       if (next === to) {
         let hop = to;
@@ -196,188 +215,241 @@ function firstHop(machine: StateMachine, from: string, to: string): string {
   return '';
 }
 
-interface Props {
-  live: SessionState;
-  machine: StateMachine;
-  setup: StandSetup;
-  go: (state: string) => void;
-  hasEngine: boolean;
-  /** One line along the bottom of the console rather than a section. */
-  compact?: boolean;
+/** Where the stand is on the pad, read off its physical state. */
+export interface PadGuide {
+  phases: Phase[];
+  /** Index of the phase being worked; `phases.length` when all are done. */
+  index: number;
+  current: Phase | undefined;
+  /** The stand is sitting in the current phase's state, waiting it out. */
+  inTarget: boolean;
+  /** The state to press next, '' when none (waiting, done or no route). */
+  hop: string;
+  legal: boolean;
+  /** 0..1 through the current wait, when it has a size. */
+  progress: number | undefined;
+  /** Phases done before the stand was committed that have since slipped. */
+  sagged: Phase[];
+  auto: boolean;
+  setAuto: (on: boolean) => void;
 }
 
-export default function PadSequence({ live, machine, setup, go, hasEngine, compact = false }: Props) {
+/**
+ * The pad sequence as state for a panel to draw: which phase, what to press
+ * next, how far through a wait. The auto-sequence runs here, so it keeps
+ * running whatever draws it.
+ */
+export function usePadGuide(
+  stand: SessionState | null,
+  machine: StateMachine | null,
+  setup: StandSetup,
+  go: (state: string) => void,
+  /** Drawing ids of the ground support: its dewar and K-bottles are where a
+   *  load comes from, not the tank being loaded. */
+  ground: ReadonlySet<string> = new Set(),
+): PadGuide | null {
   const [auto, setAuto] = useState(false);
-  const phases = PHASES.filter((p) => machine.states.includes(p.target));
-  const committed = COMMITTED(live.state);
-  const current = phases.find(
-    (p) => !p.done(live, setup) && !(committed && p.key !== 'ready' && p.key !== 'fire'),
-  );
-  const index = current ? phases.indexOf(current) : phases.length;
-  // What has sagged since the stand was committed. Hot pressurant collapsing
-  // onto a cryogen after the press solenoid shuts is physical and is exactly
-  // what an operator watches for at Ready; the guide names it rather than
-  // pretending the checklist is still green.
-  // Not during a burn: tanks emptying into an engine have not "sagged".
-  const sagged =
-    committed && live.state !== 'Fire'
-      ? phases.filter((p) => !p.done(live, setup) && p.key !== 'ready' && p.key !== 'fire')
-      : [];
-
-  // Where the stand is, relative to the current phase.
-  const inTarget = current !== undefined && live.state === current.target;
-  const hop = current && !inTarget ? firstHop(machine, live.state, current.target) : '';
-  const legal = hop !== '' && live.reachable.includes(hop);
-  const progress = current?.progress?.(live, setup);
+  const commanded = useRef('');
+  const live = stand && {
+    ...stand,
+    tanks: stand.tanks.filter((t) => !ground.has(t.id)),
+    bottles: stand.bottles.filter((b) => !ground.has(b.id)),
+  };
+  const guide = (() => {
+    if (!live || !machine) return null;
+    const phases = PHASES.filter((p) => machine.states.includes(p.target));
+    const committed = COMMITTED(live.state);
+    const current = phases.find(
+      (p) => !p.done(live, setup) && !(committed && p.key !== 'ready' && p.key !== 'fire'),
+    );
+    const index = current ? phases.indexOf(current) : phases.length;
+    // What has sagged since the stand was committed. Hot pressurant collapsing
+    // onto a cryogen after the press solenoid shuts is physical and is exactly
+    // what an operator watches for at Ready; the guide names it rather than
+    // pretending the checklist is still green.
+    // Not during a burn: tanks emptying into an engine have not "sagged".
+    const sagged =
+      committed && live.state !== 'Fire'
+        ? phases.filter((p) => !p.done(live, setup) && p.key !== 'ready' && p.key !== 'fire')
+        : [];
+    const inTarget = current !== undefined && live.state === current.target;
+    const hop = current && !inTarget ? firstHop(machine, live.state, current.target) : '';
+    const legal = hop !== '' && live.reachable.includes(hop);
+    const progress = current?.progress?.(live, setup);
+    return { phases, index, current, inTarget, hop, legal, progress, sagged };
+  })();
 
   // Auto-sequence: take each legal hop as it comes, wait out the waits, and
   // stop at Ready. Fire is the operator's. One command per distinct stand
   // state, so a slow round trip does not double-command.
-  const commanded = useRef('');
+  const stamp = guide && live ? `${live.state}>${guide.hop}` : '';
+  // Nor does it lead the stand out of an abort: that is the operator's call,
+  // and an auto-sequence that resumed a fill after someone hit abort would be
+  // the worst thing on the page.
+  const stop = !guide?.current || guide.current.key === 'fire' || Boolean(live && ABORT(live.state));
+  const act = Boolean(guide && !guide.inTarget && guide.legal);
   useEffect(() => {
     if (!auto) {
       commanded.current = '';
       return;
     }
-    if (!current || current.key === 'fire') {
+    if (stop) {
       setAuto(false);
       return;
     }
-    if (inTarget || !legal) return;
-    const stamp = `${live.state}>${hop}`;
+    if (!act || !guide) return;
     if (commanded.current === stamp) return;
     commanded.current = stamp;
-    go(hop);
-  }, [auto, current, inTarget, legal, hop, live.state, go]);
+    go(guide.hop);
+  }, [auto, stop, act, stamp]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return (
-    <section>
-      {!compact && (
-        <div className="mb-2 flex flex-wrap items-baseline gap-3">
-          <h2 className="caps">
-            Pad sequence
-          </h2>
-          <span className="text-[11px] text-gray-600">
-            read off the stand, not a script — a tank you filled by hand counts
+  return guide ? { ...guide, auto, setAuto } : null;
+}
+
+/**
+ * The guide as one line over the state machine's grid: the checklist as dots, what
+ * is happening or what to press, and the auto-sequence. The state to press is
+ * ringed on the grid itself; the strip of buttons that used to sit along the
+ * bottom of the console repeated the grid (the operator, 2026-10-09).
+ */
+export function PadGuideLine({
+  guide,
+  state,
+  hasEngine,
+  burn,
+  burnout = '',
+}: {
+  guide: PadGuide;
+  state: string;
+  hasEngine: boolean;
+  /** The stand's latest burn, live while it burns. */
+  burn?: Burn;
+  /** The stand's burnout note, while it stands (it clears on the next state). */
+  burnout?: string;
+}) {
+  const { phases, index, current, inTarget, hop, legal, progress, sagged, auto, setAuto } = guide;
+  // During a burn and in the Vent it ends in, the line is the burn: what
+  // someone watching wants then is how it went, not that the tanks are empty
+  // and the next thing is a LOX load.
+  const burning = state === 'Fire';
+  const burned = !burning && Boolean(burnout) && burn !== undefined && !burn.burning;
+  if ((burning || burned) && burn) {
+    const why = burnout.match(/: (.+? ran dry)/)?.[1];
+    return (
+      <div className="flex min-w-0 items-center gap-x-4 font-mono text-[12px]">
+        <span className={`min-w-0 flex-1 truncate ${burned ? 'text-[var(--color-success)]' : 'text-[var(--ink)]'}`}>
+          {burned ? 'Burned' : 'Burning'}{' '}
+          <span className="tabular-nums">{fixed(burn.duration_s, 2)} s</span>
+          <span className="text-[var(--ink-2)]">
+            {' · '}
+            <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
+            {burn.isp_s > 0 && (
+              <>
+                {' · Isp '}
+                <span className="tabular-nums">{fixed(burn.isp_s, 0)} s</span>
+              </>
+            )}
+            {burned && why && ` — ${why}`}
           </span>
-        </div>
-      )}
-
-      {!hasEngine && (
-        <p className="mb-2 rounded-lg border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-[12px] leading-relaxed text-amber-300">
-          No engine is attached to this stand. Without one the chamber is a
-          boundary: the tanks will load and press, but Fire lights nothing. Pick
-          an engine in the Library tab.
-        </p>
-      )}
-
-      <div className={`bg-card rounded-lg border border-gray-800 ${compact ? 'flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-1.5' : 'px-4 py-3'}`}>
-        {compact && (
-          <span className="caps text-[10px]">Sequence</span>
+        </span>
+        {burned && (
+          <span className="flex flex-shrink-0 gap-3 text-[11px]">
+            <Link to="/engine" className="text-[var(--ink-2)] underline-offset-2 hover:text-[var(--ink)] hover:underline">
+              Engine
+            </Link>
+            <Link to="/runs" className="text-[var(--ink-2)] underline-offset-2 hover:text-[var(--ink)] hover:underline">
+              Runs
+            </Link>
+          </span>
         )}
-        <ol className={`flex flex-wrap ${compact ? 'gap-x-3 gap-y-1' : 'gap-x-5 gap-y-2'}`}>
-          {phases.map((p, i) => {
-            const state = i < index ? 'done' : i === index ? 'active' : 'pending';
-            return (
-              <li
-                key={p.key}
-                className={`flex items-center gap-1.5 text-[12px] ${
-                  state === 'done'
-                    ? 'text-green-400'
-                    : state === 'active'
-                      ? 'font-semibold text-white'
-                      : 'text-gray-600'
-                }`}
-              >
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${
-                    state === 'done'
-                      ? 'bg-green-500'
-                      : state === 'active'
-                        ? 'bg-[var(--ink)]'
-                        : 'bg-gray-700'
-                  }`}
-                />
-                {p.label}
-              </li>
-            );
-          })}
-        </ol>
-
-        {sagged.length > 0 && (
-          <p className="mt-2 text-[12px] text-amber-300">
-            Since the stand was committed: {sagged.map((p) => p.label.toLowerCase()).join(', ')}{' '}
-            {sagged.length === 1 ? 'has' : 'have'} dropped below the mark. Fire as it
-            stands, or Vent and go round again.
-          </p>
-        )}
-
-        <div className={`flex flex-wrap items-center gap-3 ${compact ? '' : 'mt-3'}`}>
-          {current === undefined ? (
-            <span className="text-[12px] text-green-300">
-              Sequence complete — the stand is in {live.state}.
-            </span>
-          ) : inTarget ? (
-            <>
-              <span className="text-[12px] text-text">
-                {current.key === 'fire' ? 'Burning.' : `In ${live.state}: ${current.waiting}.`}
-              </span>
-              {progress !== undefined && (
-                <span className="flex items-center gap-2">
-                  <span className="relative h-1.5 w-40 overflow-hidden rounded bg-black/50">
-                    <span
-                      className="absolute inset-y-0 left-0 rounded bg-blue-500 transition-[width] duration-200"
-                      style={{ width: `${Math.min(Math.max(progress, 0), 1) * 100}%` }}
-                    />
-                  </span>
-                  <span className="font-mono text-[11px] tabular-nums text-text-muted">
-                    {fixed(Math.min(progress, 1) * 100, 0)}%
-                  </span>
-                </span>
-              )}
-            </>
-          ) : hop ? (
-            <>
-              <span className="text-[12px] text-text-muted">
-                Next, to {current.label.toLowerCase()}:
-              </span>
-              <button
-                type="button"
-                disabled={!legal}
-                onClick={() => go(hop)}
-                title={legal ? undefined : `${hop} is not reachable from ${live.state} right now`}
-                className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all ${
-                  current.key === 'fire'
-                    ? 'bg-red-700 text-white hover:bg-red-600'
-                    : 'bg-blue-600 text-white hover:bg-blue-500'
-                } disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-500`}
-              >
-                {hop}
-                {hop !== current.target && (
-                  <span className="ml-1.5 font-normal text-blue-200/80">→ {current.target}</span>
-                )}
-              </button>
-            </>
-          ) : (
-            <span className="text-[12px] text-amber-300">
-              No legal route from {live.state} to {current.target} without an abort or a
-              vent. Take the stand back by hand.
-            </span>
-          )}
-
-          {current !== undefined && current.key !== 'fire' && (
-            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-text-muted">
-              <input
-                type="checkbox"
-                checked={auto}
-                onChange={(e) => setAuto(e.target.checked)}
-                className="accent-blue-500"
-              />
-              Run the sequence to Ready
-            </label>
-          )}
-        </div>
       </div>
-    </section>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5 font-mono text-[12px]">
+      <div className="flex min-w-0 items-center gap-x-4">
+        <span
+          className="flex flex-shrink-0 items-center gap-1"
+          title={phases
+            .map((p, i) => `${i < index ? '✓' : i === index ? '▸' : '·'} ${p.label}`)
+            .join('\n')}
+        >
+          {phases.map((p, i) => (
+            <span
+              key={p.key}
+              className="inline-block h-1.5 w-3"
+              style={{
+                background:
+                  i < index ? 'var(--color-success)' : i === index ? 'var(--ink)' : 'var(--line-strong)',
+              }}
+            />
+          ))}
+          <span className="ml-1.5 text-[11px] text-[var(--ink-3)]">
+            {Math.min(index, phases.length)}/{phases.length}
+          </span>
+        </span>
+        {current === undefined ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--color-success)]">Pad complete — the stand is in {state}.</span>
+        ) : inTarget ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[var(--ink-2)]">
+            <span className="truncate">
+              {current.key === 'fire' ? 'Burning.' : `${current.label}: ${current.waiting}.`}
+            </span>
+            {progress !== undefined && (
+              <>
+                <span className="relative h-1 w-24 flex-shrink-0 overflow-hidden bg-[var(--line)]">
+                  <span
+                    className="absolute inset-y-0 left-0 bg-[var(--ink-2)] transition-[width] duration-200"
+                    style={{ width: `${Math.min(Math.max(progress, 0), 1) * 100}%` }}
+                  />
+                </span>
+                <span className="tabular-nums text-[var(--ink-3)]">{fixed(Math.min(progress, 1) * 100, 0)}%</span>
+              </>
+            )}
+          </span>
+        ) : hop && ABORT(state) ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
+            Out of {state}: press{' '}
+            <span className={legal ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-3)]'}>{hop}</span>
+            <span className="text-[var(--ink-3)]"> → … → {current.target}</span>
+          </span>
+        ) : hop ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
+            Next, {current.label.toLowerCase()}: press{' '}
+            <span className={legal ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-3)]'}>{hop}</span>
+            {hop !== current.target && <span className="text-[var(--ink-3)]"> → {current.target}</span>}
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[var(--color-warning)]">
+            No route from {state} to {current.target} without a vent or an abort.
+          </span>
+        )}
+        {current !== undefined && current.key !== 'fire' && !ABORT(state) && (
+          <label
+            className="ml-auto flex flex-shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-[var(--ink-3)]"
+            title="Press each state as it comes and wait out the loads and presses, stopping at Ready. Fire stays yours."
+          >
+            <input
+              type="checkbox"
+              checked={auto}
+              onChange={(e) => setAuto(e.target.checked)}
+              className="accent-[var(--ink-2)]"
+            />
+            Auto to Ready
+          </label>
+        )}
+      </div>
+      {sagged.length > 0 && (
+        <span className="text-[var(--color-warning)]">
+          Since commit, {sagged.map((p) => p.label.toLowerCase()).join(', ')}{' '}
+          {sagged.length === 1 ? 'has' : 'have'} slipped. Fire as it stands, or Vent and go round again.
+        </span>
+      )}
+      {!hasEngine && (
+        <span className="text-[var(--color-warning)]">
+          No engine on this stand: tanks load and press, but Fire lights nothing. Pick one in Library.
+        </span>
+      )}
+    </div>
   );
 }

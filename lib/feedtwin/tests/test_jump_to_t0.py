@@ -41,3 +41,21 @@ def test_t0_is_loaded_charged_and_at_lockup_in_ready() -> None:
     )
     bottle = next(iter(session.bottles.values()))
     assert psig(bottle.pressure) == pytest.approx(4500.0, abs=5.0)
+
+
+def test_reading_the_lockup_moves_nothing() -> None:
+    """The console reads each tank's lockup on every tick. Evaluated through
+    the step's signals, that snapped every valve to its command: a main
+    halfway through its travel was fully open after the readout, so the
+    console's valves opened in one tick whatever their travel time."""
+    session = _helium_stand()
+    jump_to_t0(session, copv_psi=4500.0, fill_fraction=0.9)
+    session.command_state("Fire")
+    travel = min(session._travel_time(v) for v in session.model.built.actuators)
+    session.step(travel / 4)
+    moving = {v: x for v, x in session._positions.items() if 0.0 < x < 1.0}
+    assert moving, "a valve should be mid-travel a quarter of the way in"
+    tank_id = next(iter(session.tanks))
+    for loaded in (False, True):
+        regulator_lockup(session, tank_id, loaded_dome=loaded)
+        assert {v: session._positions[v] for v in moving} == moving

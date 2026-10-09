@@ -193,6 +193,11 @@ LOW_TANK = 0.10
 #: Fraction of its fill target below which a bottle is worth mentioning.
 LOW_BOTTLE = 0.25
 
+#: Propellant leaving a vehicle tank with the engine cold faster than this
+#: [kg/s] gets a note naming where it goes: five grams a second, well over
+#: anything a closed stand weeps and well under a dump.
+LEAK_NOTE_KG_S = 0.005
+
 #: Chamber closure tolerance [Pa] and iteration cap. The chamber node is a
 #: boundary whose value depends on the flows it receives; each cockpit step
 #: finds the pressure at which the network's delivery and the chamber's
@@ -1160,6 +1165,13 @@ class TankSim:
         self.chilling = False
         return True
 
+    @property
+    def load_target_kg(self) -> float:
+        """What a load fills this tank to [kg] (:meth:`_wanted`), for the pad
+        guide: a fire load of 6.75 kg is 73 % of LE4's LOX tank, and a guide
+        that wanted 90 % said the load had slipped after every T-0."""
+        return self._wanted()
+
     def _wanted(self) -> float:
         """Liquid mass a load stops at [kg]: the fire load when there is one,
         never more than the full fraction of the tank."""
@@ -1875,6 +1887,8 @@ class Session:
         self.trip: Trip | None = None
         #: Set when Fire ended by a tank running dry (see _burnout_check).
         self.burnout: str | None = None
+        #: Stand time the current state was entered at (command_state).
+        self._state_since = 0.0
         self.t = 0.0
         self.wall = time.monotonic()
         self.history: Deque[Sample] = deque(maxlen=HISTORY)
@@ -2063,6 +2077,32 @@ class Session:
                 in load
             }
         return self._fire_loads
+
+    def short_loads(self) -> list[str]:
+        """Each vehicle tank too small for the engine's fire load, said.
+
+        A load stops at the tank's full fraction (``TankSim._wanted``), so a
+        drawn tank that cannot hold its fire load is loaded short, silently,
+        and every burn on the stand is that much shorter than the engine was
+        designed for. Empty when every tank holds its load.
+        """
+        out: list[str] = []
+        for tank_id, kg in self.fire_loads().items():
+            sim = self.tanks[tank_id]
+            fraction = self.setup.full_fraction
+            held = (
+                sim.tank.geometry.total_volume
+                * fraction
+                * sim.tank.liquid_density(sim.state)
+            )
+            if held < kg - 0.005:
+                out.append(
+                    f"{sim.label} holds {held:.2f} kg at its {fraction:.0%} fill, "
+                    f"under the engine's {kg:.2f} kg fire load: a fire is loaded "
+                    f"with {held:.2f} kg. A bigger tank on the drawing, or a "
+                    "higher full fraction (Configuration), loads the rest."
+                )
+        return out
 
     @property
     def vehicle_tanks(self) -> tuple[str, ...]:
@@ -2504,7 +2544,9 @@ class Session:
                     pressure=from_psig(copv_psi), temperature=293.15
                 )
             bottle.charged = True
-        self.state = state if state in self.machine.states else self.state
+        if state in self.machine.states and state != self.state:
+            self.state = state
+            self._state_since = self.t
         # T-0 has the dome loaded on the pad, whatever the line's valves are
         # doing when the session is put there.
         self._dome_primed = True
@@ -2629,6 +2671,7 @@ class Session:
                 f"{', '.join(self.machine.targets(self.state))}"
             )
         self.state = state
+        self._state_since = self.t
         # A transition writes every actuator the table knows, the way the
         # DAQ does, so a valve taken by hand goes back to the table's command
         # here. Holds used to outlive the state forever: the table opened Fuel
@@ -2641,14 +2684,35 @@ class Session:
         for symbol in self.binding.to_symbol.values():
             self.forced.pop(symbol, None)
 
+    @property
+    def operator_held(self) -> list[str]:
+        """Valves a person has taken from the state table, by drawing id.
+
+        :attr:`forced` holds those, and also the twin's own crew on a drawn
+        load -- the transfer valve it shuts at the start and opens for the
+        load. Shown as the operator's "1 held" on a stand nobody had touched,
+        that read as a bug (the operator, 2026-10-09). A crew valve a person
+        has since turned the other way is the person's again.
+        """
+        crew = {
+            valve
+            for valve, opened in self._fill_crew.items()
+            if self.forced.get(valve) == (1.0 if opened else 0.0)
+        }
+        return sorted(v for v in self.forced if v not in crew)
+
     def set_valve(self, drawing_id: str, is_open: bool) -> None:
         self.forced[drawing_id] = 1.0 if is_open else 0.0
 
     def release(self, drawing_id: str = "") -> None:
+        """Hand a valve back to the state table; with no id, every valve a
+        person took (:attr:`operator_held`) -- not the crew's on a drawn load,
+        which would open the transfer line out of turn."""
         if drawing_id:
             self.forced.pop(drawing_id, None)
         else:
-            self.forced.clear()
+            for valve in self.operator_held:
+                self.forced.pop(valve, None)
 
     def skip_chilldown(self, tank_id: str = "") -> list[str]:
         """Chill a cryogen tank's wall now rather than wait for the load to.
@@ -2768,6 +2832,34 @@ class Session:
             )
             out[signal] = self._slew(drawing_id, target, dt)
         return out
+
+    def peek_signals(self, *, loaded_dome: bool = False) -> dict[str, float]:
+        """What the components would read now, moving nothing.
+
+        :meth:`signals` is the step's: it slews each valve toward its command
+        (a zero ``dt`` snaps it there), spends the T-0 dome prime, and records
+        what each dome line holds. A readout must do none of that -- the
+        lockup under the dome knob, asked for on every console tick, snapped
+        every valve to its command mid-travel, so the console's mains opened
+        in one tick whatever their travel time.
+
+        ``loaded_dome``: read each dome line as open to its loader, the dome
+        the knob sets -- not what a shut line holds (atmosphere, in Idle).
+        """
+        positions = dict(self._positions)
+        held = dict(self._dome_held)
+        readings = dict(self._dome_readings)
+        primed = self._dome_primed
+        self._dome_primed = primed or loaded_dome
+        try:
+            return self.signals()
+        finally:
+            self._positions.clear()
+            self._positions.update(positions)
+            self._dome_held.clear()
+            self._dome_held.update(held)
+            self._dome_readings = readings
+            self._dome_primed = primed
 
     def _gated_dome(
         self, line: DomeLine | None, live: float, commanded: Mapping[str, float]
@@ -2892,11 +2984,25 @@ class Session:
             if sim.state.liquid_mass > DRY_MASS:
                 continue
             filling = self._fill_lines.get(sim.id, frozenset())
+            # The line it is loaded through stays open to a dry tank in its fill
+            # state, and only then. Always open, an open branch flows both
+            # ways: with a dump open on the far side (LE4's FD-ROT-G, which
+            # nothing commands and rests open) the dry tank "drained" through
+            # it at ~0.5 kg/s for as long as the stand ran, the vessel's floor
+            # re-making every gram -- 20 kg of propellant from nothing in 40 s.
+            # Not on the last solve's pressures: the two sides of a dry tank's
+            # idle line sit within a hair of each other, the line flipped every
+            # step, and a circuit that changes every step drops its flows every
+            # step (a topped LOX tank's vent with them). Nor on the transfer
+            # valve held open by hand, which is that drain again. A dry tank is
+            # loaded through the drawing in its fill state.
+            loading = self._loading(sim)
             for branch_id, branch in net.branches.items():
-                if branch_id in filling:
-                    continue  # the line it is loaded through: open to a dry tank
-                if sim.outlet_node in (branch.upstream, branch.downstream):
-                    out.add(branch_id)
+                if sim.outlet_node not in (branch.upstream, branch.downstream):
+                    continue
+                if branch_id in filling and loading:
+                    continue
+                out.add(branch_id)
         return frozenset(out)
 
     def _firing(self) -> bool:
@@ -3912,6 +4018,13 @@ class Session:
                     frontier.append(there)
         return out
 
+    def _loading(self, sim: TankSim) -> bool:
+        """The stand is in this tank's fill state ("Fuel Fill", "Ox Fill")."""
+        name = self.state.lower()
+        side = propellant_side(sim.tank.liquid.name)
+        words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
+        return "fill" in name and any(w in name for w in words)
+
     def _stop_full_loads(self) -> None:
         """The crew's hand on a drawn load's transfer valve.
 
@@ -3923,16 +4036,12 @@ class Session:
         crew would do changes, so a hand on the P&ID in between is kept.
         """
         labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
-        name = self.state.lower()
         for tank_id, valve in self._fill_stops.items():
             sim = self.tanks[tank_id]
             sim.full_fraction = self.setup.full_fraction
             sim.load_kg = self.fire_loads().get(tank_id, 0.0)
             full = sim.state.liquid_mass >= sim._wanted()
-            side = propellant_side(sim.tank.liquid.name)
-            words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
-            loading = "fill" in name and any(w in name for w in words)
-            wanted = loading and not full
+            wanted = self._loading(sim) and not full
             if self._fill_crew.get(valve) == wanted:
                 continue
             self._fill_crew[valve] = wanted
@@ -4140,6 +4249,57 @@ class Session:
             if found:
                 out[stub] = found
         return out
+
+    def _leaking_notes(self) -> list[str]:
+        """Where a vehicle tank's propellant is going, when it is not the engine.
+
+        On LE4 the cart's FD-ROT-G -- a dump nothing in the state table
+        commands, resting open as drawn -- emptied the flight fuel tank through
+        its fill line in about ten seconds after T-0, and nothing on screen said
+        where the fuel went (2026-10-09). This names the way out: each branch
+        carrying that propellant across the stand's boundary, and whether the
+        state table drives it. Read off the last solve; changes nothing.
+        """
+        if self._firing():
+            return []
+        net = self.model.built.network
+        boundary = self._boundary_nodes()
+        owner = {b: sid for sid, bs in self.model.built.branches_of.items() for b in bs}
+        labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        commanded = set(self.binding.to_symbol.values())
+        ground = self.ground
+        notes: list[str] = []
+        for sim in self.tanks.values():
+            if sim.id in ground or sim.empty or sim.filling:
+                continue
+            arriving, leaving = self._split_at(sim.outlet_node, self._last_flows)
+            rate = leaving - arriving
+            if rate < LEAK_NOTE_KG_S:
+                continue
+            species = net.nodes[sim.outlet_node].fluid
+            exits: list[str] = []
+            for branch_id, branch in net.branches.items():
+                flow = self._last_flows.get(branch_id, 0.0)
+                if branch.downstream in boundary and branch.upstream not in boundary:
+                    inside, out_flow = branch.upstream, flow
+                elif branch.upstream in boundary and branch.downstream not in boundary:
+                    inside, out_flow = branch.downstream, -flow
+                else:
+                    continue
+                if out_flow < LEAK_NOTE_KG_S or net.nodes[inside].fluid != species:
+                    continue
+                symbol = owner.get(branch_id, branch_id)
+                name = labels.get(symbol, symbol)
+                if symbol not in commanded:
+                    name += " (nothing in the state table commands it)"
+                if name not in exits:
+                    exits.append(name)
+            where = f": out through {', '.join(exits)}" if exits else ""
+            notes.append(
+                f"{sim.label} is losing {species} at {rate:.2f} kg/s with the "
+                f"engine cold{where}."
+            )
+        return notes
 
     def _split_at(self, node: str, flows: Mapping[str, float]) -> tuple[float, float]:
         """Mass arriving at and leaving a node [kg/s], kept apart.
@@ -4813,9 +4973,12 @@ class Session:
         dry = [sim for sim in self.tanks.values() if sim.empty]
         if not dry or not self.machine.can_go(self.state, "Vent"):
             return
+        # T+ from Fire, not the stand clock: "T+302.7 s" after a 3.5 s burn
+        # read as a five-minute one.
+        lit = self.t - self._state_since
         self.command_state("Vent")
         self.burnout = (
-            f"Burnout at T+{self.t:.1f} s: {', '.join(sim.label for sim in dry)} ran "
+            f"Burnout at T+{lit:.2f} s: {', '.join(sim.label for sim in dry)} ran "
             "dry, so the sequence went to Vent."
         )
 
@@ -4927,6 +5090,7 @@ class Session:
                     "higher. The drawing has no relief valve; a real tank would "
                     "have lifted one long ago. Vent it."
                 )
+        out.extend(self._leaking_notes())
         ground = self.ground
         verbs = {GSE_CHARGE: "charge", GSE_DUMP: "dump"}
         for bottle in self.bottles.values():

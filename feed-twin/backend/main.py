@@ -83,6 +83,7 @@ from backend.models import (
     KnobOut,
     LiveKnobOut,
     SolverOut,
+    StateEvent,
     BurnTankOut,
     FreshnessOut,
     ImportResult,
@@ -99,8 +100,8 @@ from backend.models import (
     TankOut,
 )
 from backend.live import Stand
-from feedtwin.session.gauge import PSI, psig
-from backend.session import Sample as SessionSample, Session, Setup
+from feedtwin.session.gauge import PSI, from_psig, psig
+from backend.session import MAX_STEP, Sample as SessionSample, Session, Setup
 from feedtwin.session.burn import (
     BurnPlan,
     find_probes,
@@ -804,6 +805,20 @@ async def model_view(
         pages=_pages(model.diagram.nodes),
         console_hidden=sorted(_console_hidden(diagram)),
         console_order=_console_order(diagram),
+        ground_cut=[
+            str(c) for c in cast(list[Any], model.meta.get("ground_cut") or [])
+        ],
+        drawn_knobs={
+            k: round(v, 1)
+            for k, v in _drawn_knobs(
+                diagram,
+                engine,
+                fluid_set,
+                model,
+                _hookup_for(diagram, model)[0],
+                ignore_gse,
+            ).items()
+        },
         ground=sorted(ground := ground_ids(model.diagram)),
         ground_bottles=sorted(
             n.id
@@ -1189,12 +1204,8 @@ def _stand(
             f"{', '.join(sm_available())}. ({exc})",
         ) from exc
     hookup, _, problem = _hookup_for(diagram, model)
-    drawn = knob_starts(hookup, model)
+    drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
     if vehicle_only:
-        # The cart's settings are still the drawing's, though the cart is not
-        # simulated: the COPV fill charges to its fill regulator's setting.
-        whole = _assemble(diagram, engine, fluid_set)
-        drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}
         hookup = hookup_on_vehicle(hookup, model)
     return Stand(
         model=model,
@@ -1222,6 +1233,25 @@ def _lineage(artifact: Artifact) -> str:
     if artifact.source.startswith("shipped:"):
         return artifact.source
     return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+
+
+def _drawn_knobs(
+    diagram: str,
+    engine: str,
+    fluid_set: str,
+    model: Model,
+    hookup: Hookup,
+    vehicle_only: bool,
+) -> dict[str, float]:
+    """Where each knob starts on this drawing [psig], by knob id: the
+    regulators' drawn settings. Rocket only, the cart's settings are still the
+    drawing's, though the cart is not simulated: the COPV fill charges to its
+    fill regulator's setting."""
+    drawn: dict[str, float] = dict(knob_starts(hookup, model))
+    if vehicle_only:
+        whole = _assemble(diagram, engine, fluid_set)
+        drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}
+    return drawn
 
 
 def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
@@ -1373,12 +1403,33 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
     ]
 
 
-def _lockup_psig(session: Session, tank_id: str) -> float | None:
-    """The regulator lockup feeding a vehicle tank right now [psig], or None."""
+def _lockup_psig(
+    session: Session,
+    tank_id: str,
+    inlet_psig: float | None = None,
+    loaded_dome: bool = False,
+) -> float | None:
+    """The regulator lockup feeding a vehicle tank [psig], or None: right now,
+    or with the bottle at ``inlet_psig`` (and ``loaded_dome``: the dome at its
+    knob's setting, though the dome line is shut). A readout: moves nothing."""
     if tank_id in session.ground:
         return None
-    lockup = regulator_lockup(session, tank_id)
+    inlet = None if inlet_psig is None else from_psig(inlet_psig)
+    lockup = regulator_lockup(session, tank_id, inlet, loaded_dome=loaded_dome)
     return None if lockup is None else round(psig(lockup), 1)
+
+
+def _lockup_range(session: Session, tank_id: str) -> list[float] | None:
+    """Where a vehicle tank locks up with the COPV charged to its fill setting
+    and with it empty [psig]: the range the tank sees as the bottle blows down
+    (the supply effect, measured from zero inlet). The dome knob's number."""
+    # At the dome the knob sets: in Idle a cart's dome line is shut and the
+    # dome reads atmosphere, which put this at "-5 -> 50".
+    charged = _lockup_psig(
+        session, tank_id, float(session.setup.copv_target_psi), loaded_dome=True
+    )
+    empty = _lockup_psig(session, tank_id, 0.0, loaded_dome=True)
+    return None if charged is None or empty is None else [charged, empty]
 
 
 def _session_out(session: Session, sample: SessionSample) -> SessionOut:
@@ -1419,7 +1470,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
             for d, ids in built.branches_of.items()
         },
         open={d: sample.signals.get(s, 0.0) > 0.5 for d, s in signals_of.items()},
-        held=sorted(session.forced),
+        held=session.operator_held,
         tripped=session.tripped,
         overrides_hash=fingerprint(_applied(session.model)),
         tanks=[
@@ -1440,7 +1491,11 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
                 chilling=bool(values.get("chilling", 0.0)),
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
+                load_kg=round(sim.load_target_kg, 3),
+                fire_load_kg=session.fire_loads().get(sim.id),
                 lockup_psi=_lockup_psig(session, sim.id),
+                lockup_range_psi=_lockup_range(session, sim.id),
+                mawp_psi=round(psig(sim.mawp), 1) if sim.mawp > 0.0 else None,
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]
@@ -1456,6 +1511,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 fill_fraction=round(b.fraction, 4),
                 level_m=0.0,
                 volume_L=round(b.volume.volume * 1e3, 2),
+                mawp_psi=round(psig(b.mawp), 1) if b.mawp > 0.0 else None,
             )
             for b in session.bottles.values()
         ],
@@ -1539,6 +1595,7 @@ async def open_session(
     notices = [
         *(stand.notes if hookup is stand.hookup else ()),
         *([hookup_note] if hookup_note else []),
+        *session.short_loads(),
     ]
     session.assumptions.extend(notices)
     if len(_SESSIONS) >= _SESSION_LIMIT:
@@ -1569,13 +1626,28 @@ async def tick_session(
     """
     session = _session(session_id)
     settings = dict(body or {})
-    dt = float(settings.get("dt") or 0.1)
+    # Time warp: a tick may carry several steps' worth of stand time, run as
+    # consecutive full steps of the session's own size -- nothing is coarsened,
+    # it only goes faster when the machine can (a 20-minute LOX load watched at
+    # x20). The cockpit drops back to x1 at Fire.
+    dt = min(max(float(settings.get("dt") or 0.1), 0.0), MAX_TICK_S)
+    left = dt
     try:
-        sample = session.step(dt)
+        while True:
+            chunk = min(left, MAX_STEP)
+            sample = session.step(chunk)
+            _record_on_burnout(session, sample)
+            left -= chunk
+            if left <= 1e-9 or session.tripped or session.state == "Fire":
+                break
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _record_on_burnout(session, sample)
     return _session_out(session, sample)
+
+
+#: The most stand time one tick may carry [s]: x20 on a 200 ms tick, with
+#: room. A backgrounded tab resumes; it does not catch up an hour.
+MAX_TICK_S = 6.0
 
 
 _STUDY = StudyRunner()
@@ -1813,9 +1885,15 @@ async def session_history(
     built = session.model.built
     cutoff = session.t - max(seconds, 1.0)
     kept = [s for s in session.history if s.t >= cutoff]
+    events = [
+        StateEvent(t=round(b.t, 3), label=b.state)
+        for a, b in zip(kept, kept[1:])
+        if b.state != a.state
+    ]
     if max_points > 0 and len(kept) > max_points:
         stride = -(-len(kept) // max_points)
         kept = kept[::-1][::stride][::-1]
+    limits = _channel_limits(session)
     return RunOut(
         message=f"live session, {len(kept)} samples",
         times_s=[s.t for s in kept],
@@ -1829,12 +1907,93 @@ async def session_history(
                     if i.type in THERMAL_INSTRUMENTS
                     else [round(psig(s.pressures.get(i.node, 0.0)), 2) for s in kept]
                 ),
+                **limits.get(i.id, {}),
             )
             for i in built.instruments
         ]
-        + (_engine_channels(kept) if session.model.engine is not None else []),
+        + [
+            c.model_copy(update=limits.get(c.id, {}))
+            for c in (
+                _engine_channels(kept) if session.model.engine is not None else []
+            )
+        ],
+        events=events,
         balance=_session_balance(session),
     )
+
+
+#: The chamber's bar turns amber this far over the engine's design chamber
+#: pressure, and red this far over: a display band, not a limit of the engine
+#: (it has no MAWP on the drawing). The DAQ's fixed 400 / 500 psig made a
+#: nominal 7 kN burn read amber from ignition to burnout.
+PC_NOP_OVER_DESIGN = 1.10
+PC_MEOP_OVER_DESIGN = 1.25
+
+
+def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
+    """Each pressure channel's amber and red lines [psig], from what it reads.
+
+    A transducer on a vessel: amber above the operating pressure the drawing
+    gives the vessel, red above the pressure the stand trips at (its MAWP).
+    The chamber: bands over the engine's design chamber pressure. Anything
+    else -- a line, a dome -- is left to the console's guess by tag. The
+    guesses were all there was, and a COPV transducer tagged HP-1 read red at
+    1,800 psig against the propellant tanks' 700.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    params = {n.id: n.params for n in session.model.diagram.nodes}
+
+    def drawn(vessel_id: str) -> float | None:
+        param = params.get(vessel_id, {}).get("pressure")
+        return psig(param.si) if param is not None else None
+
+    for inst in session.model.built.instruments:
+        if inst.type in THERMAL_INSTRUMENTS:
+            continue
+        for sim in session.tanks.values():
+            if inst.node in (sim.ullage_node, sim.outlet_node) and sim.mawp > 0.0:
+                nop = drawn(sim.id)
+                meop = psig(sim.mawp)
+                out[inst.id] = {
+                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
+                    "meop": round(meop, 1),
+                    "limits": f"{sim.label}: "
+                    + (
+                        f"operating {nop:.0f} psig on the drawing · "
+                        if nop is not None
+                        else ""
+                    )
+                    + f"trips at {meop:.0f} psig (MAWP)",
+                }
+        for bottle in session.bottles.values():
+            if inst.node == bottle.node and bottle.mawp > 0.0:
+                nop = drawn(bottle.id)
+                meop = psig(bottle.mawp)
+                out[inst.id] = {
+                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
+                    "meop": round(meop, 1),
+                    "limits": f"{bottle.label}: "
+                    + (
+                        f"charged to {nop:.0f} psig on the drawing · "
+                        if nop is not None
+                        else ""
+                    )
+                    + f"trips at {meop:.0f} psig (MAWP)",
+                }
+    engine = session.model.engine
+    design = (
+        getattr(engine, "design_chamber_pressure", 0.0) if engine is not None else 0.0
+    )
+    if design > 0.0:
+        pc = psig(design)
+        out["engine.pc"] = {
+            "nop": round(pc * PC_NOP_OVER_DESIGN, 1),
+            "meop": round(pc * PC_MEOP_OVER_DESIGN, 1),
+            "limits": f"design chamber {pc:.0f} psig · amber 10 % over, red 25 % over",
+        }
+    # A missing NOP falls back on the tag's own, which may sit over a drawn
+    # MEOP: say nothing rather than draw red under amber.
+    return {k: v for k, v in out.items() if v.get("meop") is not None}
 
 
 #: How far back the Engine page's O/F split looks for a sample that flowed.
@@ -1875,10 +2034,19 @@ def _hookup_body(hookup: Hookup) -> HookupBody:
     )
 
 
-def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> HookupOut:
+def _hookup_out(
+    diagram: str, engine: str, fluid_set: str, machine: str, vehicle_only: bool = False
+) -> HookupOut:
     stand = _stand(diagram, engine, fluid_set, machine)
     model, b = stand.model, stand.binding
     hookup, saved, _ = _hookup_for(diagram, model)
+    if vehicle_only:
+        # Rocket only (Setup.ignore_gse): the wiring the stand runs is the cut
+        # drawing's -- a vent bound to the cart's solenoid is bound to the
+        # rocket's capped disconnect instead. The hookup itself stays the whole
+        # drawing's, so saving a name from here never drops the cart's knobs
+        # and pins (on_vehicle keeps the vehicle's half at session start).
+        b = _stand(diagram, engine, fluid_set, machine, vehicle_only=True).binding
     return HookupOut(
         lineage=_lineage(library.get(diagram)),
         saved=saved,
@@ -1908,16 +2076,22 @@ def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> Hook
         by_user=list(b.by_user),
         pages=sorted({n.page or "Main" for n in model.diagram.nodes}),
         mated=[list(pair) for pair in model.built.mated],
+        vehicle_only=vehicle_only,
     )
 
 
 @app.get("/api/hookup")
 async def get_hookup(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire", machine: str = "diablo"
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Which valve each actuator drives and which knob sets which regulator, on
-    this drawing: saved, or the twin's suggestion."""
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    this drawing: saved, or the twin's suggestion. ``ignore_gse``: wired as a
+    rocket-only stand runs it."""
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.put("/api/hookup")
@@ -1927,6 +2101,7 @@ async def save_hookup(
     engine: str = "",
     fluid_set: str = "hotfire",
     machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Keep a hookup for this drawing's lineage. New stands open with it."""
     try:
@@ -1952,16 +2127,20 @@ async def save_hookup(
         _lineage(library.get(diagram)),
         {"hookup": hookup.to_dict(), "diagram": diagram},
     )
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.delete("/api/hookup")
 async def reset_hookup(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire", machine: str = "diablo"
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
     library.drop_record(HOOKUPS, _lineage(library.get(diagram)))
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.get("/api/session/{session_id}/burns")
@@ -2154,6 +2333,7 @@ async def session_solver(
         mass_error_kg=[r.mass_error_kg for r in kept],
         guard_kg=[r.guard_kg for r in kept],
         guard_J=[r.guard_J for r in kept],
+        crossed_kg=[r.crossed_in_kg + r.crossed_out_kg for r in kept],
         summary=summary,
     )
 

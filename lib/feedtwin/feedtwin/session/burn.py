@@ -221,7 +221,7 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
         lockups = [
             lockup
             for tank_id in session.vehicle_tanks
-            if (lockup := regulator_lockup(session, tank_id)) is not None
+            if (lockup := regulator_lockup(session, tank_id, place=True)) is not None
         ]
         if lockups and abs(psig(min(lockups)) - plan.tank_psi) > 0.05:
             tank_psi = psig(min(lockups))
@@ -267,8 +267,26 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
     return True
 
 
-def regulator_lockup(session: Session, tank_id: str) -> float | None:
+def regulator_lockup(
+    session: Session,
+    tank_id: str,
+    inlet: float | None = None,
+    *,
+    loaded_dome: bool = False,
+    place: bool = False,
+) -> float | None:
     """Where the regulator feeding ``tank_id`` locks up, right now [Pa abs].
+
+    ``inlet`` [Pa abs]: where it would lock up with the bottle at this
+    pressure instead -- a charged COPV, or an empty one, to show the range a
+    tank sees as the bottle blows down. Default: the bottle as it is.
+    ``loaded_dome``: with the dome as its knob sets it, though the dome line
+    is shut (:meth:`Session.peek_signals`).
+
+    Moves nothing, unless ``place``: T-0 has always evaluated it through the
+    step's :meth:`Session.signals`, which also put each valve where the state
+    commands it and took the dome as it stands -- what a stand put at T-0
+    starts from. Its two callers there keep that, so burns are unchanged.
 
     Walks upstream from the tank's ullage to the first regulator in the
     network (dome loaders are lifted out of it, so this is the unit that
@@ -319,7 +337,11 @@ def regulator_lockup(session: Session, tank_id: str) -> float | None:
         return None
     component = regulator.component
     assert isinstance(component, Regulator)
-    flow = net.conditions(regulator.upstream, max(bottles), session.signals())
+    supply = max(bottles) if inlet is None else inlet
+    signals = (
+        session.signals() if place else session.peek_signals(loaded_dome=loaded_dome)
+    )
+    flow = net.conditions(regulator.upstream, supply, signals)
     return float(component.lockup_pressure(flow))
 
 
@@ -333,6 +355,11 @@ class T0:
     tank_psi: float
     """What the tanks were primed at [psig]."""
     notes: list[str] = field(default_factory=list)
+    loads: dict[str, float] = field(default_factory=dict)
+    """The propellant each tank was loaded with [kg], by tank id: the fire
+    load where the engine states one. Empty when nothing named a load and the
+    tanks went to the fill fraction. A burn plan that primes again must carry
+    these, or it reloads to the fill fraction."""
 
 
 def jump_to_t0(
@@ -405,7 +432,7 @@ def jump_to_t0(
     lockups = {
         tank_id: lockup
         for tank_id in session.vehicle_tanks
-        if (lockup := regulator_lockup(session, tank_id)) is not None
+        if (lockup := regulator_lockup(session, tank_id, place=True)) is not None
     }
     tank_psi = fallback_psi
     if lockups:
@@ -435,6 +462,7 @@ def jump_to_t0(
         lockup_psi={k: round(psig(v), 1) for k, v in lockups.items()},
         tank_psi=round(tank_psi, 1),
         notes=notes,
+        loads=loads,
     )
 
 
@@ -558,6 +586,7 @@ def burn(
             return ended(tripped(None))
 
     session.state = plan.fire_state
+    session._state_since = session.t
     fire_t = session.t
     clock = 0.0
     depleted: float | None = None

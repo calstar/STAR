@@ -5,7 +5,11 @@
  * only part of the schematic feed-twin owns. Three things, each placed by the
  * drawing rather than by guesswork:
  *
- * - a pressure above each symbol, where the tag (below) does not sit;
+ * - a reading above each instrument and vessel -- pressure on a transducer,
+ *   gauge, tank, bottle, dewar or the engine, temperature on an RTD or
+ *   thermocouple. Not on every symbol: thirty-odd valves and disconnects each
+ *   reading "0" buried the transducers, a reading over a valve does not say
+ *   which side it is, and an RTD labelled with a pressure read as a gauge;
  * - a ring round each valve the console drives, green open and red shut, and a
  *   dashed one outside it when the operator holds it by hand. A ring, not a
  *   repaint: the symbol already draws its fail state, and a normally-open
@@ -24,8 +28,10 @@ import type { Frame } from '../api';
 import { fixed } from '../api';
 import { dashPeriod, isFlowing } from '../lib/schematic';
 
-/** Symbols that are not a place a pressure belongs to. */
-const NO_READING = new Set(['JUNCTION', 'TEXT', 'REGION']);
+/** What reads or holds a pressure: these carry one. */
+const PRESSURE = new Set(['PT', 'PG', 'TANK', 'KBOTTLE', 'DEWAR', 'ENGINE']);
+/** What reads a temperature. */
+const TEMPERATURE = new Set(['RTD', 'TC']);
 
 interface Props {
   frame: Frame | null;
@@ -35,9 +41,11 @@ interface Props {
   valves: ReadonlySet<string>;
   /** Valves held by hand, overriding the sequence. */
   held: ReadonlySet<string>;
+  /** The symbol open in the P&ID tab's panel: ringed, so it is found. */
+  focus?: string | null;
 }
 
-export function LiveLayer({ frame, lines, valves, held }: Props) {
+export function LiveLayer({ frame, lines, valves, held, focus = null }: Props) {
   const nodes = useNodes();
   const routes = useDrawnRoutes(lines);
   if (!frame) return null;
@@ -60,12 +68,27 @@ export function LiveLayer({ frame, lines, valves, held }: Props) {
           .map((n) => (
             <ValveRing key={n.id} node={n} open={frame.open[n.id] ?? false} held={held.has(n.id)} />
           ))}
+        {shown
+          .filter((n) => n.id === focus)
+          .map((n) => (
+            <rect
+              key="focus"
+              x={n.position.x - 12}
+              y={n.position.y - 12}
+              width={n.measured!.width! + 24}
+              height={n.measured!.height! + 24}
+              rx={12}
+              fill="none"
+              stroke="#60A5FA"
+              strokeWidth={2.5}
+            />
+          ))}
       </svg>
       {shown.map((n) => {
         const type = (n.data as { componentType?: string }).componentType ?? n.type ?? '';
-        if (NO_READING.has(type)) return null;
-        const psi = frame.node_psi[n.id] ?? frame.pressure_psi[n.id];
-        if (psi === undefined) return null;
+        const kelvin = TEMPERATURE.has(type) ? frame.temperature_K?.[n.id] : undefined;
+        const psi = PRESSURE.has(type) ? (frame.pressure_psi[n.id] ?? frame.node_psi[n.id]) : undefined;
+        if (psi === undefined && kelvin === undefined) return null;
         const x = n.position.x + n.measured!.width! / 2;
         const y = n.position.y - 3;
         return (
@@ -74,7 +97,7 @@ export function LiveLayer({ frame, lines, valves, held }: Props) {
             className="pointer-events-none absolute rounded bg-[var(--color-bg-primary)]/80 px-1 font-mono text-[11px] leading-tight text-[var(--color-text-primary)] tabular-nums"
             style={{ transform: `translate(${x}px, ${y}px) translate(-50%, -100%)`, zIndex: 1 }}
           >
-            {fixed(psi, 0)}
+            {kelvin !== undefined ? `${fixed(kelvin, 0)} K` : fixed(psi ?? 0, 0)}
           </div>
         );
       })}

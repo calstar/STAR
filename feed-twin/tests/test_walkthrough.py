@@ -158,7 +158,14 @@ def test_an_operator_can_take_the_stand_from_cold_to_fire() -> None:
     assert (
         state["state"] == "Vent"
     ), f"Fire should end in Vent at burnout: {state['state']}"
-    assert any("Burnout" in n for n in state["notes"]), state["notes"]
+    note = next((n for n in state["notes"] if "Burnout" in n), "")
+    assert note, state["notes"]
+    # Timed from Fire, as T+ is read: not the stand clock, which had been
+    # running through the whole pad sequence before it.
+    lit = float(note.split("T+")[1].split(" s")[0])
+    burn = client.get(f"/api/session/{sid}/burns").json()["burns"][-1]
+    assert lit == pytest.approx(burn["duration_s"], abs=0.1), (note, burn["duration_s"])
+    assert lit < state["t"] - 1.0, (note, state["t"])
     state = run(sid, 3.0)
     assert (
         tank(state, fu_id)["pressure_psi"] < 100.0

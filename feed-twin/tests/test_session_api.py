@@ -103,9 +103,15 @@ def test_garbage_setup_is_ignored_rather_than_fatal() -> None:
 
 def test_a_huge_step_is_clamped() -> None:
     """A tab that was in the background for a minute must resume, not integrate
-    a minute of stand in one explicit step."""
+    a minute of stand in one explicit step. Time warp lets a tick carry a few
+    seconds (MAX_TICK_S), but as the session's own small steps."""
+    from backend.main import MAX_TICK_S
+
     state = open_session()
-    assert tick(state["id"], dt=1.0e6)["t"] < 5.0
+    after = tick(state["id"], dt=1.0e6)
+    assert after["t"] <= MAX_TICK_S + 0.01
+    solver = client.get(f"/api/session/{state['id']}/solver").json()
+    assert solver["summary"]["ticks"] >= 0.8 * MAX_TICK_S / 0.02, "one big step"
 
 
 @pytest.mark.parametrize("dt", [-1.0, 0.0, 1e-12])
@@ -424,3 +430,17 @@ def test_a_lox_loads_chilldown_can_be_skipped() -> None:
         f"/api/session/{sid}/command", json={"skip_chill": "no-such-tank"}
     )
     assert unknown.status_code == 404
+
+
+def test_the_history_says_when_each_state_began() -> None:
+    """The plots draw a rule where the stand changed state: every change in the
+    window, from the unthinned history, however hard the trace is thinned."""
+    state = open_session()
+    tick(state["id"], dt=0.5)
+    command(state["id"], state="Armed")
+    tick(state["id"], dt=0.5)
+    history = client.get(
+        f"/api/session/{state['id']}/history", params={"seconds": 60, "max_points": 3}
+    ).json()
+    assert [e["label"] for e in history["events"]] == ["Armed"]
+    assert 0.4 < history["events"][0]["t"] < 0.6

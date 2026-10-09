@@ -4,6 +4,59 @@ The stand app. Versioned in `backend/version.py`; `/api/version` reports it with
 the library version and the commit (and whether the tree was dirty). Physics
 changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
 
+## Unreleased — 2026-10-09
+
+The console, used end to end overnight. Pressures here in psia.
+
+### Added
+- The nav in three groups: Operate (Console, P&ID, GSE Controls, Plots), Results
+  (Engine, Runs, Study, Solver), Set up (Library, Hookup, Configuration, Checks).
+- **Solver**: a verdict in words, one residual monitor (each residual over its
+  criterion, converged under the dashed line), the iteration log beside it, and
+  iterations / mass balance / guard energy below.
+- The pad guide is one line over the state grid, with the state to press ringed
+  NEXT; during and after a burn it reads the burn (time, mean thrust, Isp, which tank
+  ran dry) with Engine and Runs links. It leads out of an abort, and Auto never does.
+- Runs: a "Ran on" column (drawing, engine, rocket only, simplified engine); a diff
+  names knobs by the hookup's labels.
+- GSE Controls: the dome knob shows the lockup a burn sweeps (LE4: 544.7 -> 599.7 psia,
+  COPV full -> empty, at the dome the knob sets); the knobs' red arcs are the drawn
+  MAWPs (were 4,514.7 and 964.7 psia whatever was drawn).
+- Plots: state changes marked; Download CSV of the whole trace at full rate.
+- Time warp x1 / x5 / x20 in the top bar; Fire is always x1.
+- The stand says when a drawn tank cannot hold the engine's fire load, and where a
+  cold vehicle tank's propellant goes when it is not the engine.
+- `/api/hookup?ignore_gse`, `ModelView.drawn_knobs`, `TankOut.lockup_range_psi`,
+  `mawp_psi`, `fire_load_kg`, `load_kg`; run summaries carry `diagram`, `engine`,
+  `rocket_only`; history carries state `events`.
+
+### Changed
+- The console's bottom pad strip is gone (it repeated the state machine).
+- The P&ID tab's symbol panel is the hookup, symbol by symbol: a console checkbox, a
+  console name, and the actuator that drives each valve, saved from one bar (wiring
+  restarts the stand); "Driving nothing" lists actuators no valve answers to. Its
+  override form says what it still needs (a source, a reference) instead of a grey
+  button. The Hookup page keeps the regulator knobs.
+- Solver: four checks across the top -- Converged, Mass balance, Chamber, Clamps --
+  PASS or FAIL, numbers on hover; "guards" are "clamps" on screen.
+- The P&ID reads out transducers, gauges, vessels and the engine (temperature on RTDs
+  and thermocouples), not every symbol.
+- A transducer the drawing gives no limits for draws no limit lines (the tag guess put
+  a 564.7 / 714.7 psia envelope on the dome line).
+- Configuration: the dome and COPV charge default to the drawing's settings; a search
+  box and a "changed only" filter.
+- Study: no Fill column when the engine's fire load names every tank; the header says
+  what T-0 loads.
+- Engine tab plots fill the page; the state grid's labels fit a 1280 px window.
+
+### Fixed
+- Study cases burned 95 % of the drawn tanks (~8.9 kg LOX, 4.6 s) where the console's
+  T-0 burns the fire load (6.75 kg, 3.5 s).
+- The pad guide said loads had "slipped" after T-0 (it judged by 90 % of the tank).
+- Settings were lost on a backend restart and reload; Runs' compare charts were empty
+  (NaN from resampling); GSE Controls' readings never found their transducers;
+  "N held" counted the crew's fill valve.
+
 ## Unreleased — 2026-10-08
 
 ### Added
