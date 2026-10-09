@@ -37,9 +37,10 @@ Without a stand the cockpit still works. Its runs then go in your own list.
   in because the drawing left it blank, and (folded) how it read the drawing.
   The tab's number counts only the first. Fix it on the drawing
   (pid-designer), not here.
-* **Hookup**: which actuator opens which valve, which valves and transducers
-  the console shows and what it calls them, and which knob loads which
-  regulator. Imported drawings are matched by name; check them.
+* **Hookup**: which valves and transducers the console shows and what it calls
+  them (first), which actuator opens which valve (**Wiring**), and which knob
+  loads which regulator. Imported drawings are matched by name; check them.
+  With the GSE ignored, Wiring shows the rocket's own matches.
 * **GSE Controls → Ignore the drawn GSE**: run the rocket alone, filled by the
   built-in charge and loads at the settings on that page, when the cart on the
   drawing is more than you need.
@@ -53,9 +54,14 @@ plain `psi`. See [ADR 0004](../../docs/adr/0004-pressure-references.md).
 ## 3. Run the stand
 
 Walk the state machine as you would at the pad: fills, press, Ready, Fire.
-The state to press next is ringed on the grid, and the line under it says
+The state to press next is ringed on the grid, and the line over it says
 what the stand is doing; **Auto to Ready** walks it for you and stops short of
-Fire. **GSE Controls** has the knobs, and shows where each tank will lock up.
+Fire (and never leads out of an abort). While it burns, and in the Vent it ends
+in, that line is the burn: time, mean thrust, Isp, and which tank ran dry.
+**GSE Controls** has the knobs, and shows the lockup range a burn sweeps:
+the tanks at T-0 with the COPV charged, climbing as it blows down. Its red arcs
+are the drawing's MAWPs. The stand's **Notes** (below the fold) say when a
+drawn tank cannot hold the engine's fire load.
 The cockpit runs the same numerics as the study, so a stiff stand runs in slow
 motion rather than less accurately. The top bar says the ratio. **T-0** skips
 the pad: loaded with the engine's fire load, charged, at lockup, in Ready.
@@ -71,7 +77,8 @@ When a burn ends it is **recorded** on its own. Nothing to remember.
   model; say so.
 * **Plots**: every channel against time, with each state change marked;
   **Download CSV** for the whole trace at full rate.
-* **Runs**: every recorded burn. Pick two to see every input that changed and
+* **Runs**: every recorded burn, with the drawing and engine it ran on (and
+  *rocket only* / *simplified* where they apply). Pick two to see every input that changed and
   the outcome deltas. **Explain** replays both from their **T-0** and swaps one
   input group at a time, showing how much of the change each group accounts
   for and how much is **interaction**. *Replay vs recorded* under it says
