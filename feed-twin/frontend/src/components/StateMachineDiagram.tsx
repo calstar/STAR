@@ -54,6 +54,9 @@ interface Props {
   actions?: ReactNode;
 }
 
+/** The smallest a row of states gets [px]: two lines of label. */
+const ROW_MIN = 40;
+
 export default function StateMachineDiagram({ machine, live, go, locked = false, actions }: Props) {
   const states = machine.states.filter((s) => !OFF_GRID.test(s));
   const extra = states.filter((s) => STATE_POS[s] === undefined);
@@ -63,7 +66,9 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
   const rows = Math.max(1, ...states.map((st) => pos(st)[0] + 1));
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // Never shorter than every row at its smallest; the Console's panel
+    // scrolls if the window cannot give it that.
+    <div className="flex h-full flex-col">
       <div className="mb-4 flex flex-shrink-0 items-baseline justify-between gap-4">
         <h2 className="caps">State Machine</h2>
         {actions && <span className="ml-auto flex items-center gap-2">{actions}</span>}
@@ -76,10 +81,11 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
       </div>
       {/* Rows share the panel's height, so the squares grow with the window. */}
       <div
-        className="grid min-h-0 flex-1 gap-2.5"
+        className="grid flex-1 gap-2.5"
         style={{
           gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${rows}, minmax(40px, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(${ROW_MIN}px, 1fr))`,
+          minHeight: rows * ROW_MIN + (rows - 1) * 10,
         }}
       >
         {states.map((state) => {

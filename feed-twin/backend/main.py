@@ -15,6 +15,7 @@ Run with::
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
 import re
@@ -108,11 +109,14 @@ from feedtwin.session.burn import (
     run_burn,
 )
 from stardesign.userdata import slug_user
+from feedtwin.pid.roles import ground_ids
 from feedtwin.session.hookup import (
     CHARGE,
     DOME,
     Hookup,
     binding as hookup_binding,
+    knob_starts,
+    on_vehicle as hookup_on_vehicle,
     regulators as hookup_regulators,
     suggest as suggest_hookup,
     valves as hookup_valves,
@@ -168,11 +172,33 @@ def _overrides_for(diagram_id: str) -> dict[str, Any]:
     return overrides.entry(_drawing_key(diagram_id))
 
 
-def _console_hidden(diagram_id: str) -> set[str]:
+@functools.lru_cache(maxsize=64)
+def _ground_of(diagram_id: str) -> frozenset[str]:
+    """The drawing's ground support (feedtwin.pid.roles). Artifacts are
+    content-addressed, so an id's answer never changes."""
     try:
-        return set(_overrides_for(diagram_id)["console_hidden"])
+        return frozenset(ground_ids(load_diagram_artifact(library, diagram_id)))
+    except (LibraryError, AssemblyError, ValueError):
+        return frozenset()
+
+
+def _console_hidden(diagram_id: str) -> set[str]:
+    """What the console leaves off for everyone: what the team hid, and the
+    ground support it has not chosen to show."""
+    try:
+        entry = _overrides_for(diagram_id)
     except (LibraryError, OverrideError):
         return set()
+    ground = _ground_of(diagram_id)
+    return (set(entry["console_hidden"]) | ground) - set(entry["console_shown"])
+
+
+def _console_order(diagram_id: str) -> dict[str, list[str]]:
+    try:
+        order = _overrides_for(diagram_id)["console_order"]
+    except (LibraryError, OverrideError):
+        return {}
+    return {k: list(v) for k, v in order.items()}
 
 
 def _who(request: Request) -> str:
@@ -282,6 +308,7 @@ def _assemble(
     fluid_set: str,
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
+    vehicle_only: bool = False,
 ) -> Model:
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
@@ -302,6 +329,7 @@ def _assemble(
             cea_resolver=_cea_for,
             multiphase=multiphase,
             overrides=_overrides_for(diagram_id),
+            vehicle_only=vehicle_only,
         )
     except (AssemblyError, LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -753,15 +781,16 @@ def _pages(nodes: Sequence[PidNode]) -> dict[str, str]:
 
 @app.get("/api/model")
 async def model_view(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire"
+    diagram: str, engine: str = "", fluid_set: str = "hotfire", ignore_gse: bool = False
 ) -> ModelView:
     """Assemble and describe, without solving.
 
     Split from the run so the drawing is on screen the moment a stand is picked,
     and the assembly report -- what was read, what defaulted -- is readable
-    before anybody waits on a solve.
+    before anybody waits on a solve. ``ignore_gse``: the vehicle alone, as a
+    session with ``Setup.ignore_gse`` builds it.
     """
-    model = _assemble(diagram, engine, fluid_set)
+    model = _assemble(diagram, engine, fluid_set, vehicle_only=ignore_gse)
     return ModelView(
         diagram_id=diagram,
         engine_id=model.report.engine,
@@ -774,6 +803,13 @@ async def model_view(
         report=_report(model),
         pages=_pages(model.diagram.nodes),
         console_hidden=sorted(_console_hidden(diagram)),
+        console_order=_console_order(diagram),
+        ground=sorted(ground := ground_ids(model.diagram)),
+        ground_bottles=sorted(
+            n.id
+            for n in model.diagram.nodes
+            if n.id in ground and (n.drawn_as or n.type) in ("KBOTTLE", "DEWAR")
+        ),
         engine=(
             {
                 **engine_summary(model.engine),
@@ -859,7 +895,7 @@ async def drawing_view(
         )
 
     stored = entry["params"]
-    hidden = entry["console_hidden"]
+    hidden = _console_hidden(diagram)
     built = raw.built
     instruments = {i.id for i in built.instruments}
     console = (
@@ -949,7 +985,11 @@ async def drawing_view(
                 options=dict(n.options),
                 on_console=n.id in console,
                 console_hidden=n.id in hidden,
-                hidden_by=(hidden.get(n.id) or {}).get("by", ""),
+                hidden_by=(
+                    (entry["console_hidden"].get(n.id) or {}).get("by", "")
+                    if n.id in hidden
+                    else ""
+                ),
             )
         )
     labels = {n.id: n.label or n.id for n in raw.diagram.nodes}
@@ -1052,13 +1092,17 @@ async def clear_override(diagram: str, element: str, parameter: str) -> dict[str
 
 
 @app.get("/api/drawing/console")
-async def console_visibility(diagram: str) -> dict[str, list[str]]:
-    """Which symbols the console hides. Cheap; the console polls it."""
+async def console_visibility(diagram: str) -> dict[str, Any]:
+    """Which symbols the console hides, and the order it draws its
+    transducers and tanks in. Cheap; the console polls it."""
     try:
         _drawing_key(diagram)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"hidden": sorted(_console_hidden(diagram))}
+    return {
+        "hidden": sorted(_console_hidden(diagram)),
+        "order": _console_order(diagram),
+    }
 
 
 @app.put("/api/drawing/console")
@@ -1068,13 +1112,57 @@ async def set_console_visibility(
     element: str = Body(...),
     hidden: bool = Body(...),
 ) -> dict[str, list[str]]:
-    """Hide a symbol from the console, or show it again, for everyone."""
+    """Hide a symbol from the console, or show it again, for everyone. The
+    ground support starts hidden, so for it this records a showing."""
     try:
         key = _drawing_key(diagram)
-        entry = overrides.set_console_hidden(key, element, hidden, by=_who(request))
+        if element in _ground_of(diagram):
+            overrides.set_console_shown(key, element, not hidden, by=_who(request))
+        else:
+            overrides.set_console_hidden(key, element, hidden, by=_who(request))
     except (LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"hidden": sorted(entry["console_hidden"])}
+    return {"hidden": sorted(_console_hidden(diagram))}
+
+
+@app.put("/api/drawing/console/order")
+async def set_console_order(
+    diagram: str = Body(...), order: dict[str, list[str]] = Body(...)
+) -> dict[str, Any]:
+    """The order the console draws transducers and tanks in, for everyone."""
+    try:
+        overrides.set_console_order(_drawing_key(diagram), order)
+    except (LibraryError, OverrideError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "hidden": sorted(_console_hidden(diagram)),
+        "order": _console_order(diagram),
+    }
+
+
+@app.put("/api/drawing/console/view")
+async def set_console_view(
+    request: Request,
+    diagram: str = Body(...),
+    hidden: list[str] = Body(...),
+    order: dict[str, list[str]] | None = Body(None),
+) -> dict[str, Any]:
+    """Make the console what a saved stand had: exactly ``hidden`` off it,
+    in ``order``. Opening a stand puts its view back this way."""
+    try:
+        overrides.set_console_view(
+            _drawing_key(diagram),
+            hidden=set(hidden),
+            ground=set(_ground_of(diagram)),
+            order=order,
+            by=_who(request),
+        )
+    except (LibraryError, OverrideError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "hidden": sorted(_console_hidden(diagram)),
+        "order": _console_order(diagram),
+    }
 
 
 def _stand(
@@ -1084,9 +1172,14 @@ def _stand(
     machine: str,
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
+    vehicle_only: bool = False,
 ) -> "Stand":
-    """A model with the stand's state machine bound to its valves."""
-    model = _assemble(diagram, engine, fluid_set, multiphase, swap)
+    """A model with the stand's state machine bound to its valves.
+
+    ``vehicle_only`` (``Setup.ignore_gse``) builds the rocket alone: the
+    drawing's hookup keeps its vehicle pins, and its knobs are the cut
+    drawing's (:func:`feedtwin.session.hookup.on_vehicle`)."""
+    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only)
     try:
         loaded = load_machine(machine)
     except (OSError, ValueError) as exc:
@@ -1096,11 +1189,19 @@ def _stand(
             f"{', '.join(sm_available())}. ({exc})",
         ) from exc
     hookup, _, problem = _hookup_for(diagram, model)
+    drawn = knob_starts(hookup, model)
+    if vehicle_only:
+        # The cart's settings are still the drawing's, though the cart is not
+        # simulated: the COPV fill charges to its fill regulator's setting.
+        whole = _assemble(diagram, engine, fluid_set)
+        drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}
+        hookup = hookup_on_vehicle(hookup, model)
     return Stand(
         model=model,
         machine=loaded,
         binding=hookup_binding(model, loaded, hookup),
         hookup=hookup,
+        drawn=drawn,
         notes=(problem,) if problem else (),
     )
 
@@ -1287,6 +1388,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         id=session.id,
         t=sample.t,
         knobs=_live_knobs(session),
+        aliases=dict(session.hookup.aliases) if session.hookup is not None else {},
         # The stand's state, not the frame's. While a run is being computed the
         # frame on display is the one from before the command that started it,
         # and offering its transitions would offer the wrong ones.
@@ -1380,7 +1482,21 @@ async def open_session(
     a thirtieth of the density. Not ready for flashing work yet.
     """
     settings = dict(body or {})
-    stand = _stand(diagram, engine, fluid_set, machine, multiphase)
+    setup = _setup(settings)
+    stand = _stand(
+        diagram, engine, fluid_set, machine, multiphase, vehicle_only=setup.ignore_gse
+    )
+    # The dome and the COPV fill start where the drawing sets them; the
+    # client sends them only when the operator has turned them (or a stand
+    # carries them). They used to start at 500 and 4,500 whatever was drawn.
+    setup = _setup(
+        {
+            key: stand.drawn[knob]
+            for key, knob in (("dome", DOME), ("copv_target", CHARGE))
+            if key not in settings and knob in stand.drawn
+        },
+        setup,
+    )
     hookup, binding = stand.hookup, stand.binding
     hookup_note = ""
     raw = settings.get("hookup")
@@ -1392,6 +1508,8 @@ async def open_session(
         # drawing's own hookup and says so, rather than refusing to open.
         try:
             candidate = Hookup.from_dict(raw)
+            if setup.ignore_gse:
+                candidate = hookup_on_vehicle(candidate, stand.model)
             known = {r.id for r in hookup_regulators(stand.model)}
             stray = sorted({r for k in candidate.knobs for r in k.regulators} - known)
             if stray:
@@ -1410,7 +1528,7 @@ async def open_session(
             stand.machine,
             binding,
             state=str(settings.get("state") or "Idle"),
-            setup=_setup(settings),
+            setup=setup,
             hookup=hookup,
         )
     except AssemblyError as exc:
@@ -1635,6 +1753,17 @@ async def command_session(
             session.setup = _setup({"copv_target": value}, session.setup)
         else:
             session.knobs[found.id] = value
+    aliases = settings.get("aliases")
+    if isinstance(aliases, Mapping):
+        # Names only: the running stand takes them without reopening.
+        # (A session with no hookup drives the dome the old way; an empty
+        # hookup would stop that, so it has nowhere to keep names.)
+        if session.hookup is None:
+            raise HTTPException(
+                status_code=409, detail="This stand has no hookup to name things in."
+            )
+        named = Hookup.from_dict({"aliases": aliases}).aliases
+        session.hookup = replace(session.hookup, aliases=named)
     if "valve" in settings:
         try:
             session.set_valve(str(settings["valve"]), bool(settings.get("open")))
@@ -1660,6 +1789,11 @@ async def command_session(
         # The tanks were built with the old knobs; a physics toggle that only
         # took effect on the next session was a toggle that did not work.
         session.apply_thermal()
+        # ...except what the stand was built from: ignoring the GSE is a
+        # different network, so it takes a new stand, and this one says what
+        # it is.
+        if session.setup.ignore_gse != session.gse_ignored:
+            session.setup = replace(session.setup, ignore_gse=session.gse_ignored)
 
     return _session_out(session, session.step(1e-3))
 
@@ -1737,6 +1871,7 @@ def _hookup_body(hookup: Hookup) -> HookupBody:
     return HookupBody(
         valves=dict(hookup.valves),
         knobs=[KnobOut(**k.to_dict()) for k in hookup.knobs],
+        aliases=dict(hookup.aliases),
     )
 
 
@@ -1796,7 +1931,11 @@ async def save_hookup(
     """Keep a hookup for this drawing's lineage. New stands open with it."""
     try:
         hookup = Hookup.from_dict(
-            {"valves": body.valves, "knobs": [k.model_dump() for k in body.knobs]}
+            {
+                "valves": body.valves,
+                "knobs": [k.model_dump() for k in body.knobs],
+                "aliases": body.aliases,
+            }
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2233,6 +2372,7 @@ def _session_from_inputs(
     if pressurant:
         other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
         swap = {other: (pressurant, 293.15)}
+    setup = replace(parse_setup(dict(inputs.get("setup") or {})), auto_vent=False)
     stand = _stand(
         str(inputs["diagram"]),
         str(inputs.get("engine") or ""),
@@ -2240,14 +2380,17 @@ def _session_from_inputs(
         str(inputs.get("machine") or "diablo"),
         bool(inputs.get("multiphase")),
         swap,
+        vehicle_only=setup.ignore_gse,
     )
     raw = inputs.get("hookup")
     drawn, _, _ = _hookup_for(str(inputs["diagram"]), stand.model)
     hookup = Hookup.from_dict(raw) if isinstance(raw, Mapping) and raw else drawn
+    if setup.ignore_gse:
+        drawn = hookup_on_vehicle(drawn, stand.model)
+        hookup = hookup_on_vehicle(hookup, stand.model)
     known = {r.id for r in hookup_regulators(stand.model)}
     if any(r not in known for k in hookup.knobs for r in k.regulators):
         hookup = drawn
-    setup = replace(parse_setup(dict(inputs.get("setup") or {})), auto_vent=False)
     session = Session(
         stand.model,
         stand.machine,
@@ -2423,10 +2566,15 @@ async def tunables() -> list[dict[str, Any]]:
 
 @app.get("/api/statemachine")
 async def state_machine(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire", machine: str = "diablo"
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> StateMachineOut:
-    """The stand's states and how they bind to this drawing's valves."""
-    stand = _stand(diagram, engine, fluid_set, machine)
+    """The stand's states and how they bind to this drawing's valves (the
+    vehicle's alone with ``ignore_gse``)."""
+    stand = _stand(diagram, engine, fluid_set, machine, vehicle_only=ignore_gse)
     m, b = stand.machine, stand.binding
     return StateMachineOut(
         name=m.name,

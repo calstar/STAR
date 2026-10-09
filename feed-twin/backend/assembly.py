@@ -135,6 +135,7 @@ def assemble(
     cea_resolver: Callable[[EngineDesign], str] | None = None,
     multiphase: bool = False,
     overrides: Mapping[str, Any] | None = None,
+    vehicle_only: bool = False,
 ) -> Model:
     """Read, resolve, build, and audit. The whole import in one call.
 
@@ -144,6 +145,8 @@ def assemble(
             reads it; what took effect is ``meta["overrides"]``, part of the
             record for the same reason the artifact hashes are.
         cea_cache: An explicit combustion table. Direct and unconditional.
+        vehicle_only: Build the vehicle alone, the drawn GSE cut away
+            (``Setup.ignore_gse``; :func:`feedtwin.session.assemble_model`).
         cea_resolver: Called with the imported engine to *find* one, when which
             table is wanted depends on what the engine burns. Inverted this way
             round because the alternative is assembling twice -- once to learn
@@ -204,6 +207,7 @@ def assemble(
         chamber=chamber,
         fluid_swap=fluid_swap,
         multiphase=multiphase,
+        vehicle_only=vehicle_only,
         meta={
             "diagram_name": artifact.name,
             "diagram_sha256": artifact.sha256,

@@ -29,7 +29,7 @@ Gauge pressures throughout, as on the panel.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from feedtwin.session.gauge import psig
@@ -96,6 +96,11 @@ class Hookup:
     valves: Mapping[str, str] = field(default_factory=dict)
     """Pinned actuators: table name -> drawing id ("" = no valve here)."""
     knobs: tuple[Knob, ...] = ()
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    """What the console calls a valve or transducer, by drawing id (or
+    channel id, ``engine.pc``) -- "Chamber pressure" for a PT tagged PC. A
+    name only: nothing is bound, solved or recorded by it. Absent, the
+    console shows the drawing's own tag."""
 
     def knob_for(self, regulator: str) -> Knob | None:
         return next((k for k in self.knobs if regulator in k.regulators), None)
@@ -105,6 +110,7 @@ class Hookup:
             "schema": SCHEMA,
             "valves": dict(self.valves),
             "knobs": [k.to_dict() for k in self.knobs],
+            "aliases": dict(self.aliases),
         }
 
     @classmethod
@@ -122,6 +128,11 @@ class Hookup:
         return cls(
             valves={str(a): str(s or "") for a, s in (raw.get("valves") or {}).items()},
             knobs=knobs,
+            aliases={
+                str(k): str(v).strip()
+                for k, v in (raw.get("aliases") or {}).items()
+                if str(v or "").strip()
+            },
         )
 
 
@@ -214,13 +225,17 @@ def suggest(
     No pinned valves (names and roles decide). The knob :data:`DOME` on every
     dome loader -- or, with none drawn, on the first dome-loaded regulator --
     which is what the session's dome knob always drove. Then a knob for every
-    regulator the drawing gives no setting at all, because a regulator with no
-    number on the sheet is set by a hand on the cart: the one whose outlet
-    charges the vehicle's pressurant bottle is :data:`CHARGE` (the COPV fill),
-    the rest are knobs of their own, starting where the build left them. A
-    drawing whose regulators all carry their settings gets only the dome knob,
-    exactly as before.
+    regulator a hand sets: every regulator on the ground support, whatever the
+    sheet says (the cart's regulators are turned on the pad), and any other
+    the drawing gives no setting at all. The one whose outlet charges the
+    vehicle's pressurant bottle is :data:`CHARGE` (the COPV fill), the rest are
+    knobs of their own. Every knob starts at the drawing's setting
+    (:func:`drawn_settings`); only a regulator the sheet says nothing about
+    starts at ``dome_psig``, ``charge_psig`` or where the build left it. A
+    drawing of the rocket alone whose regulators all carry their settings gets
+    only the dome knob, as before.
     """
+    drawn = drawn_settings(model)
     built = model.built
     labels = {n.id: n.label or n.id for n in model.diagram.nodes}
     knobs: list[Knob] = []
@@ -242,7 +257,7 @@ def suggest(
                     else f"Dome control regulator ({labels.get(owned[0], owned[0])})"
                 ),
                 regulators=owned,
-                psig=dome_psig,
+                psig=_first_drawn(drawn, owned, dome_psig),
                 low=0.0,
                 high=1000.0,
             )
@@ -256,7 +271,7 @@ def suggest(
                     id=CHARGE,
                     label=f"COPV fill ({labels.get(regulator, regulator)})",
                     regulators=(regulator,),
-                    psig=charge_psig,
+                    psig=drawn.get(regulator, charge_psig),
                     low=0.0,
                     high=6000.0,
                 )
@@ -267,17 +282,90 @@ def suggest(
                     id=regulator,
                     label=labels.get(regulator, regulator),
                     regulators=(regulator,),
-                    psig=UNSET_PSIG,
+                    psig=drawn.get(regulator, UNSET_PSIG),
                     low=0.0,
-                    high=1000.0,
+                    high=max(1000.0, 2.0 * drawn.get(regulator, 0.0)),
                 )
             )
     return Hookup(knobs=tuple(knobs))
 
 
+def on_vehicle(saved: Hookup, model: Model) -> Hookup:
+    """``saved`` for a stand built on the vehicle alone (``Setup.ignore_gse``):
+    the valves a person pinned on the vehicle kept, the knobs the cut drawing
+    suggests. The saved knobs turn the cart's regulators, which are not there;
+    with the cart's dome loader gone, the dome knob sets the dome-loaded
+    regulator itself, as on a drawing of the rocket alone, and the COPV fill
+    is the built-in charge's target.
+    """
+    ids = {n.id for n in model.diagram.nodes}
+    knobs = suggest(model).knobs
+    kept = {k.id: k for k in saved.knobs}
+    return Hookup(
+        aliases=saved.aliases,
+        valves={a: v for a, v in saved.valves.items() if not v or v in ids},
+        # A knob the cut drawing also has starts where the saved one did.
+        knobs=tuple(
+            (
+                replace(k, psig=kept[k.id].psig)
+                if k.id in kept and kept[k.id].regulators == k.regulators
+                else k
+            )
+            for k in knobs
+        ),
+    )
+
+
+def drawn_settings(model: Model) -> dict[str, float]:
+    """What the drawing sets each regulator to [psig], by drawing id: a
+    loader's or plain regulator's ``setpoint``, a dome-loaded one's
+    ``dome_pressure``. A regulator the sheet says nothing about is absent."""
+    out: dict[str, float] = {}
+    for node in model.diagram.nodes:
+        if node.type != "PR":
+            continue
+        key = (
+            "dome_pressure"
+            if node.options.get("domeLoaded") == "yes"
+            and node.id not in model.built.dome_loaders
+            else "setpoint"
+        )
+        param = node.params.get(key)
+        if param is not None:
+            out[node.id] = psig(param.si)
+    return out
+
+
+def knob_starts(hookup: Hookup, model: Model) -> dict[str, float]:
+    """Where each of ``hookup``'s knobs starts on this drawing [psig], by knob
+    id: the drawing's setting of the first regulator on it that states one.
+    A knob on regulators the sheet says nothing about is absent -- it starts
+    at the session's own setting."""
+    drawn = drawn_settings(model)
+    out: dict[str, float] = {}
+    for knob in hookup.knobs:
+        found = _first_drawn(drawn, knob.regulators, float("nan"))
+        if found == found:
+            out[knob.id] = found
+    return out
+
+
+def _first_drawn(
+    drawn: Mapping[str, float], regulators: tuple[str, ...], default: float
+) -> float:
+    return next((drawn[r] for r in regulators if r in drawn), default)
+
+
 def _hand_loaded_regulators(model: Model, taken: set[str]) -> list[str]:
-    """Built regulators the drawing gives no setting, not already on a knob."""
+    """Built regulators a hand sets, not already on a knob: every one on the
+    ground support (the cart's regulators are turned on the pad, whatever the
+    sheet says they were set to), and any other the drawing gives no setting."""
     built = model.built
+    ground = (
+        frozenset()
+        if built.vehicle is None
+        else frozenset(n.id for n in model.diagram.nodes if n.id not in built.vehicle)
+    )
     out = []
     for node in model.diagram.nodes:
         if node.type != "PR" or node.id in taken or node.id in built.dome_loaders:
@@ -286,7 +374,7 @@ def _hand_loaded_regulators(model: Model, taken: set[str]) -> list[str]:
             continue  # its dome is the dome knob's
         if node.id not in built.network.branches:
             continue
-        if {"setpoint", "dome_pressure"} & set(node.params):
+        if {"setpoint", "dome_pressure"} & set(node.params) and node.id not in ground:
             continue
         out.append(node.id)
     return out

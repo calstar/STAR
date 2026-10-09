@@ -154,3 +154,23 @@ def test_a_saved_hookup_that_cannot_be_read_is_said_on_the_console() -> None:
     assert (
         client.get("/api/hookup", params={"diagram": diagram}).json()["saved"] is False
     )
+
+
+def test_aliases_are_saved_with_the_hookup_and_reach_a_running_stand() -> None:
+    """A console name is kept with the drawing's hookup, comes back on the next
+    stand, and a running stand takes a rename without reopening."""
+    diagram = upload(json.loads(STAND.read_text()), "alias stand.json")
+    first = client.get("/api/hookup", params={"diagram": diagram}).json()
+    body = {**first["hookup"], "aliases": {"engine.pc": "Chamber pressure", "x": " "}}
+    saved = client.put("/api/hookup", params={"diagram": diagram}, json=body).json()
+    assert saved["hookup"]["aliases"] == {"engine.pc": "Chamber pressure"}
+
+    opened = client.post("/api/session", params={"diagram": diagram}, json={}).json()
+    assert opened["aliases"] == {"engine.pc": "Chamber pressure"}
+    renamed = client.post(
+        f"/api/session/{opened['id']}/command",
+        json={"aliases": {"engine.pc": "Pc"}},
+    ).json()
+    assert renamed["aliases"] == {"engine.pc": "Pc"}
+    assert renamed["t"] >= opened["t"], "the same stand, not a new one"
+    _SESSIONS.pop(opened["id"], None)

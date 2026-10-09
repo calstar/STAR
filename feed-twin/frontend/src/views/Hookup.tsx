@@ -8,6 +8,11 @@
  * page is where a person fixes the rest without editing the drawing or asking
  * anyone: pin an actuator to a valve, make a knob, put regulators on it. Kept
  * per drawing (by where it comes from, so saving the drawing again keeps it).
+ *
+ * "On the console" ticks which valves and transducers the Console shows. The
+ * cart's start off. It is the team's console view, kept per drawing like the
+ * Console's ⋯ (lib/shown.ts), and saved with a stand; console names are part
+ * of the hookup.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -20,13 +25,31 @@ import {
   type HookupBody,
   type KnobDef,
 } from '../api';
+import { groupByPage } from '../lib/pages';
 import { useStand } from '../stand';
 
 const AUTO = '__auto__';
 const NONE = '__none__';
 
 export function Hookup() {
-  const { where, restart, standDoc, standHookup, setStandHookup, locked } = useStand();
+  const {
+    where,
+    restart,
+    standDoc,
+    standHookup,
+    setStandHookup,
+    locked,
+    model,
+    history,
+    setAliases,
+    consoleHidden,
+    hideOnConsole,
+  } = useStand();
+  const [tab, setTab] = useState<'valves' | 'pts' | 'knobs'>('valves');
+  // What the console shows is the team's (lib/shown.ts): ticking here is the
+  // console's ⋯ by another name.
+  const onConsole = (id: string) => !consoleHidden[id];
+  const flipConsole = (id: string) => hideOnConsole([id], onConsole(id));
   // On a stand, the hookup is the stand's: kept and shared with it, saved by
   // the stand's Save. Off one, it is the drawing's own, kept in the library.
   const onStand = Boolean(standDoc);
@@ -57,27 +80,61 @@ export function Hookup() {
   if (error) return <p className="p-6 text-sm text-red-400">{error}</p>;
   if (!data || !draft) return <p className="p-6 text-sm text-text-muted">Reading the drawing…</p>;
 
+  // "On the console": every valve the actuator grid could show, the rocket's
+  // first, each by the actuator that drives it where one does.
+  const ground = new Set(model?.ground ?? []);
+  const actuators = model?.actuators ?? [];
+  const valveRows = groupByPage(actuators, actuators, (a) => a.id, model?.pages).flatMap((g) => g.items);
+  const actuatorOf: Record<string, string> = {};
+  for (const [actuator, symbol] of Object.entries(data.bound)) actuatorOf[symbol] = actuator;
+  // The transducers the console draws, as the stand reports them.
+  const channels = (history?.channels ?? []).filter((c) => ['psig', 'K', ''].includes(c.unit ?? ''));
+
+  const setAlias = (id: string, value: string) => {
+    const aliases = { ...(draft.aliases ?? {}) };
+    if (value.trim()) aliases[id] = value;
+    else delete aliases[id];
+    setDraft({ ...draft, aliases });
+  };
+  const aliasInput = (id: string, shown: string) => (
+    <input
+      type="text"
+      value={draft.aliases?.[id] ?? ''}
+      placeholder={shown}
+      disabled={locked}
+      onChange={(e) => setAlias(id, e.target.value)}
+      className="w-full max-w-xs rounded border border-gray-700 bg-black/60 px-2 py-1 text-[12.5px] placeholder:text-gray-600 disabled:opacity-50"
+    />
+  );
+
   const valveLabel = (id: string) => {
     const v = data.valves.find((x) => x.id === id);
     return v ? `${v.label}${data.pages.length > 1 ? ` · ${v.page}` : ''}` : id;
   };
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
 
-  const keep = (hookup: HookupBody) => {
+  // Only the console names changed: the stand takes them live, no reopen.
+  const namesOnly =
+    JSON.stringify(data.hookup.valves) === JSON.stringify(draft.valves) &&
+    JSON.stringify(data.hookup.knobs) === JSON.stringify(draft.knobs);
+
+  const keep = (hookup: HookupBody, reopen = true) => {
     if (!data) return;
     setData({ ...data, hookup, saved: true });
     setDraft(structuredClone(hookup));
-    setStandHookup(hookup as unknown as Record<string, unknown>);
+    setStandHookup(hookup as unknown as Record<string, unknown>, reopen);
+    if (!reopen) setAliases(hookup.aliases ?? {});
   };
 
-  const act = async (run: () => Promise<HookupData>) => {
+  const act = async (run: () => Promise<HookupData>, reopen = true) => {
     setBusy(true);
     setError('');
     try {
       const h = await run();
       setData(h);
       setDraft(structuredClone(h.hookup));
-      restart(); // the stand reopens bound the new way
+      if (reopen) restart(); // the stand reopens bound the new way
+      else setAliases(h.hookup.aliases ?? {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -164,7 +221,7 @@ export function Hookup() {
           <button
             type="button"
             disabled={busy || (!dirty && data.saved) || locked}
-            onClick={() => (onStand ? keep(draft) : void act(() => saveHookup(where, draft)))}
+            onClick={() => (onStand ? keep(draft, !namesOnly) : void act(() => saveHookup(where, draft), !namesOnly))}
             title={
               locked
                 ? 'Take the stand to change its hookup'
@@ -179,6 +236,26 @@ export function Hookup() {
         </div>
       </div>
 
+      <div className="flex gap-1 border-b border-gray-800">
+        {(['valves', 'pts', 'knobs'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`px-3 py-1.5 text-[12px] font-semibold ${
+              tab === t ? 'border-b-2 border-blue-500 text-white' : 'text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            {t === 'valves' ? 'Valves' : t === 'pts' ? 'PTs' : 'Knobs'}
+          </button>
+        ))}
+        <span className="ml-auto self-center text-[11px] text-gray-600">
+          Console names are saved with the hookup; renaming does not restart the stand.
+        </span>
+      </div>
+
+      {tab === 'valves' && (
+        <>
       <div className="bg-card rounded-lg border border-gray-800">
         <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
           Valves
@@ -233,7 +310,97 @@ export function Hookup() {
           </p>
         )}
       </div>
+      <div className="bg-card rounded-lg border border-gray-800">
+        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
+          On the console
+          <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
+            the actuator grid: which valves it shows, and what it calls them
+          </span>
+        </h2>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-[10px] uppercase tracking-wider text-gray-500">
+              <th className="w-16 px-4 py-1.5 font-normal">Show</th>
+              <th className="px-4 py-1.5 font-normal">On the P&amp;ID</th>
+              <th className="px-4 py-1.5 font-normal">Driven by</th>
+              <th className="px-4 py-1.5 font-normal">Console name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {valveRows.map((a) => (
+              <tr key={a.id} className="border-t border-gray-800/60">
+                <td className="px-4 py-1">
+                  <input
+                    type="checkbox"
+                    checked={onConsole(a.id)}
+                    onChange={() => flipConsole(a.id)}
+                    className="accent-blue-500"
+                    title={ground.has(a.id) ? "On the Console's actuator grid (the cart's start off)" : "On the Console's actuator grid"}
+                  />
+                </td>
+                <td className="px-4 py-1 font-mono">
+                  {a.tag}
+                  <span className="ml-2 text-[10px] text-gray-600">{model?.pages?.[a.id] ?? ''}</span>
+                </td>
+                <td className="px-4 py-1 text-text-muted">{actuatorOf[a.id] ?? '—'}</td>
+                <td className="px-4 py-1">{aliasInput(a.id, actuatorOf[a.id] ?? a.tag)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+        </>
+      )}
 
+      {tab === 'pts' && (
+      <div className="bg-card rounded-lg border border-gray-800">
+        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
+          Transducers
+          <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
+            which the Console's pressure strip and plots show, and what it calls them
+          </span>
+        </h2>
+        {channels.length === 0 ? (
+          <p className="px-4 py-3 text-[12px] text-text-muted">Waiting for the stand's first samples…</p>
+        ) : (
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wider text-gray-500">
+                <th className="w-16 px-4 py-1.5 font-normal">Show</th>
+                <th className="px-4 py-1.5 font-normal">On the P&amp;ID</th>
+                <th className="px-4 py-1.5 font-normal">Reads</th>
+                <th className="px-4 py-1.5 font-normal">Console name</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channels.map((c) => (
+                <tr key={c.id} className="border-t border-gray-800/60">
+                  <td className="px-4 py-1">
+                    <input
+                      type="checkbox"
+                      checked={onConsole(c.id)}
+                      onChange={() => flipConsole(c.id)}
+                      className="accent-blue-500"
+                      title="On the Console's pressure strip and plots"
+                    />
+                  </td>
+                  <td className="px-4 py-1 font-mono">
+                    {c.tag}
+                    <span className="ml-2 text-[10px] text-gray-600">
+                      {c.id === 'engine.pc' ? 'the engine' : (model?.pages?.[c.id] ?? '')}
+                    </span>
+                  </td>
+                  <td className="px-4 py-1 text-text-muted">{c.unit || 'psig'}</td>
+                  <td className="px-4 py-1">{aliasInput(c.id, c.tag)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      )}
+
+      {tab === 'knobs' && (
       <div className="bg-card rounded-lg border border-gray-800">
         <h2 className="flex items-baseline border-b border-gray-800 px-4 py-2.5 caps">
           Knobs
@@ -344,6 +511,7 @@ export function Hookup() {
           </p>
         )}
       </div>
+      )}
     </div>
   );
 }

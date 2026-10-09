@@ -21,8 +21,9 @@ never disagree about which tank is which.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 
-from feedtwin.pid.document import Diagram
+from feedtwin.pid.document import Diagram, PidNode
 
 #: Symbols that make an engine end of the vehicle.
 ENGINE_TYPES = frozenset({"ENGINE", "INJECTOR"})
@@ -61,3 +62,44 @@ def ground_ids(diagram: Diagram) -> frozenset[str]:
     if vehicle is None or len(vehicle) == len(diagram.nodes):
         return frozenset()
     return frozenset(n.id for n in diagram.nodes if n.id not in vehicle)
+
+
+#: Symbols :func:`vehicle_only` names when it says what it cut.
+VESSEL_TYPES = frozenset({"TANK", "KBOTTLE", "DEWAR"})
+
+
+def vehicle_only(diagram: Diagram) -> tuple[Diagram, tuple[str, ...]]:
+    """The drawing with its ground support cut away, and the labels of the
+    vessels that went with it.
+
+    What a stand with its GSE unplugged is: every symbol off the vehicle is
+    gone, with every line that touches one, and each vehicle disconnect whose
+    mate was cut is a capped half -- which is how a one-page drawing of the
+    rocket reads its fill and vent ports. A drawing that is one piece comes back
+    as the same object, with nothing cut.
+    """
+    vehicle = vehicle_ids(diagram)
+    if vehicle is None or len(vehicle) == len(diagram.nodes):
+        return diagram, ()
+    cut = tuple(
+        n.label or n.id
+        for n in diagram.nodes
+        if n.id not in vehicle and n.type in VESSEL_TYPES
+    )
+
+    def capped(node: PidNode) -> PidNode:
+        mate = str(node.options.get("pairedWith", "") or "").strip()
+        if not mate or mate == "none" or mate in vehicle:
+            return node
+        return replace(node, options={**node.options, "pairedWith": ""})
+
+    return (
+        replace(
+            diagram,
+            nodes=tuple(capped(n) for n in diagram.nodes if n.id in vehicle),
+            edges=tuple(
+                e for e in diagram.edges if e.source in vehicle and e.target in vehicle
+            ),
+        ),
+        cut,
+    )

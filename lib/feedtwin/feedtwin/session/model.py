@@ -44,6 +44,7 @@ from feedtwin.pid import (
     PidNode,
     build_network,
 )
+from feedtwin.pid.roles import vehicle_only as cut_to_vehicle
 
 
 class AssemblyError(ValueError):
@@ -175,6 +176,7 @@ def assemble_model(
     fluid_swap: Mapping[str, tuple[str, float]] | None = None,
     multiphase: bool = False,
     meta: Mapping[str, object] | None = None,
+    vehicle_only: bool = False,
 ) -> Model:
     """Build and audit a model from a drawing already read and an engine already
     imported. The half of the feed-twin app's ``assemble`` that needs no
@@ -188,7 +190,15 @@ def assemble_model(
             engine's own name when an engine is given.
         chamber: A chamber to attach. When omitted and an engine is given, one
             is built from ``cea_cache`` (see :func:`chamber_for`).
+        vehicle_only: Cut the ground support away before building
+            (:func:`feedtwin.pid.roles.vehicle_only`, ``Setup.ignore_gse``):
+            the cart is not simulated and the session's built-in fills stand in
+            for it. ``meta`` then carries ``vehicle_only`` and ``ground_cut``,
+            the labels of the vessels cut.
     """
+    if vehicle_only:
+        diagram, cut = cut_to_vehicle(diagram)
+        meta = {**dict(meta or {}), "vehicle_only": True, "ground_cut": list(cut)}
     if fluid_swap:
         diagram = swap_fluids(diagram, fluid_swap)
 

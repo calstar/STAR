@@ -83,7 +83,16 @@ class OverrideStore:
             "params": {"<element id>": {"<param>": {
                 "value", "unit", "source", "reference", "by", "at",
                 "was": {"value", "unit", "source"} | null}}},
-            "console_hidden": {"<element id>": {"by", "at"}}}}
+            "console_hidden": {"<element id>": {"by", "at"}},
+            "console_shown": {"<element id>": {"by", "at"}},
+            "console_order": {"pts": [ids], "tanks": [ids]}}}
+
+    The ground support starts hidden from the console (the operator,
+    2026-10-08: "we are mainly interested in any pts on the rocket"), so a
+    cart item is shown only once somebody shows it -- ``console_shown`` -- and
+    a vehicle item is hidden only once somebody hides it -- ``console_hidden``.
+    Which is which is the drawing's to say, so the caller resolves it
+    (``main._console_hidden``); the store keeps the choices.
     """
 
     def __init__(self, path: Path) -> None:
@@ -116,6 +125,8 @@ class OverrideStore:
         return {
             "params": dict(found.get("params") or {}),
             "console_hidden": dict(found.get("console_hidden") or {}),
+            "console_shown": dict(found.get("console_shown") or {}),
+            "console_order": dict(found.get("console_order") or {}),
         }
 
     def _update(self, drawing: str, change: Any) -> dict[str, Any]:
@@ -206,6 +217,60 @@ class OverrideStore:
                 entry["console_hidden"][element] = {"by": by, "at": _now()}
             else:
                 entry["console_hidden"].pop(element, None)
+
+        return self._update(drawing, change)
+
+    def set_console_shown(
+        self, drawing: str, element: str, shown: bool, *, by: str
+    ) -> dict[str, Any]:
+        """Put a ground-support item on the console, or take it off again."""
+
+        def change(entry: dict[str, Any]) -> None:
+            entry["console_hidden"].pop(element, None)
+            if shown:
+                entry["console_shown"][element] = {"by": by, "at": _now()}
+            else:
+                entry["console_shown"].pop(element, None)
+
+        return self._update(drawing, change)
+
+    def set_console_order(
+        self, drawing: str, order: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The order the console draws its transducers and tanks in."""
+        clean = {
+            panel: [str(i) for i in order.get(panel) or ()]
+            for panel in ("pts", "tanks")
+            if order.get(panel)
+        }
+
+        def change(entry: dict[str, Any]) -> None:
+            entry["console_order"] = clean
+
+        return self._update(drawing, change)
+
+    def set_console_view(
+        self,
+        drawing: str,
+        *,
+        hidden: set[str],
+        ground: set[str],
+        order: Mapping[str, Any] | None,
+        by: str,
+    ) -> dict[str, Any]:
+        """Make the console show exactly what a saved stand showed: ``hidden``
+        is everything off it, ``ground`` the drawing's ground support."""
+        mark = {"by": by, "at": _now()}
+
+        def change(entry: dict[str, Any]) -> None:
+            entry["console_hidden"] = {e: dict(mark) for e in sorted(hidden - ground)}
+            entry["console_shown"] = {e: dict(mark) for e in sorted(ground - hidden)}
+            if order is not None:
+                entry["console_order"] = {
+                    panel: [str(i) for i in order.get(panel) or ()]
+                    for panel in ("pts", "tanks")
+                    if order.get(panel)
+                }
 
         return self._update(drawing, change)
 

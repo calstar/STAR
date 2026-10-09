@@ -158,6 +158,13 @@ export interface ModelView {
   /** What the team has hidden from the console, by node id. Shared, not per
    *  browser. Absent from an older server. */
   console_hidden?: string[];
+  /** The order the console draws transducers and tanks in. Shared, like
+   *  `console_hidden`. */
+  console_order?: { pts?: string[]; tanks?: string[] };
+  /** Drawing ids off the vehicle: the cart. The console starts them hidden. */
+  ground?: string[];
+  /** The cart's K-bottles and dewars, which the console does not show. */
+  ground_bottles?: string[];
 }
 
 export interface EngineState {
@@ -310,6 +317,10 @@ export interface StandSetup {
    *  supplier's cylinder. Off (default), it starts empty and GN2 High Press
    *  fills it from GSE over copv_fill_s. */
   bottle_delivered: boolean;
+  /** The cart drawn on the GSE page is not simulated: the rocket alone, filled
+   *  by the built-in charge and loads at these settings. Changing it opens a
+   *  fresh stand. */
+  ignore_gse: boolean;
   /** Multiplier on a vessel's gas-to-wall conductance while it is being
    *  charged: the jet stirs it and forced convection runs several times
    *  natural. 1 is a still vessel (adiabatic-charge heating in full). */
@@ -346,6 +357,8 @@ export interface SessionState {
   notes: string[];
   /** The GSE page's knobs, from the drawing's hookup. */
   knobs?: LiveKnob[];
+  /** The hookup's console names, by drawing (channel) id. */
+  aliases?: Record<string, string>;
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
    *  clears it. */
   tripped?: string | null;
@@ -504,9 +517,9 @@ export const refreshArtifact = (id: string) =>
 export const removeArtifact = (id: string) =>
   json<{ removed: string }>(`/api/library/${id}`, { method: 'DELETE' });
 
-export const getModel = (diagram: string, engine: string, fluidSet: string) =>
+export const getModel = (diagram: string, engine: string, fluidSet: string, ignoreGse = false) =>
   json<ModelView>(
-    `/api/model?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}`,
+    `/api/model?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}&ignore_gse=${ignoreGse}`,
   );
 
 /** The drawing as pid-designer saved it, for pid-designer's own canvas to draw. */
@@ -603,8 +616,29 @@ export const clearOverride = (diagram: string, element: string, parameter: strin
     { method: 'DELETE' },
   );
 
+export interface ConsoleShared {
+  hidden: string[];
+  order?: { pts?: string[]; tanks?: string[] };
+}
+
 export const getConsoleHidden = (diagram: string) =>
-  json<{ hidden: string[] }>(`/api/drawing/console?diagram=${diagram}`);
+  json<ConsoleShared>(`/api/drawing/console?diagram=${diagram}`);
+
+/** The order the console draws transducers and tanks in, for everyone. */
+export const setConsoleOrder = (diagram: string, order: { pts: string[]; tanks: string[] }) =>
+  json<ConsoleShared>('/api/drawing/console/order', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, order }),
+  });
+
+/** Make the console exactly what a saved stand had. */
+export const setConsoleView = (diagram: string, hidden: string[], order: { pts: string[]; tanks: string[] }) =>
+  json<ConsoleShared>('/api/drawing/console/view', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, hidden, order }),
+  });
 
 export const setConsoleHidden = (diagram: string, element: string, hidden: boolean) =>
   json<{ hidden: string[] }>('/api/drawing/console', {
@@ -656,6 +690,8 @@ export const commandSession = (
     setup?: Partial<StandSetup>;
     knob?: { id: string; value: number };
     skip_chill?: true | string;
+    /** Rename what the console shows, live (the hookup's aliases). */
+    aliases?: Record<string, string>;
   },
 ) => post<SessionState>(`/api/session/${id}/command`, body);
 
@@ -675,6 +711,8 @@ export interface KnobDef {
 export interface HookupBody {
   valves: Record<string, string>;
   knobs: KnobDef[];
+  /** What the console calls a valve or transducer, by drawing (channel) id. */
+  aliases?: Record<string, string>;
 }
 
 export interface Hookup {
@@ -782,8 +820,8 @@ export interface Tunable {
 
 export const getTunables = () => json<Tunable[]>('/api/tunables');
 
-export const getStateMachine = (w: Where) =>
-  json<StateMachine>(`/api/statemachine?${query(w)}`);
+export const getStateMachine = (w: Where, ignoreGse = false) =>
+  json<StateMachine>(`/api/statemachine?${query(w)}&ignore_gse=${ignoreGse}`);
 
 /**
  * Channel colours, lifted from the DAQ's `lib/sensor-colors.ts` so the same

@@ -17,7 +17,8 @@
  *
  * The ⋯ hides valves nobody is watching today. A hidden valve still shows
  * while it is open or held: a valve you cannot see is not a valve you can
- * forget is open.
+ * forget is open. Not the cart's: its valves are put on the console from the
+ * Hookup tab, and the ⋯ lists only the ones that are.
  */
 
 import type { ModelView, SessionState, StateMachine } from '../api';
@@ -32,6 +33,10 @@ interface Props {
   onRelease: () => void;
   locked?: boolean;
   hidden?: string[];
+  /** Drawing ids off the vehicle: the cart's valves. */
+  ground?: ReadonlySet<string>;
+  /** Console names (the hookup's aliases), by drawing id. */
+  aliases?: Record<string, string>;
   onToggleHidden?: (id: string) => void;
   onAllHidden?: (show: boolean) => void;
 }
@@ -44,19 +49,23 @@ export default function ActuatorGrid({
   onRelease,
   locked = false,
   hidden = [],
+  ground = new Set<string>(),
+  aliases = {},
   onToggleHidden,
   onAllHidden,
 }: Props) {
   const roleOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(machine?.bound ?? {})) roleOf[symbol] = actuator;
   const opened = model.actuators.filter((a) => live.open[a.id]).length;
-  const urgent = (id: string) => (live.open[id] ?? false) || live.held.includes(id);
+  const urgent = (id: string) => !ground.has(id) && ((live.open[id] ?? false) || live.held.includes(id));
   const drawn = model.actuators.filter((a) => !hidden.includes(a.id) || urgent(a.id));
-  // The menu lists them by sheet; the grid does not split.
-  const listed = groupByPage(model.actuators, model.actuators, (a) => a.id, model.pages);
+  // The menu lists them by sheet; the grid does not split. The cart's are
+  // listed only once put on the console (Hookup tab).
+  const offered = model.actuators.filter((a) => !ground.has(a.id) || !hidden.includes(a.id));
+  const listed = groupByPage(offered, offered, (a) => a.id, model.pages);
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-col">
       <div className="mb-3 flex flex-shrink-0 items-baseline justify-between gap-3">
         <h2 className="caps">Actuators</h2>
         <span className="flex items-baseline gap-3">
@@ -79,7 +88,7 @@ export default function ActuatorGrid({
               items={listed.flatMap((g) =>
                 g.items.map((a) => ({
                   id: a.id,
-                  label: roleOf[a.id] ?? a.tag,
+                  label: aliases[a.id] || (roleOf[a.id] ?? a.tag),
                   forced: urgent(a.id) ? 'Open or held, so it shows anyway' : undefined,
                   page: g.page,
                 })),
@@ -91,7 +100,9 @@ export default function ActuatorGrid({
           )}
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-2">
+      {/* Scrolls when the valves outgrow the space the console gives them;
+          the header and its Release stay put. */}
+      <div className="grid min-h-0 grid-cols-4 content-start gap-2 overflow-y-auto pr-1">
         {drawn.map((a) => {
           const open = live.open[a.id] ?? false;
           const held = live.held.includes(a.id);
@@ -113,7 +124,7 @@ export default function ActuatorGrid({
               }`}
             >
               <span className="flex min-w-0 flex-col">
-                <span className="truncate text-[14px] font-semibold text-[var(--ink)]">{role ?? a.tag}</span>
+                <span className="truncate text-[14px] font-semibold text-[var(--ink)]">{aliases[a.id] || (role ?? a.tag)}</span>
                 <span
                   className={`mt-0.5 font-mono text-[10px] uppercase leading-none tracking-[0.14em] ${
                     open ? 'text-[var(--color-success)]' : 'text-[var(--ink-3)]'

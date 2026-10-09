@@ -5,9 +5,10 @@
  * scale, where the NOP and MEOP lines sit, the thresholds at which the bar
  * changes colour. A re-implementation would drift on exactly those. What is
  * not the DAQ's is the drawing: an outlined capsule in the console's
- * monochrome, neutral below NOP, amber above it, red above MEOP, and the
- * limit rules run the width of the column so a row of bars reads as one
- * gauge.
+ * monochrome, neutral below NOP, amber above it, red above MEOP. The limit
+ * rules cross the capsule only, and each number sits against the capsule's
+ * edge at its rule (the operator, 2026-10-08: rules across the whole column
+ * and numbers off at its side read as belonging to the neighbour).
  *
  * Three of its props are declared there and never read — `unit`, `showLabels`,
  * and one derived value. They are wired up here rather than deleted, because
@@ -119,13 +120,15 @@ function PressureBar({
    *  capsule shares its column with a gutter, and the numbers live there. */
   const GUTTER = showLabels ? 32 : 0;
 
+  // A rule across the capsule, and its number just outside the capsule's
+  // right edge, centred on the rule.
   const limit = (pct: number, v: number, tone: string) => (
     <div className="pointer-events-none absolute inset-x-0" style={{ bottom: `${pct.toFixed(2)}%` }}>
-      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.6 }} />
+      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.75 }} />
       {showLabels && (
         <span
-          className="absolute right-0 top-1 pl-1.5 font-mono text-[10px] leading-none tabular-nums"
-          style={{ color: tone, width: GUTTER }}
+          className="absolute left-full -translate-y-1/2 whitespace-nowrap pl-1 font-mono text-[10px] leading-none tabular-nums"
+          style={{ color: tone, top: 0 }}
         >
           {isFinite(v) && Math.abs(v) < 1e21 ? v.toFixed(0) : v}
         </span>
@@ -151,32 +154,36 @@ function PressureBar({
             which are laid out against the full column height, sit where the
             DAQ puts them to within the outline's pixel. */}
         <div className="absolute inset-y-0 left-0 flex justify-center" style={{ right: GUTTER }}>
-          <div
-            className="relative h-full w-[72%] max-w-[52px] overflow-hidden border"
-            style={{
-              borderRadius: 9,
-              borderColor: level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)',
-              // A faint wash of the channel's colour, so an empty bar still
-              // says which trace it is.
-              background: color ? undefined : `${tint}12`,
-            }}
-          >
-            {sane && value !== null && (
-              <div
-                className="absolute bottom-0 w-full"
-                style={{
-                  height: `${displayHeight}%`,
-                  background: barColor,
-                  minHeight: value !== 0 ? '2px' : '0px',
-                  transition: 'height 0.05s ease-out',
-                  opacity: value !== 0 ? 0.85 : 0.3,
-                }}
-              />
-            )}
+          {/* The capsule's own box: the rules span it and their numbers hang
+              off its right edge, so they move with it. */}
+          <div className="relative h-full w-[72%] max-w-[52px]">
+            <div
+              className="absolute inset-0 overflow-hidden border"
+              style={{
+                borderRadius: 9,
+                borderColor: level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)',
+                // A faint wash of the channel's colour, so an empty bar still
+                // says which trace it is.
+                background: color ? undefined : `${tint}12`,
+              }}
+            >
+              {sane && value !== null && (
+                <div
+                  className="absolute bottom-0 w-full"
+                  style={{
+                    height: `${displayHeight}%`,
+                    background: barColor,
+                    minHeight: value !== 0 ? '2px' : '0px',
+                    transition: 'height 0.05s ease-out',
+                    opacity: value !== 0 ? 0.85 : 0.3,
+                  }}
+                />
+              )}
+            </div>
+            {limit(meopPct, meop, '#ef4444')}
+            {limit(nopPct, nop, '#e5b53a')}
           </div>
         </div>
-        {limit(meopPct, meop, '#ef4444')}
-        {limit(nopPct, nop, '#e5b53a')}
       </div>
 
       <div

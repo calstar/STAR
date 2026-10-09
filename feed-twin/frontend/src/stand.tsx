@@ -22,6 +22,7 @@ import {
   type ReactNode,
 } from 'react';
 import { keyOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
+import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
 import {
   commandSession,
@@ -35,6 +36,8 @@ import {
   sessionT0,
   sessionHistory,
   setConsoleHidden,
+  setConsoleOrder as putConsoleOrder,
+  setConsoleView,
   tickSession,
   type Artifact,
   type Burns,
@@ -79,12 +82,19 @@ interface StandValue {
   /** What the console's menus and the P&ID tab hide, for everyone on this
    *  drawing. Kept by the backend, so every browser shows the same console. */
   consoleHidden: Record<string, boolean>;
+  /** The order the strip draws transducers and tanks in; shared the same way. */
+  consoleOrder: Order;
+  setConsoleOrder: (order: Order) => void;
   hideOnConsole: (ids: string[], hide: boolean) => void;
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
   /** Turn one of the hookup's knobs [psig]. The dome knob is `setSetup({dome})`. */
   turnKnob: (id: string, value: number) => void;
+  /** What the console calls a valve or transducer: its alias, or `tag`. */
+  nameOf: (id: string, tag: string) => string;
+  /** Give the running stand new console names (no reopen). */
+  setAliases: (aliases: Record<string, string>) => void;
   release: () => void;
   restart: () => void;
   /** Skip the pad: loaded, charged, at lockup, in Ready. */
@@ -111,7 +121,9 @@ interface StandValue {
   /** The stand's own hookup, when it has one for the drawing on screen. */
   standHookup: Record<string, unknown> | null;
   /** Change the stand's hookup (kept with the stand; Save writes it). */
-  setStandHookup: (hookup: Record<string, unknown>) => void;
+  /** Give the open stand a hookup; `reopen` false when only console names
+   *  changed (they are applied live). */
+  setStandHookup: (hookup: Record<string, unknown>, reopen?: boolean) => void;
 }
 
 /** A stand document, open. */
@@ -137,6 +149,21 @@ export const useStand = () => {
   return value;
 };
 
+/** Setup keys a drawing sets on its regulators: a fresh stand starts them there. */
+const DRAWN_KNOBS = ['dome', 'copv_target'];
+
+const orderOf = (raw?: { pts?: string[]; tanks?: string[] } | null): Order => ({
+  pts: raw?.pts ?? [],
+  tanks: raw?.tanks ?? [],
+});
+
+/** Put a saved stand's console view back on its drawing (the team's view).
+ *  A stand saved before views were kept carries none, and changes nothing. */
+async function putStandView(diagram: string, view?: Partial<ConsoleView> | null): Promise<void> {
+  if (!diagram || !view || !Array.isArray(view.hidden)) return;
+  await setConsoleView(diagram, view.hidden, orderOf(view.order)).catch(() => undefined);
+}
+
 export function StandProvider({ children }: { children: ReactNode }) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [diagram, setDiagram] = useState('');
@@ -158,6 +185,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     dewar_psi: 100,
     dewar_fill_cv: 0.019,
     bottle_delivered: false,
+    ignore_gse: false,
     fill_stirring: 20,
     ullage_collapse: true,
     ullage_vapour: true,
@@ -167,6 +195,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
   });
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [consoleHidden, setConsoleHiddenState] = useState<Record<string, boolean>>({});
+  const [consoleOrder, setConsoleOrderState] = useState<Order>(NO_ORDER);
   const [generation, setGeneration] = useState(0);
   const [standDoc, setStandDoc] = useState<OpenStand | null>(readStand);
   // Taking the checkout must not reload the stand: that would reopen the
@@ -180,6 +209,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const session = useRef('');
   /** Set by Reset: the next open must be a new stand, not the remembered one. */
   const wantFresh = useRef(false);
+  /** The drawing's knobs this tab has turned (dome, COPV fill). Only those are
+   *  sent when a stand opens; the rest start where the drawing sets them. */
+  const turned = useRef<{ diagram: string; keys: Set<string> }>({ diagram: '', keys: new Set() });
   const last = useRef(0);
   const alive = useRef(true);
   /** Stand seconds per wall second over the last few ticks. A stiff stand
@@ -280,6 +312,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (onStand && !standPayload.current) {
         try {
           standPayload.current = await standApi.load(onStand.ref);
+          // The stand's console view is put back for its drawing.
+          await putStandView(standPayload.current.diagram, standPayload.current.console);
         } catch (e) {
           // Unshared or deleted: say so, and open the cockpit off the stand
           // rather than leave it hanging on a session the server refuses.
@@ -298,9 +332,15 @@ export function StandProvider({ children }: { children: ReactNode }) {
       // are not there: the drawing's own hookup is used, and saving the stand
       // records the drawing it is now on.
       const doc = onStand && standPayload.current?.diagram === diagram ? standPayload.current : null;
+      // The dome and the COPV fill are the drawing's until someone turns them
+      // here, or a stand carries them: this tab's 500 and 4,500 used to win
+      // over whatever the drawing set its regulators to.
+      if (turned.current.diagram !== diagram) turned.current = { diagram, keys: new Set() };
+      const fromDrawing = DRAWN_KNOBS.filter((key) => !turned.current.keys.has(key) && !(doc && key in doc.setup));
+      const sent = Object.fromEntries(Object.entries(setup).filter(([key]) => !fromDrawing.includes(key)));
       const opened = await openSession(where, {
         state: 'Idle',
-        ...setup,
+        ...sent,
         ...(onStand ? { stand: { id: onStand.ref.id, owner: onStand.ref.owner ?? '' } } : {}),
         ...(doc && Object.keys(doc.hookup).length ? { hookup: doc.hookup } : {}),
       });
@@ -315,14 +355,18 @@ export function StandProvider({ children }: { children: ReactNode }) {
     };
     (async () => {
       try {
-        const [view, sm, first] = await Promise.all([
-          getModel(diagram, engine, 'hotfire'),
-          getStateMachine(where),
-          reopen(),
+        const first = await reopen();
+        // Read the drawing as the session was built: a reattached one may
+        // ignore the GSE whatever this tab's defaults say.
+        const cut = Boolean(first.setup?.ignore_gse ?? setup.ignore_gse);
+        const [view, sm] = await Promise.all([
+          getModel(diagram, engine, 'hotfire', cut),
+          getStateMachine(where, cut),
         ]);
         if (cancelled) return;
         setModel(view);
         setConsoleHiddenState(Object.fromEntries((view.console_hidden ?? []).map((id) => [id, true])));
+        setConsoleOrderState(orderOf(view.console_order));
         setMachine(sm);
         session.current = first.id;
         try {
@@ -427,7 +471,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
     if (!diagram) return undefined;
     const pull = () =>
       getConsoleHidden(diagram)
-        .then(({ hidden: ids }) => setConsoleHiddenState(Object.fromEntries(ids.map((id) => [id, true]))))
+        .then(({ hidden: ids, order }) => {
+          setConsoleHiddenState(Object.fromEntries(ids.map((id) => [id, true])));
+          setConsoleOrderState(orderOf(order));
+        })
         .catch(() => undefined);
     const id = window.setInterval(pull, 5000);
     return () => window.clearInterval(id);
@@ -454,6 +501,16 @@ export function StandProvider({ children }: { children: ReactNode }) {
         });
     },
     [diagram, consoleHidden],
+  );
+
+  /** The order the strip draws transducers and tanks in, for everyone. */
+  const changeConsoleOrder = useCallback(
+    (order: Order) => {
+      if (!diagram) return;
+      setConsoleOrderState(order);
+      putConsoleOrder(diagram, order).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    },
+    [diagram],
   );
 
   const command = useCallback(
@@ -493,6 +550,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (locked) return refuse();
       const next = { ...setup, ...patch } as StandSetup;
       setSetupState(next);
+      for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
+      // Ignoring the GSE is a different network: a fresh stand, built with it.
+      if ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) {
+        wantFresh.current = true;
+        setGeneration((g) => g + 1);
+        return;
+      }
       void command({ setup: patch });
     },
     setRunning,
@@ -500,6 +564,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     toggleChannel: (id) => setHidden((h) => ({ ...h, [id]: !h[id] })),
     consoleHidden,
     hideOnConsole,
+    consoleOrder,
+    setConsoleOrder: changeConsoleOrder,
     pick: (kind, id) => {
       if (locked) return refuse();
       if (kind === 'diagram') setDiagram(id);
@@ -512,6 +578,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (locked) return refuse();
       void command({ knob: { id, value } });
     },
+    nameOf: (id, tag) => live?.aliases?.[id] || tag,
+    setAliases: (aliases) => void command({ aliases }),
     release: () => void command({ release: '*' }),
     skipChill: (tankId) => void command({ skip_chill: tankId ?? true }),
     restart: () => {
@@ -535,6 +603,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     openStand: async (ref, name) => {
       const doc = await standApi.load(ref);
       standPayload.current = doc;
+      await putStandView(doc.diagram, doc.console);
       const opened = { ref, name };
       setStandDoc(opened);
       try {
@@ -565,9 +634,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
       Object.keys(standPayload.current.hookup).length
         ? standPayload.current.hookup
         : null,
-    setStandHookup: (hookup) => {
+    setStandHookup: (hookup, reopen = true) => {
       if (locked || !standPayload.current) return refuse();
       standPayload.current = { ...standPayload.current, diagram, hookup };
+      if (!reopen) return;
       wantFresh.current = true;
       setGeneration((g) => g + 1);
     },
@@ -586,6 +656,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
           : ((hookup?.hookup ?? {}) as unknown as Record<string, unknown>),
         operating_point: {
           knobs: Object.fromEntries((live?.knobs ?? []).map((k) => [k.id, k.psig])),
+        },
+        // What the console shows and in what order, as this tab has it.
+        console: {
+          hidden: Object.keys(consoleHidden).filter((id) => consoleHidden[id]),
+          order: consoleOrder,
         },
         notes: standPayload.current?.notes ?? '',
       };
