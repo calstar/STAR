@@ -443,6 +443,14 @@ export function Hookup() {
             Add knob
           </button>
         </h2>
+        {data.vehicle_only && (
+          <p
+            className="border-b border-gray-800 px-4 py-2 text-[12px] text-text-muted"
+            title="With the drawn GSE ignored the cart's regulators are not simulated: the dome knob turns the rocket's dome-loaded regulator itself, and the COPV fill is the built-in charge to this knob's setting. The knobs here are the whole drawing's, kept for when the GSE is simulated again; GSE Controls shows the ones the stand turns now."
+          >
+            Rocket only — the dome knob turns the rocket's regulator directly; these are the whole drawing's knobs.
+          </p>
+        )}
         <div className="flex flex-col divide-y divide-gray-800/60">
           {draft.knobs.map((knob, index) => (
             <div key={knob.id} className="flex flex-wrap items-start gap-4 px-4 py-3">
