@@ -88,6 +88,28 @@ function Vessel({
           <span className="truncate font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ink)]">
             {label}
           </span>
+          {/* On the name line, not a line of its own: the third vessel used to
+              drop off the strip while a LOX load chilled. */}
+          {chilling && (
+            <span className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em]">
+              <span
+                style={{ color: colour }}
+                title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
+              >
+                chilling
+              </span>
+              {onSkipChill && (
+                <button
+                  type="button"
+                  onClick={onSkipChill}
+                  className="uppercase tracking-[0.1em] text-[var(--ink-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--ink)]"
+                  title="Skip the chilldown: put the wall where the chill leaves it (saturation at atmosphere) and let the pour collect from now. On the stand it takes ~10 minutes."
+                >
+                  skip
+                </button>
+              )}
+            </span>
+          )}
         </span>
         <span className="flex-shrink-0 font-mono">
           <span className="text-[17px] leading-none tabular-nums" style={{ color: colour }}>
@@ -112,27 +134,6 @@ function Vessel({
           {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
         </span>
       </div>
-      {/* A line of its own: the one above truncates in a narrow column. */}
-      {chilling && (
-        <div className="mt-0.5 flex items-baseline gap-2 font-mono text-[11px] uppercase tracking-[0.1em]">
-          <span
-            style={{ color: colour }}
-            title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
-          >
-            chilling
-          </span>
-          {onSkipChill && (
-            <button
-              type="button"
-              onClick={onSkipChill}
-              className="uppercase tracking-[0.1em] text-[var(--ink-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--ink)]"
-              title="Skip the chilldown: put the wall where the chill leaves it (saturation at atmosphere) and let the pour collect from now. On the stand it takes ~10 minutes."
-            >
-              skip
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

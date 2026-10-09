@@ -27,6 +27,9 @@ export interface View {
   hint: string;
 }
 
+/** Time-warp settings: real time, and two speeds for waiting out the pad. */
+const WARPS = [1, 5, 20] as const;
+
 /** The stand clock: how long this stand has been up, mm:ss (h:mm:ss past an
  *  hour). Not "T+": to a rocket team that counts from ignition, and the stand
  *  was opened long before anyone fired it. */
@@ -48,9 +51,9 @@ function health(stand: ReturnType<typeof useStand>): { text: string; dot: string
   if (!(live?.converged ?? false)) {
     return { text: 'Solver struggling', dot: 'var(--color-danger)', pulse: false, title: 'The last step did not converge' };
   }
-  const slow = speed !== undefined && speed < 0.85;
+  const slow = speed !== undefined && speed < 0.85 * stand.warp;
   return {
-    text: slow ? `Running · ×${speed.toFixed(2)}` : 'Running',
+    text: slow || stand.warp > 1 ? `Running · ×${speed.toFixed(speed < 1 ? 2 : 1)}` : 'Running',
     dot: 'var(--color-success)',
     pulse: false,
     title: slow
@@ -162,6 +165,24 @@ export function TopBar({ views }: { views: readonly View[] }) {
             style={{ background: h.dot }}
           />
           {h.text}
+        </span>
+        <span
+          className="flex items-center border border-[var(--line)] normal-case tracking-normal"
+          title="Time warp: run the stand faster than real time, to wait out a load or a COPV charge. Fire always runs at ×1. The status shows the speed the machine actually reaches."
+        >
+          {WARPS.map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={() => stand.setWarp(w)}
+              aria-pressed={stand.warp === w}
+              className={`px-1.5 py-0.5 font-mono text-[10px] tabular-nums ${
+                stand.warp === w ? 'bg-[var(--ink)] text-black' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'
+              }`}
+            >
+              ×{w}
+            </button>
+          ))}
         </span>
         {/* The stand clock, not the wall clock: how long this stand has been
             up. It stops when the sim is paused. */}

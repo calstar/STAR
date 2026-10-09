@@ -98,7 +98,7 @@ const PHASES: Phase[] = [
     key: 'ox',
     label: 'Load LOX',
     target: 'Ox Fill',
-    waiting: 'LOX arriving from the tanker, then the wall chilling down — keep venting until it is cold',
+    waiting: 'LOX loading; the wall chills first, so keep venting',
     done: (l) => (oxTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(oxTank(l)),
     progress: (l) => loadProgress(oxTank(l)),
   },
@@ -106,7 +106,7 @@ const PHASES: Phase[] = [
     key: 'fuel',
     label: 'Load fuel',
     target: 'Fuel Fill',
-    waiting: 'fuel arriving from the tanker',
+    waiting: 'fuel loading',
     done: (l) => (fuelTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(fuelTank(l)),
     progress: (l) => loadProgress(fuelTank(l)),
   },
@@ -114,7 +114,7 @@ const PHASES: Phase[] = [
     key: 'charge',
     label: 'Charge COPV',
     target: 'GN2 High Press',
-    waiting: 'bottle charging from the GSE cart',
+    waiting: 'COPV charging',
     done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
   },
@@ -122,7 +122,7 @@ const PHASES: Phase[] = [
     key: 'oxpress',
     label: 'Press LOX',
     target: 'Ox Press',
-    waiting: 'LOX tank coming up through the regulator',
+    waiting: 'LOX tank pressing up to lockup',
     done: (l, s) =>
       (oxTank(l)?.pressure_psi ?? Infinity) >=
       pressTarget(oxTank(l), s.dome) - PRESSED_PSI,
@@ -133,7 +133,7 @@ const PHASES: Phase[] = [
     key: 'fuelpress',
     label: 'Press fuel',
     target: 'Fuel Press',
-    waiting: 'fuel tank coming up through the regulator',
+    waiting: 'fuel tank pressing up to lockup',
     done: (l, s) =>
       (fuelTank(l)?.pressure_psi ?? Infinity) >=
       pressTarget(fuelTank(l), s.dome) - PRESSED_PSI,
@@ -144,7 +144,7 @@ const PHASES: Phase[] = [
     key: 'topup',
     label: 'Top up COPV',
     target: 'GN2 High Press',
-    waiting: 'bottle back to target after pressing',
+    waiting: 'COPV back up to its charge',
     done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
   },
@@ -307,9 +307,9 @@ export function PadGuideLine({
   const { phases, index, current, inTarget, hop, legal, progress, sagged, auto, setAuto } = guide;
   return (
     <div className="flex flex-col gap-1.5 font-mono text-[12px]">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <div className="flex min-w-0 items-center gap-x-4">
         <span
-          className="flex items-center gap-1"
+          className="flex flex-shrink-0 items-center gap-1"
           title={phases
             .map((p, i) => `${i < index ? '✓' : i === index ? '▸' : '·'} ${p.label}`)
             .join('\n')}
@@ -329,9 +329,9 @@ export function PadGuideLine({
           </span>
         </span>
         {current === undefined ? (
-          <span className="text-[var(--color-success)]">Pad complete — the stand is in {state}.</span>
+          <span className="min-w-0 flex-1 truncate text-[var(--color-success)]">Pad complete — the stand is in {state}.</span>
         ) : inTarget ? (
-          <span className="flex min-w-0 items-center gap-2 text-[var(--ink-2)]">
+          <span className="flex min-w-0 flex-1 items-center gap-2 text-[var(--ink-2)]">
             <span className="truncate">
               {current.key === 'fire' ? 'Burning.' : `${current.label}: ${current.waiting}.`}
             </span>
@@ -348,19 +348,19 @@ export function PadGuideLine({
             )}
           </span>
         ) : hop ? (
-          <span className="text-[var(--ink-2)]">
+          <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
             Next, {current.label.toLowerCase()}: press{' '}
             <span className={legal ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-3)]'}>{hop}</span>
             {hop !== current.target && <span className="text-[var(--ink-3)]"> → {current.target}</span>}
           </span>
         ) : (
-          <span className="text-[var(--color-warning)]">
+          <span className="min-w-0 flex-1 truncate text-[var(--color-warning)]">
             No route from {state} to {current.target} without a vent or an abort.
           </span>
         )}
         {current !== undefined && current.key !== 'fire' && (
           <label
-            className="ml-auto flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--ink-3)]"
+            className="ml-auto flex flex-shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-[var(--ink-3)]"
             title="Press each state as it comes and wait out the loads and presses, stopping at Ready. Fire stays yours."
           >
             <input

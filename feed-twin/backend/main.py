@@ -100,7 +100,7 @@ from backend.models import (
 )
 from backend.live import Stand
 from feedtwin.session.gauge import PSI, psig
-from backend.session import Sample as SessionSample, Session, Setup
+from backend.session import MAX_STEP, Sample as SessionSample, Session, Setup
 from feedtwin.session.burn import (
     BurnPlan,
     find_probes,
@@ -1569,13 +1569,28 @@ async def tick_session(
     """
     session = _session(session_id)
     settings = dict(body or {})
-    dt = float(settings.get("dt") or 0.1)
+    # Time warp: a tick may carry several steps' worth of stand time, run as
+    # consecutive full steps of the session's own size -- nothing is coarsened,
+    # it only goes faster when the machine can (a 20-minute LOX load watched at
+    # x20). The cockpit drops back to x1 at Fire.
+    dt = min(max(float(settings.get("dt") or 0.1), 0.0), MAX_TICK_S)
+    left = dt
     try:
-        sample = session.step(dt)
+        while True:
+            chunk = min(left, MAX_STEP)
+            sample = session.step(chunk)
+            _record_on_burnout(session, sample)
+            left -= chunk
+            if left <= 1e-9 or session.tripped or session.state == "Fire":
+                break
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _record_on_burnout(session, sample)
     return _session_out(session, sample)
+
+
+#: The most stand time one tick may carry [s]: x20 on a 200 ms tick, with
+#: room. A backgrounded tab resumes; it does not catch up an hour.
+MAX_TICK_S = 6.0
 
 
 _STUDY = StudyRunner()
@@ -1836,7 +1851,9 @@ async def session_history(
         ]
         + [
             c.model_copy(update=limits.get(c.id, {}))
-            for c in (_engine_channels(kept) if session.model.engine is not None else [])
+            for c in (
+                _engine_channels(kept) if session.model.engine is not None else []
+            )
         ],
         balance=_session_balance(session),
     )
@@ -1878,7 +1895,11 @@ def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
                     "nop": round(nop, 1) if nop is not None and nop < meop else None,
                     "meop": round(meop, 1),
                     "limits": f"{sim.label}: "
-                    + (f"operating {nop:.0f} psig on the drawing · " if nop is not None else "")
+                    + (
+                        f"operating {nop:.0f} psig on the drawing · "
+                        if nop is not None
+                        else ""
+                    )
                     + f"trips at {meop:.0f} psig (MAWP)",
                 }
         for bottle in session.bottles.values():
@@ -1889,11 +1910,17 @@ def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
                     "nop": round(nop, 1) if nop is not None and nop < meop else None,
                     "meop": round(meop, 1),
                     "limits": f"{bottle.label}: "
-                    + (f"charged to {nop:.0f} psig on the drawing · " if nop is not None else "")
+                    + (
+                        f"charged to {nop:.0f} psig on the drawing · "
+                        if nop is not None
+                        else ""
+                    )
                     + f"trips at {meop:.0f} psig (MAWP)",
                 }
     engine = session.model.engine
-    design = getattr(engine, "design_chamber_pressure", 0.0) if engine is not None else 0.0
+    design = (
+        getattr(engine, "design_chamber_pressure", 0.0) if engine is not None else 0.0
+    )
     if design > 0.0:
         pc = psig(design)
         out["engine.pc"] = {

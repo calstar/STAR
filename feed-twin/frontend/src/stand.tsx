@@ -89,6 +89,9 @@ interface StandValue {
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
+  /** Stand seconds per wall second asked for (time warp); 1 at Fire. */
+  warp: number;
+  setWarp: (w: number) => void;
   /** Turn one of the hookup's knobs [psig]. The dome knob is `setSetup({dome})`. */
   turnKnob: (id: string, value: number) => void;
   /** What the console calls a valve or transducer: its alias, or `tag`. */
@@ -253,6 +256,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
    *  slower than real time; the panel then runs in slow motion and says so,
    *  rather than freezing. */
   const [speed, setSpeed] = useState(1);
+  /** Stand seconds per wall second the cockpit asks for: x1, or faster to wait
+   *  out a load or a charge. Back to x1 at Fire. */
+  const [warp, setWarpState] = useState(1);
+  const warpRef = useRef(1);
+  const liveState = useRef('');
   const pace = useRef<{ wall: number; t: number } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -444,7 +452,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (!alive.current || !session.current) return;
       const now = performance.now();
       const started = now;
-      const dt = Math.min((now - last.current) / 1000, MAX_DT);
+      // Time warp: the tick carries `warp` times the wall time, never in Fire
+      // (a burn is watched in real time) -- the backend runs it as whole steps.
+      const w = liveState.current === 'Fire' ? 1 : warpRef.current;
+      const dt = Math.min(((now - last.current) / 1000) * w, MAX_DT * w);
       last.current = now;
       try {
         const next = await tickSession(session.current, dt);
@@ -459,6 +470,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
           pace.current = { wall: nowWall, t: next.t };
         }
         setLive(next);
+        liveState.current = next.state;
         setError('');
       } catch (e) {
         if (!alive.current) return;
@@ -609,7 +621,18 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (kind === 'diagram') setDiagram(id);
       else setEngine(id);
     },
-    go: (state) => void command({ state }),
+    go: (state) => {
+      if (/^fire$/i.test(state)) {
+        warpRef.current = 1;
+        setWarpState(1);
+      }
+      void command({ state });
+    },
+    warp,
+    setWarp: (w) => {
+      warpRef.current = w;
+      setWarpState(w);
+    },
     toggleValve: (id) =>
       void command({ valve: id, open: !(live?.open[id] ?? false) }),
     turnKnob: (id, value) => {
