@@ -307,7 +307,7 @@ export function usePadGuide(
 }
 
 /**
- * The guide as one line under the state machine: the checklist as dots, what
+ * The guide as one line over the state machine's grid: the checklist as dots, what
  * is happening or what to press, and the auto-sequence. The state to press is
  * ringed on the grid itself; the strip of buttons that used to sit along the
  * bottom of the console repeated the grid (the operator, 2026-10-09).

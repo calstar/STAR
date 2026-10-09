@@ -1247,7 +1247,7 @@ def _drawn_knobs(
     regulators' drawn settings. Rocket only, the cart's settings are still the
     drawing's, though the cart is not simulated: the COPV fill charges to its
     fill regulator's setting."""
-    drawn = knob_starts(hookup, model)
+    drawn: dict[str, float] = dict(knob_starts(hookup, model))
     if vehicle_only:
         whole = _assemble(diagram, engine, fluid_set)
         drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}

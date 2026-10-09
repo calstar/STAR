@@ -54,7 +54,7 @@ interface Props {
   actions?: ReactNode;
   /** The state the pad guide says to press next: ringed. */
   next?: string;
-  /** The pad guide's line, under the grid. */
+  /** The pad guide's line, between the header and the grid. */
   guide?: ReactNode;
 }
 
@@ -83,6 +83,9 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
           </span>
         </span>
       </div>
+      {/* What to press next, above the grid it points into: under it, a short
+          window scrolled the line out of sight (1280 x 800). */}
+      {guide && <div className="mb-3 flex-shrink-0">{guide}</div>}
       {/* Rows share the panel's height, so the squares grow with the window. */}
       <div
         className="grid flex-1 gap-2.5"
@@ -116,7 +119,9 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
                       : `${state} is not reachable from ${live.state}`
               }
               style={{ gridRow: row + 1, gridColumn: col + 1 }}
-              className={`relative flex min-h-0 items-center justify-center border px-2 py-2 text-center font-mono text-[13px] font-semibold uppercase leading-snug tracking-[0.14em] transition-colors ${
+              // Narrower type below 1440: at 1280 a column is ~60 px and "GN2
+              // HIGH PRESS" broke onto three lines and out of its square.
+              className={`relative flex min-h-0 items-center justify-center border px-1.5 py-1.5 text-center font-mono text-[11px] font-semibold uppercase leading-tight tracking-[0.06em] transition-colors min-[1440px]:px-2 min-[1440px]:py-2 min-[1440px]:text-[13px] min-[1440px]:leading-snug min-[1440px]:tracking-[0.14em] ${
                 active
                   ? 'cursor-default border-[var(--ink)] bg-[var(--ink)] text-black'
                   : suggested
@@ -134,7 +139,6 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
           );
         })}
       </div>
-      {guide && <div className="mt-3 flex-shrink-0">{guide}</div>}
     </div>
   );
 }
