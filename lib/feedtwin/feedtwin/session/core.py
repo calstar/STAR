@@ -3264,17 +3264,7 @@ class Session:
         # would, but is no change of circuit: it carried nothing a step ago.
         resting = self._resting[0]
         storage = self._ullage_storage(dt, isolated | resting)
-        result = solve_steady(
-            net,
-            signals=signals,
-            tol=self.setup.network_tolerance,
-            max_iterations=self.setup.max_iterations,
-            raise_on_failure=False,
-            guess=self._guess or None,
-            isolate=dry | resting,
-            storage=storage,
-            report=False,
-        )
+        result = self._solve(net, signals, dry | resting, storage)
         self._note_solve(result)
         self._accept(result)
         if self._reliefs and result.converged:
@@ -3291,17 +3281,7 @@ class Session:
                     self._last_flows = {}
                     self._last_isolated = isolated
                     storage = self._ullage_storage(dt, isolated | resting)
-                result = solve_steady(
-                    net,
-                    signals=signals,
-                    tol=self.setup.network_tolerance,
-                    max_iterations=self.setup.max_iterations,
-                    raise_on_failure=False,
-                    guess=self._guess or None,
-                    isolate=dry | resting,
-                    storage=storage,
-                    report=False,
-                )
+                result = self._solve(net, signals, dry | resting, storage)
                 self._note_solve(result)
                 self._accept(result)
         result = self._close_chamber(net, signals, dry | resting, result, storage)
@@ -3491,6 +3471,65 @@ class Session:
             **{b: f for b, f in result.flows.items() if abs(f) > 1e-9},
         }
 
+    def _solve(
+        self,
+        net: Network,
+        signals: Mapping[str, float],
+        isolate: frozenset[str],
+        storage: Mapping[str, tuple[float, float]] | None,
+    ) -> SteadyResult:
+        """The network at this coupling step, warm-started from the last answer.
+
+        A solve with the ullages closed (``storage``) that fails is tried once
+        more, from where the same network lands with them held: that solve is
+        easy, and it puts Newton beside the answer. A failed solve holds the
+        stand (:meth:`_held`), so the next step asks the same question and
+        fails the same way, for good. A Fire from unpressed tanks did exactly
+        that -- frozen with the chamber at 0 psig, where 384 iterations of the
+        same solve converged and 9 + 4 by this route. Only a step that failed
+        takes it, so every step that converges is the step it was.
+        """
+        result = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess=self._guess or None,
+            isolate=isolate,
+            storage=storage,
+            report=False,
+        )
+        if result.converged or not storage:
+            return result
+        held = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess=self._guess or None,
+            isolate=isolate,
+            report=False,
+        )
+        if not held.converged:
+            return result
+        retried = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess={
+                **held.pressures,
+                **{b: f for b, f in held.flows.items() if abs(f) > 1e-9},
+            },
+            isolate=isolate,
+            storage=storage,
+            report=False,
+        )
+        return retried if retried.converged else result
+
     def _held(self, result: SteadyResult) -> Mapping[str, float]:
         """The node pressures a step acts on and shows.
 
@@ -3561,17 +3600,7 @@ class Session:
 
         def solve_at(p: float) -> SteadyResult:
             net.nodes[node].pressure = p
-            res = solve_steady(
-                net,
-                signals=signals,
-                tol=self.setup.network_tolerance,
-                max_iterations=self.setup.max_iterations,
-                raise_on_failure=False,
-                guess=self._guess or None,
-                isolate=dry,
-                storage=storage,
-                report=False,
-            )
+            res = self._solve(net, signals, dry, storage)
             self._note_solve(res)
             self._accept(res)
             return res

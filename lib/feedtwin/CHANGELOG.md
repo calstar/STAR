@@ -23,6 +23,13 @@ be able to find why they differ.
   regulator with every ullage, joined or not (`Session._regulator_slopes`). LE4 (6) Ox
   Fill holding its load: 9-10 solves per 20 ms step -> 1, 0.34x -> 1.89x in-process;
   Fuel Fill 1.42x -> 3.01x.
+- A failed network solve could freeze the stand for good: it holds the vessels, so
+  the next step asks the same question and fails the same way. A Fire from unpressed
+  tanks sat at 0 psig chamber from ignition (`test_fire_with_unpressed_tanks_is_a_weak_start`,
+  tipped into it by the changes above; the same solve converged in 384 iterations).
+  A solve that fails with the ullages closed is retried once from the solution with
+  them held (`Session._solve`): 9 + 4 iterations there. Steps that converge are
+  untouched.
 
 ## Unreleased — 2026-10-07
 
