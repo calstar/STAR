@@ -175,6 +175,23 @@ def test_without_enginedesign_the_engine_is_the_simplified_one_and_says_so() -> 
         library.remove(engine)
 
 
+def test_a_stored_card_that_cannot_be_read_is_not_reported_as_no_card() -> None:
+    """A broken attachment sends whoever reads the report to it, not off to build
+    a card the engine already has."""
+    imported = upload("brokencard")
+    engine = imported["artifact"]["id"]
+    try:
+        library.attach(engine, "card", b'{"card": {"truncated')
+        view = model(engine)
+        assert view["engine"]["engine_model"] == "simplified"
+        assert view["engine"]["why"] == "card unreadable"
+        warnings = view["report"]["warnings"]
+        assert SIMPLIFIED_ENGINE not in warnings
+        assert any("could not be read" in w for w in warnings), warnings
+    finally:
+        library.remove(engine)
+
+
 def test_a_pulled_engine_knows_when_enginedesign_has_moved_on(
     engine_design: list[httpx.Request],
 ) -> None:

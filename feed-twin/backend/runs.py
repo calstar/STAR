@@ -74,10 +74,6 @@ def new_id(now: float | None = None) -> str:
     return f"{stamp:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
 
 
-def thin(values: list[float], keep: list[int]) -> list[float]:
-    return [values[i] for i in keep]
-
-
 def stride_indices(n: int, points: int = SERIES_POINTS) -> list[int]:
     """Evenly spaced indices into ``n`` samples, first and last always kept."""
     if n <= points:
@@ -113,15 +109,6 @@ class RunStore:
             return None
         loaded: dict[str, Any] = json.loads(path.read_text())
         return loaded
-
-    def delete(self, user: str, run_id: str) -> bool:
-        if not _ID.match(run_id):
-            return False
-        path = self.folder(user, create=False) / f"{run_id}.json"
-        if not path.is_file():
-            return False
-        path.unlink()
-        return True
 
     def list(
         self, users: Iterable[str], *, stand: str | None = None

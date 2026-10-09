@@ -83,6 +83,9 @@ interface StandValue {
   restart: () => void;
   /** Skip the pad: loaded, charged, at lockup, in Ready. */
   jumpToT0: () => void;
+  /** Skip a LOX load's chilldown: the wall goes where the chill leaves it and
+   *  the load collects from now. Operating, not configuring: never locked. */
+  skipChill: (tankId?: string) => void;
   refresh: () => Promise<Artifact[]>;
   /** The stand document this cockpit is on, if any (stands.ts). */
   standDoc: OpenStand | null;
@@ -147,7 +150,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     tank_fill_s: 120,
     fuel_fill_s: 15,
     dewar_psi: 100,
-    dewar_fill_cv: 0.013,
+    dewar_fill_cv: 0.019,
     bottle_delivered: false,
     fill_stirring: 20,
     ullage_collapse: true,
@@ -357,10 +360,6 @@ export function StandProvider({ children }: { children: ReactNode }) {
       try {
         const next = await tickSession(session.current, dt);
         if (!alive.current) return;
-        // While the run is being computed ahead the display holds its frame;
-        // the wall clock that passes must not be handed to the first replay
-        // tick as a quarter-second jump into the burn.
-        if (next.computing) last.current = performance.now();
         // Pace, smoothed over ~1 s of wall clock so it reads steadily.
         const nowWall = performance.now();
         if (pace.current && nowWall - pace.current.wall > 1000) {
@@ -469,6 +468,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       void command({ knob: { id, value } });
     },
     release: () => void command({ release: '*' }),
+    skipChill: (tankId) => void command({ skip_chill: tankId ?? true }),
     restart: () => {
       wantFresh.current = true;
       setGeneration((g) => g + 1);

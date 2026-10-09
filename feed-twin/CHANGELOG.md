@@ -4,6 +4,56 @@ The stand app. Versioned in `backend/version.py`; `/api/version` reports it with
 the library version and the commit (and whether the tree was dirty). Physics
 changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
 
+## Unreleased — 2026-10-08
+
+### Added
+- **Skip chilldown**: a LOX tank chilling during its load says `chilling · skip` on
+  the console's tank card; skip puts the wall where the chill leaves it and the pour
+  collects from then on (`skip_chill` on `/api/session/{id}/command`: `true` or a tank
+  id). The chill takes ~5 min at the calibrated dewar valve, ~10 on the stand.
+
+### Changed
+- The compressible regulator seat is on and the dewar valve is Cv 0.019 by default
+  (the library's changelog has the numbers).
+
+### Fixed
+- A burn whose run record fails to save says so in the console's notes until a
+  record lands; it was logged on the server and nowhere else.
+- A drawing's saved hookup that cannot be read is said in the console's notes; the
+  stand fell back to the suggested hookup exactly as if none had been saved. The
+  session's own hookup notes reach the console too (they went only into run
+  records).
+- An engine card that is stored but cannot be read is reported as that
+  (`why: card unreadable`), not as "no engine card is stored with it".
+- A Study case that crashes logs its traceback on the server; the case still
+  carries its type and message.
+
+### Removed
+- `POST /api/state` and `POST /api/fire`, the frozen-stand solves, with
+  `backend/run.py` and the solve half of `backend/live.py` behind them, and the
+  frontend's `goToState` / `fireStand`. Nothing called them: the console runs a
+  session (`/api/session/{id}/command`). They held the tanks at dome + bias --
+  LE4 (6) Fire read 416 psia / 7,251 N there -- and a held valve outlived a
+  state change, both of which the session stopped doing. Their tests that
+  checked the stand rather than the endpoint now run on a session from T-0
+  (`tests/test_api.py`); the gauge helpers come from `feedtwin.session.gauge`.
+- Compute-ahead-and-replay: `POST /api/session/{id}/precompute`, the
+  `precompute` / `horizon` keys on `/command`, and `computing`, `progress` and
+  `replaying` on the session frame (the top bar's "Running sim" and "Replaying").
+  The console has integrated Fire live since 3.9; nothing asked for it.
+- Routes nothing called: `POST /api/library/pull`,
+  `GET /api/sources/{key}/documents/{doc_id}/releases` (the Library reads releases
+  through `/documents?with_releases=true`), `DELETE /api/twin/runs/{id}`, and
+  `POST /api/session/{id}/runs` with the frontend's `recordRuns` (a burn records
+  at burnout; the run label it alone could set stays in the schema, empty).
+- Fields nothing read. The history poll carried the whole model report, the
+  stand's ids and a `frames` list that was always empty every 1.5 s; it is now
+  the trace, its message and the O/F split. The model view's `controls` (the
+  knobs of the fire runner above) and `fluid_sets`.
+- `ActuatorOut`, `runs.thin`, `RunStore.delete`, the benchmark study's own
+  `StudyRunner` and `StudyRequest.key` (its cache is long gone), `fmtAxisVal`,
+  33 re-exports in `backend/session.py` nothing imported, and unused imports.
+
 ## 0.2.0 — 2026-10-06
 
 ### Added

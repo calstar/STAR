@@ -21,8 +21,8 @@ import pytest
 
 from backend.assembly import assemble
 from backend.library import Library
-from backend.run import PSI
-from backend.session import AMBIENT, AMBIENT_T, Session, Setup
+from feedtwin.session.gauge import PSI
+from backend.session import AMBIENT_T, Session, Setup
 from backend.statemachine import bind, load_machine
 
 CEA = (
@@ -572,107 +572,6 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     )
     assert mod.COUPLING_SAFETY <= 1.0
     assert sum(calls) == pytest.approx(min(dt, mod.MAX_STEP), rel=1e-9)
-
-
-# ---------------------------------------------------- computed ahead, replayed
-
-
-def test_a_precomputed_run_replays_in_order_without_integrating() -> None:
-    """The burn is integrated ahead at study accuracy and handed back a frame
-    at a time, so the panel gets a real-time, noise-free run for the price of a
-    short wait before it. During replay `step` must not integrate: the frames
-    it returns are the buffered ones, in stand-time order, paced by dt.
-    """
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    frames = session.precompute(horizon=0.6, dt=0.02)
-    assert frames >= 20 and not session.computing and session.replaying
-    end_t = session.t  # the stand itself is at the END of the run
-    buffered = {
-        round(f.t, 6) for f, _ in session._replay
-    }  # before replay consumes them
-    ts = []
-    for _ in range(12):
-        ts.append(session.step(0.05).t)
-    assert ts == sorted(ts) and ts[0] < ts[-1] < end_t + 1e-9
-    assert session.t == end_t, "replay integrated the stand further"
-    # Each shown frame is one that was buffered, not a fresh solve.
-    assert all(round(t, 6) in buffered for t in ts)
-    # The buffer is spent; the stand carries on live from where the run ended.
-    assert not session.replaying
-    assert session.step(0.05).t > end_t
-
-
-def test_a_command_during_replay_restores_the_stand_to_the_frame_shown() -> None:
-    """An abort mid-replay must act on the stand the operator is looking at,
-    not on the one four seconds further into the future that the precompute
-    left behind. Every buffered frame therefore carries the stand's state at
-    that instant, and a command restores it before it does anything else.
-    """
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    session.precompute(horizon=0.6, dt=0.02)
-    for _ in range(5):
-        shown = session.step(0.05)
-    assert session.t > shown.t + 0.1, "the stand should be well ahead of the display"
-    ox = next(iter(session.tanks.values()))
-    shown_mass = (
-        shown.tanks[ox.id]["liquid_kg"] if "liquid_kg" in shown.tanks[ox.id] else None
-    )
-
-    session.set_valve(next(iter(session.model.built.actuators)), False)
-
-    assert session.t == pytest.approx(
-        shown.t
-    ), "stand not restored to the shown instant"
-    assert not session._replay and not session.replaying
-    assert session.history[-1].t == pytest.approx(shown.t), "history not truncated"
-    if shown_mass is not None:
-        assert ox.state.liquid_mass == pytest.approx(shown_mass, rel=1e-9)
-    # ...and it carries on live from there.
-    nxt = session.step(0.05)
-    assert nxt.t > shown.t and session.t == pytest.approx(nxt.t)
-
-
-def test_a_command_while_computing_cancels_the_run_and_acts_on_the_held_frame() -> None:
-    """An abort during "running sim" must never be refused, and must act on the
-    stand the operator is looking at -- the frame held since the run began, not
-    the future the thread has integrated to. So a command cancels the run at
-    its next step, restores the stand to that frame, and goes through.
-    """
-    import threading
-
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    held = session.step(0.05)
-    session.state = "Fire"
-    worker = threading.Thread(
-        target=session.precompute, args=(30.0,), kwargs={"dt": 0.02}
-    )
-    worker.start()
-    # Let it get a few frames in, and confirm the display is holding.
-    for _ in range(50):
-        if len(session._replay) >= 3:
-            break
-        import time as _t
-
-        _t.sleep(0.05)
-    assert session.computing and session.step(0.05).t == held.t
-    assert session.t > held.t, "the thread should have integrated ahead"
-
-    target = next(
-        s for s in session.machine.targets(session.state) if "abort" in s.lower()
-    )
-    session.command_state(target)  # must not raise
-    worker.join(timeout=30)
-    assert not session.computing and not session.replaying
-    assert session.state == target
-    assert session.t == pytest.approx(held.t), "not restored to the held frame"
-    assert session.step(0.05).t > held.t, "and it carries on live from there"
 
 
 # ---------------------------------------------------- the operator's report

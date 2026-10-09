@@ -20,6 +20,7 @@ against is :mod:`backend.benchmark_study`, not this.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
@@ -29,6 +30,8 @@ from feedtwin.session.gauge import psig
 from feedtwin.session.hookup import CHARGE, DOME
 
 from backend.session import LIVE_STEP, Session
+
+_log = logging.getLogger("feed-twin.study")
 
 #: What a case can swap the bottle's gas for, by the fluid name drawings use.
 PRESSURANTS = ("helium", "nitrogen")
@@ -319,6 +322,10 @@ def run_study(
         try:
             done = run_case(request, case, build, outcome, cancelled)
         except Exception as exc:  # noqa: BLE001 - reported on the case
+            # The case carries the type and message; the traceback stays in the
+            # server log, or a crash in the physics has to be reproduced to be
+            # found.
+            _log.exception("study case %r failed", case.label)
             detail = getattr(exc, "detail", None) or str(exc)
             done = CaseResult(
                 label=case.label,
@@ -402,6 +409,7 @@ class StudyRunner:
                 )
                 self.stage = "cancelled" if self._cancel.is_set() else "done"
             except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+                _log.exception("study failed")
                 self.error = f"{type(exc).__name__}: {exc}"
                 self.stage = "failed"
             finally:

@@ -61,6 +61,8 @@ def burn_setup(**changes: Any) -> Setup:
         # The ullage against its dry wall only (2026-10-06): on in the library
         # and the cockpit, off here for the same reason as line walls.
         "ullage_wall_by_level": False,
+        # The regulator seat as a gas sees it (2026-10-08): the same again.
+        "regulator_compressible_seat": False,
         # A burn reads the trace past depletion; the cockpit's automatic Vent
         # at burnout would open the vents on it.
         "auto_vent": False,

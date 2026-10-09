@@ -239,7 +239,7 @@ burned.
 **Every pressure in this tier is gauge (psig)**, because that is what the stand's
 transducers read and what the study traces report; a vented vessel is 0.0. The model
 underneath is absolute — the study primes at 473.5 psig, which is 488.2 psia — and the
-only two places the two meet are `backend.run.psig` / `from_psig`. Differential
+only two places the two meet are `feedtwin.session.gauge.psig` / `from_psig`. Differential
 pressures are the same in either.
 
 This is the headline regression. Run it after any change to the solver, the
@@ -590,11 +590,13 @@ check by 13 psi). Test:
 Every optional physics model must satisfy both:
 
 1. **Off is byte-identical.** `line_walls=False` reproduces the baseline trace
-   exactly, not to a tolerance. Where an option changes which quantity is read —
-   `_pressurant_enthalpy` reads the walked arrival instead of the bottle — that read
-   must be gated on the toggle, because an adiabatic walk agrees with the bottle only
-   to the walk's own convergence tolerance, and "agrees to a tolerance" is not
-   "unchanged".
+   exactly, not to a tolerance. Where an option changes which quantity is read, that
+   read must be gated on the toggle, because "agrees to a tolerance" is not
+   "unchanged". (Not every read an option once changed stays gated: the walked
+   arrival enthalpy at an ullage was first read only with line walls on, and is now
+   read always, because the bottle's enthalpy was the wrong price for gas that came
+   from the other tank — 2.4c item 5. That change was a fix to the baseline, made
+   with a fresh baseline, not an option.)
 2. **On, with nothing declared, is also byte-identical.** A drawing that never gave
    `wall_thickness` or `fitting_mass` has no metal, so the option must be inert rather
    than subtly perturbing. Gate on the model having something to do, not just on the
@@ -633,9 +635,15 @@ test's expectation — the second is the measurement.
 With a main valve shut, the leg beyond it must **hold its own pressure** and not
 track the tank down. Known-good: `MVO.out` sits at 14.7 psi while the tank vents.
 
-There is a related open defect — a leg that is a genuine *dead end* is back-filled
-from the node across the shut branch, and the hold-last-value guard does not arm for
-a plain valve because its `pressure_drop(0.0)` is identically zero. Check both.
+A leg that is a genuine *dead end* behind a shut valve -- a capped line, the run
+between two shut valves -- **holds what was trapped in it**. It is back-filled from
+the node across the shut branch (an upper bound), and the solve flags it undefined so
+the session shows the last value it read, atmosphere on a stand never pressed. The
+flag used to arm only for a component holding a drop at zero flow (a check valve
+behind its crack), and a plain valve's `pressure_drop(0.0)` is identically zero, so a
+transducer behind a shut ball valve followed the tank. Fixed 2026-10-08: a stub
+reached across a shut or isolated branch is flagged
+(`test_audit_regressions.py::test_a_leg_behind_a_shut_valve_is_flagged`). Check both.
 
 ### 3.3 Vents must exist at all
 
@@ -651,7 +659,8 @@ it (`components/pid/vents.ts`) and feedtwin now reads the same rule. Assert:
 ### 3.4 The state machine must fail closed
 
 `can_go` on a state whose row could not be parsed must refuse every non-abort target,
-while **aborts stay reachable**. The shipped Diablo table has 10 malformed rows; that
+while **aborts stay reachable**. The shipped Diablo table has 9 rows one cell short
+(the DAQ's own copy, 10); they are read left-aligned as the DAQ reads them, and that
 is expected and documented in `feed-twin/backend/statemachines/NEEDS-REPAIR.md`.
 
 Assert specifically: **`Idle → Armed → Fire` is refused.** That two-move path to
@@ -724,7 +733,8 @@ it); GSE Abort (GSE High Press Vent dumps the bottle — GSE-side fill and vent 
 driven by the table's own `GSE High Press Control` / `GSE High Press Vent` actuators,
 not by the state's name); Engine Abort from Fire (mains open, as the table says);
 Emergency Abort → Idle (nothing moves); hand holds defeating a press until released;
-Fire straight from Fuel Press (one of the seven bypasses — it burns, and warns); and a
+Fire straight from Fuel Press (one of the six bypasses left in the twin's table, seven
+in the DAQ's — it burns, and warns); and a
 200-move seeded random walk over the table. After every step: no NaN, nothing below
 vacuum, no inventory below zero, and **every commanded valve is where the table says
 unless a hand holds it**.

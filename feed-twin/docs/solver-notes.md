@@ -30,8 +30,13 @@ answer is the step.
 | He settled | 484–545 | 548–553 |
 
 **Fix.** `Session._coupling_timescale()` computes τ and the coupling count is
-sized from it, `COUPLING_SAFETY = 0.25` of τ per step. The regression test
-asserts the literal τ/4 — an earlier version compared against
+sized from it: `COUPLING_SAFETY` of τ per step. It was 0.25 on the reasoning
+that a quarter of τ must be safe; a sweep over a burn then showed the answer
+flat to run-to-run noise up to 2τ and visibly rough by 4τ on both gases, so it
+is **1.0**, a factor of four in hand (the table is at the constant in
+`feedtwin/session/core.py`). The regression test
+(`tests/test_session.py::test_the_coupling_step_resolves_the_regulator_ullage_time_constant`)
+asserts the literal 1.0 τ — an earlier version compared against
 `COUPLING_SAFETY` itself and so passed no matter what that constant was set to.
 
 ---
@@ -87,6 +92,18 @@ Related: `_result` rebuilds its own branch indexing from `isolated`, and one
 caller omitted it. That reads past the end of the solution vector on a good day
 and **silently reports a neighbour's flow** on a bad one. It is a required
 argument now.
+
+And not raising is only half of holding. `Session._advance_once` took
+`self._last_flows or dict(result.flows)` — but the last flows are emptied
+whenever the circuit changes (a main opens, a tank is isolated dry), so a solve
+failing on exactly that step integrated the vessels on the failed iterate,
+which closes no node balance. Driven by a forced failure at the mains opening,
+one 20 ms tick moved **3 kg** out of a 6 kg fuel tank. Its pressures also fed the
+tank's supply clip and the frame. Now a failed solve holds the last converged
+flows and pressures, and moves nothing when there are none for the new circuit
+(`lib/feedtwin/tests/test_failed_solve_holds.py`, red on the old code). The
+nominal LE4 (6) burn fails no solve at all, which is why a green benchmark never
+saw it.
 
 ---
 

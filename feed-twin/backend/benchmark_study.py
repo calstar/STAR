@@ -38,15 +38,14 @@ expected to drop it rather than plot it.
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Sequence
+from typing import Callable
 
 from feedtwin.session.burn import BurnPlan, burn, burn_setup, open_session, prime_at_t0
 
 from backend.assembly import Model, assemble
 from backend.library import Library
-from backend.run import psig
+from feedtwin.session.gauge import psig
 from backend.session import PAD_HOLD_S, Session
 from backend.statemachine import load_machine
 
@@ -155,21 +154,6 @@ class StudyRequest:
             + (len(SWEEP_LITRES) if self.sweep else 0)
         )
         return max(len(self.gases) * per_gas, 1)
-
-    def key(self) -> str:
-        return "|".join(
-            [
-                ",".join(sorted(self.gases)),
-                f"b{int(self.bigger)}",
-                f"c{int(self.collapse)}",
-                f"s{int(self.sweep)}",
-                f"v{int(self.vapour)}",
-                f"w{self.chilldown:g}",
-                f"m{int(self.line_walls)}",
-                f"{self.dt:g}",
-                f"{self.horizon:g}",
-            ]
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,76 +518,3 @@ def run_study(
         sweep=sweep,
         notes=notes,
     )
-
-
-class StudyRunner:
-    """One study at a time, on a worker thread, with progress and cancel.
-
-    One at a time deliberately: each case pins a core for a minute and running
-    two would only make both slower and the progress meaningless.
-    """
-
-    def __init__(self) -> None:
-        self.running = False
-        self.progress = 0.0
-        self.stage = ""
-        self.error = ""
-        self.request: StudyRequest | None = None
-        self.result: StudyResult | None = None
-        #: The engine the current or last run fired: ``{"id", "name"}``.
-        self.engine: dict[str, str] = {}
-        self._cancel = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-
-    def start(
-        self,
-        library: Library,
-        engine_id: str,
-        cea_cache: str,
-        request: StudyRequest,
-        engine_name: str = "",
-    ) -> bool:
-        """Begin a run. False if one is already going."""
-        with self._lock:
-            if self.running:
-                return False
-            self.running = True
-            self.progress = 0.0
-            self.stage = "starting"
-            self.error = ""
-            self.request = request
-            self.result = None
-            self.engine = {"id": engine_id, "name": engine_name or engine_id}
-            self._cancel.clear()
-
-        def work() -> None:
-            try:
-
-                def on_progress(done: int, total: int, stage: str) -> None:
-                    self.progress = done / max(total, 1)
-                    self.stage = stage
-
-                result = run_study(
-                    library,
-                    engine_id,
-                    cea_cache,
-                    request,
-                    progress=on_progress,
-                    cancelled=self._cancel.is_set,
-                )
-                self.result = result
-                self.stage = "cancelled" if self._cancel.is_set() else "done"
-            except Exception as exc:  # noqa: BLE001 - reported, not swallowed
-                self.error = f"{type(exc).__name__}: {exc}"
-                self.stage = "failed"
-            finally:
-                self.running = False
-                self.progress = 1.0
-
-        self._thread = threading.Thread(target=work, daemon=True, name="copv-study")
-        self._thread.start()
-        return True
-
-    def cancel(self) -> None:
-        self._cancel.set()

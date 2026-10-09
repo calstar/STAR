@@ -118,17 +118,6 @@ export interface Actuator {
   signal: string;
 }
 
-export interface ControlSpec {
-  key: string;
-  label: string;
-  unit: string;
-  default: number;
-  minimum: number;
-  maximum: number;
-  step: number;
-  note: string;
-}
-
 export interface Assumption {
   component: string;
   parameter: string;
@@ -158,8 +147,6 @@ export interface ModelView {
   engine_id: string;
   title: string;
   actuators: Actuator[];
-  controls: ControlSpec[];
-  fluid_sets: string[];
   report: Report;
   engine: Record<string, unknown>;
   /** Which sheet of the drawing each node is on, by node id. Absent from an
@@ -353,15 +340,9 @@ export interface SessionState {
   notes: string[];
   /** The GSE page's knobs, from the drawing's hookup. */
   knobs?: LiveKnob[];
-  /** A run is being integrated ahead of the display; nothing advances yet. */
-  computing: boolean;
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
    *  clears it. */
   tripped?: string | null;
-  /** Fraction of that run finished, 0..1. */
-  progress: number;
-  /** The display is serving a run computed ahead, at wall-clock pace. */
-  replaying: boolean;
 }
 
 /** One study case as the view writes it: the stand, with these changes.
@@ -442,20 +423,11 @@ export const startStudy = (request: StudyRequestIn) => post<StudyState>('/api/st
 /** Stop after the case running now, keeping the ones finished. */
 export const cancelStudy = () => post<StudyState>('/api/study/cancel', {});
 
+/** A session's trace, in the shape the plots read. */
 export interface RunResult {
-  /** The state machine state this was solved in. */
-  state: string;
-  diagram_id: string;
-  engine_id: string;
-  fluid_set: string;
-  converged: boolean;
   message: string;
-  elapsed_s: number;
   times_s: number[];
   channels: Channel[];
-  frames: Frame[];
-  controls: Record<string, number>;
-  report: Report;
   balance: Balance | null;
 }
 
@@ -569,7 +541,8 @@ export const sessionT0 = (id: string) => post<SessionState>(`/api/session/${id}/
 export const tickSession = (id: string, dt: number) =>
   post<SessionState>(`/api/session/${id}/tick`, { dt });
 
-/** Change state, take a valve by hand, release one, turn the dome knob. */
+/** Change state, take a valve by hand, release one, turn the dome knob, or skip
+ *  a load's chilldown (`skip_chill`: true for every tank, or one tank's id). */
 export const commandSession = (
   id: string,
   body: {
@@ -579,6 +552,7 @@ export const commandSession = (
     release?: string;
     setup?: Partial<StandSetup>;
     knob?: { id: string; value: number };
+    skip_chill?: true | string;
   },
 ) => post<SessionState>(`/api/session/${id}/command`, body);
 
@@ -707,36 +681,6 @@ export const getTunables = () => json<Tunable[]>('/api/tunables');
 
 export const getStateMachine = (w: Where) =>
   json<StateMachine>(`/api/statemachine?${query(w)}`);
-
-/**
- * Solve the stand as it stands, in one state. Behind every click: picking a
- * state, taking a valve by hand. One steady solve, so it answers fast enough
- * to feel like the stand rather than like a report.
- */
-export const goToState = (
-  w: Where,
-  body: {
-    state: string;
-    /** Where the stand is now, so the server can refuse an illegal move. */
-    from: string;
-    forced: Record<string, number>;
-    dome: number;
-  },
-) => post<RunResult>(`/api/state?${query(w)}`, body);
-
-/** Run a burn: hold the pre-fire state, transition, sample. */
-export const fireStand = (
-  w: Where,
-  body: {
-    state: string;
-    prefire: string;
-    duration: number;
-    lead_in: number;
-    sample_hz: number;
-    dome: number;
-    forced: Record<string, number>;
-  },
-) => post<RunResult>(`/api/fire?${query(w)}`, body);
 
 /**
  * Channel colours, lifted from the DAQ's `lib/sensor-colors.ts` so the same
@@ -910,8 +854,6 @@ export const explainRuns = (a: RunSummary, b: RunSummary) =>
   post<ExplainState>('/api/twin/runs/explain', { a: a.id, b: b.id, owner_a: a.owner, owner_b: b.owner });
 export const explainStatus = () => json<ExplainState>('/api/twin/runs/explain');
 export const explainCancel = () => post<ExplainState>('/api/twin/runs/explain/cancel', {});
-export const recordRuns = (session: string, label = '') =>
-  post<RunSummary[]>(`/api/session/${session}/runs`, { label });
 
 /** What the model has been checked against (backend/version.py VALIDATION). */
 export interface Validation {

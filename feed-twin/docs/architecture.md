@@ -29,12 +29,20 @@ gets the whole width and its own URL.
 ## The solve, in one paragraph
 
 The system is a semi-explicit index-1 DAE. Vessels carry the differential state
-(mass, energy, liquid); the network is the algebraic constraint, satisfied
-exactly at each step rather than carried as extra unknowns. Unknowns are one
-pressure per free node and one mass flow per branch; equations are one mass
-balance per node and one pressure relation per branch. Almost all of the
-Jacobian is the incidence matrix and never changes, so a Newton step costs one
-derivative per component and a sparse solve.
+(mass, energy, liquid); the network is the algebraic constraint, solved to a
+tolerance (`Setup.network_tolerance`) at each step rather than carried as extra
+unknowns. Unknowns are one pressure per free node and one mass flow per branch;
+equations are one mass balance per node and one pressure relation per branch.
+Almost all of the Jacobian is the incidence matrix and never changes, so a
+Newton step costs one derivative per component and a sparse solve. The ullages
+on the press path are the exception: each enters the solve as a storage node,
+backward Euler on the vessel inside the one Newton solve.
+
+A solve that fails is held, not integrated: the vessels move on the last
+converged flows, and on nothing at all right after the circuit changes (a valve
+opens, a tank is isolated dry), when there is no converged answer for the new
+circuit yet. The frame shows the last converged pressures and says it did not
+converge.
 
 Properties come from CoolProp through a caching layer. Real gas throughout —
 at 4500 psi and 293 K nitrogen's compressibility is 1.15, and ideal-gas mass is
@@ -42,26 +50,19 @@ at 4500 psi and 293 K nitrogen's compressibility is 1.15, and ideal-gas mass is
 
 ## `Session`: the stand as a thing that exists in time
 
-`backend/session.py` is where the app-level physics lives. Nothing is
+`Session` (`lib/feedtwin/feedtwin/session/core.py`; `backend/session.py`
+re-exports it) is where the stand's physics in time lives. Nothing is
 pressurised or loaded until somebody does it; a state commands valves, and the
 valves decide what happens next tick.
 
-Three regimes, and an operator should only notice one:
+**Everything is integrated live, Fire included.** A panel tick of `dt` is split
+into `LIVE_STEP` (0.02 s) steps -- the Study's grid -- with the Study's Newton
+allowance (120 iterations) and no wall-clock budget, so the console and the
+Study integrate one scheme. A stand too stiff to keep up runs in slow motion and
+the top bar says by how much; nothing is folded to catch up
+(docs/PHYSICS-BENCHMARK.md 3.9-3.10b).
 
-| Regime | What `step()` does |
-|---|---|
-| **Live** | Integrates now. The pad, fills, presses, holds. |
-| **Computing** | A burn is being integrated ahead on a worker. The display holds its frame and reports progress. |
-| **Replaying** | Hands back buffered frames at wall-clock pace. The stand is already at the end of the run; the operator is watching it catch up. |
-
-A command during replay restores the stand to the frame being shown, discards
-the future, and continues live — the same thing that would have happened had
-the run never been computed ahead. A command *during* compute cancels the run
-and does the same. An abort must never be refused and must never act on a
-future the operator has not seen.
-
-### Why a burn cannot be integrated live
-
+The coupling inside each step is sized from the regulator-ullage time constant.
 The regulator and the ullage it feeds are an RC pair: capacitance `C = m/p` of
 the ullage, resistance `R = flow_droop / rated_flow` of the regulator. Their
 product is about **1 ms on helium and 7 ms on GN2**. An explicit scheme that
@@ -69,34 +70,49 @@ steps past that overshoots, overcorrects, and fills the trace with tick-rate
 noise that reads as physics. `Session._coupling_timescale()` computes it and the
 coupling count is sized from it (`COUPLING_SAFETY`, one τ per step — measured,
 not assumed: the answer is flat to within run-to-run noise up to 2τ and visibly
-rough by 4τ on both gases).
+rough by 4τ on both gases), and from the ullage's mass and the press path's own
+constant on top (see `Session._integrate`).
 
-That costs seconds of wall clock per second of stand — fine for a study,
-impossible for a 200 ms panel tick. Hence compute-ahead-and-replay.
+A command acts on the stand the operator is looking at, at once; an abort is
+never refused. (Fire used to be computed ahead and replayed, with commands
+during the replay rewinding the stand to the frame on screen. Nothing used it
+once Fire ran live, and it went on 2026-10-08.)
 
-## Configuration that changes the trade
+## The cockpit and the benchmark are different thermal schemes
 
-`Setup` carries the knobs where a cockpit and a study want opposite answers:
-
-| Field | Cockpit | Study |
-|---|---|---|
-| `tick_budget` | 0.15 s — panel stays live | `1e9` — never fold a step |
-| `max_iterations` | 30 — bounded latency | 120 — converge |
-| `ullage_collapse` | on | off, for a clean comparison |
+The cockpit, Layer X and the Study tab run `Setup`'s thermal defaults: collapse,
+vapour, wall chilldown with film and nucleate boiling, a boiling-onset
+superheat, a stratified surface layer, line walls, the ullage against its dry
+wall only (Layer X and the Study turn off only the automatic vent at burnout,
+to read a trace past depletion). The benchmark study (`backend/benchmark_study.py`,
+through `feedtwin.session.burn.burn_setup`) turns stratification, boiling
+onset, nucleate boiling, line walls, ullage-wall-by-level, the compressible
+regulator seat and the automatic vent off, and each case passes collapse, vapour
+and chilldown itself, because the
+expectations in docs/PHYSICS-BENCHMARK.md 2.x were stated before those closures
+existed. **Compare a console trace with a Tier 2 number only after checking
+which scheme produced it**: a cockpit run record carries its whole `Setup` in
+its inputs.
 
 ## The state machine
 
 Read from the DAQ's own CSVs — `state_machine_actuators.csv` (actuator × state)
 and `state_transitions.csv` (legality). Not a reimplementation: if the DAQ
-table says Fire cannot go to Ox Press, neither can the twin. Ten rows of the
-transitions file are ragged; they are dropped and reported rather than zipped,
-because a shifted column can silently delete an abort path.
+table says Fire cannot go to Ox Press, neither can the twin. Nine rows of the
+transitions file are one cell short; they are read left-aligned, the way the
+DAQ's parser reads them, and every Fire path that alignment opens is warned
+(`backend/statemachines/NEEDS-REPAIR.md`). A row that cannot be read at all
+fails closed, with the aborts still reachable.
 
 ## Testing
 
-- `lib/feedtwin`: 508 tests. Physics against closed form and published values.
-- `feed-twin`: 101+ tests, including abuse cases against the HTTP surface.
-- `mypy --strict` on `backend`, `black`, and a frontend `tsc -b && vite build`.
+- `scripts/check.sh` runs every gate CI runs (`scripts/check.sh full` adds the
+  slow tier and the Layer X parity test).
+- `lib/feedtwin`: physics against closed form and published values;
+  `scripts/physics_benchmark.py` against hand calculation, `fluids` and CoolProp.
+- `feed-twin`: the session, the HTTP surface (abuse cases included), operator
+  walks; `mypy --strict` on `backend`, `black`, and a frontend `tsc -b && vite
+  build`.
 
 The rule that matters: **a regression test must be verified to fail when the fix
 is reverted.** Two tests in this repo passed with their bug in place before that

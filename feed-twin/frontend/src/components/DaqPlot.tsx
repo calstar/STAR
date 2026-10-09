@@ -60,18 +60,6 @@ const NO_MARKS: { t: number; label: string }[] = [];
 /** Tick labels: small, monospace, the console's grey. */
 const AXIS_FONT = '11px "SF Mono", ui-monospace, Menlo, monospace';
 
-export function fmtAxisVal(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  if (abs >= 100) return value.toFixed(0);
-  if (abs >= 1) return value.toFixed(1);
-  if (abs === 0) return '0';
-  // Below a hundredth two decimals read "0.00" for every tick: a residual
-  // axis from 1e-9 to 1e-3 was a column of zeros.
-  if (abs < 0.01) return value.toExponential(0).replace('e-', 'e−');
-  return value.toFixed(2);
-}
-
 /** A linear tick label, as precise as the tick spacing and no more.
  *
  *  Fixed decimals cannot serve every axis: two decimals print 0.025 and 0.030

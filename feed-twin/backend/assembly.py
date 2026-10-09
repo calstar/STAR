@@ -175,6 +175,13 @@ def assemble(
                     "firing feedtwin's simplified engine instead. Rebuild the card in Library."
                 )
                 engine_meta = {"engine_model": "simplified", "why": "card does not fit"}
+        elif card_meta.get("unreadable"):
+            notes.append(
+                "The engine card stored with this engine could not be read "
+                f"({card_meta['unreadable']}); firing feedtwin's simplified engine "
+                "instead. Rebuild the card in Library."
+            )
+            engine_meta = {"engine_model": "simplified", "why": "card unreadable"}
         else:
             notes.append(SIMPLIFIED_ENGINE)
             engine_meta = {"engine_model": "simplified", "why": "no card"}
@@ -215,7 +222,12 @@ def load_engine_card(
     library: Library, engine_id: str
 ) -> tuple[EngineCard | None, dict[str, Any]]:
     """The EngineDesign card stored with an engine, and what it says about
-    itself; ``(None, {})`` when there is none or it cannot be read."""
+    itself; ``(None, {})`` when there is none.
+
+    A card that is stored but cannot be read is ``(None, {"unreadable":
+    why})``. It used to be ``(None, {})`` too, and the report then said no
+    card was stored -- sending whoever read it to build one that already
+    exists, rather than to the attachment that is broken."""
     try:
         raw = library.attachment(engine_id, "card")
     except LibraryError:
@@ -225,8 +237,8 @@ def load_engine_card(
     try:
         stored = json.loads(raw.decode("utf-8"))
         card = EngineCard.from_dict(stored["card"])
-    except (ValueError, KeyError, TypeError):
-        return None, {}
+    except (ValueError, KeyError, TypeError) as exc:
+        return None, {"unreadable": f"{type(exc).__name__}: {exc}"}
     return card, card_summary(stored)
 
 

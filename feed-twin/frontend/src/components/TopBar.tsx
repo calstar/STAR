@@ -38,12 +38,7 @@ function health(stand: ReturnType<typeof useStand>): { text: string; dot: string
   const { live, busy, running, speed } = stand;
   if (live?.tripped) return { text: 'Stopped · overpressure', dot: 'var(--color-danger)', pulse: true, title: live.tripped };
   if (busy) return { text: 'Starting', dot: 'var(--color-warning)', pulse: true, title: 'Opening the stand' };
-  if (live?.computing) {
-    const pct = Math.round((live.progress ?? 0) * 100);
-    return { text: `Running sim · ${pct}%`, dot: 'var(--color-warning)', pulse: true, title: 'Integrating ahead for replay' };
-  }
   if (!running) return { text: 'Paused', dot: 'var(--ink-3)', pulse: false, title: 'The stand clock is stopped' };
-  if (live?.replaying) return { text: 'Replaying', dot: 'var(--ink)', pulse: false, title: 'Playing back a run integrated ahead' };
   if (!(live?.converged ?? false)) {
     return { text: 'Solver struggling', dot: 'var(--color-danger)', pulse: false, title: 'The last step did not converge' };
   }

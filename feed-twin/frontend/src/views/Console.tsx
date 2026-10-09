@@ -62,6 +62,7 @@ function Vessel({
   temperature,
   colour,
   chilling = false,
+  onSkipChill,
 }: {
   label: string;
   litres?: number;
@@ -71,6 +72,8 @@ function Vessel({
   temperature: number;
   colour: string;
   chilling?: boolean;
+  /** Skip the load's chilldown: the wall goes where it would end up. */
+  onSkipChill?: () => void;
 }) {
   const pct = Math.min(Math.max(fill, 0), 1) * 100;
   return (
@@ -102,16 +105,28 @@ function Vessel({
       <div className="mt-1 truncate font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
         {litres !== undefined && litres > 0 && `${fixed(litres, litres < 10 ? 1 : 0)} L · `}
         {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
-        {chilling && (
+      </div>
+      {/* A line of its own: the one above truncates in a narrow column. */}
+      {chilling && (
+        <div className="mt-0.5 flex items-baseline gap-2 font-mono text-[11px] uppercase tracking-[0.1em]">
           <span
-            className="ml-1.5 uppercase tracking-[0.1em]"
             style={{ color: colour }}
             title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
           >
             chilling
           </span>
-        )}
-      </div>
+          {onSkipChill && (
+            <button
+              type="button"
+              onClick={onSkipChill}
+              className="uppercase tracking-[0.1em] text-[var(--ink-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--ink)]"
+              title="Skip the chilldown: put the wall where the chill leaves it (saturation at atmosphere) and let the pour collect from now. On the stand it takes ~10 minutes."
+            >
+              skip
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -238,6 +253,7 @@ export function Console() {
     setRunning,
     restart,
     jumpToT0,
+    skipChill,
   } = useStand();
   const [window, setWindow] = useState(60);
 
@@ -413,6 +429,7 @@ export function Console() {
                       : t.wall_temperature_K
                   }
                   chilling={t.chilling}
+                  onSkipChill={() => skipChill(t.id)}
                   colour={tankColour(t)}
                 />
               ))}

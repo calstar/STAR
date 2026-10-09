@@ -181,5 +181,7 @@ very bugs they were written for.
 - `docs/integration/` — the cross-app agreements: line-loss method ladder, the
   pid-designer handoff, and `daq-k-fitting.md` for the K-fit reader that is meant to
   live inside the DAQ.
-- `feed-twin/backend/statemachines/NEEDS-REPAIR.md` — 10 malformed rows in the shipped
-  transition table, why they are not recoverable, and why the machine fails closed.
+- `feed-twin/backend/statemachines/NEEDS-REPAIR.md` — the transition table's rows one
+  cell short (9 in the twin's copy, 10 in the DAQ's), read left-aligned as the DAQ
+  reads them; the Fire bypasses that opens, the abort rows that open the mains, and
+  why an unreadable row still fails closed.
