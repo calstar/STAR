@@ -333,6 +333,11 @@ class T0:
     tank_psi: float
     """What the tanks were primed at [psig]."""
     notes: list[str] = field(default_factory=list)
+    loads: dict[str, float] = field(default_factory=dict)
+    """The propellant each tank was loaded with [kg], by tank id: the fire
+    load where the engine states one. Empty when nothing named a load and the
+    tanks went to the fill fraction. A burn plan that primes again must carry
+    these, or it reloads to the fill fraction."""
 
 
 def jump_to_t0(
@@ -435,6 +440,7 @@ def jump_to_t0(
         lockup_psi={k: round(psig(v), 1) for k, v in lockups.items()},
         tank_psi=round(tank_psi, 1),
         notes=notes,
+        loads=loads,
     )
 
 

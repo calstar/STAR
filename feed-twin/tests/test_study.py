@@ -199,3 +199,9 @@ def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     assert rise == pytest.approx(50.0, abs=1.0)
     assert as_set["outcome"].get("impulse_Ns", 0.0) > 0.0, "it fired"
     assert len(as_set["t"]) == len(as_set["thrust_n"]) == len(as_set["converged"])
+    # Loaded as the cockpit's T-0 loads it: the engine's fire load (6.75 kg of
+    # LOX in a 15 L tank), not the tank's fill fraction (~16 kg). The burn's
+    # own prime used to reload to the fill fraction.
+    loads = as_set["t0"]["loads_kg"]
+    assert any(abs(kg - 6.75) < 0.02 for kg in loads.values()), loads
+    assert all(kg < 10.0 for kg in loads.values()), loads

@@ -235,6 +235,11 @@ def run_case(
         tank_psi=t0.tank_psi,
         copv_psi=copv,
         fill_fraction=fill,
+        # The fire load T-0 loaded. Left out, the burn's own prime reloaded
+        # every tank to the fill fraction: a study case burned ~8.9 kg of LOX
+        # against the 6.75 kg the cockpit's T-0 and the engine's config load,
+        # and ran a second longer than the same stand on the console.
+        loads=t0.loads or None,
         bottle_litres=case.bottle_litres,
         dt=LIVE_STEP,
         horizon_s=request.horizon_s,
@@ -264,6 +269,12 @@ def run_case(
             "lockup_psi": {labels.get(k, k): v for k, v in t0.lockup_psi.items()},
             "fill_fraction": round(fill, 4),
             "bottle_litres": round(litres[0], 3) if litres else None,
+            # What each tank held at ignition, off the trace: what was burned.
+            "loads_kg": {
+                labels.get(k, k): round(v["liquid_mass_kg"][0], 3)
+                for k, v in trace.tank.items()
+                if v.get("liquid_mass_kg")
+            },
         },
         t=column(trace.t, 3),
         tanks={
