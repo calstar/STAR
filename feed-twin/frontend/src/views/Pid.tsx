@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { DrawingView } from '@pid/DrawingView';
 import { getDrawing } from '../api';
 import type { Drawing } from '../api';
@@ -70,6 +71,7 @@ export function Pid() {
     return <p className="p-6 text-sm text-text-muted">Loading…</p>;
   }
   const title = stand?.title ?? artifacts.find((a) => a.id === diagram)?.name ?? '';
+  const pages = new Set(drawing.doc.nodes.map((n) => String((n.data as { page?: string } | undefined)?.page || 'Main'))).size;
 
   return (
     <div className="flex h-full flex-col">
@@ -86,6 +88,16 @@ export function Pid() {
           </>
         ) : (
           <span className="text-[11.5px] text-gray-600">not running · scroll to zoom · drag to pan</span>
+        )}
+        {live?.setup?.ignore_gse && pages > 1 && (
+          // The cart's page still draws; nothing on it is simulated.
+          <Link
+            to="/gse"
+            className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            title="Ignore the drawn GSE is on: the stand is the rocket alone. The cart's page is drawn here, but none of it is simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
+          >
+            Rocket only — the GSE page is not simulated
+          </Link>
         )}
         <button
           type="button"

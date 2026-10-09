@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CHARGE_KNOB, DOME_KNOB, type LiveKnob, type StandSetup } from '../api';
+import { CHARGE_KNOB, DOME_KNOB, fixed, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
 import { useStand } from '../stand';
 
@@ -104,7 +104,7 @@ function HookupKnob({ knob, disabled }: { knob: LiveKnob; disabled: boolean }) {
 }
 
 export function Gse() {
-  const { live, setup, setSetup, locked: readOnly } = useStand();
+  const { live, setup, setSetup, locked: readOnly, history, nameOf } = useStand();
   const set = (patch: Partial<StandSetup>) => setSetup(patch);
   const commitDome = useCallback((v: number) => setSetup({ dome: v }), [setSetup]);
   const commitHigh = useCallback((v: number) => setSetup({ copv_target: v }), [setSetup]);
@@ -115,11 +115,17 @@ export function Gse() {
   const locked = Boolean(live?.tripped) || readOnly;
   const chargeKnob = live?.knobs?.find((k) => k.id === CHARGE_KNOB);
 
+  // A transducer's reading, found by its tag. The live frame is keyed by
+  // drawing id, so matching the pattern against those keys never found one
+  // and the dome knob never showed what it read.
   const reading = (pattern: RegExp) => {
     if (!live) return undefined;
-    const tag = Object.keys(live.pressure_psi).find((t) => pattern.test(t));
-    return tag ? { label: tag, value: live.pressure_psi[tag] } : undefined;
+    const channel = history?.channels.find((c) => (c.unit || 'psig') === 'psig' && pattern.test(c.tag));
+    const value = channel ? live.pressure_psi[channel.id] : undefined;
+    return channel && value !== undefined ? { label: nameOf(channel.id, channel.tag), value } : undefined;
   };
+  // What the dome knob does, in numbers: where the tanks lock up now.
+  const lockups = (live?.tanks ?? []).filter((t) => t.lockup_psi != null);
   const bottle = live?.bottles[0];
   const lox = live?.tanks.find((t) => t.side === 'lox');
   const tankMawp = 1000; // psig, the drawing's estimate for both tanks
@@ -167,18 +173,37 @@ export function Gse() {
           {/* A knob that sets nothing on this drawing is not on the panel. */}
           {(live?.knobs?.length ?? 0) === 0 ||
           live?.knobs?.some((k) => k.id === DOME_KNOB && k.regulators.length > 0) ? (
-            <Knob
-              label={live?.knobs?.find((k) => k.id === DOME_KNOB)?.label ?? 'Dome control regulator'}
-              value={dome}
-              min={0}
-              max={1000}
-              step={5}
-              unit="psig"
-              onChange={setDome}
-              disabled={locked}
-              redline={tankMawp - 50}
-              actual={reading(/REG/i) ?? reading(/UP/i)}
-            />
+            <div className="flex flex-col items-center gap-1">
+              <Knob
+                label={live?.knobs?.find((k) => k.id === DOME_KNOB)?.label ?? 'Dome control regulator'}
+                value={dome}
+                min={0}
+                max={1000}
+                step={5}
+                unit="psig"
+                onChange={setDome}
+                disabled={locked}
+                redline={tankMawp - 50}
+                actual={reading(/DOME|DP-|^DP|REG/i) ?? reading(/UP/i)}
+              />
+              {/* What the knob does: the dome sets where the tanks lock up,
+                  less the regulator's supply effect from the COPV behind it. */}
+              {lockups.length > 0 && (
+                <span
+                  className="font-mono text-[11px] tabular-nums text-text-muted"
+                  title="Where each tank's regulator locks up now: dome + its spring bias, less its supply effect x the COPV pressure. It climbs as the COPV blows down."
+                >
+                  lockup:{' '}
+                  {lockups.map((t, i) => (
+                    <span key={t.id}>
+                      {i > 0 && ' · '}
+                      {t.label} <span className="text-text">{fixed(t.lockup_psi ?? 0, 0)}</span>
+                    </span>
+                  ))}{' '}
+                  psig
+                </span>
+              )}
+            </div>
           ) : null}
           {(live?.knobs ?? [])
             .filter((k) => k.id !== DOME_KNOB && k.id !== CHARGE_KNOB && k.regulators.length > 0)
@@ -206,17 +231,17 @@ export function Gse() {
           disabled={locked}
           className="bg-card m-0 flex min-w-0 flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3 disabled:opacity-60"
         >
-          <Number_ label="COPV charge" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
-          <Number_ label="Fuel load" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
+          <Number_ label="COPV charge time" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
+          <Number_ label="Fuel load time" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
           <span title="What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. 0: a fixed-rate load over the LOX load time.">
-            <Number_ label="LOX dewar" value={setup.dewar_psi} unit="psig" step={5} onChange={(dewar_psi) => set({ dewar_psi })} />
+            <Number_ label="LOX dewar pressure" value={setup.dewar_psi} unit="psig" step={5} onChange={(dewar_psi) => set({ dewar_psi })} />
           </span>
           {setup.dewar_psi > 0 ? (
             <span title="Everything on the fill line that is not tube -- in practice how far the dewar valve is open. The stand tops out near 30 psig during the chill; on LE4 (6) 0.019 peaks at 57 psig, 0.013 at 38.">
-              <Number_ label="Dewar valve" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
+              <Number_ label="Dewar valve Cv" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
             </span>
           ) : (
-            <Number_ label="LOX load" value={setup.tank_fill_s} unit="s" step={10} onChange={(tank_fill_s) => set({ tank_fill_s })} />
+            <Number_ label="LOX load time" value={setup.tank_fill_s} unit="s" step={10} onChange={(tank_fill_s) => set({ tank_fill_s })} />
           )}
           {lox && setup.dewar_psi > 0 ? (
             <span className="pb-1.5 font-mono text-[12px] tabular-nums text-text-muted">
