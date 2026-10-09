@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { registerResources } from "./resources";
 import { TOOL_MODULES } from "./tools";
 
 export const SERVER_NAME = "starproject";
@@ -21,5 +22,6 @@ export function createStarProjectServer(): McpServer {
     },
   );
   for (const register of TOOL_MODULES) register(server);
+  registerResources(server);
   return server;
 }
