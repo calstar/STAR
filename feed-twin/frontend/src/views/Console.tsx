@@ -20,10 +20,12 @@
  *
  * A big stand overfills the strip, so Pressure, Tanks and Actuators each have
  * a ⋯ that hides what is not being watched (lib/shown.ts). A hidden
- * transducer leaves the plot too, and comes back by itself past NOP.
+ * transducer leaves the plot too, and comes back by itself past NOP. What is
+ * hidden is the team's, kept by the backend per drawing and also set from the
+ * P&ID tab, so every browser shows the same console.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
@@ -34,7 +36,7 @@ import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
 import { groupByPage } from '../lib/pages';
-import { NONE, readHidden, setAll, toggle, visible, writeHidden, type Hidden, type Panel } from '../lib/shown';
+import { visible, type Hidden, type Panel } from '../lib/shown';
 
 const WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -254,23 +256,21 @@ export function Console() {
     restart,
     jumpToT0,
     skipChill,
+    consoleHidden,
+    hideOnConsole,
   } = useStand();
   const [window, setWindow] = useState(60);
 
-  // What the ⋯ menus hide, for this stand. Re-read when the drawing changes.
-  const diagramId = model?.diagram_id ?? '';
-  const [hiddenBy, setHiddenBy] = useState<Hidden>(NONE);
-  useEffect(() => {
-    setHiddenBy(diagramId ? readHidden(diagramId) : NONE);
-  }, [diagramId]);
-  const change = (next: Hidden) => {
-    setHiddenBy(next);
-    if (diagramId) writeHidden(diagramId, next);
-  };
+  // What the ⋯ menus hide, for this stand and everyone on it. Node ids are
+  // unique across the panels, so one shared list serves all three.
+  const hiddenBy = useMemo<Hidden>(() => {
+    const ids = Object.keys(consoleHidden).filter((id) => consoleHidden[id]);
+    return { pts: ids, tanks: ids, actuators: ids };
+  }, [consoleHidden]);
   const menuFor = (panel: Panel, ids: string[]) => ({
     hidden: hiddenBy[panel],
-    onToggle: (id: string) => change(toggle(hiddenBy, panel, id)),
-    onAll: (show: boolean) => change(setAll(hiddenBy, panel, ids, show)),
+    onToggle: (id: string) => hideOnConsole([id], !consoleHidden[id]),
+    onAll: (show: boolean) => hideOnConsole(ids, !show),
   });
 
   // A transducer past NOP is drawn, bar and trace, whatever the menu says.
@@ -541,9 +541,7 @@ export function Console() {
                 onRelease={release}
                 hidden={hiddenBy.actuators}
                 onToggleHidden={menuFor('actuators', []).onToggle}
-                onAllHidden={(show) =>
-                  change(setAll(hiddenBy, 'actuators', model.actuators.map((a) => a.id), show))
-                }
+                onAllHidden={(show) => hideOnConsole(model.actuators.map((a) => a.id), !show)}
               />
             </section>
             <section className="flex min-h-0 flex-1 flex-col py-5">

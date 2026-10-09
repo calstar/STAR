@@ -28,8 +28,9 @@ from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
+from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
 from feedtwin.pid.document import PidNode
-from feedtwin.pid.network import propellant_side
+from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
     AssemblyError,
@@ -39,6 +40,7 @@ from backend.assembly import (
     diagram_summary,
     engine_from_bytes,
     engine_summary,
+    load_diagram_artifact,
 )
 from feedtwin.engine import EngineDesign
 from feedtwin.engine.balance import MixtureBalance, SideBalance
@@ -48,7 +50,23 @@ from feedtwin.engine.importer import EngineImportError
 from backend import designtools
 from backend.designtools import DesignTool, DesignToolError, tools
 from backend.library import Artifact, Library, LibraryError
+from backend.overrides import (
+    OVERRIDE_SOURCES,
+    Applied,
+    SUPERSEDED_BY_SEGMENTS,
+    OverrideError,
+    OverrideStore,
+    apply_overrides,
+    fingerprint,
+)
+from feedtwin.model.param import Param
+from feedtwin.model.units import UnknownUnit, dimension_of, registered_units
 from backend.models import (
+    DrawingElement,
+    DrawingOut,
+    DrawingParam,
+    OverrideOut,
+    ParamValue,
     Actuator,
     ArtifactOut,
     AssumptionOut,
@@ -134,6 +152,33 @@ app.include_router(stands.router)
 app.include_router(users.router)
 
 library = Library()
+
+#: Operator overrides and console visibility, beside the library so a deployment
+#: that mounts the library keeps them too. See backend.overrides.
+overrides = OverrideStore(library.root / "overrides.json")
+
+
+def _drawing_key(diagram_id: str) -> str:
+    """What overrides are kept under: the drawing's name, so a re-import keeps
+    them. Raises LibraryError for an unknown id."""
+    return library.get(diagram_id).name
+
+
+def _overrides_for(diagram_id: str) -> dict[str, Any]:
+    return overrides.entry(_drawing_key(diagram_id))
+
+
+def _console_hidden(diagram_id: str) -> set[str]:
+    try:
+        return set(_overrides_for(diagram_id)["console_hidden"])
+    except (LibraryError, OverrideError):
+        return set()
+
+
+def _who(request: Request) -> str:
+    """Who is asking, the way every other route here names them."""
+    return str(userdata.store.current_user(request))
+
 
 #: Where a CEA table is looked for. Absent, the chamber falls back to a constant
 #: c* and says so in the warnings.
@@ -256,8 +301,9 @@ def _assemble(
             fluid_swap={**FLUID_SETS[fluid_set], **dict(swap or {})},
             cea_resolver=_cea_for,
             multiphase=multiphase,
+            overrides=_overrides_for(diagram_id),
         )
-    except (AssemblyError, LibraryError) as exc:
+    except (AssemblyError, LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -286,7 +332,25 @@ def _report(model: Model) -> ReportOut:
             for a in r.assumptions
         ],
         warnings=list(r.warnings),
+        overrides=[
+            AssumptionOut(
+                component=o.element,
+                parameter=o.parameter,
+                value=o.value,
+                unit=o.unit,
+                source=o.source,
+                reference=f"{o.by}: {o.reference}" if o.by else o.reference,
+            )
+            for o in _applied(model)
+        ],
+        overrides_hash=fingerprint(_applied(model)),
     )
+
+
+def _applied(model: Model) -> tuple[Applied, ...]:
+    """The operator overrides that took effect on this assembly."""
+    applied = model.meta.get("overrides")
+    return applied if isinstance(applied, tuple) else ()
 
 
 def _leg_out(side: SideBalance, chamber_pressure: float) -> LegOut:
@@ -709,6 +773,7 @@ async def model_view(
         ],
         report=_report(model),
         pages=_pages(model.diagram.nodes),
+        console_hidden=sorted(_console_hidden(diagram)),
         engine=(
             {
                 **engine_summary(model.engine),
@@ -722,6 +787,294 @@ async def model_view(
             else {}
         ),
     )
+
+
+# ------------------------------------------------------------------ drawing
+#
+# What was pulled from the drawing, what the operator typed over it, and what
+# the console shows. The drawing itself is never edited -- see backend.overrides.
+
+
+def _value(p: Param) -> ParamValue:
+    return ParamValue(
+        value=p.value, unit=p.unit, source=p.source.value, reference=p.reference
+    )
+
+
+def _role(component_type: str) -> str:
+    """What part a symbol plays, as the drawing panel groups it."""
+    if component_type == "TANK":
+        return "tank"
+    if component_type in SOURCE_TYPES:
+        return "source"
+    if component_type in INLINE_TYPES:
+        return "inline"
+    if component_type in INSTRUMENT_TYPES:
+        return "instrument"
+    if component_type in SINK_TYPES:
+        return "sink"
+    return "component"
+
+
+def _same_dimension(unit: str) -> list[str]:
+    try:
+        dim = dimension_of(unit)
+    except UnknownUnit:
+        return [unit]
+    return [u for u in registered_units() if dimension_of(u) == dim]
+
+
+@app.get("/api/drawing")
+async def drawing_view(
+    diagram: str, engine: str = "", fluid_set: str = "hotfire"
+) -> DrawingOut:
+    """Every symbol and line feed-twin read, parameter by parameter.
+
+    Assembled *without* the overrides, so what the library had to fill in is
+    still visible under a number somebody has since typed over it.
+    """
+    try:
+        artifact = library.get(diagram)
+        entry = _overrides_for(diagram)
+        raw = assemble(
+            library,
+            diagram,
+            engine_id=engine,
+            fluid_swap=FLUID_SETS.get(fluid_set),
+            cea_resolver=_cea_for,
+        )
+    except (AssemblyError, LibraryError, OverrideError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    by_label = {n.label: n.id for n in raw.diagram.nodes if n.label}
+    assumed: dict[str, dict[str, ParamValue]] = {}
+    for a in raw.report.assumptions:
+        element = (
+            a.component
+            if raw.diagram.node(a.component)
+            else by_label.get(a.component, a.component)
+        )
+        assumed.setdefault(element, {})[a.parameter] = ParamValue(
+            value=a.value, unit=a.unit, source=a.source, reference=a.reference
+        )
+
+    stored = entry["params"]
+    hidden = entry["console_hidden"]
+    built = raw.built
+    instruments = {i.id for i in built.instruments}
+    console = (
+        instruments
+        | set(built.tanks)
+        | {d for d, sig in built.actuators.items() if not sig.endswith(".dome")}
+        | {n.id for n in raw.diagram.nodes if n.type in {"KBOTTLE", "DEWAR"}}
+    )
+    _, applied = apply_overrides(raw.diagram, entry)
+
+    def params_of(
+        element: str, declared: Mapping[str, Param], segmented: bool
+    ) -> list[DrawingParam]:
+        own = stored.get(element) or {}
+        filled = assumed.get(element, {})
+        out = []
+        for name in sorted(set(declared) | set(filled) | set(own)):
+            drawn = declared.get(name)
+            # A declared estimate also shows up as an assumption; it is the
+            # drawing's own number, so it is shown once, as the drawing's.
+            fill = filled.get(name) if drawn is None else None
+            o = own.get(name)
+            locked = (
+                "superseded by the line's itemised run"
+                if segmented and name in SUPERSEDED_BY_SEGMENTS
+                else ""
+            )
+            override = None
+            stale = False
+            if o is not None:
+                was = o.get("was")
+                override = OverrideOut(
+                    value=o["value"],
+                    unit=o["unit"],
+                    source=o["source"],
+                    reference=o.get("reference", ""),
+                    by=o.get("by", ""),
+                    at=o.get("at", ""),
+                    was=ParamValue(**was, reference="") if was else None,
+                )
+                if was is None:
+                    stale = drawn is not None
+                else:
+                    stale = drawn is None or (drawn.value, drawn.unit) != (
+                        was["value"],
+                        was["unit"],
+                    )
+            base = _value(drawn) if drawn is not None else fill
+            effective = (
+                ParamValue(
+                    value=override.value,
+                    unit=override.unit,
+                    source=override.source,
+                    reference=override.reference,
+                )
+                if override is not None and not locked
+                else base
+            )
+            unit = (override or base or ParamValue(value=0, unit="-", source="")).unit
+            out.append(
+                DrawingParam(
+                    name=name,
+                    drawing=_value(drawn) if drawn is not None else None,
+                    assumed=fill,
+                    override=override,
+                    effective=effective,
+                    stale=stale,
+                    locked=locked,
+                    units=_same_dimension(unit),
+                )
+            )
+        return out
+
+    elements: list[DrawingElement] = []
+    for n in raw.diagram.nodes:
+        if n.is_annotation:
+            continue
+        elements.append(
+            DrawingElement(
+                id=n.id,
+                kind="symbol",
+                tag=n.label or n.id,
+                type=n.type,
+                role=_role(n.type),
+                fluid=n.fluid,
+                params=params_of(n.id, n.params, False),
+                options=dict(n.options),
+                on_console=n.id in console,
+                console_hidden=n.id in hidden,
+                hidden_by=(hidden.get(n.id) or {}).get("by", ""),
+            )
+        )
+    labels = {n.id: n.label or n.id for n in raw.diagram.nodes}
+    for e in raw.diagram.edges:
+        elements.append(
+            DrawingElement(
+                id=e.id,
+                kind="line",
+                tag=f"{labels.get(e.source, e.source)} → {labels.get(e.target, e.target)}",
+                type=e.line_type,
+                params=params_of(e.id, e.params, bool(e.segments)),
+                options=dict(e.options),
+                segments=len(e.segments),
+            )
+        )
+    known = {el.id for el in elements}
+    return DrawingOut(
+        diagram_id=diagram,
+        key=artifact.name,
+        source=artifact.source,
+        imported_at=artifact.imported_at,
+        elements=elements,
+        orphaned=sorted(
+            [f"{el}.{p}" for el, ps in stored.items() if el not in known for p in ps]
+            + [f"{el} (console)" for el in hidden if el not in known]
+        ),
+        overrides_hash=fingerprint(applied),
+        override_sources=list(OVERRIDE_SOURCES),
+    )
+
+
+@app.put("/api/drawing/override")
+async def set_override(
+    request: Request,
+    diagram: str = Body(...),
+    element: str = Body(...),
+    parameter: str = Body(...),
+    value: float = Body(...),
+    unit: str = Body(...),
+    source: str = Body(...),
+    reference: str = Body(...),
+) -> dict[str, Any]:
+    """Type a number over the drawing's. Takes effect on the next Reset."""
+    try:
+        drawing = load_diagram_artifact(library, diagram)
+        key = _drawing_key(diagram)
+    except (AssemblyError, LibraryError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    node = drawing.node(element)
+    edge = next((e for e in drawing.edges if e.id == element), None)
+    if node is None and edge is None:
+        raise HTTPException(
+            status_code=404, detail=f"the drawing has no symbol or line {element!r}"
+        )
+    if edge is not None and edge.segments and parameter in SUPERSEDED_BY_SEGMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{parameter} on this line is superseded by its itemised run "
+            "and would be ignored. Change the segments in pid-designer.",
+        )
+    declared = (node.params if node is not None else edge.params).get(parameter)  # type: ignore[union-attr]
+    if declared is not None:
+        try:
+            if dimension_of(unit) != dimension_of(declared.unit):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{unit} is not a {dimension_of(declared.unit)}; the "
+                    f"drawing gives {parameter} in {declared.unit}.",
+                )
+        except UnknownUnit as exc:
+            raise HTTPException(
+                status_code=422, detail=f"unknown unit {unit!r}"
+            ) from exc
+    try:
+        entry = overrides.set_param(
+            key,
+            element,
+            parameter,
+            value=value,
+            unit=unit,
+            source=source,
+            reference=reference,
+            by=_who(request),
+            was=declared,
+        )
+    except OverrideError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"key": key, "params": entry["params"].get(element, {})}
+
+
+@app.delete("/api/drawing/override")
+async def clear_override(diagram: str, element: str, parameter: str) -> dict[str, Any]:
+    """Back to the drawing's number."""
+    try:
+        key = _drawing_key(diagram)
+        entry = overrides.clear_param(key, element, parameter)
+    except (LibraryError, OverrideError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"key": key, "params": entry["params"].get(element, {})}
+
+
+@app.get("/api/drawing/console")
+async def console_visibility(diagram: str) -> dict[str, list[str]]:
+    """Which symbols the console hides. Cheap; the console polls it."""
+    try:
+        _drawing_key(diagram)
+    except LibraryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"hidden": sorted(_console_hidden(diagram))}
+
+
+@app.put("/api/drawing/console")
+async def set_console_visibility(
+    request: Request,
+    diagram: str = Body(...),
+    element: str = Body(...),
+    hidden: bool = Body(...),
+) -> dict[str, list[str]]:
+    """Hide a symbol from the console, or show it again, for everyone."""
+    try:
+        key = _drawing_key(diagram)
+        entry = overrides.set_console_hidden(key, element, hidden, by=_who(request))
+    except (LibraryError, OverrideError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"hidden": sorted(entry["console_hidden"])}
 
 
 def _stand(
@@ -966,6 +1319,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         open={d: sample.signals.get(s, 0.0) > 0.5 for d, s in signals_of.items()},
         held=sorted(session.forced),
         tripped=session.tripped,
+        overrides_hash=fingerprint(_applied(session.model)),
         tanks=[
             TankOut(
                 id=sim.id,

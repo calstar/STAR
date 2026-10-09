@@ -3,12 +3,12 @@
  *
  * A stand with a dozen transducers, four vessels and a full valve manifold
  * does not fit the strip, and most of it is not what the operator is watching
- * today. Each panel's menu hides what is not; this is where that is kept.
+ * today. Each panel's menu hides what is not; these are the rules for it.
  *
- * Kept by the drawing's id, because ids are the drawing's: PT-OX-UP on one
- * stand is not the same instrument on another, and hiding it on one must not
- * hide it on the next. Kept in this browser only -- it is a view, not the
- * stand, and nobody else's console should change because you tidied yours.
+ * The choice itself is kept by the backend, per drawing (backend/overrides.py,
+ * `console_hidden`), and set from these menus or the P&ID tab. It is shared:
+ * the console is what the stand team watches together, and "who hid PT-FUEL-2"
+ * should have one answer for everyone rather than one per browser.
  *
  * Hiding is never allowed to hide trouble. `visible` brings an item back
  * while it is in a state the operator has to see -- a valve open or held, a
@@ -19,30 +19,6 @@ export type Panel = 'pts' | 'tanks' | 'actuators';
 export type Hidden = Record<Panel, string[]>;
 
 export const NONE: Hidden = { pts: [], tanks: [], actuators: [] };
-
-const key = (diagramId: string) => `feedtwin.console.hidden.${diagramId}`;
-
-export function readHidden(diagramId: string): Hidden {
-  try {
-    const raw = window.localStorage.getItem(key(diagramId));
-    if (!raw) return NONE;
-    const parsed = JSON.parse(raw) as Partial<Hidden>;
-    const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
-    return { pts: ids(parsed.pts), tanks: ids(parsed.tanks), actuators: ids(parsed.actuators) };
-  } catch {
-    return NONE;
-  }
-}
-
-export function writeHidden(diagramId: string, hidden: Hidden): void {
-  try {
-    const empty = !hidden.pts.length && !hidden.tanks.length && !hidden.actuators.length;
-    if (empty) window.localStorage.removeItem(key(diagramId));
-    else window.localStorage.setItem(key(diagramId), JSON.stringify(hidden));
-  } catch {
-    /* private window or storage full: the choice lasts the session */
-  }
-}
 
 /** `hidden` with one item flipped. */
 export function toggle(hidden: Hidden, panel: Panel, id: string): Hidden {

@@ -7,14 +7,28 @@
  * (`LiveLayer`). Values on it are the session's, so a shut valve reads what a
  * shut valve reads and an empty tank reads atmosphere. Clicking a valve takes
  * it by hand.
+ *
+ * Beside it, what feed-twin read from the drawing: every number, the team's
+ * overrides of them, and what the console shows (DrawingPanel).
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { DrawingView } from '@pid/DrawingView';
 import { getDrawing } from '../api';
 import type { Drawing } from '../api';
+import { DrawingPanel } from '../components/DrawingPanel';
 import { LiveLayer } from '../components/LiveLayer';
 import { useStand } from '../stand';
+
+const PANEL_KEY = 'feedtwin.pid.panel';
+
+function remembered(): boolean {
+  try {
+    return window.localStorage.getItem(PANEL_KEY) !== 'closed';
+  } catch {
+    return true;
+  }
+}
 
 export function Pid() {
   const { model, live, where, artifacts, toggleValve } = useStand();
@@ -23,6 +37,17 @@ export function Pid() {
   const diagram = where.diagram;
   const [drawing, setDrawing] = useState<{ id: string; doc: Drawing } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [panel, setPanel] = useState(remembered);
+  const togglePanel = () => {
+    setPanel((was) => {
+      try {
+        window.localStorage.setItem(PANEL_KEY, was ? 'closed' : 'open');
+      } catch {
+        // Storage can be unavailable; the toggle still works for this tab.
+      }
+      return !was;
+    });
+  };
 
   useEffect(() => {
     if (!diagram) return;
@@ -62,9 +87,17 @@ export function Pid() {
         ) : (
           <span className="text-[11.5px] text-gray-600">not running · scroll to zoom · drag to pan</span>
         )}
+        <button
+          type="button"
+          onClick={togglePanel}
+          aria-expanded={panel}
+          className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
+        >
+          {panel ? 'Hide drawing data' : 'Show drawing data'}
+        </button>
       </div>
-      <div className="min-h-0 flex-1 px-2 pb-2">
-        <div className="pid-drawing h-full overflow-hidden rounded-lg border border-gray-800">
+      <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
+        <div className="pid-drawing h-full min-w-0 flex-1 overflow-hidden rounded-lg border border-gray-800">
           <DrawingView
             nodes={drawing.doc.nodes}
             edges={drawing.doc.edges}
@@ -88,6 +121,11 @@ export function Pid() {
             )}
           </DrawingView>
         </div>
+        {panel && (
+          <aside className="bg-card h-full w-[400px] max-w-[45%] flex-shrink-0 overflow-hidden rounded-lg border border-[var(--line)]">
+            <DrawingPanel />
+          </aside>
+        )}
       </div>
     </div>
   );

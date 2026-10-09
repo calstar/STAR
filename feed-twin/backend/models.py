@@ -77,6 +77,11 @@ class ReportOut(BaseModel):
     unchecked: int = 0
     assumptions: list[AssumptionOut] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: Operator overrides that took effect, as assumptions are shown: what,
+    #: how much, on whose say-so.
+    overrides: list[AssumptionOut] = Field(default_factory=list)
+    #: Short hash of `overrides`; empty when there are none.
+    overrides_hash: str = ""
 
 
 class ModelView(BaseModel):
@@ -92,6 +97,9 @@ class ModelView(BaseModel):
     # Which sheet of the drawing each node is on, by node id. The console
     # splits its panels by it when a stand spans more than one.
     pages: dict[str, str] = Field(default_factory=dict)
+    #: What the team has hidden from the console, by node id. Shared, not per
+    #: browser; set from the console's menus or the P&ID tab.
+    console_hidden: list[str] = Field(default_factory=list)
 
 
 class Channel(BaseModel):
@@ -321,6 +329,9 @@ class SessionOut(BaseModel):
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a
     #: reset clears it.
     tripped: str | None = None
+    #: Hash of the operator overrides this stand was built with. A drawing
+    #: view whose hash differs is waiting on a Reset.
+    overrides_hash: str = ""
 
 
 class RunOut(BaseModel):
@@ -467,3 +478,70 @@ class SolverOut(BaseModel):
     guard_kg: list[float]
     guard_J: list[float]
     summary: dict[str, float] = Field(default_factory=dict)
+
+
+# ------------------------------------------------------------------ drawing
+
+
+class ParamValue(BaseModel):
+    value: float
+    unit: str
+    source: str
+    reference: str = ""
+
+
+class OverrideOut(ParamValue):
+    by: str = ""
+    at: str = ""
+    #: What the drawing said when the override was made, if it said anything.
+    was: ParamValue | None = None
+
+
+class DrawingParam(BaseModel):
+    """One number on one symbol: what the drawing says, what was filled in,
+    what somebody typed over it, and which of those the model uses."""
+
+    name: str
+    drawing: ParamValue | None = None
+    assumed: ParamValue | None = None
+    """Filled in by the library because the drawing said nothing."""
+    override: OverrideOut | None = None
+    effective: ParamValue | None = None
+    #: The drawing has changed this value since the override was made.
+    stale: bool = False
+    #: Superseded by an itemised run; shown, not editable.
+    locked: str = ""
+    #: Units an override may be written in -- the same dimension.
+    units: list[str] = Field(default_factory=list)
+
+
+class DrawingElement(BaseModel):
+    id: str
+    kind: str
+    """``symbol`` or ``line``."""
+    tag: str
+    type: str
+    role: str = ""
+    fluid: str = ""
+    params: list[DrawingParam] = Field(default_factory=list)
+    options: dict[str, str] = Field(default_factory=dict)
+    segments: int = 0
+    #: Something the console draws: a gauge, a vessel, a valve.
+    on_console: bool = False
+    console_hidden: bool = False
+    hidden_by: str = ""
+
+
+class DrawingOut(BaseModel):
+    """What feed-twin pulled from a drawing, and what it did to it."""
+
+    diagram_id: str
+    key: str
+    """The name overrides are kept under; survives a re-import."""
+    source: str
+    imported_at: str
+    elements: list[DrawingElement]
+    #: Overrides naming a symbol or line this drawing does not have.
+    orphaned: list[str] = Field(default_factory=list)
+    overrides_hash: str = ""
+    override_sources: list[str] = Field(default_factory=list)

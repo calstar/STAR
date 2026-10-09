@@ -50,6 +50,7 @@ from feedtwin.session.model import (
 )
 
 from backend.library import Library, LibraryError
+from backend.overrides import Applied, apply_overrides
 
 __all__ = [
     "AssemblyError",
@@ -133,10 +134,15 @@ def assemble(
     cea_cache: str = "",
     cea_resolver: Callable[[EngineDesign], str] | None = None,
     multiphase: bool = False,
+    overrides: Mapping[str, Any] | None = None,
 ) -> Model:
     """Read, resolve, build, and audit. The whole import in one call.
 
     Args:
+        overrides: One drawing's entry from the override store
+            (:mod:`backend.overrides`). Applied to the drawing before anything
+            reads it; what took effect is ``meta["overrides"]``, part of the
+            record for the same reason the artifact hashes are.
         cea_cache: An explicit combustion table. Direct and unconditional.
         cea_resolver: Called with the imported engine to *find* one, when which
             table is wanted depends on what the engine burns. Inverted this way
@@ -148,6 +154,9 @@ def assemble(
     """
     artifact = library.get(diagram_id)
     diagram = load_diagram_artifact(library, diagram_id)
+    applied: tuple[Applied, ...] = ()
+    if overrides:
+        diagram, applied = apply_overrides(diagram, overrides)
 
     # An explicit engine wins over the drawing's own reference, so a user can
     # try a different engine on the same stand without editing the drawing.
@@ -199,6 +208,7 @@ def assemble(
             "diagram_name": artifact.name,
             "diagram_sha256": artifact.sha256,
             **engine_meta,
+            **({"overrides": applied} if applied else {}),
         },
     )
     if notes:

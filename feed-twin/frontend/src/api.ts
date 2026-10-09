@@ -140,6 +140,9 @@ export interface Report {
   unchecked: number;
   assumptions: Assumption[];
   warnings: string[];
+  /** Operator overrides that took effect on this assembly. */
+  overrides?: Assumption[];
+  overrides_hash?: string;
 }
 
 export interface ModelView {
@@ -152,6 +155,9 @@ export interface ModelView {
   /** Which sheet of the drawing each node is on, by node id. Absent from an
    *  older server. */
   pages?: Record<string, string>;
+  /** What the team has hidden from the console, by node id. Shared, not per
+   *  browser. Absent from an older server. */
+  console_hidden?: string[];
 }
 
 export interface EngineState {
@@ -343,6 +349,8 @@ export interface SessionState {
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
    *  clears it. */
   tripped?: string | null;
+  /** Hash of the operator overrides this stand was built with. */
+  overrides_hash?: string;
 }
 
 /** One study case as the view writes it: the stand, with these changes.
@@ -509,6 +517,101 @@ export interface Drawing {
 
 export const getDrawing = (diagram: string) =>
   json<Drawing>(`/api/diagram?diagram=${diagram}`);
+
+// ------------------------------------------------------------------ drawing
+
+export interface ParamValue {
+  value: number;
+  unit: string;
+  source: string;
+  reference: string;
+}
+
+export interface OverrideValue extends ParamValue {
+  by: string;
+  at: string;
+  /** What the drawing said when the override was made. */
+  was: ParamValue | null;
+}
+
+/** One number on one symbol: as drawn, as filled in, as typed over. */
+export interface DrawingParam {
+  name: string;
+  drawing: ParamValue | null;
+  assumed: ParamValue | null;
+  override: OverrideValue | null;
+  effective: ParamValue | null;
+  /** The drawing changed this value after the override was made. */
+  stale: boolean;
+  /** Why it cannot be overridden, if it cannot. */
+  locked: string;
+  units: string[];
+}
+
+export interface DrawingElement {
+  id: string;
+  kind: 'symbol' | 'line';
+  tag: string;
+  type: string;
+  role: string;
+  fluid: string;
+  params: DrawingParam[];
+  options: Record<string, string>;
+  segments: number;
+  on_console: boolean;
+  console_hidden: boolean;
+  hidden_by: string;
+}
+
+export interface DrawingData {
+  diagram_id: string;
+  /** The drawing's name — what overrides are kept under across re-imports. */
+  key: string;
+  source: string;
+  imported_at: string;
+  elements: DrawingElement[];
+  orphaned: string[];
+  overrides_hash: string;
+  override_sources: string[];
+}
+
+/** What feed-twin read from the drawing, for the P&ID tab's panel. Not the
+ *  drawing itself -- that is `getDrawing`. */
+export const getDrawingData = (diagram: string, engine: string, fluidSet = 'hotfire') =>
+  json<DrawingData>(
+    `/api/drawing?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}`,
+  );
+
+export const setOverride = (body: {
+  diagram: string;
+  element: string;
+  parameter: string;
+  value: number;
+  unit: string;
+  source: string;
+  reference: string;
+}) =>
+  json<unknown>('/api/drawing/override', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+export const clearOverride = (diagram: string, element: string, parameter: string) =>
+  json<unknown>(
+    `/api/drawing/override?${new URLSearchParams({ diagram, element, parameter })}`,
+    { method: 'DELETE' },
+  );
+
+export const getConsoleHidden = (diagram: string) =>
+  json<{ hidden: string[] }>(`/api/drawing/console?diagram=${diagram}`);
+
+export const setConsoleHidden = (diagram: string, element: string, hidden: boolean) =>
+  json<{ hidden: string[] }>('/api/drawing/console', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, element, hidden }),
+  });
 
 export interface Where {
   diagram: string;

@@ -25,6 +25,7 @@ import { keyOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { standApi, type StandPayload } from './stands';
 import {
   commandSession,
+  getConsoleHidden,
   getHookup,
   getModel,
   getStateMachine,
@@ -33,6 +34,7 @@ import {
   sessionBurns,
   sessionT0,
   sessionHistory,
+  setConsoleHidden,
   tickSession,
   type Artifact,
   type Burns,
@@ -74,6 +76,10 @@ interface StandValue {
   setRunning: (on: boolean) => void;
   hidden: Record<string, boolean>;
   toggleChannel: (id: string) => void;
+  /** What the console's menus and the P&ID tab hide, for everyone on this
+   *  drawing. Kept by the backend, so every browser shows the same console. */
+  consoleHidden: Record<string, boolean>;
+  hideOnConsole: (ids: string[], hide: boolean) => void;
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
@@ -160,6 +166,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     ambient_leak: 8,
   });
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [consoleHidden, setConsoleHiddenState] = useState<Record<string, boolean>>({});
   const [generation, setGeneration] = useState(0);
   const [standDoc, setStandDoc] = useState<OpenStand | null>(readStand);
   // Taking the checkout must not reload the stand: that would reopen the
@@ -315,6 +322,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         ]);
         if (cancelled) return;
         setModel(view);
+        setConsoleHiddenState(Object.fromEntries((view.console_hidden ?? []).map((id) => [id, true])));
         setMachine(sm);
         session.current = first.id;
         try {
@@ -413,6 +421,41 @@ export function StandProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(id);
   }, [live?.id]);
 
+  /** What the console hides is the team's, so another operator's change has to
+   *  arrive here without a reload. A few seconds late is fine; it is layout. */
+  useEffect(() => {
+    if (!diagram) return undefined;
+    const pull = () =>
+      getConsoleHidden(diagram)
+        .then(({ hidden: ids }) => setConsoleHiddenState(Object.fromEntries(ids.map((id) => [id, true]))))
+        .catch(() => undefined);
+    const id = window.setInterval(pull, 5000);
+    return () => window.clearInterval(id);
+  }, [diagram]);
+
+  const hideOnConsole = useCallback(
+    (ids: string[], hide: boolean) => {
+      if (!diagram || ids.length === 0) return;
+      const before = consoleHidden;
+      setConsoleHiddenState((h) => ({ ...h, ...Object.fromEntries(ids.map((id) => [id, hide])) }));
+      // One request per item, applied in order on the server; the last answer
+      // is the whole list, so it is what this browser keeps.
+      ids
+        .reduce<Promise<{ hidden: string[] } | null>>(
+          (prev, id) => prev.then(() => setConsoleHidden(diagram, id, hide)),
+          Promise.resolve(null),
+        )
+        .then((last) => {
+          if (last) setConsoleHiddenState(Object.fromEntries(last.hidden.map((i) => [i, true])));
+        })
+        .catch((e: unknown) => {
+          setConsoleHiddenState(before);
+          setError(e instanceof Error ? e.message : String(e));
+        });
+    },
+    [diagram, consoleHidden],
+  );
+
   const command = useCallback(
     async (body: Parameters<typeof commandSession>[1]) => {
       if (!session.current) return;
@@ -455,6 +498,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setRunning,
     hidden,
     toggleChannel: (id) => setHidden((h) => ({ ...h, [id]: !h[id] })),
+    consoleHidden,
+    hideOnConsole,
     pick: (kind, id) => {
       if (locked) return refuse();
       if (kind === 'diagram') setDiagram(id);
