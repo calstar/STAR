@@ -564,6 +564,7 @@ def burn(
             return ended(tripped(None))
 
     session.state = plan.fire_state
+    session._state_since = session.t
     fire_t = session.t
     clock = 0.0
     depleted: float | None = None

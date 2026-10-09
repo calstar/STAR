@@ -1887,6 +1887,8 @@ class Session:
         self.trip: Trip | None = None
         #: Set when Fire ended by a tank running dry (see _burnout_check).
         self.burnout: str | None = None
+        #: Stand time the current state was entered at (command_state).
+        self._state_since = 0.0
         self.t = 0.0
         self.wall = time.monotonic()
         self.history: Deque[Sample] = deque(maxlen=HISTORY)
@@ -2516,7 +2518,9 @@ class Session:
                     pressure=from_psig(copv_psi), temperature=293.15
                 )
             bottle.charged = True
-        self.state = state if state in self.machine.states else self.state
+        if state in self.machine.states and state != self.state:
+            self.state = state
+            self._state_since = self.t
         # T-0 has the dome loaded on the pad, whatever the line's valves are
         # doing when the session is put there.
         self._dome_primed = True
@@ -2641,6 +2645,7 @@ class Session:
                 f"{', '.join(self.machine.targets(self.state))}"
             )
         self.state = state
+        self._state_since = self.t
         # A transition writes every actuator the table knows, the way the
         # DAQ does, so a valve taken by hand goes back to the table's command
         # here. Holds used to outlive the state forever: the table opened Fuel
@@ -4914,9 +4919,12 @@ class Session:
         dry = [sim for sim in self.tanks.values() if sim.empty]
         if not dry or not self.machine.can_go(self.state, "Vent"):
             return
+        # T+ from Fire, not the stand clock: "T+302.7 s" after a 3.5 s burn
+        # read as a five-minute one.
+        lit = self.t - self._state_since
         self.command_state("Vent")
         self.burnout = (
-            f"Burnout at T+{self.t:.1f} s: {', '.join(sim.label for sim in dry)} ran "
+            f"Burnout at T+{lit:.2f} s: {', '.join(sim.label for sim in dry)} ran "
             "dry, so the sequence went to Vent."
         )
 

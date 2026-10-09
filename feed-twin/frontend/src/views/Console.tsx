@@ -666,7 +666,17 @@ export function Console() {
                   go={go}
                   locked={locked}
                   next={guide?.legal ? guide.hop : undefined}
-                  guide={guide ? <PadGuideLine guide={guide} state={state} hasEngine={attached} /> : undefined}
+                  guide={
+                    guide ? (
+                      <PadGuideLine
+                        guide={guide}
+                        state={state}
+                        hasEngine={attached}
+                        burn={lastBurn ?? undefined}
+                        burnout={live?.notes.find((n) => n.startsWith('Burnout')) ?? ''}
+                      />
+                    ) : undefined
+                  }
                   actions={others.map((s) => (
                     // The states the grid does not draw and Command has no
                     // button for: the GSE and emergency aborts, a debug

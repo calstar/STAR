@@ -26,7 +26,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { fixed, type SessionState, type StandSetup, type StateMachine, type TankState } from '../api';
+import { Link } from 'react-router-dom';
+import { fixed, type Burn, type SessionState, type StandSetup, type StateMachine, type TankState } from '../api';
 
 interface Phase {
   key: string;
@@ -315,12 +316,55 @@ export function PadGuideLine({
   guide,
   state,
   hasEngine,
+  burn,
+  burnout = '',
 }: {
   guide: PadGuide;
   state: string;
   hasEngine: boolean;
+  /** The stand's latest burn, live while it burns. */
+  burn?: Burn;
+  /** The stand's burnout note, while it stands (it clears on the next state). */
+  burnout?: string;
 }) {
   const { phases, index, current, inTarget, hop, legal, progress, sagged, auto, setAuto } = guide;
+  // During a burn and in the Vent it ends in, the line is the burn: what
+  // someone watching wants then is how it went, not that the tanks are empty
+  // and the next thing is a LOX load.
+  const burning = state === 'Fire';
+  const burned = !burning && Boolean(burnout) && burn !== undefined && !burn.burning;
+  if ((burning || burned) && burn) {
+    const why = burnout.match(/: (.+? ran dry)/)?.[1];
+    return (
+      <div className="flex min-w-0 items-center gap-x-4 font-mono text-[12px]">
+        <span className={`min-w-0 flex-1 truncate ${burned ? 'text-[var(--color-success)]' : 'text-[var(--ink)]'}`}>
+          {burned ? 'Burned' : 'Burning'}{' '}
+          <span className="tabular-nums">{fixed(burn.duration_s, 2)} s</span>
+          <span className="text-[var(--ink-2)]">
+            {' · '}
+            <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
+            {burn.isp_s > 0 && (
+              <>
+                {' · Isp '}
+                <span className="tabular-nums">{fixed(burn.isp_s, 0)} s</span>
+              </>
+            )}
+            {burned && why && ` — ${why}`}
+          </span>
+        </span>
+        {burned && (
+          <span className="flex flex-shrink-0 gap-3 text-[11px]">
+            <Link to="/engine" className="text-[var(--ink-2)] underline-offset-2 hover:text-[var(--ink)] hover:underline">
+              Engine
+            </Link>
+            <Link to="/runs" className="text-[var(--ink-2)] underline-offset-2 hover:text-[var(--ink)] hover:underline">
+              Runs
+            </Link>
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-1.5 font-mono text-[12px]">
       <div className="flex min-w-0 items-center gap-x-4">
