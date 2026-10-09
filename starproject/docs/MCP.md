@@ -120,6 +120,16 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `get_my_settings` | Your Settings page: name, theme, email prefs, digest kinds, followed projects/subteams (+ the followable ones and kind options) | read |
+| `set_theme` | `light` or `dark` | idempotent; returns refreshed settings |
+| `set_display_name` | Your shown name (≤60 chars; `""` clears to "First L.") | idempotent; returns refreshed settings |
+| `set_email_pref` | One of `emailAssignments`, `emailDueSoon`, `emailOverdue` on/off | idempotent; returns refreshed settings |
+| `set_digest_kind` | Include/exclude a `DIGEST_KINDS` key from your nightly digest | idempotent; kind validated by zod enum |
+| `toggle_digest_project` | Follow/unfollow a project for the digest | toggle; returns `following` + settings |
+| `toggle_digest_subteam` | Follow/unfollow a subteam for the digest | toggle; returns `following` + settings |
+| `list_admins` | Effective admins, each marked `seed` or added, plus your `isAdmin` | read |
+| `add_admin` | Grant admin to an email | admins only |
+| `remove_admin` | Revoke admin (seed admins are tombstoned); refuses to remove the last admin | admins only; destructive |
 
 Modules append their tools here as they land.
 
