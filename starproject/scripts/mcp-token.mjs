@@ -10,7 +10,9 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { PrismaClient } from "@prisma/client";
 
-const [email, name = "local"] = process.argv.slice(2);
+const [rawEmail, name = "local"] = process.argv.slice(2);
+// Same normalisation as the admin list: one User row per address, whatever the case typed.
+const email = (rawEmail ?? "").trim().toLowerCase();
 if (!email || !email.includes("@")) {
   console.error("usage: node scripts/mcp-token.mjs <email> [name]");
   process.exit(2);

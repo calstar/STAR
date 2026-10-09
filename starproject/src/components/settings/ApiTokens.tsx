@@ -35,12 +35,16 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
   };
 
   const revoke = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
     setError(null);
     try {
       await revokeApiToken(id);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't revoke that token");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -89,7 +93,8 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
               </div>
               <button
                 onClick={() => revoke(t.id)}
-                className="min-h-11 sm:min-h-0 shrink-0 rounded px-3 sm:px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                disabled={busy}
+                className="min-h-11 sm:min-h-0 shrink-0 rounded px-3 sm:px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 disabled:opacity-60 dark:hover:bg-red-950/40"
               >
                 Revoke
               </button>
