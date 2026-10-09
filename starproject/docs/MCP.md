@@ -23,7 +23,9 @@ node scripts/mcp-token.mjs you@berkeley.edu "laptop"      # prints sp_…
 ```
 
 Tokens are stored hashed (SHA-256); the row keeps a short prefix, a name, created / last-used /
-revoked timestamps. Deleting a user deletes their tokens.
+revoked timestamps. Deleting a user deletes their tokens. Minting is only possible from the
+browser session, never through MCP, so a leaked token cannot create a successor for itself;
+revoking (`revoke_api_token`) is available either way.
 
 ## Connecting a client
 
@@ -118,7 +120,6 @@ defineTool(server, "archive_task", {
 | `whoami` | The token's user and admin flag | read |
 | `health` | DB round-trip and counts | read |
 | `list_api_tokens` | Your tokens (never the secret) | read |
-| `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
 
 Modules append their tools here as they land.

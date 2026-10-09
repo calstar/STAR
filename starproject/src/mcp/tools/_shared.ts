@@ -61,13 +61,17 @@ export function describeError(err: unknown): string {
       .join("; ");
     return ["Invalid input", fields, f.formErrors.join("; ")].filter(Boolean).join(" -- ");
   }
-  if (err && typeof err === "object" && "digest" in err && String((err as { digest: unknown }).digest).startsWith("NEXT_REDIRECT")) {
-    // A server action that redirects after it succeeds (createProject); the
-    // write happened. Modules should prefer an action that returns instead.
-    return "Done (the action redirected)";
-  }
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/** The path a Next `redirect()` error points at, or null if `err` is not one. */
+export function redirectTarget(err: unknown): string | null {
+  if (!err || typeof err !== "object" || !("digest" in err)) return null;
+  const digest = String((err as { digest: unknown }).digest);
+  if (!digest.startsWith("NEXT_REDIRECT")) return null;
+  // "NEXT_REDIRECT;<type>;<url>;<status>;"
+  return digest.split(";")[2] ?? "";
 }
 
 type Identity = { identity?: CurrentUser };
@@ -90,6 +94,12 @@ export function defineTool<Shape extends z.ZodRawShape>(
       try {
         return ok(await handler(args));
       } catch (err) {
+        const redirected = redirectTarget(err);
+        // A server action that redirects after it succeeds (the web form's
+        // createProject): the write happened, so this is a success, not an
+        // error a client should retry. Modules should still prefer an action
+        // that returns the record.
+        if (redirected !== null) return ok({ done: true, redirectedTo: redirected });
         return fail(describeError(err));
       }
     };

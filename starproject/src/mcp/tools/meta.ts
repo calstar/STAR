@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 import { isAdmin } from "@/lib/admins";
-import { listTokens, mintToken, revokeToken } from "@/lib/apiTokens";
+import { listTokens, revokeToken } from "@/lib/apiTokens";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
 import { getCurrentDbUser } from "@/lib/user";
 
-import { DESTRUCTIVE, READ, WRITE, defineTool, type ToolModule } from "./_shared";
+import { DESTRUCTIVE, READ, defineTool, type ToolModule } from "./_shared";
 
 // Who am I, is the app up, and the caller's own API tokens. The worked example
 // other modules copy: zod input, an annotation constant, a handler that returns
@@ -65,20 +65,9 @@ export const metaTools: ToolModule = (server) => {
     },
   );
 
-  defineTool(
-    server,
-    "create_api_token",
-    {
-      description: "Mint a new MCP API token for yourself. The token is returned once; store it. Same as Settings → API tokens.",
-      inputSchema: { name: z.string().trim().min(1).max(60).describe("A label, e.g. 'laptop claude code'") },
-      annotations: WRITE,
-    },
-    async ({ name }) => {
-      const user = await getCurrentDbUser();
-      return mintToken(user.id, name);
-    },
-  );
-
+  // Minting is deliberately NOT a tool: a leaked token could otherwise mint a
+  // successor before it was revoked. Tokens are created under Settings → API
+  // tokens (a browser session); revoking is fine to expose.
   defineTool(
     server,
     "revoke_api_token",
