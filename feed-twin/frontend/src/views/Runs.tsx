@@ -43,6 +43,22 @@ const B_COLOR = '#F39C12';
 const show = (v: unknown) =>
   typeof v === 'number' ? fixed(v, Math.abs(v) >= 100 ? 1 : 3) : v === undefined ? '—' : JSON.stringify(v);
 
+/** A changed input's value, short: a list or an object is summarised (the
+ *  whole of it on hover) rather than printed as JSON that runs off the page. */
+const brief = (v: unknown): string => {
+  if (v === null || v === undefined) return '—';
+  if (Array.isArray(v)) {
+    const named = v.every((x) => x && typeof x === 'object' && 'label' in (x as object));
+    return named
+      ? (v as { label: string }[]).map((x) => x.label).join(', ') || '(none)'
+      : `${v.length} item${v.length === 1 ? '' : 's'}`;
+  }
+  if (v && typeof v === 'object') return `${Object.keys(v).length} fields`;
+  return show(v);
+};
+
+const WORDS: Record<string, string> = { t0: 'T-0', setup: 'setting', hookup: 'hookup', knobs: 'knob', bottles: 'bottle', tanks: 'tank' };
+
 const key = (r: RunSummary) => `${r.owner}/${r.id}`;
 
 /** The whole record as a file: inputs, code, stand version, outcome, solver
@@ -245,7 +261,12 @@ export function Runs() {
       </table>
 
       {shown.length > 0 && <Traces records={shown} />}
-      {diff && <DiffPanel diff={diff} />}
+      {diff && (
+        <DiffPanel
+          diff={diff}
+          named={Object.assign({}, ...chosen.map((r) => records[key(r)]?.series?.labels ?? {}))}
+        />
+      )}
       {chosen.length === 2 && (
         <ExplainPanel
           explain={explain && explain.a === chosen[0].id && explain.b === chosen[1].id ? explain : null}
@@ -299,7 +320,25 @@ function Traces({ records }: { records: RunRecord[] }) {
   );
 }
 
-function DiffPanel({ diff }: { diff: RunDiff }) {
+function DiffPanel({ diff, named = {} }: { diff: RunDiff; named?: Record<string, string> }) {
+  // The records name their vessels (traces' labels, and `<...>.label` rows
+  // where they differ): use those to name the rest, and leave the label rows
+  // themselves out.
+  const labels: Record<string, string> = { ...named };
+  for (const c of diff.inputs) {
+    const m = /\.([^.]+)\.label$/.exec(c.key);
+    const v = typeof c.a === 'string' ? c.a : typeof c.b === 'string' ? c.b : '';
+    if (m && v) labels[m[1]] = v;
+  }
+  const inputs = diff.inputs
+    .filter((c) => !c.key.endsWith('.label'))
+    .map((c) => ({
+      ...c,
+      name: c.key
+        .split('.')
+        .map((part) => labels[part] ?? WORDS[part] ?? part.replace(/_/g, ' '))
+        .join(' · '),
+    }));
   return (
     <div className="grid grid-cols-2 gap-4">
       <div>
@@ -324,18 +363,18 @@ function DiffPanel({ diff }: { diff: RunDiff }) {
       </div>
       <div>
         <h3 className="mb-1 text-[12px] text-gray-400">
-          What changed <span className="text-gray-600">({diff.inputs.length} inputs)</span>
+          What changed <span className="text-gray-600">({inputs.length} inputs)</span>
         </h3>
         <table className="w-full font-mono text-[12px]">
           <tbody>
-            {diff.inputs.map((c) => (
-              <tr key={c.key} className="border-b border-gray-900" title={c.group}>
-                <td className="py-0.5 pr-2 text-gray-400">{c.key}</td>
-                <td className="pr-2 text-right" style={{ color: A_COLOR }}>
-                  {show(c.a)}
+            {inputs.map((c) => (
+              <tr key={c.key} className="border-b border-gray-900 align-top" title={`${c.group} · ${c.key}`}>
+                <td className="py-0.5 pr-2 text-gray-400">{c.name}</td>
+                <td className="max-w-[14rem] break-words pr-2 text-right" style={{ color: A_COLOR }} title={show(c.a)}>
+                  {brief(c.a)}
                 </td>
-                <td className="text-right" style={{ color: B_COLOR }}>
-                  {show(c.b)}
+                <td className="max-w-[14rem] break-words text-right" style={{ color: B_COLOR }} title={show(c.b)}>
+                  {brief(c.b)}
                 </td>
               </tr>
             ))}
@@ -346,7 +385,7 @@ function DiffPanel({ diff }: { diff: RunDiff }) {
                 <td className="text-right">{show(c.b)}</td>
               </tr>
             ))}
-            {diff.inputs.length === 0 && diff.code.length === 0 && (
+            {inputs.length === 0 && diff.code.length === 0 && (
               <tr>
                 <td className="py-1 text-gray-500">Nothing: the same inputs and code.</td>
               </tr>

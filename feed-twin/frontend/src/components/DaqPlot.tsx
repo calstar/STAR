@@ -246,9 +246,15 @@ export function DaqPlot({
   const shape = shown.map((c) => `${c.key}:${c.color}:${c.tag}:${c.dash?.join(',') ?? ''}`).join('|');
   const rangeRef = useRef(range);
   rangeRef.current = range;
+  // A value that is not a number is a gap, not a point: uPlot takes NaN as a
+  // value, its auto-range came out NaN, and the plot drew nothing at all --
+  // Runs compared two burns of different lengths (the shorter one resampled to
+  // NaN past its end) and both charts were empty.
   const dataFor = (): uPlot.AlignedData => [
     times,
-    ...shown.map((c) => (onLog ? c.values.map((v) => (v > 0 ? v : null)) : c.values)),
+    ...shown.map((c) =>
+      c.values.map((v) => (Number.isFinite(v) && (!onLog || v > 0) ? v : null)),
+    ),
   ];
   const dataRef = useRef(dataFor);
   dataRef.current = dataFor;
