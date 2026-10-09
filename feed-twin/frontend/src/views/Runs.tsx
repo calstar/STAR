@@ -285,7 +285,7 @@ export function Runs() {
       {diff && (
         <DiffPanel
           diff={diff}
-          named={Object.assign({}, ...chosen.map((r) => records[key(r)]?.series?.labels ?? {}))}
+          named={Object.assign({}, ...chosen.map((r) => namesIn(records[key(r)])))}
         />
       )}
       {chosen.length === 2 && (
@@ -339,6 +339,17 @@ function Traces({ records }: { records: RunRecord[] }) {
       </div>
     </div>
   );
+}
+
+/** What a record calls the ids its inputs are keyed by: its vessels (the
+ *  traces' labels) and its knobs (the hookup's, so "knob · node 90" reads
+ *  "knob · LP-PR"). */
+function namesIn(rec: RunRecord | undefined): Record<string, string> {
+  if (!rec) return {};
+  const out: Record<string, string> = { ...(rec.series?.labels ?? {}) };
+  const hookup = rec.inputs?.hookup as { knobs?: { id?: string; label?: string }[] } | undefined;
+  for (const k of hookup?.knobs ?? []) if (k.id && k.label && k.label !== k.id) out[k.id] = k.label;
+  return out;
 }
 
 function DiffPanel({ diff, named = {} }: { diff: RunDiff; named?: Record<string, string> }) {
