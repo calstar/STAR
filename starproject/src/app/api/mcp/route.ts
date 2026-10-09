@@ -5,8 +5,8 @@ import { authenticateBearer } from "@/lib/apiTokens";
 import { runAsIdentity } from "@/lib/auth";
 import { createStarProjectServer } from "@/mcp/server";
 
-// The MCP endpoint. Streamable HTTP, stateless: each request gets its own
-// server + transport and is answered as JSON. Identity is a personal access
+// The MCP endpoint. Streamable HTTP, stateless: each POST gets its own
+// server + transport and is answered as JSON; GET and DELETE are 405. Identity is a personal access
 // token (Settings → API tokens) in `Authorization: Bearer sp_…`; Caddy routes
 // /api/mcp* around forward_auth and strips X-Auth-* so the token is the only
 // identity this path can carry (deploy/ec2/caddy/Caddyfile).
@@ -51,5 +51,14 @@ async function handle(req: Request): Promise<Response> {
 }
 
 export const POST = handle;
-export const GET = handle;
-export const DELETE = handle;
+
+// Stateless: there is no session to stream to or delete. Answer 405 rather
+// than opening an SSE stream the finally block above would close at once.
+function notAllowed() {
+  return NextResponse.json(
+    { error: "method_not_allowed", hint: "This MCP endpoint is stateless; send JSON-RPC with POST." },
+    { status: 405, headers: { Allow: "POST" } },
+  );
+}
+export const GET = notAllowed;
+export const DELETE = notAllowed;

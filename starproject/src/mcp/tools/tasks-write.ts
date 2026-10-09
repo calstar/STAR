@@ -12,7 +12,6 @@ import { midpointOrder } from "@/lib/board";
 import { prisma } from "@/lib/db";
 import { descendants } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
-import { getCurrentDbUser } from "@/lib/user";
 import { TaskPriorityEnum, TaskStatusEnum } from "@/lib/validation";
 
 import { DESTRUCTIVE, IDEMPOTENT_WRITE, WRITE, defineTool, toFormData, type ToolModule } from "./_shared";
@@ -152,15 +151,8 @@ export const tasksWriteTools: ToolModule = (server) => {
       annotations: WRITE,
     },
     async (input) => {
-      const user = await getCurrentDbUser();
-      await createTask(toFormData(createTaskFields(input)));
-      // createTask returns void; the row is the newest one we made with that
-      // title in that project (the action trims the title before saving).
-      const created = await prisma.task.findFirst({
-        where: { projectId: input.projectId, title: input.title.trim(), createdById: user.id },
-        orderBy: { createdAt: "desc" },
-        include: taskView,
-      });
+      const { id } = await createTask(toFormData(createTaskFields(input)));
+      const created = await prisma.task.findUnique({ where: { id }, include: taskView });
       if (!created) throw new Error("The task was created but could not be read back");
       return created;
     },

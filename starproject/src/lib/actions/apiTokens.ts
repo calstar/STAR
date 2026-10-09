@@ -16,11 +16,14 @@ export async function createApiToken(name: string): Promise<{ token: string; vie
   return made;
 }
 
-export async function revokeApiToken(tokenId: string): Promise<void> {
+// Returns an error string instead of throwing: a thrown server-action message
+// is redacted in production, so the UI would only see "An error occurred".
+export async function revokeApiToken(tokenId: string): Promise<{ error?: string }> {
   const user = await getCurrentDbUser();
   const done = await revokeToken(user.id, tokenId);
-  if (!done) throw new Error("That token isn't yours or is already revoked");
+  if (!done) return { error: "That token isn't yours or is already revoked" };
   revalidatePath("/settings");
+  return {};
 }
 
 export async function listApiTokens(): Promise<ApiTokenView[]> {

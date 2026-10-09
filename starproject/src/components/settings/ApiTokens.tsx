@@ -6,8 +6,9 @@ import { useState } from "react";
 import { createApiToken, revokeApiToken } from "@/lib/actions/apiTokens";
 import type { ApiTokenView } from "@/lib/apiTokens";
 
-const when = (d: Date | string | null) =>
-  d ? new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "never";
+// ISO date, not toLocaleDateString: the server and the browser must render the
+// same string or React reports a hydration mismatch.
+const when = (d: Date | string | null) => (d ? new Date(d).toISOString().slice(0, 10) : "never");
 
 export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
   const [name, setName] = useState("");
@@ -39,10 +40,11 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
     setBusy(true);
     setError(null);
     try {
-      await revokeApiToken(id);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't revoke that token");
+      const r = await revokeApiToken(id);
+      if (r.error) setError(r.error);
+      else router.refresh();
+    } catch {
+      setError("Couldn't revoke that token");
     } finally {
       setBusy(false);
     }
