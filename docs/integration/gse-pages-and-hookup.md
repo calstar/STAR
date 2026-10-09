@@ -90,3 +90,39 @@ The API:
   it turns.
 
 The GSE Controls tab then draws one knob per hookup knob that sets something.
+
+## Ignoring the drawn GSE
+
+`Setup.ignore_gse` ("Ignore the drawn GSE", on the GSE Controls and Configuration
+tabs; off by default) is for when the twin's reading of a complicated cart gets in
+the way and only the rocket matters (the operator, 2026-10-08). On, the stand is
+built from the vehicle alone (`feedtwin.pid.roles.vehicle_only`,
+`assemble_model(vehicle_only=True)`): every symbol off the vehicle and every line
+touching one is cut, and each vehicle disconnect whose mate was cut is a capped
+half. The stand then fills like a drawing of the rocket alone:
+
+* GN2 High Press charges the COPV to the COPV fill knob (`copv_target_psi`) over
+  `copv_fill_s`;
+* Fuel Fill pours the load over `fuel_fill_s`; Ox Fill loads from a dewar at
+  `dewar_psi`;
+* the dome knob sets the dome-loaded tank regulator directly, and the vehicle's
+  dome transducer reads it.
+
+The drawing's saved hookup keeps its vehicle pins; its knobs are the cut drawing's
+(`hookup.on_vehicle`). It is how the stand is built, so changing it opens a fresh
+stand, and a running session reports the value its model was built with. Run
+records carry it in their setup, so a replay rebuilds the same stand. On a drawing
+with no GSE page it changes nothing.
+
+## Knobs start at the drawing (2026-10-08)
+
+Every regulator a hand sets gets a knob: every regulator on the ground support,
+whatever the sheet says it was set to, and any other the drawing gives no setting.
+Every knob starts at the drawing's setting (`hookup.drawn_settings`,
+`knob_starts`): a loader's or plain regulator's `setpoint`, a dome-loaded one's
+`dome_pressure`. A fresh stand's dome (`Setup.dome_psi`) and COPV fill
+(`copv_target_psi`) are read the same way. The cockpit sends them only when the
+operator has turned them on this drawing, or a stand document carries them.
+Before this, a cart regulator drawn with a setting got no knob, and the dome and
+COPV fill opened at 500 and 4,500 whatever was drawn: LE4 drawn with PR-1 at 3,750,
+DR-REG-G at 535 and LP-PR at 150 showed one knob, at 500.

@@ -100,6 +100,15 @@ class ModelView(BaseModel):
     #: What the team has hidden from the console, by node id. Shared, not per
     #: browser; set from the console's menus or the P&ID tab.
     console_hidden: list[str] = Field(default_factory=list)
+    #: The order the console draws transducers and tanks in ({pts, tanks}).
+    console_order: dict[str, list[str]] = Field(default_factory=dict)
+    # Drawing ids off the vehicle (feedtwin.pid.roles.ground_ids): the cart.
+    # The console starts its transducers and vessels hidden. Empty for a
+    # drawing of the rocket alone, or one built with the GSE ignored.
+    ground: list[str] = Field(default_factory=list)
+    # The cart's K-bottles and dewars: the console does not show them at all
+    # (nobody reads their level on the pad). The cart's tanks it can.
+    ground_bottles: list[str] = Field(default_factory=list)
 
 
 class Channel(BaseModel):
@@ -309,6 +318,9 @@ class SessionOut(BaseModel):
     id: str
     t: float
     knobs: list[LiveKnobOut] = Field(default_factory=list)
+    # The hookup's console names, by drawing (channel) id: what the console
+    # shows in place of a valve's or transducer's tag.
+    aliases: dict[str, str] = Field(default_factory=dict)
     state: str
     reachable: list[str]
     converged: bool
@@ -420,6 +432,8 @@ class HookupBody(BaseModel):
 
     valves: dict[str, str] = Field(default_factory=dict)
     knobs: list[KnobOut] = Field(default_factory=list)
+    # What the console calls a valve or transducer, by drawing (channel) id.
+    aliases: dict[str, str] = Field(default_factory=dict)
 
 
 class HookupValveOut(BaseModel):

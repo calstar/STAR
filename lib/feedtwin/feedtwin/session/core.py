@@ -77,7 +77,8 @@ from feedtwin.vessels.vapour import NoVapour, SaturatedVapour, latent_heat
 from feedtwin.vessels.tank import Tank, TankRates, TankState
 from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
-from feedtwin.pid.network import DomeLine, DomeLoader, propellant_side
+from feedtwin.pid.document import BOUNDARY_TYPES, INLINE_TYPES, SOURCE_TYPES
+from feedtwin.pid.network import DOME_HANDLE, DomeLine, DomeLoader, propellant_side
 from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
 from feedtwin.session.hookup import CHARGE, DOME, Hookup
@@ -757,6 +758,22 @@ class Setup:
     physics is not what the twin is for). Only a drawing with its ground
     support drawn has anything to rest. Off integrates every cart vessel
     every step, as before."""
+    ignore_gse: bool = False
+    """Simulate the rocket alone and fill it the simple way. On: everything
+    off the vehicle (:func:`feedtwin.pid.roles.vehicle_only`) is cut from the
+    drawing before it is built -- the cart's tanks, bottles, dewar,
+    regulators and valves are not simulated at all, and each vehicle
+    disconnect is a capped half. What a one-page drawing of the rocket gets
+    then stands in for the cart: GN2 High Press charges the bottle to
+    :attr:`copv_target_psi` over :attr:`copv_fill_s`, Fuel Fill pours over
+    :attr:`fuel_fill_s`, Ox Fill loads from a dewar at :attr:`dewar_psi`,
+    and the dome is :attr:`dome_psi`, set on the dome-loaded regulator
+    itself. **Simplification** (the operator, 2026-10-08: the twin misreads
+    the complicated GSE, and "the rest is only handled on the rocket, which
+    is what we need"). Read when the model is assembled
+    (``assemble_model(vehicle_only=...)``), so changing it opens a new
+    stand; a session reports the value its model was built with. Off -- the
+    default -- simulates the drawn GSE, exactly as before."""
 
 
 def _not_a_liquid_tank(
@@ -1830,7 +1847,12 @@ class Session:
             {k.id: k.psig for k in hookup.knobs} if hookup is not None else {}
         )
         self.state = state if state in machine.states else machine.states[0]
+        #: Built on the vehicle alone, the GSE cut away (Setup.ignore_gse,
+        #: assemble_model(vehicle_only=...)). The setup says what the stand is.
+        self.gse_ignored = bool(model.meta.get("vehicle_only"))
         self.setup = setup or Setup()
+        if self.setup.ignore_gse != self.gse_ignored:
+            self.setup = replace(self.setup, ignore_gse=self.gse_ignored)
         self.forced: dict[str, float] = {}
         #: Where each actuator actually is, as opposed to where it is told to be.
         self._positions: dict[str, float] = {}
@@ -1954,6 +1976,25 @@ class Session:
         #: fills them, or they would be filled twice. Empty on a drawing with
         #: no GSE drawn, and then nothing changes.
         self._drawn_fill: frozenset[str] = self._find_drawn_fills()
+        #: Network nodes on the dome line of each dome-loaded regulator whose
+        #: loader went with the GSE, by regulator id: they read the dome. Empty
+        #: unless the GSE is ignored.
+        self._dome_ports: dict[str, frozenset[str]] = (
+            self._find_cut_dome_ports() if self.gse_ignored else {}
+        )
+        if self.gse_ignored:
+            raw_cut = model.meta.get("ground_cut")
+            cut = [str(c) for c in raw_cut] if isinstance(raw_cut, list) else []
+            self.assumptions.append(
+                "The drawn GSE is ignored (Configuration: Ignore the drawn GSE): "
+                + (
+                    f"{', '.join(cut)} and the rest of the cart are not simulated"
+                    if cut
+                    else "this drawing has no GSE off the vehicle to cut"
+                )
+                + ". The bottle charge, the loads and the dome are the GSE "
+                "Controls settings, as on a drawing of the rocket alone."
+            )
         # Vehicle tanks a cart tank loads through the drawing: the only tanks
         # that take liquid in at their outlet.
         # Both ends of a transfer line: liquid that sloshes back into the cart's
@@ -2103,6 +2144,52 @@ class Session:
                     f"(from {labels.get(supply, supply)}): the cart's built-in charge is off."
                 )
         return frozenset(found)
+
+    def _find_cut_dome_ports(self) -> dict[str, frozenset[str]]:
+        """The network nodes a dome-loaded regulator's dome line reaches, for
+        each one with no loader left on the drawing: its loader was on the cart
+        and went with it (:attr:`Setup.ignore_gse`). The line is no plumbing,
+        so the solve leaves it at atmosphere; its transducer reads the dome the
+        knob sets. Walked from the ``dome`` handle through junctions and
+        instruments, stopping at any valve, regulator, disconnect or vessel."""
+        built = self.model.built
+        diagram = self.model.diagram
+        by_id = {n.id: n for n in diagram.nodes}
+        adjacent: dict[str, set[str]] = {}
+        for edge in diagram.edges:
+            adjacent.setdefault(edge.source, set()).add(edge.target)
+            adjacent.setdefault(edge.target, set()).add(edge.source)
+        loaded = {loader.signal for loader in built.dome_loaders.values()}
+        stop = INLINE_TYPES | SOURCE_TYPES | BOUNDARY_TYPES
+        out: dict[str, frozenset[str]] = {}
+        for node in diagram.nodes:
+            if node.type != "PR" or node.options.get("domeLoaded") != "yes":
+                continue
+            if built.actuators.get(node.id, "") in loaded | {""}:
+                continue  # a loader still drawn sets it, or it was never built
+            frontier = [
+                e.target if e.source == node.id else e.source
+                for e in diagram.edges
+                if (e.source == node.id and e.source_handle == DOME_HANDLE)
+                or (e.target == node.id and e.target_handle == DOME_HANDLE)
+            ]
+            seen: set[str] = set()
+            while frontier:
+                here = frontier.pop()
+                if here in seen or here not in by_id or here == node.id:
+                    continue
+                seen.add(here)
+                if by_id[here].type not in stop:
+                    frontier.extend(adjacent.get(here, ()))
+            places = {
+                built.node_of[sid]
+                for sid in seen
+                if by_id[sid].type not in stop and sid in built.node_of
+            } | {i.node for i in built.instruments if i.id in seen}
+            places &= set(built.network.nodes)
+            if places:
+                out[node.id] = frozenset(places)
+        return out
 
     def _build_vessels(self) -> None:
         """Turn the drawing's tanks and bottles into integrable vessels.
@@ -2657,6 +2744,12 @@ class Session:
                 )
                 if dome_signal:
                     out[dome_signal] = from_psig(self.setup.dome_psi)
+
+        # A dome line whose loader went with the GSE reads the dome it is set to.
+        for regulator, places in self._dome_ports.items():
+            dome = out.get(built.actuators[regulator])
+            if dome is not None:
+                self._dome_readings.update(dict.fromkeys(places, dome))
 
         self._dome_primed = False
         for drawing_id, signal in built.actuators.items():

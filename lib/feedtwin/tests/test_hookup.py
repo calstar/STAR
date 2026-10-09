@@ -140,3 +140,16 @@ def test_a_regulator_cannot_be_on_two_knobs() -> None:
         }
     )
     assert Hookup.from_dict(ok.to_dict()) == ok
+
+
+def test_aliases_round_trip_and_blanks_are_dropped() -> None:
+    """A console name survives the store; an empty one is no name (the tag shows)."""
+    raw = {
+        "valves": {},
+        "knobs": [],
+        "aliases": {"PC": "Chamber pressure", "SV-1": "  "},
+    }
+    hookup = Hookup.from_dict(raw)
+    assert hookup.aliases == {"PC": "Chamber pressure"}
+    assert Hookup.from_dict(hookup.to_dict()) == hookup
+    assert Hookup.from_dict({"valves": {}, "knobs": []}).aliases == {}

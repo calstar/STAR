@@ -9,6 +9,7 @@ underneath it is flagged.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -176,9 +177,9 @@ def test_console_visibility_is_shared() -> None:
         headers={"X-Auth-Email": "a@b.c"},
     )
     assert r.json() == {"hidden": ["PT_HI"]}
-    assert client.get("/api/drawing/console", params={"diagram": sid}).json() == {
-        "hidden": ["PT_HI"]
-    }
+    assert client.get("/api/drawing/console", params={"diagram": sid}).json()[
+        "hidden"
+    ] == ["PT_HI"]
     assert client.get("/api/model", params={"diagram": sid}).json()[
         "console_hidden"
     ] == ["PT_HI"]
@@ -193,6 +194,97 @@ def test_console_visibility_is_shared() -> None:
         "/api/drawing/console",
         json={"diagram": sid, "element": "PT_HI", "hidden": False},
     )
-    assert client.get("/api/drawing/console", params={"diagram": sid}).json() == {
-        "hidden": []
-    }
+    assert (
+        client.get("/api/drawing/console", params={"diagram": sid}).json()["hidden"]
+        == []
+    )
+
+
+LE4 = (
+    Path(__file__).resolve().parents[2]
+    / "lib"
+    / "feedtwin"
+    / "tests"
+    / "fixtures"
+    / "le4_rocket_and_gse.json"
+)
+
+
+def _le4() -> tuple[str, dict[str, str]]:
+    r = client.post(
+        "/api/library/diagrams",
+        files={"file": ("console LE4.json", LE4.read_bytes(), "application/json")},
+    )
+    assert r.status_code == 200, r.text
+    ids = {n["data"]["label"]: n["id"] for n in json.loads(LE4.read_text())["nodes"]}
+    return r.json()["artifact"]["id"], ids
+
+
+def test_the_cart_starts_off_the_console_and_can_be_put_on() -> None:
+    """The ground support is hidden until somebody shows it; the rocket is
+    shown until somebody hides it. Both for everyone."""
+    diagram, ids = _le4()
+    try:
+        hidden = set(
+            client.get("/api/drawing/console", params={"diagram": diagram}).json()[
+                "hidden"
+            ]
+        )
+        assert (
+            ids["6K-GN2"] in hidden and ids["HPC_SOL"] in hidden
+        ), "the cart starts off"
+        assert (
+            ids["COPV"] not in hidden and ids["FM-R"] not in hidden
+        ), "the rocket starts on"
+
+        shown = client.put(
+            "/api/drawing/console",
+            json={"diagram": diagram, "element": ids["HPC_SOL"], "hidden": False},
+        ).json()["hidden"]
+        assert ids["HPC_SOL"] not in shown and ids["6K-GN2"] in shown
+        again = client.put(
+            "/api/drawing/console",
+            json={"diagram": diagram, "element": ids["HPC_SOL"], "hidden": True},
+        ).json()["hidden"]
+        assert ids["HPC_SOL"] in again
+        view = client.get("/api/model", params={"diagram": diagram}).json()
+        assert ids["HPC_SOL"] in view["console_hidden"]
+    finally:
+        library.remove(diagram)
+
+
+def test_the_console_order_and_a_stands_view_are_kept() -> None:
+    """Dragged order is kept for everyone; a stand's saved view put back makes
+    the console exactly that, cart items included."""
+    diagram, ids = _le4()
+    try:
+        order = {
+            "pts": ["engine.pc", ids["FU-PT-R"]],
+            "tanks": [ids["LOX-Tank"], ids["Eth-Tank"]],
+        }
+        r = client.put(
+            "/api/drawing/console/order", json={"diagram": diagram, "order": order}
+        )
+        assert r.json()["order"] == order
+        assert (
+            client.get("/api/model", params={"diagram": diagram}).json()[
+                "console_order"
+            ]
+            == order
+        )
+
+        saved = sorted(
+            {ids["FM-R"], ids["6K-GN2"]}
+        )  # one rocket item off, one cart item only
+        r = client.put(
+            "/api/drawing/console/view",
+            json={
+                "diagram": diagram,
+                "hidden": saved,
+                "order": {"pts": [], "tanks": []},
+            },
+        )
+        assert sorted(r.json()["hidden"]) == saved, "exactly the stand's view"
+        assert r.json()["order"] == {}
+    finally:
+        library.remove(diagram)

@@ -3,17 +3,37 @@
  *
  * Channels silenced from the top bar are silenced here — same click, same
  * rescale. That is the behaviour on the real software and it is the reason the
- * bars are buttons.
+ * bars are buttons. What the console's ⋯ hides is off here too -- the cart's
+ * transducers, until someone shows them; a click here shows one again.
  */
 
 import { channelColor, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
+import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
 
 const PLOTTED = ['psig', 'K'];
 
 export function Plots() {
-  const { history: result, live, hidden, toggleChannel } = useStand();
+  const {
+    history: result,
+    live,
+    hidden: silenced,
+    toggleChannel,
+    nameOf,
+    consoleHidden,
+    hideOnConsole,
+    consoleOrder,
+  } = useStand();
+  // The console's order (dragged on its strip), here too.
+  const channels = ordered(result?.channels ?? [], consoleOrder.pts, (c) => c.id);
+  const hidden: Record<string, boolean> = {};
+  for (const c of result?.channels ?? []) {
+    hidden[c.id] = Boolean(silenced[c.id]) || Boolean(consoleHidden[c.id]);
+  }
+  // A chip hidden from the console is put back on it; otherwise it mutes the
+  // trace, as the console's bar does.
+  const flip = (id: string) => (consoleHidden[id] ? hideOnConsole([id], false) : toggleChannel(id));
 
   if (!result) return <p className="p-6 text-sm text-text-muted">Nothing solved yet.</p>;
 
@@ -26,7 +46,7 @@ export function Plots() {
   // The engine's own channels (thrust, O/F, flows) are on the Engine page;
   // chamber pressure is a pressure and plots here with the tanks.
   const groups = PLOTTED.flatMap((unit) => {
-    const inUnit = result.channels.filter((c) => (c.unit || 'psig') === unit);
+    const inUnit = channels.filter((c) => (c.unit || 'psig') === unit);
     if (inUnit.length === 0) return [];
     return [{
       unit,
@@ -36,7 +56,7 @@ export function Plots() {
         .filter((c) => !hidden[c.id])
         .map((c): Channel => ({
           key: c.id,
-          tag: c.tag,
+          tag: nameOf(c.id, c.tag),
           values: c.values,
           color: channelColor(c.tag),
         })),
@@ -66,7 +86,7 @@ export function Plots() {
           <div className="mt-2 flex flex-wrap justify-center gap-3">
             {result.channels.map((c) => (
               <span key={c.id} className="font-mono text-xs tabular-nums">
-                <span style={{ color: channelColor(c.tag) }}>{c.tag}</span>{' '}
+                <span style={{ color: channelColor(c.tag) }}>{nameOf(c.id, c.tag)}</span>{' '}
                 <span className="text-text">{fixed(c.values[0] ?? 0, 1)}</span>
                 <span className="text-gray-600"> {c.unit || 'psig'}</span>
               </span>
@@ -93,11 +113,11 @@ export function Plots() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {result.channels.filter((c) => PLOTTED.includes(c.unit || 'psig')).map((c) => (
+        {channels.filter((c) => PLOTTED.includes(c.unit || 'psig')).map((c) => (
           <button
             key={c.id}
             type="button"
-            onClick={() => toggleChannel(c.id)}
+            onClick={() => flip(c.id)}
             className={`flex items-center gap-1.5 rounded border border-gray-800 px-2 py-1 font-mono text-[11px] transition-opacity hover:border-gray-600 ${
               hidden[c.id] ? 'opacity-40' : ''
             }`}
@@ -106,7 +126,7 @@ export function Plots() {
               className="inline-block h-2 w-2 rounded-full"
               style={{ background: channelColor(c.tag) }}
             />
-            {c.tag}
+            {nameOf(c.id, c.tag)}
           </button>
         ))}
       </div>

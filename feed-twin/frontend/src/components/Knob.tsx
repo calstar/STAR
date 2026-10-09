@@ -33,7 +33,11 @@ interface Props {
 }
 
 const SWEEP = 270; // degrees of travel
-const START = 135; // degrees, clockwise from 12 o'clock, where `min` sits
+// degrees, clockwise from 12 o'clock, where `min` sits: 7:30, so the travel
+// runs round the top to 4:30 and the gap is at the bottom, under the reading.
+// It was 135 (4:30), which turned the gap to the right and put the reading
+// and its unit on the arc.
+const START = 225;
 
 const polar = (cx: number, cy: number, r: number, deg: number) => {
   const a = ((deg - 90) * Math.PI) / 180;

@@ -8,7 +8,10 @@ A stand is everything a run depends on that is not the code:
 * every Configuration-tab setting (``setup``, as ``wire_setup`` keys);
 * the hookup (valve pins and knobs);
 * the operating point -- where T-0 is: tank pressure, bottle fill, loads,
-  how long it has been loaded.
+  how long it has been loaded;
+* the console's view -- which transducers, tanks and valves it shows and in
+  what order (``{hidden: {pts, tanks, actuators}, order: {pts, tanks}}``,
+  drawing ids), so a stand reopened anywhere looks the way it was left.
 
 Kept in :mod:`stardesign.documents`, the store pid-designer and EngineDesign
 already use: an owner, a share list, a checkout so two people do not edit one
@@ -36,6 +39,7 @@ EMPTY: dict[str, Any] = {
     "setup": {},
     "hookup": {},
     "operating_point": {},
+    "console": {},
     "notes": "",
 }
 
@@ -48,6 +52,7 @@ class StandPayload(BaseModel):
     setup: dict[str, Any] = Field(default_factory=dict)
     hookup: dict[str, Any] = Field(default_factory=dict)
     operating_point: dict[str, Any] = Field(default_factory=dict)
+    console: dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
 
 

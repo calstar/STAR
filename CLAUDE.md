@@ -149,9 +149,13 @@ very bugs they were written for.
   for what is *not* drawn. Every hand valve rests shut (unless drawn `normalPosition: open`)
   and is never bound to the table; MOVs are actuated. A liquid DEWAR is a supply tank;
   dome-line valves gate the dome (open to the loader: live; open vent: drained; else held). Lines on a regulator's
-  `dome` handle are loading, not feed. Every hand-loaded regulator gets a knob (`DOME`,
-  `CHARGE` = `copv_target_psi`, or its own). Before adding a Hookup-tab workaround, ask
-  what the drawing should say instead.
+  `dome` handle are loading, not feed. Every hand-loaded regulator -- every cart regulator, and any
+  regulator drawn with no setting -- gets a knob (`DOME`, `CHARGE` = `copv_target_psi`, or its
+  own), and every knob starts at the drawing's setting (`hookup.knob_starts`); a fresh
+  stand's dome and COPV fill are the drawing's unless the operator turned them. Before adding a Hookup-tab workaround, ask
+  what the drawing should say instead. `Setup.ignore_gse` (off by default) cuts the cart
+  away at assembly (`roles.vehicle_only`) and leaves only the built-in fills; it is a
+  build-time choice, so changing it opens a new stand.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,

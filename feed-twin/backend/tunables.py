@@ -49,6 +49,23 @@ GROUPS = [
 TUNABLES: tuple[Tunable, ...] = (
     # --- cart and regulators (the GSE tab's knobs, repeated here) ---------
     Tunable(
+        "ignore_gse",
+        "ignore_gse",
+        "Ignore the drawn GSE",
+        "",
+        GROUPS[0],
+        "On: the cart drawn on the GSE page is not simulated. The stand is built "
+        "from the rocket alone, its disconnects capped, and the fills are the simple "
+        "built-in ones at the GSE Controls settings: GN2 High Press charges the COPV "
+        "to the COPV fill knob over the COPV charge time, Fuel Fill pours the fuel "
+        "load, Ox Fill loads LOX from the LOX dewar pressure, and the dome knob sets "
+        "the tank regulator's dome directly. Off (the default) simulates the GSE as "
+        "drawn. Changing it opens a fresh stand. A drawing with no GSE page is the "
+        "same either way.",
+        kind="flag",
+        applies="reset",
+    ),
+    Tunable(
         "dome",
         "dome_psi",
         "Dome control regulator",

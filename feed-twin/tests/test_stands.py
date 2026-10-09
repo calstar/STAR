@@ -30,8 +30,16 @@ STAND: dict[str, Any] = {
     "fluid_set": "hotfire",
     "machine": "diablo",
     "setup": {"vapour": True, "wall_htc_film": 100.0},
-    "hookup": {"pins": {"PV-OX": "OX Main"}, "knobs": {"lox": ["PR-OX"]}},
+    "hookup": {
+        "pins": {"PV-OX": "OX Main"},
+        "knobs": {"lox": ["PR-OX"]},
+        "aliases": {"engine.pc": "Chamber pressure"},
+    },
     "operating_point": {"tank_psi": 550.0, "copv_psi": 4500.0},
+    "console": {
+        "hidden": {"pts": ["PT-6K"], "tanks": ["TK-CART"], "actuators": ["SV-CART"]},
+        "order": {"pts": ["PT-OX", "PT-FU"], "tanks": ["TK-FU", "TK-OX"]},
+    },
     "notes": "TRR configuration",
 }
 

@@ -432,3 +432,37 @@ def test_t0_loads_the_fire_load_not_the_tank() -> None:
     # A pad load stops there too (the session hands it over each tick).
     session.step(0.02)
     assert lox._wanted() == pytest.approx(config["lox_tank"]["mass"])
+
+
+def test_the_cart_regulators_drawn_with_settings_get_knobs_at_them() -> None:
+    """A cart regulator the drawing sets is still turned by hand on the pad, so it
+    gets a knob -- starting where the drawing sets it. It used to get none, and the
+    dome and COPV fill started at 500 and 4,500 whatever the sheet said."""
+    from feedtwin.session import assemble_model
+    from feedtwin.session.hookup import CHARGE, DOME, knob_starts, suggest
+
+    ids = _ids()
+    payload = _payload()
+    settings = {"PR-1": 3750, "DR-REG-G": 535, "LP-PR": 150}
+    for node in payload["nodes"]:
+        label = node["data"]["label"]
+        if label in settings:
+            node["data"].setdefault("params", {})["setpoint"] = {
+                "value": settings[label],
+                "unit": "psi",
+                "source": "estimated",
+            }
+    model = assemble_model(read_diagram(payload, name="LE4"), diagram_id="le4")
+    hookup = suggest(model, 500.0, 4500.0)
+    knobs = {k.id: k for k in hookup.knobs}
+    assert knobs[DOME].regulators == (ids["DR-REG-G"],)
+    assert knobs[CHARGE].regulators == (ids["PR-1"],)
+    assert knobs[ids["LP-PR"]].regulators == (ids["LP-PR"],)
+    assert knob_starts(hookup, model) == {
+        DOME: pytest.approx(535.0),
+        CHARGE: pytest.approx(3750.0),
+        ids["LP-PR"]: pytest.approx(150.0),
+    }
+    assert knobs[DOME].psig == pytest.approx(535.0)
+    assert knobs[CHARGE].psig == pytest.approx(3750.0)
+    assert knobs[ids["LP-PR"]].psig == pytest.approx(150.0)
