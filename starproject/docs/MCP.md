@@ -116,6 +116,23 @@ node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" read starproje
 - The unit tests (`npm test`) cover the pure helpers only; nothing in them needs a database or
   a running server.
 
+### Test suites
+
+- `npm test` includes `src/mcp/server.test.ts`: an in-memory MCP client lists the registry and checks
+  every tool has a description and behaviour hints, names are unique, reads are read-only,
+  destructive tools say so, admin-gated tools say "admin", and no tool can mint a token.
+  No database is touched.
+- `npm run mcp:e2e` (`scripts/mcp-e2e.mjs`) is the live smoke test: with `MCP_URL` and `MCP_TOKEN`
+  set it drives a real client through 401/405, whoami, projects, two `[mcp-e2e]` tasks (create,
+  read by number, update, clear, dates), blockers (add, duplicate, cycle, list, remove), the
+  `tasks/{number}` resource, move-to-done auto-archive, activity, settings round trip, the program
+  board, and admin gating. It deletes its tasks with an admin token; a non-admin token can only
+  archive them, and the script prints their ids. Exit code 1 on any failed check.
+
+```bash
+MCP_URL=http://localhost:3100/api/mcp MCP_TOKEN=$(node scripts/mcp-token.mjs you@berkeley.edu e2e) npm run mcp:e2e
+```
+
 ## How it works
 
 ```

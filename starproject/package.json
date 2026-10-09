@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy"
+    "migrate:deploy": "prisma migrate deploy",
+    "mcp:e2e": "node scripts/mcp-e2e.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.700.0",
