@@ -120,6 +120,11 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `add_blocker` | Mark a task blocked by another task in its project, optional note | write; rejects self, cross-project, duplicate, cycle |
+| `remove_blocker` | Unlink a blocker edge | idempotent; `removed: false` when there was none |
+| `list_blockers` | By `taskId`: blocked-by and blocking lists; by `projectId`: every edge (the Gantt arrows) | read |
+| `list_activity` | The audit log with the `/activity` filters (kind, actor, project) plus task and `since`/`until`, paged | read; each item has a `summary` line |
+| `recent_activity` | The last N hours (default 24, max 168), the digest's view, optional project / subteam | read |
 
 Modules append their tools here as they land.
 
