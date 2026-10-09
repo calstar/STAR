@@ -81,6 +81,19 @@ def test_a_diff_names_the_setting_and_the_outcome_change() -> None:
     assert run_records.diff(a, a)["inputs"] == []
 
 
+def test_the_list_says_what_each_run_ran_on() -> None:
+    """Two burns on different drawings, or one with the GSE cut away, are not
+    comparable; the list says which is which without opening them."""
+    whole = run_records.summary(_record("a", INPUTS, thrust_mean_N=7000.0))
+    cut = run_records.summary(
+        _record("b", _changed(setup_ignore_gse=True), thrust_mean_N=7000.0)
+    )
+    assert (whole["diagram"], whole["engine"]) == ("sha256:d1", "sha256:e1")
+    assert whole["rocket_only"] is False
+    assert cut["rocket_only"] is True
+    assert run_records.summary({"id": "old"})["diagram"] == ""
+
+
 def test_swaps_are_one_rung_per_group_and_per_setting() -> None:
     b = _changed(engine="sha256:e2", setup_vapour=False, setup_dome_psi=520.0)
     rungs = dict(run_records.swaps(INPUTS, b))

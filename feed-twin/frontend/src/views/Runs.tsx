@@ -73,7 +73,8 @@ const download = (rec: RunRecord) => {
 };
 
 export function Runs() {
-  const { standDoc } = useStand();
+  const { standDoc, artifacts } = useStand();
+  const named = (id?: string) => (id ? (artifacts.find((a) => a.id === id)?.name ?? id) : '');
   const [scope, setScope] = useState<'stand' | 'mine'>(standDoc ? 'stand' : 'mine');
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
@@ -196,6 +197,12 @@ export function Runs() {
             <th className="w-6" />
             <th className="py-1 pr-3 font-normal">When</th>
             <th className="pr-3 font-normal">By</th>
+            <th
+              className="pr-3 font-normal"
+              title="The drawing and the engine it burned, from the library. Rocket only: the drawn GSE was cut away. Simplified: feedtwin's own engine fired, not an EngineDesign card."
+            >
+              Ran on
+            </th>
             {COLUMNS.map((c) => (
               <th key={c.key} className="pr-3 text-right font-normal">
                 {c.label} {c.unit && <span className="text-gray-600">{c.unit}</span>}
@@ -227,6 +234,20 @@ export function Runs() {
                   {when(r.created)} {r.label && <span className="text-gray-400">· {r.label}</span>}
                 </td>
                 <td className="pr-3 text-gray-400">{r.user}</td>
+                <td className="max-w-[22rem] truncate pr-3 text-gray-400" title={`${named(r.diagram)} · ${named(r.engine)}`}>
+                  {r.diagram ? (
+                    <>
+                      {named(r.diagram)}
+                      {r.engine && <span className="text-gray-600"> · {named(r.engine)}</span>}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                  {r.rocket_only && <span className="ml-1.5 text-[10px] uppercase tracking-wider text-gray-500">rocket only</span>}
+                  {r.engine_model === 'simplified' && (
+                    <span className="ml-1.5 text-[10px] uppercase tracking-wider text-amber-500/80">simplified</span>
+                  )}
+                </td>
                 {COLUMNS.map((c) => {
                   const v = r.outcome[c.key];
                   return (
@@ -252,7 +273,7 @@ export function Runs() {
           })}
           {runs.length === 0 && (
             <tr>
-              <td colSpan={COLUMNS.length + 5} className="py-6 text-center text-gray-500">
+              <td colSpan={COLUMNS.length + 6} className="py-6 text-center text-gray-500">
                 No runs yet. A burn is recorded here when it ends.
               </td>
             </tr>

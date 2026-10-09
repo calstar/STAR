@@ -931,6 +931,10 @@ export interface RunSummary {
   label: string;
   stand: RunStand | null;
   engine_model: string;
+  /** What it ran on: library ids, and whether the GSE was cut away. */
+  diagram?: string;
+  engine?: string;
+  rocket_only?: boolean;
   outcome: Record<string, number | null>;
   converged: boolean;
   mass_error_ppm: number | null;
