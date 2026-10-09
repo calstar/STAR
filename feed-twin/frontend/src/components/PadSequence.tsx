@@ -176,6 +176,11 @@ const PHASES: Phase[] = [
 /** States the guide never routes through on its own. */
 const NEVER_VIA = (s: string) => /fire|abort|vent/i.test(s);
 
+/** The aborts. The table's only way out of one is often through another
+ *  (Engine Abort reaches GSE Abort, and only GSE Abort reaches Idle), so the
+ *  guide walks abort to abort on the way out -- never into one. */
+const ABORT = (s: string) => /abort/i.test(s);
+
 /** Past the point of no return on the table: from here the only ways back to
  *  a fill or a press go through Vent or an abort, so the loading phases are
  *  taken as read and the guide stops re-checking them. A tank that has sagged
@@ -185,7 +190,8 @@ const COMMITTED = (s: string) => /^(calibrate|ready|fire)$/i.test(s);
 /**
  * First hop of the shortest legal path from `from` to `to`, or '' if there is
  * none that avoids Fire, Vent and the aborts. The target itself may be Fire —
- * that is the last step — but nothing is routed *through* it.
+ * that is the last step — but nothing is routed *through* it. From inside an
+ * abort the path may step to another abort, which is how the table leaves one.
  */
 function firstHop(machine: StateMachine, from: string, to: string): string {
   if (from === to) return '';
@@ -195,7 +201,7 @@ function firstHop(machine: StateMachine, from: string, to: string): string {
     const here = queue.shift() as string;
     for (const next of machine.transitions[here] ?? []) {
       if (prev.has(next)) continue;
-      if (next !== to && NEVER_VIA(next)) continue;
+      if (next !== to && NEVER_VIA(next) && !(ABORT(here) && ABORT(next))) continue;
       prev.set(next, here);
       if (next === to) {
         let hop = to;
@@ -276,7 +282,10 @@ export function usePadGuide(
   // stop at Ready. Fire is the operator's. One command per distinct stand
   // state, so a slow round trip does not double-command.
   const stamp = guide && live ? `${live.state}>${guide.hop}` : '';
-  const stop = !guide?.current || guide.current.key === 'fire';
+  // Nor does it lead the stand out of an abort: that is the operator's call,
+  // and an auto-sequence that resumed a fill after someone hit abort would be
+  // the worst thing on the page.
+  const stop = !guide?.current || guide.current.key === 'fire' || Boolean(live && ABORT(live.state));
   const act = Boolean(guide && !guide.inTarget && guide.legal);
   useEffect(() => {
     if (!auto) {
@@ -354,6 +363,12 @@ export function PadGuideLine({
               </>
             )}
           </span>
+        ) : hop && ABORT(state) ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
+            Out of {state}: press{' '}
+            <span className={legal ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-3)]'}>{hop}</span>
+            <span className="text-[var(--ink-3)]"> → … → {current.target}</span>
+          </span>
         ) : hop ? (
           <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
             Next, {current.label.toLowerCase()}: press{' '}
@@ -365,7 +380,7 @@ export function PadGuideLine({
             No route from {state} to {current.target} without a vent or an abort.
           </span>
         )}
-        {current !== undefined && current.key !== 'fire' && (
+        {current !== undefined && current.key !== 'fire' && !ABORT(state) && (
           <label
             className="ml-auto flex flex-shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-[var(--ink-3)]"
             title="Press each state as it comes and wait out the loads and presses, stopping at Ready. Fire stays yours."
