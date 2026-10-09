@@ -112,6 +112,10 @@ class ModelView(BaseModel):
     # Built with the drawn GSE ignored: the vessels that were cut, by label.
     # Empty when nothing was (a drawing of the rocket alone, or the GSE kept).
     ground_cut: list[str] = Field(default_factory=list)
+    #: Where each knob starts on this drawing [psig], by knob id ("dome",
+    #: "charge", a regulator's): the regulators' drawn settings. What a
+    #: knob's "default" goes back to, not the library's 500 / 4,500.
+    drawn_knobs: dict[str, float] = Field(default_factory=dict)
 
 
 class Channel(BaseModel):

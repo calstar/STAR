@@ -808,6 +808,17 @@ async def model_view(
         ground_cut=[
             str(c) for c in cast(list[Any], model.meta.get("ground_cut") or [])
         ],
+        drawn_knobs={
+            k: round(v, 1)
+            for k, v in _drawn_knobs(
+                diagram,
+                engine,
+                fluid_set,
+                model,
+                _hookup_for(diagram, model)[0],
+                ignore_gse,
+            ).items()
+        },
         ground=sorted(ground := ground_ids(model.diagram)),
         ground_bottles=sorted(
             n.id
@@ -1193,12 +1204,8 @@ def _stand(
             f"{', '.join(sm_available())}. ({exc})",
         ) from exc
     hookup, _, problem = _hookup_for(diagram, model)
-    drawn = knob_starts(hookup, model)
+    drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
     if vehicle_only:
-        # The cart's settings are still the drawing's, though the cart is not
-        # simulated: the COPV fill charges to its fill regulator's setting.
-        whole = _assemble(diagram, engine, fluid_set)
-        drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}
         hookup = hookup_on_vehicle(hookup, model)
     return Stand(
         model=model,
@@ -1226,6 +1233,25 @@ def _lineage(artifact: Artifact) -> str:
     if artifact.source.startswith("shipped:"):
         return artifact.source
     return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+
+
+def _drawn_knobs(
+    diagram: str,
+    engine: str,
+    fluid_set: str,
+    model: Model,
+    hookup: Hookup,
+    vehicle_only: bool,
+) -> dict[str, float]:
+    """Where each knob starts on this drawing [psig], by knob id: the
+    regulators' drawn settings. Rocket only, the cart's settings are still the
+    drawing's, though the cart is not simulated: the COPV fill charges to its
+    fill regulator's setting."""
+    drawn = knob_starts(hookup, model)
+    if vehicle_only:
+        whole = _assemble(diagram, engine, fluid_set)
+        drawn = {**knob_starts(_hookup_for(diagram, whole)[0], whole), **drawn}
+    return drawn
 
 
 def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:

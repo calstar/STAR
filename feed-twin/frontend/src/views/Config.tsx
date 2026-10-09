@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { getTunables, type StandSetup, type Tunable } from '../api';
+import { CHARGE_KNOB, DOME_KNOB, getTunables, type StandSetup, type Tunable } from '../api';
 import { useStand } from '../stand';
 
 /** How long a hand has to rest on a row before it explains itself. */
@@ -60,13 +60,20 @@ function fmt(v: number, step: number): string {
   return Number(v).toFixed(places).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m));
 }
 
+/** A row; ``drawn``: its default is the drawing's (a regulator's setting),
+ *  not the library's. */
+type Row = Tunable & { drawn?: boolean };
+
+/** The Setup fields a drawn regulator sets, by knob. */
+const DRAWN: Record<string, string> = { dome: DOME_KNOB, copv_target: CHARGE_KNOB };
+
 function Row({
   t,
   value,
   onChange,
   disabled,
 }: {
-  t: Tunable;
+  t: Row;
   value: number | boolean;
   onChange: (v: number | boolean) => void;
   disabled: boolean;
@@ -95,6 +102,7 @@ function Row({
       <div>{t.explains}</div>
       <div className="mt-1.5 font-mono text-[11px] text-gray-400">
         default {typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : `${fmt(Number(t.default), t.step)} ${t.unit}`}
+        {t.drawn && ', the drawing\'s setting'}
         {t.kind === 'number' && ` · ${fmt(t.low, t.step)} to ${fmt(t.high, t.step)}`}
         {t.applies === 'reset' && ' · takes effect on Reset'}
       </div>
@@ -147,7 +155,7 @@ function Row({
               type="button"
               disabled={disabled}
               onClick={() => onChange(t.default)}
-              title={`Back to ${typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : fmt(Number(t.default), t.step)}`}
+              title={`Back to ${typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : fmt(Number(t.default), t.step)}${t.drawn ? ', the drawing\'s setting' : ''}`}
               className="rounded px-1.5 py-0.5 font-mono text-[10px] text-blue-300 hover:bg-blue-900/40"
             >
               default
@@ -160,7 +168,7 @@ function Row({
 }
 
 export function Config() {
-  const { live, setup, setSetup, locked: readOnly } = useStand();
+  const { live, setup, setSetup, locked: readOnly, model } = useStand();
   const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -174,13 +182,19 @@ export function Config() {
   // or see only what differs from the default.
   const [query, setQuery] = useState('');
   const [changedOnly, setChangedOnly] = useState(false);
+  // The dome and the COPV charge default to what the drawing sets them to:
+  // 'default' on a 535 psig drawn dome went back to the library's 500.
+  const rows: Row[] = tunables.map((t) => {
+    const drawn = DRAWN[t.key] !== undefined ? model?.drawn_knobs?.[DRAWN[t.key]] : undefined;
+    return drawn === undefined ? t : { ...t, default: drawn, drawn: true };
+  });
   const valueOf = (t: Tunable) => (setup as StandSetup)[t.key] ?? t.default;
   const isChanged = (t: Tunable) => {
     const v = valueOf(t);
     return typeof v === 'boolean' ? v !== t.default : Math.abs(Number(v) - Number(t.default)) > 1e-9;
   };
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = tunables.filter(
+  const shown = rows.filter(
     (t) =>
       (!changedOnly || isChanged(t)) &&
       words.every((w) => `${t.label} ${t.key} ${t.explains} ${t.group}`.toLowerCase().includes(w)),
@@ -214,7 +228,7 @@ export function Config() {
             onChange={(e) => setChangedOnly(e.target.checked)}
             className="accent-blue-500"
           />
-          Changed from the default only ({tunables.filter(isChanged).length})
+          Changed from the default only ({rows.filter(isChanged).length})
         </label>
         {shown.length === 0 && tunables.length > 0 && (
           <span className="text-[12px] text-gray-500">Nothing matches.</span>

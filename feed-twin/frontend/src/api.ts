@@ -167,6 +167,9 @@ export interface ModelView {
   ground_bottles?: string[];
   /** Built with the drawn GSE ignored: the vessels the cut left out. */
   ground_cut?: string[];
+  /** Where each knob starts on this drawing [psig], by knob id: the
+   *  regulators' drawn settings, what a knob's default goes back to. */
+  drawn_knobs?: Record<string, number>;
 }
 
 export interface EngineState {

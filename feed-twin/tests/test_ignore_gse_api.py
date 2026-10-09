@@ -166,6 +166,26 @@ def test_the_dome_knob_reads_the_lockup_range_and_the_drawn_mawp() -> None:
     assert tank["pressure_psi"] == pytest.approx(charged, abs=3.0)
 
 
+def test_the_model_view_carries_the_drawn_knob_settings() -> None:
+    """What a knob's 'default' goes back to on the Configuration tab: the
+    drawing's regulator settings, never the library's 500 / 4,500. This
+    drawing sets only DPR_HP's dome (535 psi); rocket only, the dome knob
+    turns it, so it is the dome knob's start. A knob whose regulators are
+    drawn without a setting is absent, and the stand starts it at Setup's."""
+    diagram = _upload()
+    for cut in (False, True):
+        view = client.get(
+            "/api/model", params={"diagram": diagram, "ignore_gse": cut}
+        ).json()
+        drawn = view["drawn_knobs"]
+        if cut:
+            assert drawn["dome"] == pytest.approx(535.0), drawn
+        opened = _open(diagram, ignore_gse=cut)
+        for knob, key in (("dome", "dome"), ("charge", "copv_target")):
+            if knob in drawn:
+                assert opened["setup"][key] == pytest.approx(drawn[knob]), knob
+
+
 def test_a_replay_rebuilds_the_stand_the_run_was_on() -> None:
     """A run record carries its setup; the Explain ladder and the Study rebuild
     from it, so a burn on the rocket alone replays on the rocket alone."""
