@@ -267,6 +267,10 @@ class TankOut(BaseModel):
     #: What a load fills this tank to [kg]: the engine's fire load where it
     #: states one, else the full fraction. The pad guide's "loaded".
     load_kg: float = 0.0
+    #: The engine's fire load for this tank [kg] (its config's lox_tank /
+    #: fuel_tank mass, fixed by the competition), ``None`` when it names none
+    #: and a load fills the tank to its full fraction instead.
+    fire_load_kg: float | None = None
     #: Where the regulator feeding this tank locks up right now [psig]:
     #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
     #: ``None`` for a tank no regulator feeds.

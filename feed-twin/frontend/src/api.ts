@@ -300,6 +300,8 @@ export interface TankState {
   surface_temperature_K?: number;
   /** What a load fills this tank to [kg]: the fire load, else the full fraction. */
   load_kg?: number;
+  /** The engine's fire load for this tank [kg]; absent when it names none. */
+  fire_load_kg?: number | null;
   /** A LOX load still chilling the wall: nothing collects yet. */
   chilling?: boolean;
   /** What the load is delivering into the tank [g/s]. */

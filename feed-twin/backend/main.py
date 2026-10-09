@@ -1458,6 +1458,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 chilling=bool(values.get("chilling", 0.0)),
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
                 load_kg=round(sim.load_target_kg, 3),
+                fire_load_kg=session.fire_loads().get(sim.id),
                 lockup_psi=_lockup_psig(session, sim.id),
                 lockup_range_psi=_lockup_range(session, sim.id),
                 mawp_psi=round(psig(sim.mawp), 1) if sim.mawp > 0.0 else None,
@@ -1560,6 +1561,7 @@ async def open_session(
     notices = [
         *(stand.notes if hookup is stand.hookup else ()),
         *([hookup_note] if hookup_note else []),
+        *session.short_loads(),
     ]
     session.assumptions.extend(notices)
     if len(_SESSIONS) >= _SESSION_LIMIT:

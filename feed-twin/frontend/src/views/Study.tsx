@@ -108,7 +108,7 @@ function NumberCell({
 }
 
 export function Study() {
-  const { live, setup, artifacts, where, standDoc } = useStand();
+  const { live, setup, artifacts, where, standDoc, model } = useStand();
   const [study, setStudy] = useState<StudyState | null>(null);
   const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
@@ -154,6 +154,20 @@ export function Study() {
   const standName = standDoc?.name ?? drawing?.name ?? 'no stand';
   const knobValue = (id: string) => (id === 'dome' ? setup.dome : knobs.find((k) => k.id === id)?.psig);
   const fill = Number(setup.full_fraction ?? 0.95);
+  // T-0 loads the engine's fire load; a fill fraction only loads a tank it
+  // does not name. With every tank named, a Fill column changes nothing --
+  // it used to sit there at 95 % while the cases burned 6.75 kg.
+  const ground = new Set(model?.ground ?? []);
+  const flight = (live?.tanks ?? []).filter((t) => !ground.has(t.id));
+  const fireLoaded = flight.length > 0 && flight.every((t) => (t.fire_load_kg ?? 0) > 0);
+  // What T-0 loads: the fire load, or what the tank holds at its full
+  // fraction when that is less (said in the Notes; the burn is shorter).
+  const held = (t: (typeof flight)[number]) => Math.min(t.fire_load_kg ?? 0, t.load_kg ?? Infinity);
+  const loadText = fireLoaded
+    ? `load ${flight
+        .map((t) => `${t.label} ${fixed(held(t), 2)}${held(t) < (t.fire_load_kg ?? 0) - 0.005 ? ` of ${fixed(t.fire_load_kg ?? 0, 2)}` : ''}`)
+        .join(' · ')} kg`
+    : `fill ${fixed(fill * 100, 0)} %`;
 
   const edit = (i: number, patch: Partial<StudyCaseIn>) =>
     setCases((all) => all.map((c, k) => (k === i ? { ...c, ...patch } : c)));
@@ -188,7 +202,7 @@ export function Study() {
             {knobs.length
               ? knobs.map((k) => `${k.label} ${fixed(knobValue(k.id) ?? k.psig, 0)} psig`).join(' · ')
               : `dome ${fixed(Number(setup.dome), 0)} psig`}{' '}
-            · fill {fixed(fill * 100, 0)} % · {bottle?.label ?? 'bottle'} as drawn
+            · {loadText} · {bottle?.label ?? 'bottle'} as drawn
           </span>
           <div className="ml-auto flex items-center gap-2">
             <label className="text-[12px] text-text-muted" title="A case stops here if no tank has run dry.">
@@ -220,7 +234,7 @@ export function Study() {
           cases={cases}
           knobs={knobs.map((k) => ({ id: k.id, label: k.label, psig: knobValue(k.id) ?? k.psig }))}
           setup={setup}
-          fill={fill}
+          fill={fireLoaded ? null : fill}
           tunables={tunables}
           bottleLabel={bottle?.label ?? 'Bottle'}
           onEdit={edit}
@@ -239,6 +253,7 @@ export function Study() {
           </button>
           <SweepBuilder
             knobs={knobs.map((k) => ({ id: k.id, label: k.label }))}
+            fillable={!fireLoaded}
             onBuild={(built, label) => {
               setCases(built);
               setSweepLabel(label);
@@ -283,7 +298,9 @@ function CaseTable({
   cases: StudyCaseIn[];
   knobs: { id: string; label: string; psig: number }[];
   setup: Record<string, number | boolean>;
-  fill: number;
+  /** The stand's fill fraction; null when the engine's fire load names every
+   *  tank and a fill changes nothing (no column then). */
+  fill: number | null;
   tunables: Tunable[];
   bottleLabel: string;
   onEdit: (i: number, patch: Partial<StudyCaseIn>) => void;
@@ -307,9 +324,11 @@ function CaseTable({
             <th className={th} title={`${bottleLabel} volume`}>
               Bottle (L)
             </th>
-            <th className={th} title="Liquid over tank volume at T-0">
-              Fill (%)
-            </th>
+            {fill !== null && (
+              <th className={th} title="Liquid over tank volume at T-0, for a tank the engine's fire load does not name">
+                Fill (%)
+              </th>
+            )}
             <th className={th} title="The gas in the bottle and press lines">
               Pressurant
             </th>
@@ -358,14 +377,16 @@ function CaseTable({
                   onChange={(v) => onEdit(i, { bottle_litres: v })}
                 />
               </td>
-              <td className="px-2 py-1">
-                <NumberCell
-                  value={c.fill_fraction == null ? null : Math.round(c.fill_fraction * 1000) / 10}
-                  placeholder={fixed(fill * 100, 0)}
-                  width="w-14"
-                  onChange={(v) => onEdit(i, { fill_fraction: v == null ? null : v / 100 })}
-                />
-              </td>
+              {fill !== null && (
+                <td className="px-2 py-1">
+                  <NumberCell
+                    value={c.fill_fraction == null ? null : Math.round(c.fill_fraction * 1000) / 10}
+                    placeholder={fixed(fill * 100, 0)}
+                    width="w-14"
+                    onChange={(v) => onEdit(i, { fill_fraction: v == null ? null : v / 100 })}
+                  />
+                </td>
+              )}
               <td className="px-2 py-1">
                 <select
                   value={c.pressurant ?? ''}
@@ -484,9 +505,12 @@ function SettingsCell({
 
 function SweepBuilder({
   knobs,
+  fillable = true,
   onBuild,
 }: {
   knobs: { id: string; label: string }[];
+  /** False when the engine's fire load names every tank: a fill sweeps nothing. */
+  fillable?: boolean;
   onBuild: (cases: StudyCaseIn[], label: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -500,7 +524,7 @@ function SweepBuilder({
       unit: 'psig',
     })),
     { key: 'bottle_litres', label: 'Bottle volume', unit: 'L' },
-    { key: 'fill_fraction', label: 'Fill', unit: '%' },
+    ...(fillable ? [{ key: 'fill_fraction' as SweepVar, label: 'Fill', unit: '%' }] : []),
   ];
   const chosen = options.find((o) => o.key === what) ?? options[0];
   const parsed = values.trim()

@@ -2078,6 +2078,32 @@ class Session:
             }
         return self._fire_loads
 
+    def short_loads(self) -> list[str]:
+        """Each vehicle tank too small for the engine's fire load, said.
+
+        A load stops at the tank's full fraction (``TankSim._wanted``), so a
+        drawn tank that cannot hold its fire load is loaded short, silently,
+        and every burn on the stand is that much shorter than the engine was
+        designed for. Empty when every tank holds its load.
+        """
+        out: list[str] = []
+        for tank_id, kg in self.fire_loads().items():
+            sim = self.tanks[tank_id]
+            fraction = self.setup.full_fraction
+            held = (
+                sim.tank.geometry.total_volume
+                * fraction
+                * sim.tank.liquid_density(sim.state)
+            )
+            if held < kg - 0.005:
+                out.append(
+                    f"{sim.label} holds {held:.2f} kg at its {fraction:.0%} fill, "
+                    f"under the engine's {kg:.2f} kg fire load: a fire is loaded "
+                    f"with {held:.2f} kg. A bigger tank on the drawing, or a "
+                    "higher full fraction (Configuration), loads the rest."
+                )
+        return out
+
     @property
     def vehicle_tanks(self) -> tuple[str, ...]:
         """The tanks the engine burns from: every tank, less the ground's."""

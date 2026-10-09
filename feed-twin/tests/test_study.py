@@ -205,3 +205,29 @@ def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     loads = as_set["t0"]["loads_kg"]
     assert any(abs(kg - 6.75) < 0.02 for kg in loads.values()), loads
     assert all(kg < 10.0 for kg in loads.values()), loads
+
+
+def test_a_tank_too_small_for_its_fire_load_is_said(stand: str) -> None:
+    """The engine's fuel fire load (7.00 kg) does not fit the stand's 8.67 L
+    fuel tank at a 95 % fill. A load stops at the full fraction, so every fire
+    is loaded short -- the stand says so when it opens, with what it does
+    load, which follows the full fraction."""
+
+    def opened(fraction: float) -> dict[str, Any]:
+        return dict(
+            client.post(
+                "/api/session",
+                params={"diagram": stand, "engine": _engine()},
+                json={"full_fraction": fraction},
+            ).json()
+        )
+
+    full = opened(0.95)
+    short = [n for n in full["notes"] if "fire load" in n]
+    assert len(short) == 1, full["notes"]
+    fuel = next(t for t in full["tanks"] if t["fire_load_kg"] == pytest.approx(7.0))
+    assert fuel["label"] in short[0] and fuel["load_kg"] < 7.0
+    assert f"holds {fuel['load_kg']:.2f} kg at its 95% fill" in short[0]
+    half = opened(0.5)
+    (note,) = [n for n in half["notes"] if "fire load" in n]
+    assert f"holds {fuel['load_kg'] * 0.5 / 0.95:.2f} kg at its 50% fill" in note
