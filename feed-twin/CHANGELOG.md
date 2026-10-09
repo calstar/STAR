@@ -17,6 +17,11 @@ changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
   (the library's changelog has the numbers).
 
 ### Fixed
+- Fills on a stand with its cart drawn ran far below real time (0.34x in-process on
+  LE4 (6)'s Ox Fill once the tank held its load): the vented boil-off and an unjoined
+  regulator each asked for extra solves every step. 1.9x now; Fuel Fill 1.4x -> 3.0x.
+  A topped LOX tank on its vent reads 3.1 psig, where it read 7.2 (the library's
+  changelog and docs/PHYSICS-BENCHMARK.md 3.10c).
 - A burn whose run record fails to save says so in the console's notes until a
   record lands; it was logged on the server and nowhere else.
 - A drawing's saved hookup that cannot be read is said in the console's notes; the

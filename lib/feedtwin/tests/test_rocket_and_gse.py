@@ -317,6 +317,34 @@ def test_ox_fill_loads_the_flight_lox_tank_from_the_dewar() -> None:
     assert abs(last.mass_error_kg - last.guard_kg) < 1e-3
 
 
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_topped_lox_tank_on_its_vent_lands_where_the_solve_put_it() -> None:
+    """Topped to its load in Ox Fill, the LOX tank passes ~20 g/s of boil-off
+    through a 0.45 g ullage to its vent. The solve closed that ullage on the
+    stiffer of its gas-in and gas-out slopes, and over boiling LOX gas in is
+    eight times stiffer: the node the vent flowed from sat at 3.1 psig while
+    the tank read 7.2, a gap that grew with the coupling step. And the 10 %
+    mass rule counted the vented gas, so the whole stand was solved nine
+    times every 20 ms -- the fill ran at a third of real time. A venting
+    ullage is closed on its own gas-out slope, and gas gone to the sky asks
+    for no extra solves."""
+    from feedtwin.session.gauge import psig
+
+    ids = _ids()
+    session = _session(_with_lox_fill_drawn())
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "Ox Fill"
+    for _ in range(36):
+        session.step(0.25)
+    assert lox.state.liquid_mass == pytest.approx(lox._wanted(), rel=0.01)
+    session.step(0.02)
+    gas_in, gas_out = session._split_at(lox.ullage_node, session._last_flows)
+    assert gas_out > 20.0 * lox.state.ullage.mass, "the ullage turns over each 50 ms"
+    node = session._last_pressures[lox.ullage_node]
+    assert psig(lox.pressure) == pytest.approx(psig(node), abs=0.3)
+    assert session.solver_log[-1].couplings == 1
+
+
 # ------------------------------------------------------------ the cart rests
 
 
