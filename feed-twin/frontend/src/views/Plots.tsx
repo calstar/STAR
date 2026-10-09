@@ -7,8 +7,8 @@
  * transducers, until someone shows them; a click here shows one again.
  */
 
-import { useState } from 'react';
-import { channelColor, fixed } from '../api';
+import { useMemo, useState } from 'react';
+import { channelColor, fixed, sessionHistory } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
@@ -36,7 +36,34 @@ export function Plots() {
   // trace, as the console's bar does.
   const flip = (id: string) => (consoleHidden[id] ? hideOnConsole([id], false) : toggleChannel(id));
   const [showOff, setShowOff] = useState(false);
+  const eventsKey = (result?.events ?? []).map((e) => `${e.t}:${e.label}`).join('|');
+  const marks = useMemo(() => result?.events ?? [], [eventsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const offConsole = channels.filter((c) => PLOTTED.includes(c.unit || 'psig') && consoleHidden[c.id]);
+
+  // The whole trace at full rate, not the plot's thinned copy: what someone
+  // takes into a spreadsheet or a notebook.
+  const downloadCsv = async () => {
+    if (!live?.id) return;
+    const full = await sessionHistory(live.id, 3600, 0);
+    const cols = full.channels;
+    const states = full.events ?? [];
+    let at = 0;
+    let state = states.length ? '' : live.state;
+    const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const lines = [
+      ['t_s', 'state', ...cols.map((c) => `${nameOf(c.id, c.tag)} [${c.unit || 'psig'}]`)].map(quote).join(','),
+      ...full.times_s.map((t, i) => {
+        while (at < states.length && states[at].t <= t) state = states[at++].label;
+        return [t.toFixed(3), quote(state), ...cols.map((c) => String(c.values[i] ?? ''))].join(',');
+      }),
+    ];
+    const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `feed-twin-${live.id}-${Math.round(live.t)}s.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   if (!result) return <p className="p-6 text-sm text-text-muted">Nothing solved yet.</p>;
 
@@ -75,6 +102,14 @@ export function Plots() {
           Channel history
         </h2>
         <span className="text-[11.5px] text-gray-600">{result.message}</span>
+        <button
+          type="button"
+          onClick={() => void downloadCsv()}
+          className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
+          title="Every channel the stand records, at full rate, over the last hour of stand time: one column per channel (by its console name), time in the first, and the state."
+        >
+          Download CSV
+        </button>
       </div>
 
       {single ? (
@@ -109,6 +144,7 @@ export function Plots() {
                 yLabel={g.label}
                 fill={g.unit === 'psig'}
                 allowLog={g.unit === 'psig'}
+                marks={marks}
               />
             </div>
           ))}

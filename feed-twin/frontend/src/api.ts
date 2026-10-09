@@ -456,6 +456,8 @@ export interface RunResult {
   message: string;
   times_s: number[];
   channels: Channel[];
+  /** Every state change in the window: rules across the plots. */
+  events?: { t: number; label: string }[];
   balance: Balance | null;
 }
 

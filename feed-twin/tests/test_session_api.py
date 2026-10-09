@@ -430,3 +430,17 @@ def test_a_lox_loads_chilldown_can_be_skipped() -> None:
         f"/api/session/{sid}/command", json={"skip_chill": "no-such-tank"}
     )
     assert unknown.status_code == 404
+
+
+def test_the_history_says_when_each_state_began() -> None:
+    """The plots draw a rule where the stand changed state: every change in the
+    window, from the unthinned history, however hard the trace is thinned."""
+    state = open_session()
+    tick(state["id"], dt=0.5)
+    command(state["id"], state="Armed")
+    tick(state["id"], dt=0.5)
+    history = client.get(
+        f"/api/session/{state['id']}/history", params={"seconds": 60, "max_points": 3}
+    ).json()
+    assert [e["label"] for e in history["events"]] == ["Armed"]
+    assert 0.4 < history["events"][0]["t"] < 0.6

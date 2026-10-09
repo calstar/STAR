@@ -353,12 +353,22 @@ class SessionOut(BaseModel):
     overrides_hash: str = ""
 
 
+class StateEvent(BaseModel):
+    """The stand entering a state, for a rule across the plots."""
+
+    t: float
+    label: str
+
+
 class RunOut(BaseModel):
     """A session's trace, in the shape the plots read."""
 
     message: str
     times_s: list[float]
     channels: list[Channel]
+    #: Every state change in the window, from the unthinned history, so a
+    #: transition between two kept samples is not lost.
+    events: list[StateEvent] = Field(default_factory=list)
     balance: BalanceOut | None = None
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one

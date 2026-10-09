@@ -271,12 +271,28 @@ export function DaqPlot({
           ctx.strokeStyle = '#EAB308';
           ctx.setLineDash([4, 4]);
           ctx.lineWidth = 1;
+          const dpr = window.devicePixelRatio || 1;
+          ctx.font = `${10 * dpr}px ui-monospace, Menlo, monospace`;
+          ctx.fillStyle = 'rgba(234, 179, 8, 0.85)';
+          // Named at the top in three rows: each label takes the first row
+          // with room after the last label in it, and a state too close to
+          // its neighbours keeps its rule but not its name -- overprinted,
+          // a pad sequence read as a smear.
+          const rowEnd = [-Infinity, -Infinity, -Infinity];
           for (const m of marks) {
             const x = u.valToPos(m.t, 'x', true);
+            if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
             ctx.beginPath();
             ctx.moveTo(x, u.bbox.top);
             ctx.lineTo(x, u.bbox.top + u.bbox.height);
             ctx.stroke();
+            if (!m.label) continue;
+            const left = x + 3 * dpr;
+            const width = ctx.measureText(m.label).width;
+            const row = rowEnd.findIndex((end) => left > end + 6 * dpr);
+            if (row < 0 || left + width > u.bbox.left + u.bbox.width) continue;
+            ctx.fillText(m.label, left, u.bbox.top + (10 + row * 12) * dpr);
+            rowEnd[row] = left + width;
           }
           ctx.restore();
         },

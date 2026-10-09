@@ -372,6 +372,12 @@ export function Console() {
     };
   }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The stand's state changes as rules across the plot, keyed by content: a
+  // new array on every history pull would rebuild the chart and lose the
+  // cursor.
+  const eventsKey = (history?.events ?? []).map((e) => `${e.t}:${e.label}`).join('|');
+  const marks = useMemo(() => history?.events ?? [], [eventsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pressure bars only. A thermocouple in a bar scaled to MEOP is
   // meaningless -- temperature lives in its own panel on Pressure.
   const allGauges = useMemo(
@@ -610,7 +616,7 @@ export function Console() {
             <div className="relative min-h-[200px] flex-1">
               <div className="absolute inset-0">
                 {plot.times.length > 1 ? (
-                  <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} />
+                  <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} marks={marks} />
                 ) : (
                   <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
                 )}

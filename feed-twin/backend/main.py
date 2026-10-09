@@ -83,6 +83,7 @@ from backend.models import (
     KnobOut,
     LiveKnobOut,
     SolverOut,
+    StateEvent,
     BurnTankOut,
     FreshnessOut,
     ImportResult,
@@ -1828,6 +1829,11 @@ async def session_history(
     built = session.model.built
     cutoff = session.t - max(seconds, 1.0)
     kept = [s for s in session.history if s.t >= cutoff]
+    events = [
+        StateEvent(t=round(b.t, 3), label=b.state)
+        for a, b in zip(kept, kept[1:])
+        if b.state != a.state
+    ]
     if max_points > 0 and len(kept) > max_points:
         stride = -(-len(kept) // max_points)
         kept = kept[::-1][::stride][::-1]
@@ -1855,6 +1861,7 @@ async def session_history(
                 _engine_channels(kept) if session.model.engine is not None else []
             )
         ],
+        events=events,
         balance=_session_balance(session),
     )
 
