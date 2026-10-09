@@ -109,6 +109,9 @@ class ModelView(BaseModel):
     # The cart's K-bottles and dewars: the console does not show them at all
     # (nobody reads their level on the pad). The cart's tanks it can.
     ground_bottles: list[str] = Field(default_factory=list)
+    # Built with the drawn GSE ignored: the vessels that were cut, by label.
+    # Empty when nothing was (a drawing of the rocket alone, or the GSE kept).
+    ground_cut: list[str] = Field(default_factory=list)
 
 
 class Channel(BaseModel):

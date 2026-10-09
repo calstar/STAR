@@ -113,7 +113,10 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const onConsole = pathname === '/';
   const engineName = stand.artifacts.find((a) => a.id === stand.where.engine)?.name ?? '';
   const title = model ? (engineName ? `${model.title} · ${engineName}` : model.title) : '—';
-  const rocketOnly = Boolean(live?.setup?.ignore_gse);
+  // Only when the cut left something out: on a drawing of the rocket alone
+  // the setting changes nothing, and the badge said otherwise.
+  const cut = live?.setup?.ignore_gse ? (model?.ground_cut ?? []) : [];
+  const rocketOnly = cut.length > 0;
   const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
     const last = out[out.length - 1];
     if (last && last.name === v.group) last.views.push(v);
@@ -208,7 +211,7 @@ export function TopBar({ views }: { views: readonly View[] }) {
           <Link
             to="/gse"
             className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
-            title="The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Change it on GSE Controls."
+            title={`The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Left out: ${cut.join(', ')} and the rest of the cart. Change it on GSE Controls.`}
           >
             Rocket only
           </Link>

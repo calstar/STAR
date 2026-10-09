@@ -805,6 +805,7 @@ async def model_view(
         pages=_pages(model.diagram.nodes),
         console_hidden=sorted(_console_hidden(diagram)),
         console_order=_console_order(diagram),
+        ground_cut=[str(c) for c in cast(list[Any], model.meta.get("ground_cut") or [])],
         ground=sorted(ground := ground_ids(model.diagram)),
         ground_bottles=sorted(
             n.id

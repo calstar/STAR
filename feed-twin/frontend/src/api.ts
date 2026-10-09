@@ -165,6 +165,8 @@ export interface ModelView {
   ground?: string[];
   /** The cart's K-bottles and dewars, which the console does not show. */
   ground_bottles?: string[];
+  /** Built with the drawn GSE ignored: the vessels the cut left out. */
+  ground_cut?: string[];
 }
 
 export interface EngineState {
