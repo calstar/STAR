@@ -32,7 +32,7 @@ import { Link } from 'react-router-dom';
 import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
-import PadSequence from '../components/PadSequence';
+import { PadGuideLine, usePadGuide } from '../components/PadSequence';
 import PanelMenu from '../components/PanelMenu';
 import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
@@ -96,19 +96,21 @@ function Vessel({
           <span className="ml-1 text-[10px] uppercase text-[var(--ink-3)]">psig</span>
         </span>
       </div>
+      {/* The fill bar and what it holds share a line: three vessels fit the
+          strip without a scroll (the third used to hang off the bottom). */}
       <div
-        className="relative mt-1.5 h-1 overflow-hidden"
-        style={{ background: `${colour}26` }}
-        title={`${fixed(fill * 100, 1)}% full`}
+        className="mt-1 flex items-center gap-2"
+        title={`${litres !== undefined && litres > 0 ? `${fixed(litres, litres < 10 ? 1 : 0)} L · ` : ''}${fixed(fill * 100, 1)}% full`}
       >
-        <div
-          className="absolute inset-y-0 left-0 transition-[width] duration-200"
-          style={{ width: `${pct}%`, background: colour }}
-        />
-      </div>
-      <div className="mt-1 truncate font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
-        {litres !== undefined && litres > 0 && `${fixed(litres, litres < 10 ? 1 : 0)} L · `}
-        {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
+        <div className="relative h-1 min-w-[24px] flex-1 overflow-hidden" style={{ background: `${colour}26` }}>
+          <div
+            className="absolute inset-y-0 left-0 transition-[width] duration-200"
+            style={{ width: `${pct}%`, background: colour }}
+          />
+        </div>
+        <span className="flex-shrink-0 font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
+          {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
+        </span>
       </div>
       {/* A line of its own: the one above truncates in a narrow column. */}
       {chilling && (
@@ -274,6 +276,9 @@ export function Console() {
     return { pts: ids, tanks: ids, actuators: ids };
   }, [consoleHidden]);
   const ground = useMemo(() => new Set(model?.ground ?? []), [model]);
+  // The pad sequence, read off the stand: the state to press is ringed on the
+  // grid and one line under it says what is happening.
+  const guide = usePadGuide(live, machine, setup, go, ground);
   // The order the strip draws transducers and tanks in: dragged into place,
   // shared like what is hidden.
   const dragging = useRef<{ panel: 'pts' | 'tanks'; id: string } | null>(null);
@@ -616,6 +621,8 @@ export function Console() {
                   live={live}
                   go={go}
                   locked={locked}
+                  next={guide?.legal ? guide.hop : undefined}
+                  guide={guide ? <PadGuideLine guide={guide} state={state} hasEngine={attached} /> : undefined}
                   actions={others.map((s) => (
                     // The states the grid does not draw and Command has no
                     // button for: the GSE and emergency aborts, a debug
@@ -641,11 +648,6 @@ export function Console() {
           </div>
         </div>
 
-        {machine && (
-          <div className="flex-shrink-0 border-t border-[var(--line)] py-3">
-            <PadSequence live={live} machine={machine} setup={setup} go={go} hasEngine={engine !== null} compact />
-          </div>
-        )}
       </div>
 
       {/* ── Below the fold ── */}

@@ -20,17 +20,22 @@ import { useStand } from '../stand';
 import { StandBar } from './StandBar';
 
 export interface View {
+  group: string;
   path: string;
   label: string;
   hint: string;
 }
 
-/** Mission time, the way a pad clock reads it. */
+/** The stand clock: how long this stand has been up, mm:ss (h:mm:ss past an
+ *  hour). Not "T+": to a rocket team that counts from ignition, and the stand
+ *  was opened long before anyone fired it. */
 export function elapsed(t: number): string {
   const whole = Math.max(Math.floor(t), 0);
-  const m = Math.floor(whole / 60);
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
   const sec = whole % 60;
-  return `T+${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  const mmss = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return h > 0 ? `${h}:${mmss}` : mmss;
 }
 
 /** What the solver is doing, in the words the status line uses, and the dot. */
@@ -62,13 +67,12 @@ function ValidationBadge() {
   }, []);
   if (!validation) return null;
   const ok = validation.status === 'validated';
+  // Quiet on purpose: it says what this build of the twin has been checked
+  // against, which matters when reading a result, not every second of a run.
   return (
     <span
-      className="border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.18em]"
-      style={{
-        borderColor: ok ? 'var(--color-success)' : 'var(--color-warning)',
-        color: ok ? 'var(--color-success)' : 'var(--color-warning)',
-      }}
+      className="cursor-help font-mono text-[11px] normal-case tracking-normal"
+      style={{ color: ok ? 'var(--color-success)' : 'var(--ink-3)' }}
       title={[
         validation.label,
         '',
@@ -79,7 +83,7 @@ function ValidationBadge() {
         ...validation.not_checked.map((c) => `  • ${c}`),
       ].join('\n')}
     >
-      {validation.status}
+      {ok ? 'validated' : 'not validated'}
     </span>
   );
 }
@@ -101,34 +105,50 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const h = health(stand);
   const state = live?.state ?? '—';
   const onConsole = pathname === '/';
-  const title = model ? `${model.title}${model.report.coupled ? ' · coupled' : ''}` : '—';
+  const engineName = stand.artifacts.find((a) => a.id === stand.where.engine)?.name ?? '';
+  const title = model ? (engineName ? `${model.title} · ${engineName}` : model.title) : '—';
+  const rocketOnly = Boolean(live?.setup?.ignore_gse);
+  const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
+    const last = out[out.length - 1];
+    if (last && last.name === v.group) last.views.push(v);
+    else out.push({ name: v.group, views: [v] });
+    return out;
+  }, []);
 
   return (
     <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-4">
-      <div className="flex min-w-0 items-baseline gap-10">
+      <div className="flex min-w-0 items-baseline gap-8">
         <span className="flex-shrink-0 font-mono text-[17px] font-bold uppercase tracking-[0.42em] text-[var(--ink)]">
           Feed Twin
         </span>
-        <nav className="flex min-w-0 items-baseline gap-x-6 gap-y-1 overflow-x-auto">
-          {views.map((v) => {
-            const active = pathname === v.path;
-            return (
-              <Link
-                key={v.path}
-                to={v.path}
-                title={v.hint}
-                className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
-                  active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
-                }`}
-              >
-                {v.label}
-                {v.path === '/report' && warnings > 0 && (
-                  <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
-                )}
-                {active && <span className="absolute inset-x-0 bottom-0 h-px bg-[var(--ink)]" />}
-              </Link>
-            );
-          })}
+        <nav className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+          {groups.map((g, i) => (
+            <span
+              key={g.name}
+              className={`flex flex-shrink-0 items-baseline gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-5' : ''}`}
+            >
+              <span className="caps pb-1.5 text-[9px] text-[var(--ink-4)]">{g.name}</span>
+              {g.views.map((v) => {
+                const active = pathname === v.path;
+                return (
+                  <Link
+                    key={v.path}
+                    to={v.path}
+                    title={v.hint}
+                    className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
+                      active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
+                    }`}
+                  >
+                    {v.label}
+                    {v.path === '/report' && warnings > 0 && (
+                      <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
+                    )}
+                    {active && <span className="absolute inset-x-0 bottom-0 h-px bg-[var(--ink)]" />}
+                  </Link>
+                );
+              })}
+            </span>
+          ))}
         </nav>
       </div>
 
@@ -140,15 +160,33 @@ export function TopBar({ views }: { views: readonly View[] }) {
           />
           {h.text}
         </span>
-        {/* Mission time, not wall clock: how long this stand has been up. It
-            stops when the sim is paused. */}
-        <span className="font-semibold tabular-nums text-[var(--ink)]" title="Stand time since it was opened">
+        {/* The stand clock, not the wall clock: how long this stand has been
+            up. It stops when the sim is paused. */}
+        <span
+          className="flex items-baseline gap-2 font-semibold tabular-nums text-[var(--ink)]"
+          title="Stand clock: time since this stand was opened. It stops while paused."
+        >
+          <span className="caps text-[10px] font-normal">Stand</span>
           {elapsed(live?.t ?? 0)}
         </span>
-        <span className="tabular-nums text-[var(--ink-3)]">{clock}</span>
-        <span className="max-w-[260px] truncate text-[var(--ink-2)]" title={title}>
+        <span className="tabular-nums text-[var(--ink-3)]" title="Wall clock">
+          {clock}
+        </span>
+        <span
+          className="max-w-[340px] truncate normal-case tracking-normal text-[var(--ink-2)]"
+          title={`Drawing · engine${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}`}
+        >
           {title}
         </span>
+        {rocketOnly && (
+          <Link
+            to="/gse"
+            className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            title="The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Change it on GSE Controls."
+          >
+            Rocket only
+          </Link>
+        )}
         <ValidationBadge />
 
         <div className="ml-auto flex items-center gap-4 normal-case tracking-normal">

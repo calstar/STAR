@@ -176,7 +176,7 @@ export function Config() {
           a value and the running stand uses it; rows marked <span className="font-mono text-[10px] uppercase">on reset</span>{' '}
           are built into the vessels and take effect on the next Reset. Changed rows are tinted and carry a
           way back to the default. What the <em>drawing</em> left unsaid — a defaulted volume, an estimated
-          bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Report</Link> tab.
+          bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Checks</Link> tab.
         </p>
       </div>
       {error && <p className="text-[12px] text-red-300">{error}</p>}
