@@ -1165,6 +1165,13 @@ class TankSim:
         self.chilling = False
         return True
 
+    @property
+    def load_target_kg(self) -> float:
+        """What a load fills this tank to [kg] (:meth:`_wanted`), for the pad
+        guide: a fire load of 6.75 kg is 73 % of LE4's LOX tank, and a guide
+        that wanted 90 % said the load had slipped after every T-0."""
+        return self._wanted()
+
     def _wanted(self) -> float:
         """Liquid mass a load stops at [kg]: the fire load when there is one,
         never more than the full fraction of the tank."""

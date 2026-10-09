@@ -805,7 +805,9 @@ async def model_view(
         pages=_pages(model.diagram.nodes),
         console_hidden=sorted(_console_hidden(diagram)),
         console_order=_console_order(diagram),
-        ground_cut=[str(c) for c in cast(list[Any], model.meta.get("ground_cut") or [])],
+        ground_cut=[
+            str(c) for c in cast(list[Any], model.meta.get("ground_cut") or [])
+        ],
         ground=sorted(ground := ground_ids(model.diagram)),
         ground_bottles=sorted(
             n.id
@@ -1442,6 +1444,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 side=propellant_side(built.network.nodes[sim.outlet_node].fluid),
                 chilling=bool(values.get("chilling", 0.0)),
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
+                load_kg=round(sim.load_target_kg, 3),
                 lockup_psi=_lockup_psig(session, sim.id),
             )
             for sim in session.tanks.values()

@@ -47,9 +47,10 @@ interface Phase {
 /** Where a fill stops: the session's FULL_FRACTION -- a 5 % ullage, which is
  *  how the stand is loaded (6.5 kg of ethanol plus 5 %). */
 const FULL = 0.95;
-/** Loaded means the fill has all but stopped. Strictly under FULL, because
- *  the fill lands *at* FULL and a threshold equal to it never fires. */
-const LOADED = 0.9;
+/** Loaded means the load has all but stopped: this share of what it fills
+ *  the tank to. Strictly under 1, because the load lands *at* its target and
+ *  a threshold equal to it never fires. */
+const LOADED_OF_TARGET = 0.95;
 /** At pressure means within this of the lockup its regulator gives now [psi]:
  *  dome + bias less the supply effect of the bottle behind it, which with a
  *  full COPV sits *below* the dome. Close, not 95 %: the guide once moved on
@@ -80,10 +81,16 @@ const chilled = (t: TankState | undefined) =>
   t.liquid_temperature_K >= CRYOGENIC_K ||
   t.wall_temperature_K === undefined ||
   t.wall_temperature_K - t.liquid_temperature_K < WARM_WALL_K;
+/** How far through its load a tank is, 0..1: against what the load fills it
+ *  to (the engine's fire load, which T-0 and the pad load), or the full
+ *  fraction from an older server. A 6.75 kg fire load is 73 % of LE4's LOX
+ *  tank; read against 90 %, every T-0 "slipped". */
+const loaded = (t: TankState) =>
+  t.load_kg && t.load_kg > 0 ? Math.min(t.liquid_mass_kg / t.load_kg, 1) : Math.min(t.fill_fraction / FULL, 1);
 /** 0..1 through the load: the fill first, then the chilldown. */
 const loadProgress = (t: TankState | undefined) => {
   if (!t) return 0;
-  const fill = Math.min(t.fill_fraction / FULL, 1);
+  const fill = loaded(t);
   if (fill < 1 || chilled(t)) return fill;
   const excess = (t.wall_temperature_K ?? t.liquid_temperature_K) - t.liquid_temperature_K;
   // 293 K wall on 90 K LOX is the start of the chilldown; WARM_WALL_K the end.
@@ -99,7 +106,7 @@ const PHASES: Phase[] = [
     label: 'Load LOX',
     target: 'Ox Fill',
     waiting: 'LOX loading; the wall chills first, so keep venting',
-    done: (l) => (oxTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(oxTank(l)),
+    done: (l) => (oxTank(l) ? loaded(oxTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(oxTank(l)),
     progress: (l) => loadProgress(oxTank(l)),
   },
   {
@@ -107,7 +114,7 @@ const PHASES: Phase[] = [
     label: 'Load fuel',
     target: 'Fuel Fill',
     waiting: 'fuel loading',
-    done: (l) => (fuelTank(l)?.fill_fraction ?? 1) >= LOADED && chilled(fuelTank(l)),
+    done: (l) => (fuelTank(l) ? loaded(fuelTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(fuelTank(l)),
     progress: (l) => loadProgress(fuelTank(l)),
   },
   {

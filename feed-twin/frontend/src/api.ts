@@ -296,6 +296,8 @@ export interface TankState {
    *  chilling down and will boil hard if the vent shuts. */
   wall_temperature_K?: number;
   surface_temperature_K?: number;
+  /** What a load fills this tank to [kg]: the fire load, else the full fraction. */
+  load_kg?: number;
   /** A LOX load still chilling the wall: nothing collects yet. */
   chilling?: boolean;
   /** What the load is delivering into the tank [g/s]. */
