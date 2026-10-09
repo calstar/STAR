@@ -120,6 +120,12 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `create_task` | New task in a project: title, description, priority, assignees, subteam, dates; returns it with its `#number` | write; logs created + assigned, emails assignees |
+| `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote; `assigneeIds` replaces the set | idempotent; done ⇄ archived follows the UI |
+| `set_task_dates` | Start and due together (the Gantt drag) | idempotent |
+| `move_task` | Kanban move: `status` plus `boardOrder`, or `afterTaskId` / `beforeTaskId` (midpoint of the neighbours on `boardProjectId`'s board -- that project and its subprojects, as the project page shows; default the task's own project); default end of column | idempotent |
+| `archive_task` | Hide from active lists, or `archived=false` to restore | idempotent |
+| `delete_task` | Permanent; returns `{deleted, number}` | destructive, admins only |
 
 Modules append their tools here as they land.
 
