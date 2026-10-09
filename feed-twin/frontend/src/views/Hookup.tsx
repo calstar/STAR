@@ -44,7 +44,10 @@ export function Hookup() {
     setAliases,
     consoleHidden,
     hideOnConsole,
+    setup,
   } = useStand();
+  // Rocket only: the wiring shown is what the stand runs on the rocket alone.
+  const at = { ...where, ignoreGse: Boolean(setup.ignore_gse) };
   const [tab, setTab] = useState<'valves' | 'pts' | 'knobs'>('valves');
   // What the console shows is the team's (lib/shown.ts): ticking here is the
   // console's ⋯ by another name.
@@ -61,7 +64,7 @@ export function Hookup() {
   useEffect(() => {
     if (!where.diagram) return;
     setError('');
-    getHookup(where)
+    getHookup(at)
       .then((h) => {
         const own = standHookup as unknown as HookupBody | null;
         const shown = own ? { ...h, hookup: own, saved: true } : h;
@@ -70,7 +73,7 @@ export function Hookup() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where.diagram, where.engine, standHookup]);
+  }, [where.diagram, where.engine, standHookup, at.ignoreGse]);
 
   const dirty = useMemo(
     () => Boolean(data && draft && JSON.stringify(data.hookup) !== JSON.stringify(draft)),
@@ -109,7 +112,11 @@ export function Hookup() {
 
   const valveLabel = (id: string) => {
     const v = data.valves.find((x) => x.id === id);
-    return v ? `${v.label}${data.pages.length > 1 ? ` · ${v.page}` : ''}` : id;
+    if (v) return `${v.label}${data.pages.length > 1 ? ` · ${v.page}` : ''}`;
+    // Rocket only, a vent can be bound to the rocket's capped disconnect,
+    // which the whole drawing mates rather than lists as a valve.
+    const a = model?.actuators.find((x) => x.id === id);
+    return a ? `${a.tag}${model?.pages?.[id] ? ` · ${model.pages[id]}` : ''}` : id;
   };
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
 
@@ -212,7 +219,7 @@ export function Hookup() {
           <button
             type="button"
             disabled={busy || !data.saved || locked}
-            onClick={() => (onStand ? keep(data.suggested) : void act(() => resetHookup(where)))}
+            onClick={() => (onStand ? keep(data.suggested) : void act(() => resetHookup(at)))}
             title="Forget what was saved and go back to the twin's own matching."
             className="rounded bg-gray-700 px-3 py-1 text-[12px] font-semibold text-white hover:bg-gray-600 disabled:opacity-40"
           >
@@ -221,7 +228,7 @@ export function Hookup() {
           <button
             type="button"
             disabled={busy || (!dirty && data.saved) || locked}
-            onClick={() => (onStand ? keep(draft, !namesOnly) : void act(() => saveHookup(where, draft), !namesOnly))}
+            onClick={() => (onStand ? keep(draft, !namesOnly) : void act(() => saveHookup(at, draft), !namesOnly))}
             title={
               locked
                 ? 'Take the stand to change its hookup'
@@ -256,13 +263,63 @@ export function Hookup() {
 
       {tab === 'valves' && (
         <>
+      {/* What people come here for most -- which valves the grid shows and
+          what it calls them -- first; the binding is matched by itself and is
+          checked once per drawing. */}
       <div className="bg-card rounded-lg border border-gray-800">
         <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
-          Valves
+          On the console
           <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
-            what each state-machine actuator opens on this drawing
+            the actuator grid: which valves it shows, and what it calls them
           </span>
         </h2>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-[10px] uppercase tracking-wider text-gray-500">
+              <th className="w-16 px-4 py-1.5 font-normal">Show</th>
+              <th className="px-4 py-1.5 font-normal">On the P&amp;ID</th>
+              <th className="px-4 py-1.5 font-normal">Driven by</th>
+              <th className="px-4 py-1.5 font-normal">Console name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {valveRows.map((a) => (
+              <tr key={a.id} className="border-t border-gray-800/60">
+                <td className="px-4 py-1">
+                  <input
+                    type="checkbox"
+                    checked={onConsole(a.id)}
+                    onChange={() => flipConsole(a.id)}
+                    className="accent-blue-500"
+                    title={ground.has(a.id) ? "On the Console's actuator grid (the cart's start off)" : "On the Console's actuator grid"}
+                  />
+                </td>
+                <td className="px-4 py-1 font-mono">
+                  {a.tag}
+                  <span className="ml-2 text-[10px] text-gray-600">{model?.pages?.[a.id] ?? ''}</span>
+                </td>
+                <td className="px-4 py-1 text-text-muted">{actuatorOf[a.id] ?? '—'}</td>
+                <td className="px-4 py-1">{aliasInput(a.id, actuatorOf[a.id] ?? a.tag)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="bg-card rounded-lg border border-gray-800">
+        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
+          Wiring
+          <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
+            which valve each state-machine actuator opens on this drawing
+          </span>
+        </h2>
+        {data.vehicle_only && (
+          <p
+            className="border-b border-gray-800 px-4 py-2 text-[12px] text-text-muted"
+            title="With the drawn GSE ignored (GSE Controls), a vent wired to the cart's solenoid opens the rocket's own disconnect instead, and an actuator that only reaches the cart is never commanded. A pin made here is kept for the whole drawing."
+          >
+            Rocket only — automatic matches are the rocket's; the cart's valves are not simulated.
+          </p>
+        )}
         <table className="w-full text-[12.5px]">
           <tbody>
             {data.actuators.map((actuator) => {
@@ -309,45 +366,6 @@ export function Hookup() {
             Nothing in the table drives: {data.uncommanded.map(valveLabel).join(', ')}
           </p>
         )}
-      </div>
-      <div className="bg-card rounded-lg border border-gray-800">
-        <h2 className="border-b border-gray-800 px-4 py-2.5 caps">
-          On the console
-          <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
-            the actuator grid: which valves it shows, and what it calls them
-          </span>
-        </h2>
-        <table className="w-full text-[12.5px]">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-gray-500">
-              <th className="w-16 px-4 py-1.5 font-normal">Show</th>
-              <th className="px-4 py-1.5 font-normal">On the P&amp;ID</th>
-              <th className="px-4 py-1.5 font-normal">Driven by</th>
-              <th className="px-4 py-1.5 font-normal">Console name</th>
-            </tr>
-          </thead>
-          <tbody>
-            {valveRows.map((a) => (
-              <tr key={a.id} className="border-t border-gray-800/60">
-                <td className="px-4 py-1">
-                  <input
-                    type="checkbox"
-                    checked={onConsole(a.id)}
-                    onChange={() => flipConsole(a.id)}
-                    className="accent-blue-500"
-                    title={ground.has(a.id) ? "On the Console's actuator grid (the cart's start off)" : "On the Console's actuator grid"}
-                  />
-                </td>
-                <td className="px-4 py-1 font-mono">
-                  {a.tag}
-                  <span className="ml-2 text-[10px] text-gray-600">{model?.pages?.[a.id] ?? ''}</span>
-                </td>
-                <td className="px-4 py-1 text-text-muted">{actuatorOf[a.id] ?? '—'}</td>
-                <td className="px-4 py-1">{aliasInput(a.id, actuatorOf[a.id] ?? a.tag)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
         </>
       )}

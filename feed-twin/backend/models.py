@@ -493,6 +493,9 @@ class HookupOut(BaseModel):
     by_user: list[str]
     pages: list[str]
     mated: list[list[str]]
+    #: ``bound`` and the rest are the rocket-only stand's wiring
+    #: (``Setup.ignore_gse``); ``hookup`` is still the whole drawing's.
+    vehicle_only: bool = False
 
 
 class SolverOut(BaseModel):

@@ -743,6 +743,8 @@ export interface Hookup {
   by_user: string[];
   pages: string[];
   mated: string[][];
+  /** `bound` and the rest are the rocket-only stand's wiring. */
+  vehicle_only?: boolean;
 }
 
 /** The id of the knob the session's dome setting drives. */
@@ -761,20 +763,23 @@ export interface LiveKnob {
   regulators: string[];
 }
 
-const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
-  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}`;
+/** ``ignoreGse``: wired as a rocket-only stand runs it (the hookup itself is
+ *  still the whole drawing's). */
+const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
+  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}` +
+  (w.ignoreGse ? '&ignore_gse=true' : '');
 
-export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`);
 
-export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }, body: HookupBody) =>
+export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }, body: HookupBody) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
-export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
 
 /** The solver tab: per tick, as columns (feedtwin.session.diagnostics). */

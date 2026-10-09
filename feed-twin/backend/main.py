@@ -1982,10 +1982,19 @@ def _hookup_body(hookup: Hookup) -> HookupBody:
     )
 
 
-def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> HookupOut:
+def _hookup_out(
+    diagram: str, engine: str, fluid_set: str, machine: str, vehicle_only: bool = False
+) -> HookupOut:
     stand = _stand(diagram, engine, fluid_set, machine)
     model, b = stand.model, stand.binding
     hookup, saved, _ = _hookup_for(diagram, model)
+    if vehicle_only:
+        # Rocket only (Setup.ignore_gse): the wiring the stand runs is the cut
+        # drawing's -- a vent bound to the cart's solenoid is bound to the
+        # rocket's capped disconnect instead. The hookup itself stays the whole
+        # drawing's, so saving a name from here never drops the cart's knobs
+        # and pins (on_vehicle keeps the vehicle's half at session start).
+        b = _stand(diagram, engine, fluid_set, machine, vehicle_only=True).binding
     return HookupOut(
         lineage=_lineage(library.get(diagram)),
         saved=saved,
@@ -2015,16 +2024,22 @@ def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> Hook
         by_user=list(b.by_user),
         pages=sorted({n.page or "Main" for n in model.diagram.nodes}),
         mated=[list(pair) for pair in model.built.mated],
+        vehicle_only=vehicle_only,
     )
 
 
 @app.get("/api/hookup")
 async def get_hookup(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire", machine: str = "diablo"
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Which valve each actuator drives and which knob sets which regulator, on
-    this drawing: saved, or the twin's suggestion."""
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    this drawing: saved, or the twin's suggestion. ``ignore_gse``: wired as a
+    rocket-only stand runs it."""
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.put("/api/hookup")
@@ -2034,6 +2049,7 @@ async def save_hookup(
     engine: str = "",
     fluid_set: str = "hotfire",
     machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Keep a hookup for this drawing's lineage. New stands open with it."""
     try:
@@ -2059,16 +2075,20 @@ async def save_hookup(
         _lineage(library.get(diagram)),
         {"hookup": hookup.to_dict(), "diagram": diagram},
     )
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.delete("/api/hookup")
 async def reset_hookup(
-    diagram: str, engine: str = "", fluid_set: str = "hotfire", machine: str = "diablo"
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
     library.drop_record(HOOKUPS, _lineage(library.get(diagram)))
-    return _hookup_out(diagram, engine, fluid_set, machine)
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
 @app.get("/api/session/{session_id}/burns")

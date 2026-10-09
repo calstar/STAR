@@ -125,6 +125,29 @@ def test_a_stand_opened_ignoring_the_gse_is_the_rocket_alone() -> None:
     assert flipped["setup"]["ignore_gse"] is True
 
 
+def test_the_hookup_tab_shows_the_wiring_the_rocket_alone_runs() -> None:
+    """Rocket only, a vent wired to the cart's solenoid opens the rocket's
+    capped disconnect instead; the Hookup tab says so, while the hookup it
+    saves stays the whole drawing's (the cart's knobs are not dropped)."""
+    diagram = _upload()
+    labels = {
+        n["id"]: n["data"]["label"] for n in json.loads(DRAWING.read_text())["nodes"]
+    }
+    whole = client.get("/api/hookup", params={"diagram": diagram}).json()
+    rocket = client.get(
+        "/api/hookup", params={"diagram": diagram, "ignore_gse": True}
+    ).json()
+    assert whole["vehicle_only"] is False and rocket["vehicle_only"] is True
+    assert labels[whole["bound"]["Fuel Vent"]] == "FV-SOL"
+    assert labels[rocket["bound"]["Fuel Vent"]] == "FV-QD-B"
+    assert "GSE High Press Control" in whole["bound"]
+    assert "GSE High Press Control" not in rocket["bound"]
+    assert rocket["hookup"] == whole["hookup"]
+    assert "DR-REG-G" in {
+        labels.get(r, r) for k in rocket["hookup"]["knobs"] for r in k["regulators"]
+    }
+
+
 def test_a_replay_rebuilds_the_stand_the_run_was_on() -> None:
     """A run record carries its setup; the Explain ladder and the Study rebuild
     from it, so a burn on the rocket alone replays on the rocket alone."""
