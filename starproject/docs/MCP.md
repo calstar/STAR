@@ -120,6 +120,11 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done | read |
+| `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log | read |
+| `board` | A project's (with subtree) or subteam's active tasks grouped by status, sorted like the Board view | read |
+| `gantt` | A project's or subteam's timeline rows (`toGanttTasks`): dated tasks with dependencies | read |
+| `my_tasks` | The home page's "My tasks": active tasks assigned to you, soonest due first | read |
 
 Modules append their tools here as they land.
 
