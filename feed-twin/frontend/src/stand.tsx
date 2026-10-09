@@ -149,6 +149,28 @@ export const useStand = () => {
   return value;
 };
 
+/** Where this browser keeps the cockpit's settings and which drawn knobs it
+ *  has turned, so a reload after a backend restart reopens the same stand. */
+const SETUP_KEY = 'feedtwin.setup';
+const TURNED_KEY = 'feedtwin.turned';
+
+function remembered<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? ({ ...fallback, ...(JSON.parse(raw) as T) } as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function keep(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage unavailable: the settings last this tab.
+  }
+}
+
 /** Setup keys a drawing sets on its regulators: a fresh stand starts them there. */
 const DRAWN_KNOBS = ['dome', 'copv_target'];
 
@@ -176,7 +198,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [running, setRunning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [setup, setSetupState] = useState<StandSetup>({
+  const [setup, setSetupState] = useState<StandSetup>(() => ({
     dome: 500,
     copv_target: 4500,
     copv_fill_s: 9.7,
@@ -192,7 +214,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
     chilldown: 100,
     line_walls: true,
     ambient_leak: 8,
-  });
+    // What this browser last ran with: a backend restart and a reload used to
+    // reopen the stand on these defaults, silently -- Ignore the drawn GSE and
+    // every Configuration change gone (found 2026-10-09).
+    ...remembered<Partial<StandSetup>>(SETUP_KEY, {}),
+  }));
+  useEffect(() => keep(SETUP_KEY, setup), [setup]);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const [consoleHidden, setConsoleHiddenState] = useState<Record<string, boolean>>({});
   const [consoleOrder, setConsoleOrderState] = useState<Order>(NO_ORDER);
@@ -211,7 +238,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const wantFresh = useRef(false);
   /** The drawing's knobs this tab has turned (dome, COPV fill). Only those are
    *  sent when a stand opens; the rest start where the drawing sets them. */
-  const turned = useRef<{ diagram: string; keys: Set<string> }>({ diagram: '', keys: new Set() });
+  const turned = useRef<{ diagram: string; keys: Set<string> }>(
+    (() => {
+      const saved = remembered<{ diagram?: string; keys?: string[] }>(TURNED_KEY, {});
+      return { diagram: saved.diagram ?? '', keys: new Set(saved.keys ?? []) };
+    })(),
+  );
+  const keepTurned = () =>
+    keep(TURNED_KEY, { diagram: turned.current.diagram, keys: [...turned.current.keys] });
   const last = useRef(0);
   const alive = useRef(true);
   /** Stand seconds per wall second over the last few ticks. A stiff stand
@@ -335,7 +369,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
       // The dome and the COPV fill are the drawing's until someone turns them
       // here, or a stand carries them: this tab's 500 and 4,500 used to win
       // over whatever the drawing set its regulators to.
-      if (turned.current.diagram !== diagram) turned.current = { diagram, keys: new Set() };
+      if (turned.current.diagram !== diagram) {
+        turned.current = { diagram, keys: new Set() };
+        keepTurned();
+      }
       const fromDrawing = DRAWN_KNOBS.filter((key) => !turned.current.keys.has(key) && !(doc && key in doc.setup));
       const sent = Object.fromEntries(Object.entries(setup).filter(([key]) => !fromDrawing.includes(key)));
       const opened = await openSession(where, {
@@ -551,6 +588,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       const next = { ...setup, ...patch } as StandSetup;
       setSetupState(next);
       for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
+      keepTurned();
       // Ignoring the GSE is a different network: a fresh stand, built with it.
       if ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) {
         wantFresh.current = true;

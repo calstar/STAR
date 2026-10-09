@@ -2154,6 +2154,7 @@ async def session_solver(
         mass_error_kg=[r.mass_error_kg for r in kept],
         guard_kg=[r.guard_kg for r in kept],
         guard_J=[r.guard_J for r in kept],
+        crossed_kg=[r.crossed_in_kg + r.crossed_out_kg for r in kept],
         summary=summary,
     )
 

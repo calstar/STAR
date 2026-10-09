@@ -778,6 +778,8 @@ export interface SolverTrace {
   mass_error_kg: number[];
   guard_kg: number[];
   guard_J: number[];
+  /** Cumulative mass across the boundary, in plus out [kg]. */
+  crossed_kg?: number[];
   summary: Record<string, number>;
 }
 

@@ -22,6 +22,10 @@ export interface Channel {
   tag: string;
   values: number[];
   color: string;
+  /** Dashed, e.g. a criterion drawn across the plot: `[6, 4]`. */
+  dash?: number[];
+  /** What the series is, for its legend pill's hover. */
+  hint?: string;
 }
 
 interface Props {
@@ -239,7 +243,7 @@ export function DaqPlot({
   // poll of the same channels changes the data, not this, and the data goes
   // into the existing chart (`setData`) -- rebuilding it every poll lost the
   // cursor every two seconds, so nothing could be read off a live plot.
-  const shape = shown.map((c) => `${c.key}:${c.color}:${c.tag}`).join('|');
+  const shape = shown.map((c) => `${c.key}:${c.color}:${c.tag}:${c.dash?.join(',') ?? ''}`).join('|');
   const rangeRef = useRef(range);
   rangeRef.current = range;
   const dataFor = (): uPlot.AlignedData => [
@@ -337,7 +341,8 @@ export function DaqPlot({
         ...shown.map((c) => ({
           label: c.tag,
           stroke: c.color,
-          width: lineWidth,
+          width: c.dash ? 1 : lineWidth,
+          ...(c.dash ? { dash: c.dash } : {}),
           points: { show: false },
         })),
       ],
@@ -416,6 +421,7 @@ export function DaqPlot({
               type="button"
               onClick={() => toggle(c.key)}
               aria-pressed={!off}
+              title={c.hint}
               className={`flex flex-shrink-0 items-center gap-2 py-0.5 transition-opacity ${
                 off ? 'opacity-35' : ''
               }`}

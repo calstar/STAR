@@ -491,6 +491,9 @@ class SolverOut(BaseModel):
     mass_error_kg: list[float]
     guard_kg: list[float]
     guard_J: list[float]
+    #: Cumulative mass across the boundary, in plus out [kg]: what the mass
+    #: error is measured against, tick by tick.
+    crossed_kg: list[float] = Field(default_factory=list)
     summary: dict[str, float] = Field(default_factory=dict)
 
 
