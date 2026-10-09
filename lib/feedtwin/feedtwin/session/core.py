@@ -1918,6 +1918,9 @@ class Session:
         self._resting_memo: tuple[
             frozenset[str] | None, tuple[frozenset[str], frozenset[str]]
         ] = (None, self._resting)
+        #: Each ullage's stiffest reachable regulator slope, per shut set and
+        #: boundaries (_regulator_slopes).
+        self._regulator_memo: tuple[object, dict[str, float]] = (None, {})
         self._chamber_guess = AMBIENT
         self._last_chamber: ChamberResult | None = None
         # A cold chamber is open to atmosphere through its own nozzle, so pin
@@ -3016,18 +3019,11 @@ class Session:
         cost 170 N of mean thrust (2026-10-05).
         """
         resting_branches, resting = self._resting
-        slopes = []
-        for branch in self.model.built.network.branches.values():
-            comp = getattr(branch, "component", None)
-            if comp is None or "Regulator" not in type(comp).__name__:
-                continue
-            if branch.id in resting_branches:
-                continue
-            droop = comp.p.get("flow_droop", 0.0)
-            rated = comp.p.get("rated_flow", 0.0)
-            if droop > 0.0 and rated > 0.0:
-                slopes.append(droop / rated)
-        resistance = min(slopes) if slopes else 0.0
+        net = self.model.built.network
+        shut = (
+            frozenset(net.isolated(signals)) | self._dry_branches() | resting_branches
+        )
+        slopes = self._regulator_slopes(shut)
         tau = float("inf")
         for sim in self.tanks.values():
             if sim.id in resting:
@@ -3039,6 +3035,7 @@ class Session:
             if volume <= 0.0:
                 continue
             capacitance = sim.state.ullage.mass / p  # V rho / p, with V rho = m
+            resistance = slopes.get(sim.ullage_node, 0.0)
             if resistance > 0.0:
                 tau = min(tau, capacitance * resistance)
             if press:
@@ -3046,6 +3043,64 @@ class Session:
                     tau, self._press_path_timescale(sim, capacitance, signals, dt)
                 )
         return tau if tau < float("inf") else 0.0
+
+    def _regulator_slopes(self, shut: frozenset[str]) -> dict[str, float]:
+        """Each ullage's stiffest regulator slope, ``flow_droop / rated_flow``
+        [Pa/(kg/s)], over the regulators it is joined to.
+
+        Walked from the ullage across every branch not ``shut``, never on
+        through another boundary (a vessel, the sky). A regulator the tank
+        has no open path to is no loop with it: every regulator on the stand
+        used to be paired with every ullage, so a LOX tank topped in Ox Fill,
+        its press valve shut, was stepped at the cart's fuel regulator's time
+        constant -- three solves every 20 ms for a loop that did not exist.
+        Remembered per shut set and boundaries, as ``Network.dead_ends`` is.
+        """
+        net = self.model.built.network
+        fixed = frozenset(n for n, node in net.nodes.items() if node.is_fixed)
+        key = (shut, fixed)
+        memo_key, memo = self._regulator_memo
+        if memo_key == key:
+            return memo
+        adjacent: dict[str, list[tuple[str, str]]] = {}
+        for branch_id, branch in net.branches.items():
+            if branch_id in shut:
+                continue
+            adjacent.setdefault(branch.upstream, []).append(
+                (branch_id, branch.downstream)
+            )
+            adjacent.setdefault(branch.downstream, []).append(
+                (branch_id, branch.upstream)
+            )
+        slope_of: dict[str, float] = {}
+        for branch_id, branch in net.branches.items():
+            comp = getattr(branch, "component", None)
+            if comp is None or "Regulator" not in type(comp).__name__:
+                continue
+            droop = comp.p.get("flow_droop", 0.0)
+            rated = comp.p.get("rated_flow", 0.0)
+            if droop > 0.0 and rated > 0.0:
+                slope_of[branch_id] = droop / rated
+        out: dict[str, float] = {}
+        for sim in self.tanks.values():
+            start = sim.ullage_node
+            reached = {start}
+            stack = [start]
+            found: list[float] = []
+            while stack:
+                here = stack.pop()
+                for branch_id, there in adjacent.get(here, ()):
+                    if branch_id in slope_of:
+                        found.append(slope_of[branch_id])
+                    if there in reached:
+                        continue
+                    reached.add(there)
+                    if there not in fixed:
+                        stack.append(there)
+            if found:
+                out[start] = min(found)
+        self._regulator_memo = (key, out)
+        return out
 
     def _press_path_timescale(
         self,
@@ -3192,6 +3247,18 @@ class Session:
         and gas out: over-stating the vessel's stiffness only damps the
         closure, under-stating it hands back some of the explicit coupling.
         A tank cut off by shut valves gets none and stays a fixed boundary.
+
+        Except an ullage draining to the sky (:meth:`_venting`), which is
+        closed on its gas-out slope alone. There the flow is one way and
+        steady, so the slope is not a damping: the node lands at
+        ``reference - q dt / slope`` while the vessel lands where its own
+        slope puts it, and the stiffer one opens a gap between them that
+        grows with the step. Over boiling LOX the two differ eightfold --
+        warm gas arriving compresses the ullage, gas leaving is replaced by
+        flash boil-off -- and a topped tank on its vent sat 4 psi above the
+        node its vent flowed from, at 7.3 psig where finer coupling found
+        3.4. A vent ends at a fixed pressure, so there is no second vessel
+        across it to flip-flop with.
         """
         out: dict[str, tuple[float, float]] = {}
         if dt <= 0.0:
@@ -3234,9 +3301,13 @@ class Session:
             probe = STORAGE_PROBE * held / dt
             try:
                 reference = land()
-                slope = max(
-                    land(gas_in=probe) - reference, reference - land(gas_out=probe)
-                )
+                if self._venting(node, self._last_flows):
+                    slope = reference - land(gas_out=probe)
+                else:
+                    slope = max(
+                        land(gas_in=probe) - reference,
+                        reference - land(gas_out=probe),
+                    )
             except Exception:  # noqa: BLE001 - a vessel that cannot price it
                 continue  # stays a fixed boundary, as it always was
             if slope > 0.0 and reference > 0.0:
@@ -3286,17 +3357,7 @@ class Session:
         # would, but is no change of circuit: it carried nothing a step ago.
         resting = self._resting[0]
         storage = self._ullage_storage(dt, isolated | resting)
-        result = solve_steady(
-            net,
-            signals=signals,
-            tol=self.setup.network_tolerance,
-            max_iterations=self.setup.max_iterations,
-            raise_on_failure=False,
-            guess=self._guess or None,
-            isolate=dry | resting,
-            storage=storage,
-            report=False,
-        )
+        result = self._solve(net, signals, dry | resting, storage)
         self._note_solve(result)
         self._accept(result)
         if self._reliefs and result.converged:
@@ -3313,17 +3374,7 @@ class Session:
                     self._last_flows = {}
                     self._last_isolated = isolated
                     storage = self._ullage_storage(dt, isolated | resting)
-                result = solve_steady(
-                    net,
-                    signals=signals,
-                    tol=self.setup.network_tolerance,
-                    max_iterations=self.setup.max_iterations,
-                    raise_on_failure=False,
-                    guess=self._guess or None,
-                    isolate=dry | resting,
-                    storage=storage,
-                    report=False,
-                )
+                result = self._solve(net, signals, dry | resting, storage)
                 self._note_solve(result)
                 self._accept(result)
         result = self._close_chamber(net, signals, dry | resting, result, storage)
@@ -3513,6 +3564,65 @@ class Session:
             **{b: f for b, f in result.flows.items() if abs(f) > 1e-9},
         }
 
+    def _solve(
+        self,
+        net: Network,
+        signals: Mapping[str, float],
+        isolate: frozenset[str],
+        storage: Mapping[str, tuple[float, float]] | None,
+    ) -> SteadyResult:
+        """The network at this coupling step, warm-started from the last answer.
+
+        A solve with the ullages closed (``storage``) that fails is tried once
+        more, from where the same network lands with them held: that solve is
+        easy, and it puts Newton beside the answer. A failed solve holds the
+        stand (:meth:`_held`), so the next step asks the same question and
+        fails the same way, for good. A Fire from unpressed tanks did exactly
+        that -- frozen with the chamber at 0 psig, where 384 iterations of the
+        same solve converged and 9 + 4 by this route. Only a step that failed
+        takes it, so every step that converges is the step it was.
+        """
+        result = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess=self._guess or None,
+            isolate=isolate,
+            storage=storage,
+            report=False,
+        )
+        if result.converged or not storage:
+            return result
+        held = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess=self._guess or None,
+            isolate=isolate,
+            report=False,
+        )
+        if not held.converged:
+            return result
+        retried = solve_steady(
+            net,
+            signals=signals,
+            tol=self.setup.network_tolerance,
+            max_iterations=self.setup.max_iterations,
+            raise_on_failure=False,
+            guess={
+                **held.pressures,
+                **{b: f for b, f in held.flows.items() if abs(f) > 1e-9},
+            },
+            isolate=isolate,
+            storage=storage,
+            report=False,
+        )
+        return retried if retried.converged else result
+
     def _held(self, result: SteadyResult) -> Mapping[str, float]:
         """The node pressures a step acts on and shows.
 
@@ -3583,17 +3693,7 @@ class Session:
 
         def solve_at(p: float) -> SteadyResult:
             net.nodes[node].pressure = p
-            res = solve_steady(
-                net,
-                signals=signals,
-                tol=self.setup.network_tolerance,
-                max_iterations=self.setup.max_iterations,
-                raise_on_failure=False,
-                guess=self._guess or None,
-                isolate=dry,
-                storage=storage,
-                report=False,
-            )
+            res = self._solve(net, signals, dry, storage)
             self._note_solve(res)
             self._accept(res)
             return res
@@ -3927,6 +4027,15 @@ class Session:
             weighted += abs(flow) * net.nodes[source].temperature
         return weighted / total if total > 0.0 else None
 
+    def _venting(self, node: str, flows: Mapping[str, float]) -> bool:
+        """More of the gas at ``node`` leaves for the sky than arrives or is
+        sent on to another vessel."""
+        gas_in, gas_out = self._split_at(node, flows)
+        if gas_out <= gas_in:
+            return False
+        vented = gas_out * self._vent_fraction(node, flows)
+        return vented > gas_in + (gas_out - vented)
+
     def _vent_fraction(self, node: str, flows: Mapping[str, float]) -> float:
         """Share of the gas leaving ``node`` that ends at a vent, 0..1.
 
@@ -4176,10 +4285,20 @@ class Session:
         # step -- and the tank overshot lockup by 43 psi on the step that
         # crossed it. Sized from the flows the last solve produced, so it
         # sees the press coming rather than reacting to it.
+        #
+        # Gas a tank vents to atmosphere is not counted. A vent ends at a
+        # fixed pressure, and the solve closes the ullage against it
+        # implicitly (`_ullage_storage`), so it needs no finer coupling. A LOX
+        # tank topped to its load in Ox Fill passes ~20 g/s of boil-off
+        # through a 0.45 g ullage to its vent; counted, it asked for nine
+        # solves of the whole stand every 20 ms and the fill ran at a third
+        # of real time.
         for sim in self.tanks.values():
             if sim.id in resting:
                 continue
             gas_in, gas_out = self._split_at(sim.ullage_node, self._last_flows)
+            if gas_out > gas_in:
+                gas_out *= 1.0 - self._vent_fraction(sim.ullage_node, self._last_flows)
             rate = max(gas_in, gas_out)
             inventory = sim.state.ullage.mass
             if rate > 0.0 and inventory > 0.0:

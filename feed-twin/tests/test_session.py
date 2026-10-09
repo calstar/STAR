@@ -524,6 +524,10 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     """
     session = stand(dome_psi=500.0)
     session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
+    # Ready shuts both press solenoids; held open by hand, each tank rides
+    # the regulator, which is the loop this test is about.
+    session.set_valve("SV_LOX_PRESS", True)
+    session.set_valve("SV_FUEL_PRESS", True)
 
     tau = session._coupling_timescale()
     assert tau > 0.0, "a stand with a droop regulator has a time constant"
@@ -572,6 +576,37 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     )
     assert mod.COUPLING_SAFETY <= 1.0
     assert sum(calls) == pytest.approx(min(dt, mod.MAX_STEP), rel=1e-9)
+
+
+def test_a_regulator_the_tank_cannot_reach_sets_no_coupling_step() -> None:
+    """The regulator-ullage loop is a loop only through an open path. In Ready
+    both press solenoids are shut, and the regulator's time constant is no
+    reason to re-solve the stand: it once paired every regulator with every
+    ullage, and a LOX tank topped in Ox Fill was stepped at the cart's fuel
+    regulator's constant, three solves every 20 ms for a loop that did not
+    exist."""
+    session = stand(dome_psi=500.0)
+    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
+    signals = session.signals(0.02)
+    assert session._coupling_timescale(signals, 0.02, press=False) == 0.0
+    session.set_valve("SV_LOX_PRESS", True)
+    signals = session.signals(0.02)
+    lox = next(t for t in session.tanks.values() if t.label == "TK-LOX")
+    expected = (
+        lox.state.ullage.mass
+        / lox.pressure
+        * min(
+            c.p["flow_droop"] / c.p["rated_flow"]
+            for br in session.model.built.network.branches.values()
+            for c in [getattr(br, "component", None)]
+            if c is not None
+            and "Regulator" in type(c).__name__
+            and c.p.get("rated_flow", 0) > 0
+        )
+    )
+    assert session._coupling_timescale(signals, 0.02, press=False) == pytest.approx(
+        expected, rel=1e-9
+    ), "the LOX tank, opened to the regulator, is paired with it alone"
 
 
 # ---------------------------------------------------- the operator's report

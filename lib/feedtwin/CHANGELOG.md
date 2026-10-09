@@ -6,6 +6,31 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-09
+
+### Changed results
+- **A venting ullage is closed on its gas-out slope** (`Session._ullage_storage`,
+  `Session._venting`). It was closed on the stiffer of gas in and gas out, and over
+  boiling LOX gas in is ~8x stiffer, so a steady vent left the tank above the node its
+  vent flowed from by a gap that grew with the coupling step. LE4 (6), LOX tank topped
+  in Ox Fill: 7.2 -> 3.1 psig (the node was 3.1 both times; finer coupling on the old
+  code tended to 3.4). Tier 2.1 bit-identical; LE4 (6) burn impulse bit-identical
+  (docs/PHYSICS-BENCHMARK.md 3.10c).
+
+### Fixed
+- Fills ran at a third of real time on a drawn cart. The 10 % mass rule counted gas a
+  tank vents to atmosphere, and the regulator-ullage time constant paired every
+  regulator with every ullage, joined or not (`Session._regulator_slopes`). LE4 (6) Ox
+  Fill holding its load: 9-10 solves per 20 ms step -> 1, 0.34x -> 1.89x in-process;
+  Fuel Fill 1.42x -> 3.01x.
+- A failed network solve could freeze the stand for good: it holds the vessels, so
+  the next step asks the same question and fails the same way. A Fire from unpressed
+  tanks sat at 0 psig chamber from ignition (`test_fire_with_unpressed_tanks_is_a_weak_start`,
+  tipped into it by the changes above; the same solve converged in 384 iterations).
+  A solve that fails with the ullages closed is retried once from the solution with
+  them held (`Session._solve`): 9 + 4 iterations there. Steps that converge are
+  untouched.
+
 ## Unreleased — 2026-10-07
 
 ### Changed results
