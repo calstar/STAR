@@ -1,7 +1,9 @@
+import { ApiTokens } from "@/components/settings/ApiTokens";
 import { DigestSettings } from "@/components/settings/DigestSettings";
 import { DisplayNameInput } from "@/components/settings/DisplayNameInput";
 import { EmailPrefToggle } from "@/components/settings/EmailPrefToggle";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
+import { listTokens } from "@/lib/apiTokens";
 import { prisma } from "@/lib/db";
 import { DIGEST_KINDS } from "@/lib/digest";
 import { shortName } from "@/lib/names";
@@ -13,7 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const { user, settings } = await getCurrentSettings();
 
-  const [projects, subteams, subs] = await Promise.all([
+  const [projects, subteams, subs, tokens] = await Promise.all([
     getProjectOptions(),
     prisma.subteam.findMany({
       select: { id: true, name: true },
@@ -23,6 +25,7 @@ export default async function SettingsPage() {
       where: { userId: user.id },
       select: { projectId: true, subteamId: true },
     }),
+    listTokens(user.id),
   ]);
 
   const projectOptions = projects;
@@ -96,6 +99,17 @@ export default async function SettingsPage() {
             kinds={settings.digestKinds}
             kindOptions={DIGEST_KINDS}
           />
+        </div>
+      </section>
+
+      <section className={`mt-4 ${card}`}>
+        <h2 className="font-medium">API tokens</h2>
+        <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          Personal tokens for the MCP endpoint (<code>/api/mcp</code>), so an agent can
+          act as you with your permissions. See <code>docs/MCP.md</code> for client setup.
+        </p>
+        <div className="mt-3">
+          <ApiTokens tokens={tokens} />
         </div>
       </section>
     </div>
