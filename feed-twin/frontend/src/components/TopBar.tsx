@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { getVersion, type Validation } from '../api';
+import { checksToFix } from '../lib/checks';
 import { useStand } from '../stand';
 import { StandBar } from './StandBar';
 
@@ -92,7 +93,9 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const stand = useStand();
   const { pathname } = useLocation();
   const { live, model, busy } = stand;
-  const warnings = model?.report.warnings.length ?? 0;
+  // Only what is worth fixing: most of the assembly's sentences say how the
+  // drawing was read (lib/checks.ts).
+  const warnings = checksToFix(model?.report.warnings ?? []);
 
   const [clock, setClock] = useState('');
   useEffect(() => {

@@ -137,6 +137,34 @@ function Vessel({
   );
 }
 
+/**
+ * The state table's warnings, grouped: the seven "X -> Fire is permitted ...
+ * bypasses Ready" sentences become one line naming the states, and every
+ * other warning shows its first sentence with the rest on hover.
+ */
+function groupTableWarnings(warnings: readonly string[]): { text: string; detail: string }[] {
+  const bypass: string[] = [];
+  const out: { text: string; detail: string }[] = [];
+  let bypassDetail = '';
+  for (const w of warnings) {
+    const m = /^(.+?) -> Fire is permitted/.exec(w);
+    if (m) {
+      bypass.push(m[1]);
+      bypassDetail = w.replace(/^.+? -> /, 'X -> ');
+      continue;
+    }
+    const first = w.split(/(?<=\.)\s/)[0] ?? w;
+    out.push({ text: first, detail: w });
+  }
+  if (bypass.length) {
+    out.unshift({
+      text: `${bypass.length} state${bypass.length === 1 ? '' : 's'} can go straight to Fire without Ready: ${bypass.join(', ')}.`,
+      detail: bypassDetail,
+    });
+  }
+  return out;
+}
+
 type Reading = readonly [label: string, value: number, unit: string, places: number, colour?: string];
 
 /** One reading, large: the engine card's unit. */
@@ -235,7 +263,7 @@ function EngineCard({
           ]}
         />
       ) : (
-        <p className="font-mono text-[13px] text-[var(--ink-3)]">Not lit. Fire from Command and the burn shows here.</p>
+        <p className="font-mono text-[13px] text-[var(--ink-3)]">Not lit. Press FIRE (top right) and the burn shows here.</p>
       )}
     </section>
   );
@@ -367,6 +395,7 @@ export function Console() {
   if (!model || !live) {
     return <p className="caps p-8">Bringing the stand up…</p>;
   }
+  const tableIssues = groupTableWarnings(machine?.warnings ?? []);
   const engine = live.engine;
   const lit = engine !== null && engine.chamber_psi > 5;
   const attached = Object.keys(model.engine).length > 0;
@@ -661,19 +690,31 @@ export function Console() {
           lastBurn={lastBurn}
         />
 
-        {(live.notes.length > 0 || (machine?.warnings.length ?? 0) > 0) && (
+        {(live.notes.length > 0 || tableIssues.length > 0) && (
           <section className="border border-[var(--line)] px-8 py-5 font-mono">
             <h2 className="caps mb-3">Notes</h2>
             {live.notes.map((n) => (
-              <p key={n} className="text-[12px] leading-relaxed text-[var(--color-warning)]">
-                {n}
+              <p key={n} className="text-[12px] leading-relaxed text-[var(--ink-2)]">
+                · {n}
               </p>
             ))}
-            {(machine?.warnings ?? []).map((w) => (
-              <p key={w} className="text-[12px] leading-relaxed text-[var(--color-warning)] opacity-60">
-                {w}
-              </p>
-            ))}
+            {tableIssues.length > 0 && (
+              // The stand's own table: true on every run, so folded away
+              // rather than repeated at the operator in amber every time.
+              <details className="mt-3">
+                <summary className="cursor-pointer text-[12px] text-[var(--color-warning)]">
+                  The stand's state table has {tableIssues.length} issue{tableIssues.length === 1 ? '' : 's'}{' '}
+                  <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                </summary>
+                <ul className="mt-2 flex flex-col gap-1 pl-4">
+                  {tableIssues.map((w) => (
+                    <li key={w.text} className="text-[12px] leading-relaxed text-[var(--ink-2)]" title={w.detail}>
+                      {w.text}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </section>
         )}
       </div>
