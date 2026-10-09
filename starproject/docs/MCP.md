@@ -132,6 +132,12 @@ defineTool(server, "archive_task", {
 | `move_task` | Kanban move: `status` plus `boardOrder`, or `afterTaskId` / `beforeTaskId` (midpoint of the neighbours on `boardProjectId`'s board -- that project and its subprojects, as the project page shows; default the task's own project); default end of column | idempotent |
 | `archive_task` | Hide from active lists, or `archived=false` to restore | idempotent |
 | `delete_task` | Permanent; returns `{deleted, number}` | destructive, admins only |
+| `list_projects` | The project tree in `/projects` order: depth, path, own and rolled-up task counts | read; `includeArchived` |
+| `get_project` | One project with ancestors, subprojects, counts, creator | read |
+| `create_project` | New project, optionally under a parent | admins only; write |
+| `update_project` | Rename, describe, recolour or move a project (omitted fields kept, `null` clears) | admins only; idempotent |
+| `archive_project` | Hide a project and its subprojects from lists and pickers (or restore it) | admins only; idempotent |
+| `delete_project` | Delete a project and its tasks | admins only; destructive |
 
 Modules append their tools here as they land.
 
