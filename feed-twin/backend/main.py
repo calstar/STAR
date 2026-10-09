@@ -100,7 +100,7 @@ from backend.models import (
     TankOut,
 )
 from backend.live import Stand
-from feedtwin.session.gauge import PSI, psig
+from feedtwin.session.gauge import PSI, from_psig, psig
 from backend.session import MAX_STEP, Sample as SessionSample, Session, Setup
 from feedtwin.session.burn import (
     BurnPlan,
@@ -1377,12 +1377,25 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
     ]
 
 
-def _lockup_psig(session: Session, tank_id: str) -> float | None:
-    """The regulator lockup feeding a vehicle tank right now [psig], or None."""
+def _lockup_psig(
+    session: Session, tank_id: str, inlet_psig: float | None = None
+) -> float | None:
+    """The regulator lockup feeding a vehicle tank [psig], or None: right now,
+    or with the bottle at ``inlet_psig``."""
     if tank_id in session.ground:
         return None
-    lockup = regulator_lockup(session, tank_id)
+    inlet = None if inlet_psig is None else from_psig(inlet_psig)
+    lockup = regulator_lockup(session, tank_id, inlet)
     return None if lockup is None else round(psig(lockup), 1)
+
+
+def _lockup_range(session: Session, tank_id: str) -> list[float] | None:
+    """Where a vehicle tank locks up with the COPV charged to its fill setting
+    and with it empty [psig]: the range the tank sees as the bottle blows down
+    (the supply effect, measured from zero inlet). The dome knob's number."""
+    charged = _lockup_psig(session, tank_id, float(session.setup.copv_target_psi))
+    empty = _lockup_psig(session, tank_id, 0.0)
+    return None if charged is None or empty is None else [charged, empty]
 
 
 def _session_out(session: Session, sample: SessionSample) -> SessionOut:
@@ -1446,6 +1459,8 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 fill_flow_g_s=round(values.get("fill_flow_g_s", 0.0), 2),
                 load_kg=round(sim.load_target_kg, 3),
                 lockup_psi=_lockup_psig(session, sim.id),
+                lockup_range_psi=_lockup_range(session, sim.id),
+                mawp_psi=round(psig(sim.mawp), 1) if sim.mawp > 0.0 else None,
             )
             for sim in session.tanks.values()
             for values in [sample.tanks[sim.id]]
@@ -1461,6 +1476,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
                 fill_fraction=round(b.fraction, 4),
                 level_m=0.0,
                 volume_L=round(b.volume.volume * 1e3, 2),
+                mawp_psi=round(psig(b.mawp), 1) if b.mawp > 0.0 else None,
             )
             for b in session.bottles.values()
         ],

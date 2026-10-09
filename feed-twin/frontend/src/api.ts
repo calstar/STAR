@@ -307,6 +307,11 @@ export interface TankState {
   /** Where the regulator feeding this tank locks up now [psig]: dome + bias
    *  less the supply effect of the bottle behind it. Absent: no regulator. */
   lockup_psi?: number | null;
+  /** [charged, empty]: where it locks up with the COPV at its fill setting and
+   *  with it empty [psig] -- the range over a burn. */
+  lockup_range_psi?: [number, number] | null;
+  /** The drawn MAWP [psig]; the stand trips above it. */
+  mawp_psi?: number | null;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
   /** Which leg the tank is on, from what it holds. Empty on a bottle. */

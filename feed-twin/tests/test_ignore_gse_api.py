@@ -148,6 +148,24 @@ def test_the_hookup_tab_shows_the_wiring_the_rocket_alone_runs() -> None:
     }
 
 
+def test_the_dome_knob_reads_the_lockup_range_and_the_drawn_mawp() -> None:
+    """The GSE tab's lockup is the range a burn sweeps: the low end is where
+    T-0 primes the tanks (COPV charged to its fill setting), the high end the
+    same dome over an empty bottle. The redlines are the drawing's MAWPs."""
+    diagram = _upload()
+    rocket = _open(diagram, ignore_gse=True)
+    tanks = {t["label"]: t for t in rocket["tanks"]}
+    charged, empty = tanks["Eth-Tank"]["lockup_range_psi"]
+    assert empty > charged + 10.0
+    assert tanks["Eth-Tank"]["mawp_psi"] == pytest.approx(750.0)
+    assert rocket["bottles"][0]["mawp_psi"] == pytest.approx(7500.0)
+    primed = client.post(f"/api/session/{rocket['id']}/t0", json={})
+    assert primed.status_code == 200, primed.text
+    state = client.post(f"/api/session/{rocket['id']}/tick", json={"dt": 0.01}).json()
+    tank = next(t for t in state["tanks"] if t["label"] == "Eth-Tank")
+    assert tank["pressure_psi"] == pytest.approx(charged, abs=3.0)
+
+
 def test_a_replay_rebuilds_the_stand_the_run_was_on() -> None:
     """A run record carries its setup; the Explain ladder and the Study rebuild
     from it, so a burn on the rocket alone replays on the rocket alone."""

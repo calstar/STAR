@@ -267,8 +267,14 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
     return True
 
 
-def regulator_lockup(session: Session, tank_id: str) -> float | None:
+def regulator_lockup(
+    session: Session, tank_id: str, inlet: float | None = None
+) -> float | None:
     """Where the regulator feeding ``tank_id`` locks up, right now [Pa abs].
+
+    ``inlet`` [Pa abs]: where it would lock up with the bottle at this
+    pressure instead -- a charged COPV, or an empty one, to show the range a
+    tank sees as the bottle blows down. Default: the bottle as it is.
 
     Walks upstream from the tank's ullage to the first regulator in the
     network (dome loaders are lifted out of it, so this is the unit that
@@ -319,7 +325,8 @@ def regulator_lockup(session: Session, tank_id: str) -> float | None:
         return None
     component = regulator.component
     assert isinstance(component, Regulator)
-    flow = net.conditions(regulator.upstream, max(bottles), session.signals())
+    supply = max(bottles) if inlet is None else inlet
+    flow = net.conditions(regulator.upstream, supply, session.signals())
     return float(component.lockup_pressure(flow))
 
 

@@ -271,6 +271,12 @@ class TankOut(BaseModel):
     #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
     #: ``None`` for a tank no regulator feeds.
     lockup_psi: float | None = None
+    #: ``[charged, empty]``: where it locks up with the COPV at its fill
+    #: setting and with it empty [psig] -- the range over a burn.
+    lockup_range_psi: list[float] | None = None
+    #: The tank's drawn MAWP [psig] (the stand trips above it); ``None`` when
+    #: the drawing gives none.
+    mawp_psi: float | None = None
 
 
 class StudyCaseOut(BaseModel):

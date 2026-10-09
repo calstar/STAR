@@ -104,7 +104,7 @@ function HookupKnob({ knob, disabled }: { knob: LiveKnob; disabled: boolean }) {
 }
 
 export function Gse() {
-  const { live, setup, setSetup, locked: readOnly, history, nameOf } = useStand();
+  const { live, setup, setSetup, locked: readOnly, history, nameOf, model } = useStand();
   const set = (patch: Partial<StandSetup>) => setSetup(patch);
   const commitDome = useCallback((v: number) => setSetup({ dome: v }), [setSetup]);
   const commitHigh = useCallback((v: number) => setSetup({ copv_target: v }), [setSetup]);
@@ -124,11 +124,31 @@ export function Gse() {
     const value = channel ? live.pressure_psi[channel.id] : undefined;
     return channel && value !== undefined ? { label: nameOf(channel.id, channel.tag), value } : undefined;
   };
-  // What the dome knob does, in numbers: where the tanks lock up now.
-  const lockups = (live?.tanks ?? []).filter((t) => t.lockup_psi != null);
-  const bottle = live?.bottles[0];
+  // What the dome knob does, in numbers: where the tanks lock up, from the
+  // COPV charged to its fill setting to empty -- the range a burn sweeps.
+  const lockups = (live?.tanks ?? []).filter((t) => t.lockup_range_psi);
+  const ground = new Set(model?.ground ?? []);
+  // The vehicle's bottle: on a full-GSE drawing the cart's K-bottles come
+  // first in the list.
+  const bottle = live?.bottles.find((b) => !ground.has(b.id)) ?? live?.bottles[0];
   const lox = live?.tanks.find((t) => t.side === 'lox');
-  const tankMawp = 1000; // psig, the drawing's estimate for both tanks
+  // The red arcs are the drawing's MAWPs, not numbers chosen here (they were
+  // 4,500 and 950 whatever was drawn). On the dome: the lowest tank MAWP less
+  // the regulator's spring bias, so the dial goes red where a tank fed off an
+  // emptying COPV would trip the stand.
+  const tankMawps = (live?.tanks ?? [])
+    .filter((t) => !ground.has(t.id) && t.mawp_psi != null)
+    .map((t) => t.mawp_psi as number);
+  const bias = Math.max(0, ...lockups.map((t) => (t.lockup_range_psi as [number, number])[1] - dome));
+  const domeRedline = tankMawps.length ? Math.min(...tankMawps) - bias : undefined;
+  const sameRange =
+    lockups.length > 1 &&
+    lockups.every((t) => JSON.stringify(t.lockup_range_psi) === JSON.stringify(lockups[0].lockup_range_psi));
+  const range = (r: [number, number]) => (
+    <>
+      <span className="text-text">{fixed(r[0], 0)}</span> → <span className="text-text">{fixed(r[1], 0)}</span>
+    </>
+  );
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -163,7 +183,7 @@ export function Gse() {
             unit="psig"
             onChange={setHigh}
             disabled={locked}
-            redline={4500}
+            redline={bottle?.mawp_psi ?? undefined}
             actual={
               bottle
                 ? { label: `${bottle.label} reads`, value: bottle.pressure_psi }
@@ -183,7 +203,7 @@ export function Gse() {
                 unit="psig"
                 onChange={setDome}
                 disabled={locked}
-                redline={tankMawp - 50}
+                redline={domeRedline}
                 actual={reading(/DOME|DP-|^DP|REG/i) ?? reading(/UP/i)}
               />
               {/* What the knob does: the dome sets where the tanks lock up,
@@ -191,16 +211,27 @@ export function Gse() {
               {lockups.length > 0 && (
                 <span
                   className="font-mono text-[11px] tabular-nums text-text-muted"
-                  title="Where each tank's regulator locks up now: dome + its spring bias, less its supply effect x the COPV pressure. It climbs as the COPV blows down."
+                  title={
+                    `Where each tank's regulator locks up: dome + its spring bias, less its supply effect × the COPV pressure. ` +
+                    `The low number is with the COPV at its fill setting (${fixed(setup.copv_target, 0)} psig), what the tanks see at T-0; ` +
+                    `it climbs to the high number as the COPV blows down.` +
+                    lockups.map((t) => `\n${t.label}: ${fixed(t.lockup_psi ?? 0, 0)} psig now`).join('')
+                  }
                 >
-                  lockup:{' '}
-                  {lockups.map((t, i) => (
-                    <span key={t.id}>
-                      {i > 0 && ' · '}
-                      {t.label} <span className="text-text">{fixed(t.lockup_psi ?? 0, 0)}</span>
-                    </span>
-                  ))}{' '}
-                  psig
+                  {sameRange ? (
+                    <>
+                      lockup {range(lockups[0].lockup_range_psi as [number, number])} psig
+                    </>
+                  ) : (
+                    lockups.map((t, i) => (
+                      <span key={t.id}>
+                        {i > 0 && ' · '}
+                        {t.label} {range(t.lockup_range_psi as [number, number])}
+                      </span>
+                    ))
+                  )}
+                  {sameRange ? '' : ' psig'}
+                  <span className="text-gray-600"> · full → empty COPV</span>
                 </span>
               )}
             </div>
