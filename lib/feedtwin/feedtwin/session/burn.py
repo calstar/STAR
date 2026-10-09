@@ -221,7 +221,7 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
         lockups = [
             lockup
             for tank_id in session.vehicle_tanks
-            if (lockup := regulator_lockup(session, tank_id)) is not None
+            if (lockup := regulator_lockup(session, tank_id, place=True)) is not None
         ]
         if lockups and abs(psig(min(lockups)) - plan.tank_psi) > 0.05:
             tank_psi = psig(min(lockups))
@@ -268,13 +268,25 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
 
 
 def regulator_lockup(
-    session: Session, tank_id: str, inlet: float | None = None
+    session: Session,
+    tank_id: str,
+    inlet: float | None = None,
+    *,
+    loaded_dome: bool = False,
+    place: bool = False,
 ) -> float | None:
     """Where the regulator feeding ``tank_id`` locks up, right now [Pa abs].
 
     ``inlet`` [Pa abs]: where it would lock up with the bottle at this
     pressure instead -- a charged COPV, or an empty one, to show the range a
     tank sees as the bottle blows down. Default: the bottle as it is.
+    ``loaded_dome``: with the dome as its knob sets it, though the dome line
+    is shut (:meth:`Session.peek_signals`).
+
+    Moves nothing, unless ``place``: T-0 has always evaluated it through the
+    step's :meth:`Session.signals`, which also put each valve where the state
+    commands it and took the dome as it stands -- what a stand put at T-0
+    starts from. Its two callers there keep that, so burns are unchanged.
 
     Walks upstream from the tank's ullage to the first regulator in the
     network (dome loaders are lifted out of it, so this is the unit that
@@ -326,7 +338,10 @@ def regulator_lockup(
     component = regulator.component
     assert isinstance(component, Regulator)
     supply = max(bottles) if inlet is None else inlet
-    flow = net.conditions(regulator.upstream, supply, session.signals())
+    signals = (
+        session.signals() if place else session.peek_signals(loaded_dome=loaded_dome)
+    )
+    flow = net.conditions(regulator.upstream, supply, signals)
     return float(component.lockup_pressure(flow))
 
 
@@ -417,7 +432,7 @@ def jump_to_t0(
     lockups = {
         tank_id: lockup
         for tank_id in session.vehicle_tanks
-        if (lockup := regulator_lockup(session, tank_id)) is not None
+        if (lockup := regulator_lockup(session, tank_id, place=True)) is not None
     }
     tank_psi = fallback_psi
     if lockups:

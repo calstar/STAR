@@ -2833,6 +2833,34 @@ class Session:
             out[signal] = self._slew(drawing_id, target, dt)
         return out
 
+    def peek_signals(self, *, loaded_dome: bool = False) -> dict[str, float]:
+        """What the components would read now, moving nothing.
+
+        :meth:`signals` is the step's: it slews each valve toward its command
+        (a zero ``dt`` snaps it there), spends the T-0 dome prime, and records
+        what each dome line holds. A readout must do none of that -- the
+        lockup under the dome knob, asked for on every console tick, snapped
+        every valve to its command mid-travel, so the console's mains opened
+        in one tick whatever their travel time.
+
+        ``loaded_dome``: read each dome line as open to its loader, the dome
+        the knob sets -- not what a shut line holds (atmosphere, in Idle).
+        """
+        positions = dict(self._positions)
+        held = dict(self._dome_held)
+        readings = dict(self._dome_readings)
+        primed = self._dome_primed
+        self._dome_primed = primed or loaded_dome
+        try:
+            return self.signals()
+        finally:
+            self._positions.clear()
+            self._positions.update(positions)
+            self._dome_held.clear()
+            self._dome_held.update(held)
+            self._dome_readings = readings
+            self._dome_primed = primed
+
     def _gated_dome(
         self, line: DomeLine | None, live: float, commanded: Mapping[str, float]
     ) -> float:

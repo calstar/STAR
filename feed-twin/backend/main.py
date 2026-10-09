@@ -1404,14 +1404,18 @@ def _live_knobs(session: Session) -> list[LiveKnobOut]:
 
 
 def _lockup_psig(
-    session: Session, tank_id: str, inlet_psig: float | None = None
+    session: Session,
+    tank_id: str,
+    inlet_psig: float | None = None,
+    loaded_dome: bool = False,
 ) -> float | None:
     """The regulator lockup feeding a vehicle tank [psig], or None: right now,
-    or with the bottle at ``inlet_psig``."""
+    or with the bottle at ``inlet_psig`` (and ``loaded_dome``: the dome at its
+    knob's setting, though the dome line is shut). A readout: moves nothing."""
     if tank_id in session.ground:
         return None
     inlet = None if inlet_psig is None else from_psig(inlet_psig)
-    lockup = regulator_lockup(session, tank_id, inlet)
+    lockup = regulator_lockup(session, tank_id, inlet, loaded_dome=loaded_dome)
     return None if lockup is None else round(psig(lockup), 1)
 
 
@@ -1419,8 +1423,12 @@ def _lockup_range(session: Session, tank_id: str) -> list[float] | None:
     """Where a vehicle tank locks up with the COPV charged to its fill setting
     and with it empty [psig]: the range the tank sees as the bottle blows down
     (the supply effect, measured from zero inlet). The dome knob's number."""
-    charged = _lockup_psig(session, tank_id, float(session.setup.copv_target_psi))
-    empty = _lockup_psig(session, tank_id, 0.0)
+    # At the dome the knob sets: in Idle a cart's dome line is shut and the
+    # dome reads atmosphere, which put this at "-5 -> 50".
+    charged = _lockup_psig(
+        session, tank_id, float(session.setup.copv_target_psi), loaded_dome=True
+    )
+    empty = _lockup_psig(session, tank_id, 0.0, loaded_dome=True)
     return None if charged is None or empty is None else [charged, empty]
 
 
