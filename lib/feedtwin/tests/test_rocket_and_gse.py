@@ -530,3 +530,21 @@ def test_a_dry_tank_does_not_drain_back_through_its_fill_line() -> None:
     last = session.solver_log[-1]
     assert last.guard_kg - guard < 0.05, "the floor is re-making propellant"
     assert abs(last.mass_error_kg - last.guard_kg) < 1e-6
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_the_crews_transfer_valve_is_not_the_operators_hold() -> None:
+    """A fresh stand with a drawn load has the crew's transfer valve shut by the
+    twin. That is not the operator's hand: no "1 held", and Release leaves it."""
+    ids = _ids()
+    session = _session()
+    valve = ids["FF-MAN-Output"]
+    assert valve in session.forced
+    assert session.operator_held == []
+    session.set_valve(ids["FM-R"], True)
+    assert session.operator_held == [ids["FM-R"]]
+    session.release()
+    assert session.operator_held == [] and valve in session.forced
+    # Turned the other way by hand, it is the operator's.
+    session.set_valve(valve, True)
+    assert session.operator_held == [valve]

@@ -1419,7 +1419,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
             for d, ids in built.branches_of.items()
         },
         open={d: sample.signals.get(s, 0.0) > 0.5 for d, s in signals_of.items()},
-        held=sorted(session.forced),
+        held=session.operator_held,
         tripped=session.tripped,
         overrides_hash=fingerprint(_applied(session.model)),
         tanks=[

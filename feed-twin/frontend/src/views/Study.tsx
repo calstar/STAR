@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  CHARGE_KNOB,
   cancelStudy,
   fixed,
   getStudy,
@@ -143,7 +144,10 @@ export function Study() {
     };
   }, [study?.running]);
 
-  const knobs = live?.knobs ?? [];
+  // The COPV fill knob sets the same thing as the COPV column (the charge,
+  // Setup copv_target), so it is not a column of its own: two cells for one
+  // number could disagree, and the backend would take whichever came last.
+  const knobs = (live?.knobs ?? []).filter((k) => k.id !== CHARGE_KNOB);
   const engine = artifacts.find((a) => a.id === where.engine);
   const drawing = artifacts.find((a) => a.id === where.diagram);
   const bottle = live?.bottles[0];

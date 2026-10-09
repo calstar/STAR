@@ -2646,14 +2646,35 @@ class Session:
         for symbol in self.binding.to_symbol.values():
             self.forced.pop(symbol, None)
 
+    @property
+    def operator_held(self) -> list[str]:
+        """Valves a person has taken from the state table, by drawing id.
+
+        :attr:`forced` holds those, and also the twin's own crew on a drawn
+        load -- the transfer valve it shuts at the start and opens for the
+        load. Shown as the operator's "1 held" on a stand nobody had touched,
+        that read as a bug (the operator, 2026-10-09). A crew valve a person
+        has since turned the other way is the person's again.
+        """
+        crew = {
+            valve
+            for valve, opened in self._fill_crew.items()
+            if self.forced.get(valve) == (1.0 if opened else 0.0)
+        }
+        return sorted(v for v in self.forced if v not in crew)
+
     def set_valve(self, drawing_id: str, is_open: bool) -> None:
         self.forced[drawing_id] = 1.0 if is_open else 0.0
 
     def release(self, drawing_id: str = "") -> None:
+        """Hand a valve back to the state table; with no id, every valve a
+        person took (:attr:`operator_held`) -- not the crew's on a drawn load,
+        which would open the transfer line out of turn."""
         if drawing_id:
             self.forced.pop(drawing_id, None)
         else:
-            self.forced.clear()
+            for valve in self.operator_held:
+                self.forced.pop(valve, None)
 
     def skip_chilldown(self, tank_id: str = "") -> list[str]:
         """Chill a cryogen tank's wall now rather than wait for the load to.

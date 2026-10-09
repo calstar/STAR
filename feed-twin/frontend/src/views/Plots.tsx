@@ -7,6 +7,7 @@
  * transducers, until someone shows them; a click here shows one again.
  */
 
+import { useState } from 'react';
 import { channelColor, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { ordered } from '../lib/shown';
@@ -34,6 +35,8 @@ export function Plots() {
   // A chip hidden from the console is put back on it; otherwise it mutes the
   // trace, as the console's bar does.
   const flip = (id: string) => (consoleHidden[id] ? hideOnConsole([id], false) : toggleChannel(id));
+  const [showOff, setShowOff] = useState(false);
+  const offConsole = channels.filter((c) => PLOTTED.includes(c.unit || 'psig') && consoleHidden[c.id]);
 
   if (!result) return <p className="p-6 text-sm text-text-muted">Nothing solved yet.</p>;
 
@@ -112,24 +115,33 @@ export function Plots() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {channels.filter((c) => PLOTTED.includes(c.unit || 'psig')).map((c) => (
+      {/* The channels on the plots have their own pills, with readings, under
+          each plot. Only what the console hides needs a way back -- folded,
+          it used to be thirty chips under every view. */}
+      {offConsole.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            key={c.id}
             type="button"
-            onClick={() => flip(c.id)}
-            className={`flex items-center gap-1.5 rounded border border-gray-800 px-2 py-1 font-mono text-[11px] transition-opacity hover:border-gray-600 ${
-              hidden[c.id] ? 'opacity-40' : ''
-            }`}
+            onClick={() => setShowOff((v) => !v)}
+            className="font-mono text-[11px] text-[var(--ink-3)] hover:text-[var(--ink)]"
+            title="Channels the console hides (its ⋯ or the Hookup tab). Click one to put it back on the console and here."
           >
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: channelColor(c.tag) }}
-            />
-            {nameOf(c.id, c.tag)}
+            {showOff ? '−' : '+'} {offConsole.length} hidden from the console
           </button>
-        ))}
-      </div>
+          {showOff &&
+            offConsole.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => flip(c.id)}
+                className="flex items-center gap-1.5 rounded border border-gray-800 px-2 py-0.5 font-mono text-[11px] opacity-60 hover:border-gray-600 hover:opacity-100"
+              >
+                <span className="inline-block h-2 w-2 rounded-full" style={{ background: channelColor(c.tag) }} />
+                {nameOf(c.id, c.tag)}
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

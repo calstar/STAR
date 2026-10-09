@@ -535,7 +535,15 @@ export function Console() {
               type="button"
               onClick={() => go('Fire')}
               disabled={!canFire || firing}
-              title={firing ? 'Firing' : reachable.includes('Fire') ? 'Go to Fire' : `Fire is not reachable from ${state}`}
+              title={
+                firing
+                  ? 'Firing'
+                  : reachable.includes('Fire')
+                    ? state === 'Ready'
+                      ? 'Go to Fire'
+                      : `Go to Fire — the stand's table lets ${state} go straight to Fire, skipping Ready`
+                    : `Fire is not reachable from ${state}`
+              }
               className={`ctl min-h-0 flex-[1.4] text-[17px] tracking-[0.42em] ${
                 firing
                   ? '!border-[var(--color-danger-solid)] !bg-[var(--color-danger-solid)] !text-white'

@@ -56,9 +56,12 @@ export default function ActuatorGrid({
 }: Props) {
   const roleOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(machine?.bound ?? {})) roleOf[symbol] = actuator;
-  const opened = model.actuators.filter((a) => live.open[a.id]).length;
   const urgent = (id: string) => !ground.has(id) && ((live.open[id] ?? false) || live.held.includes(id));
   const drawn = model.actuators.filter((a) => !hidden.includes(a.id) || urgent(a.id));
+  // Counted on the grid: "1 open" with nothing open in sight (a cart dump
+  // resting open off it) read as a bug. The rest is said, and named on hover.
+  const opened = drawn.filter((a) => live.open[a.id]).length;
+  const openOff = model.actuators.filter((a) => live.open[a.id] && !drawn.includes(a));
   // The menu lists them by sheet; the grid does not split. The cart's are
   // listed only once put on the console (Hookup tab).
   const offered = model.actuators.filter((a) => !ground.has(a.id) || !hidden.includes(a.id));
@@ -81,6 +84,14 @@ export default function ActuatorGrid({
           )}
           <span className="font-mono text-[12px] uppercase tracking-[0.12em] text-[var(--ink-2)]">
             {opened} open
+            {openOff.length > 0 && (
+              <span
+                className="ml-2 normal-case tracking-normal text-[var(--ink-3)]"
+                title={`Open, not on the grid: ${openOff.map((a) => aliases[a.id] || roleOf[a.id] || a.tag).join(', ')}`}
+              >
+                +{openOff.length} off grid
+              </span>
+            )}
           </span>
           {onToggleHidden && onAllHidden && (
             <PanelMenu
