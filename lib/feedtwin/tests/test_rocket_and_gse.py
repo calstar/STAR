@@ -498,12 +498,12 @@ def test_the_cart_regulators_drawn_with_settings_get_knobs_at_them() -> None:
 
 @pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
 def test_a_dry_tank_does_not_drain_back_through_its_fill_line() -> None:
-    """The flight fuel tank's fill line stays open to it when dry, so it can be
-    loaded -- but only while the far side can push liquid in. With a dump open
+    """The flight fuel tank's fill line stays open to it when dry so it can be
+    loaded -- in its fill state, and only then. Open always, with a dump open
     beyond it (LE4's FD-ROT-G, uncommanded and resting open; here the cart's
-    hand dump and transfer valve opened), the dry tank "drained" through the
-    line forever and the vessel's floor re-made the mass: ~0.46 kg/s of
-    propellant from nothing, booked as guard."""
+    hand dump and transfer valve opened, the transfer held by hand), the dry
+    tank "drained" through the line forever and the vessel's floor re-made the
+    mass: ~0.46 kg/s of propellant from nothing, booked as guard."""
     from feedtwin.session.burn import jump_to_t0
 
     ids = _ids()

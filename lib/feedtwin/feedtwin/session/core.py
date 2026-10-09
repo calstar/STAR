@@ -2984,27 +2984,24 @@ class Session:
             if sim.state.liquid_mass > DRY_MASS:
                 continue
             filling = self._fill_lines.get(sim.id, frozenset())
-            here = self._last_pressures.get(sim.outlet_node, sim.pressure)
+            # The line it is loaded through stays open to a dry tank in its fill
+            # state, and only then. Always open, an open branch flows both
+            # ways: with a dump open on the far side (LE4's FD-ROT-G, which
+            # nothing commands and rests open) the dry tank "drained" through
+            # it at ~0.5 kg/s for as long as the stand ran, the vessel's floor
+            # re-making every gram -- 20 kg of propellant from nothing in 40 s.
+            # Not on the last solve's pressures: the two sides of a dry tank's
+            # idle line sit within a hair of each other, the line flipped every
+            # step, and a circuit that changes every step drops its flows every
+            # step (a topped LOX tank's vent with them). Nor on the transfer
+            # valve held open by hand, which is that drain again. A dry tank is
+            # loaded through the drawing in its fill state.
+            loading = self._loading(sim)
             for branch_id, branch in net.branches.items():
                 if sim.outlet_node not in (branch.upstream, branch.downstream):
                     continue
-                if branch_id in filling:
-                    # The line it is loaded through stays open to a dry tank --
-                    # while it can push liquid *in*. An open branch flows both
-                    # ways: with a dump open on the far side (LE4's FD-ROT-G,
-                    # which nothing commands and rests open), the dry tank
-                    # "drained" through it at ~0.5 kg/s for as long as the stand
-                    # ran, and the vessel's floor re-made every gram -- 20 kg
-                    # of propellant from nothing in 40 s. Judged on the last
-                    # solve's pressures, not its flow: a flow test on a shut
-                    # branch reads zero and never reopens.
-                    far = (
-                        branch.upstream
-                        if branch.downstream == sim.outlet_node
-                        else branch.downstream
-                    )
-                    if self._last_pressures.get(far, 0.0) > here:
-                        continue
+                if branch_id in filling and loading:
+                    continue
                 out.add(branch_id)
         return frozenset(out)
 
@@ -4021,6 +4018,13 @@ class Session:
                     frontier.append(there)
         return out
 
+    def _loading(self, sim: TankSim) -> bool:
+        """The stand is in this tank's fill state ("Fuel Fill", "Ox Fill")."""
+        name = self.state.lower()
+        side = propellant_side(sim.tank.liquid.name)
+        words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
+        return "fill" in name and any(w in name for w in words)
+
     def _stop_full_loads(self) -> None:
         """The crew's hand on a drawn load's transfer valve.
 
@@ -4032,16 +4036,12 @@ class Session:
         crew would do changes, so a hand on the P&ID in between is kept.
         """
         labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
-        name = self.state.lower()
         for tank_id, valve in self._fill_stops.items():
             sim = self.tanks[tank_id]
             sim.full_fraction = self.setup.full_fraction
             sim.load_kg = self.fire_loads().get(tank_id, 0.0)
             full = sim.state.liquid_mass >= sim._wanted()
-            side = propellant_side(sim.tank.liquid.name)
-            words = ("ox", "lox") if side == "lox" else ("fuel", "eth")
-            loading = "fill" in name and any(w in name for w in words)
-            wanted = loading and not full
+            wanted = self._loading(sim) and not full
             if self._fill_crew.get(valve) == wanted:
                 continue
             self._fill_crew[valve] = wanted

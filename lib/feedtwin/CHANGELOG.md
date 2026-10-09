@@ -20,8 +20,12 @@ be able to find why they differ.
   The line a drawn cart loads through was exempt from the dry-tank isolation, and an
   open branch flows both ways: with LE4's FD-ROT-G (uncommanded, rests open) beyond
   it, the dry tank kept "draining" and the vessel floor re-made the mass, ~0.46 kg/s
-  booked as guard. It now stays open only while its far side is above the tank.
-  Drawings with no cart are untouched; the benchmark is unchanged.
+  booked as guard. It now stays open to a dry tank only in that tank's fill state
+  (`Session._loading`): not on the last solve's pressures, which sit within a hair of
+  each other across an idle line and flipped it every step -- a circuit that changes
+  every step drops its flows, and a topped LOX tank's vent went with them
+  (`test_a_topped_lox_tank_on_its_vent_lands_where_the_solve_put_it`). Drawings with
+  no cart are untouched; the benchmark is unchanged.
 - **A venting ullage is closed on its gas-out slope** (`Session._ullage_storage`,
   `Session._venting`). It was closed on the stiffer of gas in and gas out, and over
   boiling LOX gas in is ~8x stiffer, so a steady vent left the tank above the node its
