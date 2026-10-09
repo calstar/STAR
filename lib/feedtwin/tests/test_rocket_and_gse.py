@@ -516,7 +516,12 @@ def test_a_dry_tank_does_not_drain_back_through_its_fill_line() -> None:
     session.release(ids["FF-MAN-Output"])
     session.set_valve(ids["FF-MAN-Output"], True)
     fuel = session.tanks[ids["Eth-Tank"]]
-    for _ in range(300):  # 15 s: the tank drains through the dump, then is dry
+    for _ in range(20):
+        session.step(0.05)
+    # Where the fuel is going is said, and that nothing commands the way out.
+    (leaving,) = [n for n in session.history[-1].notes if "losing ethanol" in n]
+    assert "FF-MAN-Dump" in leaving and "nothing in the state table" in leaving
+    for _ in range(280):  # 15 s: the tank drains through the dump, then is dry
         session.step(0.05)
     assert fuel.state.liquid_mass == pytest.approx(0.0, abs=1e-3)
     guard = session.solver_log[-1].guard_kg

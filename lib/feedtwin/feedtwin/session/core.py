@@ -193,6 +193,11 @@ LOW_TANK = 0.10
 #: Fraction of its fill target below which a bottle is worth mentioning.
 LOW_BOTTLE = 0.25
 
+#: Propellant leaving a vehicle tank with the engine cold faster than this
+#: [kg/s] gets a note naming where it goes: five grams a second, well over
+#: anything a closed stand weeps and well under a dump.
+LEAK_NOTE_KG_S = 0.005
+
 #: Chamber closure tolerance [Pa] and iteration cap. The chamber node is a
 #: boundary whose value depends on the flows it receives; each cockpit step
 #: finds the pressure at which the network's delivery and the chamber's
@@ -4158,6 +4163,57 @@ class Session:
                 out[stub] = found
         return out
 
+    def _leaking_notes(self) -> list[str]:
+        """Where a vehicle tank's propellant is going, when it is not the engine.
+
+        On LE4 the cart's FD-ROT-G -- a dump nothing in the state table
+        commands, resting open as drawn -- emptied the flight fuel tank through
+        its fill line in about ten seconds after T-0, and nothing on screen said
+        where the fuel went (2026-10-09). This names the way out: each branch
+        carrying that propellant across the stand's boundary, and whether the
+        state table drives it. Read off the last solve; changes nothing.
+        """
+        if self._firing():
+            return []
+        net = self.model.built.network
+        boundary = self._boundary_nodes()
+        owner = {b: sid for sid, bs in self.model.built.branches_of.items() for b in bs}
+        labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        commanded = set(self.binding.to_symbol.values())
+        ground = self.ground
+        notes: list[str] = []
+        for sim in self.tanks.values():
+            if sim.id in ground or sim.empty or sim.filling:
+                continue
+            arriving, leaving = self._split_at(sim.outlet_node, self._last_flows)
+            rate = leaving - arriving
+            if rate < LEAK_NOTE_KG_S:
+                continue
+            species = net.nodes[sim.outlet_node].fluid
+            exits: list[str] = []
+            for branch_id, branch in net.branches.items():
+                flow = self._last_flows.get(branch_id, 0.0)
+                if branch.downstream in boundary and branch.upstream not in boundary:
+                    inside, out_flow = branch.upstream, flow
+                elif branch.upstream in boundary and branch.downstream not in boundary:
+                    inside, out_flow = branch.downstream, -flow
+                else:
+                    continue
+                if out_flow < LEAK_NOTE_KG_S or net.nodes[inside].fluid != species:
+                    continue
+                symbol = owner.get(branch_id, branch_id)
+                name = labels.get(symbol, symbol)
+                if symbol not in commanded:
+                    name += " (nothing in the state table commands it)"
+                if name not in exits:
+                    exits.append(name)
+            where = f": out through {', '.join(exits)}" if exits else ""
+            notes.append(
+                f"{sim.label} is losing {species} at {rate:.2f} kg/s with the "
+                f"engine cold{where}."
+            )
+        return notes
+
     def _split_at(self, node: str, flows: Mapping[str, float]) -> tuple[float, float]:
         """Mass arriving at and leaving a node [kg/s], kept apart.
 
@@ -4944,6 +5000,7 @@ class Session:
                     "higher. The drawing has no relief valve; a real tank would "
                     "have lifted one long ago. Vent it."
                 )
+        out.extend(self._leaking_notes())
         ground = self.ground
         verbs = {GSE_CHARGE: "charge", GSE_DUMP: "dump"}
         for bottle in self.bottles.values():
