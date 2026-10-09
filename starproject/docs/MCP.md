@@ -27,6 +27,13 @@ revoked timestamps. Deleting a user deletes their tokens. Minting is only possib
 browser session, never through MCP, so a leaked token cannot create a successor for itself;
 revoking (`revoke_api_token`) is available either way.
 
+**Lifecycle.** A token never expires on its own; it ends when you revoke it. `lastUsedAt` is
+refreshed as the token is used (at most once a minute, to spare the database), so a token you
+don't recognise in the list can be judged by when it was last used. To rotate: mint the new one (`create_api_token` or Settings → API
+tokens), move your clients over, then `revoke_api_token` the old one -- revocation is immediate,
+and revoking the token a session is using ends that session on its next request. There is no
+"re-show" of a token; a lost token is a revoke-and-mint.
+
 ## Connecting a client
 
 **Claude Code**
@@ -36,7 +43,9 @@ claude mcp add --transport http starproject https://project.starberkeley.org/api
   --header "Authorization: Bearer sp_…"
 ```
 
-**Claude Desktop / clients that only speak stdio** — via `mcp-remote`:
+**Claude Desktop** (and any client that only speaks stdio) — via `mcp-remote`, in
+`claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`,
+Windows: `%APPDATA%\Claude\claude_desktop_config.json`); restart Claude Desktop after saving:
 
 ```json
 {
@@ -57,9 +66,55 @@ node scripts/mcp-smoke.mjs https://project.starberkeley.org/api/mcp "$TOKEN" lis
 node scripts/mcp-smoke.mjs https://project.starberkeley.org/api/mcp "$TOKEN" call whoami
 node scripts/mcp-smoke.mjs https://project.starberkeley.org/api/mcp "$TOKEN" call create_task \
   '{"projectId":"…","title":"Order fittings","priority":"high"}'
+node scripts/mcp-smoke.mjs https://project.starberkeley.org/api/mcp "$TOKEN" resources
+node scripts/mcp-smoke.mjs https://project.starberkeley.org/api/mcp "$TOKEN" read starproject://tasks/12
 ```
 
+**Raw JSON-RPC with curl** -- the transport is stateless, so a single `POST` is a complete
+exchange; no `initialize` handshake is needed. The `Accept` header must offer both media types
+or the server refuses the request with `406`:
+
+```bash
+curl -s https://project.starberkeley.org/api/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+Swap the body for `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"whoami","arguments":{}}}`
+to call a tool, or `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"starproject://me"}}`
+to read a resource.
+
 Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`.
+
+## Running locally
+
+The MCP endpoint is part of the Next app, so `npm run dev` serves it at
+`http://localhost:3000/api/mcp` (set `PORT` to move it). It needs `DATABASE_URL`; the
+`DEV_AUTH_*` fallbacks are for the browser UI and are never consulted on this path.
+
+```bash
+cd starproject
+export DATABASE_URL="postgresql://starproject:starproject@localhost:5432/starproject?schema=public"
+TOKEN=$(node scripts/mcp-token.mjs you@berkeley.edu "laptop")   # mints straight into the DB
+npm run dev &
+node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" list
+node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" call whoami
+node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" resources
+node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" read starproject://projects
+```
+
+- `scripts/mcp-token.mjs <email> [name]` upserts the user and mints a token in the same format
+  `src/lib/apiTokens.ts` uses (`sp_` + 32 random bytes, stored as SHA-256), printing it once.
+- `scripts/mcp-smoke.mjs <url> <token> list | call <tool> [json] | resources | read <uri>` is a
+  real MCP client; its exit code is 1 when a tool call returns `isError`, so it works in
+  shell checks.
+- Admin-only tools answer `Forbidden: admins only` unless the token's owner is in
+  `src/lib/admins.ts` (or added under Workspace setup → Admins); your dev identity usually
+  isn't, so expect that refusal locally for the ops tools.
+- The unit tests (`npm test`) cover the pure helpers only; nothing in them needs a database or
+  a running server.
 
 ## How it works
 
@@ -82,6 +137,29 @@ client ──Bearer──▶ Caddy (handle /api/mcp*, strips X-Auth-*) ──▶
   token. Headers a client sends are never consulted on this path (Caddy also strips them).
 - Each request builds a fresh `McpServer` and a stateless transport; registration is cheap and
   nothing touches the database until a tool runs.
+
+## Security
+
+- **Tokens are hashed.** Only the SHA-256 of a token is stored (`ApiToken.tokenHash`), with an
+  8-character prefix for display. A database read cannot recover a token; neither can the app
+  after the one time it shows it.
+- **Revocation is immediate.** Every request looks the token up; a revoked (or deleted) token
+  gets `401` on its very next call, with no cache to wait out.
+- **The token is the only identity on this path.** Caddy routes `/api/mcp*` around the
+  `forward_auth` gate and strips any `X-Auth-*` headers the client sent, and `getCurrentUser()`
+  checks the token identity before it reads headers at all. A client cannot name someone else by
+  adding a header.
+- **A token acts as its owner.** Every tool and resource runs as the user who minted it, with
+  that user's permissions: the same flat model as the UI (everyone reads and edits everything),
+  the same `Activity` rows, the same assignment emails. Treat a token like a password to your
+  account.
+- **Admins-only tools say so** in their description and refuse with `Forbidden: admins only`
+  for anyone else; the gate is `src/lib/admins.ts`, the same one the UI's destructive actions
+  use. The ops tools (`run_email_batch`, `run_deadline_scan`, `run_digest`, `list_email_queue`,
+  `list_notification_log`) are all admin-gated.
+- **Rotate with `create_api_token` / `revoke_api_token`** (or Settings → API tokens). Mint the
+  replacement first, then revoke the old one; `list_api_tokens` shows last-used times so a
+  stray token is easy to spot.
 
 ## Conventions for tool modules
 
@@ -159,8 +237,27 @@ defineTool(server, "archive_task", {
 | `list_admins` | Effective admins, each marked `seed` or added, plus your `isAdmin` | read |
 | `add_admin` | Grant admin to an email | admins only |
 | `remove_admin` | Revoke admin (seed admins are tombstoned); refuses to remove the last admin | admins only; destructive |
+| `run_email_batch` | Flush the assignment-email queue (what the 15-minute cron does) | admins only; no-op without `SES_FROM` |
+| `run_deadline_scan` | Email overdue / due-soon assignees, once per (task, user, kind) | admins only; no-op without `SES_FROM` |
+| `run_digest` | Send the nightly activity digest to followers | admins only; no-op without `SES_FROM` |
+| `list_email_queue` | Unsent `EmailQueueItem`s: recipient, kind, task title, queued at | admins only; read |
+| `list_notification_log` | Recent `NotifLog` rows (deadline emails sent), labelled with task and recipient | admins only; read |
 
 Modules append their tools here as they land.
+
+## Resources
+
+Read-only context a client can pull without calling a tool (`resources/list`,
+`resources/templates/list`, `resources/read`). Every body is JSON (`application/json`).
+
+| URI | Body |
+|---|---|
+| `starproject://projects` | The whole project tree in display order: `id`, `name`, `path` ("LE4 › Engine › Spark igniter"), `depth`, `parentId`, `color`, `archived`. Archived projects are included and flagged. |
+| `starproject://tasks/{number}` | One task by its global `#number`: fields, project (with path), subteam, assignees (with `displayName`), and the tasks blocking it. An unknown number is a JSON-RPC error (`No task #N`). |
+| `starproject://me` | The token's owner, the same object `whoami` returns. |
+
+They live in `src/mcp/resources.ts`, registered from `createStarProjectServer` after the tool
+modules.
 
 ## Deployment
 
