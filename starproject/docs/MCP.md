@@ -120,6 +120,12 @@ defineTool(server, "archive_task", {
 | `list_api_tokens` | Your tokens (never the secret) | read |
 | `create_api_token` | Mint a token for yourself | shown once |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
+| `list_projects` | The project tree in `/projects` order: depth, path, own and rolled-up task counts | read; `includeArchived` |
+| `get_project` | One project with ancestors, subprojects, counts, creator | read |
+| `create_project` | New project, optionally under a parent | admins only; write |
+| `update_project` | Rename, describe, recolour or move a project (omitted fields kept, `null` clears) | admins only; idempotent |
+| `archive_project` | Hide a project and its subprojects from lists and pickers (or restore it) | admins only; idempotent |
+| `delete_project` | Delete a project and its tasks | admins only; destructive |
 
 Modules append their tools here as they land.
 
