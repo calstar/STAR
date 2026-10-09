@@ -348,7 +348,8 @@ export function Console() {
     for (const c of history?.channels ?? []) {
       if (ground.has(c.id)) continue;
       const v = c.id === 'engine.pc' ? chamber : pressures?.[c.id];
-      if (v !== undefined && v !== null && v > limitsOf(c).nop) out.add(c.id);
+      const { nop } = limitsOf(c);
+      if (v !== undefined && v !== null && nop !== undefined && v > nop) out.add(c.id);
     }
     return out;
   }, [history, pressures, chamber, ground]);
@@ -431,7 +432,11 @@ export function Console() {
         key={c.id}
         type="button"
         {...dragProps('pts', c.id, gaugeIds)}
-        title={`${nameOf(c.id, c.tag)}${nameOf(c.id, c.tag) !== c.tag ? ` (${c.tag} on the P&ID)` : ''}\nAmber over ${fixed(nop, 0)}, red over ${fixed(meop, 0)} psig${c.limits ? ` — ${c.limits}` : ' (guessed from the tag)'}\nClick to ${silent ? 'show on' : 'hide from'} the plot, drag to reorder`}
+        title={`${nameOf(c.id, c.tag)}${nameOf(c.id, c.tag) !== c.tag ? ` (${c.tag} on the P&ID)` : ''}\n${
+          meop === undefined
+            ? 'No limits: the drawing gives none for what this transducer reads'
+            : `${nop !== undefined ? `Amber over ${fixed(nop, 0)}, red` : 'Red'} over ${fixed(meop, 0)} psig${c.limits ? ` — ${c.limits}` : ''}`
+        }\nClick to ${silent ? 'show on' : 'hide from'} the plot, drag to reorder`}
         onClick={() => toggleChannel(c.id)}
         aria-pressed={!silent}
         className={`h-full min-h-0 min-w-0 transition-opacity ${silent ? 'opacity-35' : 'opacity-100'}`}
