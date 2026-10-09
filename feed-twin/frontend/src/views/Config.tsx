@@ -50,8 +50,13 @@ function Explain({ text, children }: { text: ReactNode; children: ReactNode }) {
   );
 }
 
+/** The value as it is, to the step's places at least: a step of 5 printed
+ *  the COPV charge time of 9.7 s as "10", and the row lied about the number
+ *  the stand ran on. */
 function fmt(v: number, step: number): string {
-  const places = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
+  const stepPlaces = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
+  const own = (String(Number(v)).split('.')[1] ?? '').length;
+  const places = Math.min(Math.max(stepPlaces, own), 6);
   return Number(v).toFixed(places).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m));
 }
 
@@ -165,7 +170,22 @@ export function Config() {
   }, []);
   // Tripped, or a stand you have not taken: the settings are the stand's.
   const locked = Boolean(live?.tripped) || readOnly;
-  const groups = Array.from(new Set(tunables.map((t) => t.group)));
+  // Sixty-odd rows: find one by any word in its name or what it accounts for,
+  // or see only what differs from the default.
+  const [query, setQuery] = useState('');
+  const [changedOnly, setChangedOnly] = useState(false);
+  const valueOf = (t: Tunable) => (setup as StandSetup)[t.key] ?? t.default;
+  const isChanged = (t: Tunable) => {
+    const v = valueOf(t);
+    return typeof v === 'boolean' ? v !== t.default : Math.abs(Number(v) - Number(t.default)) > 1e-9;
+  };
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = tunables.filter(
+    (t) =>
+      (!changedOnly || isChanged(t)) &&
+      words.every((w) => `${t.label} ${t.key} ${t.explains} ${t.group}`.toLowerCase().includes(w)),
+  );
+  const groups = Array.from(new Set(shown.map((t) => t.group)));
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -179,6 +199,27 @@ export function Config() {
           bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Checks</Link> tab.
         </p>
       </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Find a setting — e.g. dome, chill, tolerance"
+          className="w-80 rounded-md border border-gray-700 bg-black/60 px-3 py-1.5 text-[12.5px] text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
+        />
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-gray-400">
+          <input
+            type="checkbox"
+            checked={changedOnly}
+            onChange={(e) => setChangedOnly(e.target.checked)}
+            className="accent-blue-500"
+          />
+          Changed from the default only ({tunables.filter(isChanged).length})
+        </label>
+        {shown.length === 0 && tunables.length > 0 && (
+          <span className="text-[12px] text-gray-500">Nothing matches.</span>
+        )}
+      </div>
       {error && <p className="text-[12px] text-red-300">{error}</p>}
       <div className="grid gap-4 xl:grid-cols-2">
         {groups.map((g) => (
@@ -186,7 +227,7 @@ export function Config() {
             <h3 className="border-b border-gray-800 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-text-muted">
               {g}
             </h3>
-            {tunables
+            {shown
               .filter((t) => t.group === g)
               .map((t) => (
                 <Row
