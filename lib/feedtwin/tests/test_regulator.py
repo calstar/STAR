@@ -437,3 +437,47 @@ def test_an_ideal_regulator_still_honours_the_dome() -> None:
         dome_bias=Param(50.0, "psi", M, "bias"),
     )
     assert outlet(reg, 0.01, 4500 * PSI) / PSI == pytest.approx(500.0, rel=1e-9)
+
+
+def test_a_perfect_regulator_makes_its_branch_indeterminate() -> None:
+    """With zero flow droop the branch equation ``(p_up - p_dn) - dp(mdot) = 0``
+    is satisfied for *every* mass flow, so its Jacobian row is identically zero
+    and the flow is genuinely undetermined. ``check()`` must say so before
+    anyone spends an afternoon on a solve that will not converge. (Found by the
+    old transient integrator, and kept when it went.)
+    """
+    params = {
+        "setpoint": Param(500.0, "psi", M, "x"),
+        "supply_coefficient": Param(17.0, "psi/1000psi", M, "x"),
+        "Cv": Param(0.8, "Cv", M, "x"),
+        "bore": Param(7.75, "mm", M, "x"),
+    }
+    flat = build_component(
+        ComponentInstance.build("PR-01", "regulator", params, model="droop")
+    )
+    flow = FlowConditions(rho=39.0, mu=1.78e-5, p_upstream=4500 * PSI)
+
+    h = 1e-8
+    slope = (
+        flat.pressure_drop(0.01 + h, flow) - flat.pressure_drop(0.01 - h, flow)
+    ) / (2 * h)
+    assert slope == 0.0
+    assert "flow_droop" in [v.limit for v in flat.check()]
+
+    drooping = build_component(
+        ComponentInstance.build(
+            "PR-02",
+            "regulator",
+            {
+                **params,
+                "flow_droop": Param(20.0, "psi", M, "at rated"),
+                "rated_flow": Param(0.05, "kg/s", M, "rated"),
+            },
+            model="droop",
+        )
+    )
+    slope = (
+        drooping.pressure_drop(0.01 + h, flow) - drooping.pressure_drop(0.01 - h, flow)
+    ) / (2 * h)
+    assert slope == pytest.approx(20.0 * PSI / 0.05, rel=1e-3)
+    assert "flow_droop" not in [v.limit for v in drooping.check()]

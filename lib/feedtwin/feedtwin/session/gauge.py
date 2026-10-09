@@ -6,9 +6,9 @@ reads or types on a stand is gauge, because that is what a PT with atmosphere
 cancelled out reports and what the dial on a regulator is marked in.
 
 :func:`psig` and :func:`from_psig` are the only two places the two meet. Moved
-here from the feed-twin app (``backend/run.py``, which re-exports them) when the
-marching session became library code, so a second caller -- EngineDesign's
-Layer X -- converts through the same two functions rather than its own.
+here from the feed-twin app when the marching session became library code, so a
+second caller -- EngineDesign's Layer X -- converts through the same two
+functions rather than its own.
 
 The zero is the **standard** atmosphere, deliberately and only for gauge
 readings: it is the convention the stand's DAQ and the cockpit share. A caller

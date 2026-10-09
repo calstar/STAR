@@ -17,7 +17,7 @@ pydantic>=2.12
 # NOT here yet: scenarios become shared documents in Phase 09, and wiring the
 # store in before there is anything to store would be dead code.
 
-# Pulling a diagram straight out of pid-designer (POST /api/library/pull).
+# Asking the sibling design tools for their documents (backend.designtools).
 # Also what FastAPI's TestClient runs on, so it is not a new dependency
 # so much as a declared one.
 httpx>=0.27

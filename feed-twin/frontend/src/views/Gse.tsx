@@ -193,7 +193,7 @@ export function Gse() {
             <Number_ label="LOX dewar" value={setup.dewar_psi} unit="psig" step={5} onChange={(dewar_psi) => set({ dewar_psi })} />
           </span>
           {setup.dewar_psi > 0 ? (
-            <span title="Everything on the fill line that is not tube -- in practice how far the dewar valve is open. 0.013 is what tops LE4 out at 30 psig during the chill.">
+            <span title="Everything on the fill line that is not tube -- in practice how far the dewar valve is open. The stand tops out near 30 psig during the chill; on LE4 (6) 0.019 peaks at 57 psig, 0.013 at 38.">
               <Number_ label="Dewar valve" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
             </span>
           ) : (

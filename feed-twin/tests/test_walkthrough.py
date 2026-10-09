@@ -137,9 +137,7 @@ def test_an_operator_can_take_the_stand_from_cold_to_fire() -> None:
     # the chamber light on the next ticks. (It used to be computed ahead and
     # replayed, and the ten-second "Running sim..." freeze read as Fire doing
     # nothing.)
-    state = run(sid, 0.25)
-    assert not state.get("computing"), "Fire integrates live; nothing is computed ahead"
-    state = run(sid, 1.0, dt=0.05)
+    state = run(sid, 1.25, dt=0.05)
     engine = state.get("engine") or {}
     assert engine.get("chamber_psi", 0.0) > 100.0, f"the engine should light: {engine}"
     thrust = next((v for k, v in engine.items() if k.startswith("thrust")), 0.0)

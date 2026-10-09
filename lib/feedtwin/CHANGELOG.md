@@ -31,6 +31,61 @@ be able to find why they differ.
   (`SUPPLY_DATUM_SIGNAL`, `LOCKUP_SUPPLY_SIGNAL`). `inlet_reference` still loads, is
   ignored, and `Regulator.check` warns.
 
+### Changed results (2026-10-08, the team)
+- **The regulator seat is compressible by default** (`Setup.regulator_compressible_seat`,
+  IEC 60534-2-1's expansion factor and choke) in the cockpit, Layer X and the Study tab;
+  `burn_setup` pins it off, so the benchmark Study is unchanged. Only a wide-open
+  regulator is affected: the LE4 (6) helium burn and a press from 50 psig to lockup are
+  bit-identical, and the COPV study's GN2 drawing burned off a 1,200 psig bottle loses
+  0.04 % thrust.
+- **`dewar_fill_cv` 0.013 -> 0.019**. On the LE4-like test stand the chill reads the
+  stand's ~30 psig again at 30 s (it read ~21 since the 2026-10-06 vent fix), and
+  `test_the_fill_cv_is_calibrated_to_the_stands_30_psig_chill` is no longer an xfail.
+  LE4 (6) as drawn vents differently: its chill now peaks at 57 psig and takes 5.3 min
+  (was 38.5 psig and 6.9 min); the stand shows ~30 psig and ~10 min.
+
+### Added (2026-10-08)
+- `Session.skip_chilldown(tank_id="")` / `TankSim.skip_chill()`: a vehicle cryogen
+  tank's wall goes where a load's chill leaves it -- saturation at atmosphere plus the
+  boiling onset, so the boil-off venting afterwards does not set it chilling again --
+  and the load collects from the next step. The propellant the chill would have
+  flashed is booked in `chill_boiled`, and the assumptions say the pad was cut short.
+
+### Removed (2026-10-08: nothing called them)
+- `Session.precompute` and the replay it served: `computing`, `progress`,
+  `replaying`, `Snapshot`, `_snapshot` / `_restore` / `_leave_replay` and the
+  session's lock, which existed for the precompute thread. A session is stepped
+  from one thread; `step()` integrates live or holds a tripped frame.
+- `feedtwin.transient` (`TransientSystem`, `simulate`, `Scenario`, ...) and
+  `feedtwin.engine.EngineCoupling`, the Phase 07 integrator and its relaxed
+  chamber loop: the session replaced them, and nothing imported them but their
+  own tests. The two of those tests that checked components rather than the
+  integrator -- a regulator with no droop is flagged, a valve reads its own
+  command -- moved to `test_regulator.py` and `test_comps_validation.py`.
+
+### Fixed (2026-10-08, from an outside review of feed-twin)
+- **A failed network solve no longer moves the stand.** `Session._advance_once`
+  integrated the vessels on `self._last_flows or dict(result.flows)`, and the last
+  flows are emptied whenever the circuit changes, so a solve that failed on the step
+  a main opened (or a tank was isolated dry) moved propellant on the failed iterate:
+  forced at the mains opening, one 20 ms tick took 3 kg out of a 6 kg fuel tank. Its
+  pressures also fed the tank's supply clip, the frame and the trapped-leg values. A
+  failed solve now holds the last converged flows and pressures (`Session._held`),
+  and moves nothing when the circuit has none yet. No change where every solve
+  converges: the LE4 (6) burn fails none, and the benchmark asserts none fail.
+  `tests/test_failed_solve_holds.py`.
+- **A leg behind a shut valve holds what was trapped in it** (docs/PHYSICS-BENCHMARK.md
+  3.2, listed there as open). A stub reached across a shut or isolated branch is now
+  flagged undefined, so the session shows its last value rather than the live side's
+  pressure across the seat; only a check valve behind its crack used to be. Solved
+  pressures and flows unchanged; on LE4 (6) no transducer reading changes (its two
+  such PTs read the dome line).
+- `Tank.step` rebuilds its state with `replace`, so a field `TankState` grows later is
+  carried through a step rather than reset (benchmark trap 4.3). Same numbers.
+- The session names the GSE actuators it drives an undrawn bottle with
+  (`GSE_CHARGE`, `GSE_DUMP`) and its notes say when the state table has neither
+  row, instead of the charge and dump silently never happening.
+
 ## 0.2.0 — 2026-10-06
 
 ### Added

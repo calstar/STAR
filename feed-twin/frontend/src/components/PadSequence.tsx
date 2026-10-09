@@ -243,12 +243,12 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
       setAuto(false);
       return;
     }
-    if (inTarget || !legal || live.computing) return;
+    if (inTarget || !legal) return;
     const stamp = `${live.state}>${hop}`;
     if (commanded.current === stamp) return;
     commanded.current = stamp;
     go(hop);
-  }, [auto, current, inTarget, legal, hop, live.state, live.computing, go]);
+  }, [auto, current, inTarget, legal, hop, live.state, go]);
 
   return (
     <section>
@@ -343,7 +343,7 @@ export default function PadSequence({ live, machine, setup, go, hasEngine, compa
               </span>
               <button
                 type="button"
-                disabled={!legal || live.computing}
+                disabled={!legal}
                 onClick={() => go(hop)}
                 title={legal ? undefined : `${hop} is not reachable from ${live.state} right now`}
                 className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all ${

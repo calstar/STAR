@@ -22,7 +22,7 @@ import random
 
 import pytest
 
-from backend.run import PSI, psig
+from feedtwin.session.gauge import PSI, psig
 from backend.session import Session
 from tests.test_session import stand
 

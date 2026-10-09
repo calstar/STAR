@@ -96,12 +96,12 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[0],
         "On: a wide-open dome regulator passes gas the way IEC 60534-2-1 says a "
         "valve of its Cv does -- with the expansion factor Y = 1 - x/(3 F_gamma xT) "
-        "and choking once the drop passes F_gamma xT of the inlet. Off (the "
-        "benchmarked setting): the seat is the incompressible Cv law at the inlet "
-        "density, which overstates a GN2 regulator's wide-open capacity by ~25 % "
-        "near burnout (0.398 vs 0.319 kg/s) and by up to 1.5x choked. Only a "
-        "saturated regulator is affected; on helium at the hot-fire flows it "
-        "regulates and nothing changes.",
+        "and choking once the drop passes F_gamma xT of the inlet. On by default. "
+        "Off: the seat is the incompressible Cv law at the inlet density (what "
+        "the benchmark study is stated at), which overstates a GN2 regulator's "
+        "wide-open capacity by ~25 % near burnout (0.398 vs 0.319 kg/s) and by up "
+        "to 1.5x choked. Only a saturated regulator is affected; on helium at the "
+        "hot-fire flows it regulates and nothing changes.",
         kind="flag",
     ),
     Tunable(
@@ -196,10 +196,11 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Everything on the fill line that is not tube: the dewar's liquid valve, the "
         "LOX Fill valve, the disconnect -- in practice how far the dewar valve is "
-        "open. Calibrated: 0.013 tops LE4 out at 30 psig during the chill with a "
-        "Cv 0.5 vent, which is what the stand shows (operator). A clean 3/8 in line "
-        "pours ~0.7 kg/s, all of which boils on a warm wall, and the tank rides up "
-        "to the dewar.",
+        "open. The stand tops out near 30 psig during the chill and takes ~10 min "
+        "(operator). LE4 (6) as drawn: 0.019 peaks at 57 psig and chills in 5.3 "
+        "min; 0.013 at 38 psig and 6.9 min. 'skip' on the tank card skips the "
+        "chill. A clean 3/8 in line pours ~0.7 kg/s, all of which boils on a warm "
+        "wall, and the tank rides up to the dewar.",
         low=0.0,
         high=10.0,
         step=0.001,
@@ -814,7 +815,6 @@ TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
-_BY_KEY = {t.key: t for t in TUNABLES}
 _SETUP_FIELDS = {f.name for f in fields(Setup)}
 for _t in TUNABLES:
     assert _t.field in _SETUP_FIELDS, _t.field

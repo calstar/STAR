@@ -60,7 +60,7 @@ def _sim(
         dewar_pressure=from_psig(100.0),
         fill_line_bore=7.75e-3,
         fill_line_length=3.0,
-        fill_cv=0.013,
+        fill_cv=0.019,
     )
 
 
@@ -78,7 +78,7 @@ def test_the_fill_line_is_crane_and_clamond() -> None:
     area = math.pi * D * D / 4
     v = flow / (rho * area)
     f = Clamond(rho * v * D / mu, FILL_LINE_ROUGHNESS / D)
-    K = 891.0 * (D / 25.4e-3) ** 4 / 0.013**2
+    K = 891.0 * (D / 25.4e-3) ** 4 / 0.019**2
     assert drop == pytest.approx((f * L / D + K + 1.0) * rho * v * v / 2, rel=5e-3)
 
 
@@ -277,15 +277,10 @@ def test_a_chilling_tank_climbs_and_climbs_more_the_harder_the_dewar_pushes() ->
     assert 5.0 < low < high
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="2026-10-06: Cv 0.013 was calibrated to the operator's ~30 psig chill "
-    "peak against a vent that took air a floor put back (~3 g/s of phantom air "
-    "pressing the ullage). With that fixed, 0.013 peaks near 21 psig and ~0.019 "
-    "gives 30 -- but shortens the chill to ~4.8 min against the operator's ~10. "
-    "Recalibration is the team's call.",
-)
 def test_the_fill_cv_is_calibrated_to_the_stands_30_psig_chill() -> None:
+    """The default Cv (0.019, the team 2026-10-08) tops LE4 out near the stand's
+    ~30 psig. 0.013 did until the vent stopped taking back air the pressurant
+    floor re-created (2026-10-06); it then peaked near 21."""
     high, _ = _chill(30.0, dewar_psi=100.0)
     assert high == pytest.approx(30.0, abs=5.0), "calibrated to the stand's ~30 psig"
 
@@ -322,3 +317,49 @@ def test_a_chilling_tank_vents_its_boil_off_not_air_the_floor_puts_back() -> Non
     assert sim.chilling, "still chilling: the case being checked"
     assert arrived > 0.1
     assert abs(sim.fixed_kg) < 1e-3 * arrived, (sim.fixed_kg, arrived)
+
+
+def test_a_skipped_chilldown_collects_at_once_where_a_chilling_one_does_not() -> None:
+    """Nobody rehearsing waits out the minutes a dewar load spends on the wall
+    (the team, 2026-10-08). Skipped, the wall is where the chill would have left
+    it and the next seconds of the pour collect; not skipped, they boil."""
+    session, _ = _le4_session()
+    for state in ("Armed", "Ox Fill"):
+        session.command_state(state)
+    for _ in range(4):
+        session.step(0.5)
+    lox = session.tanks["OT"]
+    assert lox.chilling and lox.state.liquid_mass == 0.0
+
+    assert session.skip_chilldown() == [lox.label]
+    # Where the chill ends once its boil-off has vented, not saturation at the
+    # pressure the boil-off is holding the tank at now.
+    from feedtwin.session.gauge import ATMOSPHERE
+
+    assert lox.pressure > ATMOSPHERE
+    target = lox._chill_target(ATMOSPHERE)
+    assert lox.state.ullage.wall_temperature == pytest.approx(target)
+    assert lox.chill_boiled > 0.0, "the propellant the chill would have flashed"
+    assert any("Chilldown skipped on" in a for a in session.assumptions)
+    for _ in range(4):
+        session.step(0.5)
+    assert not lox.chilling and lox.state.liquid_mass > 0.01
+    assert session.skip_chilldown() == [], "a cold wall has nothing to skip"
+
+    control, _ = _le4_session()
+    for state in ("Armed", "Ox Fill"):
+        control.command_state(state)
+    for _ in range(8):
+        control.step(0.5)
+    assert control.tanks["OT"].chilling
+    assert control.tanks["OT"].state.liquid_mass == 0.0
+
+
+def test_skipping_chilldown_leaves_a_storable_and_an_unknown_tank_alone() -> None:
+    session, _ = _le4_session()
+    fuel = next(s for s in session.tanks.values() if s.id != "OT")
+    wall = fuel.state.ullage.wall_temperature
+    assert session.skip_chilldown(fuel.id) == []
+    assert fuel.state.ullage.wall_temperature == wall
+    with pytest.raises(KeyError):
+        session.skip_chilldown("no-such-tank")

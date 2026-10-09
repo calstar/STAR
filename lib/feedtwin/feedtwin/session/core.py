@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import copy
 import math
-import threading
 import time
 import uuid
 from collections import deque
@@ -129,14 +128,15 @@ MIN_CHAMBER_FLOW = ENGINE_MIN_CHAMBER_FLOW
 DRY_MASS = 1.0e-3
 
 
-#: Cap on those re-solves. One tick is allowed to cost this many network solves
-#: and no more; past it the step is simply taken, and the next tick corrects.
+#: Cap on those re-solves. One step is allowed to cost this many network solves
+#: and no more; past it the step is simply taken, and the next one corrects.
 #:
 #: Raised from 12 once the coupling was sized from the ullage time constant
 #: (see COUPLING_SAFETY): a helium ullage of half a litre behind a regulator has
-#: a time constant of two or three milliseconds, and a 50 ms cockpit tick needs
-#: far more than twelve solves to resolve it. The tick budget, not this cap, is
-#: what protects the panel from a slow tick.
+#: a time constant of two or three milliseconds, and a 20 ms step needs far more
+#: than twelve solves to resolve it. Nothing else bounds a slow tick any more
+#: (TICK_BUDGET is effectively off): a stand that cannot keep up runs in slow
+#: motion.
 MAX_COUPLING_STEPS = 400
 
 #: Fraction of the regulator-ullage time constant one coupling step may span.
@@ -192,7 +192,6 @@ LOW_TANK = 0.10
 #: Fraction of its fill target below which a bottle is worth mentioning.
 LOW_BOTTLE = 0.25
 
-#: How hard the chamber node chases the flows each tick. See Session._chamber.
 #: Chamber closure tolerance [Pa] and iteration cap. The chamber node is a
 #: boundary whose value depends on the flows it receives; each cockpit step
 #: finds the pressure at which the network's delivery and the chamber's
@@ -267,6 +266,13 @@ CHILLED_BAND = 0.5
 
 #: Temperature of the gas a GSE fill delivers [K]: a bank at ambient.
 FILL_SUPPLY_T = 293.15
+#: The state table's actuators for the GSE side of a bottle whose fill is not
+#: drawn: its charge and its dump, the Diablo table's rows read as the DAQ reads
+#: them. The one place the session names actuators itself, because that side
+#: has no valve on the drawing for the hookup to bind. A table without them
+#: cannot charge or dump such a bottle, and the notes say so (`Session._notes`).
+GSE_CHARGE = "GSE High Press Control"
+GSE_DUMP = "GSE High Press Vent"
 #: The room [K], for the heat that leaks through a tank skin.
 AMBIENT_T = 293.15
 #: Fiberglass batt, for a drawing that gives a thickness and no conductivity.
@@ -370,12 +376,14 @@ class Setup:
 
     dome_psi: float = 500.0
     """Dome control regulator setting [psig] -- what the dial reads. The
-    1092-50 delivers 50 psi above it, so 500 here is the 550 psig the tanks
-    lock up at on the stand."""
+    1092-50 delivers dome + its 50 psi bias less its supply effect, S x inlet
+    gauge, so lockup is *not* dome + bias: on LE4 (6) off a full 4,500 psig
+    bottle, 500 here locks the tanks up at 483.7 psig
+    (docs/PHYSICS-BENCHMARK.md 4.11)."""
 
     copv_target_psi: float = 4500.0
-    """Bottle fill target [psig], as its gauge would read it."""
-    """What GN2 High Press fills the bottle to."""
+    """Bottle fill target [psig], as its gauge would read it: what GN2 High
+    Press fills the bottle to."""
 
     supply_press_s: float = 3.0
     """Seconds the cart's press line takes to bring a ground supply tank (a fuel
@@ -456,17 +464,24 @@ class Setup:
     """Length of the dewar's fill line [m]. Estimated: a hose from a dewar
     beside the stand to the tank's fill disconnect. Measure it."""
 
-    dewar_fill_cv: float = 0.013
+    dewar_fill_cv: float = 0.019
     """Flow coefficient of everything on the fill line that is not tube [Cv]:
     the dewar's liquid valve, the cart's LOX Fill valve, the disconnect. In
     practice, how far the dewar valve is open.
 
-    Calibrated, not known (2026-10-05). The stand tops out near 30 psig while
-    a LOX tank chills (operator), and with a Cv 0.5 vent on LE4 this is the
-    value that does that: the vent carries ~7 g/s of the vapour a warm wall
-    boils, so the dewar can only be sending about that. A clean 3/8 in line
-    from 100 psig pours ~0.7 kg/s; every gram of it boils on a warm wall,
-    and the tank rides up to the dewar's own pressure."""
+    Calibrated, not known, and the calibration depends on the drawing's vent.
+    The stand tops out near 30 psig while a LOX tank chills, in about ten
+    minutes (operator). On the LE4-like test stand (the tank vented through
+    its top disconnect and the cart's Cv 0.5 valve,
+    tests/test_dewar_load.py) this value reads ~30 psig at 30 s and chills in
+    ~4.8 min; 0.013 read ~21 there once the vent stopped taking back air the
+    pressurant floor re-created (2026-10-06). LE4 (6) as drawn vents through a
+    different path: there this peaks at 57 psig and chills in 5.3 min, 0.013
+    at 38 psig and 6.9 min (2026-10-08). The team set it here (2026-10-08:
+    nobody waits out a chilldown in the cockpit -- :meth:`Session.
+    skip_chilldown`). A clean 3/8 in line from 100 psig pours ~0.7 kg/s; every
+    gram of it boils on a warm wall, and the tank rides up to the dewar's own
+    pressure."""
 
     gse_vent_cv: float = 0.5
     """Flow coefficient of the cart's vent valve [Cv] (operator: ~0.5).
@@ -501,6 +516,16 @@ class Setup:
     stand whose bottle was filled hours earlier shows."""
 
     ullage_collapse: bool = True
+    """Model heat leaving the ullage into the propellant surface.
+
+    Real, and it is why a tank droops on a long hold: warm pressurant meets cold
+    liquid and gives its heat up across the interface. Off, the ullage exchanges
+    heat only with the vessel wall.
+
+    Toggleable because it is a *separate* question from how much gas a bottle
+    can deliver, and mixing the two makes a pressurant study impossible to read
+    -- collapse and an under-sized COPV both show up as a tank that will not
+    hold pressure."""
 
     ullage_vapour: bool = True
     """Propellant vapour in the ullage -- boil-off and condensation.
@@ -566,35 +591,31 @@ class Setup:
 
     tick_budget: float = TICK_BUDGET
     """Wall-clock seconds one tick may spend before folding the rest of its
-    coupling steps into one. A cockpit wants this small so the panel stays
-    live; a study wants it effectively off, because a folded step is exactly
-    the under-resolved step the coupling count was chosen to avoid."""
+    coupling steps into one. Effectively off everywhere since the console took
+    the Study's numerics (docs/PHYSICS-BENCHMARK.md 3.10): a folded step is
+    exactly the under-resolved step the coupling count was chosen to avoid, and
+    a console that folds integrates a different scheme from the one benchmarked.
+    Lower it and the fold in :meth:`Session._integrate` comes back."""
     max_iterations: int = LIVE_ITERATIONS
-    """Newton iterations the network solve may take per tick.
+    """Newton iterations the network solve may take per coupling step.
 
-    A cockpit and a study want different answers here. The default bounds tick
-    latency so the panel stays live: a solve that has not closed in this many
-    iterations hands back the last good state, which costs one slightly stale
-    frame. A study wants the opposite trade -- a helium burn, whose regulator
-    branch is nearly flat and whose Newton steps are correspondingly long, goes
-    from 39 failed ticks in 140 to 4 by raising this to 60, at the cost of a
-    worst-case tick near a second. Nobody watching a panel would accept that;
-    nobody reading a pressure curve would accept the 39.
+    The Study's 120 on the console too, since it held the last good flows
+    through a regulator's crossover at 30. A solve that has not closed in this
+    many iterations holds the last converged flows and pressures for the step
+    (nothing moves right after the circuit changed), which the frame reports as
+    not converged. A helium burn, whose regulator branch is nearly flat and whose
+    Newton steps are correspondingly long, went from 39 failed ticks in 140 to 4
+    by raising this from 30 to 60.
     """
-    """Model heat leaving the ullage into the propellant surface.
-
-    Real, and it is why a tank droops on a long hold: warm pressurant meets cold
-    liquid and gives its heat up across the interface. Off, the ullage exchanges
-    heat only with the vessel wall.
-
-    Toggleable because it is a *separate* question from how much gas a bottle
-    can deliver, and mixing the two makes a pressurant study impossible to read
-    -- collapse and an under-sized COPV both show up as a tank that will not
-    hold pressure."""
 
     # ---- the constants that used to be module-level, now dialled from the
-    # Configuration tab (feed-twin backend/tunables.py explains each). Defaults are the
-    # values the benchmarks were run with.
+    # Configuration tab (feed-twin backend/tunables.py explains each). These are
+    # the cockpit's values, which Layer X and the Study tab share. The benchmark
+    # study is *not* run at them: `feedtwin.session.burn.burn_setup` turns
+    # stratification, boiling onset, nucleate boiling, line walls,
+    # ullage-wall-by-level, the compressible regulator seat and the automatic
+    # vent off, because the expectations in docs/PHYSICS-BENCHMARK.md 2.x were
+    # stated before those existed.
     wall_boiling: bool = True
     """Boil at a superheated wetted wall (needs ``ullage_vapour``)."""
     chilldown_nucleate: float = 3000.0
@@ -683,7 +704,7 @@ class Setup:
     bottle -- so 1e-4 on a full COPV is ~3 kPa on every branch, and an
     injector drop comes out a few tenths of a percent off its own relation. A
     caller quoting the engine finer than that sets this lower."""
-    regulator_compressible_seat: bool = False
+    regulator_compressible_seat: bool = True
     """The regulator's wide-open seat seen as a gas sees it: IEC 60534-2-1's
     expansion factor ``Y = 1 - x / (3 F_gamma xT)`` and its choke at
     ``x >= F_gamma xT`` (:mod:`feedtwin.comps.iec_gas`), in place of the
@@ -691,8 +712,14 @@ class Setup:
     GN2 regulator's capacity near burnout by 25 % (0.398 against 0.319 kg/s on
     the COPV study's GN2 drawing; EngineDesign/docs/layerx/AUDIT.md 5.3, 9.6 C3)
     and by up to 1.5x choked. Only a wide-open regulator is affected: while it
-    regulates, its outlet is the droop law and the seat never binds. Off (the
-    default) is the previous behaviour, bit for bit."""
+    regulates, its outlet is the droop law and the seat never binds.
+
+    **On by default** since 2026-10-08 (the team), in the cockpit, Layer X and
+    the Study tab. Measured then: the LE4 (6) helium burn and a press from
+    50 psig to lockup bit-identical; the COPV study's GN2 drawing burned off a
+    1,200 psig bottle, -0.04 % thrust. :func:`~feedtwin.session.burn.burn_setup`
+    pins it off, so the benchmark Study is the incompressible law its
+    expectations were stated at. Off is that law, bit for bit."""
     regulator_xT: float = XT_TYPICAL
     """The seat's pressure-differential ratio factor at choked flow, for a
     regulator whose drawing gives none (a drawn ``xT`` wins). 0.70: IEC 60534's
@@ -906,35 +933,6 @@ def _vessel_wall(
     return mass, capacity, conductance
 
 
-@dataclass(frozen=True, slots=True)
-class Snapshot:
-    """The stand's mutable state at one instant, by value.
-
-    What a replay frame carries alongside the sample, so a command given while
-    the operator is watching a run computed ahead can put the stand back to the
-    frame being shown. Typed rather than a dict of ``object`` because a restore
-    that assigns the wrong thing to the wrong field is exactly the bug a type
-    checker exists to catch, and one that a test on a happy path never would.
-    """
-
-    tanks: dict[str, tuple[TankState, bool, bool]]
-    bottles: dict[str, tuple[VesselState, bool, bool, bool]]
-    t: float
-    state: str
-    guess: dict[str, float]
-    last_flows: dict[str, float]
-    last_isolated: frozenset[str]
-    positions: dict[str, float]
-    chamber: float
-    trapped: dict[str, float]
-    last_change: float
-    last_dt: float
-    forced: dict[str, float]
-    history: int
-    relief_open: dict[str, bool] = field(default_factory=dict)
-    relief_lift: dict[str, float] = field(default_factory=dict)
-
-
 @dataclass
 class TankSim:
     """One propellant tank, integrating."""
@@ -963,7 +961,7 @@ class TankSim:
     #: is not tube. See :attr:`Setup.dewar_fill_cv`.
     fill_line_bore: float = 7.75e-3
     fill_line_length: float = 3.0
-    fill_cv: float = 0.013
+    fill_cv: float = 0.019
     #: What the dewar delivered over the last step [kg/s].
     fill_flow: float = 0.0
     #: The drawing symbol this was built from, for knobs re-read live.
@@ -1064,11 +1062,7 @@ class TankSim:
             or state.liquid_temperature >= CRYOGENIC_K
         ):
             return False
-        try:
-            target = self.tank.liquid.get("T", p=self.pressure, q=0.0)
-        except (ValueError, PropertyError):
-            target = state.liquid_temperature
-        target += max(self.tank.boiling_onset, 0.0)
+        target = self._chill_target()
         walls = [state.ullage.wall_temperature]
         if state.wetted_wall_temperature is not None:
             walls.append(state.wetted_wall_temperature)
@@ -1094,6 +1088,59 @@ class TankSim:
                 cooled[1] if state.wetted_wall_temperature is not None else None
             ),
         )
+        return True
+
+    def _chill_target(self, pressure: float | None = None) -> float:
+        """Where a load's chilldown takes the wall [K]: saturation at the tank's
+        pressure (or ``pressure``), plus the boiling onset, where a wall stops
+        boiling what touches it."""
+        try:
+            target = self.tank.liquid.get(
+                "T", p=self.pressure if pressure is None else pressure, q=0.0
+            )
+        except (ValueError, PropertyError):
+            target = self.state.liquid_temperature
+        return float(target) + max(self.tank.boiling_onset, 0.0)
+
+    def skip_chill(self) -> bool:
+        """Put the wall where a chilldown leaves it, now.
+
+        Where it leaves it once the boil-off has vented: the chill target at
+        atmosphere (or at the tank's pressure, if lower). Not at the tank's
+        present pressure -- a chilling tank sits above atmosphere on its own
+        boil-off, that pressure falls as soon as the boiling stops, and a wall
+        left at its saturation is above the new one a moment later and chilling
+        again. What the metal gave up is the propellant the chill flashes off
+        and vents, booked in :attr:`chill_boiled`; a load then collects from its
+        next step. Returns whether there was anything to chill: not for a liquid
+        that is no cryogen, nor a wall already there.
+        """
+        state = self.state
+        if state.liquid_temperature >= CRYOGENIC_K:
+            return False
+        target = self._chill_target(min(self.pressure, AMBIENT))
+        walls = [state.ullage.wall_temperature]
+        if state.wetted_wall_temperature is not None:
+            walls.append(state.wetted_wall_temperature)
+        if max(walls) <= target + CHILLED_BAND:
+            return False
+        cooled = [min(w, target) for w in walls]
+        capacity = self.tank.wall_mass * self.tank.wall_capacity
+        heat = capacity * sum(w - c for w, c in zip(walls, cooled)) / len(walls)
+        try:
+            h_fg = latent_heat(self.tank.liquid, state.liquid_temperature)
+        except (ValueError, PropertyError):
+            h_fg = 0.0
+        if h_fg > 0.0:
+            self.chill_boiled += heat / h_fg
+        self.state = replace(
+            state,
+            ullage=replace(state.ullage, wall_temperature=cooled[0]),
+            wetted_wall_temperature=(
+                cooled[1] if state.wetted_wall_temperature is not None else None
+            ),
+        )
+        self.chilling = False
         return True
 
     def _wanted(self) -> float:
@@ -1796,14 +1843,8 @@ class Session:
         #: Prime asks for the dome as loaded on the pad, not as it was.
         self._dome_primed = False
         self._travel: dict[str, float] = {}
-        #: The run computed ahead of the display. Each entry is the sample the
-        #: operator will see and the stand's state at that instant, so a command
-        #: given mid-replay can put the stand back exactly where the operator
-        #: thinks it is. See :meth:`precompute`.
-        self._replay: list[tuple[Sample, Snapshot]] = []
-        self._replay_at: int = 0
-        self._replay_clock: float = 0.0
-        self._replay_t0: float = 0.0
+        #: The frame on display: the last one integrated, and the one a tripped
+        #: stand holds.
         self._shown: Sample | None = None
         #: Why the stand stopped, if it has: a vessel over its MAWP. Cleared
         #: only by opening a new stand -- there is no un-bursting a tank.
@@ -1812,10 +1853,6 @@ class Session:
         self.trip: Trip | None = None
         #: Set when Fire ended by a tank running dry (see _burnout_check).
         self.burnout: str | None = None
-        self.computing: bool = False
-        self.progress: float = 0.0
-        self._cancel = threading.Event()
-        self._lock = threading.RLock()
         self.t = 0.0
         self.wall = time.monotonic()
         self.history: Deque[Sample] = deque(maxlen=HISTORY)
@@ -1830,6 +1867,9 @@ class Session:
         self._guard_J0 = 0.0
         self.assumptions: list[str] = []
         self._last_flows: dict[str, float] = {}
+        #: Node pressures of the last converged solve: what a failed one holds
+        #: (:meth:`_held`).
+        self._last_pressures: dict[str, float] = {}
         # Warm start. Consecutive ticks are 50 ms apart and the network barely
         # moves between them, so starting each solve from the previous answer is
         # both faster and far more robust: cold-starting a network whose bottle
@@ -2380,6 +2420,7 @@ class Session:
         self._dome_primed = True
         self._guess = {}
         self._last_flows = {}
+        self._last_pressures = {}
         self._last_isolated = frozenset()
         # The inventory was set, not reached: the mass balance starts here.
         self.reset_balance()
@@ -2490,7 +2531,6 @@ class Session:
             )
 
     def command_state(self, state: str) -> None:
-        self._leave_replay()
         if state not in self.machine.states:
             raise ValueError(f"no state {state!r}")
         if not self.machine.can_go(self.state, state):
@@ -2512,15 +2552,43 @@ class Session:
             self.forced.pop(symbol, None)
 
     def set_valve(self, drawing_id: str, is_open: bool) -> None:
-        self._leave_replay()
         self.forced[drawing_id] = 1.0 if is_open else 0.0
 
     def release(self, drawing_id: str = "") -> None:
-        self._leave_replay()
         if drawing_id:
             self.forced.pop(drawing_id, None)
         else:
             self.forced.clear()
+
+    def skip_chilldown(self, tank_id: str = "") -> list[str]:
+        """Chill a cryogen tank's wall now rather than wait for the load to.
+
+        A load spends minutes chilling the metal before anything collects --
+        ~5 on LE4 at the calibrated dewar valve, ~10 on the stand -- and nobody
+        rehearsing waits that out (the team, 2026-10-08). Each vehicle tank, or
+        the one named, gets :meth:`TankSim.skip_chill`; the cart's own vessels
+        are supplies and are left alone. The assumptions say so, so a burn's
+        record shows its pad was cut short. Returns the labels of the tanks it
+        chilled: none when every wall is already cold.
+        """
+        if tank_id and tank_id not in self.tanks:
+            raise KeyError(f"no tank {tank_id!r}")
+        ground = self.ground
+        chilled: list[str] = []
+        for sim in self.tanks.values():
+            if (tank_id and sim.id != tank_id) or sim.id in ground:
+                continue
+            flashed = sim.chill_boiled
+            if not sim.skip_chill():
+                continue
+            chilled.append(sim.label)
+            self.assumptions.append(
+                f"Chilldown skipped on {sim.label}: wall put at "
+                f"{sim.state.ullage.wall_temperature:.0f} K, where the load's chill "
+                f"takes it, without the {(sim.chill_boiled - flashed) * 1e3:.0f} g "
+                "of propellant that chill flashes off."
+            )
+        return chilled
 
     # ---------------------------------------------------------------- signals
 
@@ -3166,7 +3234,16 @@ class Session:
                 self._note_solve(result)
                 self._accept(result)
         result = self._close_chamber(net, signals, dry | resting, result, storage)
-        flows = self._last_flows or dict(result.flows)
+        # The vessels move on the last *converged* flows. A failed solve's
+        # iterate is not a flow field -- Newton stopped wherever it stopped and
+        # the node balances are not closed -- so integrating on it moves
+        # propellant no path carried. With a good solve on this circuit the
+        # step holds its flows (the solver tab says so); right after the
+        # circuit changed there is none, because `_last_flows` was emptied
+        # above, and the vessels exchange nothing for the step. This used to
+        # fall back on the failed iterate's flows exactly there: the Ready ->
+        # Fire step, or a tank just isolated dry, that the emptying is for.
+        flows = self._last_flows
         # A tank that runs dry part-way through this step can give only what it
         # holds, but the solve sees a fixed-pressure boundary and delivers the
         # whole step's flow past it: on the ethalox stand, 17-25 g that reached
@@ -3181,7 +3258,7 @@ class Session:
         into, out = crossing(net, flows, self._boundary_nodes())
         self._crossed_in += into * span
         self._crossed_out += out * span
-        self._move_vessels(flows, result.pressures, span, substeps)
+        self._move_vessels(flows, self._held(result), span, substeps)
         if span < dt:
             return self._advance_once(net, given, dt - span, substeps)
         return result
@@ -3328,6 +3405,7 @@ class Session:
         if not result.converged:
             return
         self._last_flows = dict(result.flows)
+        self._last_pressures = dict(result.pressures)
         # Pressures always; flows only where something was actually moving.
         #
         # A state with the whole panel shut solves to flows of exactly zero,
@@ -3340,6 +3418,26 @@ class Session:
         self._guess = {
             **result.pressures,
             **{b: f for b, f in result.flows.items() if abs(f) > 1e-9},
+        }
+
+    def _held(self, result: SteadyResult) -> Mapping[str, float]:
+        """The node pressures a step acts on and shows.
+
+        The solve's own when it converged. A failed solve's iterate is not a
+        pressure field either, so every node it was solving for stays where the
+        last converged solve left it; only the boundaries -- vessels,
+        atmosphere, the chamber -- are taken as they stand, because the session
+        set those itself. Before any solve has converged there is nothing to
+        hold and the iterate is all there is.
+        """
+        if result.converged or not self._last_pressures:
+            return result.pressures
+        nodes = self.model.built.network.nodes
+        return {
+            node: (
+                value if nodes[node].is_fixed else self._last_pressures.get(node, value)
+            )
+            for node, value in result.pressures.items()
         }
 
     def _close_chamber(
@@ -3366,7 +3464,7 @@ class Session:
         """
         ports = self.model.built.engine_ports
         if self.model.chamber is None or "chamber" not in ports:
-            self._chamber(self._last_flows or dict(result.flows))
+            self._chamber(self._last_flows)
             self._last_chamber = None
             return result
         node = ports["chamber"]
@@ -3868,202 +3966,35 @@ class Session:
         arriving, leaving = self._split_at(node, flows)
         return arriving - leaving
 
-    @property
-    def replaying(self) -> bool:
-        """Serving a run computed ahead, rather than integrating live."""
-        return bool(self._replay) and not self.computing
-
     def step(self, dt: float) -> Sample:
         """What the operator sees ``dt`` seconds later.
 
-        Three regimes, and the operator should only ever notice one of them.
-
-        **Live.** Integrate now and return the result -- the pad, fills, presses,
-        holds. Cheap enough to do inside a tick.
-
-        **Computing.** A run is being integrated ahead in the background, because
-        resolving the regulator-ullage loop at a quarter of its time constant
-        costs seconds of wall clock per second of stand and a panel cannot wait
-        on it. The display holds its last frame and reports progress; nothing
-        advances until the run is in.
-
-        **Replaying.** The run is in. Each tick hands back the buffered frame for
-        the stand time the display has reached, at wall-clock pace. The stand
-        itself is already at the *end* of the run; the operator is watching it
-        catch up. A command given during replay restores the stand to the frame
-        being shown, discards the future, and continues live from there -- the
-        same thing that would have happened had the run never been computed
-        ahead, only a little later.
+        Integrated now, Fire included, as a run of :attr:`Setup.live_step`
+        steps -- the Study's grid, with nothing folded to save wall clock. A
+        stand too stiff for real time runs in slow motion rather than on a
+        coarser scheme (docs/PHYSICS-BENCHMARK.md 3.10). A tripped stand holds
+        the frame it tripped on.
         """
-        if self.computing:
-            if self._shown is None:
-                with self._lock:
-                    self._shown = self._integrate(1e-4)
-            return self._shown
-        if self._replay:
-            dt = max(min(dt, MAX_STEP), 1e-4)
-            self._replay_clock += dt
-            target = self._replay_t0 + self._replay_clock
-            while (
-                self._replay_at < len(self._replay)
-                and self._replay[self._replay_at][0].t <= target + 1e-9
-            ):
-                self._replay_at += 1
-            if self._replay_at == 0:
-                return self._shown or self._replay[0][0]
-            shown = self._replay[self._replay_at - 1][0]
-            self._shown = shown
-            if self._replay_at >= len(self._replay):
-                # Caught up. The stand is already here; live from now on.
-                self._replay.clear()
-                self._replay_at = 0
-            return shown
         if self.tripped:
             # The stand has failed. Nothing moves until it is reset; the
             # frame on display is the one it failed on.
             if self._shown is None:
-                with self._lock:
-                    self._shown = self._integrate(1e-4)
+                self._shown = self._integrate(1e-4)
             return self._shown
-        with self._lock:
-            # A panel tick is a run of study-sized steps, so the console and
-            # the Study tab integrate on the same grid.
-            dt = max(min(dt, MAX_STEP), 1e-4)
-            steps = max(int(round(dt / self.setup.live_step)), 1)
-            inner = dt / steps
-            for _ in range(steps):
-                self._shown = self._integrate(inner)
-                if self.tripped:
-                    break
+        # A panel tick is a run of study-sized steps, so the console and the
+        # Study tab integrate on the same grid.
+        dt = max(min(dt, MAX_STEP), 1e-4)
+        steps = max(int(round(dt / self.setup.live_step)), 1)
+        inner = dt / steps
+        for _ in range(steps):
+            self._shown = self._integrate(inner)
+            if self.tripped:
+                break
         # `steps` is clamped to at least 1, so the loop above always assigned a
         # frame -- including on the tick that trips the stand, which breaks
         # after the assignment, not before.
         assert self._shown is not None
         return self._shown
-
-    def precompute(self, horizon: float, dt: float = 0.02) -> int:
-        """Integrate ``horizon`` seconds ahead at study accuracy, for replay.
-
-        Returns the number of frames buffered. Stops early when the tanks run
-        dry, since a blowdown into empty tanks is not a run anybody asked for.
-        Runs at the study settings -- no latency budget, a generous Newton
-        allowance -- because the whole point is that this is allowed to take
-        as long as accuracy needs; the cost is paid here, once, and the panel
-        pays it back as a delay before the burn starts rather than as noise
-        through it.
-        """
-        with self._lock:
-            self.computing = True
-            self.progress = 0.0
-            saved = (self.setup.tick_budget, self.setup.max_iterations)
-            self.setup.tick_budget = 1e9
-            self.setup.max_iterations = max(self.setup.max_iterations, 120)
-            self._replay.clear()
-            self._replay_at = 0
-            self._replay_clock = 0.0
-            self._replay_t0 = self.t
-            steps = max(int(horizon / dt), 1)
-            self._cancel.clear()
-            start = self._snapshot()
-            try:
-                for i in range(steps):
-                    if self._cancel.is_set():
-                        # A command arrived while the run was being computed. The
-                        # operator has seen nothing past the frame the display is
-                        # holding, so the stand goes back there and the command
-                        # applies to it -- an abort during "running" must act on
-                        # the stand the operator is looking at, and must never be
-                        # refused.
-                        self._restore(start)
-                        self._replay.clear()
-                        break
-                    sample = self._integrate(dt)
-                    self._replay.append((sample, self._snapshot()))
-                    self.progress = (i + 1) / steps
-                    if all(sim.empty for sim in self.tanks.values()):
-                        break
-            finally:
-                self.setup.tick_budget, self.setup.max_iterations = saved
-                self.computing = False
-                self.progress = 1.0
-            return len(self._replay)
-
-    def _snapshot(self) -> "Snapshot":
-        """Everything that changes as the stand runs, by value."""
-        return Snapshot(
-            tanks={
-                k: (sim.state, sim.filling, sim.empty) for k, sim in self.tanks.items()
-            },
-            bottles={
-                k: (b.state, b.filling, b.venting, b.charged)
-                for k, b in self.bottles.items()
-            },
-            t=self.t,
-            state=self.state,
-            guess=dict(self._guess),
-            last_flows=dict(self._last_flows),
-            last_isolated=self._last_isolated,
-            positions=dict(self._positions),
-            chamber=self._chamber_guess,
-            trapped=dict(self._trapped),
-            last_change=self._last_change,
-            last_dt=self._last_dt,
-            forced=dict(self.forced),
-            history=len(self.history),
-            relief_open=dict(self._relief_open),
-            relief_lift=dict(self._relief_lift),
-        )
-
-    def _restore(self, snap: "Snapshot") -> None:
-        for k, (tstate, filling, empty) in snap.tanks.items():
-            sim = self.tanks[k]
-            sim.state, sim.filling, sim.empty = tstate, filling, empty
-        for k, (bstate, bfilling, venting, charged) in snap.bottles.items():
-            b = self.bottles[k]
-            b.state, b.filling, b.venting, b.charged = (
-                bstate,
-                bfilling,
-                venting,
-                charged,
-            )
-        self.t = snap.t
-        self.state = snap.state
-        self._guess = dict(snap.guess)
-        self._last_flows = dict(snap.last_flows)
-        self._last_isolated = snap.last_isolated
-        self._positions = dict(snap.positions)
-        self._chamber_guess = snap.chamber
-        self._trapped = dict(snap.trapped)
-        self._last_change = snap.last_change
-        self._last_dt = snap.last_dt
-        self.forced = dict(snap.forced)
-        self._relief_open = dict(snap.relief_open)
-        self._relief_lift = dict(snap.relief_lift)
-        while len(self.history) > snap.history:
-            self.history.pop()
-        while self.solver_log and self.solver_log[-1].t > self.t + 1e-9:
-            self.solver_log.pop()
-        self.reset_balance()
-
-    def _leave_replay(self) -> None:
-        """A command has arrived: put the stand where the operator sees it.
-
-        Mid-replay, that is the frame being shown. Mid-compute, it is the frame
-        the display has been holding since the run started; the run is cancelled
-        at its next step boundary and the stand restored to that frame before
-        the command goes through. Acquiring the lock is what waits for the
-        computing thread to notice and step aside.
-        """
-        if self.computing:
-            self._cancel.set()
-            with self._lock:
-                pass
-        if not self._replay:
-            return
-        index = max(self._replay_at - 1, 0)
-        self._restore(self._replay[index][1])
-        self._replay.clear()
-        self._replay_at = 0
 
     def _integrate(self, dt: float) -> Sample:
         """Advance the stand by ``dt`` seconds and return where it is."""
@@ -4115,9 +4046,9 @@ class Session:
             # the built-in charge stands in for the vehicle's alone: it once
             # "charged" a LOX dewar to the COPV target as if it were gas.
             off_drawing = bottle.id not in self._drawn_fill and bottle.id not in ground
-            bottle.filling = off_drawing and "GSE High Press Control" in opened
+            bottle.filling = off_drawing and GSE_CHARGE in opened
             bottle.fill_supply_T = self.setup.fill_supply_T
-            bottle.venting = off_drawing and "GSE High Press Vent" in opened
+            bottle.venting = off_drawing and GSE_DUMP in opened
             bottle.target = from_psig(self.setup.copv_target_psi)
             bottle.fill_seconds = self.setup.copv_fill_s
 
@@ -4218,11 +4149,14 @@ class Session:
         vessels |= {b.node for b in self.bottles.values()}
         held = set(result.indeterminate_nodes) - vessels
 
-        pressures = dict(result.pressures)
+        # A failed solve shows, and leaves as the trapped value, what the last
+        # converged one found -- not the iterate it stopped on.
+        solved = self._held(result)
+        pressures = dict(solved)
         for node in held:
             pressures[node] = self._trapped.get(node, AMBIENT)
         pressures.update(self._dome_readings)
-        for node, value in result.pressures.items():
+        for node, value in solved.items():
             if node not in held:
                 self._trapped[node] = value
         self.t += dt
@@ -4781,7 +4715,21 @@ class Session:
                     "higher. The drawing has no relief valve; a real tank would "
                     "have lifted one long ago. Vent it."
                 )
+        ground = self.ground
+        verbs = {GSE_CHARGE: "charge", GSE_DUMP: "dump"}
         for bottle in self.bottles.values():
+            # Its GSE is not drawn, so only the table's own actuators fill and
+            # dump it. Renamed or dropped from the CSV, they silently would not.
+            undrawn = bottle.id not in self._drawn_fill and bottle.id not in ground
+            missing = [
+                name for name in verbs if undrawn and name not in self.machine.actuators
+            ]
+            if missing:
+                out.append(
+                    f"{bottle.label}'s fill is not on the drawing and the state "
+                    f"table has no {' or '.join(repr(m) for m in missing)} row, "
+                    f"so no state can {' or '.join(verbs[m] for m in missing)} it."
+                )
             if not bottle.charged:
                 out.append(f"{bottle.label} is not charged.")
             elif (

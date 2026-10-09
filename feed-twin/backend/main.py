@@ -19,20 +19,17 @@ import hashlib
 import logging
 import re
 import json
-import threading
 from dataclasses import asdict, dataclass, field, replace
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
-import httpx
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
-from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
 from feedtwin.pid.document import PidNode
-from feedtwin.pid.network import SINK_TYPES, propellant_side
+from feedtwin.pid.network import propellant_side
 
 from backend.assembly import (
     AssemblyError,
@@ -57,9 +54,7 @@ from backend.models import (
     AssumptionOut,
     BalanceOut,
     Channel,
-    ControlSpec,
     EngineState,
-    Frame,
     BurnOut,
     BurnsOut,
     HookupBody,
@@ -84,8 +79,8 @@ from backend.models import (
     SourceOut,
     TankOut,
 )
-from backend.live import FireOptions, Stand, fire, solve_at
-from backend.run import PSI, Sample, psig
+from backend.live import Stand
+from feedtwin.session.gauge import PSI, psig
 from backend.session import Sample as SessionSample, Session, Setup
 from feedtwin.session.burn import (
     BurnPlan,
@@ -114,7 +109,7 @@ from backend.version import VALIDATION, code_version
 from backend.tunables import TUNABLES
 from backend.tunables import describe as describe_tunables, parse_setup, wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
-from backend.statemachine import available as sm_available, bind, load_machine
+from backend.statemachine import available as sm_available, load_machine
 from backend import runs as run_records
 from backend import userdata
 from backend.routers import stands, users
@@ -155,46 +150,6 @@ FLUID_SETS: dict[str, dict[str, tuple[str, float]]] = {
     "cold-flow": {"oxygen": ("nitrogen", 80.0), "ethanol": ("water", 288.15)},
     "water-flow": {"oxygen": ("water", 288.15), "ethanol": ("water", 288.15)},
 }
-
-CONTROLS = [
-    ControlSpec(
-        key="dome",
-        label="Dome control regulator",
-        unit="psig",
-        default=450.0,
-        minimum=200.0,
-        maximum=560.0,
-        step=10.0,
-        note="1092-50 delivers +50 psi",
-    ),
-    ControlSpec(
-        key="open_at",
-        label="Main valves open",
-        unit="s",
-        default=0.20,
-        minimum=0.0,
-        maximum=1.5,
-        step=0.05,
-    ),
-    ControlSpec(
-        key="ox_lead",
-        label="Ox lead",
-        unit="s",
-        default=0.04,
-        minimum=-0.20,
-        maximum=0.20,
-        step=0.01,
-    ),
-    ControlSpec(
-        key="duration",
-        label="Run length",
-        unit="s",
-        default=1.0,
-        minimum=0.5,
-        maximum=4.0,
-        step=0.5,
-    ),
-]
 
 
 def _seed() -> None:
@@ -452,42 +407,6 @@ async def import_engine(request: Request, file: UploadFile) -> ImportResult:
     )
 
 
-@app.post("/api/library/pull")
-async def pull_from_designer(
-    url: str = Body(..., embed=True), name: str = Body("", embed=True)
-) -> ImportResult:
-    """Fetch a diagram straight out of pid-designer.
-
-    The url is supplied by the caller rather than configured, because there is
-    no single pid-designer -- there is a dev one, a deployed one, and whatever
-    somebody is running locally.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            data = response.content
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach {url}: {exc}"
-        ) from exc
-    try:
-        payload = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status_code=422, detail=f"{url} did not return a diagram ({exc})"
-        ) from exc
-    artifact, existed = library.add(
-        data,
-        kind="diagram",
-        name=name or "pulled diagram",
-        source=f"pid-designer:{url}",
-        suffix=".json",
-        summary=diagram_summary(payload),
-    )
-    return ImportResult(artifact=_out(artifact), already_present=existed)
-
-
 # ------------------------------------------------------------------ sources
 #
 # The other design tools, imported from directly. See backend.designtools for
@@ -553,16 +472,6 @@ async def source_documents(
     except DesignToolError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return out
-
-
-@app.get("/api/sources/{key}/documents/{doc_id}/releases")
-async def source_releases(
-    request: Request, key: str, doc_id: str, owner: str = ""
-) -> list[dict[str, str]]:
-    try:
-        return await designtools.releases(_tool(key), doc_id, owner, request.headers)
-    except DesignToolError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/api/sources/{key}/import")
@@ -798,8 +707,6 @@ async def model_view(
             for d, s in model.built.actuators.items()
             if not s.endswith(".dome")
         ],
-        controls=CONTROLS,
-        fluid_sets=sorted(FLUID_SETS),
         report=_report(model),
         pages=_pages(model.diagram.nodes),
         engine=(
@@ -835,12 +742,13 @@ def _stand(
             detail=f"No state machine {machine!r}. Shipped: "
             f"{', '.join(sm_available())}. ({exc})",
         ) from exc
-    hookup, _ = _hookup_for(diagram, model)
+    hookup, _, problem = _hookup_for(diagram, model)
     return Stand(
         model=model,
         machine=loaded,
         binding=hookup_binding(model, loaded, hookup),
         hookup=hookup,
+        notes=(problem,) if problem else (),
     )
 
 
@@ -862,20 +770,35 @@ def _lineage(artifact: Artifact) -> str:
     return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
 
 
-def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool]:
-    """The drawing's saved hookup, or the twin's suggestion; and whether saved."""
+def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
+    """The drawing's saved hookup, or the twin's suggestion; whether saved; and
+    why a saved one was not used, or "".
+
+    A saved hookup that cannot be read falls back to the suggestion like one
+    never saved, and used to be indistinguishable from it: the stand ran on a
+    different wiring and nothing said so."""
     try:
         lineage = _lineage(library.get(diagram_id))
     except LibraryError:
-        return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
+        suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
+        return suggested, False, ""
     stored = library.record(HOOKUPS, lineage)
+    problem = ""
     if stored is not None:
         try:
             raw = stored.get("hookup")
-            return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True
-        except (ValueError, KeyError, TypeError):
-            pass
-    return suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi), False
+            return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True, ""
+        except (ValueError, KeyError, TypeError) as exc:
+            problem = (
+                f"This drawing's saved hookup could not be read ({exc}); the "
+                "suggested hookup is wired instead. Check the Hookup tab and save "
+                "it again."
+            )
+            logging.getLogger("feed-twin.hookup").warning(
+                "hookup for %s unreadable: %s", lineage, exc
+            )
+    suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
+    return suggested, False, problem
 
 
 #: Instrument types that read a temperature rather than a pressure.
@@ -887,39 +810,6 @@ THERMAL_INSTRUMENTS = frozenset({"TC", "RTD"})
 
 def _channel_unit(instrument_type: str) -> str:
     return "K" if instrument_type in THERMAL_INSTRUMENTS else "psig"
-
-
-def _frame(stand: Stand, sample: Sample) -> Frame:
-    built = stand.model.built
-    signals_of = {d: s for d, s in built.actuators.items() if not s.endswith(".dome")}
-    return Frame(
-        t=round(sample.t, 5),
-        pressure_psi={
-            i.id: round(psig(sample.pressures[i.node]), 3)
-            for i in built.instruments
-            if i.node in sample.pressures
-        },
-        # Thermocouples and RTDs read the node they are clipped to, the same way
-        # a transducer does. Every instrument gets an entry -- a PT's own node
-        # has a temperature too, and a stand that wants it plotted should not
-        # need a second symbol to get it.
-        temperature_K={
-            i.id: round(sample.temperatures.get(i.node, 0.0), 2)
-            for i in built.instruments
-            if i.node in sample.temperatures
-        },
-        node_psi={
-            d: round(psig(sample.pressures[n]), 3)
-            for d, n in built.node_of.items()
-            if n in sample.pressures
-        },
-        flow_kg_s={
-            d: round(sum(sample.flows.get(b, 0.0) for b in ids), 5)
-            for d, ids in built.branches_of.items()
-        },
-        open={d: sample.signals.get(s, 0.0) > 0.5 for d, s in signals_of.items()},
-        engine=_engine_state(sample.chamber),
-    )
 
 
 def _engine_state(chamber: ChamberResult | None) -> EngineState | None:
@@ -961,11 +851,25 @@ class _Opened:
     """``{id, owner, name, modified}`` when opened from a stand document."""
     burning: bool = False
     recorded: set[float] = field(default_factory=set)
-    """Burn start times already recorded, so a rewind past one and a second
-    falling edge does not record it twice."""
+    """Burn start times already recorded: every burnout records every finished
+    burn still in the history, so one is recorded once however many follow."""
     kept: list[dict[str, Any]] = field(default_factory=list)
     """The recorded burns, ``{run_id, outcome, series}``, newest last: the
     Engine tab keeps showing a burn after it leaves the session's history."""
+    notices: list[str] = field(default_factory=list)
+    """Said in the console's notes on every frame: what the stand was opened on
+    that the operator should know (a hookup that could not be used). The
+    session's own ``assumptions`` reach only the run record."""
+    unrecorded: str = ""
+    """Why the last burn could not be recorded; cleared once a record lands."""
+
+
+def _notices(session_id: str) -> list[str]:
+    """The backend's notes for a session's console, beside the stand's own."""
+    opened = _OPENED.get(session_id)
+    if opened is None:
+        return []
+    return [*opened.notices, *([opened.unrecorded] if opened.unrecorded else [])]
 
 
 _OPENED: dict[str, _Opened] = {}
@@ -1061,10 +965,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         },
         open={d: sample.signals.get(s, 0.0) > 0.5 for d, s in signals_of.items()},
         held=sorted(session.forced),
-        computing=session.computing,
         tripped=session.tripped,
-        progress=round(session.progress, 3),
-        replaying=session.replaying,
         tanks=[
             TankOut(
                 id=sim.id,
@@ -1104,7 +1005,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         ],
         setup=wire_setup(session.setup),
         engine=_engine_state(sample.chamber),
-        notes=list(sample.notes),
+        notes=[*sample.notes, *_notices(session.id)],
     )
 
 
@@ -1162,8 +1063,12 @@ async def open_session(
         # A drawing that assembles can still fail to *start* -- a COPV drawn
         # as a tank has no liquid to begin from. Said, not a bare 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if hookup_note:
-        session.assumptions.append(hookup_note)
+    # The drawing's hookup notes, while it is the drawing's hookup that is wired.
+    notices = [
+        *(stand.notes if hookup is stand.hookup else ()),
+        *([hookup_note] if hookup_note else []),
+    ]
+    session.assumptions.extend(notices)
     if len(_SESSIONS) >= _SESSION_LIMIT:
         _OPENED.pop(_SESSIONS.pop(next(iter(_SESSIONS))).id, None)
     _SESSIONS[session.id] = session
@@ -1175,6 +1080,7 @@ async def open_session(
         multiphase=multiphase,
         user=userdata.store.current_user(request),
         stand=_stand_ref(request, settings.get("stand")),
+        notices=notices,
     )
     return _session_out(session, session.step(1e-3))
 
@@ -1333,38 +1239,12 @@ async def cancel_study() -> StudyOut:
     return _study_out()
 
 
-def _start_precompute(session: Session, horizon: float) -> None:
-    if session.computing:
-        return
-    # Marked before the thread starts, not by the thread. A tick that lands in
-    # the gap otherwise sees a live frame, and a client polling `computing`
-    # to know when the burn is ready concludes it already is.
-    session.computing = True
-    session.progress = 0.0
-    threading.Thread(
-        target=session.precompute,
-        args=(horizon,),
-        daemon=True,
-        name=f"precompute-{session.id}",
-    ).start()
-
-
-@app.post("/api/session/{session_id}/precompute")
-async def precompute_session(
-    session_id: str, body: dict[str, Any] | None = Body(None)
-) -> SessionOut:
-    """Integrate the next ``horizon`` seconds ahead, for replay at full accuracy."""
-    session = _session(session_id)
-    settings = dict(body or {})
-    _start_precompute(session, horizon=float(settings.get("horizon") or 15.0))
-    return _session_out(session, session.step(1e-4))
-
-
 @app.post("/api/session/{session_id}/command")
 async def command_session(
     session_id: str, body: dict[str, Any] | None = Body(None)
 ) -> SessionOut:
-    """Change state, take a valve by hand, or release one."""
+    """Change state, take a valve by hand or release one, turn a knob, change
+    the setup, or skip a load's chilldown (``skip_chill``)."""
     session = _session(session_id)
     settings = dict(body or {})
 
@@ -1383,10 +1263,7 @@ async def command_session(
         # then played back a run the operator could not touch. A stand whose
         # regulator-ullage loop is too stiff for real time now simply runs
         # slower than the wall clock, and the panel says by how much; that is
-        # honest and it is never a frozen screen. `precompute_session` is
-        # still there for a client that asks for it.
-        if settings.get("precompute") and "fire" in session.state.lower():
-            _start_precompute(session, horizon=float(settings.get("horizon") or 15.0))
+        # honest and it is never a frozen screen.
     knob = settings.get("knob")
     if isinstance(knob, Mapping) and session.hookup is not None:
         found = next((k for k in session.hookup.knobs if k.id == knob.get("id")), None)
@@ -1411,6 +1288,13 @@ async def command_session(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
     if settings.get("release") is not None:
         session.release(str(settings.get("release") or ""))
+    skip = settings.get("skip_chill")
+    if skip:
+        # True: every vehicle tank still chilling; a tank id: that one.
+        try:
+            session.skip_chilldown("" if skip is True else str(skip))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     if "setup" in settings or "dome" in settings:
         session.setup = _setup(
             {
@@ -1445,13 +1329,7 @@ async def session_history(
         stride = -(-len(kept) // max_points)
         kept = kept[::-1][::stride][::-1]
     return RunOut(
-        diagram_id=session.model.report.diagram,
-        engine_id=session.model.report.engine,
-        fluid_set="",
-        state=session.state,
-        converged=all(s.converged for s in kept) if kept else True,
         message=f"live session, {len(kept)} samples",
-        elapsed_s=round(session.t, 2),
         times_s=[s.t for s in kept],
         channels=[
             Channel(
@@ -1467,9 +1345,6 @@ async def session_history(
             for i in built.instruments
         ]
         + (_engine_channels(kept) if session.model.engine is not None else []),
-        frames=[],
-        controls={"dome": session.setup.dome_psi},
-        report=_report(session.model),
         balance=_session_balance(session),
     )
 
@@ -1514,7 +1389,7 @@ def _hookup_body(hookup: Hookup) -> HookupBody:
 def _hookup_out(diagram: str, engine: str, fluid_set: str, machine: str) -> HookupOut:
     stand = _stand(diagram, engine, fluid_set, machine)
     model, b = stand.model, stand.binding
-    hookup, saved = _hookup_for(diagram, model)
+    hookup, saved, _ = _hookup_for(diagram, model)
     return HookupOut(
         lineage=_lineage(library.get(diagram)),
         saved=saved,
@@ -1915,9 +1790,7 @@ def _burn_series(
     }
 
 
-def _record_burns(
-    session: Session, opened: _Opened, label: str = ""
-) -> list[dict[str, Any]]:
+def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
     """Record every finished burn in the history not yet recorded."""
     if session.model.engine is None:
         return []
@@ -1939,7 +1812,9 @@ def _record_burns(
             "id": run_records.new_id(),
             "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "user": opened.user,
-            "label": label,
+            # Kept in the schema; nothing sets one since the record-on-demand
+            # route went (2026-10-08).
+            "label": "",
             "stand": opened.stand,
             "code": code_version(),
             "validation": VALIDATION["status"],
@@ -1961,6 +1836,9 @@ def _record_burns(
             }
         )
         del opened.kept[:-KEPT_BURNS]
+    # Every finished burn in the history is recorded now, including any whose
+    # record failed before.
+    opened.unrecorded = ""
     return saved
 
 
@@ -1977,8 +1855,14 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
         return
     try:
         _record_burns(session, opened)
-    except Exception:  # noqa: BLE001 - a lost record must not stop the stand
+    except Exception as exc:  # noqa: BLE001 - a lost record must not stop the stand
         _log.exception("run not recorded for session %s", session.id)
+        # ...nor go unsaid: a burn with no record has no provenance, and only
+        # the server log knew.
+        opened.unrecorded = (
+            f"The burn that ended at t = {sample.t:.1f} s was not recorded "
+            f"({type(exc).__name__}: {exc}); it is not in Runs."
+        )
 
 
 def _session_from_inputs(
@@ -2004,7 +1888,7 @@ def _session_from_inputs(
         swap,
     )
     raw = inputs.get("hookup")
-    drawn, _ = _hookup_for(str(inputs["diagram"]), stand.model)
+    drawn, _, _ = _hookup_for(str(inputs["diagram"]), stand.model)
     hookup = Hookup.from_dict(raw) if isinstance(raw, Mapping) and raw else drawn
     known = {r.id for r in hookup_regulators(stand.model)}
     if any(r not in known for k in hookup.knobs for r in k.regulators):
@@ -2080,7 +1964,8 @@ async def session_t0(session_id: str) -> SessionOut:
 
     The pad (fills, chilldown, presses) is skipped -- the same initial
     condition the Study and Layer X burn from (`feedtwin.session.burn.
-    jump_to_t0`). What it did is in the returned notes.
+    jump_to_t0`). What it did goes into the session's assumptions, which the
+    run record of the next burn carries as its notes.
     """
     session = _session(session_id)
     try:
@@ -2104,20 +1989,6 @@ async def session_t0(session_id: str) -> SessionOut:
     )
     session.assumptions.extend(t0.notes)
     return _session_out(session, session.step(1e-3))
-
-
-@app.post("/api/session/{session_id}/runs")
-async def record_session_runs(
-    session_id: str, body: dict[str, Any] | None = Body(None)
-) -> list[dict[str, Any]]:
-    """Record any finished burn on this stand not recorded yet. Burnout records
-    on its own; this is for a label, or a burn ended by a rewind."""
-    session = _session(session_id)
-    opened = _OPENED.get(session_id)
-    if opened is None:
-        raise HTTPException(status_code=404, detail="Session opened before runs")
-    label = str((body or {}).get("label") or "")
-    return [run_records.summary(r) for r in _record_burns(session, opened, label)]
 
 
 @app.get("/api/twin/runs")
@@ -2188,14 +2059,6 @@ async def get_run(
     return _run_for(request, run_id, owner)
 
 
-@app.delete("/api/twin/runs/{run_id}")
-async def delete_run(request: Request, run_id: str) -> dict[str, bool]:
-    """Your own records only: a run on someone's stand is theirs to keep."""
-    if not run_records.store.delete(userdata.store.current_user(request), run_id):
-        raise HTTPException(status_code=404, detail=f"No run {run_id!r} of yours")
-    return {"deleted": True}
-
-
 @app.get("/api/tunables")
 async def tunables() -> list[dict[str, Any]]:
     """Every number the twin assumes: label, unit, bounds, what it stands for,
@@ -2226,157 +2089,4 @@ async def state_machine(
             }
             for state in m.states
         },
-    )
-
-
-@app.post("/api/state")
-async def go_to_state(
-    diagram: str,
-    engine: str = "",
-    fluid_set: str = "hotfire",
-    machine: str = "diablo",
-    body: dict[str, Any] | None = Body(None),
-) -> RunOut:
-    """Solve the stand in one state. The call behind every click.
-
-    Returns the same shape a fire does, with a single frame, so the app draws
-    one thing whether it is sitting in a state or watching a burn.
-    """
-    settings = dict(body or {})
-    state = str(settings.get("state") or "Idle")
-    stand = _stand(diagram, engine, fluid_set, machine)
-    if state not in stand.machine.states:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No state {state!r} on {machine}. "
-            f"States: {', '.join(stand.machine.states)}",
-        )
-    # The twin refuses what the stand refuses. Without this the API is a
-    # back door around the state machine the whole app is built on, and a
-    # scripted client could jump Idle straight to Fire.
-    current = str(settings.get("from") or "")
-    if current and not stand.machine.can_go(current, state):
-        raise HTTPException(
-            status_code=409,
-            detail=f"{current} cannot go to {state} on {machine}. From there: "
-            f"{', '.join(stand.machine.targets(current))}",
-        )
-    forced = {str(k): float(v) for k, v in dict(settings.get("forced") or {}).items()}
-    dome = float(settings.get("dome") or 0.0)
-
-    started = time.perf_counter()
-    try:
-        sample = solve_at(stand, state, forced=forced, dome_psi=dome)
-    except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return _run_out(
-        stand,
-        [sample],
-        state=state,
-        fluid_set=fluid_set,
-        elapsed=time.perf_counter() - started,
-        message=f"steady state in {state}",
-        controls={"dome": dome},
-    )
-
-
-@app.post("/api/fire")
-async def fire_endpoint(
-    diagram: str,
-    engine: str = "",
-    fluid_set: str = "hotfire",
-    machine: str = "diablo",
-    body: dict[str, Any] | None = Body(None),
-) -> RunOut:
-    """Run a burn: hold the pre-fire state, transition, sample."""
-    settings = dict(body or {})
-    stand = _stand(diagram, engine, fluid_set, machine)
-
-    options = FireOptions(
-        duration=max(float(settings.get("duration") or 5.0), 0.05),
-        lead_in=max(float(settings.get("lead_in") or 0.5), 0.0),
-        sample_hz=max(float(settings.get("sample_hz") or 20.0), 1.0),
-        prefire=str(settings.get("prefire") or "Ready"),
-        state=str(settings.get("state") or "Fire"),
-        dome_psi=float(settings.get("dome") or 0.0),
-        forced={
-            str(k): float(v) for k, v in dict(settings.get("forced") or {}).items()
-        },
-    )
-    for name in (options.prefire, options.state):
-        if name not in stand.machine.states:
-            raise HTTPException(
-                status_code=404, detail=f"No state {name!r} on {machine}"
-            )
-
-    started = time.perf_counter()
-    try:
-        samples, rate = fire(stand, options)
-    except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return _run_out(
-        stand,
-        samples,
-        state=options.state,
-        fluid_set=fluid_set,
-        elapsed=time.perf_counter() - started,
-        message=(
-            f"{options.duration:g} s in {options.state} at {rate:.0f} Hz; each "
-            "sample is its own steady solve, tanks held where the regulator "
-            "puts them"
-        ),
-        controls={
-            "duration": options.duration,
-            "lead_in": options.lead_in,
-            "sample_hz": rate,
-            "dome": options.dome_psi,
-        },
-    )
-
-
-def _run_out(
-    stand: Stand,
-    samples: list[Sample],
-    *,
-    state: str,
-    fluid_set: str,
-    elapsed: float,
-    message: str,
-    controls: dict[str, float],
-) -> RunOut:
-    built = stand.model.built
-    frames = [_frame(stand, s) for s in samples]
-    last = next((s for s in reversed(samples) if s.balance is not None), None)
-    return RunOut(
-        diagram_id=stand.model.report.diagram,
-        engine_id=stand.model.report.engine,
-        fluid_set=fluid_set,
-        state=state,
-        converged=all(s.converged for s in samples),
-        message=message,
-        elapsed_s=round(elapsed, 2),
-        times_s=[f.t for f in frames],
-        channels=[
-            Channel(
-                id=i.id,
-                tag=i.tag,
-                unit=_channel_unit(i.type),
-                values=(
-                    [f.temperature_K.get(i.id, 0.0) for f in frames]
-                    if i.type in THERMAL_INSTRUMENTS
-                    else [f.pressure_psi.get(i.id, 0.0) for f in frames]
-                ),
-            )
-            for i in built.instruments
-        ],
-        frames=frames,
-        controls=controls,
-        report=_report(stand.model),
-        balance=(
-            _balance(last.balance)
-            if last is not None and last.balance is not None
-            else None
-        ),
     )

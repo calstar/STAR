@@ -36,6 +36,6 @@ def load_machine(
 def available() -> list[str]:
     """Machines shipped with the app."""
     # Annotated: the app's mypy run cannot see into the editable feedtwin
-    # install, so the library call reads as Any here (see backend/run.py).
+    # install, so the library call reads as Any here.
     machines: list[str] = _machines.available(TABLES)
     return machines

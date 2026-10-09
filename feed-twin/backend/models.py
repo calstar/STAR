@@ -53,17 +53,6 @@ class Actuator(BaseModel):
     signal: str
 
 
-class ControlSpec(BaseModel):
-    key: str
-    label: str
-    unit: str
-    default: float
-    minimum: float
-    maximum: float
-    step: float
-    note: str = ""
-
-
 class AssumptionOut(BaseModel):
     component: str
     parameter: str
@@ -98,8 +87,6 @@ class ModelView(BaseModel):
     engine_id: str = ""
     title: str
     actuators: list[Actuator]
-    controls: list[ControlSpec]
-    fluid_sets: list[str]
     report: ReportOut
     engine: dict[str, object] = Field(default_factory=dict)
     # Which sheet of the drawing each node is on, by node id. The console
@@ -190,16 +177,6 @@ class SourceDocument(BaseModel):
     updated_at: str = ""
     mine: bool = False
     releases: list[str] = Field(default_factory=list)
-
-
-class ActuatorOut(BaseModel):
-    """A valve on the drawing, and what the state machine calls it."""
-
-    id: str
-    tag: str
-    signal: str
-    role: str = ""
-    """The state machine's name for it, empty when nothing commands it."""
 
 
 class StateMachineOut(BaseModel):
@@ -330,7 +307,7 @@ class SessionOut(BaseModel):
     pressure_psi: dict[str, float]
     """Instrument readings [psig]. Gauge, like the transducers on the stand: a
     vented line reads 0.0. Every `*_psi` on this API is gauge; the model
-    underneath is absolute (see backend.run.psig)."""
+    underneath is absolute (see feedtwin.session.gauge.psig)."""
     temperature_K: dict[str, float] = Field(default_factory=dict)
     node_psi: dict[str, float]
     flow_kg_s: dict[str, float]
@@ -341,42 +318,17 @@ class SessionOut(BaseModel):
     setup: dict[str, float | bool] = Field(default_factory=dict)
     engine: "EngineState | None" = None
     notes: list[str] = Field(default_factory=list)
-    #: A run is being integrated ahead of the display; nothing advances yet.
-    computing: bool = False
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a
     #: reset clears it.
     tripped: str | None = None
-    #: Fraction of that run finished, 0..1.
-    progress: float = 0.0
-    #: The display is serving a run computed ahead, at wall-clock pace.
-    replaying: bool = False
-
-
-class Frame(BaseModel):
-    t: float
-    pressure_psi: dict[str, float]
-    temperature_K: dict[str, float] = Field(default_factory=dict)
-    node_psi: dict[str, float] = Field(default_factory=dict)
-    flow_kg_s: dict[str, float] = Field(default_factory=dict)
-    open: dict[str, bool] = Field(default_factory=dict)
-    engine: EngineState | None = None
 
 
 class RunOut(BaseModel):
-    diagram_id: str
-    engine_id: str = ""
-    fluid_set: str
-    state: str = ""
-    """The state machine state this was solved in."""
+    """A session's trace, in the shape the plots read."""
 
-    converged: bool
     message: str
-    elapsed_s: float
     times_s: list[float]
     channels: list[Channel]
-    frames: list[Frame]
-    controls: dict[str, float] = Field(default_factory=dict)
-    report: ReportOut
     balance: BalanceOut | None = None
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one

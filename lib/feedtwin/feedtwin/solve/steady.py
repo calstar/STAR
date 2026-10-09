@@ -950,8 +950,15 @@ def _result(
             # behind its cracking pressure -- leaves the stub genuinely
             # undefined. Report the live end's pressure and say it is an upper
             # bound.
+            #
+            # So does a shut valve. A stub reached only across one (a leg
+            # between two shut valves, a capped line behind one) holds whatever
+            # was trapped in it, not the pressure across the seat -- and a ball
+            # valve's drop at zero flow is identically zero, so the test above
+            # never caught it: a transducer there followed the tank.
             if (
                 branch.component.pressure_drop(0.0, conditions) > 0.0
+                or dead.branch in isolated
                 or dead.live_end in indeterminate_nodes
             ):
                 # Undefined-ness travels. A regulator with nothing drawing

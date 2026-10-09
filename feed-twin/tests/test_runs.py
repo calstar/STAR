@@ -224,8 +224,61 @@ def test_a_cockpit_burn_is_recorded_once_at_burnout() -> None:
         assert kept[0]["impulse_Ns"] == record["outcome"]["impulse_Ns"]
         assert kept[0]["series"]["thrust_N"] == series["thrust_N"]
 
-        # Asked again, nothing new: a burn is recorded once.
-        assert client.post(f"/api/session/{sid}/runs", json={}).json() == []
+        # Another burnout edge records nothing new: a burn is recorded once.
+        main._OPENED[sid].burning = True
+        client.post(f"/api/session/{sid}/tick", json={"dt": 0.05})
+        assert len(client.get("/api/twin/runs").json()) == 1
+    finally:
+        main.library.remove(engine)
+        main.library.remove(diagram)
+
+
+def test_a_burn_that_cannot_be_recorded_is_said_on_the_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost record must not stop the stand -- nor go unsaid. It was logged on
+    the server and nowhere else: a burn could leave no provenance and the
+    operator would never know. Once a record lands, the note goes."""
+    client = TestClient(main.app)
+    engine = client.post(
+        "/api/library/engines",
+        files={
+            "file": (
+                "unrecorded.yaml",
+                CONFIG.read_bytes() + b"\n# unrecorded\n",
+                "application/x-yaml",
+            )
+        },
+    ).json()["artifact"]["id"]
+    diagram = client.post(
+        "/api/library/diagrams",
+        files={"file": (STAND.name, STAND.read_bytes(), "application/json")},
+    ).json()["artifact"]["id"]
+    try:
+        opened = client.post(
+            "/api/session", params={"diagram": diagram, "engine": engine}, json={}
+        )
+        assert opened.status_code == 200, opened.text
+        sid = opened.json()["id"]
+        real = main._record_burns
+
+        def full(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(main, "_record_burns", full)
+        main._OPENED[sid].burning = True  # the cockpit saw a burn go out
+        ticked = client.post(f"/api/session/{sid}/tick", json={"dt": 0.05})
+        assert ticked.status_code == 200, ticked.text
+        notes = ticked.json()["notes"]
+        assert any("not recorded" in n and "disk full" in n for n in notes), notes
+
+        # The next burnout records whatever the history still holds.
+        monkeypatch.setattr(main, "_record_burns", real)
+        main._OPENED[sid].burning = True
+        notes = client.post(f"/api/session/{sid}/tick", json={"dt": 0.05}).json()[
+            "notes"
+        ]
+        assert not any("not recorded" in n for n in notes), notes
     finally:
         main.library.remove(engine)
         main.library.remove(diagram)
