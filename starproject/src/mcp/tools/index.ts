@@ -1,5 +1,7 @@
 import type { ToolModule } from "./_shared";
 import { adminTools } from "./admins";
+import { activityTools } from "./activity";
+import { blockerTools } from "./blockers";
 import { metaTools } from "./meta";
 import { tasksReadTools } from "./tasks-read";
 import { tasksWriteTools } from "./tasks-write";
@@ -19,4 +21,6 @@ export const TOOL_MODULES: ToolModule[] = [
   settingsTools,
   adminTools,
   opsTools,
+  blockerTools,
+  activityTools,
 ];

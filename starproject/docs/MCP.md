@@ -242,6 +242,11 @@ defineTool(server, "archive_task", {
 | `run_digest` | Send the nightly activity digest to followers | admins only; no-op without `SES_FROM` |
 | `list_email_queue` | Unsent `EmailQueueItem`s: recipient, kind, task title, queued at | admins only; read |
 | `list_notification_log` | Recent `NotifLog` rows (deadline emails sent), labelled with task and recipient | admins only; read |
+| `add_blocker` | Mark a task blocked by another task in its project, optional note | write; rejects self, cross-project, duplicate, cycle |
+| `remove_blocker` | Unlink a blocker edge | idempotent; `removed: false` when there was none |
+| `list_blockers` | By `taskId`: blocked-by and blocking lists; by `projectId`: every edge (the Gantt arrows) | read |
+| `list_activity` | The audit log with the `/activity` filters (kind, actor, project) plus task and `since`/`until`, paged | read; each item has a `summary` line |
+| `recent_activity` | The last N hours (default 24, max 168), the digest's view, optional project / subteam | read |
 
 Modules append their tools here as they land.
 
