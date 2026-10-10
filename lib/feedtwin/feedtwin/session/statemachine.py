@@ -37,10 +37,28 @@ from typing import Any, Mapping, Sequence
 #: Bumped whenever the stored form of an edited table changes meaning.
 MACHINE_SCHEMA = 1
 
-#: States the session and the cockpit find by name: the stand opens in Idle,
-#: T-0 primes in Ready, Fire is the burn, burnout vents to Vent, the console's
-#: ENG ABORT goes to Engine Abort. An edited table without one is warned.
-KEYED_STATES = ("Idle", "Ready", "Fire", "Vent", "Engine Abort")
+#: States the session and the cockpit find by name, and what each is for. An
+#: edited table without one is warned, with its reason.
+KEYED_STATES: dict[str, str] = {
+    "Idle": "a stand opens in Idle",
+    "Ready": "T-0 primes in Ready",
+    "Fire": "Fire burns",
+    "Vent": "a dry tank vents to Vent",
+    "Engine Abort": "ENG ABORT goes to Engine Abort",
+}
+
+#: What a state's name holds for the session to load a tank of each side in it
+#: (``Session._fills``): "fill" and one of these. The load comes from a tanker
+#: that is not on the drawing, so the name is all the session has to go on.
+FILL_WORDS: dict[str, tuple[str, ...]] = {"lox": ("ox", "lox"), "fuel": ("fuel", "eth")}
+
+
+def fills(state: str, side: str) -> bool:
+    """Whether the session loads a ``side`` (``lox``/``fuel``) tank in
+    ``state``: by its name, as :data:`FILL_WORDS` reads it."""
+    name = state.lower()
+    return "fill" in name and any(word in name for word in FILL_WORDS[side])
+
 
 #: Prefixes that say how a valve is actuated, not what it does. A solenoid and
 #: a ball valve in the same place are the same actuator to a state machine.
@@ -539,8 +557,22 @@ def machine_from_dict(raw: Mapping[str, Any]) -> StateMachine:
         warnings.append(
             f"The table has no {', '.join(missing)}: the twin keys on "
             f"{'that state' if len(missing) == 1 else 'those states'} by name "
-            "(a stand opens in Idle, T-0 primes in Ready, Fire burns, a dry "
-            "tank vents to Vent, ENG ABORT goes to Engine Abort)."
+            f"({'; '.join(KEYED_STATES[s] for s in missing)})."
+        )
+    unloaded = [
+        (tank, example)
+        for side, tank, example in (
+            ("lox", "LOX", "Ox Fill"),
+            ("fuel", "fuel", "Fuel Fill"),
+        )
+        if not any(fills(state, side) for state in states)
+    ]
+    if unloaded:
+        warnings.append(
+            f"No state loads the {' or the '.join(t for t, _ in unloaded)} tank: "
+            "the twin loads a tank only in a state whose name says fill and its "
+            f"side, as {' and '.join(e for _, e in unloaded)} "
+            f"{'does' if len(unloaded) == 1 else 'do'}."
         )
     return StateMachine(
         name=str(raw.get("name") or "edited"),

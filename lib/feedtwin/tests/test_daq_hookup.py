@@ -516,3 +516,79 @@ def test_a_connector_whose_symbol_left_the_drawing_is_matched_by_name_and_said()
     on_pt = Hookup(channels=(Channel("pt_low", 1, "LOX Main", "PT_FUU"),))
     assert "LOX Main" not in binding(model, machine, on_pt).to_symbol
     assert lost_connectors(on_pt, model) == []
+
+
+# ---------------------------------------------- rows the twin acts on by name
+
+
+@needs_tables
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+@pytest.mark.parametrize("cut", [False, True], ids=["whole", "rocket-only"])
+def test_a_row_is_built_in_only_where_the_stand_acts_on_it(cut: bool) -> None:
+    """LE4 (6) draws the cart charging the COPV, so the built-in charge stands
+    aside and an unwired GSE High Press Control charges nothing: it is not
+    built-in there. The rocket alone has no cart, and the built-in charge is
+    what fills the COPV again. The transfer tank's press is the whole
+    drawing's alone. Held to the stand itself: in GN2 High Press the COPV
+    fills by the built-in, and in Fuel Fill the transfer tank is pressed,
+    exactly when the row is listed."""
+    from feedtwin.session.burn import open_session
+    from feedtwin.session.core import builtin_rows
+
+    ids = {n["data"]["label"]: n["id"] for n in json.loads(LE4.read_text())["nodes"]}
+    machine, model = _machine(), _le4(cut)
+    listed = builtin_rows(machine, model)
+    assert ("GSE High Press Control" in listed) is cut
+    assert ("GSE High Press Vent" in listed) is cut
+    assert ("Fuel Fill Press" in listed) is not cut
+
+    hookup = suggest(_le4(False))
+    session = open_session(
+        model, machine, hookup=on_vehicle(hookup, model) if cut else hookup
+    )
+    assert session.builtin == listed
+    session.state = "GN2 High Press"
+    session.step(0.1)
+    assert session.bottles[ids["COPV"]].filling is cut
+    session.state = "Fuel Fill"
+    pressed = [
+        sim.id for sim in session.tanks.values() if session._supply_press(sim)[0] > 0.0
+    ]
+    assert bool(pressed) is ("Fuel Fill Press" in listed)
+
+
+def _renamed(table: dict[str, Any], old: str, new: str) -> dict[str, Any]:
+    """``table`` with state ``old`` called ``new`` everywhere it appears."""
+    out: dict[str, Any] = json.loads(json.dumps(table))
+    for row in out["states"]:
+        if row["name"] == old:
+            row["name"] = new
+    out["open"] = {new if k == old else k: v for k, v in out["open"].items()}
+    out["allowed"] = {
+        new if k == old else k: [new if t == old else t for t in v]
+        for k, v in out["allowed"].items()
+    }
+    return out
+
+
+@needs_tables
+def test_a_table_is_warned_for_only_what_it_lacks() -> None:
+    """A state the twin keys on, gone, is warned with its own reason and no
+    other's; a table in which no state loads one side's tank is warned for
+    that side. The DAQ's table, read back, is warned for neither."""
+    shipped = _machine().to_dict()
+
+    def said(table: dict[str, Any], words: str) -> list[str]:
+        return [w for w in machine_from_dict(table).warnings if words in w]
+
+    assert said(shipped, "keys on") == [] and said(shipped, "No state loads") == []
+
+    (vent,) = said(_renamed(shipped, "Vent", "Blowdown"), "keys on")
+    assert "no Vent" in vent and "a dry tank vents to Vent" in vent
+    assert "Idle" not in vent and "Ready" not in vent and "ENG ABORT" not in vent
+
+    (lox,) = said(_renamed(shipped, "Ox Fill", "Oxidiser Load"), "No state loads")
+    assert "LOX tank" in lox and "Ox Fill" in lox
+    assert "fuel" not in lox and "Fuel Fill" not in lox
+    # Named the way the session reads it, a renamed fill state still loads.
+    assert said(_renamed(shipped, "Ox Fill", "LOX Fill"), "No state loads") == []

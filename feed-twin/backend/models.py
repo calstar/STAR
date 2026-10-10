@@ -250,7 +250,8 @@ class StateMachineOut(BaseModel):
     """The stand's own table, not the shipped DAQ one."""
 
     builtin: dict[str, str] = Field(default_factory=dict)
-    """Rows the twin reads by name (feedtwin.session.core.builtin_rows)."""
+    """Rows the twin acts on by name on this stand
+    (feedtwin.session.core.builtin_rows)."""
 
 
 class TankOut(BaseModel):
@@ -584,7 +585,13 @@ class HookupOut(BaseModel):
     """What is wrong with the table this hookup runs."""
     builtin: dict[str, str] = Field(default_factory=dict)
     """Rows the twin reads by name, and what each does with no valve wired to
-    it (the built-in COPV charge and dump, the transfer tank's press)."""
+    it (the built-in COPV charge and dump, the transfer tank's press) -- only
+    where it has something to act on: not the charge on a drawing whose cart
+    charges the COPV, unless rocket only."""
+    problems: list[str] = Field(default_factory=list)
+    """What this drawing cannot have: a cable to a symbol a later version of
+    the drawing dropped, a knob on a regulator it lacks. Saving is refused
+    until they are unplugged."""
 
 
 class SolverOut(BaseModel):

@@ -1222,20 +1222,31 @@ def _stand(
         hookup=hookup,
         drawn=drawn,
         notes=tuple(n for n in (problem, lost) if n),
-        whole_ids=frozenset(n.id for n in whole.diagram.nodes),
+        whole=whole,
     )
 
 
-def _lost_note(hookup: Hookup, whole: Model) -> str:
-    """Say which connectors go to symbols the drawing no longer has: their
-    rows are matched by name instead (feedtwin.session.hookup.binding)."""
+def _lost_note(hookup: Hookup, whole: Model, whose: str = "The DAQ box") -> str:
+    """Say which connectors go to symbols the drawing no longer has, by what
+    each now does: a valve connector's row is matched by name instead
+    (feedtwin.session.hookup.binding); a transducer, RTD or thermocouple is
+    read from nothing, so the console does not show it until it is rewired."""
     lost = hookup_lost(hookup, whole)
     if not lost:
         return ""
-    named = ", ".join(f"{c.name} ({c.symbol})" for c in lost)
+    valves = [c for c in lost if daqbox.KIND_OF_BOARD.get(c.board) == "valve"]
+    sensors = [c for c in lost if c not in valves]
+    said = [
+        f"{what}: {', '.join(f'{c.name} ({c.symbol})' for c in these)}."
+        for what, these in (
+            ("Valves, matched by name instead", valves),
+            ("Sensors, not shown until rewired", sensors),
+        )
+        if these
+    ]
     return (
-        f"The DAQ box cables {named} to symbols this drawing no longer has; "
-        "matched by name instead. Rewire them on the P&ID tab."
+        f"{whose} cables connectors to symbols this drawing no longer has. "
+        f"{' '.join(said)} Rewire them on the P&ID tab."
     )
 
 
@@ -1570,6 +1581,27 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
     )
 
 
+def _stand_box_notes(own: Hookup, stand: Stand) -> list[str]:
+    """What a stand's own DAQ box has that this drawing cannot -- the
+    connectors a save or a view would refuse (``daqbox.problems``): a cable on
+    the wrong board, to a symbol the DAQ cannot read or drive, on a board the
+    box lacks. The stand opens on it all the same, and says so. A cable to a
+    symbol the drawing lost is said once, by what it now does
+    (:func:`_lost_note`). Checked against the whole drawing: rocket only, a
+    cable to the cart is the box's, not a fault."""
+    whole = stand.whole or stand.model
+    drawn = {n.id for n in whole.diagram.nodes}
+    kept = tuple(c for c in own.channels or () if c.symbol in drawn)
+    wrong = daqbox.problems(replace(own, channels=kept), whole)
+    out = [_lost_note(own, whole, "The stand's DAQ box")]
+    if wrong:
+        out.append(
+            "The stand's DAQ box has connectors this drawing cannot take (a "
+            f"save would refuse them): {' '.join(wrong)} Fix them on the P&ID tab."
+        )
+    return [n for n in out if n]
+
+
 @app.post("/api/session")
 async def open_session(
     request: Request,
@@ -1603,7 +1635,7 @@ async def open_session(
         setup,
     )
     hookup, binding, table = stand.hookup, stand.binding, stand.machine
-    hookup_note = ""
+    hookup_notes: list[str] = []
     raw = settings.get("hookup")
     if isinstance(raw, Mapping) and raw:
         # A stand document carries its own hookup: used for this session only,
@@ -1618,7 +1650,7 @@ async def open_session(
             known = {r.id for r in hookup_regulators(stand.model)}
             stray = sorted({r for k in candidate.knobs for r in k.regulators} - known)
             if stray:
-                hookup_note = (
+                hookup_notes.append(
                     "The stand's hookup was made for another drawing (it names "
                     f"{', '.join(stray)}); using this drawing's own hookup."
                 )
@@ -1626,18 +1658,11 @@ async def open_session(
                 hookup = candidate
                 table = candidate.machine or _shipped_machine(machine)
                 binding = hookup_binding(stand.model, table, hookup)
-                gone = sorted(
-                    {c.symbol for c in Hookup.from_dict(raw).channels or ()}
-                    - stand.whole_ids
-                )
-                if gone:
-                    hookup_note = (
-                        "The stand's DAQ box cables connectors to symbols this "
-                        f"drawing no longer has ({', '.join(gone)}); matched by "
-                        "name instead. Rewire them on the P&ID tab."
-                    )
+                hookup_notes.extend(_stand_box_notes(Hookup.from_dict(raw), stand))
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
-            hookup_note = f"The stand's hookup could not be read ({exc}); using this drawing's own."
+            hookup_notes.append(
+                f"The stand's hookup could not be read ({exc}); using this drawing's own."
+            )
     try:
         session = Session(
             stand.model,
@@ -1654,7 +1679,7 @@ async def open_session(
     # The drawing's hookup notes, while it is the drawing's hookup that is wired.
     notices = [
         *(stand.notes if hookup is stand.hookup else ()),
-        *([hookup_note] if hookup_note else []),
+        *hookup_notes,
         *session.short_loads(),
     ]
     session.assumptions.extend(notices)
@@ -2181,6 +2206,8 @@ def _hookup_out(
         hookup, saved = own, True
     table = hookup.machine or shipped
     b = hookup_binding(model, table, hookup)
+    # The model the stand runs, for the rows it acts on by name.
+    runs = model
     if vehicle_only:
         # Rocket only (Setup.ignore_gse): the wiring the stand runs is the cut
         # drawing's -- a vent bound to the cart's solenoid is bound to the
@@ -2189,6 +2216,8 @@ def _hookup_out(
         # and connectors (on_vehicle keeps the vehicle's half at session start).
         cut = _assemble(diagram, engine, fluid_set, vehicle_only=True)
         b = hookup_binding(cut, table, hookup_on_vehicle(hookup, cut))
+        # The cart's fill went with the cart: the built-in charge is back.
+        runs = cut
     suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
         lineage=_lineage(library.get(diagram)),
@@ -2234,7 +2263,8 @@ def _hookup_out(
         ],
         machine_shipped=shipped.to_dict(),
         machine_warnings=list(table.warnings),
-        builtin=builtin_rows(table),
+        builtin=builtin_rows(table, runs),
+        problems=_impossible(hookup, model),
     )
 
 
@@ -2259,27 +2289,32 @@ async def view_hookup(
     fluid_set: str = "hotfire",
     machine: str = "diablo",
     ignore_gse: bool = False,
+    check: bool = True,
 ) -> HookupOut:
     """A hookup that is not the drawing's -- a stand's own -- shown as the
     drawing's would be, and bound the way that stand runs it. Writes nothing,
     but refuses (422) what a save would: the panels check a stand's hookup
-    here before keeping it with the stand."""
+    here before keeping it with the stand. ``check=false`` only shows it, with
+    what is wrong in ``problems`` -- a stand whose drawing lost a symbol
+    still opens in the panels, so the cable can be unplugged."""
     hookup = _hookup_from_body(body)
-    _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
+    if check:
+        _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse, own=hookup)
 
 
-def _refuse_impossible(hookup: Hookup, model: Model) -> None:
-    """422 for a hookup this drawing cannot have: a knob on a regulator it
+def _impossible(hookup: Hookup, model: Model) -> list[str]:
+    """What this drawing cannot have in ``hookup``: a knob on a regulator it
     lacks, a cable on the wrong board or to a symbol that is not here."""
     known = {r.id for r in hookup_regulators(model)}
     stray = sorted({r for k in hookup.knobs for r in k.regulators} - known)
-    if stray:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Not regulators on this drawing: {', '.join(stray)}.",
-        )
-    wrong = daqbox.problems(hookup, model)
+    out = [f"Not regulators on this drawing: {', '.join(stray)}."] if stray else []
+    return out + daqbox.problems(hookup, model)
+
+
+def _refuse_impossible(hookup: Hookup, model: Model) -> None:
+    """422 for a hookup this drawing cannot have (``_impossible``)."""
+    wrong = _impossible(hookup, model)
     if wrong:
         raise HTTPException(status_code=422, detail=" ".join(wrong))
 
@@ -2947,7 +2982,9 @@ async def tunables() -> list[dict[str, Any]]:
     return describe_tunables()
 
 
-def _machine_out(m: StateMachine, b: Any, edited: bool) -> StateMachineOut:
+def _machine_out(
+    m: StateMachine, b: Any, edited: bool, builtin: dict[str, str]
+) -> StateMachineOut:
     return StateMachineOut(
         name=m.name,
         states=list(m.states),
@@ -2967,7 +3004,7 @@ def _machine_out(m: StateMachine, b: Any, edited: bool) -> StateMachineOut:
         aborts=[s for s in m.states if m.is_abort(s)],
         table=m.to_dict(),
         edited=edited,
-        builtin=builtin_rows(m),
+        builtin=builtin,
     )
 
 
@@ -2984,7 +3021,8 @@ async def state_machine(
     DAQ's."""
     stand = _stand(diagram, engine, fluid_set, machine, vehicle_only=ignore_gse)
     edited = stand.hookup is not None and stand.hookup.machine is not None
-    return _machine_out(stand.machine, stand.binding, edited)
+    builtin = builtin_rows(stand.machine, stand.model)
+    return _machine_out(stand.machine, stand.binding, edited, builtin)
 
 
 @app.get("/api/session/{session_id}/statemachine")
@@ -2993,4 +3031,4 @@ async def session_state_machine(session_id: str) -> StateMachineOut:
     hookup included, which the drawing's endpoint cannot see."""
     session = _session(session_id)
     edited = session.hookup is not None and session.hookup.machine is not None
-    return _machine_out(session.machine, session.binding, edited)
+    return _machine_out(session.machine, session.binding, edited, session.builtin)

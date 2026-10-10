@@ -36,6 +36,16 @@ client = TestClient(app)
 STAND = (
     Path(__file__).resolve().parents[1] / "backend" / "diagrams" / "ethalox_stand.json"
 )
+#: LE4 (6): the rocket and a GSE page whose cart charges the COPV and presses
+#: a fuel transfer tank.
+LE4 = (
+    Path(__file__).resolve().parents[2]
+    / "lib"
+    / "feedtwin"
+    / "tests"
+    / "fixtures"
+    / "le4_rocket_and_gse.json"
+)
 
 #: What these tests put in the shared test library, taken out again after each:
 #: other tests open "the newest drawing", and a stand left here would become it.
@@ -44,12 +54,12 @@ UPLOADED: list[str] = []
 OPENED: list[str] = []
 
 
-def upload(name: str) -> str:
-    """The shipped stand under a name of its own. A node is nudged so the
-    bytes -- and so the artifact -- are this test's alone (the library is
-    content-addressed: the same bytes come back as whoever uploaded them
-    first, lineage and saved hookup included)."""
-    payload = json.loads(STAND.read_text())
+def upload(name: str, drawing: Path = STAND) -> str:
+    """The shipped stand (or ``drawing``) under a name of its own. A node is
+    nudged so the bytes -- and so the artifact -- are this test's alone (the
+    library is content-addressed: the same bytes come back as whoever
+    uploaded them first, lineage and saved hookup included)."""
+    payload = json.loads(drawing.read_text())
     payload["nodes"][0]["position"] = {"x": 7000 + len(name), "y": sum(map(ord, name))}
     response = client.post(
         "/api/library/diagrams",
@@ -402,7 +412,11 @@ def test_a_run_records_an_edited_table_and_a_replay_runs_it() -> None:
     table = inputs["machine_table"]
     assert "Purge" in [s["name"] for s in table["states"]]
     # Swapped with the hookup: the box's connector names are the table's rows.
-    assert group_of("machine_table.states") == group_of("hookup.channels") == "drawing"
+    # Named for both, so a rung that swapped only the table does not read as
+    # a different drawing.
+    together = group_of("machine_table.states")
+    assert together == group_of("hookup.channels") == group_of("diagram")
+    assert together == "drawing & hookup"
     assert group_of("machine") == "state machine"
 
     replay = _session_from_inputs({"diagram": diagram, **inputs})
@@ -415,24 +429,60 @@ def test_a_run_records_an_edited_table_and_a_replay_runs_it() -> None:
 
 
 def test_rows_the_twin_reads_by_name_are_named() -> None:
-    """The built-in COPV charge and dump, and the transfer tank's press, follow
-    table rows by name with no valve wired to them. The editor must not call
-    them "wired to nothing", so the API says which they are."""
+    """The built-in COPV charge and dump follow table rows by name with no
+    valve wired to them. The editor must not call them "wired to nothing", so
+    the API says which they are -- and only those the stand acts on: the
+    shipped stand has no cart transfer tank, so nothing presses one in Fuel
+    Fill and Fuel Fill Press is a row like any other."""
     diagram = upload("daq box builtin.json")
     builtin = get(diagram)["builtin"]
-    assert set(builtin) >= {"GSE High Press Control", "GSE High Press Vent"}
-    assert "Fuel Fill Press" in builtin
-    assert "LOX Main" not in builtin
+    assert set(builtin) == {"GSE High Press Control", "GSE High Press Vent"}
     table = client.get("/api/statemachine", params={"diagram": diagram}).json()
     assert table["builtin"] == builtin
+    stand = open_stand(diagram)
+    running = client.get(f"/api/session/{stand['id']}/statemachine").json()
+    assert running["builtin"] == builtin
+
+
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+def test_a_drawn_cart_fill_is_not_built_in_unless_the_cart_is_cut() -> None:
+    """LE4 (6) draws the cart charging the COPV: the built-in charge stands
+    aside and an unwired GSE High Press Control would charge nothing, so it
+    is not built-in -- the cart's transfer tank press is. Rocket only, the
+    cart is cut, the built-in charge fills the COPV again and there is no
+    transfer tank to press."""
+    diagram = upload("daq box builtin LE4.json", LE4)
+    for rocket_only in (False, True):
+        params = {"diagram": diagram, "ignore_gse": str(rocket_only).lower()}
+        builtin = client.get("/api/hookup", params=params).json()["builtin"]
+        assert ("GSE High Press Control" in builtin) is rocket_only
+        assert ("GSE High Press Vent" in builtin) is rocket_only
+        assert ("Fuel Fill Press" in builtin) is not rocket_only
+        table = client.get("/api/statemachine", params=params).json()
+        assert table["builtin"] == builtin
+        opened = client.post(
+            "/api/session",
+            params={"diagram": diagram},
+            json={"state": "Idle", "ignore_gse": rocket_only},
+        )
+        assert opened.status_code == 200, opened.text
+        OPENED.append(opened.json()["id"])
+        running = client.get(f"/api/session/{opened.json()['id']}/statemachine")
+        assert running.json()["builtin"] == builtin
 
 
 def test_a_connector_to_a_symbol_the_drawing_lost_is_said_and_matched_by_name() -> None:
-    """A redrawn main valve with a new id: the box still names the old one.
-    The stand opens with LOX Main matched by name, and says why."""
+    """A redrawn main valve and fuel transducer with new ids: the box still
+    names the old ones. The stand opens with LOX Main matched by name, and
+    says why; the transducer is matched by nothing, and that is said too."""
     diagram = upload("daq box lost.json")
     first = get(diagram)
-    body = {**first["hookup"], "channels": box(("sol12", 1, "LOX Main", "MVO-old"))}
+    body = {
+        **first["hookup"],
+        "channels": box(
+            ("sol12", 1, "LOX Main", "MVO-old"), ("pt_low", 1, "Fuel tank", "PT-old")
+        ),
+    }
     # Saving refuses it (not on the drawing); a stand's own hookup carries it.
     assert (
         client.put("/api/hookup", params={"diagram": diagram}, json=body).status_code
@@ -445,7 +495,12 @@ def test_a_connector_to_a_symbol_the_drawing_lost_is_said_and_matched_by_name() 
     ).json()
     OPENED.append(opened["id"])
     assert _SESSIONS[opened["id"]].binding.to_symbol.get("LOX Main") == "MVO"
-    assert any("no longer has" in n and "MVO-old" in n for n in opened["notes"])
+    (said,) = [n for n in opened["notes"] if "no longer has" in n]
+    assert "matched by name instead: LOX Main (MVO-old)." in said
+    assert "not shown until rewired: Fuel tank (PT-old)." in said
+    assert "Fuel tank (PT-old)" not in said.split("Sensors")[0], "not matched"
+    # Said once: not again as a connector the drawing cannot take.
+    assert not [n for n in opened["notes"] if "cannot take" in n]
 
 
 def test_an_edited_table_without_the_states_the_twin_needs_is_warned() -> None:
@@ -458,13 +513,43 @@ def test_an_edited_table_without_the_states_the_twin_needs_is_warned() -> None:
         if k != "Vent"
     }
     said = client.post("/api/statemachine/check", json=table).json()
-    assert said["ok"] and any("no Vent" in w for w in said["warnings"])
+    (vent,) = [w for w in said["warnings"] if "keys on" in w]
+    assert said["ok"] and "no Vent" in vent
+    # Its own reason, not all five.
+    assert "Vent" in vent and "Idle" not in vent and "ENG ABORT" not in vent
+
+
+def test_an_edited_table_with_no_ox_fill_state_is_warned() -> None:
+    """The twin loads a tank only in a state named for its fill; renamed, Ox
+    Fill loads nothing and the LOX tank is never filled. Said, for the LOX
+    side alone."""
+    shipped = get(upload("daq box no ox fill.json"))["machine_shipped"]
+    table = json.loads(json.dumps(shipped))
+    for row in table["states"]:
+        if row["name"] == "Ox Fill":
+            row["name"] = "Oxidiser Load"
+    table["open"] = {
+        ("Oxidiser Load" if k == "Ox Fill" else k): v for k, v in table["open"].items()
+    }
+    table["allowed"] = {
+        ("Oxidiser Load" if k == "Ox Fill" else k): [
+            "Oxidiser Load" if t == "Ox Fill" else t for t in v
+        ]
+        for k, v in table["allowed"].items()
+    }
+    said = client.post("/api/statemachine/check", json=table).json()
+    assert said["ok"], said
+    (lox,) = [w for w in said["warnings"] if "No state loads" in w]
+    assert "LOX tank" in lox and "fuel" not in lox
+    shipped_said = client.post("/api/statemachine/check", json=shipped).json()
+    assert not [w for w in shipped_said["warnings"] if "No state loads" in w]
 
 
 def test_viewing_a_stands_hookup_refuses_what_a_save_would() -> None:
     """The panels check a stand's own hookup here before keeping it with the
-    stand: a cable on the wrong board must be refused, as a save refuses it,
-    or the stand would open on the drawing's hookup without a word."""
+    stand: a cable on the wrong board must be refused, as a save refuses it.
+    A stand that carries one anyway still opens on it -- a stand's own
+    hookup is not refused at the door -- and says what is wrong with it."""
     diagram = upload("daq box view refuses.json")
     body = {
         **get(diagram)["hookup"],
@@ -472,3 +557,39 @@ def test_viewing_a_stands_hookup_refuses_what_a_save_would() -> None:
     }
     refused = client.post("/api/hookup/view", params={"diagram": diagram}, json=body)
     assert refused.status_code == 422, refused.text
+    opened = client.post(
+        "/api/session",
+        params={"diagram": diagram},
+        json={"state": "Idle", "hookup": body},
+    )
+    assert opened.status_code == 200, opened.text
+    OPENED.append(opened.json()["id"])
+    (said,) = [n for n in opened.json()["notes"] if "cannot take" in n]
+    assert "LOX Main" in said and "does not plug into Solenoids 12V" in said
+    assert "no longer has" not in " ".join(opened.json()["notes"])
+
+
+def test_a_stands_hookup_with_a_lost_cable_still_shows_so_it_can_be_unplugged() -> None:
+    """A stand kept a cable to a symbol a later drawing dropped. The panels
+    load it with ``check=false`` and say what is wrong, or the user could
+    never reach the DAQ box to unplug it; a save still refuses it."""
+    diagram = upload("daq box lost view.json")
+    body = {
+        **get(diagram)["hookup"],
+        "channels": box(("sol12", 1, "LOX Main", "MVO-old")),
+    }
+    params = {"diagram": diagram}
+    assert client.post("/api/hookup/view", params=params, json=body).status_code == 422
+    shown = client.post(
+        "/api/hookup/view", params={**params, "check": "false"}, json=body
+    )
+    assert shown.status_code == 200, shown.text
+    problems = shown.json()["problems"]
+    assert len(problems) == 1 and "MVO-old" in problems[0]
+    # Unplugged, nothing is wrong.
+    clean = client.post(
+        "/api/hookup/view",
+        params={**params, "check": "false"},
+        json={**body, "channels": []},
+    ).json()
+    assert clean["problems"] == []

@@ -36,6 +36,7 @@ class Stand:
     #: What the stand was built on that the operator should be told: a saved
     #: hookup that could not be read, and was replaced by the suggestion.
     notes: tuple[str, ...] = ()
-    #: Every symbol id on the whole drawing, the cart's too when the stand is
-    #: the rocket alone: what a stand's own hookup may name.
-    whole_ids: frozenset[str] = frozenset()
+    #: The whole drawing, the cart's too when the stand is the rocket alone
+    #: (else ``model`` itself): what a stand's own hookup is checked against.
+    #: None: ``model``.
+    whole: Model | None = None

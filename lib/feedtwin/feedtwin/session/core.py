@@ -50,7 +50,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Deque, Mapping
+from typing import Any, Callable, Collection, Deque, Mapping
 
 from feedtwin.comps.correlations import (
     DEFAULT_FRICTION_METHOD,
@@ -83,7 +83,7 @@ from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
 from feedtwin.session.hookup import CHARGE, DOME, Hookup
 from feedtwin.session.model import AssemblyError, Model
-from feedtwin.session.statemachine import Binding, StateMachine, _words
+from feedtwin.session.statemachine import Binding, StateMachine, _words, fills
 
 #: Standard atmosphere [Pa]. What a vented vessel sits at, and the zero of every
 #: gauge on the stand -- see `feedtwin.session.gauge.psig`.
@@ -279,28 +279,169 @@ FILL_SUPPLY_T = 293.15
 #: cannot charge or dump such a bottle, and the notes say so (`Session._notes`).
 GSE_CHARGE = "GSE High Press Control"
 GSE_DUMP = "GSE High Press Vent"
+#: Symbols the session integrates as gas bottles (:meth:`Session._build_vessels`).
+BOTTLE_TYPES = frozenset({"KBOTTLE", "DEWAR"})
 
 
-def builtin_rows(machine: StateMachine) -> dict[str, str]:
-    """The table's rows the session reads by name, with what each does when no
-    valve on the drawing answers to it: the built-in COPV charge and dump, and
-    the cart's press on a transfer tank whose press line is not drawn
+def _ground(model: Model) -> frozenset[str]:
+    """Drawing ids off the vehicle (:attr:`Session.ground`)."""
+    vehicle = model.built.vehicle
+    if vehicle is None:
+        return frozenset()
+    return frozenset(n.id for n in model.diagram.nodes if n.id not in vehicle)
+
+
+def _bottle_ids(model: Model) -> list[str]:
+    """The drawing's bottles, in the order the session builds them."""
+    net = model.built.network
+    return [
+        n.id
+        for n in model.diagram.nodes
+        if n.type in BOTTLE_TYPES and n.id in net.nodes
+    ]
+
+
+def drawn_fills(model: Model) -> tuple[dict[str, str], dict[str, str]]:
+    """The vessels the drawing itself fills, each with what fills it:
+    ``(tanks, bottles)``, vessel id -> supply id.
+
+    Tanks a drawn dewar reaches, and bottles another drawn bottle or dewar
+    reaches, through the drawing's lines and valves (open or shut -- a valve
+    is how the fill is commanded, not whether it exists) without passing
+    through another vessel -- from another page of the drawing, which is
+    where pid-designer puts the cart. Two flight bottles manifolded together
+    on the vehicle page are not one filling the other. A cart's own tank and
+    bottles are supplies and never listed. The session's built-in fill steps
+    aside for every one (:attr:`Session._drawn_fill`)."""
+    built = model.built
+    net = built.network
+    types = {n.id: n.type for n in model.diagram.nodes}
+    pages = {n.id: n.page or "Main" for n in model.diagram.nodes}
+    # A vessel joined to its manifold by an unsized line shares a node with
+    # the junction: the vessel is what that place is. (Keyed last-wins, a
+    # cart's K-bottle read as its junction and was never found.)
+    place: dict[str, str] = {}
+    for sid, kind in types.items():
+        where = built.node_of.get(sid, sid)
+        if where not in place or kind in {"TANK", "KBOTTLE", "DEWAR"}:
+            place[where] = sid
+    neighbours: dict[str, set[str]] = {}
+    for branch in net.branches.values():
+        neighbours.setdefault(branch.upstream, set()).add(branch.downstream)
+        neighbours.setdefault(branch.downstream, set()).add(branch.upstream)
+
+    def reaches(starts: set[str], kinds: set[str], own: str) -> str:
+        seen, frontier = set(starts), list(starts)
+        while frontier:
+            here = frontier.pop()
+            for there in neighbours.get(here, ()):
+                if there in seen:
+                    continue
+                seen.add(there)
+                symbol = place.get(there, "")
+                if (
+                    symbol
+                    and symbol != own
+                    and types.get(symbol) in kinds
+                    and pages.get(symbol) != pages.get(own)
+                ):
+                    return symbol
+                if net.nodes[there].pressure is not None:
+                    continue  # another vessel, a vent, the chamber: stop
+                frontier.append(there)
+        return ""
+
+    tanks: dict[str, str] = {}
+    fed_by = {
+        vehicle_tank: supply_tank
+        for supply_tank, fed in built.supplies.items()
+        for vehicle_tank in fed
+    }
+    for tank_id, ports in built.tanks.items():
+        if tank_id in built.supplies:
+            continue  # the cart's own tank: pre-loaded, never loaded here
+        supply = fed_by.get(tank_id) or reaches(
+            {ports.ullage, ports.outlet}, {"DEWAR"}, tank_id
+        )
+        if supply:
+            tanks[tank_id] = supply
+    bottles: dict[str, str] = {}
+    ground = _ground(model)
+    for bottle_id in _bottle_ids(model):
+        if bottle_id in ground:
+            continue  # a cart bottle is the supply, delivered full
+        start = built.node_of.get(bottle_id, bottle_id)
+        supply = reaches({start}, {"KBOTTLE", "DEWAR"}, bottle_id)
+        if supply:
+            bottles[bottle_id] = supply
+    return tanks, bottles
+
+
+def _pressed_supplies(model: Model) -> dict[str, list[str]]:
+    """The cart's transfer tanks a table row presses
+    (:meth:`Session._supply_press`), labels by side (``lox``/``fuel``): a
+    supply tank with a drawn pressure. Not a dewar: its own circuit holds it,
+    whatever the table says."""
+    built = model.built
+    by_id = {n.id: n for n in model.diagram.nodes}
+    out: dict[str, list[str]] = {}
+    for tank_id in built.supplies:
+        node, ports = by_id.get(tank_id), built.tanks.get(tank_id)
+        if node is None or ports is None:
+            continue  # never built as a vessel, so never pressed
+        if node.params.get("pressure") is None or node.drawn_as == "DEWAR":
+            continue
+        species = Fluid(built.network.nodes[ports.outlet].fluid).name
+        out.setdefault(propellant_side(species), []).append(node.label or tank_id)
+    return out
+
+
+def builtin_rows(
+    machine: StateMachine, model: Model, drawn: Collection[str] | None = None
+) -> dict[str, str]:
+    """The table's rows the session reads by name and acts on itself with no
+    valve wired to them, with what each does: the built-in COPV charge and
+    dump, and the cart's press on a transfer tank
     (:meth:`Session._supply_press`). Such a row is not "wired to nothing" --
-    renaming or dropping it stops what it does, and an editor must say so."""
+    renaming or dropping it stops what it does, and an editor must say so.
+
+    Only where the session would act on ``model``: the charge and dump while
+    a vehicle bottle's fill is not drawn (a cart drawn charging it charges it
+    through its own valves, and an unwired GSE High Press Control then
+    charges nothing), the press while a transfer tank of the row's side has a
+    drawn pressure. Rocket only, give it the cut model: the cart's fill went
+    with the cart. ``drawn``: the vessels the drawing fills, when a session
+    has found them already (:attr:`Session.builtin`); else found here."""
+    if drawn is None:
+        tanks, bottles = drawn_fills(model)
+        drawn = {*tanks, *bottles}
+    ground = _ground(model)
+    labels = {n.id: n.label or n.id for n in model.diagram.nodes}
+    charged = [
+        labels.get(b, b)
+        for b in _bottle_ids(model)
+        if b not in drawn and b not in ground
+    ]
+    pressed = _pressed_supplies(model)
     out: dict[str, str] = {}
     for row in machine.actuators:
         words = _words(row)
-        if row == GSE_CHARGE:
+        sides = sorted(words & set(pressed))
+        if row == GSE_CHARGE and charged:
             out[row] = (
-                "Charges the COPV by the twin's built-in fill when the cart's fill is not drawn."
+                f"Charges {', '.join(charged)} by the twin's built-in fill: "
+                "nothing on the stand fills it."
             )
-        elif row == GSE_DUMP:
+        elif row == GSE_DUMP and charged:
             out[row] = (
-                "Dumps the COPV by the twin's built-in vent when the cart's fill is not drawn."
+                f"Dumps {', '.join(charged)} by the twin's built-in vent: "
+                "nothing on the stand fills it."
             )
-        elif {"fill", "press"} <= words and words & {"fuel", "lox"}:
+        elif {"fill", "press"} <= words and sides:
+            supplies = [label for side in sides for label in pressed[side]]
             out[row] = (
-                "Presses the cart's transfer tank when no press line to it is drawn."
+                f"Presses {', '.join(supplies)} to its drawn pressure by the "
+                "cart's built-in press while no valve is wired to this row."
             )
     return out
 
@@ -2080,10 +2221,7 @@ class Session:
         """Drawing ids of the ground support: everything off the vehicle
         (:func:`feedtwin.pid.roles.vehicle_ids`). Empty for a drawing that is
         one piece."""
-        vehicle = self.model.built.vehicle
-        if vehicle is None:
-            return frozenset()
-        return frozenset(n.id for n in self.model.diagram.nodes if n.id not in vehicle)
+        return _ground(self.model)
 
     def fire_loads(self) -> dict[str, float]:
         """Propellant a fire is loaded with, per vehicle tank [kg].
@@ -2137,82 +2275,27 @@ class Session:
         return tuple(t for t in self.tanks if t not in ground)
 
     def _find_drawn_fills(self) -> frozenset[str]:
-        """Tanks a drawn dewar reaches, and bottles another drawn bottle or
-        dewar reaches, through the drawing's lines and valves (open or shut --
-        a valve is how the fill is commanded, not whether it exists) without
-        passing through another vessel -- from another page of the drawing,
-        which is where pid-designer puts the cart. Two flight bottles
-        manifolded together on the vehicle page are not one filling the other."""
-        built = self.model.built
-        net = built.network
-        types = {n.id: n.type for n in self.model.diagram.nodes}
-        pages = {n.id: n.page or "Main" for n in self.model.diagram.nodes}
-        # A vessel joined to its manifold by an unsized line shares a node with
-        # the junction: the vessel is what that place is. (Keyed last-wins, a
-        # cart's K-bottle read as its junction and was never found.)
-        place: dict[str, str] = {}
-        for sid, kind in types.items():
-            where = built.node_of.get(sid, sid)
-            if where not in place or kind in {"TANK", "KBOTTLE", "DEWAR"}:
-                place[where] = sid
-        neighbours: dict[str, set[str]] = {}
-        for branch in net.branches.values():
-            neighbours.setdefault(branch.upstream, set()).add(branch.downstream)
-            neighbours.setdefault(branch.downstream, set()).add(branch.upstream)
-
-        def reaches(starts: set[str], kinds: set[str], own: str) -> str:
-            seen, frontier = set(starts), list(starts)
-            while frontier:
-                here = frontier.pop()
-                for there in neighbours.get(here, ()):
-                    if there in seen:
-                        continue
-                    seen.add(there)
-                    symbol = place.get(there, "")
-                    if (
-                        symbol
-                        and symbol != own
-                        and types.get(symbol) in kinds
-                        and pages.get(symbol) != pages.get(own)
-                    ):
-                        return symbol
-                    if net.nodes[there].pressure is not None:
-                        continue  # another vessel, a vent, the chamber: stop
-                    frontier.append(there)
-            return ""
-
-        found: set[str] = set()
+        """The vessels the drawing fills (:func:`drawn_fills`), each said: its
+        built-in fill steps aside."""
         labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
-        fed_by = {
-            vehicle_tank: supply_tank
-            for supply_tank, fed in built.supplies.items()
-            for vehicle_tank in fed
-        }
-        for tank_id, ports in built.tanks.items():
-            if tank_id in built.supplies:
-                continue  # the cart's own tank: pre-loaded, never loaded here
-            supply = fed_by.get(tank_id) or reaches(
-                {ports.ullage, ports.outlet}, {"DEWAR"}, tank_id
+        tanks, bottles = drawn_fills(self.model)
+        for tank_id, supply in tanks.items():
+            self.assumptions.append(
+                f"{labels.get(tank_id, tank_id)} is loaded through the drawing "
+                f"(from {labels.get(supply, supply)}): the built-in tanker load is off."
             )
-            if supply:
-                found.add(tank_id)
-                self.assumptions.append(
-                    f"{labels.get(tank_id, tank_id)} is loaded through the drawing "
-                    f"(from {labels.get(supply, supply)}): the built-in tanker load is off."
-                )
-        ground = self.ground
-        for bottle_id in self.bottles:
-            if bottle_id in ground:
-                continue  # a cart bottle is the supply, delivered full
-            start = built.node_of.get(bottle_id, bottle_id)
-            supply = reaches({start}, {"KBOTTLE", "DEWAR"}, bottle_id)
-            if supply:
-                found.add(bottle_id)
-                self.assumptions.append(
-                    f"{labels.get(bottle_id, bottle_id)} is charged through the drawing "
-                    f"(from {labels.get(supply, supply)}): the cart's built-in charge is off."
-                )
-        return frozenset(found)
+        for bottle_id, supply in bottles.items():
+            self.assumptions.append(
+                f"{labels.get(bottle_id, bottle_id)} is charged through the drawing "
+                f"(from {labels.get(supply, supply)}): the cart's built-in charge is off."
+            )
+        return frozenset({*tanks, *bottles})
+
+    @property
+    def builtin(self) -> dict[str, str]:
+        """The table's rows this stand acts on by name with no valve wired
+        (:func:`builtin_rows`), on the fills it found."""
+        return builtin_rows(self.machine, self.model, self._drawn_fill)
 
     def _find_cut_dome_ports(self) -> dict[str, frozenset[str]]:
         """The network nodes a dome-loaded regulator's dome line reaches, for
@@ -2402,7 +2485,7 @@ class Session:
                 )
 
         for node in self.model.diagram.nodes:
-            if node.type not in {"KBOTTLE", "DEWAR"} or node.id not in net.nodes:
+            if node.type not in BOTTLE_TYPES or node.id not in net.nodes:
                 continue
             volume = node.params.get("volume")
             pressure = node.params.get("pressure")
@@ -4688,16 +4771,15 @@ class Session:
         that is where a load comes from, pre-loaded.
 
         Matched on the state's name against the tank's fluid, because fill comes
-        from a tanker that is not on the drawing -- see FILL_RATE.
+        from a tanker that is not on the drawing -- see FILL_RATE. The rule is
+        :func:`~feedtwin.session.statemachine.fills`, which an edited table is
+        checked against.
         """
-        name = self.state.lower()
-        if "fill" not in name or sim.id in self.ground:
+        if "fill" not in self.state.lower() or sim.id in self.ground:
             return False
         net = self.model.built.network
         species = net.nodes[sim.outlet_node].fluid
-        if species == "oxygen":
-            return "ox" in name or "lox" in name
-        return "fuel" in name or "eth" in name
+        return fills(self.state, "lox" if species == "oxygen" else "fuel")
 
     def _build_line_walls(self) -> None:
         """One lumped wall per line, started at the temperature its line holds.

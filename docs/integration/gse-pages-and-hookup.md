@@ -109,10 +109,15 @@ config: `[actuator_roles]` puts each actuator name on a board and channel,
   stand-in (a disconnect whose mate was cut, `Model.meta["capped"]`), which the
   box cannot take.
 * A connector whose symbol the drawing no longer has (redrawn, new id) is matched
-  by name again, and the stand says so in its notes.
+  by name again if it is a valve's (its name is a row); a sensor's is not shown
+  until rewired. The stand says which in its notes, and also names any connector
+  of a stand's own box that a save would refuse (wrong board, not a DAQ symbol).
 * Some rows the twin reads by name with no valve wired (`core.builtin_rows`: the
-  built-in COPV charge and dump, the transfer tank's press). The State machine
-  tab shows them as built-in, not "wired to nothing".
+  built-in COPV charge and dump, the transfer tank's press), listed only where the
+  stand acts on them: the charge and dump while a vehicle bottle's fill is not
+  drawn (on the cut drawing when rocket only), the press while a cart transfer
+  tank of that side has a drawn pressure. The State machine tab shows them as
+  built-in, not "wired to nothing".
 * The console shows what is wired: a valve or transducer the box can take is on
   it only with a connector, as on the real DAQ's dashboard. Gauges, tanks and the
   engine's channels are the twin's and show as before (`SessionOut.wired`).
@@ -121,10 +126,12 @@ config: `[actuator_roles]` puts each actuator name on a board and channel,
 (`StateMachine.to_dict` / `machine_from_dict`: states with their panel row/col and
 abort flag, rows, which rows each state opens *as written*, and the legal moves).
 `None` is the shipped DAQ table. An edited table is read like the CSVs: Idle held
-shut, mains outside Fire and Fire bypasses warned, and a missing Idle, Ready,
-Fire, Vent or Engine Abort warned (the twin keys on them). It rides with the
-hookup, so a stand carries its own. A run records it as `machine_table`, which the
-Explain ladder swaps with the hookup, and a replay runs it.
+shut, mains outside Fire and Fire bypasses warned, a missing Idle, Ready,
+Fire, Vent or Engine Abort warned with its reason (the twin keys on them), and a
+table in which no state loads the LOX or the fuel tank warned (a fill state's name
+says fill and its side). It rides with the hookup, so a stand carries its own. A
+run records it as `machine_table`, which the Explain ladder swaps with the hookup
+(the "drawing & hookup" rung), and a replay runs it.
 `POST /api/statemachine/check` warns about a table being edited.
 `GET /api/session/{id}/statemachine` is the table a running stand commands,
 including a stand's own hookup.
@@ -136,7 +143,8 @@ including a stand's own hookup.
   connector onto a symbol, or click it and then the symbol.
 * **State machine**: the DAQ's State tab: states, what each opens, the allowed
   transitions, and the DAQ's CSVs to download or upload.
-* **Hookup**: the knobs, as named dials with start, low and high values, each
+* **Knobs** (the nav's name for the old Hookup page; its path is still
+  `/hookup`): the knobs, as named dials with start, low and high values, each
   with the regulators it turns.
 
 The four edit one draft and save together.

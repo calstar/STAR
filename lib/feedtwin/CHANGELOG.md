@@ -39,10 +39,26 @@ be able to find why they differ.
 - `core.builtin_rows(machine)`: the rows the session reads by name (the built-in
   COPV charge and dump, the transfer tank's press), with what each does.
 
+### Fixed
+- `builtin_rows(machine, model, drawn=None)` follows the drawing: the COPV charge and
+  dump only while a vehicle bottle's fill is not drawn (not on LE4 (6), whose cart
+  charges it; again rocket only), the fill-press row only for a cart transfer tank of
+  its side with a drawn pressure (not on the shipped stand). The drawn-fill walk is
+  `core.drawn_fills(model)`, which `Session._drawn_fill` now calls; `Session.builtin`
+  lists the rows on a stand's own fills.
+- An edited table missing a state the twin keys on is warned with that state's reason
+  alone (`KEYED_STATES` is name -> reason), and one in which no state loads a side's
+  tank is warned for that side (`statemachine.fills`, the rule `Session._fills` now
+  calls).
+- `lost_connectors`: only a connector named for a table row is matched by name again;
+  a transducer's names nothing until it is rewired (docstring).
+
 ### Changed results
 - None. A hookup without channels and a table without flags bind and run as before
   (`tests/test_daq_hookup.py`, `test_hookup.py`); the shipped table's aborts from its
-  new `_states.csv` are the three the name rule found.
+  new `_states.csv` are the three the name rule found. The fixes above are reporting
+  only: an LE4 (6) whole and rocket-only, and shipped-stand, pad walk is bit-identical
+  to before (history, notes, drawn fills).
 
 ## Unreleased — 2026-10-09
 

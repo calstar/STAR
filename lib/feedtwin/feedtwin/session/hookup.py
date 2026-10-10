@@ -643,8 +643,10 @@ def _stand_ins(model: Model) -> frozenset[str]:
 
 def lost_connectors(hookup: Hookup, model: Model) -> list[Channel]:
     """The box's connectors whose cable goes to a symbol the drawing no longer
-    has: their rows are matched by name instead, and the stand should say so.
-    Give it the whole drawing: on a rocket-only one the cart's connectors are
-    cut on purpose (:func:`on_vehicle`)."""
+    has, which the stand should say. A connector named for a table row (a
+    valve's) has its row matched by name instead (:func:`binding`); any other
+    -- a transducer's -- names nothing until it is rewired. Give it the whole
+    drawing: on a rocket-only one the cart's connectors are cut on purpose
+    (:func:`on_vehicle`)."""
     drawn = {n.id for n in model.diagram.nodes}
     return [c for c in hookup.channels or () if c.symbol not in drawn]
