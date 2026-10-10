@@ -217,8 +217,11 @@ export function badgeRoom(at: { x: number; y: number }, others: readonly { x: nu
 /** What a symbol's badge says: "S12·1 LOX Main" when `room` allows, the name
  *  cut short when only part of it fits, the connector alone when less. The
  *  overlay takes no pointer, so a hover could never say the name. */
-export function badgeLabel(c: ChannelDef, room: number): string {
+export function badgeLabel(c: ChannelDef, room: number, tag = ''): string {
   const head = badge(c);
+  // A name that is only the symbol's own tag says nothing the drawing does
+  // not already print beside it: "RTD·1", not "RTD·1 OX-RTD-1".
+  if (tag && c.name.trim().toLowerCase() === tag.trim().toLowerCase()) return head;
   const full = `${head} ${c.name}`;
   if (badgeWidth(full) <= room) return full;
   // The space and the ellipsis take two.

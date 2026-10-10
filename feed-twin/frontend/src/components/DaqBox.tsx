@@ -27,7 +27,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
-import type { BoardDef, BoardId, ChannelDef, SymbolKind } from '../api';
+import type { BoardDef, BoardId, ChannelDef, HookupSymbol, SymbolKind } from '../api';
 import {
   BOARD_KEY,
   type DaqUi,
@@ -377,6 +377,22 @@ export function DaqBox({
               </option>
             ))}
           </select>
+          {hookup.data && (
+            <span
+              className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold ${
+                hookup.data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
+              }`}
+              title={
+                hookup.data.saved
+                  ? hookup.onStand
+                    ? 'The stand’s own hookup.'
+                    : 'Saved for this drawing.'
+                  : 'The twin’s suggestion, matched by name: not saved. Until it is, the console shows every valve and transducer.'
+              }
+            >
+              {hookup.data.saved ? 'Saved' : 'Suggested'}
+            </span>
+          )}
           <BoxMenu
             disabled={locked}
             onUnplugAll={() => {
@@ -527,6 +543,14 @@ export function DaqBox({
           </Waiting>
         )}
 
+        {!selected && !armed && !picked && !locked && (
+          <Unplugged
+            symbols={hookup.symbols.filter((x) => x.kind === def.kind && !channelOf(draft, x.id))}
+            boardLabel={def.label}
+            onPlug={(id) => plugIn(hookup, ui, { board: boardId, slot: freeSlot(draft, boardId) }, id, drawn)}
+          />
+        )}
+
         {selected && (
           <Detail
             key={`${selected.board}:${selected.slot}`}
@@ -556,6 +580,41 @@ export function DaqBox({
       {/* At the foot, so it never pushes the board down under a drag. */}
       <div className="flex-shrink-0 px-3 pb-2 empty:hidden">
         <HookupSaveBar compact />
+      </div>
+    </div>
+  );
+}
+
+/** What this board could take and nothing has plugged in: one click puts it
+ *  on the next free connector, for a symbol that is hard to find on the
+ *  drawing. */
+function Unplugged({
+  symbols,
+  boardLabel,
+  onPlug,
+}: {
+  symbols: HookupSymbol[];
+  boardLabel: string;
+  onPlug: (id: string) => void;
+}) {
+  if (symbols.length === 0) return null;
+  return (
+    <div className="mt-3 border-t border-[var(--line)] pt-2">
+      <div className="caps text-[10px]" title={`Click one to plug it into the next free connector on ${boardLabel}.`}>
+        Not wired · {symbols.length}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        {symbols.map((x) => (
+          <button
+            key={x.id}
+            type="button"
+            onClick={() => onPlug(x.id)}
+            title={`${x.label} (${x.type}, ${x.page}): plug into the next free connector`}
+            className="border border-[var(--line-strong)] px-1.5 py-px font-mono text-[10.5px] text-[var(--ink-2)] hover:border-[#5a5a5a] hover:text-[var(--ink)]"
+          >
+            {x.label}
+          </button>
+        ))}
       </div>
     </div>
   );

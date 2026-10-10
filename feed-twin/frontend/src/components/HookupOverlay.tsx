@@ -89,7 +89,8 @@ export function HookupOverlay({
         if (!n) return [];
         const x = n.position.x + n.measured!.width! / 2;
         const y = n.position.y - (readings && READ.has(typeOf(n)) ? 19 : 6);
-        return [{ c, x, y }];
+        const tag = String((n.data as { label?: string } | undefined)?.label ?? '');
+        return [{ c, x, y, tag }];
       })
     : [];
 
@@ -135,7 +136,7 @@ export function HookupOverlay({
           />
         )}
       </svg>
-      {placed.map(({ c, x, y }, i) => {
+      {placed.map(({ c, x, y, tag }, i) => {
         const lit = rings.has(c.symbol);
         const room = badgeRoom({ x, y }, placed.filter((_, j) => j !== i));
         return (
@@ -151,7 +152,7 @@ export function HookupOverlay({
               whiteSpace: 'nowrap',
             }}
           >
-            {badgeLabel(c, room)}
+            {badgeLabel(c, room, tag)}
           </div>
         );
       })}

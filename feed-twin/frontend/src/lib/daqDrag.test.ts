@@ -270,3 +270,11 @@ describe('the shared store', () => {
     expect(heard).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('a badge with nothing to add', () => {
+  it('drops a name that is only the symbol’s tag', () => {
+    const c = { board: 'rtd' as const, slot: 1, name: 'OX-RTD-1', symbol: 'n' };
+    expect(badgeLabel(c, 400, 'OX-RTD-1')).toBe('RTD·1');
+    expect(badgeLabel({ ...c, name: 'LOX upper' }, 400, 'OX-RTD-1')).toBe('RTD·1 LOX upper');
+  });
+});

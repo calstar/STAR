@@ -104,6 +104,15 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
   const m = draft.machine;
   const [pick, setPick] = useState<Pick>(null);
   const [justAdded, setJustAdded] = useState('');
+  const [page, setPageState] = useState<Page>(recallPage);
+  const setPage = (p: Page) => {
+    setPageState(p);
+    try {
+      window.localStorage.setItem(PAGE_KEY, p);
+    } catch {
+      // Storage can be unavailable; the page still changes for this tab.
+    }
+  };
 
   const edit = useCallback<Edit>((f) => update((d) => ({ ...d, machine: f(d.machine) })), [update]);
 
@@ -271,6 +280,32 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
         />
       </section>
 
+      {/* Three pages, as the DAQ's own State tab has three tables: what each
+          state opens first, because pairing names to states is what this tab
+          is for. */}
+      <nav className="flex gap-1 border-b border-gray-800">
+        {PAGES.map(([id, label, hint]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setPage(id)}
+            title={hint}
+            aria-current={page === id ? 'page' : undefined}
+            className={`-mb-px border-b px-3 pb-1.5 font-mono text-[13px] ${
+              page === id
+                ? 'border-[var(--ink)] text-[var(--ink)]'
+                : 'border-transparent text-[var(--ink-3)] hover:text-[var(--ink-2)]'
+            }`}
+          >
+            {label}
+            {id === 'moves' && noAbort.length > 0 && (
+              <span className="ml-1.5 text-[10px] text-[var(--color-warning)]">{noAbort.length}</span>
+            )}
+          </button>
+        ))}
+      </nav>
+
+      {page === 'states' && (
       <StatesCard
         m={m}
         current={current}
@@ -286,7 +321,9 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
           setJustAdded(added);
         }}
       />
+      )}
 
+      {page === 'opens' && (
       <OpensCard
         m={m}
         groups={groups}
@@ -300,10 +337,30 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
         edit={edit}
         builtin={builtin}
       />
+      )}
 
-      <MovesCard m={m} current={current} locked={locked} edit={edit} />
+      {page === 'moves' && <MovesCard m={m} current={current} locked={locked} edit={edit} />}
     </div>
   );
+}
+
+// ------------------------------------------------------------------- pages
+
+type Page = 'opens' | 'moves' | 'states';
+const PAGE_KEY = 'feedtwin.statemachine.page';
+const PAGES: readonly (readonly [Page, string, string])[] = [
+  ['opens', 'What each state opens', 'Tick the states each name opens in'],
+  ['moves', 'Transitions', 'Which state may follow which'],
+  ['states', 'States', 'Add, rename, order and place the states'],
+];
+
+function recallPage(): Page {
+  try {
+    const p = window.localStorage.getItem(PAGE_KEY);
+    return p === 'moves' || p === 'states' ? p : 'opens';
+  } catch {
+    return 'opens';
+  }
 }
 
 // ------------------------------------------------------------------ issues
@@ -420,8 +477,7 @@ function StatesCard({
   return (
     <section className={CARD}>
       <h2 className={CARD_H2}>
-        States
-        <span className={SUB}>in the tables' column order</span>
+        <span className={SUB}>In the tables' column order; Row and Col place it on the console grid.</span>
         <button type="button" disabled={locked} onClick={onAdd} className={`ml-auto ${SMALL_BTN}`}>
           + Add state
         </button>
@@ -984,8 +1040,7 @@ function OpensCard({
   return (
     <section className={CARD}>
       <h2 className={CARD_H2}>
-        What each state opens
-        <span className={SUB}>one row per solenoid connector name</span>
+        <span className={SUB}>One row per valve connector's name. Click a square to open or shut it in that state.</span>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -1158,7 +1213,6 @@ const OpensBody = memo(function OpensBody({
 // ------------------------------------------------------------------- moves
 
 function MovesCard({ m, current, locked, edit }: { m: MachineDef; current: string; locked: boolean; edit: Edit }) {
-  const [shown, setShown] = useState(false);
   const noRow = m.states.filter((s) => !(s.name in m.allowed)).map((s) => s.name);
   const allowed = useMemo(
     () => new Map(Object.entries(m.allowed).map(([s, to]) => [s, new Set(to)])),
@@ -1170,8 +1224,7 @@ function MovesCard({ m, current, locked, edit }: { m: MachineDef; current: strin
   );
   return (
     <section className={CARD}>
-      <h2 className={shown ? CARD_H2 : CARD_H2_BARE}>
-        Allowed transitions
+      <h2 className={CARD_H2}>
         <span className={SUB}>Row: the state you are in. Column: where it may go.</span>
         {noRow.length > 0 && (
           <span
@@ -1181,35 +1234,30 @@ function MovesCard({ m, current, locked, edit }: { m: MachineDef; current: strin
             {noRow.length} with no row
           </span>
         )}
-        <button type="button" onClick={() => setShown((v) => !v)} className={`ml-auto ${SMALL_BTN}`}>
-          {shown ? 'Hide' : 'Show'}
-        </button>
       </h2>
-      {shown && (
-        <MatrixFrame id="moves">
-          <thead>
-            <tr>
-              <th className={`sticky left-0 top-0 z-30 ${HEAD_H} min-w-[160px] border-b border-r border-gray-800 bg-black px-2 pb-1.5 text-left align-bottom text-[10.5px] font-normal text-gray-500`}>
-                From \ To
-              </th>
-              {m.states.map((s, ci) => (
-                <ColHead
-                  key={s.name}
-                  s={s}
-                  ci={ci}
-                  current={s.name === current}
-                  title={
-                    s.abort
-                      ? `${s.name}: abort. The twin lets any state go to it; the DAQ only where this column says`
-                      : s.name
-                  }
-                />
-              ))}
-            </tr>
-          </thead>
-          <MovesBody states={m.states} allowed={allowed} locked={locked} onToggle={toggle} />
-        </MatrixFrame>
-      )}
+      <MatrixFrame id="moves">
+        <thead>
+          <tr>
+            <th className={`sticky left-0 top-0 z-30 ${HEAD_H} min-w-[160px] border-b border-r border-gray-800 bg-black px-2 pb-1.5 text-left align-bottom text-[10.5px] font-normal text-gray-500`}>
+              From \ To
+            </th>
+            {m.states.map((s, ci) => (
+              <ColHead
+                key={s.name}
+                s={s}
+                ci={ci}
+                current={s.name === current}
+                title={
+                  s.abort
+                    ? `${s.name}: abort. The twin lets any state go to it; the DAQ only where this column says`
+                    : s.name
+                }
+              />
+            ))}
+          </tr>
+        </thead>
+        <MovesBody states={m.states} allowed={allowed} locked={locked} onToggle={toggle} />
+      </MatrixFrame>
     </section>
   );
 }
