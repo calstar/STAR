@@ -384,7 +384,7 @@ class SessionOut(BaseModel):
     held: list[str]
     tanks: list[TankOut]
     bottles: list[TankOut]
-    setup: dict[str, float | bool] = Field(default_factory=dict)
+    setup: dict[str, float | bool | str] = Field(default_factory=dict)
     engine: "EngineState | None" = None
     notes: list[str] = Field(default_factory=list)
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a

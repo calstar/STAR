@@ -220,6 +220,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     dewar_fill_cv: 0.019,
     bottle_delivered: false,
     ignore_gse: false,
+    pressurant: '',
     fill_stirring: 20,
     ullage_collapse: true,
     ullage_vapour: true,
@@ -617,8 +618,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
       setSetupState(next);
       for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
       keepTurned();
-      // Ignoring the GSE is a different network: a fresh stand, built with it.
-      if ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) {
+      // Ignoring the GSE, or another pressurant, is a different network: a
+      // fresh stand, built with it.
+      if (
+        ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) ||
+        ('pressurant' in patch && (patch.pressurant ?? '') !== (setup.pressurant ?? ''))
+      ) {
         wantFresh.current = true;
         setGeneration((g) => g + 1);
         return;

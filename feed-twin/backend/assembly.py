@@ -131,6 +131,7 @@ def assemble(
     *,
     engine_id: str = "",
     fluid_swap: Mapping[str, tuple[str, float]] | None = None,
+    gas_swap: Mapping[str, str] | None = None,
     cea_cache: str = "",
     cea_resolver: Callable[[EngineDesign], str] | None = None,
     multiphase: bool = False,
@@ -147,6 +148,9 @@ def assemble(
         cea_cache: An explicit combustion table. Direct and unconditional.
         vehicle_only: Build the vehicle alone, the drawn GSE cut away
             (``Setup.ignore_gse``; :func:`feedtwin.session.assemble_model`).
+        gas_swap: The pressurant replaced (``Setup.pressurant``;
+            :func:`feedtwin.session.model.swap_gases`). Not a cold flow: the
+            engine still burns on its card.
         cea_resolver: Called with the imported engine to *find* one, when which
             table is wanted depends on what the engine burns. Inverted this way
             round because the alternative is assembling twice -- once to learn
@@ -206,6 +210,7 @@ def assemble(
         cea_cache=resolved,
         chamber=chamber,
         fluid_swap=fluid_swap,
+        gas_swap=gas_swap,
         multiphase=multiphase,
         vehicle_only=vehicle_only,
         meta={

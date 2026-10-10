@@ -327,6 +327,7 @@ def _assemble(
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
+    gas: Mapping[str, str] | None = None,
 ) -> Model:
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
@@ -344,6 +345,7 @@ def _assemble(
             diagram_id,
             engine_id=engine_id,
             fluid_swap={**FLUID_SETS[fluid_set], **dict(swap or {})},
+            gas_swap=gas,
             cea_resolver=_cea_for,
             multiphase=multiphase,
             overrides=_overrides_for(diagram_id),
@@ -1218,18 +1220,19 @@ def _stand(
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
+    gas: Mapping[str, str] | None = None,
 ) -> "Stand":
     """A model with the stand's state machine bound to its valves.
 
     ``vehicle_only`` (``Setup.ignore_gse``) builds the rocket alone: the
     drawing's hookup keeps its vehicle pins, and its knobs are the cut
     drawing's (:func:`feedtwin.session.hookup.on_vehicle`)."""
-    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only)
+    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas)
     shipped = _shipped_machine(machine)
     hookup, _, problem = _hookup_for(diagram, model)
     drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
     whole = (
-        _assemble(diagram, engine, fluid_set, multiphase, swap)
+        _assemble(diagram, engine, fluid_set, multiphase, swap, gas=gas)
         if vehicle_only
         else model
     )
@@ -1644,7 +1647,13 @@ async def open_session(
     settings = dict(body or {})
     setup = _setup(settings)
     stand = _stand(
-        diagram, engine, fluid_set, machine, multiphase, vehicle_only=setup.ignore_gse
+        diagram,
+        engine,
+        fluid_set,
+        machine,
+        multiphase,
+        vehicle_only=setup.ignore_gse,
+        gas=_pressurant_swap(setup.pressurant),
     )
     # The dome and the COPV fill start where the drawing sets them; the
     # client sends them only when the operator has turned them (or a stand
@@ -2003,6 +2012,7 @@ async def command_session(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     if "setup" in settings or "dome" in settings:
+        built_gas = session.setup.pressurant
         session.setup = _setup(
             {
                 **dict(settings.get("setup") or {}),
@@ -2018,6 +2028,8 @@ async def command_session(
         # it is.
         if session.setup.ignore_gse != session.gse_ignored:
             session.setup = replace(session.setup, ignore_gse=session.gse_ignored)
+        # The pressurant is in the network too: a new stand.
+        session.setup = replace(session.setup, pressurant=built_gas)
 
     return _session_out(session, session.step(1e-3))
 
@@ -2800,6 +2812,15 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
         )
 
 
+def _pressurant_swap(pressurant: str) -> dict[str, str]:
+    """``Setup.pressurant`` as a gas swap (``swap_gases``): the drawing's other
+    gas for it, wherever it is declared. Empty: the drawing's gas."""
+    if not pressurant:
+        return {}
+    other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
+    return {other: pressurant}
+
+
 def _session_from_inputs(
     inputs: Mapping[str, Any], pressurant: str | None = None
 ) -> Session:
@@ -2808,21 +2829,21 @@ def _session_from_inputs(
     automatic vent at burnout off.
 
     ``pressurant`` swaps the gas in the bottle and the press lines (helium or
-    nitrogen, whichever the drawing has) for the other, at 293 K.
+    nitrogen, whichever the drawing has) for the other; without one, the
+    run's own (``Setup.pressurant``). A gas swap, not a cold flow: the engine
+    still burns on its card.
     """
-    swap: dict[str, tuple[str, float]] = {}
-    if pressurant:
-        other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
-        swap = {other: (pressurant, 293.15)}
     setup = replace(parse_setup(dict(inputs.get("setup") or {})), auto_vent=False)
+    if pressurant:
+        setup = replace(setup, pressurant=pressurant)
     stand = _stand(
         str(inputs["diagram"]),
         str(inputs.get("engine") or ""),
         str(inputs.get("fluid_set") or "hotfire"),
         str(inputs.get("machine") or "diablo"),
         bool(inputs.get("multiphase")),
-        swap,
         vehicle_only=setup.ignore_gse,
+        gas=_pressurant_swap(setup.pressurant),
     )
     raw = inputs.get("hookup")
     if isinstance(raw, Mapping) and raw and inputs.get("machine_table"):

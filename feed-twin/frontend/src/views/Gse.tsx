@@ -169,6 +169,37 @@ export function Gse() {
           <span className="text-[11px] text-text-muted">· rocket and its vent lines, fills at the settings below</span>
         ) : null}
       </label>
+      <div
+        className="flex items-center gap-2 text-[12px] text-text"
+        title="The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand."
+      >
+        <span>Pressurant</span>
+        <div className="flex overflow-hidden rounded border border-[var(--line-strong)]">
+          {(
+            [
+              ['', "Drawing's"],
+              ['nitrogen', 'GN2'],
+              ['helium', 'Helium'],
+            ] as const
+          ).map(([value, label]) => {
+            const on = (setup.pressurant ?? '') === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                disabled={locked}
+                aria-pressed={on}
+                onClick={() => !on && set({ pressurant: value })}
+                className={`px-2 py-0.5 text-[11px] disabled:opacity-50 ${
+                  on ? 'bg-white/10 text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <section>
         <h2 className="mb-1 caps">

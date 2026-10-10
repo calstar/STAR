@@ -53,6 +53,13 @@ be able to find why they differ.
 - `lost_connectors`: only a connector named for a table row is matched by name again;
   a transducer's names nothing until it is rewired (docstring).
 
+### Added
+- `assemble_model(gas_swap=...)` / `swap_gases`: the pressurant replaced wherever a
+  symbol declares it (bottles, press and dome lines; the network spreads it to the
+  ullages); tanks and dewars keep their contents. `Setup.pressurant` (`""`, `"nitrogen"`,
+  `"helium"`) names it for the caller that assembles, as `ignore_gse` does. Empty, the
+  default, is the drawing's gas -- nothing changes.
+
 ### Changed results
 - `roles.vehicle_only` (`Setup.ignore_gse`, rocket only) keeps the cart's vent lines
   (`roles.vent_branches`: behind a vehicle disconnect, no vessel, regulator or

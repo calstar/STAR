@@ -29,11 +29,13 @@ class Tunable:
     group: str
     explains: str
     """What the number accounts for, and where it came from."""
-    kind: str = "number"  # "number" | "flag"
+    kind: str = "number"  # "number" | "flag" | "choice"
     low: float = 0.0
     high: float = 1.0e9
     step: float = 1.0
     applies: str = "live"  # "live" | "reset"
+    choices: tuple[tuple[str, str], ...] = ()
+    """For a ``choice``: (value, label) pairs, the first the default."""
 
 
 GROUPS = [
@@ -66,6 +68,23 @@ TUNABLES: tuple[Tunable, ...] = (
         "same either way.",
         kind="flag",
         applies="reset",
+    ),
+    Tunable(
+        "pressurant",
+        "pressurant",
+        "Pressurant",
+        "",
+        GROUPS[0],
+        "The gas in the bottles and press lines. Drawing's: whatever the drawing "
+        "has. Helium or GN2: the drawing's other gas swapped for it at 293 K "
+        "wherever it is drawn -- the COPV, the press lines, the cart's bottles and "
+        "dome lines -- as the Study tab's pressurant cases do. For comparing a "
+        "helium hot-fire press against GN2 on one drawing (the team, 2026-10-02: "
+        "helium for hot fire, nitrogen for water flows). Each burn's run record "
+        "says which, so the Runs tab compares them. Changing it opens a fresh stand.",
+        kind="choice",
+        applies="reset",
+        choices=(("", "Drawing's"), ("nitrogen", "GN2"), ("helium", "Helium")),
     ),
     Tunable(
         "dome",
@@ -854,6 +873,10 @@ def parse_setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup
         if t.kind == "flag":
             changes[t.field] = bool(raw)
             continue
+        if t.kind == "choice":
+            if str(raw) in {value for value, _ in t.choices}:
+                changes[t.field] = str(raw)
+            continue
         try:
             value = float(raw)
         except (TypeError, ValueError):
@@ -886,6 +909,7 @@ def describe() -> list[dict[str, Any]]:
             "high": t.high,
             "step": t.step,
             "applies": t.applies,
+            "choices": [{"value": v, "label": label} for v, label in t.choices],
             "default": getattr(defaults, t.field),
         }
         for t in TUNABLES

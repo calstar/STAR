@@ -247,3 +247,33 @@ def test_a_vent_drawn_unpaired_is_said_and_once_paired_it_stays() -> None:
     assert {ids["OV-QD-A"], ids["OV-MOT"]} <= vent_branches(paired)
     cut = _model(True, payload)
     assert ids["QD-OV-B"] not in cut.meta["capped"]
+
+
+def test_a_gas_swap_puts_helium_in_the_bottles_lines_and_ullages() -> None:
+    """``gas_swap`` replaces the pressurant wherever it is declared: the
+    network's bottles, press lines and the ullages they fill hold helium; the
+    tanks keep their propellants. Without it, the drawing's nitrogen."""
+    from feedtwin.session.model import swap_gases
+
+    ids = _ids()
+    diagram = read_diagram(_payload(), name="LE4 (6)")
+    swapped = swap_gases(diagram, {"nitrogen": "helium"})
+    by_id = {n.id: n for n in swapped.nodes}
+    assert by_id[ids["COPV"]].fluid == "helium"
+    assert by_id[ids["Eth-Tank"]].fluid == next(
+        n.fluid for n in diagram.nodes if n.id == ids["Eth-Tank"]
+    )
+    assert not any(n.fluid == "nitrogen" for n in swapped.nodes)
+    for gas in ("nitrogen", "helium"):
+        model = assemble_model(
+            read_diagram(_payload(), name="LE4 (6)"),
+            diagram_id="le4",
+            gas_swap=None if gas == "nitrogen" else {"nitrogen": gas},
+        )
+        nodes = model.built.network.nodes
+        assert nodes[ids["COPV"]].fluid == gas
+        # The ullages it presses (a tank's node is its ullage; ``.out`` its
+        # liquid), and the tanks still hold their propellants.
+        for tank in ("Eth-Tank", "LOX-Tank"):
+            assert nodes[ids[tank]].fluid == gas
+            assert nodes[f"{ids[tank]}.out"].fluid in ("ethanol", "oxygen")

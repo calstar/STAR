@@ -358,7 +358,7 @@ export interface TankState {
 /** One tick of a live stand. */
 export interface StandSetup {
   /** Every other knob the backend's tunables table names. */
-  [key: string]: number | boolean;
+  [key: string]: number | boolean | string;
   dome: number;
   copv_target: number;
   copv_fill_s: number;
@@ -376,6 +376,9 @@ export interface StandSetup {
    *  by the built-in charge and loads at these settings. Changing it opens a
    *  fresh stand. */
   ignore_gse: boolean;
+  /** The gas in the bottles and press lines: '' the drawing's, or that gas
+   *  swapped for helium or GN2. Changing it opens a fresh stand. */
+  pressurant: '' | 'nitrogen' | 'helium';
   /** Multiplier on a vessel's gas-to-wall conductance while it is being
    *  charged: the jet stirs it and forced convection runs several times
    *  natural. 1 is a still vessel (adiabatic-charge heating in full). */
@@ -441,7 +444,7 @@ export interface StudyCaseIn {
   fill_fraction?: number | null;
   pressurant?: 'helium' | 'nitrogen' | null;
   /** Configuration rows, by key. */
-  setup?: Record<string, number | boolean>;
+  setup?: Record<string, number | boolean | string>;
   /** The swept quantity's value for this case. */
   x?: number | null;
 }
@@ -962,12 +965,14 @@ export interface Tunable {
   unit: string;
   group: string;
   explains: string;
-  kind: 'number' | 'flag';
+  kind: 'number' | 'flag' | 'choice';
   low: number;
   high: number;
   step: number;
   applies: 'live' | 'reset';
-  default: number | boolean;
+  /** For a choice: its values and labels. */
+  choices?: { value: string; label: string }[];
+  default: number | boolean | string;
 }
 
 export const getTunables = () => json<Tunable[]>('/api/tunables');

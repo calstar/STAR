@@ -946,6 +946,15 @@ class Setup:
     (``assemble_model(vehicle_only=...)``), so changing it opens a new
     stand; a session reports the value its model was built with. Off -- the
     default -- simulates the drawn GSE, exactly as before."""
+    pressurant: str = ""
+    """The gas in the bottles and press lines: ``""`` the drawing's,
+    ``"helium"`` or ``"nitrogen"`` the drawing's other gas swapped for it at
+    293 K wherever it is drawn (``assemble_model(fluid_swap=...)``, the swap
+    the Study tab's pressurant cases make). For comparing a helium hot-fire
+    press against GN2 on one drawing (the team, 2026-10-02: helium for hot
+    fire, nitrogen for water flows). Read when the model is assembled, so
+    changing it opens a new stand. Empty -- the default -- is the drawing's
+    gas, exactly as before."""
 
 
 def _not_a_liquid_tank(

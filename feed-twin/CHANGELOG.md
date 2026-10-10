@@ -44,6 +44,14 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
   name the rows the twin reads by name, so the editor does not call them unwired.
 - `statemachines/diablo_states.csv`: the DAQ's panel layout and abort flags.
 
+### Added
+- **Pressurant** (GSE Controls, Configuration; `Setup.pressurant`): Drawing's, GN2 or
+  Helium. Swaps the drawing's gas for the other wherever it is declared -- the
+  bottles, press lines, dome lines and the ullages they fill -- and opens a fresh
+  stand; the top bar says HELIUM / GN2 when it is not the drawing's. Each burn's run
+  record carries it, so Runs compares a helium run with a GN2 one and a replay runs
+  the gas it was recorded on.
+
 ### Changed
 - The **Hookup** tab is gone: which knob turns which regulator is edited at the foot
   of **GSE Controls**, under the dials it sets up (`components/KnobsEditor.tsx`;
@@ -89,6 +97,10 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - The hookup re-rendered the state-table matrix on every tick.
 - The console says when every valve is hidden, and shows no empty plot with nothing to
   plot; its state-table note points at the State machine tab for an edited table.
+- The Study tab's helium/nitrogen cases were not: the case went through the cold-flow
+  swap, which replaces tank contents only (the bottles kept the drawing's nitrogen)
+  and fires the simplified engine. It is a gas swap now (`swap_gases`), and the
+  engine burns on its card.
 - On a stand, a hookup saved after the page had reloaded never reached the stand:
   the reload reattached to the running session without reading the stand, so the
   hookup Save had no stand to go into (refused with a misleading "Read only"), the

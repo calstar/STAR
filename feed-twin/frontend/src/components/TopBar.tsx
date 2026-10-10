@@ -123,6 +123,8 @@ export function TopBar({ views }: { views: readonly View[] }) {
   // Only when the cut left something out: on a drawing of the rocket alone
   // the setting changes nothing, and the badge said otherwise.
   const cut = live?.setup?.ignore_gse ? (model?.ground_cut ?? []) : [];
+  // The gas the stand was built with, when it is not the drawing's.
+  const gas = String(live?.setup?.pressurant ?? '');
   const rocketOnly = cut.length > 0;
   const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
     const last = out[out.length - 1];
@@ -229,6 +231,15 @@ export function TopBar({ views }: { views: readonly View[] }) {
             title={`The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Left out: ${cut.join(', ')} and the rest of the cart. Change it on GSE Controls.`}
           >
             Rocket only
+          </Link>
+        )}
+        {gas && (
+          <Link
+            to="/gse"
+            className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            title="The pressurant is swapped from the drawing's. Change it on GSE Controls."
+          >
+            {gas === 'helium' ? 'Helium' : 'GN2'}
           </Link>
         )}
         <ValidationBadge />
