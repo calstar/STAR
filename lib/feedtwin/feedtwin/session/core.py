@@ -291,12 +291,20 @@ def builtin_rows(machine: StateMachine) -> dict[str, str]:
     for row in machine.actuators:
         words = _words(row)
         if row == GSE_CHARGE:
-            out[row] = "Charges the COPV by the twin's built-in fill when the cart's fill is not drawn."
+            out[row] = (
+                "Charges the COPV by the twin's built-in fill when the cart's fill is not drawn."
+            )
         elif row == GSE_DUMP:
-            out[row] = "Dumps the COPV by the twin's built-in vent when the cart's fill is not drawn."
+            out[row] = (
+                "Dumps the COPV by the twin's built-in vent when the cart's fill is not drawn."
+            )
         elif {"fill", "press"} <= words and words & {"fuel", "lox"}:
-            out[row] = "Presses the cart's transfer tank when no press line to it is drawn."
+            out[row] = (
+                "Presses the cart's transfer tank when no press line to it is drawn."
+            )
     return out
+
+
 #: The room [K], for the heat that leaks through a tank skin.
 AMBIENT_T = 293.15
 #: Fiberglass batt, for a drawing that gives a thickness and no conductivity.
