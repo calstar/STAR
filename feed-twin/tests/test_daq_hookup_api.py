@@ -623,3 +623,31 @@ def test_a_disconnect_is_never_on_the_daq_box() -> None:
     body = {**get(diagram)["hookup"], "channels": box(("sol12", 1, "LOX Vent", qd))}
     refused = client.put("/api/hookup", params={"diagram": diagram}, json=body)
     assert refused.status_code == 422 and "disconnect" in refused.text
+
+
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+def test_a_disconnect_is_not_operated() -> None:
+    """Nobody opens or shuts a QD. Rocket only LE4 (6)'s capped LOX vent QD
+    is in the assembly's actuators (the vent row vents through it in the cut
+    cart's place), but it is no valve on the console or the drawing, and the
+    valve command refuses it."""
+    diagram = upload("daq box QD not operated.json", LE4)
+    doc = json.loads(LE4.read_text())
+    qds = {n["id"] for n in doc["nodes"] if n.get("type") == "QD"}
+    for rocket_only in (False, True):
+        params = {"diagram": diagram, "ignore_gse": str(rocket_only).lower()}
+        model = client.get("/api/model", params=params).json()
+        assert not qds & {a["id"] for a in model["actuators"]}
+    drawing = client.get("/api/drawing", params={"diagram": diagram}).json()
+    assert not any(e["on_console"] for e in drawing["elements"] if e["id"] in qds)
+    rocket = client.post(
+        "/api/session",
+        params={"diagram": diagram},
+        json={"state": "Idle", "setup": {"ignore_gse": True}},
+    )
+    assert rocket.status_code == 200, rocket.text
+    OPENED.append(rocket.json()["id"])
+    capped = qds & set(_SESSIONS[rocket.json()["id"]].model.built.actuators)
+    assert capped, "rocket only, the vent QD stands in for the cart's vent"
+    refused = command(rocket.json()["id"], {"valve": sorted(capped)[0], "open": True})
+    assert refused.status_code == 409 and "disconnect" in refused.text

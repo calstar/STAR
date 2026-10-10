@@ -93,6 +93,9 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
   to the rocket's vent disconnect. No cable goes to a disconnect: it is not on the
   box, and a cable to one is refused. Rocket only, the vent row still reaches the
   capped QD as the cut cart's stand-in (the binding, not a connector).
+- Nor is a QD operated: it is off the console's actuators and the drawing's
+  clickable valves, has no console switch on the P&ID, and the valve command
+  refuses it (409). Every QD was listed as an actuator, cart and rocket.
 - `builtin` lists only the rows the stand acts on: not GSE High Press Control/Vent on
   a drawing whose cart charges the COPV (LE4; rocket only they are back), not Fuel
   Fill Press without a cart transfer tank (the shipped stand). A running stand's comes

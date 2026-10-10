@@ -787,6 +787,15 @@ def _pages(nodes: Sequence[PidNode]) -> dict[str, str]:
     return pages
 
 
+def _not_operated(model: Model) -> frozenset[str]:
+    """Actuators nobody operates: disconnects. A capped QD is in the
+    assembly's actuators only so that, rocket only, the state table's vent
+    row can vent through it in the cut cart's place (the binding's
+    stand-in); it is not a valve on the console or the drawing, and no DAQ
+    cable goes to it (``daqbox.NOT_CABLED``)."""
+    return frozenset(n.id for n in model.diagram.nodes if n.type in daqbox.NOT_CABLED)
+
+
 @app.get("/api/model")
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire", ignore_gse: bool = False
@@ -806,7 +815,7 @@ async def model_view(
         actuators=[
             Actuator(id=d, tag=s.split(".")[0], signal=s)
             for d, s in model.built.actuators.items()
-            if not s.endswith(".dome")
+            if not s.endswith(".dome") and d not in _not_operated(model)
         ],
         report=_report(model),
         pages=_pages(model.diagram.nodes),
@@ -923,7 +932,11 @@ async def drawing_view(
     console = (
         instruments
         | set(built.tanks)
-        | {d for d, sig in built.actuators.items() if not sig.endswith(".dome")}
+        | {
+            d
+            for d, sig in built.actuators.items()
+            if not sig.endswith(".dome") and d not in _not_operated(raw)
+        }
         | {n.id for n in raw.diagram.nodes if n.type in {"KBOTTLE", "DEWAR"}}
     )
     _, applied = apply_overrides(raw.diagram, entry)
@@ -1961,6 +1974,11 @@ async def command_session(
             )
         session.hookup = renamed
     if "valve" in settings:
+        if str(settings["valve"]) in _not_operated(session.model):
+            raise HTTPException(
+                status_code=409,
+                detail="A disconnect is not a valve: nobody opens or shuts it.",
+            )
         try:
             session.set_valve(str(settings["valve"]), bool(settings.get("open")))
         except PermissionError as exc:
