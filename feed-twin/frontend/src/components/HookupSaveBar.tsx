@@ -69,6 +69,12 @@ export function HookupSaveBar({ compact = false }: { compact?: boolean }) {
               : hookup.namesOnly
                 ? 'Unsaved names'
                 : 'Unsaved hookup — saving restarts the stand'}
+            {hookup.restored && (
+              <span className="text-gray-400" title="Kept in this tab while unsaved, so a reload does not lose it">
+                {' '}
+                · kept from before the reload
+              </span>
+            )}
           </span>
           {dirty && (
             <button

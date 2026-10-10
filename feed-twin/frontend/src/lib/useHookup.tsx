@@ -44,6 +44,8 @@ export interface HookupApi {
   /** Only names changed -- a transducer's connector, an alias, rows shown --
    *  so the running stand takes it without reopening. */
   namesOnly: boolean;
+  /** The unsaved draft came back from before the page reloaded. */
+  restored: boolean;
   onStand: boolean;
   locked: boolean;
   save: () => void;
@@ -63,6 +65,48 @@ export interface HookupApi {
 }
 
 const Context = createContext<HookupApi | null>(null);
+
+/**
+ * An unsaved draft, kept in the tab's sessionStorage per drawing and stand,
+ * so a reload -- a refresh, a dev server's, the backend restarting the stand
+ * -- does not throw away an hour of naming. `base` is the hookup it was made
+ * against: a saved one that has changed since (somebody saved) wins, and the
+ * draft is dropped rather than written over it.
+ */
+const STASH = 'feedtwin.hookup-draft:';
+interface Stash {
+  saved: boolean;
+  base: string;
+  draft: Draft;
+}
+
+function readStash(owner: string): Stash | null {
+  try {
+    const raw = window.sessionStorage.getItem(STASH + owner);
+    return raw ? (JSON.parse(raw) as Stash) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStash(owner: string, stash: Stash | null) {
+  try {
+    if (stash) window.sessionStorage.setItem(STASH + owner, JSON.stringify(stash));
+    else window.sessionStorage.removeItem(STASH + owner);
+  } catch {
+    // Storage full or off: the draft still lives until the page goes.
+  }
+}
+
+/** The stashed draft for `owner` against the hookup `h`, if it still fits:
+ *  a saved hookup only if it is the one the draft was made against. */
+function restore(owner: string, h: Hookup): Draft | null {
+  const stash = readStash(owner);
+  if (!stash) return null;
+  const fits = stash.saved === h.saved && (!h.saved || stash.base === JSON.stringify(draftOf(h)));
+  if (!fits) writeStash(owner, null);
+  return fits ? stash.draft : null;
+}
 
 /** The draft a backend answer starts: always a box, always a table. */
 export function draftOf(h: Hookup): Draft {
@@ -114,6 +158,7 @@ export function HookupProvider({ children }: { children: ReactNode }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [restored, setRestored] = useState(false);
 
   const base = useMemo(() => (data ? draftOf(data) : null), [data]);
   const sameTable = Boolean(base && draft && sameMachine(base.machine, draft.machine));
@@ -149,8 +194,12 @@ export function HookupProvider({ children }: { children: ReactNode }) {
         if (stale) return;
         setData(h);
         if (draftOwner.current === asked && unsaved.current) return;
+        // Newly here (a reload, or back from another drawing): the edits
+        // left unsaved in this tab come back.
+        const kept = draftOwner.current !== asked ? restore(asked, h) : null;
         draftOwner.current = asked;
-        setDraft(draftOf(h));
+        setDraft(kept ?? draftOf(h));
+        setRestored(Boolean(kept));
       })
       .catch((e) => !stale && setError(e instanceof Error ? e.message : String(e)));
     return () => {
@@ -158,6 +207,13 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [where.diagram, where.engine, standHookup, ignoreGse, owner]);
+
+  // Keep the unsaved draft with the tab; drop it once saved or discarded.
+  useEffect(() => {
+    if (!data || !draft || draftOwner.current !== owner) return;
+    writeStash(owner, dirty ? { saved: data.saved, base: JSON.stringify(draftOf(data)), draft } : null);
+    if (!dirty) setRestored(false);
+  }, [data, draft, dirty, owner]);
 
   /** What is written: the box as it stands, and the table only when it is
    *  not the DAQ's (so a fix to the shipped table still reaches it). */
@@ -210,6 +266,7 @@ export function HookupProvider({ children }: { children: ReactNode }) {
       // Its answer replaces the draft, unsaved edits and all: they are what
       // the user just chose to forget.
       draftOwner.current = null;
+      writeStash(owner, null);
       calls.current.setStandHookup(
         { ...data.suggested, channels: null, machine: null } as unknown as Record<string, unknown>,
         true,
@@ -225,7 +282,7 @@ export function HookupProvider({ children }: { children: ReactNode }) {
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
-  }, [data, onStand, at]);
+  }, [data, onStand, at, owner]);
 
   const discard = useCallback(() => {
     if (base) setDraft(structuredClone(base));
@@ -247,6 +304,7 @@ export function HookupProvider({ children }: { children: ReactNode }) {
       busy,
       dirty,
       namesOnly,
+      restored,
       onStand,
       locked,
       save,
@@ -272,7 +330,7 @@ export function HookupProvider({ children }: { children: ReactNode }) {
         return a ? `${a.tag}${model?.pages?.[id] ? ` · ${model.pages[id]}` : ''}` : id;
       },
     };
-  }, [data, draft, update, error, busy, dirty, namesOnly, onStand, locked, save, discard, reset, model]);
+  }, [data, draft, update, error, busy, dirty, namesOnly, restored, onStand, locked, save, discard, reset, model]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -89,6 +89,11 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - The hookup re-rendered the state-table matrix on every tick.
 - The console says when every valve is hidden, and shows no empty plot with nothing to
   plot; its state-table note points at the State machine tab for an edited table.
+- An unsaved hookup -- renamed transducers, wiring, the table -- was lost on any
+  page reload (a refresh, a dev rebuild, the stand restarting), so names typed on the
+  P&ID seemed never to reach the DAQ box. It is kept in the tab (sessionStorage, per
+  drawing and stand) until saved or discarded, and comes back after a reload ("kept
+  from before the reload"); a saved hookup that changed meanwhile wins.
 - Rocket only kept nothing of the cart, vents included: a tank vented through a
   stand-in on its capped top disconnect. The cart's vent lines now stay
   (`roles.vent_branches`): they are plugged into the rocket until launch, so Fuel
