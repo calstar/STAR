@@ -77,6 +77,10 @@ class Symbol:
     ground: bool
 
 
+#: Drawn types the valve list can hold that no DAQ cable goes to.
+NOT_CABLED = frozenset({"QD"})
+
+
 def symbols(model: Model) -> list[Symbol]:
     """Everything on the drawing a connector can take, valves first."""
     built = model.built
@@ -89,6 +93,11 @@ def symbols(model: Model) -> list[Symbol]:
     out: list[Symbol] = []
     for v in hookup_valves(model):
         node = nodes.get(v.id)
+        # A disconnect is a fitting, not a solenoid: no cable runs to it. A
+        # capped one stands in for the cart's vent rocket only (the binding's
+        # stand-in, not a connector); the cart's vent valve is what is cabled.
+        if node is not None and node.type in NOT_CABLED:
+            continue
         out.append(
             Symbol(
                 id=v.id,
@@ -199,12 +208,18 @@ def problems(hookup: Hookup, model: Model) -> list[str]:
     """What a box cannot be on this drawing: a board the box does not have, a
     cable to a symbol that is not on the drawing or cannot go on that board."""
     wanted = {s.id: s for s in symbols(model)}
+    nodes = {n.id: n for n in model.diagram.nodes}
     out: list[str] = []
     for c in hookup.channels or ():
         kind = KIND_OF_BOARD.get(c.board)
         label = next((b.label for b in BOARDS if b.id == c.board), c.board)
         if kind is None:
             out.append(f"{c.name}: there is no board {c.board!r}.")
+        elif c.symbol in nodes and nodes[c.symbol].type in NOT_CABLED:
+            out.append(
+                f"{c.name}: {nodes[c.symbol].label or c.symbol} is a disconnect, "
+                "which no DAQ cable goes to. Cable the valve behind it."
+            )
         elif c.symbol not in wanted:
             out.append(
                 f"{c.name}: {c.symbol} is not on this drawing, or is not something "

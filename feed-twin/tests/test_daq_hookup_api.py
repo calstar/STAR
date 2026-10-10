@@ -593,3 +593,33 @@ def test_a_stands_hookup_with_a_lost_cable_still_shows_so_it_can_be_unplugged() 
         json={**body, "channels": []},
     ).json()
     assert clean["problems"] == []
+
+
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+def test_a_disconnect_is_never_on_the_daq_box() -> None:
+    """LE4 (6)'s LOX tank vents through a QD to the cart's vent valves. No
+    cable runs to a QD: it is not a symbol the box takes, the suggested box
+    does not plug a row onto it (rocket only it still stands in for the cut
+    cart's vent, by the binding), and a cable to it is refused."""
+    diagram = upload("daq box no QD.json", LE4)
+    doc = json.loads(LE4.read_text())
+    qds = {
+        n["id"]
+        for n in doc["nodes"]
+        if (n.get("data") or {}).get("componentType", n.get("type")) == "QD"
+    }
+    assert qds
+    for rocket_only in (False, True):
+        params = {"diagram": diagram, "ignore_gse": str(rocket_only).lower()}
+        out = client.get("/api/hookup", params=params).json()
+        assert not qds & {s["id"] for s in out["symbols"]}
+        assert not qds & {c["symbol"] for c in out["hookup"]["channels"]}
+    # Rocket only, the vent row still reaches the capped disconnect.
+    cut = client.get(
+        "/api/hookup", params={"diagram": diagram, "ignore_gse": "true"}
+    ).json()
+    assert qds & set(cut["bound"].values())
+    qd = sorted(qds)[0]
+    body = {**get(diagram)["hookup"], "channels": box(("sol12", 1, "LOX Vent", qd))}
+    refused = client.put("/api/hookup", params={"diagram": diagram}, json=body)
+    assert refused.status_code == 422 and "disconnect" in refused.text

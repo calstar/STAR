@@ -89,6 +89,10 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - The hookup re-rendered the state-table matrix on every tick.
 - The console says when every valve is hidden, and shows no empty plot with nothing to
   plot; its state-table note points at the State machine tab for an edited table.
+- A QD was offered as a DAQ box symbol, and the suggested box cabled the LOX vent row
+  to the rocket's vent disconnect. No cable goes to a disconnect: it is not on the
+  box, and a cable to one is refused. Rocket only, the vent row still reaches the
+  capped QD as the cut cart's stand-in (the binding, not a connector).
 - `builtin` lists only the rows the stand acts on: not GSE High Press Control/Vent on
   a drawing whose cart charges the COPV (LE4; rocket only they are back), not Fuel
   Fill Press without a cart transfer tank (the shipped stand). A running stand's comes
