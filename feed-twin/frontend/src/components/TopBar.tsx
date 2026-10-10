@@ -16,21 +16,30 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { getVersion, type Validation } from '../api';
+import { checksToFix } from '../lib/checks';
 import { useStand } from '../stand';
 import { StandBar } from './StandBar';
 
 export interface View {
+  group: string;
   path: string;
   label: string;
   hint: string;
 }
 
-/** Mission time, the way a pad clock reads it. */
+/** Time-warp settings: real time, and two speeds for waiting out the pad. */
+const WARPS = [1, 5, 20] as const;
+
+/** The stand clock: how long this stand has been up, mm:ss (h:mm:ss past an
+ *  hour). Not "T+": to a rocket team that counts from ignition, and the stand
+ *  was opened long before anyone fired it. */
 export function elapsed(t: number): string {
   const whole = Math.max(Math.floor(t), 0);
-  const m = Math.floor(whole / 60);
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor((whole % 3600) / 60);
   const sec = whole % 60;
-  return `T+${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  const mmss = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  return h > 0 ? `${h}:${mmss}` : mmss;
 }
 
 /** What the solver is doing, in the words the status line uses, and the dot. */
@@ -42,9 +51,9 @@ function health(stand: ReturnType<typeof useStand>): { text: string; dot: string
   if (!(live?.converged ?? false)) {
     return { text: 'Solver struggling', dot: 'var(--color-danger)', pulse: false, title: 'The last step did not converge' };
   }
-  const slow = speed !== undefined && speed < 0.85;
+  const slow = speed !== undefined && speed < 0.85 * stand.warp;
   return {
-    text: slow ? `Running · ×${speed.toFixed(2)}` : 'Running',
+    text: slow || stand.warp > 1 ? `Running · ×${speed.toFixed(speed < 1 ? 2 : 1)}` : 'Running',
     dot: 'var(--color-success)',
     pulse: false,
     title: slow
@@ -62,13 +71,12 @@ function ValidationBadge() {
   }, []);
   if (!validation) return null;
   const ok = validation.status === 'validated';
+  // Quiet on purpose: it says what this build of the twin has been checked
+  // against, which matters when reading a result, not every second of a run.
   return (
     <span
-      className="border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.18em]"
-      style={{
-        borderColor: ok ? 'var(--color-success)' : 'var(--color-warning)',
-        color: ok ? 'var(--color-success)' : 'var(--color-warning)',
-      }}
+      className="cursor-help font-mono text-[11px] normal-case tracking-normal"
+      style={{ color: ok ? 'var(--color-success)' : 'var(--ink-3)' }}
       title={[
         validation.label,
         '',
@@ -79,7 +87,7 @@ function ValidationBadge() {
         ...validation.not_checked.map((c) => `  • ${c}`),
       ].join('\n')}
     >
-      {validation.status}
+      {ok ? 'validated' : 'not validated'}
     </span>
   );
 }
@@ -88,7 +96,9 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const stand = useStand();
   const { pathname } = useLocation();
   const { live, model, busy } = stand;
-  const warnings = model?.report.warnings.length ?? 0;
+  // Only what is worth fixing: most of the assembly's sentences say how the
+  // drawing was read (lib/checks.ts).
+  const warnings = checksToFix(model?.report.warnings ?? []);
 
   const [clock, setClock] = useState('');
   useEffect(() => {
@@ -101,34 +111,55 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const h = health(stand);
   const state = live?.state ?? '—';
   const onConsole = pathname === '/';
-  const title = model ? `${model.title}${model.report.coupled ? ' · coupled' : ''}` : '—';
+  const engineName = stand.artifacts.find((a) => a.id === stand.where.engine)?.name ?? '';
+  const title = model ? (engineName ? `${model.title} · ${engineName}` : model.title) : '—';
+  // Only when the cut left something out: on a drawing of the rocket alone
+  // the setting changes nothing, and the badge said otherwise.
+  const cut = live?.setup?.ignore_gse ? (model?.ground_cut ?? []) : [];
+  const rocketOnly = cut.length > 0;
+  const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
+    const last = out[out.length - 1];
+    if (last && last.name === v.group) last.views.push(v);
+    else out.push({ name: v.group, views: [v] });
+    return out;
+  }, []);
 
   return (
     <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-4">
-      <div className="flex min-w-0 items-baseline gap-10">
+      <div className="flex min-w-0 items-baseline gap-8">
         <span className="flex-shrink-0 font-mono text-[17px] font-bold uppercase tracking-[0.42em] text-[var(--ink)]">
           Feed Twin
         </span>
-        <nav className="flex min-w-0 items-baseline gap-x-6 gap-y-1 overflow-x-auto">
-          {views.map((v) => {
-            const active = pathname === v.path;
-            return (
-              <Link
-                key={v.path}
-                to={v.path}
-                title={v.hint}
-                className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
-                  active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
-                }`}
-              >
-                {v.label}
-                {v.path === '/report' && warnings > 0 && (
-                  <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
-                )}
-                {active && <span className="absolute inset-x-0 bottom-0 h-px bg-[var(--ink)]" />}
-              </Link>
-            );
-          })}
+        <nav className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+          {groups.map((g, i) => (
+            <span
+              key={g.name}
+              className={`flex flex-shrink-0 items-baseline gap-x-3.5 min-[1400px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 min-[1400px]:pl-5' : ''}`}
+            >
+              {/* The group's name where there is room; the divider says it
+                  on a laptop, where the names wrapped the nav onto two rows. */}
+              <span className="caps hidden pb-1.5 text-[9px] text-[var(--ink-4)] min-[1400px]:inline">{g.name}</span>
+              {g.views.map((v) => {
+                const active = pathname === v.path;
+                return (
+                  <Link
+                    key={v.path}
+                    to={v.path}
+                    title={v.hint}
+                    className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
+                      active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
+                    }`}
+                  >
+                    {v.label}
+                    {v.path === '/report' && warnings > 0 && (
+                      <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
+                    )}
+                    {active && <span className="absolute inset-x-0 bottom-0 h-px bg-[var(--ink)]" />}
+                  </Link>
+                );
+              })}
+            </span>
+          ))}
         </nav>
       </div>
 
@@ -140,15 +171,51 @@ export function TopBar({ views }: { views: readonly View[] }) {
           />
           {h.text}
         </span>
-        {/* Mission time, not wall clock: how long this stand has been up. It
-            stops when the sim is paused. */}
-        <span className="font-semibold tabular-nums text-[var(--ink)]" title="Stand time since it was opened">
+        <span
+          className="flex items-center border border-[var(--line)] normal-case tracking-normal"
+          title="Time warp: run the stand faster than real time, to wait out a load or a COPV charge. Fire always runs at ×1. The status shows the speed the machine actually reaches."
+        >
+          {WARPS.map((w) => (
+            <button
+              key={w}
+              type="button"
+              onClick={() => stand.setWarp(w)}
+              aria-pressed={stand.warp === w}
+              className={`px-1.5 py-0.5 font-mono text-[10px] tabular-nums ${
+                stand.warp === w ? 'bg-[var(--ink)] text-black' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'
+              }`}
+            >
+              ×{w}
+            </button>
+          ))}
+        </span>
+        {/* The stand clock, not the wall clock: how long this stand has been
+            up. It stops when the sim is paused. */}
+        <span
+          className="flex items-baseline gap-2 font-semibold tabular-nums text-[var(--ink)]"
+          title="Stand clock: time since this stand was opened. It stops while paused."
+        >
+          <span className="caps text-[10px] font-normal">Stand</span>
           {elapsed(live?.t ?? 0)}
         </span>
-        <span className="tabular-nums text-[var(--ink-3)]">{clock}</span>
-        <span className="max-w-[260px] truncate text-[var(--ink-2)]" title={title}>
+        <span className="tabular-nums text-[var(--ink-3)]" title="Wall clock">
+          {clock}
+        </span>
+        <span
+          className="max-w-[340px] truncate normal-case tracking-normal text-[var(--ink-2)]"
+          title={`Drawing · engine${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}`}
+        >
           {title}
         </span>
+        {rocketOnly && (
+          <Link
+            to="/gse"
+            className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            title={`The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Left out: ${cut.join(', ')} and the rest of the cart. Change it on GSE Controls.`}
+          >
+            Rocket only
+          </Link>
+        )}
         <ValidationBadge />
 
         <div className="ml-auto flex items-center gap-4 normal-case tracking-normal">

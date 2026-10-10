@@ -8,11 +8,15 @@
  * shut valve reads and an empty tank reads atmosphere. Clicking a valve takes
  * it by hand.
  *
- * Beside it, what feed-twin read from the drawing: every number, the team's
- * overrides of them, and what the console shows (DrawingPanel).
+ * Beside it, the symbols (DrawingPanel): what the console shows and calls
+ * each, what drives each valve, every number and the team's overrides of
+ * them. Clicking a symbol that is not a valve opens it there, and the open
+ * one is ringed on the drawing, so a name in the list and a shape on the
+ * sheet are never a guess.
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { DrawingView } from '@pid/DrawingView';
 import { getDrawing } from '../api';
 import type { Drawing } from '../api';
@@ -38,6 +42,8 @@ export function Pid() {
   const [drawing, setDrawing] = useState<{ id: string; doc: Drawing } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState(remembered);
+  /** The symbol open in the panel, ringed on the drawing. */
+  const [focus, setFocus] = useState<string | null>(null);
   const togglePanel = () => {
     setPanel((was) => {
       try {
@@ -62,6 +68,13 @@ export function Pid() {
   // Only this drawing's stand: the one before it lingers while the next opens.
   const stand = model?.diagram_id === diagram ? model : null;
   const valves = useMemo(() => new Set(stand?.actuators.map((a) => a.id)), [stand]);
+  // Every symbol takes a click: a valve is operated, anything else opens in
+  // the panel.
+  const symbols = useMemo(() => new Set(drawing?.doc.nodes.map((n) => n.id) ?? []), [drawing]);
+  const openSymbol = (id: string) => {
+    setFocus(id);
+    if (!panel) togglePanel();
+  };
   const held = useMemo(() => new Set(live?.held), [live?.held]);
   const lines = useMemo(() => drawing?.doc.edges.map((e) => e.id) ?? [], [drawing]);
 
@@ -70,6 +83,7 @@ export function Pid() {
     return <p className="p-6 text-sm text-text-muted">Loading…</p>;
   }
   const title = stand?.title ?? artifacts.find((a) => a.id === diagram)?.name ?? '';
+  const pages = new Set(drawing.doc.nodes.map((n) => String((n.data as { page?: string } | undefined)?.page || 'Main'))).size;
 
   return (
     <div className="flex h-full flex-col">
@@ -81,11 +95,21 @@ export function Pid() {
           <>
             <span className="font-mono text-[12px] text-blue-400">{live.state}</span>
             <span className="text-[11.5px] text-gray-600">
-              psig · scroll to zoom · drag to pan · click a valve to take it by hand
+              psig · scroll to zoom · drag to pan · click a valve to operate it, anything else to open it in Symbols
             </span>
           </>
         ) : (
           <span className="text-[11.5px] text-gray-600">not running · scroll to zoom · drag to pan</span>
+        )}
+        {live?.setup?.ignore_gse && pages > 1 && (
+          // The cart's page still draws; nothing on it is simulated.
+          <Link
+            to="/gse"
+            className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            title="Ignore the drawn GSE is on: the stand is the rocket alone. The cart's page is drawn here, but none of it is simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
+          >
+            Rocket only — the GSE page is not simulated
+          </Link>
         )}
         <button
           type="button"
@@ -93,7 +117,7 @@ export function Pid() {
           aria-expanded={panel}
           className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
         >
-          {panel ? 'Hide drawing data' : 'Show drawing data'}
+          {panel ? 'Hide symbols' : 'Symbols'}
         </button>
       </div>
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
@@ -101,14 +125,15 @@ export function Pid() {
           <DrawingView
             nodes={drawing.doc.nodes}
             edges={drawing.doc.edges}
-            onSymbolClick={(id) => { if (valves.has(id)) toggleValve(id); }}
-            clickable={valves}
+            onSymbolClick={(id) => (valves.has(id) ? toggleValve(id) : openSymbol(id))}
+            clickable={symbols}
           >
             {stand && live && (
               <LiveLayer
                 frame={{
                   t: live.t,
                   pressure_psi: live.pressure_psi,
+                  temperature_K: live.temperature_K,
                   node_psi: live.node_psi,
                   flow_kg_s: live.flow_kg_s,
                   open: live.open,
@@ -117,13 +142,14 @@ export function Pid() {
                 lines={lines}
                 valves={valves}
                 held={held}
+                focus={panel ? focus : null}
               />
             )}
           </DrawingView>
         </div>
         {panel && (
           <aside className="bg-card h-full w-[400px] max-w-[45%] flex-shrink-0 overflow-hidden rounded-lg border border-[var(--line)]">
-            <DrawingPanel />
+            <DrawingPanel focus={focus} onFocus={setFocus} />
           </aside>
         )}
       </div>

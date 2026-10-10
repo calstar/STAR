@@ -9,6 +9,23 @@ be able to find why they differ.
 ## Unreleased — 2026-10-09
 
 ### Changed results
+- **Reading a regulator's lockup moves nothing** (`Session.peek_signals`,
+  `regulator_lockup(place=)`). It went through the step's `signals()`, which at a zero
+  dt snaps every valve to its command; the cockpit read each tank's lockup on every
+  tick, so a main valve mid-travel was fully open after the readout. Cockpit burns now
+  honour the valves' travel time. T-0 (`jump_to_t0`, `prime_at_t0`) keeps the old
+  evaluation (`place=True`): the Study, Layer X and the benchmark are unchanged, and
+  the Layer X <-> cockpit parity test holds.
+- **A dry tank no longer drains back through its fill line** (`Session._dry_branches`).
+  The line a drawn cart loads through was exempt from the dry-tank isolation, and an
+  open branch flows both ways: with LE4's FD-ROT-G (uncommanded, rests open) beyond
+  it, the dry tank kept "draining" and the vessel floor re-made the mass, ~0.46 kg/s
+  booked as guard. It now stays open to a dry tank only in that tank's fill state
+  (`Session._loading`): not on the last solve's pressures, which sit within a hair of
+  each other across an idle line and flipped it every step -- a circuit that changes
+  every step drops its flows, and a topped LOX tank's vent went with them
+  (`test_a_topped_lox_tank_on_its_vent_lands_where_the_solve_put_it`). Drawings with
+  no cart are untouched; the benchmark is unchanged.
 - **A venting ullage is closed on its gas-out slope** (`Session._ullage_storage`,
   `Session._venting`). It was closed on the stiffer of gas in and gas out, and over
   boiling LOX gas in is ~8x stiffer, so a steady vent left the tank above the node its
@@ -16,6 +33,16 @@ be able to find why they differ.
   in Ox Fill: 7.2 -> 3.1 psig (the node was 3.1 both times; finer coupling on the old
   code tended to 3.4). Tier 2.1 bit-identical; LE4 (6) burn impulse bit-identical
   (docs/PHYSICS-BENCHMARK.md 3.10c).
+
+### Added
+- `Session.short_loads()`: each vehicle tank that cannot hold the engine's fire load at
+  its full fraction, said. LE4's Eth-Tank holds 6.14 kg against a 7.00 kg fuel fire
+  load; a load stops at the full fraction, so the stand has been loaded short.
+- `regulator_lockup(inlet=, loaded_dome=)`: the lockup with the bottle at a given
+  pressure, and with the dome its knob sets though the dome line is shut.
+- `Session.operator_held` (the operator's hands, not the crew's fill valve),
+  `TankSim.load_target_kg`, `T0.loads`, and a note naming where a cold vehicle tank's
+  propellant goes when it is not the engine.
 
 ### Fixed
 - Fills ran at a third of real time on a drawn cart. The 10 % mass rule counted gas a
@@ -30,6 +57,8 @@ be able to find why they differ.
   A solve that fails with the ullages closed is retried once from the solution with
   them held (`Session._solve`): 9 + 4 iterations there. Steps that converge are
   untouched.
+- The burnout note said `T+` on the stand clock ("T+302.7 s" after a 3.5 s burn); it
+  times from Fire.
 
 ## Unreleased — 2026-10-07
 

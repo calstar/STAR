@@ -9,6 +9,68 @@
 
 import { useState } from 'react';
 import type { Report } from '../api';
+import { groupChecks, type CheckGroup, type CheckKind } from '../lib/checks';
+
+const SECTION: Record<CheckKind, { title: string; hint: string; tone: string }> = {
+  fix: {
+    title: 'Worth fixing on the drawing',
+    hint: 'Each of these changes an answer, or leaves part of the stand out. Fix it in pid-designer (or Library for the engine).',
+    tone: 'var(--warn)',
+  },
+  assumed: {
+    title: 'Filled in by the twin',
+    hint: 'The drawing does not say, so the twin assumed it. The answer stands, but it rests on these.',
+    tone: 'var(--muted)',
+  },
+  read: {
+    title: 'How the drawing was read',
+    hint: 'Nothing wrong: how the twin joined pages, oriented valves and read hand valves and vents.',
+    tone: 'var(--dim)',
+  },
+};
+
+/** The assembly's warnings, one line per kind (lib/checks.ts). How the
+ *  drawing was read is folded away; the rest is open. */
+function Checks({ warnings, labels = {} }: { warnings: readonly string[]; labels?: Record<string, string> }) {
+  // Ids the backend names a line by, swapped for the drawing's labels.
+  const named = (item: string) => item.replace(/\b(?:node|junc)_[\w]+/g, (id) => labels[id] ?? id);
+  const groups = groupChecks(warnings).map((g) => ({ ...g, items: g.items.map(named) }));
+  const of = (kind: CheckKind) => groups.filter((g) => g.kind === kind);
+  const line = (g: CheckGroup) => (
+    <li key={g.title} className="py-0.5 text-[12.5px] leading-relaxed" title={g.detail}>
+      <span className="text-[var(--text)]">{g.title}</span>
+      {g.items.length > 0 && (
+        <span className="text-[var(--muted)]">
+          {' '}
+          — {g.items.length > 1 && <span className="num">{g.items.length}: </span>}
+          {g.items.join(', ')}
+        </span>
+      )}
+    </li>
+  );
+  return (
+    <div className="flex flex-col gap-3 py-1">
+      {(['fix', 'assumed'] as const).map((kind) =>
+        of(kind).length ? (
+          <section key={kind}>
+            <h3 className="caps mb-1 text-[11px]" style={{ color: SECTION[kind].tone }} title={SECTION[kind].hint}>
+              {SECTION[kind].title}
+            </h3>
+            <ul className="m-0 list-none p-0">{of(kind).map(line)}</ul>
+          </section>
+        ) : null,
+      )}
+      {of('read').length > 0 && (
+        <details>
+          <summary className="caps cursor-pointer text-[11px]" style={{ color: SECTION.read.tone }} title={SECTION.read.hint}>
+            {SECTION.read.title} · {of('read').length}
+          </summary>
+          <ul className="m-0 mt-1 list-none p-0">{of('read').map(line)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
 
 const RANK: Record<string, number> = { default: 0, estimated: 1 };
 
@@ -25,7 +87,7 @@ const LABEL: Record<string, string> = {
   estimated: 'Estimated',
 };
 
-export function ReportPanel({ report }: { report: Report }) {
+export function ReportPanel({ report, labels }: { report: Report; labels?: Record<string, string> }) {
   const [open, setOpen] = useState(false);
   const sorted = [...report.assumptions].sort(
     (a, b) =>
@@ -57,11 +119,7 @@ export function ReportPanel({ report }: { report: Report }) {
           : 'No engine — the injector face is a fixed pressure boundary.'}
       </p>
 
-      {report.warnings.map((w) => (
-        <p key={w} className="text-[11.5px]" style={{ color: 'var(--warn)' }}>
-          {w}
-        </p>
-      ))}
+      <Checks warnings={report.warnings} labels={labels} />
 
       <button
         type="button"
@@ -72,8 +130,8 @@ export function ReportPanel({ report }: { report: Report }) {
         <span className="num text-[14px]" style={{ color: 'var(--warn)' }}>
           {sorted.length}
         </span>
-        <span className="text-[12.5px] text-[var(--muted)]">
-          unmeasured{report.unchecked > 0 && `, ${report.unchecked} unchecked`}
+        <span className="text-[12.5px] text-[var(--muted)]" title="Every number a part needs that the drawing did not state: what the library filled in, and whether anyone has looked at it since.">
+          numbers the drawing did not give{report.unchecked > 0 && ` · ${report.unchecked} never checked`}
         </span>
         <span className="ml-auto text-[12px] text-[var(--accent)]">
           {open ? 'Hide' : 'Show'}

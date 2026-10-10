@@ -10,6 +10,12 @@
  * edge at its rule (the operator, 2026-10-08: rules across the whole column
  * and numbers off at its side read as belonging to the neighbour).
  *
+ * Not the DAQ's either: a bar with no limits. The DAQ's sensor config gives
+ * every channel a NOP and MEOP; the twin has only what the drawing says, and a
+ * transducer on a dome line or manifold reads no vessel's MAWP. Such a bar is
+ * linear to a round full scale and draws no rules -- the 550/700 it used to
+ * guess from the tag was worse than none.
+ *
  * Three of its props are declared there and never read — `unit`, `showLabels`,
  * and one derived value. They are wired up here rather than deleted, because
  * deleting them would make the two files diverge in signature and the next
@@ -83,11 +89,14 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   }
 }
 
+/** A bar with no limits reads to the first of these its value fits under. */
+const FULL_SCALES = [1000, 5000, 10000];
+
 function PressureBar({
   label,
   value,
-  nop = 500,
-  meop = 700,
+  nop: drawnNop,
+  meop: drawnMeop,
   color,
   tint = '#d9d9d9',
   unit = 'psig',
@@ -95,8 +104,20 @@ function PressureBar({
   compact = false,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
+  const bare = drawnMeop === undefined;
+  // A red line alone (the drawing's operating pressure is not under it): the
+  // DAQ's scale still wants an amber knee, so it sits where the DAQ's would.
+  const meop = drawnMeop ?? 0;
+  const nop = drawnNop ?? meop * 0.85;
 
   const { sane, nopPct, meopPct, displayHeight, barColor, level } = useMemo(() => {
+    if (bare) {
+      const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
+      const full = FULL_SCALES.find((f) => displayValue <= f) ?? FULL_SCALES[FULL_SCALES.length - 1];
+      const pct = sane ? Math.min(Math.max(displayValue / full, 0), 1) * 100 : 0;
+      const displayHeight = sane && value !== null && value !== 0 ? Math.max(pct, 2) : pct;
+      return { sane, nopPct: 0, meopPct: 0, displayHeight, barColor: color || tint, level: 'ok' as const };
+    }
     const maxVal = Math.max(meop * 1.3, 1000);
     const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
     const clampedDisplayValue = Math.max(0, displayValue);
@@ -111,7 +132,7 @@ function PressureBar({
     const barColor = color || (level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : tint);
 
     return { sane, nopPct, meopPct, displayHeight, barColor, level };
-  }, [displayValue, value, nop, meop, color, tint]);
+  }, [displayValue, value, nop, meop, color, tint, bare]);
 
   const readout = level === 'meop' ? '#f87171' : level === 'nop' ? '#e5b53a' : 'var(--ink)';
   /** Width kept to the right of the capsule for the limit numbers [px].
@@ -180,8 +201,8 @@ function PressureBar({
                 />
               )}
             </div>
-            {limit(meopPct, meop, '#ef4444')}
-            {limit(nopPct, nop, '#e5b53a')}
+            {!bare && limit(meopPct, meop, '#ef4444')}
+            {!bare && drawnNop !== undefined && limit(nopPct, nop, '#e5b53a')}
           </div>
         </div>
       </div>

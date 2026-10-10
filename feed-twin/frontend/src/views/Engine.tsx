@@ -249,7 +249,7 @@ function BurnPanel({ burn }: { burn: Burn }) {
       <h2 className="flex items-baseline gap-2 border-b border-gray-800 px-4 py-2.5 caps">
         {burn.burning ? 'Burning' : 'Last burn'}
         <span className="font-normal normal-case tracking-normal text-gray-600">
-          T+{fixed(burn.start_s, 2)} to {fixed(burn.end_s, 2)} s on the stand clock
+          {fixed(burn.start_s, 2)}–{fixed(burn.end_s, 2)} s on the stand clock
         </span>
         {burn.run_id ? (
           <Link
@@ -375,7 +375,7 @@ function BurnPlots({ burn }: { burn: Burn }) {
     <div className="grid gap-3 lg:grid-cols-3">
       {shown.panels.map((panel) =>
         panel.channels.length ? (
-          <div key={panel.label} className="bg-card h-[240px] rounded-lg border border-gray-800 p-3">
+          <div key={panel.label} className="bg-card h-[clamp(240px,40vh,420px)] rounded-lg border border-gray-800 p-3">
             <DaqPlot times={shown.times} channels={panel.channels} yLabel={panel.label} minSpan={panel.minSpan} fill />
           </div>
         ) : null,

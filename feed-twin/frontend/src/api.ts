@@ -165,6 +165,11 @@ export interface ModelView {
   ground?: string[];
   /** The cart's K-bottles and dewars, which the console does not show. */
   ground_bottles?: string[];
+  /** Built with the drawn GSE ignored: the vessels the cut left out. */
+  ground_cut?: string[];
+  /** Where each knob starts on this drawing [psig], by knob id: the
+   *  regulators' drawn settings, what a knob's default goes back to. */
+  drawn_knobs?: Record<string, number>;
 }
 
 export interface EngineState {
@@ -182,6 +187,8 @@ export interface EngineState {
 export interface Frame {
   t: number;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
@@ -193,6 +200,13 @@ export interface Channel {
   tag: string;
   unit: string;
   values: number[];
+  /** Amber and red lines [psig] from what the transducer reads (the drawn
+   *  operating pressure and MAWP of its vessel, the engine's design Pc).
+   *  Absent: none drawn for what it reads; the bar has no lines. */
+  nop?: number | null;
+  meop?: number | null;
+  /** Where they came from, for a hover. */
+  limits?: string;
 }
 
 /** A sibling design tool this instance can import from. */
@@ -287,6 +301,10 @@ export interface TankState {
    *  chilling down and will boil hard if the vent shuts. */
   wall_temperature_K?: number;
   surface_temperature_K?: number;
+  /** What a load fills this tank to [kg]: the fire load, else the full fraction. */
+  load_kg?: number;
+  /** The engine's fire load for this tank [kg]; absent when it names none. */
+  fire_load_kg?: number | null;
   /** A LOX load still chilling the wall: nothing collects yet. */
   chilling?: boolean;
   /** What the load is delivering into the tank [g/s]. */
@@ -294,6 +312,11 @@ export interface TankState {
   /** Where the regulator feeding this tank locks up now [psig]: dome + bias
    *  less the supply effect of the bottle behind it. Absent: no regulator. */
   lockup_psi?: number | null;
+  /** [charged, empty]: where it locks up with the COPV at its fill setting and
+   *  with it empty [psig] -- the range over a burn. */
+  lockup_range_psi?: [number, number] | null;
+  /** The drawn MAWP [psig]; the stand trips above it. */
+  mawp_psi?: number | null;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
   /** Which leg the tank is on, from what it holds. Empty on a bottle. */
@@ -346,6 +369,8 @@ export interface SessionState {
   reachable: string[];
   converged: boolean;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
@@ -449,6 +474,8 @@ export interface RunResult {
   message: string;
   times_s: number[];
   channels: Channel[];
+  /** Every state change in the window: rules across the plots. */
+  events?: { t: number; label: string }[];
   balance: Balance | null;
 }
 
@@ -730,6 +757,8 @@ export interface Hookup {
   by_user: string[];
   pages: string[];
   mated: string[][];
+  /** `bound` and the rest are the rocket-only stand's wiring. */
+  vehicle_only?: boolean;
 }
 
 /** The id of the knob the session's dome setting drives. */
@@ -748,20 +777,23 @@ export interface LiveKnob {
   regulators: string[];
 }
 
-const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
-  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}`;
+/** ``ignoreGse``: wired as a rocket-only stand runs it (the hookup itself is
+ *  still the whole drawing's). */
+const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
+  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}` +
+  (w.ignoreGse ? '&ignore_gse=true' : '');
 
-export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`);
 
-export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }, body: HookupBody) =>
+export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }, body: HookupBody) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
-export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
 
 /** The solver tab: per tick, as columns (feedtwin.session.diagnostics). */
@@ -778,6 +810,8 @@ export interface SolverTrace {
   mass_error_kg: number[];
   guard_kg: number[];
   guard_J: number[];
+  /** Cumulative mass across the boundary, in plus out [kg]. */
+  crossed_kg?: number[];
   summary: Record<string, number>;
 }
 
@@ -791,15 +825,15 @@ export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burn
 export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500) =>
   json<RunResult>(`/api/session/${id}/history?seconds=${seconds}&max_points=${maxPoints}`);
 
-/** Where a transducer's bar sits against its limits, keyed by tag. The DAQ
- *  reads these from its sensor config; a drawing does not carry them yet, so
- *  a high-pressure tag gets bottle limits and everything else tank limits.
- *  Wrong limits are worse than none, so both are stated. */
-export function limitsFor(tag: string): { nop: number; meop: number } {
-  const upper = tag.toUpperCase();
-  if (upper.includes('HI') || upper.includes('HIGH')) return { nop: 4500, meop: 5000 };
-  if (upper.includes('CHAMBER') || upper.includes('PC')) return { nop: 400, meop: 500 };
-  return { nop: 550, meop: 700 };
+/** A channel's amber and red lines: the drawing's, where the backend found
+ *  them (the vessel the transducer reads: its drawn operating pressure and
+ *  MAWP; the engine's design Pc). None where it found none -- a transducer on a
+ *  dome line or a manifold reads no vessel. The DAQ reads these from its
+ *  sensor config; they used to be guessed here from the tag (550/700 on a
+ *  dome PT, 4,500/5,000 on anything named HI), and a wrong line is worse than
+ *  none. */
+export function limitsOf(c: Pick<Channel, 'nop' | 'meop'>): { nop?: number; meop?: number } {
+  return { nop: c.nop ?? undefined, meop: c.meop ?? undefined };
 }
 
 /** One knob the twin assumes a value for: what it stands for, its unit,
@@ -902,6 +936,10 @@ export interface RunSummary {
   label: string;
   stand: RunStand | null;
   engine_model: string;
+  /** What it ran on: library ids, and whether the GSE was cut away. */
+  diagram?: string;
+  engine?: string;
+  rocket_only?: boolean;
   outcome: Record<string, number | null>;
   converged: boolean;
   mass_error_ppm: number | null;

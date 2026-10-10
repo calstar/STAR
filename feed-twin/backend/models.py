@@ -109,6 +109,13 @@ class ModelView(BaseModel):
     # The cart's K-bottles and dewars: the console does not show them at all
     # (nobody reads their level on the pad). The cart's tanks it can.
     ground_bottles: list[str] = Field(default_factory=list)
+    # Built with the drawn GSE ignored: the vessels that were cut, by label.
+    # Empty when nothing was (a drawing of the rocket alone, or the GSE kept).
+    ground_cut: list[str] = Field(default_factory=list)
+    #: Where each knob starts on this drawing [psig], by knob id ("dome",
+    #: "charge", a regulator's): the regulators' drawn settings. What a
+    #: knob's "default" goes back to, not the library's 500 / 4,500.
+    drawn_knobs: dict[str, float] = Field(default_factory=dict)
 
 
 class Channel(BaseModel):
@@ -116,6 +123,13 @@ class Channel(BaseModel):
     tag: str
     unit: str
     values: list[float]
+    #: Where the console's bar turns amber and red [psig], from what the
+    #: transducer reads (main._channel_limits); absent, the console falls back
+    #: on the DAQ's guesses by tag.
+    nop: float | None = None
+    meop: float | None = None
+    #: Where those two came from, for the bar's hover.
+    limits: str = ""
 
 
 class EngineState(BaseModel):
@@ -254,10 +268,23 @@ class TankOut(BaseModel):
     #: through its fill line, boiling on the wall or collecting. Zero when
     #: nothing is loading.
     fill_flow_g_s: float = 0.0
+    #: What a load fills this tank to [kg]: the engine's fire load where it
+    #: states one, else the full fraction. The pad guide's "loaded".
+    load_kg: float = 0.0
+    #: The engine's fire load for this tank [kg] (its config's lox_tank /
+    #: fuel_tank mass, fixed by the competition), ``None`` when it names none
+    #: and a load fills the tank to its full fraction instead.
+    fire_load_kg: float | None = None
     #: Where the regulator feeding this tank locks up right now [psig]:
     #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
     #: ``None`` for a tank no regulator feeds.
     lockup_psi: float | None = None
+    #: ``[charged, empty]``: where it locks up with the COPV at its fill
+    #: setting and with it empty [psig] -- the range over a burn.
+    lockup_range_psi: list[float] | None = None
+    #: The tank's drawn MAWP [psig] (the stand trips above it); ``None`` when
+    #: the drawing gives none.
+    mawp_psi: float | None = None
 
 
 class StudyCaseOut(BaseModel):
@@ -346,12 +373,22 @@ class SessionOut(BaseModel):
     overrides_hash: str = ""
 
 
+class StateEvent(BaseModel):
+    """The stand entering a state, for a rule across the plots."""
+
+    t: float
+    label: str
+
+
 class RunOut(BaseModel):
     """A session's trace, in the shape the plots read."""
 
     message: str
     times_s: list[float]
     channels: list[Channel]
+    #: Every state change in the window, from the unthinned history, so a
+    #: transition between two kept samples is not lost.
+    events: list[StateEvent] = Field(default_factory=list)
     balance: BalanceOut | None = None
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one
@@ -470,6 +507,9 @@ class HookupOut(BaseModel):
     by_user: list[str]
     pages: list[str]
     mated: list[list[str]]
+    #: ``bound`` and the rest are the rocket-only stand's wiring
+    #: (``Setup.ignore_gse``); ``hookup`` is still the whole drawing's.
+    vehicle_only: bool = False
 
 
 class SolverOut(BaseModel):
@@ -491,6 +531,9 @@ class SolverOut(BaseModel):
     mass_error_kg: list[float]
     guard_kg: list[float]
     guard_J: list[float]
+    #: Cumulative mass across the boundary, in plus out [kg]: what the mass
+    #: error is measured against, tick by tick.
+    crossed_kg: list[float] = Field(default_factory=list)
     summary: dict[str, float] = Field(default_factory=dict)
 
 

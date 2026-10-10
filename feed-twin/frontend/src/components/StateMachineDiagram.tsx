@@ -52,12 +52,16 @@ interface Props {
   locked?: boolean;
   /** Buttons for the header: the states the grid does not draw. */
   actions?: ReactNode;
+  /** The state the pad guide says to press next: ringed. */
+  next?: string;
+  /** The pad guide's line, between the header and the grid. */
+  guide?: ReactNode;
 }
 
 /** The smallest a row of states gets [px]: two lines of label. */
 const ROW_MIN = 40;
 
-export default function StateMachineDiagram({ machine, live, go, locked = false, actions }: Props) {
+export default function StateMachineDiagram({ machine, live, go, locked = false, actions, next, guide }: Props) {
   const states = machine.states.filter((s) => !OFF_GRID.test(s));
   const extra = states.filter((s) => STATE_POS[s] === undefined);
   const pos = (state: string): [number, number] =>
@@ -79,6 +83,9 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
           </span>
         </span>
       </div>
+      {/* What to press next, above the grid it points into: under it, a short
+          window scrolled the line out of sight (1280 x 800). */}
+      {guide && <div className="mb-3 flex-shrink-0">{guide}</div>}
       {/* Rows share the panel's height, so the squares grow with the window. */}
       <div
         className="grid flex-1 gap-2.5"
@@ -92,6 +99,7 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
           const [row, col] = pos(state);
           const active = state === live.state;
           const canGo = !locked && reachable.has(state) && !active;
+          const suggested = canGo && state === next;
           return (
             <button
               key={state}
@@ -102,6 +110,8 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
               title={
                 active
                   ? `${state} — current`
+                  : suggested
+                    ? `Go to ${state} — the pad sequence's next step`
                   : canGo
                     ? `Go to ${state}`
                     : locked
@@ -109,15 +119,22 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
                       : `${state} is not reachable from ${live.state}`
               }
               style={{ gridRow: row + 1, gridColumn: col + 1 }}
-              className={`flex min-h-0 items-center justify-center border px-2 py-2 text-center font-mono text-[13px] font-semibold uppercase leading-snug tracking-[0.14em] transition-colors ${
+              // Narrower type below 1440: at 1280 a column is ~60 px and "GN2
+              // HIGH PRESS" broke onto three lines and out of its square.
+              className={`relative flex min-h-0 items-center justify-center border px-1.5 py-1.5 text-center font-mono text-[11px] font-semibold uppercase leading-tight tracking-[0.06em] transition-colors min-[1440px]:px-2 min-[1440px]:py-2 min-[1440px]:text-[13px] min-[1440px]:leading-snug min-[1440px]:tracking-[0.14em] ${
                 active
                   ? 'cursor-default border-[var(--ink)] bg-[var(--ink)] text-black'
+                  : suggested
+                    ? 'cursor-pointer border-[var(--ink)] bg-[#141414] text-[var(--ink)] shadow-[0_0_0_1px_var(--ink)] hover:bg-[#1f1f1f]'
                   : canGo
                     ? 'cursor-pointer border-[#3d3d3d] bg-[#0d0d0d] text-[var(--ink)] hover:border-[#8a8a8a] hover:bg-[#1a1a1a]'
                     : 'cursor-not-allowed border-[#1c1c1c] bg-[#080808] text-[#6a6a6a]'
               }`}
             >
               {state}
+              {suggested && (
+                <span className="absolute right-1 top-0.5 text-[8px] tracking-[0.18em] text-[var(--ink-2)]">NEXT</span>
+              )}
             </button>
           );
         })}
