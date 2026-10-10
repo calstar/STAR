@@ -120,6 +120,7 @@ from feedtwin.session.hookup import (
     Hookup,
     binding as hookup_binding,
     knob_starts,
+    lost_connectors as hookup_lost,
     on_vehicle as hookup_on_vehicle,
     regulators as hookup_regulators,
     suggest as suggest_hookup,
@@ -138,6 +139,7 @@ from backend.study import StudyCase, StudyRequest, StudyRunner
 from backend.statemachine import available as sm_available, load_machine
 from backend import daqbox
 from feedtwin.session.statemachine import StateMachine, machine_from_dict
+from feedtwin.session.core import builtin_rows
 from backend import runs as run_records
 from backend import userdata
 from backend.routers import stands, users
@@ -1203,6 +1205,12 @@ def _stand(
     shipped = _shipped_machine(machine)
     hookup, _, problem = _hookup_for(diagram, model)
     drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
+    whole = (
+        _assemble(diagram, engine, fluid_set, multiphase, swap)
+        if vehicle_only
+        else model
+    )
+    lost = _lost_note(hookup, whole)
     if vehicle_only:
         hookup = hookup_on_vehicle(hookup, model)
     # The drawing's own state table when somebody edited it, else the DAQ's.
@@ -1213,7 +1221,21 @@ def _stand(
         binding=hookup_binding(model, loaded, hookup),
         hookup=hookup,
         drawn=drawn,
-        notes=(problem,) if problem else (),
+        notes=tuple(n for n in (problem, lost) if n),
+        whole_ids=frozenset(n.id for n in whole.diagram.nodes),
+    )
+
+
+def _lost_note(hookup: Hookup, whole: Model) -> str:
+    """Say which connectors go to symbols the drawing no longer has: their
+    rows are matched by name instead (feedtwin.session.hookup.binding)."""
+    lost = hookup_lost(hookup, whole)
+    if not lost:
+        return ""
+    named = ", ".join(f"{c.name} ({c.symbol})" for c in lost)
+    return (
+        f"The DAQ box cables {named} to symbols this drawing no longer has; "
+        "matched by name instead. Rewire them on the P&ID tab."
     )
 
 
@@ -1285,7 +1307,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
         try:
             raw = stored.get("hookup")
             return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True, ""
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
                 f"This drawing's saved hookup could not be read ({exc}); the "
                 "suggested hookup is wired instead. Check the Hookup tab and save "
@@ -1595,8 +1617,6 @@ async def open_session(
                 candidate = hookup_on_vehicle(candidate, stand.model)
             known = {r.id for r in hookup_regulators(stand.model)}
             stray = sorted({r for k in candidate.knobs for r in k.regulators} - known)
-            ids = {n.id for n in stand.model.diagram.nodes}
-            stray += sorted({c.symbol for c in candidate.channels or ()} - ids)
             if stray:
                 hookup_note = (
                     "The stand's hookup was made for another drawing (it names "
@@ -1606,7 +1626,17 @@ async def open_session(
                 hookup = candidate
                 table = candidate.machine or _shipped_machine(machine)
                 binding = hookup_binding(stand.model, table, hookup)
-        except (ValueError, KeyError, TypeError) as exc:
+                gone = sorted(
+                    {c.symbol for c in Hookup.from_dict(raw).channels or ()}
+                    - stand.whole_ids
+                )
+                if gone:
+                    hookup_note = (
+                        "The stand's DAQ box cables connectors to symbols this "
+                        f"drawing no longer has ({', '.join(gone)}); matched by "
+                        "name instead. Rewire them on the P&ID tab."
+                    )
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             hookup_note = f"The stand's hookup could not be read ({exc}); using this drawing's own."
     try:
         session = Session(
@@ -1883,7 +1913,7 @@ async def command_session(
                     "channels": names.get("channels"),
                 }
             )
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         # Names without connectors leave the box as it is.
         channels = fresh.channels if "channels" in names else session.hookup.channels
@@ -2127,7 +2157,7 @@ def _hookup_from_body(body: HookupBody) -> Hookup:
                 "machine": body.machine,
             }
         )
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -2204,6 +2234,7 @@ def _hookup_out(
         ],
         machine_shipped=shipped.to_dict(),
         machine_warnings=list(table.warnings),
+        builtin=builtin_rows(table),
     )
 
 
@@ -2285,7 +2316,7 @@ async def check_state_machine(table: dict[str, Any] = Body(...)) -> dict[str, An
     would give it once saved, or why it cannot be read at all."""
     try:
         machine = machine_from_dict(table)
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return {"ok": False, "error": str(exc), "warnings": []}
     return {"ok": True, "error": "", "warnings": list(machine.warnings)}
 
@@ -2542,9 +2573,9 @@ def _t0(session: Session, sample: SessionSample) -> dict[str, Any]:
 
 def _hookup_inputs(session: Session) -> dict[str, Any]:
     """The hookup as a run records it. An edited state table goes under its
-    own key, ``machine_table``, beside the shipped table's name: the Explain
-    ladder swaps "state machine" and "drawing" as separate rungs, and a table
-    inside the hookup would ride with the drawing. A run on the shipped table
+    own key, ``machine_table``, so a diff names it apart from the box; the
+    Explain ladder still swaps the two together (runs.GROUPS), because the
+    box's connector names are the table's rows. A run on the shipped table
     records no ``machine_table`` at all, so it diffs clean against a run
     recorded before tables could be edited."""
     if session.hookup is None:
@@ -2929,6 +2960,7 @@ def _machine_out(m: StateMachine, b: Any, edited: bool) -> StateMachineOut:
         aborts=[s for s in m.states if m.is_abort(s)],
         table=m.to_dict(),
         edited=edited,
+        builtin=builtin_rows(m),
     )
 
 

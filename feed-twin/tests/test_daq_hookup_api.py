@@ -401,7 +401,8 @@ def test_a_run_records_an_edited_table_and_a_replay_runs_it() -> None:
     assert "machine" not in inputs["hookup"], "the table is not the drawing's"
     table = inputs["machine_table"]
     assert "Purge" in [s["name"] for s in table["states"]]
-    assert group_of("machine_table.states") == "state machine"
+    # Swapped with the hookup: the box's connector names are the table's rows.
+    assert group_of("machine_table.states") == group_of("hookup.channels") == "drawing"
     assert group_of("machine") == "state machine"
 
     replay = _session_from_inputs({"diagram": diagram, **inputs})
@@ -411,3 +412,50 @@ def test_a_run_records_an_edited_table_and_a_replay_runs_it() -> None:
     # the drawing's saved hookup says now.
     bare = _session_from_inputs({"diagram": diagram, **shipped_inputs})
     assert "Purge" not in bare.machine.states
+
+
+def test_rows_the_twin_reads_by_name_are_named() -> None:
+    """The built-in COPV charge and dump, and the transfer tank's press, follow
+    table rows by name with no valve wired to them. The editor must not call
+    them "wired to nothing", so the API says which they are."""
+    diagram = upload("daq box builtin.json")
+    builtin = get(diagram)["builtin"]
+    assert set(builtin) >= {"GSE High Press Control", "GSE High Press Vent"}
+    assert "Fuel Fill Press" in builtin
+    assert "LOX Main" not in builtin
+    table = client.get("/api/statemachine", params={"diagram": diagram}).json()
+    assert table["builtin"] == builtin
+
+
+def test_a_connector_to_a_symbol_the_drawing_lost_is_said_and_matched_by_name() -> None:
+    """A redrawn main valve with a new id: the box still names the old one.
+    The stand opens with LOX Main matched by name, and says why."""
+    diagram = upload("daq box lost.json")
+    first = get(diagram)
+    body = {**first["hookup"], "channels": box(("sol12", 1, "LOX Main", "MVO-old"))}
+    # Saving refuses it (not on the drawing); a stand's own hookup carries it.
+    assert (
+        client.put("/api/hookup", params={"diagram": diagram}, json=body).status_code
+        == 422
+    )
+    opened = client.post(
+        "/api/session",
+        params={"diagram": diagram},
+        json={"state": "Idle", "hookup": body},
+    ).json()
+    OPENED.append(opened["id"])
+    assert _SESSIONS[opened["id"]].binding.to_symbol.get("LOX Main") == "MVO"
+    assert any("no longer has" in n and "MVO-old" in n for n in opened["notes"])
+
+
+def test_an_edited_table_without_the_states_the_twin_needs_is_warned() -> None:
+    shipped = get(upload("daq box keyed.json"))["machine_shipped"]
+    table = {**shipped, "states": [s for s in shipped["states"] if s["name"] != "Vent"]}
+    table["open"] = {k: v for k, v in shipped["open"].items() if k != "Vent"}
+    table["allowed"] = {
+        k: [t for t in v if t != "Vent"]
+        for k, v in shipped["allowed"].items()
+        if k != "Vent"
+    }
+    said = client.post("/api/statemachine/check", json=table).json()
+    assert said["ok"] and any("no Vent" in w for w in said["warnings"])

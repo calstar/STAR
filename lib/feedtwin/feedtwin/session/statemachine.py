@@ -37,6 +37,11 @@ from typing import Any, Mapping, Sequence
 #: Bumped whenever the stored form of an edited table changes meaning.
 MACHINE_SCHEMA = 1
 
+#: States the session and the cockpit find by name: the stand opens in Idle,
+#: T-0 primes in Ready, Fire is the burn, burnout vents to Vent, the console's
+#: ENG ABORT goes to Engine Abort. An edited table without one is warned.
+KEYED_STATES = ("Idle", "Ready", "Fire", "Vent", "Engine Abort")
+
 #: Prefixes that say how a valve is actuated, not what it does. A solenoid and
 #: a ball valve in the same place are the same actuator to a state machine.
 _NOISE = {"valve", "sv", "bv", "nv", "av", "act", "the"}
@@ -529,6 +534,14 @@ def machine_from_dict(raw: Mapping[str, Any]) -> StateMachine:
     source = "the edited table"
     warnings = _hold_idle(states, actuators, positions, source)
     warnings.extend(_fire_bypasses(allowed, source))
+    missing = [s for s in KEYED_STATES if s not in known_states]
+    if missing:
+        warnings.append(
+            f"The table has no {', '.join(missing)}: the twin keys on "
+            f"{'that state' if len(missing) == 1 else 'those states'} by name "
+            "(a stand opens in Idle, T-0 primes in Ready, Fire burns, a dry "
+            "tank vents to Vent, ENG ABORT goes to Engine Abort)."
+        )
     return StateMachine(
         name=str(raw.get("name") or "edited"),
         states=tuple(states),

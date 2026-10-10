@@ -19,7 +19,12 @@ be able to find why they differ.
   in. Without channels nothing changes: pins, then names and roles, bit for bit.
   `Hookup.names()` is the console's names (a connector's name over an alias).
   `on_vehicle` keeps the rocket's connectors and matches the rows whose cable went to
-  the cart as before (`Hookup.auto`), and now rebuilds with `replace`.
+  the cart as before (`Hookup.auto`, compared ignoring case), and now rebuilds with
+  `replace`. Rocket only, a row with no connector still drives the stand-in the cut
+  drawing makes of a disconnect whose mate went with the cart (the tank-top GSE
+  vent; `Model.meta["capped"]`), which the box cannot take. A connector whose
+  symbol the drawing lost is matched by name again, as a pin to a lost valve always
+  was (`lost_connectors` lists them for the stand's notes).
 - **An edited state table** (`StateMachine.to_dict`, `machine_from_dict`,
   `Hookup.machine`). Read exactly as the CSVs are: Idle held shut, mains outside Fire
   and ignition paths around Ready warned (`_hold_idle`, `_fire_bypasses`, shared with
@@ -28,7 +33,11 @@ be able to find why they differ.
   keeps what the table wrote before the Idle hold; `layout` is the DAQ's panel
   row/col; `aborts` the states flagged abort (`None`: by name, as before; a flag is
   read strictly -- "0" is no). `load_machine` reads an optional
-  `<name>_states.csv` beside the tables for both.
+  `<name>_states.csv` beside the tables for both. An edited table without a state
+  the twin keys on by name (`KEYED_STATES`: Idle, Ready, Fire, Vent, Engine Abort)
+  is warned.
+- `core.builtin_rows(machine)`: the rows the session reads by name (the built-in
+  COPV charge and dump, the transfer tank's press), with what each does.
 
 ### Changed results
 - None. A hookup without channels and a table without flags bind and run as before

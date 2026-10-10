@@ -35,8 +35,12 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
   (a stand's own hookup, bound as it runs); `POST /api/statemachine/check`;
   `GET /api/session/{id}/statemachine`; `StateMachineOut.layout/aborts/table/edited`;
   `SessionOut.wired`; the session command `names` renames live.
-- Runs record an edited table as `machine_table` ("state machine" in the Explain
-  ladder); a replay runs the table the run was recorded on.
+- Runs record an edited table as `machine_table`; the Explain ladder swaps it with
+  the hookup (a box's connector names are the table's rows), and a replay runs the
+  table the run was recorded on.
+- The stand says when a connector goes to a symbol the drawing no longer has (its
+  row is matched by name instead). `HookupOut.builtin` / `StateMachineOut.builtin`
+  name the rows the twin reads by name, so the editor does not call them unwired.
 - `statemachines/diablo_states.csv`: the DAQ's panel layout and abort flags.
 
 ## Unreleased — 2026-10-09

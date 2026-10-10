@@ -279,6 +279,24 @@ FILL_SUPPLY_T = 293.15
 #: cannot charge or dump such a bottle, and the notes say so (`Session._notes`).
 GSE_CHARGE = "GSE High Press Control"
 GSE_DUMP = "GSE High Press Vent"
+
+
+def builtin_rows(machine: StateMachine) -> dict[str, str]:
+    """The table's rows the session reads by name, with what each does when no
+    valve on the drawing answers to it: the built-in COPV charge and dump, and
+    the cart's press on a transfer tank whose press line is not drawn
+    (:meth:`Session._supply_press`). Such a row is not "wired to nothing" --
+    renaming or dropping it stops what it does, and an editor must say so."""
+    out: dict[str, str] = {}
+    for row in machine.actuators:
+        words = _words(row)
+        if row == GSE_CHARGE:
+            out[row] = "Charges the COPV by the twin's built-in fill when the cart's fill is not drawn."
+        elif row == GSE_DUMP:
+            out[row] = "Dumps the COPV by the twin's built-in vent when the cart's fill is not drawn."
+        elif {"fill", "press"} <= words and words & {"fuel", "lox"}:
+            out[row] = "Presses the cart's transfer tank when no press line to it is drawn."
+    return out
 #: The room [K], for the heat that leaks through a tank skin.
 AMBIENT_T = 293.15
 #: Fiberglass batt, for a drawing that gives a thickness and no conductivity.

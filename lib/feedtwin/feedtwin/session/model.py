@@ -193,12 +193,28 @@ def assemble_model(
         vehicle_only: Cut the ground support away before building
             (:func:`feedtwin.pid.roles.vehicle_only`, ``Setup.ignore_gse``):
             the cart is not simulated and the session's built-in fills stand in
-            for it. ``meta`` then carries ``vehicle_only`` and ``ground_cut``,
-            the labels of the vessels cut.
+            for it. ``meta`` then carries ``vehicle_only``, ``ground_cut``
+            (the labels of the vessels cut) and ``capped`` (the ids of the
+            vehicle's disconnects whose mate was cut).
     """
     if vehicle_only:
+        mates = {
+            n.id: str(n.options.get("pairedWith", "") or "").strip()
+            for n in diagram.nodes
+        }
         diagram, cut = cut_to_vehicle(diagram)
-        meta = {**dict(meta or {}), "vehicle_only": True, "ground_cut": list(cut)}
+        capped = [
+            n.id
+            for n in diagram.nodes
+            if mates.get(n.id) not in ("", "none", None)
+            and not str(n.options.get("pairedWith", "") or "").strip()
+        ]
+        meta = {
+            **dict(meta or {}),
+            "vehicle_only": True,
+            "ground_cut": list(cut),
+            "capped": capped,
+        }
     if fluid_swap:
         diagram = swap_fluids(diagram, fluid_swap)
 

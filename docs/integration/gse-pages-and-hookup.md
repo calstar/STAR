@@ -105,7 +105,14 @@ config: `[actuator_roles]` puts each actuator name on a board and channel,
   binding.
 * Rocket only, `on_vehicle` keeps the rocket's connectors. A row whose cable
   went to the cart is matched on the rocket as before (`auto`), so its vent row
-  finds the tank-top disconnect.
+  finds the tank-top disconnect; a row with no connector still drives such a
+  stand-in (a disconnect whose mate was cut, `Model.meta["capped"]`), which the
+  box cannot take.
+* A connector whose symbol the drawing no longer has (redrawn, new id) is matched
+  by name again, and the stand says so in its notes.
+* Some rows the twin reads by name with no valve wired (`core.builtin_rows`: the
+  built-in COPV charge and dump, the transfer tank's press). The State machine
+  tab shows them as built-in, not "wired to nothing".
 * The console shows what is wired: a valve or transducer the box can take is on
   it only with a connector, as on the real DAQ's dashboard. Gauges, tanks and the
   engine's channels are the twin's and show as before (`SessionOut.wired`).
@@ -114,9 +121,10 @@ config: `[actuator_roles]` puts each actuator name on a board and channel,
 (`StateMachine.to_dict` / `machine_from_dict`: states with their panel row/col and
 abort flag, rows, which rows each state opens *as written*, and the legal moves).
 `None` is the shipped DAQ table. An edited table is read like the CSVs: Idle held
-shut, mains outside Fire and Fire bypasses warned. It rides with the hookup, so a
-stand carries its own. A run records it as `machine_table` (grouped with
-`machine` under "state machine" in the Explain ladder), and a replay runs it.
+shut, mains outside Fire and Fire bypasses warned, and a missing Idle, Ready,
+Fire, Vent or Engine Abort warned (the twin keys on them). It rides with the
+hookup, so a stand carries its own. A run records it as `machine_table`, which the
+Explain ladder swaps with the hookup, and a replay runs it.
 `POST /api/statemachine/check` warns about a table being edited.
 `GET /api/session/{id}/statemachine` is the table a running stand commands,
 including a stand's own hookup.

@@ -580,14 +580,44 @@ def binding(model: Model, machine: StateMachine, hookup: Hookup | None) -> Bindi
         # Main" is the table's "LOX Main". (Names are unique ignoring case on
         # the box and in the table, so this can only find the one row.)
         rows = {a.casefold(): a for a in machine.actuators}
-        overrides = {
-            rows[c.name.casefold()]: c.symbol
-            for c in hookup.channels
-            if c.name.casefold() in rows and c.symbol in labels
-        }
-        for actuator in machine.actuators:
-            if actuator not in overrides and actuator not in hookup.auto:
-                overrides[actuator] = ""
+        drawn = {n.id for n in model.diagram.nodes}
+        auto = {a.casefold() for a in hookup.auto}
+        overrides = {}
+        for c in hookup.channels:
+            row = rows.get(c.name.casefold())
+            if row is None:
+                continue
+            if c.symbol in labels:
+                overrides[row] = c.symbol
+            elif c.symbol not in drawn:
+                # The drawing lost the symbol the cable went to (redrawn, a
+                # new id): matched by name again, as a pin to a lost valve
+                # always was -- a main the drawing still has must not go
+                # uncommanded because its old id did. The stand says so.
+                auto.add(row.casefold())
+        free = [
+            a
+            for a in machine.actuators
+            if a not in overrides and a.casefold() not in auto
+        ]
+        overrides.update({a: "" for a in free})
+        stand_ins = _stand_ins(model)
+        if stand_ins and free:
+            # Rocket only, the cut drawing makes stand-ins of the disconnects
+            # that mated the cart (the tank-top GSE vent). The box cannot take
+            # one -- on the whole drawing it is not a valve -- so a row the box
+            # leaves unwired drives the stand-in the old matching gives it,
+            # and nothing else.
+            trial = bind(
+                machine,
+                labels,
+                roles=built.valve_roles,
+                overrides={k: v for k, v in overrides.items() if k not in free},
+            )
+            for a in free:
+                found = trial.to_symbol.get(a, "")
+                if found in stand_ins:
+                    overrides[a] = found
     elif hookup is not None:
         overrides = dict(hookup.valves)
     return bind(
@@ -596,3 +626,25 @@ def binding(model: Model, machine: StateMachine, hookup: Hookup | None) -> Bindi
         roles=model.built.valve_roles,
         overrides=overrides,
     )
+
+
+def _stand_ins(model: Model) -> frozenset[str]:
+    """A rocket-only drawing's valves that are not valves on the whole one: a
+    disconnect whose mate went with the cart (``meta["capped"]``), read as the
+    GSE vent it couples (:func:`feedtwin.pid.network._gse_vents`)."""
+    raw = model.meta.get("capped")
+    capped = {str(c) for c in raw} if isinstance(raw, (list, tuple)) else set()
+    return frozenset(
+        n.id
+        for n in model.diagram.nodes
+        if n.id in capped and n.type == "QD" and n.id in model.built.actuators
+    )
+
+
+def lost_connectors(hookup: Hookup, model: Model) -> list[Channel]:
+    """The box's connectors whose cable goes to a symbol the drawing no longer
+    has: their rows are matched by name instead, and the stand should say so.
+    Give it the whole drawing: on a rocket-only one the cart's connectors are
+    cut on purpose (:func:`on_vehicle`)."""
+    drawn = {n.id for n in model.diagram.nodes}
+    return [c for c in hookup.channels or () if c.symbol not in drawn]

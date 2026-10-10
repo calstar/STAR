@@ -442,3 +442,77 @@ def test_two_rows_one_name_apart_from_case_are_refused() -> None:
     raw["actuators"] = [*raw["actuators"], "lox main"]
     with pytest.raises(ValueError):
         machine_from_dict(raw)
+
+
+@needs_tables
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+def test_on_the_vehicle_a_cut_row_is_matched_whatever_case_its_connector_has() -> None:
+    """The connector on the cart's FV-SOL typed "fuel vent": the whole stand
+    joins it to Fuel Vent ignoring case, and so must the rocket alone, or the
+    fuel tank's top disconnect is never vented there."""
+    ids = {n["data"]["label"]: n["id"] for n in json.loads(LE4.read_text())["nodes"]}
+    whole, cut = _le4(False), _le4(True)
+    machine = _machine()
+    saved = Hookup(channels=(Channel("sol24", 2, "fuel vent", ids["FV-SOL"]),))
+    assert binding(whole, machine, saved).to_symbol["Fuel Vent"] == ids["FV-SOL"]
+    rocket = binding(cut, machine, on_vehicle(saved, cut)).to_symbol
+    assert rocket.get("Fuel Vent") == ids["FV-QD-B"]
+
+
+@needs_tables
+@pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
+def test_on_the_vehicle_an_unwired_row_still_drives_the_tank_top_stand_in() -> None:
+    """A cart drawn with no fuel vent solenoid: the whole drawing binds no
+    Fuel Vent, so the box has no connector for it, and on the whole drawing
+    the tank-top disconnect is mated, not a valve the box could take. The
+    rocket alone reads that disconnect as the GSE vent and the old matching
+    vented through it; a saved box must too, or neither Vent nor the burnout
+    vent can empty the fuel tank."""
+    raw = json.loads(LE4.read_text())
+    gone = {
+        n["id"] for n in raw["nodes"] if n["data"]["label"] in ("FV-SOL", "FF-SOL-Vent")
+    }
+    raw["nodes"] = [n for n in raw["nodes"] if n["id"] not in gone]
+    raw["edges"] = [
+        e for e in raw["edges"] if e["source"] not in gone and e["target"] not in gone
+    ]
+    ids = {n["data"]["label"]: n["id"] for n in raw["nodes"]}
+
+    def build(cut: bool) -> Any:
+        return assemble_model(
+            read_diagram(raw, name="LE4 no vent"), diagram_id="le4nv", vehicle_only=cut
+        )
+
+    whole, cut = build(False), build(True)
+    machine = _machine()
+    legacy = binding(cut, machine, on_vehicle(suggest(whole), cut)).to_symbol
+    assert legacy["Fuel Vent"] == ids["FV-QD-B"], "the old matching vents through it"
+    assert "Fuel Vent" not in binding(whole, machine, suggest(whole)).to_symbol
+    box = Hookup(
+        channels=(Channel("sol12", 1, "LOX Main", ids["OM-R"]),),
+    )
+    rocket = binding(cut, machine, on_vehicle(box, cut)).to_symbol
+    assert rocket.get("Fuel Vent") == ids["FV-QD-B"]
+    # ... and only a stand-in: an ordinary valve of the rocket's is not taken.
+    assert set(rocket.values()) <= {ids["OM-R"], ids["FV-QD-B"]}
+
+
+@needs_stand
+def test_a_connector_whose_symbol_left_the_drawing_is_matched_by_name_and_said() -> (
+    None
+):
+    """The drawing redrawn and the main valve given a new id: the box's LOX
+    Main still names the old one. Pinned to nothing, the main would never
+    open in Fire; matched by name, as a pin to a lost valve always was, it
+    does -- and the connector is listed so the stand can say so."""
+    from feedtwin.session.hookup import lost_connectors
+
+    model, machine = _stand(), _machine()
+    box = Hookup(channels=(Channel("sol12", 1, "LOX Main", "MVO-old"),))
+    assert binding(model, machine, box).to_symbol.get("LOX Main") == "MVO"
+    assert [c.symbol for c in lost_connectors(box, model)] == ["MVO-old"]
+    # A connector on a symbol the drawing has, but that is not a valve, is
+    # the person's doing and stays as they left it.
+    on_pt = Hookup(channels=(Channel("pt_low", 1, "LOX Main", "PT_FUU"),))
+    assert "LOX Main" not in binding(model, machine, on_pt).to_symbol
+    assert lost_connectors(on_pt, model) == []

@@ -249,6 +249,9 @@ class StateMachineOut(BaseModel):
     edited: bool = False
     """The stand's own table, not the shipped DAQ one."""
 
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin reads by name (feedtwin.session.core.builtin_rows)."""
+
 
 class TankOut(BaseModel):
     """A propellant tank's inventory, which is what makes a sequence mean
@@ -579,6 +582,9 @@ class HookupOut(BaseModel):
     """The DAQ's table as shipped, for "back to the DAQ's table"."""
     machine_warnings: list[str] = Field(default_factory=list)
     """What is wrong with the table this hookup runs."""
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin reads by name, and what each does with no valve wired to
+    it (the built-in COPV charge and dump, the transfer tank's press)."""
 
 
 class SolverOut(BaseModel):
