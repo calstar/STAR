@@ -115,6 +115,10 @@ class FlightDynamicsResult:
     drift_bearing: float            # deg, compass bearing pad->apogee point
     lateral_velocity_at_apogee: float   # m/s, horizontal GROUND speed at apogee
     lateral_bearing_at_apogee: float    # deg, compass bearing it points TOWARD
+    # At motor burnout: thrust stops at peak drag, which is what pulls a
+    # separation joint apart (the recovery tab's shear pin sizing).
+    burnout_mass: float | None      # kg, whole vehicle; None if RocketPy could not say
+    burnout_drag: float | None      # N, whole-vehicle aerodynamic drag
     launch_stable: bool
     approximations: list[str] = field(default_factory=list)
 
@@ -262,7 +266,7 @@ def run_flight(
                    float(motor.burn_time))
 
 
-def _safe(fn, t: float, default: float = 0.0) -> float:
+def _safe(fn, t: float, default: float | None = 0.0) -> float | None:
     try:
         return float(fn(t))
     except Exception:
@@ -388,6 +392,8 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
         drift_bearing=bearing,
         lateral_velocity_at_apogee=lat_v_apogee,
         lateral_bearing_at_apogee=lat_bearing_apogee,
+        burnout_mass=_safe(flight.rocket.total_mass, burnout_time, None),
+        burnout_drag=_safe(flight.aerodynamic_drag, burnout_time, None),
         launch_stable=launch_stable,
         approximations=[
             "inertia: rod/cylinder estimate (no CAD inertia tensor)",

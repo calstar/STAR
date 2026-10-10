@@ -360,6 +360,10 @@ export interface FlightDynamicsResult {
   /** Horizontal ground speed at apogee (m/s) and the compass bearing it points toward. */
   lateralVelocityAtApogee: number
   lateralBearingAtApogee: number
+  /** Whole vehicle at motor burnout: mass (kg) and aerodynamic drag (N). Null
+   *  when RocketPy could not report them. */
+  burnoutMass: number | null
+  burnoutDrag: number | null
   launchStable: boolean
   approximations: string[]
 }

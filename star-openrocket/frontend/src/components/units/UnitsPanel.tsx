@@ -27,7 +27,7 @@ import { Button, Card, Select } from '../../recovery/components/ui'
 const GROUPS: { title: string; kinds: Kind[] }[] = [
   {
     title: 'Vehicle and geometry',
-    kinds: ['altitude', 'length', 'area', 'volume', 'mass', 'distance'],
+    kinds: ['altitude', 'length', 'smallLength', 'area', 'volume', 'mass', 'charge', 'distance'],
   },
   {
     title: 'Motion and loads',
@@ -50,6 +50,8 @@ const HELP: Partial<Record<Kind, string>> = {
     + 'difference converts by the ratio alone: 1 K is 1.8 °F, not 33.8 °F.',
   lapse: 'How fast temperature falls with height. Stored per metre; K/km is '
     + 'already a display convention.',
+  smallLength: 'Vent hole and shear pin diameters on the Ejection & Pins page.',
+  charge: 'Black powder per ejection charge.',
   stiffness: 'Series harness stiffness k_eff, which drives the snatch load.',
 }
 

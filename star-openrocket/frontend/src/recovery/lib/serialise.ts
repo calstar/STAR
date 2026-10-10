@@ -8,7 +8,9 @@
  * stays UI-side by default. That is the safe direction to fail.
  */
 
-import type { Config, Device, UiConfig, UiDevice, UiSite, UiStudyAxis } from '../types/schema'
+import type {
+  Config, Device, EjectionInputs, UiConfig, UiDevice, UiJoint, UiSite, UiStudyAxis,
+} from '../types/schema'
 import { REFERENCE_CONFIG } from '../api/fixture'
 import { airframeBand } from './units'
 
@@ -279,12 +281,63 @@ export function defaultUiConfig(): UiConfig {
     study: [],
     // Apogee, mass and lateral velocity default to typed-in (manual). The Recovery
     // tab flips these to read the ascent design once there is a flight run / model.
-    sources: { apogeeFromDesign: false, massFromDesign: false, lateralFromDesign: false },
+    sources: {
+      apogeeFromDesign: false, massFromDesign: false, lateralFromDesign: false,
+      // On: burnout mass and drag are outputs of the ascent, not things to type.
+      burnoutFromDesign: true,
+    },
     // Still air by default; the Drift tab's wind selection resolves into this.
     wind: null,
     // Nose-down by default (the structural bound); the Drift tab can switch it, and
     // Full Flight reads it from here.
     airframeBound: 'axial',
+    ejection: defaultEjection(),
+  }
+}
+
+const IN = 0.0254
+
+/** A joint with no pin chosen: the page sizes every catalog pin for it. */
+export function blankJoint(name: string, role: UiJoint['role']): UiJoint {
+  return { name, role, bay_id: 6 * IN, bay_length: 20 * IN, m_forward: 0, pin: null }
+}
+
+/** Opens on the LE3 mastersheet's bays (6 in inside diameter, 27.75 in drogue,
+ *  21.22 in main) and the Camelot sheet's 9 in avionics bay with four ports.
+ *  Burnout mass and drag start at zero only until the ascent fills them
+ *  (`sources.burnoutFromDesign`); the masses forward of each joint are the
+ *  user's, since the CAD has no notion of where the joints are. */
+export function defaultEjection(): EjectionInputs {
+  return {
+    m_burnout: 0, D_burnout: 0,
+    sf_hold: 2, sf_eject: 1.5,
+    trapped_pressure: true, dual_separation: true,
+    joints: [
+      { ...blankJoint('Drogue', 'drogue'), bay_length: 27.75 * IN },
+      { ...blankJoint('Main', 'main'), bay_length: 21.22 * IN },
+    ],
+    vent: { bay_id: 6 * IN, bay_length: 9 * IN, n_holes: 4 },
+  }
+}
+
+/** The body of POST /api/ejection: the wire config (pad and apogee pressure,
+ *  the drogue's opening load) plus the page's inputs. */
+export function toEjectionRequest(ui: UiConfig) {
+  const e = ui.ejection
+  // Field by field, like toWireConfig: the chosen `pin` is UI-side, and the
+  // backend is extra="forbid", so a spread would 422 on it.
+  return {
+    config: toWireConfig(ui),
+    ejection: {
+      m_burnout: e.m_burnout, D_burnout: e.D_burnout,
+      sf_hold: e.sf_hold, sf_eject: e.sf_eject,
+      trapped_pressure: e.trapped_pressure, dual_separation: e.dual_separation,
+      joints: e.joints.map((j) => ({
+        name: j.name, role: j.role, bay_id: j.bay_id, bay_length: j.bay_length,
+        m_forward: j.m_forward,
+      })),
+      vent: { bay_id: e.vent.bay_id, bay_length: e.vent.bay_length, n_holes: e.vent.n_holes },
+    },
   }
 }
 
