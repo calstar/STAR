@@ -5,39 +5,67 @@
  */
 
 import type { ChannelDef, MachineDef, MachineStateDef } from '../api';
-import { PANEL_COLS, fromCsv, isValveBoard, toActuatorCsv } from './hookupDraft';
+import { PANEL_COLS, fromCsv, isValveBoard, parseCsv, toActuatorCsv } from './hookupDraft';
 
 const fold = (s: string) => s.trim().toLocaleLowerCase();
 
 export type CsvKind = 'actuators' | 'transitions';
 
+/** The DAQ's third table, `state_machine_actuator_delays.csv`: states across,
+ *  actuators down, seconds in the cells. Its zeros read like a transition
+ *  table's, so it is told apart by its name. */
+const DELAYS = /delay/i;
+
+/** A file's rows and cells, read as the DAQ reads them (quotes, a BOM). */
+const rowsOf = (text: string) => parseCsv(text.replace(/^\uFEFF/, ''));
+
+/** The rows of a 0/1 file that are not states of its own first row: a
+ *  transition table's rows are its columns, read the other way. */
+function strangers(rows: string[][]): string[] {
+  const states = new Set((rows[0] ?? []).slice(1).filter(Boolean));
+  return rows
+    .slice(1)
+    .map((r) => r[0])
+    .filter((k) => k && !states.has(k));
+}
+
 /**
  * Which of the DAQ's files this is, by its first data row: OPEN/CLOSE cells
  * are `state_machine_actuators.csv`, 0/1 cells `state_transitions.csv`. The
  * file's name decides only for a table with no rows; a row that is neither
- * is neither, whatever the file is called.
+ * is neither, whatever the file is called. The DAQ's delay table is never
+ * either, nor is a 0/1 table whose rows are not states of its own header.
  */
 export function csvKind(text: string, fileName = ''): CsvKind | null {
-  const lines = text
-    .replace(/^\uFEFF/, '')
-    .split(/\r?\n/)
-    .filter((l) => l.trim());
-  const row = lines[1];
+  if (DELAYS.test(fileName)) return null;
+  const rows = rowsOf(text);
+  const row = rows[1];
   if (row) {
-    // A quoted name may hold a comma; the cells after it never do.
     const cells = row
-      .replace(/"(?:[^"]|"")*"/g, 'name')
-      .split(',')
       .slice(1)
-      .map((c) => c.trim().toUpperCase())
+      .map((c) => c.toUpperCase())
       .filter(Boolean);
     if (cells.some((c) => c.startsWith('OPEN') || c.startsWith('CLOSE'))) return 'actuators';
-    if (cells.length > 0 && cells.every((c) => c === '0' || c === '1')) return 'transitions';
+    if (cells.length > 0 && cells.every((c) => c === '0' || c === '1') && strangers(rows).length === 0)
+      return 'transitions';
     return null;
   }
   if (/transition/i.test(fileName)) return 'transitions';
   if (/actuator/i.test(fileName)) return 'actuators';
   return null;
+}
+
+/** Why a file is not one of the DAQ's two state tables, in a line. */
+function notATable(name: string, text: string): string {
+  if (DELAYS.test(name)) {
+    return `${name}: the DAQ's actuator delays, which the twin does not read. Upload state_machine_actuators.csv and state_transitions.csv.`;
+  }
+  const odd = strangers(rowsOf(text));
+  if (odd.length) {
+    const shown = odd.slice(0, 3).join(', ') + (odd.length > 3 ? ', …' : '');
+    return `${name}: rows ${shown} are not states in its first row, so it is not a transition table.`;
+  }
+  return `${name}: not a DAQ state table (no OPEN/CLOSE or 0/1 cells).`;
 }
 
 /**
@@ -51,7 +79,7 @@ export function applyCsvFiles(m: MachineDef, files: { name: string; text: string
   for (const f of files) {
     const text = f.text.replace(/^\uFEFF/, '');
     const kind = csvKind(text, f.name);
-    if (!kind) throw new Error(`${f.name}: not a DAQ state table (no OPEN/CLOSE or 0/1 cells).`);
+    if (!kind) throw new Error(notATable(f.name, text));
     if (kind === 'actuators') {
       if (actuators !== undefined) throw new Error('Two actuator tables: upload one.');
       actuators = text;
@@ -123,3 +151,15 @@ export function rowGroups(rows: string[], channels: ChannelDef[]): { wired: RowW
 
 /** Whether the twin holds this state shut whatever its column says. */
 export const heldShut = (state: string) => fold(state) === 'idle';
+
+/** The states whose own row of the transition table goes to no abort (a
+ *  state with no row goes nowhere at all). The twin admits an abort from
+ *  anywhere; the DAQ goes only where the cells say. An abort state is not
+ *  asked, and a table with no aborts flagged has nothing to reach. */
+export function withoutAbort(m: MachineDef): string[] {
+  const aborts = m.states.filter((s) => s.abort).map((s) => s.name);
+  if (aborts.length === 0) return [];
+  return m.states
+    .filter((s) => !s.abort && !aborts.some((a) => (m.allowed[s.name] ?? []).includes(a)))
+    .map((s) => s.name);
+}

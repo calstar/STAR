@@ -12,11 +12,15 @@
  * switching between them changes nothing:
  *
  * - Symbols (DrawingPanel): what the console shows and calls each symbol,
- *   every number and the team's overrides of them. Clicking a symbol that is
- *   not a valve opens it there, ringed on the drawing.
+ *   every number and the team's overrides of them. Clicking a symbol opens
+ *   it there, ringed on the drawing; a valve is operated as well, and its
+ *   card says what it is wired to.
  * - DAQ box (DaqBox): the boards of GX12 connectors. Drag an empty one onto a
  *   symbol, or click it and then the symbol, to cable it; clicking a cabled
  *   symbol opens its connector.
+ *
+ * With either panel open, each cabled symbol carries its connector and, room
+ * allowing, its name ("S12·1 LOX Main").
  *
  * `/pid?symbol=<id>` opens on that symbol.
  */
@@ -183,8 +187,10 @@ export function Pid() {
       openSymbol(id);
       return;
     }
-    if (valves.has(id)) toggleValve(id);
-    else openSymbol(id);
+    if (!valves.has(id)) return openSymbol(id);
+    toggleValve(id);
+    // Operated, and its card open beside it: what it is wired to and named.
+    if (panel) setFocus(id);
   };
   // The canvas keeps one click handler; it calls the latest.
   const click = useRef(onSymbol);
@@ -231,7 +237,9 @@ export function Pid() {
           {daq
             ? ' · click a symbol for its connector'
             : running
-              ? ' · click a valve to operate it, anything else to open it'
+              ? panel
+                ? ' · click a valve to operate it; any symbol opens in the panel'
+                : ' · click a valve to operate it, anything else to open it'
               : ''}
         </span>
         {live?.setup?.ignore_gse && pages.length > 1 && (
@@ -285,7 +293,7 @@ export function Pid() {
             )}
             <HookupOverlay
               ui={ui}
-              badges={daq}
+              badges={panel}
               readings={running}
               ring={panel && mode === 'symbols' && !running ? focus : null}
             />
@@ -319,7 +327,7 @@ export function Pid() {
             </div>
             <div className="min-h-0 flex-1">
               {mode === 'symbols' ? (
-                <DrawingPanel focus={focus} onFocus={setFocus} />
+                <DrawingPanel focus={focus} onFocus={setFocus} ui={ui} />
               ) : (
                 <DaqBox ui={ui} canvas={canvas} drawn={drawn} onShow={showSymbol} onPage={pageOf} />
               )}

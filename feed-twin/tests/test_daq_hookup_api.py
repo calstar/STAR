@@ -459,3 +459,16 @@ def test_an_edited_table_without_the_states_the_twin_needs_is_warned() -> None:
     }
     said = client.post("/api/statemachine/check", json=table).json()
     assert said["ok"] and any("no Vent" in w for w in said["warnings"])
+
+
+def test_viewing_a_stands_hookup_refuses_what_a_save_would() -> None:
+    """The panels check a stand's own hookup here before keeping it with the
+    stand: a cable on the wrong board must be refused, as a save refuses it,
+    or the stand would open on the drawing's hookup without a word."""
+    diagram = upload("daq box view refuses.json")
+    body = {
+        **get(diagram)["hookup"],
+        "channels": box(("sol12", 1, "LOX Main", "PT_FUU")),
+    }
+    refused = client.post("/api/hookup/view", params={"diagram": diagram}, json=body)
+    assert refused.status_code == 422, refused.text

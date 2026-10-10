@@ -438,7 +438,12 @@ export function Console() {
   // Whatever the table can reach that the grid does not draw and the stack
   // has no button for -- the GSE and emergency aborts, a debug state. Before,
   // these were only in a "Go to…" dropdown; they must not become unreachable.
-  const others = reachable.filter((s) => OFF_GRID.test(s) && !/^fire$/i.test(s) && s !== 'Engine Abort');
+  // The grid also leaves out a state the State machine tab flags Abort
+  // whatever it is called, so the same test picks its button.
+  const others = reachable.filter(
+    (s) =>
+      (OFF_GRID.test(s) || Boolean(machine?.aborts?.includes(s))) && !/^fire$/i.test(s) && s !== 'Engine Abort',
+  );
 
   const gauge = (c: (typeof gauges)[number]) => {
     const { nop, meop } = limitsOf(c);

@@ -43,6 +43,7 @@ import {
   type Artifact,
   type Burns,
   type ChannelDef,
+  type HookupBody,
   type ModelView,
   type RunResult,
   type SessionState,
@@ -723,6 +724,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
     },
     snapshot: async () => {
       const hookup = await getHookup(where).catch(() => null);
+      // The drawing's box only when somebody wrote one down: unsaved, it is
+      // the twin's guess, and a stand that kept it would read as wired. The
+      // table is the response's own (null when nothing is saved).
+      const drawn: HookupBody | null = hookup
+        ? hookup.wired
+          ? hookup.hookup
+          : { ...hookup.hookup, channels: null, rows: {} }
+        : null;
       return {
         diagram,
         engine,
@@ -733,7 +742,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
           standPayload.current?.hookup &&
           Object.keys(standPayload.current.hookup).length
           ? standPayload.current.hookup
-          : ((hookup?.hookup ?? {}) as unknown as Record<string, unknown>),
+          : ((drawn ?? {}) as unknown as Record<string, unknown>),
         operating_point: {
           knobs: Object.fromEntries((live?.knobs ?? []).map((k) => [k.id, k.psig])),
         },

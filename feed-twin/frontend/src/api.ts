@@ -293,6 +293,8 @@ export interface StateMachine {
   table?: MachineDef;
   /** The stand's own table, not the shipped DAQ one. */
   edited?: boolean;
+  /** Rows the twin reads by name (see `Hookup.builtin`). */
+  builtin?: Record<string, string>;
 }
 
 /** A state as the State machine tab edits it: its place on the panel and
@@ -847,6 +849,9 @@ export interface Hookup {
   machine_shipped: MachineDef;
   /** What is wrong with the table this hookup runs. */
   machine_warnings: string[];
+  /** Rows the twin reads by name, and what each does with no valve wired to
+   *  it (the built-in COPV charge and dump, the transfer tank's press). */
+  builtin?: Record<string, string>;
 }
 
 /** The id of the knob the session's dome setting drives. */

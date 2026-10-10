@@ -180,6 +180,52 @@ export const badgeOf = (channels: readonly ChannelDef[], symbol: string): string
   return c ? badge(c) : null;
 };
 
+/** "LOX Main is S12·1 → OM-R": the connector that already goes by a name,
+ *  said under the field it is being typed in. Null when none does (case
+ *  ignored, as `nameTaken`). */
+export function clashNote(d: Draft, name: string, except: string, tagOf: (id: string) => string): string | null {
+  const n = fold(name);
+  if (!n) return null;
+  const c = d.channels.find((x) => x.symbol !== except && fold(x.name) === n);
+  return c ? `${c.name} is ${badge(c)} → ${tagOf(c.symbol)}` : null;
+}
+
+// ------------------------------------------------------------ the badges
+
+/** A badge on the drawing is 10 px monospace: ~6 px a character, and 10 px
+ *  of padding and border. */
+const BADGE_CHAR = 6;
+const BADGE_PAD = 10;
+/** Badges whose centres are closer than this in height share a line. */
+const BADGE_LINE = 18;
+/** Space kept between two badges on one line. */
+const BADGE_GAP = 6;
+
+export const badgeWidth = (text: string) => text.length * BADGE_CHAR + BADGE_PAD;
+
+/** The width a badge centred at `at` may take [flow px] without running into
+ *  one of `others` on about the same line: for two badges centred `dx`
+ *  apart, each may be `dx` less the gap wide. At most `most`. */
+export function badgeRoom(at: { x: number; y: number }, others: readonly { x: number; y: number }[], most = 180): number {
+  let room = most;
+  for (const o of others) {
+    if (Math.abs(o.y - at.y) < BADGE_LINE) room = Math.min(room, Math.abs(o.x - at.x) - BADGE_GAP);
+  }
+  return room;
+}
+
+/** What a symbol's badge says: "S12·1 LOX Main" when `room` allows, the name
+ *  cut short when only part of it fits, the connector alone when less. The
+ *  overlay takes no pointer, so a hover could never say the name. */
+export function badgeLabel(c: ChannelDef, room: number): string {
+  const head = badge(c);
+  const full = `${head} ${c.name}`;
+  if (badgeWidth(full) <= room) return full;
+  // The space and the ellipsis take two.
+  const chars = Math.floor((room - BADGE_PAD) / BADGE_CHAR) - head.length - 2;
+  return chars >= 3 ? `${head} ${c.name.slice(0, chars).trimEnd()}…` : head;
+}
+
 // ---------------------------------------------------------------- the store
 
 export interface Store<T> {
@@ -254,3 +300,6 @@ export const DAQ_UI: DaqUi = {
   note: null,
   fresh: null,
 };
+
+/** A store nobody writes: for a panel shown without the DAQ box beside it. */
+export const NO_UI: Store<DaqUi> = createStore<DaqUi>({ ...DAQ_UI });

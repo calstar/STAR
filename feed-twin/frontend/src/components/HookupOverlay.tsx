@@ -5,8 +5,11 @@
  * - while a cable is drawn from an empty connector, every symbol on this page
  *   that connector takes is outlined faintly (where it can go), and the one
  *   under the pointer is ringed -- blue if it fits, red if not;
- * - with the DAQ box panel open, each cabled symbol carries its connector,
- *   "S12·3", small, above it (above its reading, when the stand is running);
+ * - with the side panel open (Symbols or DAQ box), each cabled symbol
+ *   carries its connector and, where the next badge leaves room, its name --
+ *   "S12·3 LOX Main" -- small, above it (above its reading, when the stand
+ *   is running). The name is in the text because nothing here takes the
+ *   pointer, so a hover could never show it;
  * - the symbol of the connector under the mouse, or open in the panel, or
  *   waiting for a connector, is ringed, as LiveLayer rings the Symbols
  *   panel's.
@@ -18,7 +21,7 @@
 import { ViewportPortal, useNodes, useReactFlow } from '@xyflow/react';
 import type { Node } from '@xyflow/react';
 import { useEffect, useRef } from 'react';
-import { type DaqUi, NOT_TARGETS, type Store, badge } from '../lib/daqDrag';
+import { type DaqUi, NOT_TARGETS, type Store, badgeLabel, badgeRoom } from '../lib/daqDrag';
 import { accepts, channelAt } from '../lib/hookupDraft';
 import { useHookup } from '../lib/useHookup';
 import { useDaqUi } from './DaqBox';
@@ -36,7 +39,7 @@ export function HookupOverlay({
   ring = null,
 }: {
   ui: Store<DaqUi>;
-  /** The DAQ box panel is open: badge every cabled symbol. */
+  /** The side panel is open: badge every cabled symbol. */
   badges: boolean;
   /** The stand is running, so instruments carry LiveLayer's reading. */
   readings: boolean;
@@ -77,6 +80,18 @@ export function HookupOverlay({
   const aim = target ? byId.get(target.id) : undefined;
 
   if (!badges && !rings.size && !fits.length && !aim) return null;
+
+  // Where each badge sits: centred over its symbol, above the reading
+  // LiveLayer puts over an instrument.
+  const placed = badges
+    ? channels.flatMap((c) => {
+        const n = byId.get(c.symbol);
+        if (!n) return [];
+        const x = n.position.x + n.measured!.width! / 2;
+        const y = n.position.y - (readings && READ.has(typeOf(n)) ? 19 : 6);
+        return [{ c, x, y }];
+      })
+    : [];
 
   const box = (n: Node, pad: number) => ({
     x: n.position.x - pad,
@@ -120,32 +135,26 @@ export function HookupOverlay({
           />
         )}
       </svg>
-      {badges &&
-        channels.map((c) => {
-          const n = byId.get(c.symbol);
-          if (!n) return null;
-          const x = n.position.x + n.measured!.width! / 2;
-          // Above the reading LiveLayer puts over an instrument.
-          const y = n.position.y - (readings && READ.has(typeOf(n)) ? 19 : 6);
-          const lit = rings.has(c.symbol);
-          return (
-            <div
-              key={`badge-${c.symbol}`}
-              className={`pointer-events-none absolute border bg-[var(--color-bg-primary)]/85 px-1 font-mono text-[10px] leading-[14px] tabular-nums ${
-                lit ? 'text-[var(--ink)]' : 'border-[var(--line-strong)] text-[var(--ink-2)]'
-              }`}
-              style={{
-                transform: `translate(${x}px, ${y}px) translate(-50%, -100%)`,
-                zIndex: 2,
-                borderColor: lit ? FOCUS : undefined,
-                whiteSpace: 'nowrap',
-              }}
-              title={c.name}
-            >
-              {badge(c)}
-            </div>
-          );
-        })}
+      {placed.map(({ c, x, y }, i) => {
+        const lit = rings.has(c.symbol);
+        const room = badgeRoom({ x, y }, placed.filter((_, j) => j !== i));
+        return (
+          <div
+            key={`badge-${c.symbol}`}
+            className={`pointer-events-none absolute border bg-[var(--color-bg-primary)]/85 px-1 font-mono text-[10px] leading-[14px] tabular-nums ${
+              lit ? 'text-[var(--ink)]' : 'border-[var(--line-strong)] text-[var(--ink-2)]'
+            }`}
+            style={{
+              transform: `translate(${x}px, ${y}px) translate(-50%, -100%)`,
+              zIndex: 2,
+              borderColor: lit ? FOCUS : undefined,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {badgeLabel(c, room)}
+          </div>
+        );
+      })}
     </ViewportPortal>
   );
 }

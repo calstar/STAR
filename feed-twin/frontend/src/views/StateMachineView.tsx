@@ -49,7 +49,7 @@ import {
   toActuatorCsv,
   toTransitionCsv,
 } from '../lib/hookupDraft';
-import { applyCsvFiles, heldShut, panelGrid, rowGroups } from '../lib/stateTable';
+import { applyCsvFiles, heldShut, panelGrid, rowGroups, withoutAbort } from '../lib/stateTable';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 
@@ -67,6 +67,9 @@ const NOT_WIRED =
   'No connector on the DAQ box goes by this name, so it commands nothing. Wire a valve to a solenoid connector with this name on the P&ID tab.';
 const NO_ROW = 'No row in the transition table: it can go nowhere until one is given';
 const IDLE_HELD = 'The twin holds Idle shut whatever the table says';
+const ABORT_ADMITTED = 'Not in the table: the twin admits an abort anyway, the DAQ would refuse it';
+const NO_ABORT =
+  'Its row of the transition table goes to no abort. The twin admits one from anywhere; the DAQ goes only where the cells say. Tick an abort’s cell under Allowed transitions.';
 
 type Pick = { kind: 'state' | 'row'; name: string } | null;
 type Edit = (f: (m: MachineDef) => MachineDef) => void;
@@ -138,7 +141,15 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
       window.clearTimeout(timer);
     };
   }, [m]);
-  const issues = useMemo(() => tableIssues(draft), [draft]);
+  // Rows the twin reads by name (the built-in COPV charge and dump, the
+  // transfer tank's press) drive something with no connector: not "wired to
+  // nothing", and not to be removed without knowing it.
+  const builtin = useMemo(() => hookup.data?.builtin ?? {}, [hookup.data]);
+  const issues = useMemo(() => {
+    const found = tableIssues(draft);
+    return { ...found, unwired: found.unwired.filter((r) => !(r in builtin)) };
+  }, [draft, builtin]);
+  const noAbort = useMemo(() => withoutAbort(m), [m]);
 
   // ------------------------------------------------------------- the rows
   const groups = useMemo(() => rowGroups(m.actuators, draft.channels), [m.actuators, draft.channels]);
@@ -196,7 +207,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
           </span>
           <span className="text-[12px] text-text-muted">
             {m.states.length} states · {m.actuators.length} rows
-            {groups.unwired.length > 0 && ` (${groups.unwired.length} not wired)`}
+            {issues.unwired.length > 0 && ` (${issues.unwired.length} not wired)`}
           </span>
           {locked && (
             <span className="text-[12px] text-[var(--color-warning)]" title="Take the stand (top bar) to change its table.">
@@ -216,7 +227,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
             <button
               type="button"
               onClick={download}
-              title="state_machine_actuators.csv and state_transitions.csv, in the DAQ's format"
+              title="The DAQ's two tables, state_machine_actuators.csv and state_transitions.csv, in its format. The States list (ids, panel places, abort flags) and the actuator delays are kept in the DAQ's own config: set those there."
               className={BTN}
             >
               Download CSVs
@@ -254,6 +265,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
           failed={checkFailed}
           unwired={issues.unwired}
           rowless={issues.rowless.map((c) => c.name)}
+          noAbort={noAbort}
           locked={locked}
           onAddRows={() => edit((mm) => issues.rowless.reduce((acc, c) => addRow(acc, c.name), mm))}
         />
@@ -286,6 +298,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
         clearPick={() => setPick(null)}
         locked={locked}
         edit={edit}
+        builtin={builtin}
       />
 
       <MovesCard m={m} current={current} locked={locked} edit={edit} />
@@ -307,6 +320,7 @@ function Issues({
   failed,
   unwired,
   rowless,
+  noAbort,
   locked,
   onAddRows,
 }: {
@@ -314,27 +328,34 @@ function Issues({
   failed: string;
   unwired: string[];
   rowless: string[];
+  /** States whose own cells go to no abort (stateTable.withoutAbort). */
+  noAbort: string[];
   locked: boolean;
   onAddRows: () => void;
 }) {
   const [all, setAll] = useState(false);
   const warnings = check?.warnings ?? [];
   const bad = check && !check.ok;
-  if (!bad && warnings.length === 0 && unwired.length === 0 && rowless.length === 0 && !failed) return null;
-  const shown = all ? warnings : warnings.slice(0, 3);
+  if (!bad && warnings.length === 0 && noAbort.length === 0 && unwired.length === 0 && rowless.length === 0 && !failed)
+    return null;
+  // The first sentence says what; the rest (why, and what to fix) is on
+  // hover, so the list reads at a glance.
+  const lines = [
+    ...noAbort.map((s) => ({ text: `${s} has no abort in the transition table`, title: NO_ABORT })),
+    ...warnings.map((w) => ({ text: firstSentence(w), title: w })),
+  ];
+  const shown = all ? lines : lines.slice(0, 3);
   return (
     <div className="flex flex-col gap-0.5 border-t border-gray-800 px-4 py-2 text-[12px]">
       {bad && <p className="text-[var(--color-danger)]">{check.error || 'The twin cannot read this table.'}</p>}
-      {shown.map((w, i) => (
-        // The first sentence says what; the rest (why, and what to fix) is
-        // on hover, so the list reads at a glance.
-        <p key={i} className="truncate text-[var(--color-warning)]" title={w}>
-          {firstSentence(w)}
+      {shown.map((l, i) => (
+        <p key={i} className="truncate text-[var(--color-warning)]" title={l.title}>
+          {l.text}
         </p>
       ))}
-      {warnings.length > 3 && (
+      {lines.length > 3 && (
         <button type="button" onClick={() => setAll((a) => !a)} className="self-start text-[11px] text-gray-400 hover:text-white">
-          {all ? 'Fewer' : `${warnings.length - 3} more`}
+          {all ? 'Fewer' : `${lines.length - 3} more`}
         </button>
       )}
       {unwired.length > 0 && (
@@ -419,7 +440,7 @@ function StatesCard({
               >
                 Col
               </th>
-              <th className="py-1 pr-3 font-normal" title="Always reachable, from any state">
+              <th className="py-1 pr-3 font-normal" title="An abort: the twin lets any state go to it, the DAQ only where the transition table says">
                 Abort
               </th>
               <th className="py-1 pr-2 font-normal" title="Order in the tables below">
@@ -538,7 +559,7 @@ function StateRow({
           checked={Boolean(s.abort)}
           disabled={locked}
           onChange={(e) => edit((mm) => setState(mm, s.name, { abort: e.target.checked }))}
-          title="Always reachable, from any state"
+          title="An abort: the twin lets any state go to it, the DAQ only where the transition table says"
           className="h-3.5 w-3.5 accent-[var(--color-danger)]"
         />
       </td>
@@ -875,6 +896,12 @@ const HATCH: CSSProperties = {
   borderColor: 'var(--color-success)',
   backgroundImage: 'repeating-linear-gradient(135deg, rgba(74,222,128,0.6) 0 2px, transparent 2px 5px)',
 };
+/** A move into an abort the table does not have: the twin takes it anyway. */
+const ABORT_HATCH: CSSProperties = {
+  borderColor: 'rgba(248,113,113,0.6)',
+  backgroundColor: '#050505',
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(248,113,113,0.35) 0 2px, transparent 2px 5px)',
+};
 const ROW_HEAD = 'sticky left-0 z-10 border-r border-gray-800 bg-black px-2 text-left font-normal';
 
 // ------------------------------------------------------------------- opens
@@ -890,6 +917,7 @@ function OpensCard({
   clearPick,
   locked,
   edit,
+  builtin,
 }: {
   m: MachineDef;
   groups: ReturnType<typeof rowGroups>;
@@ -901,6 +929,8 @@ function OpensCard({
   clearPick: () => void;
   locked: boolean;
   edit: Edit;
+  /** Rows the twin reads by name, and what each does. */
+  builtin: Record<string, string>;
 }) {
   const [filter, setFilter] = useState('');
 
@@ -1006,6 +1036,7 @@ function OpensCard({
             onToggle={toggle}
             onPickRow={onPickRow}
             onRemove={drop}
+            builtin={builtin}
           />
         </MatrixFrame>
       )}
@@ -1024,6 +1055,7 @@ const OpensBody = memo(function OpensBody({
   onToggle,
   onPickRow,
   onRemove,
+  builtin,
 }: {
   lines: Line[];
   states: MachineStateDef[];
@@ -1032,6 +1064,7 @@ const OpensBody = memo(function OpensBody({
   onToggle: (row: string, state: string) => void;
   onPickRow: (name: string) => void;
   onRemove: (name: string) => void;
+  builtin: Record<string, string>;
 }) {
   return (
     <tbody>
@@ -1065,6 +1098,13 @@ const OpensBody = memo(function OpensBody({
                   >
                     {line.wiring.text}
                   </Link>
+                ) : builtin[line.name] ? (
+                  <span
+                    title={`${builtin[line.name]} Renaming or removing the row stops it; wiring a valve to this name puts that valve in its place.`}
+                    className="shrink-0 border border-[var(--line-strong)] px-1 text-[10px] leading-4 text-gray-400"
+                  >
+                    built-in
+                  </span>
                 ) : (
                   <>
                     <span
@@ -1158,7 +1198,11 @@ function MovesCard({ m, current, locked, edit }: { m: MachineDef; current: strin
                   s={s}
                   ci={ci}
                   current={s.name === current}
-                  title={s.abort ? `${s.name}: abort, reachable from any state` : s.name}
+                  title={
+                    s.abort
+                      ? `${s.name}: abort. The twin lets any state go to it; the DAQ only where this column says`
+                      : s.name
+                  }
                 />
               ))}
             </tr>
@@ -1195,35 +1239,38 @@ const MovesBody = memo(function MovesBody({
             </th>
             {states.map((to, ci) => {
               const self = to.name === from.name;
-              const fixed = self || to.abort;
-              const on = fixed || (row?.has(to.name) ?? false);
+              // The table's own cell, aborts too: it is what Download writes.
+              const on = self || (row?.has(to.name) ?? false);
+              const admitted = to.abort && !on;
+              const click = locked ? '' : on ? ' — click to forbid' : ' — click to allow';
               return (
                 <td key={to.name} data-c={ci} className="border-l border-gray-900 p-0">
                   <button
                     type="button"
                     data-ri={ri}
                     data-ci={ci}
-                    disabled={locked || fixed}
+                    disabled={locked || self}
                     aria-pressed={on}
                     onClick={() => onToggle(from.name, to.name)}
                     title={
                       self
                         ? `Staying in ${from.name}`
-                        : to.abort
-                          ? 'Abort is reachable from any state'
-                          : `${from.name} → ${to.name}: ${on ? 'allowed' : 'not allowed'}${
-                              locked ? '' : on ? ' — click to forbid' : ' — click to allow'
-                            }`
+                        : admitted
+                          ? `${from.name} → ${to.name}. ${ABORT_ADMITTED}${click}`
+                          : `${from.name} → ${to.name}: ${on ? 'allowed' : 'not allowed'}${click}`
                     }
                     className={`${CELL} ${
                       self
                         ? 'border-[#2a2a2a] bg-[#2a2a2a]'
-                        : to.abort
-                          ? 'border-[rgba(248,113,113,0.45)] bg-[rgba(248,113,113,0.35)]'
+                        : admitted
+                          ? 'enabled:hover:brightness-125'
                           : on
-                            ? 'border-[var(--ink-2)] bg-[var(--ink-2)] enabled:hover:bg-white'
+                            ? to.abort
+                              ? 'border-[rgba(248,113,113,0.6)] bg-[rgba(248,113,113,0.45)] enabled:hover:brightness-125'
+                              : 'border-[var(--ink-2)] bg-[var(--ink-2)] enabled:hover:bg-white'
                             : CELL_OFF
                     }`}
+                    style={admitted ? ABORT_HATCH : undefined}
                   />
                 </td>
               );

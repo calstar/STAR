@@ -159,14 +159,17 @@ export function move(d: Draft, from: { board: BoardId; slot: number }, to: { boa
 /**
  * Rename a symbol's connector. On a solenoid board the name is its row, so:
  * a name the table already has joins that row (its spelling kept), and the
- * row it leaves goes too if no state opens it (the blank row wiring made for
- * its tag); otherwise the row it had is renamed with it, so it still opens
+ * row it leaves stays in the table -- a row that opens nowhere may be the
+ * DAQ's own all-CLOSE one ("GSE Low Press Vent"), not a blank the wiring
+ * made. Otherwise the row it had is renamed with it, so it still opens
  * where it did.
  *
  * `carry` false is for a name the twin only guessed a moment ago (a cable
  * just plugged, named by the twin's matching): the person is correcting the
  * guess, not renaming the table's row. The guessed row stays as the table
- * has it, and the new name joins its own row or gets a new, blank one.
+ * has it, and the new name joins its own row or gets a new, blank one. The
+ * blank row a plug made for a tag is the panels' to drop (daqDrag
+ * `dropFreshRow`), since only they know which row that was.
  *
  * Returns the draft unchanged for an empty name or one another connector has.
  */
@@ -184,7 +187,6 @@ export function rename(d: Draft, symbol: string, name: string, carry = true): Dr
       else machine = addRow(machine, wanted);
     } else if (existing && existing !== own) {
       chosen = existing;
-      if (own && opensIn(machine, own).length === 0) machine = removeRow(machine, own);
     } else if (own && fold(own) === fold(wanted)) {
       // "Lox Main" for "LOX Main": the same row as a person reads it (the
       // twin binds ignoring case), so the table keeps its spelling and stays
@@ -193,6 +195,44 @@ export function rename(d: Draft, symbol: string, name: string, carry = true): Dr
     else machine = addRow(machine, wanted);
   }
   return { ...d, machine, channels: d.channels.map((x) => (x === c ? { ...x, name: chosen } : x)) };
+}
+
+/**
+ * What `rename(d, symbol, typed, carry)` would do to the state table, in a
+ * few words for beside the name field, and a sentence for its hover. Null
+ * for a connector not on a solenoid board, an empty name, or one another
+ * connector has (the field says that itself).
+ */
+export function nameHint(
+  d: Draft,
+  symbol: string,
+  typed: string,
+  carry = true,
+): { text: string; title: string } | null {
+  const c = channelOf(d, symbol);
+  const wanted = typed.trim();
+  if (!c || !isValveBoard(c.board) || !wanted || nameTaken(d, wanted, symbol)) return null;
+  const existing = rowNamed(d.machine, wanted);
+  const own = rowNamed(d.machine, c.name);
+  if (own && fold(own) === fold(wanted)) {
+    return { text: 'row in the state table', title: 'The state table has this row: the valve opens wherever it says' };
+  }
+  if (wanted === c.name) {
+    return { text: 'no row in the state table', title: 'No state ever moves it until the table has a row of this name' };
+  }
+  if (existing) {
+    return {
+      text: `joins row ${existing}`,
+      title: `The state table has ${existing}: the valve opens wherever that row says`,
+    };
+  }
+  if (carry && own) {
+    return {
+      text: `renames row ${own}, keeps its states`,
+      title: `The table's ${own} row is renamed with it, so the valve still opens where it did`,
+    };
+  }
+  return { text: 'new row, opens in no state yet', title: 'A new row in the state table, open in no state until you tick some' };
 }
 
 /** A console name for a symbol that is not on the box (a tank, the engine). */
@@ -272,19 +312,22 @@ function freeSpot(m: MachineDef): [number, number] {
   }
 }
 
-/** A new state, as the DAQ adds one: opens nothing, may go only to itself,
- *  in the first free spot on the panel. */
+/** A new state: opens nothing, in the first free spot on the panel, and may
+ *  go to itself and to every abort. The DAQ adds one that goes only to
+ *  itself, but the twin admits an abort from anywhere, so a state added
+ *  that way would abort here and not on the stand once the CSVs go back. */
 export function addState(m: MachineDef, name?: string): MachineDef {
   const names = new Set(m.states.map((s) => fold(s.name)));
   let n = m.states.length + 1;
   let wanted = name?.trim() || `New state ${n}`;
   while (names.has(fold(wanted))) wanted = `New state ${++n}`;
   const [row, col] = freeSpot(m);
+  const states = [...m.states, { name: wanted, row, col, abort: false }];
   return {
     ...m,
-    states: [...m.states, { name: wanted, row, col, abort: false }],
+    states,
     open: { ...m.open, [wanted]: [] },
-    allowed: { ...m.allowed, [wanted]: [wanted] },
+    allowed: { ...m.allowed, [wanted]: states.filter((s) => s.name === wanted || s.abort).map((s) => s.name) },
   };
 }
 
@@ -332,11 +375,23 @@ export function setState(m: MachineDef, name: string, patch: Partial<Omit<Machin
   return { ...m, states: m.states.map((s) => (s.name === name ? { ...s, ...patch } : s)) };
 }
 
+/** The states the pad guide walks the stand through, by name
+ *  (components/PadSequence.tsx, its PHASES' targets). */
+export const PAD_STATES: readonly string[] = [
+  'Ox Fill',
+  'Fuel Fill',
+  'GN2 High Press',
+  'Ox Press',
+  'Fuel Press',
+  'Ready',
+  'Fire',
+];
+
 /** States the twin itself keys on by name, and why: renaming or removing
  *  one would quietly stop what it does. Their cells and moves stay
  *  editable. */
 export function lockReason(name: string): string {
-  const n = name.toLowerCase();
+  const n = name.trim().toLowerCase();
   if (n === 'idle') return 'Every stand opens in Idle, and the twin holds it shut (de-energised).';
   if (n === 'ready') return 'T-0 primes the stand in Ready, and the pad guide leads to it.';
   if (n === 'fire') return 'Fire is the burn: the engine lights and the burn is recorded.';
@@ -344,6 +399,7 @@ export function lockReason(name: string): string {
   if (n === 'engine abort') return 'The console’s ENG ABORT button goes to Engine Abort.';
   if (n.includes('fill') && /(^|\s)(ox|lox|fuel|eth)/.test(n))
     return 'The twin’s loading follows the fill states by name (a tank fills in its own).';
+  if (PAD_STATES.some((s) => s.toLowerCase() === n)) return 'The pad guide leads through it by name.';
   return '';
 }
 
@@ -392,7 +448,8 @@ export function toTransitionCsv(m: MachineDef): string {
   return [head, ...rows].join('\n') + '\n';
 }
 
-function parseCsv(text: string): string[][] {
+/** A CSV's rows, each cell trimmed; blank lines dropped. */
+export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';

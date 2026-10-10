@@ -3,9 +3,13 @@ import type { BoardDef, HookupSymbol, MachineDef } from '../api';
 import {
   type Hit,
   badge,
+  badgeLabel,
+  badgeRoom,
+  badgeWidth,
   boardOption,
   canDropRow,
   cellOf,
+  clashNote,
   connectorUnder,
   createStore,
   dropFreshRow,
@@ -16,7 +20,7 @@ import {
   symbolUnder,
   verdict,
 } from './daqDrag';
-import { type Draft, rename, setRows, unwire, wire } from './hookupDraft';
+import { type Draft, opensIn, rename, setRows, unwire, wire } from './hookupDraft';
 
 const TABLE: MachineDef = {
   states: [
@@ -170,13 +174,27 @@ describe('what is under the pointer', () => {
 
 describe('the row a cable makes for its tag', () => {
   it('goes when the connector is named onto a row the table had', () => {
+    // As the panels do it: just plugged, so the name is the twin's guess and
+    // the rename does not carry; then the blank row the plug made is dropped.
     const plugged = wire(empty(), OM, 'sol12', 1);
     expect(plugged.machine.actuators).toEqual(['LOX Main', 'OM-R']);
-    const named = rename(plugged, 'OM-R', 'lox main');
-    // rename joins the row and drops the tag's, which no state opens ...
-    expect(named.machine.actuators).toEqual(['LOX Main']);
-    // ... so there is nothing left for the panel's own clean-up to do.
-    expect(dropFreshRow(named, { symbol: 'OM-R', row: 'OM-R' })).toBe(named);
+    const named = rename(plugged, 'OM-R', 'lox main', false);
+    expect(named.machine.actuators).toEqual(['LOX Main', 'OM-R']);
+    const clean = dropFreshRow(named, { symbol: 'OM-R', row: 'OM-R' });
+    expect(clean.machine.actuators).toEqual(['LOX Main']);
+    expect(clean.channels).toEqual([{ board: 'sol12', slot: 1, name: 'LOX Main', symbol: 'OM-R' }]);
+  });
+
+  it('is the only row that goes: a renamed connector leaves the DAQ’s all-CLOSE row it had', () => {
+    // Named a while ago, so not fresh: the panels rename with carry and drop
+    // nothing. The shipped row opens nowhere and is still the DAQ's.
+    const table: MachineDef = { ...TABLE, actuators: ['LOX Main', 'Fuel Fill Vent'] };
+    const d = wire({ ...empty(), machine: table }, OM, 'sol12', 1, 'Fuel Fill Vent');
+    expect(opensIn(d.machine, 'Fuel Fill Vent')).toEqual([]);
+    const named = rename(d, 'OM-R', 'LOX Main');
+    expect(named.machine.actuators).toEqual(['LOX Main', 'Fuel Fill Vent']);
+    // Nothing is fresh, so the panels' clean-up leaves it too.
+    expect(dropFreshRow(named, null)).toBe(named);
   });
 
   it('goes when the cable is pulled straight out', () => {
@@ -190,6 +208,49 @@ describe('the row a cable makes for its tag', () => {
     const opened = { ...unwire(d, 'OM-R'), machine: { ...d.machine, open: { ...d.machine.open, Fire: ['LOX Main', 'OM-R'] } } };
     expect(dropFreshRow(opened, { symbol: 'OM-R', row: 'OM-R' })).toBe(opened);
     expect(dropFreshRow(d, null)).toBe(d);
+  });
+});
+
+describe('a name another connector has', () => {
+  it('says which connector has it and where it goes', () => {
+    const d = wire(empty(), OM, 'sol12', 1, 'LOX Main');
+    const tag = (id: string) => ({ 'OM-R': 'OM-R' })[id] ?? id;
+    expect(clashNote(d, 'lox main', 'OU', tag)).toBe('LOX Main is S12·1 → OM-R');
+    expect(clashNote(d, 'LOX Main', 'OM-R', tag)).toBeNull();
+    expect(clashNote(d, 'Fuel Main', 'OU', tag)).toBeNull();
+    expect(clashNote(d, '  ', 'OU', tag)).toBeNull();
+  });
+});
+
+describe('the badge on the drawing', () => {
+  const ch = { board: 'sol12' as const, slot: 1, name: 'LOX Main', symbol: 'OM-R' };
+
+  it('carries the name when there is room, cut short when only some fits, and the connector alone when less', () => {
+    expect(badgeLabel(ch, 200)).toBe('S12·1 LOX Main');
+    expect(badgeLabel(ch, badgeWidth('S12·1 LOX Main'))).toBe('S12·1 LOX Main');
+    expect(badgeLabel(ch, badgeWidth('S12·1 LOX Main') - 1)).toBe('S12·1 LOX Ma…');
+    expect(badgeLabel(ch, badgeWidth('S12·1 LOX…'))).toBe('S12·1 LOX…');
+    expect(badgeLabel(ch, badgeWidth('S12·1 LO…'))).toBe('S12·1');
+    expect(badgeLabel(ch, 0)).toBe('S12·1');
+  });
+
+  it('has the room the nearest badge on its line leaves, and no more than the most', () => {
+    const at = { x: 100, y: 50 };
+    expect(badgeRoom(at, [])).toBe(180);
+    expect(badgeRoom(at, [], 90)).toBe(90);
+    // 80 apart on the same line: each may be 80 less the gap wide.
+    expect(badgeRoom(at, [{ x: 180, y: 52 }])).toBe(74);
+    expect(badgeRoom(at, [{ x: 180, y: 52 }, { x: 60, y: 45 }])).toBe(34);
+    // One on another line takes nothing.
+    expect(badgeRoom(at, [{ x: 105, y: 120 }])).toBe(180);
+  });
+
+  it('two neighbours given their room never overlap', () => {
+    const a = { x: 0, y: 0 };
+    const b = { x: 90, y: 4 };
+    const wa = badgeWidth(badgeLabel(ch, badgeRoom(a, [b])));
+    const wb = badgeWidth(badgeLabel({ ...ch, name: 'Fuel Main' }, badgeRoom(b, [a])));
+    expect(wa / 2 + wb / 2).toBeLessThanOrEqual(90);
   });
 });
 

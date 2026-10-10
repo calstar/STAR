@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChannelDef, MachineDef } from '../api';
-import { canGo, isOpen, toActuatorCsv, toTransitionCsv } from './hookupDraft';
-import { applyCsvFiles, csvKind, heldShut, panelGrid, rowGroups } from './stateTable';
+import { addState, canGo, isOpen, setAllowed, toActuatorCsv, toTransitionCsv } from './hookupDraft';
+import { applyCsvFiles, csvKind, heldShut, panelGrid, rowGroups, withoutAbort } from './stateTable';
 
 const TABLE: MachineDef = {
   states: [
@@ -23,7 +23,20 @@ describe('csvKind', () => {
 
   it('reads a quoted name with a comma, a BOM and CRLF', () => {
     expect(csvKind('\uFEFF,Idle,Fire\r\n"Main, LOX",CLOSE,OPEN\r\n')).toBe('actuators');
-    expect(csvKind(',Idle,Fire\r\n"Idle, cold",1,0\r\n')).toBe('transitions');
+    expect(csvKind(',Idle,"Idle, cold"\r\n"Idle, cold",1,0\r\n')).toBe('transitions');
+  });
+
+  it('never takes the DAQ’s delay table, whatever its cells', () => {
+    // Its zeros read like a transition table's.
+    const delays = ',Idle,Fire\nFuel Fill Vent,0,0\nFuel Main,0,0.080\n';
+    expect(csvKind(delays, 'state_machine_actuator_delays.csv')).toBeNull();
+    expect(csvKind(',Idle,Fire\n', 'state_machine_actuator_delays.csv')).toBeNull();
+  });
+
+  it('takes a 0/1 table as transitions only when its rows are states of its own first row', () => {
+    expect(csvKind(',Idle,Fire\nIdle,1,1\nFire,0,1\n')).toBe('transitions');
+    expect(csvKind(',Idle,Fire\nFuel Fill Vent,0,0\nFuel Main,0,0\n', 'renamed.csv')).toBeNull();
+    expect(csvKind(',Idle,Fire\nIdle,1,1\nLOX Main,0,0\n')).toBeNull();
   });
 
   it('falls back to the file name only when there is no data row', () => {
@@ -56,6 +69,20 @@ describe('applyCsvFiles', () => {
     expect(out.allowed).toEqual({ Idle: ['Idle', 'Fire'] });
   });
 
+  it('refuses the delay table by name rather than read its zeros as moves', () => {
+    const delays = ',Idle,Ox Press,Fire,Engine Abort\nLOX Main,0,0,0,0\n';
+    expect(() => applyCsvFiles(TABLE, [{ name: 'state_machine_actuator_delays.csv', text: delays }])).toThrow(
+      /state_machine_actuator_delays\.csv: the DAQ's actuator delays/,
+    );
+  });
+
+  it('says why a 0/1 table whose rows are not its states is refused', () => {
+    const t = ',Idle,Ox Press,Fire,Engine Abort\nLOX Main,0,0,0,0\nLOX Press,0,0,0,0\n';
+    expect(() => applyCsvFiles(TABLE, [{ name: 'copy.csv', text: t }])).toThrow(
+      /copy\.csv: rows LOX Main, LOX Press are not states in its first row/,
+    );
+  });
+
   it('refuses a file that is neither, and two of one kind', () => {
     expect(() => applyCsvFiles(TABLE, [{ name: 'x.csv', text: 'a,b\nc,d\n' }])).toThrow(/x\.csv/);
     const a = toActuatorCsv(TABLE);
@@ -65,6 +92,24 @@ describe('applyCsvFiles', () => {
         { name: '2.csv', text: a },
       ]),
     ).toThrow(/Two actuator/);
+  });
+});
+
+describe('withoutAbort', () => {
+  it('lists the states whose own cells go to no abort', () => {
+    // TABLE flags Engine Abort and no row goes to it; Engine Abort has no row.
+    expect(withoutAbort(TABLE)).toEqual(['Idle', 'Ox Press', 'Fire']);
+    expect(withoutAbort(setAllowed(TABLE, 'Idle', 'Engine Abort', true))).toEqual(['Ox Press', 'Fire']);
+  });
+
+  it('does not ask an abort, nor a table with none flagged', () => {
+    expect(withoutAbort(TABLE)).not.toContain('Engine Abort');
+    const none: MachineDef = { ...TABLE, states: TABLE.states.map((s) => ({ ...s, abort: false })) };
+    expect(withoutAbort(none)).toEqual([]);
+  });
+
+  it('a state added on the tab can abort', () => {
+    expect(withoutAbort(addState(TABLE, 'Purge'))).not.toContain('Purge');
   });
 });
 

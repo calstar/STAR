@@ -12,7 +12,8 @@
  * knobs reopens the stand bound the new way.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { keyOf } from '@stardesign-ui';
 import {
   getHookup,
   resetHookup,
@@ -108,24 +109,6 @@ export function HookupProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (!where.diagram) return;
-    let stale = false;
-    setError('');
-    const own = standHookup as unknown as HookupBody | null;
-    (own ? viewHookup(at, own) : getHookup(at))
-      .then((h) => {
-        if (stale) return;
-        setData(h);
-        setDraft(draftOf(h));
-      })
-      .catch((e) => !stale && setError(e instanceof Error ? e.message : String(e)));
-    return () => {
-      stale = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [where.diagram, where.engine, standHookup, ignoreGse]);
-
   const base = useMemo(() => (data ? draftOf(data) : null), [data]);
   const sameTable = Boolean(base && draft && sameMachine(base.machine, draft.machine));
   const sameWiring = Boolean(base && draft && sameTable && wiringKey(base) === wiringKey(draft));
@@ -134,6 +117,39 @@ export function HookupProvider({ children }: { children: ReactNode }) {
   // A box written down for the first time changes what the console shows
   // (only what is wired), so that reopens the stand too.
   const namesOnly = dirty && sameWiring && Boolean(data?.wired);
+
+  // What the draft is the hookup of: this drawing, on this stand (or none).
+  // An answer for the same one while edits are unsaved -- the engine or
+  // rocket-only changed, the stand reopened -- replaces what the backend
+  // says and leaves the edits alone; one for another drawing or stand
+  // replaces the draft.
+  const owner = `${where.diagram}|${standDoc ? keyOf(standDoc.ref) : ''}`;
+  const draftOwner = useRef<string | null>(null);
+  const unsaved = useRef(false);
+  useEffect(() => {
+    unsaved.current = dirty;
+  });
+
+  useEffect(() => {
+    if (!where.diagram) return;
+    let stale = false;
+    setError('');
+    const own = standHookup as unknown as HookupBody | null;
+    const asked = owner;
+    (own ? viewHookup(at, own) : getHookup(at))
+      .then((h) => {
+        if (stale) return;
+        setData(h);
+        if (draftOwner.current === asked && unsaved.current) return;
+        draftOwner.current = asked;
+        setDraft(draftOf(h));
+      })
+      .catch((e) => !stale && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [where.diagram, where.engine, standHookup, ignoreGse, owner]);
 
   /** What is written: the box as it stands, and the table only when it is
    *  not the DAQ's (so a fix to the shipped table still reaches it). */
@@ -154,27 +170,32 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     [setNames, restart],
   );
 
+  // One save at a time: a second click while the first is out is dropped.
+  const saving = useRef(false);
   const save = useCallback(() => {
-    if (!data || !draft) return;
+    if (!data || !draft || saving.current) return;
     const reopen = !namesOnly;
-    if (onStand) {
-      // Kept with the stand; the stand's Save writes it.
-      setStandHookup(body(draft) as unknown as Record<string, unknown>, reopen);
-      setData({ ...data, hookup: body(draft), saved: true, wired: true });
-      if (!reopen) void live_names(draft);
-      return;
-    }
+    const out = body(draft);
+    saving.current = true;
     setBusy(true);
     setError('');
-    saveHookup(at, body(draft))
+    // On a stand it is kept with the stand (the stand's Save writes it), so
+    // the backend is asked to read it first: a body it refuses kept here
+    // would be marked saved, and the stand would open on the drawing's own.
+    (onStand ? viewHookup(at, out) : saveHookup(at, out))
       .then((h) => {
-        setData(h);
+        if (onStand) setStandHookup(out as unknown as Record<string, unknown>, reopen);
+        setData(onStand ? { ...h, saved: true } : h);
         setDraft(draftOf(h));
-        if (reopen) restart();
-        else void live_names(draftOf(h));
+        if (reopen) {
+          if (!onStand) restart();
+        } else void live_names(draftOf(h));
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false));
+      .finally(() => {
+        saving.current = false;
+        setBusy(false);
+      });
   }, [data, draft, namesOnly, onStand, setStandHookup, body, at, restart, live_names]);
 
   const reset = useCallback(() => {

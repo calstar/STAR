@@ -36,6 +36,7 @@ import {
   badge,
   boardOption,
   canDropRow,
+  clashNote,
   connectorUnder,
   dropFreshRow,
   pastClick,
@@ -52,7 +53,7 @@ import {
   freeSlot,
   isValveBoard,
   move,
-  nameTaken,
+  nameHint,
   opensIn,
   rename,
   rowNamed,
@@ -386,7 +387,9 @@ export function DaqBox({
             onReset={() => {
               if (
                 !window.confirm(
-                  'Go back to the twin’s own matching? This throws away the hookup kept for this drawing (or this stand) straight away.',
+                  `Go back to the twin’s own matching? This forgets the whole hookup saved for this ${
+                    hookup.onStand ? 'stand' : 'drawing'
+                  }: the DAQ box, the edited state table and the knobs, straight away.`,
                 )
               )
                 return;
@@ -535,6 +538,7 @@ export function DaqBox({
             drawn={drawn}
             rocketOnly={rocketOnly}
             inputRef={nameInput}
+            carry={s.fresh?.symbol !== selected.symbol}
             onName={(text) => commitName(selected.symbol, text)}
             onShow={() => onShow(selected.symbol)}
             onUnplug={() => unplug(selected.symbol)}
@@ -678,7 +682,7 @@ function BoxMenu({
             type="button"
             disabled={disabled}
             className={item}
-            title="Forget this hookup: the twin matches valves and sensors by name again"
+            title="Forget the whole saved hookup (the box, the edited state table, the knobs): the twin matches valves and sensors by name again"
             onClick={() => {
               setOpen(false);
               onReset();
@@ -703,6 +707,7 @@ function Detail({
   drawn,
   rocketOnly,
   inputRef,
+  carry,
   onName,
   onShow,
   onUnplug,
@@ -716,6 +721,8 @@ function Detail({
   drawn: Drawn;
   rocketOnly: boolean;
   inputRef: RefObject<HTMLInputElement | null>;
+  /** A rename takes the row with it (false: the name is the twin's guess). */
+  carry: boolean;
   onName: (text: string) => void;
   onShow: () => void;
   onUnplug: () => void;
@@ -762,7 +769,15 @@ function Detail({
         </button>
       </div>
 
-      <NameField channel={channel} draft={draft} valve={valve} locked={locked} inputRef={inputRef} onCommit={onName} />
+      <NameField
+        channel={channel}
+        draft={draft}
+        locked={locked}
+        carry={carry}
+        tagOf={(id) => hookup.symbol(id)?.label ?? hookup.label(id)}
+        inputRef={inputRef}
+        onCommit={onName}
+      />
 
       <div className="mt-1.5 flex items-baseline gap-2">
         <span className="w-16 shrink-0 text-[11px] text-gray-500">Goes to</span>
@@ -796,7 +811,7 @@ function Detail({
                 <span
                   key={st}
                   className="px-1 py-px font-mono text-[10px] text-gray-500 line-through"
-                  title="The table opens it in Idle, but the twin holds Idle shut: a de-energised stand has nothing open."
+                  title="The table opens it in Idle; the twin holds Idle shut."
                 >
                   {st}
                 </span>
@@ -819,19 +834,22 @@ function Detail({
 }
 
 /** The connector's name: the console's, and on a solenoid board the state
- *  table's row. Kept on Enter or leaving the field; Esc puts it back. */
+ *  table's row. Kept on Enter or leaving the field; Esc puts it back. Under
+ *  it, what the name does to the table, or which connector already has it. */
 function NameField({
   channel,
   draft,
-  valve,
   locked,
+  carry,
+  tagOf,
   inputRef,
   onCommit,
 }: {
   channel: ChannelDef;
   draft: Draft;
-  valve: boolean;
   locked: boolean;
+  carry: boolean;
+  tagOf: (id: string) => string;
   inputRef: RefObject<HTMLInputElement | null>;
   onCommit: (text: string) => void;
 }) {
@@ -844,13 +862,10 @@ function NameField({
   }
   const skip = useRef(false);
   const list = useId();
+  const valve = isValveBoard(channel.board);
   const wanted = text.trim();
-  const fold = (x: string) => x.trim().toLocaleLowerCase();
-  const clash =
-    wanted && nameTaken(draft, wanted, channel.symbol)
-      ? draft.channels.find((c) => c.symbol !== channel.symbol && fold(c.name) === fold(wanted))
-      : undefined;
-  const row = valve && wanted ? rowNamed(draft.machine, wanted) : undefined;
+  const clash = wanted ? clashNote(draft, wanted, channel.symbol, tagOf) : null;
+  const hint = nameHint(draft, channel.symbol, wanted, carry);
   const commit = () => {
     if (skip.current) {
       skip.current = false;
@@ -864,55 +879,47 @@ function NameField({
     if (wanted !== channel.name) onCommit(wanted);
   };
   return (
-    <label className="mt-1.5 flex items-center gap-2">
-      <span className="w-16 shrink-0 text-[11px] text-gray-500">Name</span>
-      <input
-        ref={inputRef}
-        type="text"
-        value={text}
-        disabled={locked}
-        list={valve ? list : undefined}
-        placeholder={valve ? 'e.g. LOX Main' : 'e.g. LOX tank'}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && wanted && !clash) e.currentTarget.blur();
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            skip.current = true;
-            e.currentTarget.blur();
-          }
-        }}
-        title={
-          clash
-            ? `${badge(clash)} is already called ${clash.name}`
-            : valve
-              ? 'The console’s name for it, and its row in the state table'
-              : 'The console’s name for it'
-        }
-        className={`min-w-0 flex-1 rounded border bg-black/60 px-1.5 py-0.5 text-[12px] text-white focus:outline-none disabled:opacity-50 ${
-          clash ? 'border-red-500' : 'border-gray-700 focus:border-blue-500'
-        }`}
-      />
-      {valve && (
-        <datalist id={list}>
-          {unwiredRows(draft).map((r) => (
-            <option key={r} value={r} />
-          ))}
-        </datalist>
-      )}
-      {valve && wanted && (
-        <span
-          className="shrink-0 text-[10px] text-gray-500"
-          title={
-            row
-              ? 'The state table has this row: the valve opens wherever it says'
-              : 'A new row in the state table, open in no state until you tick some'
-          }
+    <div className="mt-1.5">
+      <label className="flex items-center gap-2">
+        <span className="w-16 shrink-0 text-[11px] text-gray-500">Name</span>
+        <input
+          ref={inputRef}
+          type="text"
+          value={text}
+          disabled={locked}
+          list={valve ? list : undefined}
+          placeholder={valve ? 'e.g. LOX Main' : 'e.g. LOX tank'}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && wanted && !clash) e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              skip.current = true;
+              e.currentTarget.blur();
+            }
+          }}
+          title={valve ? 'The console’s name for it, and its row in the state table' : 'The console’s name for it'}
+          className={`min-w-0 flex-1 rounded border bg-black/60 px-1.5 py-0.5 text-[12px] text-white focus:outline-none disabled:opacity-50 ${
+            clash ? 'border-red-500' : 'border-gray-700 focus:border-blue-500'
+          }`}
+        />
+        {valve && (
+          <datalist id={list}>
+            {unwiredRows(draft).map((r) => (
+              <option key={r} value={r} />
+            ))}
+          </datalist>
+        )}
+      </label>
+      {(clash || hint) && (
+        <p
+          className={`mt-0.5 truncate pl-[4.5rem] text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
+          title={clash ? 'Another connector has this name: leaving the field puts the old one back' : hint?.title}
         >
-          {row ? 'row in the state table' : 'new row'}
-        </span>
+          {clash ?? hint?.text}
+        </p>
       )}
-    </label>
+    </div>
   );
 }

@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { HookupSymbol, MachineDef } from '../api';
 import {
   type Draft,
+  PAD_STATES,
   addState,
   channelOf,
   fromCsv,
+  lockReason,
   move,
+  nameHint,
   opensIn,
+  removeRow,
   removeState,
   rename,
   renameState,
@@ -104,10 +108,24 @@ describe('renaming a connector carries its row', () => {
     expect(opensIn(d.machine, 'LOX Press Sol')).toEqual(['Ox Press', 'Fire']);
   });
 
-  it('joins a row it is renamed onto; the blank row its tag made goes', () => {
+  it('joins a row it is renamed onto, and leaves the row it had in the table', () => {
+    // A blank row a plug made for the tag is the panels' to drop
+    // (daqDrag.dropFreshRow); rename cannot tell it from the DAQ's own.
     const d = rename(wire(empty(), OM, 'sol12', 1), 'OM-R', 'LOX MAIN');
     expect(channelOf(d, 'OM-R')?.name).toBe('LOX Main');
-    expect(d.machine.actuators).toEqual(['LOX Press', 'LOX Main']);
+    expect(d.machine.actuators).toEqual(['LOX Press', 'LOX Main', 'OM-R']);
+  });
+
+  it('keeps the DAQ’s own all-CLOSE row when its connector is renamed onto another row', () => {
+    // "GSE Low Press Vent" opens in no state in the shipped table: it is
+    // still the DAQ's row, and the CSVs written back must keep it.
+    const shipped: MachineDef = { ...TABLE, actuators: [...TABLE.actuators, 'GSE Low Press Vent'] };
+    const wired = wire({ ...empty(), machine: shipped }, OU, 'sol12', 1, 'GSE Low Press Vent');
+    expect(opensIn(wired.machine, 'GSE Low Press Vent')).toEqual([]);
+    const d = rename(wired, 'OU', 'LOX Press');
+    expect(channelOf(d, 'OU')?.name).toBe('LOX Press');
+    expect(d.machine.actuators).toEqual(['LOX Press', 'LOX Main', 'GSE Low Press Vent']);
+    expect(toActuatorCsv(d.machine)).toContain('GSE Low Press Vent,CLOSE,CLOSE,CLOSE,CLOSE');
   });
 
   it('keeps a row it leaves when a state opens it', () => {
@@ -146,11 +164,14 @@ describe('editing the table', () => {
     expect(opensIn(setOpen(m, 'LOX Main', 'Ox Press', false), 'LOX Main')).toEqual(['Fire', 'Engine Abort']);
   });
 
-  it('adds a state that opens nothing and goes only to itself, in a free spot', () => {
+  it('adds a state that opens nothing and goes to itself and every abort, in a free spot', () => {
     const m = addState(TABLE, 'Purge');
     expect(m.states.at(-1)).toEqual({ name: 'Purge', row: 0, col: 1, abort: false });
     expect(m.open.Purge).toEqual([]);
-    expect(m.allowed.Purge).toEqual(['Purge']);
+    // The twin admits an abort from anywhere; the DAQ only where the cells
+    // say, so the cells say it.
+    expect(m.allowed.Purge).toEqual(['Engine Abort', 'Purge']);
+    expect(toTransitionCsv(m).split('\n').at(-2)).toBe('Purge,0,0,0,1,1');
   });
 
   it('renames a state in every table that names it', () => {
@@ -178,6 +199,63 @@ describe('editing the table', () => {
     const issues = tableIssues({ ...d, machine: { ...d.machine, actuators: TABLE.actuators } });
     expect(issues.unwired).toEqual(['LOX Press', 'LOX Main']);
     expect(issues.rowless.map((c) => c.name)).toEqual(['Igniter purge']);
+  });
+});
+
+describe('the hint beside a connector’s name', () => {
+  const lox = () => wire(empty(), OU, 'sol12', 1, 'LOX Press');
+
+  it('says a rename carries the row it had, with its states', () => {
+    expect(nameHint(lox(), 'OU', 'LOX Press Sol')?.text).toBe('renames row LOX Press, keeps its states');
+    const d = rename(lox(), 'OU', 'LOX Press Sol');
+    expect(opensIn(d.machine, 'LOX Press Sol')).toEqual(['Ox Press', 'Fire']);
+  });
+
+  it('says a name the table has joins that row', () => {
+    expect(nameHint(lox(), 'OU', 'lox main')?.text).toBe('joins row LOX Main');
+    expect(nameHint(lox(), 'OU', 'lox main', false)?.text).toBe('joins row LOX Main');
+  });
+
+  it('says a corrected guess makes a new row, and so does a name with no row to carry', () => {
+    expect(nameHint(lox(), 'OU', 'Dome Ctrl', false)?.text).toBe('new row, opens in no state yet');
+    expect(rename(lox(), 'OU', 'Dome Ctrl', false).machine.actuators).toEqual(['LOX Press', 'LOX Main', 'Dome Ctrl']);
+    const rowless = { ...lox(), machine: removeRow(TABLE, 'LOX Press') };
+    expect(nameHint(rowless, 'OU', 'Igniter')?.text).toBe('new row, opens in no state yet');
+  });
+
+  it('says what the name already is when it is not changed', () => {
+    expect(nameHint(lox(), 'OU', 'LOX Press')?.text).toBe('row in the state table');
+    expect(nameHint(lox(), 'OU', 'Lox press')?.text).toBe('row in the state table');
+    const rowless = { ...lox(), machine: removeRow(TABLE, 'LOX Press') };
+    expect(nameHint(rowless, 'OU', 'LOX Press')?.text).toBe('no row in the state table');
+  });
+
+  it('says nothing for a transducer, a blank, or a name another connector has', () => {
+    const d = wire(wire(lox(), PT, 'pt_low', 1, 'LOX tank'), OM, 'sol12', 2, 'LOX Main');
+    expect(nameHint(d, 'PT1', 'Fuel tank')).toBeNull();
+    expect(nameHint(d, 'OU', '  ')).toBeNull();
+    expect(nameHint(d, 'OU', 'lox main')).toBeNull();
+  });
+});
+
+describe('states the twin keys on by name', () => {
+  it('locks every state the pad guide leads through', () => {
+    for (const s of PAD_STATES) expect(lockReason(s)).not.toBe('');
+    for (const s of ['GN2 High Press', 'Ox Press', 'Fuel Press'])
+      expect(lockReason(s)).toBe('The pad guide leads through it by name.');
+  });
+
+  it('keeps the more particular reason where there is one', () => {
+    expect(lockReason('Ready')).toMatch(/^T-0 primes/);
+    expect(lockReason('Fire')).toMatch(/^Fire is the burn/);
+    expect(lockReason('Ox Fill')).toMatch(/loading follows the fill states/);
+    expect(lockReason('Engine Abort')).toMatch(/ENG ABORT/);
+  });
+
+  it('leaves the rest free to rename or remove', () => {
+    expect(lockReason('GN2 Low Press')).toBe('');
+    expect(lockReason('Calibrate')).toBe('');
+    expect(lockReason('Ox Press Standby')).toBe('');
   });
 });
 

@@ -21,7 +21,7 @@
  * tab and the Hookup page (lib/useHookup), saved from the bar at the top.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   clearOverride,
@@ -40,7 +40,7 @@ import {
   channelAt,
   channelOf,
   move,
-  nameTaken,
+  nameHint,
   opensIn,
   rename,
   rowNamed,
@@ -51,10 +51,11 @@ import {
   unwiredRows,
   wire,
 } from '../lib/hookupDraft';
-import { dropFreshRow, type FreshRow } from '../lib/daqDrag';
+import { NO_UI, clashNote, dropFreshRow, type DaqUi, type FreshRow, type Store } from '../lib/daqDrag';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 import { HookupSaveBar } from './HookupSaveBar';
+import { useDaqUi } from './DaqBox';
 
 /** Another operator's override should show up without a reload. */
 const POLL_MS = 10000;
@@ -338,10 +339,21 @@ function ConnectorBadge({ channel, label }: { channel: ChannelDef | undefined; l
   );
 }
 
-/** A field of the hookup section: a label column and the control. */
-function Field({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
+/** A field of the hookup section: a label column and the control. On the
+ *  control's baseline when a line may sit under it. */
+function Field({
+  label,
+  title,
+  baseline = false,
+  children,
+}: {
+  label: string;
+  title?: string;
+  baseline?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center gap-2 text-[11px] text-gray-500" title={title}>
+    <div className={`flex ${baseline ? 'items-baseline' : 'items-center'} gap-2 text-[11px] text-gray-500`} title={title}>
       <span className="w-[4.5rem] shrink-0">{label}</span>
       <div className="flex min-w-0 flex-1 items-center gap-1.5">{children}</div>
     </div>
@@ -352,17 +364,22 @@ const control =
   'min-w-0 rounded border border-gray-700 bg-black/60 px-1.5 py-0.5 text-[12px] text-white placeholder:text-gray-600 disabled:opacity-50';
 
 /** A connector name, typed freely and committed on Enter or leaving the
- *  field: a name another connector has is refused, in red. */
+ *  field. Under it, what the name will do to the state table -- or, in red,
+ *  which connector already has it (refused: leaving puts the old one back). */
 function NameInput({
   value,
-  taken,
+  clashOf,
+  hintOf,
   rows,
   disabled,
   autoFocus,
   onCommit,
 }: {
   value: string;
-  taken: (name: string) => boolean;
+  /** "LOX Main is S12·1 → OM-R" for a name another connector has. */
+  clashOf: (name: string) => string | null;
+  /** What committing this name does to the table (valves only). */
+  hintOf?: (name: string) => { text: string; title: string } | null;
   /** The state table's rows nothing is wired to, offered as names. */
   rows?: string[];
   disabled: boolean;
@@ -371,14 +388,15 @@ function NameInput({
 }) {
   const [typed, setTyped] = useState(value);
   useEffect(() => setTyped(value), [value]);
-  const clash = typed.trim() !== '' && typed.trim().toLowerCase() !== value.toLowerCase() && taken(typed);
+  const clash = typed.trim() ? clashOf(typed) : null;
+  const hint = clash ? null : (hintOf?.(typed) ?? null);
   const listId = useMemo(() => `rows-${Math.random().toString(36).slice(2)}`, []);
   const commit = () => {
     if (!typed.trim() || clash) return setTyped(value);
     if (typed.trim() !== value) onCommit(typed.trim());
   };
   return (
-    <>
+    <div className="flex min-w-0 flex-1 flex-col">
       <input
         type="text"
         value={typed}
@@ -394,8 +412,7 @@ function NameInput({
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           if (e.key === 'Escape') setTyped(value);
         }}
-        title={clash ? 'Another connector already has this name' : undefined}
-        className={`${control} flex-1 ${clash ? 'border-red-500' : ''}`}
+        className={`${control} ${clash ? 'border-red-500' : ''}`}
       />
       {rows && (
         <datalist id={listId}>
@@ -404,20 +421,37 @@ function NameInput({
           ))}
         </datalist>
       )}
-    </>
+      {(clash || hint) && (
+        <span
+          className={`mt-0.5 truncate text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
+          title={clash ? 'Another connector has this name: leaving the field puts the old one back' : hint?.title}
+        >
+          {clash ?? hint?.text}
+        </span>
+      )}
+    </div>
   );
 }
+
+/** The P&ID's DAQ box state, when the panel sits beside the box. */
+const BoxUi = createContext<Store<DaqUi> | null>(null);
 
 /** The symbol's place on the DAQ box: which board and connector, its name,
  *  and -- for a valve -- the states that open it. */
 function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
   const hookup = useHookup();
+  const ui = useContext(BoxUi);
   const { draft } = hookup;
   const [justWired, setJustWired] = useState(false);
   // Plugged from here a moment ago and named by the twin's guess: the first
   // rename corrects the guess (the guessed row stays the table's), and a
-  // blank row made for the tag goes if nothing uses it.
-  const [fresh, setFresh] = useState<FreshRow | null>(null);
+  // blank row made for the tag goes if nothing uses it. One record with the
+  // DAQ box (the P&ID keeps it), so a cable plugged there and renamed here is
+  // still a guess being corrected.
+  const [own, setOwn] = useState<FreshRow | null>(null);
+  const shared = useDaqUi(ui ?? NO_UI, (x) => x.fresh);
+  const fresh = ui ? shared : own;
+  const setFresh = (f: FreshRow | null) => (ui ? ui.set({ fresh: f }) : setOwn(f));
   if (!draft) return null;
   const channel = channelOf(draft, symbol.id);
   const boards = hookup.boards.filter((b) => b.kind === symbol.kind);
@@ -487,6 +521,7 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
       {channel ? (
         <Field
           label="Name"
+          baseline
           title={
             isValve
               ? 'What the console calls it, and its row in the state table: the states that open this name open this valve. Pick a row the table already has to take its states.'
@@ -498,7 +533,8 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
             disabled={locked}
             autoFocus={justWired}
             rows={isValve ? unwiredRows(draft) : undefined}
-            taken={(n) => nameTaken(draft, n, symbol.id)}
+            clashOf={(n) => clashNote(draft, n, symbol.id, (id) => hookup.symbol(id)?.label ?? hookup.label(id))}
+            hintOf={isValve ? (n) => nameHint(draft, symbol.id, n, fresh?.symbol !== symbol.id) : undefined}
             onCommit={(n) => {
               const guessed = fresh?.symbol === symbol.id;
               hookup.update((d) => {
@@ -525,7 +561,7 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
                   <span
                     key={s}
                     className="rounded px-1 font-mono text-[10.5px] text-gray-500 line-through"
-                    title="The table opens it in Idle, but the twin holds Idle shut: a de-energised stand has nothing open."
+                    title="The table opens it in Idle; the twin holds Idle shut."
                   >
                     {s}
                   </span>
@@ -725,10 +761,13 @@ const GROUP_TITLES = [
 export function DrawingPanel({
   focus = null,
   onFocus = () => undefined,
+  ui = null,
 }: {
   /** The symbol to open: clicked on the drawing, or opened here. */
   focus?: string | null;
   onFocus?: (id: string | null) => void;
+  /** The DAQ box's state (P&ID tab), shared so the two panels agree. */
+  ui?: Store<DaqUi> | null;
 } = {}) {
   const { where, live, consoleHidden, hideOnConsole, restart, model } = useStand();
   const hookup = useHookup();
@@ -821,7 +860,11 @@ export function DrawingPanel({
   };
   const [vw, vt] = count('valve');
   const [sw, st] = count('sensor');
+  // Not the rows the twin reads by name (the built-in COPV charge and dump):
+  // they drive something with nothing wired to them.
+  const builtin = hookup.data?.builtin ?? {};
   const issues = draft ? tableIssues(draft) : { unwired: [], rowless: [] };
+  issues.unwired = issues.unwired.filter((r) => !(r in builtin));
 
   const save = async (el: DrawingElement, p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => {
     await setOverride({ diagram: view.diagram_id, element: el.id, parameter: p.name, ...v });
@@ -837,6 +880,7 @@ export function DrawingPanel({
   };
 
   return (
+    <BoxUi.Provider value={ui}>
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex-shrink-0 border-b border-[var(--line)] px-3 py-2">
         <div className="flex items-baseline gap-2">
@@ -981,5 +1025,6 @@ export function DrawingPanel({
         )}
       </ul>
     </div>
+    </BoxUi.Provider>
   );
 }

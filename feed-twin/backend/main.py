@@ -2261,10 +2261,27 @@ async def view_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """A hookup that is not the drawing's -- a stand's own -- shown as the
-    drawing's would be, and bound the way that stand runs it. Writes nothing."""
-    return _hookup_out(
-        diagram, engine, fluid_set, machine, ignore_gse, own=_hookup_from_body(body)
-    )
+    drawing's would be, and bound the way that stand runs it. Writes nothing,
+    but refuses (422) what a save would: the panels check a stand's hookup
+    here before keeping it with the stand."""
+    hookup = _hookup_from_body(body)
+    _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse, own=hookup)
+
+
+def _refuse_impossible(hookup: Hookup, model: Model) -> None:
+    """422 for a hookup this drawing cannot have: a knob on a regulator it
+    lacks, a cable on the wrong board or to a symbol that is not here."""
+    known = {r.id for r in hookup_regulators(model)}
+    stray = sorted({r for k in hookup.knobs for r in k.regulators} - known)
+    if stray:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Not regulators on this drawing: {', '.join(stray)}.",
+        )
+    wrong = daqbox.problems(hookup, model)
+    if wrong:
+        raise HTTPException(status_code=422, detail=" ".join(wrong))
 
 
 @app.put("/api/hookup")
@@ -2278,17 +2295,7 @@ async def save_hookup(
 ) -> HookupOut:
     """Keep a hookup for this drawing's lineage. New stands open with it."""
     hookup = _hookup_from_body(body)
-    model = _assemble(diagram, engine, fluid_set)
-    known = {r.id for r in hookup_regulators(model)}
-    stray = sorted({r for k in hookup.knobs for r in k.regulators} - known)
-    if stray:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Not regulators on this drawing: {', '.join(stray)}.",
-        )
-    wrong = daqbox.problems(hookup, model)
-    if wrong:
-        raise HTTPException(status_code=422, detail=" ".join(wrong))
+    _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
         HOOKUPS,
         _lineage(library.get(diagram)),

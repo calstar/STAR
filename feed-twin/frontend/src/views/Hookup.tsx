@@ -93,7 +93,7 @@ export function Hookup() {
             type="button"
             disabled={busy || !data.saved || locked}
             onClick={reset}
-            title="Forget what was saved and go back to the twin's own matching."
+            title="Forget the whole saved hookup (the DAQ box, the edited state table, the knobs) and go back to the twin's own matching."
             className="rounded bg-gray-700 px-3 py-1 text-[12px] font-semibold text-white hover:bg-gray-600 disabled:opacity-40"
           >
             Back to suggestions
