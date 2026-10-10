@@ -7,7 +7,12 @@ import { prisma } from "@/lib/db";
 import { getCurrentDbUser } from "@/lib/user";
 import { subteamCreateSchema } from "@/lib/validation";
 
-export async function createSubteam(formData: FormData) {
+/** The form action: same as createSubteamReturningId, typed void for `<form action>`. */
+export async function createSubteam(formData: FormData): Promise<void> {
+  await createSubteamReturningId(formData);
+}
+
+export async function createSubteamReturningId(formData: FormData): Promise<{ id: string }> {
   const user = await getCurrentDbUser();
   if (!(await isAdmin(user.email)))
     throw new Error("Only admins can create subteams.");
@@ -15,9 +20,11 @@ export async function createSubteam(formData: FormData) {
     name: formData.get("name"),
     color: formData.get("color"),
   });
-  await prisma.subteam.create({ data: { name: data.name, color: data.color } });
+  const created = await prisma.subteam.create({ data: { name: data.name, color: data.color } });
   revalidatePath("/subteams");
   revalidatePath("/tasks");
+  // The MCP tool reads the new subteam back by id.
+  return { id: created.id };
 }
 
 export async function updateSubteam(formData: FormData) {
