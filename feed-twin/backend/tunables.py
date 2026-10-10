@@ -54,8 +54,10 @@ TUNABLES: tuple[Tunable, ...] = (
         "Ignore the drawn GSE",
         "",
         GROUPS[0],
-        "On: the cart drawn on the GSE page is not simulated. The stand is built "
-        "from the rocket alone, its disconnects capped, and the fills are the simple "
+        "On: the cart drawn on the GSE page is not simulated, except its vent lines, "
+        "which stay plugged into the rocket until the last moment before launch: a "
+        "tank still vents through the cart's vent valve. The stand is built from the "
+        "rocket and those vents, its other disconnects capped, and the fills are the simple "
         "built-in ones at the GSE Controls settings: GN2 High Press charges the COPV "
         "to the COPV fill knob over the COPV charge time, Fuel Fill pours the fuel "
         "load, Ox Fill loads LOX from the LOX dewar pressure, and the dome knob sets "

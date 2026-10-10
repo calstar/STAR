@@ -783,6 +783,7 @@ function Detail({
   onUnplug: () => void;
   onMoveTo: (board: BoardId) => void;
 }) {
+  const { model } = useStand();
   const sym = hookup.symbol(channel.symbol);
   const valve = isValveBoard(channel.board);
   const siblings = boards.filter((b) => b.kind === def.kind);
@@ -790,6 +791,9 @@ function Detail({
   const page = sym?.page ?? drawn.get(channel.symbol)?.page;
   const locked = hookup.locked;
   const lost = !sym && !drawn.has(channel.symbol);
+  // Cut, rocket only: off the stand the session runs (the cart's vent lines
+  // stay on it, plugged into the rocket until launch).
+  const cut = rocketOnly && Boolean(sym?.ground) && !(channel.symbol in (model?.pages ?? {}));
   return (
     <section className="mt-3 border-t border-[var(--line)] pt-2 text-[11.5px]">
       <div className="flex items-center gap-2">
@@ -846,10 +850,10 @@ function Detail({
         )}
         <span className="shrink-0 font-mono text-[10px] text-gray-500">{sym?.type ?? drawn.get(channel.symbol)?.type}</span>
         {pages && page && <span className="shrink-0 truncate text-[10.5px] text-gray-500">{page}</span>}
-        {sym?.ground && rocketOnly && (
+        {cut && (
           <span
             className="shrink-0 text-[10px] text-gray-500"
-            title="Rocket only: the cart is drawn but not simulated. The cable is kept."
+            title="Rocket only: the cart is drawn but not simulated (its vent lines are). The cable is kept."
           >
             Cart · not simulated
           </span>

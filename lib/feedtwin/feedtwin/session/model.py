@@ -44,6 +44,7 @@ from feedtwin.pid import (
     PidNode,
     build_network,
 )
+from feedtwin.pid.roles import unpaired_vents
 from feedtwin.pid.roles import vehicle_only as cut_to_vehicle
 
 
@@ -197,6 +198,7 @@ def assemble_model(
             (the labels of the vessels cut) and ``capped`` (the ids of the
             vehicle's disconnects whose mate was cut).
     """
+    loose_vents = unpaired_vents(diagram)
     if vehicle_only:
         mates = {
             n.id: str(n.options.get("pairedWith", "") or "").strip()
@@ -233,6 +235,7 @@ def assemble_model(
         raise AssemblyError("build", str(exc)) from exc
 
     warnings.extend(built.warnings)
+    warnings.extend(loose_vents)
 
     assumptions = tuple(
         Assumption(

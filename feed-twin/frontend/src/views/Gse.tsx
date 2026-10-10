@@ -11,7 +11,8 @@
  * Below the regulators: the rest of the cart, which is not on the drawing
  * yet -- how fast it charges, and the LOX dewar that pushes the load in.
  * "Ignore the drawn GSE" (Setup ignore_gse) makes that true of a drawing that
- * does have its cart drawn: the rocket alone, filled at these settings.
+ * does have its cart drawn: the rocket alone, filled at these settings --
+ * and the cart's vent lines, which stay plugged in until launch.
  * The model switches moved to the Configuration tab with everything else
  * the twin assumes.
  */
@@ -154,7 +155,7 @@ export function Gse() {
     <div className="flex flex-col gap-4 p-4">
       <label
         className="flex items-center gap-2 text-[12px] text-text"
-        title="On: the cart drawn on the GSE page is not simulated. The rocket alone is built, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
+        title="On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
       >
         <input
           type="checkbox"
@@ -165,7 +166,7 @@ export function Gse() {
         />
         Ignore the drawn GSE
         {setup.ignore_gse ? (
-          <span className="text-[11px] text-text-muted">· rocket only, fills at the settings below</span>
+          <span className="text-[11px] text-text-muted">· rocket and its vent lines, fills at the settings below</span>
         ) : null}
       </label>
 

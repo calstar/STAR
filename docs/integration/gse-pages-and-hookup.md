@@ -159,7 +159,17 @@ the way and only the rocket matters (the operator, 2026-10-08). On, the stand is
 built from the vehicle alone (`feedtwin.pid.roles.vehicle_only`,
 `assemble_model(vehicle_only=True)`): every symbol off the vehicle and every line
 touching one is cut, and each vehicle disconnect whose mate was cut is a capped
-half. The stand then fills like a drawing of the rocket alone:
+half -- **except the cart's vent lines** (`roles.vent_branches`). The vents sit on
+the GSE but stay plugged into the rocket until the last moment before launch (the
+team, 2026-10-10), so a branch behind a vehicle disconnect that holds nothing (no
+vessel, regulator or further coupling) and has a valve the table opens, a relief or
+an outlet stays, still coupled: Fuel Vent drives the cart's FV-SOL rocket only as it
+does with the whole cart. A branch with only a hand valve behind it is no vent line
+and stays capped (the tank keeps the stand-in vent through its capped top
+disconnect). A vent whose two halves are drawn *unpaired* -- LE4's QD-OV-B and
+OV-QD-A -- is not guessed: the report says so (`roles.unpaired_vents`), and until
+it is paired in pid-designer the tank vents through the rocket's half as a stand-in.
+The stand then fills like a drawing of the rocket alone:
 
 * GN2 High Press charges the COPV to the COPV fill knob (`copv_target_psi`) over
   `copv_fill_s`;

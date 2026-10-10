@@ -157,8 +157,10 @@ very bugs they were written for.
   own), and every knob starts at the drawing's setting (`hookup.knob_starts`); a fresh
   stand's dome and COPV fill are the drawing's unless the operator turned them. Before adding a hookup workaround (DAQ box, State machine tab, GSE Controls knobs), ask
   what the drawing should say instead. `Setup.ignore_gse` (off by default) cuts the cart
-  away at assembly (`roles.vehicle_only`) and leaves only the built-in fills; it is a
-  build-time choice, so changing it opens a new stand.
+  away at assembly (`roles.vehicle_only`) and leaves only the built-in fills -- but
+  **never the vents**: the cart's vent lines stay plugged into the rocket until launch
+  (`roles.vent_branches`), so rocket only a tank still vents through the cart's vent
+  valve. It is a build-time choice, so changing it opens a new stand.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,

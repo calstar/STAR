@@ -126,9 +126,10 @@ def test_a_stand_opened_ignoring_the_gse_is_the_rocket_alone() -> None:
 
 
 def test_the_hookup_tab_shows_the_wiring_the_rocket_alone_runs() -> None:
-    """Rocket only, a vent wired to the cart's solenoid opens the rocket's
-    capped disconnect instead; the Hookup tab says so, while the hookup it
-    saves stays the whole drawing's (the cart's knobs are not dropped)."""
+    """Rocket only, the cart's vent line stays plugged in, so the vent wired to
+    the cart's solenoid still opens that solenoid; what is cut (GSE High Press
+    Control's HPC_SOL) drives nothing. The hookup saved stays the whole
+    drawing's (the cart's knobs are not dropped)."""
     diagram = _upload()
     labels = {
         n["id"]: n["data"]["label"] for n in json.loads(DRAWING.read_text())["nodes"]
@@ -139,7 +140,7 @@ def test_the_hookup_tab_shows_the_wiring_the_rocket_alone_runs() -> None:
     ).json()
     assert whole["vehicle_only"] is False and rocket["vehicle_only"] is True
     assert labels[whole["bound"]["Fuel Vent"]] == "FV-SOL"
-    assert labels[rocket["bound"]["Fuel Vent"]] == "FV-QD-B"
+    assert labels[rocket["bound"]["Fuel Vent"]] == "FV-SOL"
     assert "GSE High Press Control" in whole["bound"]
     assert "GSE High Press Control" not in rocket["bound"]
     assert rocket["hookup"] == whole["hookup"]
@@ -261,4 +262,10 @@ def test_the_model_view_says_which_symbols_are_the_cart() -> None:
     rocket = client.get(
         "/api/model", params={"diagram": diagram, "ignore_gse": True}
     ).json()
-    assert rocket["ground"] == [] and rocket["ground_bottles"] == []
+    # The cart's vent lines are plugged into the rocket until launch and watched
+    # with it: not the cart the console starts hidden, in either mode.
+    # Its hand valve is turned at the cart, and stays with the cart.
+    assert not {"FV-QD-A", "FV-SOL", "junc_o5qqb5_95"} & ground
+    assert "FV-MAN" in ground
+    assert {labels.get(i, i) for i in rocket["ground"]} == {"FV-MAN"}
+    assert rocket["ground_bottles"] == []

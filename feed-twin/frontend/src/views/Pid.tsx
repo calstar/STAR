@@ -259,9 +259,9 @@ export function Pid() {
           <Link
             to="/gse"
             className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
-            title="Ignore the drawn GSE is on: the stand is the rocket alone. The cart's page is drawn here, but none of it is simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
+            title="Ignore the drawn GSE is on: the stand is the rocket and the cart's vent lines, which stay plugged in until launch. The rest of the cart's page is drawn here but not simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
           >
-            GSE page not simulated
+            GSE not simulated · vents are
           </Link>
         )}
         <button

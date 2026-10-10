@@ -63,7 +63,8 @@ Without a stand the cockpit still works. Its runs then go in your own list.
   the stand. A name alone applies to the running stand.
 * **GSE Controls → Ignore the drawn GSE**: run the rocket alone, filled by the
   built-in charge and loads at the settings on that page, when the cart on the
-  drawing is more than you need.
+  drawing is more than you need. The cart's vent lines stay: they are plugged
+  into the rocket until launch, so the tanks still vent through them.
 * **Configuration**: every number the twin assumes, with what it stands for.
   Change one here and the next run records it.
 

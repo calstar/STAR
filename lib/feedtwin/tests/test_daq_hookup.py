@@ -370,10 +370,11 @@ def _le4(cut: bool) -> Any:
 @pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
 def test_on_the_vehicle_the_box_keeps_the_rocket_and_frees_the_cut_rows() -> None:
     """The box cables Fuel Vent to the cart's FV-SOL and GSE High Press Control
-    to HPC_SOL; the rocket alone has neither. Those rows go back to being
-    matched (Fuel Vent finds the fuel tank's capped top disconnect); LOX Main
-    keeps its connector; LOX Vent, which the name match would bind to the LOX
-    tank's disconnect, has no connector and stays unbound."""
+    to HPC_SOL. The rocket alone keeps the cart's vent line (it is plugged in
+    until launch), so Fuel Vent keeps its connector; HPC_SOL is cut, and its
+    row goes back to being matched. LOX Main keeps its connector; LOX Vent,
+    which the name match would bind to the LOX tank's unpaired disconnect,
+    has no connector and stays unbound."""
     ids = {n["data"]["label"]: n["id"] for n in json.loads(LE4.read_text())["nodes"]}
     whole, cut = _le4(False), _le4(True)
     machine = _machine()
@@ -395,20 +396,21 @@ def test_on_the_vehicle_the_box_keeps_the_rocket_and_frees_the_cut_rows() -> Non
     rocket = on_vehicle(saved, cut)
     assert rocket.channels == (
         Channel("sol12", 1, "LOX Main", ids["OM-R"]),
+        Channel("sol12", 2, "Fuel Vent", ids["FV-SOL"]),
         Channel("pt_low", 1, "Fuel tank", ids["FU-PT-R"]),
     )
-    assert rocket.auto == {"Fuel Vent", "GSE High Press Control"}
+    assert rocket.auto == {"GSE High Press Control"}
     assert rocket.rows == saved.rows and rocket.wired
 
     b = binding(cut, machine, rocket)
     assert dict(b.to_symbol) == {
         "LOX Main": ids["OM-R"],
-        "Fuel Vent": ids["FV-QD-B"],
+        "Fuel Vent": ids["FV-SOL"],
     }
     assert "LOX Vent" in b.unmatched and "GSE High Press Control" in b.unmatched
     by_name = binding(cut, machine, on_vehicle(suggest(whole), cut)).to_symbol
     assert by_name["LOX Vent"] == ids["QD-OV-B"], "the name match would bind it"
-    assert by_name["Fuel Vent"] == ids["FV-QD-B"]
+    assert by_name["Fuel Vent"] == ids["FV-SOL"], "the cart's vent valve, still there"
 
 
 @needs_stand
@@ -448,15 +450,15 @@ def test_two_rows_one_name_apart_from_case_are_refused() -> None:
 @pytest.mark.skipif(not LE4.exists(), reason="LE4 (6) fixture absent")
 def test_on_the_vehicle_a_cut_row_is_matched_whatever_case_its_connector_has() -> None:
     """The connector on the cart's FV-SOL typed "fuel vent": the whole stand
-    joins it to Fuel Vent ignoring case, and so must the rocket alone, or the
-    fuel tank's top disconnect is never vented there."""
+    joins it to Fuel Vent ignoring case, and so must the rocket alone, whose
+    vent line is still plugged in, or the fuel tank is never vented."""
     ids = {n["data"]["label"]: n["id"] for n in json.loads(LE4.read_text())["nodes"]}
     whole, cut = _le4(False), _le4(True)
     machine = _machine()
     saved = Hookup(channels=(Channel("sol24", 2, "fuel vent", ids["FV-SOL"]),))
     assert binding(whole, machine, saved).to_symbol["Fuel Vent"] == ids["FV-SOL"]
     rocket = binding(cut, machine, on_vehicle(saved, cut)).to_symbol
-    assert rocket.get("Fuel Vent") == ids["FV-QD-B"]
+    assert rocket.get("Fuel Vent") == ids["FV-SOL"]
 
 
 @needs_tables

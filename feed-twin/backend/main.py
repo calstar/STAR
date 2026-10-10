@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.document import PidNode
+from feedtwin.pid.document import Diagram, PidNode
 from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
@@ -113,7 +113,7 @@ from feedtwin.session.burn import (
     run_burn,
 )
 from stardesign.userdata import slug_user
-from feedtwin.pid.roles import ground_ids
+from feedtwin.pid.roles import ground_ids, vent_branches
 from feedtwin.session.hookup import (
     CHARGE,
     DOME,
@@ -180,12 +180,22 @@ def _overrides_for(diagram_id: str) -> dict[str, Any]:
     return overrides.entry(_drawing_key(diagram_id))
 
 
+def _cart(diagram: Diagram) -> frozenset[str]:
+    """The cart, as the console starts it hidden: the drawing's ground support
+    (feedtwin.pid.roles) less its vent lines, which are plugged into the
+    rocket until launch and watched with it (the team, 2026-10-10) -- their
+    valves, not a hand valve on one, which a person turns at the cart."""
+    types = {n.id: n.type for n in diagram.nodes}
+    vents = {i for i in vent_branches(diagram) if types.get(i) != "MAN"}
+    return frozenset(ground_ids(diagram)) - frozenset(vents)
+
+
 @functools.lru_cache(maxsize=64)
 def _ground_of(diagram_id: str) -> frozenset[str]:
-    """The drawing's ground support (feedtwin.pid.roles). Artifacts are
+    """:func:`_cart` of a drawing in the library. Artifacts are
     content-addressed, so an id's answer never changes."""
     try:
-        return frozenset(ground_ids(load_diagram_artifact(library, diagram_id)))
+        return _cart(load_diagram_artifact(library, diagram_id))
     except (LibraryError, AssemblyError, ValueError):
         return frozenset()
 
@@ -835,7 +845,7 @@ async def model_view(
                 ignore_gse,
             ).items()
         },
-        ground=sorted(ground := ground_ids(model.diagram)),
+        ground=sorted(ground := _cart(model.diagram)),
         ground_bottles=sorted(
             n.id
             for n in model.diagram.nodes

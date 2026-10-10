@@ -89,6 +89,12 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - The hookup re-rendered the state-table matrix on every tick.
 - The console says when every valve is hidden, and shows no empty plot with nothing to
   plot; its state-table note points at the State machine tab for an edited table.
+- Rocket only kept nothing of the cart, vents included: a tank vented through a
+  stand-in on its capped top disconnect. The cart's vent lines now stay
+  (`roles.vent_branches`): they are plugged into the rocket until launch, so Fuel
+  Vent drives the cart's FV-SOL rocket only as with the whole cart, and the wording
+  on GSE Controls, Configuration and the P&ID says so. A vent drawn with its two
+  halves unpaired (LE4's QD-OV-B / OV-QD-A) is reported, not guessed.
 - A QD was offered as a DAQ box symbol, and the suggested box cabled the LOX vent row
   to the rocket's vent disconnect. No cable goes to a disconnect: it is not on the
   box, and a cable to one is refused. Rocket only, the vent row still reaches the

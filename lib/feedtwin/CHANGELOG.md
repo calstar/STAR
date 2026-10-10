@@ -54,7 +54,15 @@ be able to find why they differ.
   a transducer's names nothing until it is rewired (docstring).
 
 ### Changed results
-- None. A hookup without channels and a table without flags bind and run as before
+- `roles.vehicle_only` (`Setup.ignore_gse`, rocket only) keeps the cart's vent lines
+  (`roles.vent_branches`: behind a vehicle disconnect, no vessel, regulator or
+  further coupling, and a valve the table opens, a relief or an outlet). They are
+  plugged into the rocket until launch (the team, 2026-10-10), so rocket only a
+  tank vents through the cart's vent valve, not a stand-in on its capped top
+  disconnect. A LE4 (6) rocket-only burn is unchanged (thrust within 4e-5 N of
+  6,916 N); its fuel tank vents from 519.9 psia to 14.7 psia in 10 s through
+  FV-SOL. `roles.unpaired_vents` reports a vent whose halves are drawn unpaired.
+- Otherwise none. A hookup without channels and a table without flags bind and run as before
   (`tests/test_daq_hookup.py`, `test_hookup.py`); the shipped table's aborts from its
   new `_states.csv` are the three the name rule found. The fixes above are reporting
   only: an LE4 (6) whole and rocket-only, and shipped-stand, pad walk is bit-identical
