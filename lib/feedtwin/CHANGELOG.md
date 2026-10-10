@@ -6,6 +6,35 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-10: the DAQ box and the stand's own state table
+
+### Added
+- **A hookup can be wired** (`Hookup.channels`, `Channel(board, slot, name, symbol)`,
+  hookup schema 2; schema 1 still reads and a hookup without channels is still written
+  as schema 1). It is how the real DAQ declares a stand: each valve and transducer on a
+  named connector, and the state table opening names. On a wired hookup `binding()`
+  binds a row to the valve on the connector of its name (ignoring case) and nothing
+  else: a row with no connector, or one on a symbol that is not a valve, drives
+  nothing and is listed in `unmatched`. `channels=()` is a box with nothing plugged
+  in. Without channels nothing changes: pins, then names and roles, bit for bit.
+  `Hookup.names()` is the console's names (a connector's name over an alias).
+  `on_vehicle` keeps the rocket's connectors and matches the rows whose cable went to
+  the cart as before (`Hookup.auto`), and now rebuilds with `replace`.
+- **An edited state table** (`StateMachine.to_dict`, `machine_from_dict`,
+  `Hookup.machine`). Read exactly as the CSVs are: Idle held shut, mains outside Fire
+  and ignition paths around Ready warned (`_hold_idle`, `_fire_bypasses`, shared with
+  `load_machine`). Refused when it contradicts itself (a state or row named twice --
+  rows ignoring case --, a cell naming what the table lacks). `StateMachine.table`
+  keeps what the table wrote before the Idle hold; `layout` is the DAQ's panel
+  row/col; `aborts` the states flagged abort (`None`: by name, as before; a flag is
+  read strictly -- "0" is no). `load_machine` reads an optional
+  `<name>_states.csv` beside the tables for both.
+
+### Changed results
+- None. A hookup without channels and a table without flags bind and run as before
+  (`tests/test_daq_hookup.py`, `test_hookup.py`); the shipped table's aborts from its
+  new `_states.csv` are the three the name rule found.
+
 ## Unreleased — 2026-10-09
 
 ### Changed results

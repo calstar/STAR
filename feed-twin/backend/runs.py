@@ -249,7 +249,7 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("drawing", ("diagram", "hookup", "multiphase")),
     ("engine", ("engine",)),
     ("fluids", ("fluid_set",)),
-    ("state machine", ("machine",)),
+    ("state machine", ("machine", "machine_table")),
     ("regulator knobs", ("knobs",)),
     ("T-0", ("t0",)),
     ("settings", ("setup",)),
