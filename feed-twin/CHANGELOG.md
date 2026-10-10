@@ -18,7 +18,8 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
   connector, the name, and for a valve the states that open it ("Opens in"). It
   replaces "Driven by", which showed a row name ("LOX Press") that read as a state.
   Switching between the two changes nothing; they edit one draft with the State
-  machine and Knobs tabs (`lib/useHookup.tsx`), saved from any of them.
+  machine tab and the knobs on GSE Controls (`lib/useHookup.tsx`), saved from any
+  of them.
 - **State machine** tab, after the DAQ's State tab: the states (name, place on the
   console grid, abort), what each state opens (a compact matrix: rows are the
   connectors' names), the allowed transitions, the twin's warnings, and the DAQ's
@@ -44,8 +45,10 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - `statemachines/diablo_states.csv`: the DAQ's panel layout and abort flags.
 
 ### Changed
-- The nav's **Hookup** is **Knobs** (path still `/hookup`): it holds the regulator
-  knobs; the wiring is the P&ID's and the table the State machine tab's.
+- The **Hookup** tab is gone: which knob turns which regulator is edited at the foot
+  of **GSE Controls**, under the dials it sets up (`components/KnobsEditor.tsx`;
+  `/hookup` redirects there). The wiring is the P&ID's, the table the State
+  machine tab's.
 - A state-table row is an **actuator** everywhere, as the DAQ's own
   `state_machine_actuators.csv` has it ("Row" meant four things).
 - State machine: three pages, **Opens · Transitions · States**, with the

@@ -12,7 +12,7 @@ cd feed-twin && ./dev.sh       # API on :8003, UI on :5177
 
 Open http://localhost:5177. The tabs are in three groups: **Operate** (Console,
 P&ID, GSE Controls, Plots), **Results** (Engine, Runs, Study, Solver) and **Set
-up** (Library, Knobs, State machine, Configuration, Checks). The line under them is the
+up** (Library, State machine, Configuration, Checks). The line under them is the
 stand's health, the time warp (×1 / ×5 / ×20 to wait out a load; Fire always
 runs at ×1), the stand clock, the drawing and engine, and "not validated":
 hover it for what the model has been checked against. Until the stand's own
@@ -55,7 +55,8 @@ Without a stand the cockpit still works. Its runs then go in your own list.
   states each actuator (a valve connector's name) opens in. **Transitions**:
   which state may follow which. **States**: add, rename, order and place them.
   **Download CSVs** writes the DAQ's own files; **Upload CSVs** reads them back.
-* **Knobs**: which knob on GSE Controls sets which regulator.
+* **GSE Controls → Which knob turns which regulator** (at the foot of the page):
+  which dial sets which regulator on the drawing.
 * An imported drawing is wired by the twin's own name matching ("Suggested")
   until you save. Save from any of these tabs (the bar says "Suggested · not
   saved" until you do): it is one hookup, and wiring or table changes restart

@@ -1,6 +1,7 @@
 /**
  * The one save bar for the hookup, wherever it is being edited: the P&ID's
- * side panel (Symbols and DAQ box), the State machine tab, the Knobs page.
+ * side panel (Symbols and DAQ box), the State machine tab, the knobs on GSE
+ * Controls.
  * They share one draft (lib/useHookup), so the bar says the same thing on
  * each -- and an edit made on one tab is still waiting to be saved on the
  * next.
@@ -42,7 +43,7 @@ export function HookupSaveBar({ compact = false }: { compact?: boolean }) {
     // three tabs are not.
     if (
       !hookup.namesOnly &&
-      !window.confirm('Discard the unsaved hookup? Every change not yet saved on the P&ID, State machine and Knobs tabs goes.')
+      !window.confirm('Discard the unsaved hookup? Every change not yet saved on the P&ID, State machine and GSE Controls tabs goes.')
     )
       return;
     hookup.discard();

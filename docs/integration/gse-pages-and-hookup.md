@@ -143,9 +143,9 @@ including a stand's own hookup.
   connector onto a symbol, or click it and then the symbol.
 * **State machine**: the DAQ's State tab: states, what each opens, the allowed
   transitions, and the DAQ's CSVs to download or upload.
-* **Knobs** (the nav's name for the old Hookup page; its path is still
-  `/hookup`): the knobs, as named dials with start, low and high values, each
-  with the regulators it turns.
+* **GSE Controls → Which knob turns which regulator** (the old Hookup page;
+  `/hookup` redirects there): the knobs, as named dials with start, low and
+  high values, each with the regulators it turns.
 
 The four edit one draft and save together.
 

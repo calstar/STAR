@@ -1,7 +1,7 @@
 /**
  * The drawing's hookup -- the DAQ box, the state table and the knobs -- loaded
  * once and edited in one place by every panel that shows it: the P&ID's
- * Symbols list and DAQ box, the State machine tab and the Knobs page. One
+ * Symbols list and DAQ box, the State machine tab and GSE Controls. One
  * draft for all of them, so wiring a valve on the P&ID, ticking the states it
  * opens in on the State machine tab and saving from either is one change;
  * switching panels never loses an edit.

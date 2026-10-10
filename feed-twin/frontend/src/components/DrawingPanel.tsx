@@ -18,8 +18,8 @@
  * connector a valve or transducer is wired to, the name that connector goes
  * by -- the console's name and, for a valve, its row in the state table --
  * and the states that open it. One draft with the DAQ box, the State machine
- * tab and the Knobs page (lib/useHookup), saved from the bar at the panel's
- * foot.
+ * tab and the knobs on GSE Controls (lib/useHookup), saved from the bar at
+ * the panel's foot.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';

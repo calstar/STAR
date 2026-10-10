@@ -17,10 +17,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { CHARGE_KNOB, DOME_KNOB, fixed, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
 import { useStand } from '../stand';
+import { KnobsEditor } from '../components/KnobsEditor';
 
 /** The knobs turn continuously; the stand hears about it a few times a
  *  second. Enough to feel live, not enough to flood the command channel. */
@@ -246,11 +246,11 @@ export function Gse() {
           {chargeKnob
             ? `COPV fill sets ${chargeKnob.regulators.join(', ')} on the drawing. `
             : "COPV fill is the twin's own GSE fill (no fill regulator on the drawing). "}
-          Which regulator each other knob turns is set on the{' '}
-          <Link to="/hookup" className="text-blue-400 hover:underline">
-            Hookup
-          </Link>{' '}
-          page.
+          Which regulator each knob turns is set{' '}
+          <a href="#knobs" className="text-blue-400 hover:underline">
+            below
+          </a>
+          .
         </p>
       </section>
 
@@ -295,6 +295,7 @@ export function Gse() {
         </fieldset>
       </section>
 
+      <KnobsEditor />
     </div>
   );
 }

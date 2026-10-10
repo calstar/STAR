@@ -22,7 +22,7 @@ import { useHookup } from '../lib/useHookup';
 import { StandBar } from './StandBar';
 
 /** The tabs that edit the hookup's one draft. */
-const HOOKUP_VIEWS = new Set(['/pid', '/statemachine', '/hookup']);
+const HOOKUP_VIEWS = new Set(['/pid', '/statemachine', '/gse']);
 
 export interface View {
   group: string;
@@ -161,7 +161,7 @@ export function TopBar({ views }: { views: readonly View[] }) {
                     {unsavedHookup && HOOKUP_VIEWS.has(v.path) && (
                       <span
                         className="ml-1 text-[var(--color-warning)]"
-                        title="Unsaved hookup: save it on the P&ID, State machine or Knobs tab"
+                        title="Unsaved hookup: save it on the P&ID, State machine or GSE Controls tab"
                       >
                         •
                       </span>

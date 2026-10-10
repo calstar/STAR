@@ -67,7 +67,7 @@ import { useStand } from '../stand';
 
 const fold = (s: string) => s.trim().toLocaleLowerCase();
 
-/** The one secondary button, as the DAQ box and the Knobs page have it. */
+/** The one secondary button, as the DAQ box and the knobs have it. */
 const BTN =
   'rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-normal normal-case tracking-normal text-[var(--ink-2)] hover:text-[var(--ink)] disabled:opacity-40';
 const CARD = 'bg-card rounded-lg border border-gray-800';

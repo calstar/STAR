@@ -1,31 +1,34 @@
 /**
  * The hookup's regulator knobs: which dial on GSE Controls sets which
- * regulator on the drawing.
+ * regulator on the drawing. At the foot of GSE Controls, under the dials it
+ * sets up (it was a tab of its own).
  *
  * An imported drawing arrives with its own regulators. The twin gives every
  * hand-loaded one a knob (the stand's dome, the COPV charge, one each for the
- * rest); this page is where a person regroups them -- a knob, the regulators
- * on it, where it starts -- without editing the drawing. Kept per drawing (by
+ * rest); this is where a person regroups them -- a knob, the regulators on
+ * it, where it starts -- without editing the drawing. Kept per drawing (by
  * where it comes from, so saving the drawing again keeps it), and with a stand
  * when one is open.
  *
- * The nav calls it Knobs: the rest of the hookup -- the DAQ box (which
- * connector each valve and transducer is wired to, and the name it goes by)
- * and the state table -- is on the P&ID and State machine tabs. All of it is
- * one draft (lib/useHookup), saved from any of them.
+ * The rest of the hookup -- the DAQ box (which connector each valve and
+ * transducer is wired to, and the name it goes by) and the state table -- is
+ * on the P&ID and State machine tabs. All of it is one draft (lib/useHookup),
+ * saved from any of them.
  */
 
 import { DOME_KNOB, type KnobDef } from '../api';
-import { HookupSaveBar, HookupStatus, NoHookup, ReadOnly, confirmReset } from '../components/HookupSaveBar';
 import { useHookup } from '../lib/useHookup';
+import { HookupSaveBar, HookupStatus, ReadOnly } from './HookupSaveBar';
 
 const BTN =
   'rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)] disabled:opacity-40';
 
-export function Hookup() {
-  const { data, draft, setDraft, error, busy, onStand, locked, reset } = useHookup();
+export function KnobsEditor() {
+  const { data, draft, setDraft, error, locked } = useHookup();
 
-  if (!data || !draft) return <NoHookup error={error} />;
+  if (!data || !draft) {
+    return error ? <p className="text-[12px] text-red-400">{error}</p> : null;
+  }
 
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
 
@@ -62,53 +65,32 @@ export function Hookup() {
   const unknobbed = data.regulators.filter((r) => !owner(r.id));
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-3 p-4">
-      <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-800 px-4 py-3">
-        <div className="min-w-0">
-          <div className="caps text-[10px]">Drawing</div>
-          <div className="truncate text-[13px]" title="Kept for every version of this drawing, by where it comes from.">
-            {data.lineage}
-          </div>
-        </div>
-        <span className="text-[12px] text-text-muted" title="pid-designer pages on this drawing; paired disconnects join them.">
-          {data.pages.length} page{data.pages.length === 1 ? '' : 's'}: {data.pages.join(', ')}
-          {data.mated.length > 0 && ` · ${data.mated.length} mated disconnect${data.mated.length === 1 ? '' : 's'}`}
-        </span>
+    <section id="knobs">
+      <h2
+        className="mb-1 flex items-center gap-2 caps"
+        title="Each dial above, and the regulators on the drawing it sets. Kept for every version of this drawing (by where it comes from). Valves and transducers go on the DAQ box (P&ID tab); what each state opens is on the State machine tab."
+      >
+        Which knob turns which regulator
         <HookupStatus />
         <ReadOnly />
-        <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            disabled={busy || !data.saved || locked}
-            onClick={() => confirmReset(onStand) && reset()}
-            title="Forget the whole saved hookup (the DAQ box, the edited state table, the knobs) and go back to the twin's own matching."
-            className={BTN}
-          >
-            Back to suggested
-          </button>
-        </div>
+      </h2>
+      <div className="mb-1.5 empty:hidden">
+        <HookupSaveBar compact />
       </div>
-
-      <HookupSaveBar />
-
-      <div className="bg-card rounded-lg border border-gray-800">
-        <h2 className="flex items-baseline border-b border-gray-800 px-4 py-2.5 caps">
-          <span title="Each a dial on GSE Controls, and the regulators it sets. Valves and transducers go on the DAQ box (P&ID tab); what each state opens is on the State machine tab.">
-            Knobs
+      <div className="bg-card rounded-xl border border-gray-800">
+        <div className="flex items-center border-b border-gray-800 px-4 py-2">
+          <span className="text-[12px] text-text-muted" title="pid-designer pages on this drawing; paired disconnects join them.">
+            {data.pages.length} page{data.pages.length === 1 ? '' : 's'}: {data.pages.join(', ')}
+            {data.mated.length > 0 && ` · ${data.mated.length} mated disconnect${data.mated.length === 1 ? '' : 's'}`}
           </span>
-          <button
-            type="button"
-            onClick={addKnob}
-            disabled={locked}
-            className={`ml-auto normal-case tracking-normal ${BTN}`}
-          >
+          <button type="button" onClick={addKnob} disabled={locked} className={`ml-auto ${BTN}`}>
             Add knob
           </button>
-        </h2>
+        </div>
         {data.vehicle_only && (
           <p
             className="border-b border-gray-800 px-4 py-2 text-[12px] text-text-muted"
-            title="With the drawn GSE ignored the cart's regulators are not simulated: the dome knob turns the rocket's dome-loaded regulator itself, and the COPV fill is the built-in charge to this knob's setting. The knobs here are the whole drawing's, kept for when the GSE is simulated again; GSE Controls shows the ones the stand turns now."
+            title="With the drawn GSE ignored the cart's regulators are not simulated: the dome knob turns the rocket's dome-loaded regulator itself, and the COPV fill is the built-in charge to this knob's setting. The knobs here are the whole drawing's, kept for when the GSE is simulated again; the dials above are the ones the stand turns now."
           >
             Rocket only: the dome knob turns the rocket's regulator.
           </p>
@@ -213,6 +195,6 @@ export function Hookup() {
           </p>
         )}
       </div>
-    </div>
+    </section>
   );
 }
