@@ -89,6 +89,13 @@ cabled to named connectors on the DAQ's boards, and a state table that opens nam
 - The hookup re-rendered the state-table matrix on every tick.
 - The console says when every valve is hidden, and shows no empty plot with nothing to
   plot; its state-table note points at the State machine tab for an edited table.
+- On a stand, a hookup saved after the page had reloaded never reached the stand:
+  the reload reattached to the running session without reading the stand, so the
+  hookup Save had no stand to go into (refused with a misleading "Read only"), the
+  panel still showed the names as saved, and the stand's Save wrote the drawing's
+  unsaved suggestion over the stand's own (LE4(real): no connectors in any version).
+  The stand is read before reattaching; a hookup Save on a stand writes the stand
+  too, and one the stand cannot take stays unsaved and says why.
 - An unsaved hookup -- renamed transducers, wiring, the table -- was lost on any
   page reload (a refresh, a dev rebuild, the stand restarting), so names typed on the
   P&ID seemed never to reach the DAQ box. It is kept in the tab (sessionStorage, per

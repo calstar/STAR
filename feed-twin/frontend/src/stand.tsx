@@ -130,10 +130,12 @@ interface StandValue {
   locked: boolean;
   /** The stand's own hookup, when it has one for the drawing on screen. */
   standHookup: Record<string, unknown> | null;
-  /** Change the stand's hookup (kept with the stand; Save writes it). */
   /** Give the open stand a hookup; `reopen` false when only console names
-   *  changed (they are applied live). */
-  setStandHookup: (hookup: Record<string, unknown>, reopen?: boolean) => void;
+   *  changed (they are applied live). False, with the reason in the error
+   *  line, when the stand could not take it (not taken, not loaded). */
+  setStandHookup: (hookup: Record<string, unknown>, reopen?: boolean) => boolean;
+  /** Write the open stand as it is now (the stand bar's Save). */
+  saveStand: () => Promise<void>;
 }
 
 /** A stand document, open. */
@@ -347,16 +349,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
       }
     };
     const reopen = async (): Promise<SessionState> => {
-      const id = remembered();
-      if (id) {
-        try {
-          return await tickSession(id, 1e-3);
-        } catch {
-          // The backend forgot it (restart, deploy); a fresh stand is honest.
-        }
-      }
       // A stand document: the run records name it, and its own hookup is used
-      // for this session without touching the drawing's saved one.
+      // for this session without touching the drawing's saved one. Read
+      // first, before reattaching to a session that is still running: a page
+      // reloaded on a stand used to reattach without it, so the hookup panels
+      // showed the drawing's, a hookup Save had no stand to go into, and the
+      // stand's Save wrote the drawing's suggestion over the stand's own.
       let onStand = standDoc;
       if (onStand && !standPayload.current) {
         try {
@@ -374,6 +372,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
           } catch {
             // Nothing to forget.
           }
+        }
+      }
+      const id = remembered();
+      if (id) {
+        try {
+          return await tickSession(id, 1e-3);
+        } catch {
+          // The backend forgot it (restart, deploy); a fresh stand is honest.
         }
       }
       // The stand's hookup and knob positions belong to the drawing it was
@@ -716,11 +722,24 @@ export function StandProvider({ children }: { children: ReactNode }) {
         ? standPayload.current.hookup
         : null,
     setStandHookup: (hookup, reopen = true) => {
-      if (locked || !standPayload.current) return refuse();
+      if (locked) {
+        refuse();
+        return false;
+      }
+      if (!standPayload.current) {
+        setError('The stand is still loading: save the hookup again in a moment.');
+        return false;
+      }
       standPayload.current = { ...standPayload.current, diagram, hookup };
-      if (!reopen) return;
-      wantFresh.current = true;
-      setGeneration((g) => g + 1);
+      if (reopen) {
+        wantFresh.current = true;
+        setGeneration((g) => g + 1);
+      }
+      return true;
+    },
+    saveStand: async () => {
+      if (!standDoc || locked) return;
+      await standApi.autosave(standDoc.ref, await value.snapshot());
     },
     snapshot: async () => {
       const hookup = await getHookup(where).catch(() => null);

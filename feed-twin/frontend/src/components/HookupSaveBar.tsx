@@ -36,7 +36,7 @@ export function HookupSaveBar({ compact = false }: { compact?: boolean }) {
   const saveTitle = hookup.locked
     ? 'Take the stand (top bar) to change its hookup'
     : hookup.onStand
-      ? 'Kept with the stand: Save the stand to keep it for good'
+      ? 'Saved with the stand'
       : 'Kept for this drawing, for everyone';
   const discard = () => {
     // A name is one keystroke to put back; wiring, a table and knobs on

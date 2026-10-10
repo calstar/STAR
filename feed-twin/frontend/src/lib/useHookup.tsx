@@ -240,12 +240,20 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     saving.current = true;
     setBusy(true);
     setError('');
-    // On a stand it is kept with the stand (the stand's Save writes it), so
-    // the backend is asked to read it first: a body it refuses kept here
-    // would be marked saved, and the stand would open on the drawing's own.
+    // On a stand it is kept with the stand and the stand is written, so the
+    // backend is asked to read it first: a body it refuses kept here would be
+    // marked saved, and the stand would open on the drawing's own.
     (onStand ? viewHookup(at, out) : saveHookup(at, out))
-      .then((h) => {
-        if (onStand) calls.current.setStandHookup(out as unknown as Record<string, unknown>, reopen);
+      .then(async (h) => {
+        if (onStand) {
+          // Into the stand, and the stand written: Save means saved. A stand
+          // that cannot take it (not taken, still loading) says why, and the
+          // edits stay unsaved here rather than look kept and be lost.
+          if (!calls.current.setStandHookup(out as unknown as Record<string, unknown>, reopen)) {
+            throw new Error('The stand did not take the hookup: it is still unsaved.');
+          }
+          await calls.current.saveStand();
+        }
         setData(onStand ? { ...h, saved: true } : h);
         setDraft(draftOf(h));
         if (reopen) {
