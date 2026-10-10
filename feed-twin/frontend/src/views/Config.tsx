@@ -204,13 +204,14 @@ export function Config() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="max-w-3xl">
-        <h2 className="caps">Every number the twin assumes</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
-          Rest on a row for two seconds and it says what the number accounts for and where it came from. Edit
-          a value and the running stand uses it; rows marked <span className="font-mono text-[10px] uppercase">on reset</span>{' '}
-          are built into the vessels and take effect on the next Reset. Changed rows are tinted and carry a
-          way back to the default. What the <em>drawing</em> left unsaid — a defaulted volume, an estimated
-          bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Checks</Link> tab.
+        <h2 className="caps">Assumptions</h2>
+        <p className="mt-1 text-[12px] text-gray-500">
+          Hover a row for its source. <span className="font-mono text-[10px] uppercase">On reset</span> rows apply
+          after Reset. Drawing gaps are on{' '}
+          <Link to="/report" className="text-blue-400 hover:underline">
+            Checks
+          </Link>
+          .
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-4">
