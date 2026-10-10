@@ -2,10 +2,10 @@
  * The State machine tab: the DAQ's State tab, for this drawing.
  *
  * The DAQ's three tables, as its config page edits them: the states (name,
- * place on the console's grid, abort), what each state opens -- one row per
- * solenoid connector name, so a valve cabled to a connector named "LOX Main"
- * on the P&ID opens wherever the "LOX Main" row says -- and the allowed
- * moves. Every edit is a lib/hookupDraft function on the one shared hookup
+ * place on the console's grid, abort), what each state opens -- one line per
+ * actuator, which is a solenoid connector's name, so a valve cabled to a
+ * connector named "LOX Main" on the P&ID opens wherever "LOX Main" does --
+ * and the allowed moves. Every edit is a lib/hookupDraft function on the one shared hookup
  * draft (lib/useHookup), so wiring on the P&ID and ticking states here are
  * one change, saved once from either.
  *
@@ -24,11 +24,14 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   type SyntheticEvent,
 } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { checkMachine, type MachineDef, type MachineStateDef } from '../api';
-import { HookupSaveBar } from '../components/HookupSaveBar';
+import { HookupSaveBar, NoHookup, ReadOnly } from '../components/HookupSaveBar';
+import { OFF_GRID } from '../components/StateMachineDiagram';
+import { badge } from '../lib/daqDrag';
 import {
   type Draft,
   PANEL_COLS,
@@ -41,6 +44,7 @@ import {
   removeRow,
   removeState,
   renameState,
+  rowNamed,
   sameMachine,
   setAllowed,
   setOpen,
@@ -49,29 +53,35 @@ import {
   toActuatorCsv,
   toTransitionCsv,
 } from '../lib/hookupDraft';
-import { applyCsvFiles, heldShut, panelGrid, rowGroups, withoutAbort } from '../lib/stateTable';
+import {
+  applyCsvFiles,
+  groupTableWarnings,
+  heldShut,
+  panelGrid,
+  rowGroups,
+  skippedDelays,
+  withoutAbort,
+} from '../lib/stateTable';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 
 const fold = (s: string) => s.trim().toLocaleLowerCase();
 
-const BTN = 'rounded bg-gray-700 px-3 py-1 text-[12px] text-white hover:bg-gray-600 disabled:opacity-40';
-const SMALL_BTN =
-  'rounded bg-gray-700 px-2 py-0.5 text-[11px] normal-case tracking-normal text-white hover:bg-gray-600 disabled:opacity-40';
+/** The one secondary button, as the DAQ box and the Knobs page have it. */
+const BTN =
+  'rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-normal normal-case tracking-normal text-[var(--ink-2)] hover:text-[var(--ink)] disabled:opacity-40';
 const CARD = 'bg-card rounded-lg border border-gray-800';
-const CARD_H2_BARE = 'flex items-baseline gap-3 px-4 py-2.5 caps';
-const CARD_H2 = `${CARD_H2_BARE} border-b border-gray-800`;
-const SUB = 'font-normal normal-case tracking-normal text-gray-600';
+const CARD_H2 = 'flex items-center gap-3 border-b border-gray-800 px-4 py-2 caps';
 
 const NOT_WIRED =
   'No connector on the DAQ box goes by this name, so it commands nothing. Wire a valve to a solenoid connector with this name on the P&ID tab.';
-const NO_ROW = 'No row in the transition table: it can go nowhere until one is given';
+const NO_ROW = 'Not in the transition file: it can go nowhere until it is given a line';
 const IDLE_HELD = 'The twin holds Idle shut whatever the table says';
 const ABORT_ADMITTED = 'Not in the table: the twin admits an abort anyway, the DAQ would refuse it';
 const NO_ABORT =
-  'Its row of the transition table goes to no abort. The twin admits one from anywhere; the DAQ goes only where the cells say. Tick an abort’s cell under Allowed transitions.';
+  'Its row of the transition table goes to no abort. The twin admits one from anywhere; the DAQ goes only where the cells say. Tick an abort’s cell on Transitions.';
 
-type Pick = { kind: 'state' | 'row'; name: string } | null;
+type Pick = { kind: 'state' | 'actuator'; name: string } | null;
 type Edit = (f: (m: MachineDef) => MachineDef) => void;
 
 function saveFile(name: string, text: string) {
@@ -88,13 +98,7 @@ function saveFile(name: string, text: string) {
 export function StateMachineView() {
   const hookup = useHookup();
   const { live } = useStand();
-  if (!hookup.data || !hookup.draft) {
-    return hookup.error ? (
-      <p className="p-6 text-sm text-red-400">{hookup.error}</p>
-    ) : (
-      <p className="p-6 text-sm text-text-muted">Reading the drawing…</p>
-    );
-  }
+  if (!hookup.data || !hookup.draft) return <NoHookup error={hookup.error} />;
   return <Editor draft={hookup.draft} shipped={hookup.data.machine_shipped} current={live?.state ?? ''} />;
 }
 
@@ -116,7 +120,23 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
 
   const edit = useCallback<Edit>((f) => update((d) => ({ ...d, machine: f(d.machine) })), [update]);
 
-  // A pick whose state or row has gone (renamed, removed, uploaded over) is no pick.
+  // `?actuator=LOX Main` (Opens in's "State machine →"): open on its line.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('actuator');
+  useEffect(() => {
+    if (asked == null) return;
+    const name = rowNamed(m, asked);
+    setPageState('opens');
+    if (name) setPick({ kind: 'actuator', name });
+    setParams((p) => {
+      p.delete('actuator');
+      return p;
+    }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked]);
+
+  // A pick whose state or actuator has gone (renamed, removed, uploaded
+  // over) is no pick.
   const picked: Pick =
     pick &&
     (pick.kind === 'state' ? m.states.some((s) => s.name === pick.name) : m.actuators.includes(pick.name))
@@ -126,10 +146,21 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
     (name: string) => setPick((p) => (p?.kind === 'state' && p.name === name ? null : { kind: 'state', name })),
     [],
   );
-  const pickRow = useCallback(
-    (name: string) => setPick((p) => (p?.kind === 'row' && p.name === name ? null : { kind: 'row', name })),
+  const pickActuator = useCallback(
+    (name: string) =>
+      setPick((p) => (p?.kind === 'actuator' && p.name === name ? null : { kind: 'actuator', name })),
     [],
   );
+  // Esc lets go of the pick, unless it is a field's own Esc.
+  useEffect(() => {
+    if (!pick) return;
+    const esc = (e: globalThis.KeyboardEvent) => {
+      const typing = (e.target as HTMLElement | null)?.closest('input, textarea, select');
+      if (e.key === 'Escape' && !typing) setPick(null);
+    };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, [pick]);
 
   // ---------------------------------------------------------------- checks
   const [check, setCheck] = useState<{ ok: boolean; error: string; warnings: string[] } | null>(null);
@@ -168,8 +199,11 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
     for (const r of groups.wired) {
       const c = r.channel;
       if (!c) continue;
+      // The short connector ("S12·1"), as on the drawing's badges, so the
+      // symbol's tag -- what differs line to line -- is not cut off.
       out.set(r.name, {
-        text: `${hookup.board(c.board)?.label ?? c.board} #${c.slot} → ${hookup.label(c.symbol)}`,
+        text: `${badge(c)} → ${hookup.label(c.symbol)}`,
+        title: `${hookup.board(c.board)?.label ?? c.board}, connector ${c.slot} → ${hookup.label(c.symbol)}. Show it on the P&ID.`,
         symbol: c.symbol,
       });
     }
@@ -178,16 +212,18 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
 
   // ------------------------------------------------------------ the files
   const fileInput = useRef<HTMLInputElement>(null);
-  const [csvError, setCsvError] = useState('');
+  const [csvNote, setCsvNote] = useState<{ text: string; bad: boolean } | null>(null);
   const upload = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
-    setCsvError('');
+    setCsvNote(null);
     try {
       const files = await Promise.all([...list].map(async (f) => ({ name: f.name, text: await f.text() })));
       const next = applyCsvFiles(m, files);
       update((d) => ({ ...d, machine: next }));
+      const skipped = skippedDelays(files);
+      if (skipped.length) setCsvNote({ text: `Passed over ${skipped.join(', ')}: the twin does not read delays.`, bad: false });
     } catch (e) {
-      setCsvError(e instanceof Error ? e.message : String(e));
+      setCsvNote({ text: e instanceof Error ? e.message : String(e), bad: true });
     }
   };
   const download = () => {
@@ -215,20 +251,16 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
             {isShipped ? "The DAQ's table" : `Edited for this ${onStand ? 'stand' : 'drawing'}`}
           </span>
           <span className="text-[12px] text-text-muted">
-            {m.states.length} states · {m.actuators.length} rows
+            {m.states.length} states · {m.actuators.length} actuators
             {issues.unwired.length > 0 && ` (${issues.unwired.length} not wired)`}
           </span>
-          {locked && (
-            <span className="text-[12px] text-[var(--color-warning)]" title="Take the stand (top bar) to change its table.">
-              Read only
-            </span>
-          )}
+          <ReadOnly />
           <div className="ml-auto flex flex-wrap gap-2">
             <button
               type="button"
               disabled={locked || isShipped}
               onClick={() => update((d) => ({ ...d, machine: structuredClone(shipped) }))}
-              title="Put the DAQ's own table back: every state, row and move as shipped."
+              title="Put the DAQ's own table back: every state, actuator and move as shipped."
               className={BTN}
             >
               Back to the DAQ's table
@@ -248,7 +280,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
               title="The DAQ's state_machine_actuators.csv, state_transitions.csv, or both at once"
               className={BTN}
             >
-              Upload CSV
+              Upload CSVs
             </button>
             <input
               ref={fileInput}
@@ -263,12 +295,18 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
             />
           </div>
         </header>
-        {(hookup.dirty || hookup.error) && (
-          <div className="border-t border-gray-800 px-4 py-2">
-            <HookupSaveBar />
-          </div>
+        <div className="border-t border-gray-800 px-4 py-2 empty:hidden">
+          <HookupSaveBar />
+        </div>
+        {csvNote && (
+          <p
+            className={`border-t border-gray-800 px-4 py-2 text-[12px] ${
+              csvNote.bad ? 'text-[var(--color-danger)]' : 'text-text-muted'
+            }`}
+          >
+            {csvNote.text}
+          </p>
         )}
-        {csvError && <p className="border-t border-gray-800 px-4 py-2 text-[12px] text-[var(--color-danger)]">{csvError}</p>}
         <Issues
           check={check}
           failed={checkFailed}
@@ -276,7 +314,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
           rowless={issues.rowless.map((c) => c.name)}
           noAbort={noAbort}
           locked={locked}
-          onAddRows={() => edit((mm) => issues.rowless.reduce((acc, c) => addRow(acc, c.name), mm))}
+          onAddActuators={() => edit((mm) => issues.rowless.reduce((acc, c) => addRow(acc, c.name), mm))}
         />
       </section>
 
@@ -331,7 +369,7 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
         current={current}
         pick={picked}
         onPickState={pickState}
-        onPickRow={pickRow}
+        onPickActuator={pickActuator}
         clearPick={() => setPick(null)}
         locked={locked}
         edit={edit}
@@ -349,9 +387,17 @@ function Editor({ draft, shipped, current }: { draft: Draft; shipped: MachineDef
 type Page = 'opens' | 'moves' | 'states';
 const PAGE_KEY = 'feedtwin.statemachine.page';
 const PAGES: readonly (readonly [Page, string, string])[] = [
-  ['opens', 'What each state opens', 'Tick the states each name opens in'],
-  ['moves', 'Transitions', 'Which state may follow which'],
-  ['states', 'States', 'Add, rename, order and place the states'],
+  [
+    'opens',
+    'Opens',
+    'What each state opens: one line per actuator (a valve connector’s name on the DAQ box). Click a square to open or shut it in that state.',
+  ],
+  ['moves', 'Transitions', 'Which state may follow which. Line: the state you are in; column: where it may go.'],
+  [
+    'states',
+    'States',
+    'Add, rename, order and place the states: in the tables’ column order, with Row and Col placing each on the console grid.',
+  ],
 ];
 
 function recallPage(): Page {
@@ -365,12 +411,9 @@ function recallPage(): Page {
 
 // ------------------------------------------------------------------ issues
 
-/** "Idle commands LOX Press OPEN in the edited table as the DAQ reads it. A
- *  cold, ..." -> "Idle commands LOX Press OPEN". */
-function firstSentence(w: string): string {
-  const head = w.split(/\.\s/)[0];
-  return head.replace(/ in (the edited table|[\w.-]+\.csv)( as the DAQ reads it)?$/, '').replace(/ is permitted by .*$/, ' is allowed');
-}
+/** "Idle commands LOX Press OPEN in the edited table as the DAQ reads it."
+ *  -> "Idle commands LOX Press OPEN": where it was read is this page. */
+const shorter = (w: string) => w.replace(/ in (the edited table|[\w.-]+\.csv)( as the DAQ reads it)?\.?$/, '');
 
 function Issues({
   check,
@@ -379,7 +422,7 @@ function Issues({
   rowless,
   noAbort,
   locked,
-  onAddRows,
+  onAddActuators,
 }: {
   check: { ok: boolean; error: string; warnings: string[] } | null;
   failed: string;
@@ -388,7 +431,7 @@ function Issues({
   /** States whose own cells go to no abort (stateTable.withoutAbort). */
   noAbort: string[];
   locked: boolean;
-  onAddRows: () => void;
+  onAddActuators: () => void;
 }) {
   const [all, setAll] = useState(false);
   const warnings = check?.warnings ?? [];
@@ -396,10 +439,11 @@ function Issues({
   if (!bad && warnings.length === 0 && noAbort.length === 0 && unwired.length === 0 && rowless.length === 0 && !failed)
     return null;
   // The first sentence says what; the rest (why, and what to fix) is on
-  // hover, so the list reads at a glance.
+  // hover, so the list reads at a glance -- grouped as the console's Notes
+  // group them (seven "X -> Fire" warnings are one line).
   const lines = [
     ...noAbort.map((s) => ({ text: `${s} has no abort in the transition table`, title: NO_ABORT })),
-    ...warnings.map((w) => ({ text: firstSentence(w), title: w })),
+    ...groupTableWarnings(warnings).map((w) => ({ text: shorter(w.text), title: w.detail })),
   ];
   const shown = all ? lines : lines.slice(0, 3);
   return (
@@ -420,25 +464,25 @@ function Issues({
           className="truncate text-[var(--color-warning)]"
           title={`${unwired.join(', ')}\n\nNo solenoid connector on the DAQ box goes by these names, so they command nothing.`}
         >
-          Wired to nothing: {unwired.join(', ')}
+          Not wired: {unwired.join(', ')}
         </p>
       )}
       {rowless.length > 0 && (
         <p className="flex items-center gap-2 text-[var(--color-warning)]">
           <span
             className="truncate"
-            title={`${rowless.join(', ')}\n\nValve connectors the table has no row for: no state ever moves them.`}
+            title={`${rowless.join(', ')}\n\nValve connectors the state table has no actuator for: no state ever moves them.`}
           >
-            On the DAQ box with no row: {rowless.join(', ')}
+            Not in the table: {rowless.join(', ')}
           </span>
           <button
             type="button"
             disabled={locked}
-            onClick={onAddRows}
-            title="A row for each, open in no state yet"
-            className={SMALL_BTN}
+            onClick={onAddActuators}
+            title="An actuator for each, open in no state yet"
+            className={BTN}
           >
-            Add rows
+            Add to table
           </button>
         </p>
       )}
@@ -472,14 +516,17 @@ function StatesCard({
   justAdded: string;
   onAdd: () => void;
 }) {
-  const grid = useMemo(() => panelGrid(m.states), [m.states]);
+  // The console's grid draws neither Fire nor an abort (they are buttons
+  // above it), so the preview does not either.
+  const onGrid = useMemo(() => m.states.filter((s) => !OFF_GRID.test(s.name) && !s.abort), [m.states]);
+  const buttons = useMemo(() => m.states.filter((s) => OFF_GRID.test(s.name) || s.abort).map((s) => s.name), [m.states]);
+  const grid = useMemo(() => panelGrid(onGrid), [onGrid]);
   const names = useMemo(() => new Set(m.states.map((s) => fold(s.name))), [m.states]);
   return (
     <section className={CARD}>
       <h2 className={CARD_H2}>
-        <span className={SUB}>In the tables' column order; Row and Col place it on the console grid.</span>
-        <button type="button" disabled={locked} onClick={onAdd} className={`ml-auto ${SMALL_BTN}`}>
-          + Add state
+        <button type="button" disabled={locked} onClick={onAdd} className={`ml-auto ${BTN}`}>
+          Add state
         </button>
       </h2>
       <div className="flex flex-wrap items-start gap-x-8 gap-y-4 px-4 py-3">
@@ -530,7 +577,7 @@ function StatesCard({
             )}
           </tbody>
         </table>
-        <PanelPreview grid={grid} current={current} picked={picked} onPick={onPick} />
+        <PanelPreview grid={grid} buttons={buttons} current={current} picked={picked} onPick={onPick} />
       </div>
     </section>
   );
@@ -572,6 +619,10 @@ function StateRow({
 }) {
   const reason = lockReason(s.name);
   const clashText = clash ? `Same spot on the grid as ${clash.join(', ')}` : '';
+  // ENG ABORT reaches Engine Abort from Fire only because it is an abort:
+  // the shipped Fire line does not list it. Unflagged, the button is refused
+  // mid-burn without a word.
+  const abortKept = fold(s.name) === 'engine abort' && Boolean(s.abort);
   return (
     <tr className={selected ? 'bg-white/[0.06]' : ''}>
       <td className="py-0.5 pr-3">
@@ -613,9 +664,13 @@ function StateRow({
         <input
           type="checkbox"
           checked={Boolean(s.abort)}
-          disabled={locked}
+          disabled={locked || abortKept}
           onChange={(e) => edit((mm) => setState(mm, s.name, { abort: e.target.checked }))}
-          title="An abort: the twin lets any state go to it, the DAQ only where the transition table says"
+          title={
+            abortKept
+              ? 'The console’s ENG ABORT reaches Engine Abort from Fire because it is an abort: it stays one.'
+              : 'An abort: the twin lets any state go to it, the DAQ only where the transition table says'
+          }
           className="h-3.5 w-3.5 accent-[var(--color-danger)]"
         />
       </td>
@@ -645,9 +700,10 @@ function StateRow({
           disabled={locked || Boolean(reason)}
           onClick={() => edit((mm) => removeState(mm, s.name))}
           title={reason || `Remove ${s.name}: its column and its moves`}
-          className="text-[11px] text-gray-500 hover:text-[var(--color-danger)] disabled:opacity-30 disabled:hover:text-gray-500"
+          aria-label={`Remove ${s.name}`}
+          className="px-1 text-[13px] text-gray-500 hover:text-[var(--color-danger)] disabled:opacity-30 disabled:hover:text-gray-500"
         >
-          Remove
+          ×
         </button>
       </td>
     </tr>
@@ -747,11 +803,14 @@ function SpotInput({
 /** The console's state grid as the table places it. */
 function PanelPreview({
   grid,
+  buttons,
   current,
   picked,
   onPick,
 }: {
   grid: ReturnType<typeof panelGrid>;
+  /** Fire and the aborts: buttons above the console's grid, not on it. */
+  buttons: string[];
   current: string;
   picked: string;
   onPick: (name: string) => void;
@@ -804,6 +863,11 @@ function PanelPreview({
           );
         })}
       </div>
+      {buttons.length > 0 && (
+        <p className="max-w-[360px] text-[11px] text-gray-500" title="The console draws these as buttons in its header and Command stack">
+          Buttons: {buttons.join(', ')}
+        </p>
+      )}
       {grid.off.length > 0 && (
         <p className="max-w-[360px] text-[11px] text-gray-500">Not on the grid: {grid.off.join(', ')}</p>
       )}
@@ -814,16 +878,18 @@ function PanelPreview({
 // ---------------------------------------------------------------- matrices
 
 interface Wiring {
-  /** `<board> #<slot> → <symbol>` */
+  /** `S12·1 → OM-R` */
   text: string;
+  /** The board spelled out, for the hover. */
+  title: string;
   symbol: string;
 }
 
-/** One line of the opens matrix: a row, or the label over a group. `vi` is
- *  the row's place on screen (arrow keys and the crosshair go by it). */
+/** One line of the opens matrix: an actuator, or the label over a group.
+ *  `vi` is its place on screen (arrow keys and the crosshair go by it). */
 type Line =
-  | { kind: 'group'; label: string; count: number }
-  | { kind: 'row'; name: string; vi: number; wiring?: Wiring };
+  | { kind: 'group'; label: string; count: number; title?: string }
+  | { kind: 'actuator'; name: string; vi: number; wiring?: Wiring };
 
 const STEP: Record<string, [number, number]> = {
   ArrowUp: [-1, 0],
@@ -858,11 +924,13 @@ function MatrixFrame({
   id,
   pickedCol = -1,
   pickedRow = -1,
+  frame,
   children,
 }: {
   id: string;
   pickedCol?: number;
   pickedRow?: number;
+  frame?: RefObject<HTMLDivElement | null>;
   children: ReactNode;
 }) {
   const [col, setCol] = useState(-1);
@@ -878,7 +946,7 @@ function MatrixFrame({
     pickedRow >= 0 ? `${at} tr[data-r="${pickedRow}"] > * { ${tint(0.11)} }` : '',
   ].join('\n');
   return (
-    <div className="max-h-[60vh] overflow-auto">
+    <div ref={frame} className="max-h-[60vh] overflow-auto">
       <style>{css}</style>
       <table
         data-matrix={id}
@@ -969,7 +1037,7 @@ function OpensCard({
   current,
   pick,
   onPickState,
-  onPickRow,
+  onPickActuator,
   clearPick,
   locked,
   edit,
@@ -981,11 +1049,11 @@ function OpensCard({
   current: string;
   pick: Pick;
   onPickState: (name: string) => void;
-  onPickRow: (name: string) => void;
+  onPickActuator: (name: string) => void;
   clearPick: () => void;
   locked: boolean;
   edit: Edit;
-  /** Rows the twin reads by name, and what each does. */
+  /** Actuators the twin reads by name, and what each does. */
   builtin: Record<string, string>;
 }) {
   const [filter, setFilter] = useState('');
@@ -994,32 +1062,49 @@ function OpensCard({
     const f = fold(filter);
     const match = (name: string) =>
       !f || fold(name).includes(f) || (wiring.get(name)?.text.toLocaleLowerCase().includes(f) ?? false);
-    const wired = groups.wired.filter((r) => match(r.name));
-    const unwired = groups.unwired.filter((r) => match(r.name));
+    // Wired, then not wired, then the built-in ones (which drive something
+    // with nothing wired): counted apart, so the counts match the header's.
+    const sets = [
+      { label: 'Wired', rows: groups.wired.filter((r) => match(r.name)) },
+      { label: 'Not wired', rows: groups.unwired.filter((r) => match(r.name) && !builtin[r.name]) },
+      {
+        label: 'Built-in',
+        rows: groups.unwired.filter((r) => match(r.name) && builtin[r.name]),
+        title: 'The twin reads these by name: with no valve wired to them they run its own fill or vent.',
+      },
+    ].filter((g) => g.rows.length > 0);
     const out: Line[] = [];
     let vi = 0;
-    const both = wired.length > 0 && unwired.length > 0;
-    if (both) out.push({ kind: 'group', label: 'Wired', count: wired.length });
-    for (const r of wired) out.push({ kind: 'row', name: r.name, vi: vi++, wiring: wiring.get(r.name) });
-    if (both) out.push({ kind: 'group', label: 'Not wired', count: unwired.length });
-    for (const r of unwired) out.push({ kind: 'row', name: r.name, vi: vi++ });
+    for (const g of sets) {
+      if (sets.length > 1) out.push({ kind: 'group', label: g.label, count: g.rows.length, title: g.title });
+      for (const r of g.rows) out.push({ kind: 'actuator', name: r.name, vi: vi++, wiring: wiring.get(r.name) });
+    }
     return out;
-  }, [groups, wiring, filter]);
+  }, [groups, wiring, filter, builtin]);
 
   const open = useMemo(() => new Map(Object.entries(m.open).map(([s, rows]) => [s, new Set(rows)])), [m.open]);
   const toggle = useCallback(
-    (row: string, state: string) => edit((mm) => setOpen(mm, row, state, !isOpen(mm, row, state))),
+    (actuator: string, state: string) =>
+      edit((mm) => setOpen(mm, actuator, state, !isOpen(mm, actuator, state))),
     [edit],
   );
-  const drop = useCallback((row: string) => edit((mm) => removeRow(mm, row)), [edit]);
+  const drop = useCallback((actuator: string) => edit((mm) => removeRow(mm, actuator)), [edit]);
 
   const pickedCol = pick?.kind === 'state' ? m.states.findIndex((s) => s.name === pick.name) : -1;
   const pickedRow =
-    pick?.kind === 'row'
-      ? (lines.find((l): l is Extract<Line, { kind: 'row' }> => l.kind === 'row' && l.name === pick.name)?.vi ?? -1)
+    pick?.kind === 'actuator'
+      ? (lines.find((l): l is Extract<Line, { kind: 'actuator' }> => l.kind === 'actuator' && l.name === pick.name)
+          ?.vi ?? -1)
       : -1;
+  // Picked from elsewhere (Opens in's link): its line in view.
+  const frame = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (pickedRow < 0) return;
+    frame.current?.querySelector(`tr[data-r="${pickedRow}"]`)?.scrollIntoView({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick]);
 
-  let summary: ReactNode = <span className="text-gray-600">Click a state or a row.</span>;
+  let summary: ReactNode = <span className="text-gray-600">Click a state or an actuator.</span>;
   if (pick?.kind === 'state') {
     const opens = m.actuators.filter((a) => open.get(pick.name)?.has(a));
     summary = (
@@ -1028,7 +1113,7 @@ function OpensCard({
         {heldShut(pick.name) && opens.length > 0 && <span className="text-gray-500"> (held shut by the twin)</span>}
       </span>
     );
-  } else if (pick?.kind === 'row') {
+  } else if (pick?.kind === 'actuator') {
     const where = m.states.filter((s) => open.get(s.name)?.has(pick.name)).map((s) => s.name);
     summary = (
       <span>
@@ -1040,32 +1125,31 @@ function OpensCard({
   return (
     <section className={CARD}>
       <h2 className={CARD_H2}>
-        <span className={SUB}>One row per valve connector's name. Click a square to open or shut it in that state.</span>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter rows"
+          placeholder="Filter actuators"
           className="ml-auto w-44 rounded border border-gray-700 bg-black/60 px-2 py-0.5 font-sans text-[12px] font-normal normal-case tracking-normal text-[var(--ink)] placeholder:text-gray-600"
         />
       </h2>
       <div className="flex min-h-[30px] items-center gap-2 border-b border-gray-800 px-4 py-1 text-[12px]">
         <span className="min-w-0 flex-1 truncate">{summary}</span>
         {pick && (
-          <button type="button" onClick={clearPick} className="text-[11px] text-gray-500 hover:text-white" title="Clear">
-            ✕
+          <button type="button" onClick={clearPick} className="text-[13px] text-gray-500 hover:text-white" title="Clear (Esc)">
+            ×
           </button>
         )}
       </div>
       {m.actuators.length === 0 ? (
         <p className="px-4 py-3 text-[12px] text-text-muted">
-          No rows. Name a valve's solenoid connector on the P&amp;ID tab, or upload the DAQ's CSVs.
+          No actuators. Name a valve's solenoid connector on the P&amp;ID tab, or upload the DAQ's CSVs.
         </p>
       ) : (
-        <MatrixFrame id="open" pickedCol={pickedCol} pickedRow={pickedRow}>
+        <MatrixFrame id="open" pickedCol={pickedCol} pickedRow={pickedRow} frame={frame}>
           <thead>
             <tr>
               <th className={`sticky left-0 top-0 z-30 ${HEAD_H} min-w-[220px] border-b border-r border-gray-800 bg-black px-2 pb-1.5 text-left align-bottom text-[10.5px] font-normal text-gray-500`}>
-                Row
+                Actuator
               </th>
               {m.states.map((s, ci) => (
                 <ColHead
@@ -1089,14 +1173,14 @@ function OpensCard({
             open={open}
             locked={locked}
             onToggle={toggle}
-            onPickRow={onPickRow}
+            onPickActuator={onPickActuator}
             onRemove={drop}
             builtin={builtin}
           />
         </MatrixFrame>
       )}
       {m.actuators.length > 0 && lines.length === 0 && (
-        <p className="px-4 py-2 text-[12px] text-text-muted">No row matches “{filter}”.</p>
+        <p className="px-4 py-2 text-[12px] text-text-muted">No actuator matches “{filter}”.</p>
       )}
     </section>
   );
@@ -1108,7 +1192,7 @@ const OpensBody = memo(function OpensBody({
   open,
   locked,
   onToggle,
-  onPickRow,
+  onPickActuator,
   onRemove,
   builtin,
 }: {
@@ -1116,8 +1200,8 @@ const OpensBody = memo(function OpensBody({
   states: MachineStateDef[];
   open: Map<string, Set<string>>;
   locked: boolean;
-  onToggle: (row: string, state: string) => void;
-  onPickRow: (name: string) => void;
+  onToggle: (actuator: string, state: string) => void;
+  onPickActuator: (name: string) => void;
   onRemove: (name: string) => void;
   builtin: Record<string, string>;
 }) {
@@ -1126,7 +1210,10 @@ const OpensBody = memo(function OpensBody({
       {lines.map((line) =>
         line.kind === 'group' ? (
           <tr key={`group:${line.label}`}>
-            <td className={`${ROW_HEAD} pb-0.5 pt-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-gray-500`}>
+            <td
+              className={`${ROW_HEAD} pb-0.5 pt-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-gray-500`}
+              title={line.title}
+            >
               {line.label} · {line.count}
             </td>
             <td colSpan={states.length} />
@@ -1137,7 +1224,7 @@ const OpensBody = memo(function OpensBody({
               <div className="flex h-6 max-w-[320px] items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => onPickRow(line.name)}
+                  onClick={() => onPickActuator(line.name)}
                   title={`Where ${line.name} opens`}
                   className={`max-w-[180px] shrink-0 truncate text-left text-[12.5px] hover:underline ${
                     line.wiring ? 'text-[var(--ink)]' : 'text-gray-500'
@@ -1148,14 +1235,14 @@ const OpensBody = memo(function OpensBody({
                 {line.wiring ? (
                   <Link
                     to={`/pid?symbol=${encodeURIComponent(line.wiring.symbol)}`}
-                    title="Show it on the P&ID"
+                    title={line.wiring.title}
                     className="truncate font-mono text-[10.5px] text-gray-500 hover:text-gray-300"
                   >
                     {line.wiring.text}
                   </Link>
                 ) : builtin[line.name] ? (
                   <span
-                    title={`${builtin[line.name]} Renaming or removing the row stops it; wiring a valve to this name puts that valve in its place.`}
+                    title={`${builtin[line.name]} Renaming or removing it stops that; wiring a valve to this name puts the valve in its place.`}
                     className="shrink-0 border border-[var(--line-strong)] px-1 text-[10px] leading-4 text-gray-400"
                   >
                     built-in
@@ -1172,10 +1259,11 @@ const OpensBody = memo(function OpensBody({
                       <button
                         type="button"
                         onClick={() => onRemove(line.name)}
-                        title={`Remove the ${line.name} row`}
-                        className="text-[11px] text-gray-600 hover:text-[var(--color-danger)]"
+                        title={`Remove ${line.name} from the state table`}
+                        aria-label={`Remove ${line.name}`}
+                        className="text-[13px] text-gray-600 hover:text-[var(--color-danger)]"
                       >
-                        ✕
+                        ×
                       </button>
                     )}
                   </>
@@ -1191,6 +1279,8 @@ const OpensBody = memo(function OpensBody({
                     type="button"
                     data-ri={line.vi}
                     data-ci={ci}
+                    // One tab stop for the whole matrix; arrow keys move in it.
+                    tabIndex={line.vi === 0 && ci === 0 ? 0 : -1}
                     disabled={locked}
                     aria-pressed={on}
                     onClick={() => onToggle(line.name, s.name)}
@@ -1224,17 +1314,16 @@ function MovesCard({ m, current, locked, edit }: { m: MachineDef; current: strin
   );
   return (
     <section className={CARD}>
-      <h2 className={CARD_H2}>
-        <span className={SUB}>Row: the state you are in. Column: where it may go.</span>
-        {noRow.length > 0 && (
+      {noRow.length > 0 && (
+        <h2 className={CARD_H2}>
           <span
             className="text-[11.5px] font-normal normal-case tracking-normal text-[var(--color-warning)]"
             title={`${noRow.join(', ')}\n\n${NO_ROW}`}
           >
-            {noRow.length} with no row
+            {noRow.length} go{noRow.length === 1 ? 'es' : ''} nowhere
           </span>
-        )}
-      </h2>
+        </h2>
+      )}
       <MatrixFrame id="moves">
         <thead>
           <tr>
@@ -1282,7 +1371,7 @@ const MovesBody = memo(function MovesBody({
             <th scope="row" className={ROW_HEAD} title={row ? undefined : NO_ROW}>
               <div className="flex h-6 items-center gap-2">
                 <span className={`truncate text-[12.5px] ${row ? 'text-[var(--ink)]' : 'text-gray-500'}`}>{from.name}</span>
-                {!row && <span className="shrink-0 text-[10px] text-[var(--color-warning)]">no row</span>}
+                {!row && <span className="shrink-0 text-[10px] text-[var(--color-warning)]">goes nowhere</span>}
               </div>
             </th>
             {states.map((to, ci) => {
@@ -1297,6 +1386,7 @@ const MovesBody = memo(function MovesBody({
                     type="button"
                     data-ri={ri}
                     data-ci={ci}
+                    tabIndex={ri === 0 && ci === 1 ? 0 : -1}
                     disabled={locked || self}
                     aria-pressed={on}
                     onClick={() => onToggle(from.name, to.name)}

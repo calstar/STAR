@@ -40,7 +40,7 @@ export const VIEWS = [
   { group: 'Results', path: '/study', label: 'Study', hint: 'Your stand, burned from T-0 once per case: change the COPV, a knob, the bottle, the load, or sweep one' },
   { group: 'Results', path: '/solver', label: 'Solver', hint: 'Can these numbers be trusted? Residuals, mass balance and the iteration log' },
   { group: 'Set up', path: '/library', label: 'Library', hint: 'Import drawings and engines' },
-  { group: 'Set up', path: '/hookup', label: 'Hookup', hint: 'Which knob sets which regulator; the DAQ box is on the P&ID tab' },
+  { group: 'Set up', path: '/hookup', label: 'Knobs', hint: 'Which dial on GSE Controls sets which regulator' },
   { group: 'Set up', path: '/statemachine', label: 'State machine', hint: 'The DAQ’s state table: what each state opens, and which states can follow which' },
   { group: 'Set up', path: '/config', label: 'Configuration', hint: 'Every number the twin assumes, explained and editable' },
   { group: 'Set up', path: '/report', label: 'Checks', hint: 'What the twin read from the drawing, what it had to assume, and what looks wrong' },

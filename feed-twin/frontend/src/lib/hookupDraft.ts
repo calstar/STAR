@@ -38,7 +38,8 @@ export interface Draft extends HookupBody {
   machine: MachineDef;
 }
 
-const fold = (s: string) => s.trim().toLocaleLowerCase();
+/** A name as the table matches it: case and edge spaces ignored. */
+export const fold = (s: string) => s.trim().toLocaleLowerCase();
 
 /** Solenoid boards: their connectors' names are the table's rows. */
 export const isValveBoard = (board: BoardId) => board === 'sol12' || board === 'sol24';
@@ -199,9 +200,10 @@ export function rename(d: Draft, symbol: string, name: string, carry = true): Dr
 
 /**
  * What `rename(d, symbol, typed, carry)` would do to the state table, in a
- * few words for beside the name field, and a sentence for its hover. Null
- * for a connector not on a solenoid board, an empty name, or one another
- * connector has (the field says that itself).
+ * few words for under the name field while it is being changed, and a
+ * sentence for its hover. Null for the name as it is (Opens in says what
+ * that does), a connector not on a solenoid board, an empty name, or one
+ * another connector has (the field says that itself).
  */
 export function nameHint(
   d: Draft,
@@ -211,28 +213,28 @@ export function nameHint(
 ): { text: string; title: string } | null {
   const c = channelOf(d, symbol);
   const wanted = typed.trim();
-  if (!c || !isValveBoard(c.board) || !wanted || nameTaken(d, wanted, symbol)) return null;
+  if (!c || !isValveBoard(c.board) || !wanted || wanted === c.name || nameTaken(d, wanted, symbol)) return null;
   const existing = rowNamed(d.machine, wanted);
   const own = rowNamed(d.machine, c.name);
   if (own && fold(own) === fold(wanted)) {
-    return { text: 'row in the state table', title: 'The state table has this row: the valve opens wherever it says' };
-  }
-  if (wanted === c.name) {
-    return { text: 'no row in the state table', title: 'No state ever moves it until the table has a row of this name' };
+    return { text: 'same actuator', title: 'Case is ignored: the state table keeps its spelling' };
   }
   if (existing) {
     return {
-      text: `joins row ${existing}`,
-      title: `The state table has ${existing}: the valve opens wherever that row says`,
+      text: `joins ${existing}`,
+      title: `The state table has ${existing}: the valve opens wherever it does`,
     };
   }
   if (carry && own) {
     return {
-      text: `renames row ${own}, keeps its states`,
-      title: `The table's ${own} row is renamed with it, so the valve still opens where it did`,
+      text: `renames ${own}, keeps its states`,
+      title: `${own} is renamed in the state table too, so the valve still opens where it did`,
     };
   }
-  return { text: 'new row, opens in no state yet', title: 'A new row in the state table, open in no state until you tick some' };
+  return {
+    text: 'new actuator, opens nowhere yet',
+    title: 'A new actuator in the state table, open in no state until you tick some',
+  };
 }
 
 /** A console name for a symbol that is not on the box (a tank, the engine). */
@@ -397,7 +399,9 @@ export function lockReason(name: string): string {
   if (n === 'fire') return 'Fire is the burn: the engine lights and the burn is recorded.';
   if (n === 'vent') return 'A tank running dry in Fire sends the stand to Vent.';
   if (n === 'engine abort') return 'The console’s ENG ABORT button goes to Engine Abort.';
-  if (n.includes('fill') && /(^|\s)(ox|lox|fuel|eth)/.test(n))
+  // The session's own rule (feedtwin statemachine.fills): "fill" and a side's
+  // word anywhere in the name, so every state it loads a tank in is locked.
+  if (n.includes('fill') && /ox|fuel|eth/.test(n))
     return 'The twin’s loading follows the fill states by name (a tank fills in its own).';
   if (PAD_STATES.some((s) => s.toLowerCase() === n)) return 'The pad guide leads through it by name.';
   return '';

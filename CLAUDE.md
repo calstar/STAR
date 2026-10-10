@@ -155,7 +155,7 @@ very bugs they were written for.
   `dome` handle are loading, not feed. Every hand-loaded regulator -- every cart regulator, and any
   regulator drawn with no setting -- gets a knob (`DOME`, `CHARGE` = `copv_target_psi`, or its
   own), and every knob starts at the drawing's setting (`hookup.knob_starts`); a fresh
-  stand's dome and COPV fill are the drawing's unless the operator turned them. Before adding a Hookup-tab workaround, ask
+  stand's dome and COPV fill are the drawing's unless the operator turned them. Before adding a hookup workaround (DAQ box, State machine or Knobs tab), ask
   what the drawing should say instead. `Setup.ignore_gse` (off by default) cuts the cart
   away at assembly (`roles.vehicle_only`) and leaves only the built-in fills; it is a
   build-time choice, so changing it opens a new stand.

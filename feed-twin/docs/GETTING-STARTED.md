@@ -12,7 +12,7 @@ cd feed-twin && ./dev.sh       # API on :8003, UI on :5177
 
 Open http://localhost:5177. The tabs are in three groups: **Operate** (Console,
 P&ID, GSE Controls, Plots), **Results** (Engine, Runs, Study, Solver) and **Set
-up** (Library, Hookup, State machine, Configuration, Checks). The line under them is the
+up** (Library, Knobs, State machine, Configuration, Checks). The line under them is the
 stand's health, the time warp (×1 / ×5 / ×20 to wait out a load; Fire always
 runs at ×1), the stand clock, the drawing and engine, and "not validated":
 hover it for what the model has been checked against. Until the stand's own
@@ -44,19 +44,22 @@ Without a stand the cockpit still works. Its runs then go in your own list.
   opens valves by it: a valve on a connector named "LOX Main" opens in every
   state that opens LOX Main. Only what is wired is on the console.
 * **P&ID → Symbols**: every symbol on the drawing. Open a valve or transducer
-  to pick its board and connector and give it its name ("Opens in" lists the
-  states that open a valve). Its numbers are here too: **edit** one to override
+  to pick its board and connector, give it its name, or unplug it ("Opens in"
+  lists the states that open a valve; its link opens the State machine tab on
+  that name). Its numbers are here too: **edit** one to override
   it, with a source and a reference.
 * **P&ID → DAQ box**: the same wiring drawn as the box. Pick a board, drag an
   empty GX12 connector onto a symbol on the drawing, name it. Switching between
   Symbols and DAQ box changes nothing; they edit the same hookup.
-* **State machine**: the DAQ's state table. Tick the states each name opens in,
-  add or move states, and set which state may follow which. **Download CSVs**
-  writes the DAQ's own files.
-* **Hookup**: which knob on GSE Controls sets which regulator.
+* **State machine**: the DAQ's state table, on three pages. **Opens**: tick the
+  states each actuator (a valve connector's name) opens in. **Transitions**:
+  which state may follow which. **States**: add, rename, order and place them.
+  **Download CSVs** writes the DAQ's own files; **Upload CSVs** reads them back.
+* **Knobs**: which knob on GSE Controls sets which regulator.
 * An imported drawing is wired by the twin's own name matching ("Suggested")
-  until you save. Save from any of these tabs: it is one hookup, and wiring or
-  table changes restart the stand.
+  until you save. Save from any of these tabs (the bar says "Suggested · not
+  saved" until you do): it is one hookup, and wiring or table changes restart
+  the stand. A name alone applies to the running stand.
 * **GSE Controls → Ignore the drawn GSE**: run the rocket alone, filled by the
   built-in charge and loads at the settings on that page, when the cart on the
   drawing is more than you need.

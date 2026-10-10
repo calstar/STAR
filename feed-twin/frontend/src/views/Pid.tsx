@@ -33,6 +33,7 @@ import { getDrawing } from '../api';
 import type { BoardId, Drawing } from '../api';
 import { DaqBox, type Drawn, plugIn } from '../components/DaqBox';
 import { DrawingPanel } from '../components/DrawingPanel';
+import { HookupSaveBar } from '../components/HookupSaveBar';
 import { HookupOverlay } from '../components/HookupOverlay';
 import { LiveLayer } from '../components/LiveLayer';
 import { BOARD_KEY, DAQ_UI, type DaqUi, createStore } from '../lib/daqDrag';
@@ -80,6 +81,14 @@ export function Pid() {
   /** What the DAQ box and the drawing share while a cable is drawn. */
   const [ui] = useState(() => createStore<DaqUi>({ ...DAQ_UI, board: recall(BOARD_KEY) as BoardId | null }));
   const canvas = useRef<HTMLDivElement>(null);
+
+  // The twin's guess at a just-plugged cable's name is a guess until the
+  // hookup is saved or discarded; after that the name is the user's, and
+  // renaming it renames its state-table row like any other.
+  const dirty = hookup.dirty;
+  useEffect(() => {
+    if (!dirty) ui.set({ fresh: null });
+  }, [dirty, ui]);
 
   const openPanel = (open: boolean) => {
     setPanel(open);
@@ -159,7 +168,8 @@ export function Pid() {
         ? hookup.draft.channels.find((c) => c.board === s.selected!.board && c.slot === s.selected!.slot)
         : undefined;
       if (open) setFocus(open.symbol);
-      ui.set({ armed: null, picked: null, hover: null, drag: null, target: null });
+      // Carried across as focus: left selected, it would ring a second symbol.
+      ui.set({ selected: null, armed: null, picked: null, hover: null, drag: null, target: null });
     } else if (focus && hookup.draft && channelOf(hookup.draft, focus)) {
       toConnector(focus);
     }
@@ -232,15 +242,17 @@ export function Pid() {
           {title}
         </span>
         {running && live && <span className="font-mono text-[12px] text-blue-400">{live.state}</span>}
-        <span className="text-[11.5px] text-gray-600">
-          {running ? 'psig · ' : 'not running · '}scroll to zoom · drag to pan
-          {daq
-            ? ' · click a symbol for its connector'
-            : running
-              ? panel
-                ? ' · click a valve to operate it; any symbol opens in the panel'
-                : ' · click a valve to operate it, anything else to open it'
-              : ''}
+        <span
+          className="cursor-help text-[11.5px] text-gray-600"
+          title={`Scroll to zoom, drag to pan. ${
+            daq
+              ? 'Click a symbol for its connector.'
+              : running
+                ? 'Click a valve to operate it; any other symbol opens in the panel.'
+                : 'Click a symbol to open it in the panel.'
+          }`}
+        >
+          {running ? 'psig' : 'not running'}
         </span>
         {live?.setup?.ignore_gse && pages.length > 1 && (
           // The cart's page still draws; nothing on it is simulated.
@@ -249,16 +261,17 @@ export function Pid() {
             className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
             title="Ignore the drawn GSE is on: the stand is the rocket alone. The cart's page is drawn here, but none of it is simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
           >
-            Rocket only — the GSE page is not simulated
+            GSE page not simulated
           </Link>
         )}
         <button
           type="button"
           onClick={() => openPanel(!panel)}
           aria-expanded={panel}
+          title={mode === 'daq' ? 'The DAQ box' : 'Symbols: what each one is wired to, called and set to'}
           className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
         >
-          {panel ? 'Hide panel' : mode === 'daq' ? 'DAQ box' : 'Symbols'}
+          {panel ? 'Hide panel' : 'Show panel'}
         </button>
       </div>
       <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
@@ -304,7 +317,7 @@ export function Pid() {
             <div className="flex flex-shrink-0 border-b border-[var(--line)]" role="tablist" aria-label="Panel">
               {(
                 [
-                  ['symbols', 'Symbols', 'Every symbol: what the console shows and calls it, and its numbers'],
+                  ['symbols', 'Symbols', 'Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they are shared with everyone and follow the drawing when it is re-imported.'],
                   ['daq', 'DAQ box', 'The boards of connectors: which valve or sensor each one is cabled to'],
                 ] as const
               ).map(([m, label, hint]) => (
@@ -327,10 +340,22 @@ export function Pid() {
             </div>
             <div className="min-h-0 flex-1">
               {mode === 'symbols' ? (
-                <DrawingPanel focus={focus} onFocus={setFocus} ui={ui} />
+                <DrawingPanel
+                  focus={focus}
+                  onFocus={(id) => {
+                    setFocus(id);
+                    // A card opened from the list shows its symbol's page.
+                    if (id) pageOf(id);
+                  }}
+                  ui={ui}
+                />
               ) : (
                 <DaqBox ui={ui} canvas={canvas} drawn={drawn} onShow={showSymbol} onPage={pageOf} />
               )}
+            </div>
+            {/* One bar for both tabs, in one place: they edit one draft. */}
+            <div className="flex-shrink-0 px-3 pb-2 empty:hidden">
+              <HookupSaveBar compact />
             </div>
           </aside>
         )}

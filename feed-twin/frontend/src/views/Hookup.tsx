@@ -9,23 +9,23 @@
  * where it comes from, so saving the drawing again keeps it), and with a stand
  * when one is open.
  *
- * The rest of the hookup -- the DAQ box (which connector each valve and
- * transducer is wired to, and the name it goes by) and the state table --
- * is on the P&ID and State machine tabs. All of it is one draft
- * (lib/useHookup), saved from any of them.
+ * The nav calls it Knobs: the rest of the hookup -- the DAQ box (which
+ * connector each valve and transducer is wired to, and the name it goes by)
+ * and the state table -- is on the P&ID and State machine tabs. All of it is
+ * one draft (lib/useHookup), saved from any of them.
  */
 
-import { Link } from 'react-router-dom';
 import { DOME_KNOB, type KnobDef } from '../api';
+import { HookupSaveBar, HookupStatus, NoHookup, ReadOnly, confirmReset } from '../components/HookupSaveBar';
 import { useHookup } from '../lib/useHookup';
-import { useStand } from '../stand';
+
+const BTN =
+  'rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)] disabled:opacity-40';
 
 export function Hookup() {
-  const { standHookup } = useStand();
-  const { data, draft, setDraft, error, busy, dirty, onStand, locked, save, reset } = useHookup();
+  const { data, draft, setDraft, error, busy, onStand, locked, reset } = useHookup();
 
-  if (error) return <p className="p-6 text-sm text-red-400">{error}</p>;
-  if (!data || !draft) return <p className="p-6 text-sm text-text-muted">Reading the drawing…</p>;
+  if (!data || !draft) return <NoHookup error={error} />;
 
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
 
@@ -65,7 +65,7 @@ export function Hookup() {
     <div className="mx-auto flex max-w-6xl flex-col gap-3 p-4">
       <div className="bg-card flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-800 px-4 py-3">
         <div className="min-w-0">
-          <div className="caps text-[10px]">Hookup</div>
+          <div className="caps text-[10px]">Drawing</div>
           <div className="truncate text-[13px]" title="Kept for every version of this drawing, by where it comes from.">
             {data.lineage}
           </div>
@@ -74,70 +74,33 @@ export function Hookup() {
           {data.pages.length} page{data.pages.length === 1 ? '' : 's'}: {data.pages.join(', ')}
           {data.mated.length > 0 && ` · ${data.mated.length} mated disconnect${data.mated.length === 1 ? '' : 's'}`}
         </span>
-        <span
-          className={`rounded px-2 py-0.5 text-[11px] font-semibold ${
-            data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
-          }`}
-          title={
-            onStand
-              ? "The stand's own hookup."
-              : data.saved
-                ? 'Saved for this drawing.'
-                : 'Nothing saved: this is what the twin matched by itself.'
-          }
-        >
-          {onStand && standHookup ? 'On the stand' : data.saved ? 'Saved' : 'Suggested'}
-        </span>
+        <HookupStatus />
+        <ReadOnly />
         <div className="ml-auto flex gap-2">
           <button
             type="button"
             disabled={busy || !data.saved || locked}
-            onClick={reset}
+            onClick={() => confirmReset(onStand) && reset()}
             title="Forget the whole saved hookup (the DAQ box, the edited state table, the knobs) and go back to the twin's own matching."
-            className="rounded bg-gray-700 px-3 py-1 text-[12px] font-semibold text-white hover:bg-gray-600 disabled:opacity-40"
+            className={BTN}
           >
-            Back to suggestions
-          </button>
-          <button
-            type="button"
-            disabled={busy || (!dirty && data.saved) || locked}
-            onClick={save}
-            title={
-              locked
-                ? 'Take the stand to change its hookup'
-                : onStand
-                  ? "Keep this hookup with the stand (the stand's Save writes it). The cockpit restarts with it."
-                  : 'Keep this hookup for the drawing. The cockpit restarts with it.'
-            }
-            className="rounded bg-blue-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
-          >
-            {busy ? 'Saving…' : 'Save'}
+            Back to suggested
           </button>
         </div>
       </div>
 
-      <p className="text-[12px] text-text-muted">
-        Valves and transducers go on the DAQ box on the{' '}
-        <Link to="/pid" className="text-blue-400 hover:underline">
-          P&amp;ID
-        </Link>{' '}
-        tab; the states that open each are on the{' '}
-        <Link to="/statemachine" className="text-blue-400 hover:underline">
-          State machine
-        </Link>{' '}
-        tab. One hookup: save it from any of them.
-      </p>
+      <HookupSaveBar />
 
       <div className="bg-card rounded-lg border border-gray-800">
         <h2 className="flex items-baseline border-b border-gray-800 px-4 py-2.5 caps">
-          Knobs
-          <span className="ml-2 font-normal normal-case tracking-normal text-gray-600">
-            each a dial on the GSE page, and the regulators it sets
+          <span title="Each a dial on GSE Controls, and the regulators it sets. Valves and transducers go on the DAQ box (P&ID tab); what each state opens is on the State machine tab.">
+            Knobs
           </span>
           <button
             type="button"
             onClick={addKnob}
-            className="ml-auto rounded bg-gray-700 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-white hover:bg-gray-600"
+            disabled={locked}
+            className={`ml-auto normal-case tracking-normal ${BTN}`}
           >
             Add knob
           </button>
@@ -147,7 +110,7 @@ export function Hookup() {
             className="border-b border-gray-800 px-4 py-2 text-[12px] text-text-muted"
             title="With the drawn GSE ignored the cart's regulators are not simulated: the dome knob turns the rocket's dome-loaded regulator itself, and the COPV fill is the built-in charge to this knob's setting. The knobs here are the whole drawing's, kept for when the GSE is simulated again; GSE Controls shows the ones the stand turns now."
           >
-            Rocket only — the dome knob turns the rocket's regulator directly; these are the whole drawing's knobs.
+            Rocket only: the dome knob turns the rocket's regulator.
           </p>
         )}
         <div className="flex flex-col divide-y divide-gray-800/60">
@@ -156,6 +119,7 @@ export function Hookup() {
               <div className="flex min-w-[220px] flex-col gap-1.5">
                 <input
                   value={knob.label}
+                  disabled={locked}
                   onChange={(e) => setKnob(index, { label: e.target.value })}
                   className="rounded border border-gray-700 bg-black/60 px-2 py-1 text-[13px] font-semibold"
                 />
@@ -166,6 +130,7 @@ export function Hookup() {
                       <input
                         type="number"
                         value={knob[key]}
+                        disabled={locked}
                         onChange={(e) => {
                           const v = Number(e.target.value);
                           if (Number.isFinite(v)) setKnob(index, { [key]: v });
@@ -190,6 +155,7 @@ export function Hookup() {
                     <button
                       key={r.id}
                       type="button"
+                      disabled={locked}
                       onClick={() => toggleRegulator(index, r.id)}
                       title={
                         (r.kind === 'loader'
@@ -219,9 +185,11 @@ export function Hookup() {
               </div>
               <button
                 type="button"
+                disabled={locked}
                 onClick={() => setDraft({ ...draft, knobs: draft.knobs.filter((_, i) => i !== index) })}
                 aria-label={`Remove ${knob.label}`}
-                className="px-1 text-[13px] text-gray-500 hover:text-red-400"
+                title={`Remove ${knob.label}`}
+                className="px-1 text-[13px] text-gray-500 hover:text-red-400 disabled:opacity-40"
               >
                 ×
               </button>
@@ -241,8 +209,7 @@ export function Hookup() {
             className="border-t border-gray-800 px-4 py-2 text-[12px] text-text-muted"
             title="The GSE page's COPV knob is the twin's own fill. Draw the cart's high-press regulator and its line to the COPV, and that regulator gets the knob."
           >
-            The COPV fill knob on GSE Controls is the twin's built-in fill: no regulator on this
-            drawing charges the COPV.
+            COPV fill: built-in. No drawn regulator charges the COPV.
           </p>
         )}
       </div>

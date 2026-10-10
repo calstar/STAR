@@ -18,7 +18,8 @@
  * connector a valve or transducer is wired to, the name that connector goes
  * by -- the console's name and, for a valve, its row in the state table --
  * and the states that open it. One draft with the DAQ box, the State machine
- * tab and the Hookup page (lib/useHookup), saved from the bar at the top.
+ * tab and the Knobs page (lib/useHookup), saved from the bar at the panel's
+ * foot.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -39,11 +40,10 @@ import {
   PER_ROW,
   channelAt,
   channelOf,
+  fold,
   move,
   nameHint,
-  opensIn,
   rename,
-  rowNamed,
   rowsOf,
   setAlias,
   tableIssues,
@@ -51,10 +51,11 @@ import {
   unwiredRows,
   wire,
 } from '../lib/hookupDraft';
-import { NO_UI, clashNote, dropFreshRow, type DaqUi, type FreshRow, type Store } from '../lib/daqDrag';
+import { NO_UI, badge, clashNote, dropFreshRow, type DaqUi, type FreshRow, type Store } from '../lib/daqDrag';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
-import { HookupSaveBar } from './HookupSaveBar';
+import { HookupStatus, ReadOnly } from './HookupSaveBar';
+import { OpensIn } from './OpensIn';
 import { useDaqUi } from './DaqBox';
 
 /** Another operator's override should show up without a reload. */
@@ -139,7 +140,9 @@ function EditForm({
   const field =
     'rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[12px] text-white focus:border-blue-500 focus:outline-none';
   return (
-    <div className="mt-1.5 flex flex-col gap-1.5 rounded-md border border-blue-900/60 bg-blue-950/20 p-2">
+    // data-editing: an open card with this in it stays open when the drawing
+    // focuses another symbol (DrawingPanel), so a half-typed value survives.
+    <div data-editing className="mt-1.5 flex flex-col gap-1.5 rounded-md border border-blue-900/60 bg-blue-950/20 p-2">
       <div className="flex gap-1.5">
         <input
           autoFocus
@@ -307,23 +310,25 @@ function ParamRow({
   );
 }
 
-/** A board's short name, for a badge. */
-const SHORT: Record<BoardId, string> = {
-  sol12: 'S12',
-  sol24: 'S24',
-  pt_low: 'PT-L',
-  pt_high: 'PT-H',
-  rtd: 'RTD',
-  tc: 'TC',
-};
-
 /** Where a symbol's cable goes on the DAQ box, or that it has none. */
-function ConnectorBadge({ channel, label }: { channel: ChannelDef | undefined; label?: string }) {
+function ConnectorBadge({
+  channel,
+  label,
+  valve,
+}: {
+  channel: ChannelDef | undefined;
+  label?: string;
+  valve: boolean;
+}) {
   if (!channel) {
     return (
       <span
         className="shrink-0 rounded border border-amber-900/60 px-1 font-mono text-[9.5px] text-amber-300/80"
-        title="Not on the DAQ box: no state moves it and the console does not show it."
+        title={
+          valve
+            ? 'Not on the DAQ box: no state moves it and the console does not show it.'
+            : 'Not on the DAQ box: the console does not show it.'
+        }
       >
         not wired
       </span>
@@ -332,9 +337,9 @@ function ConnectorBadge({ channel, label }: { channel: ChannelDef | undefined; l
   return (
     <span
       className="shrink-0 rounded border border-[var(--line-strong)] px-1 font-mono text-[9.5px] text-gray-300"
-      title={`On the DAQ box: ${label ?? channel.board}, connector ${channel.slot}`}
+      title={`On the DAQ box: ${badge(channel)} (${label ?? channel.board}, connector ${channel.slot})`}
     >
-      {SHORT[channel.board]}·{channel.slot}
+      {badge(channel)}
     </span>
   );
 }
@@ -409,7 +414,9 @@ function NameInput({
         onFocus={(e) => e.target.select()}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          // On a clash Enter does nothing: the red line says why, and leaving
+          // the field puts the old name back.
+          if (e.key === 'Enter' && !clash) (e.target as HTMLInputElement).blur();
           if (e.key === 'Escape') setTyped(value);
         }}
         className={`${control} ${clash ? 'border-red-500' : ''}`}
@@ -431,6 +438,15 @@ function NameInput({
       )}
     </div>
   );
+}
+
+/** The cards to leave open when `id` opens: it, and any with an override
+ *  half typed (EditForm marks itself), which closing would throw away. */
+function openWith(id: string | null): Record<string, boolean> {
+  const editing = [...document.querySelectorAll('[data-editing]')]
+    .map((el) => el.closest('li[id^="symbol-"]')?.id.slice('symbol-'.length))
+    .filter((x): x is string => Boolean(x));
+  return Object.fromEntries([...editing, ...(id ? [id] : [])].map((x) => [x, true]));
 }
 
 /** The P&ID's DAQ box state, when the panel sits beside the box. */
@@ -457,25 +473,33 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
   const boards = hookup.boards.filter((b) => b.kind === symbol.kind);
   const locked = hookup.locked;
   const isValve = symbol.kind === 'valve';
-  const row = channel && isValve ? rowNamed(draft.machine, channel.name) : undefined;
-  const opens = row ? opensIn(draft.machine, row) : [];
   const slots = channel ? Math.max(rowsOf(draft, channel.board) * PER_ROW, channel.slot) : 0;
+  const unplug = () => {
+    // A guess made for this cable goes with it; another cable's stays.
+    const mine = fresh?.symbol === symbol.id;
+    hookup.update((d) => (mine ? dropFreshRow(unwire(d, symbol.id), fresh) : unwire(d, symbol.id)));
+    if (mine) setFresh(null);
+  };
 
   return (
     <div className="flex flex-col gap-1 border-t border-[var(--line)]/60 px-2 py-1.5">
       <Field
-        label="DAQ"
-        title="The board and connector its cable goes to. 12 V and 24 V, low and high pressure, are yours to tell apart: either takes it."
+        label="DAQ box"
+        title="The board and connector its cable goes to. 12 V/24 V and low/high PT are labels only: either board takes either."
       >
         <select
           value={channel?.board ?? ''}
           disabled={locked}
+          title={
+            channel
+              ? undefined
+              : isValve
+                ? 'Not on the DAQ box: no state moves it and the console does not show it. Pick a board to wire it.'
+                : 'Not on the DAQ box: the console does not show it. Pick a board to wire it.'
+          }
           onChange={(e) => {
             const board = e.target.value as BoardId | '';
-            if (!board) {
-              setFresh(null);
-              return hookup.update((d) => dropFreshRow(unwire(d, symbol.id), fresh));
-            }
+            if (!board) return unplug();
             const name = channel?.name ?? hookup.suggestedName(symbol.id);
             if (!channel) {
               const made = wire(draft, symbol, board, undefined, name).machine.actuators.find(
@@ -517,6 +541,17 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
             })}
           </select>
         )}
+        {channel && (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={unplug}
+            className="shrink-0 rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:border-red-400/60 hover:text-red-300 disabled:opacity-40"
+            title={isValve ? 'Pull the cable. Its actuator stays in the state table.' : 'Pull the cable'}
+          >
+            Unplug
+          </button>
+        )}
       </Field>
       {channel ? (
         <Field
@@ -541,46 +576,19 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
                 const next = rename(d, symbol.id, n, !guessed);
                 return guessed ? dropFreshRow(next, fresh) : next;
               });
-              setFresh(null);
+              // Named by a person now: the actuator is theirs. Only this
+              // cable's guess, and not for a change of case (as the DAQ box).
+              if (guessed && fold(n) !== fold(channel.name)) setFresh(null);
             }}
           />
         </Field>
-      ) : (
-        <p className="text-[11px] text-gray-500">
-          {isValve
-            ? 'Not on the DAQ: no state moves it and the console does not show it. Pick a board to wire it.'
-            : 'Not on the DAQ: the console does not show it. Pick a board to wire it.'}
+      ) : null}
+      {channel && isValve && <OpensIn machine={draft.machine} name={channel.name} />}
+      {cut && (
+        <p className="text-[11px] text-gray-500" title="The drawn GSE is ignored: the stand is the rocket alone. The cable is kept.">
+          Cart · not simulated
         </p>
       )}
-      {channel && isValve && (
-        <Field label="Opens in" title="The states whose column opens this name. Change them on the State machine tab.">
-          {opens.length ? (
-            <span className="flex min-w-0 flex-wrap gap-1">
-              {opens.map((s) =>
-                s.toLowerCase() === 'idle' ? (
-                  <span
-                    key={s}
-                    className="rounded px-1 font-mono text-[10.5px] text-gray-500 line-through"
-                    title="The table opens it in Idle; the twin holds Idle shut."
-                  >
-                    {s}
-                  </span>
-                ) : (
-                  <span key={s} className="rounded bg-[#0b140e] px-1 font-mono text-[10.5px] text-[var(--color-success)]">
-                    {s}
-                  </span>
-                ),
-              )}
-            </span>
-          ) : (
-            <span className="text-amber-300/80">{row ? 'no state yet' : 'not a row in the state table'}</span>
-          )}
-          <Link to="/statemachine" className="ml-auto shrink-0 text-[10.5px] text-blue-400 hover:underline">
-            Edit →
-          </Link>
-        </Field>
-      )}
-      {cut && <p className="text-[11px] text-gray-500">On the cart, which is not simulated while the drawn GSE is ignored.</p>}
     </div>
   );
 }
@@ -643,7 +651,13 @@ function ElementCard({
             </span>
           )}
           <span className="shrink-0 font-mono text-[10px] text-gray-600">{el.type}</span>
-          {symbol && <ConnectorBadge channel={channel} label={channel && hookup.board(channel.board)?.label} />}
+          {symbol && (
+            <ConnectorBadge
+              channel={channel}
+              label={channel && hookup.board(channel.board)?.label}
+              valve={symbol.kind === 'valve'}
+            />
+          )}
           {overridden > 0 && (
             <span className="shrink-0 rounded bg-blue-950/60 px-1 font-mono text-[9px] text-blue-300">
               {overridden} override{overridden > 1 ? 's' : ''}
@@ -714,7 +728,7 @@ function ElementCard({
           )}
           {el.params.length === 0 ? (
             <p className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[11.5px] text-gray-600">
-              No numbers on this one — the drawing places it and the model reads nothing else.
+              No numbers.
             </p>
           ) : (
             <ul className="m-0 list-none p-0">
@@ -750,13 +764,7 @@ function ElementGroup({ title, children }: { title: string; children: React.Reac
 
 type Filter = 'all' | 'unwired' | 'changed' | 'filled';
 
-const GROUP_TITLES = [
-  'Valves the DAQ can drive',
-  'Transducers, RTDs & TCs',
-  'Tanks, gauges & hand valves',
-  'Other symbols',
-  'Cart — not simulated (rocket only)',
-];
+const GROUP_TITLES = ['Valves', 'Sensors', 'Tanks, gauges, hand valves', 'Other', 'Cart · not simulated'];
 
 export function DrawingPanel({
   focus = null,
@@ -794,14 +802,18 @@ export function DrawingPanel({
     return () => window.clearInterval(id);
   }, [load]);
 
-  // A symbol clicked on the drawing opens here, in view, whatever the list
-  // was filtered to.
+  // A symbol clicked on the drawing opens here, in view: the search and
+  // filter are cleared only when they hide it, and a card with an override
+  // being typed stays open.
   const scrollTo = useRef<string | null>(null);
+  const listed = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!focus) return;
-    setOpen({ [focus]: true });
-    setQuery('');
-    setFilter('all');
+    setOpen(openWith(focus));
+    if (!listed.current.has(focus)) {
+      setQuery('');
+      setFilter('all');
+    }
     scrollTo.current = focus;
   }, [focus]);
   useEffect(() => {
@@ -831,8 +843,9 @@ export function DrawingPanel({
     });
   }, [view, query, filter, showLines, focus, draft, hookup]);
 
+  listed.current = new Set(shown.map((el) => el.id));
   if (!view) {
-    return <p className="p-3 text-[12px] text-gray-500">{error || 'Reading the drawing…'}</p>;
+    return <p className="p-3 text-[12px] text-gray-500">{error || 'Loading…'}</p>;
   }
 
   const locked = Boolean(live?.tripped);
@@ -884,48 +897,27 @@ export function DrawingPanel({
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex-shrink-0 border-b border-[var(--line)] px-3 py-2">
         <div className="flex items-baseline gap-2">
-          <h2
-            className="text-[11px] font-bold uppercase tracking-widest text-text-muted"
-            title="Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they're shared with everyone and follow the drawing when it's re-imported."
+          <span
+            className="min-w-0 text-[11px] leading-snug text-gray-500"
+            title="Valves on a solenoid board are opened by the states that open their name (State machine tab). Transducers on a PT board show on the console under their name."
           >
-            Symbols
-          </h2>
-          {hookup.data && (
-            <span
-              className={`rounded px-1.5 py-px text-[10px] font-semibold ${
-                hookup.data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
-              }`}
-              title={
-                hookup.data.saved
-                  ? hookup.onStand
-                    ? 'The stand’s own hookup.'
-                    : 'Saved for this drawing.'
-                  : 'The twin’s suggestion, matched by name: not saved. Until it is, the console shows every valve and transducer.'
-              }
-            >
-              {hookup.data.saved ? 'Saved' : 'Suggested'}
-            </span>
-          )}
+            On the DAQ box: {vw}/{vt} valves · {sw}/{st} sensors
+          </span>
+          <HookupStatus />
+          <ReadOnly />
           <span className="ml-auto truncate font-mono text-[10px] text-gray-600" title={view.source}>
             {view.key}
           </span>
         </div>
-        <p className="mt-1 text-[11px] leading-snug text-gray-500" title="Valves on a solenoid board are opened by the states that open their name (State machine tab). Transducers on a PT board show on the console under their name.">
-          On the DAQ: {vw}/{vt} valves · {sw}/{st} sensors.
-          {issues.unwired.length > 0 && (
-            <>
-              {' '}
-              <Link
-                to="/statemachine"
-                className="text-amber-300/80 hover:underline"
-                title={`State-table rows no connector goes by, so they command nothing: ${issues.unwired.join(', ')}`}
-              >
-                {issues.unwired.length} row{issues.unwired.length > 1 ? 's' : ''} wired to nothing
-              </Link>
-            </>
-          )}
-        </p>
-        <HookupSaveBar compact />
+        {issues.unwired.length > 0 && (
+          <Link
+            to="/statemachine"
+            className="mt-0.5 block text-[11px] text-amber-300/80 hover:underline"
+            title={`Actuators in the state table no connector goes by, so they command nothing: ${issues.unwired.join(', ')}`}
+          >
+            {issues.unwired.length} actuator{issues.unwired.length > 1 ? 's' : ''} not wired
+          </Link>
+        )}
         {pending && (
           <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
             <span className="flex-1 text-[11px] text-blue-200">
@@ -996,9 +988,12 @@ export function DrawingPanel({
               el={el}
               open={Boolean(open[el.id])}
               onOpen={() => {
-                // One open at a time: it is the one ringed on the drawing.
+                // One open at a time: it is the one ringed on the drawing
+                // (and any with an override being typed).
                 const opening = !open[el.id];
-                setOpen(opening ? { [el.id]: true } : {});
+                // Closed by hand, it closes, half-typed or not.
+                const { [el.id]: _closed, ...others } = openWith(null);
+                setOpen(opening ? openWith(el.id) : others);
                 if (opening) onFocus(el.id);
                 else if (focus === el.id) onFocus(null);
               }}

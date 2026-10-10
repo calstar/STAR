@@ -206,28 +206,29 @@ describe('the hint beside a connector’s name', () => {
   const lox = () => wire(empty(), OU, 'sol12', 1, 'LOX Press');
 
   it('says a rename carries the row it had, with its states', () => {
-    expect(nameHint(lox(), 'OU', 'LOX Press Sol')?.text).toBe('renames row LOX Press, keeps its states');
+    expect(nameHint(lox(), 'OU', 'LOX Press Sol')?.text).toBe('renames LOX Press, keeps its states');
     const d = rename(lox(), 'OU', 'LOX Press Sol');
     expect(opensIn(d.machine, 'LOX Press Sol')).toEqual(['Ox Press', 'Fire']);
   });
 
   it('says a name the table has joins that row', () => {
-    expect(nameHint(lox(), 'OU', 'lox main')?.text).toBe('joins row LOX Main');
-    expect(nameHint(lox(), 'OU', 'lox main', false)?.text).toBe('joins row LOX Main');
+    expect(nameHint(lox(), 'OU', 'lox main')?.text).toBe('joins LOX Main');
+    expect(nameHint(lox(), 'OU', 'lox main', false)?.text).toBe('joins LOX Main');
   });
 
   it('says a corrected guess makes a new row, and so does a name with no row to carry', () => {
-    expect(nameHint(lox(), 'OU', 'Dome Ctrl', false)?.text).toBe('new row, opens in no state yet');
+    expect(nameHint(lox(), 'OU', 'Dome Ctrl', false)?.text).toBe('new actuator, opens nowhere yet');
     expect(rename(lox(), 'OU', 'Dome Ctrl', false).machine.actuators).toEqual(['LOX Press', 'LOX Main', 'Dome Ctrl']);
     const rowless = { ...lox(), machine: removeRow(TABLE, 'LOX Press') };
-    expect(nameHint(rowless, 'OU', 'Igniter')?.text).toBe('new row, opens in no state yet');
+    expect(nameHint(rowless, 'OU', 'Igniter')?.text).toBe('new actuator, opens nowhere yet');
   });
 
-  it('says what the name already is when it is not changed', () => {
-    expect(nameHint(lox(), 'OU', 'LOX Press')?.text).toBe('row in the state table');
-    expect(nameHint(lox(), 'OU', 'Lox press')?.text).toBe('row in the state table');
+  it('says nothing for the name as it is, and "same actuator" for a change of case', () => {
+    // Under every valve's name all the time, it was noise: Opens in says it.
+    expect(nameHint(lox(), 'OU', 'LOX Press')).toBeNull();
     const rowless = { ...lox(), machine: removeRow(TABLE, 'LOX Press') };
-    expect(nameHint(rowless, 'OU', 'LOX Press')?.text).toBe('no row in the state table');
+    expect(nameHint(rowless, 'OU', 'LOX Press')).toBeNull();
+    expect(nameHint(lox(), 'OU', 'Lox press')?.text).toBe('same actuator');
   });
 
   it('says nothing for a transducer, a blank, or a name another connector has', () => {
@@ -250,6 +251,15 @@ describe('states the twin keys on by name', () => {
     expect(lockReason('Fire')).toMatch(/^Fire is the burn/);
     expect(lockReason('Ox Fill')).toMatch(/loading follows the fill states/);
     expect(lockReason('Engine Abort')).toMatch(/ENG ABORT/);
+  });
+
+  it('locks every state the session loads a tank in, by the session’s own rule', () => {
+    // feedtwin statemachine.fills: "fill" and a side's word anywhere in the
+    // name -- "Box" holds "ox", so the twin loads LOX in it.
+    expect(lockReason('LOX Fill')).toMatch(/loading follows/);
+    expect(lockReason('Ethanol Fill')).toMatch(/loading follows/);
+    expect(lockReason('Purge Fill Box')).toMatch(/loading follows/);
+    expect(lockReason('GN2 Fill')).toBe('');
   });
 
   it('leaves the rest free to rename or remove', () => {

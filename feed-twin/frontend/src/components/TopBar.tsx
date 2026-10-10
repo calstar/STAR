@@ -161,7 +161,7 @@ export function TopBar({ views }: { views: readonly View[] }) {
                     {unsavedHookup && HOOKUP_VIEWS.has(v.path) && (
                       <span
                         className="ml-1 text-[var(--color-warning)]"
-                        title="Unsaved hookup: save it on the P&ID, State machine or Hookup tab"
+                        title="Unsaved hookup: save it on the P&ID, State machine or Knobs tab"
                       >
                         •
                       </span>

@@ -26,7 +26,6 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
 import type { BoardDef, BoardId, ChannelDef, HookupSymbol, SymbolKind } from '../api';
 import {
   BOARD_KEY,
@@ -54,9 +53,7 @@ import {
   isValveBoard,
   move,
   nameHint,
-  opensIn,
   rename,
-  rowNamed,
   rowsOf,
   setRows,
   unwire,
@@ -67,7 +64,8 @@ import {
 import { type HookupApi, useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 import { Gx12, type Gx12Mark } from './Gx12';
-import { HookupSaveBar } from './HookupSaveBar';
+import { HookupStatus, ReadOnly, confirmReset } from './HookupSaveBar';
+import { OpensIn } from './OpensIn';
 
 const FOCUS = '#60A5FA';
 
@@ -128,6 +126,7 @@ export function plugIn(hookup: HookupApi, ui: Store<DaqUi>, at: Slot, id: string
 }
 
 const KIND_WORD: Record<SymbolKind, string> = { valve: 'valve', pt: 'PT', rtd: 'RTD', tc: 'TC' };
+const KIND_PLURAL: Record<SymbolKind, string> = { valve: 'Valves', pt: 'PTs', rtd: 'RTDs', tc: 'TCs' };
 
 interface Press {
   slot: number;
@@ -278,12 +277,20 @@ export function DaqBox({
     ui.set({ armed: sameSlot(now.armed, at) ? null : at, selected: null, note: null });
   };
 
-  // Escape lets go of whatever is waiting: a drag, a connector, a symbol.
+  // Escape lets go of whatever is waiting -- a drag, a connector, a symbol
+  // -- and with nothing waiting, closes the open connector.
   const waiting = Boolean(s.drag || s.armed || s.picked);
+  const open = Boolean(s.selected);
   useEffect(() => {
-    if (!waiting) return;
+    if (!waiting && !open) return;
     const esc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (!waiting) {
+        // A field's own Esc puts its text back; it does not close the card.
+        if ((e.target as HTMLElement | null)?.closest('input, select, textarea')) return;
+        ui.set({ selected: null });
+        return;
+      }
       press.current = null;
       if (frame.current) cancelAnimationFrame(frame.current);
       frame.current = 0;
@@ -292,7 +299,7 @@ export function DaqBox({
     };
     window.addEventListener('keydown', esc);
     return () => window.removeEventListener('keydown', esc);
-  }, [waiting, ui]);
+  }, [waiting, open, ui]);
 
   // A note says its piece and goes.
   useEffect(() => {
@@ -326,7 +333,6 @@ export function DaqBox({
   if (!draft || !boardId || !def) {
     return (
       <div className="p-3">
-        <HookupSaveBar compact />
         <p className="text-[12px] text-gray-500">{hookup.error || 'Reading the hookup…'}</p>
       </div>
     );
@@ -377,38 +383,18 @@ export function DaqBox({
               </option>
             ))}
           </select>
-          {hookup.data && (
-            <span
-              className={`shrink-0 rounded px-1.5 py-px text-[10px] font-semibold ${
-                hookup.data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
-              }`}
-              title={
-                hookup.data.saved
-                  ? hookup.onStand
-                    ? 'The stand’s own hookup.'
-                    : 'Saved for this drawing.'
-                  : 'The twin’s suggestion, matched by name: not saved. Until it is, the console shows every valve and transducer.'
-              }
-            >
-              {hookup.data.saved ? 'Saved' : 'Suggested'}
-            </span>
-          )}
+          <HookupStatus />
+          <ReadOnly />
           <BoxMenu
             disabled={locked}
+            saved={Boolean(hookup.data?.saved)}
             onUnplugAll={() => {
               if (!window.confirm('Unplug every connector on every board? The state table stays as it is.')) return;
               hookup.update(unwireAll);
               ui.set({ selected: null, armed: null, picked: null, fresh: null });
             }}
             onReset={() => {
-              if (
-                !window.confirm(
-                  `Go back to the twin’s own matching? This forgets the whole hookup saved for this ${
-                    hookup.onStand ? 'stand' : 'drawing'
-                  }: the DAQ box, the edited state table and the knobs, straight away.`,
-                )
-              )
-                return;
+              if (!confirmReset(hookup.onStand)) return;
               hookup.reset();
               ui.set({ selected: null, armed: null, picked: null, fresh: null });
             }}
@@ -419,14 +405,11 @@ export function DaqBox({
           title={
             'Or click an empty connector, then the symbol. ' +
             'Drag a plugged one onto another connector to move it there (onto a plugged one, the two swap). ' +
-            '12 V and 24 V, low and high press, are yours to tell apart: either takes the other’s.'
+            '12 V/24 V and low/high PT are labels only: either board takes either.'
           }
         >
           Drag an empty connector onto a symbol. Click a plugged one to rename or unplug it.
         </p>
-        {locked && (
-          <p className="mt-1 text-[11px] text-amber-300/90">Read only: take the stand (top bar) to change the hookup.</p>
-        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -463,12 +446,12 @@ export function DaqBox({
                   tabIndex={0}
                   data-daq-board={boardId}
                   data-daq-slot={slot}
-                  aria-label={ch ? `${def.label} ${slot}: ${ch.name}` : `${def.label} ${slot}: empty`}
+                  aria-label={ch ? `${badge(at)}: ${ch.name}` : `${badge(at)}: empty`}
                   aria-pressed={isSelected || isArmed}
                   title={
                     ch
                       ? `${ch.name} — ${sym?.label ?? ch.symbol}${sym ? ` (${sym.type})` : ''}. Click to rename or unplug; drag onto another connector to move it.`
-                      : `${def.label} ${slot}: empty. Drag it onto a ${KIND_WORD[def.kind]} on the drawing, or click it, then the symbol.`
+                      : `${badge(at)} (${def.label}): empty. Drag it onto a ${KIND_WORD[def.kind]} on the drawing, or click it, then the symbol.`
                   }
                   onPointerDown={(e) => down(e, slot)}
                   onPointerMove={moved}
@@ -539,7 +522,7 @@ export function DaqBox({
         )}
         {armed && !picked && (
           <Waiting onCancel={() => ui.set({ armed: null })}>
-            {def.label} {armed.slot}: click a {KIND_WORD[def.kind]} on the drawing.
+            {badge(armed)}: click a {KIND_WORD[def.kind]} on the drawing.
           </Waiting>
         )}
 
@@ -547,6 +530,7 @@ export function DaqBox({
           <Unplugged
             symbols={hookup.symbols.filter((x) => x.kind === def.kind && !channelOf(draft, x.id))}
             boardLabel={def.label}
+            kind={def.kind}
             onPlug={(id) => plugIn(hookup, ui, { board: boardId, slot: freeSlot(draft, boardId) }, id, drawn)}
           />
         )}
@@ -577,10 +561,6 @@ export function DaqBox({
       </div>
 
       {origin && s.drag && <Band origin={origin} ui={ui} line={band} tip={tip} />}
-      {/* At the foot, so it never pushes the board down under a drag. */}
-      <div className="flex-shrink-0 px-3 pb-2 empty:hidden">
-        <HookupSaveBar compact />
-      </div>
     </div>
   );
 }
@@ -591,31 +571,43 @@ export function DaqBox({
 function Unplugged({
   symbols,
   boardLabel,
+  kind,
   onPlug,
 }: {
   symbols: HookupSymbol[];
   boardLabel: string;
+  kind: SymbolKind;
   onPlug: (id: string) => void;
 }) {
   if (symbols.length === 0) return null;
+  // By page, in the drawing's order: a rocket valve and a cart valve with
+  // the same look are told apart by where they are drawn.
+  const pages = [...new Set(symbols.map((x) => x.page))];
   return (
     <div className="mt-3 border-t border-[var(--line)] pt-2">
       <div className="caps text-[10px]" title={`Click one to plug it into the next free connector on ${boardLabel}.`}>
-        Not wired · {symbols.length}
+        {KIND_PLURAL[kind]} not wired · {symbols.length}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-1">
-        {symbols.map((x) => (
-          <button
-            key={x.id}
-            type="button"
-            onClick={() => onPlug(x.id)}
-            title={`${x.label} (${x.type}, ${x.page}): plug into the next free connector`}
-            className="border border-[var(--line-strong)] px-1.5 py-px font-mono text-[10.5px] text-[var(--ink-2)] hover:border-[#5a5a5a] hover:text-[var(--ink)]"
-          >
-            {x.label}
-          </button>
-        ))}
-      </div>
+      {pages.map((page) => (
+        <div key={page} className="mt-1.5">
+          {pages.length > 1 && <div className="mb-0.5 text-[10px] text-gray-500">{page}</div>}
+          <div className="flex flex-wrap gap-1">
+            {symbols
+              .filter((x) => x.page === page)
+              .map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  onClick={() => onPlug(x.id)}
+                  title={`${x.label} (${x.type}, ${x.page}): plug into the next free connector`}
+                  className="border border-[var(--line-strong)] px-1.5 py-px font-mono text-[10.5px] text-[var(--ink-2)] hover:border-[#5a5a5a] hover:text-[var(--ink)]"
+                >
+                  {x.label}
+                </button>
+              ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -686,10 +678,13 @@ function Band({
 /** The ⋯ at the top: the two things that change the whole box. */
 function BoxMenu({
   disabled,
+  saved,
   onUnplugAll,
   onReset,
 }: {
   disabled: boolean;
+  /** Something is saved to go back from. */
+  saved: boolean;
   onUnplugAll: () => void;
   onReset: () => void;
 }) {
@@ -716,6 +711,7 @@ function BoxMenu({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="More"
+        title="Unplug everything · Back to suggested"
         aria-expanded={open}
         className={`px-1 font-mono text-[14px] leading-none tracking-[0.1em] hover:text-[var(--ink-2)] ${
           open ? 'text-[var(--ink-2)]' : 'text-[var(--ink-4)]'
@@ -739,7 +735,7 @@ function BoxMenu({
           </button>
           <button
             type="button"
-            disabled={disabled}
+            disabled={disabled || !saved}
             className={item}
             title="Forget the whole saved hookup (the box, the edited state table, the knobs): the twin matches valves and sensors by name again"
             onClick={() => {
@@ -747,7 +743,7 @@ function BoxMenu({
               onReset();
             }}
           >
-            Back to the suggestion
+            Back to suggested
           </button>
         </div>
       )}
@@ -789,12 +785,11 @@ function Detail({
 }) {
   const sym = hookup.symbol(channel.symbol);
   const valve = isValveBoard(channel.board);
-  const row = valve ? (rowNamed(draft.machine, channel.name) ?? channel.name) : '';
-  const states = valve ? opensIn(draft.machine, row) : [];
   const siblings = boards.filter((b) => b.kind === def.kind);
   const pages = new Set([...drawn.values()].map((d) => d.page)).size > 1;
   const page = sym?.page ?? drawn.get(channel.symbol)?.page;
   const locked = hookup.locked;
+  const lost = !sym && !drawn.has(channel.symbol);
   return (
     <section className="mt-3 border-t border-[var(--line)] pt-2 text-[11.5px]">
       <div className="flex items-center gap-2">
@@ -839,8 +834,16 @@ function Detail({
       />
 
       <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="w-16 shrink-0 text-[11px] text-gray-500">Goes to</span>
+        <span className="w-[4.5rem] shrink-0 text-[11px] text-gray-500">Goes to</span>
         <span className="min-w-0 truncate text-gray-100">{sym?.label ?? hookup.label(channel.symbol)}</span>
+        {lost && (
+          <span
+            className="shrink-0 text-[10.5px] text-red-300"
+            title="This version of the drawing has no such symbol: unplug the cable, or plug it into the symbol that took its place. Saving is refused until then."
+          >
+            not on this drawing
+          </span>
+        )}
         <span className="shrink-0 font-mono text-[10px] text-gray-500">{sym?.type ?? drawn.get(channel.symbol)?.type}</span>
         {pages && page && <span className="shrink-0 truncate text-[10.5px] text-gray-500">{page}</span>}
         {sym?.ground && rocketOnly && (
@@ -848,7 +851,7 @@ function Detail({
             className="shrink-0 text-[10px] text-gray-500"
             title="Rocket only: the cart is drawn but not simulated. The cable is kept."
           >
-            cart · not simulated
+            Cart · not simulated
           </span>
         )}
         <button
@@ -862,30 +865,8 @@ function Detail({
       </div>
 
       {valve && (
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-1">
-          <span className="w-16 shrink-0 text-[11px] text-gray-500">Opens in</span>
-          {states.length ? (
-            states.map((st) =>
-              st.toLowerCase() === 'idle' ? (
-                <span
-                  key={st}
-                  className="px-1 py-px font-mono text-[10px] text-gray-500 line-through"
-                  title="The table opens it in Idle; the twin holds Idle shut."
-                >
-                  {st}
-                </span>
-              ) : (
-                <span key={st} className="border border-[var(--line-strong)] px-1 py-px font-mono text-[10px] text-gray-300">
-                  {st}
-                </span>
-              ),
-            )
-          ) : (
-            <span className="text-[11px] text-gray-500">no state opens it yet</span>
-          )}
-          <Link to="/statemachine" className="ml-auto text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]">
-            Edit in State machine →
-          </Link>
+        <div className="mt-1.5">
+          <OpensIn machine={draft.machine} name={channel.name} />
         </div>
       )}
     </section>
@@ -940,7 +921,7 @@ function NameField({
   return (
     <div className="mt-1.5">
       <label className="flex items-center gap-2">
-        <span className="w-16 shrink-0 text-[11px] text-gray-500">Name</span>
+        <span className="w-[4.5rem] shrink-0 text-[11px] text-gray-500">Name</span>
         <input
           ref={inputRef}
           type="text"
@@ -973,7 +954,7 @@ function NameField({
       </label>
       {(clash || hint) && (
         <p
-          className={`mt-0.5 truncate pl-[4.5rem] text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
+          className={`mt-0.5 truncate pl-[5rem] text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
           title={clash ? 'Another connector has this name: leaving the field puts the old one back' : hint?.title}
         >
           {clash ?? hint?.text}

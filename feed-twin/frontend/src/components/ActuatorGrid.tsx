@@ -18,9 +18,10 @@
  * The ⋯ hides valves nobody is watching today. A hidden valve still shows
  * while it is open or held: a valve you cannot see is not a valve you can
  * forget is open. Not the cart's: its valves are put on the console from the
- * Hookup tab, and the ⋯ lists only the ones that are.
+ * P&ID's Symbols panel, and the ⋯ lists only the ones that are.
  */
 
+import { Link } from 'react-router-dom';
 import type { ModelView, SessionState, StateMachine } from '../api';
 import { groupByPage } from '../lib/pages';
 import PanelMenu from './PanelMenu';
@@ -69,7 +70,7 @@ export default function ActuatorGrid({
   const opened = drawn.filter((a) => live.open[a.id]).length;
   const openOff = model.actuators.filter((a) => live.open[a.id] && !drawn.includes(a));
   // The menu lists them by sheet; the grid does not split. The cart's are
-  // listed only once put on the console (Hookup tab).
+  // listed only once put on the console (the P&ID's Symbols panel).
   const offered = model.actuators.filter((a) => onBox(a.id) && (!ground.has(a.id) || !hidden.includes(a.id)));
   const listed = groupByPage(offered, offered, (a) => a.id, model.pages);
 
@@ -119,10 +120,17 @@ export default function ActuatorGrid({
       </div>
       {/* Scrolls when the valves outgrow the space the console gives them;
           the header and its Release stay put. */}
-      {drawn.length === 0 && model.actuators.some((a) => !onBox(a.id)) && (
+      {drawn.length === 0 && model.actuators.some((a) => !onBox(a.id)) && offered.length === 0 && (
         <p className="font-mono text-[12px] text-[var(--ink-3)]">
-          No valve on the DAQ box. Wire them on the P&ID (Symbols or DAQ box).
+          No valve on the DAQ box.{' '}
+          <Link to="/pid" className="text-[var(--ink-2)] underline">
+            Wire one on the P&ID
+          </Link>
+          .
         </p>
+      )}
+      {drawn.length === 0 && offered.length > 0 && (
+        <p className="font-mono text-[12px] text-[var(--ink-3)]">Every valve hidden. Show some from ⋯.</p>
       )}
       <div className="grid min-h-0 grid-cols-4 content-start gap-2 overflow-y-auto pr-1">
         {drawn.map((a) => {

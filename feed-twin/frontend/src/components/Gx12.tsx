@@ -82,7 +82,8 @@ export function Gx12({
           {/* The cable, leaving the plug's boot. */}
           <path d="M-2.6 5 L-2.6 24 L2.6 24 L2.6 5 Z" fill="#1a1a1a" stroke="#6b6b6b" strokeWidth={0.8} />
           {/* The coupling ring, knurled, screwed home. */}
-          <circle r={14} fill="#2b2b2b" stroke="var(--color-success)" strokeWidth={1} strokeOpacity={0.85} />
+          {/* Grey: green on this box means open (the dot), nothing else. */}
+          <circle r={14} fill="#2b2b2b" stroke="#a3a3a3" strokeWidth={1} />
           <path d={KNURL} stroke="#8f8f8f" strokeWidth={0.8} />
           <circle r={11.2} fill="#0d0d0d" stroke="#4d4d4d" strokeWidth={0.8} />
           {/* The boot, and the cable end-on. */}

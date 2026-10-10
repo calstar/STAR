@@ -1,10 +1,10 @@
 /**
  * The drawing's hookup -- the DAQ box, the state table and the knobs -- loaded
  * once and edited in one place by every panel that shows it: the P&ID's
- * Symbols list and DAQ box, the State machine tab and the Hookup page (the
- * knobs). One draft for all of them, so wiring a valve on the P&ID, ticking
- * the states it opens in on the State machine tab and saving from either is
- * one change; switching panels never loses an edit.
+ * Symbols list and DAQ box, the State machine tab and the Knobs page. One
+ * draft for all of them, so wiring a valve on the P&ID, ticking the states it
+ * opens in on the State machine tab and saving from either is one change;
+ * switching panels never loses an edit.
  *
  * On a stand the hookup is the stand's, kept with it (shown and bound by the
  * backend as the stand runs it); off one it is the drawing's own, in the
@@ -96,7 +96,13 @@ const namesKey = (d: Draft) =>
   });
 
 export function HookupProvider({ children }: { children: ReactNode }) {
-  const { where, restart, standDoc, standHookup, setStandHookup, locked, setNames, setup, model, live } = useStand();
+  const stand = useStand();
+  const { where, standDoc, standHookup, locked, setup, model, live } = stand;
+  // The stand's callbacks are new on every tick; read through a ref, so save
+  // and reset -- and with them every panel reading this hookup -- change only
+  // when the hookup does, not 60 times a minute.
+  const calls = useRef(stand);
+  calls.current = stand;
   // Rocket only: the binding shown is what the stand runs on the rocket alone.
   const ignoreGse = Boolean(live?.setup?.ignore_gse ?? setup.ignore_gse);
   const at = useMemo(
@@ -136,7 +142,9 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     setError('');
     const own = standHookup as unknown as HookupBody | null;
     const asked = owner;
-    (own ? viewHookup(at, own) : getHookup(at))
+    // Shown, not checked: a stand whose drawing lost a symbol must still
+    // open here, or its cable could never be unplugged (`problems` says).
+    (own ? viewHookup(at, own, false) : getHookup(at))
       .then((h) => {
         if (stale) return;
         setData(h);
@@ -161,14 +169,11 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     [data],
   );
 
-  const live_names = useCallback(
-    async (d: Draft) => {
-      // The running stand takes new names without reopening; if it refuses
-      // (it was built on other wiring), reopen it.
-      if (!(await setNames(d.aliases ?? {}, d.channels))) restart();
-    },
-    [setNames, restart],
-  );
+  const live_names = useCallback(async (d: Draft) => {
+    // The running stand takes new names without reopening; if it refuses
+    // (it was built on other wiring), reopen it.
+    if (!(await calls.current.setNames(d.aliases ?? {}, d.channels))) calls.current.restart();
+  }, []);
 
   // One save at a time: a second click while the first is out is dropped.
   const saving = useRef(false);
@@ -184,11 +189,11 @@ export function HookupProvider({ children }: { children: ReactNode }) {
     // would be marked saved, and the stand would open on the drawing's own.
     (onStand ? viewHookup(at, out) : saveHookup(at, out))
       .then((h) => {
-        if (onStand) setStandHookup(out as unknown as Record<string, unknown>, reopen);
+        if (onStand) calls.current.setStandHookup(out as unknown as Record<string, unknown>, reopen);
         setData(onStand ? { ...h, saved: true } : h);
         setDraft(draftOf(h));
         if (reopen) {
-          if (!onStand) restart();
+          if (!onStand) calls.current.restart();
         } else void live_names(draftOf(h));
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -196,13 +201,19 @@ export function HookupProvider({ children }: { children: ReactNode }) {
         saving.current = false;
         setBusy(false);
       });
-  }, [data, draft, namesOnly, onStand, setStandHookup, body, at, restart, live_names]);
+  }, [data, draft, namesOnly, onStand, body, at, live_names]);
 
   const reset = useCallback(() => {
     if (!data) return;
     if (onStand) {
       // The suggestion as it is: matched by name, so it follows the drawing.
-      setStandHookup({ ...data.suggested, channels: null, machine: null } as unknown as Record<string, unknown>, true);
+      // Its answer replaces the draft, unsaved edits and all: they are what
+      // the user just chose to forget.
+      draftOwner.current = null;
+      calls.current.setStandHookup(
+        { ...data.suggested, channels: null, machine: null } as unknown as Record<string, unknown>,
+        true,
+      );
       return;
     }
     setBusy(true);
@@ -210,11 +221,11 @@ export function HookupProvider({ children }: { children: ReactNode }) {
       .then((h) => {
         setData(h);
         setDraft(draftOf(h));
-        restart();
+        calls.current.restart();
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
-  }, [data, onStand, setStandHookup, at, restart]);
+  }, [data, onStand, at]);
 
   const discard = useCallback(() => {
     if (base) setDraft(structuredClone(base));

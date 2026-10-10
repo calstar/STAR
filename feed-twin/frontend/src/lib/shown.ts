@@ -10,8 +10,8 @@
  * the console is what the stand team watches together, and "who hid PT-FUEL-2"
  * should have one answer for everyone rather than one per browser. The ground
  * support starts hidden (the operator, 2026-10-08: the rocket is what is
- * watched); a cart valve or transducer is put on from the Hookup tab or the
- * menus. The order the strip draws things in is kept the same way.
+ * watched); a cart valve or transducer is put on from the P&ID's Symbols
+ * panel or the menus. The order the strip draws things in is kept the same way.
  *
  * Hiding is never allowed to hide trouble. `visible` brings an item back
  * while it is in a state the operator has to see -- a valve open or held, a

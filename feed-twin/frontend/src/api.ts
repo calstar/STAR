@@ -852,6 +852,9 @@ export interface Hookup {
   /** Rows the twin reads by name, and what each does with no valve wired to
    *  it (the built-in COPV charge and dump, the transfer tank's press). */
   builtin?: Record<string, string>;
+  /** What this drawing cannot have: a cable to a symbol it lost, a knob on a
+   *  regulator it lacks. A save is refused until they are unplugged. */
+  problems?: string[];
 }
 
 /** The id of the knob the session's dome setting drives. */
@@ -890,9 +893,14 @@ export const resetHookup = (w: { diagram: string; engine: string; fluidSet: stri
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
 
 /** A stand's own hookup, shown and bound as the drawing's would be. Saves
- *  nothing. */
-export const viewHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }, body: HookupBody) =>
-  json<Hookup>(`/api/hookup/view?${whereQuery(w)}`, {
+ *  nothing; refuses what a save would, unless `check` is false (only
+ *  showing it, with what is wrong in `problems`). */
+export const viewHookup = (
+  w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean },
+  body: HookupBody,
+  check = true,
+) =>
+  json<Hookup>(`/api/hookup/view?${whereQuery(w)}${check ? '' : '&check=false'}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

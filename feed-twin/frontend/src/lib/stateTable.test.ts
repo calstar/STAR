@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { ChannelDef, MachineDef } from '../api';
 import { addState, canGo, isOpen, setAllowed, toActuatorCsv, toTransitionCsv } from './hookupDraft';
-import { applyCsvFiles, csvKind, heldShut, panelGrid, rowGroups, withoutAbort } from './stateTable';
+import {
+  applyCsvFiles,
+  csvKind,
+  groupTableWarnings,
+  heldShut,
+  panelGrid,
+  rowGroups,
+  skippedDelays,
+  withoutAbort,
+} from './stateTable';
 
 const TABLE: MachineDef = {
   states: [
@@ -74,6 +83,20 @@ describe('applyCsvFiles', () => {
     expect(() => applyCsvFiles(TABLE, [{ name: 'state_machine_actuator_delays.csv', text: delays }])).toThrow(
       /state_machine_actuator_delays\.csv: the DAQ's actuator delays/,
     );
+  });
+
+  it('passes over the delay table picked with the state tables, the natural pick from the DAQ folder', () => {
+    const delays = ',Idle,Ox Press,Fire,Engine Abort\nLOX Main,0,0,0,0\n';
+    const edited: MachineDef = { ...TABLE, open: { ...TABLE.open, Idle: ['LOX Main'] } };
+    const files = [
+      { name: 'state_machine_actuators.csv', text: toActuatorCsv(edited) },
+      { name: 'state_transitions.csv', text: toTransitionCsv(edited) },
+      { name: 'state_machine_actuator_delays.csv', text: delays },
+    ];
+    expect(skippedDelays(files)).toEqual(['state_machine_actuator_delays.csv']);
+    expect(isOpen(applyCsvFiles(TABLE, files), 'LOX Main', 'Idle')).toBe(true);
+    // Alone, it is still refused, with why.
+    expect(skippedDelays([files[2]])).toEqual([]);
   });
 
   it('says why a 0/1 table whose rows are not its states is refused', () => {
@@ -155,5 +178,20 @@ describe('heldShut', () => {
     expect(heldShut('Idle')).toBe(true);
     expect(heldShut(' idle ')).toBe(true);
     expect(heldShut('Idle Vent')).toBe(false);
+  });
+});
+
+describe('groupTableWarnings', () => {
+  it('folds the "X -> Fire" warnings into one line and keeps the first sentence of the rest', () => {
+    const out = groupTableWarnings([
+      'Idle commands LOX Press OPEN in diablo_actuators.csv as the DAQ reads it. A cold stand has nothing open.',
+      'Ox Press -> Fire is permitted by diablo_transitions.csv, bypassing Ready.',
+      'Fuel Press -> Fire is permitted by diablo_transitions.csv, bypassing Ready.',
+    ]);
+    expect(out.map((w) => w.text)).toEqual([
+      '2 states can go straight to Fire without Ready: Ox Press, Fuel Press.',
+      'Idle commands LOX Press OPEN in diablo_actuators.csv as the DAQ reads it.',
+    ]);
+    expect(out[1].detail).toContain('A cold stand');
   });
 });

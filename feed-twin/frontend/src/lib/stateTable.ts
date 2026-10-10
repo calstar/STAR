@@ -68,6 +68,14 @@ function notATable(name: string, text: string): string {
   return `${name}: not a DAQ state table (no OPEN/CLOSE or 0/1 cells).`;
 }
 
+/** The DAQ's delay table picked with the two state tables -- the natural
+ *  pick from its folder -- is passed over (by name), not refused: the twin
+ *  does not read delays. Alone it is still refused, with why. */
+export function skippedDelays(files: { name: string }[]): string[] {
+  const delays = files.filter((f) => DELAYS.test(f.name)).map((f) => f.name);
+  return delays.length < files.length ? delays : [];
+}
+
 /**
  * One or both of the DAQ's CSVs read into `m` (hookupDraft.fromCsv). With
  * only the transition file, the actuator table stays as it is. Throws, with
@@ -76,7 +84,7 @@ function notATable(name: string, text: string): string {
 export function applyCsvFiles(m: MachineDef, files: { name: string; text: string }[]): MachineDef {
   let actuators: string | undefined;
   let transitions: string | undefined;
-  for (const f of files) {
+  for (const f of files.filter((x) => !skippedDelays(files).includes(x.name))) {
     const text = f.text.replace(/^\uFEFF/, '');
     const kind = csvKind(text, f.name);
     if (!kind) throw new Error(notATable(f.name, text));
@@ -162,4 +170,32 @@ export function withoutAbort(m: MachineDef): string[] {
   return m.states
     .filter((s) => !s.abort && !aborts.some((a) => (m.allowed[s.name] ?? []).includes(a)))
     .map((s) => s.name);
+}
+
+/**
+ * The state table's warnings, grouped: the seven "X -> Fire is permitted ...
+ * bypasses Ready" sentences become one line naming the states, and every
+ * other warning shows its first sentence with the rest on hover.
+ */
+export function groupTableWarnings(warnings: readonly string[]): { text: string; detail: string }[] {
+  const bypass: string[] = [];
+  const out: { text: string; detail: string }[] = [];
+  let bypassDetail = '';
+  for (const w of warnings) {
+    const m = /^(.+?) -> Fire is permitted/.exec(w);
+    if (m) {
+      bypass.push(m[1]);
+      bypassDetail = w.replace(/^.+? -> /, 'X -> ');
+      continue;
+    }
+    const first = w.split(/(?<=\.)\s/)[0] ?? w;
+    out.push({ text: first, detail: w });
+  }
+  if (bypass.length) {
+    out.unshift({
+      text: `${bypass.length} state${bypass.length === 1 ? '' : 's'} can go straight to Fire without Ready: ${bypass.join(', ')}.`,
+      detail: bypassDetail,
+    });
+  }
+  return out;
 }

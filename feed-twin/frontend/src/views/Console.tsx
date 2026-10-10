@@ -40,6 +40,7 @@ import { useStand } from '../stand';
 import { useHookup } from '../lib/useHookup';
 import { groupByPage } from '../lib/pages';
 import { moveTo, ordered, visible, type Hidden, type Panel } from '../lib/shown';
+import { groupTableWarnings } from '../lib/stateTable';
 
 const WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -137,34 +138,6 @@ function Vessel({
       </div>
     </div>
   );
-}
-
-/**
- * The state table's warnings, grouped: the seven "X -> Fire is permitted ...
- * bypasses Ready" sentences become one line naming the states, and every
- * other warning shows its first sentence with the rest on hover.
- */
-function groupTableWarnings(warnings: readonly string[]): { text: string; detail: string }[] {
-  const bypass: string[] = [];
-  const out: { text: string; detail: string }[] = [];
-  let bypassDetail = '';
-  for (const w of warnings) {
-    const m = /^(.+?) -> Fire is permitted/.exec(w);
-    if (m) {
-      bypass.push(m[1]);
-      bypassDetail = w.replace(/^.+? -> /, 'X -> ');
-      continue;
-    }
-    const first = w.split(/(?<=\.)\s/)[0] ?? w;
-    out.push({ text: first, detail: w });
-  }
-  if (bypass.length) {
-    out.unshift({
-      text: `${bypass.length} state${bypass.length === 1 ? '' : 's'} can go straight to Fire without Ready: ${bypass.join(', ')}.`,
-      detail: bypassDetail,
-    });
-  }
-  return out;
 }
 
 type Reading = readonly [label: string, value: number, unit: string, places: number, colour?: string];
@@ -657,7 +630,10 @@ export function Console() {
                 has, however tall the window makes it. */}
             <div className="relative min-h-[200px] flex-1">
               <div className="absolute inset-0">
-                {plot.times.length > 1 ? (
+                {plot.channels.length === 0 ? (
+                  // Empty axes say nothing; the Pressure strip above says why.
+                  <p className="font-mono text-[12px] text-[var(--ink-3)]">No transducer to plot.</p>
+                ) : plot.times.length > 1 ? (
                   <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} marks={marks} />
                 ) : (
                   <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
@@ -687,7 +663,7 @@ export function Console() {
                 onToggleHidden={menuFor('actuators', []).onToggle}
                 // "all" is everything the menu lists: the rocket's valves and
                 // the cart's already on the console. The rest of the cart
-                // stays off until the Hookup tab puts it on.
+                // stays off until the P&ID's Symbols panel puts it on.
                 onAllHidden={(show) =>
                   show
                     ? hideOnConsole(
@@ -729,7 +705,9 @@ export function Console() {
                       type="button"
                       onClick={() => go(s)}
                       disabled={busy || locked}
-                      className={`ctl h-7 px-2.5 text-[10px] ${/abort/i.test(s) ? 'text-[var(--color-danger)]' : ''}`}
+                      className={`ctl h-7 px-2.5 text-[10px] ${
+                        /abort/i.test(s) || machine?.aborts?.includes(s) ? 'text-[var(--color-danger)]' : ''
+                      }`}
                     >
                       {s}
                     </button>
@@ -772,7 +750,17 @@ export function Console() {
               <details className="mt-3">
                 <summary className="cursor-pointer text-[12px] text-[var(--color-warning)]">
                   The stand's state table has {tableIssues.length} issue{tableIssues.length === 1 ? '' : 's'}{' '}
-                  <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                  {machine?.edited ? (
+                    <span className="text-[var(--ink-3)]">
+                      — this stand's own table; fix it on the{' '}
+                      <Link to="/statemachine" className="underline">
+                        State machine
+                      </Link>{' '}
+                      tab
+                    </span>
+                  ) : (
+                    <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                  )}
                 </summary>
                 <ul className="mt-2 flex flex-col gap-1 pl-4">
                   {tableIssues.map((w) => (
