@@ -1,0 +1,21 @@
+// ==============================================================================
+// STMicroelectronics Unico-GUI MLC Decision Tree Export
+// Tree 6: Touchdown Confirmed
+// Description: Confirms landing impact and stationary resting state on ground
+// Target Column: touchdown_confirmed
+// Exported: 2026-10-05 19:50:10
+// Leaf Nodes: 4 | Total Nodes: 7
+// Max Depth: 2
+// Target Classes: ['0', '1']
+// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core
+// ==============================================================================
+
+mag_x_min <= 0.230305
+|   mag_z_ptp <= 0.803780 : 0 (15582.0)
+|   mag_z_ptp > 0.803780 : 1 (76.0)
+mag_x_min > 0.230305
+|   gyro_y_mean <= 200.281562 : 1 (1924.0)
+|   gyro_y_mean > 200.281562 : 0 (18.0)
+
+Number of Leaves  : 4
+Size of the tree : 7
