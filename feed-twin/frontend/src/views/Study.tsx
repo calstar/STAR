@@ -297,7 +297,7 @@ function CaseTable({
 }: {
   cases: StudyCaseIn[];
   knobs: { id: string; label: string; psig: number }[];
-  setup: Record<string, number | boolean>;
+  setup: Record<string, number | boolean | string>;
   /** The stand's fill fraction; null when the engine's fire load names every
    *  tank and a fill changes nothing (no column then). */
   fill: number | null;
@@ -427,7 +427,7 @@ function CaseTable({
 }
 
 /** Rows the case table has its own columns for. */
-const OWN_COLUMNS = ['dome', 'copv_target', 'full_fraction'];
+const OWN_COLUMNS = ['dome', 'copv_target', 'full_fraction', 'pressurant'];
 
 function SettingsCell({
   value,
@@ -435,10 +435,10 @@ function SettingsCell({
   tunables,
   onChange,
 }: {
-  value: Record<string, number | boolean>;
-  setup: Record<string, number | boolean>;
+  value: Record<string, number | boolean | string>;
+  setup: Record<string, number | boolean | string>;
   tunables: Tunable[];
-  onChange: (next: Record<string, number | boolean>) => void;
+  onChange: (next: Record<string, number | boolean | string>) => void;
 }) {
   const byKey = useMemo(() => new Map(tunables.map((t) => [t.key, t])), [tunables]);
   const free = tunables.filter((t) => !(t.key in value) && !OWN_COLUMNS.includes(t.key));

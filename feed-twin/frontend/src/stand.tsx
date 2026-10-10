@@ -30,6 +30,7 @@ import {
   getHookup,
   getModel,
   getStateMachine,
+  sessionStateMachine,
   listArtifacts,
   openSession,
   sessionBurns,
@@ -41,6 +42,8 @@ import {
   tickSession,
   type Artifact,
   type Burns,
+  type ChannelDef,
+  type HookupBody,
   type ModelView,
   type RunResult,
   type SessionState,
@@ -98,6 +101,10 @@ interface StandValue {
   nameOf: (id: string, tag: string) => string;
   /** Give the running stand new console names (no reopen). */
   setAliases: (aliases: Record<string, string>) => void;
+  /** Give the running stand new names -- aliases and what its connectors are
+   *  called -- without reopening it. False when it refuses (a valve's
+   *  connector renamed off its row is rewiring): reopen it instead. */
+  setNames: (aliases: Record<string, string>, channels: ChannelDef[] | null) => Promise<boolean>;
   release: () => void;
   restart: () => void;
   /** Skip the pad: loaded, charged, at lockup, in Ready. */
@@ -123,10 +130,12 @@ interface StandValue {
   locked: boolean;
   /** The stand's own hookup, when it has one for the drawing on screen. */
   standHookup: Record<string, unknown> | null;
-  /** Change the stand's hookup (kept with the stand; Save writes it). */
   /** Give the open stand a hookup; `reopen` false when only console names
-   *  changed (they are applied live). */
-  setStandHookup: (hookup: Record<string, unknown>, reopen?: boolean) => void;
+   *  changed (they are applied live). False, with the reason in the error
+   *  line, when the stand could not take it (not taken, not loaded). */
+  setStandHookup: (hookup: Record<string, unknown>, reopen?: boolean) => boolean;
+  /** Write the open stand as it is now (the stand bar's Save). */
+  saveStand: () => Promise<void>;
 }
 
 /** A stand document, open. */
@@ -211,6 +220,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     dewar_fill_cv: 0.019,
     bottle_delivered: false,
     ignore_gse: false,
+    pressurant: '',
     fill_stirring: 20,
     ullage_collapse: true,
     ullage_vapour: true,
@@ -340,16 +350,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
       }
     };
     const reopen = async (): Promise<SessionState> => {
-      const id = remembered();
-      if (id) {
-        try {
-          return await tickSession(id, 1e-3);
-        } catch {
-          // The backend forgot it (restart, deploy); a fresh stand is honest.
-        }
-      }
       // A stand document: the run records name it, and its own hookup is used
-      // for this session without touching the drawing's saved one.
+      // for this session without touching the drawing's saved one. Read
+      // first, before reattaching to a session that is still running: a page
+      // reloaded on a stand used to reattach without it, so the hookup panels
+      // showed the drawing's, a hookup Save had no stand to go into, and the
+      // stand's Save wrote the drawing's suggestion over the stand's own.
       let onStand = standDoc;
       if (onStand && !standPayload.current) {
         try {
@@ -367,6 +373,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
           } catch {
             // Nothing to forget.
           }
+        }
+      }
+      const id = remembered();
+      if (id) {
+        try {
+          return await tickSession(id, 1e-3);
+        } catch {
+          // The backend forgot it (restart, deploy); a fresh stand is honest.
         }
       }
       // The stand's hookup and knob positions belong to the drawing it was
@@ -404,9 +418,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
         // Read the drawing as the session was built: a reattached one may
         // ignore the GSE whatever this tab's defaults say.
         const cut = Boolean(first.setup?.ignore_gse ?? setup.ignore_gse);
+        // The table the session commands, bound as it runs: a stand's own
+        // hookup (and its own table) included, which the drawing's endpoint
+        // cannot see. An older backend falls back to the drawing's.
         const [view, sm] = await Promise.all([
           getModel(diagram, engine, 'hotfire', cut),
-          getStateMachine(where, cut),
+          sessionStateMachine(first.id).catch(() => getStateMachine(where, cut)),
         ]);
         if (cancelled) return;
         setModel(view);
@@ -601,8 +618,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
       setSetupState(next);
       for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
       keepTurned();
-      // Ignoring the GSE is a different network: a fresh stand, built with it.
-      if ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) {
+      // Ignoring the GSE, or another pressurant, is a different network: a
+      // fresh stand, built with it.
+      if (
+        ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) ||
+        ('pressurant' in patch && (patch.pressurant ?? '') !== (setup.pressurant ?? ''))
+      ) {
         wantFresh.current = true;
         setGeneration((g) => g + 1);
         return;
@@ -641,6 +662,16 @@ export function StandProvider({ children }: { children: ReactNode }) {
     },
     nameOf: (id, tag) => live?.aliases?.[id] || tag,
     setAliases: (aliases) => void command({ aliases }),
+    setNames: async (aliases, channels) => {
+      if (!session.current) return true;
+      try {
+        setLive(await commandSession(session.current, { names: { aliases, channels } }));
+        last.current = performance.now();
+        return true;
+      } catch {
+        return false;
+      }
+    },
     release: () => void command({ release: '*' }),
     skipChill: (tankId) => void command({ skip_chill: tankId ?? true }),
     restart: () => {
@@ -696,14 +727,35 @@ export function StandProvider({ children }: { children: ReactNode }) {
         ? standPayload.current.hookup
         : null,
     setStandHookup: (hookup, reopen = true) => {
-      if (locked || !standPayload.current) return refuse();
+      if (locked) {
+        refuse();
+        return false;
+      }
+      if (!standPayload.current) {
+        setError('The stand is still loading: save the hookup again in a moment.');
+        return false;
+      }
       standPayload.current = { ...standPayload.current, diagram, hookup };
-      if (!reopen) return;
-      wantFresh.current = true;
-      setGeneration((g) => g + 1);
+      if (reopen) {
+        wantFresh.current = true;
+        setGeneration((g) => g + 1);
+      }
+      return true;
+    },
+    saveStand: async () => {
+      if (!standDoc || locked) return;
+      await standApi.autosave(standDoc.ref, await value.snapshot());
     },
     snapshot: async () => {
       const hookup = await getHookup(where).catch(() => null);
+      // The drawing's box only when somebody wrote one down: unsaved, it is
+      // the twin's guess, and a stand that kept it would read as wired. The
+      // table is the response's own (null when nothing is saved).
+      const drawn: HookupBody | null = hookup
+        ? hookup.wired
+          ? hookup.hookup
+          : { ...hookup.hookup, channels: null, rows: {} }
+        : null;
       return {
         diagram,
         engine,
@@ -714,7 +766,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
           standPayload.current?.hookup &&
           Object.keys(standPayload.current.hookup).length
           ? standPayload.current.hookup
-          : ((hookup?.hookup ?? {}) as unknown as Record<string, unknown>),
+          : ((drawn ?? {}) as unknown as Record<string, unknown>),
         operating_point: {
           knobs: Object.fromEntries((live?.knobs ?? []).map((k) => [k.id, k.psig])),
         },

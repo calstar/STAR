@@ -166,11 +166,14 @@ def test_aliases_are_saved_with_the_hookup_and_reach_a_running_stand() -> None:
     assert saved["hookup"]["aliases"] == {"engine.pc": "Chamber pressure"}
 
     opened = client.post("/api/session", params={"diagram": diagram}, json={}).json()
-    assert opened["aliases"] == {"engine.pc": "Chamber pressure"}
+    assert opened["aliases"]["engine.pc"] == "Chamber pressure"
+    # Saved from the panel, the hookup is wired: what is on the DAQ box goes
+    # by its connector's name -- a main valve by the row that opens it.
+    assert opened["aliases"]["MVO"] == "LOX Main"
     renamed = client.post(
         f"/api/session/{opened['id']}/command",
         json={"aliases": {"engine.pc": "Pc"}},
     ).json()
-    assert renamed["aliases"] == {"engine.pc": "Pc"}
+    assert renamed["aliases"]["engine.pc"] == "Pc"
     assert renamed["t"] >= opened["t"], "the same stand, not a new one"
     _SESSIONS.pop(opened["id"], None)

@@ -160,7 +160,7 @@ export function Plots() {
             type="button"
             onClick={() => setShowOff((v) => !v)}
             className="font-mono text-[11px] text-[var(--ink-3)] hover:text-[var(--ink)]"
-            title="Channels the console hides (its ⋯ or the Hookup tab). Click one to put it back on the console and here."
+            title="Channels the console hides (its ⋯ or the P&ID's Symbols panel). Click one to put it back on the console and here."
           >
             {showOff ? '−' : '+'} {offConsole.length} hidden from the console
           </button>

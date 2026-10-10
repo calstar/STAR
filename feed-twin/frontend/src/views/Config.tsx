@@ -74,8 +74,8 @@ function Row({
   disabled,
 }: {
   t: Row;
-  value: number | boolean;
-  onChange: (v: number | boolean) => void;
+  value: number | boolean | string;
+  onChange: (v: number | boolean | string) => void;
   disabled: boolean;
 }) {
   const [draft, setDraft] = useState<string>(typeof value === 'number' ? fmt(value, t.step) : '');
@@ -95,13 +95,22 @@ function Row({
     },
     [onChange, t.high, t.low],
   );
-  const changed = typeof value === 'boolean' ? value !== t.default : Math.abs(Number(value) - Number(t.default)) > 1e-9;
+  const changed =
+    typeof value === 'number' ? Math.abs(value - Number(t.default)) > 1e-9 : value !== t.default;
+  const say = (v: number | boolean | string) =>
+    t.kind === 'choice'
+      ? (t.choices?.find((c) => c.value === v)?.label ?? String(v))
+      : typeof v === 'boolean'
+        ? v
+          ? 'on'
+          : 'off'
+        : `${fmt(Number(v), t.step)} ${t.unit}`;
   const explain = (
     <>
       <div className="mb-1 font-semibold text-white">{t.label}</div>
       <div>{t.explains}</div>
       <div className="mt-1.5 font-mono text-[11px] text-gray-400">
-        default {typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : `${fmt(Number(t.default), t.step)} ${t.unit}`}
+        default {say(t.default)}
         {t.drawn && ', the drawing\'s setting'}
         {t.kind === 'number' && ` · ${fmt(t.low, t.step)} to ${fmt(t.high, t.step)}`}
         {t.applies === 'reset' && ' · takes effect on Reset'}
@@ -124,7 +133,20 @@ function Row({
           )}
         </div>
         <div>
-          {t.kind === 'flag' ? (
+          {t.kind === 'choice' ? (
+            <select
+              value={String(value)}
+              disabled={disabled}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[12px] text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            >
+              {(t.choices ?? []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          ) : t.kind === 'flag' ? (
             <label className="flex items-center gap-2 text-gray-300">
               <input
                 type="checkbox"
@@ -155,7 +177,7 @@ function Row({
               type="button"
               disabled={disabled}
               onClick={() => onChange(t.default)}
-              title={`Back to ${typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : fmt(Number(t.default), t.step)}${t.drawn ? ', the drawing\'s setting' : ''}`}
+              title={`Back to ${say(t.default)}${t.drawn ? ', the drawing\'s setting' : ''}`}
               className="rounded px-1.5 py-0.5 font-mono text-[10px] text-blue-300 hover:bg-blue-900/40"
             >
               default
@@ -204,13 +226,14 @@ export function Config() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="max-w-3xl">
-        <h2 className="caps">Every number the twin assumes</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
-          Rest on a row for two seconds and it says what the number accounts for and where it came from. Edit
-          a value and the running stand uses it; rows marked <span className="font-mono text-[10px] uppercase">on reset</span>{' '}
-          are built into the vessels and take effect on the next Reset. Changed rows are tinted and carry a
-          way back to the default. What the <em>drawing</em> left unsaid — a defaulted volume, an estimated
-          bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Checks</Link> tab.
+        <h2 className="caps">Assumptions</h2>
+        <p className="mt-1 text-[12px] text-gray-500">
+          Hover a row for its source. <span className="font-mono text-[10px] uppercase">On reset</span> rows apply
+          after Reset. Drawing gaps are on{' '}
+          <Link to="/report" className="text-blue-400 hover:underline">
+            Checks
+          </Link>
+          .
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-4">

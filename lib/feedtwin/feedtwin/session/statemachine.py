@@ -32,7 +32,33 @@ import csv
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
+
+#: Bumped whenever the stored form of an edited table changes meaning.
+MACHINE_SCHEMA = 1
+
+#: States the session and the cockpit find by name, and what each is for. An
+#: edited table without one is warned, with its reason.
+KEYED_STATES: dict[str, str] = {
+    "Idle": "a stand opens in Idle",
+    "Ready": "T-0 primes in Ready",
+    "Fire": "Fire burns",
+    "Vent": "a dry tank vents to Vent",
+    "Engine Abort": "ENG ABORT goes to Engine Abort",
+}
+
+#: What a state's name holds for the session to load a tank of each side in it
+#: (``Session._fills``): "fill" and one of these. The load comes from a tanker
+#: that is not on the drawing, so the name is all the session has to go on.
+FILL_WORDS: dict[str, tuple[str, ...]] = {"lox": ("ox", "lox"), "fuel": ("fuel", "eth")}
+
+
+def fills(state: str, side: str) -> bool:
+    """Whether the session loads a ``side`` (``lox``/``fuel``) tank in
+    ``state``: by its name, as :data:`FILL_WORDS` reads it."""
+    name = state.lower()
+    return "fill" in name and any(word in name for word in FILL_WORDS[side])
+
 
 #: Prefixes that say how a valve is actuated, not what it does. A solenoid and
 #: a ball valve in the same place are the same actuator to a state machine.
@@ -156,6 +182,19 @@ class StateMachine:
     warnings: tuple[str, ...] = ()
     """Problems in the tables themselves. Reported rather than repaired: only
     whoever maintains the CSV knows which column a short row is missing."""
+    table: Mapping[str, Mapping[str, bool]] | None = None
+    """The positions as the table writes them, before the twin holds Idle
+    shut -- what an editor shows and a download writes. ``None``: the same as
+    ``positions``."""
+    layout: Mapping[str, tuple[int, int]] = field(default_factory=dict)
+    """Where each state sits on the panel, ``(row, col)`` -- the DAQ's
+    ``panel_row``/``panel_col``. A state not here is not placed."""
+    aborts: frozenset[str] | None = None
+    """The abort states, as the DAQ flags them (``is_abort``). ``None``: any
+    state with "abort" in its name, which is what the twin always assumed."""
+
+    def is_abort(self, state: str) -> bool:
+        return state in self.aborts if self.aborts is not None else _is_abort(state)
 
     def can_go(self, current: str, target: str) -> bool:
         """Whether the stand would accept this transition.
@@ -170,7 +209,7 @@ class StateMachine:
         the failure it guards against is asymmetric: a spurious abort path costs
         an operator one confused moment, and a missing one costs an abort.
         """
-        if current == target or _is_abort(target):
+        if current == target or self.is_abort(target):
             return True
         reachable = self.allowed.get(current)
         if reachable is None:
@@ -188,6 +227,37 @@ class StateMachine:
     def open_actuators(self, state: str) -> frozenset[str]:
         row = self.positions.get(state, {})
         return frozenset(name for name, is_open in row.items() if is_open)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The tables as an editor holds them: the states in column order with
+        their place on the panel, the rows, which rows each state opens *as
+        written* (Idle's OPEN cells included -- the twin's hold is applied
+        again on reading), and the legal moves. A state with no entry in
+        ``allowed`` has no row in the transition table, and fails closed."""
+        written = self.table if self.table is not None else self.positions
+        return {
+            "schema": MACHINE_SCHEMA,
+            "name": self.name,
+            "states": [
+                {
+                    "name": s,
+                    "row": self.layout[s][0] if s in self.layout else None,
+                    "col": self.layout[s][1] if s in self.layout else None,
+                    "abort": self.is_abort(s),
+                }
+                for s in self.states
+            ],
+            "actuators": list(self.actuators),
+            "open": {
+                s: [a for a in self.actuators if written.get(s, {}).get(a)]
+                for s in self.states
+            },
+            "allowed": {
+                s: [t for t in self.states if t in self.allowed[s]]
+                for s in self.states
+                if s in self.allowed
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,42 +333,9 @@ def load_machine(
     for actuator, row in zip(actuator_names, body):
         for state, cell in zip(states, row):
             positions[state][actuator] = cell.upper().startswith("OPEN")
+    table = {s: dict(row) for s, row in positions.items()}
 
-    warnings: list[str] = []
-    # Positions that cannot be what anybody meant, read exactly as the DAQ
-    # reads them. A main valve is only ever open with the engine lit, and a
-    # cold, de-energised stand has nothing open at all; the shipped table
-    # says otherwise in four places.
-    #
-    # Idle is the one place the twin does NOT do as the table says. Idle is
-    # the de-energised state -- what the panel is in before anybody arms
-    # anything and what every solenoid falls back to unpowered -- and OPEN in
-    # that column cannot be a position a normally-closed solenoid holds. Read
-    # literally it opened LOX Press, and once a bottle could be full at
-    # start-up it pressed the LOX tank to 550 psig before the operator had
-    # touched a thing. Transitions stay faithful to the byte (an interlock
-    # the stand lacks must be missing here too); a valve position that
-    # pressurises a cold stand is not an interlock, it is a typo, and the
-    # warning below says exactly what the table claimed.
-    mains = [a for a in actuator_names if "main" in a.lower()]
-    for state in states:
-        opened = sorted(a for a in actuator_names if positions[state].get(a))
-        if state.lower() == "idle" and opened:
-            warnings.append(
-                f"Idle commands {', '.join(opened)} OPEN in {act_path.name} as "
-                "the DAQ reads it. A cold, de-energised stand has nothing "
-                "open, so the twin holds Idle shut; the stand's table is what "
-                "needs fixing."
-            )
-            for actuator in opened:
-                positions[state][actuator] = False
-        wrong = [a for a in mains if positions[state].get(a)]
-        if wrong and state.lower() not in ("fire", "idle"):
-            warnings.append(
-                f"{state} commands {', '.join(wrong)} OPEN in {act_path.name} "
-                "as the DAQ reads it. Only Fire should open a main; the "
-                "stand's table is what needs fixing."
-            )
+    warnings = _hold_idle(states, actuator_names, positions, act_path.name)
     allowed: dict[str, frozenset[str]] = {}
     if trans_path.exists():
         columns, sources, moves = _read_matrix(trans_path)
@@ -328,18 +365,12 @@ def load_machine(
                 "refuses the same moves as the stand. Fix the file and both "
                 "tools change together."
             )
-        # The consequence worth shouting about. Only Ready and Fire should be
-        # able to reach Fire; if the alignment hands Fire to anything else, the
-        # stand has an unguarded ignition path and so, faithfully, does this.
-        for source, targets in allowed.items():
-            if "Fire" in targets and source not in ("Ready", "Fire"):
-                warnings.append(
-                    f"{source} -> Fire is permitted by {trans_path.name} as the "
-                    "DAQ reads it. That is an ignition path that bypasses "
-                    "Ready. The twin allows it so a rehearsal matches the "
-                    "stand; the stand's table is what needs fixing."
-                )
+        warnings.extend(_fire_bypasses(allowed, trans_path.name))
 
+    layout, aborts = _read_panel(
+        Path(str(tables)) / f"{name}_states.csv" if tables is not None else None,
+        states,
+    )
     return StateMachine(
         name=name,
         states=tuple(states),
@@ -347,6 +378,212 @@ def load_machine(
         positions=positions,
         allowed=allowed,
         warnings=tuple(warnings),
+        table=table,
+        layout=layout,
+        aborts=aborts,
+    )
+
+
+def _hold_idle(
+    states: Sequence[str],
+    actuators: Sequence[str],
+    positions: dict[str, dict[str, bool]],
+    source: str,
+) -> list[str]:
+    """Hold Idle shut in ``positions`` and say what the table claimed; flag a
+    main valve opened outside Fire. Shared by the CSV and the edited table, so
+    a table reads the same whichever way it arrives.
+
+    Positions that cannot be what anybody meant, read exactly as the DAQ
+    reads them. A main valve is only ever open with the engine lit, and a
+    cold, de-energised stand has nothing open at all; the shipped table says
+    otherwise in four places.
+
+    Idle is the one place the twin does NOT do as the table says. Idle is the
+    de-energised state -- what the panel is in before anybody arms anything
+    and what every solenoid falls back to unpowered -- and OPEN in that column
+    cannot be a position a normally-closed solenoid holds. Read literally it
+    opened LOX Press, and once a bottle could be full at start-up it pressed
+    the LOX tank to 550 psig before the operator had touched a thing.
+    Transitions stay faithful to the byte (an interlock the stand lacks must
+    be missing here too); a valve position that pressurises a cold stand is
+    not an interlock, it is a typo, and the warning says exactly what the
+    table claimed.
+    """
+    warnings: list[str] = []
+    mains = [a for a in actuators if "main" in a.lower()]
+    for state in states:
+        opened = sorted(a for a in actuators if positions[state].get(a))
+        if state.lower() == "idle" and opened:
+            warnings.append(
+                f"Idle commands {', '.join(opened)} OPEN in {source} as "
+                "the DAQ reads it. A cold, de-energised stand has nothing "
+                "open, so the twin holds Idle shut; the stand's table is what "
+                "needs fixing."
+            )
+            for actuator in opened:
+                positions[state][actuator] = False
+        wrong = [a for a in mains if positions[state].get(a)]
+        if wrong and state.lower() not in ("fire", "idle"):
+            warnings.append(
+                f"{state} commands {', '.join(wrong)} OPEN in {source} "
+                "as the DAQ reads it. Only Fire should open a main; the "
+                "stand's table is what needs fixing."
+            )
+    return warnings
+
+
+def _fire_bypasses(allowed: Mapping[str, frozenset[str]], source: str) -> list[str]:
+    """The consequence worth shouting about. Only Ready and Fire should be able
+    to reach Fire; if the table hands Fire to anything else, the stand has an
+    unguarded ignition path and so, faithfully, does this."""
+    return [
+        f"{state} -> Fire is permitted by {source} as the "
+        "DAQ reads it. That is an ignition path that bypasses "
+        "Ready. The twin allows it so a rehearsal matches the "
+        "stand; the stand's table is what needs fixing."
+        for state, targets in allowed.items()
+        if "Fire" in targets and state not in ("Ready", "Fire")
+    ]
+
+
+def _read_panel(
+    path: Path | None, states: Sequence[str]
+) -> tuple[dict[str, tuple[int, int]], frozenset[str] | None]:
+    """Where each state sits on the panel and which are aborts, from
+    ``<name>_states.csv`` (``name,row,col,abort``: the DAQ's ``[[states]]``
+    ``panel_row``/``panel_col``/``is_abort``). With no such file the panel is
+    the console's own and aborts go by name, as before. A state the file
+    does not list is an abort only by its name."""
+    if path is None or not path.exists():
+        return {}, None
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    layout: dict[str, tuple[int, int]] = {}
+    flagged: set[str] = set()
+    listed: set[str] = set()
+    for row in rows:
+        state = (row.get("name") or "").strip()
+        if state not in states:
+            continue
+        listed.add(state)
+        place = (row.get("row") or "").strip(), (row.get("col") or "").strip()
+        if all(place):
+            layout[state] = (int(place[0]), int(place[1]))
+        if _flag(row.get("abort")):
+            flagged.add(state)
+    flagged |= {s for s in states if s not in listed and _is_abort(s)}
+    return layout, frozenset(flagged)
+
+
+def _flag(value: Any) -> bool:
+    """A yes/no a person or a file wrote: ``True``, ``1``, ``"1"``,
+    ``"true"``, ``"yes"``. Anything else -- ``"0"`` and ``"false"`` included
+    -- is no: an abort flag read loosely is an unguarded path into it."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value or "").strip().lower() in ("1", "true", "yes")
+
+
+def machine_from_dict(raw: Mapping[str, Any]) -> StateMachine:
+    """An edited table (:meth:`StateMachine.to_dict`'s shape), read as the CSVs
+    are: Idle held shut and the same warnings. Refused outright when it
+    contradicts itself -- a state or row named twice, a cell naming a state or
+    row the table does not have -- because a half-understood table would
+    command valves nobody chose."""
+    schema = int(raw.get("schema", MACHINE_SCHEMA))
+    if schema != MACHINE_SCHEMA:
+        raise ValueError(
+            f"state table schema {schema}; this feedtwin reads {MACHINE_SCHEMA}"
+        )
+    rows = raw.get("states") or []
+    states = [str((s or {}).get("name") or "").strip() for s in rows]
+    if not states:
+        raise ValueError("the state table has no states")
+    if "" in states:
+        raise ValueError("a state has no name")
+    if len(set(states)) != len(states):
+        raise ValueError("two states share a name")
+    actuators = [str(a or "").strip() for a in raw.get("actuators") or []]
+    if "" in actuators:
+        raise ValueError("an actuator row has no name")
+    if len({a.casefold() for a in actuators}) != len(actuators):
+        raise ValueError("two actuator rows share a name")
+    known_states, known_rows = set(states), set(actuators)
+
+    opened: Mapping[str, Any] = raw.get("open") or {}
+    for state, names in opened.items():
+        if state not in known_states:
+            raise ValueError(
+                f"the table opens valves in {state!r}, which is not a state"
+            )
+        stray = sorted(set(map(str, names or [])) - known_rows)
+        if stray:
+            raise ValueError(f"{state} opens {', '.join(stray)}, which have no row")
+    positions = {
+        s: {a: a in set(map(str, opened.get(s) or [])) for a in actuators}
+        for s in states
+    }
+    table = {s: dict(row) for s, row in positions.items()}
+
+    moves: Mapping[str, Any] = raw.get("allowed") or {}
+    allowed: dict[str, frozenset[str]] = {}
+    for state, targets in moves.items():
+        if state not in known_states:
+            raise ValueError(f"the transitions name {state!r}, which is not a state")
+        stray = sorted(set(map(str, targets or [])) - known_states)
+        if stray:
+            raise ValueError(
+                f"{state} may go to {', '.join(stray)}, which are not states"
+            )
+        allowed[state] = frozenset(map(str, targets or []))
+
+    layout: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        r, c = row.get("row"), row.get("col")
+        if r is not None and c is not None and r != "" and c != "":
+            layout[str(row["name"]).strip()] = (int(r), int(c))
+    aborts = frozenset(
+        str(row["name"]).strip() for row in rows if _flag(row.get("abort"))
+    )
+
+    source = "the edited table"
+    warnings = _hold_idle(states, actuators, positions, source)
+    warnings.extend(_fire_bypasses(allowed, source))
+    missing = [s for s in KEYED_STATES if s not in known_states]
+    if missing:
+        warnings.append(
+            f"The table has no {', '.join(missing)}: the twin keys on "
+            f"{'that state' if len(missing) == 1 else 'those states'} by name "
+            f"({'; '.join(KEYED_STATES[s] for s in missing)})."
+        )
+    unloaded = [
+        (tank, example)
+        for side, tank, example in (
+            ("lox", "LOX", "Ox Fill"),
+            ("fuel", "fuel", "Fuel Fill"),
+        )
+        if not any(fills(state, side) for state in states)
+    ]
+    if unloaded:
+        warnings.append(
+            f"No state loads the {' or the '.join(t for t, _ in unloaded)} tank: "
+            "the twin loads a tank only in a state whose name says fill and its "
+            f"side, as {' and '.join(e for _, e in unloaded)} "
+            f"{'does' if len(unloaded) == 1 else 'do'}."
+        )
+    return StateMachine(
+        name=str(raw.get("name") or "edited"),
+        states=tuple(states),
+        actuators=tuple(actuators),
+        positions=positions,
+        allowed=allowed,
+        warnings=tuple(warnings),
+        table=table,
+        layout=layout,
+        aborts=aborts,
     )
 
 

@@ -246,7 +246,10 @@ def diff(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
 
 #: Input groups, in the order the ladder swaps them, and the keys each owns.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("drawing", ("diagram", "hookup", "multiphase")),
+    # An edited table rides with the hookup: a box's connector names are its
+    # rows, so swapping one without the other runs the mains unbound. Named
+    # for all of it: a rung that swaps only the table is not "the drawing".
+    ("drawing & hookup", ("diagram", "hookup", "machine_table", "multiphase")),
     ("engine", ("engine",)),
     ("fluids", ("fluid_set",)),
     ("state machine", ("machine",)),

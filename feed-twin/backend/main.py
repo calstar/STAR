@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.document import PidNode
+from feedtwin.pid.document import Diagram, PidNode
 from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
@@ -76,9 +76,12 @@ from backend.models import (
     EngineState,
     BurnOut,
     BurnsOut,
+    BoardOut,
+    ChannelOut,
     HookupBody,
     HookupOut,
     HookupRegulatorOut,
+    HookupSymbolOut,
     HookupValveOut,
     KnobOut,
     LiveKnobOut,
@@ -110,13 +113,14 @@ from feedtwin.session.burn import (
     run_burn,
 )
 from stardesign.userdata import slug_user
-from feedtwin.pid.roles import ground_ids
+from feedtwin.pid.roles import ground_ids, vent_branches
 from feedtwin.session.hookup import (
     CHARGE,
     DOME,
     Hookup,
     binding as hookup_binding,
     knob_starts,
+    lost_connectors as hookup_lost,
     on_vehicle as hookup_on_vehicle,
     regulators as hookup_regulators,
     suggest as suggest_hookup,
@@ -133,6 +137,9 @@ from backend.tunables import TUNABLES
 from backend.tunables import describe as describe_tunables, parse_setup, wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
 from backend.statemachine import available as sm_available, load_machine
+from backend import daqbox
+from feedtwin.session.statemachine import StateMachine, machine_from_dict
+from feedtwin.session.core import builtin_rows
 from backend import runs as run_records
 from backend import userdata
 from backend.routers import stands, users
@@ -173,12 +180,22 @@ def _overrides_for(diagram_id: str) -> dict[str, Any]:
     return overrides.entry(_drawing_key(diagram_id))
 
 
+def _cart(diagram: Diagram) -> frozenset[str]:
+    """The cart, as the console starts it hidden: the drawing's ground support
+    (feedtwin.pid.roles) less its vent lines, which are plugged into the
+    rocket until launch and watched with it (the team, 2026-10-10) -- their
+    valves, not a hand valve on one, which a person turns at the cart."""
+    types = {n.id: n.type for n in diagram.nodes}
+    vents = {i for i in vent_branches(diagram) if types.get(i) != "MAN"}
+    return frozenset(ground_ids(diagram)) - frozenset(vents)
+
+
 @functools.lru_cache(maxsize=64)
 def _ground_of(diagram_id: str) -> frozenset[str]:
-    """The drawing's ground support (feedtwin.pid.roles). Artifacts are
+    """:func:`_cart` of a drawing in the library. Artifacts are
     content-addressed, so an id's answer never changes."""
     try:
-        return frozenset(ground_ids(load_diagram_artifact(library, diagram_id)))
+        return _cart(load_diagram_artifact(library, diagram_id))
     except (LibraryError, AssemblyError, ValueError):
         return frozenset()
 
@@ -310,6 +327,7 @@ def _assemble(
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
+    gas: Mapping[str, str] | None = None,
 ) -> Model:
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
@@ -327,6 +345,7 @@ def _assemble(
             diagram_id,
             engine_id=engine_id,
             fluid_swap={**FLUID_SETS[fluid_set], **dict(swap or {})},
+            gas_swap=gas,
             cea_resolver=_cea_for,
             multiphase=multiphase,
             overrides=_overrides_for(diagram_id),
@@ -780,6 +799,15 @@ def _pages(nodes: Sequence[PidNode]) -> dict[str, str]:
     return pages
 
 
+def _not_operated(model: Model) -> frozenset[str]:
+    """Actuators nobody operates: disconnects. A capped QD is in the
+    assembly's actuators only so that, rocket only, the state table's vent
+    row can vent through it in the cut cart's place (the binding's
+    stand-in); it is not a valve on the console or the drawing, and no DAQ
+    cable goes to it (``daqbox.NOT_CABLED``)."""
+    return frozenset(n.id for n in model.diagram.nodes if n.type in daqbox.NOT_CABLED)
+
+
 @app.get("/api/model")
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire", ignore_gse: bool = False
@@ -799,7 +827,7 @@ async def model_view(
         actuators=[
             Actuator(id=d, tag=s.split(".")[0], signal=s)
             for d, s in model.built.actuators.items()
-            if not s.endswith(".dome")
+            if not s.endswith(".dome") and d not in _not_operated(model)
         ],
         report=_report(model),
         pages=_pages(model.diagram.nodes),
@@ -819,7 +847,7 @@ async def model_view(
                 ignore_gse,
             ).items()
         },
-        ground=sorted(ground := ground_ids(model.diagram)),
+        ground=sorted(ground := _cart(model.diagram)),
         ground_bottles=sorted(
             n.id
             for n in model.diagram.nodes
@@ -916,7 +944,11 @@ async def drawing_view(
     console = (
         instruments
         | set(built.tanks)
-        | {d for d, sig in built.actuators.items() if not sig.endswith(".dome")}
+        | {
+            d
+            for d, sig in built.actuators.items()
+            if not sig.endswith(".dome") and d not in _not_operated(raw)
+        }
         | {n.id for n in raw.diagram.nodes if n.type in {"KBOTTLE", "DEWAR"}}
     )
     _, applied = apply_overrides(raw.diagram, entry)
@@ -1188,33 +1220,73 @@ def _stand(
     multiphase: bool = False,
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
+    gas: Mapping[str, str] | None = None,
 ) -> "Stand":
     """A model with the stand's state machine bound to its valves.
 
     ``vehicle_only`` (``Setup.ignore_gse``) builds the rocket alone: the
     drawing's hookup keeps its vehicle pins, and its knobs are the cut
     drawing's (:func:`feedtwin.session.hookup.on_vehicle`)."""
-    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only)
-    try:
-        loaded = load_machine(machine)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No state machine {machine!r}. Shipped: "
-            f"{', '.join(sm_available())}. ({exc})",
-        ) from exc
+    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas)
+    shipped = _shipped_machine(machine)
     hookup, _, problem = _hookup_for(diagram, model)
     drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
+    whole = (
+        _assemble(diagram, engine, fluid_set, multiphase, swap, gas=gas)
+        if vehicle_only
+        else model
+    )
+    lost = _lost_note(hookup, whole)
     if vehicle_only:
         hookup = hookup_on_vehicle(hookup, model)
+    # The drawing's own state table when somebody edited it, else the DAQ's.
+    loaded = hookup.machine or shipped
     return Stand(
         model=model,
         machine=loaded,
         binding=hookup_binding(model, loaded, hookup),
         hookup=hookup,
         drawn=drawn,
-        notes=(problem,) if problem else (),
+        notes=tuple(n for n in (problem, lost) if n),
+        whole=whole,
     )
+
+
+def _lost_note(hookup: Hookup, whole: Model, whose: str = "The DAQ box") -> str:
+    """Say which connectors go to symbols the drawing no longer has, by what
+    each now does: a valve connector's row is matched by name instead
+    (feedtwin.session.hookup.binding); a transducer, RTD or thermocouple is
+    read from nothing, so the console does not show it until it is rewired."""
+    lost = hookup_lost(hookup, whole)
+    if not lost:
+        return ""
+    valves = [c for c in lost if daqbox.KIND_OF_BOARD.get(c.board) == "valve"]
+    sensors = [c for c in lost if c not in valves]
+    said = [
+        f"{what}: {', '.join(f'{c.name} ({c.symbol})' for c in these)}."
+        for what, these in (
+            ("Valves, matched by name instead", valves),
+            ("Sensors, not shown until rewired", sensors),
+        )
+        if these
+    ]
+    return (
+        f"{whose} cables connectors to symbols this drawing no longer has. "
+        f"{' '.join(said)} Rewire them on the P&ID tab."
+    )
+
+
+def _shipped_machine(machine: str) -> StateMachine:
+    """The DAQ's state table this app ships, by name."""
+    try:
+        loaded: StateMachine = load_machine(machine)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No state machine {machine!r}. Shipped: "
+            f"{', '.join(sm_available())}. ({exc})",
+        ) from exc
+    return loaded
 
 
 #: The record kind a drawing's hookup is kept under (Library.put_record).
@@ -1272,7 +1344,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
         try:
             raw = stored.get("hookup")
             return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True, ""
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
                 f"This drawing's saved hookup could not be read ({exc}); the "
                 "suggested hookup is wired instead. Check the Hookup tab and save "
@@ -1432,6 +1504,19 @@ def _lockup_range(session: Session, tank_id: str) -> list[float] | None:
     return None if charged is None or empty is None else [charged, empty]
 
 
+def _wired(session: Session) -> list[str] | None:
+    """What the stand's DAQ box sees, by drawing id: every symbol on a
+    connector and every valve a table row drives (rocket only, a vent row
+    finds the tank-top disconnect with no connector of its own). ``None``
+    when the hookup is not wired: everything is, as it was before the box."""
+    hookup = session.hookup
+    if hookup is None or hookup.channels is None:
+        return None
+    return sorted(
+        {c.symbol for c in hookup.channels} | set(session.binding.to_symbol.values())
+    )
+
+
 def _session_out(session: Session, sample: SessionSample) -> SessionOut:
     built = session.model.built
     signals_of = {d: s for d, s in built.actuators.items() if not s.endswith(".dome")}
@@ -1439,7 +1524,8 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         id=session.id,
         t=sample.t,
         knobs=_live_knobs(session),
-        aliases=dict(session.hookup.aliases) if session.hookup is not None else {},
+        aliases=session.hookup.names() if session.hookup is not None else {},
+        wired=_wired(session),
         # The stand's state, not the frame's. While a run is being computed the
         # frame on display is the one from before the command that started it,
         # and offering its transitions would offer the wrong ones.
@@ -1521,6 +1607,27 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
     )
 
 
+def _stand_box_notes(own: Hookup, stand: Stand) -> list[str]:
+    """What a stand's own DAQ box has that this drawing cannot -- the
+    connectors a save or a view would refuse (``daqbox.problems``): a cable on
+    the wrong board, to a symbol the DAQ cannot read or drive, on a board the
+    box lacks. The stand opens on it all the same, and says so. A cable to a
+    symbol the drawing lost is said once, by what it now does
+    (:func:`_lost_note`). Checked against the whole drawing: rocket only, a
+    cable to the cart is the box's, not a fault."""
+    whole = stand.whole or stand.model
+    drawn = {n.id for n in whole.diagram.nodes}
+    kept = tuple(c for c in own.channels or () if c.symbol in drawn)
+    wrong = daqbox.problems(replace(own, channels=kept), whole)
+    out = [_lost_note(own, whole, "The stand's DAQ box")]
+    if wrong:
+        out.append(
+            "The stand's DAQ box has connectors this drawing cannot take (a "
+            f"save would refuse them): {' '.join(wrong)} Fix them on the P&ID tab."
+        )
+    return [n for n in out if n]
+
+
 @app.post("/api/session")
 async def open_session(
     request: Request,
@@ -1540,7 +1647,13 @@ async def open_session(
     settings = dict(body or {})
     setup = _setup(settings)
     stand = _stand(
-        diagram, engine, fluid_set, machine, multiphase, vehicle_only=setup.ignore_gse
+        diagram,
+        engine,
+        fluid_set,
+        machine,
+        multiphase,
+        vehicle_only=setup.ignore_gse,
+        gas=_pressurant_swap(setup.pressurant),
     )
     # The dome and the COPV fill start where the drawing sets them; the
     # client sends them only when the operator has turned them (or a stand
@@ -1553,8 +1666,8 @@ async def open_session(
         },
         setup,
     )
-    hookup, binding = stand.hookup, stand.binding
-    hookup_note = ""
+    hookup, binding, table = stand.hookup, stand.binding, stand.machine
+    hookup_notes: list[str] = []
     raw = settings.get("hookup")
     if isinstance(raw, Mapping) and raw:
         # A stand document carries its own hookup: used for this session only,
@@ -1569,19 +1682,23 @@ async def open_session(
             known = {r.id for r in hookup_regulators(stand.model)}
             stray = sorted({r for k in candidate.knobs for r in k.regulators} - known)
             if stray:
-                hookup_note = (
+                hookup_notes.append(
                     "The stand's hookup was made for another drawing (it names "
                     f"{', '.join(stray)}); using this drawing's own hookup."
                 )
             else:
                 hookup = candidate
-                binding = hookup_binding(stand.model, stand.machine, hookup)
-        except (ValueError, KeyError, TypeError) as exc:
-            hookup_note = f"The stand's hookup could not be read ({exc}); using this drawing's own."
+                table = candidate.machine or _shipped_machine(machine)
+                binding = hookup_binding(stand.model, table, hookup)
+                hookup_notes.extend(_stand_box_notes(Hookup.from_dict(raw), stand))
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            hookup_notes.append(
+                f"The stand's hookup could not be read ({exc}); using this drawing's own."
+            )
     try:
         session = Session(
             stand.model,
-            stand.machine,
+            table,
             binding,
             state=str(settings.get("state") or "Idle"),
             setup=setup,
@@ -1594,7 +1711,7 @@ async def open_session(
     # The drawing's hookup notes, while it is the drawing's hookup that is wired.
     notices = [
         *(stand.notes if hookup is stand.hookup else ()),
-        *([hookup_note] if hookup_note else []),
+        *hookup_notes,
         *session.short_loads(),
     ]
     session.assumptions.extend(notices)
@@ -1749,7 +1866,7 @@ async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
         "machine": opened.machine,
         "multiphase": opened.multiphase,
         "setup": wire_setup(session.setup),
-        "hookup": session.hookup.to_dict() if session.hookup is not None else {},
+        **_hookup_inputs(session),
         "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
     }
     engine_name = opened.engine
@@ -1836,7 +1953,51 @@ async def command_session(
             )
         named = Hookup.from_dict({"aliases": aliases}).aliases
         session.hookup = replace(session.hookup, aliases=named)
+    names = settings.get("names")
+    if isinstance(names, Mapping):
+        # The console's names, live: aliases, and the DAQ box when only what
+        # its connectors are called changed. A name a table row goes by is
+        # wiring -- renaming a valve's connector moves it off its row -- so
+        # that needs a fresh stand, and is refused here rather than half done.
+        if session.hookup is None:
+            raise HTTPException(
+                status_code=409, detail="This stand has no hookup to name things in."
+            )
+        try:
+            fresh = Hookup.from_dict(
+                {
+                    "aliases": names.get("aliases") or {},
+                    "channels": names.get("channels"),
+                }
+            )
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Names without connectors leave the box as it is.
+        channels = fresh.channels if "channels" in names else session.hookup.channels
+        if channels is not None and session.hookup.channels is not None:
+            here = {n.id for n in session.model.diagram.nodes}
+            channels = tuple(c for c in channels if c.symbol in here)
+        renamed = replace(
+            session.hookup,
+            aliases=fresh.aliases,
+            channels=channels if session.hookup.channels is not None else None,
+        )
+        before = {(c.board, c.slot, c.symbol) for c in session.hookup.channels or ()}
+        after = {(c.board, c.slot, c.symbol) for c in renamed.channels or ()}
+        rebound = hookup_binding(session.model, session.machine, renamed).to_symbol
+        if before != after or dict(rebound) != dict(session.binding.to_symbol):
+            raise HTTPException(
+                status_code=409,
+                detail="That changes what a state-table row drives; save it to "
+                "restart the stand wired the new way.",
+            )
+        session.hookup = renamed
     if "valve" in settings:
+        if str(settings["valve"]) in _not_operated(session.model):
+            raise HTTPException(
+                status_code=409,
+                detail="A disconnect is not a valve: nobody opens or shuts it.",
+            )
         try:
             session.set_valve(str(settings["valve"]), bool(settings.get("open")))
         except PermissionError as exc:
@@ -1851,6 +2012,7 @@ async def command_session(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
     if "setup" in settings or "dome" in settings:
+        built_gas = session.setup.pressurant
         session.setup = _setup(
             {
                 **dict(settings.get("setup") or {}),
@@ -1866,6 +2028,8 @@ async def command_session(
         # it is.
         if session.setup.ignore_gse != session.gse_ignored:
             session.setup = replace(session.setup, ignore_gse=session.gse_ignored)
+        # The pressurant is in the network too: a new stand.
+        session.setup = replace(session.setup, pressurant=built_gas)
 
     return _session_out(session, session.step(1e-3))
 
@@ -2031,30 +2195,76 @@ def _hookup_body(hookup: Hookup) -> HookupBody:
         valves=dict(hookup.valves),
         knobs=[KnobOut(**k.to_dict()) for k in hookup.knobs],
         aliases=dict(hookup.aliases),
+        channels=(
+            None
+            if hookup.channels is None
+            else [ChannelOut(**c.to_dict()) for c in hookup.channels]
+        ),
+        rows=dict(hookup.rows),
+        machine=None if hookup.machine is None else hookup.machine.to_dict(),
     )
 
 
+def _hookup_from_body(body: HookupBody) -> Hookup:
+    """A hookup as the API sends it, refused (422) when it contradicts itself."""
+    try:
+        return Hookup.from_dict(
+            {
+                "valves": body.valves,
+                "knobs": [k.model_dump() for k in body.knobs],
+                "aliases": body.aliases,
+                "channels": (
+                    None
+                    if body.channels is None
+                    else [c.model_dump() for c in body.channels]
+                ),
+                "rows": body.rows,
+                "machine": body.machine,
+            }
+        )
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _hookup_out(
-    diagram: str, engine: str, fluid_set: str, machine: str, vehicle_only: bool = False
+    diagram: str,
+    engine: str,
+    fluid_set: str,
+    machine: str,
+    vehicle_only: bool = False,
+    own: Hookup | None = None,
 ) -> HookupOut:
-    stand = _stand(diagram, engine, fluid_set, machine)
-    model, b = stand.model, stand.binding
-    hookup, saved, _ = _hookup_for(diagram, model)
+    """A drawing's hookup as the panels show it: the saved one or the
+    suggestion -- or ``own``, a stand's -- always as a DAQ box (a hookup that
+    is not wired comes with the box its matching amounts to), with the state
+    table it runs and how that binds."""
+    model = _assemble(diagram, engine, fluid_set)
+    shipped = _shipped_machine(machine)
+    if own is None:
+        hookup, saved, _ = _hookup_for(diagram, model)
+    else:
+        hookup, saved = own, True
+    table = hookup.machine or shipped
+    b = hookup_binding(model, table, hookup)
+    # The model the stand runs, for the rows it acts on by name.
+    runs = model
     if vehicle_only:
         # Rocket only (Setup.ignore_gse): the wiring the stand runs is the cut
         # drawing's -- a vent bound to the cart's solenoid is bound to the
         # rocket's capped disconnect instead. The hookup itself stays the whole
         # drawing's, so saving a name from here never drops the cart's knobs
-        # and pins (on_vehicle keeps the vehicle's half at session start).
-        b = _stand(diagram, engine, fluid_set, machine, vehicle_only=True).binding
+        # and connectors (on_vehicle keeps the vehicle's half at session start).
+        cut = _assemble(diagram, engine, fluid_set, vehicle_only=True)
+        b = hookup_binding(cut, table, hookup_on_vehicle(hookup, cut))
+        # The cart's fill went with the cart: the built-in charge is back.
+        runs = cut
+    suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
         lineage=_lineage(library.get(diagram)),
         saved=saved,
-        hookup=_hookup_body(hookup),
-        suggested=_hookup_body(
-            suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
-        ),
-        actuators=list(stand.machine.actuators),
+        hookup=_hookup_body(daqbox.wiring(hookup, model, table)),
+        suggested=_hookup_body(daqbox.wiring(suggested, model, shipped)),
+        actuators=list(table.actuators),
         valves=[
             HookupValveOut(id=v.id, label=v.label, page=v.page, role=list(v.role))
             for v in hookup_valves(model)
@@ -2077,6 +2287,24 @@ def _hookup_out(
         pages=sorted({n.page or "Main" for n in model.diagram.nodes}),
         mated=[list(pair) for pair in model.built.mated],
         vehicle_only=vehicle_only,
+        wired=hookup.wired,
+        boards=[BoardOut(id=x.id, label=x.label, kind=x.kind) for x in daqbox.BOARDS],
+        symbols=[
+            HookupSymbolOut(
+                id=x.id,
+                label=x.label,
+                type=x.type,
+                page=x.page,
+                kind=x.kind,
+                board=x.board,
+                ground=x.ground,
+            )
+            for x in daqbox.symbols(model)
+        ],
+        machine_shipped=shipped.to_dict(),
+        machine_warnings=list(table.warnings),
+        builtin=builtin_rows(table, runs),
+        problems=_impossible(hookup, model),
     )
 
 
@@ -2088,10 +2316,47 @@ async def get_hookup(
     machine: str = "diablo",
     ignore_gse: bool = False,
 ) -> HookupOut:
-    """Which valve each actuator drives and which knob sets which regulator, on
-    this drawing: saved, or the twin's suggestion. ``ignore_gse``: wired as a
-    rocket-only stand runs it."""
+    """The drawing's DAQ box, state table and knobs: saved, or the twin's
+    suggestion. ``ignore_gse``: bound as a rocket-only stand runs it."""
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
+
+
+@app.post("/api/hookup/view")
+async def view_hookup(
+    diagram: str,
+    body: HookupBody,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
+    check: bool = True,
+) -> HookupOut:
+    """A hookup that is not the drawing's -- a stand's own -- shown as the
+    drawing's would be, and bound the way that stand runs it. Writes nothing,
+    but refuses (422) what a save would: the panels check a stand's hookup
+    here before keeping it with the stand. ``check=false`` only shows it, with
+    what is wrong in ``problems`` -- a stand whose drawing lost a symbol
+    still opens in the panels, so the cable can be unplugged."""
+    hookup = _hookup_from_body(body)
+    if check:
+        _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
+    return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse, own=hookup)
+
+
+def _impossible(hookup: Hookup, model: Model) -> list[str]:
+    """What this drawing cannot have in ``hookup``: a knob on a regulator it
+    lacks, a cable on the wrong board or to a symbol that is not here."""
+    known = {r.id for r in hookup_regulators(model)}
+    stray = sorted({r for k in hookup.knobs for r in k.regulators} - known)
+    out = [f"Not regulators on this drawing: {', '.join(stray)}."] if stray else []
+    return out + daqbox.problems(hookup, model)
+
+
+def _refuse_impossible(hookup: Hookup, model: Model) -> None:
+    """422 for a hookup this drawing cannot have (``_impossible``)."""
+    wrong = _impossible(hookup, model)
+    if wrong:
+        raise HTTPException(status_code=422, detail=" ".join(wrong))
 
 
 @app.put("/api/hookup")
@@ -2104,24 +2369,8 @@ async def save_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Keep a hookup for this drawing's lineage. New stands open with it."""
-    try:
-        hookup = Hookup.from_dict(
-            {
-                "valves": body.valves,
-                "knobs": [k.model_dump() for k in body.knobs],
-                "aliases": body.aliases,
-            }
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    model = _assemble(diagram, engine, fluid_set)
-    known = {r.id for r in hookup_regulators(model)}
-    stray = sorted({r for k in hookup.knobs for r in k.regulators} - known)
-    if stray:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Not regulators on this drawing: {', '.join(stray)}.",
-        )
+    hookup = _hookup_from_body(body)
+    _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
         HOOKUPS,
         _lineage(library.get(diagram)),
@@ -2141,6 +2390,17 @@ async def reset_hookup(
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
     library.drop_record(HOOKUPS, _lineage(library.get(diagram)))
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
+
+
+@app.post("/api/statemachine/check")
+async def check_state_machine(table: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """What is wrong with a state table being edited: the warnings the twin
+    would give it once saved, or why it cannot be read at all."""
+    try:
+        machine = machine_from_dict(table)
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        return {"ok": False, "error": str(exc), "warnings": []}
+    return {"ok": True, "error": "", "warnings": list(machine.warnings)}
 
 
 @app.get("/api/session/{session_id}/burns")
@@ -2393,6 +2653,20 @@ def _t0(session: Session, sample: SessionSample) -> dict[str, Any]:
     }
 
 
+def _hookup_inputs(session: Session) -> dict[str, Any]:
+    """The hookup as a run records it. An edited state table goes under its
+    own key, ``machine_table``, so a diff names it apart from the box; the
+    Explain ladder still swaps the two together (runs.GROUPS), because the
+    box's connector names are the table's rows. A run on the shipped table
+    records no ``machine_table`` at all, so it diffs clean against a run
+    recorded before tables could be edited."""
+    if session.hookup is None:
+        return {"hookup": {}}
+    raw = session.hookup.to_dict()
+    table = raw.pop("machine", None)
+    return {"hookup": raw, **({"machine_table": table} if table else {})}
+
+
 def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[str, Any]:
     return {
         "diagram": opened.diagram,
@@ -2401,7 +2675,7 @@ def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[st
         "machine": opened.machine,
         "multiphase": opened.multiphase,
         "setup": wire_setup(session.setup),
-        "hookup": session.hookup.to_dict() if session.hookup is not None else {},
+        **_hookup_inputs(session),
         "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
         "t0": _t0(session, before),
     }
@@ -2538,6 +2812,15 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
         )
 
 
+def _pressurant_swap(pressurant: str) -> dict[str, str]:
+    """``Setup.pressurant`` as a gas swap (``swap_gases``): the drawing's other
+    gas for it, wherever it is declared. Empty: the drawing's gas."""
+    if not pressurant:
+        return {}
+    other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
+    return {other: pressurant}
+
+
 def _session_from_inputs(
     inputs: Mapping[str, Any], pressurant: str | None = None
 ) -> Session:
@@ -2546,23 +2829,25 @@ def _session_from_inputs(
     automatic vent at burnout off.
 
     ``pressurant`` swaps the gas in the bottle and the press lines (helium or
-    nitrogen, whichever the drawing has) for the other, at 293 K.
+    nitrogen, whichever the drawing has) for the other; without one, the
+    run's own (``Setup.pressurant``). A gas swap, not a cold flow: the engine
+    still burns on its card.
     """
-    swap: dict[str, tuple[str, float]] = {}
-    if pressurant:
-        other = {"helium": "nitrogen", "nitrogen": "helium"}[pressurant]
-        swap = {other: (pressurant, 293.15)}
     setup = replace(parse_setup(dict(inputs.get("setup") or {})), auto_vent=False)
+    if pressurant:
+        setup = replace(setup, pressurant=pressurant)
     stand = _stand(
         str(inputs["diagram"]),
         str(inputs.get("engine") or ""),
         str(inputs.get("fluid_set") or "hotfire"),
         str(inputs.get("machine") or "diablo"),
         bool(inputs.get("multiphase")),
-        swap,
         vehicle_only=setup.ignore_gse,
+        gas=_pressurant_swap(setup.pressurant),
     )
     raw = inputs.get("hookup")
+    if isinstance(raw, Mapping) and raw and inputs.get("machine_table"):
+        raw = {**raw, "machine": inputs["machine_table"]}
     drawn, _, _ = _hookup_for(str(inputs["diagram"]), stand.model)
     hookup = Hookup.from_dict(raw) if isinstance(raw, Mapping) and raw else drawn
     if setup.ignore_gse:
@@ -2571,10 +2856,12 @@ def _session_from_inputs(
     known = {r.id for r in hookup_regulators(stand.model)}
     if any(r not in known for k in hookup.knobs for r in k.regulators):
         hookup = drawn
+    # The table the run was recorded on, not whatever the drawing has now.
+    table = hookup.machine or _shipped_machine(str(inputs.get("machine") or "diablo"))
     session = Session(
         stand.model,
-        stand.machine,
-        hookup_binding(stand.model, stand.machine, hookup),
+        table,
+        hookup_binding(stand.model, table, hookup),
         state="Idle",
         setup=setup,
         hookup=hookup,
@@ -2744,18 +3031,9 @@ async def tunables() -> list[dict[str, Any]]:
     return describe_tunables()
 
 
-@app.get("/api/statemachine")
-async def state_machine(
-    diagram: str,
-    engine: str = "",
-    fluid_set: str = "hotfire",
-    machine: str = "diablo",
-    ignore_gse: bool = False,
+def _machine_out(
+    m: StateMachine, b: Any, edited: bool, builtin: dict[str, str]
 ) -> StateMachineOut:
-    """The stand's states and how they bind to this drawing's valves (the
-    vehicle's alone with ``ignore_gse``)."""
-    stand = _stand(diagram, engine, fluid_set, machine, vehicle_only=ignore_gse)
-    m, b = stand.machine, stand.binding
     return StateMachineOut(
         name=m.name,
         states=list(m.states),
@@ -2771,4 +3049,35 @@ async def state_machine(
             }
             for state in m.states
         },
+        layout={s: [r, c] for s, (r, c) in m.layout.items()},
+        aborts=[s for s in m.states if m.is_abort(s)],
+        table=m.to_dict(),
+        edited=edited,
+        builtin=builtin,
     )
+
+
+@app.get("/api/statemachine")
+async def state_machine(
+    diagram: str,
+    engine: str = "",
+    fluid_set: str = "hotfire",
+    machine: str = "diablo",
+    ignore_gse: bool = False,
+) -> StateMachineOut:
+    """The drawing's states and how they bind to its valves (the vehicle's
+    alone with ``ignore_gse``): its own table if somebody edited one, else the
+    DAQ's."""
+    stand = _stand(diagram, engine, fluid_set, machine, vehicle_only=ignore_gse)
+    edited = stand.hookup is not None and stand.hookup.machine is not None
+    builtin = builtin_rows(stand.machine, stand.model)
+    return _machine_out(stand.machine, stand.binding, edited, builtin)
+
+
+@app.get("/api/session/{session_id}/statemachine")
+async def session_state_machine(session_id: str) -> StateMachineOut:
+    """The table a running stand commands and how it is bound -- a stand's own
+    hookup included, which the drawing's endpoint cannot see."""
+    session = _session(session_id)
+    edited = session.hookup is not None and session.hookup.machine is not None
+    return _machine_out(session.machine, session.binding, edited, session.builtin)

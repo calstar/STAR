@@ -44,6 +44,7 @@ from feedtwin.pid import (
     PidNode,
     build_network,
 )
+from feedtwin.pid.roles import unpaired_vents
 from feedtwin.pid.roles import vehicle_only as cut_to_vehicle
 
 
@@ -174,6 +175,7 @@ def assemble_model(
     chamber: Chamber | None = None,
     cea_cache: str = "",
     fluid_swap: Mapping[str, tuple[str, float]] | None = None,
+    gas_swap: Mapping[str, str] | None = None,
     multiphase: bool = False,
     meta: Mapping[str, object] | None = None,
     vehicle_only: bool = False,
@@ -190,17 +192,39 @@ def assemble_model(
             engine's own name when an engine is given.
         chamber: A chamber to attach. When omitted and an engine is given, one
             is built from ``cea_cache`` (see :func:`chamber_for`).
+        gas_swap: The pressurant replaced, ``{"nitrogen": "helium"}``
+            (:func:`swap_gases`): every symbol declaring the one gas declares
+            the other. Tanks keep their contents.
         vehicle_only: Cut the ground support away before building
             (:func:`feedtwin.pid.roles.vehicle_only`, ``Setup.ignore_gse``):
             the cart is not simulated and the session's built-in fills stand in
-            for it. ``meta`` then carries ``vehicle_only`` and ``ground_cut``,
-            the labels of the vessels cut.
+            for it. ``meta`` then carries ``vehicle_only``, ``ground_cut``
+            (the labels of the vessels cut) and ``capped`` (the ids of the
+            vehicle's disconnects whose mate was cut).
     """
+    loose_vents = unpaired_vents(diagram)
     if vehicle_only:
+        mates = {
+            n.id: str(n.options.get("pairedWith", "") or "").strip()
+            for n in diagram.nodes
+        }
         diagram, cut = cut_to_vehicle(diagram)
-        meta = {**dict(meta or {}), "vehicle_only": True, "ground_cut": list(cut)}
+        capped = [
+            n.id
+            for n in diagram.nodes
+            if mates.get(n.id) not in ("", "none", None)
+            and not str(n.options.get("pairedWith", "") or "").strip()
+        ]
+        meta = {
+            **dict(meta or {}),
+            "vehicle_only": True,
+            "ground_cut": list(cut),
+            "capped": capped,
+        }
     if fluid_swap:
         diagram = swap_fluids(diagram, fluid_swap)
+    if gas_swap:
+        diagram = swap_gases(diagram, gas_swap)
 
     reference = engine_reference or (engine.name if engine is not None else "")
     warnings: list[str] = []
@@ -217,6 +241,7 @@ def assemble_model(
         raise AssemblyError("build", str(exc)) from exc
 
     warnings.extend(built.warnings)
+    warnings.extend(loose_vents)
 
     assumptions = tuple(
         Assumption(
@@ -311,6 +336,23 @@ def chamber_for(engine: EngineDesign, cea_cache: str) -> Chamber:
             **losses,
         )
     return Chamber(engine.throat_area, ConstantCStar(cstar=1700.0), **losses)
+
+
+def swap_gases(diagram: Diagram, swaps: Mapping[str, str]) -> Diagram:
+    """The pressurant replaced: every symbol that declares a gas in ``swaps``
+    -- the bottles, and any valve or line labelled with it -- declares the
+    other instead, keeping its own temperature. Tanks and dewars hold liquids
+    and are :func:`swap_fluids`'s. The network spreads gases from what is
+    declared (a K-bottle first), so this is the whole of the change: helium
+    in the COPV, its press lines and the ullages it fills."""
+    from dataclasses import replace
+
+    def swapped(node: PidNode) -> PidNode:
+        if node.type in ("TANK", "DEWAR") or node.fluid not in swaps:
+            return node
+        return replace(node, fluid=swaps[node.fluid])
+
+    return replace(diagram, nodes=tuple(swapped(n) for n in diagram.nodes))
 
 
 def swap_fluids(diagram: Diagram, swaps: Mapping[str, tuple[str, float]]) -> Diagram:

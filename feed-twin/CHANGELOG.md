@@ -4,6 +4,141 @@ The stand app. Versioned in `backend/version.py`; `/api/version` reports it with
 the library version and the commit (and whether the tree was dirty). Physics
 changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
 
+## Unreleased — 2026-10-10: the DAQ box and the State machine tab
+
+The hookup, rebuilt the way the real DAQ declares a stand: valves and transducers
+cabled to named connectors on the DAQ's boards, and a state table that opens names.
+
+### Added
+- **P&ID → DAQ box** (hookup method B): the six boards (Solenoids 12V/24V, Low/High
+  press PT, RTDs, TCs) as GX12 connectors, five to a row, two rows to start and a
+  "+ row". Drag an empty connector onto a symbol on the drawing to cable it (or click
+  it, then the symbol), name it, drag a plugged one to move or swap it.
+- **P&ID → Symbols** (method A) shows the same wiring per symbol: board and
+  connector, the name, and for a valve the states that open it ("Opens in"). It
+  replaces "Driven by", which showed a row name ("LOX Press") that read as a state.
+  Switching between the two changes nothing; they edit one draft with the State
+  machine tab and the knobs on GSE Controls (`lib/useHookup.tsx`), saved from any
+  of them.
+- **State machine** tab, after the DAQ's State tab: the states (name, place on the
+  console grid, abort), what each state opens (a compact matrix: rows are the
+  connectors' names), the allowed transitions, the twin's warnings, and the DAQ's
+  CSVs to download or upload. States the twin keys on (Idle, Ready, Fire, Vent,
+  Engine Abort, the fills) cannot be renamed or removed.
+- The console shows what is wired, as the DAQ's dashboard does: a valve or
+  transducer is on it only with a connector (gauges, tanks and the engine's channels
+  as before). A drawing nobody has wired shows everything, as before.
+- The console's state grid follows the table's own layout.
+- API: `GET /api/hookup` returns the box (derived from the twin's matching until
+  saved, at the DAQ's own connectors: `statemachines/diablo_channels.json`), `wired`,
+  `boards`, `symbols`, `machine_shipped`, `machine_warnings`; `PUT` takes `channels`,
+  `rows` and `machine` and refuses a cable on the wrong board; `POST /api/hookup/view`
+  (a stand's own hookup, bound as it runs); `POST /api/statemachine/check`;
+  `GET /api/session/{id}/statemachine`; `StateMachineOut.layout/aborts/table/edited`;
+  `SessionOut.wired`; the session command `names` renames live.
+- Runs record an edited table as `machine_table`; the Explain ladder swaps it with
+  the hookup (a box's connector names are the table's rows), and a replay runs the
+  table the run was recorded on.
+- The stand says when a connector goes to a symbol the drawing no longer has (its
+  row is matched by name instead). `HookupOut.builtin` / `StateMachineOut.builtin`
+  name the rows the twin reads by name, so the editor does not call them unwired.
+- `statemachines/diablo_states.csv`: the DAQ's panel layout and abort flags.
+
+### Added
+- **Pressurant** (GSE Controls, Configuration; `Setup.pressurant`): Drawing's, GN2 or
+  Helium. Swaps the drawing's gas for the other wherever it is declared -- the
+  bottles, press lines, dome lines and the ullages they fill -- and opens a fresh
+  stand; the top bar says HELIUM / GN2 when it is not the drawing's. Each burn's run
+  record carries it, so Runs compares a helium run with a GN2 one and a replay runs
+  the gas it was recorded on.
+
+### Changed
+- The **Hookup** tab is gone: which knob turns which regulator is edited at the foot
+  of **GSE Controls**, under the dials it sets up (`components/KnobsEditor.tsx`;
+  `/hookup` redirects there). The wiring is the P&ID's, the table the State
+  machine tab's.
+- A state-table row is an **actuator** everywhere, as the DAQ's own
+  `state_machine_actuators.csv` has it ("Row" meant four things).
+- State machine: three pages, **Opens · Transitions · States**, with the
+  instructions in their hovers; its warnings grouped as the console's Notes group
+  them (the seven "X → Fire" lines are one); actuators in Wired / Not wired /
+  Built-in groups whose counts match the header; a connector shown as `S12·1 → OM-R`
+  so the tag is not cut off; the console-grid preview leaves out Fire and the aborts,
+  as the console does; **Upload CSVs** passes over the DAQ's delay table picked with
+  the two state tables; Esc lets go of a pick; one Tab stop per matrix.
+- P&ID side panel: one save bar at its foot for both tabs; a "Saved / Unsaved /
+  Suggested" chip that follows the draft; **Unplug** on a Symbols card; one "Opens in"
+  row in both tabs, whose **State machine →** opens the tab on that actuator
+  (`/statemachine?actuator=`); the name hint only while a name is being changed;
+  the DAQ box's not-wired list by page; Esc closes an open connector; grey GX12
+  rings (green is open). The header is one line (instructions on hover).
+- A suggested hookup can be saved from any tab ("Suggested · not saved"); Discard
+  asks before dropping wiring; "Back to suggested" asks everywhere; a stand somebody
+  else has is read only on every hookup page, knobs included.
+- `POST /api/hookup/view?check=false` shows a hookup without refusing it, and
+  `HookupOut.problems` says what a save would refuse; the panels load a stand's own
+  hookup this way, and the save bar names a cable to a symbol the drawing lost.
+
+### Fixed
+- A stand whose hookup had a cable to a symbol a later drawing dropped could not be
+  opened in the hookup panels (the view refused it), so the cable could not be
+  unplugged.
+- Back to suggested on a stand kept the unsaved edits on screen, and Save wrote them
+  back.
+- Operating a valve on the drawing cleared the Symbols search and filter and closed
+  a card with an override half typed.
+- Engine Abort's abort flag could be unticked, which silently refused ENG ABORT
+  during Fire (the shipped Fire line does not list it).
+- The twin's guess at a just-plugged connector's name outlived Save, and the Symbols
+  panel cleared another connector's guess.
+- An abort-flagged state not named "abort" got a plain console button.
+- A connector selected in the DAQ box stayed ringed after switching to Symbols; a
+  card opened from the list did not switch to its symbol's page.
+- The hookup re-rendered the state-table matrix on every tick.
+- The console says when every valve is hidden, and shows no empty plot with nothing to
+  plot; its state-table note points at the State machine tab for an edited table.
+- The Study tab's helium/nitrogen cases were not: the case went through the cold-flow
+  swap, which replaces tank contents only (the bottles kept the drawing's nitrogen)
+  and fires the simplified engine. It is a gas swap now (`swap_gases`), and the
+  engine burns on its card.
+- On a stand, a hookup saved after the page had reloaded never reached the stand:
+  the reload reattached to the running session without reading the stand, so the
+  hookup Save had no stand to go into (refused with a misleading "Read only"), the
+  panel still showed the names as saved, and the stand's Save wrote the drawing's
+  unsaved suggestion over the stand's own (LE4(real): no connectors in any version).
+  The stand is read before reattaching; a hookup Save on a stand writes the stand
+  too, and one the stand cannot take stays unsaved and says why.
+- An unsaved hookup -- renamed transducers, wiring, the table -- was lost on any
+  page reload (a refresh, a dev rebuild, the stand restarting), so names typed on the
+  P&ID seemed never to reach the DAQ box. It is kept in the tab (sessionStorage, per
+  drawing and stand) until saved or discarded, and comes back after a reload ("kept
+  from before the reload"); a saved hookup that changed meanwhile wins.
+- Rocket only kept nothing of the cart, vents included: a tank vented through a
+  stand-in on its capped top disconnect. The cart's vent lines now stay
+  (`roles.vent_branches`): they are plugged into the rocket until launch, so Fuel
+  Vent drives the cart's FV-SOL rocket only as with the whole cart, and the wording
+  on GSE Controls, Configuration and the P&ID says so. A vent drawn with its two
+  halves unpaired (LE4's QD-OV-B / OV-QD-A) is reported, not guessed.
+- A QD was offered as a DAQ box symbol, and the suggested box cabled the LOX vent row
+  to the rocket's vent disconnect. No cable goes to a disconnect: it is not on the
+  box, and a cable to one is refused. Rocket only, the vent row still reaches the
+  capped QD as the cut cart's stand-in (the binding, not a connector).
+- Nor is a QD operated: it is off the console's actuators and the drawing's
+  clickable valves, has no console switch on the P&ID, and the valve command
+  refuses it (409). Every QD was listed as an actuator, cart and rocket.
+- `builtin` lists only the rows the stand acts on: not GSE High Press Control/Vent on
+  a drawing whose cart charges the COPV (LE4; rocket only they are back), not Fuel
+  Fill Press without a cart transfer tank (the shipped stand). A running stand's comes
+  from its session.
+- A stand whose own DAQ box has connectors a save would refuse (wrong board, a symbol
+  the DAQ cannot read or drive) still opens on it, and now says so in its notes.
+- The lost-connector note says what each connector now does: a valve's row is matched
+  by name, a sensor is not shown until rewired.
+- Explain: the group that swaps the drawing, the hookup and an edited table is
+  "drawing & hookup" (was "drawing", which a table-only change is not).
+- `/api/statemachine/check` gives each missing keyed state its own reason, and warns a
+  table in which no state loads the LOX or fuel tank (Ox Fill, Fuel Fill renamed).
+
 ## Unreleased — 2026-10-09
 
 The console, used end to end overnight. Pressures here in psia.

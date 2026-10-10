@@ -82,12 +82,72 @@ The API:
 * A session reports its knobs (`knobs` on every tick) and takes
   `{"knob": {"id", "value"}}` on `/command`.
 
-**The page.** On the Hookup tab:
-* **Valves:** each actuator has a drop-down of the drawing's valves (with page and
-  plumbed role). "Automatic" shows what the twin matched and how; "never
-  commanded" flags an actuator nothing drives.
-* **Knobs:** named dials with start, low and high values, each with the regulators
-  it turns.
+**The DAQ box (2026-10-10).** The real stand declares its wiring in the DAQ's
+config: `[actuator_roles]` puts each actuator name on a board and channel,
+`sensor_roles_<board>` names each transducer channel, and the state table opens
+*names*. A hookup now says the same three things:
+
+* `channels`: one entry per connector with a cable on it: `board` (`sol12`,
+  `sol24`, `pt_low`, `pt_high`, `rtd`, `tc`), `slot` (from 1), the `symbol` it goes
+  to, and its `name`. The name is what the console calls the symbol and, on a
+  solenoid board, the state table's row. Names are unique ignoring case.
+* A hookup with `channels` is **wired**. A row then drives the valve on the
+  connector of its name (matched ignoring case) and nothing else. A row with no
+  connector drives nothing, and so does a connector to something that is not a
+  valve. Nothing is matched behind the person's back. `channels: []` is a box
+  with nothing plugged in.
+* Without `channels` (`None`) the hookup is the old kind (pins, then names and
+  roles), written and bound exactly as before. `GET /api/hookup` still shows it
+  as a box: `backend/daqbox.wiring` puts each row the matching binds on the
+  DAQ's own connector for that name (`statemachines/diablo_channels.json`, from
+  the DAQ's `[actuator_roles]`; board 12 is shown as 12 V and 14 as 24 V, a
+  guess) and every PT, RTD and TC on its board. Saving that box changes no
+  binding.
+* Rocket only, `on_vehicle` keeps the rocket's connectors. A row whose cable
+  went to the cart is matched on the rocket as before (`auto`), so its vent row
+  finds the tank-top disconnect; a row with no connector still drives such a
+  stand-in (a disconnect whose mate was cut, `Model.meta["capped"]`), which the
+  box cannot take.
+* A connector whose symbol the drawing no longer has (redrawn, new id) is matched
+  by name again if it is a valve's (its name is a row); a sensor's is not shown
+  until rewired. The stand says which in its notes, and also names any connector
+  of a stand's own box that a save would refuse (wrong board, not a DAQ symbol).
+* Some rows the twin reads by name with no valve wired (`core.builtin_rows`: the
+  built-in COPV charge and dump, the transfer tank's press), listed only where the
+  stand acts on them: the charge and dump while a vehicle bottle's fill is not
+  drawn (on the cut drawing when rocket only), the press while a cart transfer
+  tank of that side has a drawn pressure. The State machine tab shows them as
+  built-in, not "wired to nothing".
+* The console shows what is wired: a valve or transducer the box can take is on
+  it only with a connector, as on the real DAQ's dashboard. Gauges, tanks and the
+  engine's channels are the twin's and show as before (`SessionOut.wired`).
+
+**The state table.** `machine` is the stand's own table when somebody edited it
+(`StateMachine.to_dict` / `machine_from_dict`: states with their panel row/col and
+abort flag, rows, which rows each state opens *as written*, and the legal moves).
+`None` is the shipped DAQ table. An edited table is read like the CSVs: Idle held
+shut, mains outside Fire and Fire bypasses warned, a missing Idle, Ready,
+Fire, Vent or Engine Abort warned with its reason (the twin keys on them), and a
+table in which no state loads the LOX or the fuel tank warned (a fill state's name
+says fill and its side). It rides with the hookup, so a stand carries its own. A
+run records it as `machine_table`, which the Explain ladder swaps with the hookup
+(the "drawing & hookup" rung), and a replay runs it.
+`POST /api/statemachine/check` warns about a table being edited.
+`GET /api/session/{id}/statemachine` is the table a running stand commands,
+including a stand's own hookup.
+
+**The pages.**
+* **P&ID → Symbols** (method A): each valve and transducer shows its board and
+  connector, its name, and for a valve the states that open it.
+* **P&ID → DAQ box** (method B): the boards as GX12 connectors. Drag an empty
+  connector onto a symbol, or click it and then the symbol.
+* **State machine**: the DAQ's State tab: states, what each opens, the allowed
+  transitions, and the DAQ's CSVs to download or upload.
+* **GSE Controls → Which knob turns which regulator** (the old Hookup page;
+  `/hookup` redirects there): the knobs, as named dials with start, low and
+  high values, each with the regulators it turns.
+
+The four edit one draft and save together.
 
 The GSE Controls tab then draws one knob per hookup knob that sets something.
 
@@ -99,7 +159,17 @@ the way and only the rocket matters (the operator, 2026-10-08). On, the stand is
 built from the vehicle alone (`feedtwin.pid.roles.vehicle_only`,
 `assemble_model(vehicle_only=True)`): every symbol off the vehicle and every line
 touching one is cut, and each vehicle disconnect whose mate was cut is a capped
-half. The stand then fills like a drawing of the rocket alone:
+half -- **except the cart's vent lines** (`roles.vent_branches`). The vents sit on
+the GSE but stay plugged into the rocket until the last moment before launch (the
+team, 2026-10-10), so a branch behind a vehicle disconnect that holds nothing (no
+vessel, regulator or further coupling) and has a valve the table opens, a relief or
+an outlet stays, still coupled: Fuel Vent drives the cart's FV-SOL rocket only as it
+does with the whole cart. A branch with only a hand valve behind it is no vent line
+and stays capped (the tank keeps the stand-in vent through its capped top
+disconnect). A vent whose two halves are drawn *unpaired* -- LE4's QD-OV-B and
+OV-QD-A -- is not guessed: the report says so (`roles.unpaired_vents`), and until
+it is paired in pid-designer the tank vents through the rocket's half as a stand-in.
+The stand then fills like a drawing of the rocket alone:
 
 * GN2 High Press charges the COPV to the COPV fill knob (`copv_target_psi`) over
   `copv_fill_s`;
