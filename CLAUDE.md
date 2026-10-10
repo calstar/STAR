@@ -139,8 +139,11 @@ very bugs they were written for.
   is mated (`pid/network.py _mate_disconnects`), and a cart drawn on another page fills
   the vehicle through the network while the session's built-in fills stand aside. Which
   valve each state-machine actuator drives and which knob sets which regulator is the
-  drawing's **hookup** (`feedtwin.session.hookup`, the Hookup tab), kept per drawing
-  lineage. With none saved it is `suggest()`, which is the old behaviour bit for bit.
+  drawing's **hookup** (`feedtwin.session.hookup`), kept per drawing lineage. Saved
+  from the P&ID tab it is *wired*: a DAQ box of named connectors (`channels`), and a
+  table row drives only the valve on the connector of its name; the table itself can
+  be the stand's own (`machine`, the State machine tab). With none saved it is
+  `suggest()`, which is the old behaviour bit for bit.
   Never hard-code a valve or regulator tag; see `docs/integration/gse-pages-and-hookup.md`.
 - **The drawing wires the twin** (ADR 0006). Vehicle vs ground support is
   `feedtwin.pid.roles` (the ENGINE's drawn-line component; a paired QD is the boundary).

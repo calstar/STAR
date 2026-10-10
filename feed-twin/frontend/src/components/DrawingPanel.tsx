@@ -13,24 +13,48 @@
  * browser. An override made before the drawing changed the number underneath
  * it is flagged rather than quietly winning.
  *
- * It is also the hookup, symbol by symbol: whether the console shows it, what
- * the console calls it, and which state-machine actuator drives a valve
- * (lib/useHookup.ts, shared with the Hookup page, which keeps the regulator
- * knobs). Names and wiring are saved together from the bar at the top.
+ * It is also the hookup, symbol by symbol (hookup method A; the DAQ box
+ * beside it is method B, the same hookup drawn as the box): which board and
+ * connector a valve or transducer is wired to, the name that connector goes
+ * by -- the console's name and, for a valve, its row in the state table --
+ * and the states that open it. One draft with the DAQ box, the State machine
+ * tab and the Hookup page (lib/useHookup), saved from the bar at the top.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   clearOverride,
   getDrawingData,
   setOverride,
+  type BoardId,
+  type ChannelDef,
   type DrawingElement,
   type DrawingParam,
   type DrawingData,
+  type HookupSymbol,
   type ParamValue,
 } from '../api';
+import {
+  PER_ROW,
+  channelAt,
+  channelOf,
+  move,
+  nameTaken,
+  opensIn,
+  rename,
+  rowNamed,
+  rowsOf,
+  setAlias,
+  tableIssues,
+  unwire,
+  unwiredRows,
+  wire,
+} from '../lib/hookupDraft';
+import { dropFreshRow, type FreshRow } from '../lib/daqDrag';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
+import { HookupSaveBar } from './HookupSaveBar';
 
 /** Another operator's override should show up without a reload. */
 const POLL_MS = 10000;
@@ -282,16 +306,247 @@ function ParamRow({
   );
 }
 
-/** The symbol's hookup: its console name, and the actuator that drives it
- *  when it is a valve the state machine can drive. */
-interface Wiring {
-  alias: string;
-  onAlias: (name: string) => void;
-  /** The state machine's actuators, when this is a valve one can drive,
-   *  each with the valve it drives now ('' for none). */
-  actuators?: { name: string; now: string }[];
-  driver: string;
-  onDrive: (actuator: string) => void;
+/** A board's short name, for a badge. */
+const SHORT: Record<BoardId, string> = {
+  sol12: 'S12',
+  sol24: 'S24',
+  pt_low: 'PT-L',
+  pt_high: 'PT-H',
+  rtd: 'RTD',
+  tc: 'TC',
+};
+
+/** Where a symbol's cable goes on the DAQ box, or that it has none. */
+function ConnectorBadge({ channel, label }: { channel: ChannelDef | undefined; label?: string }) {
+  if (!channel) {
+    return (
+      <span
+        className="shrink-0 rounded border border-amber-900/60 px-1 font-mono text-[9.5px] text-amber-300/80"
+        title="Not on the DAQ box: no state moves it and the console does not show it."
+      >
+        not wired
+      </span>
+    );
+  }
+  return (
+    <span
+      className="shrink-0 rounded border border-[var(--line-strong)] px-1 font-mono text-[9.5px] text-gray-300"
+      title={`On the DAQ box: ${label ?? channel.board}, connector ${channel.slot}`}
+    >
+      {SHORT[channel.board]}·{channel.slot}
+    </span>
+  );
+}
+
+/** A field of the hookup section: a label column and the control. */
+function Field({ label, title, children }: { label: string; title?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-gray-500" title={title}>
+      <span className="w-[4.5rem] shrink-0">{label}</span>
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+const control =
+  'min-w-0 rounded border border-gray-700 bg-black/60 px-1.5 py-0.5 text-[12px] text-white placeholder:text-gray-600 disabled:opacity-50';
+
+/** A connector name, typed freely and committed on Enter or leaving the
+ *  field: a name another connector has is refused, in red. */
+function NameInput({
+  value,
+  taken,
+  rows,
+  disabled,
+  autoFocus,
+  onCommit,
+}: {
+  value: string;
+  taken: (name: string) => boolean;
+  /** The state table's rows nothing is wired to, offered as names. */
+  rows?: string[];
+  disabled: boolean;
+  autoFocus?: boolean;
+  onCommit: (name: string) => void;
+}) {
+  const [typed, setTyped] = useState(value);
+  useEffect(() => setTyped(value), [value]);
+  const clash = typed.trim() !== '' && typed.trim().toLowerCase() !== value.toLowerCase() && taken(typed);
+  const listId = useMemo(() => `rows-${Math.random().toString(36).slice(2)}`, []);
+  const commit = () => {
+    if (!typed.trim() || clash) return setTyped(value);
+    if (typed.trim() !== value) onCommit(typed.trim());
+  };
+  return (
+    <>
+      <input
+        type="text"
+        value={typed}
+        autoFocus={autoFocus}
+        disabled={disabled}
+        list={rows ? listId : undefined}
+        onChange={(e) => setTyped(e.target.value)}
+        // Selected on the way in: a fresh connector's tag is there to be
+        // typed over ("Lox Main"), not appended to.
+        onFocus={(e) => e.target.select()}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') setTyped(value);
+        }}
+        title={clash ? 'Another connector already has this name' : undefined}
+        className={`${control} flex-1 ${clash ? 'border-red-500' : ''}`}
+      />
+      {rows && (
+        <datalist id={listId}>
+          {rows.map((r) => (
+            <option key={r} value={r} />
+          ))}
+        </datalist>
+      )}
+    </>
+  );
+}
+
+/** The symbol's place on the DAQ box: which board and connector, its name,
+ *  and -- for a valve -- the states that open it. */
+function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
+  const hookup = useHookup();
+  const { draft } = hookup;
+  const [justWired, setJustWired] = useState(false);
+  // Plugged from here a moment ago and named by the twin's guess: the first
+  // rename corrects the guess (the guessed row stays the table's), and a
+  // blank row made for the tag goes if nothing uses it.
+  const [fresh, setFresh] = useState<FreshRow | null>(null);
+  if (!draft) return null;
+  const channel = channelOf(draft, symbol.id);
+  const boards = hookup.boards.filter((b) => b.kind === symbol.kind);
+  const locked = hookup.locked;
+  const isValve = symbol.kind === 'valve';
+  const row = channel && isValve ? rowNamed(draft.machine, channel.name) : undefined;
+  const opens = row ? opensIn(draft.machine, row) : [];
+  const slots = channel ? Math.max(rowsOf(draft, channel.board) * PER_ROW, channel.slot) : 0;
+
+  return (
+    <div className="flex flex-col gap-1 border-t border-[var(--line)]/60 px-2 py-1.5">
+      <Field
+        label="DAQ"
+        title="The board and connector its cable goes to. 12 V and 24 V, low and high pressure, are yours to tell apart: either takes it."
+      >
+        <select
+          value={channel?.board ?? ''}
+          disabled={locked}
+          onChange={(e) => {
+            const board = e.target.value as BoardId | '';
+            if (!board) {
+              setFresh(null);
+              return hookup.update((d) => dropFreshRow(unwire(d, symbol.id), fresh));
+            }
+            const name = channel?.name ?? hookup.suggestedName(symbol.id);
+            if (!channel) {
+              const made = wire(draft, symbol, board, undefined, name).machine.actuators.find(
+                (a) => !draft.machine.actuators.includes(a),
+              );
+              setFresh({ symbol: symbol.id, row: made ?? null });
+            }
+            setJustWired(!channel);
+            hookup.update((d) => wire(d, symbol, board, undefined, name));
+          }}
+          className={`${control} flex-1`}
+        >
+          <option value="">Not wired</option>
+          {boards.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.label}
+            </option>
+          ))}
+        </select>
+        {channel && (
+          <select
+            value={channel.slot}
+            disabled={locked}
+            aria-label="connector"
+            onChange={(e) =>
+              hookup.update((d) => move(d, channel, { board: channel.board, slot: Number(e.target.value) }))
+            }
+            className={`${control} w-[4.5rem]`}
+            title="Connector number. Picking a taken one swaps the two."
+          >
+            {Array.from({ length: slots }, (_, i) => i + 1).map((n) => {
+              const there = channelAt(draft, channel.board, n);
+              return (
+                <option key={n} value={n}>
+                  #{n}
+                  {there && there.symbol !== symbol.id ? ` · ${there.name}` : ''}
+                </option>
+              );
+            })}
+          </select>
+        )}
+      </Field>
+      {channel ? (
+        <Field
+          label="Name"
+          title={
+            isValve
+              ? 'What the console calls it, and its row in the state table: the states that open this name open this valve. Pick a row the table already has to take its states.'
+              : 'What the console calls it.'
+          }
+        >
+          <NameInput
+            value={channel.name}
+            disabled={locked}
+            autoFocus={justWired}
+            rows={isValve ? unwiredRows(draft) : undefined}
+            taken={(n) => nameTaken(draft, n, symbol.id)}
+            onCommit={(n) => {
+              const guessed = fresh?.symbol === symbol.id;
+              hookup.update((d) => {
+                const next = rename(d, symbol.id, n, !guessed);
+                return guessed ? dropFreshRow(next, fresh) : next;
+              });
+              setFresh(null);
+            }}
+          />
+        </Field>
+      ) : (
+        <p className="text-[11px] text-gray-500">
+          {isValve
+            ? 'Not on the DAQ: no state moves it and the console does not show it. Pick a board to wire it.'
+            : 'Not on the DAQ: the console does not show it. Pick a board to wire it.'}
+        </p>
+      )}
+      {channel && isValve && (
+        <Field label="Opens in" title="The states whose column opens this name. Change them on the State machine tab.">
+          {opens.length ? (
+            <span className="flex min-w-0 flex-wrap gap-1">
+              {opens.map((s) =>
+                s.toLowerCase() === 'idle' ? (
+                  <span
+                    key={s}
+                    className="rounded px-1 font-mono text-[10.5px] text-gray-500 line-through"
+                    title="The table opens it in Idle, but the twin holds Idle shut: a de-energised stand has nothing open."
+                  >
+                    {s}
+                  </span>
+                ) : (
+                  <span key={s} className="rounded bg-[#0b140e] px-1 font-mono text-[10.5px] text-[var(--color-success)]">
+                    {s}
+                  </span>
+                ),
+              )}
+            </span>
+          ) : (
+            <span className="text-amber-300/80">{row ? 'no state yet' : 'not a row in the state table'}</span>
+          )}
+          <Link to="/statemachine" className="ml-auto shrink-0 text-[10.5px] text-blue-400 hover:underline">
+            Edit →
+          </Link>
+        </Field>
+      )}
+      {cut && <p className="text-[11px] text-gray-500">On the cart, which is not simulated while the drawn GSE is ignored.</p>}
+    </div>
+  );
 }
 
 function ElementCard({
@@ -300,9 +555,9 @@ function ElementCard({
   onOpen,
   sources,
   locked,
+  symbol,
   consoleHidden,
   onConsole,
-  wiring,
   cut,
   focused,
   onSave,
@@ -313,18 +568,27 @@ function ElementCard({
   onOpen: () => void;
   sources: string[];
   locked: boolean;
+  /** The symbol as the DAQ box knows it, when one can be wired. */
+  symbol: HookupSymbol | undefined;
   consoleHidden: boolean;
   onConsole: (hide: boolean) => void;
-  wiring: Wiring | null;
   /** Off the stand: the cart, with the drawn GSE ignored. */
   cut: boolean;
   focused: boolean;
   onSave: (p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => Promise<void>;
   onRevert: (p: DrawingParam) => Promise<void>;
 }) {
+  const hookup = useHookup();
   const overridden = el.params.filter((p) => p.override).length;
   const stale = el.params.some((p) => p.stale);
   const assumed = el.params.filter((p) => !p.override && !p.drawing && p.assumed).length;
+  const channel = symbol && hookup.draft ? channelOf(hookup.draft, symbol.id) : undefined;
+  const alias = hookup.draft?.aliases?.[el.id] ?? '';
+  const name = channel?.name ?? alias;
+  // On the console: what is on the DAQ box, and what the twin shows of its
+  // own (a tank, a bottle, a gauge). Not a hand valve: a hand turns it.
+  const consoleable = el.on_console && !cut && (symbol ? Boolean(channel) : el.type !== 'MAN');
+  const named = el.on_console && !symbol && el.type !== 'MAN';
 
   return (
     <li
@@ -334,18 +598,16 @@ function ElementCard({
       <div className="flex items-center gap-2 px-2 py-1.5">
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           <span className="w-2 shrink-0 font-mono text-[10px] text-gray-600">{open ? '−' : '+'}</span>
-          <span className={`truncate text-[12.5px] ${consoleHidden ? 'text-gray-500' : 'text-gray-100'}`}>{el.tag}</span>
-          {wiring?.alias && (
+          <span className={`truncate text-[12.5px] ${consoleable && consoleHidden ? 'text-gray-500' : 'text-gray-100'}`}>
+            {el.tag}
+          </span>
+          {name && name !== el.tag && (
             <span className="truncate text-[11.5px] text-gray-400" title="Its name on the console">
-              “{wiring.alias}”
+              “{name}”
             </span>
           )}
           <span className="shrink-0 font-mono text-[10px] text-gray-600">{el.type}</span>
-          {wiring?.actuators && wiring.driver && (
-            <span className="shrink-0 truncate font-mono text-[10px] text-sky-300/80" title="The state-machine actuator that drives it">
-              ← {wiring.driver}
-            </span>
-          )}
+          {symbol && <ConnectorBadge channel={channel} label={channel && hookup.board(channel.board)?.label} />}
           {overridden > 0 && (
             <span className="shrink-0 rounded bg-blue-950/60 px-1 font-mono text-[9px] text-blue-300">
               {overridden} override{overridden > 1 ? 's' : ''}
@@ -361,7 +623,7 @@ function ElementCard({
             </span>
           )}
         </button>
-        {el.on_console && !cut && (
+        {consoleable && (
           <label
             className="flex shrink-0 cursor-pointer items-center gap-1 text-[10.5px] text-gray-400"
             title={
@@ -382,43 +644,24 @@ function ElementCard({
       </div>
       {open && (
         <div className="pb-1">
-          {cut && el.on_console && (
+          {symbol && <DaqSection symbol={symbol} cut={cut} />}
+          {!symbol && el.type === 'MAN' && (
             <p className="border-t border-[var(--line)]/60 px-2 py-1.5 text-[11px] text-gray-500">
-              On the cart, which is not simulated while the drawn GSE is ignored (GSE Controls).
+              A hand valve: not on the DAQ. Click it on the drawing to turn it.
             </p>
           )}
-          {wiring && !cut && (
-            <div className="flex flex-col gap-1 border-t border-[var(--line)]/60 px-2 py-1.5">
-              <label className="flex items-center gap-2 text-[11px] text-gray-500">
-                <span className="w-20 shrink-0">Console name</span>
+          {named && hookup.draft && !cut && (
+            <div className="border-t border-[var(--line)]/60 px-2 py-1.5">
+              <Field label="Console name" title="What the console calls it. Not on the DAQ box: the twin shows it of its own.">
                 <input
                   type="text"
-                  value={wiring.alias}
+                  value={alias}
                   placeholder={el.tag}
-                  disabled={locked}
-                  onChange={(e) => wiring.onAlias(e.target.value)}
-                  className="min-w-0 flex-1 rounded border border-gray-700 bg-black/60 px-1.5 py-0.5 text-[12px] text-white placeholder:text-gray-600 disabled:opacity-50"
+                  disabled={hookup.locked}
+                  onChange={(e) => hookup.update((d) => setAlias(d, el.id, e.target.value))}
+                  className={`${control} flex-1`}
                 />
-              </label>
-              {wiring.actuators && (
-                <label className="flex items-center gap-2 text-[11px] text-gray-500">
-                  <span className="w-20 shrink-0">Driven by</span>
-                  <select
-                    value={wiring.driver}
-                    disabled={locked}
-                    onChange={(e) => wiring.onDrive(e.target.value)}
-                    className="min-w-0 flex-1 rounded border border-gray-700 bg-black/60 px-1 py-0.5 text-[12px] text-white disabled:opacity-50"
-                  >
-                    <option value="">Nothing (by hand)</option>
-                    {wiring.actuators.map((a) => (
-                      <option key={a.name} value={a.name}>
-                        {a.name}
-                        {a.now ? ` — now on ${a.now}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+              </Field>
             </div>
           )}
           {el.segments > 0 && (
@@ -469,7 +712,15 @@ function ElementGroup({ title, children }: { title: string; children: React.Reac
   );
 }
 
-type Filter = 'all' | 'console' | 'changed' | 'filled';
+type Filter = 'all' | 'unwired' | 'changed' | 'filled';
+
+const GROUP_TITLES = [
+  'Valves the DAQ can drive',
+  'Transducers, RTDs & TCs',
+  'Tanks, gauges & hand valves',
+  'Other symbols',
+  'Cart — not simulated (rocket only)',
+];
 
 export function DrawingPanel({
   focus = null,
@@ -523,10 +774,7 @@ export function DrawingPanel({
     }
   });
 
-  const locked = Boolean(live?.tripped);
-  const pending = view !== null && live !== null && (live.overrides_hash ?? '') !== view.overrides_hash;
-  const total = view?.elements.reduce((n, e) => n + e.params.filter((p) => p.override).length, 0) ?? 0;
-
+  const draft = hookup.draft;
   const shown = useMemo(() => {
     if (!view) return [];
     const q = query.trim().toLowerCase();
@@ -534,59 +782,46 @@ export function DrawingPanel({
       // Lines and junctions only on request: a junction carries nothing to set.
       if ((el.kind === 'line' || el.type === 'JUNCTION') && !showLines && filter !== 'changed' && el.id !== focus)
         return false;
-      if (q && !`${el.tag} ${el.type} ${el.id} ${el.params.map((p) => p.name).join(' ')}`.toLowerCase().includes(q))
+      const name = (draft && channelOf(draft, el.id)?.name) ?? draft?.aliases?.[el.id] ?? '';
+      if (q && !`${el.tag} ${name} ${el.type} ${el.id} ${el.params.map((p) => p.name).join(' ')}`.toLowerCase().includes(q))
         return false;
-      if (filter === 'console') return el.on_console;
+      if (filter === 'unwired') return Boolean(hookup.symbol(el.id)) && !(draft && channelOf(draft, el.id));
       if (filter === 'changed') return el.params.some((p) => p.override);
       if (filter === 'filled') return el.params.some((p) => !p.override && !p.drawing && p.assumed);
       return true;
     });
-  }, [view, query, filter, showLines, focus]);
+  }, [view, query, filter, showLines, focus, draft, hookup]);
 
   if (!view) {
     return <p className="p-3 text-[12px] text-gray-500">{error || 'Reading the drawing…'}</p>;
   }
 
-  // The hookup, symbol by symbol. A valve the state machine can drive is one
-  // the hookup lists, or one an actuator is bound to now (rocket only, the
-  // rocket's capped vent disconnect).
-  const drivable = new Set([
-    ...(hookup.data?.valves.map((v) => v.id) ?? []),
-    ...Object.values(hookup.data?.bound ?? {}),
-  ]);
-  const wiringOf = (el: DrawingElement): Wiring | null => {
-    const { data, draft } = hookup;
-    if (!data || !draft || !el.on_console) return null;
-    return {
-      alias: draft.aliases?.[el.id] ?? '',
-      onAlias: (name) => hookup.setAlias(el.id, name),
-      actuators: drivable.has(el.id)
-        ? data.actuators.map((a) => {
-            // Where it is now, when that is another valve: picking it moves it.
-            const now = hookup.valveOf(a);
-            return { name: a, now: now && now !== el.id ? hookup.valveLabel(now).split(' · ')[0] : '' };
-          })
-        : undefined,
-      driver: hookup.driverOf(el.id),
-      onDrive: (actuator) => hookup.drive(el.id, actuator),
-    };
-  };
-  const undriven = hookup.data && hookup.draft
-    ? hookup.data.actuators.filter((a) => {
-        const pinned = hookup.draft?.valves[a];
-        return pinned === undefined ? !hookup.data?.bound[a] : !pinned;
-      })
-    : [];
+  const locked = Boolean(live?.tripped);
+  const pending = live !== null && (live.overrides_hash ?? '') !== view.overrides_hash;
+  const total = view.elements.reduce((n, e) => n + e.params.filter((p) => p.override).length, 0);
 
   // With the drawn GSE ignored the stand is the rocket alone: the cart's
   // symbols are not in it, so nothing set on them shows on the console.
   const rocketOnly = Boolean(live?.setup?.ignore_gse) && Boolean(model?.pages);
   const isCut = (el: DrawingElement) => rocketOnly && el.kind === 'symbol' && !(el.id in (model?.pages ?? {}));
-  // What a person comes here for first -- what the console shows, its names,
-  // what drives a valve -- then everything else, then the cart.
-  const groupOf = (el: DrawingElement) => (isCut(el) ? 2 : el.on_console ? 0 : 1);
+  // What a person comes here for first -- the valves and sensors on the DAQ
+  // box -- then what the twin shows of its own, everything else, the cart.
+  const groupOf = (el: DrawingElement) => {
+    const sym = hookup.symbol(el.id);
+    if (isCut(el)) return 4;
+    if (sym) return sym.kind === 'valve' ? 0 : 1;
+    return el.on_console ? 2 : 3;
+  };
   const grouped = [...shown].sort((a, b) => groupOf(a) - groupOf(b));
-  const GROUP_TITLES = ['Instruments, tanks & valves', 'Other symbols', 'Cart — not simulated (rocket only)'];
+
+  // How much of the drawing is on the box, and which rows drive nothing.
+  const count = (kind: 'valve' | 'sensor') => {
+    const all = hookup.symbols.filter((s) => (kind === 'valve' ? s.kind === 'valve' : s.kind !== 'valve'));
+    return [all.filter((s) => draft && channelOf(draft, s.id)).length, all.length];
+  };
+  const [vw, vt] = count('valve');
+  const [sw, st] = count('sensor');
+  const issues = draft ? tableIssues(draft) : { unwired: [], rowless: [] };
 
   const save = async (el: DrawingElement, p: DrawingParam, v: { value: number; unit: string; source: string; reference: string }) => {
     await setOverride({ diagram: view.diagram_id, element: el.id, parameter: p.name, ...v });
@@ -607,42 +842,46 @@ export function DrawingPanel({
         <div className="flex items-baseline gap-2">
           <h2
             className="text-[11px] font-bold uppercase tracking-widest text-text-muted"
-            title="Every symbol on the drawing: whether the console shows it, what it calls it, what drives it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they're shared with everyone and follow the drawing when it's re-imported."
+            title="Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they're shared with everyone and follow the drawing when it's re-imported."
           >
             Symbols
           </h2>
+          {hookup.data && (
+            <span
+              className={`rounded px-1.5 py-px text-[10px] font-semibold ${
+                hookup.data.saved ? 'bg-emerald-900/40 text-emerald-300' : 'bg-gray-800 text-gray-300'
+              }`}
+              title={
+                hookup.data.saved
+                  ? hookup.onStand
+                    ? 'The stand’s own hookup.'
+                    : 'Saved for this drawing.'
+                  : 'The twin’s suggestion, matched by name: not saved. Until it is, the console shows every valve and transducer.'
+              }
+            >
+              {hookup.data.saved ? 'Saved' : 'Suggested'}
+            </span>
+          )}
           <span className="ml-auto truncate font-mono text-[10px] text-gray-600" title={view.source}>
             {view.key}
           </span>
         </div>
-        <p className="mt-1 text-[11px] leading-snug text-gray-500">
-          Click a symbol here or on the drawing. Tick <span className="text-gray-300">console</span> to show it
-          on the Console, give it a name, or pick what drives a valve.
+        <p className="mt-1 text-[11px] leading-snug text-gray-500" title="Valves on a solenoid board are opened by the states that open their name (State machine tab). Transducers on a PT board show on the console under their name.">
+          On the DAQ: {vw}/{vt} valves · {sw}/{st} sensors.
+          {issues.unwired.length > 0 && (
+            <>
+              {' '}
+              <Link
+                to="/statemachine"
+                className="text-amber-300/80 hover:underline"
+                title={`State-table rows no connector goes by, so they command nothing: ${issues.unwired.join(', ')}`}
+              >
+                {issues.unwired.length} row{issues.unwired.length > 1 ? 's' : ''} wired to nothing
+              </Link>
+            </>
+          )}
         </p>
-        {hookup.dirty && (
-          <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
-            <span className="flex-1 text-[11px] text-blue-200">
-              {hookup.namesOnly ? 'Unsaved names' : 'Unsaved wiring — saving restarts the stand'}
-            </span>
-            <button
-              type="button"
-              onClick={hookup.discard}
-              className="rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:text-white"
-            >
-              Discard
-            </button>
-            <button
-              type="button"
-              disabled={hookup.busy || hookup.locked}
-              onClick={hookup.save}
-              title={hookup.locked ? 'Take the stand to change its hookup' : hookup.onStand ? 'Kept with the stand' : 'Kept for this drawing'}
-              className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40"
-            >
-              {hookup.busy ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        )}
-        {hookup.error && <p className="mt-1 text-[11px] text-red-300">{hookup.error}</p>}
+        <HookupSaveBar compact />
         {pending && (
           <div className="mt-1.5 flex items-center gap-2 rounded-md border border-blue-900/70 bg-blue-950/30 px-2 py-1">
             <span className="flex-1 text-[11px] text-blue-200">
@@ -662,14 +901,14 @@ export function DrawingPanel({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Find a symbol or a parameter"
+          placeholder="Find a symbol, a name or a parameter"
           className="mt-2 w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[12px] text-white focus:border-blue-500 focus:outline-none"
         />
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {(
             [
               ['all', 'All'],
-              ['console', 'Console'],
+              ['unwired', `Not wired · ${vt - vw + (st - sw)}`],
               ['changed', `Overridden${total ? ` · ${total}` : ''}`],
               ['filled', 'Filled in'],
             ] as const
@@ -681,7 +920,7 @@ export function DrawingPanel({
               title={
                 {
                   all: 'Every symbol',
-                  console: 'Instruments, tanks and the valves the console can show',
+                  unwired: 'Valves and sensors not on the DAQ box',
                   changed: 'Numbers somebody overrode here',
                   filled: 'Numbers the drawing left blank and the library filled in',
                 }[k]
@@ -709,40 +948,31 @@ export function DrawingPanel({
         {shown.length === 0 && <li className="p-2 text-[12px] text-gray-600">Nothing matches.</li>}
         {grouped.map((el, i) => (
           <ElementGroup key={el.id} title={i === 0 || groupOf(grouped[i - 1]) !== groupOf(el) ? GROUP_TITLES[groupOf(el)] : ''}>
-          <ElementCard
-            el={el}
-            open={Boolean(open[el.id])}
-            onOpen={() => {
-              // One open at a time: it is the one ringed on the drawing.
-              const opening = !open[el.id];
-              setOpen(opening ? { [el.id]: true } : {});
-              if (opening) onFocus(el.id);
-              else if (focus === el.id) onFocus(null);
-            }}
-            cut={isCut(el)}
-            focused={focus === el.id}
-            sources={view.override_sources}
-            locked={locked}
-            // The stand's list is the whole truth (it is what the console
-            // draws). Falling back on this panel's copy -- reloaded every 10 s
-            // -- showed a box ticked back on as still off until then.
-            consoleHidden={Boolean(consoleHidden[el.id])}
-            onConsole={(hide) => hideOnConsole([el.id], hide)}
-            wiring={isCut(el) ? null : wiringOf(el)}
-            onSave={(p, v) => save(el, p, v)}
-            onRevert={(p) => revert(el, p)}
-          />
+            <ElementCard
+              el={el}
+              open={Boolean(open[el.id])}
+              onOpen={() => {
+                // One open at a time: it is the one ringed on the drawing.
+                const opening = !open[el.id];
+                setOpen(opening ? { [el.id]: true } : {});
+                if (opening) onFocus(el.id);
+                else if (focus === el.id) onFocus(null);
+              }}
+              cut={isCut(el)}
+              focused={focus === el.id}
+              sources={view.override_sources}
+              locked={locked}
+              symbol={hookup.symbol(el.id)}
+              // The stand's list is the whole truth (it is what the console
+              // draws). Falling back on this panel's copy -- reloaded every 10 s
+              // -- showed a box ticked back on as still off until then.
+              consoleHidden={Boolean(consoleHidden[el.id])}
+              onConsole={(hide) => hideOnConsole([el.id], hide)}
+              onSave={(p, v) => save(el, p, v)}
+              onRevert={(p) => revert(el, p)}
+            />
           </ElementGroup>
         ))}
-        {undriven.length > 0 && filter === 'all' && !query && (
-          <li
-            className="mt-2 px-2 py-1 text-[11px] leading-snug text-gray-500"
-            title="State-machine actuators no valve on this drawing answers to. Pick one under 'Driven by' on a valve to wire it."
-          >
-            Driving nothing: {undriven.join(', ')}
-            {rocketOnly && ' (the cart’s are not simulated, rocket only)'}
-          </li>
-        )}
         {view.orphaned.length > 0 && (
           <li className="mt-2 rounded-md border border-amber-900/50 px-2 py-1.5 text-[11px] leading-snug text-amber-300/80">
             Kept for symbols this version of the drawing doesn't have: {view.orphaned.join(', ')}. They come back

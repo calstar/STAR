@@ -18,7 +18,11 @@ import { Link, useLocation } from 'react-router-dom';
 import { getVersion, type Validation } from '../api';
 import { checksToFix } from '../lib/checks';
 import { useStand } from '../stand';
+import { useHookup } from '../lib/useHookup';
 import { StandBar } from './StandBar';
+
+/** The tabs that edit the hookup's one draft. */
+const HOOKUP_VIEWS = new Set(['/pid', '/statemachine', '/hookup']);
 
 export interface View {
   group: string;
@@ -108,6 +112,9 @@ export function TopBar({ views }: { views: readonly View[] }) {
     return () => clearInterval(id);
   }, []);
 
+  // An unsaved hookup is one draft across three tabs: say so on each, so an
+  // edit made on one is not forgotten on the way to another.
+  const { dirty: unsavedHookup } = useHookup();
   const h = health(stand);
   const state = live?.state ?? '—';
   const onConsole = pathname === '/';
@@ -151,6 +158,14 @@ export function TopBar({ views }: { views: readonly View[] }) {
                     }`}
                   >
                     {v.label}
+                    {unsavedHookup && HOOKUP_VIEWS.has(v.path) && (
+                      <span
+                        className="ml-1 text-[var(--color-warning)]"
+                        title="Unsaved hookup: save it on the P&ID, State machine or Hookup tab"
+                      >
+                        •
+                      </span>
+                    )}
                     {v.path === '/report' && warnings > 0 && (
                       <span className="ml-1.5 font-mono text-[10px] text-[var(--color-warning)]">{warnings}</span>
                     )}

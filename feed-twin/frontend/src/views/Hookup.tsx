@@ -9,9 +9,10 @@
  * where it comes from, so saving the drawing again keeps it), and with a stand
  * when one is open.
  *
- * Which valve each state-machine actuator drives, and what the console shows
- * and calls each valve and transducer, are set on the P&ID tab's symbol panel
- * (the operator, 2026-10-09: "this looks way better than the hookup page").
+ * The rest of the hookup -- the DAQ box (which connector each valve and
+ * transducer is wired to, and the name it goes by) and the state table --
+ * is on the P&ID and State machine tabs. All of it is one draft
+ * (lib/useHookup), saved from any of them.
  */
 
 import { Link } from 'react-router-dom';
@@ -116,11 +117,15 @@ export function Hookup() {
       </div>
 
       <p className="text-[12px] text-text-muted">
-        Valves and transducers — what drives them, whether the console shows them, what it calls them — are set on the{' '}
+        Valves and transducers go on the DAQ box on the{' '}
         <Link to="/pid" className="text-blue-400 hover:underline">
           P&amp;ID
         </Link>{' '}
-        tab.
+        tab; the states that open each are on the{' '}
+        <Link to="/statemachine" className="text-blue-400 hover:underline">
+          State machine
+        </Link>{' '}
+        tab. One hookup: save it from any of them.
       </p>
 
       <div className="bg-card rounded-lg border border-gray-800">

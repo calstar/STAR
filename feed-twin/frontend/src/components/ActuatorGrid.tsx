@@ -37,6 +37,9 @@ interface Props {
   ground?: ReadonlySet<string>;
   /** Console names (the hookup's aliases), by drawing id. */
   aliases?: Record<string, string>;
+  /** On the DAQ box (wired): only those are on the grid, as on the real
+   *  DAQ's dashboard. Default: every valve. */
+  onBox?: (id: string) => boolean;
   onToggleHidden?: (id: string) => void;
   onAllHidden?: (show: boolean) => void;
 }
@@ -51,20 +54,23 @@ export default function ActuatorGrid({
   hidden = [],
   ground = new Set<string>(),
   aliases = {},
+  onBox = () => true,
   onToggleHidden,
   onAllHidden,
 }: Props) {
   const roleOf: Record<string, string> = {};
   for (const [actuator, symbol] of Object.entries(machine?.bound ?? {})) roleOf[symbol] = actuator;
   const urgent = (id: string) => !ground.has(id) && ((live.open[id] ?? false) || live.held.includes(id));
-  const drawn = model.actuators.filter((a) => !hidden.includes(a.id) || urgent(a.id));
+  // Off the DAQ box a valve is not on the grid even open: the count below
+  // still says so, and the P&ID still turns it.
+  const drawn = model.actuators.filter((a) => onBox(a.id) && (!hidden.includes(a.id) || urgent(a.id)));
   // Counted on the grid: "1 open" with nothing open in sight (a cart dump
   // resting open off it) read as a bug. The rest is said, and named on hover.
   const opened = drawn.filter((a) => live.open[a.id]).length;
   const openOff = model.actuators.filter((a) => live.open[a.id] && !drawn.includes(a));
   // The menu lists them by sheet; the grid does not split. The cart's are
   // listed only once put on the console (Hookup tab).
-  const offered = model.actuators.filter((a) => !ground.has(a.id) || !hidden.includes(a.id));
+  const offered = model.actuators.filter((a) => onBox(a.id) && (!ground.has(a.id) || !hidden.includes(a.id)));
   const listed = groupByPage(offered, offered, (a) => a.id, model.pages);
 
   return (
@@ -113,6 +119,11 @@ export default function ActuatorGrid({
       </div>
       {/* Scrolls when the valves outgrow the space the console gives them;
           the header and its Release stay put. */}
+      {drawn.length === 0 && model.actuators.some((a) => !onBox(a.id)) && (
+        <p className="font-mono text-[12px] text-[var(--ink-3)]">
+          No valve on the DAQ box. Wire them on the P&ID (Symbols or DAQ box).
+        </p>
+      )}
       <div className="grid min-h-0 grid-cols-4 content-start gap-2 overflow-y-auto pr-1">
         {drawn.map((a) => {
           const open = live.open[a.id] ?? false;
@@ -135,7 +146,12 @@ export default function ActuatorGrid({
               }`}
             >
               <span className="flex min-w-0 flex-col">
-                <span className="truncate text-[14px] font-semibold text-[var(--ink)]">{aliases[a.id] || (role ?? a.tag)}</span>
+                {/* Two lines before it gives up: a name off the DAQ box ("Dome Ctrl",
+                    "GSE Med Press Control") is longer than a tag and was cut
+                    to "Dom..." at 1280 px. */}
+                <span className="line-clamp-2 break-words text-[13px] font-semibold leading-tight text-[var(--ink)]">
+                  {aliases[a.id] || (role ?? a.tag)}
+                </span>
                 <span
                   className={`mt-0.5 font-mono text-[10px] uppercase leading-none tracking-[0.14em] ${
                     open ? 'text-[var(--color-success)]' : 'text-[var(--ink-3)]'

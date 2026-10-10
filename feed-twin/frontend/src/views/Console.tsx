@@ -37,6 +37,7 @@ import PanelMenu from '../components/PanelMenu';
 import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
+import { useHookup } from '../lib/useHookup';
 import { groupByPage } from '../lib/pages';
 import { moveTo, ordered, visible, type Hidden, type Panel } from '../lib/shown';
 
@@ -305,6 +306,20 @@ export function Console() {
     return { pts: ids, tanks: ids, actuators: ids };
   }, [consoleHidden]);
   const ground = useMemo(() => new Set(model?.ground ?? []), [model]);
+  // What the DAQ box sees. A transducer or valve the box can take is on the
+  // console only when it is wired, as a channel with no role is not on the
+  // real DAQ's dashboard; gauges, tanks and the engine's own channels are the
+  // twin's, shown as before. A hookup nobody has wired shows everything.
+  const { symbols: wireable } = useHookup();
+  const wiredKey = live?.wired ? live.wired.join('|') : null;
+  const daq = useMemo(() => {
+    const wired = wiredKey === null ? null : new Set(wiredKey.split('|'));
+    const boxable = new Set(wireable.map((s) => s.id));
+    return {
+      sensor: (id: string) => !wired || !boxable.has(id) || wired.has(id),
+      valve: (id: string) => !wired || wired.has(id),
+    };
+  }, [wiredKey, wireable]);
   // The pad sequence, read off the stand: the state to press is ringed on the
   // grid and one line under it says what is happening.
   const guide = usePadGuide(live, machine, setup, go, ground);
@@ -363,7 +378,7 @@ export function Console() {
     return {
       times: history.times_s.slice(start),
       channels: ordered(history.channels, order.pts, (c) => c.id)
-        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id))
+        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id) && daq.sensor(c.id))
         .map((c): Channel => ({
           key: c.id,
           tag: nameOf(c.id, c.tag),
@@ -371,7 +386,7 @@ export function Console() {
           color: channelColor(c.tag),
         })),
     };
-  }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order, daq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The stand's state changes as rules across the plot, keyed by content: a
   // new array on every history pull would rebuild the chart and lose the
@@ -382,8 +397,13 @@ export function Console() {
   // Pressure bars only. A thermocouple in a bar scaled to MEOP is
   // meaningless -- temperature lives in its own panel on Pressure.
   const allGauges = useMemo(
-    () => ordered((history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig'), order.pts, (c) => c.id),
-    [history, order],
+    () =>
+      ordered(
+        (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig' && daq.sensor(c.id)),
+        order.pts,
+        (c) => c.id,
+      ),
+    [history, order, daq],
   );
   const gauges = allGauges.filter((c) => ptShown(c.id));
   // The menus list items by sheet; the panels themselves do not split.
@@ -489,7 +509,19 @@ export function Console() {
               </div>
             ) : (
               <p className="font-mono text-[12px] text-[var(--ink-3)]">
-                {allGauges.length > 0 ? 'Every transducer hidden. Show some from ⋯.' : 'Waiting for the first samples…'}
+                {allGauges.length > 0 ? (
+                  'Every transducer hidden. Show some from ⋯.'
+                ) : wiredKey !== null && (history?.channels.length ?? 0) > 0 ? (
+                  <>
+                    No transducer on the DAQ box.{' '}
+                    <Link to="/pid" className="text-[var(--ink-2)] underline">
+                      Wire some on the P&ID
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  'Waiting for the first samples…'
+                )}
               </p>
             )}
           </section>
@@ -645,6 +677,7 @@ export function Console() {
                 onRelease={release}
                 hidden={hiddenBy.actuators}
                 ground={ground}
+                onBox={daq.valve}
                 aliases={live.aliases}
                 onToggleHidden={menuFor('actuators', []).onToggle}
                 // "all" is everything the menu lists: the rocket's valves and

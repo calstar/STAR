@@ -285,6 +285,36 @@ export interface StateMachine {
   positions: Record<string, Record<string, boolean>>;
   /** Problems in the state tables themselves. */
   warnings: string[];
+  /** State -> [row, col] on the panel (the DAQ's panel_row/col). */
+  layout?: Record<string, [number, number]>;
+  /** The abort states: always reachable. */
+  aborts?: string[];
+  /** The tables as the editor holds them. */
+  table?: MachineDef;
+  /** The stand's own table, not the shipped DAQ one. */
+  edited?: boolean;
+}
+
+/** A state as the State machine tab edits it: its place on the panel and
+ *  whether it is an abort (always reachable). */
+export interface MachineStateDef {
+  name: string;
+  row: number | null;
+  col: number | null;
+  abort: boolean;
+}
+
+/** The DAQ's tables, as the twin edits them (feedtwin
+ *  `StateMachine.to_dict`). `open[state]` are the rows OPEN in it, as
+ *  written; `allowed[state]` the states it may go to (absent: the state has
+ *  no row in the transition table, and goes nowhere). */
+export interface MachineDef {
+  schema?: number;
+  name?: string;
+  states: MachineStateDef[];
+  actuators: string[];
+  open: Record<string, string[]>;
+  allowed: Record<string, string[]>;
 }
 
 /** A propellant tank's inventory. */
@@ -382,8 +412,13 @@ export interface SessionState {
   notes: string[];
   /** The GSE page's knobs, from the drawing's hookup. */
   knobs?: LiveKnob[];
-  /** The hookup's console names, by drawing (channel) id. */
+  /** The hookup's console names, by drawing (channel) id: a connector's
+   *  name for what is on the DAQ box, the alias for anything else. */
   aliases?: Record<string, string>;
+  /** What the DAQ box sees, by drawing id: every symbol on a connector and
+   *  every valve a state-table row drives. Absent/null on a hookup that is
+   *  not wired yet: everything is, as before the box. */
+  wired?: string[] | null;
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
    *  clears it. */
   tripped?: string | null;
@@ -719,6 +754,9 @@ export const commandSession = (
     skip_chill?: true | string;
     /** Rename what the console shows, live (the hookup's aliases). */
     aliases?: Record<string, string>;
+    /** Rename aliases and connectors live; refused (409) when that would
+     *  change what a table row drives. */
+    names?: { aliases: Record<string, string>; channels: ChannelDef[] | null };
   },
 ) => post<SessionState>(`/api/session/${id}/command`, body);
 
@@ -732,14 +770,55 @@ export interface KnobDef {
   high: number;
 }
 
-/** What a person decided about a drawing's controls. `valves` pins a table
- *  actuator to a drawing valve ("" = no valve here); unpinned ones are matched
- *  automatically. */
+/** A board in the DAQ box. */
+export type BoardId = 'sol12' | 'sol24' | 'pt_low' | 'pt_high' | 'rtd' | 'tc';
+export type SymbolKind = 'valve' | 'pt' | 'rtd' | 'tc';
+
+export interface BoardDef {
+  id: BoardId;
+  label: string;
+  /** What plugs into it. */
+  kind: SymbolKind;
+}
+
+/** One connector on the DAQ box: board, connector number (from 1), the name
+ *  the DAQ gives it (console name; for a valve, the state table's row), and
+ *  the drawing id its cable goes to. */
+export interface ChannelDef {
+  board: BoardId;
+  slot: number;
+  name: string;
+  symbol: string;
+}
+
+/** A symbol a connector can take. */
+export interface HookupSymbol {
+  id: string;
+  label: string;
+  type: string;
+  page: string;
+  kind: SymbolKind;
+  /** The board it goes on unless somebody says otherwise. */
+  board: BoardId;
+  /** On the cart, not the vehicle. */
+  ground: boolean;
+}
+
+/** What a person decided about a drawing's controls: the DAQ box
+ *  (`channels`), the stand's own state table (`machine`, null = the DAQ's),
+ *  the knobs. `valves` are pins from before the box ("" = no valve here). */
 export interface HookupBody {
   valves: Record<string, string>;
   knobs: KnobDef[];
-  /** What the console calls a valve or transducer, by drawing (channel) id. */
+  /** What the console calls a symbol that is not on the box, by drawing
+   *  (channel) id: a tank, the engine's channels. */
   aliases?: Record<string, string>;
+  /** Always a list from the API: the box the twin's matching amounts to when
+   *  nobody has wired it (`Hookup.wired` false). */
+  channels?: ChannelDef[] | null;
+  /** Rows of five connectors each board shows. */
+  rows?: Partial<Record<BoardId, number>>;
+  machine?: MachineDef | null;
 }
 
 export interface Hookup {
@@ -759,6 +838,15 @@ export interface Hookup {
   mated: string[][];
   /** `bound` and the rest are the rocket-only stand's wiring. */
   vehicle_only?: boolean;
+  /** The box was written down (saved, or the stand's). False: `hookup`'s
+   *  channels are the twin's suggestion. */
+  wired: boolean;
+  boards: BoardDef[];
+  symbols: HookupSymbol[];
+  /** The DAQ's table as shipped. */
+  machine_shipped: MachineDef;
+  /** What is wrong with the table this hookup runs. */
+  machine_warnings: string[];
 }
 
 /** The id of the knob the session's dome setting drives. */
@@ -795,6 +883,23 @@ export const saveHookup = (w: { diagram: string; engine: string; fluidSet: strin
 
 export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
+
+/** A stand's own hookup, shown and bound as the drawing's would be. Saves
+ *  nothing. */
+export const viewHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }, body: HookupBody) =>
+  json<Hookup>(`/api/hookup/view?${whereQuery(w)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+/** What the twin would say about a table being edited. */
+export const checkMachine = (table: MachineDef) =>
+  json<{ ok: boolean; error: string; warnings: string[] }>('/api/statemachine/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(table),
+  });
 
 /** The solver tab: per tick, as columns (feedtwin.session.diagnostics). */
 export interface SolverTrace {
@@ -856,6 +961,10 @@ export const getTunables = () => json<Tunable[]>('/api/tunables');
 
 export const getStateMachine = (w: Where, ignoreGse = false) =>
   json<StateMachine>(`/api/statemachine?${query(w)}&ignore_gse=${ignoreGse}`);
+
+/** The table a running stand commands, and how it is bound: a stand's own
+ *  hookup included. */
+export const sessionStateMachine = (id: string) => json<StateMachine>(`/api/session/${id}/statemachine`);
 
 /**
  * Channel colours, lifted from the DAQ's `lib/sensor-colors.ts` so the same

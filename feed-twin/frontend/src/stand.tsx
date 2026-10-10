@@ -30,6 +30,7 @@ import {
   getHookup,
   getModel,
   getStateMachine,
+  sessionStateMachine,
   listArtifacts,
   openSession,
   sessionBurns,
@@ -41,6 +42,7 @@ import {
   tickSession,
   type Artifact,
   type Burns,
+  type ChannelDef,
   type ModelView,
   type RunResult,
   type SessionState,
@@ -98,6 +100,10 @@ interface StandValue {
   nameOf: (id: string, tag: string) => string;
   /** Give the running stand new console names (no reopen). */
   setAliases: (aliases: Record<string, string>) => void;
+  /** Give the running stand new names -- aliases and what its connectors are
+   *  called -- without reopening it. False when it refuses (a valve's
+   *  connector renamed off its row is rewiring): reopen it instead. */
+  setNames: (aliases: Record<string, string>, channels: ChannelDef[] | null) => Promise<boolean>;
   release: () => void;
   restart: () => void;
   /** Skip the pad: loaded, charged, at lockup, in Ready. */
@@ -404,9 +410,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
         // Read the drawing as the session was built: a reattached one may
         // ignore the GSE whatever this tab's defaults say.
         const cut = Boolean(first.setup?.ignore_gse ?? setup.ignore_gse);
+        // The table the session commands, bound as it runs: a stand's own
+        // hookup (and its own table) included, which the drawing's endpoint
+        // cannot see. An older backend falls back to the drawing's.
         const [view, sm] = await Promise.all([
           getModel(diagram, engine, 'hotfire', cut),
-          getStateMachine(where, cut),
+          sessionStateMachine(first.id).catch(() => getStateMachine(where, cut)),
         ]);
         if (cancelled) return;
         setModel(view);
@@ -641,6 +650,16 @@ export function StandProvider({ children }: { children: ReactNode }) {
     },
     nameOf: (id, tag) => live?.aliases?.[id] || tag,
     setAliases: (aliases) => void command({ aliases }),
+    setNames: async (aliases, channels) => {
+      if (!session.current) return true;
+      try {
+        setLive(await commandSession(session.current, { names: { aliases, channels } }));
+        last.current = performance.now();
+        return true;
+      } catch {
+        return false;
+      }
+    },
     release: () => void command({ release: '*' }),
     skipChill: (tankId) => void command({ skip_chill: tankId ?? true }),
     restart: () => {

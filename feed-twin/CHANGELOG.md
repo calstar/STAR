@@ -4,6 +4,41 @@ The stand app. Versioned in `backend/version.py`; `/api/version` reports it with
 the library version and the commit (and whether the tree was dirty). Physics
 changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
 
+## Unreleased — 2026-10-10: the DAQ box and the State machine tab
+
+The hookup, rebuilt the way the real DAQ declares a stand: valves and transducers
+cabled to named connectors on the DAQ's boards, and a state table that opens names.
+
+### Added
+- **P&ID → DAQ box** (hookup method B): the six boards (Solenoids 12V/24V, Low/High
+  press PT, RTDs, TCs) as GX12 connectors, five to a row, two rows to start and a
+  "+ row". Drag an empty connector onto a symbol on the drawing to cable it (or click
+  it, then the symbol), name it, drag a plugged one to move or swap it.
+- **P&ID → Symbols** (method A) shows the same wiring per symbol: board and
+  connector, the name, and for a valve the states that open it ("Opens in"). It
+  replaces "Driven by", which showed a row name ("LOX Press") that read as a state.
+  Switching between the two changes nothing; they edit one draft with the State
+  machine and Hookup tabs (`lib/useHookup.tsx`), saved from any of them.
+- **State machine** tab, after the DAQ's State tab: the states (name, place on the
+  console grid, abort), what each state opens (a compact matrix: rows are the
+  connectors' names), the allowed transitions, the twin's warnings, and the DAQ's
+  CSVs to download or upload. States the twin keys on (Idle, Ready, Fire, Vent,
+  Engine Abort, the fills) cannot be renamed or removed.
+- The console shows what is wired, as the DAQ's dashboard does: a valve or
+  transducer is on it only with a connector (gauges, tanks and the engine's channels
+  as before). A drawing nobody has wired shows everything, as before.
+- The console's state grid follows the table's own layout.
+- API: `GET /api/hookup` returns the box (derived from the twin's matching until
+  saved, at the DAQ's own connectors: `statemachines/diablo_channels.json`), `wired`,
+  `boards`, `symbols`, `machine_shipped`, `machine_warnings`; `PUT` takes `channels`,
+  `rows` and `machine` and refuses a cable on the wrong board; `POST /api/hookup/view`
+  (a stand's own hookup, bound as it runs); `POST /api/statemachine/check`;
+  `GET /api/session/{id}/statemachine`; `StateMachineOut.layout/aborts/table/edited`;
+  `SessionOut.wired`; the session command `names` renames live.
+- Runs record an edited table as `machine_table` ("state machine" in the Explain
+  ladder); a replay runs the table the run was recorded on.
+- `statemachines/diablo_states.csv`: the DAQ's panel layout and abort flags.
+
 ## Unreleased — 2026-10-09
 
 The console, used end to end overnight. Pressures here in psia.
