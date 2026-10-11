@@ -1,29 +1,45 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export function UserMenu({
   name,
   email,
   isAdmin = false,
   compact = false,
+  placement = "down",
 }: {
   name: string;
   email: string;
   isAdmin?: boolean;
   /** Avatar only, no name/chevron — for the collapsed sidebar rail. */
   compact?: boolean;
+  /**
+   * "down" drops the menu below the button (the mobile top bar). "up" opens it
+   * above, for the button at the foot of the sidebar: dropping down there put
+   * the menu below the bottom of the screen, inside the rail's scroll box, so a
+   * click flipped the chevron and showed nothing. "up" renders into <body> at a
+   * fixed position so neither that box nor the 68px collapsed rail clips it.
+   */
+  placement?: "down" | "up";
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const up = placement === "up";
 
-  // Close on outside tap and Escape.
+  // Close on outside tap and Escape. The "up" menu lives in a portal, so a tap
+  // inside it is outside `ref` and has to be checked separately.
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -38,6 +54,46 @@ export function UserMenu({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  // Pin the "up" menu to the button. A fixed menu would drift from a button that
+  // moves under it, so a resize or a scroll anywhere (the rail scrolls) closes it.
+  useLayoutEffect(() => {
+    if (!open || !up) return;
+    const r = buttonRef.current?.getBoundingClientRect();
+    if (r) setPos({ left: r.left, bottom: window.innerHeight - r.top + 8 });
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [open, up]);
+
+  const items = (
+    <>
+      <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">{email}</div>
+      <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
+      <Link
+        href="/settings"
+        onClick={() => setOpen(false)}
+        className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+      >
+        Settings
+      </Link>
+      {isAdmin && (
+        <Link
+          href="/workspace"
+          onClick={() => setOpen(false)}
+          className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+        >
+          Workspace setup
+        </Link>
+      )}
+    </>
+  );
+  const panel =
+    "w-56 max-w-[calc(100vw-3rem)] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg";
 
   return (
     <div ref={ref} className="relative">
@@ -63,7 +119,7 @@ export function UserMenu({
             <svg
               viewBox="0 0 20 20"
               fill="currentColor"
-              className={`h-4 w-4 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`}
+              className={`h-4 w-4 text-neutral-400 transition-transform ${open !== up ? "rotate-180" : ""}`}
               aria-hidden="true"
             >
               <path
@@ -75,28 +131,16 @@ export function UserMenu({
           </>
         )}
       </button>
-      {open && (
-        <div className="absolute right-0 z-50 mt-2 w-56 max-w-[calc(100vw-3rem)] rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg">
-          <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">{email}</div>
-          <div className="my-1 border-t border-neutral-100 dark:border-neutral-800" />
-          <Link
-            href="/settings"
-            onClick={() => setOpen(false)}
-            className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-          >
-            Settings
-          </Link>
-          {isAdmin && (
-            <Link
-              href="/workspace"
-              onClick={() => setOpen(false)}
-              className="flex min-h-11 items-center rounded px-3 py-2 text-sm text-neutral-700 sm:min-h-0 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-            >
-              Workspace setup
-            </Link>
-          )}
-        </div>
-      )}
+      {open && !up && <div className={`absolute right-0 z-50 mt-2 ${panel}`}>{items}</div>}
+      {open &&
+        up &&
+        pos &&
+        createPortal(
+          <div ref={menuRef} className={`fixed z-50 ${panel}`} style={{ left: pos.left, bottom: pos.bottom }}>
+            {items}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
