@@ -11,8 +11,17 @@ import { getProjectTree } from "@/lib/projects";
 import { getCurrentDbUser } from "@/lib/user";
 import { projectCreateSchema } from "@/lib/validation";
 
-export async function createProject(formData: FormData) {
+// The create itself, without the redirect, so a caller that isn't a form (the
+// MCP server) learns the new id. `createProject` below is what the UI's
+// <form action> uses and behaves exactly as before.
+export async function createProjectReturningId(
+  formData: FormData,
+): Promise<{ id: string }> {
   const user = await getCurrentDbUser();
+  // The only form that reaches this lives on the admin-only Workspace page;
+  // the action says so itself so a non-form caller gets the same answer.
+  if (!(await isAdmin(user.email)))
+    throw new Error("Only admins can create projects.");
   const data = projectCreateSchema.parse({
     name: formData.get("name"),
     description: formData.get("description"),
@@ -38,11 +47,20 @@ export async function createProject(formData: FormData) {
     },
   });
   revalidatePath("/projects");
-  redirect(`/projects/${project.id}`);
+  return { id: project.id };
+}
+
+export async function createProject(formData: FormData) {
+  const { id } = await createProjectReturningId(formData);
+  redirect(`/projects/${id}`);
 }
 
 export async function archiveProject(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
+  // Project management is admin-only (see /workspace); hiding a project hides
+  // its whole branch from everyone's lists and pickers.
+  if (!(await isAdmin(user.email)))
+    throw new Error("Only admins can archive projects.");
   const id = String(formData.get("id"));
   const archived = formData.get("archived") === "true";
   await prisma.project.update({ where: { id }, data: { archived } });

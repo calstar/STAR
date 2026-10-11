@@ -34,7 +34,7 @@ const withNames = {
   subteam: { select: { name: true } },
 } as const;
 
-export async function createTask(formData: FormData) {
+export async function createTask(formData: FormData): Promise<{ id: string }> {
   const user = await getCurrentDbUser();
   const data = taskCreateSchema.parse({
     projectId: formData.get("projectId"),
@@ -90,6 +90,8 @@ export async function createTask(formData: FormData) {
       notifyAssignment({ taskId: created.id, assigneeId, actorId: user.id }),
     );
   }
+  // The form ignores this; the MCP tool reads the new task back by id.
+  return { id: created.id };
 }
 
 /**

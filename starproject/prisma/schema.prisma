@@ -46,6 +46,25 @@ model User {
   createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
   approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
   reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
+  apiTokens              ApiToken[]
+}
+
+// A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
+// the token is stored; the plaintext is shown once at creation. `prefix` is the
+// first few characters so a user can tell their tokens apart in Settings. A
+// revoked token keeps its row (revokedAt set) so the list shows what happened.
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
 }
 
 model Project {

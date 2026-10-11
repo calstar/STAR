@@ -344,17 +344,8 @@ export function SidebarNav({
           </>
         )}
         <div className={`mt-auto pt-5 ${collapsed ? "px-2" : "px-3"}`}>
-          {isAdmin && !collapsed && (
-            <Link
-              href="/workspace"
-              onClick={onNavigate}
-              className="mb-2 flex min-h-11 items-center px-0 text-sm text-neutral-500 hover:text-neutral-900 sm:min-h-0 dark:text-neutral-400 dark:hover:text-neutral-100"
-            >
-              Workspace setup
-            </Link>
-          )}
           <div className={collapsed ? "flex justify-center" : "px-1"}>
-            <UserMenu name={userName} email={userEmail} isAdmin={isAdmin} compact={collapsed} />
+            <UserMenu name={userName} email={userEmail} isAdmin={isAdmin} compact={collapsed} placement="up" />
           </div>
         </div>
       </>

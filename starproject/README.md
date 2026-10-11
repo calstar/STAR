@@ -37,6 +37,26 @@ npm run build            # runs `prisma generate` then `next build`
 
 `next build` does **not** need a database — the only page is `force-dynamic`.
 
+## MCP server
+
+The app's actions are also exposed as [MCP](https://modelcontextprotocol.io) tools at
+`/api/mcp` (`https://project.starberkeley.org/api/mcp`, or `http://localhost:3000/api/mcp`
+in dev), so Claude Code, Claude Desktop or any MCP client can read and change tasks,
+projects, subteams and the rest *as you*; the tool table in `docs/MCP.md` is the list
+that ships. Auth is a personal access token from
+**Settings → API tokens** sent as `Authorization: Bearer sp_…`; tools run with your
+permissions and leave the same Activity trail as the UI. Three read-only resources
+(`starproject://projects`, `starproject://tasks/{number}`, `starproject://me`) give a
+client context without a tool call.
+
+```bash
+claude mcp add --transport http starproject https://project.starberkeley.org/api/mcp \
+  --header "Authorization: Bearer sp_…"
+```
+
+Client setup, the tool list, security notes and the local smoke-test scripts are in
+[`docs/MCP.md`](docs/MCP.md).
+
 ## Container
 
 The image is self-contained (Next standalone output) and runs
