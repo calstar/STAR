@@ -160,14 +160,16 @@ function PressureBar({
   return (
     <div className="flex h-full min-h-0 w-full select-none flex-col">
       {/* The tag and the reading centre on the capsule, not on the column. */}
+      {/* Two lines at most, and always room for two so the capsules line
+          up: a name off the DAQ box ("Fuel Upstream") is longer than a tag. */}
       <div
-        className={`flex-shrink-0 truncate pb-3 text-center font-mono uppercase tracking-[0.08em] text-[var(--ink-2)] ${
-          compact ? 'text-[11px]' : 'text-[12px]'
+        className={`flex flex-shrink-0 items-end justify-center pb-3 text-center font-mono uppercase leading-tight tracking-[0.08em] text-[var(--ink-2)] ${
+          compact ? 'h-[calc(2.5em+0.75rem)] text-[11px]' : 'h-[calc(2.5em+0.75rem)] text-[12px]'
         }`}
         style={{ paddingRight: GUTTER }}
         title={label}
       >
-        {label}
+        <span className="line-clamp-2 break-words">{label}</span>
       </div>
 
       <div className="relative min-h-0 w-full flex-1">

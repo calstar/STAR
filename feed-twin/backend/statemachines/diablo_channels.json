@@ -1,0 +1,22 @@
+{
+  "about": "Where the DAQ cables each actuator: daq-server/config/profiles/default/config.toml [actuator_roles], name -> [channel, board_id]. The twin's suggested hookup puts a matched valve on the same connector. Which DAQ actuator board is the 12 V one and which the 24 V is not in the DAQ's config: board 12 is shown as Solenoids 12V and board 14 as Solenoids 24V until somebody says otherwise.",
+  "boards": {"12": "sol12", "14": "sol24"},
+  "actuators": {
+    "LOX Main": [1, 12],
+    "Fuel Vent": [2, 12],
+    "Fuel Press": [3, 12],
+    "GSE Low Press Vent": [5, 12],
+    "LOX Vent": [6, 12],
+    "Fuel Main": [7, 12],
+    "LOX Press": [8, 12],
+    "Fuel Fill Vent": [1, 14],
+    "Fuel Fill Press": [2, 14],
+    "GSE High Press Control": [3, 14],
+    "GSE Med Press Control": [4, 14],
+    "GSE High Press Vent": [5, 14],
+    "GN2 Vent": [6, 14],
+    "LOX Fill": [7, 14],
+    "LOX Dump": [8, 14],
+    "GSE LOX Fill Vent": [10, 14]
+  }
+}

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from feedtwin.pid import read_diagram
-from feedtwin.pid.roles import ground_ids, vehicle_only
+from feedtwin.pid.roles import ground_ids, unpaired_vents, vehicle_only, vent_branches
 from feedtwin.session import Setup, assemble_model, load_machine
 from feedtwin.session.burn import open_session
 from feedtwin.session.gauge import psig
@@ -59,22 +59,35 @@ def _session(cut: bool) -> Any:
 
 
 def test_the_cart_is_cut_and_its_disconnects_capped() -> None:
+    """Everything off the vehicle goes but the cart's vent line, which stays
+    plugged into the rocket until launch; every other coupling is capped."""
     ids = _ids()
     diagram = read_diagram(_payload(), name="LE4 (6)")
     ground = ground_ids(diagram)
+    vents = vent_branches(diagram)
+    assert vents == {ids[x] for x in ("FV-QD-A", "FV-SOL", "FV-MAN", "junc_o5qqb5_95")}
     cut, gone = vehicle_only(diagram)
-    assert ground and not ground & {n.id for n in cut.nodes}
-    assert not ground_ids(cut), "what is left is one piece"
+    kept = {n.id for n in cut.nodes}
+    assert ground and ground & kept == vents
+    assert ground_ids(cut) == vents, "the rocket and its vent line"
     assert set(gone) == {"LOX-DW-350 PSI", "6K-GN2", "2K-GN2", "Fuel Transfer Tank"}
-    assert all(e.source not in ground and e.target not in ground for e in cut.edges)
-    mates = {n.id: n.options.get("pairedWith", "") for n in cut.nodes if n.type == "QD"}
-    assert not any(m in ground for m in mates.values()), "no half paired to the cart"
-    assert ids["COPV"] in {n.id for n in cut.nodes}
+    cart = ground - vents
+    assert all(e.source not in cart and e.target not in cart for e in cut.edges)
+    mates = {
+        n.label: n.options.get("pairedWith", "") for n in cut.nodes if n.type == "QD"
+    }
+    assert mates["FV-QD-B"] == ids["FV-QD-A"], "the vent stays coupled"
+    assert not any(
+        m in cart for m in mates.values()
+    ), "no other half paired to the cart"
+    assert ids["COPV"] in kept
 
     model = _model(True)
     assert model.meta["vehicle_only"] is True
     assert set(model.meta["ground_cut"]) == set(gone)
-    assert not model.built.mated and not model.built.supplies
+    # The one coupling left mated is the vent's; nothing on the cart supplies.
+    assert model.built.mated == ((ids["FV-QD-B"], ids["FV-QD-A"]),)
+    assert not model.built.supplies
 
 
 def test_a_drawing_of_the_rocket_alone_is_not_touched() -> None:
@@ -187,3 +200,80 @@ def test_the_setup_says_what_the_stand_was_built_from() -> None:
     assert whole.setup.ignore_gse is False and not whole.gse_ignored
     cut = open_session(_model(True), machine, setup=Setup())
     assert cut.setup.ignore_gse is True and cut.gse_ignored
+
+
+@needs_tables
+def test_the_cart_vent_stays_plugged_in_and_vents_the_rocket() -> None:
+    """The cart's vents are a small part of the GSE that stays plugged into the
+    rocket until the last moment before launch (the team, 2026-10-10). Rocket
+    only, the fuel tank's vent coupling stays mated to the cart's vent line,
+    Fuel Vent drives the cart's FV-SOL -- not a stand-in on the capped
+    coupling -- and venting through it empties the pressed tank."""
+    ids = _ids()
+    model = _model(True)
+    assert ids["FV-QD-B"] not in model.meta["capped"]
+    session = _session(True)
+    assert session.binding.to_symbol["Fuel Vent"] == ids["FV-SOL"]
+    fuel = session.tanks[ids["Eth-Tank"]]
+    for state, steps in (("GN2 High Press", 30), ("Fuel Fill", 40), ("Fuel Press", 20)):
+        session.state = state
+        for _ in range(steps):
+            session.step(0.5)
+    pressed = psig(fuel.pressure)
+    assert pressed > 400.0
+    session.state = "Fuel Vent"
+    for _ in range(20):
+        session.step(0.5)
+    assert psig(fuel.pressure) < 0.1 * pressed, "it vents through the cart's line"
+
+
+def test_a_vent_drawn_unpaired_is_said_and_once_paired_it_stays() -> None:
+    """LE4 (6) draws the LOX vent's halves -- the rocket's QD-OV-B and the
+    cart's OV-QD-A in front of OV-MOT -- paired with nothing. The twin does
+    not guess the pair; it says so. Paired, the warning goes and the LOX vent
+    line stays plugged into the rocket only like the fuel's."""
+    payload = _payload()
+    ids = _ids()
+    warned = unpaired_vents(read_diagram(payload, name="LE4 (6)"))
+    assert len(warned) == 1 and "QD-OV-B" in warned[0] and "OV-MOT" in warned[0]
+    assert warned[0] in _model(False).report.warnings
+    for node in payload["nodes"]:
+        label = node["data"]["label"]
+        if label in ("QD-OV-B", "OV-QD-A"):
+            other = "OV-QD-A" if label == "QD-OV-B" else "QD-OV-B"
+            node["data"].setdefault("options", {})["pairedWith"] = ids[other]
+    paired = read_diagram(payload, name="LE4 (6) paired")
+    assert unpaired_vents(paired) == []
+    assert {ids["OV-QD-A"], ids["OV-MOT"]} <= vent_branches(paired)
+    cut = _model(True, payload)
+    assert ids["QD-OV-B"] not in cut.meta["capped"]
+
+
+def test_a_gas_swap_puts_helium_in_the_bottles_lines_and_ullages() -> None:
+    """``gas_swap`` replaces the pressurant wherever it is declared: the
+    network's bottles, press lines and the ullages they fill hold helium; the
+    tanks keep their propellants. Without it, the drawing's nitrogen."""
+    from feedtwin.session.model import swap_gases
+
+    ids = _ids()
+    diagram = read_diagram(_payload(), name="LE4 (6)")
+    swapped = swap_gases(diagram, {"nitrogen": "helium"})
+    by_id = {n.id: n for n in swapped.nodes}
+    assert by_id[ids["COPV"]].fluid == "helium"
+    assert by_id[ids["Eth-Tank"]].fluid == next(
+        n.fluid for n in diagram.nodes if n.id == ids["Eth-Tank"]
+    )
+    assert not any(n.fluid == "nitrogen" for n in swapped.nodes)
+    for gas in ("nitrogen", "helium"):
+        model = assemble_model(
+            read_diagram(_payload(), name="LE4 (6)"),
+            diagram_id="le4",
+            gas_swap=None if gas == "nitrogen" else {"nitrogen": gas},
+        )
+        nodes = model.built.network.nodes
+        assert nodes[ids["COPV"]].fluid == gas
+        # The ullages it presses (a tank's node is its ullage; ``.out`` its
+        # liquid), and the tanks still hold their propellants.
+        for tank in ("Eth-Tank", "LOX-Tank"):
+            assert nodes[ids[tank]].fluid == gas
+            assert nodes[f"{ids[tank]}.out"].fluid in ("ethanol", "oxygen")

@@ -6,6 +6,75 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-10: the DAQ box and the stand's own state table
+
+### Added
+- **A hookup can be wired** (`Hookup.channels`, `Channel(board, slot, name, symbol)`,
+  hookup schema 2; schema 1 still reads and a hookup without channels is still written
+  as schema 1). It is how the real DAQ declares a stand: each valve and transducer on a
+  named connector, and the state table opening names. On a wired hookup `binding()`
+  binds a row to the valve on the connector of its name (ignoring case) and nothing
+  else: a row with no connector, or one on a symbol that is not a valve, drives
+  nothing and is listed in `unmatched`. `channels=()` is a box with nothing plugged
+  in. Without channels nothing changes: pins, then names and roles, bit for bit.
+  `Hookup.names()` is the console's names (a connector's name over an alias).
+  `on_vehicle` keeps the rocket's connectors and matches the rows whose cable went to
+  the cart as before (`Hookup.auto`, compared ignoring case), and now rebuilds with
+  `replace`. Rocket only, a row with no connector still drives the stand-in the cut
+  drawing makes of a disconnect whose mate went with the cart (the tank-top GSE
+  vent; `Model.meta["capped"]`), which the box cannot take. A connector whose
+  symbol the drawing lost is matched by name again, as a pin to a lost valve always
+  was (`lost_connectors` lists them for the stand's notes).
+- **An edited state table** (`StateMachine.to_dict`, `machine_from_dict`,
+  `Hookup.machine`). Read exactly as the CSVs are: Idle held shut, mains outside Fire
+  and ignition paths around Ready warned (`_hold_idle`, `_fire_bypasses`, shared with
+  `load_machine`). Refused when it contradicts itself (a state or row named twice --
+  rows ignoring case --, a cell naming what the table lacks). `StateMachine.table`
+  keeps what the table wrote before the Idle hold; `layout` is the DAQ's panel
+  row/col; `aborts` the states flagged abort (`None`: by name, as before; a flag is
+  read strictly -- "0" is no). `load_machine` reads an optional
+  `<name>_states.csv` beside the tables for both. An edited table without a state
+  the twin keys on by name (`KEYED_STATES`: Idle, Ready, Fire, Vent, Engine Abort)
+  is warned.
+- `core.builtin_rows(machine)`: the rows the session reads by name (the built-in
+  COPV charge and dump, the transfer tank's press), with what each does.
+
+### Fixed
+- `builtin_rows(machine, model, drawn=None)` follows the drawing: the COPV charge and
+  dump only while a vehicle bottle's fill is not drawn (not on LE4 (6), whose cart
+  charges it; again rocket only), the fill-press row only for a cart transfer tank of
+  its side with a drawn pressure (not on the shipped stand). The drawn-fill walk is
+  `core.drawn_fills(model)`, which `Session._drawn_fill` now calls; `Session.builtin`
+  lists the rows on a stand's own fills.
+- An edited table missing a state the twin keys on is warned with that state's reason
+  alone (`KEYED_STATES` is name -> reason), and one in which no state loads a side's
+  tank is warned for that side (`statemachine.fills`, the rule `Session._fills` now
+  calls).
+- `lost_connectors`: only a connector named for a table row is matched by name again;
+  a transducer's names nothing until it is rewired (docstring).
+
+### Added
+- `assemble_model(gas_swap=...)` / `swap_gases`: the pressurant replaced wherever a
+  symbol declares it (bottles, press and dome lines; the network spreads it to the
+  ullages); tanks and dewars keep their contents. `Setup.pressurant` (`""`, `"nitrogen"`,
+  `"helium"`) names it for the caller that assembles, as `ignore_gse` does. Empty, the
+  default, is the drawing's gas -- nothing changes.
+
+### Changed results
+- `roles.vehicle_only` (`Setup.ignore_gse`, rocket only) keeps the cart's vent lines
+  (`roles.vent_branches`: behind a vehicle disconnect, no vessel, regulator or
+  further coupling, and a valve the table opens, a relief or an outlet). They are
+  plugged into the rocket until launch (the team, 2026-10-10), so rocket only a
+  tank vents through the cart's vent valve, not a stand-in on its capped top
+  disconnect. A LE4 (6) rocket-only burn is unchanged (thrust within 4e-5 N of
+  6,916 N); its fuel tank vents from 519.9 psia to 14.7 psia in 10 s through
+  FV-SOL. `roles.unpaired_vents` reports a vent whose halves are drawn unpaired.
+- Otherwise none. A hookup without channels and a table without flags bind and run as before
+  (`tests/test_daq_hookup.py`, `test_hookup.py`); the shipped table's aborts from its
+  new `_states.csv` are the three the name rule found. The fixes above are reporting
+  only: an LE4 (6) whole and rocket-only, and shipped-stand, pad walk is bit-identical
+  to before (history, notes, drawn fills).
+
 ## Unreleased — 2026-10-09
 
 ### Changed results

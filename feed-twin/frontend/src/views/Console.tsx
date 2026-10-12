@@ -37,8 +37,10 @@ import PanelMenu from '../components/PanelMenu';
 import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
+import { useHookup } from '../lib/useHookup';
 import { groupByPage } from '../lib/pages';
 import { moveTo, ordered, visible, type Hidden, type Panel } from '../lib/shown';
+import { groupTableWarnings } from '../lib/stateTable';
 
 const WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -136,34 +138,6 @@ function Vessel({
       </div>
     </div>
   );
-}
-
-/**
- * The state table's warnings, grouped: the seven "X -> Fire is permitted ...
- * bypasses Ready" sentences become one line naming the states, and every
- * other warning shows its first sentence with the rest on hover.
- */
-function groupTableWarnings(warnings: readonly string[]): { text: string; detail: string }[] {
-  const bypass: string[] = [];
-  const out: { text: string; detail: string }[] = [];
-  let bypassDetail = '';
-  for (const w of warnings) {
-    const m = /^(.+?) -> Fire is permitted/.exec(w);
-    if (m) {
-      bypass.push(m[1]);
-      bypassDetail = w.replace(/^.+? -> /, 'X -> ');
-      continue;
-    }
-    const first = w.split(/(?<=\.)\s/)[0] ?? w;
-    out.push({ text: first, detail: w });
-  }
-  if (bypass.length) {
-    out.unshift({
-      text: `${bypass.length} state${bypass.length === 1 ? '' : 's'} can go straight to Fire without Ready: ${bypass.join(', ')}.`,
-      detail: bypassDetail,
-    });
-  }
-  return out;
 }
 
 type Reading = readonly [label: string, value: number, unit: string, places: number, colour?: string];
@@ -305,6 +279,20 @@ export function Console() {
     return { pts: ids, tanks: ids, actuators: ids };
   }, [consoleHidden]);
   const ground = useMemo(() => new Set(model?.ground ?? []), [model]);
+  // What the DAQ box sees. A transducer or valve the box can take is on the
+  // console only when it is wired, as a channel with no role is not on the
+  // real DAQ's dashboard; gauges, tanks and the engine's own channels are the
+  // twin's, shown as before. A hookup nobody has wired shows everything.
+  const { symbols: wireable } = useHookup();
+  const wiredKey = live?.wired ? live.wired.join('|') : null;
+  const daq = useMemo(() => {
+    const wired = wiredKey === null ? null : new Set(wiredKey.split('|'));
+    const boxable = new Set(wireable.map((s) => s.id));
+    return {
+      sensor: (id: string) => !wired || !boxable.has(id) || wired.has(id),
+      valve: (id: string) => !wired || wired.has(id),
+    };
+  }, [wiredKey, wireable]);
   // The pad sequence, read off the stand: the state to press is ringed on the
   // grid and one line under it says what is happening.
   const guide = usePadGuide(live, machine, setup, go, ground);
@@ -363,7 +351,7 @@ export function Console() {
     return {
       times: history.times_s.slice(start),
       channels: ordered(history.channels, order.pts, (c) => c.id)
-        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id))
+        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id) && daq.sensor(c.id))
         .map((c): Channel => ({
           key: c.id,
           tag: nameOf(c.id, c.tag),
@@ -371,7 +359,7 @@ export function Console() {
           color: channelColor(c.tag),
         })),
     };
-  }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order, daq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The stand's state changes as rules across the plot, keyed by content: a
   // new array on every history pull would rebuild the chart and lose the
@@ -382,8 +370,13 @@ export function Console() {
   // Pressure bars only. A thermocouple in a bar scaled to MEOP is
   // meaningless -- temperature lives in its own panel on Pressure.
   const allGauges = useMemo(
-    () => ordered((history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig'), order.pts, (c) => c.id),
-    [history, order],
+    () =>
+      ordered(
+        (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig' && daq.sensor(c.id)),
+        order.pts,
+        (c) => c.id,
+      ),
+    [history, order, daq],
   );
   const gauges = allGauges.filter((c) => ptShown(c.id));
   // The menus list items by sheet; the panels themselves do not split.
@@ -418,7 +411,12 @@ export function Console() {
   // Whatever the table can reach that the grid does not draw and the stack
   // has no button for -- the GSE and emergency aborts, a debug state. Before,
   // these were only in a "Go to…" dropdown; they must not become unreachable.
-  const others = reachable.filter((s) => OFF_GRID.test(s) && !/^fire$/i.test(s) && s !== 'Engine Abort');
+  // The grid also leaves out a state the State machine tab flags Abort
+  // whatever it is called, so the same test picks its button.
+  const others = reachable.filter(
+    (s) =>
+      (OFF_GRID.test(s) || Boolean(machine?.aborts?.includes(s))) && !/^fire$/i.test(s) && s !== 'Engine Abort',
+  );
 
   const gauge = (c: (typeof gauges)[number]) => {
     const { nop, meop } = limitsOf(c);
@@ -489,7 +487,19 @@ export function Console() {
               </div>
             ) : (
               <p className="font-mono text-[12px] text-[var(--ink-3)]">
-                {allGauges.length > 0 ? 'Every transducer hidden. Show some from ⋯.' : 'Waiting for the first samples…'}
+                {allGauges.length > 0 ? (
+                  'Every transducer hidden. Show some from ⋯.'
+                ) : wiredKey !== null && (history?.channels.length ?? 0) > 0 ? (
+                  <>
+                    No transducer on the DAQ box.{' '}
+                    <Link to="/pid" className="text-[var(--ink-2)] underline">
+                      Wire some on the P&ID
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  'Waiting for the first samples…'
+                )}
               </p>
             )}
           </section>
@@ -620,7 +630,10 @@ export function Console() {
                 has, however tall the window makes it. */}
             <div className="relative min-h-[200px] flex-1">
               <div className="absolute inset-0">
-                {plot.times.length > 1 ? (
+                {plot.channels.length === 0 ? (
+                  // Empty axes say nothing; the Pressure strip above says why.
+                  <p className="font-mono text-[12px] text-[var(--ink-3)]">No transducer to plot.</p>
+                ) : plot.times.length > 1 ? (
                   <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} marks={marks} />
                 ) : (
                   <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
@@ -645,11 +658,12 @@ export function Console() {
                 onRelease={release}
                 hidden={hiddenBy.actuators}
                 ground={ground}
+                onBox={daq.valve}
                 aliases={live.aliases}
                 onToggleHidden={menuFor('actuators', []).onToggle}
                 // "all" is everything the menu lists: the rocket's valves and
                 // the cart's already on the console. The rest of the cart
-                // stays off until the Hookup tab puts it on.
+                // stays off until the P&ID's Symbols panel puts it on.
                 onAllHidden={(show) =>
                   show
                     ? hideOnConsole(
@@ -691,7 +705,9 @@ export function Console() {
                       type="button"
                       onClick={() => go(s)}
                       disabled={busy || locked}
-                      className={`ctl h-7 px-2.5 text-[10px] ${/abort/i.test(s) ? 'text-[var(--color-danger)]' : ''}`}
+                      className={`ctl h-7 px-2.5 text-[10px] ${
+                        /abort/i.test(s) || machine?.aborts?.includes(s) ? 'text-[var(--color-danger)]' : ''
+                      }`}
                     >
                       {s}
                     </button>
@@ -734,7 +750,17 @@ export function Console() {
               <details className="mt-3">
                 <summary className="cursor-pointer text-[12px] text-[var(--color-warning)]">
                   The stand's state table has {tableIssues.length} issue{tableIssues.length === 1 ? '' : 's'}{' '}
-                  <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                  {machine?.edited ? (
+                    <span className="text-[var(--ink-3)]">
+                      — this stand's own table; fix it on the{' '}
+                      <Link to="/statemachine" className="underline">
+                        State machine
+                      </Link>{' '}
+                      tab
+                    </span>
+                  ) : (
+                    <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                  )}
                 </summary>
                 <ul className="mt-2 flex flex-col gap-1 pl-4">
                   {tableIssues.map((w) => (

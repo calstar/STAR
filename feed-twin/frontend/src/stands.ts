@@ -18,7 +18,7 @@ export interface StandPayload {
   fluid_set: string;
   machine: string;
   /** Configuration-tab settings, keyed as the backend's tunables name them. */
-  setup: Record<string, number | boolean>;
+  setup: Record<string, number | boolean | string>;
   /** Valve pins and regulator knobs (`{valves, knobs}`). */
   hookup: Record<string, unknown>;
   /** Where the knobs sit: `{knobs: {id: psig}}`. */

@@ -62,10 +62,18 @@ interface Props {
 const ROW_MIN = 40;
 
 export default function StateMachineDiagram({ machine, live, go, locked = false, actions, next, guide }: Props) {
-  const states = machine.states.filter((s) => !OFF_GRID.test(s));
-  const extra = states.filter((s) => STATE_POS[s] === undefined);
+  const states = machine.states.filter((s) => !OFF_GRID.test(s) && !machine.aborts?.includes(s));
+  // The table's own panel (the DAQ's panel_row/col, editable on the State
+  // machine tab) when it has one; the DAQ's layout by name when it does not.
+  const placed = machine.layout && Object.keys(machine.layout).length ? machine.layout : STATE_POS;
+  const at = (state: string): [number, number] | undefined => {
+    const p = placed[state];
+    return p && p[1] < COLS ? [p[0], p[1]] : undefined;
+  };
+  const extra = states.filter((s) => at(s) === undefined);
+  const last = Math.max(ROW_COUNT - 1, ...states.map((s) => at(s)?.[0] ?? 0));
   const pos = (state: string): [number, number] =>
-    STATE_POS[state] ?? [ROW_COUNT + Math.floor(extra.indexOf(state) / COLS), extra.indexOf(state) % COLS];
+    at(state) ?? [last + 1 + Math.floor(extra.indexOf(state) / COLS), extra.indexOf(state) % COLS];
   const reachable = new Set(live.reachable);
   const rows = Math.max(1, ...states.map((st) => pos(st)[0] + 1));
 

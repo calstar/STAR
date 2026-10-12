@@ -11,16 +11,17 @@
  * Below the regulators: the rest of the cart, which is not on the drawing
  * yet -- how fast it charges, and the LOX dewar that pushes the load in.
  * "Ignore the drawn GSE" (Setup ignore_gse) makes that true of a drawing that
- * does have its cart drawn: the rocket alone, filled at these settings.
+ * does have its cart drawn: the rocket alone, filled at these settings --
+ * and the cart's vent lines, which stay plugged in until launch.
  * The model switches moved to the Configuration tab with everything else
  * the twin assumes.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { CHARGE_KNOB, DOME_KNOB, fixed, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
 import { useStand } from '../stand';
+import { KnobsEditor } from '../components/KnobsEditor';
 
 /** The knobs turn continuously; the stand hears about it a few times a
  *  second. Enough to feel live, not enough to flood the command channel. */
@@ -154,7 +155,7 @@ export function Gse() {
     <div className="flex flex-col gap-4 p-4">
       <label
         className="flex items-center gap-2 text-[12px] text-text"
-        title="On: the cart drawn on the GSE page is not simulated. The rocket alone is built, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
+        title="On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
       >
         <input
           type="checkbox"
@@ -165,9 +166,40 @@ export function Gse() {
         />
         Ignore the drawn GSE
         {setup.ignore_gse ? (
-          <span className="text-[11px] text-text-muted">· rocket only, fills at the settings below</span>
+          <span className="text-[11px] text-text-muted">· rocket and its vent lines, fills at the settings below</span>
         ) : null}
       </label>
+      <div
+        className="flex items-center gap-2 text-[12px] text-text"
+        title="The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand."
+      >
+        <span>Pressurant</span>
+        <div className="flex overflow-hidden rounded border border-[var(--line-strong)]">
+          {(
+            [
+              ['', "Drawing's"],
+              ['nitrogen', 'GN2'],
+              ['helium', 'Helium'],
+            ] as const
+          ).map(([value, label]) => {
+            const on = (setup.pressurant ?? '') === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                disabled={locked}
+                aria-pressed={on}
+                onClick={() => !on && set({ pressurant: value })}
+                className={`px-2 py-0.5 text-[11px] disabled:opacity-50 ${
+                  on ? 'bg-white/10 text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <section>
         <h2 className="mb-1 caps">
@@ -246,11 +278,11 @@ export function Gse() {
           {chargeKnob
             ? `COPV fill sets ${chargeKnob.regulators.join(', ')} on the drawing. `
             : "COPV fill is the twin's own GSE fill (no fill regulator on the drawing). "}
-          Which regulator each other knob turns is set on the{' '}
-          <Link to="/hookup" className="text-blue-400 hover:underline">
-            Hookup
-          </Link>{' '}
-          page.
+          Which regulator each knob turns is set{' '}
+          <a href="#knobs" className="text-blue-400 hover:underline">
+            below
+          </a>
+          .
         </p>
       </section>
 
@@ -295,6 +327,7 @@ export function Gse() {
         </fieldset>
       </section>
 
+      <KnobsEditor />
     </div>
   );
 }

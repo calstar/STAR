@@ -1,0 +1,21 @@
+name,row,col,abort
+Idle,0,0,0
+Armed,1,0,0
+Fuel Fill,1,1,0
+Ox Fill,1,2,0
+Press Standby,2,0,0
+GN2 Low Press,2,1,0
+GN2 Low Vent,3,1,0
+Fuel Press,2,2,0
+Fuel Vent,3,2,0
+Ox Press,2,3,0
+Ox Vent,3,3,0
+GN2 High Press,2,4,0
+GN2 High Vent,3,4,0
+Calibrate,4,0,0
+Ready,4,1,0
+Fire,5,0,0
+Vent,3,0,0
+Engine Abort,,,1
+GSE Abort,,,1
+Emergency Abort,,,1

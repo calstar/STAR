@@ -236,6 +236,23 @@ class StateMachineOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     """Problems in the state tables themselves."""
 
+    layout: dict[str, list[int]] = Field(default_factory=dict)
+    """State -> ``[row, col]`` on the panel, the DAQ's ``panel_row/col``.
+    A state absent is not placed by the table (the console places it)."""
+
+    aborts: list[str] = Field(default_factory=list)
+    """The abort states: always reachable."""
+
+    table: dict[str, Any] = Field(default_factory=dict)
+    """The tables as an editor holds them (``StateMachine.to_dict``)."""
+
+    edited: bool = False
+    """The stand's own table, not the shipped DAQ one."""
+
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin acts on by name on this stand
+    (feedtwin.session.core.builtin_rows)."""
+
 
 class TankOut(BaseModel):
     """A propellant tank's inventory, which is what makes a sequence mean
@@ -346,8 +363,13 @@ class SessionOut(BaseModel):
     t: float
     knobs: list[LiveKnobOut] = Field(default_factory=list)
     # The hookup's console names, by drawing (channel) id: what the console
-    # shows in place of a valve's or transducer's tag.
+    # shows in place of a valve's or transducer's tag -- a connector's name
+    # for what is on the DAQ box, the alias for anything else.
     aliases: dict[str, str] = Field(default_factory=dict)
+    wired: list[str] | None = None
+    """What the DAQ box sees, by drawing id: every symbol on a connector, and
+    every valve a state-table row drives. ``None`` on a hookup that is not
+    wired: everything is, as before the box."""
     state: str
     reachable: list[str]
     converged: bool
@@ -362,7 +384,7 @@ class SessionOut(BaseModel):
     held: list[str]
     tanks: list[TankOut]
     bottles: list[TankOut]
-    setup: dict[str, float | bool] = Field(default_factory=dict)
+    setup: dict[str, float | bool | str] = Field(default_factory=dict)
     engine: "EngineState | None" = None
     notes: list[str] = Field(default_factory=list)
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a
@@ -463,14 +485,56 @@ class KnobOut(BaseModel):
     high: float = 1000.0
 
 
+class ChannelOut(BaseModel):
+    """One connector on the DAQ box: board, connector number (from 1), the
+    name the DAQ gives it, and the drawing id its cable goes to."""
+
+    board: str
+    slot: int
+    name: str
+    symbol: str
+
+
 class HookupBody(BaseModel):
-    """What a person decided: pinned valves (actuator -> drawing id, "" for
-    none) and the knobs."""
+    """What a person decided: the DAQ box (``channels``), the stand's own
+    state table, the knobs -- and, from before the box, pinned valves
+    (actuator -> drawing id, "" for none)."""
 
     valves: dict[str, str] = Field(default_factory=dict)
     knobs: list[KnobOut] = Field(default_factory=list)
     # What the console calls a valve or transducer, by drawing (channel) id.
     aliases: dict[str, str] = Field(default_factory=dict)
+    channels: list[ChannelOut] | None = None
+    """``None`` on a hookup that is not wired (matched by name). Out of the
+    API it is always a list: the box the twin's matching amounts to."""
+    rows: dict[str, int] = Field(default_factory=dict)
+    machine: dict[str, Any] | None = None
+    """The stand's own state table (``StateMachine.to_dict``); ``None`` is
+    the shipped DAQ table."""
+
+
+class BoardOut(BaseModel):
+    """A board in the DAQ box and what plugs into it."""
+
+    id: str
+    label: str
+    kind: str
+    """``valve``, ``pt``, ``rtd`` or ``tc``."""
+
+
+class HookupSymbolOut(BaseModel):
+    """A symbol that can go on a connector."""
+
+    id: str
+    label: str
+    type: str
+    page: str
+    kind: str
+    """``valve`` (a solenoid board drives it), ``pt``, ``rtd`` or ``tc``."""
+    board: str
+    """The board it goes on unless somebody says otherwise."""
+    ground: bool = False
+    """On the cart (ground support), not the vehicle."""
 
 
 class HookupValveOut(BaseModel):
@@ -510,6 +574,24 @@ class HookupOut(BaseModel):
     #: ``bound`` and the rest are the rocket-only stand's wiring
     #: (``Setup.ignore_gse``); ``hookup`` is still the whole drawing's.
     vehicle_only: bool = False
+    wired: bool = False
+    """The box was written down (saved or the stand's). False: ``hookup``'s
+    channels are what the twin's matching amounts to."""
+    boards: list[BoardOut] = Field(default_factory=list)
+    symbols: list[HookupSymbolOut] = Field(default_factory=list)
+    machine_shipped: dict[str, Any] = Field(default_factory=dict)
+    """The DAQ's table as shipped, for "back to the DAQ's table"."""
+    machine_warnings: list[str] = Field(default_factory=list)
+    """What is wrong with the table this hookup runs."""
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin reads by name, and what each does with no valve wired to
+    it (the built-in COPV charge and dump, the transfer tank's press) -- only
+    where it has something to act on: not the charge on a drawing whose cart
+    charges the COPV, unless rocket only."""
+    problems: list[str] = Field(default_factory=list)
+    """What this drawing cannot have: a cable to a symbol a later version of
+    the drawing dropped, a knob on a regulator it lacks. Saving is refused
+    until they are unplugged."""
 
 
 class SolverOut(BaseModel):

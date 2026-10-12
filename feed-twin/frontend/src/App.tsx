@@ -8,9 +8,10 @@
  * other view's chrome longer.
  */
 
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { TopBar } from './components/TopBar';
 import { StandProvider, useStand } from './stand';
+import { HookupProvider } from './lib/useHookup';
 import TripOverlay from './components/TripOverlay';
 import { Console } from './views/Console';
 import { Gse } from './views/Gse';
@@ -18,7 +19,7 @@ import { Config } from './views/Config';
 import { Pid } from './views/Pid';
 import { Plots } from './views/Plots';
 import { Engine } from './views/Engine';
-import { Hookup } from './views/Hookup';
+import { StateMachineView } from './views/StateMachineView';
 import { Solver } from './views/Solver';
 import { Runs } from './views/Runs';
 import { Study } from './views/Study';
@@ -38,8 +39,8 @@ export const VIEWS = [
   { group: 'Results', path: '/study', label: 'Study', hint: 'Your stand, burned from T-0 once per case: change the COPV, a knob, the bottle, the load, or sweep one' },
   { group: 'Results', path: '/solver', label: 'Solver', hint: 'Can these numbers be trusted? Residuals, mass balance and the iteration log' },
   { group: 'Set up', path: '/library', label: 'Library', hint: 'Import drawings and engines' },
-  { group: 'Set up', path: '/hookup', label: 'Hookup', hint: 'Which valve each actuator opens, what the console shows and calls things, which knob sets which regulator' },
-  { group: 'Set up', path: '/config', label: 'Configuration', hint: 'Every number the twin assumes, explained and editable' },
+  { group: 'Set up', path: '/statemachine', label: 'State machine', hint: 'The DAQ’s state table: what each state opens, and which states can follow which' },
+  { group: 'Set up', path: '/config', label: 'Configuration', hint: 'Assumed numbers, editable' },
   { group: 'Set up', path: '/report', label: 'Checks', hint: 'What the twin read from the drawing, what it had to assume, and what looks wrong' },
 ] as const;
 
@@ -62,7 +63,9 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Console />} />
           <Route path="/gse" element={<Gse />} />
-          <Route path="/hookup" element={<Hookup />} />
+          {/* The knobs were a tab; they are at the foot of GSE Controls. */}
+          <Route path="/hookup" element={<Navigate to="/gse" replace />} />
+          <Route path="/statemachine" element={<StateMachineView />} />
           <Route path="/config" element={<Config />} />
           <Route path="/pid" element={<Pid />} />
           <Route path="/plots" element={<Plots />} />
@@ -82,7 +85,9 @@ function Shell() {
 export default function App() {
   return (
     <StandProvider>
-      <Shell />
+      <HookupProvider>
+        <Shell />
+      </HookupProvider>
     </StandProvider>
   );
 }
