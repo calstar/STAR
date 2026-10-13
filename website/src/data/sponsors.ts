@@ -25,6 +25,8 @@ export const SPONSORS: Sponsor[] = [
   { name: 'JLCPCB', url: 'https://jlcpcb.com/', logo: '/img/sponsors/jlcpcb.png' },
   { name: 'Bay Area Circuits', url: 'https://bayareacircuits.com/', logo: '/img/sponsors/bay_area_circuits.png' },
   { name: 'Seamless Tanks', url: 'https://seamlesstanks.com/', logo: '/img/sponsors/seamless_tanks.png' },
+  { name: 'U.S. Solid', url: 'https://ussolid.com/pages/about-us', logo: '/img/sponsors/ussolid.png' },
+  { name: 'Valworx', url: 'https://www.valworx.com/', logo: '/img/sponsors/valworx.png' },
   { name: 'Graphite Store', url: 'https://www.graphitestore.com/', logo: '/img/sponsors/graphite_store.png' },
   { name: 'Baktek', url: 'https://www.baktek.net/', logo: '/img/sponsors/baktek.png' },
   { name: 'Mach 1 Hot Sauce', url: 'https://mach1hotsauce.com/', logo: '/img/sponsors/mach1hotsauce.png' },
