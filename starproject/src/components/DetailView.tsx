@@ -24,7 +24,6 @@ export function DetailView({
   emptyText,
   showProject = false,
   showSubproject = false,
-  showSubteam = false,
 }: {
   basePath: string;
   view: DetailViewMode;
@@ -36,7 +35,6 @@ export function DetailView({
   emptyText?: string;
   showProject?: boolean;
   showSubproject?: boolean;
-  showSubteam?: boolean;
 }) {
   const tab = (active: boolean) =>
     `inline-flex items-center rounded px-3 py-1 text-sm ${
@@ -91,7 +89,6 @@ export function DetailView({
             admin={admin}
             showProject={showProject}
             showSubproject={showSubproject}
-            showSubteam={showSubteam}
             emptyText={emptyText ?? "No tasks yet. Add one above."}
           />
         </div>

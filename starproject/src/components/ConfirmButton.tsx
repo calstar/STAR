@@ -9,6 +9,7 @@ export function ConfirmButton({
   action,
   id,
   label = "Delete",
+  ariaLabel,
   className,
   title = "Are you sure?",
   message,
@@ -16,7 +17,9 @@ export function ConfirmButton({
 }: {
   action: (formData: FormData) => void | Promise<void>;
   id: string;
-  label?: string;
+  label?: React.ReactNode;
+  /** Accessible name, needed when `label` is an icon. */
+  ariaLabel?: string;
   className?: string;
   title?: string;
   message?: string;
@@ -42,6 +45,8 @@ export function ConfirmButton({
           e.stopPropagation();
           setOpen(true);
         }}
+        aria-label={ariaLabel}
+        title={ariaLabel}
         className={`inline-flex min-h-11 items-center sm:min-h-0 ${className ?? ""}`}
       >
         {label}

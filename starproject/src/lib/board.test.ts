@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   type BoardTask,
   type WorkspaceTask,
+  comparePriorityAsc,
   groupByStatus,
   midpointOrder,
   toRowData,
@@ -188,5 +189,12 @@ describe("toRowData", () => {
     );
     expect(row.assigneeIds).toEqual(["u1", "u2"]);
     expect(row.assigneeName).toBe("Ada L., Grace H.");
+  });
+});
+
+describe("comparePriorityAsc (table Priority column)", () => {
+  it("descending puts high on top and unset last", () => {
+    const desc = ["low", "", "high", "medium"].sort((a, b) => comparePriorityAsc(b, a));
+    expect(desc).toEqual(["high", "medium", "low", ""]);
   });
 });

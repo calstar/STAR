@@ -73,6 +73,16 @@ export function descendants(
   return out;
 }
 
+/** A project's colour, else its nearest coloured ancestor's, else null — so a
+ * subproject nobody coloured still reads as part of its parent. */
+export function colorOf(tree: ProjectTree, id: string): string | null {
+  const own = tree.byId.get(id)?.color;
+  if (own) return own;
+  const up = ancestors(tree, id);
+  for (let i = up.length - 1; i >= 0; i--) if (up[i].color) return up[i].color;
+  return null;
+}
+
 /** "LE4 › Engine › Spark igniter". With `below`, the path starts under that
  * ancestor — on LE4's own page a task of Spark igniter reads "Engine › Spark
  * igniter". */
