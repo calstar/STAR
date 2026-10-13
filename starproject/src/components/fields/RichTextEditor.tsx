@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/fields/Markdown";
 import { updateField } from "@/lib/fieldUpdate";
+import { toggleTaskAt } from "@/lib/markdown-tasks";
 
 type Sel = { start: number; end: number };
 
@@ -179,7 +180,17 @@ export function RichTextEditor({
         className="min-h-11 cursor-text rounded border border-neutral-200 dark:border-neutral-800 px-2 py-1 hover:border-neutral-300 dark:hover:border-neutral-700 sm:border-transparent dark:sm:border-transparent"
       >
         {text.trim() ? (
-          <Markdown>{text}</Markdown>
+          <Markdown
+            onToggleTask={(offset) => {
+              // Tick a checklist item without opening the editor; saves at once.
+              const next = toggleTaskAt(text, offset);
+              if (next === null) return;
+              setText(next);
+              updateField(taskId, field, next);
+            }}
+          >
+            {text}
+          </Markdown>
         ) : (
           <span className="text-sm text-neutral-400 dark:text-neutral-500">
             {placeholder}

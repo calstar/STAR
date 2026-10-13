@@ -10,4 +10,13 @@ export const FIELD_LABEL: Record<string, string> = {
   title: "title",
   subteam: "subteam",
   project: "project",
+  // Manufacturing details (see lib/manufacturing.ts).
+  manufacturing: "manufacturing part",
+  partName: "part name",
+  onshapeUrl: "Onshape link",
+  drawingUrl: "drawing link",
+  quantity: "quantity",
+  material: "material",
+  designReId: "Design RE",
+  mfgReId: "Manufacturing RE",
 };

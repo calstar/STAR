@@ -8,6 +8,7 @@ import { ActivityItem, renderActivity, timeAgo } from "@/components/ActivityLine
 import { BlockedBadge } from "@/components/BlockedBadge";
 import { BlockerEditor } from "@/components/BlockerEditor";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
+import { ManufacturingSection } from "@/components/ManufacturingSection";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
@@ -235,6 +236,16 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-4">
+        <ManufacturingSection
+          key={task.manufacturing ? "on" : "off"}
+          taskId={task.id}
+          details={task.manufacturing}
+          users={users}
+          onChanged={refresh}
+        />
       </div>
 
       <div className={`mt-4 ${section}`}>
