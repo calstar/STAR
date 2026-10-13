@@ -1,5 +1,4 @@
 import PageHeader from '../components/PageHeader';
-import Reveal from '../components/Reveal';
 import { ArrowRight } from '../components/icons';
 import { SPONSORS } from '../data/sponsors';
 import { SITE } from '../data/site';
@@ -27,8 +26,7 @@ export default function Sponsors() {
         />
         <div style={{ position: 'relative', zIndex: 1 }}>
           <PageHeader
-            eyebrow="Sponsors"
-            title={<>Powered by our <span className="ink-gradient">partners.</span></>}
+            title={<>Powered by our <span className="ink">partners.</span></>}
             lead="Your monetary and material contributions promote the growth of students as engineers and a commitment to education and the future. Thank you."
           />
         </div>
@@ -37,13 +35,11 @@ export default function Sponsors() {
       <section className="section" style={{ paddingTop: 0, marginTop: 'clamp(-260px, -20vw, -140px)', position: 'relative', zIndex: 2 }}>
         <div className="container">
           <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))' }}>
-            {SPONSORS.map((s, i) => (
-              <Reveal key={s.name} delay={(i % 5) * 55}>
-                <a href={s.url} target="_blank" rel="noopener noreferrer" className="sponsor-tile" title={s.name}>
+            {SPONSORS.map((s) => (
+              <a key={s.name} href={s.url} target="_blank" rel="noopener noreferrer" className="sponsor-tile" title={s.name}>
                   <img src={s.logo} alt={s.name} loading="lazy" className="sponsor-logo" />
                   <span className="sponsor-name">{s.name}</span>
-                </a>
-              </Reveal>
+              </a>
             ))}
           </div>
         </div>
@@ -52,12 +48,11 @@ export default function Sponsors() {
       {/* Become a sponsor */}
       <section className="section" style={{ paddingTop: 0 }}>
         <div className="container">
-          <Reveal>
-            <div
+          <div
               style={{
-                border: '1px solid var(--border-strong)', borderRadius: 6,
+                border: '1px solid var(--border-strong)', borderRadius: 'var(--r)',
                 padding: 'clamp(32px, 6vw, 60px)',
-                background: 'linear-gradient(120deg, rgba(91,140,255,0.10), rgba(143,123,255,0.08))',
+                background: 'var(--bg-1)',
                 display: 'flex', flexWrap: 'wrap', gap: 32, alignItems: 'center', justifyContent: 'space-between',
               }}
             >
@@ -77,8 +72,7 @@ export default function Sponsors() {
                   {SITE.contactEmail}
                 </a>
               </div>
-            </div>
-          </Reveal>
+          </div>
         </div>
       </section>
     </>

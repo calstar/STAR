@@ -1,8 +1,9 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { SITE } from '../data/site';
 import { Instagram, YouTube, LinkedIn, Facebook, Mail, ArrowRight } from './icons';
 
 export default function Footer() {
+  const { pathname } = useLocation();
   const socials = [
     { href: SITE.socials.instagram, label: 'Instagram', Icon: Instagram },
     { href: SITE.socials.youtube, label: 'YouTube', Icon: YouTube },
@@ -12,28 +13,30 @@ export default function Footer() {
 
   return (
     <footer style={{ borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.35)', position: 'relative', zIndex: 1 }}>
-      {/* CTA band */}
-      <div className="container" style={{ padding: '72px 24px 0' }}>
-        <div
-          style={{
-            display: 'flex', flexWrap: 'wrap', gap: 28, alignItems: 'center',
-            justifyContent: 'space-between',
-            border: '1px solid var(--border-strong)', borderRadius: 6,
-            padding: '40px clamp(24px, 5vw, 52px)',
-            background: 'linear-gradient(120deg, rgba(255,182,72,0.10), rgba(91,140,255,0.08))',
-          }}
-        >
-          <div>
-            <h2 style={{ fontSize: 'clamp(24px, 3.5vw, 34px)' }}>Build rockets with us.</h2>
-            <p style={{ color: 'var(--text-dim)', margin: '10px 0 0', maxWidth: '46ch' }}>
-              No experience required, we teach you everything. Recruitment opens every semester.
-            </p>
+      {/* CTA band (skipped on /join, where it would link to itself) */}
+      {pathname !== '/join' && (
+        <div className="container" style={{ padding: '72px 24px 0' }}>
+          <div
+            style={{
+              display: 'flex', flexWrap: 'wrap', gap: 28, alignItems: 'center',
+              justifyContent: 'space-between',
+              border: '1px solid var(--border-strong)', borderRadius: 'var(--r)',
+              padding: '40px clamp(24px, 5vw, 52px)',
+              background: 'var(--bg-1)',
+            }}
+          >
+            <div>
+              <h2 style={{ fontSize: 'clamp(24px, 3.5vw, 34px)' }}>Build rockets with us.</h2>
+              <p style={{ color: 'var(--text-dim)', margin: '10px 0 0', maxWidth: '46ch' }}>
+                No experience required, we teach you everything. Recruitment opens every semester.
+              </p>
+            </div>
+            <Link to="/join" className="btn btn-primary" style={{ fontSize: 16 }}>
+              Join STAR <ArrowRight />
+            </Link>
           </div>
-          <Link to="/join" className="btn btn-primary" style={{ fontSize: 16 }}>
-            Join STAR <ArrowRight />
-          </Link>
         </div>
-      </div>
+      )}
 
       {/* Link columns */}
       <div className="container" style={{ padding: '56px 24px 40px', display: 'grid', gap: 40, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
