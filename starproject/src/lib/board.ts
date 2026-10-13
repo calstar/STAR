@@ -23,6 +23,10 @@ export type BoardTask = Task & {
 // `assigneeName` is the joined display names of every assignee (for search/sort).
 export type WorkspaceTask = BoardTask & {
   projectName: string;
+  // The project's own name and colour, for the list's Project chip (projectName
+  // may be a "Parent › Child" path, which stays the searchable/tooltip form).
+  projectShort?: string;
+  projectColor?: string | null;
   subteamName: string;
   assigneeName: string;
 };
@@ -35,6 +39,8 @@ export type TaskRowData = {
   title: string;
   projectId: string;
   projectName: string;
+  projectShort: string;
+  projectColor: string | null;
   status: TaskStatus;
   priority: string;
   assigneeIds: string[];
@@ -55,6 +61,8 @@ export function toRowData(t: WorkspaceTask): TaskRowData {
     title: t.title,
     projectId: t.projectId,
     projectName: t.projectName,
+    projectShort: t.projectShort ?? t.projectName,
+    projectColor: t.projectColor ?? null,
     status: t.status,
     priority: t.priority ?? "",
     assigneeIds: t.assignees.map((a) => a.id),
@@ -109,6 +117,12 @@ function byDueDate(a: BoardTask, b: BoardTask, desc: boolean): number {
 const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
 function priorityRank(p: string | null): number {
   return p ? (PRIORITY_RANK[p] ?? 3) : 3;
+}
+
+/** Table-column comparator, ascending = least urgent first: none, low, medium,
+ * high. The Priority column sorts descending first, so high lands on top. */
+export function comparePriorityAsc(a: string | null, b: string | null): number {
+  return priorityRank(b) - priorityRank(a);
 }
 
 // The sort orders a user can pick for the board's columns. "due" is the default

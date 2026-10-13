@@ -26,7 +26,6 @@ function CardBody({ task }: { task: BoardTask }) {
   return (
     <>
       <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-        <span className="text-neutral-400 dark:text-neutral-500">#{task.number}</span>{" "}
         {task.title}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">

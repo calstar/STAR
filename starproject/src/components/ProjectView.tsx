@@ -69,6 +69,7 @@ export async function ProjectView({
   const tasks = rawTasks.map((t) => ({
     ...t,
     projectName: t.project.name,
+    projectColor: t.project.color,
     subteamName: t.subteam?.name ?? "",
     assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject:
@@ -146,7 +147,6 @@ export async function ProjectView({
       admin={admin}
       header={header}
       showSubproject={below.length > 0}
-      showSubteam
       newTaskForm={
         <NewTaskForm projectId={project.id} users={users} subteams={subteams} />
       }

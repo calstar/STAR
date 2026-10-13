@@ -30,7 +30,7 @@ function ChipRow({
   chip,
 }: {
   label: string;
-  options: { id: string; label: string }[];
+  options: { id: string; label: string; color?: string | null; title?: string }[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   chip: (active: boolean) => string;
@@ -69,8 +69,15 @@ function ChipRow({
           <button
             key={o.id}
             onClick={() => onToggle(o.id)}
-            className={chip(selected.has(o.id))}
+            title={o.title}
+            className={`${chip(selected.has(o.id))} ${o.color !== undefined ? "inline-flex items-center gap-1.5" : ""}`}
           >
+            {o.color !== undefined && (
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: o.color ?? "#a3a3a3" }}
+              />
+            )}
             {o.label}
           </button>
         ))}
@@ -99,7 +106,7 @@ export function TasksWorkspace({
   initialMine = false,
 }: {
   tasks: WorkspaceTask[];
-  projects: { id: string; label: string }[];
+  projects: { id: string; label: string; name?: string; color?: string | null }[];
   subteams: { id: string; name: string }[];
   users: User[];
   admin: boolean;
@@ -244,7 +251,12 @@ export function TasksWorkspace({
 
         <ChipRow
           label="Projects"
-          options={projects.map((p) => ({ id: p.id, label: p.label }))}
+          options={projects.map((p) => ({
+            id: p.id,
+            label: p.name ?? p.label,
+            color: p.color ?? null,
+            title: p.label,
+          }))}
           selected={projSel}
           onToggle={(id) => setProjSel((s) => toggle(s, id))}
           chip={chip}
@@ -272,7 +284,6 @@ export function TasksWorkspace({
             users={users}
             admin={admin}
             showProject
-            showSubteam
           />
         )}
         {view === "board" && <Board tasks={active} sort={boardSort} />}
@@ -302,7 +313,6 @@ export function TasksWorkspace({
                 users={users}
                 admin={admin}
                 showProject
-                showSubteam
               />
             </div>
           )}

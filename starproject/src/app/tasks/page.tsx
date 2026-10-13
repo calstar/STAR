@@ -6,7 +6,7 @@ import {
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
-import { flatten, pathOf } from "@/lib/project-tree";
+import { colorOf, flatten, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
 import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
@@ -49,6 +49,8 @@ export default async function TasksPage({
     return {
       ...rest,
       projectName: pathOf(tree, project.id) || project.name,
+      projectShort: project.name,
+      projectColor: colorOf(tree, project.id),
       subteamName: sub?.name ?? "",
       assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     };
@@ -57,6 +59,8 @@ export default async function TasksPage({
   const projectOptions = flatten(tree).map(({ node }) => ({
     id: node.id,
     label: pathOf(tree, node.id),
+    name: node.name,
+    color: colorOf(tree, node.id),
   }));
 
   return (

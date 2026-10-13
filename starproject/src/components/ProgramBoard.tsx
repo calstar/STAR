@@ -749,7 +749,7 @@ function SubteamCard({
                 className="relative z-10 -mx-1 block w-[calc(100%+0.5rem)] rounded px-1 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
               >
                 <span className="block truncate font-medium text-neutral-900 dark:text-neutral-100">
-                  <span className="font-normal text-neutral-400">#{big.number}</span> {big.title}
+                  {big.title}
                 </span>
                 <span className="block truncate text-neutral-500 dark:text-neutral-400">
                   {[

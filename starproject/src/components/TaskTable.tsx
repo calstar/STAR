@@ -20,7 +20,7 @@ import { PrioritySelect } from "@/components/fields/PrioritySelect";
 import { StatusSelect } from "@/components/fields/StatusSelect";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { deleteTask } from "@/lib/actions/tasks";
-import type { TaskRowData } from "@/lib/board";
+import { type TaskRowData, comparePriorityAsc } from "@/lib/board";
 
 // Re-export so existing importers keep working.
 export type { TaskRowData } from "@/lib/board";
@@ -33,7 +33,6 @@ const col = createColumnHelper<TaskRowData>();
 const columnClasses: Record<string, string> = {
   subproject: "hidden lg:table-cell",
   projectName: "hidden lg:table-cell",
-  subteamName: "hidden lg:table-cell",
   priority: "hidden md:table-cell",
   assigneeName: "hidden md:table-cell",
 };
@@ -47,7 +46,6 @@ export function TaskTable({
   admin = false,
   showProject = false,
   showSubproject = false,
-  showSubteam = false,
   emptyText = "No tasks match.",
 }: {
   rows: TaskRowData[];
@@ -55,7 +53,6 @@ export function TaskTable({
   admin?: boolean;
   showProject?: boolean;
   showSubproject?: boolean;
-  showSubteam?: boolean;
   emptyText?: string;
 }) {
   const { openTask } = useTaskModal();
@@ -68,9 +65,6 @@ export function TaskTable({
         header: "Task",
         cell: (info) => (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-neutral-400 dark:text-neutral-500">
-              #{info.row.original.number}
-            </span>
             <span className="font-medium">{info.getValue()}</span>
             {info.row.original.blocked && <BlockedBadge />}
           </div>
@@ -96,15 +90,14 @@ export function TaskTable({
         ? [
             col.accessor("projectName", {
               header: "Project",
-              cell: (info) => info.getValue() || "—",
-            }),
-          ]
-        : []),
-      ...(showSubteam
-        ? [
-            col.accessor("subteamName", {
-              header: "Subteam",
-              cell: (info) => info.getValue() || "—",
+              cell: (info) => {
+                const r = info.row.original;
+                return r.projectShort ? (
+                  <ProjectChip name={r.projectShort} color={r.projectColor} title={r.projectName} />
+                ) : (
+                  "—"
+                );
+              },
             }),
           ]
         : []),
@@ -118,6 +111,10 @@ export function TaskTable({
       }),
       col.accessor("priority", {
         header: "Priority",
+        // By rank, not alphabetically ("high" < "low" < "medium").
+        sortingFn: (a, b, id) =>
+          comparePriorityAsc(a.getValue<string>(id), b.getValue<string>(id)),
+        sortDescFirst: true,
         cell: (info) => (
           <div onClick={stop}>
             <PrioritySelect taskId={info.row.original.id} value={info.getValue()} />
@@ -154,7 +151,9 @@ export function TaskTable({
                   <ConfirmButton
                     action={deleteTask}
                     id={info.row.original.id}
-                    className="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40"
+                    label={<TrashIcon />}
+                    ariaLabel={`Delete “${info.row.original.title}”`}
+                    className="justify-center rounded p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600 dark:text-neutral-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                     title={`Delete “${info.row.original.title}”?`}
                     message="This permanently deletes the task. This cannot be undone."
                   />
@@ -164,7 +163,7 @@ export function TaskTable({
           ]
         : []),
     ],
-    [showProject, showSubproject, showSubteam, users, admin],
+    [showProject, showSubproject, users, admin],
   );
 
   const table = useReactTable({
@@ -228,5 +227,48 @@ export function TaskTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** A project as a tinted chip in its own colour (neutral when it has none). */
+function ProjectChip({
+  name,
+  color,
+  title,
+}: {
+  name: string;
+  color: string | null;
+  title: string;
+}) {
+  const c = color ?? "#a3a3a3";
+  return (
+    <span
+      title={title}
+      className="inline-flex max-w-48 items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium text-neutral-800 dark:text-neutral-100"
+      style={{
+        background: `color-mix(in srgb, ${c} 16%, transparent)`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${c} 30%, transparent)`,
+      }}
+    >
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c }} />
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3" />
+    </svg>
   );
 }

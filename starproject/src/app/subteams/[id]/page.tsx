@@ -57,6 +57,7 @@ export default async function SubteamPage({
   const tasks = subteam.tasks.map((t) => ({
     ...t,
     projectName: t.project.name,
+    projectColor: t.project.color,
     subteamName: subteam.name,
     assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject: { name: t.project.name, color: t.project.color },
