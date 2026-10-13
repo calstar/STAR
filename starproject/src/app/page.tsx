@@ -8,14 +8,13 @@ import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { firstNameOf } from "@/lib/names";
 import { getProgramCards } from "@/lib/program-data";
+// The team is Berkeley-based; the greeting should read local time-of-day
+// regardless of which region the server itself runs in.
+import { BERKELEY_TZ, dayKey } from "@/lib/stats";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
-
-// The team is Berkeley-based; the greeting should read local time-of-day
-// regardless of which region the server itself runs in.
-const BERKELEY_TZ = "America/Los_Angeles";
 
 function greeting(now: Date): string {
   const hour = Number(
@@ -60,7 +59,7 @@ export default async function Home() {
     isAdmin(user.email),
   ]);
   // Deadlines count down in Berkeley days, not the server's.
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: BERKELEY_TZ }).format(now);
+  const today = dayKey(now);
 
   const tile =
     "rounded-xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900";

@@ -9,6 +9,7 @@ import { tasksWriteTools } from "./tasks-write";
 import { projectTools } from "./projects";
 import { programTools } from "./program";
 import { settingsTools } from "./settings";
+import { statsTools } from "./stats";
 import { subteamTools } from "./subteams";
 import { userTools } from "./users";
 import { opsTools } from "./ops";
@@ -28,5 +29,6 @@ export const TOOL_MODULES: ToolModule[] = [
   opsTools,
   blockerTools,
   activityTools,
+  statsTools,
   financeTools,
 ];

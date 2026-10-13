@@ -293,7 +293,7 @@ export function SidebarNav({
   const isTasks = pathname === "/tasks" && !mine;
   const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
   const isSubteams = pathname === "/subteams" || pathname.startsWith("/subteams/");
-  const isActivity = pathname === "/activity";
+  const isActivity = pathname.startsWith("/activity");
   const isFinance = pathname.startsWith("/finance");
 
   // Shared between the desktop rail (which alone may be `collapsed`) and the

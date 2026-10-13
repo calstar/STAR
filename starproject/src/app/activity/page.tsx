@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { ActivityFilters } from "@/components/ActivityFilters";
+import { ActivityTabs } from "@/components/ActivityTabs";
 import { renderActivity, timeAgo } from "@/components/ActivityLine";
 import { prisma } from "@/lib/db";
 import { getProjectOptions } from "@/lib/projects";
@@ -67,6 +68,8 @@ export default async function ActivityPage({
   return (
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Activity</h1>
+
+      <ActivityTabs active="feed" />
 
       <ActivityFilters
         users={users}
