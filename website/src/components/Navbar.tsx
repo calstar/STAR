@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { SITE } from '../data/site';
 import wordmark from '../assets/star-wordmark.png';
@@ -13,12 +13,15 @@ const LINKS = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const sentinel = useRef<HTMLDivElement>(null);
 
+  // Nav stays transparent until the top-of-page sentinel scrolls out of view.
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 12);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    const el = sentinel.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([entry]) => setScrolled(!entry.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
   }, []);
 
   // Lock scroll while the mobile menu is open.
@@ -28,15 +31,14 @@ export default function Navbar() {
   }, [open]);
 
   return (
+    <>
+    <div ref={sentinel} aria-hidden style={{ position: 'absolute', top: 0, left: 0, height: 12, width: 1, pointerEvents: 'none' }} />
     <header
       style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
         height: 'var(--nav-h)',
         borderBottom: `1px solid ${scrolled ? 'var(--border)' : 'transparent'}`,
-        background: scrolled ? 'rgba(5,6,10,0.72)' : 'transparent',
-        backdropFilter: scrolled ? 'blur(14px)' : 'none',
-        WebkitBackdropFilter: scrolled ? 'blur(14px)' : 'none',
-        transition: 'background .3s ease, border-color .3s ease',
+        background: scrolled ? 'rgba(5,6,10,0.9)' : 'transparent',
       }}
     >
       <nav className="container" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -78,7 +80,7 @@ export default function Navbar() {
         className="nav-mobile"
         style={{
           position: 'fixed', inset: 'var(--nav-h) 0 0 0', zIndex: 99,
-          background: 'rgba(5,6,10,0.97)', backdropFilter: 'blur(16px)',
+          background: 'var(--bg)',
           display: open ? 'flex' : 'none', flexDirection: 'column',
           padding: '24px', gap: 6,
         }}
@@ -94,6 +96,7 @@ export default function Navbar() {
         </a>
       </div>
     </header>
+    </>
   );
 }
 

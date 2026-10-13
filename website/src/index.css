@@ -1,9 +1,8 @@
 @import "tailwindcss";
 
 /* ══════════════════════════════════════════════════════════════════════════
-   STAR public site — design system
-   Dark, cinematic, aerospace. Space Grotesk display · Inter body · JetBrains
-   Mono labels. Tokens first, then base, then reusable component classes.
+   STAR public site: design system
+   Dark, aerospace. Space Grotesk display, Inter body, JetBrains Mono labels. Tokens first, then base, then reusable component classes.
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -22,12 +21,9 @@
   --text-dim:      #a6adbf;
   --text-faint:    #6b7285;
 
-  /* Brand — Berkeley-adjacent gold + a cool ignition blue */
+  /* Brand: Berkeley-adjacent gold, the single accent */
   --gold:          #ffb648;
   --gold-soft:     #ffd18a;
-  --accent:        #5b8cff;
-  --accent-2:      #8f7bff;
-  --flame:         #ff7a3c;
 
   --maxw: 1180px;
   --nav-h: 76px;
@@ -44,8 +40,6 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
-
 body {
   margin: 0;
   background-color: var(--bg);
@@ -58,19 +52,6 @@ body {
   overflow-x: hidden;
 }
 
-/* Fixed starfield + gradient wash behind everything */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background:
-    radial-gradient(1200px 700px at 78% -10%, rgba(91, 140, 255, 0.14), transparent 60%),
-    radial-gradient(1000px 600px at 12% 8%, rgba(143, 123, 255, 0.10), transparent 55%),
-    radial-gradient(900px 900px at 50% 120%, rgba(255, 182, 72, 0.06), transparent 60%),
-    var(--bg);
-}
-
 h1, h2, h3, h4 {
   font-family: var(--font-display);
   font-weight: 600;
@@ -81,7 +62,7 @@ h1, h2, h3, h4 {
 
 a { color: inherit; text-decoration: none; }
 
-::selection { background: rgba(91, 140, 255, 0.35); }
+::selection { background: rgba(255, 182, 72, 0.35); }
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg-1); }
@@ -99,16 +80,7 @@ a { color: inherit; text-decoration: none; }
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--gold);
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-.eyebrow::before {
-  content: '';
-  width: 22px;
-  height: 1px;
-  background: var(--gold);
-  opacity: 0.7;
+  display: inline-block;
 }
 
 .section-title {
@@ -123,7 +95,10 @@ a { color: inherit; text-decoration: none; }
   margin: 18px 0 0;
 }
 
-/* Gradient ink for emphasis words */
+/* Gold ink for emphasis words */
+.ink { color: var(--gold); }
+
+/* Gradient ink, reserved for the home stats bar */
 .ink-gradient {
   background: linear-gradient(120deg, #ffffff 0%, var(--gold-soft) 55%, var(--gold) 100%);
   -webkit-background-clip: text;
@@ -144,70 +119,35 @@ a { color: inherit; text-decoration: none; }
   border-radius: var(--r-sm);
   cursor: pointer;
   border: 1px solid transparent;
-  transition: transform 0.18s ease, box-shadow 0.25s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
   white-space: nowrap;
 }
 
 .btn-primary {
   color: #1a1205;
-  background: linear-gradient(135deg, var(--gold-soft), var(--gold));
-  box-shadow: 0 8px 30px rgba(255, 182, 72, 0.28);
+  background: var(--gold);
 }
-.btn-primary:hover { box-shadow: 0 12px 40px rgba(255, 182, 72, 0.42); }
+.btn-primary:hover { background: var(--gold-soft); }
+.btn:active { transform: translateY(1px); }
 
 .btn-ghost {
   color: var(--text);
-  background: var(--panel);
+  background: rgba(5, 6, 10, 0.4);
   border-color: var(--border-strong);
-  backdrop-filter: blur(8px);
 }
 .btn-ghost:hover { background: var(--panel-hover); border-color: var(--text-faint); }
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
 .card {
   position: relative;
-  background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015));
+  background: var(--bg-1);
   border: 1px solid var(--border);
   border-radius: var(--r);
   overflow: hidden;
-  transition: transform 0.28s cubic-bezier(0.2,0.7,0.2,1), border-color 0.28s ease, box-shadow 0.28s ease;
+  transition: border-color 0.2s ease;
 }
 .card:hover {
   border-color: var(--border-strong);
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border-strong);
-  color: var(--text-dim);
-  background: rgba(0,0,0,0.25);
-}
-.chip-vehicle     { color: var(--accent);  border-color: rgba(91,140,255,0.4); }
-.chip-engine      { color: var(--flame);   border-color: rgba(255,122,60,0.4); }
-.chip-demonstrator{ color: var(--accent-2);border-color: rgba(143,123,255,0.4); }
-.chip-current     { color: var(--gold);    border-color: rgba(255,182,72,0.45); background: rgba(255,182,72,0.08); }
-
-/* ── Scroll reveal ────────────────────────────────────────────────────── */
-.reveal {
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.5s ease, transform 0.5s ease;
-  will-change: opacity, transform;
-}
-.reveal.is-visible { opacity: 1; transform: none; }
-
-@media (prefers-reduced-motion: reduce) {
-  .reveal { opacity: 1; transform: none; transition: none; }
-  html { scroll-behavior: auto; }
 }
 
 /* ── Fine print / dividers ────────────────────────────────────────────── */
@@ -256,11 +196,7 @@ a { color: inherit; text-decoration: none; }
 }
 .social-btn:hover { color: var(--gold); border-color: var(--gold); background: rgba(255,182,72,0.06); }
 
-/* ── Hero intro fade ──────────────────────────────────────────────────── */
-@keyframes fade-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-.fade-in { animation: fade-in .8s ease both; }
-
-/* ── Subteam card image zoom ──────────────────────────────────────────── */
+/* ── Subteam card ─────────────────────────────────────────────────────── */
 .subteam-card { color: inherit; }
 
 /* ── Lead portrait ────────────────────────────────────────────────────── */
@@ -270,7 +206,7 @@ a { color: inherit; text-decoration: none; }
   aspect-ratio: 1 / 1;
   overflow: hidden;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, rgba(91,140,255,0.22), rgba(143,123,255,0.18));
+  background: var(--bg-2);
   border-bottom: 1px solid var(--border);
 }
 .lead-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -285,7 +221,7 @@ a { color: inherit; text-decoration: none; }
   aspect-ratio: 1 / 1; padding: 14px; border-radius: var(--r);
   background: #141519;
   border: 1px solid var(--border);
-  transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease, background .25s ease;
+  transition: border-color .2s ease, background .2s ease;
 }
 /* logo renders as its own tight rectangle; transparent logos get a flush white
    backing so they stay legible on the dark card (no oversized plate). */
@@ -302,10 +238,6 @@ a { color: inherit; text-decoration: none; }
   background: #1c1d22;
 }
 .sponsor-tile:hover .sponsor-name { opacity: 0.85; }
-
-/* ── Pulse dot ────────────────────────────────────────────────────────── */
-@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(0.82); } }
-.pulse { animation: pulse 1.8s ease-in-out infinite; }
 
 /* ══ Timeline — centered spine: description left, photo right ═════════════ */
 .timeline { position: relative; margin-top: 48px; }
@@ -328,11 +260,9 @@ a { color: inherit; text-decoration: none; }
 .timeline-dot {
   width: 18px; height: 18px; border-radius: 50%;
   background: var(--bg-1);
-  border: 2px solid var(--text-faint);
+  border: 2px solid var(--gold);
   box-shadow: 0 0 0 5px var(--bg);
-  transition: border-color .3s ease, box-shadow .3s ease;
 }
-.timeline-row.is-visible .timeline-dot { border-color: var(--gold); box-shadow: 0 0 0 5px var(--bg); }
 /* year pill masks the line behind it */
 .timeline-year {
   margin-top: 10px;
@@ -352,7 +282,7 @@ a { color: inherit; text-decoration: none; }
   align-items: start;
 }
 /* cap the photo's WIDTH (not height) so it renders a bit smaller while keeping
-   its natural aspect ratio — no cropping/squaring. Hugs the spine. */
+   its natural aspect ratio, no cropping/squaring. Hugs the spine. */
 .timeline-photo {
   overflow: hidden;
   width: 100%;
@@ -373,3 +303,12 @@ a { color: inherit; text-decoration: none; }
   .timeline-cards { grid-template-columns: 1fr; gap: 16px; }
   .timeline-photo { order: -1; }
 }
+
+/* ── Join: steps list ─────────────────────────────────────────────────── */
+.steps {
+  list-style: none; margin: 40px 0 0; padding: 0;
+  display: grid; gap: 0 clamp(32px, 6vw, 72px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.steps li { padding: 26px 0; border-top: 1px solid var(--border); }
+@media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }

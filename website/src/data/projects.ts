@@ -16,7 +16,7 @@ export interface Project {
   tagline: string;
   /** Numeric sort key, the (start) year of the project. */
   year: number;
-  /** Human-readable date/era shown on the node, e.g. "IREC 2024" or "2021–". */
+  /** Human-readable date/era shown on the node, e.g. "IREC 2024" or "2021-". */
   era: string;
   kind: ProjectKind;
   /** Headline stat, e.g. "27,326 ft apogee". Optional. */
@@ -36,7 +36,7 @@ export const PROJECTS: Project[] = [
     name: 'LE4',
     tagline: '4th Liquid Engine',
     year: 2026,
-    era: '2026–',
+    era: '2026-present',
     kind: 'engine',
     image: '/img/projects/le4.webp',
     current: true,
@@ -63,7 +63,7 @@ export const PROJECTS: Project[] = [
     name: 'LE3',
     tagline: '3rd Liquid Engine · “Diablo”',
     year: 2026,
-    era: '2024–2026',
+    era: '2024-2026',
     kind: 'engine',
     stat: 'Custom DAQ',
     statLabel: 'live monitor & control',
@@ -76,7 +76,7 @@ export const PROJECTS: Project[] = [
     name: 'Flight Computer',
     tagline: 'In-house avionics',
     year: 2021,
-    era: '2021–2024',
+    era: '2021-2024',
     kind: 'engine',
     stat: '13 sensors',
     statLabel: 'GNSS · baro · IMU',
@@ -141,7 +141,7 @@ export const PROJECTS: Project[] = [
     name: 'ELLIE (LE1)',
     tagline: '1st Liquid Engine',
     year: 2022,
-    era: '2021–2022',
+    era: '2021-2022',
     kind: 'engine',
     stat: '6 s',
     statLabel: 'successful test fire',
@@ -243,7 +243,7 @@ export const PROJECTS: Project[] = [
     name: 'URSA Major',
     tagline: 'NASA SL competition vehicle',
     year: 2017,
-    era: '2016–2017',
+    era: '2016-2017',
     kind: 'vehicle',
     stat: 'Huntsville, AL',
     statLabel: 'target-detection payload',

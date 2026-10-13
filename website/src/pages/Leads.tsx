@@ -1,5 +1,4 @@
 import PageHeader from '../components/PageHeader';
-import Reveal from '../components/Reveal';
 import { LEAD_GROUPS } from '../data/leads';
 import type { Lead } from '../data/leads';
 
@@ -15,8 +14,7 @@ export default function Leads() {
   return (
     <>
       <PageHeader
-        eyebrow="The Team"
-        title={<>Meet the <span className="ink-gradient">leads.</span></>}
+        title={<>Meet the <span className="ink">leads.</span></>}
         lead="The students steering each subteam and the club as a whole. Have a question about joining? Reach out to any of them."
       />
 
@@ -24,14 +22,12 @@ export default function Leads() {
         <div className="container" style={{ display: 'flex', flexDirection: 'column', gap: 64 }}>
           {LEAD_GROUPS.map((group) => (
             <div key={group.title}>
-              <Reveal>
-                <h2 style={{ fontSize: 'clamp(20px, 2.6vw, 26px)', marginBottom: 24 }}>{group.title}</h2>
-              </Reveal>
+              <h2 style={{ fontSize: 'clamp(20px, 2.6vw, 26px)', marginBottom: 24 }}>{group.title}</h2>
               <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 20 }}>
-                {group.leads.map((lead, i) => (
-                  <Reveal key={lead.id} delay={(i % 4) * 70} style={{ flex: '1 1 300px', maxWidth: 400 }}>
+                {group.leads.map((lead) => (
+                  <div key={lead.id} style={{ flex: '1 1 300px', maxWidth: 400 }}>
                     <LeadCard lead={lead} />
-                  </Reveal>
+                  </div>
                 ))}
               </div>
             </div>
