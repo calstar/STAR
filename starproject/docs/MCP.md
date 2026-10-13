@@ -264,6 +264,7 @@ defineTool(server, "archive_task", {
 | `list_blockers` | By `taskId`: blocked-by and blocking lists; by `projectId`: every edge (the Gantt arrows) | read |
 | `list_activity` | The audit log with the `/activity` filters (kind, actor, project) plus task and `since`/`until`, paged | read; each item has a `summary` line |
 | `recent_activity` | The last N hours (default 24, max 168), the digest's view, optional project / subteam | read |
+| `contribution_stats` | The `/activity/stats` leaderboard: per actor, tasks completed / created / moved forward in `window` (`7d`, `30d` default, `all`; Berkeley days), with totals and the histogram buckets | read |
 | `list_subteams` | Every subteam as `/subteams` lists them: id, name, colour, created, total `taskCount` and `activeTaskCount` | read |
 | `get_subteam` | One subteam with its active tasks as `/subteams/{id}` shows them (number, status, priority, due, project with colour and path, assignees, blockers), in board order | read |
 | `create_subteam` | New subteam: name, optional colour; returns it | admins only; write |
