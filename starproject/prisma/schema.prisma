@@ -47,6 +47,8 @@ model User {
   approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
   reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
   apiTokens              ApiToken[]
+  designReParts          TaskManufacturing[]  @relation("ManufacturingDesignRe")
+  manufacturingReParts   TaskManufacturing[]  @relation("ManufacturingMfgRe")
 }
 
 // A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
@@ -107,8 +109,8 @@ model Subteam {
   color     String?
   createdAt DateTime @default(now())
 
-  tasks      Task[]
-  digestSubs DigestSubscription[]
+  tasks         Task[]
+  digestSubs    DigestSubscription[]
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
 }
@@ -213,11 +215,33 @@ model Task {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  blockedBy  TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
-  blocking   TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
-  activities Activity[]
+  blockedBy     TaskBlocker[]      @relation("BlockedTask") // tasks blocking THIS one
+  blocking      TaskBlocker[]      @relation("BlockerTask") // tasks THIS one blocks
+  activities    Activity[]
+  // Present only for a manufacturing task: the part's details.
+  manufacturing TaskManufacturing?
 
   @@index([projectId, status])
+}
+
+// The part a manufacturing task makes. A task is a manufacturing task exactly
+// when it has this row; every field is optional so it can be filled in as the
+// design firms up. Deleted with its task.
+model TaskManufacturing {
+  taskId     String   @id
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  partName   String?
+  onshapeUrl String?
+  drawingUrl String?
+  quantity   Int?
+  material   String?
+  // Responsible engineers: who owns the design, and who owns making it.
+  designReId String?
+  designRe   User?    @relation("ManufacturingDesignRe", fields: [designReId], references: [id], onDelete: SetNull)
+  mfgReId    String?
+  mfgRe      User?    @relation("ManufacturingMfgRe", fields: [mfgReId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 // Display-only dependency edges: "task is blocked by blockedByTask". No cascade

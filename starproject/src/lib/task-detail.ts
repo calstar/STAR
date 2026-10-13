@@ -39,6 +39,12 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
         blocking: {
           include: { task: { select: { id: true, title: true, status: true } } },
         },
+        manufacturing: {
+          include: {
+            designRe: { select: { id: true, name: true, email: true, displayName: true } },
+            mfgRe: { select: { id: true, name: true, email: true, displayName: true } },
+          },
+        },
       },
     }),
     getTeamUsers(),
