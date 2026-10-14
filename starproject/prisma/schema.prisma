@@ -210,6 +210,10 @@ model Task {
   dueDate     DateTime?
   boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
   archived    Boolean       @default(false) // hidden from active board/lists once done
+  // When the task last entered Done; cleared when it leaves. The board keeps a
+  // done task in its Done column for DONE_ON_BOARD_DAYS after this, then it is
+  // only in the archive (src/lib/board.ts onBoard).
+  completedAt DateTime?
   createdById String
   createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime      @default(now())
@@ -222,6 +226,7 @@ model Task {
   manufacturing TaskManufacturing?
 
   @@index([projectId, status])
+  @@index([status, completedAt])
 }
 
 // The part a manufacturing task makes. A task is a manufacturing task exactly
