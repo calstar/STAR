@@ -1,25 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { archivedForStatusChange } from "@/lib/tasks";
+import { statusChangePatch } from "@/lib/tasks";
 
-describe("archivedForStatusChange", () => {
-  it("archives when a task enters Done", () => {
-    expect(archivedForStatusChange("in_progress", "done")).toEqual({ archived: true });
-    expect(archivedForStatusChange("todo", "done")).toEqual({ archived: true });
+describe("statusChangePatch", () => {
+  const now = new Date("2026-10-13T12:00:00Z");
+
+  it("archives and stamps completedAt when a task enters Done", () => {
+    expect(statusChangePatch("in_progress", "done", now)).toEqual({ archived: true, completedAt: now });
+    expect(statusChangePatch("todo", "done", now)).toEqual({ archived: true, completedAt: now });
   });
 
-  it("unarchives when a task leaves Done", () => {
-    expect(archivedForStatusChange("done", "in_progress")).toEqual({ archived: false });
-    expect(archivedForStatusChange("done", "todo")).toEqual({ archived: false });
+  it("unarchives and clears completedAt when a task leaves Done", () => {
+    expect(statusChangePatch("done", "in_progress", now)).toEqual({ archived: false, completedAt: null });
+    expect(statusChangePatch("done", "todo", now)).toEqual({ archived: false, completedAt: null });
   });
 
-  it("leaves archived untouched when the transition doesn't cross Done", () => {
-    expect(archivedForStatusChange("todo", "in_progress")).toEqual({});
-    expect(archivedForStatusChange("backlog", "blocked")).toEqual({});
+  it("leaves archived and completedAt untouched when the transition doesn't cross Done", () => {
+    expect(statusChangePatch("todo", "in_progress", now)).toEqual({});
+    expect(statusChangePatch("backlog", "blocked", now)).toEqual({});
   });
 
-  it("no-ops when the status is unchanged (e.g. reordering a Done card)", () => {
-    expect(archivedForStatusChange("done", "done")).toEqual({});
-    expect(archivedForStatusChange("todo", "todo")).toEqual({});
+  it("no-ops when the status is unchanged, so reordering a Done card keeps its date", () => {
+    expect(statusChangePatch("done", "done", now)).toEqual({});
+    expect(statusChangePatch("todo", "todo", now)).toEqual({});
   });
 });

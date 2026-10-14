@@ -6,13 +6,15 @@ import { PAGE_CONTAINER } from "@/components/EntityRow";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { ViewDock } from "@/components/ViewDock";
-import { type WorkspaceTask, toRowData } from "@/lib/board";
+import { type WorkspaceTask, inLists, onBoard, toRowData } from "@/lib/board";
 
 export type DetailViewMode = "board" | "list" | "gantt";
 
 // Shared detail layout for a project or subteam: an entity-specific header, then
 // the identical List/Board/Timeline tabs + task views. Both pages render through
 // this so their width, tabs, and task display can never drift apart again.
+// `tasks` is what the board shows (open tasks and the recently done, see
+// onBoard); the list and timeline show only the open ones.
 export function DetailView({
   basePath,
   view,
@@ -42,6 +44,9 @@ export function DetailView({
         ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
         : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
+
+  const boardTasks = tasks.filter((t) => onBoard(t));
+  const openTasks = tasks.filter(inLists);
 
   return (
     // pb-24 keeps the last rows clear of the mobile ViewDock; sm:pb-8 restores
@@ -75,16 +80,16 @@ export function DetailView({
 
       {view === "board" ? (
         <div className="mt-6">
-          <BoardWithSort tasks={tasks} />
+          <BoardWithSort tasks={boardTasks} />
         </div>
       ) : view === "gantt" ? (
         <div className="mt-6">
-          <GanttChart tasks={tasks} />
+          <GanttChart tasks={openTasks} />
         </div>
       ) : (
         <div className="mt-6">
           <TaskTable
-            rows={tasks.map(toRowData)}
+            rows={openTasks.map(toRowData)}
             users={users}
             admin={admin}
             showProject={showProject}

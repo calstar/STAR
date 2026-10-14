@@ -8,17 +8,20 @@ export function isBlocked(
   return !!blockedBy?.some((b) => b.blockedByTask.status !== "done");
 }
 
-// A completed task auto-archives (drops out of the active board/lists); moving it
-// back out of Done restores it. Returns the `archived` patch for a status change,
-// or {} when the transition doesn't cross the Done boundary. Shared by the
-// updateTask and moveTask actions so both mutation paths stay in sync.
-export function archivedForStatusChange(
+// A completed task auto-archives (drops out of the lists and timeline) and is
+// stamped with when it was completed, which keeps it in the board's Done column
+// for DONE_ON_BOARD_DAYS (src/lib/board.ts); moving it back out of Done restores
+// it and clears the stamp. Returns the patch for a status change, or {} when the
+// transition doesn't cross the Done boundary. Shared by the updateTask and
+// moveTask actions so both mutation paths stay in sync.
+export function statusChangePatch(
   oldStatus: TaskStatus,
   newStatus: TaskStatus,
-): { archived?: boolean } {
+  now: Date = new Date(),
+): { archived?: boolean; completedAt?: Date | null } {
   if (newStatus === oldStatus) return {};
-  if (newStatus === "done") return { archived: true };
-  if (oldStatus === "done") return { archived: false };
+  if (newStatus === "done") return { archived: true, completedAt: now };
+  if (oldStatus === "done") return { archived: false, completedAt: null };
   return {};
 }
 

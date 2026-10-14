@@ -22,8 +22,16 @@ import { SubteamSelect } from "@/components/fields/SubteamSelect";
 import { removeBlocker } from "@/lib/actions/blockers";
 import { archiveTask } from "@/lib/actions/tasks";
 import { dateLabel } from "@/lib/activity";
+import { DONE_ON_BOARD_DAYS, leavesBoardAt, onBoard } from "@/lib/board";
 import type { TaskDetailData } from "@/lib/task-detail";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
+
+/** Where a done task is now: in the board's Done column until a date, or archived. */
+function doneLabel(t: { status: TaskStatus; archived: boolean; completedAt: Date | null }): string {
+  const leaves = leavesBoardAt(t);
+  if (leaves && onBoard(t)) return `Done — in the board's Done column until ${dateLabel(leaves)}, then archived.`;
+  return leaves ? `Done — archived ${dateLabel(leaves)}.` : "Done — archived.";
+}
 
 function pill(status: TaskStatus): string {
   return `rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[status]}`;
@@ -288,7 +296,13 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        {task.archived ? (
+        {task.status === "done" ? (
+          // Done tasks archive themselves: the board keeps them in Done for a
+          // while, then they are only under Archived. Reopening is a status change.
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            {doneLabel(task)}
+          </span>
+        ) : task.archived ? (
           <>
             <span className="text-xs text-neutral-500 dark:text-neutral-400">
               Archived — hidden from the board and lists.
@@ -302,23 +316,10 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               Unarchive
             </button>
           </>
-        ) : task.status === "done" ? (
-          <>
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              Done — archive it to move it off the board into Archived.
-            </span>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => toggleArchive(true)}
-              className={`${btn} bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300`}
-            >
-              Archive
-            </button>
-          </>
         ) : (
           <span className="text-xs text-neutral-400">
-            Marking this task Done archives it automatically.
+            Marking this task Done keeps it in the board&apos;s Done column for{" "}
+            {DONE_ON_BOARD_DAYS} days, then archives it.
           </span>
         )}
       </div>
