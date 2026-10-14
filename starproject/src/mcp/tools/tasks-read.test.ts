@@ -56,6 +56,7 @@ function row(over: Partial<TaskRow> = {}): TaskRow {
     dueDate: new Date("2020-01-05T00:00:00Z"),
     boardOrder: 0,
     archived: false,
+    completedAt: null,
     createdById: "u1",
     createdAt: new Date("2026-01-01T10:00:00Z"),
     updatedAt: new Date("2026-01-02T10:00:00Z"),

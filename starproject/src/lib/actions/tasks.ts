@@ -17,7 +17,7 @@ import { prisma } from "@/lib/db";
 import { pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { notifyAssignment } from "@/lib/notifications";
-import { STATUS_LABEL, archivedForStatusChange } from "@/lib/tasks";
+import { STATUS_LABEL, statusChangePatch } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 import {
   TaskPriorityEnum,
@@ -137,7 +137,7 @@ export async function updateTask(formData: FormData) {
   if (formData.has("status")) {
     const status = TaskStatusEnum.parse(formData.get("status"));
     data.status = status;
-    Object.assign(data, archivedForStatusChange(old.status, status));
+    Object.assign(data, statusChangePatch(old.status, status));
   }
   if (formData.has("priority")) {
     const v = formData.get("priority");
@@ -312,8 +312,8 @@ export async function moveTask(
     data: {
       status: parsed.status,
       boardOrder: parsed.boardOrder,
-      // Auto-archive on completion; dragging back out of Done restores it.
-      ...(old ? archivedForStatusChange(old.status, parsed.status) : {}),
+      // Auto-archive and stamp on completion; dragging back out of Done restores it.
+      ...(old ? statusChangePatch(old.status, parsed.status) : {}),
     },
   });
   revalidatePath(`/projects/${task.projectId}`);

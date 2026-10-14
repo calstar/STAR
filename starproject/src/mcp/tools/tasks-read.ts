@@ -74,7 +74,7 @@ export function expandProjectIds(
 }
 
 /** The `archived` scope a request means. Done tasks auto-archive
- * (`archivedForStatusChange`), so asking for status `done` without saying
+ * (`statusChangePatch`), so asking for status `done` without saying
  * which scope reads as "all", like the /tasks page's done section. */
 export function effectiveArchived(f: TaskListFilters): "active" | "archived" | "all" {
   return f.archived ?? (f.status?.includes("done") ? "all" : "active");
