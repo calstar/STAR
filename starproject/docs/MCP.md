@@ -218,8 +218,8 @@ defineTool(server, "archive_task", {
 | `revoke_api_token` | Revoke one of your tokens | destructive |
 | `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done | read |
 | `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log | read |
-| `board` | A project's (with subtree) or subteam's active tasks grouped by status, sorted like the Board view | read |
-| `gantt` | A project's or subteam's timeline rows (`toGanttTasks`): dated tasks with dependencies | read |
+| `board` | A project's (with subtree) or subteam's open tasks grouped by status, plus those done in the last 30 days in `done` (most recently completed first), sorted like the Board view | read |
+| `gantt` | A project's or subteam's timeline rows (`toGanttTasks`): dated open (not done) tasks with dependencies | read |
 | `my_tasks` | The home page's "My tasks": active tasks assigned to you, soonest due first | read |
 | `create_task` | New task in a project: title, description, priority, assignees, subteam, dates; returns it with its `#number` | write; logs created + assigned, emails assignees |
 | `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote; `assigneeIds` replaces the set | idempotent; done ⇄ archived follows the UI |

@@ -1,7 +1,7 @@
 import type { Prisma, TaskStatus } from "@prisma/client";
 import { z } from "zod";
 
-import { type BoardSort, type WorkspaceTask, groupByStatus, toRowData } from "@/lib/board";
+import { type BoardSort, type WorkspaceTask, groupByStatus, onBoardWhere, toRowData } from "@/lib/board";
 import { prisma } from "@/lib/db";
 import { toGanttTasks } from "@/lib/gantt";
 import { displayNameOf } from "@/lib/names";
@@ -130,6 +130,8 @@ export type SerializedTaskRow = {
   startDate: string | null;
   dueDate: string | null;
   archived: boolean;
+  /** When the task last entered Done (null unless it is done). */
+  completedAt: string | null;
   blocked: boolean;
   overdue: boolean;
   blockedBy: { id: string; title: string; status: TaskStatus }[];
@@ -176,6 +178,7 @@ export function serializeTaskRow(t: TaskRow, tree: ProjectTree, opts: { below?: 
     startDate: ymd(t.startDate),
     dueDate: ymd(t.dueDate),
     archived: t.archived,
+    completedAt: t.completedAt ? new Date(t.completedAt).toISOString() : null,
     blocked: row.blocked,
     overdue: row.overdue,
     blockedBy: t.blockedBy.map((b) => b.blockedByTask),
@@ -209,9 +212,12 @@ const scopeSchema = {
   subteamId: z.string().min(1).optional().describe("A subteam id (alternative to projectId)"),
 };
 
-/** The active tasks of a project subtree (as /projects/[id]) or a subteam (as
- * /subteams/[id]), tagged with the display fields the board and gantt use. */
-async function scopedTasks(scope: { projectId?: string; subteamId?: string }) {
+/** The tasks of a project subtree (as /projects/[id]) or a subteam (as
+ * /subteams/[id]) that `view` shows, as DetailView splits them: the board's open
+ * tasks plus the recently done (`onBoard`), or the timeline's open tasks only. */
+async function scopedTasks(scope: { projectId?: string; subteamId?: string }, view: "board" | "gantt") {
+  const shown: Prisma.TaskWhereInput =
+    view === "board" ? onBoardWhere() : { archived: false, status: { not: "done" } };
   if (!!scope.projectId === !!scope.subteamId) {
     throw new Error("Pass exactly one of projectId or subteamId");
   }
@@ -222,7 +228,7 @@ async function scopedTasks(scope: { projectId?: string; subteamId?: string }) {
     if (!project) throw new Error("Project not found");
     const projectIds = [project.id, ...descendants(tree, project.id).map((d) => d.id)];
     const raw = await prisma.task.findMany({
-      where: { projectId: { in: projectIds }, archived: false },
+      where: { projectId: { in: projectIds }, ...shown },
       include: TASK_INCLUDE,
       orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
     });
@@ -239,7 +245,7 @@ async function scopedTasks(scope: { projectId?: string; subteamId?: string }) {
     : null;
   if (!subteam) throw new Error("Subteam not found");
   const raw = await prisma.task.findMany({
-    where: { subteamId: subteam.id, archived: false },
+    where: { subteamId: subteam.id, ...shown },
     include: TASK_INCLUDE,
     orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
   });
@@ -336,13 +342,14 @@ export const tasksReadTools: ToolModule = (server) => {
     "board",
     {
       description:
-        "The kanban board of a project (with its subprojects) or a subteam: active tasks grouped by " +
-        "status, each column sorted as the Board view would (default by due date).",
+        "The kanban board of a project (with its subprojects) or a subteam: open tasks grouped by " +
+        "status, plus tasks done in the last 30 days in the done column (most recently completed first); " +
+        "open columns are sorted as the Board view would (default by due date).",
       inputSchema: { ...scopeSchema, sort: BoardSortEnum.default("due") },
       annotations: READ,
     },
     async ({ projectId, subteamId, sort }) => {
-      const { scope, tree, below, raw } = await scopedTasks({ projectId, subteamId });
+      const { scope, tree, below, raw } = await scopedTasks({ projectId, subteamId }, "board");
       const byId = new Map(raw.map((t) => [t.id, t]));
       const columns = groupByStatus(
         raw.map((t) => toWorkspaceTask(t, tree, below)),
@@ -362,12 +369,12 @@ export const tasksReadTools: ToolModule = (server) => {
     {
       description:
         "The timeline of a project (with its subprojects) or a subteam, as the Timeline view draws it: " +
-        "dated active tasks with start/end, progress and blocker dependencies, plus the count left off.",
+        "dated open (not done) tasks with start/end, progress and blocker dependencies, plus the count left off.",
       inputSchema: scopeSchema,
       annotations: READ,
     },
     async ({ projectId, subteamId }) => {
-      const { scope, tree, below, raw } = await scopedTasks({ projectId, subteamId });
+      const { scope, tree, below, raw } = await scopedTasks({ projectId, subteamId }, "gantt");
       return { scope, ...toGanttTasks(raw.map((t) => toWorkspaceTask(t, tree, below))) };
     },
   );

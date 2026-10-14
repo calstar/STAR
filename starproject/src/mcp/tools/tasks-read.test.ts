@@ -190,6 +190,7 @@ describe("serializeTaskRow", () => {
       startDate: null,
       dueDate: "2020-01-05",
       archived: false,
+      completedAt: null,
       blocked: true,
       overdue: true,
       blockedBy: [{ id: "t0", title: "Design", status: "in_progress" }],
@@ -201,11 +202,12 @@ describe("serializeTaskRow", () => {
 
   it("is not overdue once done, nor blocked by a finished blocker", () => {
     const out = serializeTaskRow(
-      row({ status: "done", blockedBy: [blocker("done")] }),
+      row({ status: "done", completedAt: new Date("2026-10-12T09:30:00Z"), blockedBy: [blocker("done")] }),
       tree,
     );
     expect(out.overdue).toBe(false);
     expect(out.blocked).toBe(false);
+    expect(out.completedAt).toBe("2026-10-12T09:30:00.000Z");
   });
 
   it("nulls out a missing subteam, priority and dates", () => {
