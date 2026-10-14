@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
+import { onBoardWhere } from "@/lib/board";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
@@ -29,7 +30,9 @@ export default async function SubteamPage({
       where: { id },
       include: {
         tasks: {
-          where: { archived: false },
+          // Open tasks plus the recently done, for the board (DetailView keeps
+          // done tasks out of the list and timeline).
+          where: onBoardWhere(),
           include: {
             assignees: {
               select: { id: true, name: true, email: true, displayName: true },

@@ -8,6 +8,7 @@ import { isAdmin } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { onBoardWhere } from "@/lib/board";
 import { ancestors, descendants, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
@@ -51,7 +52,9 @@ export async function ProjectView({
   const projectIds = [project.id, ...below.map((d) => d.id)];
   const crumbs = ancestors(tree, project.id);
   const rawTasks = await prisma.task.findMany({
-    where: { projectId: { in: projectIds }, archived: false },
+    // The board's tasks: open ones plus the recently done (DetailView keeps
+    // done tasks out of the list and timeline).
+    where: { projectId: { in: projectIds }, ...onBoardWhere() },
     include: {
       assignees: {
         select: { id: true, name: true, email: true, displayName: true },

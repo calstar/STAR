@@ -40,7 +40,7 @@ export DEV_AUTH_NAME="Your Name"
 - `Task.number` is a global human-facing `#N` from a Postgres sequence: never reused, never edited.
 - `TaskBlocker` edges are display-only (blocked badge, Gantt arrows) — no cascade scheduling.
 - Projects nest to any depth (`parentId`); `moveProblem` in `src/lib/project-tree.ts` refuses moves that would make a loop.
-- `boardOrder` is a float for kanban ordering; `archived` hides done tasks from active views.
+- `boardOrder` is a float for kanban ordering; `archived` hides done tasks from active views. A done task is stamped `completedAt` and stays in the board's Done column (most recently completed first) for `DONE_ON_BOARD_DAYS` (30) before it is only under Archived; the list and timeline never show done tasks. The rules are `onBoard` / `inLists` / `onBoardWhere` in `src/lib/board.ts`.
 
 **MCP server** (`src/app/api/mcp/route.ts`, `src/mcp/`). Streamable HTTP, stateless, one `McpServer` per request. Identity is a personal access token (`ApiToken`, minted under Settings → API tokens or `scripts/mcp-token.mjs`) resolved by `src/lib/apiTokens.ts` and injected with `runAsIdentity` from `src/lib/auth.ts`, so tools call the *real* server actions and get the same audit trail as the UI. Tool modules live in `src/mcp/tools/*.ts`, are listed in `src/mcp/tools/index.ts`, and use `defineTool`/`toFormData` from `_shared.ts`. Every user-facing action in the app should have a tool; a new server action gets a tool in the same PR. `scripts/mcp-smoke.mjs` is a real client for checking it. Docs: `docs/MCP.md`.
 

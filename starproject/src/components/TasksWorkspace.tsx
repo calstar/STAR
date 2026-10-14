@@ -8,7 +8,14 @@ import { FieldSelect } from "@/components/fields/FieldSelect";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { ViewDock } from "@/components/ViewDock";
-import { BOARD_SORT_OPTIONS, type BoardSort, type WorkspaceTask, toRowData } from "@/lib/board";
+import {
+  BOARD_SORT_OPTIONS,
+  type BoardSort,
+  type WorkspaceTask,
+  inLists,
+  onBoard,
+  toRowData,
+} from "@/lib/board";
 import { STATUS_LABEL } from "@/lib/tasks";
 
 export type { WorkspaceTask } from "@/lib/board";
@@ -145,8 +152,18 @@ export function TasksWorkspace({
     [tasks, status, myOnly, currentUserId, projSel, subSel, search],
   );
 
-  const active = useMemo(() => filtered.filter((t) => !t.archived), [filtered]);
-  const archived = useMemo(() => filtered.filter((t) => t.archived), [filtered]);
+  // The list and timeline show open tasks; the board adds those done in the
+  // last DONE_ON_BOARD_DAYS. Everything else (done longer ago, or archived by
+  // hand) is under Archived.
+  const active = useMemo(() => filtered.filter(inLists), [filtered]);
+  const onTheBoard = useMemo(() => {
+    const now = new Date();
+    return filtered.filter((t) => onBoard(t, now));
+  }, [filtered]);
+  const archived = useMemo(() => {
+    const now = new Date();
+    return filtered.filter((t) => !inLists(t) && !onBoard(t, now));
+  }, [filtered]);
   const rows = useMemo(() => active.map(toRowData), [active]);
   const archivedRows = useMemo(() => archived.map(toRowData), [archived]);
 
@@ -156,6 +173,8 @@ export function TasksWorkspace({
     else next.add(id);
     return next;
   }
+
+  const shown = view === "board" ? onTheBoard.length : active.length;
 
   const anyFilter =
     !!search || !!status || myOnly || projSel.size > 0 || subSel.size > 0;
@@ -274,7 +293,7 @@ export function TasksWorkspace({
       </div>
 
       <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-        {active.length} task{active.length === 1 ? "" : "s"}
+        {shown} task{shown === 1 ? "" : "s"}
       </p>
 
       <div className="mt-2">
@@ -286,7 +305,7 @@ export function TasksWorkspace({
             showProject
           />
         )}
-        {view === "board" && <Board tasks={active} sort={boardSort} />}
+        {view === "board" && <Board tasks={onTheBoard} sort={boardSort} />}
         {view === "gantt" && <GanttChart tasks={active} />}
       </div>
 
