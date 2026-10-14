@@ -1190,6 +1190,32 @@ same tank pressure as before needs a dome of ~566. The study tiers moved accordi
 
 When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
 before suspecting the solver.
+
+
+### 4.12 Tables that interpolate across the saturation line
+
+CoolProp's bicubic tables -- first in every species' chain, 10-30x faster than HEOS --
+are wrong near the saturation line wherever a table cell straddles it. Against HEOS, on
+7.2 and 8.0, and on every species tried (nitrogen, oxygen, ethanol, methane, water):
+
+| state | tables | HEOS |
+|---|---|---|
+| N2, 1.07 bar, 10 K above its boiling point, rho | 83 kg/m³ | 4.26 |
+| O2 saturated vapour at 90 K, p from (rho, T) | 0.47 bar | 0.99 |
+| O2 saturated vapour at 140 K, p from (rho, T) | 15.5 bar | 27.9 |
+| O2 liquid 0.5 K subcooled at 16 bar, rho | 334 kg/m³ | 917 |
+
+Errors reached ~15 K above the line on the vapour side, 10 K below on the liquid side,
+and 20 % near the critical point. The saturation splines themselves (`p, q` and `T, q`)
+agree to 0.02 %, and so does (rho, u). Found when GN2 vented off a chilled LOX tank
+throttled onto its own boiling point and every solve failed for 7 s (2026-10-12).
+
+`backends.coolprop._Dome` now has the tables decline (p, T), (p, h) and vapour (rho, T)
+within `DOME_LIQUID_K` / `DOME_VAPOUR_K` (16 K) of the line and near the critical point;
+the chain's HEOS answers. Warm pressurant and LOX subcooled at tank pressure never come
+near it, which is why no burn or calibrated result moved; a cold LOX ullage, vent lines
+and nitrogen near 77 K do. Re-check on any CoolProp upgrade:
+`lib/feedtwin/tests/test_props_near_dome.py`.
 ---
 
 ## Reporting

@@ -21,6 +21,7 @@ import logging
 import re
 import json
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timezone
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -1418,6 +1419,11 @@ class _Opened:
     session's own ``assumptions`` reach only the run record."""
     unrecorded: str = ""
     """Why the last burn could not be recorded; cleared once a record lands."""
+    body: dict[str, Any] = field(default_factory=dict)
+    """The setup the session was opened with, as sent: a repro reopens on it."""
+    events: list[dict[str, Any]] = field(default_factory=list)
+    """Every command and T-0, stamped with stand time, for the repro
+    (``/api/session/{id}/repro``). Capped at :data:`REPRO_EVENTS`."""
 
 
 def _notices(session_id: str) -> list[str]:
@@ -1727,8 +1733,93 @@ async def open_session(
         user=userdata.store.current_user(request),
         stand=_stand_ref(request, settings.get("stand")),
         notices=notices,
+        body=json.loads(json.dumps(settings, default=str)),
     )
     return _session_out(session, session.step(1e-3))
+
+
+#: Events a session keeps for its repro; a stand driven for hours keeps the
+#: first ones, which are the ones that set it up.
+REPRO_EVENTS = 5000
+
+
+def _remember(session_id: str, session: Session, event: dict[str, Any]) -> None:
+    """Note an operator's action for the repro, at the stand time it lands."""
+    opened = _OPENED.get(session_id)
+    if opened is None or len(opened.events) >= REPRO_EVENTS:
+        return
+    opened.events.append(
+        {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
+    )
+
+
+@app.get("/api/session/{session_id}/repro")
+async def session_repro(session_id: str) -> dict[str, Any]:
+    """Everything needed to run this stand again somewhere else: the drawing
+    and engine themselves (not their ids -- the other machine's library will
+    not have them), the setup it was opened with, the hookup it ran, and every
+    command and T-0 at its stand time. ``scripts/replay_repro.py`` plays it."""
+    session = _session(session_id)
+    opened = _OPENED.get(session_id)
+    if opened is None:
+        raise HTTPException(
+            status_code=404, detail="No record of how this stand opened."
+        )
+    try:
+        drawing = json.loads(library.read(opened.diagram))
+        drawing_name = library.get(opened.diagram).name
+    except (LibraryError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=f"drawing: {exc}") from exc
+    engine: dict[str, Any] | None = None
+    if opened.engine:
+        try:
+            artifact = library.get(opened.engine)
+            card = library.attachment(opened.engine, "card")
+            engine = {
+                "name": artifact.name,
+                "filename": artifact.filename,
+                "text": library.read(opened.engine).decode("utf-8"),
+                "card": json.loads(card) if card else None,
+            }
+        except (LibraryError, OSError, ValueError):
+            engine = None
+    last = session.solver_log[-1] if session.solver_log else None
+    return {
+        "kind": "feedtwin-repro",
+        "version": 1,
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "code": code_version(),
+        "opened": {
+            "diagram": opened.diagram,
+            "drawing_name": drawing_name,
+            "engine": opened.engine,
+            "fluid_set": opened.fluid_set,
+            "machine": opened.machine,
+            "multiphase": opened.multiphase,
+            "body": opened.body,
+        },
+        "drawing": drawing,
+        "engine": engine,
+        "hookup": session.hookup.to_dict() if session.hookup is not None else None,
+        "events": list(opened.events),
+        "events_capped": len(opened.events) >= REPRO_EVENTS,
+        "end": {
+            "t": session.t,
+            "state": session.state,
+            "tripped": session.tripped,
+            "setup": asdict(session.setup),
+            "tanks": {
+                sim.label: {
+                    "pressure_psi": round(psig(sim.pressure), 3),
+                    "liquid_kg": round(sim.state.liquid_mass, 5),
+                }
+                for sim in session.tanks.values()
+            },
+            "mass_error_kg": last.mass_error_kg if last else 0.0,
+            "guard_kg": last.guard_kg if last else 0.0,
+            "flags": [f.to_dict() for f in session.watcher.flags],
+        },
+    }
 
 
 @app.post("/api/session/{session_id}/tick")
@@ -1908,6 +1999,7 @@ async def command_session(
     the setup, or skip a load's chilldown (``skip_chill``)."""
     session = _session(session_id)
     settings = dict(body or {})
+    _remember(session_id, session, {"command": settings})
 
     if session.tripped and "state" in settings:
         raise HTTPException(status_code=409, detail=session.tripped)
@@ -2595,6 +2687,7 @@ async def session_solver(
         guard_J=[r.guard_J for r in kept],
         crossed_kg=[r.crossed_in_kg + r.crossed_out_kg for r in kept],
         summary=summary,
+        flags=[f.to_dict() for f in session.watcher.flags],
     )
 
 
@@ -2932,6 +3025,7 @@ async def session_t0(session_id: str) -> SessionOut:
     run record of the next burn carries as its notes.
     """
     session = _session(session_id)
+    _remember(session_id, session, {"t0": True})
     try:
         t0 = jump_to_t0(
             session,

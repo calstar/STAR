@@ -1129,8 +1129,18 @@ def conditions_from_fluid(
         p_sat = 0.0
 
     molar_mass = fluid.constants()["molar_mass"]
+    try:
+        rho = float(fluid.get("rho", p=p, T=T))
+    except PropertyError:
+        # A gas line at its own dew point: on the saturation line (p, T) does not
+        # say liquid or vapour, and no backend will answer. Cold pressurant
+        # reaches it -- GN2 over a chilled LOX tank at 2.7 bar and 86.8 K stopped
+        # every solve of an Ethalox Stand vent for 13 s. The line carries gas, so
+        # it is priced as the saturated vapour it is, just off the line.
+        T = _off_the_dew_point(fluid, p, T)
+        rho = float(fluid.get("rho", p=p, T=T))
     return FlowConditions(
-        rho=float(fluid.get("rho", p=p, T=T)),
+        rho=rho,
         mu=float(fluid.get("mu", p=p, T=T)),
         p_upstream=p,
         p_sat=p_sat,
@@ -1142,6 +1152,26 @@ def conditions_from_fluid(
         gravity=gravity,
         gamma_ideal=_ideal_gamma(fluid, T),
     )
+
+
+#: How far above its dew point a gas line on the saturation line is priced [K]
+#: (`conditions_from_fluid`): clear of the line the backends refuse, and well
+#: inside any temperature the stand can resolve.
+DEW_POINT_MARGIN_K = 0.05
+
+
+def _off_the_dew_point(fluid: Fluid, p: float, T: float) -> float:
+    """``T``, or just above the dew point at ``p`` if ``T`` is not above it.
+
+    Re-raises the property layer's refusal when the state is not a gas at its
+    dew point -- a gas line below the line it cannot be helped from here."""
+    try:
+        dew = float(fluid.get("T", p=p, q=1.0))
+    except (PropertyError, ValueError):
+        raise PropertyError(f"{fluid.name} at p={p:.6g} Pa, T={T:.6g} K") from None
+    if T > dew + DEW_POINT_MARGIN_K:
+        raise PropertyError(f"{fluid.name} at p={p:.6g} Pa, T={T:.6g} K")
+    return dew + DEW_POINT_MARGIN_K
 
 
 #: Ideal-gas ratio of specific heats by (species, temperature). See _ideal_gamma.

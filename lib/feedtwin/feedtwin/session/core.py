@@ -84,6 +84,7 @@ from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
 from feedtwin.session.hookup import CHARGE, DOME, Hookup
 from feedtwin.session.model import AssemblyError, Model
 from feedtwin.session.statemachine import Binding, StateMachine, _words, fills
+from feedtwin.session.watch import Watcher
 
 #: Standard atmosphere [Pa]. What a vented vessel sits at, and the zero of every
 #: gauge on the stand -- see `feedtwin.session.gauge.psig`.
@@ -118,6 +119,13 @@ _TEMPERATURE_SWEEPS = 12
 _TEMPERATURE_MIN_FLOW = 1.0e-6
 #: Temperature change worth another sweep [K].
 _TEMPERATURE_TOL = 0.05
+#: How far above its dew point a gas node is held when the enthalpy walk lands
+#: it inside the two-phase dome [K] (`Session._propagate_temperatures`). The
+#: lines carry one phase; exactly on the saturation line a (p, T) state is
+#: ambiguous and the property layer refuses it. Half a kelvin is ~6 kPa of
+#: nitrogen's saturation curve near an atmosphere: room for the solve to move
+#: the node's pressure without crossing the line.
+_DEW_MARGIN_K = 0.5
 
 ROOM = 293.15
 """Room temperature [K]. Where a wall starts when its line has no upstream node
@@ -1185,6 +1193,22 @@ class TankSim:
     added_kg: float = 0.0
     fixed_kg: float = 0.0
     fixed_J: float = 0.0
+    #: No open gas path from the ullage to the air (:meth:`Session._sealed`):
+    #: the floor in :meth:`_settled` then never adds gas. Set each step.
+    sealed: bool = False
+    #: Gas the floor in :meth:`_settled` put in above what the ullage held at
+    #: the start of a step, cumulative [kg], outside vent inflow
+    #: (:attr:`vent_drawn_kg`): air from nowhere if the tank is sealed.
+    floored_kg: float = 0.0
+    #: Air an open vent let back in, cumulative [kg]: the physical floor's
+    #: additions out of a built-in chill (:meth:`_atmosphere_floor`), booked
+    #: as mass that crossed the boundary (in :attr:`added_kg`), not a clamp.
+    vent_drawn_kg: float = 0.0
+    #: What the last :meth:`_settled` drew in, (kg, J), for :meth:`_ledger`.
+    _drawn_piece: tuple[float, float] = (0.0, 0.0)
+    #: Liquid the network delivered to the outlet that the tank refused --
+    #: from no tank feeding it -- cumulative [kg] (`Session._move_vessels`).
+    refused_kg: float = 0.0
 
     @property
     def pressure(self) -> float:
@@ -1333,13 +1357,38 @@ class TankSim:
             self.chill_boiled += heat / h_fg
         self.state = replace(
             state,
-            ullage=replace(state.ullage, wall_temperature=cooled[0]),
+            ullage=self._chilled_ullage(state, cooled[0]),
             wetted_wall_temperature=(
                 cooled[1] if state.wetted_wall_temperature is not None else None
             ),
         )
         self.chilling = False
         return True
+
+    def _chilled_ullage(self, state: TankState, wall: float) -> VesselState:
+        """The ullage a chill leaves: at the chilled wall's temperature, at the
+        pressure it holds now.
+
+        A chill floods the ullage with its own cold boil-off; skipping one
+        cooled the metal and left the gas warm, which then chilled on the wall
+        after the skip and pulled the tank under the air -- in the old floor,
+        39.6 g of nitrogen in one step (2026-10-12). The gas the colder ullage
+        holds is the boil-off a chill would have left there, from the load,
+        and is booked as the load's (:attr:`added_kg`).
+        """
+        held = state.ullage
+        try:
+            volume = max(self.tank.ullage_volume(state), 1e-9)
+            partial = self.tank.pressure(state) - self.tank.vapour_pressure(state)
+            if partial <= 0.0 or wall <= 0.0:
+                raise ValueError("no pressurant pressure to hold")
+            density = float(self.tank.gas.get("rho", p=partial, T=wall))
+            energy = float(self.tank.gas.get("u", p=partial, T=wall))
+        except (ValueError, PropertyError):
+            return replace(held, wall_temperature=wall)
+        mass = density * volume
+        self.added_kg += mass - held.mass
+        return VesselState(mass=mass, energy=energy * mass, wall_temperature=wall)
 
     @property
     def load_target_kg(self) -> float:
@@ -1736,7 +1785,7 @@ class TankSim:
                 halvings += 1
                 done *= 2
                 continue
-            self._ledger(rates, remaining, candidate)
+            self._ledger(rates, remaining, candidate, drawn=self._drawn_piece)
             self.state = candidate
             done += 1
         else:
@@ -1771,19 +1820,27 @@ class TankSim:
         dt: float,
         landed: TankState,
         start: TankState | None = None,
+        drawn: tuple[float, float] = (0.0, 0.0),
     ) -> None:
         """Book what the guards changed: where a piece of step ``landed``
-        against where the rates over its ``dt`` said it would."""
+        against where the rates over its ``dt`` said it would. Air an open vent
+        let in (``drawn``, kg and J, from :meth:`_settled`) crossed the
+        boundary: it is booked as in, not as a clamp."""
         was = start or self.state
 
         def total(state: TankState) -> float:
             return state.liquid_mass + state.ullage.mass + state.vapour_mass
 
         promised = (rates.ullage.mass + rates.liquid_mass + rates.vapour_mass) * dt
-        self.fixed_kg += total(landed) - total(was) - promised
+        self.fixed_kg += total(landed) - total(was) - promised - drawn[0]
         self.fixed_J += (
-            landed.ullage.energy - was.ullage.energy - rates.ullage.energy * dt
+            landed.ullage.energy
+            - was.ullage.energy
+            - rates.ullage.energy * dt
+            - drawn[1]
         )
+        self.added_kg += drawn[0]
+        self.vent_drawn_kg += drawn[0]
 
     def _pressurant_floor(self, wall_temperature: float | None = None) -> float:
         """The least pressurant the ullage holds [kg]: atmosphere's worth at the
@@ -1796,13 +1853,55 @@ class TankSim:
         )
         return float(self.tank.gas.get("rho", p=AMBIENT, T=wall)) * volume
 
+    def _gas_temperature_of(self, ullage: VesselState) -> float:
+        """The pressurant's own temperature in ``ullage`` [K]; the wall's when
+        it cannot be priced."""
+        volume = max(self.tank.ullage_volume(self.state), 1e-9)
+        if ullage.mass > 0.0:
+            try:
+                temperature = float(
+                    self.tank.gas.get(
+                        "T", rho=ullage.mass / volume, u=ullage.energy / ullage.mass
+                    )
+                )
+                if temperature > 0.0:
+                    return temperature
+            except (ValueError, PropertyError):
+                pass
+        return ullage.wall_temperature
+
+    def _atmosphere_floor(self, ullage: VesselState | None = None) -> float:
+        """The pressurant that brings the tank back to atmosphere [kg]: its
+        partial pressure the air's less what the propellant vapour already
+        holds (Dalton, as :meth:`Tank.pressure`), at the gas's own temperature.
+
+        What "a vent cannot pull a tank below the air outside it" means. The
+        old floor (:meth:`_pressurant_floor`) asked for a whole atmosphere of
+        pressurant at the *wall's* temperature, which only fits a tank whose
+        ullage is the wall's own boil-off -- a built-in chill, where it stands
+        in for that boil-off (see :meth:`_settled`).
+        """
+        held = ullage if ullage is not None else self.state.ullage
+        volume = max(self.tank.ullage_volume(self.state), 1e-9)
+        try:
+            vapour = self.tank.vapour_pressure(self.state)
+        except (ValueError, PropertyError):
+            vapour = 0.0
+        partial = AMBIENT - vapour
+        if partial <= 0.0:
+            return 0.0
+        temperature = self._gas_temperature_of(held)
+        return float(self.tank.gas.get("rho", p=partial, T=temperature)) * volume
+
     def _settled(self, ullage: VesselState) -> VesselState:
         """Keep the ullage inside the states the gas can actually occupy.
 
         Two floors, and both are physics rather than numerics.
 
         A vent cannot pull a tank below the air outside it, so the **mass**
-        cannot fall below what atmosphere would hold in that volume.
+        cannot fall below what atmosphere would hold in that volume. Only with a
+        vent: a :attr:`sealed` tank has nothing to let air in, and goes below
+        atmosphere as its liquid drains.
 
         The floor is on the pressurant alone because the pressurant carries the
         ullage's heat capacity: the propellant vapour has no energy term (see
@@ -1818,8 +1917,48 @@ class TankSim:
         a ratchet that puts energy *in*, and a venting tank then climbs in
         pressure instead of falling.
         """
+        self._drawn_piece = (0.0, 0.0)
+        restate_at = ullage.wall_temperature
         floor = self._pressurant_floor(ullage.wall_temperature)
-        if self.state.vapour_mass > 0.0:
+        drawn_through_vent = not self.sealed and not self.chilling
+        if drawn_through_vent:
+            # Out of a built-in chill the floor keeps what it always kept -- the
+            # vent does not take the pressurant below its old floor, capped at
+            # what the ullage holds (the pressurant carries the ullage's heat
+            # capacity; the vent takes vapour first) -- but it *grows* the
+            # ullage only below the air, and only to what puts the tank back
+            # at it (:meth:`_atmosphere_floor`): the pressurant's share of an
+            # atmosphere beside the vapour, at the gas's own temperature. It
+            # used to grow to a whole atmosphere of pressurant at the wall's
+            # temperature the moment a venting LOX tank dipped 0.02 psi under
+            # the air during a fill -- 57 g where the ullage held 17.6, the
+            # 7.9 g of oxygen vapour holding a third of the pressure ignored,
+            # 39.6 g of nitrogen from nowhere in one step (Ethalox Stand,
+            # 2026-10-12). Below the air, an open vent lets in what puts the
+            # tank back at it: a hundredth of a gram there.
+            # With no vapour the pressurant is the whole ullage, and what the
+            # vent cannot take it below is atmosphere at its own temperature.
+            physical = self._atmosphere_floor(ullage)
+            if self.state.vapour_mass <= 0.0:
+                floor = physical
+            floor = min(floor, self.state.ullage.mass)
+            restate_at = self._gas_temperature_of(ullage)
+            try:
+                below = self.tank.pressure(self.state) < AMBIENT
+            except (ValueError, PropertyError):
+                below = False
+            if below:
+                floor = max(floor, physical)
+        elif self.sealed:
+            # No open path to the air: the floor stands in for gas the vent
+            # lets back in, and there is no vent. As the liquid drains or the
+            # gas cools, a sealed tank goes below atmosphere -- and holds the
+            # liquid there by that vacuum. Grown with the ullage, the floor
+            # refilled a sealed fuel tank with air as it drained, and the tank
+            # emptied at 129 g/s through a drain driven by its 0.45 psi of
+            # head, booking the air as clamp energy.
+            floor = min(floor, self.state.ullage.mass)
+        elif self.state.vapour_mass > 0.0:
             try:
                 above = self.tank.pressure(self.state) > AMBIENT
             except (ValueError, PropertyError):
@@ -1834,10 +1973,19 @@ class TankSim:
         mass = max(ullage.mass, floor)
         if mass == ullage.mass:
             return ullage
+        # Air from nowhere is what lands above what the ullage held before the
+        # step; holding it there against a vent is the floor's own job, and
+        # air an open vent let in is inflow (:attr:`vent_drawn_kg`), not this.
+        if not drawn_through_vent:
+            self.floored_kg += max(mass - max(ullage.mass, self.state.ullage.mass), 0.0)
         # Mass was floored, so the energy that went with it has to be restated
-        # or the specific energy jumps. Priced at the wall, which is what the
-        # gas re-warms against once the vent is shut.
-        specific = self.tank.gas.get("u", p=AMBIENT, T=ullage.wall_temperature)
+        # or the specific energy jumps. In a built-in chill, at the wall: the
+        # ullage the floor stands in for is the wall's boil-off. Otherwise at
+        # the gas's own temperature, where the floor was priced.
+        specific = self.tank.gas.get("u", p=AMBIENT, T=restate_at)
+        if drawn_through_vent:
+            grown = mass - ullage.mass
+            self._drawn_piece = (grown, grown * float(specific))
         return VesselState(
             mass=mass,
             energy=specific * mass,
@@ -2070,6 +2218,8 @@ class Session:
         self.history: Deque[Sample] = deque(maxlen=HISTORY)
         #: The solver tab: one record per tick (feedtwin.session.diagnostics).
         self.solver_log: Deque[SolverRecord] = deque(maxlen=HISTORY)
+        #: Laws the stand cannot break, checked each tick (session.watch).
+        self.watcher = Watcher()
         self._tick: dict[str, float] = {}
         self._boundary: frozenset[str] | None = None
         self._crossed_in = 0.0
@@ -2163,6 +2313,19 @@ class Session:
         self.bottles: dict[str, BottleSim] = {}
         self._build_vessels()
         self._fill_stubs = self._find_fill_stubs()
+        # The fill valves whose free end is that hose: out of the solve. The
+        # stub is pinned at the tank's own pressure so nothing moves through it,
+        # but a line with height still trickled liquid from it into the outlet
+        # -- ~0.7 g/s on the Ethalox Stand's LOX fill, a second copy of the
+        # commanded load that the tank refused, read as mass unaccounted for
+        # (2026-10-12). The commanded rate is the fill; the hose passes nothing.
+        net = self.model.built.network
+        self._fill_hoses: frozenset[str] = frozenset(
+            branch_id
+            for branch_id, branch in net.branches.items()
+            if branch.upstream in self._fill_stubs
+            or branch.downstream in self._fill_stubs
+        )
         #: Vessels whose fill the drawing itself carries: a GSE page with the
         #: cart's bottle or dewar plumbed to them. Their built-in fill (the
         #: tanker load, the cart's COPV charge) steps aside and the network
@@ -2203,6 +2366,7 @@ class Session:
         self._fill_lines: dict[str, frozenset[str]] = {}
         self._fill_stops: dict[str, str] = self._find_fill_stops()
         self._fill_stopped: set[str] = set()
+        self._sealed_cache: dict[frozenset[str], frozenset[str]] = {}
         #: What the crew last did with each transfer valve (open or shut), so a
         #: hand on the P&ID between changes is left alone.
         self._fill_crew: dict[str, bool] = {}
@@ -3094,12 +3258,41 @@ class Session:
 
     # ------------------------------------------------------------------ tick
 
+    def _through_outlets(self) -> frozenset[str]:
+        """Dry tanks whose outlet other lines pass through, by tank id.
+
+        An unsized tee on a tank's outlet line is joined into the outlet node
+        (an unsized line is a direct connection), so on LE4 (6) the cart's
+        transfer tank outlet *is* the tee between the fill line and the dump.
+        Cutting every branch on a dry tank's outlet (:meth:`_dry_branches`) cut
+        the fill line from the dump with it: Eth-Tank sat at 45 psig with the
+        dump open and nothing solved. A dry tank's outlet with two or more lines
+        on it -- and not being loaded through them -- is a junction instead: no
+        pressure of its own (:meth:`_apply_vessel_pressures`), nothing taken
+        from or given to the empty tank, flow passing between the lines.
+        """
+        net = self.model.built.network
+        out: set[str] = set()
+        for sim in self.tanks.values():
+            if sim.state.liquid_mass > DRY_MASS or self._loading(sim):
+                continue
+            lines = sum(
+                1
+                for branch in net.branches.values()
+                if sim.outlet_node in (branch.upstream, branch.downstream)
+                and sim.ullage_node not in (branch.upstream, branch.downstream)
+            )
+            if lines >= 2:
+                out.add(sim.id)
+        return frozenset(out)
+
     def _dry_branches(self) -> frozenset[str]:
         """Feed branches leaving a tank with nothing left in it."""
         net = self.model.built.network
         out: set[str] = set()
+        through = self._through_outlets()
         for sim in self.tanks.values():
-            if sim.state.liquid_mass > DRY_MASS:
+            if sim.state.liquid_mass > DRY_MASS or sim.id in through:
                 continue
             filling = self._fill_lines.get(sim.id, frozenset())
             # The line it is loaded through stays open to a dry tank in its fill
@@ -3363,7 +3556,7 @@ class Session:
         Infinity when there is nothing to measure.
         """
         net = self.model.built.network
-        _, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+        _, liquid_out = self._outlet_split(sim, self._last_flows)
         volume = sim.tank.ullage_volume(sim.state)
         if liquid_out <= 0.0 or volume <= 0.0:
             return float("inf")
@@ -3503,9 +3696,11 @@ class Session:
                 branch_id not in isolated for branch_id, inner in touching if not inner
             ) and any(branch_id not in cut for branch_id, _ in touching)
             held = sim.state.ullage.mass + sim.state.vapour_mass
+            if not live and held > 0.0:
+                self._close_outlet(sim, dt, cut, out)
             if not live or held <= 0.0:
                 continue
-            liquid_in, liquid_out = self._split_at(sim.outlet_node, self._last_flows)
+            liquid_in, liquid_out = self._outlet_split(sim, self._last_flows)
             if sim.id not in self._liquid_fed:
                 liquid_in = 0.0
             enthalpy = self._pressurant_enthalpy(sim)
@@ -3538,6 +3733,61 @@ class Session:
                 out[node] = (probe / slope, reference)
         return out
 
+    def _close_outlet(
+        self,
+        sim: TankSim,
+        dt: float,
+        cut: set[str],
+        out: dict[str, tuple[float, float]],
+    ) -> None:
+        """Close a shut-in tank's outlet over the step, as its ullage is closed.
+
+        With the vent and the press line shut the ullage holds a fixed mass, so
+        every gram of liquid that leaves expands it: the outlet is as stiff as
+        that ullage. Held at its start-of-step pressure it is an explicit
+        coupling -- a full LE4 fuel tank drained through a quarter-psi head
+        swung its drain 30 g/s each way, step after step, and leaked 2 g/s
+        where it should have stopped. Closed here (``solve_steady(storage=)``):
+        where the outlet lands with no liquid exchanged, and how far one probe's
+        worth of draining moves it -- both by trial steps on a copy.
+
+        Only for a tank with liquid in it and a live line at its outlet; a tank
+        whose outlet is a junction (:meth:`_through_outlets`) has none of its own.
+        """
+        if sim.state.liquid_mass <= DRY_MASS or sim.id in self._through_outlets():
+            return
+        net = self.model.built.network
+        node = sim.outlet_node
+        if not any(
+            branch_id not in cut
+            and node in (branch.upstream, branch.downstream)
+            and sim.ullage_node not in (branch.upstream, branch.downstream)
+            for branch_id, branch in net.branches.items()
+        ):
+            return
+        rho = max(sim.tank.liquid_density(sim.state), 1.0)
+        volume = max(sim.tank.ullage_volume(sim.state), 1e-9)
+        probe = STORAGE_PROBE * volume * rho / dt
+
+        def land(liquid_out: float = 0.0) -> float:
+            trial = copy.copy(sim)
+            trial.advance(
+                dt,
+                mdot_liquid_out=liquid_out,
+                mdot_gas_in=0.0,
+                mdot_gas_out=0.0,
+                enthalpy_gas_in=sim.tank.gas_enthalpy(sim.state),
+            )
+            return trial.outlet_pressure
+
+        try:
+            reference = land()
+            slope = reference - land(probe)
+        except Exception:  # noqa: BLE001 - a vessel that cannot price it
+            return  # stays a fixed boundary, as it always was
+        if slope > 0.0 and reference > 0.0:
+            out[node] = (probe / slope, reference)
+
     def _advance_once(
         self,
         net: Network,
@@ -3562,7 +3812,7 @@ class Session:
         # delivering from it, so the engine went on making four kilonewtons out
         # of an empty pair of tanks. Only the session knows the inventory, so
         # only the session can say.
-        dry = self._dry_branches()
+        dry = self._dry_branches() | self._fill_hoses
         isolated = frozenset(net.isolated(signals)) | dry
         if isolated != self._last_isolated:
             # Keep the pressures, drop the flows. The circuit changed, so the
@@ -3730,6 +3980,7 @@ class Session:
                 - getattr(self, "_guard_J0", 0.0),
             )
         )
+        self.watcher.observe(self, self.solver_log[-1])
         self._tick = {}
 
     def _relief_signals(
@@ -3976,7 +4227,7 @@ class Session:
                 if (
                     sim.id in ground
                     and self._split_at(sim.ullage_node, flows) == (0.0, 0.0)
-                    and self._split_at(sim.outlet_node, flows) == (0.0, 0.0)
+                    and self._outlet_split(sim, flows) == (0.0, 0.0)
                     and self._supply_press(sim, inner)[0] <= 0.0
                 ):
                     resting.add(sim.id)
@@ -3989,18 +4240,51 @@ class Session:
                     resting.add(b_id)
         tanks = [sim for sim in self.tanks.values() if sim.id not in resting]
         bottles = {k: b for k, b in self.bottles.items() if k not in resting}
+        sealed = self._sealed(self._last_isolated)
+        for sim in tanks:
+            sim.sealed = sim.id in sealed
+        # What each tank on a transfer line is being sent through it: the
+        # liquid leaving the tanks at its other end. An arrival at an outlet
+        # beyond that came from somewhere else -- the chamber pushing back at
+        # Fire into tanks nobody pressed -- and is not propellant. Credited
+        # whole, it put 0.28 kg of "ethanol" into a full LE4 fuel tank in one
+        # step and the tank overfilled.
+        through = self._through_outlets()
+        supplies = self.model.built.supplies
+        sent_to: dict[str, float] = {}
+        for supply, fed in supplies.items():
+            if supply not in self.tanks:
+                continue
+            given = self._outlet_split(self.tanks[supply], flows, through)[1]
+            back = 0.0
+            for tank_id in fed:
+                if tank_id in self.tanks:
+                    sent_to[tank_id] = sent_to.get(tank_id, 0.0) + given
+                    back += self._outlet_split(self.tanks[tank_id], flows, through)[1]
+            sent_to[supply] = sent_to.get(supply, 0.0) + back
         vented = {sim.id: self._vent_fraction(sim.ullage_node, flows) for sim in tanks}
         for _ in range(substeps):
             refused = 0.0
             sent: dict[str, float] = {}
             for sim in tanks:
                 gas_in, gas_out = self._split_at(sim.ullage_node, flows)
-                liquid_in, liquid_out = self._split_at(sim.outlet_node, flows)
+                liquid_in, liquid_out = self._outlet_split(sim, flows, through)
+                arrived = liquid_in
                 if sim.id not in self._liquid_fed:
                     # Only a tank a cart tank loads takes liquid in; anywhere
                     # else an arrival at an outlet is not propellant (the
                     # chamber pushing back at an abort) and is not credited.
                     liquid_in = 0.0
+                else:
+                    liquid_in = min(liquid_in, sent_to.get(sim.id, 0.0))
+                # What it refused is booked, as a give beyond what a tank holds
+                # is: the network carried it across the boundary, and unbooked it
+                # read as mass lost -- 15 g at the Fire of a sealed, nearly empty
+                # LOX tank that the open main let the nozzle's air into.
+                turned_away = arrived - liquid_in
+                if turned_away > 0.0:
+                    sim.fixed_kg -= turned_away * inner
+                    sim.refused_kg += turned_away * inner
                 # Pressurant leaving for another vessel, not a vent.
                 sent[sim.id] = gas_out * (1.0 - vented.get(sim.id, 0.0))
                 pressed, target, h_cart = self._supply_press(sim, inner)
@@ -4254,6 +4538,50 @@ class Session:
             weighted += abs(flow) * net.nodes[source].temperature
         return weighted / total if total > 0.0 else None
 
+    def _sealed(self, isolated: frozenset[str]) -> frozenset[str]:
+        """Tanks whose ullage has no open gas path to the air.
+
+        Walked from the ullage through every branch the solve did not take out
+        (``isolated``: shut valves, dry outlets) to a fixed-pressure boundary
+        that is not a vessel -- a vent, an open-ended valve. A vessel stops the
+        walk: another tank or bottle is not the air, and the liquid below an
+        ullage is not a gas path. With the vent shut and the press line closed,
+        a tank is sealed (:attr:`TankSim.sealed`). Remembered per shut set.
+        """
+        cached = self._sealed_cache.get(isolated)
+        if cached is not None:
+            return cached
+        net = self.model.built.network
+        vessels = {sim.ullage_node for sim in self.tanks.values()}
+        vessels |= {sim.outlet_node for sim in self.tanks.values()}
+        vessels |= {b.node for b in self.bottles.values()}
+        links: dict[str, list[str]] = {}
+        for branch_id, branch in net.branches.items():
+            if branch_id in isolated:
+                continue
+            links.setdefault(branch.upstream, []).append(branch.downstream)
+            links.setdefault(branch.downstream, []).append(branch.upstream)
+        sealed = set()
+        for sim in self.tanks.values():
+            seen = {sim.ullage_node}
+            frontier = [sim.ullage_node]
+            open_air = False
+            while frontier and not open_air:
+                here = frontier.pop()
+                for there in links.get(here, ()):
+                    if there in seen or there in vessels:
+                        continue
+                    seen.add(there)
+                    if net.nodes[there].is_fixed:
+                        open_air = True
+                        break
+                    frontier.append(there)
+            if not open_air:
+                sealed.add(sim.id)
+        found = frozenset(sealed)
+        self._sealed_cache[isolated] = found
+        return found
+
     def _venting(self, node: str, flows: Mapping[str, float]) -> bool:
         """More of the gas at ``node`` leaves for the sky than arrives or is
         sent on to another vessel."""
@@ -4310,9 +4638,12 @@ class Session:
 
     def _apply_vessel_pressures(self) -> None:
         net = self.model.built.network
+        through = self._through_outlets()
         for sim in self.tanks.values():
             net.nodes[sim.ullage_node].pressure = sim.pressure
-            net.nodes[sim.outlet_node].pressure = sim.outlet_pressure
+            net.nodes[sim.outlet_node].pressure = (
+                None if sim.id in through else sim.outlet_pressure
+            )
         for bottle in self.bottles.values():
             net.nodes[bottle.node].pressure = bottle.pressure
         # A fill valve's free port is the tanker's hose, not the air. The
@@ -4441,6 +4772,19 @@ class Session:
             else:
                 leaving += -signed
         return arriving, leaving
+
+    def _outlet_split(
+        self,
+        sim: TankSim,
+        flows: Mapping[str, float],
+        through: frozenset[str] | None = None,
+    ) -> tuple[float, float]:
+        """Liquid arriving at and leaving a tank's outlet [kg/s]: nothing for a
+        dry tank whose outlet is a junction (:meth:`_through_outlets`), whose
+        flows pass the tank by."""
+        if sim.id in (self._through_outlets() if through is None else through):
+            return 0.0, 0.0
+        return self._split_at(sim.outlet_node, flows)
 
     def _net_into(self, node: str, flows: Mapping[str, float]) -> float:
         arriving, leaving = self._split_at(node, flows)
@@ -4854,6 +5198,46 @@ class Session:
         # tick of no wall heat and gets the three tiers -- liquid, ullage
         # vapour, ambient pressurant -- right without a soak model.
 
+    def _off_the_dew_line(
+        self,
+        fluid: Fluid,
+        pressure: float,
+        enthalpy: float,
+        landed: float,
+        node_id: str,
+    ) -> float:
+        """A gas node the walk landed inside the two-phase dome, held as
+        saturated vapour :data:`_DEW_MARGIN_K` above its dew point.
+
+        Venting cold pressurant expands it down its own saturation line: GN2
+        off a chilled LOX tank, throttled to an atmosphere, landed at 77.87 K
+        and 107.6 kPa -- nitrogen's boiling point there -- and every solve
+        after it failed on its first property call (the state is on the line,
+        so liquid or vapour is not said). The lines carry one phase, so a
+        mostly-vapour landing (quality at least a half) is taken as the
+        vapour it nearly is; the fog it would really carry is not modelled,
+        and the notes say so once. A mostly-liquid landing -- a flashing
+        liquid -- is left where it was.
+        """
+        try:
+            h_dew = fluid.get("h", p=pressure, q=1.0)
+            h_bubble = fluid.get("h", p=pressure, q=0.0)
+        except (ValueError, PropertyError):
+            return landed  # supercritical or out of range: no dome to land in
+        if not h_bubble < enthalpy <= h_dew:
+            return landed
+        if (enthalpy - h_bubble) < 0.5 * (h_dew - h_bubble):
+            return landed
+        dew = fluid.get("T", p=pressure, q=1.0)
+        note = (
+            "Vent gas expanded to its dew point; lines carry one phase, so it is "
+            f"held as saturated vapour {_DEW_MARGIN_K:g} K above it (the "
+            "condensate it would carry is not modelled)."
+        )
+        if note not in self.assumptions:
+            self.assumptions.append(note)
+        return max(landed, dew + _DEW_MARGIN_K)
+
     def _propagate_temperatures(
         self,
         pressures: Mapping[str, float],
@@ -4990,7 +5374,12 @@ class Session:
                     # h is conserved across the component; T falls out of the
                     # equation of state at this node's own pressure. That step
                     # is the Joule-Thomson effect.
-                    landed = net.fluid(node.fluid).get("T", p=p_here, h=enthalpy)
+                    fluid_here = net.fluid(node.fluid)
+                    landed = fluid_here.get("T", p=p_here, h=enthalpy)
+                    if node.phase != "liquid":
+                        landed = self._off_the_dew_line(
+                            fluid_here, p_here, enthalpy, landed, node_id
+                        )
                 except (ValueError, PropertyError):
                     continue
                 if landed > 0.0 and abs(landed - node.temperature) > _TEMPERATURE_TOL:
@@ -5066,15 +5455,27 @@ class Session:
         # the shipped table, whose `Idle` row opens the fuel main. Propellant
         # actually arriving at the chamber is the physical question and does
         # not care what the table says.
+        # Arriving, not touching: a flow out of the chamber is the boundary
+        # pushing back up the feed, and counted as "lit" it held the chamber at
+        # its design pressure after the burn, so an Engine Abort's open mains
+        # drove 3 kg/s from a dead engine into the tanks.
         chamber = self._chamber_node
-        arriving = sum(
-            abs(flows.get(branch_id, 0.0))
-            for branch_id, branch in net.branches.items()
-            if chamber in (branch.upstream, branch.downstream)
-        )
-        net.nodes[chamber].pressure = (
-            self._design_chamber if arriving > MIN_CHAMBER_FLOW else AMBIENT
-        )
+        arriving = 0.0
+        for branch_id, branch in net.branches.items():
+            flow = flows.get(branch_id, 0.0)
+            if branch.downstream == chamber:
+                arriving += max(flow, 0.0)
+            elif branch.upstream == chamber:
+                arriving += max(-flow, 0.0)
+        # And only while the tanks can hold it: a fixed chamber above the feed
+        # pushes back up the mains, which reads as cold, which lets the feed
+        # flow, which reads as lit -- an Engine Abort on a 270 psia fuel tank
+        # against a 385 psia drawing flipped every solve, and each backward
+        # half took mass in from the chamber that no vessel held.
+        feeds = [sim.outlet_pressure for sim in self.tanks.values() if not sim.empty]
+        lit = arriving > MIN_CHAMBER_FLOW and bool(feeds)
+        lit = lit and min(feeds) > self._design_chamber
+        net.nodes[chamber].pressure = self._design_chamber if lit else AMBIENT
 
     def _burnout_check(self) -> None:
         """Burnout: a tank ran dry during Fire, so the sequence goes to Vent.
