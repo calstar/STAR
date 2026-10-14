@@ -205,8 +205,12 @@ def test_a_tank_vents_while_it_fills() -> None:
         session._last_flows.get("SV_LOX_VENT", 0.0) > 5.0e-3
     ), "the vent carries the gas the liquid displaces"
     hold(session, "Ox Fill", 9.0)
-    assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
-    assert abs(session.tanks["OXT"].fixed_kg) < 1e-3, "no gas created by the floor"
+    ox = session.tanks["OXT"]
+    assert psi(ox.pressure) - 14.7 < 100.0
+    assert ox.floored_kg < 1e-6, "no gas created by the floor"
+    # The other clamps, less the liquid it refused at its outlet (booked since
+    # 2026-10-11: a gram over the fill that no tank sent).
+    assert abs(ox.fixed_kg + ox.refused_kg) < 1e-3
 
 
 def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
@@ -239,6 +243,29 @@ def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
     saturation = CP.PropsSI("T", "P", ox.pressure, "Q", 0, "Oxygen")
     assert ox.state.ullage.wall_temperature <= saturation + ox.tank.boiling_onset + 1.0
     assert ox.state.liquid_mass > 0.5, "once chilled, the load collects"
+
+
+def test_a_skipped_chill_leaves_a_cold_ullage_and_the_fill_makes_no_gas() -> None:
+    """Skipping the chill cooled the wall and left the ullage warm; the gas
+    chilled on the wall, the venting tank dipped a fraction of a psi under
+    atmosphere, and the old floor asked for a whole atmosphere of nitrogen at
+    the wall's 92 K: 38 g of it in one step, booked as a clamp (2026-10-12).
+    The skip now leaves the ullage where a chill does -- cold, at its pressure,
+    the gas that takes booked as the load's boil-off -- and out of a chill the
+    floor is only what puts the tank back at atmosphere."""
+    session = stand(load_chill_s=30.0)
+    hold(session, "Ox Fill", 3.0, dt=0.25)
+    ox = session.tanks["OXT"]
+    assert ox.chilling
+    assert session.skip_chilldown() == [ox.label]
+    clamps = ox.fixed_kg
+    worst = 0.0
+    for _ in range(60):
+        held = ox.state.ullage.mass
+        session.step(0.05)
+        worst = max(worst, ox.state.ullage.mass - held)
+    assert worst < 1e-3, f"{worst * 1e3:.1f} g of gas in one step"
+    assert abs(ox.fixed_kg - clamps) < 5e-4
 
 
 def test_with_no_load_chill_the_liquid_collects_from_the_first_second() -> None:

@@ -4,6 +4,41 @@ The stand app. Versioned in `backend/version.py`; `/api/version` reports it with
 the library version and the commit (and whether the tree was dirty). Physics
 changes are logged in `lib/feedtwin/CHANGELOG.md`; this file is the app.
 
+## Unreleased — 2026-10-11: the watcher and the repro
+
+### Added
+- **Solver → Watch**: a fifth check beside Converged, Mass balance, Chamber and
+  Clamps, and a **Flags** list when it fails -- the library's watcher
+  (`feedtwin.session.watch`): gas made in a sealed tank, a line left at the solver's
+  starting guess, pressure held against an open path, liquid from nowhere, a solve not
+  converging or sitting at the edge of its tolerance, mass not accounted for. One row
+  per episode, newest first, the numbers on hover. `/api/session/{id}/solver` carries
+  them as `flags`.
+- **Solver → export repro** (small, at the foot of the page): downloads
+  `/api/session/{id}/repro` -- the drawing and engine themselves, the setup the stand
+  was opened with, the hookup it ran, every command and T-0 at its stand time, and
+  where it ended (tanks, flags). The session records them as they come
+  (`_Opened.events`, capped at 5,000). `scripts/replay_repro.py repro.json` plays one
+  in a scratch library and prints the end and the flags beside the original's. A
+  problem on the server was out of reach before: its drawing lived in the server's
+  library, and nobody wrote down what was clicked.
+
+### Fixed
+- The physics under the operator's "stop the fuel fill and the tank empties, the
+  clamp energy climbs" and the faults the watcher found first -- a sealed tank
+  refilling with air, a solve that judged a 0.45 psi drain against a 6,000 psi
+  bottle, a dead engine pushing back up the mains, a full fuel tank filling from the
+  chamber -- are in `lib/feedtwin/CHANGELOG.md`.
+
+### Tests
+- `test_a_skipped_chill_leaves_a_cold_ullage_and_the_fill_makes_no_gas`: 38 g of
+  nitrogen in one step before the floor fix (`lib/feedtwin/CHANGELOG.md`), none after.
+- `tests/test_repro_api.py`: the repro carries the drawing, the setup, the hookup
+  and every command in order; the solver tab's flags are the repro's; a repro
+  replays to within a few psi of where it ended.
+- `test_a_tank_vents_while_it_fills` reads the floor's own gas (`floored_kg`) and
+  the clamps less what the tank refused at its outlet.
+
 ## Unreleased — 2026-10-10: the DAQ box and the State machine tab
 
 The hookup, rebuilt the way the real DAQ declares a stand: valves and transducers

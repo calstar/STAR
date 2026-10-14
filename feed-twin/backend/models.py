@@ -617,6 +617,9 @@ class SolverOut(BaseModel):
     #: error is measured against, tick by tick.
     crossed_kg: list[float] = Field(default_factory=list)
     summary: dict[str, float] = Field(default_factory=dict)
+    #: The watcher's flags (feedtwin.session.watch): laws the stand broke,
+    #: one per episode, newest last.
+    flags: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ drawing

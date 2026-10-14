@@ -70,6 +70,7 @@ from feedtwin.engine.chamber import (
     Chamber,
     ChamberResult,
     CombustionState,
+    burning,
     unlit,
 )
 from feedtwin.engine.design import EngineDesign
@@ -441,13 +442,15 @@ class CardChamber(Chamber):
         if min(mdot_oxidiser, mdot_fuel) <= MIN_CHAMBER_FLOW:
             return unlit(self.ambient_pressure, mdot_oxidiser, mdot_fuel)
         chamber = self.card.chamber
-        cstar = chamber.cstar(mixture_ratio, total)
-        pressure = max(total * cstar / self.throat_area, self.ambient_pressure)
+        table = chamber.cstar
+        burned = burning(mdot_oxidiser, mdot_fuel, (table.x0, table.x_max))
+        cstar = chamber.cstar(mixture_ratio, burned)
+        pressure = max(burned * cstar / self.throat_area, self.ambient_pressure)
         firing = pressure > self.ambient_pressure * 1.001
         thrust = 0.0
         if firing:
             thrust = max(
-                total * chamber.vacuum_velocity(mixture_ratio, total)
+                burned * chamber.vacuum_velocity(mixture_ratio, burned)
                 - self.ambient_pressure * self.card.exit_area,
                 0.0,
             )

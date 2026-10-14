@@ -6,6 +6,149 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-11/12: a sealed tank holds its liquid; the watcher; properties near saturation
+
+### Fixed
+- **A sealed tank no longer refills itself with air as it drains.** The ullage floor
+  (`TankSim._settled`) kept the pressurant at atmosphere's worth in the ullage's
+  *present* volume, so liquid leaving a tank with its vent shut was replaced by air
+  from nowhere. The operator's case: a full fuel tank, the fill stopped (Armed shuts
+  the vent), a line open below the liquid -- the tank emptied at 129 g/s, held at
+  0 psig, and the solver tab's clamp energy climbed ~57 J/s. A tank whose ullage has
+  no open gas path to the air (`Session._sealed`, walked through the branches the
+  solve has not shut; `TankSim.sealed`) now never has gas added by the floor: it pulls
+  a vacuum and stops (14.25 psia against the column on LE4 (6), a few grams then
+  nothing). A vented tank keeps the floor, which stands in for the air the vent lets
+  back in and, on a built-in LOX load, for the boil-off the chill vents off the books.
+- **Every branch closes against its own pressure** (`solve.steady._local_scales`,
+  `LOCAL_TOLERANCE` 1 %). The convergence test scaled every branch's pressure
+  residual by the highest fixed pressure on the stand; with a 6,000 psi K-bottle
+  drawn, a branch could sit 0.5 psi off its relation and be called converged, and a
+  drain driven by 0.45 psi of head never left the solve's 1 g/s starting guess. Each
+  branch must now also close to 1 % of the larger of its end pressures (at least a
+  bar). It only tightens, and not on choked rows; 1 % because a choked charge into
+  an empty COPV closes to ~0.1 % and stalls there.
+- **A dead engine no longer pushes back up the mains.** With no engine model the
+  chamber counted any flow touching it as "lit" -- including flow out of it -- so
+  after a burn it stayed at its drawn 385 psia and an Engine Abort's open mains drove
+  3 kg/s from the dead engine into the tanks: 16 kg the mass balance could not
+  account for on LE4 (6). Lit now means propellant arriving, and only while every
+  tank still holding liquid is above the drawn chamber pressure; below it the
+  chamber is the air (`Session._chamber`). A burn on tanks above it is unchanged.
+- **A tank only takes in the liquid a tank sends it.** A tank the cart loads through
+  the drawing credited any arrival at its outlet; at Fire on unpressed tanks the
+  chamber's push-back filled a full LE4 fuel tank 46 g a second and, on a longer pad,
+  overfilled it ("tank is overfull") and stopped the stand. Its intake is now capped
+  at what its supply's outlet sends (and a supply's at what its fed tanks send back).
+  What any tank refuses at its outlet is booked as a clamp (`TankSim.refused_kg`,
+  in `fixed_kg`): unbooked, it read as mass lost.
+- **A shut-in tank's outlet is closed implicitly** (`Session._close_outlet`, inside
+  `_ullage_storage`). With the vent and press line shut, every gram that leaves
+  expands a fixed mass of ullage, so the outlet is as stiff as that ullage; held at
+  its start-of-step pressure, a sealed LE4 fuel tank on an open drain swung it
+  ~30 g/s each way at rest and leaked 2 g/s. Now it settles at 14.20 psia in two
+  Newton iterations, residual ~1e-13. Only for a tank with no live gas branch, so a
+  pressed tank in a burn is untouched.
+- **A dry tank whose outlet is a tee is a junction, not a cut** (`Session.
+  _through_outlets`). LE4 (6)'s unsized tee joins the fill line and the dump into the
+  cart transfer tank's outlet node; once that tank ran dry `_dry_branches` cut every
+  branch on it, the fuel tank's way out through the tee with them, and the stand
+  froze with Eth-Tank at 45 psig and the dump open (no solve at all). A dry tank's
+  outlet with two or more lines on it, not being loaded through them, now has no
+  pressure of its own and takes nothing from or gives nothing to the tank
+  (`_outlet_split`); the fuel tank vents out through the dump to its head's vacuum.
+  The dry tank's own ullage gas still cannot leave by its liquid port.
+
+- **Properties near the saturation line come from the equation of state.**
+  CoolProp's bicubic tables (first in every chain) interpolate across the saturation
+  line wherever a table cell straddles it: nitrogen 10 K above its boiling point at
+  1.07 bar read 83 kg/m³ for 4.3, saturated oxygen vapour at 90 K read 0.47 bar for
+  0.99. `backends.coolprop._Dome` has the tables decline (p, T), (p, h) and vapour
+  (rho, T) within 16 K of the line and near the critical point; HEOS answers. Away
+  from it nothing changes (warm pressurant, LOX subcooled at tank pressure), so no
+  calibrated result or benchmark moved; LE4 (6)'s cart pad runs ~9 % slower.
+  `docs/PHYSICS-BENCHMARK.md` 4.12.
+- **Vent gas that expands to its dew point is held as vapour** (`Session.
+  _off_the_dew_line`, `_DEW_MARGIN_K` 0.5 K). GN2 vented off a chilled LOX tank landed
+  on nitrogen's boiling point (77.87 K at 107.6 kPa); the next solve's (p, T) was on
+  the saturation line, where no backend will say liquid or vapour, and every solve
+  failed for 7 s of Vent on LE4 (6) with the cart -- the tanks stopped moving. A
+  mostly-vapour landing in the two-phase dome is now taken as the vapour it nearly is,
+  and the notes say so once; a flashing liquid is left alone.
+
+- **A gas line on its own dew point is priced as vapour** (`comps.elements.
+  conditions_from_fluid`, `DEW_POINT_MARGIN_K` 0.05 K). The same refusal reached
+  another way: a chilled LOX tank's nitrogen ullage at 2.72 bar and 86.83 K seeded its
+  press line exactly on the saturation curve, and every solve of the Ethalox Stand's
+  Vent failed for 13 s. When (p, T) is refused at or below the dew point, the line is
+  priced just above it.
+- **Beyond the c* table's O/F range, only what can burn makes chamber pressure**
+  (`engine.chamber.burning`, both `Chamber` and `CardChamber`). Clamped, an Engine Abort
+  that vented the fuel tank ran LOX-rich at O/F 20-70 on the c* of O/F ~4, held the
+  chamber at the fuel tank's own pressure and pushed the fuel line backwards on every
+  other step (Ethalox Stand, COPV studies). Now the scarce propellant burns with as
+  much of the other as the table's edge allows and the rest passes through unburned,
+  as `unlit` already says a lone propellant does: continuous at the edge, unlit as one
+  side goes to zero. Nominal burns are inside the table: benchmark and Layer X parity
+  unchanged.
+
+- **A venting tank that dips under the air no longer makes an atmosphere of gas.** A
+  LOX tank filling after a skipped chill dipped 0.02 psi below atmosphere for one
+  step; the floor switched on and asked for a whole atmosphere of nitrogen at the
+  92 K wall, ignoring the 7.9 g of oxygen vapour holding a third of the pressure --
+  57 g where the ullage held 17.6, 39.6 g from nowhere in one step, booked as a clamp
+  (Ethalox Stand). Three parts:
+  - Out of a built-in chill the floor grows the ullage only below atmosphere, and only
+    to what puts the tank back at it (`TankSim._atmosphere_floor`: the pressurant's
+    share of an atmosphere beside the vapour, at the gas's own temperature); with no
+    vapour it also holds the pressurant there. Retention with vapour, the vent split,
+    and the whole of a built-in chill (where the old floor stands in for the boil-off
+    the chill vents off the books) are as before -- every calibrated chill test holds.
+  - What the floor adds out of a chill is air an open vent let in: booked as inflow
+    (`TankSim.vent_drawn_kg`, in `added_kg`), not as a clamp.
+  - `skip_chill` leaves the ullage where a chill does -- at the chilled wall's
+    temperature, at its pressure (`TankSim._chilled_ullage`), the gas that takes booked
+    as the load's boil-off -- instead of warm gas over a cold wall.
+- **An undrawn tanker hose passes nothing** (`Session._fill_hoses`, isolated from the
+  solve). The hose stub is pinned at the tank's pressure, but a fill line with height
+  trickled ~0.7 g/s through it into the outlet, a second copy of the commanded load the
+  tank refused -- the Ethalox Stand's 1.7 g "mass not accounted for".
+
+### Added
+- **The watcher** (`feedtwin.session.watch`, `Session.watcher`): laws a correct
+  stand cannot break, checked every tick, one flag per episode -- gas made in a
+  sealed tank (`TankSim.floored_kg`), a branch left at the solve's starting flow
+  (`solve.steady.INITIAL_FLOW`), pressure held against an open path for 2 s, liquid
+  from nowhere, three unconverged ticks, five seconds above half the tolerance, and
+  mass not accounted for. Read-only; a check that raises is a flag, never a stopped
+  stand. Its first runs found the two faults above.
+
+### Tests
+- `tests/test_sealed_tank_drain.py`: a sealed tank draining gains no air and goes
+  below atmosphere; a vent still stops at the floor; a 0.45 psi drain beside a
+  6,000 psi bottle is solved; LE4 (6) with a drain teed into the fuel tank holds its
+  fuel after the fill, and holds it still (no slosh, no flags); a dry transfer tank's
+  tee lets the fuel tank vent through the dump (stuck at 34 psia before). Each fails
+  on the code before its fix.
+- `tests/test_props_near_dome.py` (against CoolProp's HEOS, not feedtwin; 9 of 12 fail
+  with the guard off), `tests/test_dew_line.py`, `tests/test_chamber_out_of_table.py`.
+- EngineDesign `tests/test_layerx_wire.py::test_a_trip_ends_the_burn_where_it_happened`
+  asserted the tripped step was *short*, true only while the crossing fell in its first
+  half; correct oxygen-vapour properties moved it 0.3 psi and 25 ms onto the step's end.
+  It now asserts the trip is within one step of the last sample.
+
+### Known
+- The COPV study drawings run Vent after burnout 10-25x slower than real time: the
+  wide-open dome regulator sits just short of choke (146 -> 49.5 psia), where the seat's
+  drop is nearly vertical in flow, and Newton creeps (60-120 iterations a solve). Wants
+  the near-choked seat solved in its inverse form.
+
+- `tests/test_watch.py`: an LE4 (6) burn and abort raise no flag and keep their mass
+  (16 kg lost before); the dead engine sits at atmosphere; a full fuel tank takes
+  nothing from the chamber at Fire (46 g/s before); each check fires on its
+  condition in a real stand; a flag is an episode.
+
+
 ## Unreleased — 2026-10-10: the DAQ box and the stand's own state table
 
 ### Added

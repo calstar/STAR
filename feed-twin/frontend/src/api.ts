@@ -934,10 +934,28 @@ export interface SolverTrace {
   /** Cumulative mass across the boundary, in plus out [kg]. */
   crossed_kg?: number[];
   summary: Record<string, number>;
+  /** The watcher's flags (feedtwin.session.watch), one per episode, newest last. */
+  flags?: WatchFlag[];
+}
+
+/** One episode of a law the stand broke. */
+export interface WatchFlag {
+  check: string;
+  title: string;
+  subject: string;
+  started: number;
+  last: number;
+  detail: string;
+  open: boolean;
 }
 
 export const sessionSolver = (id: string, seconds = 300, maxPoints = 600) =>
   json<SolverTrace>(`/api/session/${id}/solver?seconds=${seconds}&max_points=${maxPoints}`);
+
+/** Everything needed to run this stand again elsewhere: the drawing, engine,
+ *  setup, hookup and every command at its stand time
+ *  (`scripts/replay_repro.py` plays it). */
+export const sessionRepro = (id: string) => json<Record<string, unknown>>(`/api/session/${id}/repro`);
 
 /** Every burn still in the stand's history, oldest first. */
 export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burns`);

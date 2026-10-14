@@ -6,7 +6,7 @@
  * criterion so a single dashed line at 1 means "converged below here"; the
  * iteration log beside it, a row per tick, newest at the bottom; and the
  * report monitors -- iterations, the mass balance, the clamps -- small along
- * the bottom. Four checks across the top, PASS or FAIL, numbers on hover (the
+ * the bottom. Five checks across the top, PASS or FAIL, numbers on hover (the
  * operator, 2026-10-09: "just make it checks ... no bloat").
  *
  * It used to be six separate plots in six units, which a person had to read
@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fixed, sessionSolver, type SolverTrace } from '../api';
+import { fixed, sessionRepro, sessionSolver, type SolverTrace, type WatchFlag } from '../api';
 import { DaqPlot, fmtReading, type Channel } from '../components/DaqPlot';
 import { useStand } from '../stand';
 
@@ -97,7 +97,9 @@ export function Solver() {
     for (let i = trace.converged.length - 1; i >= 0; i -= 1) if (!trace.converged[i]) return trace.t[i];
     return null;
   })();
-  // Four checks, a word and PASS or FAIL each; the numbers are in the hover.
+  const flags = trace.flags ?? [];
+  const openFlags = flags.filter((f) => f.open).length;
+  // Five checks, a word and PASS or FAIL each; the numbers are in the hover.
   const checks = [
     {
       key: 'newton',
@@ -126,6 +128,15 @@ export function Solver() {
       label: 'Clamps',
       ok: Math.abs(s.guard_ppm ?? 0) <= GUARD_PPM_OK,
       hint: `The tank model's clamps changed ${fixed(Math.abs(s.guard_ppm ?? 0), 0)} ppm of the mass that moved (${fmtReading(s.guard_kg ?? 0)} kg, ${fmtReading(s.guard_J ?? 0)} J; limit ${GUARD_PPM_OK}).`,
+    },
+    {
+      key: 'watch',
+      label: 'Watch',
+      ok: flags.length === 0,
+      hint:
+        flags.length === 0
+          ? 'No law broken: no gas made in a sealed tank, no line stuck at the solver\'s guess, no pressure held against an open path, no liquid from nowhere, no mass unaccounted for.'
+          : `${flags.length} flag${flags.length === 1 ? '' : 's'}${openFlags ? `, ${openFlags} still open` : ''}. Listed below.`,
     },
   ];
 
@@ -184,6 +195,8 @@ export function Solver() {
           </span>
         ))}
       </div>
+
+      {flags.length > 0 && <Flags flags={flags} />}
 
       {trace.t.length < 2 ? (
         <p className="text-sm text-text-muted">The record starts with the stand's first ticks.</p>
@@ -248,6 +261,65 @@ export function Solver() {
           </div>
         </>
       )}
+      {live?.id && <ExportRepro id={live.id} />}
+    </div>
+  );
+}
+
+/** The watcher's flags: what broke, on what, when; the numbers on hover. */
+function Flags({ flags }: { flags: WatchFlag[] }) {
+  return (
+    <section className="bg-card border border-red-900/60 p-3">
+      <div className="caps mb-2 text-[11px]" title="Laws a correct stand cannot break, checked every tick (feedtwin.session.watch). One row per episode.">
+        Flags
+      </div>
+      <div className="flex flex-col gap-1 font-mono text-[12px]">
+        {[...flags].reverse().map((f) => (
+          <div key={`${f.check}-${f.subject}-${f.started}`} className="flex items-baseline gap-3" title={f.detail}>
+            <span className="w-[9.5rem] shrink-0 tabular-nums text-[var(--ink-2)]">
+              {fixed(f.started, 1)}–{f.open ? 'now' : `${fixed(f.last, 1)} s`}
+            </span>
+            <span className={f.open ? 'text-red-300' : 'text-amber-300/80'}>{f.title}</span>
+            <span className="truncate text-[var(--ink-2)]">{f.subject}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Downloads everything needed to run this stand again elsewhere. Out of the
+ *  way on purpose: it is for sending a problem to whoever fixes the twin. */
+function ExportRepro({ id }: { id: string }) {
+  const [note, setNote] = useState('');
+  const save = () => {
+    setNote('…');
+    sessionRepro(id)
+      .then((repro) => {
+        const opened = (repro.opened ?? {}) as { drawing_name?: string };
+        const end = (repro.end ?? {}) as { t?: number };
+        const name = `repro-${(opened.drawing_name || 'stand').replace(/[^\w.-]+/g, '_')}-t${Math.round(end.t ?? 0)}s.json`;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(repro)], { type: 'application/json' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+        setNote('');
+      })
+      .catch((e) => setNote(e instanceof Error ? e.message : String(e)));
+  };
+  return (
+    <div className="flex justify-end gap-2 pt-2 text-[10.5px] text-gray-600">
+      {note && <span>{note}</span>}
+      <button
+        type="button"
+        onClick={save}
+        className="hover:text-[var(--ink-2)]"
+        title="Download this stand's drawing, setup, hookup and every command, to send with a problem. scripts/replay_repro.py plays it."
+      >
+        export repro
+      </button>
     </div>
   );
 }

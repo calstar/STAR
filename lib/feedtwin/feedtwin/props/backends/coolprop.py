@@ -37,6 +37,8 @@ CoolProp's own cache. See :func:`warm_tables`.
 
 from __future__ import annotations
 
+import bisect
+import math
 from typing import TYPE_CHECKING, Any, Callable, NoReturn
 
 import CoolProp.CoolProp as CP
@@ -77,6 +79,11 @@ _INPUT_PAIRS: dict[StatePair, Any] = {
 #: silently backwards produces a valid-looking state at the wrong point.
 _SWAPPED: frozenset[StatePair] = frozenset({StatePair.PH, StatePair.TQ, StatePair.PD})
 
+#: The pairs a table is checked for nearness to the saturation line before it
+#: answers (:class:`_Dome`). On the line itself (PQ, TQ) the tables use their
+#: saturation splines and agree with HEOS to 0.02 %; DU agreed everywhere tried.
+_GUARDED: frozenset[StatePair] = frozenset({StatePair.PT, StatePair.PH, StatePair.DT})
+
 #: CoolProp's phase integers, mapped onto our backend-neutral enum.
 _PHASES: dict[int, Phase] = {
     CP.iphase_liquid: Phase.LIQUID,
@@ -113,6 +120,125 @@ _OUT_OF_RANGE_MARKERS = ("not in range", "outside", "out of range")
 _UNSUPPORTED_MARKERS = ("is not implemented", "not implemented for this backend")
 
 
+#: How far below the saturation line a liquid state, and above it a vapour
+#: state, the tables are not trusted [K] (:class:`_Dome`). Measured against HEOS
+#: on CoolProp 7.2 and 8.0, nitrogen, oxygen, ethanol, methane and water: a
+#: table cell that straddles the line interpolates across it, so near it the
+#: tables can be off by the ratio of liquid to vapour density. Nitrogen at
+#: 1.07 bar read 83 kg/m^3 for 4.3 ten kelvin above its boiling point; oxygen
+#: vapour on its dew curve at 90 K read 0.47 bar for 0.99. Errors reached
+#: +14.5 K on the vapour side and -10 K on the liquid side (still 19 % at -10 K
+#: on water); the bands clear them with room.
+DOME_LIQUID_K = 16.0
+DOME_VAPOUR_K = 16.0
+#: And around the critical point, where the same tables are off by up to 20 %
+#: on nitrogen at 40 bar: pressures within this share of p_c, below T_c plus
+#: :data:`DOME_VAPOUR_K`.
+DOME_CRITICAL_SHARE = (0.75, 1.5)
+#: A vapour denser than this share of the critical density, below T_c plus
+#: :data:`DOME_VAPOUR_K`, is near-critical whatever its pressure: the ideal-gas
+#: estimate a (rho, T) state is placed by overshoots there.
+DOME_DENSE_SHARE = 0.25
+#: Points on the saturation curve a guard is built from, evenly in ln p.
+DOME_POINTS = 400
+
+
+class _Dome:
+    """Where a species' tables cannot be trusted: a band about its saturation
+    line, built once from the equation of state itself (HEOS)."""
+
+    _built: dict[str, "_Dome"] = {}
+
+    def __init__(self, fluid: str) -> None:
+        heos = CP.AbstractState("HEOS", fluid)
+        self.T_c = float(heos.T_critical())
+        self.p_c = float(heos.p_critical())
+        self.rho_c = float(heos.rhomass_critical())
+        self.R = R_UNIVERSAL / float(heos.molar_mass())
+        p_low = max(float(heos.trivial_keyed_output(CP.iP_triple)), 1.0) * 1.001
+        self.ln_p: list[float] = []
+        self.T_sat: list[float] = []
+        self.h_low: list[float] = []
+        self.h_high: list[float] = []
+        top = math.log(self.p_c * 0.999)
+        bottom = math.log(p_low)
+        T_triple = float(heos.trivial_keyed_output(CP.iT_triple))
+        for i in range(DOME_POINTS):
+            ln_p = bottom + (top - bottom) * i / (DOME_POINTS - 1)
+            p = math.exp(ln_p)
+            try:
+                heos.update(CP.PQ_INPUTS, p, 0.0)
+                T_sat, h_bubble = float(heos.T()), float(heos.hmass())
+                heos.update(CP.PQ_INPUTS, p, 1.0)
+                h_dew = float(heos.hmass())
+                h_low = h_bubble
+                if T_sat - DOME_LIQUID_K > T_triple:
+                    heos.update(CP.PT_INPUTS, p, T_sat - DOME_LIQUID_K)
+                    h_low = float(heos.hmass())
+                heos.update(CP.PT_INPUTS, p, T_sat + DOME_VAPOUR_K)
+                h_high = float(heos.hmass())
+            except ValueError:
+                continue
+            self.ln_p.append(ln_p)
+            self.T_sat.append(T_sat)
+            self.h_low.append(h_low)
+            self.h_high.append(h_high)
+
+    @classmethod
+    def of(cls, fluid: str) -> "_Dome":
+        dome = cls._built.get(fluid)
+        if dome is None:
+            dome = cls._built[fluid] = cls(fluid)
+        return dome
+
+    def _at(self, column: list[float], p: float) -> float | None:
+        """``column`` at pressure ``p``, linear in ln p; None off the curve."""
+        if p <= 0.0 or not self.ln_p:
+            return None
+        x = math.log(p)
+        if x < self.ln_p[0] or x > self.ln_p[-1]:
+            return None
+        i = min(max(bisect.bisect_left(self.ln_p, x), 1), len(self.ln_p) - 1)
+        x0, x1 = self.ln_p[i - 1], self.ln_p[i]
+        w = (x - x0) / (x1 - x0) if x1 > x0 else 0.0
+        return column[i - 1] + w * (column[i] - column[i - 1])
+
+    def _critical(self, p: float, T: float) -> bool:
+        low, high = DOME_CRITICAL_SHARE
+        return low * self.p_c < p < high * self.p_c and T < self.T_c + DOME_VAPOUR_K
+
+    def near(self, pair: StatePair, v1: float, v2: float) -> bool:
+        """Whether this state is one the tables are not trusted at."""
+        if pair is StatePair.PT:
+            p, T = v1, v2
+            if T > self.T_c + DOME_VAPOUR_K:
+                return False
+            if self._critical(p, T):
+                return True
+            T_sat = self._at(self.T_sat, p)
+            return T_sat is not None and (
+                T_sat - DOME_LIQUID_K < T < T_sat + DOME_VAPOUR_K
+            )
+        if pair is StatePair.PH:
+            p, h = v1, v2
+            low, high = self._at(self.h_low, p), self._at(self.h_high, p)
+            if low is None or high is None:
+                return self._critical(p, self.T_c)
+            return low < h < high
+        if pair is StatePair.DT:
+            rho, T = v1, v2
+            if T > self.T_c + DOME_VAPOUR_K or rho >= self.rho_c:
+                return False  # warm, or a liquid: p from (rho, T) is its own matter
+            if rho > DOME_DENSE_SHARE * self.rho_c:
+                return True
+            p_ideal = rho * self.R * T
+            if self._critical(p_ideal, T):
+                return True
+            T_sat = self._at(self.T_sat, p_ideal)
+            return T_sat is not None and T < T_sat + DOME_VAPOUR_K
+        return False
+
+
 class CoolPropBackend:
     """Properties for one species from one CoolProp backend.
 
@@ -134,6 +260,10 @@ class CoolPropBackend:
         # Specific gas constant, cached on first use of Z. A property of the
         # substance, not of any state point, so it never needs recomputing.
         self._r_specific: float | None = None
+        # The tables are not trusted near the saturation line (`_Dome`); there
+        # this backend declines and the chain's equation of state answers.
+        self._dome: _Dome | None = None
+        self._tabulated = backend.upper().startswith(("BICUBIC", "TTSE"))
 
     @property
     def name(self) -> str:
@@ -150,6 +280,16 @@ class CoolPropBackend:
         except KeyError:  # pragma: no cover - StatePair is closed
             raise UnsupportedProperty(self._name, f"state pair {pair.value}") from None
 
+        if self._tabulated and pair in _GUARDED:
+            if self._dome is None:
+                self._dome = _Dome.of(self._species.backend_fluid)
+            if self._dome.near(pair, v1, v2):
+                raise OutOfRange(
+                    self._name,
+                    self._species.name,
+                    f"{pair.value}=({v1:.6g}, {v2:.6g}) is near the saturation "
+                    "line, where the tables interpolate across it",
+                )
         a, b = (v2, v1) if pair in _SWAPPED else (v1, v2)
         try:
             self._state.update(inputs, a, b)
