@@ -24,8 +24,8 @@ import { SubteamSelect } from "@/components/fields/SubteamSelect";
 import { removeBlocker } from "@/lib/actions/blockers";
 import { archiveTask } from "@/lib/actions/tasks";
 import { dateLabel } from "@/lib/activity";
-import { DONE_ON_BOARD_DAYS, leavesBoardAt, onBoard } from "@/lib/board";
-import { DEFAULT_TASK_POINTS, effectivePoints, shareLabel } from "@/lib/leaderboard";
+import { leavesBoardAt, onBoard } from "@/lib/board";
+import { effectivePoints, shareLabel } from "@/lib/leaderboard";
 import type { TaskDetailData } from "@/lib/task-detail";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 
@@ -150,12 +150,6 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
                   <span className="text-xs text-violet-700 dark:text-violet-300">{share} when done</span>
                 )}
               </div>
-              {admin && (
-                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                  Split evenly between the assignees who aren&apos;t admins once the task is done. Blank counts as{" "}
-                  {DEFAULT_TASK_POINTS}. Only admins can change it.
-                </p>
-              )}
             </div>
           )}
           <div className="mt-3">
@@ -344,12 +338,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               Unarchive
             </button>
           </>
-        ) : (
-          <span className="text-xs text-neutral-400">
-            Marking this task Done keeps it in the board&apos;s Done column for{" "}
-            {DONE_ON_BOARD_DAYS} days, then archives it.
-          </span>
-        )}
+        ) : null}
       </div>
     </div>
   );
