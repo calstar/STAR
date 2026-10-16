@@ -169,6 +169,9 @@ export function TaskTable({
   const table = useReactTable({
     data: rows,
     columns,
+    // Key rows by task, not position: the cells hold local state (status,
+    // priority…), and index keys hand a filtered row the previous row's values.
+    getRowId: (r) => r.id,
     state: { sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),

@@ -17,14 +17,6 @@ function IconHome() {
     </svg>
   );
 }
-function IconCheck() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="m8.5 12.2 2.4 2.4 4.6-5" />
-    </svg>
-  );
-}
 function IconList() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden>
@@ -287,10 +279,8 @@ export function SidebarNav({
     };
   }, [open]);
 
-  const mine = searchParams.get("mine") === "1";
   const isHome = pathname === "/";
-  const isMyTasks = pathname === "/tasks" && mine;
-  const isTasks = pathname === "/tasks" && !mine;
+  const isTasks = pathname === "/tasks";
   const isProjects = pathname === "/projects" || pathname.startsWith("/projects/");
   const isSubteams = pathname === "/subteams" || pathname.startsWith("/subteams/");
   const isActivity = pathname.startsWith("/activity");
@@ -310,7 +300,6 @@ export function SidebarNav({
         <Brand collapsed={collapsed} />
         <nav className="mt-6 space-y-0.5">
           <NavLink href="/" label="Home" icon={<IconHome />} active={isHome} collapsed={collapsed} onClick={onNavigate} />
-          <NavLink href="/tasks?mine=1" label="My tasks" icon={<IconCheck />} active={isMyTasks} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/tasks" label="Tasks" icon={<IconList />} active={isTasks} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/activity" label="Activity" icon={<IconActivity />} active={isActivity} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/finance" label="Finance" icon={<IconFinance />} active={isFinance} collapsed={collapsed} onClick={onNavigate} />
