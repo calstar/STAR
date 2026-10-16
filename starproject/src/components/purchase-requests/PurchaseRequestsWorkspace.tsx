@@ -63,23 +63,18 @@ export function PurchaseRequestsWorkspace({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <div className="flex flex-wrap gap-1" role="tablist">
+        <select
+          aria-label="Filter by status"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as PrStatus | "all")}
+          className="min-h-11 rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900 sm:min-h-0"
+        >
           {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              role="tab"
-              aria-selected={filter === f.key}
-              onClick={() => setFilter(f.key)}
-              className={`min-h-11 rounded px-3 py-1 text-sm sm:min-h-0 ${
-                filter === f.key
-                  ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                  : "text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
-              }`}
-            >
-              {f.label} <span className="opacity-60">{counts[f.key]}</span>
-            </button>
+            <option key={f.key} value={f.key}>
+              {f.key === "all" ? "All statuses" : f.label} ({counts[f.key]})
+            </option>
           ))}
-        </div>
+        </select>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}

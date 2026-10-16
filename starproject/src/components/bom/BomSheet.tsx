@@ -202,6 +202,7 @@ export function BomSheet({
   pendingRequests,
   selected,
   onToggle,
+  onToggleAll,
   onChanged,
   onError,
 }: {
@@ -217,6 +218,8 @@ export function BomSheet({
   pendingRequests: Record<string, number>;
   selected: Set<string>;
   onToggle: (id: string) => void;
+  /** Tick or untick every line the sheet shows (that can be ticked). */
+  onToggleAll: (ids: string[], on: boolean) => void;
   onChanged: () => void;
   onError: (message: string | null) => void;
 }) {
@@ -228,18 +231,24 @@ export function BomSheet({
       ? COLS
       : COLS.filter((c) => c.key !== "projectId");
   const width = 40 + cols.reduce((n, c) => n + c.width, 0) + 72;
+  // The header's select-all box covers every line shown that can be ticked
+  // (a line already filed for reimbursement can't be).
+  const tickable = sections.flatMap((s) => s.lines).filter((l) => reimbursedState(l) === "none").map((l) => l.id);
+  const allTicked = tickable.length > 0 && tickable.every((id) => selected.has(id));
+  const someTicked = tickable.some((id) => selected.has(id));
 
-  // After adding a row, carry on typing in its Unit cost once it appears.
+  // After adding a row, carry on in the column right after Item once the row
+  // appears; Tab then walks the rest of the row left to right.
   useEffect(() => {
     if (!focusNext) return;
     const el = document.querySelector<HTMLInputElement>(
-      `[data-cell="${focusNext}:unitCostCents"]`,
+      `[data-cell="${focusNext}:${cols[1]?.key ?? "unitCostCents"}"]`,
     );
     if (el) {
       el.focus();
       setFocusNext(null);
     }
-  }, [sections, focusNext]);
+  }, [sections, focusNext, cols]);
 
   async function save(l: Line, field: BomField, value: string) {
     const res = await updateBomField(l.id, field, value);
@@ -270,7 +279,19 @@ export function BomSheet({
           </colgroup>
           <thead className="bg-neutral-50 text-left text-xs font-medium text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
             <tr>
-              <th className="sticky left-0 z-20 bg-neutral-50 dark:bg-neutral-800" />
+              <th className="sticky left-0 z-20 bg-neutral-50 text-center dark:bg-neutral-800">
+                <input
+                  type="checkbox"
+                  aria-label="Select every part"
+                  title="Select every part shown"
+                  disabled={tickable.length === 0}
+                  checked={allTicked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someTicked && !allTicked;
+                  }}
+                  onChange={() => onToggleAll(tickable, !allTicked)}
+                />
+              </th>
               {cols.map((c, i) => (
                 <th
                   key={c.key}

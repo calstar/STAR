@@ -25,7 +25,6 @@ const btn =
  */
 export function BomTab({
   projectId,
-  projectName,
   sections,
   projectOptions,
   people,
@@ -34,7 +33,6 @@ export function BomTab({
   pendingRequests,
 }: {
   projectId: string;
-  projectName: string;
   /** Every section, empty ones included, so each subproject has a row to type into. */
   sections: BomSection[];
   /** This project and everything under it, as "LE4 › LE4 Avionics". */
@@ -177,15 +175,20 @@ export function BomTab({
           pendingRequests={pendingRequests}
           selected={selected}
           onToggle={toggle}
+          onToggleAll={(ids, on) =>
+            setSelected((s) => {
+              const next = new Set(s);
+              for (const id of ids) {
+                if (on) next.add(id);
+                else next.delete(id);
+              }
+              return next;
+            })
+          }
           onChanged={() => router.refresh()}
           onError={setNotice}
         />
       )}
-      <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        Click a cell to edit; it saves when you leave it. Enter moves down, Tab moves right, Esc undoes. Type in a
-        section&apos;s last row to add a part to {all.length ? "that project" : projectName}, or paste rows copied from
-        Excel or Google Sheets there.
-      </p>
 
       {requesting && (
         <RequestPurchaseDialog
