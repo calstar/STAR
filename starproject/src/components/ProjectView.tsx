@@ -97,7 +97,6 @@ export async function ProjectView({
     view === "bom" ? (
       <BomTab
         projectId={project.id}
-        projectName={project.name}
         sections={sectionsFor(tree, project.id, bomLines, { includeEmpty: true })}
         pendingRequests={Object.fromEntries(waiting)}
         projectOptions={[
