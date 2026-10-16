@@ -14,6 +14,7 @@
 import { useEffect, useState } from 'react'
 import type { CatalogDevice } from '../../api/client'
 import { searchDevices } from '../../api/client'
+import { MAX_DEVICES } from '../../types/schema'
 import type { TriggerKind, UiDevice } from '../../types/schema'
 import { blankDevice } from '../../lib/serialise'
 import { Badge, Band, Button, Card, Field, NumberInput, Select, TextInput, Toggle, UnitInput } from '../ui'
@@ -38,7 +39,13 @@ export function DeviceList({ devices, onChange }: {
   return (
     <Card
       title={`Devices (${devices.length})`}
-      right={<Button onClick={add} variant="secondary">+ Add device</Button>}
+      right={
+        <Button onClick={add} variant="secondary"
+                disabled={devices.length >= MAX_DEVICES}
+                title={devices.length >= MAX_DEVICES ? `At most ${MAX_DEVICES} devices.` : undefined}>
+          + Add device
+        </Button>
+      }
     >
       {devices.length === 0 && (
         <p className="text-xs text-[var(--color-text-muted)]">

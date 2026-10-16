@@ -15,7 +15,7 @@ from backend.recovery.serialise import (
 )
 from physics.atmosphere import Atmosphere
 from physics.cases import (
-    CASES,
+    case_ids,
     default_sweep,
     evaluate,
     governing_candidates,
@@ -44,12 +44,13 @@ def run_simulation(
                     "carries body_drag_band showing what the other would be.",
     ),
 ):
-    """All four §11.5 cases, every run.
+    """Every §11.5 case, every run: nominal, simultaneous, and each device
+    failing on its own.
 
     They are not optional and not a separate mode: a report showing only the
     nominal case hides a single-point failure that, for the worked vehicle,
-    exceeds the design load by 11x. Four integrations is ~160 ms, so there is
-    no reason to gate them behind a button.
+    exceeds the design load by 11x. Four integrations is ~160 ms (one more per
+    device beyond two), so there is no reason to gate them behind a button.
 
     Config validation is FastAPI's, straight off the Pydantic model -- a bad
     config returns 422 with the field path, and `schema.py` is the only place
@@ -60,7 +61,8 @@ def run_simulation(
                             detail="which must be 'axial' or 'broadside'")
     try:
         atm = _atmosphere(config)
-        results = {c: evaluate(config, which, c, atm=atm) for c in CASES}
+        results = {c: evaluate(config, which, c, atm=atm)
+                       for c in case_ids(config.devices)}
     except ValueError as exc:
         # Physics-level rejections: a trigger at exactly apogee giving v_s = 0,
         # canopy masses exceeding the vehicle mass. These are real answers
@@ -82,7 +84,8 @@ def run_both_bounds(config: Config):
         atm = _atmosphere(config)
         out = {}
         for which in ("axial", "broadside"):
-            results = {c: evaluate(config, which, c, atm=atm) for c in CASES}
+            results = {c: evaluate(config, which, c, atm=atm)
+                       for c in case_ids(config.devices)}
             out[which] = build_result(config, results, atm, which,
                                       config.warnings())
     except ValueError as exc:
@@ -112,9 +115,10 @@ def run_sweep(config: Config, case: str = Query("nominal"),
     coarser SWEEP_* grid brings that to ~1 MB, and only the GUI's chart wants
     it -- every other caller reads the scalars.
     """
-    if case not in CASES:
+    valid = case_ids(config.devices)
+    if case not in valid:
         raise HTTPException(status_code=400,
-                            detail="case must be one of %s" % (CASES,))
+                            detail="case must be one of %s" % (valid,))
     try:
         rows = sweep(config, case)
     except ValueError as exc:

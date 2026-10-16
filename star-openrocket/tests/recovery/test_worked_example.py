@@ -32,6 +32,10 @@ from physics.cases import evaluate_all
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "fixtures", "worked_example.json")
 
+# The fixture lists the drogue first and the main second, and a failure case
+# is named by the index of the device that fails.
+DROGUE_FAILS, MAIN_FAILS = "fail:0", "fail:1"
+
 
 def load_config():
     with open(FIXTURE, encoding="utf-8") as handle:
@@ -219,8 +223,8 @@ def test_11_5_off_nominal_table():
     want = {
         "nominal": (54.8, 6.04, 103.0, 1613.0),
         "simultaneous": (145.5, 6.04, 103.0, 898.0),
-        "no_main": (37.3, 25.00, 1771.0, 54.0),
-        "no_drogue": (35.0, 6.22, 110.0, 27029.0),
+        MAIN_FAILS: (37.3, 25.00, 1771.0, 54.0),
+        DROGUE_FAILS: (35.0, 6.22, 110.0, 27029.0),
     }
     for case, (t_g, v_i, ke, F_inf) in want.items():
         cr = results[case]
@@ -247,9 +251,9 @@ def test_11_5_case_1_is_structurally_the_gentlest():
 def test_11_5_case_2_lands_at_17x_the_nominal_energy():
     results = evaluate_all(load_config(), "axial")
     nom = impact_energy(results["nominal"].run.m, results["nominal"].run.v_impact)
-    fail = impact_energy(results["no_main"].run.m, results["no_main"].run.v_impact)
+    fail = impact_energy(results[MAIN_FAILS].run.m, results[MAIN_FAILS].run.v_impact)
     assert fail / nom == pytest.approx(17.0, abs=0.5)
-    assert equivalent_height(results["no_main"].run.v_impact) == pytest.approx(
+    assert equivalent_height(results[MAIN_FAILS].run.v_impact) == pytest.approx(
         31.0, abs=1.0)
 
 
@@ -259,17 +263,17 @@ def test_11_5_case_3_is_the_structural_one():
     rest."""
     results = evaluate_all(load_config(), "axial")
     nom = max(d.F_inf for d in results["nominal"].per_device if d.fired)
-    fail = max(d.F_inf for d in results["no_drogue"].per_device if d.fired)
+    fail = max(d.F_inf for d in results[DROGUE_FAILS].per_device if d.fired)
     assert fail / nom == pytest.approx(16.9, abs=0.3)
-    main = next(d for d in results["no_drogue"].per_device if d.name == "main")
+    main = next(d for d in results[DROGUE_FAILS].per_device if d.name == "main")
     assert main.v_s == pytest.approx(103.0, abs=1.5)
 
 
 def test_11_5_case_3_is_far_milder_broadside():
     """A tumbling airframe is its own drogue. The axial figure is the one to
     design against, since nothing guarantees the vehicle tumbles."""
-    ax = evaluate_all(load_config(), "axial")["no_drogue"]
-    br = evaluate_all(load_config(), "broadside")["no_drogue"]
+    ax = evaluate_all(load_config(), "axial")[DROGUE_FAILS]
+    br = evaluate_all(load_config(), "broadside")[DROGUE_FAILS]
     ax_F = max(d.F_inf for d in ax.per_device if d.fired)
     br_F = max(d.F_inf for d in br.per_device if d.fired)
     assert ax_F == pytest.approx(27029.0, rel=0.01)

@@ -1,16 +1,32 @@
 """Off-nominal cases and the corner sweep. PLAN.md §11.5, §11.9.
 
-Sizing to the nominal sequence hides single-point failures, so three
+Sizing to the nominal sequence hides single-point failures, so the
 off-nominal cases are computed on **every** run and presented alongside it.
 They are not optional and not a separate mode -- a report that shows only the
 nominal case is the failure §11.5 exists to prevent.
 
-Each fails in a *different category*, which is why no single pass/fail number
-covers them:
+The cases are:
 
-    1. simultaneous   fails on drift      (2.7x descent time)
-    2. main fails     fails on impact     (17x nominal KE)
-    3. drogue fails   fails on structure  (17x nominal load)
+    nominal          every device at its own trigger
+    simultaneous     every device fires at the first device's trigger
+    fail:<i>         device i never deploys; every other device is nominal
+
+One failure case per device, not a "drogue fails" and a "main fails". Those
+two names assume exactly two devices, and the roles they guessed (first to
+fire, largest CdS) stop meaning anything at three: with a drogue, a small main
+and a big main, "drogue fails" used to drop the small main as well and open
+the big main out of free fall. A single-point failure is one device failing,
+so that is the case, once per device, named after it.
+
+Each fails in a *different category*, which is why no single pass/fail number
+covers them. For the two-device §13 vehicle:
+
+    simultaneous     fails on drift      (2.7x descent time)
+    main fails       fails on impact     (17x nominal KE)
+    drogue fails     fails on structure  (17x nominal load)
+
+With more devices the category of a failure is not knowable from its role, so
+`category` measures it against nominal.
 """
 
 import copy
@@ -19,18 +35,43 @@ import itertools
 from pydantic import ValidationError
 
 from physics.budget import checkpoint
-from physics.loads import design_load, device_loads
+from physics.loads import design_load, device_loads, impact_energy
 from physics.schema import Config, Trigger, TriggerKind
 from physics.solver import integrate
 
-CASES = ("nominal", "simultaneous", "no_main", "no_drogue")
+FAIL_PREFIX = "fail:"
 
 
-def _primary(devices):
-    """The 'main': the largest drag area. §6.1.1 is explicit that a drogue is
-    just a device with a small CdS that happens to deploy first, so identify
-    by size rather than by name."""
-    return max(devices, key=lambda d: d.CdS)
+def case_ids(devices):
+    """Every §11.5 case for this device list, in display order.
+
+    With one device there is nothing to fire simultaneously, and its failure
+    is a ballistic descent the solver is not asked for, so only nominal runs.
+    """
+    if len(devices) < 2:
+        return ["nominal"]
+    return (["nominal", "simultaneous"]
+            + ["%s%d" % (FAIL_PREFIX, i) for i in range(len(devices))])
+
+
+def failed_index(case):
+    """The device index a `fail:<i>` case drops, or None for any other case."""
+    if not case.startswith(FAIL_PREFIX):
+        return None
+    try:
+        return int(case[len(FAIL_PREFIX):])
+    except ValueError:
+        raise ValueError("unknown case %r" % case) from None
+
+
+def case_label(devices, case):
+    """What the case is called in a report: '<device name> fails' for a
+    failure, so a three-chute design reads 'small main fails' rather than
+    guessing which one is 'the main'."""
+    i = failed_index(case)
+    if i is not None:
+        return "%s fails" % devices[i].name
+    return {"nominal": "Nominal", "simultaneous": "Simultaneous"}[case]
 
 
 def _first_to_fire(devices):
@@ -47,23 +88,24 @@ def _first_to_fire(devices):
 
 def build_case(devices, case):
     """Return the device list for one §11.5 case. Never mutates the input."""
+    if case not in case_ids(devices):
+        raise ValueError("unknown case %r for %d devices"
+                         % (case, len(devices)))
     devices = [copy.deepcopy(d) for d in devices]
-    if case == "nominal" or len(devices) < 2:
+    if case == "nominal":
         return devices
-
-    main = _primary(devices)
-    first = _first_to_fire(devices)
 
     if case == "simultaneous":
-        # The main fires at the drogue's trigger, near apogee.
-        main.trigger = Trigger(kind=first.trigger.kind, value=first.trigger.value)
-        main.delay = first.delay
+        # Every device fires at the first one's trigger, near apogee.
+        first = _first_to_fire(devices)
+        for d in devices:
+            d.trigger = Trigger(kind=first.trigger.kind,
+                                value=first.trigger.value)
+            d.delay = first.delay
         return devices
-    if case == "no_main":
-        return [d for d in devices if d is not main]
-    if case == "no_drogue":
-        return [main]
-    raise ValueError("unknown case %r" % case)
+
+    i = failed_index(case)
+    return devices[:i] + devices[i + 1:]
 
 
 class CaseResult:
@@ -88,13 +130,50 @@ def evaluate(config, which="axial", case="nominal", atm=None):
 
 
 def evaluate_all(config, which="axial"):
-    """The four §11.5 cases. Under 100 ms all in, so they ride along in the
+    """Every §11.5 case. Under 100 ms all in, so they ride along in the
     live tier rather than hiding behind a button nobody presses."""
     from physics.atmosphere import Atmosphere
 
     atm = Atmosphere(config.site.z_site, config.site.T_pad,
                      config.site.p_pad, config.site.lapse)
-    return {c: evaluate(config, which, c, atm=atm) for c in CASES}
+    return {c: evaluate(config, which, c, atm=atm)
+            for c in case_ids(config.devices)}
+
+
+CATEGORY_TOL = 1e-6
+
+
+def category(case, result, nominal):
+    """Which §11.5 category this case stresses: 'structure', 'impact',
+    'drift', or 'none'.
+
+    Measured, not assumed from the case's name. Each metric is taken as a
+    ratio to nominal and the largest excess names the category. For the §13
+    vehicle this reproduces the table in the module docstring; for a design
+    with more devices it is the only honest way to know, because 'the small
+    main fails' can be an impact case or a structural one depending on what
+    is left to open.
+    """
+    if case == "nominal":
+        return "none"
+
+    def ke(cr):
+        return impact_energy(cr.run.m, cr.run.v_impact)
+
+    def load(cr):
+        return cr.design.governing_value or 0.0
+
+    ratios = {
+        "drift": (result.run.t_ground, nominal.run.t_ground),
+        "impact": (ke(result), ke(nominal)),
+        "structure": (load(result), load(nominal)),
+    }
+    best, worst_ratio = "none", 1.0 + CATEGORY_TOL
+    for name, (val, ref) in ratios.items():
+        ratio = val / ref if ref > 0 else (float("inf") if val > 0 else 1.0)
+        if ratio > worst_ratio:
+            best, worst_ratio = name, ratio
+    return best
 
 
 # --- §11.9 corner sweep ----------------------------------------------------

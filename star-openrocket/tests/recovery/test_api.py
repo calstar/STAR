@@ -54,13 +54,27 @@ def test_health_reports_a_git_sha():
 # --- simulate --------------------------------------------------------------
 
 
-def test_simulate_returns_all_four_cases():
+def test_simulate_returns_every_case():
     """§11.5: not optional, not a separate mode. A report showing only the
-    nominal case hides a single-point failure worth 11x the design load."""
+    nominal case hides a single-point failure worth 11x the design load.
+    One failure case per device, named after it."""
     with client() as c:
         body = c.post("/api/simulate", json=load_fixture()).json()
-    assert set(body["cases"]) == {"nominal", "simultaneous", "no_main",
-                                  "no_drogue"}
+    assert body["case_ids"] == ["nominal", "simultaneous", "fail:0", "fail:1"]
+    assert list(body["cases"]) == body["case_ids"]
+    assert body["cases"]["fail:0"]["label"] == "drogue fails"
+    assert body["cases"]["fail:0"]["failed_device"] == "drogue"
+    assert body["cases"]["fail:1"]["label"] == "main fails"
+    # The §11.5 table's categories, measured rather than assumed.
+    assert {c: body["cases"][c]["category"] for c in body["case_ids"]} == {
+        "nominal": "none", "simultaneous": "drift",
+        "fail:0": "structure", "fail:1": "impact"}
+
+
+def test_sweep_rejects_a_failure_case_past_the_last_device():
+    with client() as c:
+        r = c.post("/api/sweep?case=fail:2", json=load_fixture())
+    assert r.status_code == 400
 
 
 def test_simulate_matches_the_frontend_result_contract():

@@ -41,30 +41,30 @@ def device_table(per_device):
     return lines
 
 
-def case_summary(results):
+def case_summary(results, devices):
     """§11.5: each case fails in a different category, so report each against
-    its own metric rather than emitting a bare PASS/FAIL."""
+    its own metric rather than emitting a bare PASS/FAIL. The category is
+    measured against nominal (`physics.cases.category`)."""
+    from physics.cases import case_label, category
+
+    width = max([14] + [len(case_label(devices, c)) for c in results])
     lines = [
-        "  %-14s %9s %9s %9s %11s %11s"
-        % ("case", "descent", "impact", "KE", "max F_inf", "fails on"),
-        "  %-14s %9s %9s %9s %11s %11s"
-        % ("", "s", "m/s", "J", "N", ""),
+        "  %-*s %9s %9s %9s %11s %11s"
+        % (width, "case", "descent", "impact", "KE", "max F_inf", "fails on"),
+        "  %-*s %9s %9s %9s %11s %11s"
+        % (width, "", "s", "m/s", "J", "N", ""),
     ]
-    categories = {
-        "nominal": "--",
-        "simultaneous": "drift",
-        "no_main": "impact",
-        "no_drogue": "structure",
-    }
+    nominal = results["nominal"]
     for name, cr in results.items():
         run = cr.run
         fired = [d for d in cr.per_device if d.fired]
         F_inf = max((d.F_inf for d in fired), default=0.0)
+        kind = category(name, cr, nominal)
         lines.append(
-            "  %-14s %9.1f %9.2f %9.0f %11.0f %11s"
-            % (name, run.t_ground, run.v_impact,
+            "  %-*s %9.1f %9.2f %9.0f %11.0f %11s"
+            % (width, case_label(devices, name), run.t_ground, run.v_impact,
                impact_energy(run.m, run.v_impact), F_inf,
-               categories.get(name, "--"))
+               "--" if kind == "none" else kind)
         )
     return lines
 
@@ -190,21 +190,26 @@ def render(config, results, which="axial"):
     out.append("OFF-NOMINAL CASES  (computed on every run, because a report")
     out.append("                    showing only the nominal case hides a")
     out.append("                    single-point failure)")
-    out.extend(case_summary(results))
+    out.extend(case_summary(results, config.devices))
     out.append("")
 
     warns = list(config.warnings())
     for name, cr in results.items():
         for w in cr.run.warnings:
             warns.append("%s: %s" % (name, w))
-    no_drogue = results.get("no_drogue")
-    if no_drogue is not None and d.F_design is not None:
-        nd = no_drogue.design
-        if nd.F_design and nd.F_design > d.F_design:
-            warns.insert(0, "Drogue failure reaches %.0f N - %.1fx the "
-                            "nominal design load. The main opens out of "
-                            "free fall."
-                            % (nd.F_design, nd.F_design / d.F_design))
+    if d.F_design is not None:
+        from physics.cases import case_label, failed_index
+
+        worse = []
+        for name, cr in results.items():
+            if failed_index(name) is None:
+                continue
+            fd = cr.design.F_design
+            if fd and fd > d.F_design:
+                worse.append("%s: %.0f N - %.1fx the nominal design load."
+                             % (case_label(config.devices, name), fd,
+                                fd / d.F_design))
+        warns[:0] = worse
     if warns:
         out.append("WARNINGS")
         for w in warns:

@@ -63,8 +63,7 @@
      the trajectory chart so a line and its tab always agree. */
   --case-nominal: #3b82f6;
   --case-simultaneous: #a855f7;
-  --case-no-main: #f59e0b;
-  --case-no-drogue: #ef4444;
+  --case-failure: #ef4444;
 }
 
 /* The viewer's CAD tab fills the viewport (three.js scene + flex column). */

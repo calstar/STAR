@@ -60,6 +60,9 @@ CD0_MAX = 6.0
 # other half of the hang. Neither is a number anyone can type on purpose.
 STRICT = ConfigDict(extra="forbid", allow_inf_nan=False)
 
+#: Mirrored by `MAX_DEVICES` in frontend/src/recovery/types/schema.ts.
+MAX_DEVICES = 6
+
 
 # --- what counts as a rocket, a pad and a sky ---------------------------------
 #
@@ -724,8 +727,10 @@ class Config(BaseModel):
     # Capped because the cost is super-linear, not because eight is a design
     # limit: `CdS_total` is O(N) on every derivative call, the solver's segment
     # guard is 4N+8, and `settle` re-resolves simultaneous events at O(N^2).
-    # Four devices is already an unusual recovery system.
-    devices: List[Device] = Field(min_length=1, max_length=8)
+    # Four devices is already an unusual recovery system. Six also keeps the
+    # §11.5 cases (nominal, simultaneous, one failure per device) to two rows
+    # of four buttons in the GUI.
+    devices: List[Device] = Field(min_length=1, max_length=MAX_DEVICES)
     hardware: Optional[Hardware] = None
 
     # Horizontal wind, promoted from the drift-only request so the WHOLE model is

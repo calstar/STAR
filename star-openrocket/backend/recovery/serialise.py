@@ -23,6 +23,7 @@ import subprocess
 
 import numpy as np
 
+from physics.cases import case_label, category, failed_index
 from physics.devices import airframe_band
 from physics.loads import equivalent_height, impact_energy
 
@@ -193,29 +194,40 @@ def device_loads_payload(per_device):
     return out
 
 
-def case_status(case, cr, hardware):
+def case_status(kind, cr, hardware):
     """§11.5: each case fails in a *different* category, so no single pass/fail
-    covers them. Only the structural cases have a declared threshold.
+    covers them. Only the structural category has a declared threshold.
 
     'na' where the category has no allowable -- the impact and drift categories
     do not, because nothing in the schema declares a maximum landing energy or
     a recovery-zone radius. Inventing one here would be a verdict the user
     never asked for. §4.2: without hardware the tool reports loads, with it a
-    verdict.
+    verdict. Nominal is always held to the allowable: it is what the hardware
+    is sized to.
     """
-    if case in ("nominal", "no_drogue"):
+    if kind in ("none", "structure"):
         if hardware is None or cr.design.F_allow is None:
             return "na"
         return "pass" if cr.design.passes else "fail"
     return "na"
 
 
-def build_case(case, cr, hardware):
+def build_case(case, cr, hardware, devices, nominal):
     run = cr.run
     events = build_events(run)
     F_max = float(run.traj.F_T.max()) if len(run.traj.t) else 0.0
+    kind = category(case, cr, nominal)
+    failed = failed_index(case)
     return {
         "case": case,
+        # Named after the device, so a three-chute design reads "small main
+        # fails" and the GUI never has to guess which device is "the main".
+        "label": case_label(devices, case),
+        "failed_device": None if failed is None else devices[failed].name,
+        # Measured against nominal (`physics.cases.category`), not assumed from
+        # the case's name: which category a device's failure stresses depends
+        # on what is left to open.
+        "category": kind,
         "trajectory": resample_for_wire(run, events),
         "events": events,
         "device_loads": device_loads_payload(cr.per_device),
@@ -233,7 +245,7 @@ def build_case(case, cr, hardware):
         "F_peak_max": cr.design.governing_value or 0.0,
         "safety_factor": cr.design.safety_factor,
         "F_design": cr.design.F_design or 0.0,
-        "status": case_status(case, cr, hardware),
+        "status": case_status(kind, cr, hardware),
         "governing_link": cr.design.governing_link,
         # Beyond the frontend's provisional shape, but cheap and load-bearing:
         # eq (36) is a max over three candidates and the report has to name
@@ -267,8 +279,12 @@ def build_result(config, results, atm, which, warnings):
             timespec="seconds"),
         "config": config.model_dump(mode="json"),
         "warnings": all_warnings,
-        "cases": {c: build_case(c, cr, config.hardware)
+        "cases": {c: build_case(c, cr, config.hardware, config.devices,
+                                results["nominal"])
                   for c, cr in results.items()},
+        # Display order. The ids are per device (`fail:<i>`), so the GUI
+        # cannot hold a fixed list of them.
+        "case_ids": list(results),
         "pad": {
             "p_pad": atm.p_pad,
             "T_pad": atm.T_pad,

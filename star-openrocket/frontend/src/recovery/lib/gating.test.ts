@@ -54,7 +54,7 @@ const NOT_EDITING: Record<string, string> = {
 const VIEW_ONLY: Record<string, string> = {
   'RecoveryPanel.tsx:live': 'live-rerun toggle, a view preference',
   'ResultsPanel.tsx:onChange(id)': 'which case the results show',
-  'CornersPanel.tsx:setKase(id)': 'which case the chart shows',
+  'CornersPanel.tsx:setPicked(id)': 'which case the chart shows',
   'WorstCards.tsx:onSelect(w.id)': 'chart selection, local state',
   'StudyTable.tsx:onToggle(p.id)': 'chart series visibility, local state',
 }

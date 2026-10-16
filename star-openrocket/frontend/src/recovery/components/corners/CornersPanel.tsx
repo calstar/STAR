@@ -16,7 +16,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import type { CaseId, UiConfig } from '../../types/schema'
-import { CASE_IDS, CASE_META } from '../../types/schema'
+import { caseDetail, caseIdsFor, caseLabel } from '../../types/schema'
 import type { SweepResult } from '../../api/client'
 import { runSweep } from '../../api/client'
 import { cornersKey, toWireConfig } from '../../lib/serialise'
@@ -35,7 +35,11 @@ export function CornersPanel({ ui, onChange }: {
   const [result, setResult] = useState<SweepResult | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [kase, setKase] = useState<CaseId>('nominal')
+  const [picked, setPicked] = useState<CaseId>('nominal')
+  const names = useMemo(() => ui.devices.map((d) => d.name), [ui.devices])
+  const caseIds = useMemo(() => caseIdsFor(ui.devices.length), [ui.devices.length])
+  // Failure cases are per device, so removing one can orphan the pick.
+  const kase = caseIds.includes(picked) ? picked : 'nominal'
   const [channel, setChannel] = useState<Channel>('z')
   const [showContext, setShowContext] = useState(false)
 
@@ -47,6 +51,9 @@ export function CornersPanel({ ui, onChange }: {
    *  live one to detect staleness; there is no cheaper honest test, and the
    *  string is built once per edit rather than per render. */
   const [ranFrom, setRanFrom] = useState<string | null>(null)
+  /** The device names the displayed result was swept with, so its badge says
+   *  which device failed even after a rename or a removal. */
+  const [ranNames, setRanNames] = useState<string[]>([])
   // `cornersKey`, not the whole config: the Sweep tab's study axes are stored
   // on the same `UiConfig` and cannot move a corner sweep, so adding one must
   // not badge a finished sweep stale.
@@ -69,13 +76,14 @@ export function CornersPanel({ ui, onChange }: {
     }
     setResult(res.data)
     setRanFrom(snapshot)
+    setRanNames(names)
 
     // Default to the corners that produced the worst cases -- the union, not
     // a fixed count: structure and impact often share one corner, and showing
     // "three" when there are two would mean padding with an arbitrary third.
     const worst = Object.values(res.data.worst_by_category).map((w) => w.id)
     setSelectedIds([...new Set(worst)].slice(0, MAX_SELECTED))
-  }, [ui, kase])
+  }, [ui, kase, names])
 
   const toggle = useCallback((id: string) => {
     setSelectedIds((prev) => prev.includes(id)
@@ -103,21 +111,22 @@ export function CornersPanel({ ui, onChange }: {
 
           {/* Which §11.5 case the corners are swept WITHIN. A drogue-failure
               sweep is a different question from a nominal one, and the
-              endpoint has always taken it. */}
-          <div className="flex items-center gap-1">
-            {CASE_IDS.map((id) => (
+              endpoint has always taken it. One "<device> fails" per device,
+              wrapping when they do not fit. */}
+          <div className="flex flex-wrap items-center gap-1">
+            {caseIds.map((id) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setKase(id)}
-                title={CASE_META[id].detail}
+                onClick={() => setPicked(id)}
+                title={caseDetail(id, names)}
                 className={`rounded border px-2.5 py-1.5 text-xs transition-colors ${
                   kase === id
                     ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-text-primary)]'
                     : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-text-muted)]'
                 }`}
               >
-                {CASE_META[id].label}
+                {caseLabel(id, names)}
               </button>
             ))}
           </div>
@@ -125,7 +134,7 @@ export function CornersPanel({ ui, onChange }: {
           <span className="ml-auto flex items-center gap-2">
             {result && (
               <Badge tone="neutral">
-                {result.runs} corners · {CASE_META[result.case as CaseId]?.label ?? result.case}
+                {result.runs} corners · {caseLabel(result.case, ranNames)}
               </Badge>
             )}
             {stale && (

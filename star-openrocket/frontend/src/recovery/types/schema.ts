@@ -331,60 +331,62 @@ export interface UiConfig {
 // RESULT -- PROVISIONAL, see the file header
 // ============================================================================
 
-/** PLAN.md §11.5. Computed on every run, never behind a button. */
-export type CaseId = 'nominal' | 'simultaneous' | 'no_main' | 'no_drogue'
-
-export const CASE_IDS: CaseId[] = ['nominal', 'simultaneous', 'no_main', 'no_drogue']
+/** PLAN.md §11.5. Computed on every run, never behind a button.
+ *
+ *  'nominal', 'simultaneous', or 'fail:<i>' -- one failure case per device,
+ *  named after it. Not a fixed "main fails" / "drogue fails" pair: those
+ *  assume two devices, and on a three-chute design the roles they guessed
+ *  dropped the wrong canopies. The backend sends the ids in display order as
+ *  `Result.case_ids`. */
+export type CaseId = string
 
 /** Each case fails in a *different category*, so no single PASS/FAIL covers
- *  them (§11.5). The summary names the category rather than emitting a bare
- *  verdict. */
+ *  them (§11.5). The backend measures it against nominal; the summary names
+ *  the category rather than emitting a bare verdict. */
 export type FailureCategory = 'structure' | 'impact' | 'drift' | 'none'
 
-export const CASE_META: Record<CaseId, {
-  label: string
-  short: string
-  /** What this case is. */
-  detail: string
-  /** The metric that decides whether this case is acceptable -- §11.5's
-   *  second table. Every case reports all four figures; this names the one
-   *  that carries the verdict for this case. */
-  metric: string
-  category: FailureCategory
-  colour: string
-}> = {
-  nominal: {
-    label: 'Nominal',
-    short: 'NOM',
-    detail: 'Drogue at its trigger, main at its altitude.',
-    metric: 'all',
-    category: 'none',
-    colour: 'var(--case-nominal)',
-  },
-  simultaneous: {
-    label: 'Simultaneous',
-    short: 'SIM',
-    detail: "Main fires at the drogue's trigger time, near apogee.",
-    metric: 'descent time and drift',
-    category: 'drift',
-    colour: 'var(--case-simultaneous)',
-  },
-  no_main: {
-    label: 'Main fails',
-    short: 'NO MAIN',
-    detail: 'Descends under drogue alone to the ground.',
-    metric: 'impact velocity and impact energy (KE_impact)',
-    category: 'impact',
-    colour: 'var(--case-no-main)',
-  },
-  no_drogue: {
-    label: 'Drogue fails',
-    short: 'NO DROGUE',
-    detail: 'Main opens out of ballistic free fall.',
-    metric: 'max load (F_peak) against the allowable (F_allow)',
-    category: 'structure',
-    colour: 'var(--case-no-drogue)',
-  },
+/** Mirrors `physics.schema.MAX_DEVICES`. */
+export const MAX_DEVICES = 6
+
+/** The device index a failure case drops, or null for nominal/simultaneous. */
+export function failedIndex(id: CaseId): number | null {
+  const m = /^fail:(\d+)$/.exec(id)
+  return m ? Number(m[1]) : null
+}
+
+/** Every case for this many devices, in the backend's order. With one device
+ *  only nominal runs (`physics.cases.case_ids`). */
+export function caseIdsFor(deviceCount: number): CaseId[] {
+  if (deviceCount < 2) return ['nominal']
+  return ['nominal', 'simultaneous',
+          ...Array.from({ length: deviceCount }, (_, i) => `fail:${i}`)]
+}
+
+/** What a case is called, for the GUI's buttons. Mirrors
+ *  `physics.cases.case_label`. */
+export function caseLabel(id: CaseId, deviceNames: string[]): string {
+  const i = failedIndex(id)
+  if (i !== null) return `${deviceNames[i] ?? `device ${i + 1}`} fails`
+  return id === 'simultaneous' ? 'Simultaneous' : 'Nominal'
+}
+
+/** What this case is, one sentence. */
+export function caseDetail(id: CaseId, deviceNames: string[]): string {
+  const i = failedIndex(id)
+  if (i !== null) {
+    return `${deviceNames[i] ?? `Device ${i + 1}`} never deploys; every other device fires at its own trigger.`
+  }
+  return id === 'simultaneous'
+    ? "Every device fires at the first device's trigger, near apogee."
+    : 'Every device at its own trigger.'
+}
+
+/** Only one case is drawn against nominal at a time, so every failure shares
+ *  one colour. */
+export function caseColour(id: CaseId): string {
+  if (id === 'nominal') return 'var(--case-nominal)'
+  if (id === 'simultaneous') return 'var(--case-simultaneous)'
+  return 'var(--case-failure)'
 }
 
 /** One row of `trajectory.csv` (§11.4). */
@@ -461,6 +463,13 @@ export interface DeviceLoads {
 
 export interface CaseResult {
   case: CaseId
+  /** "Nominal", "Simultaneous", or "<device name> fails". */
+  label: string
+  /** The device that does not deploy in a failure case; null otherwise. */
+  failed_device: string | null
+  /** Which figure this case stresses, measured against nominal. A "look
+   *  here", not a verdict. */
+  category: FailureCategory
   trajectory: TrajectorySample[]
   events: FlightEvent[]
   device_loads: DeviceLoads[]
@@ -497,6 +506,8 @@ export interface Result {
   warnings: string[]
   /** Every case, every run (§11.5). */
   cases: Record<CaseId, CaseResult>
+  /** The keys of `cases`, in display order. */
+  case_ids: CaseId[]
   /** Resolved pad state, so the report can state what atmosphere was used. */
   pad: {
     p_pad: number

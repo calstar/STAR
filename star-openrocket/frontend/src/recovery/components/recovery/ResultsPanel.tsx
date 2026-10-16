@@ -20,7 +20,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { CASE_IDS, CASE_META } from '../../types/schema'
+import { caseColour, caseDetail } from '../../types/schema'
 import type { CaseId, CaseResult, Result } from '../../types/schema'
 import { STUB_SHA } from '../../api/fixture'
 import { Badge, Button, Card, Empty, Stat, StubBanner, WarningsCard } from '../ui'
@@ -53,7 +53,11 @@ export function ResultsPanel({ result, running, error }: {
     )
   }
 
-  const cur = result.cases[active]
+  // A case id is per device, so one picked before a device was removed can
+  // name a case this result does not have. Fall back rather than crash.
+  const shown = result.cases[active] ? active : 'nominal'
+  const cur = result.cases[shown]
+  const names = result.config.devices.map((d) => d.name)
   const isStub = result.git_sha === STUB_SHA
 
   return (
@@ -78,34 +82,35 @@ export function ResultsPanel({ result, running, error }: {
         </StubBanner>
       )}
 
-      <CaseSelector result={result} active={active} onChange={setActive} />
+      <CaseSelector result={result} active={shown} onChange={setActive} />
 
       <Card
-        title={`${CASE_META[active].label} summary`}
-        subtitle={CASE_META[active].detail}
+        title={`${cur.label} summary`}
+        subtitle={caseDetail(shown, names)}
       >
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           {/* The tone highlights, in yellow, whichever figure this case is
               chosen to stress -- a drift case flags its descent time, an impact
               case its landing speed and energy, a structural case its peak
-              load. It is a "look here", not a pass/fail: no threshold is
-              compared, so it never turns red. Nominal stresses nothing in
-              particular and highlights nothing. */}
+              load. Which one is measured against nominal by the backend, not
+              assumed from the case's name. It is a "look here", not a
+              pass/fail: no threshold is compared, so it never turns red.
+              Nominal stresses nothing in particular and highlights nothing. */}
           <Stat
             label="Descent time"
             value={dur(cur.descent_time)}
-            tone={CASE_META[active].category === 'drift' ? 'warning' : undefined}
+            tone={cur.category === 'drift' ? 'warning' : undefined}
             hint="Drift scales with this."
           />
           <Stat
             label="Impact velocity"
             value={num(cur.impact_velocity, 'speed')} kind="speed"
-            tone={CASE_META[active].category === 'impact' ? 'warning' : undefined}
+            tone={cur.category === 'impact' ? 'warning' : undefined}
           />
           <Stat
             label="Impact energy"
             value={num(cur.impact_ke, 'energy')} kind="energy"
-            tone={CASE_META[active].category === 'impact' ? 'warning' : undefined}
+            tone={cur.category === 'impact' ? 'warning' : undefined}
             hint={`Equivalent to a ${q(cur.h_equiv, 'altitude', 1)} drop`}
           />
           {/* The unfactored eq (36) max -- the load the hardware actually sees.
@@ -115,14 +120,14 @@ export function ResultsPanel({ result, running, error }: {
             label="Max load"
             value={num(cur.F_peak_max, 'force')} kind="force"
             hint="The governing load to size to: the largest of every device's F_p,inf bound, its snatch load, and its numerical peak F_num."
-            tone={CASE_META[active].category === 'structure' ? 'warning' : undefined}
+            tone={cur.category === 'structure' ? 'warning' : undefined}
           />
         </div>
       </Card>
 
       <Card
         title="Flight history"
-        subtitle={active === 'nominal' ? undefined : "Nominal and the selected case, overlaid."}
+        subtitle={shown === 'nominal' ? undefined : "Nominal and the selected case, overlaid."}
         right={
           <div className="flex flex-wrap gap-1">
             {CHANNELS.map((c) => (
@@ -137,7 +142,7 @@ export function ResultsPanel({ result, running, error }: {
           </div>
         }
       >
-        <TrajectoryChart result={result} active={active} channel={channel} />
+        <TrajectoryChart result={result} active={shown} channel={channel} />
       </Card>
 
       <LoadsTable c={cur} />
@@ -153,6 +158,12 @@ export function ResultsPanel({ result, running, error }: {
   )
 }
 
+/**
+ * Nominal, simultaneous, then one "<device> fails" per device, filling rows of
+ * four. The failures are per device because "main fails" / "drogue fails" only
+ * mean something with exactly two; with three chutes the guessed roles dropped
+ * the wrong canopies. MAX_DEVICES keeps it to two rows.
+ */
 function CaseSelector({ result, active, onChange }: {
   result: Result
   active: CaseId
@@ -161,9 +172,8 @@ function CaseSelector({ result, active, onChange }: {
   const { q, dec } = useUnits()
   return (
     <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-      {CASE_IDS.map((id) => {
+      {result.case_ids.map((id) => {
         const c = result.cases[id]
-        const meta = CASE_META[id]
         const on = id === active
         return (
           <button
@@ -176,9 +186,9 @@ function CaseSelector({ result, active, onChange }: {
           >
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: meta.colour }} />
-              <span className={`text-sm ${on ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
-                {meta.label}
+                    style={{ backgroundColor: caseColour(id) }} />
+              <span className={`truncate text-sm ${on ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
+                {c.label}
               </span>
             </div>
             <div className="font-num mt-1.5 flex gap-3 text-sm text-[var(--color-text-muted)]">
@@ -279,14 +289,14 @@ function TrajectoryChart({ result, active, channel }: {
           {showNominal && (
             <Line
               dataKey="nominal" name="nominal"
-              stroke={CASE_META.nominal.colour} strokeWidth={1}
+              stroke={caseColour('nominal')} strokeWidth={1}
               strokeDasharray="4 3" dot={false} connectNulls
               isAnimationActive={false}
             />
           )}
           <Line
-            dataKey="selected" name={CASE_META[active].label}
-            stroke={CASE_META[active].colour} strokeWidth={2}
+            dataKey="selected" name={cur.label}
+            stroke={caseColour(active)} strokeWidth={2}
             dot={false} connectNulls isAnimationActive={false}
           />
 

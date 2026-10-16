@@ -25,7 +25,7 @@
  */
 
 import type {
-  CaseId, CaseResult, Config, DeviceLoads, FlightEvent, Result, TrajectorySample,
+  CaseId, CaseResult, Config, FailureCategory, DeviceLoads, FlightEvent, Result, TrajectorySample,
 } from '../types/schema'
 import { G0 } from '../lib/units'
 
@@ -166,18 +166,28 @@ const STUB_SF = 1.5
 /** §11.5's table. These are the real published figures for the §13 vehicle at
  *  the axial bound -- the load-conservative choice, stated because §6.4
  *  forbids picking silently. */
+// REFERENCE_CONFIG lists the drogue first and the main second; a failure case
+// is named by the index of the device that fails.
+const DROGUE_FAILS = 'fail:0'
+const MAIN_FAILS = 'fail:1'
+
 const CASE_NUMBERS: Record<CaseId, {
   descent: number; impact: number; ke: number; fmax: number
   status: CaseResult['status']; link: string | null
+  label: string; failed: string | null; category: FailureCategory
 }> = {
   nominal:      { descent: 55,  impact: 6.00,  ke: 102,  fmax: 1613,
-                  status: 'pass', link: 'quick_link' },
+                  status: 'pass', link: 'quick_link',
+                  label: 'Nominal', failed: null, category: 'none' },
   simultaneous: { descent: 146, impact: 6.00,  ke: 102,  fmax: 910,
-                  status: 'pass', link: 'quick_link' },
-  no_main:      { descent: 38,  impact: 24.8,  ke: 1749, fmax: 55,
-                  status: 'fail', link: null },
-  no_drogue:    { descent: 35,  impact: 6.18,  ke: 108,  fmax: 27263,
-                  status: 'fail', link: 'quick_link' },
+                  status: 'na', link: 'quick_link',
+                  label: 'Simultaneous', failed: null, category: 'drift' },
+  [MAIN_FAILS]: { descent: 38,  impact: 24.8,  ke: 1749, fmax: 55,
+                  status: 'na', link: null,
+                  label: 'main fails', failed: 'main', category: 'impact' },
+  [DROGUE_FAILS]: { descent: 35, impact: 6.18, ke: 108,  fmax: 27263,
+                  status: 'fail', link: 'quick_link',
+                  label: 'drogue fails', failed: 'drogue', category: 'structure' },
 }
 
 function buildCase(id: CaseId): CaseResult {
@@ -185,24 +195,27 @@ function buildCase(id: CaseId): CaseResult {
   const drogueTrigger = REFERENCE_CONFIG.devices[0].trigger.value
   const mainAlt = REFERENCE_CONFIG.devices[1].trigger.value
 
-  const shape = {
+  const shape = ({
     nominal:      () => integrate(drogueTrigger, mainAlt, cdsAxial),
     // Main fires at the drogue's trigger time, near apogee.
     simultaneous: () => integrate(drogueTrigger, REFERENCE_CONFIG.vehicle.h_a,
                                   cdsAxial),
-    no_main:      () => integrate(drogueTrigger, null, cdsAxial),
-    no_drogue:    () => integrate(null, mainAlt, cdsAxial),
-  }[id]()
+    [MAIN_FAILS]:   () => integrate(drogueTrigger, null, cdsAxial),
+    [DROGUE_FAILS]: () => integrate(null, mainAlt, cdsAxial),
+  } as Record<CaseId, () => ReturnType<typeof integrate>>)[id]()
 
   const nums = CASE_NUMBERS[id]
   const loads: DeviceLoads[] =
-    id === 'no_main' ? [DROGUE_LOADS]
-    : id === 'no_drogue' ? [{ ...MAIN_LOADS, v_s: 103.0, X1: 0.266,
+    id === MAIN_FAILS ? [DROGUE_LOADS]
+    : id === DROGUE_FAILS ? [{ ...MAIN_LOADS, v_s: 103.0, X1: 0.266,
                               F_inf: 27263, F_peak: 7250 }]
     : [DROGUE_LOADS, MAIN_LOADS]
 
   return {
     case: id,
+    label: nums.label,
+    failed_device: nums.failed,
+    category: nums.category,
     trajectory: shape.traj,
     events: shape.events,
     device_loads: loads,
@@ -235,9 +248,10 @@ export function stubResult(config: Config = REFERENCE_CONFIG): Result {
     cases: {
       nominal: buildCase('nominal'),
       simultaneous: buildCase('simultaneous'),
-      no_main: buildCase('no_main'),
-      no_drogue: buildCase('no_drogue'),
+      [DROGUE_FAILS]: buildCase(DROGUE_FAILS),
+      [MAIN_FAILS]: buildCase(MAIN_FAILS),
     },
+    case_ids: ['nominal', 'simultaneous', DROGUE_FAILS, MAIN_FAILS],
     pad: {
       p_pad: 95461,
       T_pad: 284.9,
