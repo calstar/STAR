@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import type { ActivityKind } from "@/lib/activity";
-import { FIELD_LABEL } from "@/lib/activity-labels";
+import { FIELD_LABEL, bomSentence, prSentence } from "@/lib/activity-labels";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
 
@@ -21,6 +21,13 @@ export const ACTIVITY_KINDS = [
   "unassigned",
   "blocker_added",
   "blocker_removed",
+  "bom_added",
+  "bom_updated",
+  "bom_removed",
+  "pr_created",
+  "pr_approved",
+  "pr_rejected",
+  "pr_cancelled",
 ] as const satisfies readonly ActivityKind[];
 
 export type ActivityFilter = {
@@ -87,6 +94,15 @@ export function activitySummary(a: ActivitySummaryInput): string {
       return `${who} removed a blocker from ${task}: ${val(a.toValue)}`;
     case "updated":
       return `${who} changed ${FIELD_LABEL[a.field ?? ""] ?? a.field} of ${task} from ${val(a.fromValue)} to ${val(a.toValue)}`;
+    case "bom_added":
+    case "bom_updated":
+    case "bom_removed":
+      return bomSentence(who, a);
+    case "pr_created":
+    case "pr_approved":
+    case "pr_rejected":
+    case "pr_cancelled":
+      return prSentence(who, a);
     default:
       return `${who} updated ${task}`;
   }

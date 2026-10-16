@@ -1,5 +1,5 @@
 import { TaskLink } from "@/components/TaskLink";
-import { FIELD_LABEL } from "@/lib/activity-labels";
+import { FIELD_LABEL, bomSentence, prSentence } from "@/lib/activity-labels";
 import { displayNameOf } from "@/lib/names";
 
 // One audit-log row, in the shape both the global feed (server) and the per-task
@@ -100,6 +100,15 @@ export function renderActivity(
           {bold(a.toValue)}
         </>
       );
+    case "bom_added":
+    case "bom_updated":
+    case "bom_removed":
+      return <>{bomSentence(displayNameOf(a.actor), a)}</>;
+    case "pr_created":
+    case "pr_approved":
+    case "pr_rejected":
+    case "pr_cancelled":
+      return <>{prSentence(displayNameOf(a.actor), a)}</>;
     default:
       return withTask ? <>{who} updated {taskRef(a)}</> : <>{who} updated this task</>;
   }

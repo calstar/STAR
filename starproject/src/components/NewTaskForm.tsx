@@ -7,24 +7,28 @@ import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { FieldSelect } from "@/components/fields/FieldSelect";
 import { createTask } from "@/lib/actions/tasks";
 import { PRIORITY_BADGE } from "@/lib/tasks";
-import { isValidDateInput } from "@/lib/validation";
+import { DEFAULT_TASK_POINTS } from "@/lib/leaderboard";
+import { MAX_TASK_POINTS, isValidDateInput } from "@/lib/validation";
 
 // One task-create form for every context: a project detail page pins the
 // project (`projectId`); a subteam detail page pins the subteam (`subteamId`)
 // and offers a project picker (`projects`); the /tasks workspace offers both
 // pickers. A pinned field becomes a hidden input; an offered field a dropdown.
+// `admin` adds the Points field (only admins may put points on a task).
 export function NewTaskForm({
   projectId,
   projects,
   subteamId,
   users,
   subteams,
+  admin = false,
 }: {
   projectId?: string;
   projects?: { id: string; label: string }[];
   subteamId?: string;
   users: User[];
   subteams?: { id: string; name: string }[];
+  admin?: boolean;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -177,6 +181,20 @@ export function NewTaskForm({
       )}
 
       <input type="date" name="dueDate" min="1900-01-01" max="9999-12-31" className={control} aria-label="Due date" />
+      {admin && (
+        <input
+          type="number"
+          name="points"
+          inputMode="numeric"
+          min={0}
+          max={MAX_TASK_POINTS}
+          step={1}
+          placeholder={`Points (${DEFAULT_TASK_POINTS})`}
+          aria-label="Points"
+          title={`Points for whoever finishes it, split between the assignees; blank counts as ${DEFAULT_TASK_POINTS} (admins only)`}
+          className={`w-full sm:w-24 tabular-nums ${control}`}
+        />
+      )}
       <button
         type="submit"
         className="min-h-11 rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:min-h-0"

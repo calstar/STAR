@@ -2,9 +2,14 @@ import Link from "next/link";
 import { Fragment } from "react";
 import { notFound } from "next/navigation";
 
+import { BomTab } from "@/components/bom/BomTab";
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
+import { isPvp } from "@/lib/pvp";
+import { bomRollsUp, sectionsFor } from "@/lib/bom";
+import { loadBomLines } from "@/lib/bom-data";
+import { pendingRequestsFor } from "@/lib/purchase-request-data";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
@@ -81,7 +86,30 @@ export async function ProjectView({
         : { name: pathOf(tree, t.projectId, project.id) || t.project.name, color: t.project.color },
   }));
 
-  const admin = await isAdmin((await getCurrentUser()).email);
+  const viewerEmail = (await getCurrentUser()).email;
+  const admin = await isAdmin(viewerEmail);
+
+  // The BOM tab's body, loaded only when it is the tab showing. Lines can go
+  // on this project or anything under it, each listed by its own name.
+  const bomLines = view === "bom" ? await loadBomLines(project.id) : [];
+  const waiting = await pendingRequestsFor(bomLines.map((l) => l.id));
+  const bomBody =
+    view === "bom" ? (
+      <BomTab
+        projectId={project.id}
+        projectName={project.name}
+        sections={sectionsFor(tree, project.id, bomLines, { includeEmpty: true })}
+        pendingRequests={Object.fromEntries(waiting)}
+        projectOptions={[
+          { id: project.id, label: project.name },
+          // A project too deep to roll up shows only its own lines, so only it can take new ones.
+          ...(bomRollsUp(tree, project.id) ? below.map((d) => ({ id: d.id, label: d.name })) : []),
+        ]}
+        people={users.map((u) => ({ id: u.id, label: displayNameOf(u) }))}
+        canApprove={await isPvp(viewerEmail)}
+        showOwnHeader={crumbs.length === 0}
+      />
+    ) : null;
 
   const header = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -150,8 +178,9 @@ export async function ProjectView({
       admin={admin}
       header={header}
       showSubproject={below.length > 0}
+      bom={{ body: bomBody }}
       newTaskForm={
-        <NewTaskForm projectId={project.id} users={users} subteams={subteams} />
+        <NewTaskForm projectId={project.id} users={users} subteams={subteams} admin={admin} />
       }
     />
   );

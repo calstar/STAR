@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { recordActivity, userLabel } from "@/lib/activity";
 import { prisma } from "@/lib/db";
@@ -9,6 +10,7 @@ import {
   isManufacturingField,
   parseManufacturingValue,
 } from "@/lib/manufacturing";
+import { notifyAssignment } from "@/lib/notifications";
 import { getCurrentDbUser } from "@/lib/user";
 
 // A task becomes a manufacturing task when it gets a TaskManufacturing row and
@@ -123,6 +125,33 @@ export async function updateManufacturingField(
     from: shown(old, field),
     to: shown(updated, field),
   });
+
+  // Whoever is made Design RE or Manufacturing RE is put on the task as an
+  // assignee too, logged and notified the way any assignment is. Someone
+  // replaced as RE stays assigned: they may be on the task for other reasons,
+  // so taking them off is left to a person.
+  if ((field === "designReId" || field === "mfgReId") && value !== null) {
+    const re = field === "designReId" ? updated.designRe : updated.mfgRe;
+    const already = await prisma.task.count({
+      where: { id: task.id, assignees: { some: { id: value as string } } },
+    });
+    if (re && !already) {
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { assignees: { connect: { id: value as string } } },
+      });
+      await recordActivity({
+        actorId: user.id,
+        taskId: task.id,
+        projectId: task.projectId,
+        taskTitle: task.title,
+        kind: "assigned",
+        to: userLabel(re),
+      });
+      after(() => notifyAssignment({ taskId: task.id, assigneeId: value as string, actorId: user.id }));
+    }
+  }
+
   revalidate(task.projectId);
   return {};
 }

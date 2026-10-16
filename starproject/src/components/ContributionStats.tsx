@@ -1,9 +1,9 @@
 import type { NamedContributionStats } from "@/lib/stats-data";
 import { ALL_TIME_WEEKS, type Bucket, type Counts, type StatClass } from "@/lib/stats";
 
-// The Stats tab's body: a leaderboard of who completed / created / moved
-// forward the most tasks in the window, and a small stacked histogram of the
-// same three classes over time. Server component; the SVG is inline so no chart
+// The Stats tab's body: the window's totals and a small stacked histogram of
+// tasks completed / created / moved forward over time (who did them is on the
+// Leaderboard tab, components/Leaderboard.tsx). Server component; the SVG is inline so no chart
 // library is needed. Colours follow the status badges in src/lib/tasks.ts:
 // done is green, to-do is blue, in-progress is amber.
 
@@ -14,66 +14,6 @@ const SERIES: { key: StatClass; label: string; fill: string; bar: string }[] = [
 ];
 
 const total = (c: Counts) => c.completed + c.created + c.forward;
-
-/** One leaderboard cell: the number and a thin bar relative to the column max. */
-function CountCell({ value, max, bar }: { value: number; max: number; bar: string }) {
-  const pct = max > 0 ? (value / max) * 100 : 0;
-  return (
-    <td className="px-3 py-2 align-middle">
-      <div className="flex items-center gap-2">
-        <span className="min-w-6 shrink-0 text-right tabular-nums">{value}</span>
-        <span className="h-1.5 flex-1 rounded-full bg-neutral-100 dark:bg-neutral-800" aria-hidden>
-          <span className={`block h-1.5 rounded-full ${value > 0 ? bar : ""}`} style={{ width: `${pct}%` }} />
-        </span>
-      </div>
-    </td>
-  );
-}
-
-function Leaderboard({ users }: { users: NamedContributionStats["users"] }) {
-  if (users.length === 0) {
-    return (
-      <p className="rounded-lg border border-neutral-200 bg-white p-4 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-        No activity in this window.
-      </p>
-    );
-  }
-  const max: Counts = {
-    completed: Math.max(...users.map((u) => u.completed)),
-    created: Math.max(...users.map((u) => u.created)),
-    forward: Math.max(...users.map((u) => u.forward)),
-  };
-  return (
-    <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-      <table className="w-full min-w-[32rem] text-sm">
-        <thead>
-          <tr className="border-b border-neutral-200 text-left text-xs font-medium uppercase tracking-wide text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
-            <th scope="col" className="px-3 py-2">
-              Person
-            </th>
-            {SERIES.map((s) => (
-              <th key={s.key} scope="col" className="w-1/4 px-3 py-2">
-                {s.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
-          {users.map((u) => (
-            <tr key={u.actorId}>
-              <th scope="row" className="px-3 py-2 text-left font-medium text-neutral-800 dark:text-neutral-100">
-                {u.name}
-              </th>
-              {SERIES.map((s) => (
-                <CountCell key={s.key} value={u[s.key]} max={max[s.key]} bar={s.bar} />
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 const CHART_W = 600;
 const CHART_H = 100;
@@ -161,12 +101,10 @@ export function ContributionStats({ stats }: { stats: NamedContributionStats }) 
         </div>
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
           {stats.window === "all"
-            ? `One bar per week (Monday start) for the last ${ALL_TIME_WEEKS} weeks; the totals and leaderboard count everything ever recorded.`
+            ? `One bar per week (Monday start) for the last ${ALL_TIME_WEEKS} weeks; the totals count everything ever recorded.`
             : "One bar per day, Berkeley time."}
         </p>
       </section>
-
-      <Leaderboard users={stats.users} />
     </div>
   );
 }

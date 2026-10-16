@@ -198,7 +198,7 @@ export function TasksWorkspace({
     <div className="pb-20 sm:pb-0">
       <ViewDock
         active={view === "table" ? "list" : view}
-        onSelect={(v) => setView(v === "list" ? "table" : v)}
+        onSelect={(v) => setView(v === "list" || v === "bom" ? "table" : v)}
       />
       <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">

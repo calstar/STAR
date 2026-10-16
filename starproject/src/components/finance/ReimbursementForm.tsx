@@ -32,6 +32,13 @@ type Item = {
 let nextKey = 1;
 const blankItem = (): Item => ({ key: nextKey++, date: "", vendor: "", amount: "", comment: "", file: null, fileError: null });
 
+/** A filing started from BOM lines: the items to fill in and the lines it pays back. */
+export type ReimbursementPrefill = {
+  subject: string;
+  items: { date: string; vendor: string; amount: string; comment: string }[];
+  bomItemIds: string[];
+};
+
 function Field({
   label,
   error,
@@ -67,19 +74,23 @@ export function ReimbursementForm({
   defaults,
   seededFrom,
   accountEmail,
+  prefill,
 }: {
   defaults: ProfileDefaults;
+  prefill?: ReimbursementPrefill;
   /** CalLink request number the payee details were taken from, if any. */
   seededFrom: string | null;
   accountEmail: string;
 }) {
   const router = useRouter();
-  const [subject, setSubject] = useState("");
+  const [subject, setSubject] = useState(prefill?.subject ?? "");
   const [description, setDescription] = useState("");
   const [payee, setPayee] = useState(defaults);
   const [expenditureAction, setExpenditureAction] = useState<(typeof EXPENDITURE_ACTIONS)[number]>("Direct Deposit");
   const [specialInstructions, setSpecialInstructions] = useState("");
-  const [items, setItems] = useState<Item[]>(() => [blankItem()]);
+  const [items, setItems] = useState<Item[]>(() =>
+    prefill?.items.length ? prefill.items.map((i) => ({ ...blankItem(), ...i })) : [blankItem()],
+  );
   const [saveProfile, setSaveProfile] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -130,6 +141,7 @@ export function ReimbursementForm({
       specialInstructions,
       items: items.map((i) => ({ date: i.date, vendor: i.vendor, amount: i.amount, comment: i.comment })),
       saveProfile,
+      bomItemIds: prefill?.bomItemIds ?? [],
     };
     const body = new FormData();
     body.set("payload", JSON.stringify(payload));
@@ -159,6 +171,14 @@ export function ReimbursementForm({
       {formError && (
         <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           {formError}
+        </p>
+      )}
+
+      {prefill && prefill.bomItemIds.length > 0 && (
+        <p className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+          Filled in from {prefill.bomItemIds.length} BOM line{prefill.bomItemIds.length === 1 ? "" : "s"}. Check each
+          amount against its receipt and attach the receipts. Once CalLink pays this out, those lines show as
+          reimbursed.
         </p>
       )}
 

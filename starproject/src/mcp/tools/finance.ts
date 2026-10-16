@@ -181,7 +181,7 @@ export const financeTools: ToolModule = (server) => {
         `goes to CalLink until an admin approves it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
         "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes). Amounts are text like \"12.34\"; the " +
         "total is their sum. saveProfile (default true) remembers the payee details as your profile. Returns the " +
-        "new R-number and the reimbursement.",
+        "new R-number and the reimbursement. bomItemIds (ids from list_bom) marks the BOM lines this filing pays back.",
       inputSchema: {
         ...reimbursementInputSchema.innerType().shape,
         receipts: z.array(receiptSchema).min(1).max(MAX_ITEMS).describe("One per item, in item order"),

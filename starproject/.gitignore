@@ -16,3 +16,6 @@ next-env.d.ts
 
 # prisma local
 /prisma/*.db
+
+# local database for npm run dev:local
+/.localdb

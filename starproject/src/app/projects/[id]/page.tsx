@@ -12,7 +12,7 @@ export default async function ProjectPage({
   const { id } = await params;
   const { view: rawView } = await searchParams;
   const view: ProjectViewMode =
-    rawView === "board" ? "board" : rawView === "gantt" ? "gantt" : "list";
+    rawView === "board" ? "board" : rawView === "gantt" ? "gantt" : rawView === "bom" ? "bom" : "list";
 
   return <ProjectView id={id} view={view} />;
 }

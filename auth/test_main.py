@@ -490,3 +490,57 @@ def test_verify_only_node_says_so_instead_of_lying(client, roster, monkeypatch):
     resp = client.get("/users")
     assert resp.status_code == 503
     assert main.AUTH_PUBLIC_URL in resp.get_json()["error"]
+
+
+# ── Outside addresses (the PVP's gmail on STAR Project only) ───────────────────
+
+
+def test_outside_emails_parse_and_skip_junk():
+    parsed = main._parse_outside_emails(" A@Gmail.com : project ; b@x.org:project,pid ; nobody ; c@y.org: ")
+    assert parsed == {"a@gmail.com": frozenset({"project"}), "b@x.org": frozenset({"project", "pid"})}
+
+
+def test_default_outside_email_is_the_pvp_gmail_on_project():
+    assert main.OUTSIDE_EMAILS.get("ucberkeleystar@gmail.com") == frozenset({"project"})
+
+
+def test_may_sign_in():
+    assert main.may_sign_in("someone@berkeley.edu", False)
+    assert main.may_sign_in("ucberkeleystar@gmail.com", True)
+    assert main.may_sign_in("UCBerkeleyStar@gmail.com", True)
+    assert not main.may_sign_in("ucberkeleystar@gmail.com", False)  # Google hasn't verified it
+    assert not main.may_sign_in("someone.else@gmail.com", True)
+
+
+def test_verify_lets_the_pvp_gmail_into_star_project(client):
+    client.set_cookie("session", _token(email="ucberkeleystar@gmail.com"))
+    resp = client.get("/verify", headers={"X-Forwarded-Host": "project.starberkeley.org"})
+    assert resp.status_code == 200
+    assert resp.headers["X-Auth-Email"] == "ucberkeleystar@gmail.com"
+
+
+def test_verify_keeps_the_pvp_gmail_out_of_every_other_app(client):
+    """The cookie is shared by every app, so the login check alone isn't enough."""
+    client.set_cookie("session", _token(email="ucberkeleystar@gmail.com"))
+    for host in ("pid.starberkeley.org", "feed-twin.starberkeley.org", "starberkeley.org"):
+        resp = client.get("/verify", headers={"X-Forwarded-Host": host})
+        assert resp.status_code == 403, host
+    page = client.get(
+        "/verify",
+        headers={"X-Forwarded-Host": "pid.starberkeley.org", "Accept": "text/html", "X-Forwarded-Method": "GET"},
+    )
+    assert page.status_code == 403
+    assert "Location" not in page.headers
+
+
+def test_verify_refuses_a_forged_cookie_for_an_unlisted_outside_address(client):
+    """Defence in depth: even a validly signed token for an unlisted address gets nowhere."""
+    client.set_cookie("session", _token(email="someone.else@gmail.com"))
+    resp = client.get("/verify", headers={"X-Forwarded-Host": "project.starberkeley.org"})
+    assert resp.status_code == 403
+
+
+def test_verify_still_lets_berkeley_into_every_app(client):
+    client.set_cookie("session", _token(email="someone@berkeley.edu"))
+    for host in ("project.starberkeley.org", "pid.starberkeley.org"):
+        assert client.get("/verify", headers={"X-Forwarded-Host": host}).status_code == 200

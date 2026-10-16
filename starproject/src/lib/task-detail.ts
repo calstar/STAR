@@ -1,3 +1,5 @@
+import { listAdmins } from "@/lib/admins";
+import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ancestors, flatten, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
@@ -7,7 +9,7 @@ import { getTeamUsers } from "@/lib/user";
 /** Shared loader for the task detail view (used by both the full page and the
  * intercepted modal). Returns null if the task doesn't belong to the project. */
 export async function getTaskDetailData(projectId: string, taskId: string) {
-  const [task, users, siblings, subteams, tree] = await Promise.all([
+  const [task, users, siblings, subteams, tree, admins, viewer] = await Promise.all([
     prisma.task.findUnique({
       where: { id: taskId },
       include: {
@@ -55,6 +57,8 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
     }),
     getSubteams(),
     getProjectTree(),
+    listAdmins(),
+    getCurrentUser(),
   ]);
 
   if (!task || task.projectId !== projectId) return null;
@@ -71,7 +75,12 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
   }));
   // The task's project's ancestors, root first, for the breadcrumb.
   const projectAncestors = ancestors(tree, task.projectId).map((a) => ({ id: a.id, name: a.name }));
-  return { task, users, candidates, subteams, projects, projectAncestors };
+  // Points: only an admin edits them, and they split between the assignees who
+  // are not admins (src/lib/leaderboard.ts), so the view needs both facts.
+  const adminEmails = new Set(admins.map((a) => a.email));
+  const admin = adminEmails.has(viewer.email.toLowerCase());
+  const pointMembers = task.assignees.filter((a) => !adminEmails.has(a.email.toLowerCase())).length;
+  return { task, users, candidates, subteams, projects, projectAncestors, admin, pointMembers };
 }
 
 export type TaskDetailData = NonNullable<

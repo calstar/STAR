@@ -8,7 +8,7 @@ import { TaskTable } from "@/components/TaskTable";
 import { ViewDock } from "@/components/ViewDock";
 import { type WorkspaceTask, inLists, onBoard, toRowData } from "@/lib/board";
 
-export type DetailViewMode = "board" | "list" | "gantt";
+export type DetailViewMode = "board" | "list" | "gantt" | "bom";
 
 // Shared detail layout for a project or subteam: an entity-specific header, then
 // the identical List/Board/Timeline tabs + task views. Both pages render through
@@ -26,6 +26,7 @@ export function DetailView({
   emptyText,
   showProject = false,
   showSubproject = false,
+  bom,
 }: {
   basePath: string;
   view: DetailViewMode;
@@ -37,6 +38,9 @@ export function DetailView({
   emptyText?: string;
   showProject?: boolean;
   showSubproject?: boolean;
+  /** Project pages only: shows the BOM tab, and its body when view is "bom"
+   * (null while another tab is showing, so the BOM isn't loaded for nothing). */
+  bom?: { body: React.ReactNode | null };
 }) {
   const tab = (active: boolean) =>
     `inline-flex items-center rounded px-3 py-1 text-sm ${
@@ -65,6 +69,11 @@ export function DetailView({
         <Link href={`${basePath}?view=gantt`} className={tab(view === "gantt")}>
           Timeline
         </Link>
+        {bom && (
+          <Link href={`${basePath}?view=bom`} className={tab(view === "bom")}>
+            BOM
+          </Link>
+        )}
       </div>
 
       <ViewDock
@@ -73,12 +82,15 @@ export function DetailView({
           list: basePath,
           board: `${basePath}?view=board`,
           gantt: `${basePath}?view=gantt`,
+          ...(bom ? { bom: `${basePath}?view=bom` } : {}),
         }}
       />
 
-      {newTaskForm && <div className="mt-4">{newTaskForm}</div>}
+      {newTaskForm && view !== "bom" && <div className="mt-4">{newTaskForm}</div>}
 
-      {view === "board" ? (
+      {view === "bom" && bom ? (
+        <div className="mt-6 min-w-0">{bom.body}</div>
+      ) : view === "board" ? (
         <div className="mt-6">
           <BoardWithSort tasks={boardTasks} />
         </div>

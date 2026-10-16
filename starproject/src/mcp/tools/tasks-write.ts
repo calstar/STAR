@@ -12,7 +12,7 @@ import { midpointOrder } from "@/lib/board";
 import { prisma } from "@/lib/db";
 import { descendants } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
-import { TaskPriorityEnum, TaskStatusEnum } from "@/lib/validation";
+import { MAX_TASK_POINTS, TaskPriorityEnum, TaskStatusEnum } from "@/lib/validation";
 
 import { DESTRUCTIVE, IDEMPOTENT_WRITE, WRITE, defineTool, toFormData, type ToolModule } from "./_shared";
 
@@ -26,6 +26,14 @@ const DateInput = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
   .describe("YYYY-MM-DD");
+
+/** A task's points as the Points field takes them: admins only, no negatives. */
+const TaskPoints = z
+  .number()
+  .int()
+  .min(0)
+  .max(MAX_TASK_POINTS)
+  .describe(`Whole number 0-${MAX_TASK_POINTS}; admins only`);
 
 /** What every write hands back: the task as the list/board would show it. */
 const taskView = {
@@ -50,6 +58,7 @@ export type CreateTaskInput = {
   subteamId?: string;
   startDate?: string;
   dueDate?: string;
+  points?: number;
 };
 
 /** The record `toFormData` turns into what `createTask(formData)` reads. */
@@ -63,6 +72,7 @@ export function createTaskFields(input: CreateTaskInput): Record<string, string 
     subteamId: input.subteamId,
     startDate: input.startDate,
     dueDate: input.dueDate,
+    points: input.points === undefined ? undefined : String(input.points),
   };
 }
 
@@ -78,6 +88,7 @@ export type UpdateTaskInput = {
   projectId?: string;
   startDate?: string | null;
   dueDate?: string | null;
+  points?: number | null;
 };
 
 /**
@@ -89,7 +100,7 @@ export function updateTaskFields(input: UpdateTaskInput): Record<string, string 
   const { taskId, ...rest } = input;
   const out: Record<string, string | string[] | null | undefined> = { id: taskId };
   for (const [key, value] of Object.entries(rest)) {
-    if (value !== undefined) out[key] = value as string | string[] | null;
+    if (value !== undefined) out[key] = typeof value === "number" ? String(value) : (value as string | string[] | null);
   }
   return out;
 }
@@ -137,7 +148,8 @@ export const tasksWriteTools: ToolModule = (server) => {
     {
       description:
         "Create a task in a project (same as the New task form). Logs 'created' and one 'assigned' row per " +
-        "assignee, and emails new assignees. Returns the task with its #number.",
+        "assignee, and emails new assignees. Returns the task with its #number. `points` (admins only) is a whole " +
+        "number 0-1000; once the task is done it splits evenly between its non-admin assignees on the Leaderboard.",
       inputSchema: {
         projectId: z.string().min(1),
         title: z.string().trim().min(1).max(300),
@@ -147,6 +159,7 @@ export const tasksWriteTools: ToolModule = (server) => {
         subteamId: z.string().min(1).optional(),
         startDate: DateInput.optional(),
         dueDate: DateInput.optional(),
+        points: TaskPoints.optional(),
       },
       annotations: WRITE,
     },
@@ -165,7 +178,8 @@ export const tasksWriteTools: ToolModule = (server) => {
       description:
         "Edit any subset of a task's fields (same as the inline editors). Only the fields you pass change; " +
         "pass null to clear priority, subteam, dates, description or blockedNote. assigneeIds replaces the whole set. " +
-        "Moving to done archives the task; moving out of done restores it. Each change is logged.",
+        "Moving to done archives the task; moving out of done restores it. Each change is logged. " +
+        "points (admins only; null clears) is a whole number 0-1000, split between non-admin assignees when done.",
       inputSchema: {
         taskId: z.string().min(1),
         title: z.string().trim().min(1).max(300).optional(),
@@ -178,6 +192,7 @@ export const tasksWriteTools: ToolModule = (server) => {
         projectId: z.string().min(1).optional().describe("Move the task to another project"),
         startDate: DateInput.nullable().optional(),
         dueDate: DateInput.nullable().optional(),
+        points: TaskPoints.nullable().optional(),
       },
       annotations: IDEMPOTENT_WRITE,
     },

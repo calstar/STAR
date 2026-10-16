@@ -221,8 +221,8 @@ defineTool(server, "archive_task", {
 | `board` | A project's (with subtree) or subteam's open tasks grouped by status, plus those done in the last 30 days in `done` (most recently completed first), sorted like the Board view | read |
 | `gantt` | A project's or subteam's timeline rows (`toGanttTasks`): dated open (not done) tasks with dependencies | read |
 | `my_tasks` | The home page's "My tasks": active tasks assigned to you, soonest due first | read |
-| `create_task` | New task in a project: title, description, priority, assignees, subteam, dates; returns it with its `#number` | write; logs created + assigned, emails assignees |
-| `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote; `assigneeIds` replaces the set | idempotent; done ⇄ archived follows the UI |
+| `create_task` | New task in a project: title, description, priority, assignees, subteam, dates, points (admins only); returns it with its `#number` | write; logs created + assigned, emails assignees |
+| `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote / points; `points` is admins only; `assigneeIds` replaces the set | idempotent; done ⇄ archived follows the UI |
 | `set_task_dates` | Start and due together (the Gantt drag) | idempotent |
 | `move_task` | Kanban move: `status` plus `boardOrder`, or `afterTaskId` / `beforeTaskId` (midpoint of the neighbours on `boardProjectId`'s board -- that project and its subprojects, as the project page shows; default the task's own project); default end of column | idempotent |
 | `archive_task` | Hide from active lists, or `archived=false` to restore | idempotent |
@@ -261,10 +261,23 @@ defineTool(server, "archive_task", {
 | `list_notification_log` | Recent `NotifLog` rows (deadline emails sent), labelled with task and recipient | admins only; read |
 | `add_blocker` | Mark a task blocked by another task in its project, optional note | write; rejects self, cross-project, duplicate, cycle |
 | `remove_blocker` | Unlink a blocker edge | idempotent; `removed: false` when there was none |
+| `list_bom` | A project's bill of materials: own lines plus every subproject's, in sections, with totals and each line's predicted cost and reimbursed state | read |
+| `add_bom_items` | Add 1-100 lines to a project's BOM (money as text, "12.34") | write; a line that fails is reported, the rest go in; starting past Planned needs a PVP |
+| `update_bom_item` | Change fields of one line, or move it to another project | write; each field logged on its own; leaving or returning to Planned needs a PVP |
+| `delete_bom_item` | Remove a line | destructive; past Planned needs a PVP |
+| `list_purchase_requests` | Purchase requests, newest first, optionally by status: who asked and when, who decided, each line as requested and as it is now | read |
+| `get_purchase_request` | One request by PR number | read |
+| `create_purchase_request` | Ask a PVP to approve buying BOM lines (Planned, not already requested) | write |
+| `approve_purchase_request` | Approve a waiting request, all of it or the lines in `itemIds`; approved lines become Approved, the rest stay Planned | write; PVPs only |
+| `reject_purchase_request` | Reject a waiting request with a reason; lines stay Planned | write; PVPs only |
+| `cancel_purchase_request` | Withdraw a waiting request | write; its maker or a PVP |
+| `list_pvps` | The PVPs (purchase approvers), seed or added | read |
+| `add_pvp` / `remove_pvp` | Change the PVP list | PVPs only; the last PVP can't be removed |
 | `list_blockers` | By `taskId`: blocked-by and blocking lists; by `projectId`: every edge (the Gantt arrows) | read |
 | `list_activity` | The audit log with the `/activity` filters (kind, actor, project) plus task and `since`/`until`, paged | read; each item has a `summary` line |
 | `recent_activity` | The last N hours (default 24, max 168), the digest's view, optional project / subteam | read |
-| `contribution_stats` | The `/activity/stats` leaderboard: per actor, tasks completed / created / moved forward in `window` (`7d`, `30d` default, `all`; Berkeley days), with totals and the histogram buckets | read |
+| `contribution_stats` | The counts behind `/activity/stats`: per actor, tasks completed / created / moved forward in `window` (`7d`, `30d` default, `all`; Berkeley days), with totals and the histogram buckets | read |
+| `leaderboard` | The `/activity/leaderboard` ranking: each member's points (points on tasks completed in `window`, split evenly between non-admin assignees) beside completed / created / moved forward; admins never listed; `sort` (`points` default, `completed`, `created`, `forward`, `total`) and `dir`; `bySubteam: true` returns one ranking per subteam, as the page shows | read |
 | `list_subteams` | Every subteam as `/subteams` lists them: id, name, colour, created, total `taskCount` and `activeTaskCount` | read |
 | `get_subteam` | One subteam with its active tasks as `/subteams/{id}` shows them (number, status, priority, due, project with colour and path, assignees, blockers), in board order | read |
 | `create_subteam` | New subteam: name, optional colour; returns it | admins only; write |

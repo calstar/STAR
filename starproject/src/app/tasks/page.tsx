@@ -63,6 +63,8 @@ export default async function TasksPage({
     color: colorOf(tree, node.id),
   }));
 
+  const admin = await isAdmin(me.email);
+
   return (
     <div className="mx-auto max-w-[88rem] px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Tasks</h1>
@@ -71,6 +73,7 @@ export default async function TasksPage({
           projects={projectOptions}
           users={users}
           subteams={subteams}
+          admin={admin}
         />
       </div>
       <div className="mt-4">
@@ -79,7 +82,7 @@ export default async function TasksPage({
           projects={projectOptions}
           subteams={subteams}
           users={users}
-          admin={await isAdmin(me.email)}
+          admin={admin}
           currentUserId={me.id}
           initialSubteam={subteam}
           initialProjects={project?.split(",").filter(Boolean)}
