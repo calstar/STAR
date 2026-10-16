@@ -222,14 +222,29 @@ export function TasksWorkspace({
           />
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              role="switch"
+              aria-checked={myOnly}
               onClick={() => setMyOnly((v) => !v)}
-              className={`min-h-11 rounded px-3 py-1.5 text-sm font-medium sm:min-h-0 ${
+              className={`flex min-h-11 items-center gap-2 rounded-full border py-1 pl-3 pr-1.5 text-sm font-medium sm:min-h-0 ${
                 myOnly
-                  ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                  : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  ? "border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
+                  : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
               }`}
             >
               My tasks
+              <span
+                aria-hidden
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  myOnly ? "bg-neutral-900 dark:bg-neutral-100" : "bg-neutral-300 dark:bg-neutral-700"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
+                    myOnly ? "translate-x-[18px]" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
             </button>
             <FieldSelect
               ariaLabel="Filter by status"
