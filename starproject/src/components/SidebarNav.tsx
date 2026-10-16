@@ -64,6 +64,15 @@ function IconFinance() {
     </svg>
   );
 }
+function IconCart() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 4h2l2.4 11h10.2L20 8H6.2" />
+      <circle cx="9.5" cy="19.5" r="1.5" />
+      <circle cx="17" cy="19.5" r="1.5" />
+    </svg>
+  );
+}
 function IconChevron({ direction }: { direction: "left" | "right" }) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
@@ -98,6 +107,7 @@ function NavLink({
   active,
   collapsed,
   onClick,
+  badge = 0,
 }: {
   href: string;
   label: string;
@@ -105,6 +115,8 @@ function NavLink({
   active: boolean;
   collapsed?: boolean;
   onClick?: () => void;
+  /** A count shown beside the label (e.g. requests waiting); hidden at 0. */
+  badge?: number;
 }) {
   return (
     <Link
@@ -120,8 +132,18 @@ function NavLink({
           : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
       }`}
     >
-      <span className={active ? "" : "text-neutral-400 dark:text-neutral-500"}>{icon}</span>
+      <span className={`relative ${active ? "" : "text-neutral-400 dark:text-neutral-500"}`}>
+        {icon}
+        {collapsed && badge > 0 && (
+          <span className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden />
+        )}
+      </span>
       {!collapsed && label}
+      {!collapsed && badge > 0 && (
+        <span className="ml-auto rounded-full bg-amber-500 px-1.5 text-xs font-semibold text-white" aria-label={`${badge} waiting`}>
+          {badge}
+        </span>
+      )}
     </Link>
   );
 }
@@ -226,12 +248,15 @@ export function SidebarNav({
   userName,
   userEmail,
   isAdmin,
+  purchaseBadge = 0,
   projects,
   subteams,
 }: {
   userName: string;
   userEmail: string;
   isAdmin: boolean;
+  /** Purchase requests waiting for a PVP (0 for everyone else). */
+  purchaseBadge?: number;
   projects: EntityLite[];
   subteams: EntityLite[];
 }) {
@@ -295,6 +320,7 @@ export function SidebarNav({
   const isSubteams = pathname === "/subteams" || pathname.startsWith("/subteams/");
   const isActivity = pathname.startsWith("/activity");
   const isFinance = pathname.startsWith("/finance");
+  const isPurchases = pathname.startsWith("/purchase-requests");
 
   // Shared between the desktop rail (which alone may be `collapsed`) and the
   // mobile drawer (always full) so the two never drift apart otherwise.
@@ -312,8 +338,9 @@ export function SidebarNav({
           <NavLink href="/" label="Home" icon={<IconHome />} active={isHome} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/tasks?mine=1" label="My tasks" icon={<IconCheck />} active={isMyTasks} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/tasks" label="Tasks" icon={<IconList />} active={isTasks} collapsed={collapsed} onClick={onNavigate} />
-          <NavLink href="/activity" label="Activity" icon={<IconActivity />} active={isActivity} collapsed={collapsed} onClick={onNavigate} />
+          <NavLink href="/activity/leaderboard" label="Activity" icon={<IconActivity />} active={isActivity} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/finance" label="Finance" icon={<IconFinance />} active={isFinance} collapsed={collapsed} onClick={onNavigate} />
+          <NavLink href="/purchase-requests" label="Purchase Requests" icon={<IconCart />} active={isPurchases} collapsed={collapsed} onClick={onNavigate} badge={purchaseBadge} />
           {collapsed && (
             <>
               <NavLink href="/projects" label="Projects" icon={<IconFolder />} active={isProjects} collapsed onClick={onNavigate} />

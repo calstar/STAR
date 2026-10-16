@@ -10,7 +10,24 @@ migrations, and deploy end to end. Features come in later phases.
 
 ## Local development
 
-No Caddy runs in dev, so identity comes from an env fallback.
+**Quickest: one command, no Docker or Postgres install needed.**
+
+```bash
+cd starproject
+npm install
+npm run dev:local            # private Postgres 16 in .localdb/, migrations, demo data, http://localhost:3000
+npm run smoke:local          # in a second terminal: end-to-end checks of the BOM against the running app
+npm run dev:local -- --reset # wipe the local database and start again from the demo data
+```
+
+`dev:local` runs a real Postgres from the `embedded-postgres` package on port
+54329, applies migrations with `prisma migrate deploy` (what the production
+container runs), seeds an LE4 tree with BOM lines from LE3 BOM.xlsx, and makes
+you `dev@berkeley.edu`, an admin (`DEV_AUTH_EMAIL` to change it). It only ever
+talks to localhost. `npm run dev:local -- --db` starts just the database, for
+`prisma migrate dev` (it prints the `DATABASE_URL`).
+
+**Or bring your own Postgres.** No Caddy runs in dev, so identity comes from an env fallback.
 
 ```bash
 cd starproject

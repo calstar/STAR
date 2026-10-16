@@ -42,6 +42,18 @@ export const projectCreateSchema = z.object({
   parentId: z.preprocess(emptyToUndef, z.string().optional()),
 });
 
+// A task's points: a whole number 0–1000, or "" / null for none. No negatives.
+export const MAX_TASK_POINTS = 1000;
+export const TaskPointsInput = z.preprocess(
+  (v) => (v === "" || v == null ? null : v),
+  z.coerce
+    .number()
+    .int("Points must be a whole number.")
+    .min(0, "Points can't be negative.")
+    .max(MAX_TASK_POINTS, `Points can be at most ${MAX_TASK_POINTS}.`)
+    .nullable(),
+);
+
 export const taskCreateSchema = z.object({
   projectId: z.string().min(1),
   title: z.string().trim().min(1, "Title is required").max(300),
@@ -51,6 +63,7 @@ export const taskCreateSchema = z.object({
   subteamId: z.preprocess(emptyToUndef, z.string().optional()),
   startDate: taskDate,
   dueDate: taskDate,
+  points: TaskPointsInput.optional(),
 });
 
 export const subteamCreateSchema = z.object({

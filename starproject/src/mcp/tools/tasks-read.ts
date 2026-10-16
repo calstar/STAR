@@ -132,6 +132,9 @@ export type SerializedTaskRow = {
   archived: boolean;
   /** When the task last entered Done (null unless it is done). */
   completedAt: string | null;
+  /** Points an admin put on the task (null = none); split between its
+   * non-admin assignees on the Leaderboard once it is done. */
+  points: number | null;
   blocked: boolean;
   overdue: boolean;
   blockedBy: { id: string; title: string; status: TaskStatus }[];
@@ -179,6 +182,7 @@ export function serializeTaskRow(t: TaskRow, tree: ProjectTree, opts: { below?: 
     dueDate: ymd(t.dueDate),
     archived: t.archived,
     completedAt: t.completedAt ? new Date(t.completedAt).toISOString() : null,
+    points: t.points ?? null,
     blocked: row.blocked,
     overdue: row.overdue,
     blockedBy: t.blockedBy.map((b) => b.blockedByTask),

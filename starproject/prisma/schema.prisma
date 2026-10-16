@@ -35,20 +35,24 @@ model User {
   displayName String? // user-chosen override; if set, shown instead of `name`
   createdAt   DateTime @default(now())
 
-  createdProjects        Project[]            @relation("ProjectCreatedBy")
-  createdTasks           Task[]               @relation("TaskCreatedBy")
-  assignedTasks          Task[]               @relation("TaskAssignee")
-  activities             Activity[]           @relation("ActivityActor")
-  settings               UserSettings?
-  digestSubscriptions    DigestSubscription[]
-  emailQueue             EmailQueueItem[]
-  payeeProfile           PayeeProfile?
-  createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
-  approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
-  reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
-  apiTokens              ApiToken[]
-  designReParts          TaskManufacturing[]  @relation("ManufacturingDesignRe")
-  manufacturingReParts   TaskManufacturing[]  @relation("ManufacturingMfgRe")
+  createdProjects         Project[]            @relation("ProjectCreatedBy")
+  createdTasks            Task[]               @relation("TaskCreatedBy")
+  assignedTasks           Task[]               @relation("TaskAssignee")
+  activities              Activity[]           @relation("ActivityActor")
+  settings                UserSettings?
+  digestSubscriptions     DigestSubscription[]
+  emailQueue              EmailQueueItem[]
+  payeeProfile            PayeeProfile?
+  createdReimbursements   Reimbursement[]      @relation("ReimbursementCreatedBy")
+  approvedReimbursements  Reimbursement[]      @relation("ReimbursementApprovedBy")
+  reimbursementEvents     ReimbursementEvent[] @relation("ReimbursementEventActor")
+  apiTokens               ApiToken[]
+  designReParts           TaskManufacturing[]  @relation("ManufacturingDesignRe")
+  manufacturingReParts    TaskManufacturing[]  @relation("ManufacturingMfgRe")
+  createdBomItems         BomItem[]            @relation("BomItemCreatedBy")
+  purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
+  createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
+  decidedPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestDecidedBy")
 }
 
 // A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
@@ -99,6 +103,9 @@ model Project {
   phases        String[]       @default([])
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
+
+  bomItems         BomItem[]
+  purchaseRequests PurchaseRequest[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -214,6 +221,10 @@ model Task {
   // done task in its Done column for DONE_ON_BOARD_DAYS after this, then it is
   // only in the archive (src/lib/board.ts onBoard).
   completedAt DateTime?
+  // Points an admin puts on the task (0–1000, null = none). Once the task is
+  // done they split evenly between its non-admin assignees on the Leaderboard
+  // (src/lib/leaderboard.ts). Only admins may set them (actions/tasks.ts).
+  points      Int?
   createdById String
   createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime      @default(now())
@@ -224,6 +235,7 @@ model Task {
   activities    Activity[]
   // Present only for a manufacturing task: the part's details.
   manufacturing TaskManufacturing?
+  bomItems      BomItem[]
 
   @@index([projectId, status])
   @@index([status, completedAt])
@@ -386,6 +398,8 @@ model Reimbursement {
   items  ReimbursementItem[]
   events ReimbursementEvent[]
 
+  bomItems BomItem[]
+
   @@index([status])
   @@index([payeeEmail])
   @@index([submitterEmail])
@@ -499,4 +513,166 @@ model WorkerStatus {
   loginRequestedBy String?
   loginUpdatedAt   DateTime?
   loginNote        String?
+}
+
+// ---- Bill of materials -------------------------------------------------------
+//
+// One row per thing to buy, on the project it belongs to (Flight Computer, not
+// LE4). A project's BOM tab shows its own lines plus every descendant's, so the
+// LE4 page is the whole vehicle without any line being stored twice. Money is
+// integer cents, like Finance. The predicted cost is never stored: it is
+// computed by src/lib/bom.ts (unit x qty + shipping), one rule for everyone.
+
+enum BomStatus {
+  planned // on the list, nobody has signed off on the spend
+  approved // an admin said yes
+  ordered
+  received
+}
+
+enum BomKind {
+  part // unit cost x quantity + shipping
+  allowance // a lump sum with no quantity: "Buffer", "testing and spares"
+}
+
+model BomItem {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  kind          BomKind @default(part)
+  name          String
+  partNumber    String? // McMaster 91290A231, a Digikey PN
+  // Who makes it, as opposed to who sells it (supplier): STMicroelectronics
+  // for a part bought from Digikey.
+  manufacturer  String?
+  // For an allowance, unitCostCents is the lump sum and quantity is unused.
+  unitCostCents Int?
+  // Not always a count: "200" feet of shock cord. Up to three decimals.
+  quantity      Float?
+  shippingCents Int? // estimated shipping, tariffs and tax for the line
+  realizedCents Int? // what was actually paid, receipt total
+  supplier      String?
+  url           String?
+  // A backup or spare: counted, but the tab can show totals without them.
+  spare         Boolean @default(false)
+
+  status     BomStatus @default(planned)
+  approvedAt DateTime?
+  orderedAt  DateTime?
+
+  purchaserId   String?
+  purchaser     User?   @relation("BomItemPurchaser", fields: [purchaserId], references: [id], onDelete: SetNull)
+  // A name typed in (imported sheets say "Steven"), used when nobody is picked.
+  purchaserName String?
+  location      String? // "Snode", "Kush's house"
+  notes         String?
+
+  // The task this line is for (often a manufacturing task), if any.
+  taskId              String?
+  task                Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  // The reimbursement this purchase was filed on. "Reimbursed" is read from
+  // it (CalLink says Completed), not ticked by hand.
+  reimbursementId     String?
+  reimbursement       Reimbursement? @relation(fields: [reimbursementId], references: [id], onDelete: SetNull)
+  // Paid back before STARProject tracked reimbursements (imported LE3 rows).
+  reimbursedElsewhere Boolean        @default(false)
+
+  requestItems PurchaseRequestItem[]
+
+  position    Float    @default(0) // order within the project, lowest first
+  createdById String
+  createdBy   User     @relation("BomItemCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([reimbursementId])
+}
+
+// ---- PVP: who approves spending ----------------------------------------------
+//
+// Same shape as the admin list: a seed list in code (src/lib/pvp.ts), runtime
+// additions here, and tombstones for removed seeds. Only a PVP may approve a
+// purchase request or move a BOM line out of Planned.
+
+model PvpEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model RemovedSeedPvp {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+// ---- Purchase requests --------------------------------------------------------
+//
+// A member asks for BOM lines to be bought; a PVP approves or rejects the whole
+// request. Approving moves its lines to Approved. Each item is a snapshot of
+// its line when requested, so the record of what was asked for and approved
+// survives later edits or the line being deleted.
+
+enum PurchaseRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+model PurchaseRequest {
+  id     String                @id @default(cuid())
+  // Human-facing PR-N. Never reused, never edited.
+  number Int                   @unique @default(autoincrement())
+  status PurchaseRequestStatus @default(pending)
+
+  // The project whose BOM it was made from.
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  note      String?
+
+  createdById String
+  createdBy   User     @relation("PurchaseRequestCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  decidedById  String?
+  decidedBy    User?     @relation("PurchaseRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt    DateTime?
+  decisionNote String?
+
+  items PurchaseRequestItem[]
+
+  @@index([status, createdAt])
+}
+
+model PurchaseRequestItem {
+  id        String          @id @default(cuid())
+  requestId String
+  request   PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  // The live line; null once it is deleted.
+  bomItemId String?
+  bomItem   BomItem?        @relation(fields: [bomItemId], references: [id], onDelete: SetNull)
+
+  // The line as it was when requested.
+  projectId      String
+  projectName    String
+  kind           BomKind
+  name           String
+  partNumber     String?
+  manufacturer   String?
+  unitCostCents  Int?
+  quantity       Float?
+  shippingCents  Int?
+  url            String?
+  predictedCents Int
+  position       Int
+  // The PVP's call on this line: null while the request waits, then true for
+  // a line approved and false for one left out of the approval (it stays
+  // Planned and can be requested again).
+  approved       Boolean?
+
+  @@index([requestId])
+  @@index([bomItemId])
 }

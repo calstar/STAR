@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { isAdmin } from "@/lib/admins";
+import { isPvp } from "@/lib/pvp";
 import { listTokens, revokeToken } from "@/lib/apiTokens";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
@@ -28,6 +29,7 @@ export const metaTools: ToolModule = (server) => {
         name: user.name,
         displayName: displayNameOf(user),
         isAdmin: await isAdmin(user.email),
+        isPvp: await isPvp(user.email),
       };
     },
   );

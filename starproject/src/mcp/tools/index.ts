@@ -2,6 +2,8 @@ import type { ToolModule } from "./_shared";
 import { adminTools } from "./admins";
 import { activityTools } from "./activity";
 import { blockerTools } from "./blockers";
+import { bomTools } from "./bom";
+import { purchaseRequestTools } from "./purchase-requests";
 import { financeTools } from "./finance";
 import { metaTools } from "./meta";
 import { tasksReadTools } from "./tasks-read";
@@ -31,4 +33,6 @@ export const TOOL_MODULES: ToolModule[] = [
   activityTools,
   statsTools,
   financeTools,
+  bomTools,
+  purchaseRequestTools,
 ];

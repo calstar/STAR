@@ -69,7 +69,7 @@ export default async function ActivityPage({
     <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <h1 className="text-2xl font-semibold">Activity</h1>
 
-      <ActivityTabs active="feed" />
+      <ActivityTabs active="history" />
 
       <ActivityFilters
         users={users}

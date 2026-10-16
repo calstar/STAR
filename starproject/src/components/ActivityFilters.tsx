@@ -13,6 +13,13 @@ const KINDS: [string, string][] = [
   ["deleted", "Deleted"],
   ["blocker_added", "Blocker added"],
   ["blocker_removed", "Blocker removed"],
+  ["bom_added", "BOM line added"],
+  ["bom_updated", "BOM line changed"],
+  ["bom_removed", "BOM line removed"],
+  ["pr_created", "Purchase requested"],
+  ["pr_approved", "Purchase approved"],
+  ["pr_rejected", "Purchase rejected"],
+  ["pr_cancelled", "Purchase request cancelled"],
 ];
 
 export function ActivityFilters({

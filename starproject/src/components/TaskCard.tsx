@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useRef } from "react";
 
 import { AssigneeChip } from "@/components/AssigneeChip";
+import { PointsBadge } from "@/components/PointsBadge";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
@@ -36,6 +37,7 @@ function CardBody({ task }: { task: BoardTask }) {
           />
         )}
         {blocked && <BlockedBadge />}
+        {task.points != null && task.points > 0 && <PointsBadge points={task.points} />}
         {task.priority && (
           <span
             className={`rounded px-1.5 py-0.5 font-medium capitalize ${PRIORITY_BADGE[task.priority]}`}

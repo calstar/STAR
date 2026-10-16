@@ -98,7 +98,7 @@ export default async function SubteamPage({
       header={header}
       showProject
       newTaskForm={
-        <NewTaskForm subteamId={subteam.id} projects={projectOptions} users={users} />
+        <NewTaskForm subteamId={subteam.id} projects={projectOptions} users={users} admin={admin} />
       }
       emptyText={`No tasks are tagged with “${subteam.name}” yet. Add one above or set a task's subteam to this one.`}
     />

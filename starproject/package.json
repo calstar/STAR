@@ -12,7 +12,9 @@
     "prisma:generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
-    "mcp:e2e": "node scripts/mcp-e2e.mjs"
+    "mcp:e2e": "node scripts/mcp-e2e.mjs",
+    "dev:local": "node scripts/dev-local.mjs",
+    "smoke:local": "node scripts/smoke-local.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.700.0",
@@ -22,6 +24,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@prisma/client": "^6.3.1",
     "@tanstack/react-table": "^8.20.5",
+    "exceljs": "4.4.0",
     "next": "^15.1.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -35,6 +38,7 @@
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
+    "embedded-postgres": "16.14.0-beta.17",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.24",
     "postcss": "^8.5.1",

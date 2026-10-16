@@ -8,12 +8,14 @@ import { ActivityItem, renderActivity, timeAgo } from "@/components/ActivityLine
 import { BlockedBadge } from "@/components/BlockedBadge";
 import { BlockerEditor } from "@/components/BlockerEditor";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
+import { PointsBadge } from "@/components/PointsBadge";
 import { ManufacturingSection } from "@/components/ManufacturingSection";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
 import { DescriptionInput } from "@/components/fields/DescriptionInput";
 import { DueDateInput } from "@/components/fields/DueDateInput";
+import { PointsInput } from "@/components/fields/PointsInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
 import { ProjectSelect } from "@/components/fields/ProjectSelect";
 import { EditableTitle } from "@/components/fields/EditableTitle";
@@ -23,6 +25,7 @@ import { removeBlocker } from "@/lib/actions/blockers";
 import { archiveTask } from "@/lib/actions/tasks";
 import { dateLabel } from "@/lib/activity";
 import { DONE_ON_BOARD_DAYS, leavesBoardAt, onBoard } from "@/lib/board";
+import { DEFAULT_TASK_POINTS, effectivePoints, shareLabel } from "@/lib/leaderboard";
 import type { TaskDetailData } from "@/lib/task-detail";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 
@@ -39,7 +42,8 @@ function pill(status: TaskStatus): string {
 
 export function TaskDetail({ data }: { data: TaskDetailData }) {
   const { openTask, refresh } = useTaskModal();
-  const { task, users, candidates, subteams, projects, projectAncestors } = data;
+  const { task, users, candidates, subteams, projects, projectAncestors, admin, pointMembers } = data;
+  const share = shareLabel(effectivePoints(task.points), pointMembers);
   const [showHistory, setShowHistory] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -117,6 +121,9 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               <p className={label}>Assignees</p>
               <div className="mt-1">
                 <AssigneeSelect
+                  // Re-seed when the assignees change elsewhere (making someone a
+                  // Design or Manufacturing RE assigns them), not only from this picker.
+                  key={task.assignees.map((a) => a.id).join(",")}
                   taskId={task.id}
                   value={task.assignees.map((a) => a.id)}
                   users={users}
@@ -130,6 +137,27 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
               </div>
             </div>
           </div>
+          {(admin || task.points != null || share) && (
+            <div className="mt-3">
+              <p className={label}>Points</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {admin ? (
+                  <PointsInput key={task.id} taskId={task.id} value={task.points} />
+                ) : (
+                  task.points != null && <PointsBadge points={task.points} />
+                )}
+                {share && (
+                  <span className="text-xs text-violet-700 dark:text-violet-300">{share} when done</span>
+                )}
+              </div>
+              {admin && (
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Split evenly between the assignees who aren&apos;t admins once the task is done. Blank counts as{" "}
+                  {DEFAULT_TASK_POINTS}. Only admins can change it.
+                </p>
+              )}
+            </div>
+          )}
           <div className="mt-3">
             <p className={label}>Project</p>
             <div className="mt-1">

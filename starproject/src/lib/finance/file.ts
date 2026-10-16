@@ -1,3 +1,4 @@
+import { recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { parseMoney, sumCents } from "@/lib/finance/money";
 import { checkReceipt, safeFileName } from "@/lib/finance/receipts";
@@ -122,8 +123,31 @@ export async function fileReimbursement(user: Filer, form: FormData): Promise<Fi
       };
       await tx.payeeProfile.upsert({ where: { userId: user.id }, create: { userId: user.id, ...profile }, update: profile });
     }
+    // The BOM lines it pays back now read their reimbursed state from it.
+    if (input.bomItemIds.length) {
+      await tx.bomItem.updateMany({ where: { id: { in: input.bomItemIds } }, data: { reimbursementId: r.id } });
+    }
     return r;
   });
+
+  if (input.bomItemIds.length) {
+    const lines = await prisma.bomItem.findMany({
+      where: { id: { in: input.bomItemIds } },
+      select: { name: true, projectId: true },
+    });
+    for (const l of lines) {
+      await recordActivity({
+        actorId: user.id,
+        taskId: null,
+        projectId: l.projectId,
+        taskTitle: l.name,
+        kind: "bom_updated",
+        field: "bom.reimbursementId",
+        from: "—",
+        to: `R-${created.number}`,
+      });
+    }
+  }
 
   return { number: created.number };
 }

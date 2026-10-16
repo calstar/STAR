@@ -38,7 +38,51 @@ describe("buildActivityWhere", () => {
 
   it("lists every ActivityKind the filter accepts", () => {
     expect([...ACTIVITY_KINDS].sort()).toEqual(
-      ["assigned", "blocker_added", "blocker_removed", "created", "deleted", "unassigned", "updated"].sort(),
+      [
+        "assigned",
+        "blocker_added",
+        "blocker_removed",
+        "bom_added",
+        "bom_removed",
+        "bom_updated",
+        "pr_approved",
+        "pr_cancelled",
+        "pr_created",
+        "pr_rejected",
+        "created",
+        "deleted",
+        "unassigned",
+        "updated",
+      ].sort(),
+    );
+  });
+});
+
+describe("activitySummary for BOM lines", () => {
+  it("names the line, the field and the project", () => {
+    expect(activitySummary(row({ kind: "bom_added", taskTitle: "DAQ PCBs", toValue: "LE4 Avionics" }))).toBe(
+      "Ada L. added BOM line “DAQ PCBs” on LE4 Avionics",
+    );
+    expect(
+      activitySummary(
+        row({ kind: "bom_updated", taskTitle: "DAQ PCBs", field: "bom.status", fromValue: "Planned", toValue: "Approved" }),
+      ),
+    ).toBe("Ada L. changed status of BOM line “DAQ PCBs” from Planned to Approved");
+    expect(
+      activitySummary(
+        row({ kind: "bom_added", field: "bom.import", taskTitle: "12 lines from LE3 BOM.xlsx (Avionics BOM)", toValue: "LE4 › LE4 Avionics" }),
+      ),
+    ).toBe("Ada L. imported 12 lines from LE3 BOM.xlsx (Avionics BOM) into the BOM on LE4 › LE4 Avionics");
+  });
+});
+
+describe("activitySummary for purchase requests", () => {
+  it("names the request and the reason", () => {
+    expect(activitySummary(row({ kind: "pr_created", taskTitle: "PR-3 · 2 lines · $48.98" }))).toBe(
+      "Ada L. requested a purchase, PR-3 · 2 lines · $48.98",
+    );
+    expect(activitySummary(row({ kind: "pr_rejected", taskTitle: "PR-3 · 2 lines · $48.98", toValue: "Over budget" }))).toBe(
+      "Ada L. rejected purchase PR-3 · 2 lines · $48.98: “Over budget”",
     );
   });
 });

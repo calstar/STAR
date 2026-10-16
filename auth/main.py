@@ -70,6 +70,48 @@ app.config["SESSION_COOKIE_NAME"] = "oauth_state"
 JWT_SECRET = os.environ["JWT_SECRET"]
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", ".starberkeley.org")
 ALLOWED_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "berkeley.edu")
+
+
+def _parse_outside_emails(raw: str) -> dict[str, frozenset[str]]:
+    """`"a@gmail.com:project;b@x.org:project,pid"` -> {email: {apps}}.
+
+    Blank or malformed entries are skipped: an entry with no app grants nothing.
+    """
+    out: dict[str, frozenset[str]] = {}
+    for entry in raw.split(";"):
+        email, _, apps = entry.partition(":")
+        email = email.strip().lower()
+        names = frozenset(a.strip().lower() for a in apps.split(",") if a.strip())
+        if email and "@" in email and names:
+            out[email] = names
+    return out
+
+
+# Addresses outside @berkeley.edu that may sign in, each limited to the apps
+# named for it. The session cookie is shared by every *.starberkeley.org app, so
+# the limit is enforced per request in /verify, not only at login. The club's
+# purchasing account (PVP) uses STAR Project only.
+OUTSIDE_EMAILS = _parse_outside_emails(
+    os.environ.get("OUTSIDE_EMAILS", "ucberkeleystar@gmail.com:project")
+)
+
+
+def _in_domain(email: str) -> bool:
+    return email.lower().endswith(f"@{ALLOWED_DOMAIN}")
+
+
+def may_sign_in(email: str, verified: bool) -> bool:
+    """Login: any @berkeley.edu account, or a listed outside address Google has verified."""
+    if _in_domain(email):
+        return True
+    return verified and email.strip().lower() in OUTSIDE_EMAILS
+
+
+def may_use_app(email: str, app: str) -> bool:
+    """Per request: @berkeley.edu may use every app; an outside address only its own."""
+    if _in_domain(email):
+        return True
+    return app in OUTSIDE_EMAILS.get(email.strip().lower(), frozenset())
 TOKEN_TTL_DAYS = int(os.environ.get("TOKEN_TTL_DAYS", "30"))
 
 # Bare domain that owns every app, e.g. "starberkeley.org". Used both to decide
@@ -224,7 +266,7 @@ def callback():
 
     email = token["userinfo"]["email"]
 
-    if not email.endswith(f"@{ALLOWED_DOMAIN}"):
+    if not may_sign_in(email, bool(token["userinfo"].get("email_verified"))):
         return (
             f"<h2>Access denied</h2>"
             f"<p>{escape(email)} is not a @{ALLOWED_DOMAIN} account.</p>",
@@ -291,6 +333,13 @@ def verify():
         # allowlist is consulted only when the requested path is one that needs
         # it. A denied user is already logged in, so this is a 403, never a login
         # bounce: re-logging in would not change the answer.
+        # An address from outside @berkeley.edu holds the same shared cookie as
+        # everyone else, so it is held to the apps it was let in for here.
+        if not may_use_app(email, app):
+            if _wants_interactive_login():
+                return _not_approved_page(email, app), 403
+            return "Forbidden", 403
+
         uri = request.headers.get("X-Forwarded-Uri", "/")
         if allowlist.path_needs_approval(app, uri) and not allowlist.is_approved(app, email):
             if _wants_interactive_login():

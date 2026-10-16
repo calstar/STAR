@@ -4,6 +4,7 @@ import { EditEntityButton } from "@/components/EditEntityButton";
 import { EntityRow, LIST_CARD } from "@/components/EntityRow";
 import { NewProjectForm } from "@/components/NewProjectForm";
 import { AdminConfig } from "@/components/settings/AdminConfig";
+import { PvpConfig } from "@/components/settings/PvpConfig";
 import { createSubteam, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
 import { deleteProject, updateProject } from "@/lib/actions/projects";
 import { isAdmin, listAdmins } from "@/lib/admins";
@@ -11,14 +12,18 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { flatten, moveProblem, pathOf, totalTasks } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
+import { isPvp, listPvps } from "@/lib/pvp";
 
 export const dynamic = "force-dynamic";
 
 // Admin-only workspace setup: the rare, data-losing actions (create/remove
 // projects and subteams) live here, off the everyday browse pages.
 export default async function WorkspacePage() {
-  const admin = await isAdmin((await getCurrentUser()).email);
+  const viewer = await getCurrentUser();
+  const admin = await isAdmin(viewer.email);
   if (!admin) redirect("/settings");
+  // The PVP list shows only to an admin who is also a PVP (only PVPs may change it).
+  const pvp = await isPvp(viewer.email);
 
   const [projects, tree, subteams, admins] = await Promise.all([
     prisma.project.findMany({
@@ -164,6 +169,20 @@ export default async function WorkspacePage() {
       <div className="mt-2">
         <AdminConfig admins={admins} />
       </div>
+
+      {pvp && (
+        <>
+          {/* PVPs */}
+          <h2 className={`${heading} mt-8`}>PVPs</h2>
+          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            PVPs approve spending: only a PVP can approve or reject a purchase request, or move a BOM
+            line out of Planned.
+          </p>
+          <div className="mt-2">
+            <PvpConfig pvps={await listPvps()} />
+          </div>
+        </>
+      )}
     </div>
   );
 }
