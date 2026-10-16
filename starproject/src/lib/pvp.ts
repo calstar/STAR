@@ -10,7 +10,9 @@ import { getCurrentDbUser } from "@/lib/user";
 // Kept exactly like the admin list (src/lib/admins.ts): a seed list here, runtime
 // additions in PvpEmail, removed seeds tombstoned in RemovedSeedPvp. Any PVP can
 // add or remove PVPs (Workspace setup → PVPs), never the last one.
-export const SEED_PVP_EMAILS = ["ucberkeleystar@gmail.com"].map((e) => e.toLowerCase());
+export const SEED_PVP_EMAILS = ["ucberkeleystar@gmail.com", "aidanrickert@berkeley.edu"].map((e) =>
+  e.toLowerCase(),
+);
 
 // Memoized per request, like getAdminEmails.
 const getPvpEmails = cache(async (): Promise<Set<string>> => {
