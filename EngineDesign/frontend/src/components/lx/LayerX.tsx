@@ -154,9 +154,20 @@ function Failed({ run }: { run: RunView }) {
 }
 
 /** The guided start (GUI-SPEC "States"): three steps, each lights its rail control. */
-function GuidedStart({ job, onShow }: { job: LayerXJob; onShow: (step: RailStep) => void }) {
+function GuidedStart({ job, onShow, firstArrival }: {
+  job: LayerXJob; onShow: (step: RailStep) => void;
+  /** True the first time it is asked in this page load (the root keeps the answer, so it outlives
+   *  this panel): closing the burn opened on arrival shows this panel instead of reopening it. */
+  firstArrival: () => boolean;
+}) {
   const u = useUnits();
   const last = [...job.burns].filter((r) => r.status === 'done').sort(byPinThenNewest)[0];
+  // Layer X opens on the team's last burn when there is one, not on an empty set-up (its pages,
+  // Uncertainty included, have nothing to show without a burn open). Once per page load.
+  const lastId = last?.id;
+  useEffect(() => {
+    if (lastId && firstArrival()) job.openRun(lastId);
+  }, [lastId, job, firstArrival]);
   const tank = job.settings.tank_pressure_psia ?? job.derived?.target_lockup_psia ?? job.configTankPsia;
   const fill = bottleFillPsia(job.settings, job.derived);
   const steps: { step: RailStep; n: string; title: string; now: ReactNode; done: boolean }[] = [
@@ -288,6 +299,16 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   // ---- the page fills the window below the app's header; the main column scrolls, the rail and
   // the timeline stay put.
   const rootRef = useRef<HTMLDivElement>(null);
+  // Every page shares the one scrolling column: a page opens at its top, not at the depth the last
+  // one was scrolled to (Feed and Flight opened with their top charts cut off).
+  const mainRef = useRef<HTMLDivElement>(null);
+  const arrived = useRef(false);
+  const firstArrival = useCallback(() => {
+    if (arrived.current) return false;
+    arrived.current = true;
+    return true;
+  }, []);
+  useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [page]);
   const [top, setTop] = useState(112);
   useLayoutEffect(() => {
     if (!isVisible) return;
@@ -426,7 +447,7 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   } else if (job.openRunId && !job.run) {
     main = <Quiet>Opening the run…</Quiet>;
   } else {
-    main = <GuidedStart job={job} onShow={showStep} />;
+    main = <GuidedStart job={job} onShow={showStep} firstArrival={firstArrival} />;
   }
 
   const tabs = data && burn && !job.live && job.run?.status === 'done' ? tabsFor(data) : null;
@@ -451,7 +472,7 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
               <Rail job={job} collapsed={railCollapsed} onToggle={toggleRail} highlight={highlight} onExpandTo={showStep} />
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="relative min-h-0 flex-1 overflow-y-auto" data-lx-main>
+              <div ref={mainRef} className="relative min-h-0 flex-1 overflow-y-auto" data-lx-main>
                 <div className="mx-auto w-full max-w-[1600px] px-6 pb-10">
                   {tabs ? (
                     <div className="sticky top-0 z-10 -mx-6 mb-5 bg-[var(--lx-bg)] px-6 pt-2">

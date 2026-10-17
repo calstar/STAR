@@ -24,7 +24,7 @@ export interface SchematicProps {
   accelAt?: (t: number) => number | undefined;
   /** No data yet: draw the hardware only. */
   empty?: boolean;
-  /** The run's gauge zero [psia]: the bottle is shown as its gauge reads. */
+  /** The run's gauge zero [psia]: the bottle's hover gives the gauge (DAQ) reading. */
   gaugeZeroPsia?: number;
   /** The nozzle's state at a series index (from the replay): the plume is drawn from it. */
   nozzleAt?: (i: number) => NozzleState | undefined;
@@ -238,8 +238,12 @@ export function FeedSchematic({ series, cursor, setCursor, thrustAt, accelAt, em
         <rect x={38} y={95} width={64} height={140} rx={32} fill="var(--color-bg-primary)" stroke={LINE} strokeWidth={1.5} />
         <rect x={38} y={95} width={64} height={140} rx={32} fill={REG} fillOpacity={copv ? 0.08 + 0.3 * Math.min(1, copv / scale.copv0) : 0.05} />
         <Label x={70} y={84} color={MUTED} size={11}>Bottle</Label>
-        <Label x={70} y={163} size={13} weight={600}>{copv === undefined ? '—' : fmt(copv - gaugeZeroPsia, 0)}</Label>
-        <Label x={70} y={178} size={10} color={MUTED}>psig</Label>
+        {/* psia, like every pressure a person reads here (ADR 0007); the DAQ's gauge figure is the hover. */}
+        <g>
+          <title>{copv === undefined ? '' : `${fmt(copv - gaugeZeroPsia, 0)} psig on the DAQ`}</title>
+          <Label x={70} y={163} size={13} weight={600}>{copv === undefined ? '—' : fmt(copv, 0)}</Label>
+          <Label x={70} y={178} size={10} color={MUTED}>psia</Label>
+        </g>
 
         {/* bottle to regulator */}
         <Flow d="M102 165 H172" color={REG} rate={firing ? gas : 0} still={reduced} />

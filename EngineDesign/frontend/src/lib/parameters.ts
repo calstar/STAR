@@ -37,6 +37,13 @@ export function listedSections(sections: ParameterSection[]): ParameterSection[]
   return sections.filter((s) => !s.internal && (!s.legacy || s.modified > 0));
 }
 
+/** A section the design switches off (`enabled: false`: regenerative or film cooling on an
+ *  ablative engine). Listed apart, under "Off in this design", so it can still be turned on. */
+export function sectionIsOff(key: string, config: Record<string, unknown> | null | undefined): boolean {
+  const s = config?.[key];
+  return !!s && typeof s === 'object' && (s as { enabled?: unknown }).enabled === false;
+}
+
 /** A physics constant that lives in code (engine/pipeline/code_constants.py). Read-only here. */
 export interface CodeConstant {
   name: string;
@@ -146,6 +153,15 @@ const STRESS = /modulus|strength|stress/i;
  * (a range) is shown as one.
  */
 export function friendlyValue(row: ParameterRow, v: unknown): string | null {
+  // A length stored in metres reads in mm and inches: "0.1651 m" is a 6.5 in chamber.
+  if (unitOf(row) === 'm') {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v === 0) return null;
+    // An altitude or a rail is read in feet, not in millions of millimetres.
+    if (Math.abs(v) >= 10) return `${Math.round(v / 0.3048).toLocaleString('en-US')} ft`;
+    const mm = v * 1000;
+    const inch = v / 0.0254;
+    return `${+mm.toPrecision(4)} mm · ${+inch.toPrecision(4)} in`;
+  }
   if (unitOf(row) !== 'Pa') return null;
   const k = row.path.split('.').pop() ?? '';
   const one = (x: unknown): string | null => {
@@ -163,8 +179,8 @@ export function friendlyValue(row: ParameterRow, v: unknown): string | null {
 
 /** Keys whose words do not read on their own. */
 const LABELS: Record<string, string> = {
-  max_P_tank_O: 'Max LOX tank pressure, in Pa (blank: the psia field)',
-  max_P_tank_F: 'Max fuel tank pressure, in Pa (blank: the psia field)',
+  max_P_tank_O: 'Max LOX tank pressure, absolute (blank: the psia field above)',
+  max_P_tank_F: 'Max fuel tank pressure, absolute (blank: the psia field above)',
 };
 
 /** The last path segment, readable: 'max_lox_tank_pressure_psi' -> 'Max LOX tank pressure'. */

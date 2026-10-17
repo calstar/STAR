@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type LayerXSettings } from '../../api/layerx';
-import { heliumTwin, pickDrawing, restatedKey, withFeedTwinThermal, sectionsChanged, settingsDiff, stageOf, toolOf, whatIfHoles } from './useLayerXJob';
+import { heliumTwin, pickDrawing, restatedKey, sweepFor, withFeedTwinThermal, sectionsChanged, settingsDiff, stageOf, toolOf, whatIfHoles } from './useLayerXJob';
 
 const base: LayerXSettings = { ...DEFAULT_SETTINGS, drawing_id: 'he' };
 const names: Record<string, string> = { he: 'copv_study_he', gn2: 'copv_study_gn2' };
@@ -154,5 +154,21 @@ describe('withFeedTwinThermal', () => {
     expect(withFeedTwinThermal(old)).toEqual({ ullage_collapse: null, ullage_vapour: null, line_walls: null, chilldown: null });
     const chosen = { ...old, line_walls: true };
     expect(withFeedTwinThermal(chosen)).toBe(chosen);
+  });
+});
+
+describe('sweepFor', () => {
+  const burn = { id: 'b', design: 'd1', started: 100, settings: { drawing_id: 'x', dt: 0.002 } as unknown as LayerXSettings };
+  const job = (id: string, over: Record<string, unknown>) =>
+    ({ id, kind: 'uncertainty', status: 'done', stage: '', progress: 1, error: null, started: 200, finished: 300,
+       design: 'd1', settings: { ...DEFAULT_SETTINGS, drawing_id: 'x', dt: 0.002 }, ...over }) as never;
+  it('finds the newest finished sweep of the burn when the browser has no link', () => {
+    expect(sweepFor(burn, [job('s1', {}), job('s2', { started: 250 })])).toBe('s2');
+  });
+  it('never borrows a sweep of another design, other settings, an earlier time or one still going', () => {
+    expect(sweepFor(burn, [
+      job('a', { design: 'd2' }), job('b2', { settings: { drawing_id: 'y', dt: 0.002 } }),
+      job('c', { started: 50 }), job('d', { status: 'running' }), job('e', { kind: 'run' }),
+    ])).toBe('');
   });
 });

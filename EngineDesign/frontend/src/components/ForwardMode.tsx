@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { engineIdentity, configFingerprint, identityTransition } from '../lib/engineIdentity';
 import { evaluate, updateConfig } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
@@ -147,6 +147,25 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
     }
   }, [loxPressure, fuelPressure, stabilityOverrides]);
 
+  // The landing tab opens on the engine, not on a prompt: a design that has not been evaluated in
+  // this page yet is evaluated at its stored tank pressures as soon as it is open (about a
+  // second). Once per design -- an edit, a failed evaluation or a result on screen leaves it
+  // alone -- and a switch to another engine (which clears the result above) evaluates that one.
+  const fingerprint = useMemo(() => (config ? configFingerprint(config) : null), [config]);
+  const autoEvaluated = useRef<string | null>(null);
+  const evaluateRef = useRef(handleEvaluate);
+  useEffect(() => { evaluateRef.current = handleEvaluate; }, [handleEvaluate]);
+  useEffect(() => {
+    if (!fingerprint || report || isLoading || error || autoEvaluated.current === fingerprint) return;
+    // A beat for the design's own tank pressures to land in the inputs (the config effect above,
+    // and the design's saved panel state) before they are read.
+    const id = setTimeout(() => {
+      autoEvaluated.current = fingerprint;
+      void evaluateRef.current();
+    }, 300);
+    return () => clearTimeout(id);
+  }, [fingerprint, report, isLoading, error]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleEvaluate();
@@ -168,7 +187,7 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
   }
 
   // A burn belongs to the design it ran on: another version's burn is not shown as this one's.
-  const burnCurrent = !!burn && (!burn.configFingerprint || burn.configFingerprint === configFingerprint(config));
+  const burnCurrent = !!burn && (!burn.configFingerprint || burn.configFingerprint === fingerprint);
   const burnData: TimeSeriesData | null = burnCurrent ? burn!.data : null;
   return (
     <div className="space-y-6">

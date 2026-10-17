@@ -3,7 +3,7 @@ import { useReadOnly } from '@stardesign-ui';
 import { getParameters, updateConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
 import {
-  formatValue, friendlyValue, groupOf, labelOf, listedSections, matches, nestedUpdate, parseInput, unitOf,
+  formatValue, friendlyValue, groupOf, labelOf, listedSections, matches, nestedUpdate, parseInput, sectionIsOff, unitOf,
 } from '../lib/parameters';
 import type { CodeConstant, Filter, ParameterRow, ParametersResponse } from '../lib/parameters';
 import { useViewState } from '../lib/viewState';
@@ -131,13 +131,32 @@ export function ParametersWorkspace({ config, onConfigUpdated }: {
   return (
     <div className="flex h-full min-h-0 text-[var(--color-text-primary)]">
       <nav className="w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto py-2">
-        {listedSections(data?.sections ?? []).map((s) => (
-          <button key={s.key} type="button" onClick={() => { setSection(s.key); setQuery(''); if (filter === 'modified') setFilter('all'); }}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[12px] ${section === s.key && !searching && filter !== 'modified' ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
-            <span className="truncate">{s.label}</span>
-            <span className="font-mono text-[10px] opacity-70">{s.modified > 0 ? `${s.modified}/` : ''}{s.count}</span>
-          </button>
-        ))}
+        {(() => {
+          const listed = listedSections(data?.sections ?? []);
+          const cfg = config as unknown as Record<string, unknown> | null;
+          const off = listed.filter((s) => sectionIsOff(s.key, cfg));
+          const navButton = (s: (typeof listed)[number]) => (
+            <button key={s.key} type="button" onClick={() => { setSection(s.key); setQuery(''); if (filter === 'modified') setFilter('all'); }}
+                    className={`w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] ${section === s.key && !searching && filter !== 'modified' ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
+              <span className="min-w-0 leading-4">{s.label}</span>
+              <span className="shrink-0 font-mono text-[10px] opacity-70">{s.modified > 0 ? `${s.modified}/` : ''}{s.count}</span>
+            </button>
+          );
+          return (
+            <>
+              {listed.filter((s) => !off.includes(s)).map(navButton)}
+              {off.length > 0 && (
+                <>
+                  <div className="px-3 pt-3 pb-1 mt-2 border-t border-[var(--color-border)] text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]"
+                       title="Switched off in this design (enabled: false). Open one to turn it on.">
+                    Off in this design
+                  </div>
+                  <div className="opacity-60">{off.map(navButton)}</div>
+                </>
+              )}
+            </>
+          );
+        })()}
         <button type="button" onClick={() => { setSection(CODE); setQuery(''); setFilter('all'); }}
                 className={`w-full flex items-center justify-between px-3 py-1.5 mt-2 border-t border-[var(--color-border)] text-left text-[12px] ${section === CODE ? 'bg-[var(--color-bg-primary)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
           <span>In code</span>

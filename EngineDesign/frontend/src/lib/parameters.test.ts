@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { friendlyValue, labelOf, listedSections, nestedUpdate, parseInput, unitOf } from './parameters';
+import { friendlyValue, labelOf, listedSections, nestedUpdate, parseInput, sectionIsOff, unitOf } from './parameters';
 import type { ParameterRow } from './parameters';
 
 const row = (over: Partial<ParameterRow>): ParameterRow => ({
@@ -57,5 +57,23 @@ describe('parameters', () => {
     expect(listedSections([sec('fluids'), sec('chamber', { legacy: true }), sec('design_valid_for', { internal: true, modified: 1 })])
       .map((s) => s.key)).toEqual(['fluids']);
     expect(listedSections([sec('chamber', { legacy: true, modified: 1 })]).map((s) => s.key)).toEqual(['chamber']);
+  });
+});
+
+describe('what the Configuration tab shows a person', () => {
+  it('reads a length in mm and inches, not bare metres', () => {
+    const v = 0.1651;
+    expect(friendlyValue(row({ path: 'design_requirements.max_chamber_outer_diameter', unit: 'm', value: v }), v))
+      .toBe('165.1 mm · 6.5 in');
+    expect(friendlyValue(row({ path: 'design_requirements.target_apogee', unit: 'm', value: 3048 }), 3048)).toBe('10,000 ft');
+  });
+  it('never labels a tank pressure "in Pa"', () => {
+    expect(labelOf('design_requirements.max_P_tank_O')).not.toMatch(/\bPa\b/);
+  });
+  it('sets apart a section the design switches off', () => {
+    const cfg = { regen_cooling: { enabled: false }, ablative_cooling: { enabled: true }, injector: {} };
+    expect(sectionIsOff('regen_cooling', cfg)).toBe(true);
+    expect(sectionIsOff('ablative_cooling', cfg)).toBe(false);
+    expect(sectionIsOff('injector', cfg)).toBe(false);
   });
 });

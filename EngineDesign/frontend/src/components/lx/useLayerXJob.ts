@@ -154,6 +154,24 @@ export function settingsDiff(ran: LayerXSettings, now: LayerXSettings, drawingNa
 }
 
 /** The person's restatements a run used, comparable across runs (the vehicle's are its own). */
+/** The sweep that belongs to a burn when this browser has no link for it (a fresh browser, cleared
+ *  storage, another machine): the newest finished uncertainty job started from the burn's own
+ *  settings, after it. Without this a design that HAS been swept read "Not swept yet". */
+export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'started' | 'settings'>, runs: readonly RunView[]): string {
+  const want = (burn.settings ?? {}) as unknown as Record<string, unknown>;
+  const same = (s: LayerXSettings | undefined) => {
+    const got = (s ?? {}) as unknown as Record<string, unknown>;
+    return Object.entries(want).every(([k, v]) => v === undefined || JSON.stringify(got[k]) === JSON.stringify(v));
+  };
+  let best: RunView | null = null;
+  for (const r of runs) {
+    if (r.kind !== 'uncertainty' || r.status !== 'done' || r.id === burn.id) continue;
+    if (r.design !== burn.design || r.started < burn.started || !same(r.settings)) continue;
+    if (!best || r.started > best.started) best = r;
+  }
+  return best?.id ?? '';
+}
+
 export function restatedKey(list: unknown): string {
   return JSON.stringify(((list ?? []) as { origin?: string; key?: string; value?: number }[])
     .filter((o) => o.origin !== 'vehicle').map((o) => [o.key, o.value]).sort());
@@ -375,7 +393,7 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
   }, [isVisible, settings.drawing_id]);
 
   // The sweep of the burn that is open, and polling one that is going.
-  const openSweepId = rawRun ? sweepByRun[rawRun.id] ?? '' : '';
+  const openSweepId = rawRun ? sweepByRun[rawRun.id] ?? sweepFor(rawRun, runs) : '';
   useEffect(() => {
     if (!isVisible) return;
     if (!openSweepId) { setSweep(null); return; }

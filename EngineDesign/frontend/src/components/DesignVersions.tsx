@@ -24,7 +24,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { getConfig, loadConfigJson, type EngineConfig } from '../api/client';
+import { adoptLoadToken, getConfig, lastOwnLoadToken, loadConfigJson, type EngineConfig } from '../api/client';
+import { mayWrite, tickAction } from '../lib/sessionGuard';
 import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
 import { designApi, keyOf, refOf } from '../api/documents';
@@ -66,18 +67,20 @@ function nextLabel(releases: ReleaseVersion[]): string {
   return `0.${maxMinor + 1}`;
 }
 
-async function fetchConfig(): Promise<{ config: EngineConfig; epoch: string | null } | null> {
+async function fetchConfig(): Promise<{ config: EngineConfig; epoch: string | null; token: string | null } | null> {
   const res = await getConfig();
-  return res.data?.config ? { config: res.data.config, epoch: res.data.session_epoch ?? null } : null;
+  return res.data?.config
+    ? { config: res.data.config, epoch: res.data.session_epoch ?? null, token: res.data.load_token ?? null }
+    : null;
 }
 
 /**
  * The design as it stands right now: the authoritative config from the backend
  * session, plus the panel state that has no home in it (lib/designState.ts).
  */
-async function fetchDoc(): Promise<{ doc: api.EngineDesignDoc; epoch: string | null } | null> {
+async function fetchDoc(): Promise<{ doc: api.EngineDesignDoc; epoch: string | null; token: string | null } | null> {
   const got = await fetchConfig();
-  return got ? { doc: { config: got.config, ui: snapshotUiState() }, epoch: got.epoch } : null;
+  return got ? { doc: { config: got.config, ui: snapshotUiState() }, epoch: got.epoch, token: got.token } : null;
 }
 
 interface Props {
@@ -113,6 +116,19 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
   // session holding configs/default.yaml; autosaving that would write the default over the
   // design (it did, 2026-10-01). A changed epoch means: put the design back, save nothing.
   const sessionEpoch = useRef<string | null>(null);
+  // Whether anybody has used this tab since it opened. Until then it saves only a config that
+  // changed under it, never the panel state it derived on load (lib/sessionGuard.ts mayWrite).
+  const touched = useRef(false);
+  useEffect(() => {
+    const mark = () => {
+      touched.current = true;
+    };
+    const events = ['pointerdown', 'keydown', 'input', 'change'] as const;
+    for (const e of events) window.addEventListener(e, mark, { capture: true, passive: true });
+    return () => {
+      for (const e of events) window.removeEventListener(e, mark, { capture: true });
+    };
+  }, []);
 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.
@@ -121,6 +137,11 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
   // read only. Said out loud, because the alternative is the user carrying on
   // typing into a design that is no longer theirs to change.
   const [lapsed, setLapsed] = useState<string | null>(null);
+  // Set when another tab of yours loaded its design into the session this tab shares with it:
+  // this tab has stopped saving (lib/sessionGuard.ts) until it reopens its own design.
+  const [displaced, setDisplaced] = useState<string | null>(null);
+  // The session token the last "displaced" note was raised (or dismissed) for, so it is said once.
+  const displacedFor = useRef<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [micro, setMicro] = useState<MicroVersion[]>([]);
   const [releases, setReleases] = useState<ReleaseVersion[]>([]);
@@ -233,13 +254,18 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
   const currentDoc = useCallback(async (): Promise<api.EngineDesignDoc | null> => {
     const got = await fetchDoc();
     if (!got) return null;
-    if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current && lastSaved.current) {
-      const saved = JSON.parse(lastSaved.current) as api.EngineDesignDoc;
-      if (saved?.config && Object.keys(saved.config).length > 0) {
-        await apply(saved);
-        return saved;
-      }
+    const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
+    const haveSaved = !!saved?.config && Object.keys(saved.config).length > 0;
+    const action = tickAction({
+      held: true, ownEpoch: sessionEpoch.current, sessionEpoch: got.epoch,
+      ownToken: lastOwnLoadToken(), sessionToken: got.token, haveSaved,
+    });
+    if (action === 'restore') {
+      await apply(saved!);
+      return saved;
     }
+    // Another tab's design is in the session: this design is the one last saved, not that.
+    if (action === 'displaced' && haveSaved) return saved;
     return got.doc;
   }, [apply]);
 
@@ -273,6 +299,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
         if (docs.length === 0) {
           const fetched = await fetchDoc();
           sessionEpoch.current = fetched?.epoch ?? null;
+          adoptLoadToken(fetched?.token);
           const seed = fetched?.doc ?? undefined;
           const meta = await api.createDocument('Design 1', seed);
           if (cancelled) return;
@@ -308,6 +335,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
         if (cancelled) return;
         if (got) {
           sessionEpoch.current = sessionEpoch.current ?? got.epoch;
+          if (!lastOwnLoadToken()) adoptLoadToken(got.token);
           onRestoreRef.current(got.config);
         }
       }
@@ -335,24 +363,48 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
       // into -- the cheap call -- and leaves the design alone. A restart or an idle eviction
       // (2 h) used to leave a read-only viewer on configs/default.yaml with the design's name
       // still in the bar: Evaluate then reported a methalox engine as the ethalox one.
-      const got = held ? await fetchDoc() : await fetchConfig().then((c) => (c ? { doc: null, epoch: c.epoch } : null));
+      const got = held
+        ? await fetchDoc()
+        : await fetchConfig().then((c) => (c ? { doc: null, epoch: c.epoch, token: c.token } : null));
       if (!got) return;
-      if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current) {
-        // The backend session was recreated under us and holds the default config, not this
-        // design. Put the last saved design back; never autosave the default over it.
-        const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
-        if (saved?.config && Object.keys(saved.config).length > 0) await applyRef.current(saved);
-        else sessionEpoch.current = got.epoch;
+      if (got.epoch && !sessionEpoch.current) {
+        sessionEpoch.current = got.epoch;
+        if (!lastOwnLoadToken()) adoptLoadToken(got.token);
+      }
+      const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
+      const action = tickAction({
+        held,
+        ownEpoch: sessionEpoch.current,
+        sessionEpoch: got.epoch,
+        ownToken: lastOwnLoadToken(),
+        sessionToken: got.token,
+        haveSaved: !!saved?.config && Object.keys(saved.config).length > 0,
+      });
+      if (action === 'restore') {
+        // The session was recreated under us and holds the default config, not this design.
+        // Put the last saved design back; never autosave the default over it.
+        await applyRef.current(saved!);
         return;
       }
-      if (got.epoch && !sessionEpoch.current) sessionEpoch.current = got.epoch;
+      if (action === 'displaced') {
+        // Another tab of yours loaded its design into the session this tab shares. Loading
+        // ours back would only displace that one (and from a viewer, with a stale copy);
+        // autosaving would write that design into this one. Do neither; say so once.
+        sessionEpoch.current = got.epoch ?? sessionEpoch.current;
+        if (displacedFor.current !== got.token) {
+          displacedFor.current = got.token;
+          setDisplaced(live.current.active?.name ?? 'This design');
+        }
+        return;
+      }
       // No checkout, no autosave. The inputs are read-only in that state
       // anyway; this is the belt to that pair of braces.
-      if (!held || !got.doc) return;
+      if (action !== 'save' || !got.doc) return;
       const doc = got.doc;
       const serialized = JSON.stringify(doc);
       lastDoc.current = doc;
       if (serialized === lastSaved.current) return;
+      if (!mayWrite(doc, lastSaved.current, touched.current)) return;
       try {
         await api.autosaveDocument(activeRef, doc);
         lastSaved.current = serialized;
@@ -393,7 +445,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
   useEffect(() => {
     const flush = () => {
       // A beacon cannot read a rejection, so gate it here instead.
-      if (activeRef && loadedKey.current === keyOf(activeRef) && lastDoc.current && checkout.held) {
+      if (activeRef && loadedKey.current === keyOf(activeRef) && lastDoc.current && checkout.held
+        && mayWrite(lastDoc.current, lastSaved.current, touched.current)) {
         api.flushDocument(activeRef, lastDoc.current);
       }
     };
@@ -711,6 +764,34 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
           inputs are read only. A checkout ends on its own after a while without a save,
           and someone else may have taken it since. Press <b>Take</b> to pick it back up -
           that reloads the design first, so you will see any changes made in the meantime.
+        </p>
+      </Modal>
+
+      {/* Another tab of yours loaded a different design into the session both tabs share.
+          This tab stopped saving rather than write that design into this one. */}
+      <Modal
+        open={displaced !== null}
+        onClose={() => setDisplaced(null)}
+        title="Another tab opened a different design"
+        footer={
+          <>
+            <button onClick={() => setDisplaced(null)} className={ghostBtn}>Not now</button>
+            <button
+              onClick={() => {
+                setDisplaced(null);
+                if (activeRef) void openDoc(activeRef);
+              }}
+              className={primaryBtn}
+            >
+              Reopen here
+            </button>
+          </>
+        }
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          Your other tab loaded its design into the engine model this tab uses, so "{displaced}"
+          has stopped saving here and nothing was written to it. Reopen it to keep working in this
+          tab; that tab will then stop saving in turn.
         </p>
       </Modal>
 

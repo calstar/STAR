@@ -39,7 +39,8 @@ export function identityTransition(prev: string, next: string, hadResult: boolea
 }
 
 /** JSON with object keys sorted, so the same config always serializes the same way. */
-function stable(v: unknown): string {
+/** JSON with object keys sorted, so two equal values always give the same string. */
+export function stable(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
   if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
   const o = v as Record<string, unknown>;

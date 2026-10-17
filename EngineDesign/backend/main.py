@@ -77,23 +77,36 @@ def _sentence(text: str) -> str:
     return t if t[-1] in ".!?" else t + "."
 
 
+def _one_problem(err: dict) -> str:
+    loc = [str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path")]
+    field = " ".join(loc).replace("_", " ")
+    msg = str(err.get("msg") or "is not valid").removeprefix("Value error, ")
+    return f"{field}: {msg}" if field else msg
+
+
 def validation_sentence(errors: list) -> str:
     """FastAPI's request-validation list ([{loc, msg, type}, ...]) as the one plain sentence every
-    error response carries (``{"detail": "<sentence>"}``). The first problem, named by its field,
-    and how many more there are."""
-    if not errors:
+    error response carries (``{"detail": "<sentence>"}``). Every problem, each named by its field,
+    joined with '; ' -- as feed-twin's backend/errors.validation_sentence does. A sentence that
+    names only the first leaves the person fixing one field per round trip."""
+    said = "; ".join(p for p in (_one_problem(e) for e in errors) if p)
+    if not said:
         return "Some of the values were not accepted."
-    first = errors[0]
-    loc = [str(p) for p in first.get("loc", ()) if p not in ("body", "query", "path")]
-    field = loc[-1].replace("_", " ") if loc else ""
-    msg = str(first.get("msg") or "is not valid")
-    more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
-    return _sentence(f"{field}: {msg}{more}" if field else f"{msg}{more}")
+    return _sentence(said)
 
 
 @app.exception_handler(RequestValidationError)
 async def _validation_as_sentence(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": validation_sentence(list(exc.errors()))})
+    errors = list(exc.errors())
+    # ``errors`` keeps each problem's field path next to the sentence, so a page that has its own
+    # names for its fields (Layer X's rail: "Dome (psia)") can still say them in its own words.
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": validation_sentence(errors),
+            "errors": [{"loc": [str(p) for p in e.get("loc", ())], "msg": str(e.get("msg", ""))} for e in errors],
+        },
+    )
 
 
 @app.exception_handler(Exception)

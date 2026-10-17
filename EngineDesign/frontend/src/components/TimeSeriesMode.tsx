@@ -14,7 +14,8 @@ import {
   type EngineConfig,
 } from '../api/client';
 import { useReadOnly } from '@stardesign-ui';
-import { configFingerprint } from '../lib/engineIdentity';
+import { configFingerprint, engineIdentity } from '../lib/engineIdentity';
+import { isRegulated, seededProfile } from '../lib/timeseriesSeed';
 import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
@@ -244,14 +245,10 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     const pKey = `${loxTank?.initial_pressure_psi ?? ''}|${fuelTank?.initial_pressure_psi ?? ''}`;
     if (lastPressureKey.current !== pKey) {
       lastPressureKey.current = pKey;
+      const regulated = isRegulated(config);
       const seed = (p0: unknown, set: typeof setLoxProfile) => {
         if (typeof p0 !== 'number' || !(p0 > 0)) return;
-        const start = Math.round(p0 * 10) / 10;
-        set((prev) => ({
-          ...prev,
-          start_pressure_psi: start,
-          end_pressure_psi: prev.end_pressure_psi < start ? prev.end_pressure_psi : Math.round(0.7 * start),
-        }));
+        set((prev) => seededProfile(prev, p0, regulated));
       };
       seed(loxTank?.initial_pressure_psi, setLoxProfile);
       seed(fuelTank?.initial_pressure_psi, setFuelProfile);
@@ -477,6 +474,29 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     window.addEventListener(TIMESERIES_RUN_EVENT, on);
     return () => window.removeEventListener(TIMESERIES_RUN_EVENT, on);
   }, []);
+
+  // A design opens with its burn, not an empty chart: when this page holds no Time-Series run of
+  // the open design, run the profile it is set up for (about 3 s, after Forward Mode's evaluate).
+  // Once per engine -- an edit leaves the last run standing, as before, with its re-run note --
+  // so Flight has a burn to fly and Forward Mode its ranges without anybody pressing Run.
+  const autoRanFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!config || isLoading || inputMode === 'upload') return;
+    const engine = engineIdentity(config);
+    if (autoRanFor.current === engine) return;
+    const fp = configFingerprint(config);
+    if (loadTimeSeriesResults()?.configFingerprint === fp) {
+      autoRanFor.current = engine;
+      return;
+    }
+    const id = setTimeout(() => {
+      autoRanFor.current = engine;
+      void runCurrent.current().then((err) => {
+        if (err) window.dispatchEvent(new CustomEvent(TIMESERIES_RUN_FAILED_EVENT, { detail: err }));
+      });
+    }, 1500);
+    return () => clearTimeout(id);
+  }, [config, isLoading, inputMode]);
 
   if (!config) {
     return (

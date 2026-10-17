@@ -727,6 +727,13 @@ const FIELD_NAME: Record<string, string> = {
   lo: 'from', hi: 'to', n: 'points', x: 'sweep', y: 'and', settings: '',
 };
 
+/** What to describe from an error body: the backend's per-field list when it sent one (so the
+ *  rail's own names and units, FIELD_NAME, are used), else its sentence. */
+export function errorDetail(body: unknown): unknown {
+  const b = (body ?? {}) as { detail?: unknown; errors?: unknown };
+  return Array.isArray(b.errors) && b.errors.length ? b.errors : b.detail;
+}
+
 export function errorText(detail: unknown, status: number): string {
   if (typeof detail === 'string') return detail;
   // FastAPI's validation errors: [{loc: ['body', 'fill_fraction'], msg: 'Input should be less than 0.99'}, ...]
@@ -751,7 +758,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<Result<T>>
     const headers: Record<string, string> = init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
     const response = await fetch(`${API_BASE}/layerx${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) return { error: errorText((body as { detail?: unknown }).detail, response.status), status: response.status };
+    if (!response.ok) return { error: errorText(errorDetail(body), response.status), status: response.status };
     return { data: body as T };
   } catch (err) {
     return { error: err instanceof Error ? err.message : 'Network error' };
@@ -1085,7 +1092,7 @@ export const layerx = {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        return { error: errorText((err as { detail?: unknown }).detail, response.status), status: response.status };
+        return { error: errorText(errorDetail(err), response.status), status: response.status };
       }
       const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'design.yaml';
       return { data: { text: await response.text(), filename: name } };
@@ -1116,7 +1123,7 @@ export const layerx = {
       const response = await fetch(`${API_BASE}/layerx/runs/${encodeURIComponent(id)}/eng`);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        return { error: errorText((body as { detail?: unknown }).detail, response.status), status: response.status };
+        return { error: errorText(errorDetail(body), response.status), status: response.status };
       }
       const name = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'layerx.eng';
       return { data: { text: await response.text(), filename: name } };
