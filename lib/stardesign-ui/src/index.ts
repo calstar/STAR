@@ -20,6 +20,9 @@ export { btn, primaryBtn, dangerBtn, warningBtn, successBtn, ghostBtn, relativeT
 export { getStoredTheme, getInitialTheme, applyTheme } from './colorScheme';
 export type { Theme } from './colorScheme';
 export { ThemeToggle } from './ThemeToggle';
+export { SuiteSwitcher } from './SuiteSwitcher';
+export { SUITE, SUITE_DOMAIN, SUITE_ENV, siblingUrl, suiteUrlsFrom } from './suite';
+export type { SuiteApp, SuiteEntry, SuiteUrls, SuiteWhere } from './suite';
 export { createDesignApi, keyOf, refOf, ApiError } from './api';
 export type { Checkout, UseCheckoutOptions } from './useCheckout';
 export type {
