@@ -207,7 +207,11 @@ class PintleEngineRunner:
         logger.propagate = False  # Prevent double logging to root logger
         
         if debug:
-            log_dir = "output/logs"
+            # Where the debug log goes, and how much of it reaches the console.
+            # Unset, exactly as before: output/logs under the working directory,
+            # INFO to the console. A stack that runs from a working tree (the
+            # demo) points both away from the repo and the presenter's console.
+            log_dir = os.environ.get("ENGINE_DESIGN_LOG_DIR") or "output/logs"
             os.makedirs(log_dir, exist_ok=True)
             log_file = os.path.join(log_dir, "evaluate.log")
             
@@ -226,7 +230,8 @@ class PintleEngineRunner:
             
             # Console handler
             ch = logging.StreamHandler()
-            ch.setLevel(logging.INFO)
+            level = logging.getLevelName(os.environ.get("ENGINE_DESIGN_CONSOLE_LOG_LEVEL", "INFO").upper())
+            ch.setLevel(level if isinstance(level, int) else logging.INFO)
             console_formatter = logging.Formatter('%(message)s')
             ch.setFormatter(console_formatter)
             logger.addHandler(ch)

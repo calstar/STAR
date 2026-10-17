@@ -6,6 +6,7 @@
  */
 
 import { designHeaders, designParams } from '../lib/activeDesign';
+import { errorText, thrownText } from '../lib/errors';
 
 export const API_BASE = '/api';
 
@@ -32,13 +33,13 @@ async function request<T>(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}: ${response.statusText}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error' };
+    return { error: thrownText(err) };
   }
 }
 
@@ -269,13 +270,13 @@ export async function uploadConfig(file: File): Promise<ApiResponse<UploadRespon
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 
@@ -590,13 +591,13 @@ export async function uploadTimeseriesFromCSV(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'CSV upload failed' };
+    return { error: thrownText(err, 'The CSV upload failed.') };
   }
 }
 
@@ -1490,13 +1491,13 @@ export async function uploadLayer2Config(file: File): Promise<ApiResponse<Upload
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 
@@ -1758,7 +1759,7 @@ export function simulateLayer2ControllerStream(
     .then(async (response) => {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP ${response.status}`);
+        throw new Error(errorText(errorData.detail, response.status));
       }
 
       const reader = response.body?.getReader();
@@ -1897,13 +1898,13 @@ export async function uploadLayer3Config(file: File): Promise<ApiResponse<Upload
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 

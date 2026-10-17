@@ -162,7 +162,7 @@ export function DesignRequirements({
 
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Target Chamber Pressure [psi] <span className="text-[var(--color-text-secondary)] font-normal">(optional)</span>
+              Target Chamber Pressure [psia] <span className="text-[var(--color-text-secondary)] font-normal">(optional)</span>
             </label>
             <input
               type="number"
@@ -206,7 +206,7 @@ export function DesignRequirements({
               step="0.1"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              Target oxidizer-to-fuel mixture ratio from CEA or mission analysis. Layer 1 rescales impinging seed jets to this MR at run start; the optimizer still adjusts jet diameters.
+              Target oxidizer-to-fuel mixture ratio from CEA or mission analysis. Layer 1 rescales impinging seed jets to this O/F at run start; the optimizer still adjusts jet diameters.
             </p>
             {mrRange && (
               <p className={`text-xs mt-1 ${ofOutsideTable ? 'text-red-400' : 'text-[var(--color-text-muted)]'}`}>
@@ -261,7 +261,7 @@ export function DesignRequirements({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Max LOX Tank Pressure [psi]
+              Max LOX Tank Pressure [psia]
             </label>
             <input
               type="number"
@@ -283,7 +283,7 @@ export function DesignRequirements({
 
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
-              Max Fuel Tank Pressure [psi]
+              Max Fuel Tank Pressure [psia]
             </label>
             <input
               type="number"
@@ -775,7 +775,7 @@ export function DesignRequirements({
                 <div className={`p-3 rounded-lg border ${isFrozen('P_O_start_psi') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      LOX Tank P₀ [psi]
+                      LOX Tank P₀ [psia]
                     </label>
                     <input
                       type="checkbox"
@@ -801,7 +801,7 @@ export function DesignRequirements({
                 <div className={`p-3 rounded-lg border ${isFrozen('P_F_start_psi') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      Fuel Tank P₀ [psi]
+                      Fuel Tank P₀ [psia]
                     </label>
                     <input
                       type="checkbox"
@@ -873,11 +873,11 @@ export function DesignRequirements({
           </div>
           <div>
             <p className="text-xs text-[var(--color-text-secondary)]">Max LOX Pressure</p>
-            <p className="text-lg font-bold text-[var(--color-text-primary)]">{requirements.max_lox_tank_pressure_psi.toFixed(0)} psi</p>
+            <p className="text-lg font-bold text-[var(--color-text-primary)]">{requirements.max_lox_tank_pressure_psi.toFixed(0)} psia</p>
           </div>
           <div>
             <p className="text-xs text-[var(--color-text-secondary)]">Max Fuel Pressure</p>
-            <p className="text-lg font-bold text-[var(--color-text-primary)]">{requirements.max_fuel_tank_pressure_psi.toFixed(0)} psi</p>
+            <p className="text-lg font-bold text-[var(--color-text-primary)]">{requirements.max_fuel_tank_pressure_psi.toFixed(0)} psia</p>
           </div>
           <div>
             <p className="text-xs text-[var(--color-text-secondary)]">L* Range</p>

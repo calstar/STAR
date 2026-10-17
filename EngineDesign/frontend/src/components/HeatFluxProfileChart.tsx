@@ -264,18 +264,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
           Heat Flux Profile
         </h4>
         <p className="text-xs text-[var(--color-text-secondary)]">
-          No heat flux profile data available. This requires either:
-        </p>
-        <ul className="text-xs text-[var(--color-text-secondary)] list-disc ml-4 mt-1">
-          <li>Regen cooling enabled with segment data</li>
-          <li>Ablative cooling enabled (segment_x, segment_q_incident data)</li>
-        </ul>
-        <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
-          Debug: ablative_axial_positions_m = {ablative_axial_positions_m?.length ?? 'undefined'}, 
-          ablative_q_incident_profiles = {ablative_q_incident_profiles_w_m2?.length ?? 'undefined'}
-          {(ablative_q_incident_profiles_w_m2?.length ?? 0) > 0 && (
-            <>, first profile length = {ablative_q_incident_profiles_w_m2?.[0]?.length ?? 'undefined'}</>
-          )}
+          This run has no heat-flux profile to plot. It comes from regenerative cooling or the ablative liner;
+          turn one of them on in Configuration and run the burn again.
         </p>
       </div>
     );
@@ -455,8 +445,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
             x = 0 at throat, negative towards injector (matches chamber geometry plot).
           </p>
 
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={ablativeChartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={ablativeChartData} margin={{ top: 18, right: 30, left: 20, bottom: 25 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
               <XAxis
                 dataKey="position"
@@ -464,7 +454,7 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
                 label={{ 
-                  value: 'Axial Position (mm) - 0 = Throat, negative = Injector', 
+                  value: 'Axial position (mm), throat at 0, injector to the left', 
                   position: 'insideBottom', 
                   offset: -15, 
                   fill: 'var(--color-text-secondary)',
@@ -490,14 +480,15 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
                   strokeDasharray="5 5" 
                   label={{ 
                     value: 'Throat', 
-                    position: 'top', 
+                    position: 'insideTopRight', 
                     fill: '#ef4444',
                     fontSize: 10
                   }} 
                 />
               )}
               <Tooltip content={ablativeTooltip} />
-              <Legend verticalAlign="top" height={30} />
+              {/* Below the plot: at the top it sat on the Throat label. */}
+              <Legend verticalAlign="bottom" wrapperStyle={{ paddingTop: 22 }} />
               <Line
                 type="monotone"
                 dataKey="q_incident"

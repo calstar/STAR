@@ -10,8 +10,10 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Ensure project root is in path for imports
 project_root = Path(__file__).resolve().parents[1]
@@ -60,11 +62,47 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Pintle Engine Design API",
-    description="FastAPI backend for LOX/RP-1 pintle injector rocket engine simulation",
+    title="Hotbench Engine API",
+    description="Liquid engine design and analysis: Forward Mode, Time-Series, the optimizer layers and Layer X",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+def _sentence(text: str) -> str:
+    t = " ".join(str(text).split())
+    if not t:
+        return "Something went wrong."
+    t = t[0].upper() + t[1:]
+    return t if t[-1] in ".!?" else t + "."
+
+
+def validation_sentence(errors: list) -> str:
+    """FastAPI's request-validation list ([{loc, msg, type}, ...]) as the one plain sentence every
+    error response carries (``{"detail": "<sentence>"}``). The first problem, named by its field,
+    and how many more there are."""
+    if not errors:
+        return "Some of the values were not accepted."
+    first = errors[0]
+    loc = [str(p) for p in first.get("loc", ()) if p not in ("body", "query", "path")]
+    field = loc[-1].replace("_", " ") if loc else ""
+    msg = str(first.get("msg") or "is not valid")
+    more = f" (and {len(errors) - 1} more)" if len(errors) > 1 else ""
+    return _sentence(f"{field}: {msg}{more}" if field else f"{msg}{more}")
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_as_sentence(request: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": validation_sentence(list(exc.errors()))})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_as_sentence(request: Request, exc: Exception) -> JSONResponse:
+    # A JSON sentence instead of Starlette's bare "Internal Server Error"; the traceback still goes
+    # to the server log.
+    first = (str(exc).strip().splitlines() or [""])[0][:200]
+    what = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+    return JSONResponse(status_code=500, content={"detail": f"The engine design server hit an error ({what})."})
 
 if 'layerx' in _optional_routers:
     # Refuses an oversized drawing upload before Starlette reads (and spools) its body.

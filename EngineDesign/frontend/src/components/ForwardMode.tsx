@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { engineIdentity, configFingerprint } from '../lib/engineIdentity';
+import { engineIdentity, configFingerprint, identityTransition } from '../lib/engineIdentity';
 import { evaluate, updateConfig } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
 import { ForwardView } from './forward/ForwardView';
@@ -83,17 +83,25 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
   // Done during render rather than in an effect: this is React's "adjusting state when a prop
   // changes" pattern, which re-renders before committing instead of painting the stale panel once
   // and then clearing it. An effect would show the previous propellant's numbers for a frame.
+  //
+  // Only a change FROM an engine is a change (lib/engineIdentity.identityTransition): the design
+  // opening on page load is adopted silently, and the banner says "cleared" only when something
+  // was. A stored burn is fingerprinted to its design (burnCurrent below), so adopting needs no
+  // clearing of it either.
   if (config && identityKey !== lastIdentity) {
+    const { clear, warn } = identityTransition(lastIdentity, identityKey, results !== null || report !== null);
     setLastIdentity(identityKey);
-    setResults(null);
-    setReport(null);
-    setBurn(null);
-    setAmbientPressure(null);
-    setError(null);
-    setStabilityOverrides({});
-    setDesignWarning(
-      'Propellant or injector changed — previous results cleared. Run Evaluate to analyse the new engine.',
-    );
+    if (clear) {
+      setResults(null);
+      setReport(null);
+      setBurn(null);
+      setAmbientPressure(null);
+      setError(null);
+      setStabilityOverrides({});
+      setDesignWarning(
+        warn ? 'Propellant or injector changed — previous results cleared. Run Evaluate to analyse the new engine.' : null,
+      );
+    }
   }
 
   const handleEvaluate = useCallback(async (overridePatch?: StabilityOverrides) => {
@@ -102,11 +110,11 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
     const mergedOverrides = { ...stabilityOverrides, ...overridePatch };
 
     if (isNaN(lox) || lox <= 0) {
-      setError('LOX pressure must be a positive number');
+      setError('Enter a LOX tank pressure above zero.');
       return;
     }
     if (isNaN(fuel) || fuel <= 0) {
-      setError('Fuel pressure must be a positive number');
+      setError('Enter a fuel tank pressure above zero.');
       return;
     }
 
@@ -166,7 +174,7 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
     <div className="space-y-6">
       {/* Input section */}
       <div className="p-5 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-        <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">Tank Pressures</h3>
+        <h3 className="text-lg font-semibold mb-4 text-[var(--color-text-primary)]">Tank pressures</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* LOX Pressure */}
@@ -184,8 +192,8 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
                 placeholder="750"
                 className="w-full px-4 py-3 pr-12 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] text-sm">
-                psi
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] text-sm" title="Absolute pressure">
+                psia
               </span>
             </div>
           </div>
@@ -205,8 +213,8 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
                 placeholder="600"
                 className="w-full px-4 py-3 pr-12 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] text-sm">
-                psi
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] text-sm" title="Absolute pressure">
+                psia
               </span>
             </div>
           </div>

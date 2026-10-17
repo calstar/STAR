@@ -17,6 +17,17 @@ interface ChamberGeometryProps {
 // Convert m to mm for display
 const M_TO_MM = 1000;
 
+/** One dimension: the number on the page, what it means in the hover. */
+function DimTile({ label, value, sub, hint }: { label: string; value: string; sub?: string; hint?: string }) {
+  return (
+    <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]" title={hint}>
+      <p className="text-xs text-[var(--color-text-secondary)]">{label}</p>
+      <p className="text-lg font-semibold text-[var(--color-text-primary)] tabular-nums">{value}</p>
+      {sub && <p className="text-[11px] text-[var(--color-text-muted)]">{sub}</p>}
+    </div>
+  );
+}
+
 
 
 export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProps) {
@@ -61,6 +72,9 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
   // Calculate dimensions for display
   const dimensions = useMemo(() => {
     if (!geometry) return null;
+    // The solved contour is drawn with the throat at x = 0, so its first point is the face.
+    const cx = geometry.chamber_contour_x ?? [];
+    const faceToThroat = cx.length > 1 ? -Math.min(...cx) : null;
 
     return {
       L_chamber_mm: geometry.L_chamber * M_TO_MM,
@@ -70,8 +84,14 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
       D_throat_mm: geometry.D_throat * M_TO_MM,
       D_exit_mm: geometry.D_exit * M_TO_MM,
       throat_position_mm: geometry.throat_position * M_TO_MM,
+      face_to_throat_mm: faceToThroat != null && faceToThroat > 0 ? faceToThroat * M_TO_MM : null,
     };
   }, [geometry]);
+
+  // How the chamber length splits, when the design carries it (config.chamber_geometry).
+  const cg = (config?.chamber_geometry ?? null) as Record<string, unknown> | null;
+  const lCyl = typeof cg?.length_cylindrical === 'number' ? cg.length_cylindrical * M_TO_MM : null;
+  const lCon = typeof cg?.length_contraction === 'number' ? cg.length_contraction * M_TO_MM : null;
 
   // Empty state - no config
   if (!config) {
@@ -102,22 +122,12 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
             <div>
               <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Chamber Geometry</h2>
               <p className="text-sm text-[var(--color-text-secondary)]">
-                Cross-section visualization of thrust chamber
+                The thrust chamber, nozzle and injector of the open design
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-              <input
-                type="checkbox"
-                checked={showLowerHalf}
-                onChange={(e) => setShowLowerHalf(e.target.checked)}
-                className="w-4 h-4 rounded border-[var(--color-border)] text-rose-600 focus:ring-rose-500"
-              />
-              Show Full Cross-Section
-            </label>
-
             <button
               onClick={fetchGeometry}
               disabled={isLoading}
@@ -155,8 +165,8 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
         onShowLowerHalfChange={setShowLowerHalf}
       />
 
-      {/* CEA-Solved Chamber Contour */}
-      <ChamberContourPlot geometry={geometry} />
+      {/* CEA-Solved Chamber Contour, on the same full-section switch as the cross-section above */}
+      <ChamberContourPlot geometry={geometry} showLowerHalf={showLowerHalf} />
 
       {/* Injector pattern: face, back face and half section, from /api/geometry/injector. */}
       {injector && (
@@ -180,94 +190,40 @@ export function ChamberGeometry({ config, onConfigUpdated }: ChamberGeometryProp
           </h4>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Chamber Length</p>
-              <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {dimensions.L_chamber_mm.toFixed(1)} mm
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Nozzle Length</p>
-              <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {dimensions.L_nozzle_mm.toFixed(1)} mm
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Chamber Diameter</p>
-              <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {dimensions.D_chamber_mm.toFixed(1)} mm
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Throat Diameter</p>
-              <p className="text-lg font-semibold text-rose-400">
-                {dimensions.D_throat_mm.toFixed(1)} mm
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Exit Diameter</p>
-              <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {dimensions.D_exit_mm.toFixed(1)} mm
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Expansion Ratio</p>
-              <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                {geometry.expansion_ratio.toFixed(2)}
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Ablative Cooling</p>
-              <p className={`text-lg font-semibold ${geometry.ablative_enabled ? 'text-green-400' : 'text-gray-500'}`}>
-                {geometry.ablative_enabled ? 'Enabled' : 'Disabled'}
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Graphite Insert</p>
-              <p className={`text-lg font-semibold ${geometry.graphite_enabled ? 'text-green-400' : 'text-gray-500'}`}>
-                {geometry.graphite_enabled ? 'Enabled' : 'Disabled'}
-              </p>
-            </div>
-
-            <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-              <p className="text-xs text-[var(--color-text-secondary)]">Nozzle Type</p>
-              <p className="text-lg font-semibold text-blue-400">
-                {geometry.nozzle_method.includes('rao') ? 'Rao Bell (80%)' : 'Conical'}
-              </p>
-            </div>
-
+            <DimTile
+              label="Chamber length"
+              value={`${dimensions.L_chamber_mm.toFixed(1)} mm`}
+              sub={lCyl != null && lCon != null ? `cylinder ${lCyl.toFixed(1)} + convergence ${lCon.toFixed(1)}` : 'cylinder and convergence'}
+              hint="The sized chamber: the cylinder and the convergent cone. The drawn contour adds the blend into the throat (face to throat, next). The spray march uses a third length, the volume-equivalent cylinder L*·At/Ac."
+            />
+            {dimensions.face_to_throat_mm != null && (
+              <DimTile
+                label="Face to throat"
+                value={`${dimensions.face_to_throat_mm.toFixed(1)} mm`}
+                sub="along the drawn contour"
+                hint="Injector face to throat on the gas-side contour above, the throat's upstream blend included."
+              />
+            )}
+            <DimTile label="Nozzle length" value={`${dimensions.L_nozzle_mm.toFixed(1)} mm`} sub="throat to exit" />
+            <DimTile label="Chamber diameter" value={`${dimensions.D_chamber_mm.toFixed(1)} mm`} sub="gas side" />
+            <DimTile label="Throat diameter" value={`${dimensions.D_throat_mm.toFixed(1)} mm`} />
+            <DimTile label="Exit diameter" value={`${dimensions.D_exit_mm.toFixed(1)} mm`} />
+            <DimTile label="Expansion ratio" value={geometry.expansion_ratio.toFixed(2)} />
+            <DimTile label="Nozzle" value={geometry.nozzle_method.includes('rao') ? 'Rao bell, 80 %' : 'Conical'} />
+            <DimTile label="Ablative liner" value={geometry.ablative_enabled ? 'Yes' : 'No'} />
+            <DimTile label="Graphite insert" value={geometry.graphite_enabled ? 'Yes' : 'No'} />
             {geometry.Cf !== null && (
-              <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-                <p className="text-xs text-[var(--color-text-secondary)]">Thrust Coeff (Cf)</p>
-                <p className="text-lg font-semibold text-emerald-400">
-                  {geometry.Cf.toFixed(4)}
-                </p>
-              </div>
+              <DimTile
+                label="Cf at the sizing point"
+                value={geometry.Cf.toFixed(4)}
+                hint="The thrust coefficient the nozzle was sized at. Forward Mode reports Cf at the tank pressures you evaluate, so the two differ."
+              />
             )}
-
             {geometry.Cf_ideal !== null && (
-              <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-                <p className="text-xs text-[var(--color-text-secondary)]">Cf Ideal (CEA)</p>
-                <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                  {geometry.Cf_ideal.toFixed(4)}
-                </p>
-              </div>
+              <DimTile label="Ideal Cf (CEA)" value={geometry.Cf_ideal.toFixed(4)} hint="At the sizing point, before nozzle losses." />
             )}
-
             {geometry.A_throat_solved !== null && (
-              <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
-                <p className="text-xs text-[var(--color-text-secondary)]">A_throat (solved)</p>
-                <p className="text-lg font-semibold text-[var(--color-text-primary)]">
-                  {(geometry.A_throat_solved * 1e6).toFixed(2)} mm²
-                </p>
-              </div>
+              <DimTile label="Throat area" value={`${(geometry.A_throat_solved * 1e6).toFixed(1)} mm²`} />
             )}
           </div>
         </div>

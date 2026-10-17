@@ -25,6 +25,19 @@ export function engineIdentity(config: EngineConfig | null | undefined): string 
   ].join('|');
 }
 
+/**
+ * What a change of engine identity does to a displayed result.
+ *
+ * `prev` is '' until a config has arrived: the design opening on page load is adopted, never
+ * treated as a change -- there is nothing on screen to clear, and the "propellant or injector
+ * changed" banner it used to raise greeted every fresh visitor. Between two real engines the
+ * result is cleared, and the banner says so only when there was a result to clear.
+ */
+export function identityTransition(prev: string, next: string, hadResult: boolean): { clear: boolean; warn: boolean } {
+  if (prev === next || prev === '' || next === '') return { clear: false, warn: false };
+  return { clear: true, warn: hadResult };
+}
+
 /** JSON with object keys sorted, so the same config always serializes the same way. */
 function stable(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';

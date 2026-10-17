@@ -189,7 +189,8 @@ test('the requirements form is editable only while checked out', async ({ page }
 });
 
 test('panel state outside the backend config survives a reload', async ({ page }) => {
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  // The Controller tab is a prototype, listed in the tab strip only with ?advanced=1 (lib/tabs.ts).
+  await page.goto('/?advanced=1', { waitUntil: 'domcontentloaded' });
   await waitForDesignBar(page);
   await ensureCheckedOut(page);
 

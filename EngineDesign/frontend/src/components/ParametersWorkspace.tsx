@@ -3,7 +3,7 @@ import { useReadOnly } from '@stardesign-ui';
 import { getParameters, updateConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
 import {
-  formatValue, groupOf, labelOf, matches, nestedUpdate, parseInput, unitOf,
+  formatValue, friendlyValue, groupOf, labelOf, listedSections, matches, nestedUpdate, parseInput, unitOf,
 } from '../lib/parameters';
 import type { CodeConstant, Filter, ParameterRow, ParametersResponse } from '../lib/parameters';
 import { useViewState } from '../lib/viewState';
@@ -131,7 +131,7 @@ export function ParametersWorkspace({ config, onConfigUpdated }: {
   return (
     <div className="flex h-full min-h-0 text-[var(--color-text-primary)]">
       <nav className="w-56 shrink-0 border-r border-[var(--color-border)] overflow-y-auto py-2">
-        {(data?.sections ?? []).map((s) => (
+        {listedSections(data?.sections ?? []).map((s) => (
           <button key={s.key} type="button" onClick={() => { setSection(s.key); setQuery(''); if (filter === 'modified') setFilter('all'); }}
                   className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-[12px] ${section === s.key && !searching && filter !== 'modified' ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}>
             <span className="truncate">{s.label}</span>
@@ -201,10 +201,16 @@ export function ParametersWorkspace({ config, onConfigUpdated }: {
                             <td className="px-2 py-1">
                               <RowEditor row={r} draft={draft} onChange={(t) => edit(r.path, t)} readOnly={readOnly} />
                               {bad && <div className="text-[10px] text-[#f87171]">{bad}</div>}
+                              {!bad && (() => {
+                                // A Pa value, read in psia (or MPa); the stored number stays Pa.
+                                const shown = draft !== undefined ? parsed.ok[r.path] : r.value;
+                                const f = friendlyValue(r, shown);
+                                return f ? <div className="text-[10px] text-[var(--color-text-muted)] text-right tabular-nums">{f}</div> : null;
+                              })()}
                             </td>
                             <td className="px-1 py-1 text-[11px] text-[var(--color-text-secondary)] truncate">{unitOf(r) ?? ''}</td>
                             <td className="px-2 py-1 text-[11px] font-mono text-[var(--color-text-secondary)] truncate" title="schema default">
-                              {r.required ? 'required' : `default ${formatValue(r.default) || '—'}`}
+                              {r.required ? 'required' : `default ${formatValue(r.default) || '—'}${friendlyValue(r, r.default) ? ` (${friendlyValue(r, r.default)})` : ''}`}
                             </td>
                             <td className="px-2 py-1 text-right">
                               {!r.required && (r.modified || draft !== undefined) && (

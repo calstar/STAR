@@ -1,3 +1,5 @@
+import { PA_PER_PSI, psiUnitFor } from './pressure';
+
 /**
  * Helpers for the Parameters workspace (components/ParametersWorkspace.tsx). Pure, so they can be
  * tested without a DOM: turning a row's dotted path into the nested update PUT /api/config merges,
@@ -23,6 +25,16 @@ export interface ParameterSection {
   label: string;
   count: number;
   modified: number;
+  /** Superseded by another section, kept so an old file loads (absent from an older server). */
+  legacy?: boolean;
+  /** Written by the app for itself, never by a person. */
+  internal?: boolean;
+}
+
+/** The sections the workspace lists: a legacy one only while it holds a value, an internal one
+ *  never. Their rows stay reachable through search. */
+export function listedSections(sections: ParameterSection[]): ParameterSection[] {
+  return sections.filter((s) => !s.internal && (!s.legacy || s.modified > 0));
 }
 
 /** A physics constant that lives in code (engine/pipeline/code_constants.py). Read-only here. */
@@ -113,17 +125,58 @@ const WORDS: Record<string, string> = {
   frac: 'fraction', pos: 'position', temp: 'temperature',
 };
 
-/** The unit a key's name carries, when the schema description gives none. */
+/** The unit a key's name carries, when the schema description gives none. A `psi` field is an
+ *  absolute pressure (psia) unless its name makes it a difference (a tolerance, a scale, an
+ *  excursion), which stays psi; the stored number is the same either way. */
 export function unitOf(row: ParameterRow): string | null {
-  if (row.unit) return row.unit;
   const k = row.path.split('.').pop() ?? '';
-  for (const [re, u] of SUFFIX_UNITS) if (re.test(k)) return u;
-  return null;
+  let u = row.unit;
+  if (!u) for (const [re, su] of SUFFIX_UNITS) if (re.test(k)) { u = su; break; }
+  if (!u && /_psi_(min|max)$/.test(k)) u = 'psi';
+  if (u === 'psi') return psiUnitFor(k);
+  return u ?? null;
 }
+
+// A field stored in Pa that is not a pressure: a modulus or a strength, read in MPa / GPa.
+const STRESS = /modulus|strength|stress/i;
+
+/**
+ * A Pa value as a person reads it, beside the stored number: an absolute pressure in psia, a
+ * modulus or strength in MPa or GPa. Null for anything not in Pa, or nothing to show. A pair
+ * (a range) is shown as one.
+ */
+export function friendlyValue(row: ParameterRow, v: unknown): string | null {
+  if (unitOf(row) !== 'Pa') return null;
+  const k = row.path.split('.').pop() ?? '';
+  const one = (x: unknown): string | null => {
+    if (typeof x !== 'number' || !Number.isFinite(x)) return null;
+    if (STRESS.test(k)) return x >= 1e9 ? `${+(x / 1e9).toPrecision(3)} GPa` : `${+(x / 1e6).toPrecision(3)} MPa`;
+    const psi = x / PA_PER_PSI;
+    return `${psi.toLocaleString('en-US', { maximumFractionDigits: psi < 100 ? 1 : 0 })} ${psiUnitFor(k)}`;
+  };
+  if (Array.isArray(v)) {
+    const parts = v.map(one);
+    return parts.length && parts.every((p) => p !== null) ? parts.join(' to ') : null;
+  }
+  return one(v);
+}
+
+/** Keys whose words do not read on their own. */
+const LABELS: Record<string, string> = {
+  max_P_tank_O: 'Max LOX tank pressure, in Pa (blank: the psia field)',
+  max_P_tank_F: 'Max fuel tank pressure, in Pa (blank: the psia field)',
+};
 
 /** The last path segment, readable: 'max_lox_tank_pressure_psi' -> 'Max LOX tank pressure'. */
 export function labelOf(path: string): string {
   let k = path.split('.').pop() ?? path;
+  if (LABELS[k]) return LABELS[k];
+  // 'layer1_P_O_start_psi_min' -> 'LOX tank pressure, search floor'.
+  const tank = /^(?:layer1_)?P_([OF])_start_psi(?:_(min|max))?$/.exec(k);
+  if (tank) {
+    const bound = tank[2] === 'min' ? ', search floor' : tank[2] === 'max' ? ', search ceiling' : '';
+    return `${tank[1] === 'O' ? 'LOX' : 'Fuel'} tank pressure${bound}`;
+  }
   for (const [re] of SUFFIX_UNITS) {
     if (re.test(k) && k.replace(re, '').length > 0) { k = k.replace(re, ''); break; }
   }

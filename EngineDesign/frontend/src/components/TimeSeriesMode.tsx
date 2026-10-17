@@ -19,6 +19,8 @@ import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
   saveTimeSeriesResults,
+  TIMESERIES_RUN_EVENT,
+  TIMESERIES_RUN_FAILED_EVENT,
 } from '../utils/timeseriesSession';
 
 interface TimeSeriesModeProps {
@@ -309,7 +311,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     setIsLoading(false);
 
     if (response.error) {
-      setError(typeof response.error === 'string' ? response.error : JSON.stringify(response.error));
+      setError(response.error);
+      return response.error;
     } else if (response.data) {
       const newResults = {
         data: response.data.data,
@@ -318,7 +321,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
       setResults(newResults);
       saveTimeSeriesResults(newResults, configFingerprint(config));
     }
-  }, [duration, nSteps, loxProfile, fuelProfile]);
+    return null;
+  }, [duration, nSteps, loxProfile, fuelProfile, config]);
 
   // Handle segment-based submission
   const handleSegmentSubmit = useCallback(async () => {
@@ -337,7 +341,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     setIsLoading(false);
 
     if (response.error) {
-      setError(typeof response.error === 'string' ? response.error : JSON.stringify(response.error));
+      setError(response.error);
+      return response.error;
     } else if (response.data) {
       const newResults = {
         data: response.data.data,
@@ -346,7 +351,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
       setResults(newResults);
       saveTimeSeriesResults(newResults, configFingerprint(config));
     }
-  }, [segmentDuration, nPoints, loxSegments, fuelSegments]);
+    return null;
+  }, [segmentDuration, nPoints, loxSegments, fuelSegments, config]);
 
   const propSplit = splitPropellantMass(totalPropellantKg, ofRatio);
 
@@ -384,7 +390,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     setIsLoading(false);
 
     if (response.error) {
-      setError(typeof response.error === 'string' ? response.error : JSON.stringify(response.error));
+      setError(response.error);
+      return response.error;
     } else if (response.data) {
       const newResults = {
         data: response.data.data,
@@ -393,7 +400,9 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
       setResults(newResults);
       saveTimeSeriesResults(newResults, configFingerprint(config));
     }
+    return null;
   }, [
+    config,
     segmentDuration,
     nPoints,
     loxInitialPressure,
@@ -410,10 +419,10 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
 
 
   // Handle CSV upload submission
-  const handleUploadSubmit = useCallback(async () => {
+  const handleUploadSubmit = useCallback(async (): Promise<string | null> => {
     if (!uploadedFile) {
-      setUploadError('Please select a file');
-      return;
+      setUploadError('Choose a file first.');
+      return 'The Time-Series tab is set to a CSV upload and no file is chosen.';
     }
 
     setIsLoading(true);
@@ -426,9 +435,9 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     setIsLoading(false);
 
     if (response.error) {
-      const errorMsg = typeof response.error === 'string' ? response.error : JSON.stringify(response.error);
-      setError(errorMsg);
-      setUploadError(errorMsg);
+      setError(response.error);
+      setUploadError(response.error);
+      return response.error;
     } else if (response.data) {
       const newResults = {
         data: response.data.data,
@@ -446,7 +455,28 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         }
       }
     }
-  }, [uploadedFile, onConfigLoaded]);
+    return null;
+  }, [uploadedFile, onConfigLoaded, config]);
+
+  // Another tab (Flight) asks for the burn: run whichever profile this tab is set to, as its own
+  // Run button would, and answer with the error if there is one. Success is announced by
+  // saveTimeSeriesResults' TIMESERIES_UPDATED_EVENT, which every reader already listens to.
+  const runCurrent = useRef<() => Promise<string | null>>(async () => null);
+  useEffect(() => {
+    runCurrent.current = inputMode === 'simple' ? handleSimpleSubmit
+      : inputMode === 'segments' ? handleSegmentSubmit
+      : inputMode === 'blowdown' ? handleBlowdownSubmit
+      : handleUploadSubmit;
+  });
+  useEffect(() => {
+    const on = () => {
+      void runCurrent.current().then((err) => {
+        if (err) window.dispatchEvent(new CustomEvent(TIMESERIES_RUN_FAILED_EVENT, { detail: err }));
+      });
+    };
+    window.addEventListener(TIMESERIES_RUN_EVENT, on);
+    return () => window.removeEventListener(TIMESERIES_RUN_EVENT, on);
+  }, []);
 
   if (!config) {
     return (
@@ -670,7 +700,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div>
                   <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-2">
-                    LOX Initial Pressure (psi)
+                    LOX Initial Pressure (psia)
                   </label>
                   <input
                     disabled={readOnly}
@@ -685,7 +715,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-2">
-                    Fuel Initial Pressure (psi)
+                    Fuel Initial Pressure (psia)
                   </label>
                   <input
                     disabled={readOnly}
@@ -921,8 +951,8 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
               Upload CSV or Config File
             </h3>
             <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-              Upload a <strong>CSV file</strong> with columns <strong>T</strong> (time in seconds), <strong>P_O</strong> (LOX tank pressure in psi),
-              and <strong>P_F</strong> (Fuel tank pressure in psi). The time column is optional - if missing,
+              Upload a <strong>CSV file</strong> with columns <strong>T</strong> (time in seconds), <strong>P_O</strong> (LOX tank pressure in psia),
+              and <strong>P_F</strong> (Fuel tank pressure in psia). The time column is optional - if missing,
               uniform spacing will be assumed.
             </p>
             <p className="text-xs text-[var(--color-text-secondary)] mb-4">
