@@ -64,10 +64,13 @@ then prints:
 
 ## The five-minute click path
 
-**0:00 Hotbench P&ID (5274).** It opens on **LE4 Stand**, the team's main diagram,
+**0:00 Hotbench P&ID (5274).** It opens on **LE4 (6)**, the team's main diagram and the
+same drawing the twin and Layer X fire,
 read to anyone and held by no one: the bar says **Ready to edit**, and the first
-change you make checks it out (**Stop editing** gives it back). The Rocket page shows
-the COPV, dome regulator, tanks and engine, each pressure printed in psia. Click
+change you make checks it out (**Stop editing** gives it back). The Rocket page opens
+at full size on its top, the press section: the COPV, dome regulator and fuel tank, each
+pressure printed in psia. Scroll down for the LOX tank and engine (**Fit View** shows the
+whole page). Click
 **GSE** at the bottom to show the ground cart. Double-click a symbol (the COPV, say):
 each number is marked **Estimate** or **Verified**, so you can see where it came from.
 Press **Cancel**. The checks button (top right) lists what **the drawing needs** --
@@ -167,7 +170,8 @@ and what was left out.
   stand's own state table (below). There is one stand document, **LE4**, on that
   drawing and engine; its own hookup carries the same table. Runs: only the team's
   three lit October 7 burns on them; rehearsal runs are cleared by `--reset`.
-- **Hotbench P&ID:** **LE4 Stand** (the LE4 (6) drawing, set as the main diagram),
+- **Hotbench P&ID:** **LE4 (6)** (the same drawing, by the same name as in the twin and
+  Layer X, set as the main diagram; `PID_STAND_NAME` in `scripts/demo.sh`),
   LE4 (the September draft) and Ethalox Stand 7200N (Helium).
 - **Hotbench Engine:** **Ethalox 7200N Doublet**, plus Layer X's stand measurements and
   DAQ channel map.

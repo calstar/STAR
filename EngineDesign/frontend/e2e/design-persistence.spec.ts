@@ -28,14 +28,13 @@ const AUTOSAVE = /\/api\/engine\/documents\/.*\/autosave/;
 type Page = import('@playwright/test').Page;
 
 /**
- * The checkout's own Release button.
+ * The checkout's own give-it-back button, "Stop editing".
  *
- * Not `getByRole('button', {name: 'Release'})`: the designs bar has a second
- * Release next to it that publishes a version, and matching both is a strict
- * mode violation. Only the version one carries a title.
+ * Matched by its exact name: the designs bar has a Release next to it that
+ * publishes a version, a different button with a different name.
  */
 const releaseButton = (page: Page) =>
-  page.locator('button:not([title])').filter({ hasText: /^Release/ });
+  page.getByRole('button', { name: 'Stop editing', exact: true });
 
 /** The designs bar's own design picker: the last <select> in the header. */
 const designPicker = (page: Page) => page.locator('header select').last();
@@ -44,7 +43,7 @@ const designPicker = (page: Page) => page.locator('header select').last();
  * Wait until the bar has actually adopted a design.
  *
  * Waiting for the checkout chip is not enough: `CheckoutControl` renders in all
- * states, so the chip and its Take button appear before `activeRef` is set --
+ * states, so the chip and its Edit button appear before `activeRef` is set --
  * and `useCheckout.take()` returns silently when there is no ref, so a click in
  * that window does nothing at all. The picker's value is the design key, so an
  * empty value means "no design yet".
@@ -66,7 +65,7 @@ async function waitForDesignBar(page: Page) {
  */
 async function driveCheckout(page: Page, want: 'Editing' | 'Read only') {
   const button = want === 'Editing'
-    ? page.getByRole('button', { name: 'Take', exact: true })
+    ? page.getByRole('button', { name: 'Edit', exact: true })
     : releaseButton(page);
   await expect
     .poll(

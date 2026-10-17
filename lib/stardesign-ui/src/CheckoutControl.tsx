@@ -8,7 +8,8 @@
  * the common case ambiguous.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useModalFocus } from './Modal';
 import type { Checkout } from './useCheckout';
 import { btn, primaryBtn } from './theme';
 
@@ -26,11 +27,13 @@ export function CheckoutControl({
   /** No design open yet. */
   disabled?: boolean;
   /**
-   * What the give-it-back button says. "Release" by default; an app whose own
-   * toolbar already has a Release that means something else (pid-designer
-   * publishes versions with one) names this one for what it does, and it then
-   * explains itself on hover. Unset, the button is exactly as it was -- the
-   * EngineDesign E2E finds it as the untitled button reading "Release".
+   * What the give-it-back button says: "Stop editing" unless the app names it.
+   *
+   * One idea, one set of words, in every app: "Ready to edit", "Edit",
+   * "Editing · Stop editing". It was "Take" and "Release" here and "Stop
+   * editing" in pid-designer (whose toolbar's Release publishes a version), so
+   * moving between the tools changed the words for the same checkout, and
+   * "Take" and "Release" said nothing to anybody outside the team.
    */
   releaseLabel?: string;
 }) {
@@ -80,20 +83,14 @@ export function CheckoutControl({
               Keep editing
             </button>
           )}
-          {releaseLabel ? (
-            <button
-              onClick={() => void release()}
-              disabled={busy}
-              className={btn}
-              title={`Check this ${noun} back in so someone else can edit it. Everything you changed is already saved.`}
-            >
-              {busy ? 'Saving…' : releaseLabel}
-            </button>
-          ) : (
-            <button onClick={() => void release()} disabled={busy} className={btn}>
-              {busy ? 'Releasing…' : 'Release'}
-            </button>
-          )}
+          <button
+            onClick={() => void release()}
+            disabled={busy}
+            className={btn}
+            title={`Check this ${noun} back in so someone else can edit it. Everything you changed is already saved.`}
+          >
+            {busy ? 'Saving…' : (releaseLabel ?? 'Stop editing')}
+          </button>
         </>
       ) : checkout.armed && !takenByOther ? (
         // Taken on the first edit (`takeOnEdit`): nothing to press, and nothing
@@ -117,7 +114,7 @@ export function CheckoutControl({
         <>
           <span
             className={`${chip} border-[var(--color-border)] text-[var(--color-text-muted)]`}
-            title={`Nobody has this ${noun} checked out. Take it to make changes.`}
+            title={`Nobody is editing this ${noun}. Press Edit to make changes; nobody else can change it while you have it.`}
           >
             <span className={`${dot} bg-[var(--color-border)]`} />
             Read only
@@ -131,7 +128,7 @@ export function CheckoutControl({
             className={primaryBtn}
             title={`Check out this ${noun} so you can edit it`}
           >
-            {busy ? 'Taking…' : 'Take'}
+            {busy ? 'Opening…' : 'Edit'}
           </button>
         </>
       )}
@@ -166,7 +163,7 @@ export function ReadOnlyNotice({
           </>
         ) : (
           <>
-            Read only — press <b>Take</b> to check this {noun} out before editing.
+            Read only — press <b>Edit</b> to start editing this {noun}.
           </>
         )}
       </p>
@@ -237,7 +234,7 @@ export function CheckoutLostDialog({
       const n = new Notification('Checkout lost', {
         body: `${name ? `"${name}"` : `This ${noun}`} is no longer checked out to you${
           holderName ? ` — ${holderName} has it now` : ''
-        }. Open the tab to take it back.`,
+        }. Open the tab to edit it again.`,
         tag: 'stardesign-checkout-lost', // replace, never stack
       });
       n.onclick = () => {
@@ -250,11 +247,18 @@ export function CheckoutLostDialog({
     }
   }, [lostUnexpectedly, name, noun, holderName]);
 
+  // Marked modal, so focus goes into it: on the dialog, not on "Edit
+  // again", and Escape is the safe answer.
+  const box = useRef<HTMLDivElement>(null);
+  useModalFocus(box, lostUnexpectedly, acknowledgeLost);
+
   if (!lostUnexpectedly) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      ref={box}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 outline-none"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="checkout-lost-title"
@@ -269,7 +273,7 @@ export function CheckoutLostDialog({
               <b>{holderName}</b> has this {noun} now, so it is read only.
             </>
           ) : (
-            <>This {noun} is read only again. It is free, so you can take it straight back.</>
+            <>This {noun} is read only again. It is free, so you can start editing it again straight away.</>
           )}{' '}
           {savedAs ? (
             <>
@@ -294,7 +298,7 @@ export function CheckoutLostDialog({
             disabled={busy}
             className={primaryBtn}
           >
-            {busy ? 'Taking…' : 'Take it back'}
+            {busy ? 'Opening…' : 'Edit again'}
           </button>
         </div>
       </div>

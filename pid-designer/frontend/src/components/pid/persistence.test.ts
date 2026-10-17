@@ -14,13 +14,13 @@ const valve = (id: string, x: number): Node =>
 
 const loadEffect = compiled(canvasStatement("// Load the selected diagram's working copy"),
   ['useEffect', 'loadedId', 'api', 'diagramRef', 'migrate', 'seedIdsFrom', 'setNodes', 'setEdges', 'resetHistory',
-    'lastSaved', 'diagramKey', 'landOnPage', 'serverHas']);
+    'lastSaved', 'diagramKey', 'landOnPage', 'serverHas', 'setOpened']);
 const autosaveEffect = compiled(canvasStatement('// Debounced autosave of the working copy'),
   ['useEffect', 'loadedId', 'diagramKey', 'readOnlyRef', 'api', 'nodes', 'edges', 'lastSaved', 'unsnapped',
-    'diagramRef', 'onForbidden', 'onLockLost', 'inFlight', 'heldRef', 'firstEdit', 'serverHas']);
+    'diagramRef', 'onForbidden', 'onLockLost', 'inFlight', 'heldRef', 'firstEdit', 'serverHas', 'dropUnsent']);
 const flushEffect = compiled(canvasStatement('// Best-effort flush to S3 on tab close / hide'),
   ['useEffect', 'loadedId', 'diagramKey', 'readOnlyRef', 'api', 'snapshot', 'lastSaved', 'unsnapped', 'diagramRef',
-    'window', 'document', 'heldRef', 'serverHas']);
+    'window', 'document', 'heldRef', 'serverHas', 'claiming', 'keepUnsent']);
 const saveNowStatement = compiled(canvasStatement('// Giving the checkout back has to wait for this.'),
   ['useCallback', 'saveNowRef', 'inFlight', 'loadedId', 'diagramKey', 'readOnlyRef', 'snapshot', 'api', 'lastSaved',
     'unsnapped', 'diagramRef', 'serverHas']);
@@ -48,7 +48,11 @@ async function open(stored: G, opening: Opening = {}) {
     inFlight: { current: null as Promise<unknown> | null },
     heldRef: { current: held }, serverHas: { current: '' }, claiming: { current: null as Promise<boolean> | null },
   };
-  const told = { claims: 0, lost: [] as (string | undefined)[], stale: [] as (string | undefined)[], rescued: [] as string[] };
+  const told = {
+    claims: 0, lost: [] as (string | undefined)[], stale: [] as (string | undefined)[], rescued: [] as string[],
+    // Kept on this machine on tab close (`unsentEdit`), and let go of once sent.
+    kept: [] as string[], dropped: [] as (string | undefined)[],
+  };
   let loads = 0;
   let g: G = { nodes: [], edges: [] };
   const sent = { autosaves: [] as string[], beacons: [] as string[], stringified: 0 };
@@ -74,14 +78,15 @@ async function open(stored: G, opening: Opening = {}) {
   };
   const run = (f: () => void | (() => void)) => { f(); };
   loadEffect(run, refs.loadedId, server, { id: 'd' }, migrate, () => {}, (n: Node[]) => { g = { ...g, nodes: n }; },
-    (e: Edge[]) => { g = { ...g, edges: e }; }, () => {}, refs.lastSaved, 'd', () => {}, refs.serverHas);
+    (e: Edge[]) => { g = { ...g, edges: e }; }, () => {}, refs.lastSaved, 'd', () => {}, refs.serverHas, () => {});
   await Promise.resolve(); await Promise.resolve();
   // The flush effect, registered once, and its listeners.
   const heard: Record<string, () => void> = {};
   const target = { addEventListener: (k: string, f: () => void) => { heard[k] = f; }, removeEventListener: () => {} };
   const doc = { ...target, visibilityState: 'hidden' };
   flushEffect(run, refs.loadedId, 'd', { current: false }, server, { get current() { return g; } }, refs.lastSaved,
-    refs.unsnapped, { id: 'd' }, target, doc, refs.heldRef, refs.serverHas);
+    refs.unsnapped, { id: 'd' }, target, doc, refs.heldRef, refs.serverHas, refs.claiming,
+    (_key: string, e: { doc: G }) => { told.kept.push(text(e.doc)); });
   // The checkout's take, for the first edit: it holds the diagram from then on.
   const claim = () => { told.claims++; if (takes) refs.heldRef.current = true; return Promise.resolve(takes); };
   const firstEdit = firstEditStatement(<T>(f: T) => f, refs.heldRef, claim, refs.claiming, server, { id: 'd' },
@@ -94,7 +99,7 @@ async function open(stored: G, opening: Opening = {}) {
     cleanup = undefined;
     autosaveEffect((f: () => void | (() => void)) => { cleanup = f(); }, refs.loadedId, 'd', { current: false }, server,
       g.nodes, g.edges, refs.lastSaved, refs.unsnapped, { id: 'd' }, () => {}, () => {}, refs.inFlight,
-      refs.heldRef, firstEdit, refs.serverHas);
+      refs.heldRef, firstEdit, refs.serverHas, (_key: string, sent?: string) => { told.dropped.push(sent); });
   };
   // What the checkout's Release awaits before giving the hold back.
   const saveNowRef = { current: (): Promise<void> => Promise.resolve() };
@@ -235,6 +240,22 @@ describe('the first edit takes the checkout', () => {
     expect(c.told.claims).toBe(0);
     expect(c.sent.autosaves).toEqual([]);
     expect(c.sent.beacons).toEqual([]);
+    expect(c.told.kept).toEqual([]);
+  });
+
+  it('keeps an edit the tab closes on before it is taken, and lets it go once sent', async () => {
+    // Nothing is held until the debounced autosave takes it, and a beacon would
+    // only be refused: the edit made in that second was lost with the tab.
+    const c = await open({ nodes: [valve('A', 0)], edges: [] }, { held: false });
+    c.render({ nodes: [valve('A', 10)], edges: [] });
+    c.close();
+    expect(c.sent.beacons).toEqual([]);
+    expect(c.told.kept).toEqual([text({ nodes: [valve('A', 10)], edges: [] })]);
+    // The tab stayed after all (hidden, say): the autosave takes it and sends it.
+    vi.advanceTimersByTime(1000);
+    await settle();
+    expect(c.sent.autosaves).toEqual([text({ nodes: [valve('A', 10)], edges: [] })]);
+    expect(c.told.dropped).toEqual([text({ nodes: [valve('A', 10)], edges: [] })]);
   });
 
   it('keeps the edit as a copy and writes nothing when someone else has the diagram', async () => {

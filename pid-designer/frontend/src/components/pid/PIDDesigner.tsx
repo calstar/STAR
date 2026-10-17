@@ -44,6 +44,9 @@ import { defFor } from './types';
 import type { PIDNodeData } from './types';
 import { numberTag } from './tags';
 import { migrate } from './migrate';
+import { useArrive } from './arrival';
+import { dropUnsent, keepUnsent, readUnsent, unsentFate } from './unsentEdit';
+import type { UnsentEdit } from './unsentEdit';
 import { handleCentre, handleEnd } from './ports';
 import { copySelection, duplicatePage, pasteClip } from './clipboard';
 import type { Clip } from './clipboard';
@@ -398,6 +401,10 @@ function PIDCanvas({
     if (!here.includes(pageRef.current)) setPage(here[0]);
   }, [setPage]);
 
+  // Whether the drawing has arrived from the server (`loadedId`, as state):
+  // what an edit kept from the last visit is weighed against.
+  const [opened, setOpened] = useState(false);
+
   // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
     loadedId.current = null;
@@ -419,6 +426,7 @@ function PIDCanvas({
         // immediately save it straight back.
         lastSaved.current = JSON.stringify(api.toStored(loaded));
         loadedId.current = diagramKey;
+        setOpened(true);
       })
       .catch(() => {
         if (cancelled) return;
@@ -484,11 +492,14 @@ function PIDCanvas({
       lastSaved.current = serialized;
       unsnapped.current = true;
       const payload = { nodes, edges };
-      const save = () => api.autosaveDiagram(diagramRef, payload).then(() => { serverHas.current = serialized; });
+      // Sent, or kept by `firstEdit`: a copy of it kept on this machine on tab
+      // close (`unsentEdit`) is not wanted any more.
+      const done = () => dropUnsent(diagramKey, serialized);
+      const save = () => api.autosaveDiagram(diagramRef, payload).then(() => { serverHas.current = serialized; done(); });
       // Not held yet: this is the edit that takes it (`firstEdit`). One that
       // could not be taken, or was made on a drawing saved over since, is
       // kept and handed on there, and nothing is written here.
-      const sent = heldRef.current ? save() : firstEdit(payload).then(ok => (ok ? save() : undefined));
+      const sent = heldRef.current ? save() : firstEdit(payload).then(ok => (ok ? save() : done()));
       inFlight.current = sent.catch(() => {});
       sent.catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
@@ -543,11 +554,19 @@ function PIDCanvas({
   useEffect(() => {
     unsnapped.current = false;
     const flush = () => {
-      // A beacon cannot read a rejection, so gate it here instead -- on the
-      // checkout too: an edit made in the second before the first edit took
-      // it would only be refused.
-      if (loadedId.current !== diagramKey || readOnlyRef.current || !heldRef.current) return;
+      if (loadedId.current !== diagramKey || readOnlyRef.current) return;
       const text = JSON.stringify(api.toStored(snapshot.current));
+      // A beacon cannot read a rejection, so gate it on the checkout too: an
+      // edit made before the first edit took it (or after a hold lapsed) would
+      // only be refused. That edit -- not sent yet, or being taken -- is kept
+      // on this machine instead, and the next open offers it back
+      // (`unsentEdit`). Dropped, it was lost with the tab.
+      if (!heldRef.current) {
+        if (text !== lastSaved.current || claiming.current) {
+          keepUnsent(diagramKey, { base: serverHas.current, doc: api.toStored(snapshot.current), at: Date.now() });
+        }
+        return;
+      }
       if (text === lastSaved.current && !unsnapped.current) return;
       api.flushDiagram(diagramRef, snapshot.current);
       lastSaved.current = text;
@@ -562,6 +581,40 @@ function PIDCanvas({
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * An edit the tab closed on last time (`unsentEdit`), weighed once the
+   * drawing has arrived and this tab may draw on it. Still on the server's
+   * drawing it was made on: offered back, and put back it is an edit like any
+   * other -- it takes the checkout and saves, and Undo takes it off. Saved
+   * over since: kept as a diagram of the user's own, as `firstEdit` keeps one.
+   * While somebody else holds the diagram it waits for a later open.
+   */
+  const [unsent, setUnsent] = useState<UnsentEdit | null>(null);
+  useEffect(() => {
+    if (!opened || readOnlyRef.current) return;
+    const edit = readUnsent(diagramKey);
+    const fate = unsentFate(edit, { server: serverHas.current, shown: lastSaved.current });
+    if (fate === 'offer') { setUnsent(edit); return; }
+    dropUnsent(diagramKey);
+    if (fate === 'keep' && edit) {
+      api.rescueDiagram(diagramRef, edit.doc).then(k => onStale(k.name)).catch(() => onStale());
+    }
+  }, [opened, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  const putBackUnsent = useCallback(() => {
+    if (!unsent) return;
+    const doc = migrate(unsent.doc);
+    setUnsent(null);
+    // Dropped now: a tab closed again before this is sent keeps it again.
+    dropUnsent(diagramKey);
+    seedIdsFrom(doc.nodes);
+    setNodes(doc.nodes);
+    setEdges(doc.edges);
+  }, [unsent, diagramKey, setNodes, setEdges]);
+  const discardUnsent = useCallback(() => {
+    setUnsent(null);
+    dropUnsent(diagramKey);
+  }, [diagramKey]);
 
   /**
    * Write a whole graph, and tell `snapshot` about it.
@@ -816,14 +869,26 @@ function PIDCanvas({
    * `useNodesInitialized`, because fitting before anything is measured frames
    * nothing.
    */
+  //
+  // Nobody-has-been-here is framed for reading (`arrival.ts`): a tall page at
+  // full width from its top, not whole at a size nobody can read. Whole, when
+  // a check sends the reader to something on another page (`arriveWhole`), so
+  // what was picked is on screen.
   const nodesReady = useNodesInitialized();
   const viewKey = `${diagramKey}::${page}`;
+  const arrive = useArrive();
+  const arriveWhole = useRef(false);
   useEffect(() => {
     if (!nodesReady) return;
     const seen = viewportsRef.current.get(viewKey);
     if (seen) { setViewport(seen); return; }
     if (!nodes.some(n => pageOf(n.data as unknown as PIDNodeData) === page)) return;
-    void fitView({ padding: FIT_PADDING });
+    if (arriveWhole.current) {
+      arriveWhole.current = false;
+      void fitView({ padding: FIT_PADDING });
+    } else {
+      void arrive(FIT_PADDING);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewKey, nodesReady]);
 
@@ -1708,6 +1773,7 @@ function PIDCanvas({
             // page on arrival instead, and what was picked is on it.
             // Centring here would race that and lose.
             viewportsRef.current.delete(`${diagramKey}::${there}`);
+            arriveWhole.current = true;
             setPage(there);
           } else if (first) {
             void fitViewTo(first);
@@ -1731,6 +1797,22 @@ function PIDCanvas({
         />
       )}
 
+      <Modal
+        open={unsent !== null}
+        // Escape or a click outside decides nothing: it is offered again next time.
+        onClose={() => setUnsent(null)}
+        title="Put back your last change?"
+        footer={<>
+          <button onClick={discardUnsent} disabled={readOnly} className="rounded px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]">Discard it</button>
+          <button onClick={putBackUnsent} disabled={readOnly} className={primaryBtn}>Put it back</button>
+        </>}
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          The tab closed a moment after a change to this diagram, before it was saved
+          {unsent ? <> ({new Date(unsent.at).toLocaleString()})</> : null}. Nobody has
+          saved the diagram since, so it can go back on as it was. Undo takes it off again.
+        </p>
+      </Modal>
     </div>
   );
 }
@@ -1949,7 +2031,7 @@ export function PIDDesigner() {
     // first edit takes it (`firstEdit` in the canvas), and a hold that lapses
     // is simply free again. Taking it on open put "Editing · 14:52" over every
     // diagram anybody looked at and left a second machine read only. Deployed,
-    // the ordinary model applies -- press Take, and be told when it goes.
+    // the ordinary model applies -- press Edit, and be told when it goes.
     local: isLocalHost(location.hostname),
     takeOnEdit: true,
   });

@@ -6,7 +6,7 @@
  * for what lives here, what deliberately does not, and how an app wires it up.
  */
 
-export { Modal } from './Modal';
+export { Modal, useModalFocus } from './Modal';
 export { ChangeModal } from './ChangeModal';
 export {
   CheckoutControl,

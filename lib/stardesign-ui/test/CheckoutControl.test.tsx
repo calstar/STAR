@@ -91,7 +91,7 @@ describe('the chip s controls', () => {
     const release = vi.fn(async () => {});
     render(<CheckoutControl checkout={{ ...base, held: true, secondsLeft: 600, release }} noun="design" />);
 
-    await userEvent.click(screen.getByRole('button', { name: /^release$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^stop editing$/i }));
 
     expect(release).toHaveBeenCalledOnce();
   });
@@ -107,7 +107,7 @@ describe('the chip s controls', () => {
     const take = vi.fn(async () => {});
     render(<CheckoutControl checkout={{ ...base, held: false, holder: null, holderName: null, take }} noun="design" />);
 
-    await userEvent.click(screen.getByRole('button', { name: /^take$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     expect(take).toHaveBeenCalledOnce();
     expect(requestPermission).toHaveBeenCalled();
@@ -118,10 +118,16 @@ describe('the chip s controls', () => {
 describe('naming the give-it-back button', () => {
   afterEach(cleanup);
 
-  it('keeps the untitled "Release" by default, which the EngineDesign E2E finds', () => {
-    const html = markup({ held: true, secondsLeft: 600 });
-    expect(html).toContain('>Release</button>');
-    expect(html).not.toContain('Stop editing');
+  it('says "Stop editing" by default, the words pid-designer uses, never "Release" or "Take"', () => {
+    // One checkout, one set of words across the apps: "Take" and "Release" in
+    // EngineDesign against "Stop editing" in pid-designer changed the words for
+    // the same thing as a viewer moved between the tools.
+    const held = markup({ held: true, secondsLeft: 600 });
+    expect(held).toContain('>Stop editing</button>');
+    expect(held).not.toContain('Release');
+    const free = markup({ held: false, holder: null, holderName: null });
+    expect(free).toContain('>Edit</button>');
+    expect(free).not.toContain('Take');
   });
 
   it('says what it does, and explains itself, when the app names it', async () => {
@@ -143,7 +149,7 @@ describe('a design taken on its first edit', () => {
     const html = markup({ held: false, holder: null, holderName: null, armed: true });
     expect(html).toContain('Ready to edit');
     expect(html).not.toContain('Read only');
-    expect(html).not.toContain('>Take<');
+    expect(html).not.toContain('>Edit<');
   });
 
   it('still says who has it when somebody does', () => {

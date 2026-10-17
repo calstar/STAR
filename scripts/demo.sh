@@ -122,10 +122,15 @@ PID_KEEP_DOCS="le4 ethalox-stand-7200n-helium"
 # there, not pulled from pid-designer), and pid-designer's own "LE4" is the
 # single-page September draft. The demo copy of pid-designer gets the stand
 # drawing as a diagram of its own, marked the main diagram, so the editor opens
-# on the same stand the cockpit fires.
+# on the same stand the cockpit fires -- under the name the twin and Layer X
+# show it by. It was "LE4 Stand" here and "LE4 (6)" there, and nothing on
+# screen said they were one drawing. Not the other way round: an uploaded
+# drawing's hookup is kept under the name it was uploaded as (feed-twin
+# backend/main.py _lineage, "name:LE4"), so renaming the twin's copy drops the
+# demo stand's saved hookup and state table.
 PID_STAND_FROM="a22f706b60be"
 PID_STAND_ID="le4-stand"
-PID_STAND_NAME="LE4 Stand"
+PID_STAND_NAME="LE4 (6)"
 
 # EngineDesign: the team's design. "Design 1" (the default-named first draft,
 # untouched since 2026-09-08) is left out. Layer X keeps the stand measurements
