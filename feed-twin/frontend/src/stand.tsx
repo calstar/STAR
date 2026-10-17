@@ -24,6 +24,7 @@ import {
 import { keyOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
+import { defaultPicks, pastIdle } from './lib/standPick';
 import {
   commandSession,
   getConsoleHidden,
@@ -32,6 +33,7 @@ import {
   getStateMachine,
   sessionStateMachine,
   listArtifacts,
+  loadSampleStand,
   openSession,
   sessionBurns,
   sessionT0,
@@ -63,8 +65,37 @@ const TICK_MS = 200;
  *  integrate a minute of stand in one step — it resumes, it does not catch up. */
 const MAX_DT = 0.25;
 
+/** Why the cockpit has no stand on screen, when it has none. */
+export type NoStand =
+  /** Still asking the library what it holds. */
+  | { kind: 'library' }
+  /** The library holds no drawing: the first-run panel. */
+  | { kind: 'empty' }
+  /** The drawing picked could not be built into a stand. */
+  | { kind: 'failed'; diagram: string; name: string; reason: string }
+  /** The library could not be read at all. */
+  | { kind: 'unreachable'; reason: string };
+
+/** A switch of drawing or engine held for a yes, because the stand on screen
+ *  is past Idle and switching throws it away. */
+export interface PendingPick {
+  kind: 'diagram' | 'engine';
+  id: string;
+  name: string;
+  /** What switching would throw away, in a few words. */
+  losing: string;
+}
+
 interface StandValue {
   artifacts: Artifact[];
+  /** Null while a stand is on screen or opening; otherwise why there is none. */
+  noStand: NoStand | null;
+  /** Put the bundled sample stand into the library and open it. */
+  loadSample: () => Promise<void>;
+  /** A switch waiting for the operator's yes (see `pick`). */
+  pendingPick: PendingPick | null;
+  confirmPick: () => void;
+  cancelPick: () => void;
   model: ModelView | null;
   machine: StateMachine | null;
   live: SessionState | null;
@@ -89,6 +120,9 @@ interface StandValue {
   consoleOrder: Order;
   setConsoleOrder: (order: Order) => void;
   hideOnConsole: (ids: string[], hide: boolean) => void;
+  /** Put a drawing or engine on the console. On a stand past Idle -- loaded,
+   *  pressed, burned -- it waits in `pendingPick` for a yes instead: an
+   *  import used to switch the stand and throw a T-0'd one away unasked. */
   pick: (kind: 'diagram' | 'engine', id: string) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
@@ -117,7 +151,7 @@ interface StandValue {
   standDoc: OpenStand | null;
   /** Open a stand document: its drawing, engine, settings, hookup and knobs,
    *  on a fresh session. */
-  openStand: (ref: DocRef, name: string) => Promise<void>;
+  openStand: (ref: DocRef, name: string, take?: boolean) => Promise<void>;
   /** Leave the stand document; the cockpit keeps what it has. */
   closeStand: () => void;
   /** The cockpit's configuration as a stand document's payload. */
@@ -150,6 +184,29 @@ const readStand = (): OpenStand | null => {
     return raw ? (JSON.parse(raw) as OpenStand) : null;
   } catch {
     return null;
+  }
+};
+
+const HELD_KEY = 'feedtwin.stand.held';
+const readHeld = (): string => {
+  try {
+    return window.localStorage.getItem(HELD_KEY) ?? '';
+  } catch {
+    return '';
+  }
+};
+const keepHeld = (key: string) => {
+  try {
+    window.localStorage.setItem(HELD_KEY, key);
+  } catch {
+    // Storage unavailable: a reload asks for Take again.
+  }
+};
+const forgetHeld = () => {
+  try {
+    window.localStorage.removeItem(HELD_KEY);
+  } catch {
+    // Nothing to forget.
   }
 };
 
@@ -210,6 +267,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [running, setRunning] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [noStand, setNoStand] = useState<NoStand | null>({ kind: 'library' });
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
   const [setup, setSetupState] = useState<StandSetup>(() => ({
     dome: 500,
     copv_target: 4500,
@@ -242,6 +301,36 @@ export function StandProvider({ children }: { children: ReactNode }) {
   // session and throw away the run on screen.
   const checkout = useCheckout({ api: standApi, ref: standDoc?.ref ?? null, reload: () => undefined });
   const locked = Boolean(standDoc) && !checkout.held;
+  /** Knob positions a closed stand left the cockpit, for its next fresh
+   *  stand on the same drawing. */
+  const carried = useRef<{ diagram: string; knobs: Record<string, number> } | null>(null);
+  /** The stand this browser held when the page went away. Closing the tab
+   *  hands the checkout back (useCheckout's unload beacon), so a reload -- or
+   *  a stand somebody had just made -- came back read only, with a Take
+   *  button for their own stand. It is taken again, once, if nobody else
+   *  has it. */
+  const heldKey = useRef(readHeld());
+  const retook = useRef('');
+  const standKey = standDoc ? keyOf(standDoc.ref) : '';
+  const wasHeld = useRef(false);
+  useEffect(() => {
+    if (checkout.held && standKey) {
+      heldKey.current = standKey;
+      keepHeld(standKey);
+    } else if (wasHeld.current && !checkout.held && !checkout.lostUnexpectedly) {
+      // Released on purpose: the next reload must not take it back.
+      heldKey.current = '';
+      forgetHeld();
+    }
+    wasHeld.current = checkout.held;
+  }, [checkout.held, checkout.lostUnexpectedly, standKey]);
+  const { take, holder, held, busy: checkoutBusy } = checkout;
+  useEffect(() => {
+    if (!standKey || held || checkoutBusy || holder !== null) return;
+    if (heldKey.current !== standKey || retook.current === standKey) return;
+    retook.current = standKey;
+    void take().catch(() => undefined);
+  }, [standKey, held, checkoutBusy, holder, take]);
   /** The open stand's hookup and knobs, applied to every fresh session on it. */
   const standPayload = useRef<StandPayload | null>(null);
 
@@ -249,6 +338,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const session = useRef('');
   /** Set by Reset: the next open must be a new stand, not the remembered one. */
   const wantFresh = useRef(false);
+  /** The pressurant was asked for in the URL: it is not carried over. */
+  const gasAsked = useRef(false);
+  /** The session this tab last ran, when a fresh one replaces it (Reset, a
+   *  stand the server closed): the next open names it, so the server frees
+   *  its seat and says if it had closed it to make room. */
+  const replacing = useRef('');
   /** The drawing's knobs this tab has turned (dome, COPV fill). Only those are
    *  sent when a stand opens; the rest start where the drawing sets them. */
   const turned = useRef<{ diagram: string; keys: Set<string> }>(
@@ -278,46 +373,74 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setArtifacts(list);
     return list;
   }, []);
+  const artifactsRef = useRef<Artifact[]>([]);
+  artifactsRef.current = artifacts;
+
+  /** Open on the stand `defaultPicks` chooses, or say why there is none. */
+  const land = useCallback((list: Artifact[]) => {
+    // The engine used to be picked only when the library held exactly one.
+    // With two it picked none, silently: the console opened with no engine,
+    // no chamber and nothing that could light.
+    const stored = (kind: 'diagram' | 'engine') => {
+      try {
+        return window.localStorage.getItem(`feedtwin.${kind}`);
+      } catch {
+        return null;
+      }
+    };
+    let asked: { diagram?: string | null; engine?: string | null } = {};
+    try {
+      const q = new URLSearchParams(window.location.search);
+      asked = { diagram: q.get('diagram'), engine: q.get('engine') };
+      const gas = q.get('pressurant');
+      if (gas === 'helium' || gas === 'nitrogen' || gas === 'drawing') {
+        setSetupState((s) => ({ ...s, pressurant: gas === 'drawing' ? '' : gas }));
+        gasAsked.current = true;
+      }
+    } catch {
+      // No query to read.
+    }
+    const picks = defaultPicks(list, { diagram: stored('diagram'), engine: stored('engine') }, asked);
+    if (picks.diagram) setDiagram(picks.diagram);
+    if (picks.engine) setEngine(picks.engine);
+    setNoStand(picks.diagram ? null : { kind: 'empty' });
+  }, []);
 
   useEffect(() => {
     refresh()
-      .then((list) => {
-        // The list is newest first. Prefer what this browser used last time,
-        // if it is still in the library; otherwise the newest stand drawing
-        // (the study drawings are for the Study tab), and the newest engine.
-        //
-        // The engine used to be picked only when the library held exactly
-        // one. With two it picked none, silently: the console opened with no
-        // engine, no chamber and nothing that could light, and the only sign
-        // was an Engine section that was not there.
-        const diagrams = list.filter((a) => a.kind === 'diagram');
-        const engines = list.filter((a) => a.kind === 'engine');
-        const remembered = (kind: 'diagram' | 'engine') => {
-          try {
-            const id = window.localStorage.getItem(`feedtwin.${kind}`);
-            return id && list.some((a) => a.kind === kind && a.id === id) ? id : '';
-          } catch {
-            return '';
-          }
-        };
-        const stand = diagrams.find((a) => /stand/i.test(a.name)) ?? diagrams[0];
-        const pickedDiagram = remembered('diagram') || stand?.id || '';
-        const pickedEngine = remembered('engine') || engines[0]?.id || '';
-        if (pickedDiagram) setDiagram(pickedDiagram);
-        if (pickedEngine) setEngine(pickedEngine);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, [refresh]);
+      .then(land)
+      .catch((e: unknown) =>
+        setNoStand({ kind: 'unreachable', reason: e instanceof Error ? e.message : String(e) }),
+      );
+  }, [refresh, land]);
 
-  /** Remember the picks, so reopening the tab lands on the same stand. */
-  useEffect(() => {
+  const loadSample = useCallback(async () => {
+    setError('');
+    const list = await loadSampleStand();
+    setArtifacts(list);
+    // The sample is the featured stand: open it, whatever this browser
+    // remembered from a library that no longer holds it.
+    const diagrams = list.filter((a) => a.kind === 'diagram');
+    const engines = list.filter((a) => a.kind === 'engine');
+    const d = diagrams.find((a) => a.featured) ?? diagrams[0];
+    const e = engines.find((a) => a.featured) ?? engines[0];
+    if (!d) throw new Error('The sample stand did not arrive in the library.');
+    setNoStand(null);
+    if (e) setEngine(e.id);
+    setDiagram(d.id);
+  }, []);
+
+  /** Remember the picks once a stand has opened on them, so reopening the tab
+   *  lands on the same stand. Not before: a drawing that cannot be built was
+   *  remembered, and every reload landed on it again. */
+  const rememberPicks = useCallback((d: string, e: string) => {
     try {
-      if (diagram) window.localStorage.setItem('feedtwin.diagram', diagram);
-      if (engine) window.localStorage.setItem('feedtwin.engine', engine);
+      if (d) window.localStorage.setItem('feedtwin.diagram', d);
+      if (e) window.localStorage.setItem('feedtwin.engine', e);
     } catch {
       // Storage can be unavailable; the picks still work for this tab.
     }
-  }, [diagram, engine]);
+  }, []);
 
   /** Load the drawing and pick the stand up where it was, or open a fresh one.
    *
@@ -329,9 +452,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!diagram) return;
     let cancelled = false;
+    replacing.current = session.current || replacing.current;
     session.current = '';
     setBusy(true);
     setError('');
+    setNoStand(null);
     const fresh = wantFresh.current;
     wantFresh.current = false;
     const remembered = (): string => {
@@ -380,7 +505,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
         try {
           return await tickSession(id, 1e-3);
         } catch {
-          // The backend forgot it (restart, deploy); a fresh stand is honest.
+          // The backend forgot it (restart, deploy, closed to make room); a
+          // fresh stand is honest, and its notes say which.
+          replacing.current = replacing.current || id;
         }
       }
       // The stand's hookup and knob positions belong to the drawing it was
@@ -391,19 +518,33 @@ export function StandProvider({ children }: { children: ReactNode }) {
       // The dome and the COPV fill are the drawing's until someone turns them
       // here, or a stand carries them: this tab's 500 and 4,500 used to win
       // over whatever the drawing set its regulators to.
+      // The pressurant is the drawing's too: Helium picked on one drawing
+      // burned the next one on helium with only a badge to say so (D-70).
+      let gasReset = false;
       if (turned.current.diagram !== diagram) {
+        gasReset =
+          turned.current.diagram !== '' && !gasAsked.current && Boolean(setup.pressurant) && !(doc && 'pressurant' in doc.setup);
         turned.current = { diagram, keys: new Set() };
         keepTurned();
+        if (gasReset) setSetupState((s) => ({ ...s, pressurant: '' }));
       }
-      const fromDrawing = DRAWN_KNOBS.filter((key) => !turned.current.keys.has(key) && !(doc && key in doc.setup));
+      gasAsked.current = false;
+      const fromDrawing = [
+        ...DRAWN_KNOBS.filter((key) => !turned.current.keys.has(key) && !(doc && key in doc.setup)),
+        ...(gasReset ? ['pressurant'] : []),
+      ];
       const sent = Object.fromEntries(Object.entries(setup).filter(([key]) => !fromDrawing.includes(key)));
+      const replaces = replacing.current;
+      replacing.current = '';
       const opened = await openSession(where, {
         state: 'Idle',
+        ...(replaces ? { replaces } : {}),
         ...sent,
         ...(onStand ? { stand: { id: onStand.ref.id, owner: onStand.ref.owner ?? '' } } : {}),
         ...(doc && Object.keys(doc.hookup).length ? { hookup: doc.hookup } : {}),
       });
-      const knobs = (doc?.operating_point?.knobs ?? {}) as Record<string, number>;
+      const knobs = (doc?.operating_point?.knobs ??
+        (carried.current?.diagram === diagram ? carried.current.knobs : {})) as Record<string, number>;
       let state = opened;
       for (const [id, value] of Object.entries(knobs)) {
         if (opened.knobs?.some((k) => k.id === id)) {
@@ -443,11 +584,27 @@ export function StandProvider({ children }: { children: ReactNode }) {
         // its regulators are, and the GSE tab must show that, not the defaults.
         if (first.setup) setSetupState((s) => ({ ...s, ...first.setup }) as StandSetup);
         setLive(first);
+        liveState.current = first.state;
         setHistory(null);
         setBurns(null);
+        rememberPicks(diagram, engine);
         last.current = performance.now();
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (cancelled) return;
+        // Nothing on screen may outlive the stand it showed: the last
+        // drawing's console stayed up, RUNNING, with T-0 doing nothing.
+        session.current = '';
+        setModel(null);
+        setLive(null);
+        setMachine(null);
+        setHistory(null);
+        setBurns(null);
+        setNoStand({
+          kind: 'failed',
+          diagram,
+          name: artifactsRef.current.find((a) => a.id === diagram)?.name ?? 'This drawing',
+          reason: e instanceof Error ? e.message : String(e),
+        });
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -474,9 +631,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
       const w = liveState.current === 'Fire' ? 1 : warpRef.current;
       const dt = Math.min(((now - last.current) / 1000) * w, MAX_DT * w);
       last.current = now;
+      const asked = session.current;
       try {
-        const next = await tickSession(session.current, dt);
-        if (!alive.current) return;
+        const next = await tickSession(asked, dt);
+        // A Reset or a new drawing replaced the stand while this was out: its
+        // answer is about a stand nobody is looking at.
+        if (!alive.current || session.current !== asked) return;
         // Pace, smoothed over ~1 s of wall clock so it reads steadily.
         const nowWall = performance.now();
         if (pace.current && nowWall - pace.current.wall > 1000) {
@@ -490,7 +650,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         liveState.current = next.state;
         setError('');
       } catch (e) {
-        if (!alive.current) return;
+        if (!alive.current || session.current !== asked) return;
         const message = e instanceof Error ? e.message : String(e);
         setError(message);
         // The backend restarted and forgot the stand. Sessions live in
@@ -499,9 +659,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
         // frame with the clock stopped. Open a fresh stand instead -- cold
         // and empty, which is honest -- and say so.
         if (/no session/i.test(message)) {
+          replacing.current = session.current;
           session.current = '';
           wantFresh.current = true;
-          setError('The stand was restarted; this is a fresh one. ' + message);
+          setError('This is a fresh stand. ' + message);
           setGeneration((g) => g + 1);
           return;
         }
@@ -518,18 +679,38 @@ export function StandProvider({ children }: { children: ReactNode }) {
     };
   }, [running, live?.id]);
 
-  /** Pull the trace periodically — it is bulky and only the plot reads it. */
+  /** Pull the trace periodically — it is bulky and only the plot reads it.
+   *  Every 1.5 s, and three times as often while firing: a four-second burn
+   *  drew as two jumps. Each pull is for one stand: replaced (Reset, a new
+   *  drawing), its pulls still in flight are dropped, and a stale answer never
+   *  lands on the new stand's plot. */
+  const sessionId = live?.id;
   useEffect(() => {
-    if (!session.current) return undefined;
-    const pull = () => {
-      if (!session.current) return;
-      sessionHistory(session.current).then(setHistory).catch(() => undefined);
-      sessionBurns(session.current).then(setBurns).catch(() => undefined);
+    if (!sessionId) return undefined;
+    const abort = new AbortController();
+    let timer = 0;
+    const pull = async () => {
+      if (abort.signal.aborted || session.current !== sessionId) return;
+      await Promise.all([
+        sessionHistory(sessionId, 300, 1500, abort.signal)
+          .then((h) => {
+            if (!abort.signal.aborted && session.current === sessionId) setHistory(h);
+          })
+          .catch(() => undefined),
+        sessionBurns(sessionId, abort.signal)
+          .then((b) => {
+            if (!abort.signal.aborted && session.current === sessionId) setBurns(b);
+          })
+          .catch(() => undefined),
+      ]);
+      if (!abort.signal.aborted) timer = window.setTimeout(pull, liveState.current === 'Fire' ? 500 : 1500);
     };
-    pull();
-    const id = window.setInterval(pull, 1500);
-    return () => window.clearInterval(id);
-  }, [live?.id]);
+    void pull();
+    return () => {
+      abort.abort();
+      window.clearTimeout(timer);
+    };
+  }, [sessionId]);
 
   /** What the console hides is the team's, so another operator's change has to
    *  arrive here without a reload. A few seconds late is fine; it is layout. */
@@ -582,11 +763,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const command = useCallback(
     async (body: Parameters<typeof commandSession>[1]) => {
       if (!session.current) return;
+      const asked = session.current;
       // Wall clock is reset so the next tick does not charge the stand for the
       // time this round trip took.
       try {
-        const next = await commandSession(session.current, body);
+        const next = await commandSession(asked, body);
+        if (session.current !== asked) return;
         setLive(next);
+        liveState.current = next.state;
         last.current = performance.now();
         setError('');
       } catch (e) {
@@ -639,9 +823,29 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setConsoleOrder: changeConsoleOrder,
     pick: (kind, id) => {
       if (locked) return refuse();
+      if ((kind === 'diagram' ? diagram : engine) === id) return;
+      const losing = pastIdle(live, burns);
+      if (losing) {
+        // The ref, not this render's list: an import refreshes the library
+        // and picks in one go, and the list here is the one from before.
+        const name = artifactsRef.current.find((a) => a.id === id)?.name ?? 'the import';
+        setPendingPick({ kind, id, name, losing });
+        return;
+      }
+      setPendingPick(null);
       if (kind === 'diagram') setDiagram(id);
       else setEngine(id);
     },
+    pendingPick,
+    confirmPick: () => {
+      if (!pendingPick) return;
+      setPendingPick(null);
+      if (pendingPick.kind === 'diagram') setDiagram(pendingPick.id);
+      else setEngine(pendingPick.id);
+    },
+    cancelPick: () => setPendingPick(null),
+    noStand,
+    loadSample,
     go: (state) => {
       if (/^fire$/i.test(state)) {
         warpRef.current = 1;
@@ -692,8 +896,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
     },
     refresh,
     standDoc,
-    openStand: async (ref, name) => {
+    openStand: async (ref, name, take = false) => {
       const doc = await standApi.load(ref);
+      // A stand somebody has just made is theirs to change: taken as it opens.
+      if (take) {
+        heldKey.current = keyOf(ref);
+        retook.current = '';
+      }
       standPayload.current = doc;
       await putStandView(doc.diagram, doc.console);
       const opened = { ref, name };
@@ -710,7 +919,16 @@ export function StandProvider({ children }: { children: ReactNode }) {
       setGeneration((g) => g + 1);
     },
     closeStand: () => {
+      // The cockpit keeps what the stand gave it -- drawing, engine, settings,
+      // and where the knobs sit. The settings stayed and the knobs went back
+      // to the drawing's on the next fresh stand: half a stand.
+      const knobs = Object.fromEntries((live?.knobs ?? []).map((k) => [k.id, k.psig]));
+      carried.current = Object.keys(knobs).length ? { diagram, knobs } : null;
+      for (const key of DRAWN_KNOBS) if (live?.setup && key in live.setup) turned.current.keys.add(key);
+      keepTurned();
       standPayload.current = null;
+      heldKey.current = '';
+      forgetHeld();
       setStandDoc(null);
       try {
         window.localStorage.removeItem('feedtwin.stand');

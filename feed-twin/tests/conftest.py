@@ -57,6 +57,7 @@ SLOW_TESTS = {
     "test_a_pressed_tank_holds_when_the_valve_shuts",
     "test_every_thermal_model_on_settles_at_lockup",
     "test_a_tick_is_fast_enough_to_feel_live",
+    "test_the_study_and_the_console_end_a_burn_in_the_same_place",
     "test_a_small_ullage_press_lands_on_lockup_not_past_it",
 }
 
@@ -84,4 +85,4 @@ def _shipped_drawings_stay() -> None:
 
     have = {a.source for a in main.library.list("diagram")}
     if any(f"shipped:{p.name}" not in have for p in main.SEEDS.glob("*.json")):
-        main._seed()
+        main._seed(revive=True)

@@ -43,6 +43,8 @@ interface Phase {
   progress?: (live: SessionState, setup: StandSetup) => number;
   /** A phase with no such state on this machine is left out. */
   optional?: boolean;
+  /** Why the wait cannot finish as the stand stands, or '' (said instead). */
+  blocked?: (live: SessionState) => string;
 }
 
 /** Where a fill stops: the session's FULL_FRACTION -- a 5 % ullage, which is
@@ -63,8 +65,35 @@ const PRESSED_PSI = 3;
  *  stand does not say. */
 const pressTarget = (t: TankState | undefined, dome: number) =>
   t?.lockup_psi ?? dome;
+/** A regulator feeds the tank (it has a lockup range at the knob's dome) but
+ *  gives no lockup now: its dome is not loaded, so it is shut. */
+const domeUnloaded = (t: TankState | undefined) =>
+  t !== undefined &&
+  ((t.lockup_range_psi != null && t.lockup_psi == null) ||
+    // An older server gave the unloaded regulator's sub-atmospheric number.
+    (t.lockup_psi != null && t.lockup_psi <= 0));
+/** Pressed: within PRESSED_PSI of the lockup, and never with the dome
+ *  unloaded -- the guide reached Ready on tanks at 15 and 34 psia because an
+ *  unloaded dome's "lockup" sat under atmosphere. */
+const pressed = (t: TankState | undefined, dome: number) =>
+  t === undefined || (!domeUnloaded(t) && t.pressure_psi >= pressTarget(t, dome) - PRESSED_PSI);
+/** Far under its lockup -- or with nothing on its dome -- as FIRE asks before
+ *  it lights a stand that was never pressed: SLIP under, the same margin the
+ *  guide calls a slip. A missing tank is not. */
+export const underPressed = (t: TankState | undefined, dome: number) =>
+  t !== undefined && (domeUnloaded(t) || t.pressure_psi < (1 - SLIP) * pressTarget(t, dome));
+/** The press wait that cannot end: a shut regulator presses nothing. */
+const unloaded = (t: TankState | undefined) =>
+  domeUnloaded(t) ? 'dome not loaded, so the regulator is shut; open the dome line on the P&ID tab' : '';
 /** Charged means within 3% of the bottle target. */
 const CHARGED = 0.97;
+
+/** How far under a done phase may slip after the stand is committed before
+ *  the guide says so, as a share of what it reached. The press solenoids shut
+ *  at Ready and the pressurant collapses onto the LOX: a T-0'd LOX tank sits
+ *  ~12 % under lockup a second later, and an amber "has slipped" stood over
+ *  FIRE after every T-0. Past this it is worth a look. */
+const SLIP = 0.15;
 
 /** A wetted wall this far above its liquid is still chilling down. Shut the
  *  vent on it and the LOX it touches boils at kilowatts into a two-litre
@@ -97,6 +126,21 @@ const loadProgress = (t: TankState | undefined) => {
   // 293 K wall on 90 K LOX is the start of the chilldown; WARM_WALL_K the end.
   return Math.min(Math.max(1 - (excess - WARM_WALL_K) / (293 - t.liquid_temperature_K - WARM_WALL_K), 0), 1);
 };
+/** Where a chilldown ends [K]: the wall within WARM_WALL_K of the liquid, or
+ *  of LOX at one atmosphere while none has collected yet. */
+const LOX_NBP_K = 90.2;
+export const chillEndK = (t: TankState) =>
+  (t.liquid_temperature_K < CRYOGENIC_K ? t.liquid_temperature_K : LOX_NBP_K) + WARM_WALL_K;
+/** 0..1 through a chilldown, by the wall: from where it started to where it
+ *  ends. The pad read 0 % for the ten minutes of a chill, because the bar was
+ *  the liquid collected and nothing collects until the wall is cold. */
+export const chillFraction = (wallK: number, startK: number, endK: number) =>
+  startK - endK <= 0 ? 1 : Math.min(Math.max((startK - wallK) / (startK - endK), 0), 1);
+/** Seconds of stand time left on a chill at the rate the wall is cooling
+ *  [K/s, positive], or null when it is not cooling measurably. */
+export const chillLeftS = (wallK: number, endK: number, rateKs: number) =>
+  rateKs > 1e-4 ? Math.max(wallK - endK, 0) / rateKs : null;
+
 const oxTank = (live: SessionState) => live.tanks.find(isOx) ?? live.tanks[0];
 const fuelTank = (live: SessionState) => live.tanks.find((t) => !isOx(t)) ?? live.tanks[1];
 const bottle = (live: SessionState) => live.bottles[0];
@@ -131,9 +175,8 @@ const PHASES: Phase[] = [
     label: 'Press LOX',
     target: 'Ox Press',
     waiting: 'LOX tank pressing up to lockup',
-    done: (l, s) =>
-      (oxTank(l)?.pressure_psi ?? Infinity) >=
-      pressTarget(oxTank(l), s.dome) - PRESSED_PSI,
+    done: (l, s) => pressed(oxTank(l), s.dome),
+    blocked: (l) => unloaded(oxTank(l)),
     progress: (l, s) =>
       (oxTank(l)?.pressure_psi ?? 0) / pressTarget(oxTank(l), s.dome),
   },
@@ -142,9 +185,8 @@ const PHASES: Phase[] = [
     label: 'Press fuel',
     target: 'Fuel Press',
     waiting: 'fuel tank pressing up to lockup',
-    done: (l, s) =>
-      (fuelTank(l)?.pressure_psi ?? Infinity) >=
-      pressTarget(fuelTank(l), s.dome) - PRESSED_PSI,
+    done: (l, s) => pressed(fuelTank(l), s.dome),
+    blocked: (l) => unloaded(fuelTank(l)),
     progress: (l, s) =>
       (fuelTank(l)?.pressure_psi ?? 0) / pressTarget(fuelTank(l), s.dome),
   },
@@ -173,6 +215,32 @@ const PHASES: Phase[] = [
     done: (l) => l.state === 'Fire' || l.notes.some((n) => /burnout/i.test(n)),
   },
 ];
+
+/** Has a phase done before commit slipped past SLIP since? Presses by
+ *  pressure against a loaded lockup, charges and loads by what they hold. */
+function slipped(p: Phase, live: SessionState, setup: StandSetup): boolean {
+  if (p.done(live, setup)) return false;
+  const under = (have: number, want: number) => want > 0 && have < (1 - SLIP) * want;
+  switch (p.key) {
+    case 'oxpress':
+    case 'fuelpress': {
+      const t = p.key === 'oxpress' ? oxTank(live) : fuelTank(live);
+      return domeUnloaded(t) || under(t?.pressure_psi ?? 0, pressTarget(t, setup.dome));
+    }
+    case 'charge':
+    case 'topup':
+      return under(bottle(live)?.pressure_psi ?? Infinity, setup.copv_target);
+    default:
+      return (p.progress?.(live, setup) ?? 1) < 1 - SLIP;
+  }
+}
+
+/** A wait in stand time, as a person says it: "40 s", "6 min", "1 h 5 min". */
+export function waitText(seconds: number): string {
+  if (seconds < 90) return `${Math.max(Math.round(seconds / 5) * 5, 5)} s`;
+  const min = Math.round(seconds / 60);
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+}
 
 /** States the guide never routes through on its own. */
 const NEVER_VIA = (s: string) => /fire|abort|vent/i.test(s);
@@ -228,8 +296,14 @@ export interface PadGuide {
   legal: boolean;
   /** 0..1 through the current wait, when it has a size. */
   progress: number | undefined;
-  /** Phases done before the stand was committed that have since slipped. */
+  /** Why the current wait cannot finish, or ''. */
+  blocked: string;
+  /** Phases done before the stand was committed that have since slipped
+   *  further than SLIP. */
   sagged: Phase[];
+  /** The LOX tank's chilldown while it runs: how far, the wall, and the
+   *  stand seconds left at the rate it is cooling (null until measurable). */
+  chill: { fraction: number; wallK: number; endK: number; leftS: number | null } | null;
   auto: boolean;
   setAuto: (on: boolean) => void;
 }
@@ -268,15 +342,52 @@ export function usePadGuide(
     // what an operator watches for at Ready; the guide names it rather than
     // pretending the checklist is still green.
     // Not during a burn: tanks emptying into an engine have not "sagged".
+    // Only past SLIP: a few percent of sag after T-0 is the physics, not news.
     const sagged =
       committed && live.state !== 'Fire'
-        ? phases.filter((p) => !p.done(live, setup) && p.key !== 'ready' && p.key !== 'fire')
+        ? phases.filter((p) => p.key !== 'ready' && p.key !== 'fire' && slipped(p, live, setup))
         : [];
     const inTarget = current !== undefined && live.state === current.target;
     const hop = current && !inTarget ? firstHop(machine, live.state, current.target) : '';
     const legal = hop !== '' && live.reachable.includes(hop);
     const progress = current?.progress?.(live, setup);
-    return { phases, index, current, inTarget, hop, legal, progress, sagged };
+    const blocked = current?.blocked?.(live) ?? '';
+    return { phases, index, current, inTarget, hop, legal, progress, blocked, sagged };
+  })();
+
+  // The chilldown, read off the LOX tank's wall: how far, and how long to go
+  // at the rate it is cooling (measured over the last ~20 s of stand time).
+  const ox = live ? oxTank(live) : undefined;
+  const wallK = ox?.wall_temperature_K;
+  const chilling = Boolean(
+    ox && wallK !== undefined && (ox.chilling || (loaded(ox) >= LOADED_OF_TARGET && !chilled(ox))),
+  );
+  const trail = useRef<{ id: string; startK: number; samples: { t: number; k: number }[] }>({
+    id: '',
+    startK: 0,
+    samples: [],
+  });
+  if (live && ox && wallK !== undefined && chilling) {
+    const key = `${live.id}:${ox.id}`;
+    if (trail.current.id !== key) trail.current = { id: key, startK: Math.max(wallK, chillEndK(ox) + 1), samples: [] };
+    const samples = trail.current.samples;
+    if (!samples.length || live.t > samples[samples.length - 1].t) samples.push({ t: live.t, k: wallK });
+    while (samples.length > 2 && live.t - samples[0].t > 20) samples.shift();
+  } else if (!chilling && trail.current.id) {
+    trail.current = { id: '', startK: 0, samples: [] };
+  }
+  const chill = (() => {
+    if (!chilling || !ox || wallK === undefined) return null;
+    const endK = chillEndK(ox);
+    const s = trail.current.samples;
+    const span = s.length > 1 ? s[s.length - 1].t - s[0].t : 0;
+    const rate = span > 1 ? (s[0].k - s[s.length - 1].k) / span : 0;
+    return {
+      fraction: chillFraction(wallK, trail.current.startK, endK),
+      wallK,
+      endK,
+      leftS: span > 1 ? chillLeftS(wallK, endK, rate) : null,
+    };
   })();
 
   // Auto-sequence: take each legal hop as it comes, wait out the waits, and
@@ -286,7 +397,12 @@ export function usePadGuide(
   // Nor does it lead the stand out of an abort: that is the operator's call,
   // and an auto-sequence that resumed a fill after someone hit abort would be
   // the worst thing on the page.
-  const stop = !guide?.current || guide.current.key === 'fire' || Boolean(live && ABORT(live.state));
+  // Nor waits on something only the operator can change (an unloaded dome).
+  const stop =
+    !guide?.current ||
+    guide.current.key === 'fire' ||
+    Boolean(live && ABORT(live.state)) ||
+    Boolean(guide.inTarget && guide.blocked);
   const act = Boolean(guide && !guide.inTarget && guide.legal);
   useEffect(() => {
     if (!auto) {
@@ -303,7 +419,7 @@ export function usePadGuide(
     go(guide.hop);
   }, [auto, stop, act, stamp]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return guide ? { ...guide, auto, setAuto } : null;
+  return guide ? { ...guide, chill, auto, setAuto } : null;
 }
 
 /**
@@ -318,6 +434,8 @@ export function PadGuideLine({
   hasEngine,
   burn,
   burnout = '',
+  coldFlow = '',
+  abortNote = '',
 }: {
   guide: PadGuide;
   state: string;
@@ -326,24 +444,57 @@ export function PadGuideLine({
   burn?: Burn;
   /** The stand's burnout note, while it stands (it clears on the next state). */
   burnout?: string;
+  /** The stand's "Not lit: cold flow" note: Fire with nothing burning. */
+  coldFlow?: string;
+  /** The stand's note that this abort's table row leaves a main open. */
+  abortNote?: string;
 }) {
-  const { phases, index, current, inTarget, hop, legal, progress, sagged, auto, setAuto } = guide;
+  const { phases, index, current, inTarget, hop, legal, progress, blocked, sagged, chill, auto, setAuto } = guide;
+  // While the LOX wall chills nothing collects: the bar is the chill, by the
+  // wall's temperature, and the line says how long to go.
+  const chilling = inTarget && current?.key === 'ox' && chill !== null;
+  const shown = chilling && chill ? chill.fraction : progress;
   // During a burn and in the Vent it ends in, the line is the burn: what
   // someone watching wants then is how it went, not that the tanks are empty
   // and the next thing is a LOX load.
   const burning = state === 'Fire';
   const burned = !burning && Boolean(burnout) && burn !== undefined && !burn.burning;
-  if ((burning || burned) && burn) {
-    const why = burnout.match(/: (.+? ran dry)/)?.[1];
+  if (burning && coldFlow) {
     return (
       <div className="flex min-w-0 items-center gap-x-4 font-mono text-[12px]">
-        <span className={`min-w-0 flex-1 truncate ${burned ? 'text-[var(--color-success)]' : 'text-[var(--ink)]'}`}>
-          {burned ? 'Burned' : 'Burning'}{' '}
+        <span className="min-w-0 flex-1 truncate text-[var(--color-warning)]" title={coldFlow}>
+          {coldFlow}
+        </span>
+      </div>
+    );
+  }
+  // In Fire, only the burn going on now: the last one's totals read as this
+  // one's while the valves were still opening.
+  if (((burning && burn?.burning) || burned) && burn) {
+    const why = burnout.match(/: (.+? ran dry)/)?.[1];
+    // With no engine on the stand Fire is a flow test, and nothing lit is a
+    // cold flow: neither is a "burn" (a no-engine Fire was "Burnout").
+    const lit = hasEngine && burn.thrust_mean_N >= 1;
+    const what = !hasEngine ? 'Flow test' : !lit ? 'Not lit: cold flow' : burned ? 'Burned' : 'Burning';
+    return (
+      <div className="flex min-w-0 items-center gap-x-4 font-mono text-[12px]">
+        <span
+          className={`min-w-0 flex-1 truncate ${
+            !lit ? 'text-[var(--color-warning)]' : burned ? 'text-[var(--color-success)]' : 'text-[var(--ink)]'
+          }`}
+        >
+          {what}{' '}
           <span className="tabular-nums">{fixed(burn.duration_s, 2)} s</span>
           <span className="text-[var(--ink-2)]">
             {' · '}
-            <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
-            {burn.isp_s > 0 && (
+            {lit ? (
+              <>
+                <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
+              </>
+            ) : (
+              'no thrust'
+            )}
+            {lit && burn.isp_s > 0 && (
               <>
                 {' · Isp '}
                 <span className="tabular-nums">{fixed(burn.isp_s, 0)} s</span>
@@ -390,20 +541,37 @@ export function PadGuideLine({
         </span>
         {current === undefined ? (
           <span className="min-w-0 flex-1 truncate text-[var(--color-success)]">Pad complete — the stand is in {state}.</span>
+        ) : inTarget && blocked ? (
+          <span className="min-w-0 flex-1 truncate text-[var(--color-warning)]" title={blocked}>
+            {current.label}: {blocked}.
+          </span>
         ) : inTarget ? (
           <span className="flex min-w-0 flex-1 items-center gap-2 text-[var(--ink-2)]">
-            <span className="truncate">
-              {current.key === 'fire' ? 'Burning.' : `${current.label}: ${current.waiting}.`}
+            <span
+              className="truncate"
+              title={
+                chilling && chill
+                  ? `The wall is at ${fixed(chill.wallK, 0)} K and the LOX collects once it is near ${fixed(chill.endK, 0)} K. Until then every gram poured flashes off and vents. On the stand this takes about ten minutes: skip it on the LOX tank card, or jump to T-0.`
+                  : undefined
+              }
+            >
+              {current.key === 'fire'
+                ? 'Burning.'
+                : chilling && chill
+                  ? `${current.label}: chilling the wall, ${fixed(chill.wallK, 0)} K → ${fixed(chill.endK, 0)} K${
+                      chill.leftS !== null ? `, about ${waitText(chill.leftS)} to go` : ''
+                    }.`
+                  : `${current.label}: ${current.waiting}.`}
             </span>
-            {progress !== undefined && (
+            {shown !== undefined && (
               <>
                 <span className="relative h-1 w-24 flex-shrink-0 overflow-hidden bg-[var(--line)]">
                   <span
                     className="absolute inset-y-0 left-0 bg-[var(--ink-2)] transition-[width] duration-200"
-                    style={{ width: `${Math.min(Math.max(progress, 0), 1) * 100}%` }}
+                    style={{ width: `${Math.min(Math.max(shown, 0), 1) * 100}%` }}
                   />
                 </span>
-                <span className="tabular-nums text-[var(--ink-3)]">{fixed(Math.min(progress, 1) * 100, 0)}%</span>
+                <span className="tabular-nums text-[var(--ink-3)]">{fixed(Math.min(shown, 1) * 100, 0)}%</span>
               </>
             )}
           </span>
@@ -440,14 +608,25 @@ export function PadGuideLine({
         )}
       </div>
       {sagged.length > 0 && (
-        <span className="text-[var(--color-warning)]">
+        <span
+          className="text-[var(--color-warning)]"
+          title="Some sag after the press valves shut is expected: the pressurant cools onto the propellant. This much is worth a look before Fire."
+        >
           Since commit, {sagged.map((p) => p.label.toLowerCase()).join(', ')}{' '}
-          {sagged.length === 1 ? 'has' : 'have'} slipped. Fire as it stands, or Vent and go round again.
+          {sagged.length === 1 ? 'has' : 'have'} slipped more than {Math.round(SLIP * 100)} %. Fire as it stands, or
+          Vent and go round again.
         </span>
       )}
       {!hasEngine && (
         <span className="text-[var(--color-warning)]">
           No engine on this stand: tanks load and press, but Fire lights nothing. Pick one in Library.
+        </span>
+      )}
+      {abortNote && (
+        // The DAQ's table, run as the DAQ reads it (NEEDS-REPAIR.md): an abort
+        // that feeds the engine is said where the operator is looking.
+        <span className="leading-snug text-[var(--color-warning)]" title={abortNote}>
+          {abortNote}
         </span>
       )}
     </div>
