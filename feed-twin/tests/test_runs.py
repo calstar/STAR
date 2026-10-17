@@ -94,6 +94,34 @@ def test_the_list_says_what_each_run_ran_on() -> None:
     assert run_records.summary({"id": "old"})["diagram"] == ""
 
 
+def test_the_list_says_which_gas_pressed_each_burn() -> None:
+    """A helium and a GN2 burn on one drawing read alike everywhere else in
+    the list; the gas, and where the burned tanks started, tell them apart."""
+    swapped = run_records.summary(_record("a", _changed(setup_pressurant="helium")))
+    inputs = run_records.with_swapped(INPUTS, INPUTS, ())
+    inputs["t0"]["tanks"]["DEWAR"] = {"label": "Dewar", "psig": 50.0}
+    built = run_records.summary(
+        {
+            "id": "b",
+            "inputs": inputs,
+            "pressurant": "nitrogen",
+            "outcome": {
+                "tanks": [
+                    {"id": "OXT", "start_kg": 6.0, "end_kg": 0.1},
+                    # A cart's dewar is in the burn's tanks, untouched.
+                    {"id": "DEWAR", "start_kg": 17.8, "end_kg": 17.8},
+                ]
+            },
+        }
+    )
+    assert swapped["pressurant"] == "helium"
+    assert built["pressurant"] == "nitrogen"
+    # Only the tanks the engine burned from, gauge as recorded.
+    assert built["t0_tanks"] == {"OXT": 550.0}
+    assert swapped["t0_tanks"] == {}
+    assert run_records.summary({"id": "old"})["pressurant"] == ""
+
+
 def test_swaps_are_one_rung_per_group_and_per_setting() -> None:
     b = _changed(engine="sha256:e2", setup_vapour=False, setup_dome_psi=520.0)
     rungs = dict(run_records.swaps(INPUTS, b))

@@ -31,8 +31,9 @@ describe('the checks, grouped', () => {
     expect(unknown?.kind).toBe('fix');
   });
 
-  it('counts only what is worth fixing for the tab', () => {
-    // the simplified engine, two reliefs, the unknown sentence
-    expect(checksToFix(LE4)).toBe(4);
+  it('counts only what is worth fixing for the tab, one per line it lists', () => {
+    // the simplified engine, the reliefs (two of them, one line), the unknown sentence
+    expect(checksToFix(LE4)).toBe(3);
+    expect(checksToFix(LE4)).toBe(groupChecks(LE4).filter((g) => g.kind === 'fix').length);
   });
 });
