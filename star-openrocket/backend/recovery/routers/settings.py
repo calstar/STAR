@@ -50,6 +50,7 @@ class UnitPrefs(BaseModel):
 
     altitude: System = None
     length: System = None
+    smallLength: System = None  # noqa: N815 -- mirrors the TS key exactly
     distance: System = None
     area: System = None
     # `volume` and `torque` are in the TS `Kind` union but were never declared
@@ -60,6 +61,7 @@ class UnitPrefs(BaseModel):
     volume: System = None
     torque: System = None
     mass: System = None
+    charge: System = None
     speed: System = None
     accel: System = None
     force: System = None

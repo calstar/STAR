@@ -81,3 +81,19 @@ def test_shared_atmosphere_couples_to_apogee():
     hot = _run(atmosphere=Atmosphere(_ELEV, T_pad=320.0))
     assert cold.apogee > 100.0 and hot.apogee > 100.0
     assert hot.apogee > cold.apogee
+
+
+def test_burnout_mass_and_drag():
+    """What the recovery tab sizes drag separation from. Mass: 4.0 kg dry plus
+    the motor's 0.2 kg spent casing. Drag: q * Cd(M) * pi r^2 by hand, reading
+    q and Mach off the result's own series at burnout and Cd off the stub
+    curve the flight was run with."""
+    from backend.onshape.aero.rocketpy_flight import _STUB_DRAG
+
+    res = _run()
+    assert res.burnout_mass == pytest.approx(4.2, abs=0.01)
+    t_bo = res.burnout_time
+    q = np.interp(t_bo, res.times, res.dynamic_pressure)
+    mach = np.interp(t_bo, res.times, res.mach)
+    cd = np.interp(mach, *zip(*_STUB_DRAG))
+    assert res.burnout_drag == pytest.approx(q * cd * np.pi * 0.05 ** 2, rel=0.03)
