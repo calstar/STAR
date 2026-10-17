@@ -1605,18 +1605,49 @@ def _shipped_machine(machine: str) -> StateMachine:
 HOOKUPS = "hookups"
 
 
+def _source_lineage(source: str) -> str | None:
+    """The lineage a provenance names: the pid-designer document, or the
+    shipped file; None for anything else (an upload, named by its artifact)."""
+    parsed = designtools.parse_source(source)
+    if parsed is not None:
+        key, owner, doc_id, _ = parsed
+        return f"{key}:{owner}/{doc_id}"
+    if source.startswith("shipped:"):
+        return source
+    return None
+
+
 def _lineage(artifact: Artifact) -> str:
     """Where a drawing comes from, whatever its bytes: the pid-designer
     document, the shipped file, or the name it was uploaded under (a browser's
     " (3)" on a re-download stripped). A hookup is kept per lineage, so saving
     the drawing again -- a new artifact by content -- keeps what was linked."""
-    parsed = designtools.parse_source(artifact.source)
-    if parsed is not None:
-        key, owner, doc_id, _ = parsed
-        return f"{key}:{owner}/{doc_id}"
-    if artifact.source.startswith("shipped:"):
-        return artifact.source
+    own = _source_lineage(artifact.source)
+    if own is not None:
+        return own
     return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+
+
+def _lineages(artifact: Artifact) -> list[str]:
+    """Every lineage this drawing answers to: its own, then each pull that
+    turned out to be this drawing (D-52), newest first. A pull of an existing
+    drawing returns that artifact, so a hookup saved under the pull's lineage
+    -- when each pull made its own artifact -- is this drawing's too."""
+    out = [_lineage(artifact)]
+    for source in _aliases(artifact.id):
+        lineage = _source_lineage(source)
+        if lineage is not None and lineage not in out:
+            out.append(lineage)
+    return out
+
+
+def _hookup_lineage(artifact: Artifact) -> tuple[str, list[str]]:
+    """The lineage whose saved hookup this drawing wires -- the first of
+    :func:`_lineages` that has one, else its own, where a save goes -- and the
+    other lineages that hold a hookup the stand does not wire."""
+    held = [lin for lin in _lineages(artifact) if library.record(HOOKUPS, lin)]
+    used = held[0] if held else _lineage(artifact)
+    return used, [lin for lin in held if lin != used]
 
 
 def _drawn_knobs(
@@ -1646,7 +1677,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     never saved, and used to be indistinguishable from it: the stand ran on a
     different wiring and nothing said so."""
     try:
-        lineage = _lineage(library.get(diagram_id))
+        lineage, shadowed = _hookup_lineage(library.get(diagram_id))
     except LibraryError:
         suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
         return suggested, False, ""
@@ -1655,7 +1686,15 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     if stored is not None:
         try:
             raw = stored.get("hookup")
-            return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True, ""
+            unused = (
+                f"This drawing also has a hookup saved for {', '.join(shadowed)} "
+                f"(the same drawing, pulled from there); the one saved for "
+                f"{lineage} is wired."
+                if shadowed
+                else ""
+            )
+            hookup = Hookup.from_dict(raw if isinstance(raw, Mapping) else {})
+            return hookup, True, unused
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
                 f"This drawing's saved hookup could not be read ({exc}); the "
@@ -1706,6 +1745,12 @@ _SESSIONS: dict[str, Session] = {}
 _SESSION_LIMIT = 12
 #: When each session was last touched (time.monotonic()), for eviction.
 _TOUCHED: dict[str, float] = {}
+#: A stand touched this recently is being watched: a console ticks every
+#: 200 ms, and a browser throttles a hidden tab's to about once a second
+#: (once a minute after five). A full server of these refuses a new stand
+#: rather than close one of them [s]: closing a watched one sent its console
+#: to reopen, which closed the next, and so round all of them.
+_WATCHED_S = 30.0
 #: Why a session id is gone, for the console that asks after it: closed to
 #: make room, or replaced by a Reset. Bounded; an unknown id is a restart.
 _CLOSED: dict[str, str] = {}
@@ -1795,10 +1840,19 @@ def _make_room() -> None:
     T-0'd and mid-load vanished when someone else opened a stand, and came
     back as a fresh Idle stand with nothing said (D-17). A console being
     watched is touched every tick, so it is the last one this reaches; the
-    one closed is told why when it next asks (:data:`_CLOSED`)."""
+    one closed is told why when it next asks (:data:`_CLOSED`). None is
+    closed while it is watched (:data:`_WATCHED_S`): the new stand is refused
+    instead, 503."""
     if len(_SESSIONS) < _SESSION_LIMIT:
         return
     oldest = min(_SESSIONS, key=lambda k: _TOUCHED.get(k, 0.0))
+    if time.monotonic() - _TOUCHED.get(oldest, 0.0) < _WATCHED_S:
+        raise HTTPException(
+            503,
+            f"The server is full: {len(_SESSIONS)} stands are open and every one "
+            "is being watched, so none was closed for this one. Close a console "
+            "tab, or try again when one goes idle.",
+        )
     _close_session(
         oldest,
         f"No session {oldest} on the server: this stand sat idle and was closed "
@@ -2806,7 +2860,7 @@ def _hookup_out(
         runs = cut
     suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
-        lineage=_lineage(library.get(diagram)),
+        lineage=_hookup_lineage(library.get(diagram))[0],
         saved=saved,
         hookup=_hookup_body(daqbox.wiring(hookup, model, table)),
         suggested=_hookup_body(daqbox.wiring(suggested, model, shipped)),
@@ -2919,7 +2973,7 @@ async def save_hookup(
     _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
         HOOKUPS,
-        _lineage(library.get(diagram)),
+        _hookup_lineage(library.get(diagram))[0],
         {"hookup": hookup.to_dict(), "diagram": diagram},
     )
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
@@ -2934,7 +2988,7 @@ async def reset_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
-    library.drop_record(HOOKUPS, _lineage(library.get(diagram)))
+    library.drop_record(HOOKUPS, _hookup_lineage(library.get(diagram))[0])
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
@@ -3060,7 +3114,8 @@ def _burn_out(
 
 
 #: The engine's channels on the plots, beside the instruments: id, tag, unit,
-#: and how each is read off a sample's chamber. Zero while it is not burning.
+#: and how each is read off a sample's chamber. Zero while it is not burning,
+#: except those in ``IDLE_READS``.
 ENGINE_CHANNELS: tuple[tuple[str, str, str, Any], ...] = (
     ("engine.pc", "PC", "psig", lambda c: round(psig(c.pressure), 2)),
     ("engine.thrust", "Thrust", "N", lambda c: round(c.thrust, 1)),
@@ -3070,15 +3125,26 @@ ENGINE_CHANNELS: tuple[tuple[str, str, str, Any], ...] = (
 )
 
 
+#: Channels that read the chamber with the engine out too: its pressure is
+#: the site's air then, which the Pc tile shows (13.6 psia on a card with site
+#: ambient). A literal zero gauge plotted and exported as 14.7 psia beside it.
+IDLE_READS = frozenset({"engine.pc"})
+
+
 def _engine_channels(kept: list[SessionSample]) -> list[Channel]:
     from feedtwin.session.report import is_burning
+
+    def value(key: str, read: Any, s: SessionSample) -> float:
+        if is_burning(s) or (key in IDLE_READS and s.chamber is not None):
+            return float(read(s.chamber))
+        return 0.0
 
     return [
         Channel(
             id=key,
             tag=tag,
             unit=unit,
-            values=[read(s.chamber) if is_burning(s) else 0.0 for s in kept],
+            values=[value(key, read, s) for s in kept],
         )
         for key, tag, unit, read in ENGINE_CHANNELS
     ]
@@ -3301,24 +3367,65 @@ def _lit_burns(history: list[SessionSample], inlets: Mapping[str, str]) -> list[
     for burn in find_burns(history, inlets):
         if burn.thrust_peak_N <= 0.0:
             continue
-        # The engine went out but the propellant did not stop: an abort row
-        # with a main open trickles on unlit for as long as the stand sits
-        # there. The burn ended with its thrust, not with that trickle; a
-        # tail-off shorter than COLD_FLOW_S is left exactly as totalled.
-        lit = [
-            s.t
-            for s in history
-            if burn.start_s < s.t <= burn.end_s + 1e-9
-            and s.chamber is not None
-            and s.chamber.thrust > 0.0
-        ]
-        if lit and burn.end_s - lit[-1] > COLD_FLOW_S:
-            cut = [s for s in history if s.t <= lit[-1] + 1e-9]
-            trimmed = [b for b in find_burns(cut, inlets) if b.start_s == burn.start_s]
-            if trimmed:
-                burn = replace(trimmed[-1], burning=False)
-        out.append(burn)
+        out.extend(_lit_parts(history, inlets, burn))
     return out
+
+
+def _lit_parts(
+    history: list[SessionSample], inlets: Mapping[str, str], burn: Any
+) -> list[Any]:
+    """``burn`` as the engine lit it: one burn per stretch of thrust, split
+    where the engine was out for longer than COLD_FLOW_S though both
+    propellants kept flowing.
+
+    The engine went out but the propellant did not stop: an abort row with a
+    main open trickles on unlit for as long as the stand sits there, so a burn
+    ends with its thrust, not with that trickle; a tail-off shorter than
+    COLD_FLOW_S is left exactly as totalled. And a burn that lights again in
+    the same flow -- Fire after such an abort, or a card's zero-thrust floor
+    crossed mid-flow -- is a burn of its own: one start for the whole flow
+    was recorded once, cut at the first flame-out, and the re-lit part never
+    reached a run record while /burns showed it."""
+    lit = [
+        s.t
+        for s in history
+        if burn.start_s < s.t <= burn.end_s + 1e-9
+        and s.chamber is not None
+        and s.chamber.thrust > 0.0
+    ]
+    if not lit:
+        return [burn]
+    stretches: list[list[float]] = [[lit[0], lit[0]]]
+    for t in lit[1:]:
+        if t - stretches[-1][1] > COLD_FLOW_S:
+            stretches.append([t, t])
+        else:
+            stretches[-1][1] = t
+    if len(stretches) == 1 and burn.end_s - lit[-1] <= COLD_FLOW_S:
+        return [burn]
+    parts = []
+    for i, (first, last) in enumerate(stretches):
+        final = i == len(stretches) - 1
+        # The last stretch runs to the burn's end unless the engine went out
+        # for good before it; every other ends at its last thrust.
+        end = burn.end_s if final and burn.end_s - last <= COLD_FLOW_S else last
+        # The first is the burn's own start; a re-light starts at its flame,
+        # timed from the step before (feedtwin.session.report.burns).
+        cut = [
+            s for s in history if s.t <= end + 1e-9 and (i == 0 or s.t >= first - 1e-9)
+        ]
+        found = find_burns(cut, inlets)
+        part = (
+            next((b for b in found if b.start_s == burn.start_s), None)
+            if i == 0
+            else (found[0] if found else None)
+        )
+        if part is None:
+            continue
+        parts.append(
+            replace(part, burning=burn.burning if end == burn.end_s else False)
+        )
+    return parts
 
 
 def _after_abort(session: Session, history: list[SessionSample], burn: Any) -> str:

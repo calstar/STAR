@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { psiaEntry, snapPsia } from '../lib/pressure';
+import { psiaEntry, typedPsia } from '../lib/pressure';
 
 /** Typing pauses this long before the stand hears the new number [ms]. */
 const COMMIT_MS = 400;
@@ -52,18 +52,15 @@ export function PsiaInput({
     [],
   );
 
-  /** The gauge number `raw` stands for, or null when it is not a number. */
-  const parse = (raw: string): number | null => {
-    const n = Number(raw);
-    if (raw.trim() === '' || !Number.isFinite(n)) return null;
-    return snapPsia(n, step, low, high);
-  };
-  const flush = (raw: string) => {
+  /** Commit what was typed (lib/pressure `typedPsia`): leaving the box, or
+   *  Enter on it, with nothing typed commits nothing. Returns the gauge
+   *  number the box now holds. */
+  const flush = (raw: string): number => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
-    const gauge = parse(raw);
-    if (gauge !== null && Math.abs(gauge - value) > 1e-9) onCommit(gauge);
-    return gauge;
+    const gauge = typedPsia(raw, value, step, low, high);
+    if (gauge !== null) onCommit(gauge);
+    return gauge ?? value;
   };
 
   return (
@@ -87,13 +84,13 @@ export function PsiaInput({
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           const gauge = flush(draft);
-          setDraft(psiaEntry(gauge ?? value));
+          setDraft(psiaEntry(gauge));
         }
       }}
       onBlur={() => {
         editing.current = false;
         const gauge = flush(draft);
-        setDraft(psiaEntry(gauge ?? value));
+        setDraft(psiaEntry(gauge));
       }}
       className={className}
     />

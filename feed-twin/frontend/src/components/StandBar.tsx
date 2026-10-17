@@ -28,7 +28,16 @@ import { standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, checkout, locked } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where } = useStand();
+  // With no stand document open, the button names what is running: the
+  // featured stand on a fresh browser read "Unsaved stand" on every tab,
+  // which looks like work at risk. "Unsaved changes" once the operator has
+  // changed a setting or a knob.
+  const drawing = artifacts.find((a) => a.kind === 'diagram' && a.id === where.diagram);
+  const engine = artifacts.find((a) => a.kind === 'engine' && a.id === where.engine);
+  const featured = Boolean(drawing?.featured) && (!engine || Boolean(engine.featured));
+  const running = drawing ? drawing.name : 'No stand';
+  const shown = standDoc ? standDoc.name : changed ? 'Unsaved changes' : running;
   const [documents, setDocuments] = useState<DesignMeta[]>([]);
   const [picking, setPicking] = useState(false);
   const [releasing, setReleasing] = useState(false);
@@ -88,10 +97,12 @@ export function StandBar() {
         title={
           standDoc
             ? `Stand: ${standDoc.name}. A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Click to open, create, share or copy one.`
-            : 'This set-up is not saved as a stand. Click to open one, or save this set-up as a new stand to share it.'
+            : changed
+              ? `${running}${engine ? ` with ${engine.name}` : ''}, changed since it opened and not saved as a stand. Click to save this set-up as a stand to share it, or to open one.`
+              : `${running}${engine ? ` with ${engine.name}` : ''}${featured ? ', the featured stand' : ''}, as it opened. Click to open a saved stand, or save this set-up as one to share it.`
         }
       >
-        {standDoc ? standDoc.name : 'Unsaved stand'}
+        {shown}
       </button>
       {standDoc && (
         <>

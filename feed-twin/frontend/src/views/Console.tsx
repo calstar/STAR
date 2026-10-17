@@ -263,7 +263,7 @@ function Headline({
   ) : after ? (
     <span className="text-[var(--ink-3)]">Last burn</span>
   ) : (
-    <span className="text-[var(--ink-4)]" title={attached ? 'Not lit. T-0, then FIRE.' : 'No engine on this stand.'}>
+    <span className="text-[var(--ink-3)]" title={attached ? 'Not lit. T-0, then FIRE.' : 'No engine on this stand.'}>
       {attached ? 'Not lit' : 'No engine'}
     </span>
   );
@@ -275,7 +275,7 @@ function Headline({
           <div className="caps text-[10px]">{c.label}</div>
           <div
             className="mt-1 truncate font-mono text-[32px] leading-none tabular-nums"
-            style={{ color: c.value === null ? 'var(--ink-4)' : (c.colour ?? 'var(--ink)') }}
+            style={{ color: c.value === null ? 'var(--ink-3)' : (c.colour ?? 'var(--ink)') }}
           >
             {c.value === null ? '—' : fixed(c.value, c.places)}
             {c.unit && (
@@ -976,6 +976,7 @@ export function Console() {
                         state={state}
                         hasEngine={attached}
                         burn={lastBurn ?? undefined}
+                        clock={burnS}
                         burnout={live?.notes.find((n) => n.startsWith('Burnout')) ?? ''}
                         coldFlow={coldFlow}
                         abortNote={live?.notes.find((n) => / leaves .+ open: the stand's state table says so/.test(n)) ?? ''}

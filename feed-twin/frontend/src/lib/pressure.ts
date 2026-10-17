@@ -47,11 +47,31 @@ export const fromPsia = (psia: number): number => psia - ATMOSPHERE_PSI;
 export const commitPsia = (psia: number, step: number): number =>
   fromPsia(step > 0 ? Math.round(psia / step) * step : psia);
 
+/** How far a typed psia may sit from a setting's shown entry and still be
+ *  that setting: `psiaEntry` shows a tenth, so anything that rounds to what
+ *  the field shows is the field's own value typed back [psi]. */
+const SHOWN_PSI = 0.05;
+
 /** `commitPsia` for a field with bounds [gauge]: the ends of its travel are
  *  detents too, as a dial's stops are, and it never commits past them. So a
  *  vented 14.7 psia typed on a 5 psi detent is the vented end (0 on the wire),
- *  not 15 psia -- which would be a dewar pushing at 0.3 psi. */
-export const snapPsia = (psia: number, step: number, low?: number, high?: number): number => {
+ *  not 15 psia -- which would be a dewar pushing at 0.3 psi.
+ *
+ *  `current` [gauge], the setting the field holds, is a detent as well: a
+ *  drawn 500 psig reads 514.7 psia, off any 5 psi detent, and typing back the
+ *  number the field shows (or only leaving the field) keeps 500 -- it does not
+ *  move the setting to 515 psia, nor a 4500 psig COPV to 4485 on a 50 psi
+ *  step. */
+export const snapPsia = (
+  psia: number,
+  step: number,
+  low?: number,
+  high?: number,
+  current?: number,
+): number => {
+  if (current !== undefined && Number.isFinite(current) && Math.abs(psia - toPsia(current)) < SHOWN_PSI) {
+    return current;
+  }
   const want = fromPsia(psia);
   let gauge = commitPsia(psia, step);
   if (low !== undefined) gauge = Math.max(low, gauge);
@@ -60,6 +80,24 @@ export const snapPsia = (psia: number, step: number, low?: number, high?: number
     if (end !== undefined && Math.abs(end - want) < Math.abs(gauge - want)) gauge = end;
   }
   return gauge;
+};
+
+/** What a psia field commits when its text is `raw` and it holds `value`
+ *  [gauge]: the new gauge number, or null when nothing changed -- the text it
+ *  was seeded with (focus and leave, Enter on an untouched box), the shown
+ *  number typed back, or not a number at all. */
+export const typedPsia = (
+  raw: string,
+  value: number,
+  step: number,
+  low?: number,
+  high?: number,
+): number | null => {
+  if (raw === psiaEntry(value)) return null;
+  const n = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(n)) return null;
+  const gauge = snapPsia(n, step, low, high, value);
+  return Math.abs(gauge - value) > 1e-9 ? gauge : null;
 };
 
 /** A gauge number, as it reads on the screen: "514.7 psia". */

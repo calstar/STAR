@@ -180,3 +180,41 @@ def test_aliases_are_saved_with_the_hookup_and_reach_a_running_stand() -> None:
     assert renamed["aliases"]["engine.pc"] == "Pc"
     assert renamed["t"] >= opened["t"], "the same stand, not a new one"
     _SESSIONS.pop(opened["id"], None)
+
+
+def test_a_pull_that_is_an_existing_drawing_keeps_the_pulls_saved_hookup() -> None:
+    """A pull whose nodes and edges match a drawing in the library returns that
+    drawing (D-52) and keeps the pull only as an alias. A hookup saved under the
+    pull's pid-designer lineage -- when each pull made its own artifact -- is
+    still this drawing's: it was silently dropped for the suggestion."""
+    from backend.main import ALIASES, _alias
+
+    payload = json.loads(STAND.read_text())
+    payload["nodes"][0]["position"] = {"x": 1234, "y": 7}
+    diagram = upload(payload, "pulled twin.json")
+    pulled = "pid-designer:owner/pulled-twin"
+    first = client.get("/api/hookup", params={"diagram": diagram}).json()
+    wired = {**first["hookup"], "aliases": {"engine.pc": "Pulled Pc"}}
+    try:
+        library.put_record(HOOKUPS, pulled, {"hookup": wired, "diagram": "elsewhere"})
+        _alias(library.get(diagram), f"{pulled}@working copy")
+        got = client.get("/api/hookup", params={"diagram": diagram}).json()
+        assert got["saved"] is True and got["lineage"] == pulled
+        assert got["hookup"]["aliases"] == {"engine.pc": "Pulled Pc"}
+        # A save goes where the wired hookup came from, not a new lineage.
+        saved = client.put(
+            "/api/hookup", params={"diagram": diagram}, json=got["hookup"]
+        ).json()
+        assert saved["lineage"] == pulled
+        assert library.record(HOOKUPS, _lineage(library.get(diagram))) is None
+        # Both saved: the drawing's own wins, and the stand says the other exists.
+        library.put_record(
+            HOOKUPS, _lineage(library.get(diagram)), {"hookup": first["hookup"]}
+        )
+        opened = client.post("/api/session", params={"diagram": diagram}, json={})
+        assert opened.status_code == 200, opened.text
+        assert any(pulled in n for n in opened.json()["notes"]), opened.json()["notes"]
+        _SESSIONS.pop(opened.json()["id"], None)
+    finally:
+        library.drop_record(HOOKUPS, pulled)
+        library.drop_record(ALIASES, diagram)

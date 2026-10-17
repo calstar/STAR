@@ -169,21 +169,24 @@ export function TopBar({ views }: { views: readonly View[] }) {
   }, []);
 
   return (
-    <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-3">
-      <div className="flex min-w-0 flex-nowrap items-center gap-7">
+    <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-3 max-[1400px]:px-5">
+      <div className="flex min-w-0 flex-nowrap items-center gap-7 max-[1400px]:gap-5">
         {/* The suite's own end of the header, the same in every Hotbench
             app: the wordmark and Engine | P&ID | Twin. Twin goes to the Console.
             A hairline keeps its P&ID and Engine apart from this app's tabs. */}
         <SuiteSwitcher
           app="twin"
           onHome={() => navigate('/')}
-          className="border-r border-[var(--line)] pb-1.5 pr-7 font-mono"
+          className="border-r border-[var(--line)] pb-1.5 pr-7 font-mono max-[1400px]:pr-5"
         />
-        <nav className="flex min-w-0 flex-nowrap items-baseline gap-x-4 self-end min-[1600px]:gap-x-5">
+        {/* Below ~1330 px (a 1280 projector) the tabs no longer fit even
+            tightened: the nav scrolls on its own rather than the page
+            sideways, which put Checks off screen. */}
+        <nav className="flex min-w-0 flex-nowrap items-baseline gap-x-4 self-end overflow-x-auto [scrollbar-width:none] max-[1400px]:gap-x-3 min-[1600px]:gap-x-5">
           {groups.map((g, i) => (
             <span
               key={g.name}
-              className={`flex flex-shrink-0 items-baseline gap-x-3.5 min-[1600px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 min-[1600px]:pl-5' : ''}`}
+              className={`flex flex-shrink-0 items-baseline gap-x-3.5 max-[1400px]:gap-x-2.5 min-[1600px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 max-[1400px]:pl-3 min-[1600px]:pl-5' : ''}`}
             >
               {/* The group's name where there is room; the divider says it
                   on a laptop, where the names wrapped the nav onto two rows. */}

@@ -93,6 +93,14 @@ class StudyCase:
         if fill is not None and not 0.0 < fill <= 1.0:
             raise ValueError(f"case {index + 1}: fill {fill:g} is not in (0, 1]")
         knobs = {str(k): float(v) for k, v in dict(raw.get("knobs") or {}).items()}
+        for knob, value in knobs.items():
+            # Gauge on the wire: below zero is a regulator set under the air
+            # around it, which no knob reaches (a typed 10 psia was -4.7).
+            if value != value or not 0.0 <= value <= 10000.0:
+                raise ValueError(
+                    f"case {index + 1}: {knob} {say(from_psig(value), 1)} "
+                    "is out of range"
+                )
         return StudyCase(
             label=str(raw.get("label") or f"Case {index + 1}"),
             copv_psi=copv,
@@ -398,6 +406,14 @@ def run_study(
     return result
 
 
+#: Studies that burn at once across the whole server. Each is a run of whole
+#: burns sharing the interpreter with every live console, which drop into
+#: slow motion when they cannot keep up; one study per user and stand (D-51)
+#: put no bound on how many. The rest wait their turn, queued.
+STUDIES_AT_ONCE = 1
+_BURNING = threading.BoundedSemaphore(STUDIES_AT_ONCE)
+
+
 class StudyRunner:
     """One study at a time, on a worker thread, with progress and cancel.
 
@@ -433,7 +449,14 @@ class StudyRunner:
             self._cancel.clear()
 
         def work() -> None:
+            turn = False
             try:
+                self.stage = "queued behind another study"
+                while not (turn := _BURNING.acquire(timeout=0.1)):
+                    if self._cancel.is_set():
+                        self.stage = "cancelled"
+                        return
+                self.stage = "starting"
 
                 def on_progress(done: int, total: int, stage: str) -> None:
                     self.progress = done / max(total, 1)
@@ -453,6 +476,8 @@ class StudyRunner:
                 self.error = f"{type(exc).__name__}: {exc}"
                 self.stage = "failed"
             finally:
+                if turn:
+                    _BURNING.release()
                 self.running = False
                 self.progress = 1.0
 

@@ -149,6 +149,10 @@ interface StandValue {
   refresh: () => Promise<Artifact[]>;
   /** The stand document this cockpit is on, if any (stands.ts). */
   standDoc: OpenStand | null;
+  /** The operator has changed this set-up -- a setting or a knob -- since it
+   *  opened (kept across a reload, as the settings are). Until then the stand
+   *  bar names what is running instead of calling it unsaved work. */
+  changed: boolean;
   /** Open a stand document: its drawing, engine, settings, hookup and knobs,
    *  on a fresh session. */
   openStand: (ref: DocRef, name: string, take?: boolean) => Promise<void>;
@@ -222,6 +226,7 @@ export const useStand = () => {
  *  has turned, so a reload after a backend restart reopens the same stand. */
 const SETUP_KEY = 'feedtwin.setup';
 const TURNED_KEY = 'feedtwin.turned';
+const CHANGED_KEY = 'feedtwin.changed';
 
 function remembered<T>(key: string, fallback: T): T {
   try {
@@ -297,6 +302,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [consoleOrder, setConsoleOrderState] = useState<Order>(NO_ORDER);
   const [generation, setGeneration] = useState(0);
   const [standDoc, setStandDoc] = useState<OpenStand | null>(readStand);
+  const [changed, setChangedState] = useState<boolean>(() => remembered<{ on: boolean }>(CHANGED_KEY, { on: false }).on);
+  const setChanged = useCallback((on: boolean) => {
+    setChangedState(on);
+    keep(CHANGED_KEY, { on });
+  }, []);
   // Taking the checkout must not reload the stand: that would reopen the
   // session and throw away the run on screen.
   const checkout = useCheckout({ api: standApi, ref: standDoc?.ref ?? null, reload: () => undefined });
@@ -426,9 +436,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
     const e = engines.find((a) => a.featured) ?? engines[0];
     if (!d) throw new Error('The sample stand did not arrive in the library.');
     setNoStand(null);
+    setChanged(false);
     if (e) setEngine(e.id);
     setDiagram(d.id);
-  }, []);
+  }, [setChanged]);
 
   /** Remember the picks once a stand has opened on them, so reopening the tab
    *  lands on the same stand. Not before: a drawing that cannot be built was
@@ -799,6 +810,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setSetup: (patch) => {
       if (locked) return refuse();
       const next = { ...setup, ...patch } as StandSetup;
+      if ((Object.keys(patch) as (keyof StandSetup)[]).some((k) => patch[k] !== setup[k])) setChanged(true);
       setSetupState(next);
       for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
       keepTurned();
@@ -862,6 +874,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       void command({ valve: id, open: !(live?.open[id] ?? false) }),
     turnKnob: (id, value) => {
       if (locked) return refuse();
+      setChanged(true);
       void command({ knob: { id, value } });
     },
     nameOf: (id, tag) => live?.aliases?.[id] || tag,
@@ -896,6 +909,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     },
     refresh,
     standDoc,
+    changed,
     openStand: async (ref, name, take = false) => {
       const doc = await standApi.load(ref);
       // A stand somebody has just made is theirs to change: taken as it opens.
@@ -907,6 +921,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       await putStandView(doc.diagram, doc.console);
       const opened = { ref, name };
       setStandDoc(opened);
+      setChanged(false);
       try {
         window.localStorage.setItem('feedtwin.stand', JSON.stringify(opened));
       } catch {

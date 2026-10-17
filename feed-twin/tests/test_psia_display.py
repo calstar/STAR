@@ -247,3 +247,31 @@ def test_an_old_record_replays_to_what_it_replayed_to_when_written(
     assert difference["inputs"] == []
     pct = {o["key"]: abs(o["pct"] or 0.0) for o in difference["outcome"]}
     assert max(pct[k] for k in ("thrust_mean_N", "pc_mean_psi", "of_mean")) < 0.1
+
+
+def test_the_idle_chamber_channel_reads_what_the_pc_tile_reads() -> None:
+    """With the engine out the chamber holds the site's air: 13.6 psia on a
+    card with site ambient, which the Pc tile shows. The plotted and exported
+    channel once wrote a literal 0 gauge -- 14.7 psia -- beside it."""
+    from types import SimpleNamespace
+
+    ambient_pa = 13.6 * 6894.757293168361
+    idle = SimpleNamespace(
+        chamber=SimpleNamespace(
+            pressure=ambient_pa,
+            thrust=0.0,
+            mixture_ratio=0.0,
+            mdot_oxidiser=0.0,
+            mdot_fuel=0.0,
+            specific_impulse=0.0,
+            combustion=SimpleNamespace(temperature=0.0, cstar=0.0, extrapolated=False),
+        )
+    )
+    no_engine = SimpleNamespace(chamber=None)
+    channels = {c.id: c.values for c in main._engine_channels([idle, no_engine])}
+    tile = main._engine_state(idle.chamber).chamber_psi  # type: ignore[arg-type]
+    assert channels["engine.pc"][0] == pytest.approx(tile, abs=0.01)
+    assert channels["engine.pc"][0] + ATMOSPHERE_PSI == pytest.approx(13.6, abs=0.01)
+    # Nothing else reads while it is out, and no chamber is no reading.
+    assert channels["engine.thrust"] == [0.0, 0.0]
+    assert channels["engine.pc"][1] == 0.0

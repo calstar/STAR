@@ -433,6 +433,7 @@ export function PadGuideLine({
   state,
   hasEngine,
   burn,
+  clock = null,
   burnout = '',
   coldFlow = '',
   abortNote = '',
@@ -442,6 +443,12 @@ export function PadGuideLine({
   hasEngine: boolean;
   /** The stand's latest burn, live while it burns. */
   burn?: Burn;
+  /** The console's burn clock [s] -- the BURN tile's, from the first lit
+   *  tick -- or null while nothing is lit. While it burns the line reads this
+   *  one clock and leaves thrust and Isp to the tiles: the burn record is
+   *  fetched behind the tick, so its time and mean read 0.5 s and 130 N off
+   *  the tiles beside them (2.13 s against 1.64 s). */
+  clock?: number | null;
   /** The stand's burnout note, while it stands (it clears on the next state). */
   burnout?: string;
   /** The stand's "Not lit: cold flow" note: Fire with nothing burning. */
@@ -476,6 +483,10 @@ export function PadGuideLine({
     // cold flow: neither is a "burn" (a no-engine Fire was "Burnout").
     const lit = hasEngine && burn.thrust_mean_N >= 1;
     const what = !hasEngine ? 'Flow test' : !lit ? 'Not lit: cold flow' : burned ? 'Burned' : 'Burning';
+    // A lit burn going on now is on the tiles: one clock, theirs, and no
+    // second thrust beside their live one.
+    const onTiles = lit && !burned;
+    const time = onTiles ? clock : burn.duration_s;
     return (
       <div className="flex min-w-0 items-center gap-x-4 font-mono text-[12px]">
         <span
@@ -483,25 +494,32 @@ export function PadGuideLine({
             !lit ? 'text-[var(--color-warning)]' : burned ? 'text-[var(--color-success)]' : 'text-[var(--ink)]'
           }`}
         >
-          {what}{' '}
-          <span className="tabular-nums">{fixed(burn.duration_s, 2)} s</span>
-          <span className="text-[var(--ink-2)]">
-            {' · '}
-            {lit ? (
-              <>
-                <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
-              </>
-            ) : (
-              'no thrust'
-            )}
-            {lit && burn.isp_s > 0 && (
-              <>
-                {' · Isp '}
-                <span className="tabular-nums">{fixed(burn.isp_s, 0)} s</span>
-              </>
-            )}
-            {burned && why && ` — ${why}`}
-          </span>
+          {what}
+          {time !== null && (
+            <>
+              {' '}
+              <span className="tabular-nums">{fixed(time, 2)} s</span>
+            </>
+          )}
+          {!onTiles && (
+            <span className="text-[var(--ink-2)]">
+              {' · '}
+              {lit ? (
+                <>
+                  <span className="tabular-nums">{Math.round(burn.thrust_mean_N).toLocaleString()} N</span> mean
+                </>
+              ) : (
+                'no thrust'
+              )}
+              {lit && burn.isp_s > 0 && (
+                <>
+                  {' · Isp '}
+                  <span className="tabular-nums">{fixed(burn.isp_s, 0)} s</span>
+                </>
+              )}
+              {burned && why && ` — ${why}`}
+            </span>
+          )}
         </span>
         {burned && (
           <span className="flex flex-shrink-0 gap-3 text-[11px]">

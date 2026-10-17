@@ -84,6 +84,8 @@ def test_a_case_changes_only_what_it_says() -> None:
         ({"bottle_litres": 0}, "bottle"),
         ({"fill_fraction": 1.5}, "fill"),
         ({"copv_psi": "lots"}, "convert"),
+        # A knob typed 10 psia went on the wire as -4.7 psig and into the run.
+        ({"knobs": {"DOME": -4.7}}, "DOME"),
     ],
 )
 def test_a_bad_case_is_refused_with_what_is_wrong(
@@ -362,3 +364,45 @@ def test_a_study_is_its_owners_on_its_stand(stand: str) -> None:
         client.get("/api/study", headers={"X-Auth-Email": "eve@x.org"}).json()["cases"]
         == []
     )
+
+
+def test_studies_burn_one_at_a_time_across_the_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One study per user and stand (D-51) put no bound on how many burned at
+    once, each sharing the interpreter with every live console. The second
+    waits its turn, and a queued one cancels without ever burning."""
+    import threading
+
+    from backend import study as study_mod
+    from backend.study import StudyRequest, StudyRunner
+
+    release = threading.Event()
+    burning: list[int] = []
+    most: list[int] = [0]
+
+    def fake_run(*_: Any, **__: Any) -> None:
+        burning.append(1)
+        most[0] = max(most[0], len(burning))
+        release.wait(5.0)
+        burning.pop()
+
+    monkeypatch.setattr(study_mod, "run_study", fake_run)
+    request = StudyRequest(base={}, cases=[StudyCase(label="x")])
+    first, second, third = StudyRunner(), StudyRunner(), StudyRunner()
+    assert first.start(request, None, None)  # type: ignore[arg-type]
+    deadline = time.monotonic() + 5.0
+    while not burning and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert second.start(request, None, None)  # type: ignore[arg-type]
+    assert third.start(request, None, None)  # type: ignore[arg-type]
+    time.sleep(0.3)
+    assert second.stage.startswith("queued") and third.stage.startswith("queued")
+    third.cancel()
+    third.wait(2.0)
+    assert third.stage == "cancelled" and not third.running
+    release.set()
+    first.wait(5.0)
+    second.wait(5.0)
+    assert most[0] == 1
+    assert first.stage == "done" and second.stage == "done"

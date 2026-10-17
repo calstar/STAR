@@ -105,10 +105,12 @@ function Row({
         timer.current = null;
         const n = Number(raw);
         if (!Number.isFinite(n)) return;
-        onChange(gauge ? snapPsia(n, t.step, t.low, t.high) : Math.min(t.high, Math.max(t.low, n)));
+        // The row's own value is a detent: its shown entry typed back keeps it.
+        const held = typeof value === 'number' ? value : undefined;
+        onChange(gauge ? snapPsia(n, t.step, t.low, t.high, held) : Math.min(t.high, Math.max(t.low, n)));
       }, COMMIT_MS);
     },
-    [onChange, gauge, t.step, t.high, t.low],
+    [onChange, gauge, t.step, t.high, t.low, value],
   );
   const unit = gauge ? PRESSURE_UNIT : t.unit;
   const changed = differs(value, t.default);

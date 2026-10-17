@@ -227,8 +227,8 @@ TUNABLES: tuple[Tunable, ...] = (
         "is the dewar less the tank, through the fill line. While the wall is warm "
         "everything that arrives boils into the ullage, so the tank climbs until the "
         "vent carries what the dewar sends, more the faster it pours; once the wall "
-        "is at saturation the liquid collects. 0: the fixed-rate load and chill "
-        "time above.",
+        "is at saturation the liquid collects. Vented (14.7 psia, the bottom of "
+        "the range): the fixed-rate load and chill time above.",
         low=0.0,
         high=500.0,
         step=5.0,

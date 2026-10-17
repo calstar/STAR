@@ -14,6 +14,7 @@ import {
   psiaText,
   snapPsia,
   toPsia,
+  typedPsia,
   unitLabel,
 } from './pressure';
 
@@ -138,5 +139,34 @@ describe('labels', () => {
 
   it('gives the DAQ\'s own gauge number on hover', () => {
     expect(daqReads(535)).toBe('DAQ reads 535.0 psig');
+  });
+});
+
+describe('a field holds its own setting', () => {
+  it('commits nothing when the box is only focused and left', () => {
+    // The dewar at 100 psig shows 114.7; the knob at 500 shows 514.7; the
+    // COPV at 4500 shows 4514.7. None is on a 5 psi detent, and leaving the
+    // box once committed 100.304, 500.304, 4500.304.
+    for (const value of [100, 500, 1000, 4500, 535]) {
+      expect(typedPsia(psiaEntry(value), value, 5, 0, 5000)).toBeNull();
+    }
+  });
+
+  it('keeps the setting when its shown number is typed back', () => {
+    // Configuration's COPV row (step 50): 4514.7 typed back once committed
+    // 4485.3 psig, 14.7 psi lower.
+    expect(snapPsia(4514.7, 50, 0, 6000, 4500)).toBe(4500);
+    expect(snapPsia(514.7, 5, 0, 1000, 500)).toBe(500);
+    expect(typedPsia('514.7', 500, 5)).toBeNull();
+    // A real edit still snaps to the detent in psia.
+    expect(snapPsia(517, 5, 0, 1000, 500)).toBeCloseTo(fromPsia(515), 10);
+    expect(typedPsia('520', 500, 5)).toBeCloseTo(fromPsia(520), 10);
+  });
+
+  it('keeps a Study cell inside its bounds', () => {
+    // The Study's dewar cell: 14.7 psia typed is the vented end, not 0.3 psig.
+    expect(snapPsia(14.7, 5, 0, 500, 100)).toBe(0);
+    // A knob cell typed below an atmosphere never goes negative on the wire.
+    expect(snapPsia(10, 1, 0, undefined, 500)).toBe(0);
   });
 });

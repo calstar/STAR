@@ -138,7 +138,8 @@ const save = (state: Saved) => {
 
 /** A number cell: blank is the stand's value, shown as the placeholder.
  *  `pressure`: the value is gauge, as the case keeps it, and the cell reads
- *  and types psia, snapped to this step. */
+ *  and types psia, snapped to this step, inside `low`..`high` [gauge] and
+ *  with its own value a detent (`snapPsia`). */
 function NumberCell({
   value,
   placeholder,
@@ -146,6 +147,8 @@ function NumberCell({
   width = 'w-20',
   title,
   pressure,
+  low,
+  high,
 }: {
   value: number | null | undefined;
   placeholder: string;
@@ -153,6 +156,8 @@ function NumberCell({
   width?: string;
   title?: string;
   pressure?: number;
+  low?: number;
+  high?: number;
 }) {
   const shown = (v: number | null | undefined) => (v == null ? '' : pressure ? psiaEntry(v) : String(v));
   const [text, setText] = useState(shown(value));
@@ -169,7 +174,7 @@ function NumberCell({
         const t = text.trim();
         if (!t) return onChange(null);
         const v = Number(t);
-        if (Number.isFinite(v)) onChange(pressure ? snapPsia(v, pressure) : v);
+        if (Number.isFinite(v)) onChange(pressure ? snapPsia(v, pressure, low, high, value ?? undefined) : v);
         else setText(shown(value));
       }}
       className={`${width} rounded border border-gray-700 bg-transparent px-1.5 py-0.5 text-right font-mono text-[12.5px] tabular-nums placeholder:text-gray-600 focus:border-blue-500 focus:outline-none`}
@@ -436,6 +441,7 @@ function CaseTable({
                   placeholder={psiaEntry(Number(setup.copv_target))}
                   onChange={(v) => onEdit(i, { copv_psi: v })}
                   pressure={CELL_STEP}
+                  low={0}
                 />
               </td>
               {knobs.map((k) => (
@@ -444,6 +450,7 @@ function CaseTable({
                     value={c.knobs?.[k.id]}
                     placeholder={psiaEntry(k.psig)}
                     pressure={CELL_STEP}
+                    low={0}
                     onChange={(v) => {
                       const next = { ...(c.knobs ?? {}) };
                       if (v == null) delete next[k.id];
@@ -551,6 +558,8 @@ function SettingsCell({
                 placeholder={gauge ? psiaEntry(Number(setup[key] ?? 0)) : String(setup[key] ?? '')}
                 width="w-16"
                 pressure={gauge ? t.step : undefined}
+                low={gauge ? t.low : undefined}
+                high={gauge ? t.high : undefined}
                 onChange={(n) => onChange({ ...value, [key]: n ?? Number(setup[key] ?? 0) })}
               />
             )}
@@ -680,10 +689,10 @@ function SweepBuilder({
                   x: v,
                   ...(gas ? { pressurant: gas } : {}),
                 };
-                if (what === 'copv_psi') return { ...base, copv_psi: snapPsia(v, CELL_STEP) };
+                if (what === 'copv_psi') return { ...base, copv_psi: snapPsia(v, CELL_STEP, 0) };
                 if (what === 'bottle_litres') return { ...base, bottle_litres: v };
                 if (what === 'fill_fraction') return { ...base, fill_fraction: v / 100 };
-                return { ...base, knobs: { [what.slice(5)]: snapPsia(v, CELL_STEP) } };
+                return { ...base, knobs: { [what.slice(5)]: snapPsia(v, CELL_STEP, 0) } };
               }),
             ),
             `${chosen.label} (${chosen.unit})`,

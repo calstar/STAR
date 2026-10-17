@@ -159,11 +159,54 @@ def test_an_abort_that_leaves_the_mains_open_records_one_lit_burn(
     assert len(burns) == 1 and burns[0]["thrust_peak_N"] > 0.0
 
 
+def test_a_burn_lit_again_in_the_same_flow_is_recorded_too(
+    stand: tuple[TestClient, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A card's zero-thrust floor crossed mid-flow for longer than COLD_FLOW_S
+    (LE4's is 24-34 psia), then lit again: one continuous flow. It was one
+    burn with one start, recorded at the first flame-out, so the re-lit part
+    never reached a run record while /burns listed it."""
+    client, diagram, engine = stand
+    sid = _open(client, diagram, engine)
+    session = main._SESSIONS[sid]
+    chamber = session.model.chamber
+    evaluate = chamber.evaluate
+    floor = [8.0e5]
+
+    def card_like(mdot_oxidiser: float, mdot_fuel: float) -> Any:
+        out = evaluate(mdot_oxidiser, mdot_fuel)
+        if out.pressure < floor[0]:
+            return replace(out, thrust=0.0, specific_impulse=0.0)
+        return out
+
+    monkeypatch.setattr(chamber, "evaluate", card_like)
+    session.prime(fill_fraction=0.9, tank_psi=550.0, copv_psi=4500.0, state="Ready")
+    session.command_state("Fire")
+    _tick(client, sid, 0.6)
+    floor[0] = 1.0e12  # out, both mains still open
+    _tick(client, sid, 0.8)
+    assert session.history[-1].chamber.mdot_total > 0.0, "still flowing"
+    assert len(client.get("/api/twin/runs").json()) == 1
+    floor[0] = 8.0e5
+    _tick(client, sid, 0.6)
+    assert session.history[-1].chamber.thrust > 1000.0, "lit again"
+    session.command_state("Engine Abort")
+    _tick(client, sid, 3.0)
+    runs = client.get("/api/twin/runs").json()
+    assert len(runs) == 2, [r["outcome"] for r in runs]
+    starts = sorted(
+        client.get(f"/api/twin/runs/{r['id']}").json()["clock"]["start_s"] for r in runs
+    )
+    burns = client.get(f"/api/session/{sid}/burns").json()["burns"]
+    assert [round(b["start_s"], 3) for b in burns] == [round(t, 3) for t in starts]
+
+
 def test_a_full_server_closes_the_idlest_stand_not_the_one_watched(
     stand: tuple[TestClient, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, diagram, engine = stand
     monkeypatch.setattr(main, "_SESSION_LIMIT", 3)
+    monkeypatch.setattr(main, "_WATCHED_S", 30.0)
     for sid in list(main._SESSIONS):
         main._close_session(sid, "cleared for the test")
     first, second, third = (_open(client, diagram, engine) for _ in range(3))
@@ -180,12 +223,22 @@ def test_a_full_server_closes_the_idlest_stand_not_the_one_watched(
     # Its console reopens on a fresh stand that says what happened.
     fifth = _open(client, diagram, engine, replaces=second)
     assert any("closed on the server" in n for n in main._notices(fifth))
-    # However busy the server, the console being ticked is the last closed.
+    # A full server of watched stands closes none of them: the new one is
+    # refused. Closing one sent its console to reopen, which closed the next,
+    # round all of them.
     for sid in main._SESSIONS:
         main._TOUCHED[sid] = time.monotonic()
     _tick(client, fifth, 0.05)
+    held = set(main._SESSIONS)
+    full = client.post(
+        "/api/session", params={"diagram": diagram, "engine": engine}, json={}
+    )
+    assert full.status_code == 503 and "full" in full.json()["detail"]
+    assert set(main._SESSIONS) == held
+    # Once one goes idle it is the one closed, never the console being ticked.
+    main._TOUCHED[fourth] = time.monotonic() - 60.0
     _open(client, diagram, engine)
-    assert fifth in main._SESSIONS
+    assert fifth in main._SESSIONS and fourth not in main._SESSIONS
     # A Reset frees its old seat at once.
     sixth = _open(client, diagram, engine, replaces=first)
     assert first not in main._SESSIONS and sixth in main._SESSIONS
