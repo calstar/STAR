@@ -1,5 +1,5 @@
 /**
- * feed-twin: the stand, simulated.
+ * Hotbench Twin (feed-twin): the stand, simulated.
  *
  * The header is always there -- the views, the solver's health, the stand
  * clock, and off the Console the state and an abort -- and below it the route
@@ -8,11 +8,12 @@
  * other view's chrome longer.
  */
 
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { TopBar } from './components/TopBar';
 import { StandProvider, useStand } from './stand';
 import { HookupProvider } from './lib/useHookup';
 import TripOverlay from './components/TripOverlay';
+import { NoStand } from './components/NoStand';
 import { Console } from './views/Console';
 import { Gse } from './views/Gse';
 import { Config } from './views/Config';
@@ -44,14 +45,43 @@ export const VIEWS = [
   { group: 'Set up', path: '/report', label: 'Checks', hint: 'What the twin read from the drawing, what it had to assume, and what looks wrong' },
 ] as const;
 
+/** A switch of drawing or engine waiting for a yes: the stand on screen is
+ *  past Idle and switching throws it away. */
+function PendingPickBar() {
+  const { pendingPick, confirmPick, cancelPick } = useStand();
+  if (!pendingPick) return null;
+  return (
+    <div className="flex flex-shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--color-warning)] px-8 py-2.5 font-mono text-[12px]">
+      <span className="text-[var(--ink)]">
+        Put {pendingPick.kind === 'diagram' ? 'the drawing' : 'the engine'}{' '}
+        <span className="font-semibold">{pendingPick.name}</span> on the console?
+      </span>
+      <span className="text-[var(--ink-3)]">The stand is {pendingPick.losing}; switching starts a fresh, empty stand.</span>
+      <span className="ml-auto flex gap-2">
+        <button type="button" onClick={confirmPick} className="ctl h-7 px-3 text-[10px]">
+          Switch
+        </button>
+        <button type="button" onClick={cancelPick} className="ctl h-7 px-3 text-[10px]">
+          Keep this stand
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function Shell() {
   const stand = useStand();
-  const { live, error } = stand;
+  const { live, model, error } = stand;
+  const { pathname } = useLocation();
+  // Every view but the Library reads a stand. Without one it shows why and
+  // the way out, not its own "Loading…" that never ends.
+  const standless = (!live || !model) && pathname !== '/library';
 
   return (
     <div className="flex h-full flex-col">
       <TopBar views={VIEWS} />
 
+      <PendingPickBar />
       {error && (
         <p className="flex-shrink-0 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-danger)]">
           {error}
@@ -60,6 +90,9 @@ function Shell() {
 
       <main className="relative min-h-0 flex-1 overflow-auto">
         {live?.tripped && <TripOverlay message={live.tripped} onReset={stand.restart} />}
+        {standless ? (
+          <NoStand />
+        ) : (
         <Routes>
           <Route path="/" element={<Console />} />
           <Route path="/gse" element={<Gse />} />
@@ -77,6 +110,7 @@ function Shell() {
           <Route path="/library" element={<Library />} />
           <Route path="/report" element={<ReportView />} />
         </Routes>
+        )}
       </main>
     </div>
   );

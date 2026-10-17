@@ -54,6 +54,9 @@ def tidy() -> Iterator[None]:
 
 def test_a_hookup_is_suggested_saved_kept_across_versions_bound_and_reset() -> None:
     payload = json.loads(STAND.read_text())
+    # A node moved, so it is a drawing of its own: the shipped one, merely
+    # re-serialised, is the shipped artifact (D-52), with its lineage.
+    payload["nodes"][0]["position"] = {"x": 4321, "y": 5}
     diagram = upload(payload, "hookup stand.json")
     first = client.get("/api/hookup", params={"diagram": diagram}).json()
     assert first["saved"] is False
