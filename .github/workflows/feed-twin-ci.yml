@@ -247,6 +247,78 @@ jobs:
         working-directory: feed-twin/frontend
         run: npm test
 
+  # The demo path in a real browser: an empty library, the sample stand, T-0,
+  # FIRE, a burn, and the run it leaves on Runs -- with every pressure view
+  # read for psia and no psig, no raw objects and no console errors
+  # (frontend/e2e/demo-path.spec.ts). playwright.config.ts boots the backend
+  # over a throwaway library and Vite in front of it, so this job needs only
+  # the backend's Python, the frontend's node modules and Chromium. Mirrors
+  # engine-design-ci.yml's frontend-e2e.
+  frontend-e2e:
+    name: Frontend E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: feed-twin/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: feed-twin
+        run: |
+          pip install -r requirements.txt
+          pip install -e ../lib/feedtwin
+          pip install -e ../lib/stardesign
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: feed-twin/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: feed-twin/frontend
+        run: npm ci || npm install
+
+      # ~/.cache/ms-playwright is not covered by setup-node's npm cache, so
+      # cache the Chromium download keyed on the lockfile.
+      - name: Cache Playwright browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('feed-twin/frontend/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Playwright Chromium
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        working-directory: feed-twin/frontend
+        run: npx playwright install chromium
+
+      # System libraries for Chromium (apt): not in the browser cache, so every
+      # time (a no-op when already present).
+      - name: Install Playwright system dependencies
+        working-directory: feed-twin/frontend
+        run: npx playwright install-deps chromium
+
+      - name: Run Playwright E2E
+        working-directory: feed-twin/frontend
+        run: npm run test:e2e
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-twin-playwright-traces
+          path: feed-twin/frontend/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   # Docker image build. Proves the images build against the current tree, on a
   # PR rather than after the merge -- publish-apps.yml only runs on push to
   # main, so without this a Dockerfile that no longer matches the tree breaks
