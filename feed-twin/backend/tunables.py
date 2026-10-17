@@ -36,6 +36,11 @@ class Tunable:
     applies: str = "live"  # "live" | "reset"
     choices: tuple[tuple[str, str], ...] = ()
     """For a ``choice``: (value, label) pairs, the first the default."""
+    gauge_wire: bool = False
+    """A pressure carried gauge: ``value``, ``low``, ``high``, ``default`` and
+    ``step`` are psig on the wire and in saved setups, as they always were, and
+    a person reads and types it in ``unit`` (psia), the client adding the
+    atmosphere (ADR 0007)."""
 
 
 GROUPS = [
@@ -90,26 +95,28 @@ TUNABLES: tuple[Tunable, ...] = (
         "dome",
         "dome_psi",
         "Dome control regulator",
-        "psig",
+        "psia",
         GROUPS[0],
         "What the hand-loaded dome regulator is set to. The 1092-50 tank regulator "
-        "locks up at this + its 50 psi bias - its supply effect x the COPV: 500 here "
-        "with 4,500 psig behind it at 17 psi per 1000 is 473.5 psig in the tanks, "
-        "climbing as the bottle falls.",
+        "locks up at this + its 50 psi bias - its supply effect x the COPV's gauge "
+        "reading: 514.7 psia here with a 4,514.7 psia COPV behind it, at 17 psi per "
+        "1000, is 488.2 psia in the tanks, climbing as the bottle falls.",
         low=0.0,
         high=6000.0,
         step=5.0,
+        gauge_wire=True,
     ),
     Tunable(
         "copv_target",
         "copv_target_psi",
         "GSE high press regulator",
-        "psig",
+        "psia",
         GROUPS[0],
         "What the cart charges the COPV to during GN2 High Press.",
         low=100.0,
         high=10000.0,
         step=50.0,
+        gauge_wire=True,
     ),
     Tunable(
         "copv_fill_s",
@@ -214,9 +221,9 @@ TUNABLES: tuple[Tunable, ...] = (
         "dewar_psi",
         "dewar_psi",
         "LOX dewar pressure",
-        "psig",
+        "psia",
         GROUPS[1],
-        "What pushes the LOX load in: ~100 psig on the stand (operator). The load "
+        "What pushes the LOX load in: ~115 psia on the stand (operator). The load "
         "is the dewar less the tank, through the fill line. While the wall is warm "
         "everything that arrives boils into the ullage, so the tank climbs until the "
         "vent carries what the dewar sends, more the faster it pours; once the wall "
@@ -225,6 +232,7 @@ TUNABLES: tuple[Tunable, ...] = (
         low=0.0,
         high=500.0,
         step=5.0,
+        gauge_wire=True,
     ),
     Tunable(
         "dewar_fill_cv",
@@ -234,9 +242,9 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Everything on the fill line that is not tube: the dewar's liquid valve, the "
         "LOX Fill valve, the disconnect -- in practice how far the dewar valve is "
-        "open. The stand tops out near 30 psig during the chill and takes ~10 min "
-        "(operator). LE4 (6) as drawn: 0.019 peaks at 57 psig and chills in 5.3 "
-        "min; 0.013 at 38 psig and 6.9 min. 'skip' on the tank card skips the "
+        "open. The stand tops out near 45 psia during the chill and takes ~10 min "
+        "(operator). LE4 (6) as drawn: 0.019 peaks at 72 psia and chills in 5.3 "
+        "min; 0.013 at 53 psia and 6.9 min. 'skip' on the tank card skips the "
         "chill. A clean 3/8 in line pours ~0.7 kg/s, all of which boils on a warm "
         "wall, and the tank rides up to the dewar.",
         low=0.0,
@@ -664,7 +672,7 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[5],
         "Scale a tank's ullage-to-wall conductance by the share of the wall above "
         "the liquid. Off, a 95 % full LOX tank's ullage cooled against the whole "
-        "cold tank and a fresh press sagged 548 to 260 psig in six seconds of Ready.",
+        "cold tank and a fresh press sagged 563 to 275 psia in six seconds of Ready.",
         kind="flag",
         applies="live",
     ),
@@ -728,7 +736,7 @@ TUNABLES: tuple[Tunable, ...] = (
         "L",
         GROUPS[5],
         "Water volume of a bottle the drawing gives none: the stand's 45 scf SCBA "
-        "COPV -- 52.8 mol of free air, Z 1.1145 at 4500 psi, 4.64 L plus 3 in^3 of "
+        "COPV -- 52.8 mol of free air, Z 1.1145 at 4,500 psia, 4.64 L plus 3 in^3 of "
         "fittings. A volume on the drawing wins.",
         low=0.5,
         high=60.0,
@@ -857,6 +865,9 @@ _SETUP_FIELDS = {f.name for f in fields(Setup)}
 for _t in TUNABLES:
     assert _t.field in _SETUP_FIELDS, _t.field
 
+#: Keys of the pressures carried gauge and shown psia (:attr:`Tunable.gauge_wire`).
+GAUGE_WIRE = frozenset(t.key for t in TUNABLES if t.gauge_wire)
+
 
 def parse_setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
     """The dials, from whatever the client sent. Anything unsent is kept.
@@ -911,6 +922,7 @@ def describe() -> list[dict[str, Any]]:
             "applies": t.applies,
             "choices": [{"value": v, "label": label} for v, label in t.choices],
             "default": getattr(defaults, t.field),
+            "gauge_wire": t.gauge_wire,
         }
         for t in TUNABLES
     ]

@@ -30,7 +30,7 @@ from feedtwin.session.burn import (
     run_burn,
     trip_record,
 )
-from feedtwin.session.gauge import ATMOSPHERE, from_psig
+from feedtwin.session.gauge import ATMOSPHERE, from_psig, say
 
 STAR = Path(__file__).resolve().parents[3]
 DRAWING = STAR / "feed-twin" / "backend" / "diagrams" / "copv_study_he.json"
@@ -106,6 +106,11 @@ def test_a_mid_burn_trip_ends_the_trace_at_the_trip() -> None:
     assert record["mawp_psia"] == pytest.approx((MAWP_PSIG * PSI + ATMOSPHERE) / PSI)
     assert record["p_psia"] > record["mawp_psia"]
     assert "MAWP" in record["message"]
+    # Said in psia, from the same numbers (ADR 0007): the trip text a person
+    # reads, not the gauge the wire carries.
+    assert say(trip.pressure, 1) in record["message"], record["message"]
+    assert say(trip.limit, 1) in record["message"], record["message"]
+    assert "psig" not in record["message"]
     # And the notes say it, so a reader of the notes alone is not misled.
     assert any(note.startswith("Burn stopped at t = ") for note in trace.notes)
 

@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import {
   CHARGE_KNOB,
   cancelStudy,
@@ -26,22 +27,60 @@ import {
   type Tunable,
 } from '../api';
 import { StudyChart, type Series } from '../components/StudyChart';
+import {
+  PRESSURE_UNIT,
+  fmtP,
+  isGaugeTunable,
+  isGaugeUnit,
+  psiaEntry,
+  psiaText,
+  snapPsia,
+  toPsia,
+} from '../lib/pressure';
 import { useStand } from '../stand';
 
 /** Case colours, in this order and never cycled: the dataviz reference
  *  palette's dark steps, validated on this surface (CVD ΔE 8.4, normal 19.3). */
 const CASE_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
 
-/** A sweep is a magnitude: one hue, light to dark. */
-function ramp(i: number, n: number): string {
-  const a = [0x9e, 0xc5, 0xf7];
-  const b = [0x1a, 0x4f, 0x9c];
-  const f = n > 1 ? i / (n - 1) : 0;
+/** A sweep is a magnitude: one hue, light to dark -- and one hue per gas, so
+ *  a sweep crossed with the pressurant reads gas first and value second, as
+ *  every figure here does ("gas is hue"). */
+const RAMPS: [number[], number[]][] = [
+  [[0x9e, 0xc5, 0xf7], [0x1a, 0x4f, 0x9c]],
+  [[0xf6, 0xb8, 0x8f], [0x9c, 0x3a, 0x10]],
+  [[0x9f, 0xe0, 0xc4], [0x0d, 0x6b, 0x4a]],
+];
+
+/** A step along one hue's ramp, 0 palest to 1 darkest. */
+function shade(hue: number, f: number): string {
+  const [a, b] = RAMPS[hue % RAMPS.length];
   return `rgb(${a.map((c, k) => Math.round(c + (b[k] - c) * f)).join(',')})`;
 }
 
-const colorOf = (i: number, n: number, sweep: boolean) =>
-  sweep || n > CASE_COLORS.length ? ramp(i, n) : CASE_COLORS[i];
+/** Case i of n along a hue, pale to deep. Not the darkest step: on the black
+ *  ground it sank into the grid. */
+const ramp = (i: number, n: number, hue = 0): string => shade(hue, n > 1 ? (0.75 * i) / (n - 1) : 0.4);
+
+/** The gas a case ran on: the one it swapped in, or "" for the stand's own. */
+const gasOf = (c: StudyCaseOut): string => String((c.t0 as { pressurant?: string }).pressurant ?? '');
+
+/** A gas as the stand says it. */
+const GAS_NAME: Record<string, string> = { helium: 'He', nitrogen: 'GN2', '': 'as drawn' };
+
+/** Each finished case's colour. Cases apart: the categorical palette. A
+ *  sweep: a ramp by x within each gas, a hue per gas. */
+function caseColors(done: StudyCaseOut[], planned: number, sweep: boolean): string[] {
+  if (!sweep) return done.map((_, i) => (planned > CASE_COLORS.length ? ramp(i, planned) : CASE_COLORS[i]));
+  const gases = [...new Set(done.map(gasOf))];
+  return done.map((c) => {
+    const mates = done.filter((d) => gasOf(d) === gasOf(c)).map((d) => d.x ?? 0).sort((a, b) => a - b);
+    return ramp(mates.indexOf(c.x ?? 0), mates.length, gases.indexOf(gasOf(c)));
+  });
+}
+
+/** One gas's colour on a sweep figure: the middle of its ramp. */
+const gasColor = (hue: number) => shade(hue, 0.4);
 
 type SweepVar = 'copv_psi' | 'bottle_litres' | 'fill_fraction' | `knob:${string}`;
 
@@ -53,10 +92,36 @@ interface Saved {
   horizon: number;
 }
 
+/** A typed pressure in a case cell snaps to a whole psia. */
+const CELL_STEP = 1;
+
+/** A list saved before the screen read psia: its pressure sweep was typed in
+ *  gauge, so its x (the sweep's axis) and the names the sweep wrote say gauge.
+ *  The case values themselves were gauge then and are gauge now. */
+function fromGaugeSweep(saved: Saved): Saved {
+  const unit = /\(([^)]*)\)$/.exec(saved.sweep)?.[1];
+  if (!isGaugeUnit(unit)) return saved;
+  const label = saved.sweep.replace(/\([^)]*\)$/, `(${PRESSURE_UNIT})`);
+  const named = saved.sweep.replace(/\s*\([^)]*\)$/, '');
+  return {
+    ...saved,
+    sweep: label,
+    cases: saved.cases.map((c) =>
+      c.x == null
+        ? c
+        : {
+            ...c,
+            x: Number(psiaEntry(c.x)),
+            label: c.label.startsWith(`${named} `) ? `${named} ${psiaEntry(c.x)} ${PRESSURE_UNIT}` : c.label,
+          },
+    ),
+  };
+}
+
 const load = (): Saved => {
   try {
     const raw = window.localStorage.getItem(STORE);
-    if (raw) return JSON.parse(raw) as Saved;
+    if (raw) return fromGaugeSweep(JSON.parse(raw) as Saved);
   } catch {
     /* a fresh list */
   }
@@ -71,22 +136,27 @@ const save = (state: Saved) => {
   }
 };
 
-/** A number cell: blank is the stand's value, shown as the placeholder. */
+/** A number cell: blank is the stand's value, shown as the placeholder.
+ *  `pressure`: the value is gauge, as the case keeps it, and the cell reads
+ *  and types psia, snapped to this step. */
 function NumberCell({
   value,
   placeholder,
   onChange,
   width = 'w-20',
   title,
+  pressure,
 }: {
   value: number | null | undefined;
   placeholder: string;
   onChange: (v: number | null) => void;
   width?: string;
   title?: string;
+  pressure?: number;
 }) {
-  const [text, setText] = useState(value == null ? '' : String(value));
-  useEffect(() => setText(value == null ? '' : String(value)), [value]);
+  const shown = (v: number | null | undefined) => (v == null ? '' : pressure ? psiaEntry(v) : String(v));
+  const [text, setText] = useState(shown(value));
+  useEffect(() => setText(shown(value)), [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <input
       type="text"
@@ -99,8 +169,8 @@ function NumberCell({
         const t = text.trim();
         if (!t) return onChange(null);
         const v = Number(t);
-        if (Number.isFinite(v)) onChange(v);
-        else setText(value == null ? '' : String(value));
+        if (Number.isFinite(v)) onChange(pressure ? snapPsia(v, pressure) : v);
+        else setText(shown(value));
       }}
       className={`${width} rounded border border-gray-700 bg-transparent px-1.5 py-0.5 text-right font-mono text-[12.5px] tabular-nums placeholder:text-gray-600 focus:border-blue-500 focus:outline-none`}
     />
@@ -129,7 +199,8 @@ export function Study() {
     let timer = 0;
     const tick = async () => {
       try {
-        const next = await getStudy();
+        // This stand's study, and only yours: another viewer's is theirs.
+        const next = await getStudy(live?.id ?? '');
         if (stop) return;
         setStudy(next);
         if (next.running) timer = window.setTimeout(tick, 1500);
@@ -142,7 +213,7 @@ export function Study() {
       stop = true;
       window.clearTimeout(timer);
     };
-  }, [study?.running]);
+  }, [study?.running, live?.id]);
 
   // The COPV fill knob sets the same thing as the COPV column (the charge,
   // Setup copv_target), so it is not a column of its own: two cells for one
@@ -198,10 +269,10 @@ export function Study() {
             on <b>{standName}</b> · {engine?.name ?? 'no engine'}
           </span>
           <span className="text-[12px] text-text-muted" title="The stand's own values. A blank cell in a case is this value.">
-            COPV {fixed(Number(setup.copv_target), 0)} psig ·{' '}
+            COPV {fmtP(Number(setup.copv_target), 1)} ·{' '}
             {knobs.length
-              ? knobs.map((k) => `${k.label} ${fixed(knobValue(k.id) ?? k.psig, 0)} psig`).join(' · ')
-              : `dome ${fixed(Number(setup.dome), 0)} psig`}{' '}
+              ? knobs.map((k) => `${k.label} ${fmtP(knobValue(k.id) ?? k.psig, 1)}`).join(' · ')
+              : `dome ${fmtP(Number(setup.dome), 1)}`}{' '}
             · {loadText} · {bottle?.label ?? 'bottle'} as drawn
           </span>
           <div className="ml-auto flex items-center gap-2">
@@ -211,7 +282,7 @@ export function Study() {
             {running ? (
               <button
                 type="button"
-                onClick={() => cancelStudy().then(setStudy)}
+                onClick={() => cancelStudy(live?.id ?? '').then(setStudy)}
                 className="rounded border border-gray-600 px-3 py-1 text-[13px] hover:bg-gray-800"
               >
                 Cancel
@@ -222,10 +293,21 @@ export function Study() {
                 onClick={run}
                 disabled={Boolean(blocked) || cases.length === 0}
                 title={blocked || `Burn ${cases.length} case${cases.length === 1 ? '' : 's'} from T-0`}
-                className="rounded bg-blue-600 px-3 py-1 text-[13px] font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded bg-blue-600 px-3 py-1 text-[13px] font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Run {cases.length} case{cases.length === 1 ? '' : 's'}
               </button>
+            )}
+            {/* Why Run is shut, on the page rather than only in its hover. */}
+            {blocked && !running && (
+              <span className="text-[12px] text-[var(--warn)]">
+                {blocked}
+                {live && !engine && (
+                  <Link to="/library?import=engine" className="ml-2 underline underline-offset-4">
+                    Library →
+                  </Link>
+                )}
+              </span>
             )}
           </div>
         </header>
@@ -266,7 +348,7 @@ export function Study() {
                 setCases([{ label: 'As set' }]);
                 setSweepLabel('');
               }}
-              className="ml-auto text-[12px] text-text-muted hover:text-red-400"
+              className="ml-auto text-[12px] text-text-muted hover:text-[var(--bad)]"
             >
               Clear cases
             </button>
@@ -275,7 +357,7 @@ export function Study() {
       </section>
 
       {(error || study?.error) && (
-        <div className="rounded border border-red-900 bg-red-950/40 px-3 py-2 text-[13px] text-red-300">
+        <div className="rounded border border-[var(--color-danger-solid)] bg-[var(--bad)]/10 px-3 py-2 text-[13px] text-[var(--bad)]">
           {error || study?.error}
         </div>
       )}
@@ -314,11 +396,11 @@ function CaseTable({
           <tr>
             <th className={th}>Case</th>
             <th className={th} title="Bottle at T-0. Also the charge the regulators are taken as set against.">
-              COPV (psig)
+              COPV ({PRESSURE_UNIT})
             </th>
             {knobs.map((k) => (
               <th key={k.id} className={th} title={`Knob: ${k.label}`}>
-                {k.label.replace(/\s*\(.*\)$/, '')} (psig)
+                {k.label.replace(/\s*\(.*\)$/, '')} ({PRESSURE_UNIT})
               </th>
             ))}
             <th className={th} title={`${bottleLabel} volume`}>
@@ -351,15 +433,17 @@ function CaseTable({
               <td className="px-2 py-1">
                 <NumberCell
                   value={c.copv_psi}
-                  placeholder={fixed(Number(setup.copv_target), 0)}
+                  placeholder={psiaEntry(Number(setup.copv_target))}
                   onChange={(v) => onEdit(i, { copv_psi: v })}
+                  pressure={CELL_STEP}
                 />
               </td>
               {knobs.map((k) => (
                 <td key={k.id} className="px-2 py-1">
                   <NumberCell
                     value={c.knobs?.[k.id]}
-                    placeholder={fixed(k.psig, 0)}
+                    placeholder={psiaEntry(k.psig)}
+                    pressure={CELL_STEP}
                     onChange={(v) => {
                       const next = { ...(c.knobs ?? {}) };
                       if (v == null) delete next[k.id];
@@ -393,7 +477,7 @@ function CaseTable({
                   onChange={(e) =>
                     onEdit(i, { pressurant: (e.target.value || null) as StudyCaseIn['pressurant'] })
                   }
-                  className="rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5"
+                  className="rounded border border-gray-700 bg-[var(--color-bg-secondary)] px-1 py-0.5"
                 >
                   <option value="">as drawn</option>
                   <option value="helium">helium</option>
@@ -413,7 +497,7 @@ function CaseTable({
                   type="button"
                   onClick={() => onRemove(i)}
                   aria-label={`Remove ${c.label}`}
-                  className="px-1 text-gray-500 hover:text-red-400"
+                  className="px-1 text-gray-500 hover:text-[var(--bad)]"
                 >
                   ×
                 </button>
@@ -446,6 +530,8 @@ function SettingsCell({
     <div className="flex flex-wrap items-center gap-1">
       {Object.entries(value).map(([key, v]) => {
         const t = byKey.get(key);
+        // The dewar, say: gauge in the case, psia in the cell.
+        const gauge = t !== undefined && isGaugeTunable(t);
         return (
           <span
             key={key}
@@ -462,12 +548,13 @@ function SettingsCell({
             ) : (
               <NumberCell
                 value={Number(v)}
-                placeholder={String(setup[key] ?? '')}
+                placeholder={gauge ? psiaEntry(Number(setup[key] ?? 0)) : String(setup[key] ?? '')}
                 width="w-16"
+                pressure={gauge ? t.step : undefined}
                 onChange={(n) => onChange({ ...value, [key]: n ?? Number(setup[key] ?? 0) })}
               />
             )}
-            {t?.unit ? <span className="text-gray-500">{t.unit}</span> : null}
+            {t?.unit ? <span className="text-gray-500">{gauge ? PRESSURE_UNIT : t.unit}</span> : null}
             <button
               type="button"
               aria-label={`Drop ${key}`}
@@ -476,7 +563,7 @@ function SettingsCell({
                 delete next[key];
                 onChange(next);
               }}
-              className="text-gray-500 hover:text-red-400"
+              className="text-gray-500 hover:text-[var(--bad)]"
             >
               ×
             </button>
@@ -489,7 +576,7 @@ function SettingsCell({
           const t = byKey.get(e.target.value);
           if (t) onChange({ ...value, [t.key]: setup[t.key] ?? t.default });
         }}
-        className="max-w-[9rem] rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5 text-[11.5px] text-text-muted"
+        className="max-w-[9rem] rounded border border-gray-700 bg-[var(--color-bg-secondary)] px-1 py-0.5 text-[11.5px] text-text-muted"
         title="Change a Configuration row for this case"
       >
         <option value="">+ setting</option>
@@ -516,12 +603,17 @@ function SweepBuilder({
   const [open, setOpen] = useState(false);
   const [what, setWhat] = useState<SweepVar>('copv_psi');
   const [values, setValues] = useState('3000, 3500, 4000, 4500');
+  // Crossed with the pressurant: each value once on helium, once on GN2.
+  const [crossGas, setCrossGas] = useState(false);
+  const gases: StudyCaseIn['pressurant'][] = crossGas ? ['helium', 'nitrogen'] : [null];
+  // A pressure is swept in psia: the values typed, the names the cases get
+  // and the sweep's axis all read absolute; the cases keep gauge.
   const options: { key: SweepVar; label: string; unit: string }[] = [
-    { key: 'copv_psi', label: 'COPV charge', unit: 'psig' },
+    { key: 'copv_psi', label: 'COPV charge', unit: PRESSURE_UNIT },
     ...knobs.map((k) => ({
       key: `knob:${k.id}` as SweepVar,
       label: k.label.replace(/\s*\(.*\)$/, ''),
-      unit: 'psig',
+      unit: PRESSURE_UNIT,
     })),
     { key: 'bottle_litres', label: 'Bottle volume', unit: 'L' },
     ...(fillable ? [{ key: 'fill_fraction' as SweepVar, label: 'Fill', unit: '%' }] : []),
@@ -552,7 +644,7 @@ function SweepBuilder({
       <select
         value={what}
         onChange={(e) => setWhat(e.target.value as SweepVar)}
-        className="rounded border border-gray-700 bg-[#1e1e1e] px-1 py-0.5"
+        className="rounded border border-gray-700 bg-[var(--color-bg-secondary)] px-1 py-0.5"
       >
         {options.map((o) => (
           <option key={o.key} value={o.key}>
@@ -567,25 +659,40 @@ function SweepBuilder({
         className="w-56 rounded border border-gray-700 bg-transparent px-1.5 py-0.5 font-mono"
         title="Values, separated by commas or spaces"
       />
+      <select
+        value={crossGas ? 'both' : ''}
+        onChange={(e) => setCrossGas(e.target.value === 'both')}
+        className="rounded border border-gray-700 bg-[var(--color-bg-secondary)] px-1 py-0.5"
+        title="Run every value on the stand's own gas, or once on helium and once on GN2"
+      >
+        <option value="">on the stand's gas</option>
+        <option value="both">on He and GN2</option>
+      </select>
       <button
         type="button"
         disabled={parsed.length === 0}
         onClick={() => {
           onBuild(
-            parsed.map((v): StudyCaseIn => {
-              const base: StudyCaseIn = { label: `${chosen.label} ${v} ${chosen.unit}`, x: v };
-              if (what === 'copv_psi') return { ...base, copv_psi: v };
-              if (what === 'bottle_litres') return { ...base, bottle_litres: v };
-              if (what === 'fill_fraction') return { ...base, fill_fraction: v / 100 };
-              return { ...base, knobs: { [what.slice(5)]: v } };
-            }),
+            parsed.flatMap((v) =>
+              gases.map((gas): StudyCaseIn => {
+                const base: StudyCaseIn = {
+                  label: `${chosen.label} ${v} ${chosen.unit}${gas ? ` · ${GAS_NAME[gas]}` : ''}`,
+                  x: v,
+                  ...(gas ? { pressurant: gas } : {}),
+                };
+                if (what === 'copv_psi') return { ...base, copv_psi: snapPsia(v, CELL_STEP) };
+                if (what === 'bottle_litres') return { ...base, bottle_litres: v };
+                if (what === 'fill_fraction') return { ...base, fill_fraction: v / 100 };
+                return { ...base, knobs: { [what.slice(5)]: snapPsia(v, CELL_STEP) } };
+              }),
+            ),
             `${chosen.label} (${chosen.unit})`,
           );
           setOpen(false);
         }}
         className="rounded bg-gray-700 px-2 py-0.5 hover:bg-gray-600 disabled:opacity-40"
       >
-        Write {parsed.length} cases
+        Write {parsed.length * gases.length} cases
       </button>
       <button type="button" onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-300">
         ×
@@ -606,7 +713,13 @@ function Results({ study }: { study: StudyState }) {
   const done = study.cases;
   const sweep = Boolean(study.sweep);
   const n = Math.max(study.planned, done.length);
-  const colors = done.map((_, i) => colorOf(i, n, sweep));
+  const colors = caseColors(done, n, sweep);
+  const crossed = new Set(done.map(gasOf)).size > 1;
+  // A sweep's cases are named for the swept quantity ("Dome control
+  // regulator 440 psia · He"); the figures need only what varies.
+  const swept = study.sweep.replace(/\s*\([^)]*\)$/, '');
+  const short = (label: string) =>
+    swept && label.startsWith(`${swept} `) ? label.slice(swept.length + 1) : label;
 
   const series = (pick: (c: StudyCaseOut) => [string, number[]][]): Series[] =>
     done.flatMap((c, i) =>
@@ -623,8 +736,9 @@ function Results({ study }: { study: StudyState }) {
             return {
               key: `${i}.${name}`,
               label: name ? `${c.label} · ${name}` : c.label,
+              legend: short(c.label),
               // Endpoint text: the swept value, or the case's name, short.
-              tag: `${sweep && c.x != null ? String(c.x) : c.label.slice(0, 16)}${name ? ` ${name.slice(0, 3)}` : ''}`,
+              tag: `${sweep && c.x != null ? `${c.x}${crossed ? ` ${GAS_NAME[gasOf(c)] ?? gasOf(c)}` : ''}` : short(c.label).slice(0, 16)}${name ? ` ${name}` : ''}`,
               color: colors[i],
               dashed: k > 0,
               t,
@@ -638,12 +752,12 @@ function Results({ study }: { study: StudyState }) {
     '',
     'Case',
     'Changed',
-    'T-0 tanks (psig)',
+    `T-0 tanks (${PRESSURE_UNIT})`,
     'Burn (s)',
     'Impulse (N·s)',
     'Thrust (N)',
-    'Tank low (psig)',
-    'COPV end (psig)',
+    `Tank low (${PRESSURE_UNIT})`,
+    `COPV end (${PRESSURE_UNIT})`,
     'O/F',
     '',
   ];
@@ -697,7 +811,7 @@ function Results({ study }: { study: StudyState }) {
                       className="px-3 py-1 text-right font-mono"
                       title="Where the tanks start: the lockup their regulator gives at T-0"
                     >
-                      {c.t0.tank_psi != null ? fixed(c.t0.tank_psi, 0) : '–'}
+                      {c.t0.tank_psi != null ? psiaText(c.t0.tank_psi) : '–'}
                     </td>
                     <td
                       className="px-3 py-1 text-right font-mono"
@@ -708,23 +822,23 @@ function Results({ study }: { study: StudyState }) {
                     <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.impulse_Ns ?? NaN, 0)}</td>
                     <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.thrust_mean_N ?? NaN, 0)}</td>
                     <td className="px-3 py-1 text-right font-mono" title="Lowest tank pressure after the first 0.3 s">
-                      {low != null ? fixed(low, 0) : '–'}
+                      {low != null ? psiaText(low) : '–'}
                     </td>
                     <td className="px-3 py-1 text-right font-mono">
-                      {bottle?.length ? fixed(bottle[bottle.length - 1], 0) : '–'}
+                      {bottle?.length ? psiaText(bottle[bottle.length - 1]) : '–'}
                     </td>
                     <td className="px-3 py-1 text-right font-mono">{fixed(c.outcome.of_mean ?? NaN, 3)}</td>
                     <td className="px-3 py-1 text-[12px]">
                       {c.error ? (
-                        <span className="text-red-400" title={c.error}>
+                        <span className="text-[var(--bad)]" title={c.error}>
                           failed
                         </span>
                       ) : c.tripped ? (
-                        <span className="text-amber-400" title={c.tripped}>
+                        <span className="text-[var(--warn)]" title={c.tripped}>
                           tripped
                         </span>
                       ) : c.failed_ticks ? (
-                        <span className="text-amber-400" title={`${c.failed_ticks} step(s) did not converge`}>
+                        <span className="text-[var(--warn)]" title={`${c.failed_ticks} step(s) did not converge`}>
                           {c.failed_ticks} unconverged
                         </span>
                       ) : (
@@ -746,23 +860,27 @@ function Results({ study }: { study: StudyState }) {
 
       {done.some((c) => !c.error) && (
         <div className="grid gap-3 xl:grid-cols-2">
+          {/* The case traces are gauge, as the study keeps them; the figures
+              read absolute and stop at 0. */}
           <Figure>
             <StudyChart
               title="Tank pressure"
               caption={tankNames.length > 1 ? `${tankNames[0]} solid, ${tankNames.slice(1).join(', ')} dashed` : ''}
-              yLabel="psig"
-              series={series((c) => Object.entries(c.tanks))}
+              yLabel={PRESSURE_UNIT}
+              floor={0}
+              series={series((c) => Object.entries(c.tanks).map(([name, v]): [string, number[]] => [name, v.map(toPsia)]))}
             />
           </Figure>
           <Figure>
             <StudyChart
               title="COPV pressure"
               caption=""
-              yLabel="psig"
+              yLabel={PRESSURE_UNIT}
+              floor={0}
               series={series((c) =>
                 Object.values(c.bottles)
                   .slice(0, 1)
-                  .map((v): [string, number[]] => ['', v]),
+                  .map((v): [string, number[]] => ['', v.map(toPsia)]),
               )}
             />
           </Figure>
@@ -773,8 +891,9 @@ function Results({ study }: { study: StudyState }) {
             <StudyChart
               title="Chamber pressure"
               caption=""
-              yLabel="psig"
-              series={series((c) => [['', c.chamber_psi]])}
+              yLabel={PRESSURE_UNIT}
+              floor={0}
+              series={series((c) => [['', c.chamber_psi.map(toPsia)]])}
             />
           </Figure>
         </div>
@@ -793,26 +912,37 @@ function SweepFigures({ study }: { study: StudyState }) {
   const points = study.cases
     .filter((c) => !c.error && c.x != null)
     .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
-  const one = (label: string, read: (c: StudyCaseOut) => number | null | undefined): Series => {
-    const t: number[] = [];
-    const v: number[] = [];
-    for (const c of points) {
-      const y = read(c);
-      if (y == null || !Number.isFinite(y)) continue;
-      t.push(c.x as number);
-      v.push(y);
-    }
-    return { key: label, label, color: CASE_COLORS[0], t, v };
-  };
+  // One series per gas, each in x order: a sweep crossed with the pressurant
+  // drawn as one line zig-zagged between helium and nitrogen at every x.
+  const gases = [...new Set(points.map(gasOf))];
+  const one = (label: string, read: (c: StudyCaseOut) => number | null | undefined): Series[] =>
+    gases.map((gas, hue) => {
+      const t: number[] = [];
+      const v: number[] = [];
+      for (const c of points) {
+        if (gasOf(c) !== gas) continue;
+        const y = read(c);
+        if (y == null || !Number.isFinite(y)) continue;
+        t.push(c.x as number);
+        v.push(y);
+      }
+      const name = gases.length > 1 ? (GAS_NAME[gas] ?? gas) : label;
+      return { key: `${label}.${gas}`, label: name, tag: name, color: gases.length > 1 ? gasColor(hue) : CASE_COLORS[0], t, v };
+    });
   return (
     <div className="grid gap-3 xl:grid-cols-3">
       <Figure>
         <StudyChart
           title="Lowest tank pressure"
           caption="after the first 0.3 s"
-          yLabel="psig"
+          yLabel={PRESSURE_UNIT}
           xLabel={study.sweep}
-          series={[one('Tank low', lowOf)]}
+          markers
+          floor={0}
+          series={one('Tank low', (c) => {
+            const low = lowOf(c);
+            return low == null ? null : toPsia(low);
+          })}
         />
       </Figure>
       <Figure>
@@ -821,7 +951,8 @@ function SweepFigures({ study }: { study: StudyState }) {
           caption=""
           yLabel="N·s"
           xLabel={study.sweep}
-          series={[one('Impulse', (c) => c.outcome.impulse_Ns)]}
+          markers
+          series={one('Impulse', (c) => c.outcome.impulse_Ns)}
         />
       </Figure>
       <Figure>
@@ -830,7 +961,8 @@ function SweepFigures({ study }: { study: StudyState }) {
           caption="to the first tank dry"
           yLabel="s"
           xLabel={study.sweep}
-          series={[one('Burn', (c) => c.depleted_s)]}
+          markers
+          series={one('Burn', (c) => c.depleted_s)}
         />
       </Figure>
     </div>

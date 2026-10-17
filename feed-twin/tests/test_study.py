@@ -66,10 +66,11 @@ def test_a_case_changes_only_what_it_says() -> None:
     assert inputs["setup"]["full_fraction"] == 0.8
     assert inputs["setup"]["line_walls"] is False
     assert BASE["setup"]["copv_target"] == 4500.0, "the stand is not touched"
+    # Gauge on the wire, psia to read (ADR 0007): 3000 + 14.696.
     assert describe(BASE, case) == [
-        "COPV 3000 psig",
-        "dome 450 psig",
-        "aux 250 psig",
+        "COPV 3,014.7 psia",
+        "dome 464.7 psia",
+        "aux 264.7 psia",
         "fill 80 %",
         "line_walls = False",
     ]
@@ -231,3 +232,133 @@ def test_a_tank_too_small_for_its_fire_load_is_said(stand: str) -> None:
     half = opened(0.5)
     (note,) = [n for n in half["notes"] if "fire load" in n]
     assert f"holds {fuel['load_kg'] * 0.5 / 0.95:.2f} kg at its 50% fill" in note
+
+
+LE4 = (
+    Path(__file__).resolve().parents[2]
+    / "lib"
+    / "feedtwin"
+    / "tests"
+    / "fixtures"
+    / "le4_rocket_and_gse.json"
+)
+
+
+@pytest.mark.skipif(not LE4.is_file(), reason="no LE4 drawing")
+def test_a_study_on_a_stand_with_a_cart_reports_the_vehicle_tanks() -> None:
+    """LE4 (6) has a cart: a LOX dewar and a fuel transfer tank. They sat in
+    every case's traces at atmosphere, so "Tank low" was a flat zero for every
+    case, the legend doubled, and the loads listed the cart's propellant
+    (D-19). The vehicle's tanks are what a burn is about."""
+    diagram = client.post(
+        "/api/library/diagrams",
+        files={"file": ("le4 study.json", LE4.read_bytes(), "application/json")},
+    ).json()["artifact"]["id"]
+    try:
+        sid = _session(str(diagram))
+        started = client.post(
+            "/api/study",
+            json={"session": sid, "horizon_s": 0.5, "cases": [{"label": "as set"}]},
+        )
+        assert started.status_code == 200, started.text
+        body = _finish()
+        (case,) = body["cases"]
+        assert case["error"] == "", case["error"]
+        assert set(case["tanks"]) == {"Eth-Tank", "LOX-Tank"}, set(case["tanks"])
+        assert set(case["t0"]["loads_kg"]) <= {"Eth-Tank", "LOX-Tank"}
+        assert set(case["bottles"]) == {"COPV"}, set(case["bottles"])
+        assert min(min(v) for v in case["tanks"].values()) > 100.0
+        listed = {t["label"] for t in case["outcome"].get("tanks", [])}
+        assert listed <= {"Eth-Tank", "LOX-Tank"}, listed
+    finally:
+        library.remove(diagram)
+
+
+def test_the_study_and_the_console_end_a_burn_in_the_same_place(stand: str) -> None:
+    """One end of burn: a tank empty. The Study stopped at BurnPlan's 60 g
+    design residual while the console burned to empty, so the same stand read
+    0.6 % less impulse on the Study than on the console (D-80). The Study now
+    burns its load to empty. What is left between them (~0.3 %) is the
+    console's own last step: cut at the dry instant, its sample reads the
+    tank dry and the report does not count it."""
+    from backend import main
+
+    sid = _session(stand)
+    assert client.post(f"/api/session/{sid}/t0").status_code == 200
+    session = main._SESSIONS[sid]
+    loads = session.fire_loads()
+    session.command_state("Fire")
+    for _ in range(400):
+        client.post(f"/api/session/{sid}/tick", json={"dt": 0.05})
+        if session.state != "Fire":
+            break
+    burns = client.get(f"/api/session/{sid}/burns").json()["burns"]
+    assert burns, "the console burned"
+    console = burns[-1]
+    started = client.post(
+        "/api/study",
+        json={"session": sid, "horizon_s": 14.0, "cases": [{"label": "as set"}]},
+    )
+    assert started.status_code == 200, started.text
+    (case,) = _finish()["cases"]
+    assert case["error"] == "", case["error"]
+    study = case["outcome"]
+    burned = study["oxidiser_kg"] + study["fuel_kg"]
+    # To empty: the first tank to run dry runs to DRY_MASS, not to 60 g.
+    assert (
+        min(
+            loads[t]
+            - (
+                study["oxidiser_kg"]
+                if "lox" in t.lower() or "ox" in t.lower()
+                else study["fuel_kg"]
+            )
+            for t in loads
+        )
+        < 0.01
+    ), (loads, study["oxidiser_kg"], study["fuel_kg"])
+    assert burned > console["oxidiser_kg"] + console["fuel_kg"] - 0.005
+    assert study["impulse_Ns"] == pytest.approx(console["impulse_Ns"], rel=5e-3)
+
+
+def test_a_study_is_its_owners_on_its_stand(stand: str) -> None:
+    """One study per server let every viewer watch and cancel another's, and
+    refused anyone else's with a 409 (D-51). Studies are kept per person and
+    per stand: a second person runs theirs, sees only theirs, and cannot
+    cancel the first."""
+    alice = {"X-Auth-Email": "alice@example.com"}
+    bob = {"X-Auth-Email": "bob@example.com"}
+
+    def opened(headers: dict[str, str]) -> str:
+        response = client.post(
+            "/api/session",
+            params={"diagram": stand, "engine": _engine()},
+            json={},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return str(response.json()["id"])
+
+    a, b = opened(alice), opened(bob)
+    body = {"horizon_s": 1.0, "cases": [{"label": "one"}, {"label": "two"}]}
+    first = client.post("/api/study", json={**body, "session": a}, headers=alice)
+    assert first.status_code == 200, first.text
+    second = client.post("/api/study", json={**body, "session": b}, headers=bob)
+    assert second.status_code == 200, second.text
+    # Someone else's cancel, even with Alice's session, touches only their own;
+    # Bob's stops Bob's, and Alice's runs on.
+    client.post(f"/api/study/cancel?session={a}", headers={"X-Auth-Email": "eve@x.org"})
+    client.post(f"/api/study/cancel?session={b}", headers=bob)
+    for _ in range(1800):
+        mine = client.get(f"/api/study?session={a}", headers=alice).json()
+        theirs = client.get(f"/api/study?session={b}", headers=bob).json()
+        if not mine["running"] and not theirs["running"]:
+            break
+        time.sleep(0.1)
+    assert mine["stage"] == "done" and len(mine["cases"]) == 2, mine["stage"]
+    assert theirs["stage"] == "cancelled", theirs["stage"]
+    # A third viewer sees neither.
+    assert (
+        client.get("/api/study", headers={"X-Auth-Email": "eve@x.org"}).json()["cases"]
+        == []
+    )

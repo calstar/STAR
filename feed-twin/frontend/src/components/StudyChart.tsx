@@ -15,7 +15,7 @@
  * have to look away from the line to find out what it is.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 export interface Series {
   key: string;
@@ -25,6 +25,10 @@ export interface Series {
   dashed?: boolean;
   /** Short text for the endpoint label; the legend keeps `label`. */
   tag?: string;
+  /** The legend entry this series shares: one per case, however many tanks
+   *  it draws. Twelve "case · tank" lines of legend buried a six-case sweep;
+   *  the line style is said once, in the caption. Default: its own `label`. */
+  legend?: string;
   t: number[];
   v: number[];
 }
@@ -36,20 +40,29 @@ export interface Rule {
   label: string;
 }
 
-const W = 920;
-const H = 340;
+/** The figure is drawn at the width it is given, in pixels: a fixed 920 wide
+ *  viewBox squeezed into a 344 px card set its 12 px labels at 4.5 px, and a
+ *  min-width that kept them legible pushed the last sweep points off the
+ *  card with nothing to say they were there. */
+const H = 320;
 const L = 64;   // left gutter: y tick labels
-const R = 768;  // plot right edge; the rest is direct-label room
+/** Right of the plot: room for the endpoint labels, or a margin without them. */
+const LABEL_ROOM = 132;
+const MARGIN = 20;
+/** Narrowest it draws at; a card narrower than this scrolls. */
+const MIN_W = 320;
 /** At most this many series are labelled at their endpoints. */
 const DIRECT_LABELS = 4;
 const T = 22;
-const B = 296;
+const B = 276;
 
-const GRID = '#26262f';
-const AXIS = '#4a4a58';
-const INK2 = '#9a9aa8';
-const INK3 = '#7a7a8a';
-const SURFACE = '#141414';
+/* The console's own neutrals (index.css), so a figure is the same app. */
+const GRID = 'var(--line)';
+const AXIS = 'var(--line-strong)';
+const INK = 'var(--ink)';
+const INK2 = 'var(--ink-2)';
+const INK3 = 'var(--ink-3)';
+const SURFACE = 'var(--background)';
 
 /** Tick steps a person would have chosen: 1, 2, 5 and their decades. */
 function ticks(lo: number, hi: number, want = 6): number[] {
@@ -79,14 +92,21 @@ function unstack(points: { y: number; i: number }[], gap = 16): number[] {
   return placed;
 }
 
+const DEFAULT_X = 'seconds from ignition';
+
+/** A sweep's x as the read-out says it: whole above ten, a tenth below. */
+const fmtX = (x: number) => (Math.abs(x) >= 10 ? String(Math.round(x)) : x.toFixed(1));
+
 export function StudyChart({
   title,
   caption,
   series,
   yLabel,
-  xLabel = 'seconds from ignition',
+  xLabel = DEFAULT_X,
   rules = [],
   area = false,
+  floor,
+  markers = false,
 }: {
   title: string;
   caption: string;
@@ -96,11 +116,35 @@ export function StudyChart({
   rules?: Rule[];
   /** Gradient wash under the traces. Only legible with one or two series. */
   area?: boolean;
+  /** The axis never reaches under this: 0 on an absolute pressure. */
+  floor?: number;
+  /** A dot on every sample: a sweep's few cases are points, and the line
+   *  between them is only the eye's guide. */
+  markers?: boolean;
 }) {
   const host = useRef<SVGSVGElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
+  const [W, setW] = useState(920);
 
   const drawn = series.filter((s) => s.t.length > 1);
+  // The endpoint labels get the room their longest needs, up to LABEL_ROOM:
+  // a sweep's "He" and "GN2" leave the plot most of a narrow card.
+  const longest = Math.max(0, ...drawn.map((s) => (s.tag ?? s.label).length));
+  const R = W - (drawn.length <= DIRECT_LABELS ? Math.min(LABEL_ROOM, 24 + 7.5 * longest) : MARGIN);
+  const shown = drawn.length > 0;
+
+  // Draw at the card's own width, and again when it changes.
+  useLayoutEffect(() => {
+    const el = frame.current;
+    if (!el) return undefined;
+    const fit = () => setW(Math.max(MIN_W, Math.round(el.clientWidth)));
+    fit();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const watch = new ResizeObserver(fit);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [shown]);
 
   const box = useMemo(() => {
     if (!drawn.length) return null;
@@ -132,12 +176,13 @@ export function StudyChart({
       y1 += 1;
     }
     const pad = (y1 - y0) * 0.12;
-    return { x0, x1: x1 > x0 ? x1 : x0 + 1, y0: y0 - pad, y1: y1 + pad };
-  }, [drawn, rules]);
+    const low = y0 - pad;
+    return { x0, x1: x1 > x0 ? x1 : x0 + 1, y0: floor === undefined ? low : Math.max(low, floor), y1: y1 + pad };
+  }, [drawn, rules, floor]);
 
   const sx = useCallback(
     (t: number) => (box ? L + ((t - box.x0) / (box.x1 - box.x0)) * (R - L) : L),
-    [box],
+    [box, R],
   );
   const sy = useCallback(
     (v: number) => (box ? B - ((v - box.y0) / (box.y1 - box.y0)) * (B - T) : B),
@@ -168,7 +213,7 @@ export function StudyChart({
       return { s, t: s.t[best], v: s.v[best] };
     });
     return { at, rows };
-  }, [hover, box, drawn]);
+  }, [hover, box, drawn, R]);
 
   const track = (event: React.MouseEvent<SVGSVGElement>) => {
     const svg = host.current;
@@ -184,28 +229,17 @@ export function StudyChart({
   const xTicks = ticks(box.x0, box.x1, 7);
 
   return (
-    <figure
-      className="rounded-xl border p-6"
-      style={{
-        margin: 0,
-        borderColor: 'rgba(255,255,255,0.07)',
-        background:
-          'linear-gradient(180deg, rgba(30,30,38,0.62) 0%, rgba(20,20,26,0.5) 100%)',
-        backdropFilter: 'blur(16px)',
-        WebkitBackdropFilter: 'blur(16px)',
-      }}
-    >
-      <figcaption className="mb-3">
-        <h3
-          className="text-[15.5px] font-semibold"
-          style={{ color: '#e8e8ee', letterSpacing: '-0.012em', textWrap: 'balance' }}
-        >
+    <figure className="m-0">
+      <figcaption className="mb-2">
+        <h3 className="caps" style={{ textWrap: 'balance' }}>
           {title}
         </h3>
       </figcaption>
 
-      <div className="mb-2.5 flex flex-wrap gap-x-4 gap-y-1.5 text-[12.5px]" style={{ color: INK2 }}>
-        {drawn.map((s) => (
+      <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[12px]" style={{ color: INK2 }}>
+        {drawn
+          .filter((s, i) => drawn.findIndex((o) => (o.legend ?? o.label) === (s.legend ?? s.label)) === i)
+          .map((s) => (
           <span key={s.key} className="inline-flex items-center" style={{ color: s.color }}>
             <i
               aria-hidden
@@ -216,18 +250,20 @@ export function StudyChart({
                 opacity: s.dashed ? 0.75 : 1,
               }}
             />
-            <span style={{ color: INK2 }}>{s.label}</span>
+            <span style={{ color: INK2 }}>{s.legend ?? s.label}</span>
           </span>
-        ))}
+          ))}
       </div>
 
-      <div className="-mx-1.5 overflow-x-auto">
+      <div ref={frame} className="overflow-x-auto">
         <svg
           ref={host}
           viewBox={`0 0 ${W} ${H}`}
+          width={W}
+          height={H}
           role="img"
           aria-label={`${title}. ${caption}`}
-          style={{ display: 'block', minWidth: 660, width: '100%', height: 'auto' }}
+          style={{ display: 'block' }}
           onMouseMove={track}
           onMouseLeave={() => setHover(null)}
         >
@@ -343,6 +379,21 @@ export function StudyChart({
             />
           ))}
 
+          {markers &&
+            drawn.map((s) =>
+              s.t.map((t, i) => (
+                <circle
+                  key={`m${s.key}.${i}`}
+                  cx={sx(t)}
+                  cy={sy(s.v[i])}
+                  r={3}
+                  fill={s.color}
+                  stroke={SURFACE}
+                  strokeWidth={1.5}
+                />
+              )),
+            )}
+
           {/* Direct labels while they can be read; past four series the
               legend and the hover read-out carry identity instead. */}
           {(ends.length <= DIRECT_LABELS ? ends : []).map((e) => (
@@ -379,22 +430,23 @@ export function StudyChart({
           className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[12px]"
           style={{ color: INK2, fontVariantNumeric: 'tabular-nums' }}
         >
-          <span style={{ color: '#e8e8ee', fontWeight: 600 }}>t = {readout.at.toFixed(2)} s</span>
+          <span style={{ color: INK, fontWeight: 600 }}>
+            {xLabel === DEFAULT_X ? `t = ${readout.at.toFixed(2)} s` : `${xLabel} ${fmtX(readout.at)}`}
+          </span>
           {readout.rows.map((row) => (
             <span key={`v${row.s.key}`}>
               <span style={{ color: row.s.color }}>{row.s.label}</span>{' '}
-              <span style={{ color: '#e8e8ee' }}>{row.v.toFixed(1)}</span>
+              <span style={{ color: INK }}>{row.v.toFixed(1)}</span>
             </span>
           ))}
         </div>
       )}
 
-      <p
-        className="mt-3 text-[13px] leading-relaxed"
-        style={{ color: INK2, maxWidth: '80ch' }}
-      >
-        {caption}
-      </p>
+      {caption && (
+        <p className="mt-2 text-[12px] leading-relaxed" style={{ color: INK3, maxWidth: '80ch' }}>
+          {caption}
+        </p>
+      )}
     </figure>
   );
 }

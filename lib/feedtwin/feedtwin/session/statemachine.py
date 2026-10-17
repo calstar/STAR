@@ -404,7 +404,7 @@ def _hold_idle(
     and what every solenoid falls back to unpowered -- and OPEN in that column
     cannot be a position a normally-closed solenoid holds. Read literally it
     opened LOX Press, and once a bottle could be full at start-up it pressed
-    the LOX tank to 550 psig before the operator had touched a thing.
+    the LOX tank to 564.7 psia before the operator had touched a thing.
     Transitions stay faithful to the byte (an interlock the stand lacks must
     be missing here too); a valve position that pressurises a cold stand is
     not an interlock, it is a typo, and the warning says exactly what the

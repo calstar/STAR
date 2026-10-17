@@ -9,7 +9,8 @@ twin that ran a whole burn. It lives here now because the twin has two callers
     from feedtwin.session import assemble_model, Session, Setup, load_machine, bind
     from feedtwin.session.burn import BurnPlan, run_burn
 
-* :mod:`~feedtwin.session.gauge` -- the two functions where psig meets Pa.
+* :mod:`~feedtwin.session.gauge` -- where the gauge wire meets Pa, and
+  :func:`~feedtwin.session.gauge.say`, how a person is shown a pressure (psia).
 * :mod:`~feedtwin.session.model` -- drawing + engine in, an audited model out.
 * :mod:`~feedtwin.session.statemachine` -- the DAQ's tables, read and bound.
 * :mod:`~feedtwin.session.core` -- :class:`Session` and its :class:`Setup`.
@@ -22,7 +23,16 @@ session pulls in the property tables, which is the cost of asking for one.
 from __future__ import annotations
 
 from feedtwin.session.core import Sample, Session, Setup
-from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig, psig_from_psia
+from feedtwin.session.gauge import (
+    ATMOSPHERE,
+    ATMOSPHERE_PSI,
+    PSI,
+    from_psig,
+    psia,
+    psig,
+    psig_from_psia,
+    say,
+)
 from feedtwin.session.model import (
     AssemblyError,
     AssemblyReport,
@@ -35,6 +45,7 @@ from feedtwin.session.statemachine import Binding, StateMachine, bind, load_mach
 
 __all__ = [
     "ATMOSPHERE",
+    "ATMOSPHERE_PSI",
     "PSI",
     "AssemblyError",
     "AssemblyReport",
@@ -50,6 +61,8 @@ __all__ = [
     "chamber_for",
     "from_psig",
     "load_machine",
+    "psia",
     "psig",
     "psig_from_psia",
+    "say",
 ]

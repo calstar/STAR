@@ -15,7 +15,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { CHARGE_KNOB, DOME_KNOB, getTunables, type StandSetup, type Tunable } from '../api';
+import { PRESSURE_UNIT, isGaugeTunable, psiaEntry, snapPsia } from '../lib/pressure';
 import { useStand } from '../stand';
+
+/** Whether a setting is off its default: a number past rounding, anything
+ *  else by value. */
+function differs(value: unknown, fallback: unknown): boolean {
+  return typeof value === 'number' && typeof fallback === 'number'
+    ? Math.abs(value - fallback) > 1e-9
+    : value !== fallback;
+}
 
 /** How long a hand has to rest on a row before it explains itself. */
 const HOVER_MS = 2000;
@@ -78,11 +87,16 @@ function Row({
   onChange: (v: number | boolean | string) => void;
   disabled: boolean;
 }) {
-  const [draft, setDraft] = useState<string>(typeof value === 'number' ? fmt(value, t.step) : '');
+  // A gauge row (the dome, the COPV charge, the dewar) keeps psig on the
+  // wire -- value, bounds and default -- and reads and types psia, snapped to
+  // its step in psia.
+  const gauge = isGaugeTunable(t);
+  const show = useCallback((v: number) => (gauge ? psiaEntry(v) : fmt(v, t.step)), [gauge, t.step]);
+  const [draft, setDraft] = useState<string>(typeof value === 'number' ? show(value) : '');
   const timer = useRef<number | null>(null);
   useEffect(() => {
-    if (typeof value === 'number' && timer.current === null) setDraft(fmt(value, t.step));
-  }, [value, t.step]);
+    if (typeof value === 'number' && timer.current === null) setDraft(show(value));
+  }, [value, show]);
   const commit = useCallback(
     (raw: string) => {
       setDraft(raw);
@@ -90,13 +104,14 @@ function Row({
       timer.current = window.setTimeout(() => {
         timer.current = null;
         const n = Number(raw);
-        if (Number.isFinite(n)) onChange(Math.min(t.high, Math.max(t.low, n)));
+        if (!Number.isFinite(n)) return;
+        onChange(gauge ? snapPsia(n, t.step, t.low, t.high) : Math.min(t.high, Math.max(t.low, n)));
       }, COMMIT_MS);
     },
-    [onChange, t.high, t.low],
+    [onChange, gauge, t.step, t.high, t.low],
   );
-  const changed =
-    typeof value === 'number' ? Math.abs(value - Number(t.default)) > 1e-9 : value !== t.default;
+  const unit = gauge ? PRESSURE_UNIT : t.unit;
+  const changed = differs(value, t.default);
   const say = (v: number | boolean | string) =>
     t.kind === 'choice'
       ? (t.choices?.find((c) => c.value === v)?.label ?? String(v))
@@ -104,7 +119,7 @@ function Row({
         ? v
           ? 'on'
           : 'off'
-        : `${fmt(Number(v), t.step)} ${t.unit}`;
+        : `${show(Number(v))} ${unit}`;
   const explain = (
     <>
       <div className="mb-1 font-semibold text-white">{t.label}</div>
@@ -112,7 +127,7 @@ function Row({
       <div className="mt-1.5 font-mono text-[11px] text-gray-400">
         default {say(t.default)}
         {t.drawn && ', the drawing\'s setting'}
-        {t.kind === 'number' && ` · ${fmt(t.low, t.step)} to ${fmt(t.high, t.step)}`}
+        {t.kind === 'number' && ` · ${show(t.low)} to ${show(t.high)}`}
         {t.applies === 'reset' && ' · takes effect on Reset'}
       </div>
     </>
@@ -162,15 +177,17 @@ function Row({
               type="number"
               value={draft}
               step={t.step}
-              min={t.low}
-              max={t.high}
+              // A gauge row's bounds are gauge; the box is psia. The commit
+              // clamps it, and arrows from the box's own value step in psia.
+              min={gauge ? undefined : t.low}
+              max={gauge ? undefined : t.high}
               disabled={disabled}
               onChange={(e) => commit(e.target.value)}
               className="w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 font-mono text-[12px] tabular-nums text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
             />
           )}
         </div>
-        <div className="truncate text-[11px] text-gray-500">{t.unit}</div>
+        <div className="truncate text-[11px] text-gray-500">{unit}</div>
         <div className="text-right">
           {changed && (
             <button
@@ -205,16 +222,15 @@ export function Config() {
   const [query, setQuery] = useState('');
   const [changedOnly, setChangedOnly] = useState(false);
   // The dome and the COPV charge default to what the drawing sets them to:
-  // 'default' on a 535 psig drawn dome went back to the library's 500.
+  // 'default' on a 549.7 psia drawn dome went back to the library's 514.7.
   const rows: Row[] = tunables.map((t) => {
     const drawn = DRAWN[t.key] !== undefined ? model?.drawn_knobs?.[DRAWN[t.key]] : undefined;
     return drawn === undefined ? t : { ...t, default: drawn, drawn: true };
   });
   const valueOf = (t: Tunable) => (setup as StandSetup)[t.key] ?? t.default;
-  const isChanged = (t: Tunable) => {
-    const v = valueOf(t);
-    return typeof v === 'boolean' ? v !== t.default : Math.abs(Number(v) - Number(t.default)) > 1e-9;
-  };
+  // The same test the row's own 'default' link uses, so the count is the
+  // rows that say they changed: a choice compared as a number never counted.
+  const isChanged = (t: Tunable) => differs(valueOf(t), t.default);
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = rows.filter(
     (t) =>
@@ -226,7 +242,7 @@ export function Config() {
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="max-w-3xl">
-        <h2 className="caps">Assumptions</h2>
+        <h2 className="caps">Configuration</h2>
         <p className="mt-1 text-[12px] text-gray-500">
           Hover a row for its source. <span className="font-mono text-[10px] uppercase">On reset</span> rows apply
           after Reset. Drawing gaps are on{' '}
@@ -257,7 +273,7 @@ export function Config() {
           <span className="text-[12px] text-gray-500">Nothing matches.</span>
         )}
       </div>
-      {error && <p className="text-[12px] text-red-300">{error}</p>}
+      {error && <p className="text-[12px] text-[var(--bad)]">{error}</p>}
       <div className="grid gap-4 xl:grid-cols-2">
         {groups.map((g) => (
           <section key={g} className="bg-card overflow-hidden rounded-xl border border-gray-800">
