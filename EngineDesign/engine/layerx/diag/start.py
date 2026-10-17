@@ -653,6 +653,22 @@ def feed_line(prep: Any, side: str, *, mdot_ref: float, p_ref: float, T_ref: flo
                     tuple(elems[iv + 1:]), tuple(warnings))
 
 
+def exit_area(feed: FeedLine) -> Tuple[float, bool]:
+    """The area the flow enters the injector manifold through [m^2], and whether it is the main
+    valve's own bore: the last drawn line below the main valve, else the last above it, else -- a
+    side drawn with no line at all, as LE4's LOX side is (tank outlet, OM-R, injector) -- the valve's
+    bore. That last case used to index an empty list, and the whole start went missing from the run.
+    With neither a line nor a valve bore on the drawing there is nothing to take it from: it raises."""
+    for elems in (feed.downstream, feed.upstream):
+        pipes = [e for e in elems if e.kind == "pipe"]
+        if pipes:
+            return pipes[-1].area, False
+    if feed.valve is not None and feed.valve.area > 0.0:
+        return feed.valve.area, True
+    raise ValueError(f"{feed.side}: no line and no main-valve bore on the drawing, so nothing says what area the "
+                     "flow enters the manifold through")
+
+
 def manifold_volumes(config: Any) -> Dict[str, Dict[str, Any]]:
     """Each side's injector volume downstream of its feed port, from the config's injector layout
     (engine/core/injectors/layout.py): the ring channel (cross-section x 2 pi r_center) and the
@@ -782,15 +798,17 @@ def _start_from_run(prep: Any, result: Mapping[str, Any], config: Any,
         rho = feed.rho
         g = G0
         dz = sum(e.dz for e in feed.upstream + feed.downstream if e.kind == "pipe")
-        dn_pipes = [e for e in feed.downstream if e.kind == "pipe"]
         p_in = sp["p_inlet_ox"] if key == "ox" else sp["p_inlet_fu"]
         dp_inj = p_in - sp["pc_twin"]
         if dp_inj <= 0:
             raise ValueError(f"{side}: no injector drop at the first firing step")
         phi = m_line / math.sqrt(dp_inj)
         mv = man[key]
-        a_exit = dn_pipes[-1].area if dn_pipes else (
-            [e for e in feed.upstream if e.kind == "pipe"][-1].area if feed.upstream else 0.0)
+        a_exit, through_valve = exit_area(feed)
+        if through_valve:
+            tag = next((n.label for n in prep.model.diagram.nodes if n.id == feed.valve.id and n.label), feed.valve.id)
+            inputs[f"{key}.A_exit"] = inp(a_exit, "m^2", f"the main valve {tag}'s drawn bore: no line is drawn on this "
+                                          "side, so the flow enters the manifold from the valve")
         lines[key] = StartLine(
             key=key, rho=rho, p_tank=p_tank,
             I_up=feed.sum("up", "inertance"), R_up=feed.sum("up", "R"),

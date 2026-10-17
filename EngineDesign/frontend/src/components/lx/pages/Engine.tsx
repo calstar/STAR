@@ -3,7 +3,8 @@ import { VERDICT } from '../../layerx/format';
 import { Chart } from '../charts/Chart';
 import { alignOnto } from '../charts/resample';
 import type { ChartBand, ChartLimit, ChartSeries, ChartWorst } from '../charts/types';
-import { colAt, colOf, diag, diagFailed, diagMissing, type Col, type Diagnostics, type HardwareDiag, type StabilityDiag, type StartDiag } from '../contract';
+import { colAt, colOf, diag, diagFailed, diagMissing, networkOf, type Col, type Diagnostics, type HardwareDiag, type StabilityDiag, type StartDiag } from '../contract';
+import { partName, partTitle, type NetNames } from '../names';
 import { useCursorIndex } from '../time/hooks';
 import { formatT } from '../time/markers';
 import { Badge, Figure, NotComputed, Panel } from '../ui';
@@ -39,7 +40,17 @@ function chugOf(data: RunData, st: StabilityDiag | undefined): { t: number[]; va
   return data.cols.chug ? { t: data.t, values: data.cols.chug } : null;
 }
 
-const BASIS_WORDS: Record<string, string> = { config: "design's feed", drawing: "drawing's lines" };
+const BASIS_WORDS: Record<string, string> = { config: "design's assumed feed", drawing: "drawn lines" };
+
+/**
+ * One model, three numbers, and where each comes from (D-85): the same double-time-lag chug loop
+ * is quoted by Forward mode and twice here, on different feeds at different moments.
+ */
+const CHUG_LINKAGE = 'One chug model, three places it is quoted. Graded here: this burn on the lines the drawing has, '
+  + 'at every moment of the burn, lowest first. "Design\'s assumed feed": the same burn on the feed the design states '
+  + '(its feed_system length and K), which is what the design itself was sized on. Forward mode quotes that '
+  + 'assumed feed too, at the design\'s own tank pressure rather than this burn\'s, so its figure is a third, '
+  + 'different number. Below 1 the loop is predicted unstable.';
 
 // ------------------------------------------------------------------ the operating map
 
@@ -82,10 +93,11 @@ function OperatingMap({ data, vs, d }: { data: RunData; vs: RunData | null; d: D
   }, [data, vs, om, pa, ledgerRows]);
   const x = i >= 0 ? data.cols.of[i] ?? null : null;
   const y = i >= 0 ? data.cols.pc[i] ?? null : null;
-  const missingBits = [!om?.boundaries?.length && 'ΔP/Pc limits', !om?.isp_grid && 'Isp contours', !om?.chug_unstable && 'chug region'].filter(Boolean);
+  // The limit lines, Isp contours and chug region are drawn when a run carries them (diagnostics.opmap);
+  // no backend writes them yet, so the map is the path and the design point, with nothing promised.
   return (
     <Panel title={<Hint text="The burn as a path over O/F and chamber pressure, against the point the engine was designed for. The dot follows the time cursor.">Operating map</Hint>}
-           right={missingBits.length ? <span>{missingBits.join(', ')}: not computed</span> : undefined} className="lg:col-span-7">
+           className="lg:col-span-7">
       <XYPlot title="The burn's path over O/F and chamber pressure" lines={geo.lines} points={geo.points} xUnit="O/F" yUnit={pa.unit} height={300}
               cursor={{ x, y: y === null ? null : pa.to(y), color: '--lx-hot' }} />
       {/* TODO(charts): Isp contours under the path once diagnostics.opmap.isp_grid lands and lx/charts can draw them. */}
@@ -156,13 +168,13 @@ function ChugSummary({ data, st, chug }: { data: RunData; st: StabilityDiag | un
       ? { t: dv.chug_margin_min_t ?? (k >= 0 ? chug!.t[k] : NaN), margin: dv.chug_margin_min, frequency_hz: null } : null);
   const other = st?.other_basis;
   return (
-    <Panel title="Chug" right={st?.basis ? <span>on the {BASIS_WORDS[st.basis] ?? st.basis}</span> : undefined} className="lg:col-span-4">
+    <Panel title={<Hint text={CHUG_LINKAGE}>Chug</Hint>} right={st?.basis ? <span>on the {BASIS_WORDS[st.basis] ?? st.basis}</span> : undefined} className="lg:col-span-4">
       <div className="grid grid-cols-2 gap-x-6 gap-y-5">
         <Figure label="Lowest margin" termKey="chugMargin" q={u.ratio(worst?.margin ?? null)} sub={worst && Number.isFinite(worst.t) ? `at ${formatT(worst.t)}` : undefined} />
         <Figure label="Frequency then" termKey="chugFrequency" q={u.hz(worst?.frequency_hz ?? null)} />
         <Figure label="Lowest once settled" q={u.ratio(st?.settled_min?.margin ?? null)}
                 sub={st?.start_window_s ? `after ${u.fmt(u.time(st.start_window_s))}` : undefined} />
-        <Figure label={other ? `On the ${BASIS_WORDS[other.basis] ?? other.basis}` : 'Other basis'} q={u.ratio(other?.margin_min ?? null)}
+        <Figure label={other ? `Lowest, ${BASIS_WORDS[other.basis] ?? other.basis}` : 'Other feed'} q={u.ratio(other?.margin_min ?? null)}
                 sub={other?.t !== null && other?.t !== undefined ? `at ${formatT(other.t)}` : undefined} />
       </div>
     </Panel>
@@ -197,7 +209,7 @@ function TauSweep({ st }: { st: StabilityDiag }) {
 /** The backend writes a side as 'ox' or 'oxidiser' depending on the block. */
 const sideKeyOf = (s: string | null | undefined): SideKey | null => (s === 'ox' || s === 'oxidiser' || s === 'oxidizer' ? 'ox' : s === 'fuel' ? 'fuel' : s === 'gas' ? 'gas' : null);
 
-function Acoustics({ st }: { st: StabilityDiag | undefined }) {
+function Acoustics({ st, names }: { st: StabilityDiag | undefined; names: NetNames | null }) {
   const u = useUnits();
   const rows = st?.acoustic ?? [];
   const f = st?.worst?.frequency_hz ?? null;
@@ -206,7 +218,7 @@ function Acoustics({ st }: { st: StabilityDiag | undefined }) {
            right={f !== null ? <span className="lx-num">chug {u.fmt(u.hz(f))}</span> : undefined} className="lg:col-span-6">
       <Table caption="Line acoustic modes against the chug frequency" head={[{ sr: 'Line' }, 'Length', '¼ wave', '½ wave', { sr: 'Near chug' }]} align={['l', 'r', 'r', 'r', 'l']}
              rows={rows.map((a) => [
-               <SideName key="n" side={sideKeyOf(a.side)}>{a.line}</SideName>,
+               <SideName key="n" side={sideKeyOf(a.side)}><span title={partTitle(names, { label: a.line, kind: 'line' })}>{partName(names, { label: a.line, kind: 'line' })}</span></SideName>,
                u.fmt(u.len(a.length_m)),
                u.fmt(u.hz(a.f_quarter_hz)),
                u.fmt(u.hz(a.f_half_hz)),
@@ -235,9 +247,12 @@ function StartPanel({ start, shutdown }: { start: StartDiag | undefined; shutdow
   const mrRange = mr ? mr[0].values.filter((x): x is number => x !== null) : [];
   const sideWord = (s: string | undefined) => (s === 'ox' ? 'LOX' : s === 'fuel' ? 'Fuel' : s ?? '—');
   return (
-    <Panel title={<Hint text="The first moments after Fire: the valves travel, each side's manifold fills, the propellants meet and light. And how the burn ends: which side runs out first, and how rich the tail runs.">Start and shutdown</Hint>}
+    // A run whose start was not worked out shows its shutdown alone, not a placeholder for the start.
+    <Panel title={start
+      ? <Hint text="The first moments after Fire: the valves travel, each side's manifold fills, the propellants meet and light. And how the burn ends: which side runs out first, and how rich the tail runs.">Start and shutdown</Hint>
+      : <Hint text="How the burn ends: which side runs out first, and how rich the tail runs.">Shutdown</Hint>}
            right={start?.hard_start ? <Badge status="bad" size="sm">Hard start</Badge> : start ? <span>no hard start</span> : undefined} className="lg:col-span-6">
-      {start ? (
+      {start && (
         <Readout items={[
           { label: 'Fuel lead', value: u.fmt(u.time(start.fuel_lead_s ?? null)) },
           { label: 'Valve travel', value: u.fmt(u.time(start.valve_travel_s ?? null)) },
@@ -247,21 +262,21 @@ function StartPanel({ start, shutdown }: { start: StartDiag | undefined; shutdow
           { label: 'O/F at start', value: mrRange.length ? `${u.fmt(u.of(Math.min(...mrRange)))} – ${u.fmt(u.of(Math.max(...mrRange)))}` : '—' },
           { label: 'Impulse lost', value: u.fmt(u.impulse(start.impulse_deficit_Ns ?? null)) },
         ]} />
-      ) : <NotComputed height={48}>Start not computed for this run</NotComputed>}
+      )}
       {st?.t && (series || mr) && (
         <div className="mt-3 grid grid-cols-2 gap-4">
           {series ? <Chart t={st.t} series={series} yUnit={pa.unit} xLabel="s" height={140} store={null} /> : <span />}
           {mr ? <Chart t={st.t} series={mr} yUnit="O/F" xLabel="s" height={140} store={null} digits={2} /> : <span />}
         </div>
       )}
-      <div className="mt-4 border-t border-[var(--lx-line)] pt-3">
+      <div className={start ? 'mt-4 border-t border-[var(--lx-line)] pt-3' : ''}>
         {shutdown ? (
           <Readout items={[
             { label: 'Runs dry first', value: sideWord(shutdown.first_dry) },
             { label: 'Tail runs', value: shutdown.mode ?? '—' },
             { label: 'Tail O/F, peak', value: u.fmt(u.of(shutdown.tail_mr_max ?? null)) },
           ]} />
-        ) : <div className="text-[12px] text-[var(--lx-text-3)]">Shutdown not computed for this run</div>}
+        ) : null}
       </div>
     </Panel>
   );
@@ -366,6 +381,7 @@ export function Engine({ data, vs }: PageProps) {
   const q = { pc: u.p(f.pcMeanPsia), f: u.f(f.meanThrustN), of: u.of(f.ofMean), isp: u.isp(f.ispMean) };
   const rq = r ? { pc: u.p(r.pcMeanPsia), f: u.f(r.meanThrustN), of: u.of(r.ofMean), isp: u.isp(r.ispMean) } : null;
   const chugMin = d.stability?.worst?.margin ?? res.delivered?.summary?.chug_margin_min ?? null;
+  const names = useMemo(() => networkOf(res), [res]);
   const ts = d.thrust_shape;
   const st = d.stability;
 
@@ -404,14 +420,14 @@ export function Engine({ data, vs }: PageProps) {
       <ChartPanel title="Injector ΔP/Pc" className="lg:col-span-12" t={data.t} series={ch.stiff} yUnit="%" height={220} events={ev} digits={1}
                   band={ch.stiffBand} limits={ch.stiffLimits} worst={ch.stiffWorst} />
       {smalls.map((s) => s.el(SPAN[smalls.length] ?? 'lg:col-span-3'))}
-      <ChartPanel title="Chug margin" className={st ? 'lg:col-span-8' : 'lg:col-span-12'} t={ch.chug?.t ?? []} series={ch.chugSeries ?? []} yUnit="" height={240} events={ev} digits={2}
+      <ChartPanel title={<Hint text={CHUG_LINKAGE}>Chug margin</Hint>} chartTitle="Chug margin" className={st ? 'lg:col-span-8' : 'lg:col-span-12'} t={ch.chug?.t ?? []} series={ch.chugSeries ?? []} yUnit="" height={240} events={ev} digits={2}
                   limits={ch.chugLimits} worst={ch.chugWorst} empty={!ch.chugSeries} />
       {st && <ChugSummary data={data} st={st} chug={ch.chug} />}
       {stabRow.length > 0 && stabRow.length < 3
         ? <div className="contents">{stabRow}</div>
         : stabRow}
-      {(st?.acoustic?.length || failed('stability')) ? <Acoustics st={st} /> : null}
-      {(d.start || d.shutdown || failed('start') || failed('shutdown')) ? <StartPanel start={d.start} shutdown={d.shutdown} /> : null}
+      {(st?.acoustic?.length || failed('stability')) ? <Acoustics st={st} names={names} /> : null}
+      {(d.start || d.shutdown) ? <StartPanel start={d.start} shutdown={d.shutdown} /> : null}
       <NotYet items={[
         !st && !failed('stability') && 'chug frequency, Nyquist locus, lag sensitivity and line acoustics',
         st && !st.nyquist && 'Nyquist locus',

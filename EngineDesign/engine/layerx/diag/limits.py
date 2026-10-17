@@ -126,6 +126,20 @@ THRESHOLDS: Dict[str, Dict[str, Any]] = {
         "why": "Regulator flow over its capacity at the seat: amber above 0.8 (judgement: droop grows "
                "steeply near full lift), red at 1 (wide open, the tanks follow the bottle).",
     },
+    # The competition the vehicle flies (FAR-OUT Rules and Requirements 2024-25, rev 2024-10-02). Graded
+    # only where the design states no requirement of its own: a design's own number always wins. Before
+    # these, a design that left them blank showed a 22 m/s rail exit under "Within limits".
+    "farout_rail_exit": {
+        "value": 85.0 * 0.3048, "unit": "m/s",
+        "why": "FAR-OUT 2024-25 rule 5.1.4: the vehicle leaves the rail above 85 ft/s (25.9 m/s); the rules "
+               "recommend designing to 100 ft/s. Applied because the design states no "
+               "design_requirements.min_rail_exit_velocity_m_s.",
+    },
+    "farout_static_margin": {
+        "value": 1.5, "unit": "cal",
+        "why": "FAR-OUT 2024-25 rule 5.1.5: a static margin of at least 1.5 calibres throughout the ascent. "
+               "Applied because the design states no design_requirements.min_static_margin_cal.",
+    },
 }
 
 
@@ -712,18 +726,24 @@ def _flight(run: _Run, req: Mapping[str, Any]) -> List[Dict[str, Any]]:
     need = _num(req.get("min_rail_exit_velocity_m_s"))
     if need is None:
         need = _num(st.get("rail_exit_required_m_s"))
+    rail_why = ("design_requirements.min_rail_exit_velocity_m_s: below it the fins have too little airspeed to "
+                "stabilise the vehicle off the rail.")
+    if need is None:
+        need, rail_why = THRESHOLDS["farout_rail_exit"]["value"], THRESHOLDS["farout_rail_exit"]["why"]
     v = _num(st.get("rail_exit_m_s"))
     if v is None:
         v = _num(f.get("rail_exit_velocity_m_s"))
-    if v is not None and need is not None:
+    if v is not None:
         t = _num(st.get("rail_exit_t"))
         t = t if t is not None else _num(f.get("rail_exit_time_s"))
         out.append(_entry(
             "rail_exit", "Rail exit speed", "flight", v, "m/s", need, None, "min", _grade(v, need, None, "min"),
-            t, run.index_of(t), None, "RocketPy Flight.out_of_rail_velocity",
-            "design_requirements.min_rail_exit_velocity_m_s: below it the fins have too little airspeed to "
-            "stabilise the vehicle off the rail."))
+            t, run.index_of(t), None, "RocketPy Flight.out_of_rail_velocity", rail_why))
     lo, hi = _num(req.get("min_static_margin_cal")), _num(req.get("max_static_margin_cal"))
+    margin_why = (f"design_requirements.min_static_margin_cal ({lo:g} cal)" if lo is not None
+                  else THRESHOLDS["farout_static_margin"]["why"])
+    if lo is None:
+        lo = THRESHOLDS["farout_static_margin"]["value"]
     liftoff = _num(st.get("liftoff_static_margin_cal"))
     liftoff = liftoff if liftoff is not None else _num(st.get("static_margin_liftoff_cal"))
     smin = _num(st.get("min_static_margin_cal"))
@@ -734,17 +754,15 @@ def _flight(run: _Run, req: Mapping[str, Any]) -> List[Dict[str, Any]]:
                                  ("static_margin_min", "Static margin, lowest", smin, smin_t)):
         if value is None:
             continue
-        grade = _grade(value, lo, None, "min") if lo is not None else "info"
+        grade = _grade(value, lo, None, "min")
         if hi is not None and value > hi:
             grade = "warn"
         out.append(_entry(
             key, label, "flight", value, "cal", lo, None, "min", grade, t, run.index_of(t),
             "flight.stability.static_margin_cal" if isinstance(st.get("static_margin_cal"), list) else None,
             "RocketPy Barrowman static margin (CG less CP over the body diameter)",
-            ("design_requirements.min_static_margin_cal" + (f" ({lo:g} cal)" if lo is not None else "")
-             + (f"; amber above max_static_margin_cal ({hi:g} cal), where the vehicle weathercocks" if hi is not None
-                else "") if lo is not None or hi is not None else
-             "Reported, not graded: the design states no static-margin requirement.")))
+            margin_why + (f"; amber above max_static_margin_cal ({hi:g} cal), where the vehicle weathercocks"
+                          if hi is not None else "")))
     q = _num(st.get("max_q_pa"))
     if q is not None:
         tq = _num(st.get("max_q_t"))

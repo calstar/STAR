@@ -371,13 +371,24 @@ def soak_back(prep: Prepared, rp: Dict[str, Any], factor: float = SOAK_FACTOR) -
     if not rows:
         return {"available": False, "error": "the engine has no wall stations"}
     top = max(rows, key=lambda r: r["T_back_peak_K"])
+    bond = max(rows, key=lambda r: r["T_interface_peak_K"])
     size = res["sizing"]
+    # With both faces adiabatic the outer face has no peak: it climbs monotonically to the stored
+    # heat's equilibrium, and "within 0.05 K of it" lands hours out on a phenolic backing (LE4:
+    # +27,072 s of a 45,103 s window). Said so, with the time to 95 % of the rise as its clock;
+    # the bond line behind the insert, which does peak (seconds after shutdown), is the soak-back
+    # that loads the hardware.
+    asymptotic = top["t_back_peak_s"] > 0.5 * res["duration_s"]
     return {
         "available": True,
         "peak_K": top["T_back_peak_K"],
         "t_peak_s": top["t_back_peak_s"],
         "t_95_s": top["t_back_95_s"],
         "station": top["station"],
+        "asymptotic": asymptotic,
+        "interface_peak_K": bond["T_interface_peak_K"],
+        "t_interface_peak_s": bond["t_interface_peak_s"],
+        "interface_station": bond["station"],
         "duration_s": res["duration_s"],
         "clock": "seconds after the last replay point (burnout)",
         "back_basis": basis,
@@ -397,7 +408,9 @@ def soak_back(prep: Prepared, rp: Dict[str, Any], factor: float = SOAK_FACTOR) -
                 "conduction between stations",
                 f"window {factor:g} x the slowest layer's L^2/alpha ({size['tau_s']:.4g} s, "
                 f"{size['station']} {size['layer']})",
-                "a peak's time is the first time within 0.05 K of it: a plateau is dated when it is reached",
+                "a peak's time is the first time within 0.05 K of it: a plateau is dated when it is reached; "
+                "the outer face, adiabatic on both sides, only approaches its equilibrium, so its clock is the "
+                "time to 95 % of the rise (asymptotic: true)",
                 "properties as built (config); graphite cp(T) by its named model, every other property constant",
             ],
             "inputs": {

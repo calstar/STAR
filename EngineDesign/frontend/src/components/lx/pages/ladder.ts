@@ -93,8 +93,12 @@ export function anchorToVessel(rungs: readonly Rung[], nodeStart: number | null,
   return { rungs: rungs.map((r, k) => (k === lastReg ? { ...r, dp: (r.dp as number) + shift } : r)), start: vessel };
 }
 
+/** How a rung is named: by default the backend's label; the page passes the drawing's tags. */
+type Namer = (part: { id: string; label: string; kind: string; from?: string; to?: string }) => string;
+const asLabelled: Namer = (p) => p.label || p.id;
+
 /** The backend's ladder at one of its steps, for one side. */
-export function rungsFromDiag(ladder: Ladder, side: 'ox' | 'fuel', k: number): { rungs: Rung[]; total: number | null } | null {
+export function rungsFromDiag(ladder: Ladder, side: 'ox' | 'fuel', k: number, name: Namer = asLabelled): { rungs: Rung[]; total: number | null } | null {
   const s = ladder[side];
   if (!s || k < 0) return null;
   const at = (c: readonly (number | null)[] | undefined) => {
@@ -102,7 +106,7 @@ export function rungsFromDiag(ladder: Ladder, side: 'ox' | 'fuel', k: number): {
     return num(v) ? v : null;
   };
   return {
-    rungs: s.elements.map((e) => ({ key: e.id, label: e.label, kind: e.kind, dp: at(e.dp_psi) })),
+    rungs: s.elements.map((e) => ({ key: e.id, label: name(e), kind: e.kind, dp: at(e.dp_psi) })),
     total: at(s.total_psi),
   };
 }
@@ -112,7 +116,7 @@ export function rungsFromDiag(ladder: Ladder, side: 'ox' | 'fuel', k: number): {
  * branches along the side's path, bottle to chamber, each with its own drop at step `k`. The start
  * is the path's first node, by its own name.
  */
-export function rungsFromNetwork(net: Network, side: 'ox' | 'fuel', k: number): { rungs: Rung[]; start: number | null; startLabel: string } | null {
+export function rungsFromNetwork(net: Network, side: 'ox' | 'fuel', k: number, name: Namer = asLabelled): { rungs: Rung[]; start: number | null; startLabel: string } | null {
   const path = net.paths?.[side];
   if (!path?.length || k < 0) return null;
   const rungs: Rung[] = [];
@@ -120,7 +124,7 @@ export function rungsFromNetwork(net: Network, side: 'ox' | 'fuel', k: number): 
     const b = net.branches[id];
     if (!b) return null;
     const v = b.dp_psi?.[k];
-    rungs.push({ key: id, label: b.label || id, kind: b.kind, dp: num(v) ? v : null });
+    rungs.push({ key: id, label: name({ id, label: b.label, kind: b.kind, from: b.from, to: b.to }), kind: b.kind, dp: num(v) ? v : null });
   }
   const first = net.branches[path[0]];
   const node = first ? net.nodes[first.from] : undefined;

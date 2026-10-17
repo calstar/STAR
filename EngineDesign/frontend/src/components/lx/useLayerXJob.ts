@@ -12,7 +12,7 @@ import { pollJob } from '../layerx/jobs';
 import { burnCsv } from '../layerx/csv';
 import { testCardHtml } from '../layerx/testcard';
 import { fmt, LB } from '../layerx/format';
-import { KIND_WORD, runLabel } from '../layerx/runs';
+import { drawingWords, KIND_WORD, runLabel } from '../layerx/runs';
 
 /**
  * Layer X's run lifecycle, lifted out of layerx/LayerX.tsx so the rebuilt shell is only layout:
@@ -22,8 +22,9 @@ import { KIND_WORD, runLabel } from '../layerx/runs';
  * backend is busy with, the sweep that belongs to each burn, the compared run, the tab-title
  * progress, and what changed since the open burn ran (the stale banner).
  *
- * Behaviour is the old component's, line for line where it could be; the one change is the
- * default drawing (helium, the hot-fire pressurant), used only when no drawing is stored.
+ * Behaviour is the old component's, line for line where it could be. Two changes: the drawing a
+ * browser with none stored opens on (the team's featured stand, else the helium study), and a burn
+ * a person opens puts its own settings on the rail, so the rail and the pages describe one burn.
  */
 
 export type Stored = Omit<LayerXSettings, 'drawing_id'> & { drawing_id: string };
@@ -31,10 +32,9 @@ export type Tool = 'burn' | 'injector' | 'optimize';
 /** The old view key's values: kept so the stored choice carries over ('trade' is gone: Burn). */
 type MainView = 'burn' | 'trade' | 'optimise' | 'reconcile';
 
-/** The drawing to start from when none is stored: helium, the hot-fire pressurant. */
+/** The drawing to start from when none is stored and none is featured: helium, the hot-fire pressurant. */
 export const DEFAULT_DRAWING = 'copv_study_he';
 
-/** The stored drawing if it still exists; else the default by name; else the first. */
 /**
  * The helium twin of a drawing, for "Use helium" on a nitrogen hot fire: the drawing named the same
  * with "he" for "gn2" (copv_study_gn2 -> copv_study_he), else -- for a shipped drawing only -- the
@@ -63,9 +63,37 @@ export function withFeedTwinThermal<T extends Partial<LayerXSettings>>(s: T): T 
   return old ? { ...s, ullage_collapse: null, ullage_vapour: null, line_walls: null, chilldown: null } : s;
 }
 
-export function pickDrawing(stored: string, drawings: readonly Pick<Drawing, 'id' | 'name'>[]): string {
+/**
+ * The drawing the rail starts on: this browser's own if it still exists; else the team's featured
+ * stand (feed-twin's sample, the current LE4 stand); else the Feed Twin's own stand (its library);
+ * else the helium study by name; else the first. A fresh browser used to open on the study
+ * drawing, and a demo opened on the wrong stand.
+ */
+export function pickDrawing(stored: string,
+                            drawings: readonly (Pick<Drawing, 'id' | 'name'> & { featured?: boolean; source?: string })[]): string {
   if (stored && drawings.some((d) => d.id === stored)) return stored;
-  return (drawings.find((d) => d.name === DEFAULT_DRAWING) ?? drawings[0])?.id ?? '';
+  return (drawings.find((d) => d.featured)
+    ?? drawings.find((d) => (d.source ?? '').startsWith('feed-twin library'))
+    ?? drawings.find((d) => d.name === DEFAULT_DRAWING) ?? drawings[0])?.id ?? '';
+}
+
+/** A drawing's name as the menus show it: the server's words, else the name ("LE4 (6)"). */
+export function drawingTitle(d: Pick<Drawing, 'name'> & { label?: string } | null | undefined): string {
+  return d ? d.label || drawingWords(d.name) : '';
+}
+
+/**
+ * The drawing menu's shelves: the team's current stand first, then the other stands (the Feed Twin
+ * library, pid-designer pulls, uploads), then the benchmarks shipped with the code. A server too
+ * old to say which shelf a drawing is on puts everything under one heading, as before.
+ */
+export function drawingShelves(drawings: readonly Drawing[]): [string, Drawing[]][] {
+  const featured = drawings.filter((d) => d.featured);
+  const stands = drawings.filter((d) => !d.featured && d.group !== 'Benchmarks');
+  const bench = drawings.filter((d) => !d.featured && d.group === 'Benchmarks');
+  if (!drawings.some((d) => d.group)) return drawings.length ? [['Feed-system drawings', [...drawings]]] : [];
+  return ([['The team’s stand', featured], ['Stands', stands], ['Benchmarks', bench]] as [string, Drawing[]][])
+    .filter(([, list]) => list.length > 0);
 }
 
 export function toolOf(view: MainView | string): Tool {
@@ -362,6 +390,10 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     return pollJob(sweepLiveId, 1000, setSweep, loadRuns);
   }, [sweepLiveId, loadRuns]);
 
+  // A burn a person opens (the run menu, a link) puts its settings on the rail when it arrives, so
+  // the rail says what the pages show. The burn this browser reopens by itself on a reload does not:
+  // the rail may hold settings set up since, for the next burn.
+  const adoptRef = useRef<string>('');
   // Reopen the run this browser last looked at (or a link asked for).
   useEffect(() => {
     if (!isVisible || !openRunId || rawRun?.id === openRunId) return;
@@ -369,11 +401,19 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     // Only the run still wanted when its answer lands: two quick clicks must not show the first.
     layerx.run(wanted).then((r) => {
       if (openRunRef.current !== wanted) return;
-      if (r.data && r.data.id === wanted) setRun(r.data);
+      if (r.data && r.data.id === wanted) {
+        setRun(r.data);
+        if (adoptRef.current === wanted) {
+          adoptRef.current = '';
+          if (r.data.status === 'done' && (r.data.kind ?? 'run') === 'run' && r.data.settings) {
+            setSettings({ ...DEFAULT_SETTINGS, ...r.data.settings, design_patch: null } as Stored);
+          }
+        }
+      }
       // A run the backend no longer has (pruned, deleted, a stale link): forget it, do not wait on it.
       else if (r.status === 404) setOpenRunId('');
     });
-  }, [isVisible, openRunId, rawRun?.id, setOpenRunId]);
+  }, [isVisible, openRunId, rawRun?.id, setOpenRunId, setSettings]);
   // The sweep-to-burn links, kept to runs that still exist (it grew for ever in local storage).
   useEffect(() => {
     if (!runs.length) return;
@@ -505,7 +545,7 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
   const sweepResult = sweep?.status === 'done' && sweep.id === openSweepId ? (sweep.result as SweepResult | null) ?? null : null;
 
   // The burn on screen against the rail and the design now.
-  const drawingName = (id: string) => drawings.find((d) => d.id === id)?.name ?? id.slice(0, 8);
+  const drawingName = (id: string) => { const d = drawings.find((x) => x.id === id); return d ? drawingTitle(d) : id.slice(0, 8); };
   const changedSettings = result && rawRun && payload ? settingsDiff({ ...DEFAULT_SETTINGS, ...rawRun.settings } as LayerXSettings, payload, drawingName) : [];
   const restatedMoved = !!(result && pf?.derived && restatedKey(result.provenance.derived?.overrides) !== restatedKey(pf.derived.overrides));
   // A what-if ran on a modified copy of the design on purpose: its hash differs, and that is not "moved".
@@ -535,7 +575,13 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     restated, onMeasurementsSaved: (n) => { setRestated(n); setConfigTick((t) => t + 1); },
     pf, pfError, pfLoading, derived, configTankPsia, designLiftoffKg, designLiftoffApprox: designLiftoffExact === null,
     runs, burns, loadRuns, run, openRunId,
-    openRun: (id) => setOpenRunId(id),
+    openRun: (id) => {
+      // Already on screen: its settings go on the rail now; else when its answer arrives.
+      if (rawRun?.id === id && rawRun.status === 'done' && (rawRun.kind ?? 'run') === 'run' && rawRun.settings) {
+        setSettings({ ...DEFAULT_SETTINGS, ...rawRun.settings, design_patch: null } as Stored);
+      } else adoptRef.current = id;
+      setOpenRunId(id);
+    },
     closeRun: () => { setOpenRunId(''); setRun(null); },
     result, live, activeJob, activeWord: activeJob ? KIND_WORD[activeJob.kind ?? 'run'] ?? 'run' : '',
     canRun, starting, runError, start, cancel, cancelJob,

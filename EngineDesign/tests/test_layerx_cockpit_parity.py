@@ -118,12 +118,33 @@ def _cockpit(prepared, config, *, card: bool):
     return burn
 
 
+def _table(rows):
+    """The two burns side by side, printed (``pytest -s``): a parity test that passes in silence
+    tells nobody how close the tools are (D-66)."""
+    print("\n  quantity         Layer X        cockpit      difference")
+    for name, unit, a, b in rows:
+        print(f"  {name:<14} {a:>12.4f} {b:>12.4f} {unit:<4} {100.0 * (b / a - 1.0):+8.4f} %")
+
+
 def test_the_cockpit_firing_enginedesigns_card_is_layer_xs_burn(prepared, config, layer_x):
+    from feedtwin.session.core import LIVE_STEP
+
     cockpit = _cockpit(prepared, config, card=True)
+    psi = 6894.757293168361
+    names = (("thrust_mean_N", "N", 1.0), ("pc_mean_Pa", "psia", psi), ("of_mean", "", 1.0), ("isp_s", "s", 1.0),
+             ("impulse_Ns", "N·s", 1.0), ("duration_s", "s", 1.0))
+    _table([(n.replace("_Pa", ""), u, getattr(layer_x, n) / k, getattr(cockpit, n) / k) for n, u, k in names])
     for name in ("thrust_mean_N", "pc_mean_Pa", "of_mean", "isp_s"):
         assert getattr(cockpit, name) == pytest.approx(getattr(layer_x, name), rel=AGREE), name
     # Layer X ends on the step that empties a tank; the cockpit on the tick after it.
-    assert cockpit.duration_s == pytest.approx(layer_x.duration_s, abs=prepared.plan.dt + 0.02)
+    tick = prepared.plan.dt + 0.02
+    assert cockpit.duration_s == pytest.approx(layer_x.duration_s, abs=tick)
+    # The impulse: the agreement tolerance plus at most one end tick's share at the mean thrust
+    # (measured: -0.26 %, all of it the 10 ms the cockpit's burn ends early) ...
+    gap = cockpit.impulse_Ns - layer_x.impulse_Ns
+    assert abs(gap) <= AGREE * layer_x.impulse_Ns + layer_x.thrust_mean_N * max(prepared.plan.dt, LIVE_STEP)
+    # ... and, the end tick's share taken out, within the agreement tolerance itself.
+    assert abs(gap - layer_x.thrust_mean_N * (cockpit.duration_s - layer_x.duration_s)) <= AGREE * layer_x.impulse_Ns
 
 
 def test_and_the_simplified_engine_on_the_same_path_is_not(prepared, config, layer_x):

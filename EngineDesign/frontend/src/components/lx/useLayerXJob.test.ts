@@ -19,6 +19,14 @@ describe('pickDrawing', () => {
     expect(pickDrawing('deleted', drawings)).toBe('he');
   });
 
+  it('opens a fresh browser on the team\'s featured stand, else the Feed Twin\'s own (D-05)', () => {
+    const le4 = { id: 'le4', name: 'LE4 (6)', source: 'feed-twin library: upload' };
+    expect(pickDrawing('', [...drawings, le4])).toBe('le4');
+    expect(pickDrawing('', [...drawings, le4, { id: 'f', name: 'LE4 stand', featured: true }])).toBe('f');
+    // A browser's own choice still wins.
+    expect(pickDrawing('gn2', [...drawings, le4, { id: 'f', name: 'LE4 stand', featured: true }])).toBe('gn2');
+  });
+
   it('falls back to the first, then to nothing', () => {
     expect(pickDrawing('', [{ id: 'x', name: 'other' }])).toBe('x');
     expect(pickDrawing('', [])).toBe('');

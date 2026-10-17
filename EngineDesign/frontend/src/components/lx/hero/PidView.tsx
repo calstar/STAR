@@ -121,7 +121,8 @@ export function PidView({ result, drawingId, doc, height = 460, pick }: {
               fitView
               fitViewOptions={{ padding: 0.06 }}
               minZoom={0.2}
-              proOptions={{ hideAttribution: true }}
+              // React Flow's attribution stays, as in the Feed Twin and pid-designer canvases: hiding it is
+              // a Pro-licence option this suite does not hold (the library warned on every load).
               style={{ background: 'transparent' }}
               onNodeClick={pick ? (_e, n) => { if (pick.ids.includes(n.id)) pick.onPick(n.id); } : undefined}
             >

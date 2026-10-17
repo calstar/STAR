@@ -135,7 +135,9 @@ def test_gn2_on_lox_is_refused_above_nitrogens_saturation_pressure_by_hand():
     below = gn2_on_lox("nitrogen", _tank(T), edge - 0.1 * PSI)
     above = gn2_on_lox("nitrogen", _tank(T), edge + 0.1 * PSI)
     assert below["status"] == "info" and above["status"] == "fail"
-    assert f"{psat_n2 / PSI:.1f} psia" in above["detail"] and "ack_gn2_condensation" in above["detail"]
+    assert f"{psat_n2 / PSI:.1f} psia" in above["detail"] and "Run anyway" in above["detail"]
+    # Words a person reads: the tank, never the graph's node id or a settings key.
+    assert "OXT" not in above["detail"] and "ack_gn2" not in above["detail"] and "twin" not in above["detail"]
     assert gn2_on_lox("nitrogen", _tank(T), 578.0 * PSI, acknowledged=True)["status"] == "warn"
     # Not a nitrogen bottle, not LOX, not a hot fire: the check does not apply.
     assert gn2_on_lox("helium", _tank(T), 578.0 * PSI) is None
@@ -495,3 +497,56 @@ def test_the_catalogue_lists_shipped_rows_and_a_users_over_them(api):
     (udir / f"{kind}.json").write_text("not json")
     again = client.get("/api/layerx/catalog").json()
     assert again["problems"] and again[kind] == rows      # reported, and the shipped rows stand
+
+
+def _study_with_a_cut_dome_line():
+    """The helium study drawing as LE4 has it: the dome loaded from the cart (its loader, PR-CTRL,
+    gone with the GSE) and a transducer on the dome line, clipped to a junction there."""
+    import copy as _copy
+
+    from engine.layerx.sources import shipped_drawings_dir
+
+    payload = json.loads((shipped_drawings_dir() / "copv_study_he.json").read_text())
+    out = _copy.deepcopy(payload)
+    out["nodes"] = [n for n in out["nodes"] if n["id"] != "PR_C"]
+    out["edges"] = [e for e in out["edges"] if "PR_C" not in (e["source"], e["target"])]
+    for n in out["nodes"]:
+        if n["id"] == "PR_D":
+            n["data"].setdefault("options", {})["domeLoaded"] = "yes"
+    out["nodes"] += [
+        {"id": "JD", "position": {"x": 250, "y": 380}, "data": {"componentType": "JUNCTION", "label": "JD"}},
+        {"id": "PT_DOME", "position": {"x": 250, "y": 420}, "data": {"componentType": "PT", "label": "DP-PT"}},
+    ]
+    out["edges"] += [{"id": "PR_D-JD", "source": "PR_D", "sourceHandle": "dome", "target": "JD", "targetHandle": "l"},
+                     {"id": "JD-PT_DOME", "source": "JD", "sourceHandle": "b", "target": "PT_DOME", "targetHandle": "b"}]
+    return out
+
+
+def test_a_transducer_on_a_cut_dome_line_reads_the_dome():
+    """LE4's DP-PT-R sits on the dome line of DPR_HP, whose loader is on the cart: the burn left the
+    line at atmosphere and the Stand page predicted 0.0 psig under a 550 psia dome (D-27). The
+    line's transducers read the dome signal; every other one reads the network as before."""
+    pytest.importorskip("feedtwin")
+    from feedtwin.pid import read_diagram
+    from feedtwin.pid.network import build_network
+
+    from engine.layerx.analysis import _instrument_series, dome_line_instruments
+
+    diagram = read_diagram(_study_with_a_cut_dome_line(), name="study, cut dome")
+    built = build_network(diagram)
+    domes = dome_line_instruments(diagram, built)
+    pt = next(i for i in built.instruments if i.id == "PT_DOME")
+    assert domes == {pt.node: "PR-DOME.dome"}
+    # With its loader drawn (the study as shipped), the session reads the line: nothing to add.
+    from engine.layerx.sources import shipped_drawings_dir
+
+    shipped = read_diagram(json.loads((shipped_drawings_dir() / "copv_study_he.json").read_text()), name="study")
+    assert dome_line_instruments(shipped, build_network(shipped)) == {}
+
+    other = next(i for i in built.instruments if i.id != "PT_DOME")
+    trace = SimpleNamespace(t=[0.0, 0.05], pressure={pt.node: [101325.0] * 2, other.node: [3e6, 2.9e6]}, temperature={},
+                            dome_readings={pt.node: [101325.0 + 535 * PSI] * 2})
+    prep = SimpleNamespace(model=SimpleNamespace(built=built))
+    series = _instrument_series(prep, trace)
+    assert series["PT_DOME"]["values"] == pytest.approx([549.6959] * 2, abs=1e-3)
+    assert series[other.id]["values"] == pytest.approx([3e6 / PSI, 2.9e6 / PSI])

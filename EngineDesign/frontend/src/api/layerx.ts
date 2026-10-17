@@ -121,6 +121,14 @@ export interface DrawingSummary {
 export interface Drawing {
   id: string;
   name: string;
+  /** The name in words ("COPV study, helium" for the file copv_study_he); older servers omit it. */
+  label?: string;
+  /** Where it came from, in words; `source` is the record's own string. */
+  origin?: string;
+  /** The menu's shelf: the team's stands, or the benchmarks shipped with the code. */
+  group?: 'Stands' | 'Benchmarks' | string;
+  /** The team's current stand (feed-twin's sample, or a library entry marked so). */
+  featured?: boolean;
   source: string;
   sha256: string;
   added: number;
