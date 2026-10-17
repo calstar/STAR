@@ -25,16 +25,18 @@ import {
 } from '../api';
 import { BalancePanel } from '../components/BalancePanel';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
+import { PRESSURE_UNIT, fmtP, isPressureChannel, psiaText, toPsia, unitLabel } from '../lib/pressure';
 import { useStand } from '../stand';
 
 /** Injector stiffness (dp / Pc) below this is soft: the feed system, not the
  *  face, is setting the flow. The library's own rule (SOFT_STIFFNESS). */
 const SOFT = 0.2;
 
-/** Engine channels plotted per panel, never two units on one axis. */
-const PANELS: { unit: string; label: string; minSpan: number }[] = [
+/** Engine channels plotted per panel, never two units on one axis. The
+ *  chamber's is the pressure panel: gauge on the wire, psia on the axis. */
+const PANELS: { pressure?: boolean; unit: string; label: string; minSpan: number }[] = [
   { unit: 'N', label: 'Thrust (N)', minSpan: 100 },
-  { unit: 'psig', label: 'Chamber (psig)', minSpan: 20 },
+  { pressure: true, unit: PRESSURE_UNIT, label: `Chamber (${PRESSURE_UNIT})`, minSpan: 20 },
   { unit: 'O/F', label: 'O/F', minSpan: 0.5 },
   { unit: 'kg/s', label: 'Mass flow (kg/s)', minSpan: 0.5 },
 ];
@@ -154,7 +156,7 @@ function EngineHeader({
 
       {isCard && card ? (
         <span
-          className="rounded bg-emerald-900/40 px-2 py-0.5 text-[11px] font-semibold text-emerald-300"
+          className="rounded bg-[var(--ok)]/10 px-2 py-0.5 text-[11px] font-semibold text-[var(--ok)]"
           title={
             `EngineDesign's injector and chamber, tabulated (an engine card). The same engine Layer X fires.\n` +
             `Worst error against EngineDesign: ${(card.card_error * 100).toFixed(2)} %\n` +
@@ -166,7 +168,7 @@ function EngineHeader({
         </span>
       ) : (
         <span
-          className="rounded bg-amber-900/50 px-2 py-0.5 text-[11px] font-semibold text-amber-300"
+          className="rounded bg-[var(--warn)]/10 px-2 py-0.5 text-[11px] font-semibold text-[var(--warn)]"
           title={
             why === 'cold flow'
               ? 'A cold flow burns nothing: the engine is an orifice per side.'
@@ -178,9 +180,21 @@ function EngineHeader({
         </span>
       )}
 
+      {/* Whether this copy is still EngineDesign's design, said either way:
+          silence while current read the same as never having asked. */}
       {fresh?.tracked && fresh.current === false && (
-        <span className="rounded bg-amber-900/50 px-2 py-0.5 text-[11px] text-amber-300" title={fresh.detail}>
-          Changed in EngineDesign
+        <span className="rounded bg-[var(--warn)]/10 px-2 py-0.5 text-[11px] text-[var(--warn)]" title={fresh.detail}>
+          Changed in Hotbench Engine
+        </span>
+      )}
+      {fresh?.tracked && fresh.current === true && (
+        <span className="px-1 text-[11px] text-[var(--dim)]" title={fresh.detail}>
+          Current with Hotbench Engine
+        </span>
+      )}
+      {fresh && !fresh.tracked && (
+        <span className="px-1 text-[11px] text-[var(--dim)]" title={fresh.detail || 'An uploaded file: there is no design to compare it with.'}>
+          Uploaded copy
         </span>
       )}
 
@@ -191,7 +205,7 @@ function EngineHeader({
             disabled={Boolean(working)}
             onClick={() => void act('refresh', () => refreshArtifact(id))}
             title="Pull EngineDesign's working copy again, with its card. The old copy stays in Library."
-            className="rounded bg-blue-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+            className="rounded bg-blue-600 px-3 py-1 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {working === 'refresh' ? 'Pulling…' : 'Pull the current design'}
           </button>
@@ -209,7 +223,7 @@ function EngineHeader({
           </button>
         )}
       </div>
-      {error && <p className="w-full text-[12px] text-red-400">{error}</p>}
+      {error && <p className="w-full text-[12px] text-[var(--bad)]">{error}</p>}
     </div>
   );
 }
@@ -237,7 +251,7 @@ function Row({ label, value, hint, bad }: { label: string; value: string; hint?:
   return (
     <tr title={hint}>
       <td className="py-1 pr-4 text-text-muted">{label}</td>
-      <td className={`py-1 text-right font-mono tabular-nums ${bad ? 'text-amber-300' : ''}`}>{value}</td>
+      <td className={`py-1 text-right font-mono tabular-nums ${bad ? 'text-[var(--warn)]' : ''}`}>{value}</td>
     </tr>
   );
 }
@@ -265,7 +279,7 @@ function BurnPanel({ burn }: { burn: Burn }) {
         <Tile label="Impulse" value={burn.impulse_Ns} unit="N·s" places={0} />
         <Tile label="Mean thrust" value={burn.thrust_mean_N} unit="N" places={0} hint="Impulse over burn time." />
         <Tile label="Burn time" value={burn.duration_s} unit="s" places={2} />
-        <Tile label="Chamber" value={burn.pc_mean_psi} unit="psig" places={0} color={channelColor('PC')}
+        <Tile label="Chamber" value={toPsia(burn.pc_mean_psi)} unit={PRESSURE_UNIT} places={0} color={channelColor('PC')}
           hint="Time-weighted mean chamber pressure." />
         <Tile label="O/F" value={burn.of_mean} unit="" places={3} color={channelColor('O/F')}
           hint="LOX burned over fuel burned." />
@@ -277,7 +291,7 @@ function BurnPanel({ burn }: { burn: Burn }) {
           <tbody>
             <Row label="Thrust, min / peak" value={`${fixed(burn.thrust_min_N, 0)} / ${fixed(burn.thrust_peak_N, 0)} N`}
               hint="Minimum at full flow (valves open, before tail-off); peak over the burn." />
-            <Row label="Chamber, min / max" value={`${fixed(burn.pc_min_psi, 0)} / ${fixed(burn.pc_max_psi, 0)} psig`} />
+            <Row label="Chamber, min / max" value={`${psiaText(burn.pc_min_psi)} / ${fmtP(burn.pc_max_psi)}`} />
             <Row label="O/F range" value={`${fixed(burn.of_min, 3)} – ${fixed(burn.of_max, 3)}`} hint="At full flow." />
             <Row label="c*" value={`${fixed(burn.cstar_mps, 0)} m/s`} hint="Mass-weighted mean." />
             <Row
@@ -287,7 +301,7 @@ function BurnPanel({ burn }: { burn: Burn }) {
               bad={soft(burn.stiffness_oxidiser_min) || soft(burn.stiffness_fuel_min)}
             />
             {burn.extrapolated_steps > 0 && (
-              <Row label="Outside the combustion table" value={`${burn.extrapolated_steps} of ${burn.steps} steps`} bad
+              <Row label="Outside the combustion table" value={`${burn.extrapolated_steps} of ${burn.steps} steps`}
                 hint="The chamber was asked about an O/F or flow its table does not cover; those steps are clamped." />
             )}
           </tbody>
@@ -298,8 +312,8 @@ function BurnPanel({ burn }: { burn: Burn }) {
             {burn.tanks.map((t) => (
               <Row
                 key={t.id}
-                label={`${t.label} at Fire / lowest`}
-                value={`${fixed(t.start_psi, 0)} / ${fixed(t.min_psi, 0)} psig · ${fixed(t.start_kg, 2)} → ${fixed(t.end_kg, 2)} kg`}
+                label={`${t.label} at Fire / lowest at full flow`}
+                value={`${psiaText(t.start_psi)} / ${fmtP(t.min_psi)} · ${fixed(t.start_kg, 2)} → ${fixed(t.end_kg, 2)} kg`}
                 hint="Tank pressure when Fire was commanded, and its lowest at full flow; liquid at Fire and at the end. An ullage left sitting in Ready with its press valve shut sags before Fire."
               />
             ))}
@@ -314,18 +328,25 @@ interface Panel {
   label: string;
   minSpan: number;
   channels: Channel[];
+  /** An absolute pressure: the axis stops at 0. */
+  pressure?: boolean;
 }
 
-/** The recorded traces, from ignition: thrust; chamber and tanks on one psig
+/** O/F while something burns; a gap, not a 0, either side of it. A ratio of
+ *  two zero flows is undefined, and drawn as 0 it read as a lean dip into
+ *  the start and out of the end of every burn. */
+const burning = (of: number) => (of > 0 ? of : NaN);
+
+/** The recorded traces, from ignition: thrust; chamber and tanks on one psia
  *  axis, so a tank that climbs or sags reads against the chamber it feeds;
- *  O/F. */
+ *  O/F. The record keeps gauge; the panel converts as it draws. */
 function seriesPanels(burn: Burn): { times: number[]; panels: Panel[] } | null {
   const s = burn.series;
   if (!s || s.t.length < 2) return null;
   const tanks = Object.entries(s.tanks).map(([id, values]): Channel => ({
     key: `tank.${id}`,
     tag: s.labels[id] ?? id,
-    values,
+    values: values.map(toPsia),
     color: tankColor(s.labels[id] ?? id),
   }));
   return {
@@ -333,11 +354,12 @@ function seriesPanels(burn: Burn): { times: number[]; panels: Panel[] } | null {
     panels: [
       { label: 'Thrust (N)', minSpan: 100, channels: [{ key: 'thrust', tag: 'Thrust', values: s.thrust_N, color: channelColor('Thrust') }] },
       {
-        label: 'Pressure (psig)',
+        label: `Pressure (${PRESSURE_UNIT})`,
         minSpan: 20,
-        channels: [{ key: 'pc', tag: 'PC', values: s.pc_psig, color: channelColor('PC') }, ...tanks],
+        pressure: true,
+        channels: [{ key: 'pc', tag: 'PC', values: s.pc_psig.map(toPsia), color: channelColor('PC') }, ...tanks],
       },
-      { label: 'O/F', minSpan: 0.5, channels: [{ key: 'of', tag: 'O/F', values: s.of, color: channelColor('O/F') }] },
+      { label: 'O/F', minSpan: 0.5, channels: [{ key: 'of', tag: 'O/F', values: s.of.map(burning), color: channelColor('O/F') }] },
     ],
   };
 }
@@ -356,12 +378,15 @@ function BurnPlots({ burn }: { burn: Burn }) {
       panels: PANELS.map((panel): Panel => ({
         label: panel.label,
         minSpan: panel.minSpan,
+        pressure: panel.pressure,
         channels: channels
-          .filter((c) => c.unit === panel.unit)
+          .filter((c) => (panel.pressure ? isPressureChannel(c) : unitLabel(c.unit) === panel.unit))
           .map((c): Channel => ({
             key: c.id,
             tag: c.tag,
-            values: idx.map((i) => c.values[i]),
+            values: idx.map((i) =>
+              panel.pressure ? toPsia(c.values[i]) : panel.unit === 'O/F' ? burning(c.values[i]) : c.values[i],
+            ),
             color: channelColor(c.tag),
           })),
       })),
@@ -376,7 +401,14 @@ function BurnPlots({ burn }: { burn: Burn }) {
       {shown.panels.map((panel) =>
         panel.channels.length ? (
           <div key={panel.label} className="bg-card h-[clamp(240px,40vh,420px)] rounded-lg border border-gray-800 p-3">
-            <DaqPlot times={shown.times} channels={panel.channels} yLabel={panel.label} minSpan={panel.minSpan} fill />
+            <DaqPlot
+              times={shown.times}
+              channels={panel.channels}
+              yLabel={panel.label}
+              minSpan={panel.minSpan}
+              floor={panel.pressure ? 0 : undefined}
+              fill
+            />
           </div>
         ) : null,
       )}
@@ -393,7 +425,7 @@ function EarlierBurns({ burns }: { burns: Burn[] }) {
       <table className="w-full text-[12.5px]">
         <thead className="text-text-muted">
           <tr>
-            {['Start (s)', 'Burn (s)', 'Impulse (N·s)', 'Thrust (N)', 'Chamber (psig)', 'O/F', 'Isp (s)', ''].map((h) => (
+            {['Start (s)', 'Burn (s)', 'Impulse (N·s)', 'Thrust (N)', `Chamber (${PRESSURE_UNIT})`, 'O/F', 'Isp (s)', ''].map((h) => (
               <th key={h} className="px-4 py-1.5 text-right font-semibold first:text-left">{h}</th>
             ))}
           </tr>
@@ -405,7 +437,7 @@ function EarlierBurns({ burns }: { burns: Burn[] }) {
               <td className="px-4 py-1 text-right">{fixed(b.duration_s, 2)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.impulse_Ns, 0)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.thrust_mean_N, 0)}</td>
-              <td className="px-4 py-1 text-right">{fixed(b.pc_mean_psi, 0)}</td>
+              <td className="px-4 py-1 text-right">{psiaText(b.pc_mean_psi)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.of_mean, 3)}</td>
               <td className="px-4 py-1 text-right">{fixed(b.isp_s, 1)}</td>
               <td className="px-4 py-1 text-right font-sans">

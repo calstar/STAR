@@ -9,7 +9,7 @@ import type { GlossaryKey } from './glossary';
 import { Hint } from './pages/kit';
 import { Button, Field, Menu, MenuItem, MenuLabel, Segmented, STATUS_GLYPH, STATUS_VAR, Term, Toggle } from './ui';
 import { NBSP, STD_ATM_PSIA, useUnits } from './units';
-import { bottleFillPsia, heliumTwin, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
+import { bottleFillPsia, drawingShelves, drawingTitle, heliumTwin, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
 
 /**
  * The left rail: setup only (docs/layerx/GUI-SPEC.md, Layout). The drawing, how the stand is set
@@ -97,7 +97,17 @@ function RowLabel({ children }: { children: ReactNode }) {
   return <div className="pl-5 text-[12px] text-[var(--lx-text-2)]">{children}</div>;
 }
 
-function DrawingFacts({ d }: { d: Drawing }) {
+/** A drawing's second line in the menu: where it came from and when, in words. */
+function drawingNote(d: Drawing): string {
+  const when = d.added ? new Date(d.added * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
+  const from = d.origin ?? d.source.replace(/^shipped:.*/, 'shipped with the code');
+  return [from, d.group === 'Benchmarks' ? '' : when].filter(Boolean).join(' · ');
+}
+
+const GAS_WORD: Record<string, string> = { nitrogen: 'GN2', helium: 'helium' };
+const gasWord = (fluid: string | null | undefined) => (fluid ? GAS_WORD[fluid] ?? fluid : '');
+
+function DrawingFacts({ d, pressurant }: { d: Drawing; pressurant?: string | null }) {
   const u = useUnits();
   const s = d.summary;
   if (!s.readable) return <div className="pl-5 text-[12px] text-[var(--lx-bad)]">{s.error}</div>;
@@ -113,12 +123,22 @@ function DrawingFacts({ d }: { d: Drawing }) {
           <dd className="lx-num text-right text-[var(--lx-text-2)]">{litres(t.volume_L)}</dd>
         </div>
       ))}
-      {s.bottles?.map((b) => (
-        <div key={b.id} className="contents">
-          <dt style={{ color: 'var(--lx-gas)' }}>Bottle, {b.fluid === 'nitrogen' ? 'GN2' : b.fluid === 'helium' ? 'helium' : b.fluid}</dt>
-          <dd className="lx-num text-right text-[var(--lx-text-2)]">{litres(b.volume_L)}</dd>
-        </div>
-      ))}
+      {s.bottles?.map((b) => {
+        // The gas this burn fills it with: the rail's swap when there is one, said as a swap.
+        const swapped = !!pressurant && pressurant !== b.fluid;
+        return (
+          <div key={b.id} className="contents">
+            <dt style={{ color: 'var(--lx-gas)' }}>
+              {swapped
+                ? <Hint text={`The drawing fills this bottle with ${gasWord(b.fluid)}; this burn fills it, and everything it presses, with ${gasWord(pressurant)}.`}>
+                    Bottle, {gasWord(pressurant)} <span className="text-[var(--lx-text-3)]">(drawn {gasWord(b.fluid)})</span>
+                  </Hint>
+                : <>Bottle, {gasWord(b.fluid)}</>}
+            </dt>
+            <dd className="lx-num text-right text-[var(--lx-text-2)]">{litres(b.volume_L)}</dd>
+          </div>
+        );
+      })}
       {dome && (
         <div className="contents">
           <dt className="text-[var(--lx-text-2)]">
@@ -299,8 +319,10 @@ function Preflight({ job, onAcknowledgeGn2 }: { job: LayerXJob; onAcknowledgeGn2
       {gn2?.status === 'warn' && !gn2Hidden && (
         <div className="flex gap-2 text-[12px]" role="status">
           <span aria-hidden className="w-3 shrink-0 text-center font-semibold" style={{ color: 'var(--lx-warn)' }}>{STATUS_GLYPH.warn}</span>
-          <span className="min-w-0 flex-1 text-[var(--lx-text)]">Nitrogen over LOX, run anyway: condensation unmodelled
-            <span className="mt-0.5 block text-[11px] leading-snug text-[var(--lx-text-3)]">{gn2.detail}</span>
+          <span className="min-w-0 flex-1 text-[var(--lx-text)]">Nitrogen over LOX, run anyway
+            <span className="mt-0.5 block text-[11px] leading-snug text-[var(--lx-text-3)]">
+              <Hint text={gn2.detail}>condensation left out</Hint>
+            </span>
           </span>
           <button type="button" onClick={hideGn2} aria-label="Hide this warning" title="Hide this warning"
                   className="-mt-0.5 h-5 w-5 shrink-0 rounded text-[14px] leading-none text-[var(--lx-text-3)] hover:bg-[var(--lx-surface-2)] hover:text-[var(--lx-text)]">×</button>
@@ -406,7 +428,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1 overflow-y-auto">
         <Section id="drawing" title="Drawing" step="drawing" highlight={highlight === 'drawing'}>
           {job.settings.drawing_id && (
             <ParametersPanel drawingId={job.settings.drawing_id} open={paramsOpen} onClose={() => setParamsOpen(false)}
@@ -415,14 +437,18 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
           <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" aria-hidden tabIndex={-1}
                  onChange={(e) => { const f = e.target.files?.[0]; if (f) job.upload(f); e.target.value = ''; }} />
           <div className="pl-5">
-            <Menu label={<span className="min-w-0 flex-1 truncate text-left">{job.drawing?.name ?? (job.drawings.length ? 'Choose a drawing' : 'No drawings found')}</span>}
-                  className="w-full !justify-between" title="The feed-system drawing this burn runs on" minWidth={240}>
-              <MenuLabel>Feed-system drawings</MenuLabel>
-              {job.drawings.map((d) => (
-                <MenuItem key={d.id} checked={d.id === settings.drawing_id} onClick={() => set('drawing_id', d.id)}
-                          note={d.source.replace(/^shipped:/, 'shipped · ')}>
-                  {d.name}
-                </MenuItem>
+            <Menu label={<span className="min-w-0 flex-1 truncate text-left">{job.drawing ? drawingTitle(job.drawing) : (job.drawings.length ? 'Choose a drawing' : 'No drawings found')}</span>}
+                  className="w-full !justify-between" title="The feed-system drawing this burn runs on" minWidth={260}>
+              {drawingShelves(job.drawings).map(([shelf, list]) => (
+                <div key={shelf} role="presentation">
+                  <MenuLabel>{shelf}</MenuLabel>
+                  {list.map((d) => (
+                    <MenuItem key={d.id} checked={d.id === settings.drawing_id} onClick={() => set('drawing_id', d.id)}
+                              title={d.source} note={drawingNote(d)}>
+                      {drawingTitle(d)}
+                    </MenuItem>
+                  ))}
+                </div>
               ))}
             </Menu>
           </div>
@@ -434,7 +460,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
             <PidPicker onClose={() => setPicking(false)} onImported={async (d) => { setPicking(false); await job.useDrawing(d); }} />
           )}
           {job.uploadError && <div role="alert" className="pl-5 text-[12px] text-[var(--lx-bad)]">{job.uploadError}</div>}
-          {job.drawing && <DrawingFacts d={job.drawing} />}
+          {job.drawing && <DrawingFacts d={job.drawing} pressurant={settings.pressurant} />}
           {job.drawing && (
             <div className="pl-5">
               <Button className="w-full !justify-between" onClick={() => setParamsOpen(true)}>

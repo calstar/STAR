@@ -104,7 +104,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
               }}
               className="w-full px-3 py-2 pr-10 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-blue-500"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-text-secondary)]">psi</span>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-text-secondary)]">psia</span>
           </div>
         </div>
 
@@ -127,7 +127,7 @@ function ProfileInput({ label, profile, onChange, colorClass }: ProfileInputProp
               }}
               className="w-full px-3 py-2 pr-10 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm focus:outline-none focus:border-blue-500"
             />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-text-secondary)]">psi</span>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--color-text-secondary)]">psia</span>
           </div>
         </div>
 

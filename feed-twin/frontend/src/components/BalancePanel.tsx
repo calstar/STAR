@@ -15,6 +15,7 @@
 
 import type { Balance, Leg } from '../api';
 import { fixed } from '../api';
+import { fmtP } from '../lib/pressure';
 
 /** Fallback floor, for an engine config that states no band of its own. The
  *  classic pressure-fed rule of thumb; see feedtwin.engine.balance. */
@@ -156,7 +157,7 @@ export function BalancePanel({ balance }: { balance: Balance }) {
             Pressure budget, tank outlet to chamber
           </span>
           <span className="num text-[11.5px] text-[var(--dim)]">
-            chamber {fixed(balance.chamber_psi, 0)} psi
+            chamber {fmtP(balance.chamber_psi)}
           </span>
         </div>
         <div className="flex flex-col gap-3">

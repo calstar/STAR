@@ -572,7 +572,7 @@ export function SegmentCurveBuilder({
             transform={`rotate(-90, ${padding.left - 45}, ${height / 2})`}
             className="text-xs fill-[var(--color-text-secondary)]"
           >
-            Pressure (psi)
+            Pressure (psia)
           </text>
           <text
             x={width / 2}
@@ -732,7 +732,7 @@ export function SegmentCurveBuilder({
             {/* Pressures */}
             <div className="grid grid-cols-2 gap-2 mb-2">
               <div>
-                <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Start (psi)</label>
+                <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Start (psia)</label>
                 <input
                   disabled={readOnly}
                   type="text"
@@ -749,7 +749,7 @@ export function SegmentCurveBuilder({
                 />
               </div>
               <div>
-                <label className="block text-xs text-[var(--color-text-secondary)] mb-1">End (psi)</label>
+                <label className="block text-xs text-[var(--color-text-secondary)] mb-1">End (psia)</label>
                 <input
                   disabled={readOnly}
                   type="text"

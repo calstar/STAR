@@ -52,7 +52,10 @@
   --color-success-solid: #15803d;
 }
 
-:root[data-theme='light'] {
+/* Also any element marked light, for whatever is inside it: pid-designer puts
+   its canvas alone on white paper for a print (exportImage.ts onPaper). */
+:root[data-theme='light'],
+[data-theme='light'] {
   --color-bg-primary: #ffffff;
   --color-bg-secondary: #f7f7f7;
   --color-bg-tertiary: #ececec;

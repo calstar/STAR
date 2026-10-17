@@ -9,7 +9,8 @@ import { fmt, PSI, tickDigits } from './format';
  * The prediction against the stand: each instrument on the drawing paired with the DAQ channel
  * that records it (kept on the server with the drawing), what it should read at T-0, one second in
  * and at burnout, and, once a DAQ export is loaded, what it did read, with the bias and scatter
- * between them. Pressures as the transducers read them (gauge); temperatures in K.
+ * between them. Pressures in psia: the DAQ records gauge, as the transducers report, and its columns
+ * are read here plus the burn's own atmosphere; temperatures in K.
  *
  * Thrust is the load cells' sum against the burn's thrust.
  */
@@ -17,7 +18,7 @@ import { fmt, PSI, tickDigits } from './format';
 const THRUST = '__thrust__';
 const axisTick = { fill: 'var(--color-text-muted)', fontSize: 10 };
 
-type Row = { id: string; tag: string; unit: 'psig' | 'K' | 'N'; values: number[] };
+type Row = { id: string; tag: string; unit: 'psia' | 'K' | 'N'; values: number[] };
 
 export function MeasuredView({ result }: { result: LayerXResult }) {
   const drawingId = result.provenance.drawing.id;
@@ -39,8 +40,7 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
   // Predicted columns on the burn's own clock (Fire = 0): the drawing's instruments, and thrust.
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = Object.entries(s.instruments ?? {}).map(([id, ins]) => ({
-      id, tag: ins.tag, unit: ins.unit === 'K' ? 'K' : 'psig',
-      values: ins.unit === 'K' ? ins.values : ins.values.map((v) => v - gauge),
+      id, tag: ins.tag, unit: ins.unit === 'K' ? 'K' : 'psia', values: ins.values,
     }));
     const dv = result.delivered;
     const thrust = s.t.map((_, i) => (s.firing[i] ? s.chamber.thrust_N[i] : 0));
@@ -50,7 +50,7 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
     }
     out.push({ id: THRUST, tag: 'Thrust', unit: 'N', values: thrust });
     return out;
-  }, [s, result.delivered, gauge]);
+  }, [s, result.delivered]);
 
   const at = (r: Row, t: number) => {
     let k = 0;
@@ -71,7 +71,9 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
     }
     const ch = map[r.id];
     const col = ch ? matchColumn(data, ch) : null;
-    return col ? data.columns[col] : null;
+    if (!col) return null;
+    // The DAQ's pressure columns are gauge: read in psia, as the prediction is.
+    return r.unit === 'psia' ? data.columns[col].map((v) => (v === null ? null : v + gauge)) : data.columns[col];
   };
 
   // Fire in the file: from the mapped instrument that jumps most at Fire (a downstream transducer).
@@ -146,7 +148,7 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
                       </span>
                     ) : (
                       <select className={cell} value={map[r.id] ?? ''} aria-label={`DAQ channel for ${r.tag}`} onChange={(e) => save(r.id, e.target.value)}>
-                        <option value="">not recorded</option>
+                        <option value="">pick a channel</option>
                         {options.map((c) => <option key={c.name} value={c.name}>{c.name}{c.purpose ? ` · ${c.purpose}` : ''}</option>)}
                       </select>
                     )}
@@ -173,7 +175,7 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
           {data ? 'Load another DAQ export' : 'Load a DAQ export (CSV)'}
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) load(f); e.target.value = ''; }} />
         </label>
-        <Hint text="The DAQ web viewer's wide or long CSV export. Pressures are read as gauge, as the transducers report. Fire is found where the mapped transducer that jumps at Fire crosses halfway; type a time to override it.">
+        <Hint text="The DAQ web viewer's wide or long CSV export. Its pressures are gauge, as the transducers report, and are shown here in psia. Fire is found where the mapped transducer that jumps at Fire crosses halfway; type a time to override it.">
           <span className="text-[var(--color-text-muted)]">{data ? `${file}: ${data.t.length} rows, ${Object.keys(data.columns).length} channels` : 'measured against predicted, channel by channel'}</span>
         </Hint>
         {data && (

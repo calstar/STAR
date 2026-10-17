@@ -5,8 +5,10 @@ import {
   fmtLogTick,
   fmtReading,
   fmtTick,
+  linearRange,
   logRange,
 } from '../components/DaqPlot';
+import { toPsia } from './pressure';
 
 /** Ticks from lo to hi by incr, the way uPlot lays a linear axis. */
 const ticks = (lo: number, hi: number, incr: number): number[] => {
@@ -23,8 +25,8 @@ describe('linear ticks are told apart', () => {
     ['guard energy at 2.5 kJ steps', 0, 20000, 2500],
     ['a flat mass error', 0.035, 0.037, 0.0005],
     ['iterations', 0, 10, 2.5],
-    ['bottle psig', 0, 4500, 500],
-    ['tank psig near lockup', 380, 420, 10],
+    ['bottle psia', 0, 4500, 500],
+    ['tank psia near lockup', 380, 420, 10],
     ['O/F', 1, 2, 0.25],
     ['guard energy, small', -2e-12, 1e-12, 5e-13],
     ['an all-zero panel', 0, 1e-9, 2e-10],
@@ -128,5 +130,35 @@ describe('linear axis ends', () => {
   it('never returns an empty range', () => {
     const [a, b] = niceRange(0, 0);
     expect(b).toBeGreaterThan(a);
+  });
+});
+
+describe('a pressure axis stops at zero absolute (D-41)', () => {
+  // The idle chamber at the engine card's site ambient (94,069.7 Pa) is
+  // -1.05 on a gauge zero, and a vented ullage a few hundredths under it.
+  const idle = [-1.05, -0.09, 0];
+
+  it('went under zero on the gauge trace', () => {
+    // Without a floor the axis pads down a whole step: what the dry run saw.
+    const [lo] = linearRange(Math.min(...idle), Math.max(...idle), 50);
+    expect(lo).toBeLessThan(0);
+  });
+
+  it('reads from 0 psia with the trace in psia and a floor', () => {
+    const psia = idle.map(toPsia);
+    expect(Math.min(...psia)).toBeGreaterThan(13);
+    const [lo, hi] = linearRange(Math.min(...psia), Math.max(...psia), 50, 0);
+    expect(lo).toBe(0);
+    expect(hi).toBeGreaterThanOrEqual(50);
+  });
+
+  it('holds the floor even if a sample were under it', () => {
+    const [lo, hi] = linearRange(-3, 400, 20, 0);
+    expect(lo).toBe(0);
+    expect(hi).toBeGreaterThanOrEqual(400);
+  });
+
+  it('leaves a signed trace alone without one', () => {
+    expect(linearRange(-2, 1, 0.5)[0]).toBeLessThan(-2 + 1e-9);
   });
 });

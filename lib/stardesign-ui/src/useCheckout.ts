@@ -79,6 +79,20 @@ export interface Checkout {
    *  `Checkout` (a test, an app that has no rescue) need not mention it. */
   savedAs?: string | null;
   acknowledgeLost: () => void;
+  /**
+   * Nobody holds it, and the first edit will take it (`takeOnEdit`). An app
+   * treats the design as editable in this state and calls `claim` before its
+   * first save. Optional, like `savedAs`, so a hand-built `Checkout` need not
+   * mention it; absent means false.
+   */
+  armed?: boolean;
+  /**
+   * Take it for an edit that is already on screen: no reload, since reloading
+   * would throw the edit away. Resolves true once we hold it, false if someone
+   * else does. The app decides what to do about a view that went stale in the
+   * meantime -- it knows what it opened.
+   */
+  claim?: () => Promise<boolean>;
 }
 
 export interface UseCheckoutOptions<T> {
@@ -116,6 +130,17 @@ export interface UseCheckoutOptions<T> {
    */
   local?: boolean;
   /**
+   * With `local`: take the design on its first edit rather than on open.
+   *
+   * Taking on open put a countdown on every diagram anybody so much as looked
+   * at, and kept a second machine on the same stand read only for as long as
+   * the first one had the tab open. Here opening takes nothing; the design is
+   * `armed` while nobody holds it, the app `claim`s it on the first edit, and
+   * a hold that lapses goes back to armed rather than being taken straight
+   * back. Off by default: `local` alone behaves exactly as it did.
+   */
+  takeOnEdit?: boolean;
+  /**
    * Whether the caller may take this design at all. False for a design they
    * can only look at (pid-designer's main diagram, for a non-admin): local mode
    * then does not try to take it on open. Defaults to true -- the old
@@ -132,9 +157,14 @@ export function useCheckout<T>({
   pollMs = 10_000,
   heldPollMs = 15_000,
   local = false,
+  takeOnEdit = false,
   editable = true,
 }: UseCheckoutOptions<T>): Checkout {
+  const onEdit = local && takeOnEdit;
   const [state, setState] = useState<CheckoutState>(FREE);
+  // Whether the server has answered for this design yet. Until it has, FREE is
+  // a guess, and `armed` must not hand out an editable canvas on a guess.
+  const [heard, setHeard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lostUnexpectedly, setLostUnexpectedly] = useState(false);
@@ -148,6 +178,7 @@ export function useCheckout<T>({
   const applyState = useCallback((s: CheckoutState) => {
     setReceivedAt(Date.now());
     setState(s);
+    setHeard(true);
   }, []);
 
   const key = ref ? keyOf(ref) : null;
@@ -165,6 +196,7 @@ export function useCheckout<T>({
   // else's question entirely, and showing the old answer would be a lie.
   useEffect(() => {
     setState(FREE);
+    setHeard(false);
     setError(null);
     setLostUnexpectedly(false);
     setSavedAs(null);
@@ -217,7 +249,7 @@ export function useCheckout<T>({
         .then((s) => {
           if (cancelled) return;
           applyState(s);
-          if (!s.lockedByMe) gone();
+          if (!s.lockedByMe) gone(!!s.lockedBy);
         })
         .catch((e: unknown) => {
           if (cancelled) return;
@@ -226,7 +258,7 @@ export function useCheckout<T>({
           // than flapping a live editor to read-only on one dropped request.
           if (e instanceof ApiError && e.status === 423) {
             setState((prev) => ({ ...prev, lockedByMe: false }));
-            gone();
+            gone(true);
           }
         });
     };
@@ -333,24 +365,50 @@ export function useCheckout<T>({
   }, [api, applyState]);
 
   // The hold went away without us releasing it. Deployed: say so. Locally:
-  // take it straight back -- there is no one it could have gone to.
-  const gone = useCallback(() => {
-    if (local) void take();
+  // take it straight back -- there is no one it could have gone to. Taking on
+  // edit: a lapse nobody else acted on is simply armed again (the next edit
+  // takes it), and only somebody else having it is news.
+  const gone = useCallback((takenByOther: boolean) => {
+    if (onEdit) {
+      if (takenByOther) setLostUnexpectedly(true);
+    } else if (local) void take();
     else setLostUnexpectedly(true);
-  }, [local, take]);
+  }, [local, onEdit, take]);
 
+  // A save came back 423: somebody else holds it now.
   const lost = useCallback((kept?: string) => {
     setState((s) => ({ ...s, lockedByMe: false }));
     if (kept) setSavedAs(kept);
-    gone();
+    gone(true);
   }, [gone]);
 
-  // Locally, opening a design takes it. `busy` is left out of the deps on
-  // purpose: this fires once per design, not again after every take settles.
+  // Locally, opening a design takes it -- unless it is taken on edit. `busy`
+  // is left out of the deps on purpose: this fires once per design, not again
+  // after every take settles.
   useEffect(() => {
-    if (!local || !editable || !ref || state.lockedByMe || busy) return;
+    if (!local || onEdit || !editable || !ref || state.lockedByMe || busy) return;
     void take();
-  }, [local, key, editable]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [local, onEdit, key, editable]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const claim = useCallback(async (): Promise<boolean> => {
+    const r = refRef.current;
+    if (!r) return false;
+    if (heldRef.current) return true;
+    setError(null);
+    setLostUnexpectedly(false);
+    setSavedAs(null);
+    try {
+      const s = await api.takeCheckout(r);
+      // An edit is interaction, and the first beat should know it.
+      lastActivityRef.current = Date.now();
+      applyState(s);
+      return s.lockedByMe;
+    } catch {
+      // Somebody else has it. Show who, rather than a guess.
+      api.getCheckout(r).then(applyState).catch(() => {});
+      return false;
+    }
+  }, [api, applyState]);
 
   const acknowledgeLost = useCallback(() => {
     setLostUnexpectedly(false);
@@ -373,7 +431,11 @@ export function useCheckout<T>({
   }, [api]);
 
   // Only meaningful while we hold it: the bar shows a countdown, not a clock.
-  const secondsLeft = secondsLeftOf(state, now, receivedAt);
+  // Not at all on a developer's own machine, where every tick refreshes the
+  // hold: a timer that only ever reads 15:00 is noise, and "Editing · 14:52"
+  // on a diagram somebody merely opened read as a clock running out on them.
+  const secondsLeft = local ? null : secondsLeftOf(state, now, receivedAt);
+  const armed = onEdit && editable && !!ref && heard && !state.lockedBy && !lostUnexpectedly;
 
   return {
     holder: state.lockedBy,
@@ -390,5 +452,7 @@ export function useCheckout<T>({
     lostUnexpectedly,
     savedAs,
     acknowledgeLost,
+    armed,
+    claim,
   };
 }

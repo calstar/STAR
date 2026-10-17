@@ -41,10 +41,14 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
   const pcMean = dv?.pc_mean_psia ?? sum.pc_mean_psia ?? 0;
 
   const rows: string[] = instruments.map(([id, ins]) => {
+    // People read psia (ADR 0007); the DAQ's gauge figure is under each, for the cross-check.
     const isT = ins.unit === 'K';
-    const vals = isT ? ins.values : ins.values.map((v) => v - gauge);
-    return `<tr><td>${esc(ins.tag)}</td><td>${esc(channels[id] ?? '—')}</td><td class="u">${isT ? 'K' : 'psig'}</td>`
-      + times.map(([, t]) => `<td class="n">${fmt(value(vals, t), isT ? 1 : 0)}</td>`).join('') + '</tr>';
+    const cell = (t: number) => {
+      const v = value(ins.values, t);
+      return isT ? fmt(v, 1) : `${fmt(v, 0)}<div class="g">${fmt(v - gauge, 0)} g</div>`;
+    };
+    return `<tr><td>${esc(ins.tag)}</td><td>${esc(channels[id] ?? '—')}</td><td class="u">${isT ? 'K' : 'psia'}</td>`
+      + times.map(([, t]) => `<td class="n">${cell(t)}</td>`).join('') + '</tr>';
   });
   // The eroding engine's thrust where the replay ran, as the headline has it; the feed model's otherwise.
   const thrust = s.t.map((_, i) => (s.firing[i] ? s.chamber.thrust_N[i] : 0));
@@ -59,13 +63,17 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
   for (const [side, label] of [['oxidiser', 'LOX tank'], ['fuel', 'Fuel tank']] as const) {
     const rating = mawp[roles[side]];
     const peak = (side === 'oxidiser' ? sum.ox : sum.fuel).peak_psia;
-    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating + ambient - gauge, 0)} psig</td><td>MAWP ${fmt(rating, 0)} psi on the drawing${peak ? `; expected peak ${fmt(peak - gauge, 0)} psig` : ''}</td></tr>`);
+    // `rating` is the drawing's MAWP as an absolute pressure (prepare.py: MAWP.si / PSI): a drawn
+    // bare "MAWP 750 psi" reads as psig and arrives here as 764.7 psia. That IS the redline -- the
+    // twin trips the stand there (Session._check_limits). It used to be printed with a psig label
+    // and no conversion, 14.7 psi above the vessel's limit.
+    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating, 1)} psia</td><td>MAWP ${fmt(rating - gauge, 0)} psi on the drawing (a drawn psi is gauge: ${fmt(rating, 1)} psia), where the twin trips the stand${peak ? `; expected peak ${fmt(peak, 0)} psia` : ''}</td></tr>`);
   }
-  if (lockup) redlines.push(`<tr><td>Bottle</td><td class="n">≥ ${fmt(lockup - gauge + VERDICT.copvHeadroomPsi, 0)} psig</td><td>${VERDICT.copvHeadroomPsi} psi above lockup, or the regulator stops holding tank pressure; expected at burnout ${fmt((sum.copv_end_psia ?? NaN) - gauge, 0)} psig</td></tr>`);
+  if (lockup) redlines.push(`<tr><td>Bottle</td><td class="n">≥ ${fmt(lockup + VERDICT.copvHeadroomPsi, 0)} psia</td><td>${VERDICT.copvHeadroomPsi} psi above lockup, or the regulator stops holding tank pressure; expected at burnout ${fmt(sum.copv_end_psia ?? NaN, 0)} psia</td></tr>`);
   for (const [side, label, key] of [['oxidiser', 'LOX injector inlet', 'ox'], ['fuel', 'Fuel injector inlet', 'fuel']] as const) {
     const floor = band(stiff[side]);
     const min = (key === 'ox' ? sum.ox : sum.fuel).dp_injector_min_psi;
-    redlines.push(`<tr><td>${label}</td><td class="n">≥ ${fmt(pcMean * (1 + floor) - gauge, 0)} psig</td><td>ΔP/Pc floor ${fmt(floor * 100, 0)} % at ${fmt(pcMean, 0)} psia chamber (chug); expected lowest ΔP ${fmt(min, 0)} psi</td></tr>`);
+    redlines.push(`<tr><td>${label}</td><td class="n">≥ ${fmt(pcMean * (1 + floor), 0)} psia</td><td>ΔP/Pc floor ${fmt(floor * 100, 0)} % at ${fmt(pcMean, 0)} psia chamber (chug); expected lowest ΔP ${fmt(min, 0)} psi</td></tr>`);
   }
   if (dv?.chug_margin_min != null) redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(dv.chug_margin_min, 2)} at ${fmt(dv.chug_margin_min_t ?? NaN, 2)} s</td></tr>`);
 
@@ -78,7 +86,7 @@ body{font:13px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;color:#111;margi
 h1{font-size:20px;margin:0 0 2px} h2{font-size:14px;margin:22px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
 .m{color:#666} table{border-collapse:collapse;width:100%} td,th{padding:3px 8px 3px 0;text-align:left;vertical-align:top}
 th{font-weight:500;color:#555;border-bottom:1px solid #ddd} .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.u{color:#666} .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 24px} .big{font-size:18px;font-weight:600}
+.u{color:#666} .g{color:#888;font-size:10px} .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 24px} .big{font-size:18px;font-weight:600}
 @media print{body{margin:12mm} button{display:none}}
 </style></head><body>
 <button onclick="window.print()" style="float:right">Print / save as PDF</button>
@@ -88,9 +96,9 @@ ${run.meta?.note ? `<p>${esc(run.meta.note)}</p>` : ''}
 
 <h2>Set</h2>
 <div class="grid">
-<div>Dome regulator<div class="big">${fmt(d.dome_psig as number, 1)} psig</div></div>
-<div>Tank lockup<div class="big">${fmt((lockup ?? NaN) - gauge, 1)} psig</div><span class="m">${fmt(lockup, 1)} psia</span></div>
-<div>Bottle fill<div class="big">${fmt(d.copv_psig as number, 0)} psig</div><span class="m">${esc(settings.pressurant ?? 'as drawn')}</span></div>
+<div>Dome regulator<div class="big">${fmt((d.dome_psia as number | undefined) ?? (d.dome_psig as number) + gauge, 1)} psia</div><span class="m">${fmt(d.dome_psig as number, 1)} psig on the DAQ</span></div>
+<div>Tank lockup<div class="big">${fmt(lockup, 1)} psia</div><span class="m">${fmt((lockup ?? NaN) - gauge, 1)} psig on the DAQ</span></div>
+<div>Bottle fill<div class="big">${fmt((d.copv_psia as number | undefined) ?? (d.copv_psig as number) + gauge, 0)} psia</div><span class="m">${fmt(d.copv_psig as number, 0)} psig · ${esc(settings.pressurant ?? 'as drawn')}</span></div>
 <div>LOX load<div class="big">${fmt(loads[roles.oxidiser], 2)} kg</div></div>
 <div>Fuel load<div class="big">${fmt(loads[roles.fuel], 2)} kg</div></div>
 <div>Unusable propellant<div class="big">${fmt(settings.dry_kg, 3)} kg</div><span class="m">${(settings.dry_kg ?? 0) <= 0.002 ? 'burnt dry (not measured)' : 'as weighed'}</span></div>
@@ -113,6 +121,6 @@ ${run.meta?.note ? `<p>${esc(run.meta.note)}</p>` : ''}
 <table><tr><th>Where</th><th class="n">Limit</th><th>Why, and what is expected</th></tr>${redlines.join('')}</table>
 
 <h2>Not in these numbers</h2>
-<p>Start transient (−0.7 to −1.5 % impulse)${(settings.dry_kg ?? 0) <= 0.002 ? '; propellant the sump keeps (burnt dry here)' : ''}${off.length ? `; run without ${off.join(', ')}` : ''}. Pressures are gauge at ${fmt(gauge, 2)} psia; the stand's atmosphere is ${fmt(ambient, 2)} psia.</p>
+<p>Start transient (−0.7 to −1.5 % impulse)${(settings.dry_kg ?? 0) <= 0.002 ? '; propellant the sump keeps (burnt dry here)' : ''}${off.length ? `; run without ${off.join(', ')}` : ''}. Pressures are absolute (psia). The DAQ logs gauge, shown small under each reading ("g"): psia less ${fmt(gauge, 2)} psi. The stand's atmosphere is ${fmt(ambient, 2)} psia.</p>
 </body></html>`;
 }

@@ -440,3 +440,115 @@ describe('on a developer\'s own machine', () => {
     expect(view.result.current.lostUnexpectedly).toBe(false);
   });
 });
+
+describe('taken on the first edit, not on open (takeOnEdit)', () => {
+  // pid-designer on localhost took every diagram on open: "Editing · 14:52"
+  // counted down over a drawing nobody had touched, and a second laptop on the
+  // same stand sat read only for as long as the first had the tab open.
+  const opts = { local: true, takeOnEdit: true };
+
+  it('opening takes nothing, and is armed once the server has answered', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    // Before the first answer FREE is a guess: not armed on a guess.
+    expect(view.result.current.armed).toBe(false);
+    await tick(0);
+    expect(api.takeCheckout).not.toHaveBeenCalled();
+    expect(view.result.current.held).toBe(false);
+    expect(view.result.current.armed).toBe(true);
+  });
+
+  it('is not armed while someone else has it', async () => {
+    const api = stubApi(THEIRS);
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    await tick(0);
+    expect(view.result.current.armed).toBe(false);
+  });
+
+  it('is not armed for a design the caller may only look at', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts, editable: false }));
+    await tick(0);
+    expect(view.result.current.armed).toBe(false);
+  });
+
+  it('claims it on the first edit without reloading over that edit', async () => {
+    const api = stubApi();
+    const reload = vi.fn();
+    const view = renderHook(() => useCheckout({ api, ref: REF, reload, ...opts }));
+    await tick(0);
+
+    let ok = false;
+    await act(async () => { ok = await view.result.current.claim!(); });
+
+    expect(ok).toBe(true);
+    expect(api.takeCheckout).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(view.result.current.held).toBe(true);
+    expect(view.result.current.armed).toBe(false);
+  });
+
+  it('says so when someone else has it by the time of the edit', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    await tick(0);
+    api.set(THEIRS);
+    api.takeCheckout.mockImplementationOnce(async () => { throw new ApiError('checked out by them', 423); });
+
+    let ok = true;
+    await act(async () => { ok = await view.result.current.claim!(); });
+    await tick(0);
+
+    expect(ok).toBe(false);
+    expect(view.result.current.held).toBe(false);
+    expect(view.result.current.holder).toBe('them@berkeley.edu');
+    expect(view.result.current.armed).toBe(false);
+  });
+
+  it('goes back to armed when the hold lapses, without taking it back or saying anything', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    await tick(0);
+    await act(async () => { await view.result.current.claim!(); });
+    expect(view.result.current.held).toBe(true);
+
+    api.set(FREE); // lapsed, and nobody took it
+    await tick(15_000);
+
+    expect(api.takeCheckout).toHaveBeenCalledTimes(1);
+    expect(view.result.current.held).toBe(false);
+    expect(view.result.current.lostUnexpectedly).toBe(false);
+    expect(view.result.current.armed).toBe(true);
+  });
+
+  it('does say so when somebody else took it', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    await tick(0);
+    await act(async () => { await view.result.current.claim!(); });
+
+    api.set(THEIRS);
+    await tick(15_000);
+
+    expect(view.result.current.held).toBe(false);
+    expect(view.result.current.lostUnexpectedly).toBe(true);
+    expect(view.result.current.armed).toBe(false);
+  });
+
+  it('shows no countdown on a developer s own machine', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, ...opts }));
+    await tick(0);
+    await act(async () => { await view.result.current.claim!(); });
+    expect(view.result.current.held).toBe(true);
+    expect(view.result.current.secondsLeft).toBeNull();
+  });
+
+  it('leaves local mode without it exactly as it was: taken on open', async () => {
+    const api = stubApi();
+    const view = renderHook(() => useCheckout({ api, ref: REF, local: true }));
+    await tick(0);
+    expect(api.takeCheckout).toHaveBeenCalledTimes(1);
+    expect(view.result.current.armed).toBe(false);
+  });
+});

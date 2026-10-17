@@ -507,7 +507,7 @@ export function DaqBox({
           </button>
           {s.note && (
             <span
-              className={`ml-1 min-w-0 flex-1 truncate text-[11px] ${s.note.bad ? 'text-red-300' : 'text-gray-400'}`}
+              className={`ml-1 min-w-0 flex-1 truncate text-[11px] ${s.note.bad ? 'text-[var(--bad)]' : 'text-gray-400'}`}
               title={s.note.text}
             >
               {s.note.text}
@@ -820,7 +820,7 @@ function Detail({
           type="button"
           disabled={locked}
           onClick={onUnplug}
-          className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:border-red-400/60 hover:text-red-300 disabled:opacity-40"
+          className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:border-[var(--bad)]/60 hover:text-[var(--bad)] disabled:opacity-40"
           title={valve ? 'Pull the cable. Its row stays in the state table.' : 'Pull the cable'}
         >
           Unplug
@@ -842,7 +842,7 @@ function Detail({
         <span className="min-w-0 truncate text-gray-100">{sym?.label ?? hookup.label(channel.symbol)}</span>
         {lost && (
           <span
-            className="shrink-0 text-[10.5px] text-red-300"
+            className="shrink-0 text-[10.5px] text-[var(--bad)]"
             title="This version of the drawing has no such symbol: unplug the cable, or plug it into the symbol that took its place. Saving is refused until then."
           >
             not on this drawing
@@ -945,7 +945,7 @@ function NameField({
           }}
           title={valve ? 'The console’s name for it, and its row in the state table' : 'The console’s name for it'}
           className={`min-w-0 flex-1 rounded border bg-black/60 px-1.5 py-0.5 text-[12px] text-white focus:outline-none disabled:opacity-50 ${
-            clash ? 'border-red-500' : 'border-gray-700 focus:border-blue-500'
+            clash ? 'border-[var(--bad)]' : 'border-gray-700 focus:border-blue-500'
           }`}
         />
         {valve && (
@@ -958,7 +958,7 @@ function NameField({
       </label>
       {(clash || hint) && (
         <p
-          className={`mt-0.5 truncate pl-[5rem] text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
+          className={`mt-0.5 truncate pl-[5rem] text-[10.5px] ${clash ? 'text-[var(--bad)]' : 'text-gray-500'}`}
           title={clash ? 'Another connector has this name: leaving the field puts the old one back' : hint?.title}
         >
           {clash ?? hint?.text}

@@ -71,7 +71,8 @@ def _setup_dict(setup: Any) -> Dict[str, Any]:
 
 def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancelled: Callable[[], bool],
                lo: float, hi: float, accel: Optional[Dict[str, Any]] = None, pass_no: int = 1,
-               inline: Optional[Callable[..., Any]] = None) -> tuple:
+               inline: Optional[Callable[..., Any]] = None,
+               live: Optional[Callable[[float, float, float], None]] = None) -> tuple:
     """One twin pass. ``schedule`` is ``(t, A_throat)`` from the previous replay, applied to the
     chamber before every step; ``None`` is the as-built throat. ``accel`` is the flight's proper
     acceleration on the burn's clock (``flight.fly``), applied to every liquid column once the
@@ -104,6 +105,10 @@ def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancell
                                     regulators=(prep.settings.dome_regulator,),
                                     psig=float(prep.setup.dome_psi)),))
     session = open_session(model, prep.machine, setup=prep.setup, hookup=hookup)
+    # A transducer on a regulator's dome line reads the dome Layer X sets: the line is no plumbing,
+    # so the solve leaves it at atmosphere (LE4's DP-PT-R read 14.7 psia under a 550 psia dome).
+    domes = dome_line_instruments(model.diagram, model.built)
+    dome_readings: Dict[str, List[float]] = {node: [] for node in domes}
     say("Settling to tank pressure", lo)
     settled = prime_at_t0(session, prep.plan)
     # The drawing's own transducers are read too, so a burn says what each DAQ channel should show.
@@ -121,6 +126,8 @@ def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancell
 
     def record(clock: float, sample: Any, firing: bool) -> None:
         own(clock, sample, firing)
+        for node, signal in domes.items():
+            dome_readings[node].append(float(sample.signals.get(signal, sample.pressures.get(node, math.nan))))
         if schedule is not None and firing:
             # The throat the next step burns through: the replay's eroded throat at the end of
             # this one (one step of lag, ~0.08 % of area on this engine).
@@ -141,6 +148,11 @@ def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancell
             ascent["t"].append(float(clock))
             ascent["accel_m_s2"].append(a)
             session.setup = replace(session.setup, body_acceleration=a)
+        if live is not None and firing:
+            # What the burn is doing, as it does it: the run page draws it while the pass runs.
+            # It reads the step just recorded and changes nothing.
+            ch = trace.chamber
+            live(float(clock), float(ch["thrust_N"][-1]), float(ch["pressure_Pa"][-1]) / PSI)
         if firing and watched:
             used = max(1.0 - session.tanks[t].state.liquid_mass / max(initial[t], 1e-9) for t in watched)
             say(f"Burning, pass {pass_no}" if pass_no > 1 else "Burning", lo + (hi - lo) * min(max(used, 0.0), 1.0))
@@ -167,7 +179,51 @@ def _burn_once(prep: Prepared, schedule: Optional[tuple], say: Progress, cancell
         # integral over it -- end where the stand stopped.
         trace.t[-1] = float(trip.t)
     trace.inline_ascent = ascent if inline is not None else None  # type: ignore[attr-defined]
+    trace.dome_readings = dome_readings  # type: ignore[attr-defined]
     return trace, initial
+
+
+def dome_line_instruments(diagram: Any, built: Any) -> Dict[str, str]:
+    """The network node of each transducer on a dome line nothing on the drawing loads, and the
+    dome signal it reads (``"<regulator tag>.dome"``). Layer X burns the vehicle alone: the GSE's
+    loader is cut (engine.layerx.vehicle), the dome is the dial's, and the line from the dome port
+    to the cut disconnect is no plumbing, so the solve leaves it at atmosphere. Walked from the
+    ``dome`` handle through junctions and instruments, stopping at any valve, regulator, disconnect
+    or vessel, as feed-twin walks it for a stand built with its GSE ignored
+    (``Session._find_cut_dome_ports``). A regulator whose loader is drawn on the vehicle is left
+    alone: the session already reads its line."""
+    from feedtwin.pid.document import BOUNDARY_TYPES, INLINE_TYPES, SOURCE_TYPES
+    from feedtwin.pid.network import DOME_HANDLE
+
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: Dict[str, set] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    loaded = {loader.signal for loader in built.dome_loaders.values()}
+    stop = INLINE_TYPES | SOURCE_TYPES | BOUNDARY_TYPES
+    out: Dict[str, str] = {}
+    for node in diagram.nodes:
+        if node.type != "PR" or node.options.get("domeLoaded") != "yes":
+            continue
+        signal = built.actuators.get(node.id, "")
+        if not signal or signal in loaded:
+            continue
+        frontier = [e.target if e.source == node.id else e.source for e in diagram.edges
+                    if (e.source == node.id and e.source_handle == DOME_HANDLE)
+                    or (e.target == node.id and e.target_handle == DOME_HANDLE)]
+        seen: set = set()
+        while frontier:
+            here = frontier.pop()
+            if here in seen or here not in by_id or here == node.id:
+                continue
+            seen.add(here)
+            if by_id[here].type not in stop:
+                frontier.extend(adjacent.get(here, ()))
+        for inst in built.instruments:
+            if inst.id in seen and inst.node in built.network.nodes:
+                out[inst.node] = signal
+    return out
 
 
 def run_prepared(
@@ -180,6 +236,7 @@ def run_prepared(
     config: Any = None,
     diagnostics: bool = False,
     sidecars: Optional[Dict[str, Any]] = None,
+    live: Optional[Callable[[float, float, float], None]] = None,
 ) -> Dict[str, Any]:
     """Burn ``prep`` and return the reduced result.
 
@@ -203,6 +260,10 @@ def run_prepared(
     person starts; the tools that burn many candidates (sweep, set point, optimiser, reconcile)
     leave them off and grade their candidates themselves. ``result["limits"]`` (the graded list,
     :func:`grade_limits`) is written either way.
+
+    ``live``, if given, is told each firing step of the first pass as it burns -- ``(t [s from
+    Fire], thrust [N], chamber pressure [psia])`` -- so a person watching sees the burn while the
+    passes run. It reads the step and changes nothing.
 
     ``sidecars``, a dict, receives the final replay's axial heat-flux grids as ``["axial"]``
     (DATA-CONTRACT 4): too large for the run record, so the caller stores it beside it.
@@ -248,7 +309,7 @@ def run_prepared(
     for n in range(1, budget + 1):
         lo = 0.03 + (n - 1) * span
         trace, initial = _burn_once(prep, schedule, say, cancelled, lo, lo + 0.8 * span, accel, pass_no=n,
-                                    inline=None if on_pad else make_ascent)
+                                    inline=None if on_pad else make_ascent, live=live if n == 1 else None)
         result = reduce_trace(prep, trace, initial)
         ascent = getattr(trace, "inline_ascent", None)
         # A vessel trip ends the burn on the step that found it (lib/feedtwin ``burn``): this pass is
@@ -400,8 +461,9 @@ def run_prepared(
 
         try:
             result["feed_fit"] = fit_feed(prep, result, config)
-            if result["feed_fit"].get("available"):
+            if result["feed_fit"].get("available") and result["feed_fit"].get("writable", True):
                 # What "write into the design" sends (PUT /api/config, merged); the UI adds the run id.
+                # None when a side's K0 is not a loss: then there is nothing to write (write_refused).
                 result["feed_fit"]["design_update"] = design_update(result["feed_fit"], run_id="")
         except Exception as exc:  # noqa: BLE001 - a fit that cannot run is reported, the burn stands
             result["feed_fit"] = {"available": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -1002,7 +1064,8 @@ def _instrument_series(prep: Prepared, trace: Any) -> Dict[str, Dict[str, Any]]:
     built = prep.model.built if prep.model is not None else None
     for inst in getattr(built, "instruments", ()) or ():
         thermal = str(inst.type).upper() in THERMAL_INSTRUMENTS
-        column = (trace.temperature if thermal else trace.pressure).get(inst.node)
+        dome = None if thermal else (getattr(trace, "dome_readings", None) or {}).get(inst.node)
+        column = dome if dome and len(dome) == len(trace.t) else (trace.temperature if thermal else trace.pressure).get(inst.node)
         if not column:
             continue
         out[inst.id] = {"tag": inst.tag or inst.id, "type": inst.type, "unit": "K" if thermal else "psia",

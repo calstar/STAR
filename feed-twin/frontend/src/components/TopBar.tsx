@@ -10,11 +10,15 @@
  *
  * The slot the DAQ gives the board connection carries the solver's health,
  * since a twin has no board: running, paused, slow motion and by how much,
- * struggling, or stopped on an overpressure.
+ * a step that keeps missing, or stopped on an overpressure.
+ *
+ * Hotbench is the suite (a STAR project); this app is its Twin. The left end
+ * is the suite's switcher (lib/stardesign-ui), the same in every app.
  */
 
-import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { SuiteSwitcher } from '@stardesign-ui';
 import { getVersion, type Validation } from '../api';
 import { checksToFix } from '../lib/checks';
 import { useStand } from '../stand';
@@ -46,63 +50,90 @@ export function elapsed(t: number): string {
   return h > 0 ? `${h}:${mmss}` : mmss;
 }
 
+/** Consecutive ticks a step may miss convergence before the status line says
+ *  so. One miss is a stiff step the next one recovers from -- every cold load
+ *  had a few, and the bar flashed red "solver struggling" at an operator for
+ *  nothing. Five ticks is about a second of a step that keeps failing. */
+const STRUGGLING_TICKS = 5;
+
+/** How many ticks in a row the solver has not converged. */
+function useMissedSteps(live: ReturnType<typeof useStand>['live']): number {
+  const [missed, setMissed] = useState(0);
+  const seen = useRef('');
+  useEffect(() => {
+    if (!live) {
+      seen.current = '';
+      setMissed(0);
+      return;
+    }
+    const stamp = `${live.id}:${live.t}`;
+    if (stamp === seen.current) return;
+    seen.current = stamp;
+    setMissed((m) => (live.converged ? 0 : m + 1));
+  }, [live]);
+  return missed;
+}
+
 /** What the solver is doing, in the words the status line uses, and the dot. */
-function health(stand: ReturnType<typeof useStand>): { text: string; dot: string; pulse: boolean; title: string } {
-  const { live, busy, running, speed } = stand;
-  if (live?.tripped) return { text: 'Stopped · overpressure', dot: 'var(--color-danger)', pulse: true, title: live.tripped };
-  if (busy) return { text: 'Starting', dot: 'var(--color-warning)', pulse: true, title: 'Opening the stand' };
-  if (!running) return { text: 'Paused', dot: 'var(--ink-3)', pulse: false, title: 'The stand clock is stopped' };
-  if (!(live?.converged ?? false)) {
-    return { text: 'Solver struggling', dot: 'var(--color-danger)', pulse: false, title: 'The last step did not converge' };
+export function health(
+  stand: Pick<ReturnType<typeof useStand>, 'live' | 'busy' | 'running' | 'speed' | 'warp' | 'noStand'>,
+  missed = 0,
+): { text: string; dot: string; pulse: boolean; title: string; ratio: string; slowStep: boolean } {
+  const { live, busy, running, speed, noStand } = stand;
+  const none = { ratio: '', slowStep: false };
+  if (live?.tripped) return { text: 'Stopped · overpressure', dot: 'var(--color-danger)', pulse: true, title: live.tripped, ...none };
+  if (!live) {
+    if (noStand?.kind === 'empty') return { text: 'No stand', dot: 'var(--ink-3)', pulse: false, title: 'The library holds no drawing yet', ...none };
+    if (noStand?.kind === 'failed') return { text: 'No stand', dot: 'var(--ink-3)', pulse: false, title: noStand.reason, ...none };
+    if (noStand?.kind === 'unreachable') return { text: 'Offline', dot: 'var(--ink-3)', pulse: false, title: noStand.reason, ...none };
+    return { text: 'Starting', dot: 'var(--ink-3)', pulse: true, title: 'Opening the stand', ...none };
   }
+  if (busy) return { text: 'Starting', dot: 'var(--ink-3)', pulse: true, title: 'Opening the stand', ...none };
+  if (!running) return { text: 'Paused', dot: 'var(--ink-3)', pulse: false, title: 'The sim clock is stopped', ...none };
   const slow = speed !== undefined && speed < 0.85 * stand.warp;
+  const slowStep = missed >= STRUGGLING_TICKS;
   return {
-    text: slow || stand.warp > 1 ? `Running · ×${speed.toFixed(speed < 1 ? 2 : 1)}` : 'Running',
+    text: 'Running',
     dot: 'var(--color-success)',
     pulse: false,
+    ratio: slow || stand.warp > 1 ? `×${speed.toFixed(speed < 1 ? 2 : 1)}` : '',
+    slowStep,
     title: slow
       ? `Slow motion: ${speed.toFixed(2)} stand seconds per wall second. The stand is too stiff to integrate in real time at the study's step; it runs slower rather than coarser.`
-      : 'Integrating in real time',
+      : stand.warp > 1
+        ? `Time warp: ${speed.toFixed(1)} stand seconds per wall second.`
+        : 'Integrating in real time',
   };
 }
 
-function ValidationBadge() {
+/** What this build of the twin has been checked against, for the Checks
+ *  tab's hover. It used to be a grey "not validated" chip on every view. */
+function useValidation(): string {
   const [validation, setValidation] = useState<Validation | null>(null);
   useEffect(() => {
     getVersion()
       .then((v) => setValidation(v.validation))
       .catch(() => undefined);
   }, []);
-  if (!validation) return null;
-  const ok = validation.status === 'validated';
-  // Quiet on purpose: it says what this build of the twin has been checked
-  // against, which matters when reading a result, not every second of a run.
-  return (
-    <span
-      className="cursor-help font-mono text-[11px] normal-case tracking-normal"
-      style={{ color: ok ? 'var(--color-success)' : 'var(--ink-3)' }}
-      title={[
-        validation.label,
-        '',
-        'Checked:',
-        ...validation.checked.map((c) => `  • ${c}`),
-        '',
-        'Not yet checked:',
-        ...validation.not_checked.map((c) => `  • ${c}`),
-      ].join('\n')}
-    >
-      {ok ? 'validated' : 'not validated'}
-    </span>
-  );
+  if (!validation) return '';
+  return [
+    validation.label,
+    'Checked:',
+    ...validation.checked.map((c) => `  • ${c}`),
+    'Not yet checked:',
+    ...validation.not_checked.map((c) => `  • ${c}`),
+  ].join('\n');
 }
 
 export function TopBar({ views }: { views: readonly View[] }) {
   const stand = useStand();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { live, model, busy } = stand;
   // Only what is worth fixing: most of the assembly's sentences say how the
   // drawing was read (lib/checks.ts).
   const warnings = checksToFix(model?.report.warnings ?? []);
+  const validation = useValidation();
 
   const [clock, setClock] = useState('');
   useEffect(() => {
@@ -115,17 +146,21 @@ export function TopBar({ views }: { views: readonly View[] }) {
   // An unsaved hookup is one draft across three tabs: say so on each, so an
   // edit made on one is not forgotten on the way to another.
   const { dirty: unsavedHookup } = useHookup();
-  const h = health(stand);
+  const missed = useMissedSteps(live);
+  const h = health(stand, missed);
   const state = live?.state ?? '—';
   const onConsole = pathname === '/';
   const engineName = stand.artifacts.find((a) => a.id === stand.where.engine)?.name ?? '';
-  const title = model ? (engineName ? `${model.title} · ${engineName}` : model.title) : '—';
+  const title = model ? model.title : '';
   // Only when the cut left something out: on a drawing of the rocket alone
   // the setting changes nothing, and the badge said otherwise.
   const cut = live?.setup?.ignore_gse ? (model?.ground_cut ?? []) : [];
-  // The gas the stand was built with, when it is not the drawing's.
-  const gas = String(live?.setup?.pressurant ?? '');
   const rocketOnly = cut.length > 0;
+  // The gas in the bottle, always: swapped, or the drawing's own. The drawing's
+  // is named when the server says which it is (`gas`).
+  const swapped = String(live?.setup?.pressurant ?? '');
+  const gasName = (g: string) => (/^he/i.test(g) ? 'Helium' : /n2|nitrogen/i.test(g) ? 'GN2' : g);
+  const gas = swapped ? gasName(swapped) : live?.gas ? `${gasName(live.gas)} · drawing's` : live ? "Drawing's gas" : '';
   const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
     const last = out[out.length - 1];
     if (last && last.name === v.group) last.views.push(v);
@@ -134,28 +169,37 @@ export function TopBar({ views }: { views: readonly View[] }) {
   }, []);
 
   return (
-    <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-4">
-      <div className="flex min-w-0 items-baseline gap-8">
-        <span className="flex-shrink-0 font-mono text-[17px] font-bold uppercase tracking-[0.42em] text-[var(--ink)]">
-          Feed Twin
-        </span>
-        <nav className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+    <header className="relative z-30 flex-shrink-0 select-none border-b border-[var(--line)] px-8 pt-3 max-[1400px]:px-5">
+      <div className="flex min-w-0 flex-nowrap items-center gap-7 max-[1400px]:gap-5">
+        {/* The suite's own end of the header, the same in every Hotbench
+            app: the wordmark and Engine | P&ID | Twin. Twin goes to the Console.
+            A hairline keeps its P&ID and Engine apart from this app's tabs. */}
+        <SuiteSwitcher
+          app="twin"
+          onHome={() => navigate('/')}
+          className="border-r border-[var(--line)] pb-1.5 pr-7 font-mono max-[1400px]:pr-5"
+        />
+        {/* Below ~1330 px (a 1280 projector) the tabs no longer fit even
+            tightened: the nav scrolls on its own rather than the page
+            sideways, which put Checks off screen. */}
+        <nav className="flex min-w-0 flex-nowrap items-baseline gap-x-4 self-end overflow-x-auto [scrollbar-width:none] max-[1400px]:gap-x-3 min-[1600px]:gap-x-5">
           {groups.map((g, i) => (
             <span
               key={g.name}
-              className={`flex flex-shrink-0 items-baseline gap-x-3.5 min-[1400px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 min-[1400px]:pl-5' : ''}`}
+              className={`flex flex-shrink-0 items-baseline gap-x-3.5 max-[1400px]:gap-x-2.5 min-[1600px]:gap-x-4 ${i > 0 ? 'border-l border-[var(--line)] pl-4 max-[1400px]:pl-3 min-[1600px]:pl-5' : ''}`}
             >
               {/* The group's name where there is room; the divider says it
                   on a laptop, where the names wrapped the nav onto two rows. */}
-              <span className="caps hidden pb-1.5 text-[9px] text-[var(--ink-4)] min-[1400px]:inline">{g.name}</span>
+              <span className="caps hidden pb-1.5 text-[9px] text-[var(--ink-4)] min-[1700px]:inline">{g.name}</span>
               {g.views.map((v) => {
                 const active = pathname === v.path;
+                const hint = v.path === '/report' && validation ? `${v.hint}\n\n${validation}` : v.hint;
                 return (
                   <Link
                     key={v.path}
                     to={v.path}
-                    title={v.hint}
-                    className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.06em] transition-colors ${
+                    title={hint}
+                    className={`relative flex-shrink-0 whitespace-nowrap pb-1.5 font-mono text-[13px] tracking-[0.04em] transition-colors ${
                       active ? 'text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink-2)]'
                     }`}
                   >
@@ -180,16 +224,31 @@ export function TopBar({ views }: { views: readonly View[] }) {
         </nav>
       </div>
 
-      <div className="flex min-h-[44px] flex-wrap items-center gap-x-7 gap-y-1 py-2 font-mono text-[13px] uppercase tracking-[0.08em]">
-        <span className="flex items-center gap-2 text-[var(--ink-2)]" title={h.title}>
+      {/* One row, never wrapped: the drawing's name gives way first (it
+          truncates, whole on its hover), then the wall clock below 1600 px. */}
+      <div className="flex min-h-[44px] flex-nowrap items-center gap-x-6 py-2 font-mono text-[13px] uppercase tracking-[0.08em]">
+        <span className="flex flex-shrink-0 items-center gap-2 text-[var(--ink-2)]" title={h.title}>
           <span
             className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${h.pulse ? 'animate-pulse' : ''}`}
             style={{ background: h.dot }}
           />
           {h.text}
+          {/* The speed has its own slot, held open whether or not there is a
+              ratio to show: appearing at Fire, it shoved every item along. */}
+          <span className="inline-block w-[4.2em] tabular-nums normal-case tracking-normal text-[var(--ink-3)]">
+            {h.ratio}
+          </span>
+          {h.slowStep && (
+            <span
+              className="normal-case tracking-normal text-[var(--ink-3)]"
+              title={`The solver has missed convergence on the last ${missed} steps; it keeps going at the study's step and tolerance. If it persists, the Solver tab shows where.`}
+            >
+              solver: slow step
+            </span>
+          )}
         </span>
         <span
-          className="flex items-center border border-[var(--line)] normal-case tracking-normal"
+          className="flex flex-shrink-0 items-center border border-[var(--line)] normal-case tracking-normal"
           title="Time warp: run the stand faster than real time, to wait out a load or a COPV charge. Fire always runs at ×1. The status shows the speed the machine actually reaches."
         >
           {WARPS.map((w) => (
@@ -206,28 +265,31 @@ export function TopBar({ views }: { views: readonly View[] }) {
             </button>
           ))}
         </span>
-        {/* The stand clock, not the wall clock: how long this stand has been
+        {/* The sim clock, not the wall clock: how long this stand has been
             up. It stops when the sim is paused. */}
         <span
-          className="flex items-baseline gap-2 font-semibold tabular-nums text-[var(--ink)]"
-          title="Stand clock: time since this stand was opened. It stops while paused."
+          className="flex flex-shrink-0 items-baseline gap-2 font-semibold tabular-nums text-[var(--ink)]"
+          title="Sim time: how long this stand has run since it was opened. It stops while paused and runs faster under time warp."
         >
-          <span className="caps text-[10px] font-normal">Stand</span>
+          <span className="caps text-[10px] font-normal">Sim</span>
           {elapsed(live?.t ?? 0)}
         </span>
-        <span className="tabular-nums text-[var(--ink-3)]" title="Wall clock">
+        <span className="hidden flex-shrink-0 tabular-nums text-[var(--ink-3)] min-[1600px]:inline" title="Wall clock">
           {clock}
         </span>
-        <span
-          className="max-w-[340px] truncate normal-case tracking-normal text-[var(--ink-2)]"
-          title={`Drawing · engine${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}`}
-        >
-          {title}
-        </span>
+        {title && (
+          <span
+            className="min-w-0 truncate normal-case tracking-normal text-[var(--ink-2)]"
+            title={`Drawing: ${title}${engineName ? `\nEngine: ${engineName}${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}` : '\nNo engine'}`}
+          >
+            {title}
+            {engineName && <span className="text-[var(--ink-3)]"> · {engineName}</span>}
+          </span>
+        )}
         {rocketOnly && (
           <Link
             to="/gse"
-            className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
+            className="flex-shrink-0 border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
             title={`The drawn GSE is ignored: the rocket alone, filled by the built-in fills at the GSE Controls settings. Left out: ${cut.join(', ')} and the rest of the cart. Change it on GSE Controls.`}
           >
             Rocket only
@@ -236,15 +298,23 @@ export function TopBar({ views }: { views: readonly View[] }) {
         {gas && (
           <Link
             to="/gse"
-            className="border border-[var(--line-strong)] px-2 py-0.5 text-[10px] tracking-[0.14em] text-[var(--ink-2)] hover:text-[var(--ink)]"
-            title="The pressurant is swapped from the drawing's. Change it on GSE Controls."
+            className={`flex-shrink-0 whitespace-nowrap px-2 py-0.5 text-[10px] tracking-[0.14em] hover:text-[var(--ink)] ${
+              swapped
+                ? 'border border-[var(--line-strong)] text-[var(--ink-2)]'
+                : // The drawing's own gas gives way on a laptop; a swap never does.
+                  'hidden text-[var(--ink-3)] min-[1600px]:inline'
+            }`}
+            title={
+              swapped
+                ? "The pressurant, swapped from the drawing's. Change it on GSE Controls."
+                : "The pressurant the drawing's bottle holds. Swap it on GSE Controls."
+            }
           >
-            {gas === 'helium' ? 'Helium' : 'GN2'}
+            {gas}
           </Link>
         )}
-        <ValidationBadge />
 
-        <div className="ml-auto flex items-center gap-4 normal-case tracking-normal">
+        <div className="ml-auto flex flex-shrink-0 items-center gap-4 normal-case tracking-normal">
           <StandBar />
           {!onConsole && (
             <span className="flex items-center gap-3 border-l border-[var(--line)] pl-4">
@@ -255,7 +325,7 @@ export function TopBar({ views }: { views: readonly View[] }) {
               <button
                 type="button"
                 onClick={() => stand.go('Engine Abort')}
-                disabled={busy}
+                disabled={busy || !live}
                 className="ctl h-7 border-[var(--color-danger)] px-3 text-[11px] text-[var(--color-danger)] hover:bg-[var(--color-danger-solid)] hover:text-white"
               >
                 Eng Abort

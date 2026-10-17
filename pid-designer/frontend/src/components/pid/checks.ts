@@ -4,14 +4,16 @@ import { isInstrument } from './attach';
 import { J_ANCHOR, centreOfJunction, isJunction } from './junctions';
 import { crossPageEdges, listPages, pageOf } from './pages';
 import { findVents } from './vents';
-import { portsOf, portIsDrawn, CV_INLET } from './ports';
-import { toGaugePa as toPa } from './params';
+import { drawnPortsOf, portsOf, portIsDrawn, CV_INLET } from './ports';
+import { PSI_PA, toGaugePa as toPa } from './params';
+import { fmtPressure, fmtPsi } from './fmt';
 import { overlapOf } from './segments';
 import { drawnRoute, routesItself } from './lineRoute';
 import type { LineData } from './lineRoute';
 import { pipesOf } from './pipes';
 import type { Pipe } from './pipes';
 import { boxOfNode, routeHitsBoxes } from './routeGrid';
+import { GRID } from './route';
 import type { Box } from './route';
 import { drawnScene } from './tracks';
 import { unmeasuredEnd } from './unmeasured';
@@ -50,6 +52,13 @@ export interface Finding {
    * the line took the symbol with it.
    */
   focusIds?: string[];
+  /**
+   * Something the drawing does not say yet -- a size, a fluid, a mate, a
+   * value nobody has checked -- rather than something it says wrong. The team
+   * fills these in; the panel lists them apart, plainly, as what the drawing
+   * still needs. Always a note: a gap is not a fault.
+   */
+  gap?: boolean;
 }
 
 /** A line saved on a port its symbol no longer has: which line, which symbol, which port. */
@@ -96,28 +105,56 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   const push = (f: Finding) => found.push(f);
 
   // ── Quick disconnects ─────────────────────────────────────────────────────
+  // Read the way feed-twin reads them (`feedtwin.pid.network._mate_disconnects`),
+  // so the panel and the twin cannot disagree about a pair. A pair need not be
+  // written on both halves: drawings saved before the pair editor wrote both
+  // name the mate on one side only, and that is still a pair. Two halves
+  // naming different mates are a drawing error, and a half with no single
+  // free side -- no line on it at all, or lines on both of its ports -- has
+  // nothing to couple through: the twin leaves such a pair apart, and so the
+  // checks say so rather than calling it a good pair.
   const qds = nodes.filter(n => dataOf(n)?.componentType === 'QD');
   const pairOf = (n: Node) => dataOf(n).options?.pairedWith ?? '';
   const serviceOf = (n: Node) => dataOf(n).options?.service ?? 'fluid';
+  const realMate = (v: string) => v !== '' && v !== 'none';
+  // Which disconnects name each one as their mate.
+  const namedBy = new Map<string, string[]>();
+  for (const q of qds) {
+    const p = pairOf(q);
+    if (realMate(p)) (namedBy.get(p) ?? namedBy.set(p, []).get(p)!).push(q.id);
+  }
+  const joined = (a: string, b: string) =>
+    edges.some(e => (e.source === a && e.target === b) || (e.source === b && e.target === a));
+  // A line that carries flow: not a clip line to a probe, not annotation.
+  const plumbing = (e: Edge, self: string) => {
+    const other = byId.get(e.source === self ? e.target : e.source);
+    const t = other ? dataOf(other)?.componentType : undefined;
+    return !!other && !isInstrument(t) && t !== 'TEXT' && t !== 'REGION';
+  };
+  // The ports of a symbol that have a line on them.
+  const sidesWithLines = (n: Node) => new Set(edges
+    .filter(e => (e.source === n.id || e.target === n.id) && e.source !== e.target && plumbing(e, n.id))
+    .map(e => (e.source === n.id ? e.sourceHandle : e.targetHandle) ?? ''));
 
+  const alone: Node[] = [];
+  const pairs = new Map<string, [Node, Node]>();
   for (const qd of qds) {
     const paired = pairOf(qd);
 
     if (paired === 'none') continue;      // declared to stand alone
 
     if (!paired) {
-      push({
-        id: `qd-unpaired-${qd.id}`,
-        severity: 'info',
-        title: `${nameOf(qd)} has no mating half`,
-        detail: 'Pick the disconnect on the other side, or mark it as needing no pair.',
-        nodeIds: [qd.id],
-      });
+      // Named by another half: the pair is that half's to report.
+      if (namedBy.has(qd.id)) continue;
+      // Drawn mated: the two halves joined by a line of their own, as a
+      // cart's own disconnects often are. There is nothing for a pair to do.
+      if (qds.some(o => o.id !== qd.id && joined(qd.id, o.id))) continue;
+      alone.push(qd);
       continue;
     }
 
     const other = byId.get(paired);
-    if (!other) {
+    if (!other || dataOf(other)?.componentType !== 'QD') {
       push({
         id: `qd-missing-${qd.id}`,
         severity: 'error',
@@ -136,18 +173,136 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
         detail: 'A hydraulic disconnect does not mate with a fluid one.',
         nodeIds: [qd.id, other.id],
       });
+      continue;
     }
 
     const back = pairOf(other);
-    if (back && back !== qd.id) {
+    if (realMate(back) && back !== qd.id) {
       push({
         id: `qd-asym-${qd.id}`,
         severity: 'warning',
         title: `${nameOf(qd)} and ${nameOf(other)} disagree about who they mate with`,
-        detail: `${nameOf(qd)} is set to mate with ${nameOf(other)}, but ${nameOf(other)} is set to mate with something else. One of the two is wrong.`,
+        detail: `${nameOf(qd)} is set to mate with ${nameOf(other)}, but ${nameOf(other)} is set to mate with something else. One of the two is wrong, and neither pair is coupled until it is put right.`,
         nodeIds: [qd.id, other.id],
       });
+      continue;
     }
+    const key = [qd.id, other.id].sort().join('\u0000');
+    if (!pairs.has(key)) pairs.set(key, [qd, other]);
+  }
+
+  if (alone.length) {
+    const one = alone.length === 1;
+    push({
+      id: 'qd-unpaired',
+      severity: 'info',
+      gap: true,
+      title: one ? `${nameOf(alone[0])} has no mating half`
+        : `${alone.length} disconnects have no mating half`,
+      detail: `${one ? '' : `${listed(alone.map(nameOf))}. `}Pick the disconnect on the other side, or mark ${one ? 'it' : 'each'} as needing no pair.`,
+      nodeIds: alone.map(n => n.id),
+    });
+  }
+
+  for (const [a, b] of pairs.values()) {
+    // Joined by a line of their own: coupled on the page, whatever the pair says.
+    if (joined(a.id, b.id)) continue;
+    const bad = [a, b].map(q => ({ q, sides: sidesWithLines(q).size })).filter(x => x.sides !== 1);
+    if (!bad.length) continue;
+    const bare = bad.filter(x => x.sides === 0).map(x => nameOf(x.q));
+    const both = bad.filter(x => x.sides > 1).map(x => nameOf(x.q));
+    const why = [
+      ...(bare.length ? [`${listed(bare)} ${bare.length === 1 ? 'has' : 'have'} no line on ${bare.length === 1 ? 'it' : 'them'}`] : []),
+      ...(both.length ? [`${listed(both)} ${both.length === 1 ? 'has' : 'have'} lines on both sides`] : []),
+    ].join(', and ');
+    push({
+      id: `qd-uncoupled-${a.id}-${b.id}`,
+      // Lines on both sides is the drawing contradicting itself; a half with
+      // nothing on it yet is a drawing not finished.
+      severity: both.length ? 'warning' : 'info',
+      gap: !both.length,
+      title: `${nameOf(a)} and ${nameOf(b)} do not couple`,
+      detail: `${capital(why)}. A disconnect couples through its one free side, so a solve leaves the pair apart and nothing passes between them. Draw each half's line onto one of its two ports.`,
+      nodeIds: [a.id, b.id],
+    });
+  }
+
+  // ── Lines that stop short ─────────────────────────────────────────────────
+  // An open end -- a tee with one line on it, drawn hollow -- is a line that
+  // goes nowhere yet, and drawing one is allowed: it is how a line is put down
+  // to be picked up later. But an open end sitting on a symbol's free port
+  // reads as joined to it, and is not: nothing flows between them, and a
+  // disconnect beside it has no line at all. The LE4 stand's GSE page had
+  // four, and both the checks and the eye passed them. Within two grid steps
+  // of the port is where it reads as joined; inside the symbol's box is
+  // `drawnThrough`'s to report.
+  const NEAR_PORT = 2 * GRID;
+  const linesOnNode = new Map<string, Edge[]>();
+  for (const e of edges) {
+    for (const id of new Set([e.source, e.target])) (linesOnNode.get(id) ?? linesOnNode.set(id, []).get(id)!).push(e);
+  }
+  const portTaken = (n: Node, h: string) => edges.some(e =>
+    (e.source === n.id && e.sourceHandle === h) || (e.target === n.id && e.targetHandle === h));
+  const shortOf = new Set<string>();     // symbols an open end sits on
+  const openEnds: Node[] = [];
+  const endSheet = sheetOf(nodes, edges, byId);
+  for (const j of nodes) {
+    if (!isJunction(j) || (linesOnNode.get(j.id)?.length ?? 0) !== 1) continue;
+    const c = centreOfJunction(j);
+    const page = pageOf(dataOf(j));
+    let near: { n: Node; d: number } | null = null;
+    for (const n of nodes) {
+      if (isJunction(n) || pageOf(dataOf(n)) !== page || n.hidden) continue;
+      const box = boxOfNode(n);
+      if (c.x > box.x + 1 && c.x < box.x + box.w - 1 && c.y > box.y + 1 && c.y < box.y + box.h - 1) continue;
+      for (const h of drawnPortsOf(n)) {
+        if (portTaken(n, h)) continue;
+        const at = unmeasuredEnd(n, h);
+        if (!at) continue;
+        const d = Math.hypot(at.x - c.x, at.y - c.y);
+        if (d <= NEAR_PORT && (!near || d < near.d)) near = { n, d };
+      }
+    }
+    if (!near) { openEnds.push(j); continue; }
+    shortOf.add(near.n.id);
+    const { name } = endSheet.nameOfJunction(j);
+    push({
+      id: `open-end-on-port-${j.id}`,
+      severity: 'warning',
+      title: `${capital(name)} stops at ${nameOf(near.n)} without joining it`,
+      detail: `It ends on ${nameOf(near.n)}'s port, so it reads as connected, and it is not: nothing flows between them. Drag the hollow end onto the port to join it.`,
+      nodeIds: [j.id],
+      edgeIds: linesOnNode.get(j.id)!.map(e => e.id),
+      focusIds: [near.n.id],
+    });
+  }
+  if (openEnds.length) {
+    push({
+      id: 'lines-open-ended',
+      severity: 'info',
+      gap: true,
+      title: `${openEnds.length} line${openEnds.length === 1 ? ' ends' : 's end'} in the open`,
+      detail: `Each stops at a hollow end that joins nothing, which a solve reads as a closed dead end. Join ${openEnds.length === 1 ? 'it' : 'each'} to what it feeds, or delete it.`,
+      nodeIds: openEnds.map(j => j.id),
+    });
+  }
+
+  // A symbol nothing is joined to: on the drawing, in nobody's flow path.
+  const unjoined = nodes.filter(n => {
+    const t = dataOf(n)?.componentType;
+    if (!t || isJunction(n) || t === 'TEXT' || t === 'REGION' || isInstrument(t)) return false;
+    if (dataOf(n).attachedTo || portsOf(n).length === 0 || shortOf.has(n.id)) return false;
+    return !(linesOnNode.get(n.id)?.length);
+  });
+  if (unjoined.length) {
+    push({
+      id: 'components-unjoined',
+      severity: 'info',
+      gap: true,
+      title: `${unjoined.length} component${unjoined.length === 1 ? ' has' : 's have'} no lines on ${unjoined.length === 1 ? 'it' : 'them'}`,
+      detail: `${listed(unjoined.slice(0, 8).map(nameOf))}${unjoined.length > 8 ? `, and ${unjoined.length - 8} more` : ''}: nothing is joined to ${unjoined.length === 1 ? 'it' : 'them'}, so a solve leaves ${unjoined.length === 1 ? 'it' : 'them'} out.`,
+      nodeIds: unjoined.map(n => n.id),
+    });
   }
 
   // ── Tags ──────────────────────────────────────────────────────────────────
@@ -191,6 +346,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     push({
       id: 'tags-missing',
       severity: 'info',
+      gap: true,
       title: `${untagged.length} component${untagged.length === 1 ? '' : 's'} with no tag`,
       detail: 'Give each one a name. It is what a solve, a report and a procedure will call it.',
       nodeIds: untagged.map(n => n.id),
@@ -224,6 +380,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     push({
       id: 'fluid-unassigned',
       severity: 'info',
+      gap: true,
       title: `${noFluid.length} component${noFluid.length === 1 ? '' : 's'} with no fluid`,
       detail: 'Nothing that declares a fluid reaches them. Set it on the tank that feeds them, or join them up.',
       nodeIds: noFluid.map(n => n.id),
@@ -272,7 +429,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
             id: `vessel-over-burst-${n.id}`,
             severity: 'error',
             title: `${nameOf(n)} runs at or above its burst pressure`,
-            detail: `Operating pressure ${fmt(d.params!.pressure!)} against a burst pressure of ${fmt(d.params!.burst_pressure!)}.`,
+            detail: `Operating pressure ${fmtPressure('pressure', d.params!.pressure!)} against a burst pressure of ${fmtPressure('burst_pressure', d.params!.burst_pressure!)}.`,
             nodeIds: [n.id],
           });
         } else if (p > burst / 2) {
@@ -280,7 +437,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
             id: `vessel-low-sf-${n.id}`,
             severity: 'warning',
             title: `${nameOf(n)} has a factor of safety below 2`,
-            detail: `Operating pressure ${fmt(d.params!.pressure!)} on a burst pressure of ${fmt(d.params!.burst_pressure!)} is ${(burst / p).toFixed(2)}×.`,
+            detail: `Operating pressure ${fmtPressure('pressure', d.params!.pressure!)} on a burst pressure of ${fmtPressure('burst_pressure', d.params!.burst_pressure!)} is ${(burst / p).toFixed(2)}×.`,
             nodeIds: [n.id],
           });
         }
@@ -299,7 +456,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
         id: `relief-over-burst-${n.id}`,
         severity: 'error',
         title: `${nameOf(n)} lifts at or above ${nameOf(vessel)}'s burst pressure`,
-        detail: `Set at ${fmt(d.params!.set_pressure!)}; the vessel bursts at ${fmt(v.params!.burst_pressure!)}. It would not open before the tank failed.`,
+        detail: `Set at ${fmtPressure('set_pressure', d.params!.set_pressure!)}, so it lifts at ${lifts(set)}; the vessel bursts at ${fmtPressure('burst_pressure', v.params!.burst_pressure!)}. It would not open before the tank failed.`,
         nodeIds: [n.id, vessel.id],
       });
     } else if (op !== undefined && set <= op) {
@@ -307,7 +464,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
         id: `relief-under-operating-${n.id}`,
         severity: 'error',
         title: `${nameOf(n)} is set at or below ${nameOf(vessel)}'s operating pressure`,
-        detail: `Set at ${fmt(d.params!.set_pressure!)} with the tank run at ${fmt(v.params!.pressure!)}. It would be open the whole time.`,
+        detail: `Set at ${fmtPressure('set_pressure', d.params!.set_pressure!)}, so it lifts at ${lifts(set)}, with the tank run at ${fmtPressure('pressure', v.params!.pressure!)}. It would be open the whole time.`,
         nodeIds: [n.id, vessel.id],
       });
     }
@@ -358,6 +515,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     push({
       id: 'lines-unsized',
       severity: 'info',
+      gap: true,
       title: `${bare.length} line${bare.length === 1 ? '' : 's'} with no length or bore`,
       detail: 'Double-click a line to set what it is. Most of a feed system’s pressure drop is in the pipe.',
       edgeIds: bare.map(e => e.id),
@@ -447,7 +605,9 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     for (const qd of qds) {
       const paired = pairOf(qd);
       const other = paired && paired !== 'none' ? byId.get(paired) : undefined;
-      if (!other) continue;
+      // Two halves joined by a line of their own are a coupling drawn in
+      // place, and on one page is where it belongs.
+      if (!other || joined(qd.id, other.id)) continue;
       if (pageOf(dataOf(qd)) === pageOf(dataOf(other))) {
         push({
           id: `qd-samepage-${qd.id}`,
@@ -553,6 +713,7 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     push({
       id: 'instruments-floating',
       severity: 'info',
+      gap: true,
       title: `${floating.length} instrument${floating.length === 1 ? '' : 's'} not measuring anything`,
       detail: 'Drag each onto the component or line it reads, and it will clip to it.' + why,
       nodeIds: floating.map(n => n.id),
@@ -597,8 +758,9 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
     push({
       id: 'params-assumed',
       severity: 'info',
-      title: `${assumed.length} value${assumed.length === 1 ? '' : 's'} nobody has established`,
-      detail: `${assumed.slice(0, 8).join(', ')}${assumed.length > 8 ? `, and ${assumed.length - 8} more` : ''} — the list a design review should be looking at.`,
+      gap: true,
+      title: `${assumed.length} value${assumed.length === 1 ? '' : 's'} marked Estimate`,
+      detail: `${assumed.slice(0, 8).join(', ')}${assumed.length > 8 ? `, and ${assumed.length - 8} more` : ''}. Each is a number on the drawing nobody has checked against hardware: the list a design review should be looking at.`,
     });
   }
 
@@ -613,7 +775,11 @@ function missing(push: (f: Finding) => void, n: Node, whats: string[], why: stri
     : `${bare.slice(0, -1).join(', ')} or ${bare[bare.length - 1]}`;
   push({
     id: `missing-${n.id}`,
-    severity: 'warning',
+    // A number not on the drawing yet is the team's to fill in, not a fault
+    // in what is drawn: feed-twin stands a stated default in for it and says
+    // so. Amber here made every fresh tank read as a mistake.
+    severity: 'info',
+    gap: true,
     title: `${nameOf(n)} has no ${list}`,
     // Just the reason. It used to open with "<what> is not set", which is
     // what the title above it already says -- and a panel that says everything
@@ -623,7 +789,12 @@ function missing(push: (f: Finding) => void, n: Node, whats: string[], why: stri
   });
 }
 
-const fmt = (p: { value: number; unit: string }) => `${p.value} ${p.unit}`;
+/**
+ * Where a relief lifts, in psia. Its set pressure is a difference over the
+ * atmosphere it vents to -- plain psi -- and the vessel beside it is read in
+ * psia, so the sentence says the lift point on the vessel's reference too.
+ */
+const lifts = (setGaugePa: number) => `${fmtPsi((setGaugePa + 101325) / PSI_PA)} psia`;
 
 /**
  * Which vessel each relief valve protects.

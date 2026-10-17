@@ -57,6 +57,7 @@ SLOW_TESTS = {
     "test_a_pressed_tank_holds_when_the_valve_shuts",
     "test_every_thermal_model_on_settles_at_lockup",
     "test_a_tick_is_fast_enough_to_feel_live",
+    "test_the_study_and_the_console_end_a_burn_in_the_same_place",
     "test_a_small_ullage_press_lands_on_lockup_not_past_it",
 }
 
@@ -84,4 +85,19 @@ def _shipped_drawings_stay() -> None:
 
     have = {a.source for a in main.library.list("diagram")}
     if any(f"shipped:{p.name}" not in have for p in main.SEEDS.glob("*.json")):
-        main._seed()
+        main._seed(revive=True)
+
+
+# ------------------------------------------------------- a full server
+@pytest.fixture(autouse=True)
+def _no_console_watches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test's stands are not consoles being watched.
+
+    A full server refuses a new stand rather than close one touched in the
+    last ``_WATCHED_S`` (a console ticking it). One worker opens far more than
+    twelve stands a minute, and none is anyone's console, so here the
+    idlest is closed as it always was; the test of the refusal sets the
+    window itself."""
+    from backend import main
+
+    monkeypatch.setattr(main, "_WATCHED_S", 0.0)

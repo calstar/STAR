@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { labelOf, nestedUpdate, parseInput, unitOf } from './parameters';
+import { friendlyValue, labelOf, listedSections, nestedUpdate, parseInput, sectionIsOff, unitOf } from './parameters';
 import type { ParameterRow } from './parameters';
 
 const row = (over: Partial<ParameterRow>): ParameterRow => ({
@@ -24,7 +24,15 @@ describe('parameters', () => {
 
   it('reads units off the key and writes the team terms', () => {
     expect(labelOf('design_requirements.max_lox_tank_pressure_psi')).toBe('Max LOX tank pressure');
-    expect(unitOf(row({ path: 'design_requirements.max_lox_tank_pressure_psi' }))).toBe('psi');
+    // Absolute pressures read psia; a difference stays psi.
+    expect(unitOf(row({ path: 'design_requirements.max_lox_tank_pressure_psi' }))).toBe('psia');
+    expect(unitOf(row({ path: 'lox_tank.initial_pressure_psi', unit: 'psi' }))).toBe('psia');
+    expect(unitOf(row({ path: 'design_requirements.layer1_tank_equal_tol_psi', unit: 'psi' }))).toBe('psi');
+    expect(unitOf(row({ path: 'stability.regulator_max_excursion_psi', unit: 'psi' }))).toBe('psi');
+    expect(unitOf(row({ path: 'design_requirements.regulator_min_differential_psi', unit: 'psi' }))).toBe('psi');
+    expect(labelOf('design_requirements.layer1_P_O_start_psi_min')).toBe('LOX tank pressure, search floor');
+    expect(labelOf('design_requirements.frozen_parameters.P_F_start_psi')).toBe('Fuel tank pressure');
+    expect(unitOf(row({ path: 'design_requirements.layer1_P_F_start_psi_max' }))).toBe('psia');
     expect(labelOf('design_requirements.optimal_of_ratio')).toBe('Optimal O/F ratio');
     expect(labelOf('discharge.oxidizer.orifice_l_over_d')).toBe('Orifice L/d');
     expect(labelOf('design_requirements.min_rail_exit_velocity_m_s')).toBe('Min rail exit velocity');
@@ -32,5 +40,40 @@ describe('parameters', () => {
     expect(labelOf('design_requirements.min_static_margin_cal')).toBe('Min static margin');
     expect(labelOf('lox_tank.ullage_gas_temperature_K')).toBe('Ullage gas temperature');
     expect(unitOf(row({ unit: 'kg/m³', path: 'fluids.fuel.density' }))).toBe('kg/m³');
+  });
+
+  it('reads a Pa value in the unit a person uses', () => {
+    const pa = (path: string, value: unknown) => friendlyValue(row({ path, unit: 'Pa', value }), value);
+    expect(pa('chamber_geometry.design_pressure', 2413166)).toBe('350 psia');
+    expect(pa('fluids.fuel.vapor_pressure', 101325)).toBe('14.7 psia');
+    expect(pa('fluids.oxidizer.bulk_modulus_pa', 9.4e8)).toBe('940 MPa');
+    expect(pa('combustion.cea.Pc_range', [1e6, 9e6])).toBe('145 psia to 1,305 psia');
+    expect(pa('design_requirements.max_P_tank_O', null)).toBeNull();
+    expect(friendlyValue(row({ path: 'fluids.fuel.viscosity', unit: 'Pa·s', value: 1e-4 }), 1e-4)).toBeNull();
+  });
+
+  it('lists a legacy section only while it holds a value, an internal one never', () => {
+    const sec = (key: string, over: object = {}) => ({ key, label: key, count: 1, modified: 0, ...over });
+    expect(listedSections([sec('fluids'), sec('chamber', { legacy: true }), sec('design_valid_for', { internal: true, modified: 1 })])
+      .map((s) => s.key)).toEqual(['fluids']);
+    expect(listedSections([sec('chamber', { legacy: true, modified: 1 })]).map((s) => s.key)).toEqual(['chamber']);
+  });
+});
+
+describe('what the Configuration tab shows a person', () => {
+  it('reads a length in mm and inches, not bare metres', () => {
+    const v = 0.1651;
+    expect(friendlyValue(row({ path: 'design_requirements.max_chamber_outer_diameter', unit: 'm', value: v }), v))
+      .toBe('165.1 mm · 6.5 in');
+    expect(friendlyValue(row({ path: 'design_requirements.target_apogee', unit: 'm', value: 3048 }), 3048)).toBe('10,000 ft');
+  });
+  it('never labels a tank pressure "in Pa"', () => {
+    expect(labelOf('design_requirements.max_P_tank_O')).not.toMatch(/\bPa\b/);
+  });
+  it('sets apart a section the design switches off', () => {
+    const cfg = { regen_cooling: { enabled: false }, ablative_cooling: { enabled: true }, injector: {} };
+    expect(sectionIsOff('regen_cooling', cfg)).toBe(true);
+    expect(sectionIsOff('ablative_cooling', cfg)).toBe(false);
+    expect(sectionIsOff('injector', cfg)).toBe(false);
   });
 });

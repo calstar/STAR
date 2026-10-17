@@ -23,6 +23,7 @@
  */
 
 import { useMemo, memo } from 'react';
+import { PRESSURE_UNIT } from '../lib/pressure';
 
 interface PressureBarProps {
   label: string;
@@ -35,6 +36,9 @@ interface PressureBarProps {
    *  DAQ's amber and red still take over; `color` overrides even those. */
   tint?: string;
   unit?: string;
+  /** The reading's hover; the unit when not given. The twin's bars read psia
+   *  and the stand's DAQ gauge, so the console puts the DAQ's number here. */
+  hint?: string;
   showLabels?: boolean; // Show NOP/MEOP labels on this bar (default true)
   compact?: boolean;    // Reduced font sizes for use in tight spaces
 }
@@ -99,7 +103,8 @@ function PressureBar({
   meop: drawnMeop,
   color,
   tint = '#d9d9d9',
-  unit = 'psig',
+  unit = PRESSURE_UNIT,
+  hint,
   showLabels = true,
   compact = false,
 }: PressureBarProps) {
@@ -212,7 +217,7 @@ function PressureBar({
       <div
         className={`flex-shrink-0 whitespace-nowrap pt-3 text-center font-mono leading-none tabular-nums ${compact ? 'text-[18px]' : 'text-[clamp(16px,1.35vw,24px)]'}`}
         style={{ color: readout, paddingRight: GUTTER }}
-        title={`${unit}`}
+        title={hint ?? `${unit}`}
       >
         {value !== null ? fmtPressure(value) : '---'}
       </div>

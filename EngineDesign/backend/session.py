@@ -104,6 +104,13 @@ class UserSession:
         #: loaded the design into, so it puts the design back instead of autosaving the
         #: default over it (2026-10-01: a restart saved methalox over an ethalox design).
         self.epoch = uuid.uuid4().hex
+        #: New for every wholesale config replacement (POST /api/config/load, an upload); None
+        #: until the first one, i.e. while the session still holds configs/default.yaml. The
+        #: session is one per user, shared by every tab, so a tab that opened design X can load X
+        #: over the design Y another tab holds. A tab compares this with the token its own last
+        #: load got back and never autosaves a config some other tab put here; a read-only tab
+        #: puts its design back after a restart only while this is still None.
+        self.load_token: str | None = None
         self.app_state = AppState()
         self.optimizer = OptimizerState()
         self.controller = ControllerState()

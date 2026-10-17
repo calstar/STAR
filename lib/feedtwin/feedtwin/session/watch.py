@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Deque, Iterator
 
 from feedtwin.session.diagnostics import SolverRecord
-from feedtwin.session.gauge import ATMOSPHERE, PSI
+from feedtwin.session.gauge import ATMOSPHERE, PSI, say
 from feedtwin.solve.steady import INITIAL_FLOW
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -224,7 +224,8 @@ class Watcher:
                 solved = _path_to_air(net, node, isolated, vessels)
                 cut = [b for b in drawn if b in isolated]
                 detail = (
-                    f"{(pressure - ATMOSPHERE) / PSI:+.1f} psig at the {side} side, "
+                    f"{say(pressure, 1)} ({(pressure - ATMOSPHERE) / PSI:+.1f} psi "
+                    f"off atmosphere) at the {side} side, "
                     f"open to the air through {', '.join(name(b) for b in drawn[:6])}"
                 )
                 if solved is None and cut:

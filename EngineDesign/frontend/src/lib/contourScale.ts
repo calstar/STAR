@@ -47,8 +47,9 @@ const TICK_PX = 60;
  * Domains, ticks and chart size for a contour spanning [xMin, xMax] with maximum radius rMax
  * (any one length unit). `full` shows both halves. One scale on both axes, and the chart always
  * fills the offered width: a long part sets the scale by its length; a short, wide one would make
- * the chart taller than `maxPlotH`, so the scale comes from the height instead and the axial range
- * is widened evenly either side of the part (the part sits centred, as in a CAD viewport).
+ * the chart taller than `maxPlotH` per half, so the scale comes from the height instead and the
+ * axial range is widened evenly either side of the part (the part sits centred, as in a CAD
+ * viewport).
  */
 export function contourLayout(
   xMin: number, xMax: number, rMax: number, full: boolean, width: number, maxPlotH = 300,
@@ -61,8 +62,12 @@ export function contourLayout(
   const yr0 = full ? 2 * yTop : yTop;
   let scale = plotW / xr0;
   let plotH = Math.floor(scale * yr0);
-  if (plotH > maxPlotH) {
-    plotH = maxPlotH;
+  // Both halves get the height one half would: capping the full section at the half's height
+  // halved the scale and padded the axial range out to twice the part (2026-10-17: the ethalox
+  // chamber's 332 mm drawn on -350..200 mm, a third of it blank).
+  const cap = full ? 2 * maxPlotH : maxPlotH;
+  if (plotH > cap) {
+    plotH = cap;
     scale = plotH / yr0;
   }
   const xr = plotW / scale;
