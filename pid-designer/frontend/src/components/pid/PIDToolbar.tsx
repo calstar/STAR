@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Node, Edge } from '@xyflow/react';
-import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
+import type { Capture, InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
 import { useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { download, exportPng, exportSvg, fileStem } from './exportImage';
@@ -25,6 +25,8 @@ interface PIDToolbarProps {
   onModeChange:      (mode: InteractionMode) => void;
   /** What the exported sheet's title block says. */
   sheet:             SheetMeta;
+  /** Run an export against the canvas with nothing selected on it. */
+  capture:           Capture;
 }
 
 function relativeTime(iso: string): string {
@@ -40,7 +42,7 @@ function relativeTime(iso: string): string {
 export function PIDToolbar({
   onFitView, getSnapshot, loadSnapshot, onClear, clearSummary, onUndo, onRedo,
   onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
-  canVersion, mode, onModeChange, sheet,
+  canVersion, mode, onModeChange, sheet, capture,
 }: PIDToolbarProps) {
   // Undo, Redo, Clear, Import and the two Restores rewrite the diagram, so they
   // need the checkout. Pan / Select / Fit View / Export / History only change
@@ -69,7 +71,7 @@ export function PIDToolbar({
     useState<{ what: string; run: () => Promise<void> } | null>(null);
 
   const [exportOpen, setExportOpen] = useState(false);
-  const [exporting, setExporting] = useState<'png' | 'svg' | null>(null);
+  const [exporting, setExporting] = useState<'png' | 'print' | 'svg' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -153,7 +155,7 @@ export function PIDToolbar({
     setExportOpen(false);
   };
 
-  const exportImage = async (kind: 'png' | 'svg') => {
+  const exportImage = async (kind: 'png' | 'print' | 'svg') => {
     const flow = document.querySelector<HTMLElement>('.react-flow');
     if (!flow) return;
     setExporting(kind);
@@ -161,10 +163,12 @@ export function PIDToolbar({
     try {
       const { nodes } = getSnapshot();
       const shown = nodes.filter(n => (n.data as { page?: string })?.page === sheet.page || !(n.data as { page?: string })?.page);
-      const blob = kind === 'png'
-        ? await exportPng(flow, shown, sheet)
-        : await exportSvg(flow, shown, sheet);
-      download(blob, `${fileStem(sheet)}.${kind}`);
+      // With nothing selected: a selection is drawn in heavier ink, and the
+      // sheet would come out with one symbol picked out (`capture`).
+      const blob = await capture(() => kind === 'svg'
+        ? exportSvg(flow, shown, sheet)
+        : exportPng(flow, shown, sheet, { print: kind === 'print' }));
+      download(blob, `${fileStem(sheet)}${kind === 'print' ? ' (print)' : ''}.${kind === 'svg' ? 'svg' : 'png'}`);
       setExportOpen(false);
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'export failed');
@@ -192,7 +196,9 @@ export function PIDToolbar({
 
   const btn    = 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors border';
   const def    = `${btn} bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]`;
-  const danger = `${btn} bg-[var(--color-danger)]/15 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/25 border-[var(--color-danger)]/40`;
+  // Quiet until pointed at: a red button in the corner of every drawing drew
+  // the eye to the one action nobody opening a drawing came to take.
+  const danger = `${btn} bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-danger)]/15 hover:text-[var(--color-danger)] border-[var(--color-border)] hover:border-[var(--color-danger)]/40`;
   const green  = `${btn} bg-emerald-900/30 text-emerald-400 hover:bg-emerald-900/50 border-emerald-800/50`;
   const active = `${btn} bg-[var(--color-accent)]/25 text-[var(--color-text-primary)] border-[var(--color-accent)]`;
   const modeBtn = (m: InteractionMode) => `${btn} ${mode === m ? active.replace(btn, '') : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'}`;
@@ -251,7 +257,9 @@ export function PIDToolbar({
               <div className="fixed inset-0 z-30" onClick={() => setExportOpen(false)} />
               <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-1 shadow-2xl">
                 <ExportRow onClick={() => void exportImage('png')} busy={exporting === 'png'}
-                  title="PNG image" hint="this sheet, with a title block" />
+                  title="PNG image" hint="this sheet as on screen, with a title block" />
+                <ExportRow onClick={() => void exportImage('print')} busy={exporting === 'print'}
+                  title="PNG for print" hint="white paper and dark ink, whatever the screen" />
                 <ExportRow onClick={() => void exportImage('svg')} busy={exporting === 'svg'}
                   title="SVG" hint="scalable, for a document" />
                 <ExportRow onClick={exportJSON} title="JSON" hint="the whole diagram, for import" />
@@ -272,7 +280,9 @@ export function PIDToolbar({
           onClick={() => { setShowRelease(true); setRelStatus('idle'); setRelError(''); }}
           disabled={!canVersion || readOnly}
           className={`${green} disabled:opacity-40`}
-          title="Publish an immutable, named version (e.g. 0.1)"
+          title={readOnly
+            ? 'Take the checkout to publish a version'
+            : 'Publish a named version of this diagram (R1, say). A version never changes once published; the title block of an export names it.'}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" />
@@ -280,16 +290,74 @@ export function PIDToolbar({
           Release
         </button>
 
-        <button
-          onClick={openHistory}
-          disabled={!canVersion}
-          className={`${btn} disabled:opacity-40 ${showHistory ? 'bg-[var(--color-accent)]/20 text-[var(--color-text-primary)] border-[var(--color-accent)]/60' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'}`}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          History
-        </button>
+        {/* Over the canvas, not above it: as a band it pushed the drawing down
+            by its own height every time it opened. */}
+        <div className="relative">
+          <button
+            onClick={openHistory}
+            disabled={!canVersion}
+            className={`${btn} disabled:opacity-40 ${showHistory ? 'bg-[var(--color-accent)]/20 text-[var(--color-text-primary)] border-[var(--color-accent)]/60' : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] border-[var(--color-border)]'}`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            History
+          </button>
+          {showHistory && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setShowHistory(false)} />
+              <div className="absolute left-0 top-full z-40 mt-1 max-h-[60vh] w-[360px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-3 shadow-2xl">
+                {historyStatus === 'loading' && <p className="text-xs text-[var(--color-text-secondary)] py-2">Loading…</p>}
+                {historyStatus === 'err' && <p className="text-xs text-[var(--color-danger)] py-2">Could not load the history. Try again in a moment.</p>}
+
+                {historyStatus === 'idle' && (
+                  <>
+                    <p className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Releases</p>
+                    {releases.length === 0 && <p className="text-xs text-[var(--color-text-muted)] pb-2">No version published yet. Release publishes one, named, that never changes.</p>}
+                    {releases.length > 0 && (
+                      <div className="flex flex-col gap-1 mb-3">
+                        {releases.map(r => (
+                          <button
+                            key={r.label}
+                            onClick={() => restoreRelease(r)}
+                            disabled={readOnly || restoring === `rel:${r.label}`}
+                            className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
+                          >
+                            <span className="inline-flex items-center justify-center text-[10px] font-semibold text-emerald-300 bg-emerald-900/40 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0">{r.label}</span>
+                            <span className="text-[10px] text-[var(--color-text-muted)] flex-1 group-hover:text-[var(--color-text-secondary)]">
+                              {restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <p className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Autosaves</p>
+                    {micro.length === 0 && <p className="text-xs text-[var(--color-text-muted)] py-2">No autosaves yet.</p>}
+                    {micro.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        {micro.map(v => (
+                          <button
+                            key={v.versionId}
+                            onClick={() => restoreMicro(v)}
+                            disabled={readOnly || restoring === v.versionId}
+                            className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
+                          >
+                            <span className="w-2 h-2 rounded-full shrink-0 bg-[var(--color-bg-tertiary)]" />
+                            <span className="text-xs text-[var(--color-text-primary)] flex-1 truncate">{new Date(v.savedAt).toLocaleString()}</span>
+                            <span className="text-[10px] text-[var(--color-text-muted)] shrink-0 group-hover:text-[var(--color-text-secondary)]">
+                              {restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="ml-auto" />
         <button
@@ -302,61 +370,9 @@ export function PIDToolbar({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          Clear
+          Clear page
         </button>
       </div>
-
-      {showHistory && (
-        <div className="border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-3 max-h-[320px] overflow-y-auto">
-          {historyStatus === 'loading' && <p className="text-xs text-[var(--color-text-secondary)] py-2">Loading…</p>}
-          {historyStatus === 'err' && <p className="text-xs text-[var(--color-danger)] py-2">Failed to load history - is the backend running?</p>}
-
-          {historyStatus === 'idle' && (
-            <>
-              <p className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Releases</p>
-              {releases.length === 0 && <p className="text-xs text-[var(--color-text-muted)] pb-2">No releases yet - click Release to publish 0.1.</p>}
-              {releases.length > 0 && (
-                <div className="flex flex-col gap-1 mb-3">
-                  {releases.map(r => (
-                    <button
-                      key={r.label}
-                      onClick={() => restoreRelease(r)}
-                      disabled={readOnly || restoring === `rel:${r.label}`}
-                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
-                    >
-                      <span className="inline-flex items-center justify-center text-[10px] font-semibold text-emerald-300 bg-emerald-900/40 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0">{r.label}</span>
-                      <span className="text-[10px] text-[var(--color-text-muted)] flex-1 group-hover:text-[var(--color-text-secondary)]">
-                        {restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <p className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Microversions (auto-saved)</p>
-              {micro.length === 0 && <p className="text-xs text-[var(--color-text-muted)] py-2">No microversions yet.</p>}
-              {micro.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  {micro.map(v => (
-                    <button
-                      key={v.versionId}
-                      onClick={() => restoreMicro(v)}
-                      disabled={readOnly || restoring === v.versionId}
-                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-colors group disabled:opacity-50"
-                    >
-                      <span className="w-2 h-2 rounded-full shrink-0 bg-[var(--color-bg-tertiary)]" />
-                      <span className="text-xs text-[var(--color-text-primary)] flex-1 truncate">{new Date(v.savedAt).toLocaleString()}</span>
-                      <span className="text-[10px] text-[var(--color-text-muted)] shrink-0 group-hover:text-[var(--color-text-secondary)]">
-                        {restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
 
       <Modal
         open={confirmClear !== null}

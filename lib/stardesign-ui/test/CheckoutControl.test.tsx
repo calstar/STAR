@@ -114,3 +114,40 @@ describe('the chip s controls', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('naming the give-it-back button', () => {
+  afterEach(cleanup);
+
+  it('keeps the untitled "Release" by default, which the EngineDesign E2E finds', () => {
+    const html = markup({ held: true, secondsLeft: 600 });
+    expect(html).toContain('>Release</button>');
+    expect(html).not.toContain('Stop editing');
+  });
+
+  it('says what it does, and explains itself, when the app names it', async () => {
+    // pid-designer had two buttons reading "Release": this one, and the
+    // toolbar's, which publishes a version.
+    const release = vi.fn(async () => {});
+    render(<CheckoutControl checkout={{ ...base, held: true, secondsLeft: 600, release }} noun="diagram" releaseLabel="Stop editing" />);
+    const button = screen.getByRole('button', { name: /^stop editing$/i });
+    expect(button.getAttribute('title')).toMatch(/check this diagram back in/i);
+    expect(screen.queryByRole('button', { name: /^release$/i })).toBeNull();
+
+    await userEvent.click(button);
+    expect(release).toHaveBeenCalledOnce();
+  });
+});
+
+describe('a design taken on its first edit', () => {
+  it('reads as ready to edit, with nothing to press', () => {
+    const html = markup({ held: false, holder: null, holderName: null, armed: true });
+    expect(html).toContain('Ready to edit');
+    expect(html).not.toContain('Read only');
+    expect(html).not.toContain('>Take<');
+  });
+
+  it('still says who has it when somebody does', () => {
+    const html = markup({ held: false, holder: 'them@berkeley.edu', holderName: 'Them', armed: false });
+    expect(html).toContain('Them is editing');
+  });
+});

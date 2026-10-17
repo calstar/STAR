@@ -93,6 +93,20 @@ import { COMPONENT_SPECS } from './spec';
 
 export type InteractionMode = 'pan' | 'select';
 
+/** Run `shoot` against the canvas as it is drawn for a reader: nothing selected. */
+export type Capture = <T>(shoot: () => Promise<T>) => Promise<T>;
+
+/**
+ * Until the canvas has drawn what was just set, or a moment has passed. Two
+ * frames is a commit and a paint; the timeout is for a tab in the background,
+ * which runs no frames at all and would otherwise wait forever.
+ */
+const painted = () => new Promise<void>(resolve => {
+  const done = () => { clearTimeout(t); resolve(); };
+  const t = setTimeout(done, 150);
+  requestAnimationFrame(() => requestAnimationFrame(done));
+});
+
 // The diagram/version types and every server call now live in api/diagrams.ts:
 // a diagram is addressed as (owner, id) since diagrams are shared, and an
 // `?owner=` query parameter cannot be baked into a URL prefix the way the old
@@ -170,6 +184,17 @@ const SNAP: [number, number] = [GRID, GRID];
  */
 const DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' } as const;
 
+/**
+ * The margin Fit leaves round a page, as a fraction of the canvas.
+ *
+ * A tenth on each side was a fifth of every dimension spent on margin. A
+ * stand's Rocket page is tall and narrow, so it is the height that fits, and
+ * at 1920 it came out about 420 px wide with 7 px tags. Three hundredths
+ * clears the toolbar corners and the title block and gives the drawing back
+ * most of that.
+ */
+const FIT_PADDING = 0.03;
+
 // ── Inner canvas ─────────────────────────────────────────────────────────────
 interface CanvasProps {
   diagramRef:         DocRef;
@@ -219,6 +244,19 @@ interface CanvasProps {
   /** Autosave hit a 423: the checkout went to someone else. Given the name of
    *  the diagram the refused edits were kept as, when keeping them worked. */
   onLockLost:         (savedAs?: string) => void;
+  /** Whether this tab holds the checkout. */
+  held:               boolean;
+  /**
+   * Take the checkout for an edit already on screen (`useCheckout`'s
+   * `takeOnEdit`): given while nobody holds the diagram on a developer's own
+   * machine, where the first edit takes it rather than opening it.
+   */
+  claim?:             () => Promise<boolean>;
+  /** The first edit was made on a drawing somebody has saved over since it
+   *  was opened. Given the name the edit was kept as, when keeping it worked. */
+  onStale:            (savedAs?: string) => void;
+  /** Run an export with nothing selected on the canvas (see below). */
+  captureRef:         React.MutableRefObject<Capture>;
   /** React Flow themes its own chrome (handles, selection, controls) off
    *  this -- it does not read the CSS variables above on its own. */
   theme:              Theme;
@@ -227,7 +265,7 @@ interface CanvasProps {
 function PIDCanvas({
   diagramRef, fitRef, viewportsRef, page, setPage, declaredPages, setDeclaredPages, getRef, saveNowRef, loadRef, clearRef, clearCountRef, undoRef, redoRef,
   releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef, onForbidden, onLockLost,
-  mode, sheet, theme,
+  mode, sheet, theme, held, claim, onStale, captureRef,
 }: CanvasProps) {
   // `onNodesChange` is deliberately unused: `handleNodesChange` below applies
   // the changes itself so it can move clipped instruments in the same update.
@@ -339,6 +377,14 @@ function PIDCanvas({
   const lastSaved = useRef<string>(''), unsnapped = useRef(false);
   // The autosave on the wire, if one is: what `saveNowRef` waits for.
   const inFlight = useRef<Promise<unknown> | null>(null);
+  // Whether this tab holds the checkout, for the guards below (a ref, for the
+  // reason `readOnlyRef` is one).
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  // The drawing as the server last had it, by our own knowledge: as opened,
+  // then as each save left it. What the first edit is checked against before
+  // it is written -- see `firstEdit`.
+  const serverHas = useRef<string>('');
 
   /**
    * Open a diagram on a page it has.
@@ -359,6 +405,7 @@ function PIDCanvas({
     api.loadDiagram(diagramRef)
       .then(data => {
         if (cancelled) return;
+        serverHas.current = JSON.stringify(api.toStored({ nodes: data?.nodes ?? [], edges: data?.edges ?? [] }));
         const loaded = migrate({ nodes: data?.nodes ?? [], edges: data?.edges ?? [] });
         seedIdsFrom(loaded.nodes);
         setNodes(loaded.nodes);
@@ -383,6 +430,44 @@ function PIDCanvas({
     return () => { cancelled = true; };
   }, [diagramKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * The first edit takes the checkout (`takeOnEdit`, on a developer's own
+   * machine).
+   *
+   * Opening used to take it, which put a countdown on every diagram anybody
+   * looked at and kept a second machine read only for as long as the first
+   * had it open. Now nobody holds a diagram until somebody changes it, and
+   * the change is already on screen when it is taken -- so this takes it
+   * without the reload a Take does, and checks instead that what was drawn
+   * on is still what the server has. If somebody saved over it meanwhile,
+   * writing this edit would overwrite theirs: the edit is kept as a diagram
+   * of the user's own and the latest is put on screen (`onStale`). If
+   * somebody else holds it, the edit is kept the same way and the canvas goes
+   * read only (`onLockLost`), as a refused save does.
+   *
+   * One at a time: the edits that follow while the first is being taken wait
+   * for it rather than each trying to take it.
+   */
+  const claiming = useRef<Promise<boolean> | null>(null);
+  const firstEdit = useCallback((payload: Snapshot): Promise<boolean> => {
+    if (heldRef.current) return Promise.resolve(true);
+    if (!claim) return Promise.resolve(false);
+    claiming.current ??= (async () => {
+      const keep = () => api.rescueDiagram(diagramRef, payload).then(k => k.name).catch(() => undefined);
+      if (!(await claim())) {
+        onLockLost(await keep());
+        return false;
+      }
+      const now = await api.loadDiagram(diagramRef).catch(() => null);
+      if (now && JSON.stringify(api.toStored({ nodes: now.nodes ?? [], edges: now.edges ?? [] })) !== serverHas.current) {
+        onStale(await keep());
+        return false;
+      }
+      return true;
+    })().finally(() => { claiming.current = null; });
+    return claiming.current;
+  }, [claim, diagramRef, onLockLost, onStale]);
+
   // Debounced autosave of the working copy — only once the active diagram has
   // actually loaded, so switching never clobbers a diagram with another's data.
   useEffect(() => {
@@ -399,7 +484,11 @@ function PIDCanvas({
       lastSaved.current = serialized;
       unsnapped.current = true;
       const payload = { nodes, edges };
-      const sent = api.autosaveDiagram(diagramRef, payload);
+      const save = () => api.autosaveDiagram(diagramRef, payload).then(() => { serverHas.current = serialized; });
+      // Not held yet: this is the edit that takes it (`firstEdit`). One that
+      // could not be taken, or was made on a drawing saved over since, is
+      // kept and handed on there, and nothing is written here.
+      const sent = heldRef.current ? save() : firstEdit(payload).then(ok => (ok ? save() : undefined));
       inFlight.current = sent.catch(() => {});
       sent.catch((e: unknown) => {
         lastSaved.current = ''; // failed -- let the next change retry
@@ -437,6 +526,7 @@ function PIDCanvas({
     if (serialized === lastSaved.current) return;
     await api.autosaveDiagram(diagramRef, g);
     lastSaved.current = serialized;
+    serverHas.current = serialized;
     unsnapped.current = true;
   }, [diagramKey, diagramRef]);
 
@@ -453,12 +543,15 @@ function PIDCanvas({
   useEffect(() => {
     unsnapped.current = false;
     const flush = () => {
-      // A beacon cannot read a rejection, so gate it here instead.
-      if (loadedId.current !== diagramKey || readOnlyRef.current) return;
+      // A beacon cannot read a rejection, so gate it here instead -- on the
+      // checkout too: an edit made in the second before the first edit took
+      // it would only be refused.
+      if (loadedId.current !== diagramKey || readOnlyRef.current || !heldRef.current) return;
       const text = JSON.stringify(api.toStored(snapshot.current));
       if (text === lastSaved.current && !unsnapped.current) return;
       api.flushDiagram(diagramRef, snapshot.current);
       lastSaved.current = text;
+      serverHas.current = text;
       unsnapped.current = false;
     };
     const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
@@ -677,7 +770,36 @@ function PIDCanvas({
    * nothing, and it took a second press to work. Same root cause as the
    * palette dropping nothing right after Take, fixed the same way.
    */
-  fitRef.current = useCallback(() => { void fitView({ padding: 0.1 }); }, [fitView]);
+  fitRef.current = useCallback(() => { void fitView({ padding: FIT_PADDING }); }, [fitView]);
+
+  /**
+   * An export, taken with nothing selected.
+   *
+   * The PNG and the SVG are the live canvas serialised, and the canvas draws a
+   * selected symbol in heavier, brighter ink. Double-click the COPV, Cancel,
+   * Export, and the sheet came out with the COPV picked out as if it were the
+   * point of the drawing. The selection is put down for the shot and given
+   * back after it, whatever the shot did; history never sees either, since it
+   * compares the drawing as saved.
+   */
+  captureRef.current = useCallback(async <T,>(shoot: () => Promise<T>): Promise<T> => {
+    const nodesPicked = new Set(snapshot.current.nodes.filter(n => n.selected).map(n => n.id));
+    const edgesPicked = new Set(snapshot.current.edges.filter(e => e.selected).map(e => e.id));
+    const any = nodesPicked.size + edgesPicked.size > 0;
+    if (any) {
+      setNodes(clearSelection);
+      setEdges(clearSelection);
+      await painted();
+    }
+    try {
+      return await shoot();
+    } finally {
+      if (any) {
+        setNodes(nds => nds.map(n => (nodesPicked.has(n.id) && !n.selected ? { ...n, selected: true } : n)));
+        setEdges(eds => eds.map(e => (edgesPicked.has(e.id) && !e.selected ? { ...e, selected: true } : e)));
+      }
+    }
+  }, [setNodes, setEdges]);
 
   /**
    * Show a page when you arrive on it, and leave it where you left it.
@@ -701,7 +823,7 @@ function PIDCanvas({
     const seen = viewportsRef.current.get(viewKey);
     if (seen) { setViewport(seen); return; }
     if (!nodes.some(n => pageOf(n.data as unknown as PIDNodeData) === page)) return;
-    void fitView({ padding: 0.1 });
+    void fitView({ padding: FIT_PADDING });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewKey, nodesReady]);
 
@@ -1456,8 +1578,10 @@ function PIDCanvas({
             narrower than a desktop and climbed up through the middle of the
             drawing -- printing the instructions over the thing they are about.
             `nowrap` is what makes that impossible rather than unlikely, and
-            it stopped taking clicks meant for the canvas underneath. */}
-        <Panel position="bottom-center" className="pointer-events-none max-w-full">
+            it stopped taking clicks meant for the canvas underneath. Only
+            where there is room beside the title block -- at 1440 the two
+            overlapped -- and only to someone who can draw. */}
+        <Panel position="bottom-center" className={`pointer-events-none max-w-full ${readOnly ? 'hidden' : 'hidden 2xl:block'}`}>
           <span className="block truncate whitespace-nowrap text-[10px] text-[var(--color-text-muted)] select-none">
             Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates
           </span>
@@ -1654,6 +1778,10 @@ export function PIDDesigner() {
   const getReleasesRef    = useRef<() => Promise<ReleaseVersion[]>>(() => Promise.resolve([]));
   const restoreMicroRef   = useRef<(versionId: string) => Promise<void>>(() => Promise.resolve());
   const restoreReleaseRef = useRef<(label: string) => Promise<void>>(() => Promise.resolve());
+  const captureRef        = useRef<Capture>(shoot => shoot());
+  // The first edit was made on a drawing saved over since it was opened: the
+  // name it was kept as (or '' when keeping it failed), until acknowledged.
+  const [stale, setStale] = useState<string | null>(null);
 
 
   // Load the user's diagram list once; create a first one if they have none.
@@ -1817,11 +1945,18 @@ export function PIDDesigner() {
     reload: useCallback(async () => { setReloadKey((n) => n + 1); }, []),
     beforeRelease: useCallback(() => saveNowRef.current(), []),
     // On a developer's own machine the checkout has no colleague to protect,
-    // so it stays out of the way: the diagram is taken on open, held while the
-    // tab lives, and taken straight back if it lapses. Deployed, the ordinary
-    // model applies -- press Take, and be told when it goes.
+    // so it stays out of the way: nothing is taken by opening a diagram, the
+    // first edit takes it (`firstEdit` in the canvas), and a hold that lapses
+    // is simply free again. Taking it on open put "Editing · 14:52" over every
+    // diagram anybody looked at and left a second machine read only. Deployed,
+    // the ordinary model applies -- press Take, and be told when it goes.
     local: isLocalHost(location.hostname),
+    takeOnEdit: true,
   });
+  const onStale = useCallback((savedAs?: string) => {
+    setStale(savedAs ?? '');
+    setReloadKey(n => n + 1);
+  }, []);
 
   // What the title block says. The latest release label is fetched when the
   // diagram changes and again after a release is published, so the corner of
@@ -1853,7 +1988,9 @@ export function PIDDesigner() {
     // viewer could wipe the canvas they were looking at. The diagram bar inside
     // is unaffected: gating is opt-in, and Take / Release must stay live
     // exactly when you do not hold the diagram.
-    <ReadOnlyProvider readOnly={!checkout.held}>
+    // Editable while held -- or, on a developer's own machine, while nobody
+    // holds it and the first edit will take it (`armed`).
+    <ReadOnlyProvider readOnly={!(checkout.held || checkout.armed)}>
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <DiagramBar
         diagrams={diagrams}
@@ -1909,6 +2046,23 @@ export function PIDDesigner() {
           copy it, or ask to edit it again from <b>Change</b>.
         </p>
       </Modal>
+
+      {/* The first edit was drawn on a copy somebody saved over in the
+          meantime. Writing it would have overwritten their work. */}
+      <Modal
+        open={stale !== null}
+        onClose={() => setStale(null)}
+        title="This diagram changed after you opened it"
+        footer={<button onClick={() => setStale(null)} className={primaryBtn}>OK</button>}
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          Someone saved it while you had it open, so your change was not written over
+          theirs. {stale
+            ? <>Your change was kept as a separate diagram in your list: <b>{stale}</b>. </>
+            : <>Your change could not be kept. </>}
+          The latest version is on screen now; make the change again here.
+        </p>
+      </Modal>
       <PIDToolbar
         onFitView={() => fitRef.current()}
         getSnapshot={() => getRef.current()}
@@ -1927,6 +2081,7 @@ export function PIDDesigner() {
         onGetReleases={() => getReleasesRef.current()}
         onRestoreMicro={versionId => restoreMicroRef.current(versionId)}
         onRestoreRelease={label => restoreReleaseRef.current(label)}
+        capture={shoot => captureRef.current(shoot)}
         canVersion={!!activeRef}
         mode={mode}
         onModeChange={setMode}
@@ -1963,6 +2118,10 @@ export function PIDDesigner() {
               sheet={sheet}
               onForbidden={onForbidden}
               onLockLost={checkout.lost}
+              held={checkout.held}
+              claim={checkout.claim}
+              onStale={onStale}
+              captureRef={captureRef}
               theme={theme}
             />
           ) : (

@@ -6,7 +6,7 @@
  * looking. Deliberately tiny -- this is a shell, not a component library.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useId } from 'react';
 import type { ReactNode } from 'react';
 
 export function Modal({
@@ -24,6 +24,9 @@ export function Modal({
   footer?: ReactNode;
   width?: string;
 }) {
+  // Named for a screen reader by its own title, and marked modal, so a dialog
+  // is announced as one rather than as more of the page behind it.
+  const titleId = useId();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -36,10 +39,13 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className={`${width} max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
+        <h3 id={titleId} className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
         {children && <div className="mt-4">{children}</div>}
         {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
       </div>

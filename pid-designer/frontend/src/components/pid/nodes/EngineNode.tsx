@@ -3,7 +3,7 @@ import { Frame, TurnedPort } from './Frame';
 import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
-import { fmtParam } from '../fmt';
+import { fmtParam, fmtPressure } from '../fmt';
 
 /** The engine's box, and how far down each side its two inlets sit: what a port is placed from before it is measured. */
 export const ENGINE_W = 72, ENGINE_H = 120, ENGINE_INLET_ALONG = 18;
@@ -25,7 +25,9 @@ const W = ENGINE_W, H = ENGINE_H;
 export function EngineNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation, params } = data as unknown as PIDNodeData;
   const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
-  const readout = [fmtParam(params?.chamber_pressure), fmtParam(params?.chamber_temperature)].filter(Boolean);
+  // A bare chamber pressure is absolute already; printed psia like every
+  // other pressure on the sheet, so the engine and the tanks read alike.
+  const readout = [fmtPressure('chamber_pressure', params?.chamber_pressure, 'ENGINE'), fmtParam(params?.chamber_temperature)].filter(Boolean);
 
   const boxH = (rotation ?? 0) % 180 === 90 ? W : H;
   return (

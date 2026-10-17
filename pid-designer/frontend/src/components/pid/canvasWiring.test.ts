@@ -375,7 +375,7 @@ describe('the canvas importing and restoring', () => {
   it('opens a drawing brought up to date, and takes that as the drawing the autosave last saved', async () => {
     const effect = canvasCode("// Load the selected diagram's working copy", null,
       ['useEffect', 'loadedId', 'api', 'diagramRef', 'migrate', 'seedIdsFrom', 'setNodes', 'setEdges', 'resetHistory',
-        'lastSaved', 'diagramKey', 'landOnPage'], 'null');
+        'lastSaved', 'diagramKey', 'landOnPage', 'serverHas'], 'null');
     const sent = { nodes: [part('Old', 0, 0)], edges: [] };
     const migrated = { nodes: [part('New', 0, 0)], edges: [E('New', 'r', 'New', 'l')] };
     const set = whatIsSet();
@@ -383,7 +383,8 @@ describe('the canvas importing and restoring', () => {
     let history: unknown = null;
     const opened = Promise.resolve(sent);
     effect((f: () => void) => f(), loadedId, { loadDiagram: () => opened, toStored: api.toStored }, { id: 'd' },
-      bringsUp(sent, migrated), set.seed, set.setNodes, set.setEdges, (g: unknown) => { history = g; }, lastSaved, 'd', () => {});
+      bringsUp(sent, migrated), set.seed, set.setNodes, set.setEdges, (g: unknown) => { history = g; }, lastSaved, 'd', () => {},
+      { current: '' });
     await opened; await Promise.resolve();
     expect(set.out.nodes).toBe(migrated.nodes);
     expect(set.out.edges).toBe(migrated.edges);

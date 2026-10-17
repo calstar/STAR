@@ -18,12 +18,21 @@ export function CheckoutControl({
   checkout,
   noun = 'design',
   disabled = false,
+  releaseLabel,
 }: {
   checkout: Checkout;
   /** Singular, lower case: "design" / "config" / "diagram". */
   noun?: string;
   /** No design open yet. */
   disabled?: boolean;
+  /**
+   * What the give-it-back button says. "Release" by default; an app whose own
+   * toolbar already has a Release that means something else (pid-designer
+   * publishes versions with one) names this one for what it does, and it then
+   * explains itself on hover. Unset, the button is exactly as it was -- the
+   * EngineDesign E2E finds it as the untitled button reading "Release".
+   */
+  releaseLabel?: string;
 }) {
   const { held, holder, holderName, busy, error, take, release } = checkout;
   const { secondsLeft, keepAlive } = checkout;
@@ -71,10 +80,31 @@ export function CheckoutControl({
               Keep editing
             </button>
           )}
-          <button onClick={() => void release()} disabled={busy} className={btn}>
-            {busy ? 'Releasing…' : 'Release'}
-          </button>
+          {releaseLabel ? (
+            <button
+              onClick={() => void release()}
+              disabled={busy}
+              className={btn}
+              title={`Check this ${noun} back in so someone else can edit it. Everything you changed is already saved.`}
+            >
+              {busy ? 'Saving…' : releaseLabel}
+            </button>
+          ) : (
+            <button onClick={() => void release()} disabled={busy} className={btn}>
+              {busy ? 'Releasing…' : 'Release'}
+            </button>
+          )}
         </>
+      ) : checkout.armed && !takenByOther ? (
+        // Taken on the first edit (`takeOnEdit`): nothing to press, and nothing
+        // counting down. Grey, because nothing is wrong and nothing is held.
+        <span
+          className={`${chip} border-[var(--color-border)] text-[var(--color-text-secondary)]`}
+          title={`Nobody is editing this ${noun}. Your first change checks it out to you, so nobody else can change it while you work.`}
+        >
+          <span className={`${dot} bg-[var(--color-text-muted)]`} />
+          Ready to edit
+        </span>
       ) : takenByOther ? (
         <span
           className={`${chip} border-amber-500/40 bg-amber-500/10 text-amber-400`}
