@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { STATUS_PILL } from "@/components/bom/shared";
+import { ChipRow } from "@/components/ChipRow";
 import { approvePurchaseRequest, cancelPurchaseRequest, rejectPurchaseRequest } from "@/lib/actions/purchase-requests";
 import { BOM_STATUS_LABEL, linkHost } from "@/lib/bom";
 import { formatWhen } from "@/lib/finance/dates";
@@ -12,13 +13,7 @@ import { formatCents } from "@/lib/finance/money";
 import type { PurchaseRequestView } from "@/lib/purchase-request-data";
 import { PR_STATUS_LABEL, type PrStatus, canCancel, canDecide } from "@/lib/purchase-requests";
 
-const FILTERS: { key: PrStatus | "all"; label: string }[] = [
-  { key: "pending", label: "Pending" },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-  { key: "cancelled", label: "Cancelled" },
-  { key: "all", label: "All" },
-];
+const STATUS_ORDER: PrStatus[] = ["pending", "approved", "rejected", "cancelled"];
 
 const PILL: Record<PrStatus, string> = {
   pending: "bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300",
@@ -34,7 +29,8 @@ const ROW = "sm:grid sm:grid-cols-[1rem_4.5rem_6.5rem_minmax(0,1fr)_9rem_11rem_4
 const btn =
   "inline-flex min-h-11 items-center rounded px-3 py-1 text-sm font-medium disabled:opacity-50 sm:min-h-0";
 
-/** The Purchase Requests list: filter tabs, search, one card per request. */
+/** The Purchase Requests list: search, Status and Projects filter chips (like
+ * the Tasks page's), one row per request. No chip on in a row means no filter. */
 export function PurchaseRequestsWorkspace({
   requests,
   viewerId,
@@ -47,13 +43,26 @@ export function PurchaseRequestsWorkspace({
   openNumber: number | null;
 }) {
   const linked = openNumber !== null ? requests.find((r) => r.number === openNumber) : undefined;
-  const [filter, setFilter] = useState<PrStatus | "all">(linked ? "all" : "pending");
+  // Pending to start with, unless a link opened a request that may be decided.
+  const [statusSel, setStatusSel] = useState<Set<string>>(() => new Set(linked ? [] : ["pending"]));
+  const [projSel, setProjSel] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
-  const counts = Object.fromEntries(FILTERS.map((f) => [f.key, f.key === "all" ? requests.length : requests.filter((r) => r.status === f.key).length]));
+  const toggleIn = (set: Set<string>, id: string) => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  };
+  const count = (s: PrStatus) => requests.filter((r) => r.status === s).length;
+  const projects = [...new Map(requests.map((r) => [r.project.id, r.project])).values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  const anyFilter = statusSel.size > 0 || projSel.size > 0 || q.trim() !== "";
   const needle = q.trim().toLowerCase();
   const shown = requests.filter(
     (r) =>
-      (filter === "all" || r.status === filter) &&
+      (statusSel.size === 0 || statusSel.has(r.status)) &&
+      (projSel.size === 0 || projSel.has(r.project.id)) &&
       (!needle ||
         [`pr-${r.number}`, r.project.name, r.createdBy.name, r.note ?? "", ...r.items.map((i) => i.name)].some((v) =>
           v.toLowerCase().includes(needle),
@@ -62,26 +71,45 @@ export function PurchaseRequestsWorkspace({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        <select
-          aria-label="Filter by status"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as PrStatus | "all")}
-          className="min-h-11 rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900 sm:min-h-0"
-        >
-          {FILTERS.map((f) => (
-            <option key={f.key} value={f.key}>
-              {f.key === "all" ? "All statuses" : f.label} ({counts[f.key]})
-            </option>
-          ))}
-        </select>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search PR number, project, person, part…"
-          className="min-h-11 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900 sm:ml-auto sm:min-h-0 sm:w-72"
+      <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search PR number, project, person, part…"
+            className="min-h-11 w-full rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900 sm:min-h-0 sm:min-w-48 sm:flex-1"
+          />
+          {anyFilter && (
+            <button
+              onClick={() => {
+                setQ("");
+                setStatusSel(new Set());
+                setProjSel(new Set());
+              }}
+              className="min-h-11 px-2 text-sm text-neutral-500 hover:underline dark:text-neutral-400 sm:min-h-0 sm:px-0"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <ChipRow
+          label="Status"
+          options={STATUS_ORDER.map((s) => ({ id: s, label: `${PR_STATUS_LABEL[s]} ${count(s)}` }))}
+          selected={statusSel}
+          onToggle={(id) => setStatusSel((s) => toggleIn(s, id))}
         />
+        {projects.length > 0 && (
+          <ChipRow
+            label="Projects"
+            options={projects.map((p) => ({ id: p.id, label: p.name, color: p.color }))}
+            selected={projSel}
+            onToggle={(id) => setProjSel((s) => toggleIn(s, id))}
+          />
+        )}
       </div>
+      <p className="text-sm text-neutral-500 dark:text-neutral-400">
+        {shown.length} request{shown.length === 1 ? "" : "s"}
+      </p>
 
       {shown.length === 0 ? (
         <p className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
