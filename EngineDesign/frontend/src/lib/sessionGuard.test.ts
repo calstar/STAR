@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mayWrite, tickAction, type TickInput } from './sessionGuard';
+import { mayWrite, onFirstUse, tickAction, type TickInput } from './sessionGuard';
 
 const base: TickInput = {
   held: true, ownEpoch: 'e1', sessionEpoch: 'e1', ownToken: 't1', sessionToken: 't1', haveSaved: true,
@@ -64,5 +64,58 @@ describe('mayWrite', () => {
 
   it('with nothing saved yet there is nothing to protect', () => {
     expect(mayWrite({ config: {} }, '', false)).toBe(true);
+  });
+});
+
+describe('onFirstUse: a panel edit marks the tab used', () => {
+  const saved = JSON.stringify({
+    config: { fluids: { fuel: { temperature: 293 } } },
+    ui: { controller: { duration: '5' } },
+  });
+  // The Controller's duration typed in: panel state only, the config untouched.
+  const panelEdit = { config: { fluids: { fuel: { temperature: 293 } } }, ui: { controller: { duration: '4.2' } } };
+
+  /** A page (the window, in the app) and whether this tab has been used, as DesignVersions keeps it. */
+  function page() {
+    const target = new EventTarget();
+    const tab = { touched: false };
+    const stop = onFirstUse(target, () => {
+      tab.touched = true;
+    });
+    return { target, tab, stop };
+  }
+
+  it('typing into a panel field marks the tab used, and its panel state is then written', () => {
+    const { target, tab, stop } = page();
+    expect(mayWrite(panelEdit, saved, tab.touched)).toBe(false);
+    // What typing into the field dispatches -- all a programmatic fill (Playwright's `fill`) sends.
+    target.dispatchEvent(new Event('input'));
+    expect(tab.touched).toBe(true);
+    expect(mayWrite(panelEdit, saved, tab.touched)).toBe(true);
+    stop();
+  });
+
+  it.each(['pointerdown', 'keydown', 'input', 'change'])('%s counts as use', (type) => {
+    const { target, tab, stop } = page();
+    target.dispatchEvent(new Event(type));
+    expect(tab.touched).toBe(true);
+    stop();
+  });
+
+  it('a tab nobody used stays untouched, so panel state it derived is not written', () => {
+    const { target, tab, stop } = page();
+    // A panel seeding itself, a poll, a resize: none of them is somebody using the tab.
+    target.dispatchEvent(new Event('focus'));
+    target.dispatchEvent(new Event('resize'));
+    expect(tab.touched).toBe(false);
+    expect(mayWrite(panelEdit, saved, tab.touched)).toBe(false);
+    stop();
+  });
+
+  it('stops listening once cleaned up', () => {
+    const { target, tab, stop } = page();
+    stop();
+    target.dispatchEvent(new Event('input'));
+    expect(tab.touched).toBe(false);
   });
 });

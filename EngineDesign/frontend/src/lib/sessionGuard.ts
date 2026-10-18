@@ -55,13 +55,38 @@ export function tickAction(t: TickInput): TickAction {
 }
 
 /**
+ * What counts as somebody using the tab: a click or tap, a key, or a value typed or picked in any
+ * field. A panel's own fields count as much as a config input -- the Controller's duration, a
+ * Time-Series profile -- since that state is the half of the design (`ui`) the config does not
+ * hold. A panel seeding itself from the config on load dispatches none of these.
+ */
+export const USE_EVENTS = ['pointerdown', 'keydown', 'input', 'change'] as const;
+
+/**
+ * Call `onUse` the first time somebody uses `target` (the window, in the app). Captured, so a
+ * field that stops propagation still counts. Returns the cleanup.
+ */
+export function onFirstUse(target: EventTarget, onUse: () => void): () => void {
+  let used = false;
+  const mark = () => {
+    if (used) return;
+    used = true;
+    onUse();
+  };
+  for (const e of USE_EVENTS) target.addEventListener(e, mark, { capture: true, passive: true });
+  return () => {
+    for (const e of USE_EVENTS) target.removeEventListener(e, mark, { capture: true });
+  };
+}
+
+/**
  * Whether this tab may write `doc` over the design it last saved (`lastSavedJson`).
  *
- * Once anybody has used the tab (`touched`) it writes whatever changed. Untouched, it writes only a
- * config that changed under it, never panel state alone: that is what its panels derived from the
- * config on load (Forward Mode's tank pressures, the Time-Series profile), and saving it from a tab
- * nobody touched wrote the design and refreshed the checkout from a second tab of yours, opened
- * beside the one editing.
+ * Once anybody has used the tab (`touched`, set through `onFirstUse`) it writes whatever changed.
+ * Untouched, it writes only a config that changed under it, never panel state alone: that is what
+ * its panels derived from the config on load (Forward Mode's tank pressures, the Time-Series
+ * profile), and saving it from a tab nobody touched wrote the design and refreshed the checkout
+ * from a second tab of yours, opened beside the one editing.
  */
 export function mayWrite(
   doc: { config?: unknown },

@@ -29,9 +29,10 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 from fastapi import Request
+from starlette.concurrency import run_in_threadpool
 
 from backend import userdata
 from backend.state import AppState
@@ -52,6 +53,8 @@ SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", str(2 * 60 * 60)
 # not per user. Acquired by the streaming endpoints around the run.
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "3"))
 JOB_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+T = TypeVar("T")
 
 
 def _fresh_status() -> dict:
@@ -111,6 +114,11 @@ class UserSession:
         #: load got back and never autosaves a config some other tab put here; a read-only tab
         #: puts its design back after a restart only while this is still None.
         self.load_token: str | None = None
+        #: Held while a solve runs on this session's runner (``run_compute``). The solves run
+        #: off the event loop now, so two of them -- the page's Forward evaluate and its
+        #: Time-Series run land a second apart -- would otherwise share one runner, whose
+        #: chamber solver keeps per-call state; on the loop they were one at a time anyway.
+        self.compute_lock = threading.Lock()
         self.app_state = AppState()
         self.optimizer = OptimizerState()
         self.controller = ControllerState()
@@ -165,6 +173,25 @@ class SessionRegistry:
 
 
 registry = SessionRegistry()
+
+
+async def run_compute(session: UserSession, fn: Callable[..., T], /, *args, **kwargs) -> T:
+    """Run a solve on the session's runner in the thread pool, one at a time per session.
+
+    Forward evaluate and the Time-Series runs are seconds of CPU (a Time-Series run is ~10 s
+    on a laptop, ~23 s on a CI runner). As ``async def`` endpoints calling the runner inline
+    they ran on the event loop and froze every other request for that long -- /api/health
+    included, so a page opened while another page's load-time Time-Series run was going sat on
+    "Connecting", and the design bar's autosave could not reach the server either (the
+    Playwright failures of 2026-10-17). Off the loop the server keeps answering; the lock keeps
+    a session's solves serial, as they were.
+    """
+
+    def locked() -> T:
+        with session.compute_lock:
+            return fn(*args, **kwargs)
+
+    return await run_in_threadpool(locked)
 
 
 async def gated_stream(agen):

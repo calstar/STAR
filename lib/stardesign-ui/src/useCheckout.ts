@@ -191,6 +191,12 @@ export function useCheckout<T>({
   refRef.current = ref;
   const heldRef = useRef(false);
   heldRef.current = state.lockedByMe;
+  // A take is in flight. `take()` alone makes the design editable, after its
+  // reload; until then a poll that answers "you hold it" -- because it reached
+  // the server just after the take did -- must not, or the editor opens on the
+  // stale view and the reload then lands over the first edit (EngineDesign's
+  // E2E lost a config edit this way, 2026-10-17).
+  const takingRef = useRef(false);
 
   // Switching designs drops any claim we were showing: the new one is somebody
   // else's question entirely, and showing the old answer would be a lie.
@@ -286,7 +292,7 @@ export function useCheckout<T>({
     const tick = () => {
       api
         .getCheckout(ref)
-        .then((s) => !cancelled && applyState(s))
+        .then((s) => !cancelled && !takingRef.current && applyState(s))
         .catch(() => {
           /* transient: keep what we last knew rather than flapping to free */
         });
@@ -325,6 +331,7 @@ export function useCheckout<T>({
     setLostUnexpectedly(false);
     setSavedAs(null);
     lastActivityRef.current = Date.now();
+    takingRef.current = true;
     try {
       const s = await api.takeCheckout(r);
       // Reload before going editable. This is the ordering that matters: the
@@ -339,6 +346,7 @@ export function useCheckout<T>({
       // Refresh so the chip shows who actually has it, not a guess.
       api.getCheckout(r).then(applyState).catch(() => {});
     } finally {
+      takingRef.current = false;
       setBusy(false);
     }
   }, [api, reload, applyState]);

@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { adoptLoadToken, getConfig, lastOwnLoadToken, loadConfigJson, type EngineConfig } from '../api/client';
-import { mayWrite, tickAction } from '../lib/sessionGuard';
+import { mayWrite, onFirstUse, tickAction } from '../lib/sessionGuard';
 import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
 import { designApi, keyOf, refOf } from '../api/documents';
@@ -116,19 +116,13 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false, re
   // session holding configs/default.yaml; autosaving that would write the default over the
   // design (it did, 2026-10-01). A changed epoch means: put the design back, save nothing.
   const sessionEpoch = useRef<string | null>(null);
-  // Whether anybody has used this tab since it opened. Until then it saves only a config that
-  // changed under it, never the panel state it derived on load (lib/sessionGuard.ts mayWrite).
+  // Whether anybody has used this tab since it opened -- any click, key or field, a panel's own
+  // included. Until then it saves only a config that changed under it, never the panel state it
+  // derived on load (lib/sessionGuard.ts onFirstUse, mayWrite).
   const touched = useRef(false);
-  useEffect(() => {
-    const mark = () => {
-      touched.current = true;
-    };
-    const events = ['pointerdown', 'keydown', 'input', 'change'] as const;
-    for (const e of events) window.addEventListener(e, mark, { capture: true, passive: true });
-    return () => {
-      for (const e of events) window.removeEventListener(e, mark, { capture: true });
-    };
-  }, []);
+  useEffect(() => onFirstUse(window, () => {
+    touched.current = true;
+  }), []);
 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.

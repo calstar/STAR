@@ -377,6 +377,30 @@ describe('losing it', () => {
   });
 });
 
+describe('taking it', () => {
+  it('stays read only until the reload is in, even when a poll hears the take first', async () => {
+    // The free-design poll can reach the server just after the take does and answer "you hold
+    // it" while take() is still reloading. Applied, that made the editor live on the stale view,
+    // and the reload then landed over the first edit -- EngineDesign's E2E lost a config change
+    // that way (2026-10-17). Only take() may make it editable, after the reload.
+    const api = stubApi();
+    let reloaded!: () => void;
+    const reload = vi.fn(() => new Promise<void>((done) => { reloaded = done; }));
+    const view = renderHook(() => useCheckout({ api, ref: REF, reload, pollMs: 1_000 }));
+    await tick(0);
+
+    let taking!: Promise<void>;
+    await act(async () => { taking = view.result.current.take(); });
+    expect(reload).toHaveBeenCalled();
+    await tick(1_000); // the poll fires while the reload is outstanding: the server says MINE
+    expect(api.getCheckout).toHaveBeenCalledTimes(2);
+    expect(view.result.current.held).toBe(false);
+
+    await act(async () => { reloaded(); await taking; });
+    expect(view.result.current.held).toBe(true);
+  });
+});
+
 describe('on a developer\'s own machine', () => {
   // There is nobody to hand the design to, so every rule that frees it for a
   // colleague is friction: the user reported being locked out of their own

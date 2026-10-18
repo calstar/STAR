@@ -47,10 +47,16 @@ const designPicker = (page: Page) => page.locator('header select').last();
  * and `useCheckout.take()` returns silently when there is no ref, so a click in
  * that window does nothing at all. The picker's value is the design key, so an
  * empty value means "no design yet".
+ *
+ * The picker is set as soon as the design is chosen, before it is open, and the
+ * tab panels stay hidden until it is open ("Opening the design…", App.tsx
+ * `booted`). Until then a panel's field cannot be found by what is visible:
+ * the hidden panels' nearest visible ancestor holds every input on the page.
  */
 async function waitForDesignBar(page: Page) {
   await expect(page.getByText('Connected', { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(designPicker(page)).not.toHaveValue('', { timeout: 20_000 });
+  await expect(page.getByText('Opening the design…', { exact: true })).toBeHidden({ timeout: 20_000 });
 }
 
 /**
