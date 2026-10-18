@@ -62,10 +62,21 @@ SLOW_TESTS = {
 }
 
 
+# Tests that assert wall-clock time. Across xdist workers on a small CI runner the
+# other workers' load lands in their numbers (a 0.21 s median tick read 0.26 s),
+# so CI and `scripts/check.sh full` run them on their own, as lib's timing gate.
+TIMING_TESTS = {
+    "test_a_tick_is_fast_enough_to_feel_live",
+}
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
-        if item.path.name in SLOW_MODULES or item.name.split("[")[0] in SLOW_TESTS:
+        name = item.name.split("[")[0]
+        if item.path.name in SLOW_MODULES or name in SLOW_TESTS:
             item.add_marker(pytest.mark.slow)
+        if name in TIMING_TESTS:
+            item.add_marker(pytest.mark.timing)
 
 
 # ------------------------------------------------------- the shipped drawings

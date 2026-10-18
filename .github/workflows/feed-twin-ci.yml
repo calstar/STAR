@@ -161,7 +161,13 @@ jobs:
       # 00 claims both environments; both are checked.
       - name: Run tests
         working-directory: feed-twin
-        run: python -m pytest tests -q -n auto
+        run: python -m pytest tests -q -n auto -m "not timing"
+
+      # Wall-clock assertions run alone: across xdist workers the others' load
+      # is in the measurement (tests/conftest.py TIMING_TESTS).
+      - name: Timing tests (serial)
+        working-directory: feed-twin
+        run: python -m pytest tests -q -m timing
 
   # Phase 00's other exit criterion: the physics core has to be installable
   # alongside EngineDesign, because Layer X will import it in that process
