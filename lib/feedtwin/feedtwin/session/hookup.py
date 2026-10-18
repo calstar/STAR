@@ -13,9 +13,20 @@ the stand. :func:`suggest` fills it the way the twin always matched -- names,
 then what each valve is plumbed to do, and the one dome knob -- so an imported
 drawing works at once and the person only has to fix what the names got wrong:
 
+* ``channels``: the DAQ box, written down. Each is one connector on one of the
+  DAQ's boards, cabled to one symbol, with the name the DAQ gives it -- the
+  role name the console shows and, for a solenoid, the state table's row. That
+  is the whole of how the real stand is declared (``[actuator_roles]``: name ->
+  board and channel; the table opens names), so a hookup that has channels is
+  *wired*: a row drives the valve on the channel of that name, and a row with
+  no channel drives nothing. Without channels (``None``) the hookup is the old
+  kind and the next field decides.
 * ``valves``: actuator -> drawing id, only for what a person pinned. An empty
   id means "this actuator has no valve here". Everything not pinned is matched
   automatically, every time, so a drawing that grows a valve picks it up.
+  Ignored once the hookup is wired.
+* ``machine``: the stand's own state table when somebody edited it (the
+  DAQ's State tab, in the twin); ``None`` is the shipped DAQ table.
 * ``knobs``: each a dial on the GSE page and the regulators it sets. A knob on
   a dome loader (the hand-loaded control regulator) sets that loader, and the
   dome follows through it as it always did; on a dome-loaded regulator with no
@@ -29,15 +40,22 @@ Gauge pressures throughout, as on the panel.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 from feedtwin.session.gauge import psig
 from feedtwin.session.model import Model
-from feedtwin.session.statemachine import Binding, StateMachine, bind
+from feedtwin.session.statemachine import (
+    Binding,
+    StateMachine,
+    bind,
+    machine_from_dict,
+)
 
-#: Bumped whenever the stored form changes meaning.
-SCHEMA = 1
+#: Bumped whenever the stored form changes meaning. 2 added the DAQ box
+#: (``channels``, ``rows``, ``auto``) and an edited state table; 1 still reads.
+SCHEMA = 2
+_READS = (1, 2)
 
 #: The knob the session's ``Setup.dome_psi`` drives.
 DOME = "dome"
@@ -90,27 +108,107 @@ class Knob:
 
 
 @dataclass(frozen=True, slots=True)
+class Channel:
+    """One connector on the DAQ box: which board, which connector, the symbol
+    its cable goes to, and the name the DAQ gives it. ``board`` is the app's
+    word for the board (feed-twin: ``sol12``, ``pt_low``...); the library only
+    needs the name and the symbol."""
+
+    board: str
+    slot: int
+    name: str
+    symbol: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "board": self.board,
+            "slot": self.slot,
+            "name": self.name,
+            "symbol": self.symbol,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "Channel":
+        return cls(
+            board=str(raw["board"]),
+            slot=int(raw["slot"]),
+            name=str(raw.get("name") or "").strip(),
+            symbol=str(raw.get("symbol") or ""),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Hookup:
     """What a person decided about one drawing's controls."""
 
     valves: Mapping[str, str] = field(default_factory=dict)
     """Pinned actuators: table name -> drawing id ("" = no valve here)."""
     knobs: tuple[Knob, ...] = ()
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    """What the console calls a valve or transducer, by drawing id (or
+    channel id, ``engine.pc``) -- "Chamber pressure" for a PT tagged PC. A
+    name only: nothing is bound, solved or recorded by it. Absent, the
+    console shows the drawing's own tag. A symbol on a channel goes by the
+    channel's name instead (:meth:`names`)."""
+    channels: tuple[Channel, ...] | None = None
+    """The DAQ box: every connector with a cable on it. ``None``: not wired,
+    the old hookup (pins and automatic matching). ``()``: wired, and nothing
+    is plugged in -- no row drives anything."""
+    rows: Mapping[str, int] = field(default_factory=dict)
+    """How many rows of connectors each board shows. The panel's, not the
+    stand's; kept so the box looks the same tomorrow."""
+    auto: frozenset[str] = frozenset()
+    """Rows still matched automatically on a wired hookup: on a stand of the
+    rocket alone (:func:`on_vehicle`), the ones whose cable went to the cart,
+    which is not there. Empty on anything a person saved."""
+    machine: StateMachine | None = None
+    """The stand's own state table, when somebody edited it. ``None``: the
+    shipped DAQ table."""
+
+    @property
+    def wired(self) -> bool:
+        return self.channels is not None
 
     def knob_for(self, regulator: str) -> Knob | None:
         return next((k for k in self.knobs if regulator in k.regulators), None)
 
-    def to_dict(self) -> dict[str, Any]:
+    def channel_of(self, symbol: str) -> Channel | None:
+        return next((c for c in self.channels or () if c.symbol == symbol), None)
+
+    def names(self) -> dict[str, str]:
+        """What the console calls each thing, by drawing id: a symbol on a
+        channel by the channel's name, anything else by its alias."""
         return {
-            "schema": SCHEMA,
+            **dict(self.aliases),
+            **{c.symbol: c.name for c in self.channels or () if c.symbol},
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """The stored form. A hookup of the old kind -- no box, no edited
+        table -- is written exactly as it always was (schema 1), so a run
+        recorded before the box existed and one recorded since diff clean."""
+        out: dict[str, Any] = {
+            "schema": 1,
             "valves": dict(self.valves),
             "knobs": [k.to_dict() for k in self.knobs],
+            "aliases": dict(self.aliases),
         }
+        if self.channels is not None:
+            out["channels"] = [c.to_dict() for c in self.channels]
+        if self.rows:
+            out["rows"] = dict(self.rows)
+        if self.auto:
+            out["auto"] = sorted(self.auto)
+        if self.machine is not None:
+            out["machine"] = self.machine.to_dict()
+        if len(out) > 4:
+            out["schema"] = SCHEMA
+        return out
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "Hookup":
         schema = int(raw.get("schema", SCHEMA))
-        if schema != SCHEMA:
+        if schema not in _READS:
             raise ValueError(f"hookup schema {schema}; this feedtwin reads {SCHEMA}")
         knobs = tuple(Knob.from_dict(k) for k in raw.get("knobs") or ())
         ids = [k.id for k in knobs]
@@ -119,10 +217,50 @@ class Hookup:
         owned = [r for k in knobs for r in k.regulators]
         if len(set(owned)) != len(owned):
             raise ValueError("a regulator is on two knobs; it can only be set once")
+        listed = raw.get("channels")
+        channels = (
+            None if listed is None else tuple(Channel.from_dict(c) for c in listed)
+        )
+        _check_channels(channels or ())
+        machine_raw = raw.get("machine")
         return cls(
             valves={str(a): str(s or "") for a, s in (raw.get("valves") or {}).items()},
             knobs=knobs,
+            aliases={
+                str(k): str(v).strip()
+                for k, v in (raw.get("aliases") or {}).items()
+                if str(v or "").strip()
+            },
+            channels=channels,
+            rows={
+                str(board): max(1, int(n))
+                for board, n in (raw.get("rows") or {}).items()
+            },
+            auto=frozenset(str(a) for a in raw.get("auto") or ()),
+            machine=machine_from_dict(machine_raw) if machine_raw else None,
         )
+
+
+def _check_channels(channels: tuple[Channel, ...]) -> None:
+    """A box that cannot be: two cables in one connector, one symbol on two
+    connectors, a connector with no name or two with the same one (the DAQ
+    resolves rows by name, so one of them would be unreachable)."""
+    places = [(c.board, c.slot) for c in channels]
+    if len(set(places)) != len(places):
+        raise ValueError("two cables in one connector")
+    if any(c.slot < 1 for c in channels):
+        raise ValueError("connectors are numbered from 1")
+    symbols = [c.symbol for c in channels]
+    if "" in symbols:
+        raise ValueError("a connector's cable goes to no symbol")
+    if len(set(symbols)) != len(symbols):
+        raise ValueError("one symbol on two connectors")
+    names = [c.name.casefold() for c in channels]
+    if "" in names:
+        raise ValueError("a connector has no name")
+    if len(set(names)) != len(names):
+        twice = sorted({c.name for c in channels if names.count(c.name.casefold()) > 1})
+        raise ValueError(f"two connectors are named {', '.join(twice)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,13 +352,17 @@ def suggest(
     No pinned valves (names and roles decide). The knob :data:`DOME` on every
     dome loader -- or, with none drawn, on the first dome-loaded regulator --
     which is what the session's dome knob always drove. Then a knob for every
-    regulator the drawing gives no setting at all, because a regulator with no
-    number on the sheet is set by a hand on the cart: the one whose outlet
-    charges the vehicle's pressurant bottle is :data:`CHARGE` (the COPV fill),
-    the rest are knobs of their own, starting where the build left them. A
-    drawing whose regulators all carry their settings gets only the dome knob,
-    exactly as before.
+    regulator a hand sets: every regulator on the ground support, whatever the
+    sheet says (the cart's regulators are turned on the pad), and any other
+    the drawing gives no setting at all. The one whose outlet charges the
+    vehicle's pressurant bottle is :data:`CHARGE` (the COPV fill), the rest are
+    knobs of their own. Every knob starts at the drawing's setting
+    (:func:`drawn_settings`); only a regulator the sheet says nothing about
+    starts at ``dome_psig``, ``charge_psig`` or where the build left it. A
+    drawing of the rocket alone whose regulators all carry their settings gets
+    only the dome knob, as before.
     """
+    drawn = drawn_settings(model)
     built = model.built
     labels = {n.id: n.label or n.id for n in model.diagram.nodes}
     knobs: list[Knob] = []
@@ -242,7 +384,7 @@ def suggest(
                     else f"Dome control regulator ({labels.get(owned[0], owned[0])})"
                 ),
                 regulators=owned,
-                psig=dome_psig,
+                psig=_first_drawn(drawn, owned, dome_psig),
                 low=0.0,
                 high=1000.0,
             )
@@ -256,7 +398,7 @@ def suggest(
                     id=CHARGE,
                     label=f"COPV fill ({labels.get(regulator, regulator)})",
                     regulators=(regulator,),
-                    psig=charge_psig,
+                    psig=drawn.get(regulator, charge_psig),
                     low=0.0,
                     high=6000.0,
                 )
@@ -267,17 +409,101 @@ def suggest(
                     id=regulator,
                     label=labels.get(regulator, regulator),
                     regulators=(regulator,),
-                    psig=UNSET_PSIG,
+                    psig=drawn.get(regulator, UNSET_PSIG),
                     low=0.0,
-                    high=1000.0,
+                    high=max(1000.0, 2.0 * drawn.get(regulator, 0.0)),
                 )
             )
     return Hookup(knobs=tuple(knobs))
 
 
+def on_vehicle(saved: Hookup, model: Model) -> Hookup:
+    """``saved`` for a stand built on the vehicle alone (``Setup.ignore_gse``):
+    the valves a person pinned on the vehicle kept, the knobs the cut drawing
+    suggests. The saved knobs turn the cart's regulators, which are not there;
+    with the cart's dome loader gone, the dome knob sets the dome-loaded
+    regulator itself, as on a drawing of the rocket alone, and the COPV fill
+    is the built-in charge's target.
+    """
+    ids = {n.id for n in model.diagram.nodes}
+    knobs = suggest(model).knobs
+    kept = {k.id: k for k in saved.knobs}
+    channels = saved.channels
+    auto = saved.auto
+    if channels is not None:
+        # A wired hookup keeps the rocket's connectors. A row whose cable went
+        # to the cart is matched on the rocket as the old hookup's would be
+        # (its vent row finds the tank-top disconnect, the GSE vent); a row
+        # with no cable at all stays unwired, as the person left it.
+        auto = auto | {c.name for c in channels if c.symbol not in ids}
+        channels = tuple(c for c in channels if c.symbol in ids)
+    return replace(
+        saved,
+        valves={a: v for a, v in saved.valves.items() if not v or v in ids},
+        # A knob the cut drawing also has starts where the saved one did.
+        knobs=tuple(
+            (
+                replace(k, psig=kept[k.id].psig)
+                if k.id in kept and kept[k.id].regulators == k.regulators
+                else k
+            )
+            for k in knobs
+        ),
+        channels=channels,
+        auto=auto,
+    )
+
+
+def drawn_settings(model: Model) -> dict[str, float]:
+    """What the drawing sets each regulator to [psig], by drawing id: a
+    loader's or plain regulator's ``setpoint``, a dome-loaded one's
+    ``dome_pressure``. A regulator the sheet says nothing about is absent."""
+    out: dict[str, float] = {}
+    for node in model.diagram.nodes:
+        if node.type != "PR":
+            continue
+        key = (
+            "dome_pressure"
+            if node.options.get("domeLoaded") == "yes"
+            and node.id not in model.built.dome_loaders
+            else "setpoint"
+        )
+        param = node.params.get(key)
+        if param is not None:
+            out[node.id] = psig(param.si)
+    return out
+
+
+def knob_starts(hookup: Hookup, model: Model) -> dict[str, float]:
+    """Where each of ``hookup``'s knobs starts on this drawing [psig], by knob
+    id: the drawing's setting of the first regulator on it that states one.
+    A knob on regulators the sheet says nothing about is absent -- it starts
+    at the session's own setting."""
+    drawn = drawn_settings(model)
+    out: dict[str, float] = {}
+    for knob in hookup.knobs:
+        found = _first_drawn(drawn, knob.regulators, float("nan"))
+        if found == found:
+            out[knob.id] = found
+    return out
+
+
+def _first_drawn(
+    drawn: Mapping[str, float], regulators: tuple[str, ...], default: float
+) -> float:
+    return next((drawn[r] for r in regulators if r in drawn), default)
+
+
 def _hand_loaded_regulators(model: Model, taken: set[str]) -> list[str]:
-    """Built regulators the drawing gives no setting, not already on a knob."""
+    """Built regulators a hand sets, not already on a knob: every one on the
+    ground support (the cart's regulators are turned on the pad, whatever the
+    sheet says they were set to), and any other the drawing gives no setting."""
     built = model.built
+    ground = (
+        frozenset()
+        if built.vehicle is None
+        else frozenset(n.id for n in model.diagram.nodes if n.id not in built.vehicle)
+    )
     out = []
     for node in model.diagram.nodes:
         if node.type != "PR" or node.id in taken or node.id in built.dome_loaders:
@@ -286,7 +512,7 @@ def _hand_loaded_regulators(model: Model, taken: set[str]) -> list[str]:
             continue  # its dome is the dome knob's
         if node.id not in built.network.branches:
             continue
-        if {"setpoint", "dome_pressure"} & set(node.params):
+        if {"setpoint", "dome_pressure"} & set(node.params) and node.id not in ground:
             continue
         out.append(node.id)
     return out
@@ -329,7 +555,12 @@ def _charges_vehicle_bottle(model: Model, regulator: str) -> bool:
 
 
 def binding(model: Model, machine: StateMachine, hookup: Hookup | None) -> Binding:
-    """The machine bound to the drawing's valves, pins first."""
+    """The machine bound to the drawing's valves: pins first, then names and
+    roles -- or, on a wired hookup, exactly its connectors. There a row drives
+    the valve on the connector of its name and nothing else: a row with no
+    connector, or one whose cable goes to a symbol that is not a valve here,
+    drives nothing (and says so in ``unmatched``) rather than being matched
+    behind the person's back. Only the rows in ``auto`` are matched."""
     # Valves only: a regulator's dome signal is a knob's, not the table's.
     built = model.built
     # A valve on the ground-support side answers to "GSE" as well as to its
@@ -343,9 +574,79 @@ def binding(model: Model, machine: StateMachine, hookup: Hookup | None) -> Bindi
         and not built.actuators[node.id].endswith(".dome")
         and node.id not in built.hand_valves
     }
+    overrides: dict[str, str] | None = None
+    if hookup is not None and hookup.channels is not None:
+        # A connector joins the row of its name as a person reads it: "Lox
+        # Main" is the table's "LOX Main". (Names are unique ignoring case on
+        # the box and in the table, so this can only find the one row.)
+        rows = {a.casefold(): a for a in machine.actuators}
+        drawn = {n.id for n in model.diagram.nodes}
+        auto = {a.casefold() for a in hookup.auto}
+        overrides = {}
+        for c in hookup.channels:
+            row = rows.get(c.name.casefold())
+            if row is None:
+                continue
+            if c.symbol in labels:
+                overrides[row] = c.symbol
+            elif c.symbol not in drawn:
+                # The drawing lost the symbol the cable went to (redrawn, a
+                # new id): matched by name again, as a pin to a lost valve
+                # always was -- a main the drawing still has must not go
+                # uncommanded because its old id did. The stand says so.
+                auto.add(row.casefold())
+        free = [
+            a
+            for a in machine.actuators
+            if a not in overrides and a.casefold() not in auto
+        ]
+        overrides.update({a: "" for a in free})
+        stand_ins = _stand_ins(model)
+        if stand_ins and free:
+            # Rocket only, the cut drawing makes stand-ins of the disconnects
+            # that mated the cart (the tank-top GSE vent). The box cannot take
+            # one -- on the whole drawing it is not a valve -- so a row the box
+            # leaves unwired drives the stand-in the old matching gives it,
+            # and nothing else.
+            trial = bind(
+                machine,
+                labels,
+                roles=built.valve_roles,
+                overrides={k: v for k, v in overrides.items() if k not in free},
+            )
+            for a in free:
+                found = trial.to_symbol.get(a, "")
+                if found in stand_ins:
+                    overrides[a] = found
+    elif hookup is not None:
+        overrides = dict(hookup.valves)
     return bind(
         machine,
         labels,
         roles=model.built.valve_roles,
-        overrides=dict(hookup.valves) if hookup is not None else None,
+        overrides=overrides,
     )
+
+
+def _stand_ins(model: Model) -> frozenset[str]:
+    """A rocket-only drawing's valves that are not valves on the whole one: a
+    disconnect whose mate went with the cart (``meta["capped"]``), read as the
+    GSE vent it couples (:func:`feedtwin.pid.network._gse_vents`)."""
+    raw = model.meta.get("capped")
+    capped = {str(c) for c in raw} if isinstance(raw, (list, tuple)) else set()
+    return frozenset(
+        n.id
+        for n in model.diagram.nodes
+        if n.id in capped and n.type == "QD" and n.id in model.built.actuators
+    )
+
+
+def lost_connectors(hookup: Hookup, model: Model) -> list[Channel]:
+    """The box's connectors whose cable goes to a symbol the drawing no longer
+    has, which the stand should say. A connector named for a table row (a
+    valve's) has its row matched by name instead (:func:`binding`); any other
+    -- a transducer's -- names nothing until it is rewired. Give it the whole
+    drawing: on a rocket-only one the cart's connectors are cut on purpose
+    (:func:`on_vehicle`)."""
+    drawn = {n.id for n in model.diagram.nodes}
+    return [c for c in hookup.channels or () if c.symbol not in drawn]

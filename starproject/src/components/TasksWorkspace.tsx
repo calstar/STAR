@@ -8,7 +8,14 @@ import { FieldSelect } from "@/components/fields/FieldSelect";
 import { GanttChart } from "@/components/GanttChart";
 import { TaskTable } from "@/components/TaskTable";
 import { ViewDock } from "@/components/ViewDock";
-import { BOARD_SORT_OPTIONS, type BoardSort, type WorkspaceTask, toRowData } from "@/lib/board";
+import {
+  BOARD_SORT_OPTIONS,
+  type BoardSort,
+  type WorkspaceTask,
+  inLists,
+  onBoard,
+  toRowData,
+} from "@/lib/board";
 import { STATUS_LABEL } from "@/lib/tasks";
 
 export type { WorkspaceTask } from "@/lib/board";
@@ -30,7 +37,7 @@ function ChipRow({
   chip,
 }: {
   label: string;
-  options: { id: string; label: string }[];
+  options: { id: string; label: string; color?: string | null; title?: string }[];
   selected: Set<string>;
   onToggle: (id: string) => void;
   chip: (active: boolean) => string;
@@ -69,8 +76,15 @@ function ChipRow({
           <button
             key={o.id}
             onClick={() => onToggle(o.id)}
-            className={chip(selected.has(o.id))}
+            title={o.title}
+            className={`${chip(selected.has(o.id))} ${o.color !== undefined ? "inline-flex items-center gap-1.5" : ""}`}
           >
+            {o.color !== undefined && (
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: o.color ?? "#a3a3a3" }}
+              />
+            )}
             {o.label}
           </button>
         ))}
@@ -99,7 +113,7 @@ export function TasksWorkspace({
   initialMine = false,
 }: {
   tasks: WorkspaceTask[];
-  projects: { id: string; label: string }[];
+  projects: { id: string; label: string; name?: string; color?: string | null }[];
   subteams: { id: string; name: string }[];
   users: User[];
   admin: boolean;
@@ -138,8 +152,18 @@ export function TasksWorkspace({
     [tasks, status, myOnly, currentUserId, projSel, subSel, search],
   );
 
-  const active = useMemo(() => filtered.filter((t) => !t.archived), [filtered]);
-  const archived = useMemo(() => filtered.filter((t) => t.archived), [filtered]);
+  // The list and timeline show open tasks; the board adds those done in the
+  // last DONE_ON_BOARD_DAYS. Everything else (done longer ago, or archived by
+  // hand) is under Archived.
+  const active = useMemo(() => filtered.filter(inLists), [filtered]);
+  const onTheBoard = useMemo(() => {
+    const now = new Date();
+    return filtered.filter((t) => onBoard(t, now));
+  }, [filtered]);
+  const archived = useMemo(() => {
+    const now = new Date();
+    return filtered.filter((t) => !inLists(t) && !onBoard(t, now));
+  }, [filtered]);
   const rows = useMemo(() => active.map(toRowData), [active]);
   const archivedRows = useMemo(() => archived.map(toRowData), [archived]);
 
@@ -149,6 +173,8 @@ export function TasksWorkspace({
     else next.add(id);
     return next;
   }
+
+  const shown = view === "board" ? onTheBoard.length : active.length;
 
   const anyFilter =
     !!search || !!status || myOnly || projSel.size > 0 || subSel.size > 0;
@@ -172,7 +198,7 @@ export function TasksWorkspace({
     <div className="pb-20 sm:pb-0">
       <ViewDock
         active={view === "table" ? "list" : view}
-        onSelect={(v) => setView(v === "list" ? "table" : v)}
+        onSelect={(v) => setView(v === "list" || v === "bom" ? "table" : v)}
       />
       <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
@@ -196,14 +222,29 @@ export function TasksWorkspace({
           />
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              role="switch"
+              aria-checked={myOnly}
               onClick={() => setMyOnly((v) => !v)}
-              className={`min-h-11 rounded px-3 py-1.5 text-sm font-medium sm:min-h-0 ${
+              className={`flex min-h-11 items-center gap-2 rounded-full border py-1 pl-3 pr-1.5 text-sm font-medium sm:min-h-0 ${
                 myOnly
-                  ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
-                  : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  ? "border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
+                  : "border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
               }`}
             >
               My tasks
+              <span
+                aria-hidden
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                  myOnly ? "bg-neutral-900 dark:bg-neutral-100" : "bg-neutral-300 dark:bg-neutral-700"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
+                    myOnly ? "translate-x-[18px]" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
             </button>
             <FieldSelect
               ariaLabel="Filter by status"
@@ -244,7 +285,12 @@ export function TasksWorkspace({
 
         <ChipRow
           label="Projects"
-          options={projects.map((p) => ({ id: p.id, label: p.label }))}
+          options={projects.map((p) => ({
+            id: p.id,
+            label: p.name ?? p.label,
+            color: p.color ?? null,
+            title: p.label,
+          }))}
           selected={projSel}
           onToggle={(id) => setProjSel((s) => toggle(s, id))}
           chip={chip}
@@ -262,7 +308,7 @@ export function TasksWorkspace({
       </div>
 
       <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-        {active.length} task{active.length === 1 ? "" : "s"}
+        {shown} task{shown === 1 ? "" : "s"}
       </p>
 
       <div className="mt-2">
@@ -272,10 +318,9 @@ export function TasksWorkspace({
             users={users}
             admin={admin}
             showProject
-            showSubteam
           />
         )}
-        {view === "board" && <Board tasks={active} sort={boardSort} />}
+        {view === "board" && <Board tasks={onTheBoard} sort={boardSort} />}
         {view === "gantt" && <GanttChart tasks={active} />}
       </div>
 
@@ -302,7 +347,6 @@ export function TasksWorkspace({
                 users={users}
                 admin={admin}
                 showProject
-                showSubteam
               />
             </div>
           )}

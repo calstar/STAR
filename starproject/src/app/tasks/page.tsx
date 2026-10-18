@@ -6,7 +6,7 @@ import {
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
-import { flatten, pathOf } from "@/lib/project-tree";
+import { colorOf, flatten, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
 import { getCurrentDbUser, getTeamUsers } from "@/lib/user";
@@ -49,6 +49,8 @@ export default async function TasksPage({
     return {
       ...rest,
       projectName: pathOf(tree, project.id) || project.name,
+      projectShort: project.name,
+      projectColor: colorOf(tree, project.id),
       subteamName: sub?.name ?? "",
       assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     };
@@ -57,7 +59,11 @@ export default async function TasksPage({
   const projectOptions = flatten(tree).map(({ node }) => ({
     id: node.id,
     label: pathOf(tree, node.id),
+    name: node.name,
+    color: colorOf(tree, node.id),
   }));
+
+  const admin = await isAdmin(me.email);
 
   return (
     <div className="mx-auto max-w-[88rem] px-4 sm:px-6 py-6 sm:py-8">
@@ -67,6 +73,7 @@ export default async function TasksPage({
           projects={projectOptions}
           users={users}
           subteams={subteams}
+          admin={admin}
         />
       </div>
       <div className="mt-4">
@@ -75,7 +82,7 @@ export default async function TasksPage({
           projects={projectOptions}
           subteams={subteams}
           users={users}
-          admin={await isAdmin(me.email)}
+          admin={admin}
           currentUserId={me.id}
           initialSubteam={subteam}
           initialProjects={project?.split(",").filter(Boolean)}

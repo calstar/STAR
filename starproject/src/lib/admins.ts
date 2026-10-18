@@ -2,6 +2,7 @@ import type { User } from "@prisma/client";
 import { cache } from "react";
 
 import { prisma } from "@/lib/db";
+import { effectiveEmails } from "@/lib/email-roster";
 import { getCurrentDbUser } from "@/lib/user";
 
 // Global admin allowlist for destructive operations (delete task/project/subteam).
@@ -26,6 +27,9 @@ export const SEED_ADMIN_EMAILS = [
   "carlosbautista@berkeley.edu",
   "inez9@berkeley.edu",
   "hudson@berkeley.edu",
+  // The club's purchasing account. It is also the first PVP (src/lib/pvp.ts),
+  // and the PVP list is managed from Workspace setup, which only admins open.
+  "ucberkeleystar@gmail.com",
 ].map((e) => e.toLowerCase());
 
 // Effective admins = (seed list − removed seeds) ∪ runtime-added, lowercased.
@@ -36,10 +40,11 @@ const getAdminEmails = cache(async (): Promise<Set<string>> => {
     prisma.adminEmail.findMany({ select: { email: true } }),
     prisma.removedSeedAdmin.findMany({ select: { email: true } }),
   ]);
-  const removedSeeds = new Set(removed.map((r) => r.email.toLowerCase()));
-  const emails = new Set(SEED_ADMIN_EMAILS.filter((e) => !removedSeeds.has(e)));
-  for (const r of added) emails.add(r.email.toLowerCase());
-  return emails;
+  return effectiveEmails(
+    SEED_ADMIN_EMAILS,
+    added.map((r) => r.email),
+    removed.map((r) => r.email),
+  );
 });
 
 export async function isAdmin(email: string | null | undefined): Promise<boolean> {

@@ -147,7 +147,8 @@ REVERSE_STIFFNESS = 1.0e10
 SUPPLY_ZERO = 101325.0
 
 #: Signal that turns on the compressible seat, its value the xT a regulator
-#: that declares none takes. Opt-in (``Setup.regulator_compressible_seat``);
+#: that declares none takes. A session sends it while
+#: ``Setup.regulator_compressible_seat`` is on (the default since 2026-10-08);
 #: absent or zero, the seat is the incompressible Cv law, as it always was.
 SEAT_XT_SIGNAL = "regulator_seat_xT"
 

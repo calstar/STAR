@@ -2,12 +2,18 @@ import Link from "next/link";
 import { Fragment } from "react";
 import { notFound } from "next/navigation";
 
+import { BomTab } from "@/components/bom/BomTab";
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
+import { isPvp } from "@/lib/pvp";
+import { bomRollsUp, sectionsFor } from "@/lib/bom";
+import { loadBomLines } from "@/lib/bom-data";
+import { pendingRequestsFor } from "@/lib/purchase-request-data";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { onBoardWhere } from "@/lib/board";
 import { ancestors, descendants, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
@@ -51,7 +57,9 @@ export async function ProjectView({
   const projectIds = [project.id, ...below.map((d) => d.id)];
   const crumbs = ancestors(tree, project.id);
   const rawTasks = await prisma.task.findMany({
-    where: { projectId: { in: projectIds }, archived: false },
+    // The board's tasks: open ones plus the recently done (DetailView keeps
+    // done tasks out of the list and timeline).
+    where: { projectId: { in: projectIds }, ...onBoardWhere() },
     include: {
       assignees: {
         select: { id: true, name: true, email: true, displayName: true },
@@ -69,6 +77,7 @@ export async function ProjectView({
   const tasks = rawTasks.map((t) => ({
     ...t,
     projectName: t.project.name,
+    projectColor: t.project.color,
     subteamName: t.subteam?.name ?? "",
     assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject:
@@ -77,7 +86,29 @@ export async function ProjectView({
         : { name: pathOf(tree, t.projectId, project.id) || t.project.name, color: t.project.color },
   }));
 
-  const admin = await isAdmin((await getCurrentUser()).email);
+  const viewerEmail = (await getCurrentUser()).email;
+  const admin = await isAdmin(viewerEmail);
+
+  // The BOM tab's body, loaded only when it is the tab showing. Lines can go
+  // on this project or anything under it, each listed by its own name.
+  const bomLines = view === "bom" ? await loadBomLines(project.id) : [];
+  const waiting = await pendingRequestsFor(bomLines.map((l) => l.id));
+  const bomBody =
+    view === "bom" ? (
+      <BomTab
+        projectId={project.id}
+        sections={sectionsFor(tree, project.id, bomLines, { includeEmpty: true })}
+        pendingRequests={Object.fromEntries(waiting)}
+        projectOptions={[
+          { id: project.id, label: project.name },
+          // A project too deep to roll up shows only its own lines, so only it can take new ones.
+          ...(bomRollsUp(tree, project.id) ? below.map((d) => ({ id: d.id, label: d.name })) : []),
+        ]}
+        people={users.map((u) => ({ id: u.id, label: displayNameOf(u) }))}
+        canApprove={await isPvp(viewerEmail)}
+        showOwnHeader={crumbs.length === 0}
+      />
+    ) : null;
 
   const header = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -146,9 +177,9 @@ export async function ProjectView({
       admin={admin}
       header={header}
       showSubproject={below.length > 0}
-      showSubteam
+      bom={{ body: bomBody }}
       newTaskForm={
-        <NewTaskForm projectId={project.id} users={users} subteams={subteams} />
+        <NewTaskForm projectId={project.id} users={users} subteams={subteams} admin={admin} />
       }
     />
   );

@@ -16,7 +16,7 @@ import backend.main as api
 from backend import benchmark_study as study
 from backend.assembly import engine_from_bytes
 from backend.main import _cea_for
-from backend.run import psig
+from feedtwin.session.gauge import psig
 from tests.test_session_api import an_engine
 
 

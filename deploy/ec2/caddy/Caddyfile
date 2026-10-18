@@ -42,9 +42,23 @@
 # ── STARProject ──────────────────────────────────────────────────────────────
 # Single container: Next.js serves both its pages and /api routes, so one
 # reverse_proxy (no /api split). Postgres is the starproject-db service.
+#
+# /api/mcp is the MCP endpoint for agents. They have no browser session, so it
+# skips the cookie gate and the app authenticates it itself with a per-user
+# bearer token (starproject/src/app/api/mcp/route.ts). Strip X-Auth-* there so a
+# token is the only identity that path can carry. Same shape as analytics
+# /api/ingest below: one route {} so the order written is the order run, and
+# deploy/caddy/tests/check_gate_order.py lists /api/mcp as public by design.
 {$SCHEME:http}://project.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
-	reverse_proxy starproject:3000
+	route {
+		handle /api/mcp* {
+			request_header -X-Auth-Email
+			request_header -X-Auth-User
+			reverse_proxy starproject:3000
+		}
+		import protected
+		reverse_proxy starproject:3000
+	}
 }
 
 # ── Server analytics ─────────────────────────────────────────────────────────

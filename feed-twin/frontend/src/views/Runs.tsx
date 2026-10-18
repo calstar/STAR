@@ -43,6 +43,22 @@ const B_COLOR = '#F39C12';
 const show = (v: unknown) =>
   typeof v === 'number' ? fixed(v, Math.abs(v) >= 100 ? 1 : 3) : v === undefined ? '—' : JSON.stringify(v);
 
+/** A changed input's value, short: a list or an object is summarised (the
+ *  whole of it on hover) rather than printed as JSON that runs off the page. */
+const brief = (v: unknown): string => {
+  if (v === null || v === undefined) return '—';
+  if (Array.isArray(v)) {
+    const named = v.every((x) => x && typeof x === 'object' && 'label' in (x as object));
+    return named
+      ? (v as { label: string }[]).map((x) => x.label).join(', ') || '(none)'
+      : `${v.length} item${v.length === 1 ? '' : 's'}`;
+  }
+  if (v && typeof v === 'object') return `${Object.keys(v).length} fields`;
+  return show(v);
+};
+
+const WORDS: Record<string, string> = { t0: 'T-0', setup: 'setting', hookup: 'hookup', knobs: 'knob', bottles: 'bottle', tanks: 'tank' };
+
 const key = (r: RunSummary) => `${r.owner}/${r.id}`;
 
 /** The whole record as a file: inputs, code, stand version, outcome, solver
@@ -57,7 +73,8 @@ const download = (rec: RunRecord) => {
 };
 
 export function Runs() {
-  const { standDoc } = useStand();
+  const { standDoc, artifacts } = useStand();
+  const named = (id?: string) => (id ? (artifacts.find((a) => a.id === id)?.name ?? id) : '');
   const [scope, setScope] = useState<'stand' | 'mine'>(standDoc ? 'stand' : 'mine');
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
@@ -180,6 +197,12 @@ export function Runs() {
             <th className="w-6" />
             <th className="py-1 pr-3 font-normal">When</th>
             <th className="pr-3 font-normal">By</th>
+            <th
+              className="pr-3 font-normal"
+              title="The drawing and the engine it burned, from the library. Rocket only: the drawn GSE was cut away. Simplified: feedtwin's own engine fired, not an EngineDesign card."
+            >
+              Ran on
+            </th>
             {COLUMNS.map((c) => (
               <th key={c.key} className="pr-3 text-right font-normal">
                 {c.label} {c.unit && <span className="text-gray-600">{c.unit}</span>}
@@ -211,6 +234,20 @@ export function Runs() {
                   {when(r.created)} {r.label && <span className="text-gray-400">· {r.label}</span>}
                 </td>
                 <td className="pr-3 text-gray-400">{r.user}</td>
+                <td className="max-w-[22rem] truncate pr-3 text-gray-400" title={`${named(r.diagram)} · ${named(r.engine)}`}>
+                  {r.diagram ? (
+                    <>
+                      {named(r.diagram)}
+                      {r.engine && <span className="text-gray-600"> · {named(r.engine)}</span>}
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                  {r.rocket_only && <span className="ml-1.5 text-[10px] uppercase tracking-wider text-gray-500">rocket only</span>}
+                  {r.engine_model === 'simplified' && (
+                    <span className="ml-1.5 text-[10px] uppercase tracking-wider text-amber-500/80">simplified</span>
+                  )}
+                </td>
                 {COLUMNS.map((c) => {
                   const v = r.outcome[c.key];
                   return (
@@ -236,7 +273,7 @@ export function Runs() {
           })}
           {runs.length === 0 && (
             <tr>
-              <td colSpan={COLUMNS.length + 5} className="py-6 text-center text-gray-500">
+              <td colSpan={COLUMNS.length + 6} className="py-6 text-center text-gray-500">
                 No runs yet. A burn is recorded here when it ends.
               </td>
             </tr>
@@ -245,7 +282,12 @@ export function Runs() {
       </table>
 
       {shown.length > 0 && <Traces records={shown} />}
-      {diff && <DiffPanel diff={diff} />}
+      {diff && (
+        <DiffPanel
+          diff={diff}
+          named={Object.assign({}, ...chosen.map((r) => namesIn(records[key(r)])))}
+        />
+      )}
       {chosen.length === 2 && (
         <ExplainPanel
           explain={explain && explain.a === chosen[0].id && explain.b === chosen[1].id ? explain : null}
@@ -299,7 +341,36 @@ function Traces({ records }: { records: RunRecord[] }) {
   );
 }
 
-function DiffPanel({ diff }: { diff: RunDiff }) {
+/** What a record calls the ids its inputs are keyed by: its vessels (the
+ *  traces' labels) and its knobs (the hookup's, so "knob · node 90" reads
+ *  "knob · LP-PR"). */
+function namesIn(rec: RunRecord | undefined): Record<string, string> {
+  if (!rec) return {};
+  const out: Record<string, string> = { ...(rec.series?.labels ?? {}) };
+  const hookup = rec.inputs?.hookup as { knobs?: { id?: string; label?: string }[] } | undefined;
+  for (const k of hookup?.knobs ?? []) if (k.id && k.label && k.label !== k.id) out[k.id] = k.label;
+  return out;
+}
+
+function DiffPanel({ diff, named = {} }: { diff: RunDiff; named?: Record<string, string> }) {
+  // The records name their vessels (traces' labels, and `<...>.label` rows
+  // where they differ): use those to name the rest, and leave the label rows
+  // themselves out.
+  const labels: Record<string, string> = { ...named };
+  for (const c of diff.inputs) {
+    const m = /\.([^.]+)\.label$/.exec(c.key);
+    const v = typeof c.a === 'string' ? c.a : typeof c.b === 'string' ? c.b : '';
+    if (m && v) labels[m[1]] = v;
+  }
+  const inputs = diff.inputs
+    .filter((c) => !c.key.endsWith('.label'))
+    .map((c) => ({
+      ...c,
+      name: c.key
+        .split('.')
+        .map((part) => labels[part] ?? WORDS[part] ?? part.replace(/_/g, ' '))
+        .join(' · '),
+    }));
   return (
     <div className="grid grid-cols-2 gap-4">
       <div>
@@ -324,18 +395,18 @@ function DiffPanel({ diff }: { diff: RunDiff }) {
       </div>
       <div>
         <h3 className="mb-1 text-[12px] text-gray-400">
-          What changed <span className="text-gray-600">({diff.inputs.length} inputs)</span>
+          What changed <span className="text-gray-600">({inputs.length} inputs)</span>
         </h3>
         <table className="w-full font-mono text-[12px]">
           <tbody>
-            {diff.inputs.map((c) => (
-              <tr key={c.key} className="border-b border-gray-900" title={c.group}>
-                <td className="py-0.5 pr-2 text-gray-400">{c.key}</td>
-                <td className="pr-2 text-right" style={{ color: A_COLOR }}>
-                  {show(c.a)}
+            {inputs.map((c) => (
+              <tr key={c.key} className="border-b border-gray-900 align-top" title={`${c.group} · ${c.key}`}>
+                <td className="py-0.5 pr-2 text-gray-400">{c.name}</td>
+                <td className="max-w-[14rem] break-words pr-2 text-right" style={{ color: A_COLOR }} title={show(c.a)}>
+                  {brief(c.a)}
                 </td>
-                <td className="text-right" style={{ color: B_COLOR }}>
-                  {show(c.b)}
+                <td className="max-w-[14rem] break-words text-right" style={{ color: B_COLOR }} title={show(c.b)}>
+                  {brief(c.b)}
                 </td>
               </tr>
             ))}
@@ -346,7 +417,7 @@ function DiffPanel({ diff }: { diff: RunDiff }) {
                 <td className="text-right">{show(c.b)}</td>
               </tr>
             ))}
-            {diff.inputs.length === 0 && diff.code.length === 0 && (
+            {inputs.length === 0 && diff.code.length === 0 && (
               <tr>
                 <td className="py-1 text-gray-500">Nothing: the same inputs and code.</td>
               </tr>

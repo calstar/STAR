@@ -31,6 +31,10 @@ export type FinanceRow = {
   vendors: string;
   mine: boolean;
   needsAdmin: boolean;
+  /** Filed through STARProject, or imported from CalLink. */
+  source: "callink" | "starproject";
+  projectId: string | null;
+  subteamId: string | null;
 };
 
 export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
@@ -54,6 +58,9 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       callinkRequestNumber: true,
       needsCheck: true,
       items: { select: { vendor: true } },
+      source: true,
+      projectId: true,
+      subteamId: true,
     },
   });
   return rows
@@ -70,6 +77,9 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       vendors: [...new Set(r.items.map((i) => i.vendor).filter(Boolean))].join(", "),
       mine: isMine(viewer, r),
       needsAdmin: needsAdmin(r),
+      source: r.source,
+      projectId: r.projectId,
+      subteamId: r.subteamId,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -128,7 +138,9 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
       subteam: { select: { name: true } },
       items: {
         orderBy: { position: "asc" },
-        include: { receipts: { select: { id: true, fileName: true, size: true, callinkHref: true } } },
+        include: {
+          receipts: { select: { id: true, fileName: true, size: true, callinkHref: true, blob: { select: { receiptId: true } } } },
+        },
       },
       events: {
         orderBy: { createdAt: "asc" },
@@ -162,7 +174,8 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
       id: f.id,
       fileName: f.fileName,
       size: f.size,
-      url: f.callinkHref ?? `/api/finance/receipts/${f.id}`,
+      url: f.blob || !f.callinkHref ? `/api/finance/receipts/${f.id}` : f.callinkHref,
+      stored: !!f.blob,
     })),
   }));
 

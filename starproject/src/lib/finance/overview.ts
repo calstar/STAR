@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/db";
+import type { Budget } from "@/lib/finance/budget";
+import { budgetYears, getBudget } from "@/lib/finance/budget-data";
 import { isSummaryAccount, schoolYearOf, spendDate, spendingFor, yearsWithData, type Spending } from "@/lib/finance/ledger";
 import { displayNameOf } from "@/lib/names";
 import { getProjectTree } from "@/lib/projects";
@@ -36,10 +38,11 @@ export type FinanceOverview = {
   manual: AccountRow[];
   spending: Spending;
   income: IncomeRow[];
+  budget: Budget;
 };
 
 export async function getFinanceOverview(requestedYear: number | null, now = new Date()): Promise<FinanceOverview> {
-  const [accounts, reimbursements, subteams, tree, incomeYears] = await Promise.all([
+  const [accounts, reimbursements, subteams, tree, incomeYears, budgeted] = await Promise.all([
     prisma.financeAccount.findMany({
       where: { archived: false },
       include: { updatedBy: { select: { name: true, email: true, displayName: true } } },
@@ -61,15 +64,19 @@ export async function getFinanceOverview(requestedYear: number | null, now = new
     getSubteams(),
     getProjectTree(),
     prisma.plannedIncome.findMany({ distinct: ["schoolYear"], select: { schoolYear: true } }),
+    budgetYears(),
   ]);
 
-  const years = yearsWithData(now, reimbursements.map(spendDate), incomeYears.map((i) => i.schoolYear));
+  const years = yearsWithData(now, reimbursements.map(spendDate), [...incomeYears.map((i) => i.schoolYear), ...budgeted]);
   const year = requestedYear != null && years.includes(requestedYear) ? requestedYear : schoolYearOf(now);
 
-  const income = await prisma.plannedIncome.findMany({
-    where: { schoolYear: year },
-    orderBy: [{ expectedOn: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
-  });
+  const [income, budget] = await Promise.all([
+    prisma.plannedIncome.findMany({
+      where: { schoolYear: year },
+      orderBy: [{ expectedOn: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
+    }),
+    getBudget(year),
+  ]);
 
   const rows: AccountRow[] = accounts.map((a) => ({
     id: a.id,
@@ -98,5 +105,6 @@ export async function getFinanceOverview(requestedYear: number | null, now = new
       received: i.received,
       note: i.note,
     })),
+    budget,
   };
 }

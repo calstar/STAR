@@ -135,3 +135,45 @@ def test_a_hookup_naming_what_the_drawing_lacks_is_refused() -> None:
         }
         response = client.put("/api/hookup", params={"diagram": diagram}, json=twice)
         assert response.status_code == 422 and "two knobs" in response.text
+
+
+def test_a_saved_hookup_that_cannot_be_read_is_said_on_the_console() -> None:
+    """It falls back to the suggestion, as a drawing never linked does -- and
+    used to be indistinguishable from one: the stand ran on other wiring and
+    nothing said so."""
+    diagram = upload(json.loads(STAND.read_text()), "unreadable_hookup.json")
+    library.put_record(
+        HOOKUPS, _lineage(library.get(diagram)), {"hookup": {"schema": 999}}
+    )
+    opened = client.post("/api/session", params={"diagram": diagram}, json={})
+    assert opened.status_code == 200, opened.text
+    said = "saved hookup could not be read"
+    assert any(said in n for n in opened.json()["notes"]), opened.json()["notes"]
+    ticked = client.post(f"/api/session/{opened.json()['id']}/tick", json={"dt": 0.05})
+    assert any(said in n for n in ticked.json()["notes"])
+    assert (
+        client.get("/api/hookup", params={"diagram": diagram}).json()["saved"] is False
+    )
+
+
+def test_aliases_are_saved_with_the_hookup_and_reach_a_running_stand() -> None:
+    """A console name is kept with the drawing's hookup, comes back on the next
+    stand, and a running stand takes a rename without reopening."""
+    diagram = upload(json.loads(STAND.read_text()), "alias stand.json")
+    first = client.get("/api/hookup", params={"diagram": diagram}).json()
+    body = {**first["hookup"], "aliases": {"engine.pc": "Chamber pressure", "x": " "}}
+    saved = client.put("/api/hookup", params={"diagram": diagram}, json=body).json()
+    assert saved["hookup"]["aliases"] == {"engine.pc": "Chamber pressure"}
+
+    opened = client.post("/api/session", params={"diagram": diagram}, json={}).json()
+    assert opened["aliases"]["engine.pc"] == "Chamber pressure"
+    # Saved from the panel, the hookup is wired: what is on the DAQ box goes
+    # by its connector's name -- a main valve by the row that opens it.
+    assert opened["aliases"]["MVO"] == "LOX Main"
+    renamed = client.post(
+        f"/api/session/{opened['id']}/command",
+        json={"aliases": {"engine.pc": "Pc"}},
+    ).json()
+    assert renamed["aliases"]["engine.pc"] == "Pc"
+    assert renamed["t"] >= opened["t"], "the same stand, not a new one"
+    _SESSIONS.pop(opened["id"], None)

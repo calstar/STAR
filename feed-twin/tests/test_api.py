@@ -216,18 +216,11 @@ def test_an_unknown_artifact_is_a_422_not_a_500() -> None:
 
 # ------------------------------------------------------- the state machine
 #
-# The stand is not a timeline any more, it is a state machine — the same two
-# CSVs the DAQ's firmware and GUI both read. So these check the properties that
-# make that real: that a state commands the valves the table says, that an
-# illegal move is refused, and that an abort is never refused.
-
-
-def state(diagram: str, name: str, **body: object) -> dict:
-    response = client.post(
-        f"/api/state?diagram={diagram}", json={"state": name, **body}
-    )
-    assert response.status_code == 200, response.text
-    return response.json()
+# The stand is not a timeline any more, it is a state machine -- the same two
+# CSVs the DAQ's firmware and GUI both read. It runs on a session, as the
+# console runs it: an illegal move refused and an abort never refused are the
+# session's (tests/test_session_api.py, tests/test_statemachine.py), and every
+# valve where the table says, the operator walks' (tests/test_operator_walks.py).
 
 
 def test_the_machine_binds_to_the_drawings_valves() -> None:
@@ -240,43 +233,6 @@ def test_the_machine_binds_to_the_drawings_valves() -> None:
     assert machine["bound"]["Fuel Main"] == "MVF"
 
 
-def test_a_state_commands_exactly_what_the_table_says() -> None:
-    diagram = diagram_id()
-    machine = client.get(f"/api/statemachine?diagram={diagram}").json()
-    for name in ("Idle", "Ready", "Fire"):
-        frame = state(diagram, name)["frames"][0]
-        for symbol, wanted in machine["positions"][name].items():
-            assert frame["open"][symbol] is wanted, f"{name}/{symbol}"
-
-
-def test_fire_opens_both_mains() -> None:
-    frame = state(diagram_id(), "Fire")["frames"][0]
-    assert frame["open"]["MVO"] and frame["open"]["MVF"]
-
-
-def test_an_illegal_transition_is_refused_and_says_what_is_legal() -> None:
-    """The API must not be a back door around the state machine the whole app
-    is built on."""
-    response = client.post(
-        f"/api/state?diagram={diagram_id()}",
-        json={"state": "Fire", "from": "Idle"},
-    )
-    assert response.status_code == 409
-    detail = response.json()["detail"]
-    assert "Idle cannot go to Fire" in detail and "Armed" in detail
-
-
-def test_an_abort_is_never_refused() -> None:
-    """Asymmetric failure: a spurious abort path costs a confused moment, a
-    missing one costs an abort."""
-    for source in ("Idle", "Fire", "Ready"):
-        response = client.post(
-            f"/api/state?diagram={diagram_id()}",
-            json={"state": "Emergency Abort", "from": source},
-        )
-        assert response.status_code == 200, source
-
-
 def test_a_ragged_transition_table_is_reported_not_absorbed() -> None:
     """The DAQ's own CSV has short rows. Zipping them against the header shifts
     every column past the gap, which can silently delete an abort path."""
@@ -286,96 +242,68 @@ def test_a_ragged_transition_table_is_reported_not_absorbed() -> None:
     assert "Armed" in joined
 
 
-def test_a_held_valve_beats_the_state() -> None:
-    """Clicking a valve takes it by hand; changing state must not undo that."""
-    result = state(diagram_id(), "Ready", forced={"MVO": 1})
-    assert result["frames"][0]["open"]["MVO"] is True
-    assert result["frames"][0]["open"]["MVF"] is False
+# -------------------------------------------------------------------- firing
+#
+# On a session, from T-0, the way the console fires. Until 2026-10-08 these ran
+# on a frozen-stand endpoint (``POST /api/state``, ``/api/fire``) that nothing
+# else called, and that held the tanks at dome + bias.
 
 
-def test_a_state_returns_frames_keyed_by_drawing_id() -> None:
+def session(diagram: str, engine: str = "", fluid_set: str = "hotfire") -> str:
+    """A session at T-0: loaded, charged, at lockup, in Ready."""
+    opened = client.post(
+        "/api/session",
+        params={"diagram": diagram, "engine": engine, "fluid_set": fluid_set},
+        json={"state": "Idle"},
+    )
+    assert opened.status_code == 200, opened.text
+    sid: str = opened.json()["id"]
+    t0 = client.post(f"/api/session/{sid}/t0")
+    assert t0.status_code == 200, t0.text
+    return sid
+
+
+def fire(sid: str, seconds: float = 0.5) -> dict:
+    """Fire, and the frame ``seconds`` into it."""
+    response = client.post(f"/api/session/{sid}/command", json={"state": "Fire"})
+    assert response.status_code == 200, response.text
+    frame: dict = response.json()
+    for _ in range(round(seconds / 0.1)):
+        frame = client.post(f"/api/session/{sid}/tick", json={"dt": 0.1}).json()
+    return frame
+
+
+def test_a_frame_is_keyed_by_drawing_id() -> None:
     diagram = diagram_id()
     drawing = client.get(f"/api/diagram?diagram={diagram}").json()
-    result = state(diagram, "Fire")
-    assert result["converged"] is True
-    assert len(result["frames"]) == 1
+    frame = fire(session(diagram))
+    assert frame["converged"] is True
     ids = {n["id"] for n in drawing["nodes"]} | {e["id"] for e in drawing["edges"]}
-    last = result["frames"][-1]
-    assert set(last["node_psi"]) <= ids
-    assert set(last["flow_kg_s"]) <= ids
-    assert set(last["open"]) <= ids
-    assert last["engine"] is None  # no engine attached
+    assert set(frame["node_psi"]) <= ids
+    assert set(frame["flow_kg_s"]) <= ids
+    assert set(frame["open"]) <= ids
+    assert frame["open"]["MVO"] and frame["open"]["MVF"], "Fire opens both mains"
+    assert frame["engine"] is None  # no engine attached
 
 
-def test_turning_the_dome_control_regulator_moves_the_tanks() -> None:
-    low = state(diagram_id(), "Fire", dome=350)
-    high = state(diagram_id(), "Fire", dome=520)
-    delta = high["frames"][-1]["node_psi"]["OXT"] - low["frames"][-1]["node_psi"]["OXT"]
-    assert delta == pytest.approx(170.0, abs=20.0)
+def mains_flow(fluid_set: str) -> tuple[float, float]:
+    frame = fire(session(diagram_id(), fluid_set=fluid_set))
+    assert frame["converged"] is True
+    return abs(frame["flow_kg_s"]["MVO"]), abs(frame["flow_kg_s"]["MVF"])
 
 
 @pytest.mark.parametrize("fluid_set", ["hotfire", "cold-flow", "water-flow"])
-def test_every_fluid_set_solves(fluid_set: str) -> None:
-    response = client.post(
-        f"/api/state?diagram={diagram_id()}&fluid_set={fluid_set}",
-        json={"state": "Fire"},
-    )
-    assert response.status_code == 200, response.text
-    result = response.json()
-    assert result["converged"] is True
-    assert result["fluid_set"] == fluid_set
+def test_every_fluid_set_fires(fluid_set: str) -> None:
+    lox, fuel = mains_flow(fluid_set)
+    assert lox > 0.0 and fuel > 0.0
 
 
 def test_cold_flow_differs_from_the_real_propellants() -> None:
     """LN2 is lighter than LOX and water heavier than ethanol, so the same
     hardware at the same pressure gives different flows on each leg."""
-
-    def flow(fluid_set: str, branch: str) -> float:
-        result = client.post(
-            f"/api/state?diagram={diagram_id()}&fluid_set={fluid_set}",
-            json={"state": "Fire"},
-        ).json()
-        return abs(result["frames"][-1]["flow_kg_s"][branch])
-
-    assert flow("cold-flow", "MVO") < flow("hotfire", "MVO")
-    assert flow("cold-flow", "MVF") > flow("hotfire", "MVF")
-
-
-# -------------------------------------------------------------------- firing
-
-
-def test_a_burn_is_as_long_as_you_ask_for() -> None:
-    """There is no four-second cap. A burn is as long as the propellant lasts,
-    and a UI that says otherwise is a cap somebody has to work around."""
-    result = client.post(
-        f"/api/fire?diagram={diagram_id()}",
-        json={"duration": 30.0, "lead_in": 0.5, "sample_hz": 4},
-    ).json()
-    assert result["times_s"][-1] == pytest.approx(30.0, abs=0.5)
-    assert result["times_s"][0] == pytest.approx(-0.5, abs=0.01)
-
-
-def test_a_long_burn_drops_its_sample_rate_rather_than_its_length() -> None:
-    """A shorter burn than asked for is a wrong answer; a coarser one is not."""
-    result = client.post(
-        f"/api/fire?diagram={diagram_id()}",
-        json={"duration": 600.0, "lead_in": 0.0, "sample_hz": 50},
-    ).json()
-    assert result["times_s"][-1] == pytest.approx(600.0, abs=5.0)
-    assert len(result["frames"]) <= 401
-    assert result["controls"]["sample_hz"] < 50
-
-
-def test_the_lead_in_shows_the_stand_before_ignition() -> None:
-    result = client.post(
-        f"/api/fire?diagram={diagram_id()}",
-        json={"duration": 2.0, "lead_in": 1.0, "sample_hz": 4, "prefire": "Ready"},
-    ).json()
-    before = [f for f in result["frames"] if f["t"] < 0]
-    after = [f for f in result["frames"] if f["t"] > 0.1]
-    assert before and after
-    assert all(not f["open"]["MVO"] for f in before)
-    assert all(f["open"]["MVO"] for f in after)
+    hot, cold = mains_flow("hotfire"), mains_flow("cold-flow")
+    assert cold[0] < hot[0]
+    assert cold[1] > hot[1]
 
 
 # --------------------------------------------------------- the coupled engine
@@ -396,34 +324,24 @@ def test_attaching_an_engine_couples_the_chamber() -> None:
 
 
 @needs_engine
-def test_a_coupled_state_reports_the_whole_engine_state() -> None:
-    result = client.post(
-        f"/api/state?diagram={diagram_id()}&engine={engine_id()}",
-        json={"state": "Fire"},
-    ).json()
-    assert result["converged"] is True
-    engine = result["frames"][-1]["engine"]
-    assert engine is not None
+def test_a_shut_engine_reads_ambient_and_a_lit_one_reads_sane() -> None:
+    """A chamber is open to atmosphere through its own nozzle until propellant
+    arrives; lit, every reading on the engine card is in a sane range."""
+    sid = session(diagram_id(), engine_id())
+    ready = client.post(f"/api/session/{sid}/tick", json={"dt": 0.1}).json()
+    shut = ready["engine"]
+    assert shut["chamber_psi"] == pytest.approx(0.0, abs=0.5)  # gauge: cold is 0
+    assert shut["thrust_N"] == 0.0
+
+    lit = fire(sid)
+    assert lit["converged"] is True
+    engine = lit["engine"]
     assert 100.0 < engine["chamber_psi"] < 900.0
     assert engine["mdot_ox"] > 0.0 and engine["mdot_fuel"] > 0.0
     assert 1.0 < engine["mixture_ratio"] < 4.0
     assert 2500.0 < engine["chamber_temperature_K"] < 4000.0
     assert engine["thrust_N"] > 1000.0
     assert 150.0 < engine["isp_s"] < 350.0
-
-
-@needs_engine
-def test_the_chamber_sits_at_ambient_with_the_valves_shut() -> None:
-    """A chamber is open to atmosphere through its own nozzle."""
-    result = client.post(
-        f"/api/state?diagram={diagram_id()}&engine={engine_id()}",
-        json={"state": "Ready"},
-    ).json()
-    engine = result["frames"][0]["engine"]
-    assert engine["chamber_psi"] == pytest.approx(
-        0.0, abs=0.5
-    )  # gauge: a cold chamber reads zero
-    assert engine["thrust_N"] == 0.0
 
 
 @needs_engine

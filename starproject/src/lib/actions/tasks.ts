@@ -17,9 +17,10 @@ import { prisma } from "@/lib/db";
 import { pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { notifyAssignment } from "@/lib/notifications";
-import { STATUS_LABEL, archivedForStatusChange } from "@/lib/tasks";
+import { STATUS_LABEL, statusChangePatch } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 import {
+  TaskPointsInput,
   TaskPriorityEnum,
   TaskStatusEnum,
   csvToIds,
@@ -34,7 +35,17 @@ const withNames = {
   subteam: { select: { name: true } },
 } as const;
 
-export async function createTask(formData: FormData) {
+/** Only admins put points on a task; anyone else is refused. */
+async function assertCanSetPoints(email: string) {
+  if (!(await isAdmin(email))) throw new Error("Only admins can set a task's points.");
+}
+
+/** A points value as the activity log stores it: "30" or "none". */
+function pointsLabel(p: number | null): string {
+  return p == null ? "none" : String(p);
+}
+
+export async function createTask(formData: FormData): Promise<{ id: string }> {
   const user = await getCurrentDbUser();
   const data = taskCreateSchema.parse({
     projectId: formData.get("projectId"),
@@ -45,7 +56,12 @@ export async function createTask(formData: FormData) {
     subteamId: formData.get("subteamId"),
     startDate: formData.get("startDate"),
     dueDate: formData.get("dueDate"),
+    points: formData.get("points") ?? undefined,
   });
+  // Points are admin-only (they feed the Leaderboard). The form hides the field
+  // from members; this refuses a member who sends it anyway.
+  const points = data.points ?? null;
+  if (points !== null) await assertCanSetPoints(user.email);
   const created = await prisma.task.create({
     data: {
       projectId: data.projectId,
@@ -58,6 +74,7 @@ export async function createTask(formData: FormData) {
       subteamId: data.subteamId,
       startDate: data.startDate,
       dueDate: data.dueDate,
+      points,
       createdById: user.id,
     },
     include: withNames,
@@ -80,6 +97,17 @@ export async function createTask(formData: FormData) {
       kind: "assigned",
       to: userLabel(a),
     });
+  if (points !== null)
+    await recordActivity({
+      actorId: user.id,
+      taskId: created.id,
+      projectId: created.projectId,
+      taskTitle: created.title,
+      kind: "updated",
+      field: "points",
+      from: pointsLabel(null),
+      to: pointsLabel(points),
+    });
 
   revalidatePath(`/projects/${data.projectId}`);
   revalidatePath("/tasks");
@@ -90,6 +118,8 @@ export async function createTask(formData: FormData) {
       notifyAssignment({ taskId: created.id, assigneeId, actorId: user.id }),
     );
   }
+  // The form ignores this; the MCP tool reads the new task back by id.
+  return { id: created.id };
 }
 
 /**
@@ -135,7 +165,7 @@ export async function updateTask(formData: FormData) {
   if (formData.has("status")) {
     const status = TaskStatusEnum.parse(formData.get("status"));
     data.status = status;
-    Object.assign(data, archivedForStatusChange(old.status, status));
+    Object.assign(data, statusChangePatch(old.status, status));
   }
   if (formData.has("priority")) {
     const v = formData.get("priority");
@@ -157,6 +187,10 @@ export async function updateTask(formData: FormData) {
     const v = String(formData.get("dueDate") ?? "");
     if (!isValidDateInput(v)) throw new Error("Enter a valid due date with a 4-digit year.");
     data.dueDate = v === "" ? null : new Date(v);
+  }
+  if (formData.has("points")) {
+    await assertCanSetPoints(user.email);
+    data.points = TaskPointsInput.parse(formData.get("points"));
   }
   if (formData.has("startDate")) {
     const v = String(formData.get("startDate") ?? "");
@@ -208,6 +242,8 @@ export async function updateTask(formData: FormData) {
     old.dueDate?.getTime() !== task.dueDate?.getTime()
   )
     await log("due", dateLabel(old.dueDate), dateLabel(task.dueDate));
+  if (formData.has("points") && old.points !== task.points)
+    await log("points", pointsLabel(old.points), pointsLabel(task.points));
   const oldAssigneeIds = old.assignees.map((a) => a.id);
   const newAssigneeIds = task.assignees.map((a) => a.id);
   const addedAssignees = task.assignees.filter(
@@ -310,8 +346,8 @@ export async function moveTask(
     data: {
       status: parsed.status,
       boardOrder: parsed.boardOrder,
-      // Auto-archive on completion; dragging back out of Done restores it.
-      ...(old ? archivedForStatusChange(old.status, parsed.status) : {}),
+      // Auto-archive and stamp on completion; dragging back out of Done restores it.
+      ...(old ? statusChangePatch(old.status, parsed.status) : {}),
     },
   });
   revalidatePath(`/projects/${task.projectId}`);

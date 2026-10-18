@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ancestors,
   buildTree,
+  colorOf,
   descendants,
   flatten,
   moveProblem,
@@ -85,5 +86,19 @@ describe("project tree", () => {
     const loop = buildTree([node("A", "B"), node("B", "A")]);
     expect(ancestors(loop, "A").map((n) => n.id)).toEqual(["B"]);
     expect(pathOf(loop, "A")).toBe("B › A");
+  });
+});
+
+describe("colorOf", () => {
+  it("uses the project's own colour, else the nearest coloured ancestor's", () => {
+    const t = buildTree([
+      { ...node("LE4", null), color: "#111111" },
+      { ...node("Engine", "LE4"), color: "#222222" },
+      node("Spark", "Engine"),
+      node("Media", null),
+    ]);
+    expect(colorOf(t, "Engine")).toBe("#222222");
+    expect(colorOf(t, "Spark")).toBe("#222222");
+    expect(colorOf(t, "Media")).toBeNull();
   });
 });

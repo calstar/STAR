@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   type BoardTask,
   type WorkspaceTask,
+  DONE_ON_BOARD_DAYS,
+  comparePriorityAsc,
   groupByStatus,
+  inLists,
+  leavesBoardAt,
   midpointOrder,
+  onBoard,
+  onBoardWhere,
   toRowData,
 } from "@/lib/board";
 
@@ -100,13 +106,15 @@ describe("groupByStatus", () => {
     ]);
   });
 
-  it("orders the done column by most-recently-due first, undated last", () => {
-    const cols = groupByStatus([
-      task({ id: "old", status: "done", dueDate: new Date("2026-01-01") }),
-      task({ id: "recent", status: "done", dueDate: new Date("2026-06-01") }),
-      task({ id: "undated", status: "done", dueDate: null }),
-    ]);
-    expect(cols.done.map((t) => t.id)).toEqual(["recent", "old", "undated"]);
+  it("orders the done column by most recently completed first, undated last, under every sort", () => {
+    const done = [
+      task({ id: "old", status: "done", completedAt: new Date("2026-10-01"), dueDate: new Date("2026-12-01"), priority: "high", title: "A" }),
+      task({ id: "recent", status: "done", completedAt: new Date("2026-10-12"), dueDate: new Date("2026-01-01"), priority: "low", title: "Z" }),
+      task({ id: "undated", status: "done", completedAt: null, boardOrder: -5 }),
+    ];
+    for (const sort of ["due", "priority", "created", "title", "manual"] as const) {
+      expect(groupByStatus(done, sort).done.map((t) => t.id)).toEqual(["recent", "old", "undated"]);
+    }
   });
 
   it("breaks ties on equal or absent due dates by boardOrder then createdAt", () => {
@@ -188,5 +196,57 @@ describe("toRowData", () => {
     );
     expect(row.assigneeIds).toEqual(["u1", "u2"]);
     expect(row.assigneeName).toBe("Ada L., Grace H.");
+  });
+});
+
+describe("comparePriorityAsc (table Priority column)", () => {
+  it("descending puts high on top and unset last", () => {
+    const desc = ["low", "", "high", "medium"].sort((a, b) => comparePriorityAsc(b, a));
+    expect(desc).toEqual(["high", "medium", "low", ""]);
+  });
+});
+
+describe("done tasks on the board", () => {
+  const now = new Date("2026-10-13T12:00:00Z");
+  const daysAgo = (n: number) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+
+  it("keeps a done task on the board for 30 days after it was completed", () => {
+    expect(DONE_ON_BOARD_DAYS).toBe(30);
+    // Done tasks auto-archive, and that doesn't take them off the board.
+    expect(onBoard({ status: "done", archived: true, completedAt: daysAgo(0) }, now)).toBe(true);
+    expect(onBoard({ status: "done", archived: true, completedAt: daysAgo(29) }, now)).toBe(true);
+    expect(onBoard({ status: "done", archived: true, completedAt: daysAgo(30) }, now)).toBe(true);
+    expect(onBoard({ status: "done", archived: true, completedAt: daysAgo(30.01) }, now)).toBe(false);
+    expect(onBoard({ status: "done", archived: false, completedAt: daysAgo(45) }, now)).toBe(false);
+  });
+
+  it("leaves a done task with no completion date off the board", () => {
+    expect(onBoard({ status: "done", archived: false, completedAt: null }, now)).toBe(false);
+  });
+
+  it("shows open tasks unless they were archived by hand", () => {
+    expect(onBoard({ status: "todo", archived: false, completedAt: null }, now)).toBe(true);
+    expect(onBoard({ status: "blocked", archived: true, completedAt: null }, now)).toBe(false);
+  });
+
+  it("says when a done task moves to the archive", () => {
+    expect(leavesBoardAt({ status: "done", completedAt: daysAgo(10) })).toEqual(new Date(now.getTime() + 20 * 24 * 60 * 60 * 1000));
+    expect(leavesBoardAt({ status: "todo", completedAt: null })).toBeNull();
+  });
+
+  it("filters the database the same way onBoard does", () => {
+    expect(onBoardWhere(now)).toEqual({
+      OR: [
+        { archived: false, status: { not: "done" } },
+        { status: "done", completedAt: { gte: daysAgo(30) } },
+      ],
+    });
+  });
+
+  it("never lists a done task in the list or timeline, archived or not", () => {
+    expect(inLists({ status: "todo", archived: false })).toBe(true);
+    expect(inLists({ status: "done", archived: true })).toBe(false);
+    expect(inLists({ status: "done", archived: false })).toBe(false);
+    expect(inLists({ status: "in_progress", archived: true })).toBe(false);
   });
 });

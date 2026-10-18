@@ -5,9 +5,16 @@
  * scale, where the NOP and MEOP lines sit, the thresholds at which the bar
  * changes colour. A re-implementation would drift on exactly those. What is
  * not the DAQ's is the drawing: an outlined capsule in the console's
- * monochrome, neutral below NOP, amber above it, red above MEOP, and the
- * limit rules run the width of the column so a row of bars reads as one
- * gauge.
+ * monochrome, neutral below NOP, amber above it, red above MEOP. The limit
+ * rules cross the capsule only, and each number sits against the capsule's
+ * edge at its rule (the operator, 2026-10-08: rules across the whole column
+ * and numbers off at its side read as belonging to the neighbour).
+ *
+ * Not the DAQ's either: a bar with no limits. The DAQ's sensor config gives
+ * every channel a NOP and MEOP; the twin has only what the drawing says, and a
+ * transducer on a dome line or manifold reads no vessel's MAWP. Such a bar is
+ * linear to a round full scale and draws no rules -- the 550/700 it used to
+ * guess from the tag was worse than none.
  *
  * Three of its props are declared there and never read — `unit`, `showLabels`,
  * and one derived value. They are wired up here rather than deleted, because
@@ -82,11 +89,14 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   }
 }
 
+/** A bar with no limits reads to the first of these its value fits under. */
+const FULL_SCALES = [1000, 5000, 10000];
+
 function PressureBar({
   label,
   value,
-  nop = 500,
-  meop = 700,
+  nop: drawnNop,
+  meop: drawnMeop,
   color,
   tint = '#d9d9d9',
   unit = 'psig',
@@ -94,8 +104,20 @@ function PressureBar({
   compact = false,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
+  const bare = drawnMeop === undefined;
+  // A red line alone (the drawing's operating pressure is not under it): the
+  // DAQ's scale still wants an amber knee, so it sits where the DAQ's would.
+  const meop = drawnMeop ?? 0;
+  const nop = drawnNop ?? meop * 0.85;
 
   const { sane, nopPct, meopPct, displayHeight, barColor, level } = useMemo(() => {
+    if (bare) {
+      const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
+      const full = FULL_SCALES.find((f) => displayValue <= f) ?? FULL_SCALES[FULL_SCALES.length - 1];
+      const pct = sane ? Math.min(Math.max(displayValue / full, 0), 1) * 100 : 0;
+      const displayHeight = sane && value !== null && value !== 0 ? Math.max(pct, 2) : pct;
+      return { sane, nopPct: 0, meopPct: 0, displayHeight, barColor: color || tint, level: 'ok' as const };
+    }
     const maxVal = Math.max(meop * 1.3, 1000);
     const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
     const clampedDisplayValue = Math.max(0, displayValue);
@@ -110,7 +132,7 @@ function PressureBar({
     const barColor = color || (level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : tint);
 
     return { sane, nopPct, meopPct, displayHeight, barColor, level };
-  }, [displayValue, value, nop, meop, color, tint]);
+  }, [displayValue, value, nop, meop, color, tint, bare]);
 
   const readout = level === 'meop' ? '#f87171' : level === 'nop' ? '#e5b53a' : 'var(--ink)';
   /** Width kept to the right of the capsule for the limit numbers [px].
@@ -119,13 +141,15 @@ function PressureBar({
    *  capsule shares its column with a gutter, and the numbers live there. */
   const GUTTER = showLabels ? 32 : 0;
 
+  // A rule across the capsule, and its number just outside the capsule's
+  // right edge, centred on the rule.
   const limit = (pct: number, v: number, tone: string) => (
     <div className="pointer-events-none absolute inset-x-0" style={{ bottom: `${pct.toFixed(2)}%` }}>
-      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.6 }} />
+      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.75 }} />
       {showLabels && (
         <span
-          className="absolute right-0 top-1 pl-1.5 font-mono text-[10px] leading-none tabular-nums"
-          style={{ color: tone, width: GUTTER }}
+          className="absolute left-full -translate-y-1/2 whitespace-nowrap pl-1 font-mono text-[10px] leading-none tabular-nums"
+          style={{ color: tone, top: 0 }}
         >
           {isFinite(v) && Math.abs(v) < 1e21 ? v.toFixed(0) : v}
         </span>
@@ -136,14 +160,16 @@ function PressureBar({
   return (
     <div className="flex h-full min-h-0 w-full select-none flex-col">
       {/* The tag and the reading centre on the capsule, not on the column. */}
+      {/* Two lines at most, and always room for two so the capsules line
+          up: a name off the DAQ box ("Fuel Upstream") is longer than a tag. */}
       <div
-        className={`flex-shrink-0 truncate pb-3 text-center font-mono uppercase tracking-[0.08em] text-[var(--ink-2)] ${
-          compact ? 'text-[11px]' : 'text-[12px]'
+        className={`flex flex-shrink-0 items-end justify-center pb-3 text-center font-mono uppercase leading-tight tracking-[0.08em] text-[var(--ink-2)] ${
+          compact ? 'h-[calc(2.5em+0.75rem)] text-[11px]' : 'h-[calc(2.5em+0.75rem)] text-[12px]'
         }`}
         style={{ paddingRight: GUTTER }}
         title={label}
       >
-        {label}
+        <span className="line-clamp-2 break-words">{label}</span>
       </div>
 
       <div className="relative min-h-0 w-full flex-1">
@@ -151,32 +177,36 @@ function PressureBar({
             which are laid out against the full column height, sit where the
             DAQ puts them to within the outline's pixel. */}
         <div className="absolute inset-y-0 left-0 flex justify-center" style={{ right: GUTTER }}>
-          <div
-            className="relative h-full w-[72%] max-w-[52px] overflow-hidden border"
-            style={{
-              borderRadius: 9,
-              borderColor: level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)',
-              // A faint wash of the channel's colour, so an empty bar still
-              // says which trace it is.
-              background: color ? undefined : `${tint}12`,
-            }}
-          >
-            {sane && value !== null && (
-              <div
-                className="absolute bottom-0 w-full"
-                style={{
-                  height: `${displayHeight}%`,
-                  background: barColor,
-                  minHeight: value !== 0 ? '2px' : '0px',
-                  transition: 'height 0.05s ease-out',
-                  opacity: value !== 0 ? 0.85 : 0.3,
-                }}
-              />
-            )}
+          {/* The capsule's own box: the rules span it and their numbers hang
+              off its right edge, so they move with it. */}
+          <div className="relative h-full w-[72%] max-w-[52px]">
+            <div
+              className="absolute inset-0 overflow-hidden border"
+              style={{
+                borderRadius: 9,
+                borderColor: level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)',
+                // A faint wash of the channel's colour, so an empty bar still
+                // says which trace it is.
+                background: color ? undefined : `${tint}12`,
+              }}
+            >
+              {sane && value !== null && (
+                <div
+                  className="absolute bottom-0 w-full"
+                  style={{
+                    height: `${displayHeight}%`,
+                    background: barColor,
+                    minHeight: value !== 0 ? '2px' : '0px',
+                    transition: 'height 0.05s ease-out',
+                    opacity: value !== 0 ? 0.85 : 0.3,
+                  }}
+                />
+              )}
+            </div>
+            {!bare && limit(meopPct, meop, '#ef4444')}
+            {!bare && drawnNop !== undefined && limit(nopPct, nop, '#e5b53a')}
           </div>
         </div>
-        {limit(meopPct, meop, '#ef4444')}
-        {limit(nopPct, nop, '#e5b53a')}
       </div>
 
       <div

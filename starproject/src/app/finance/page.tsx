@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { PAGE_CONTAINER } from "@/components/EntityRow";
 import { AccountsPanel } from "@/components/finance/AccountsPanel";
+import { BudgetPanel } from "@/components/finance/BudgetPanel";
 import { IncomePanel } from "@/components/finance/IncomePanel";
 import { MonthlySpending } from "@/components/finance/MonthlySpending";
 import { SpendingBreakdown } from "@/components/finance/SpendingBreakdown";
@@ -10,6 +11,7 @@ import { schoolYearLabel } from "@/lib/finance/ledger";
 import { formatCents } from "@/lib/finance/money";
 import { getFinanceOverview } from "@/lib/finance/overview";
 import { getViewer } from "@/lib/finance/queries";
+import { getProjectOptions } from "@/lib/projects";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +26,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   if (!viewer.isAdmin) redirect("/reimbursements");
 
   const requested = Number(params.year);
-  const o = await getFinanceOverview(Number.isInteger(requested) ? requested : null);
+  const [o, projects] = await Promise.all([getFinanceOverview(Number.isInteger(requested) ? requested : null), getProjectOptions()]);
   const spentCents = o.spending.total.paidCents + o.spending.total.pendingCents;
   const plannedCents = o.income.reduce((s, i) => s + i.amountCents, 0);
   const manualCents = o.manual.reduce((s, a) => s + a.balanceCents, 0);
@@ -39,7 +41,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         <YearPicker year={o.year} years={o.years} />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <Stat
           label="STAR account (CalLink)"
           value={o.summary ? formatCents(o.summary.balanceCents) : "—"}
@@ -55,11 +57,28 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
           value={formatCents(spentCents)}
           sub={o.spending.total.pendingCents ? `${formatCents(o.spending.total.pendingCents)} of it pending` : undefined}
         />
+        <Stat
+          label={`Budget ${schoolYearLabel(o.year)}`}
+          value={formatCents(o.budget.total.plannedCents)}
+          sub={`${formatCents(o.budget.total.approvedCents)} approved on purchase requests`}
+        />
         <Stat label={`Planned income ${schoolYearLabel(o.year)}`} value={formatCents(plannedCents)} sub={`${o.income.length} source${o.income.length === 1 ? "" : "s"}`} />
       </div>
 
       <section className={`${card} mt-4`}>
         <AccountsPanel summary={o.summary} callink={o.callink} manual={o.manual} />
+      </section>
+
+      <section className={`${card} mt-4`}>
+        <h2 className="text-sm font-semibold">Budget {schoolYearLabel(o.year)}</h2>
+        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+          Each subteam&apos;s planned spending, line by line, against what PVPs have approved on purchase requests. Every request
+          names its subteam and budget line, so this moves the moment one is approved. Subteams keep their own lines under
+          Subteams → Budget.
+        </p>
+        <div className="mt-3">
+          <BudgetPanel budget={o.budget} projects={projects} linkSubteams />
+        </div>
       </section>
 
       <section className={`${card} mt-4`}>

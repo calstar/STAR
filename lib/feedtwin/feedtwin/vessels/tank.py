@@ -915,9 +915,22 @@ class Tank:
         )
 
     def step(self, state: TankState, rates: TankRates, dt: float) -> TankState:
-        """One explicit Euler step. Phase 07 replaces this with a real integrator."""
-        return TankState(
-            ullage=VesselState(
+        """One explicit Euler step.
+
+        Explicit on purpose, and stable only because the caller makes it so:
+        the session sub-steps the vessels, sizes its coupling from the
+        regulator-ullage time constant and the ullage's mass, and closes the
+        press path implicitly inside the network solve (ullage storage).
+
+        Rebuilt with ``replace``: a field added to :class:`TankState` later is
+        carried through the step rather than reset to its default every step,
+        which is how ``vapour_mass`` was once zeroed (docs/PHYSICS-BENCHMARK.md
+        4.3).
+        """
+        return replace(
+            state,
+            ullage=replace(
+                state.ullage,
                 mass=state.ullage.mass + rates.ullage.mass * dt,
                 energy=state.ullage.energy + rates.ullage.energy * dt,
                 wall_temperature=state.ullage.wall_temperature

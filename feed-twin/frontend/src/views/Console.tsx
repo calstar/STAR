@@ -20,21 +20,27 @@
  *
  * A big stand overfills the strip, so Pressure, Tanks and Actuators each have
  * a ⋯ that hides what is not being watched (lib/shown.ts). A hidden
- * transducer leaves the plot too, and comes back by itself past NOP.
+ * transducer leaves the plot too, and comes back by itself past NOP. What is
+ * hidden is the team's, kept by the backend per drawing and also set from the
+ * P&ID tab, so every browser shows the same console. The cart's transducers,
+ * tanks and valves start hidden; its K-bottles and dewars are not on the
+ * console at all. Bars and tank cards are dragged into the order wanted.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { channelColor, fixed, limitsFor, type Burn, type EngineState, type TankState } from '../api';
+import { channelColor, fixed, limitsOf, type Burn, type EngineState, type TankState } from '../api';
 import ActuatorGrid from '../components/ActuatorGrid';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
-import PadSequence from '../components/PadSequence';
+import { PadGuideLine, usePadGuide } from '../components/PadSequence';
 import PanelMenu from '../components/PanelMenu';
 import PressureBar from '../components/PressureBar';
 import StateMachineDiagram, { OFF_GRID } from '../components/StateMachineDiagram';
 import { useStand } from '../stand';
+import { useHookup } from '../lib/useHookup';
 import { groupByPage } from '../lib/pages';
-import { NONE, readHidden, setAll, toggle, visible, writeHidden, type Hidden, type Panel } from '../lib/shown';
+import { moveTo, ordered, visible, type Hidden, type Panel } from '../lib/shown';
+import { groupTableWarnings } from '../lib/stateTable';
 
 const WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -62,6 +68,7 @@ function Vessel({
   temperature,
   colour,
   chilling = false,
+  onSkipChill,
 }: {
   label: string;
   litres?: number;
@@ -71,6 +78,8 @@ function Vessel({
   temperature: number;
   colour: string;
   chilling?: boolean;
+  /** Skip the load's chilldown: the wall goes where it would end up. */
+  onSkipChill?: () => void;
 }) {
   const pct = Math.min(Math.max(fill, 0), 1) * 100;
   return (
@@ -81,6 +90,28 @@ function Vessel({
           <span className="truncate font-mono text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ink)]">
             {label}
           </span>
+          {/* On the name line, not a line of its own: the third vessel used to
+              drop off the strip while a LOX load chilled. */}
+          {chilling && (
+            <span className="flex flex-shrink-0 items-baseline gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em]">
+              <span
+                style={{ color: colour }}
+                title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
+              >
+                chilling
+              </span>
+              {onSkipChill && (
+                <button
+                  type="button"
+                  onClick={onSkipChill}
+                  className="uppercase tracking-[0.1em] text-[var(--ink-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--ink)]"
+                  title="Skip the chilldown: put the wall where the chill leaves it (saturation at atmosphere) and let the pour collect from now. On the stand it takes ~10 minutes."
+                >
+                  skip
+                </button>
+              )}
+            </span>
+          )}
         </span>
         <span className="flex-shrink-0 font-mono">
           <span className="text-[17px] leading-none tabular-nums" style={{ color: colour }}>
@@ -89,28 +120,21 @@ function Vessel({
           <span className="ml-1 text-[10px] uppercase text-[var(--ink-3)]">psig</span>
         </span>
       </div>
+      {/* The fill bar and what it holds share a line: three vessels fit the
+          strip without a scroll (the third used to hang off the bottom). */}
       <div
-        className="relative mt-1.5 h-1 overflow-hidden"
-        style={{ background: `${colour}26` }}
-        title={`${fixed(fill * 100, 1)}% full`}
+        className="mt-1 flex items-center gap-2"
+        title={`${litres !== undefined && litres > 0 ? `${fixed(litres, litres < 10 ? 1 : 0)} L · ` : ''}${fixed(fill * 100, 1)}% full`}
       >
-        <div
-          className="absolute inset-y-0 left-0 transition-[width] duration-200"
-          style={{ width: `${pct}%`, background: colour }}
-        />
-      </div>
-      <div className="mt-1 truncate font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
-        {litres !== undefined && litres > 0 && `${fixed(litres, litres < 10 ? 1 : 0)} L · `}
-        {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
-        {chilling && (
-          <span
-            className="ml-1.5 uppercase tracking-[0.1em]"
-            style={{ color: colour }}
-            title="The wall is still warm: LOX poured in flashes off and vents, and nothing collects until the metal is at saturation."
-          >
-            chilling
-          </span>
-        )}
+        <div className="relative h-1 min-w-[24px] flex-1 overflow-hidden" style={{ background: `${colour}26` }}>
+          <div
+            className="absolute inset-y-0 left-0 transition-[width] duration-200"
+            style={{ width: `${pct}%`, background: colour }}
+          />
+        </div>
+        <span className="flex-shrink-0 font-mono text-[11px] tabular-nums text-[var(--ink-3)]">
+          {fixed(mass, 2)} kg · {fixed(fill * 100, 0)}% · {fixed(temperature, 0)} K
+        </span>
       </div>
     </div>
   );
@@ -214,7 +238,7 @@ function EngineCard({
           ]}
         />
       ) : (
-        <p className="font-mono text-[13px] text-[var(--ink-3)]">Not lit. Fire from Command and the burn shows here.</p>
+        <p className="font-mono text-[13px] text-[var(--ink-3)]">Not lit. Press FIRE (top right) and the burn shows here.</p>
       )}
     </section>
   );
@@ -238,36 +262,85 @@ export function Console() {
     setRunning,
     restart,
     jumpToT0,
+    skipChill,
+    consoleHidden,
+    hideOnConsole,
+    consoleOrder: order,
+    setConsoleOrder: changeOrder,
+    nameOf,
   } = useStand();
   const [window, setWindow] = useState(60);
 
-  // What the ⋯ menus hide, for this stand. Re-read when the drawing changes.
-  const diagramId = model?.diagram_id ?? '';
-  const [hiddenBy, setHiddenBy] = useState<Hidden>(NONE);
-  useEffect(() => {
-    setHiddenBy(diagramId ? readHidden(diagramId) : NONE);
-  }, [diagramId]);
-  const change = (next: Hidden) => {
-    setHiddenBy(next);
-    if (diagramId) writeHidden(diagramId, next);
-  };
+  // What the ⋯ menus hide, for this stand and everyone on it (the cart until
+  // somebody shows it). Node ids are unique across the panels, so one shared
+  // list serves all three.
+  const hiddenBy = useMemo<Hidden>(() => {
+    const ids = Object.keys(consoleHidden).filter((id) => consoleHidden[id]);
+    return { pts: ids, tanks: ids, actuators: ids };
+  }, [consoleHidden]);
+  const ground = useMemo(() => new Set(model?.ground ?? []), [model]);
+  // What the DAQ box sees. A transducer or valve the box can take is on the
+  // console only when it is wired, as a channel with no role is not on the
+  // real DAQ's dashboard; gauges, tanks and the engine's own channels are the
+  // twin's, shown as before. A hookup nobody has wired shows everything.
+  const { symbols: wireable } = useHookup();
+  const wiredKey = live?.wired ? live.wired.join('|') : null;
+  const daq = useMemo(() => {
+    const wired = wiredKey === null ? null : new Set(wiredKey.split('|'));
+    const boxable = new Set(wireable.map((s) => s.id));
+    return {
+      sensor: (id: string) => !wired || !boxable.has(id) || wired.has(id),
+      valve: (id: string) => !wired || wired.has(id),
+    };
+  }, [wiredKey, wireable]);
+  // The pad sequence, read off the stand: the state to press is ringed on the
+  // grid and one line under it says what is happening.
+  const guide = usePadGuide(live, machine, setup, go, ground);
+  // The order the strip draws transducers and tanks in: dragged into place,
+  // shared like what is hidden.
+  const dragging = useRef<{ panel: 'pts' | 'tanks'; id: string } | null>(null);
+  const dragProps = (panel: 'pts' | 'tanks', id: string, ids: string[]) => ({
+    draggable: true,
+    onDragStart: (e: DragEvent) => {
+      dragging.current = { panel, id };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', id);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (dragging.current?.panel === panel) e.preventDefault();
+    },
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      const from = dragging.current;
+      dragging.current = null;
+      if (from && from.panel === panel) changeOrder({ ...order, [panel]: moveTo(ids, from.id, id) });
+    },
+    onDragEnd: () => {
+      dragging.current = null;
+    },
+  });
   const menuFor = (panel: Panel, ids: string[]) => ({
     hidden: hiddenBy[panel],
-    onToggle: (id: string) => change(toggle(hiddenBy, panel, id)),
-    onAll: (show: boolean) => change(setAll(hiddenBy, panel, ids, show)),
+    onToggle: (id: string) => hideOnConsole([id], !consoleHidden[id]),
+    onAll: (show: boolean) => hideOnConsole(ids, !show),
   });
 
   // A transducer past NOP is drawn, bar and trace, whatever the menu says.
+  // Not the cart's: its limits are guessed from the tag against the rocket's
+  // tanks, and a 6K bank line is always "past" 550. A vessel over its MAWP
+  // trips the stand whichever side it is on.
   const pressures = live?.pressure_psi;
   const chamber = live?.engine?.chamber_psi;
   const pastNop = useMemo(() => {
     const out = new Set<string>();
     for (const c of history?.channels ?? []) {
+      if (ground.has(c.id)) continue;
       const v = c.id === 'engine.pc' ? chamber : pressures?.[c.id];
-      if (v !== undefined && v !== null && v > limitsFor(c.tag).nop) out.add(c.id);
+      const { nop } = limitsOf(c);
+      if (v !== undefined && v !== null && nop !== undefined && v > nop) out.add(c.id);
     }
     return out;
-  }, [history, pressures, chamber]);
+  }, [history, pressures, chamber, ground]);
   const ptShown = (id: string) => visible(hiddenBy, 'pts', id, pastNop.has(id));
 
   const plot = useMemo(() => {
@@ -277,32 +350,53 @@ export function Console() {
     const start = from < 0 ? 0 : from;
     return {
       times: history.times_s.slice(start),
-      channels: history.channels
-        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id))
+      channels: ordered(history.channels, order.pts, (c) => c.id)
+        .filter((c) => (c.unit || 'psig') === 'psig' && !hidden[c.id] && ptShown(c.id) && daq.sensor(c.id))
         .map((c): Channel => ({
           key: c.id,
-          tag: c.tag,
+          tag: nameOf(c.id, c.tag),
           values: c.values.slice(start),
           color: channelColor(c.tag),
         })),
     };
-  }, [history, hidden, window, hiddenBy, pastNop]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [history, hidden, window, hiddenBy, pastNop, live?.aliases, order, daq]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The stand's state changes as rules across the plot, keyed by content: a
+  // new array on every history pull would rebuild the chart and lose the
+  // cursor.
+  const eventsKey = (history?.events ?? []).map((e) => `${e.t}:${e.label}`).join('|');
+  const marks = useMemo(() => history?.events ?? [], [eventsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pressure bars only. A thermocouple in a bar scaled to MEOP is
   // meaningless -- temperature lives in its own panel on Pressure.
   const allGauges = useMemo(
-    () => (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig'),
-    [history],
+    () =>
+      ordered(
+        (history?.channels ?? []).filter((c) => (c.unit || 'psig') === 'psig' && daq.sensor(c.id)),
+        order.pts,
+        (c) => c.id,
+      ),
+    [history, order, daq],
   );
   const gauges = allGauges.filter((c) => ptShown(c.id));
   // The menus list items by sheet; the panels themselves do not split.
   const gaugeList = groupByPage(allGauges, allGauges, (c) => c.id, model?.pages);
-  const vessels = [...(live?.tanks ?? []), ...(live?.bottles ?? [])];
+  // The cart's K-bottles and dewars are not on the console at all: nobody
+  // reads their level on the pad. Its tanks (the fuel transfer tank) are, off
+  // until shown.
+  const unwatched = new Set(model?.ground_bottles ?? []);
+  const tanks = (live?.tanks ?? []).filter((t) => !unwatched.has(t.id));
+  const bottles = (live?.bottles ?? []).filter((b) => !unwatched.has(b.id));
+  const bottleIds = new Set(bottles.map((b) => b.id));
+  const vessels = ordered([...tanks, ...bottles], order.tanks, (v) => v.id);
+  const gaugeIds = allGauges.map((c) => c.id);
+  const vesselIds = vessels.map((v) => v.id);
   const vesselList = groupByPage(vessels, vessels, (v) => v.id, model?.pages);
 
   if (!model || !live) {
     return <p className="caps p-8">Bringing the stand up…</p>;
   }
+  const tableIssues = groupTableWarnings(machine?.warnings ?? []);
   const engine = live.engine;
   const lit = engine !== null && engine.chamber_psi > 5;
   const attached = Object.keys(model.engine).length > 0;
@@ -317,10 +411,15 @@ export function Console() {
   // Whatever the table can reach that the grid does not draw and the stack
   // has no button for -- the GSE and emergency aborts, a debug state. Before,
   // these were only in a "Go to…" dropdown; they must not become unreachable.
-  const others = reachable.filter((s) => OFF_GRID.test(s) && !/^fire$/i.test(s) && s !== 'Engine Abort');
+  // The grid also leaves out a state the State machine tab flags Abort
+  // whatever it is called, so the same test picks its button.
+  const others = reachable.filter(
+    (s) =>
+      (OFF_GRID.test(s) || Boolean(machine?.aborts?.includes(s))) && !/^fire$/i.test(s) && s !== 'Engine Abort',
+  );
 
   const gauge = (c: (typeof gauges)[number]) => {
-    const { nop, meop } = limitsFor(c.tag);
+    const { nop, meop } = limitsOf(c);
     const silent = hidden[c.id];
     // The engine's own chamber channel is not a drawn instrument: it reads
     // off the live engine, so a stand with no PC transducer still shows
@@ -330,13 +429,18 @@ export function Console() {
       <button
         key={c.id}
         type="button"
-        title={silent ? `Show ${c.tag} on the plot` : `Hide ${c.tag} from the plot`}
+        {...dragProps('pts', c.id, gaugeIds)}
+        title={`${nameOf(c.id, c.tag)}${nameOf(c.id, c.tag) !== c.tag ? ` (${c.tag} on the P&ID)` : ''}\n${
+          meop === undefined
+            ? 'No limits: the drawing gives none for what this transducer reads'
+            : `${nop !== undefined ? `Amber over ${fixed(nop, 0)}, red` : 'Red'} over ${fixed(meop, 0)} psig${c.limits ? ` — ${c.limits}` : ''}`
+        }\nClick to ${silent ? 'show on' : 'hide from'} the plot, drag to reorder`}
         onClick={() => toggleChannel(c.id)}
         aria-pressed={!silent}
         className={`h-full min-h-0 min-w-0 transition-opacity ${silent ? 'opacity-35' : 'opacity-100'}`}
       >
         <PressureBar
-          label={c.tag.replace(/^PT-/, '')}
+          label={nameOf(c.id, c.tag.replace(/^PT-/, ''))}
           value={value ?? null}
           nop={nop}
           meop={meop}
@@ -366,7 +470,7 @@ export function Console() {
                 items={gaugeList.flatMap((g) =>
                   g.items.map((c) => ({
                     id: c.id,
-                    label: c.tag,
+                    label: nameOf(c.id, c.tag),
                     forced: pastNop.has(c.id) ? 'Past NOP, so it shows anyway' : undefined,
                     page: g.page,
                   })),
@@ -383,50 +487,64 @@ export function Console() {
               </div>
             ) : (
               <p className="font-mono text-[12px] text-[var(--ink-3)]">
-                {allGauges.length > 0 ? 'Every transducer hidden. Show some from ⋯.' : 'Waiting for the first samples…'}
+                {allGauges.length > 0 ? (
+                  'Every transducer hidden. Show some from ⋯.'
+                ) : wiredKey !== null && (history?.channels.length ?? 0) > 0 ? (
+                  <>
+                    No transducer on the DAQ box.{' '}
+                    <Link to="/pid" className="text-[var(--ink-2)] underline">
+                      Wire some on the P&ID
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  'Waiting for the first samples…'
+                )}
               </p>
             )}
           </section>
 
-          <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-4">
-            <div className="mb-2 flex flex-shrink-0 items-baseline justify-between">
+          <section className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] px-6 py-3">
+            <div className="mb-1.5 flex flex-shrink-0 items-baseline justify-between">
               <h2 className="caps text-[11px]">Tanks</h2>
               <PanelMenu
                 title="Tanks"
                 items={vesselList.flatMap((g) => g.items.map((v) => ({ id: v.id, label: v.label, page: g.page })))}
-                {...menuFor('tanks', [...live.tanks, ...live.bottles].map((v) => v.id))}
+                {...menuFor('tanks', vessels.map((v) => v.id))}
               />
             </div>
-            <div className="flex min-h-0 flex-1 flex-col justify-around gap-2 overflow-y-auto">
-              {live.tanks.filter((t) => visible(hiddenBy, 'tanks', t.id)).map((t: TankState) => (
-                <Vessel
-                  key={t.id}
-                  label={t.label}
-                  litres={t.volume_L}
-                  pressurePsi={t.pressure_psi}
-                  fill={t.fill_fraction}
-                  mass={t.liquid_mass_kg}
-                  // Until liquid collects, what there is to watch is the metal.
-                  temperature={
-                    t.liquid_mass_kg > 0.001 || t.wall_temperature_K === undefined
-                      ? t.liquid_temperature_K
-                      : t.wall_temperature_K
-                  }
-                  chilling={t.chilling}
-                  colour={tankColour(t)}
-                />
-              ))}
-              {live.bottles.filter((b) => visible(hiddenBy, 'tanks', b.id)).map((b) => (
-                <Vessel
-                  key={b.id}
-                  label={b.label}
-                  litres={b.volume_L}
-                  pressurePsi={b.pressure_psi}
-                  fill={b.fill_fraction}
-                  mass={b.liquid_mass_kg}
-                  temperature={b.ullage_temperature_K}
-                  colour={GN2}
-                />
+            <div className="flex min-h-0 flex-1 flex-col justify-around gap-1.5 overflow-y-auto">
+              {vessels.filter((v) => visible(hiddenBy, 'tanks', v.id)).map((v) => (
+                <div key={v.id} {...dragProps('tanks', v.id, vesselIds)} className="cursor-grab" title="Drag to reorder">
+                  {bottleIds.has(v.id) ? (
+                    <Vessel
+                      label={v.label}
+                      litres={v.volume_L}
+                      pressurePsi={v.pressure_psi}
+                      fill={v.fill_fraction}
+                      mass={v.liquid_mass_kg}
+                      temperature={v.ullage_temperature_K}
+                      colour={GN2}
+                    />
+                  ) : (
+                    <Vessel
+                      label={v.label}
+                      litres={v.volume_L}
+                      pressurePsi={v.pressure_psi}
+                      fill={v.fill_fraction}
+                      mass={v.liquid_mass_kg}
+                      // Until liquid collects, what there is to watch is the metal.
+                      temperature={
+                        v.liquid_mass_kg > 0.001 || v.wall_temperature_K === undefined
+                          ? v.liquid_temperature_K
+                          : v.wall_temperature_K
+                      }
+                      chilling={v.chilling}
+                      onSkipChill={() => skipChill(v.id)}
+                      colour={tankColour(v as TankState)}
+                    />
+                  )}
+                </div>
               ))}
             </div>
           </section>
@@ -438,7 +556,15 @@ export function Console() {
               type="button"
               onClick={() => go('Fire')}
               disabled={!canFire || firing}
-              title={firing ? 'Firing' : reachable.includes('Fire') ? 'Go to Fire' : `Fire is not reachable from ${state}`}
+              title={
+                firing
+                  ? 'Firing'
+                  : reachable.includes('Fire')
+                    ? state === 'Ready'
+                      ? 'Go to Fire'
+                      : `Go to Fire — the stand's table lets ${state} go straight to Fire, skipping Ready`
+                    : `Fire is not reachable from ${state}`
+              }
               className={`ctl min-h-0 flex-[1.4] text-[17px] tracking-[0.42em] ${
                 firing
                   ? '!border-[var(--color-danger-solid)] !bg-[var(--color-danger-solid)] !text-white'
@@ -476,7 +602,9 @@ export function Console() {
         </div>
 
         {/* ── The room: the live plot, and the valves over the state machine ── */}
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        {/* One row, exactly the room left: sized to its content, a long valve
+            list grew it past the window and the state machine went with it. */}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]">
           <section className="flex min-h-0 min-w-0 flex-col py-5 pr-8">
             <div className="mb-3 flex flex-shrink-0 items-baseline justify-between gap-4">
               <h2 className="caps">Pressure History</h2>
@@ -502,8 +630,11 @@ export function Console() {
                 has, however tall the window makes it. */}
             <div className="relative min-h-[200px] flex-1">
               <div className="absolute inset-0">
-                {plot.times.length > 1 ? (
-                  <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} />
+                {plot.channels.length === 0 ? (
+                  // Empty axes say nothing; the Pressure strip above says why.
+                  <p className="font-mono text-[12px] text-[var(--ink-3)]">No transducer to plot.</p>
+                ) : plot.times.length > 1 ? (
+                  <DaqPlot times={plot.times} channels={plot.channels} yLabel="" xLabel="" fill lineWidth={2} marks={marks} />
                 ) : (
                   <p className="font-mono text-[12px] text-[var(--ink-3)]">Waiting for the first samples…</p>
                 )}
@@ -512,7 +643,10 @@ export function Console() {
           </section>
 
           <div className="flex min-h-0 min-w-0 flex-col border-l border-[var(--line)] pl-8">
-            <section className="flex-shrink-0 border-b border-[var(--line)] py-5">
+            {/* The valves take what they need up to 40 % of the column and
+                scroll past it; the state machine has the rest. Grown without a
+                limit, a long valve list pushed it off the page. */}
+            <section className="flex max-h-[40%] min-h-0 flex-shrink-0 flex-col border-b border-[var(--line)] py-5">
               <ActuatorGrid
                 model={model}
                 machine={machine}
@@ -523,19 +657,45 @@ export function Console() {
                 }}
                 onRelease={release}
                 hidden={hiddenBy.actuators}
+                ground={ground}
+                onBox={daq.valve}
+                aliases={live.aliases}
                 onToggleHidden={menuFor('actuators', []).onToggle}
+                // "all" is everything the menu lists: the rocket's valves and
+                // the cart's already on the console. The rest of the cart
+                // stays off until the P&ID's Symbols panel puts it on.
                 onAllHidden={(show) =>
-                  change(setAll(hiddenBy, 'actuators', model.actuators.map((a) => a.id), show))
+                  show
+                    ? hideOnConsole(
+                        model.actuators.filter((a) => !ground.has(a.id)).map((a) => a.id),
+                        false,
+                      )
+                    : hideOnConsole(model.actuators.map((a) => a.id), true)
                 }
               />
             </section>
-            <section className="flex min-h-0 flex-1 flex-col py-5">
+            {/* The rest of the column. On a window too short for every row of
+                states it scrolls inside itself rather than spill into the
+                sequence strip below. */}
+            <section className="flex min-h-0 flex-1 flex-col overflow-y-auto py-5">
               {machine ? (
                 <StateMachineDiagram
                   machine={machine}
                   live={live}
                   go={go}
                   locked={locked}
+                  next={guide?.legal ? guide.hop : undefined}
+                  guide={
+                    guide ? (
+                      <PadGuideLine
+                        guide={guide}
+                        state={state}
+                        hasEngine={attached}
+                        burn={lastBurn ?? undefined}
+                        burnout={live?.notes.find((n) => n.startsWith('Burnout')) ?? ''}
+                      />
+                    ) : undefined
+                  }
                   actions={others.map((s) => (
                     // The states the grid does not draw and Command has no
                     // button for: the GSE and emergency aborts, a debug
@@ -545,7 +705,9 @@ export function Console() {
                       type="button"
                       onClick={() => go(s)}
                       disabled={busy || locked}
-                      className={`ctl h-7 px-2.5 text-[10px] ${/abort/i.test(s) ? 'text-[var(--color-danger)]' : ''}`}
+                      className={`ctl h-7 px-2.5 text-[10px] ${
+                        /abort/i.test(s) || machine?.aborts?.includes(s) ? 'text-[var(--color-danger)]' : ''
+                      }`}
                     >
                       {s}
                     </button>
@@ -561,11 +723,6 @@ export function Console() {
           </div>
         </div>
 
-        {machine && (
-          <div className="flex-shrink-0 border-t border-[var(--line)] py-3">
-            <PadSequence live={live} machine={machine} setup={setup} go={go} hasEngine={engine !== null} compact />
-          </div>
-        )}
       </div>
 
       {/* ── Below the fold ── */}
@@ -579,19 +736,41 @@ export function Console() {
           lastBurn={lastBurn}
         />
 
-        {(live.notes.length > 0 || (machine?.warnings.length ?? 0) > 0) && (
+        {(live.notes.length > 0 || tableIssues.length > 0) && (
           <section className="border border-[var(--line)] px-8 py-5 font-mono">
             <h2 className="caps mb-3">Notes</h2>
             {live.notes.map((n) => (
-              <p key={n} className="text-[12px] leading-relaxed text-[var(--color-warning)]">
-                {n}
+              <p key={n} className="text-[12px] leading-relaxed text-[var(--ink-2)]">
+                · {n}
               </p>
             ))}
-            {(machine?.warnings ?? []).map((w) => (
-              <p key={w} className="text-[12px] leading-relaxed text-[var(--color-warning)] opacity-60">
-                {w}
-              </p>
-            ))}
+            {tableIssues.length > 0 && (
+              // The stand's own table: true on every run, so folded away
+              // rather than repeated at the operator in amber every time.
+              <details className="mt-3">
+                <summary className="cursor-pointer text-[12px] text-[var(--color-warning)]">
+                  The stand's state table has {tableIssues.length} issue{tableIssues.length === 1 ? '' : 's'}{' '}
+                  {machine?.edited ? (
+                    <span className="text-[var(--ink-3)]">
+                      — this stand's own table; fix it on the{' '}
+                      <Link to="/statemachine" className="underline">
+                        State machine
+                      </Link>{' '}
+                      tab
+                    </span>
+                  ) : (
+                    <span className="text-[var(--ink-3)]">— diablo_*.csv, read as the DAQ reads it; fix it there</span>
+                  )}
+                </summary>
+                <ul className="mt-2 flex flex-col gap-1 pl-4">
+                  {tableIssues.map((w) => (
+                    <li key={w.text} className="text-[12px] leading-relaxed text-[var(--ink-2)]" title={w.detail}>
+                      {w.text}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </section>
         )}
       </div>

@@ -51,6 +51,19 @@ from feedtwin.solve.network import DeadEnd, Network, NetworkError
 #: still active at convergence, so it can never be silently load-bearing.
 MIN_BRANCH_SLOPE = 1.0e-3
 
+#: Where every branch's flow starts when no guess is given [kg/s]. Non-zero on
+#: purpose (see the module docstring). A converged branch still exactly here
+#: never moved -- the session's watcher says so (``feedtwin.session.watch``).
+INITIAL_FLOW = 1.0e-3
+
+#: How closely every branch's relation must close against its own pressure
+#: (:func:`_local_scales`), whatever else is on the stand: a percent, so
+#: 0.15 psi on a branch at atmosphere. Not tighter: a gas charge into an
+#: empty COPV closes to about a tenth of a percent and stalls there.
+LOCAL_TOLERANCE = 1.0e-2
+#: The least pressure a branch is held against for that [Pa]: a bar.
+LOCAL_SCALE_FLOOR = 1.0e5
+
 #: Relative perturbation for the finite-difference derivative.
 _FD_REL = 1.0e-6
 _FD_ABS = 1.0e-9
@@ -142,7 +155,7 @@ def solve_steady(
     *,
     tol: float = 1.0e-6,
     max_iterations: int = 100,
-    initial_flow: float = 1.0e-3,
+    initial_flow: float = INITIAL_FLOW,
     raise_on_failure: bool = True,
     signals: Mapping[str, float] | None = None,
     guess: Mapping[str, float] | None = None,
@@ -258,7 +271,8 @@ def solve_steady(
             value = guess.get(branch_id)
             if value is not None:
                 x[row] = value
-    scale = _row_scales(network, free, branch_ids, initial_flow)
+    base_scale = _row_scales(network, free, branch_ids, initial_flow)
+    scale = base_scale
 
     rows, cols = _incidence_pattern(network, node_index, branch_index, stores)
 
@@ -288,6 +302,9 @@ def solve_steady(
             # last-resort step it never got to evaluate.
             converged = False
             break
+        scale = _local_scales(
+            network, x, node_index, branch_index, branch_rows, base_scale, tol
+        )
         unresolvable[:] = False
         for branch_id, branch_row in branch_index.items():
             entry = branch_rows[branch_id]
@@ -484,6 +501,47 @@ def _row_scales(
     m_scale = max([*demands, initial_flow, 1.0e-3])
 
     return np.array([m_scale] * len(free) + [p_scale] * len(branch_ids))
+
+
+def _local_scales(
+    network: Network,
+    x: np.ndarray,
+    node_index: dict[str, int],
+    branch_index: dict[str, int],
+    branch_rows: dict[str, _BranchRow],
+    base: np.ndarray,
+    tol: float,
+) -> np.ndarray:
+    """:func:`_row_scales`, with each branch also held against its own pressures.
+
+    One pressure scale for every branch -- the highest fixed pressure in the
+    network -- let a branch on a stand with a 6,000 psi K-bottle sit half a
+    psi off its relation and call it converged. A liquid drain driven by its
+    head (0.45 psi) then never left the solve's 1 g/s starting guess: the
+    first residual was already "small", so Newton took no step.
+
+    So a branch must also close to :data:`LOCAL_TOLERANCE` of the larger of
+    its two end pressures (never less than a bar). It only ever tightens, and
+    only where the stand's own scale is the looser: a tight solve is judged as
+    before, and a choked charge into an empty bottle -- which a finite-
+    difference Jacobian closes to about a tenth of a percent and no further --
+    is not asked for more than a percent. Nor is any choked row: its residual is a
+    flow error in pressure units by an arbitrary stiffness
+    (:data:`_CHOKE_STIFFNESS`), so a share of a pressure says nothing about it.
+    """
+    scale = base.copy()
+    for branch_id, row in branch_index.items():
+        if branch_rows[branch_id].choked:
+            continue
+        branch = network.branches[branch_id]
+        try:
+            up = _pressure_at(network, x, node_index, branch.upstream)
+            down = _pressure_at(network, x, node_index, branch.downstream)
+        except KeyError:
+            continue
+        local = max(abs(up), abs(down), LOCAL_SCALE_FLOOR)
+        scale[row] = min(base[row], LOCAL_TOLERANCE * local / tol)
+    return scale
 
 
 def _physical(x: np.ndarray, free: list[str]) -> bool:
@@ -950,8 +1008,15 @@ def _result(
             # behind its cracking pressure -- leaves the stub genuinely
             # undefined. Report the live end's pressure and say it is an upper
             # bound.
+            #
+            # So does a shut valve. A stub reached only across one (a leg
+            # between two shut valves, a capped line behind one) holds whatever
+            # was trapped in it, not the pressure across the seat -- and a ball
+            # valve's drop at zero flow is identically zero, so the test above
+            # never caught it: a transducer there followed the tank.
             if (
                 branch.component.pressure_drop(0.0, conditions) > 0.0
+                or dead.branch in isolated
                 or dead.live_end in indeterminate_nodes
             ):
                 # Undefined-ness travels. A regulator with nothing drawing

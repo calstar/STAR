@@ -1,4 +1,5 @@
 import { FIELD_LABEL } from "@/lib/activity";
+import { bomSentence, prSentence } from "@/lib/activity-labels";
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/mail";
 import { displayNameOf } from "@/lib/names";
@@ -22,6 +23,8 @@ export const DIGEST_KINDS: [string, string][] = [
   ["priority", "Priority changes"],
   ["due", "Due-date changes"],
   ["blockers", "Blocker changes"],
+  ["bom", "BOM changes"],
+  ["purchases", "Purchase requests"],
   ["deleted", "Task deleted"],
 ];
 
@@ -30,6 +33,8 @@ function matches(a: Act, kinds: string[]): boolean {
   if (a.kind === "deleted") return kinds.includes("deleted");
   if (a.kind === "blocker_added" || a.kind === "blocker_removed")
     return kinds.includes("blockers");
+  if (a.kind.startsWith("bom_")) return kinds.includes("bom");
+  if (a.kind.startsWith("pr_")) return kinds.includes("purchases");
   if (a.kind === "updated") return kinds.includes(a.field ?? "");
   return false;
 }
@@ -47,6 +52,15 @@ function line(a: Act): string {
       return `${who} removed a blocker from “${a.taskTitle}”: ${a.toValue ?? ""}`;
     case "updated":
       return `${who} changed ${FIELD_LABEL[a.field ?? ""] ?? a.field} of “${a.taskTitle}” from ${a.fromValue ?? "—"} to ${a.toValue ?? "—"}`;
+    case "bom_added":
+    case "bom_updated":
+    case "bom_removed":
+      return bomSentence(who, a);
+    case "pr_created":
+    case "pr_approved":
+    case "pr_rejected":
+    case "pr_cancelled":
+      return prSentence(who, a);
     default:
       return `${who} updated “${a.taskTitle}”`;
   }

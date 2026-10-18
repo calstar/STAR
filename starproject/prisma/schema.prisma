@@ -35,19 +35,46 @@ model User {
   displayName String? // user-chosen override; if set, shown instead of `name`
   createdAt   DateTime @default(now())
 
-  createdProjects        Project[]            @relation("ProjectCreatedBy")
-  createdTasks           Task[]               @relation("TaskCreatedBy")
-  assignedTasks          Task[]               @relation("TaskAssignee")
-  activities             Activity[]           @relation("ActivityActor")
-  settings               UserSettings?
-  digestSubscriptions    DigestSubscription[]
-  emailQueue             EmailQueueItem[]
-  payeeProfile           PayeeProfile?
-  createdReimbursements  Reimbursement[]      @relation("ReimbursementCreatedBy")
-  approvedReimbursements Reimbursement[]      @relation("ReimbursementApprovedBy")
-  reimbursementEvents    ReimbursementEvent[] @relation("ReimbursementEventActor")
-  financeAccounts        FinanceAccount[]     @relation("FinanceAccountUpdatedBy")
-  plannedIncome          PlannedIncome[]      @relation("PlannedIncomeCreatedBy")
+  createdProjects         Project[]            @relation("ProjectCreatedBy")
+  createdTasks            Task[]               @relation("TaskCreatedBy")
+  assignedTasks           Task[]               @relation("TaskAssignee")
+  activities              Activity[]           @relation("ActivityActor")
+  settings                UserSettings?
+  digestSubscriptions     DigestSubscription[]
+  emailQueue              EmailQueueItem[]
+  payeeProfile            PayeeProfile?
+  createdReimbursements   Reimbursement[]      @relation("ReimbursementCreatedBy")
+  approvedReimbursements  Reimbursement[]      @relation("ReimbursementApprovedBy")
+  reimbursementEvents     ReimbursementEvent[] @relation("ReimbursementEventActor")
+  apiTokens               ApiToken[]
+  designReParts           TaskManufacturing[]  @relation("ManufacturingDesignRe")
+  manufacturingReParts    TaskManufacturing[]  @relation("ManufacturingMfgRe")
+  createdBomItems         BomItem[]            @relation("BomItemCreatedBy")
+  purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
+  createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
+  decidedPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestDecidedBy")
+  financeAccounts         FinanceAccount[]     @relation("FinanceAccountUpdatedBy")
+  plannedIncome           PlannedIncome[]      @relation("PlannedIncomeCreatedBy")
+  createdBudgetLines      BudgetLine[]         @relation("BudgetLineCreatedBy")
+  reimbursementDrafts     ReimbursementDraft[]
+}
+
+// A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
+// the token is stored; the plaintext is shown once at creation. `prefix` is the
+// first few characters so a user can tell their tokens apart in Settings. A
+// revoked token keeps its row (revokedAt set) so the list shows what happened.
+model ApiToken {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  tokenHash  String    @unique
+  prefix     String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+
+  @@index([userId])
 }
 
 model Project {
@@ -81,7 +108,10 @@ model Project {
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
 
-  reimbursements Reimbursement[]
+  reimbursements   Reimbursement[]
+  bomItems         BomItem[]
+  purchaseRequests PurchaseRequest[]
+  budgetLines      BudgetLine[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -97,7 +127,9 @@ model Subteam {
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
 
-  reimbursements Reimbursement[]
+  reimbursements   Reimbursement[]
+  budgetLines      BudgetLine[]
+  purchaseRequests PurchaseRequest[]
 }
 
 // Where one subteam is in a featured project's phase list. `phase` indexes
@@ -195,16 +227,48 @@ model Task {
   dueDate     DateTime?
   boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
   archived    Boolean       @default(false) // hidden from active board/lists once done
+  // When the task last entered Done; cleared when it leaves. The board keeps a
+  // done task in its Done column for DONE_ON_BOARD_DAYS after this, then it is
+  // only in the archive (src/lib/board.ts onBoard).
+  completedAt DateTime?
+  // Points an admin puts on the task (0–1000, null = none). Once the task is
+  // done they split evenly between its non-admin assignees on the Leaderboard
+  // (src/lib/leaderboard.ts). Only admins may set them (actions/tasks.ts).
+  points      Int?
   createdById String
   createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  blockedBy  TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
-  blocking   TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
-  activities Activity[]
+  blockedBy     TaskBlocker[]      @relation("BlockedTask") // tasks blocking THIS one
+  blocking      TaskBlocker[]      @relation("BlockerTask") // tasks THIS one blocks
+  activities    Activity[]
+  // Present only for a manufacturing task: the part's details.
+  manufacturing TaskManufacturing?
+  bomItems      BomItem[]
 
   @@index([projectId, status])
+  @@index([status, completedAt])
+}
+
+// The part a manufacturing task makes. A task is a manufacturing task exactly
+// when it has this row; every field is optional so it can be filled in as the
+// design firms up. Deleted with its task.
+model TaskManufacturing {
+  taskId     String   @id
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  partName   String?
+  onshapeUrl String?
+  drawingUrl String?
+  quantity   Int?
+  material   String?
+  // Responsible engineers: who owns the design, and who owns making it.
+  designReId String?
+  designRe   User?    @relation("ManufacturingDesignRe", fields: [designReId], references: [id], onDelete: SetNull)
+  mfgReId    String?
+  mfgRe      User?    @relation("ManufacturingMfgRe", fields: [mfgReId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 // Display-only dependency edges: "task is blocked by blockedByTask". No cascade
@@ -351,6 +415,8 @@ model Reimbursement {
   items  ReimbursementItem[]
   events ReimbursementEvent[]
 
+  bomItems BomItem[]
+
   @@index([status])
   @@index([payeeEmail])
   @@index([submitterEmail])
@@ -403,6 +469,12 @@ model ReceiptFile {
   size              Int
   callinkDocumentId String?
   callinkHref       String?
+  // An imported receipt's bytes are fetched from CalLink only when someone asks
+  // for them (the MCP get_reimbursement_receipts tool sets fetchRequestedAt); the
+  // worker downloads what is requested (src/app/api/worker/receipts).
+  fetchRequestedAt  DateTime?
+  fetchFailedAt     DateTime?
+  fetchError        String?
   createdAt         DateTime          @default(now())
 
   blob ReceiptBlob?
@@ -504,4 +576,238 @@ model PlannedIncome {
   updatedAt   DateTime  @updatedAt
 
   @@index([schoolYear])
+}
+
+// ---- Bill of materials -------------------------------------------------------
+//
+// One row per thing to buy, on the project it belongs to (Flight Computer, not
+// LE4). A project's BOM tab shows its own lines plus every descendant's, so the
+// LE4 page is the whole vehicle without any line being stored twice. Money is
+// integer cents, like Finance. The predicted cost is never stored: it is
+// computed by src/lib/bom.ts (unit x qty + shipping), one rule for everyone.
+
+enum BomStatus {
+  planned // on the list, nobody has signed off on the spend
+  approved // an admin said yes
+  ordered
+  received
+}
+
+enum BomKind {
+  part // unit cost x quantity + shipping
+  allowance // a lump sum with no quantity: "Buffer", "testing and spares"
+}
+
+model BomItem {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  kind          BomKind @default(part)
+  name          String
+  partNumber    String? // McMaster 91290A231, a Digikey PN
+  // Who makes it, as opposed to who sells it (supplier): STMicroelectronics
+  // for a part bought from Digikey.
+  manufacturer  String?
+  // For an allowance, unitCostCents is the lump sum and quantity is unused.
+  unitCostCents Int?
+  // Not always a count: "200" feet of shock cord. Up to three decimals.
+  quantity      Float?
+  shippingCents Int? // estimated shipping, tariffs and tax for the line
+  realizedCents Int? // what was actually paid, receipt total
+  supplier      String?
+  url           String?
+  // A backup or spare: counted, but the tab can show totals without them.
+  spare         Boolean @default(false)
+
+  status     BomStatus @default(planned)
+  approvedAt DateTime?
+  orderedAt  DateTime?
+
+  purchaserId   String?
+  purchaser     User?   @relation("BomItemPurchaser", fields: [purchaserId], references: [id], onDelete: SetNull)
+  // A name typed in (imported sheets say "Steven"), used when nobody is picked.
+  purchaserName String?
+  location      String? // "Snode", "Kush's house"
+  notes         String?
+
+  // The task this line is for (often a manufacturing task), if any.
+  taskId              String?
+  task                Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  // The reimbursement this purchase was filed on. "Reimbursed" is read from
+  // it (CalLink says Completed), not ticked by hand.
+  reimbursementId     String?
+  reimbursement       Reimbursement? @relation(fields: [reimbursementId], references: [id], onDelete: SetNull)
+  // Paid back before STARProject tracked reimbursements (imported LE3 rows).
+  reimbursedElsewhere Boolean        @default(false)
+
+  requestItems PurchaseRequestItem[]
+
+  position    Float    @default(0) // order within the project, lowest first
+  createdById String
+  createdBy   User     @relation("BomItemCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([reimbursementId])
+}
+
+// ---- PVP: who approves spending ----------------------------------------------
+//
+// Same shape as the admin list: a seed list in code (src/lib/pvp.ts), runtime
+// additions here, and tombstones for removed seeds. Only a PVP may approve a
+// purchase request or move a BOM line out of Planned.
+
+model PvpEmail {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model RemovedSeedPvp {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+// ---- Purchase requests --------------------------------------------------------
+//
+// A member asks for BOM lines to be bought; a PVP approves or rejects the whole
+// request. Approving moves its lines to Approved. Each item is a snapshot of
+// its line when requested, so the record of what was asked for and approved
+// survives later edits or the line being deleted.
+
+enum PurchaseRequestStatus {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+model PurchaseRequest {
+  id     String                @id @default(cuid())
+  // Human-facing PR-N. Never reused, never edited.
+  number Int                   @unique @default(autoincrement())
+  status PurchaseRequestStatus @default(pending)
+
+  // The project whose BOM it was made from.
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  note      String?
+
+  // Whose budget it spends, and which of that subteam's budget lines. Required
+  // on every new request (actions/purchase-requests.ts); null only on requests
+  // made before budgets existed.
+  subteamId    String?
+  subteam      Subteam?    @relation(fields: [subteamId], references: [id], onDelete: SetNull)
+  budgetLineId String?
+  budgetLine   BudgetLine? @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+
+  createdById String
+  createdBy   User     @relation("PurchaseRequestCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  decidedById  String?
+  decidedBy    User?     @relation("PurchaseRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt    DateTime?
+  decisionNote String?
+
+  items PurchaseRequestItem[]
+
+  @@index([status, createdAt])
+  @@index([budgetLineId])
+}
+
+model PurchaseRequestItem {
+  id        String          @id @default(cuid())
+  requestId String
+  request   PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  // The live line; null once it is deleted.
+  bomItemId String?
+  bomItem   BomItem?        @relation(fields: [bomItemId], references: [id], onDelete: SetNull)
+
+  // The line as it was when requested.
+  projectId      String
+  projectName    String
+  kind           BomKind
+  name           String
+  partNumber     String?
+  manufacturer   String?
+  unitCostCents  Int?
+  quantity       Float?
+  shippingCents  Int?
+  url            String?
+  predictedCents Int
+  position       Int
+  // The PVP's call on this line: null while the request waits, then true for
+  // a line approved and false for one left out of the approval (it stays
+  // Planned and can be requested again).
+  approved       Boolean?
+
+  @@index([requestId])
+  @@index([bomItemId])
+}
+
+// ---- Budgets ----------------------------------------------------------------------
+//
+// What a subteam expects to spend in a school year, one line per thing ("Avionics
+// boards", "Test-stand plumbing"), each optionally on a project. Any member can
+// keep their subteam's lines (Subteams → Budget); admins see every subteam's on
+// the Finance tab. A purchase request names the line it spends, and what PVPs
+// approve on it counts against the line (src/lib/finance/budget.ts). A line with
+// requests on it can't be deleted, so the record of what was approved stays whole
+// (deleting the subteam takes its lines and leaves the requests unbudgeted).
+model BudgetLine {
+  id           String   @id @default(cuid())
+  schoolYear   Int // the year it starts in: 2026 is 2026-27
+  subteamId    String
+  subteam      Subteam  @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name         String
+  plannedCents Int
+  note         String?
+  createdById  String
+  createdBy    User     @relation("BudgetLineCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  purchaseRequests PurchaseRequest[]
+
+  @@index([schoolYear, subteamId])
+}
+
+// ---- Reimbursement drafts ------------------------------------------------------------
+//
+// A reimbursement being put together (over MCP, for now) before it is filed:
+// whatever form fields are known so far, as the form's JSON, and the receipts
+// attached so far, one per item index. Private to whoever made it. Filing it runs
+// the same code as the web form (src/lib/finance/file.ts) and deletes the draft;
+// nothing about a draft reaches an admin or CalLink until then.
+model ReimbursementDraft {
+  id          String                      @id @default(cuid())
+  number      Int                         @unique @default(autoincrement()) // D-N
+  createdById String
+  createdBy   User                        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  payload     Json // a partial ReimbursementInput
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
+  receipts    ReimbursementDraftReceipt[]
+
+  @@index([createdById])
+}
+
+model ReimbursementDraftReceipt {
+  id        String             @id @default(cuid())
+  draftId   String
+  draft     ReimbursementDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  item      Int // the item's index in payload.items, from 0
+  fileName  String
+  mimeType  String
+  size      Int
+  data      Bytes
+  createdAt DateTime           @default(now())
+
+  @@unique([draftId, item])
 }

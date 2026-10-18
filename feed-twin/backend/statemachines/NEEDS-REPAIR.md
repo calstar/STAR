@@ -1,11 +1,15 @@
-# `diablo_transitions.csv` — 10 rows are one cell short, and the stand reads them anyway
+# `diablo_transitions.csv` — rows one cell short, and the stand reads them anyway
 
-This file was byte-identical to `daq-server/config/state_transitions.csv` until the
-twin-side edits listed at the end of this note. The header
-declares 21 columns (a label plus 20 states); these 10 rows carry 20:
+This file was byte-identical to the DAQ's `state_transitions.csv`
+(`daq-server/config/profiles/default/` and `profiles/server/`) until the twin-side
+edits listed at the end of this note. The header declares 21 columns (a label plus
+20 states). In the DAQ's copy these 10 rows carry 20:
 
     Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press,
     GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent
+
+In the twin's copy, 9: `Press Standby` was rewritten with 21 cells here (below). The
+DAQ's copy still has all 10 (checked 2026-10-08).
 
 ## How the stand reads them
 
@@ -20,13 +24,14 @@ its warnings.
 
 ## What that alignment permits — and why it is flagged, not hidden
 
-Read left-aligned, seven rows put a `1` under **Fire**:
+Read left-aligned, seven rows of the DAQ's copy put a `1` under **Fire**:
 
     Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent
 
-Each is an ignition path that bypasses `Ready`. The twin **permits** each one, because
-the stand does, and emits one warning per path so the operator sees it on the console
-and so whoever owns the CSV knows exactly which rows to fix. Faithfulness is the safety
+Each is an ignition path that bypasses `Ready` -- on the stand, all seven. In the
+twin's copy six remain (`Press Standby` no longer bypasses). The twin **permits** each
+one, because the stand does, and emits one warning per path so the operator sees it on
+the console and so whoever owns the CSV knows exactly which rows to fix. Faithfulness is the safety
 property here: a twin that refused a move the stand allows would train an operator to
 trust an interlock that is not there.
 
@@ -35,7 +40,8 @@ mentions constrains nothing, and "constrains nothing" is not "allows everything"
 
 ## How to repair
 
-Rewrite the 10 rows with 21 cells each **in the DAQ's copy**, then copy it here (or
+Rewrite the 10 rows with 21 cells each **in the DAQ's copy** (`Press Standby` as
+the twin's below), then copy it here (or
 better, have the twin read the DAQ's file). Almost certainly each row is missing a `0`
 in the `Fire` column — every well-formed row except `Ready` and `Fire` has one — but
 that is an inference, and the fix belongs in the file the stand reads, with the DAQ

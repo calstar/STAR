@@ -228,6 +228,20 @@ def test_sharing_grants_edit_and_only_creator_or_admin_may_share(client):
     assert _edit(client, B, a_id) == 403
 
 
+def test_shared_with_me_tells_an_admin_what_was_shared_with_them(client):
+    """The Mine tab's flag. An admin may edit everything, so `editable` cannot
+    separate a diagram shared with them from anyone else's."""
+    shared = _create(client, A, "Shared")
+    other = _create(client, A, "Other")
+    own = _create(client, ADMIN, "Own")
+    _share(client, A, shared, ["Admin@berkeley.edu"])
+    assert _row(client, ADMIN, shared)["sharedWithMe"] is True
+    assert _row(client, ADMIN, other)["sharedWithMe"] is False
+    assert _row(client, ADMIN, other)["editable"] is True
+    assert _row(client, ADMIN, own, owner="admin@berkeley.edu")["sharedWithMe"] is False
+    assert _row(client, A, shared)["sharedWithMe"] is False, "the creator's own"
+
+
 # ── asking to edit ───────────────────────────────────────────────────────────
 
 

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
+import { onBoardWhere } from "@/lib/board";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
@@ -29,7 +30,9 @@ export default async function SubteamPage({
       where: { id },
       include: {
         tasks: {
-          where: { archived: false },
+          // Open tasks plus the recently done, for the board (DetailView keeps
+          // done tasks out of the list and timeline).
+          where: onBoardWhere(),
           include: {
             assignees: {
               select: { id: true, name: true, email: true, displayName: true },
@@ -57,6 +60,7 @@ export default async function SubteamPage({
   const tasks = subteam.tasks.map((t) => ({
     ...t,
     projectName: t.project.name,
+    projectColor: t.project.color,
     subteamName: subteam.name,
     assigneeName: t.assignees.map((a) => displayNameOf(a)).join(", "),
     subproject: { name: t.project.name, color: t.project.color },
@@ -75,12 +79,20 @@ export default async function SubteamPage({
           {subteam.name}
         </h1>
       </div>
-      <Link
-        href="/subteams"
-        className="inline-flex min-h-11 shrink-0 items-center self-start text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
-      >
-        ← All subteams
-      </Link>
+      <div className="flex shrink-0 items-center gap-4 self-start">
+        <Link
+          href={`/subteams/${subteam.id}/budget`}
+          className="inline-flex min-h-11 items-center rounded border border-neutral-300 px-3 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800 sm:min-h-0 sm:py-1"
+        >
+          Budget
+        </Link>
+        <Link
+          href="/subteams"
+          className="inline-flex min-h-11 items-center text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
+        >
+          ← All subteams
+        </Link>
+      </div>
     </div>
   );
 
@@ -94,7 +106,7 @@ export default async function SubteamPage({
       header={header}
       showProject
       newTaskForm={
-        <NewTaskForm subteamId={subteam.id} projects={projectOptions} users={users} />
+        <NewTaskForm subteamId={subteam.id} projects={projectOptions} users={users} admin={admin} />
       }
       emptyText={`No tasks are tagged with “${subteam.name}” yet. Add one above or set a task's subteam to this one.`}
     />

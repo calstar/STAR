@@ -118,17 +118,6 @@ export interface Actuator {
   signal: string;
 }
 
-export interface ControlSpec {
-  key: string;
-  label: string;
-  unit: string;
-  default: number;
-  minimum: number;
-  maximum: number;
-  step: number;
-  note: string;
-}
-
 export interface Assumption {
   component: string;
   parameter: string;
@@ -151,6 +140,9 @@ export interface Report {
   unchecked: number;
   assumptions: Assumption[];
   warnings: string[];
+  /** Operator overrides that took effect on this assembly. */
+  overrides?: Assumption[];
+  overrides_hash?: string;
 }
 
 export interface ModelView {
@@ -158,13 +150,26 @@ export interface ModelView {
   engine_id: string;
   title: string;
   actuators: Actuator[];
-  controls: ControlSpec[];
-  fluid_sets: string[];
   report: Report;
   engine: Record<string, unknown>;
   /** Which sheet of the drawing each node is on, by node id. Absent from an
    *  older server. */
   pages?: Record<string, string>;
+  /** What the team has hidden from the console, by node id. Shared, not per
+   *  browser. Absent from an older server. */
+  console_hidden?: string[];
+  /** The order the console draws transducers and tanks in. Shared, like
+   *  `console_hidden`. */
+  console_order?: { pts?: string[]; tanks?: string[] };
+  /** Drawing ids off the vehicle: the cart. The console starts them hidden. */
+  ground?: string[];
+  /** The cart's K-bottles and dewars, which the console does not show. */
+  ground_bottles?: string[];
+  /** Built with the drawn GSE ignored: the vessels the cut left out. */
+  ground_cut?: string[];
+  /** Where each knob starts on this drawing [psig], by knob id: the
+   *  regulators' drawn settings, what a knob's default goes back to. */
+  drawn_knobs?: Record<string, number>;
 }
 
 export interface EngineState {
@@ -182,6 +187,8 @@ export interface EngineState {
 export interface Frame {
   t: number;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
@@ -193,6 +200,13 @@ export interface Channel {
   tag: string;
   unit: string;
   values: number[];
+  /** Amber and red lines [psig] from what the transducer reads (the drawn
+   *  operating pressure and MAWP of its vessel, the engine's design Pc).
+   *  Absent: none drawn for what it reads; the bar has no lines. */
+  nop?: number | null;
+  meop?: number | null;
+  /** Where they came from, for a hover. */
+  limits?: string;
 }
 
 /** A sibling design tool this instance can import from. */
@@ -271,6 +285,38 @@ export interface StateMachine {
   positions: Record<string, Record<string, boolean>>;
   /** Problems in the state tables themselves. */
   warnings: string[];
+  /** State -> [row, col] on the panel (the DAQ's panel_row/col). */
+  layout?: Record<string, [number, number]>;
+  /** The abort states: always reachable. */
+  aborts?: string[];
+  /** The tables as the editor holds them. */
+  table?: MachineDef;
+  /** The stand's own table, not the shipped DAQ one. */
+  edited?: boolean;
+  /** Rows the twin reads by name (see `Hookup.builtin`). */
+  builtin?: Record<string, string>;
+}
+
+/** A state as the State machine tab edits it: its place on the panel and
+ *  whether it is an abort (always reachable). */
+export interface MachineStateDef {
+  name: string;
+  row: number | null;
+  col: number | null;
+  abort: boolean;
+}
+
+/** The DAQ's tables, as the twin edits them (feedtwin
+ *  `StateMachine.to_dict`). `open[state]` are the rows OPEN in it, as
+ *  written; `allowed[state]` the states it may go to (absent: the state has
+ *  no row in the transition table, and goes nowhere). */
+export interface MachineDef {
+  schema?: number;
+  name?: string;
+  states: MachineStateDef[];
+  actuators: string[];
+  open: Record<string, string[]>;
+  allowed: Record<string, string[]>;
 }
 
 /** A propellant tank's inventory. */
@@ -287,6 +333,10 @@ export interface TankState {
    *  chilling down and will boil hard if the vent shuts. */
   wall_temperature_K?: number;
   surface_temperature_K?: number;
+  /** What a load fills this tank to [kg]: the fire load, else the full fraction. */
+  load_kg?: number;
+  /** The engine's fire load for this tank [kg]; absent when it names none. */
+  fire_load_kg?: number | null;
   /** A LOX load still chilling the wall: nothing collects yet. */
   chilling?: boolean;
   /** What the load is delivering into the tank [g/s]. */
@@ -294,6 +344,11 @@ export interface TankState {
   /** Where the regulator feeding this tank locks up now [psig]: dome + bias
    *  less the supply effect of the bottle behind it. Absent: no regulator. */
   lockup_psi?: number | null;
+  /** [charged, empty]: where it locks up with the COPV at its fill setting and
+   *  with it empty [psig] -- the range over a burn. */
+  lockup_range_psi?: [number, number] | null;
+  /** The drawn MAWP [psig]; the stand trips above it. */
+  mawp_psi?: number | null;
   /** What the drawing says the vessel holds [L]. */
   volume_L?: number;
   /** Which leg the tank is on, from what it holds. Empty on a bottle. */
@@ -303,7 +358,7 @@ export interface TankState {
 /** One tick of a live stand. */
 export interface StandSetup {
   /** Every other knob the backend's tunables table names. */
-  [key: string]: number | boolean;
+  [key: string]: number | boolean | string;
   dome: number;
   copv_target: number;
   copv_fill_s: number;
@@ -317,6 +372,13 @@ export interface StandSetup {
    *  supplier's cylinder. Off (default), it starts empty and GN2 High Press
    *  fills it from GSE over copv_fill_s. */
   bottle_delivered: boolean;
+  /** The cart drawn on the GSE page is not simulated: the rocket alone, filled
+   *  by the built-in charge and loads at these settings. Changing it opens a
+   *  fresh stand. */
+  ignore_gse: boolean;
+  /** The gas in the bottles and press lines: '' the drawing's, or that gas
+   *  swapped for helium or GN2. Changing it opens a fresh stand. */
+  pressurant: '' | 'nitrogen' | 'helium';
   /** Multiplier on a vessel's gas-to-wall conductance while it is being
    *  charged: the jet stirs it and forced convection runs several times
    *  natural. 1 is a still vessel (adiabatic-charge heating in full). */
@@ -342,6 +404,8 @@ export interface SessionState {
   reachable: string[];
   converged: boolean;
   pressure_psi: Record<string, number>;
+  /** What each instrument's node is at [K], by instrument id. */
+  temperature_K?: Record<string, number>;
   node_psi: Record<string, number>;
   flow_kg_s: Record<string, number>;
   open: Record<string, boolean>;
@@ -353,15 +417,18 @@ export interface SessionState {
   notes: string[];
   /** The GSE page's knobs, from the drawing's hookup. */
   knobs?: LiveKnob[];
-  /** A run is being integrated ahead of the display; nothing advances yet. */
-  computing: boolean;
+  /** The hookup's console names, by drawing (channel) id: a connector's
+   *  name for what is on the DAQ box, the alias for anything else. */
+  aliases?: Record<string, string>;
+  /** What the DAQ box sees, by drawing id: every symbol on a connector and
+   *  every valve a state-table row drives. Absent/null on a hookup that is
+   *  not wired yet: everything is, as before the box. */
+  wired?: string[] | null;
   /** Why the stand stopped, if it has: a vessel over its MAWP. Only Reset
    *  clears it. */
   tripped?: string | null;
-  /** Fraction of that run finished, 0..1. */
-  progress: number;
-  /** The display is serving a run computed ahead, at wall-clock pace. */
-  replaying: boolean;
+  /** Hash of the operator overrides this stand was built with. */
+  overrides_hash?: string;
 }
 
 /** One study case as the view writes it: the stand, with these changes.
@@ -377,7 +444,7 @@ export interface StudyCaseIn {
   fill_fraction?: number | null;
   pressurant?: 'helium' | 'nitrogen' | null;
   /** Configuration rows, by key. */
-  setup?: Record<string, number | boolean>;
+  setup?: Record<string, number | boolean | string>;
   /** The swept quantity's value for this case. */
   x?: number | null;
 }
@@ -442,20 +509,13 @@ export const startStudy = (request: StudyRequestIn) => post<StudyState>('/api/st
 /** Stop after the case running now, keeping the ones finished. */
 export const cancelStudy = () => post<StudyState>('/api/study/cancel', {});
 
+/** A session's trace, in the shape the plots read. */
 export interface RunResult {
-  /** The state machine state this was solved in. */
-  state: string;
-  diagram_id: string;
-  engine_id: string;
-  fluid_set: string;
-  converged: boolean;
   message: string;
-  elapsed_s: number;
   times_s: number[];
   channels: Channel[];
-  frames: Frame[];
-  controls: Record<string, number>;
-  report: Report;
+  /** Every state change in the window: rules across the plots. */
+  events?: { t: number; label: string }[];
   balance: Balance | null;
 }
 
@@ -524,9 +584,9 @@ export const refreshArtifact = (id: string) =>
 export const removeArtifact = (id: string) =>
   json<{ removed: string }>(`/api/library/${id}`, { method: 'DELETE' });
 
-export const getModel = (diagram: string, engine: string, fluidSet: string) =>
+export const getModel = (diagram: string, engine: string, fluidSet: string, ignoreGse = false) =>
   json<ModelView>(
-    `/api/model?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}`,
+    `/api/model?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}&ignore_gse=${ignoreGse}`,
   );
 
 /** The drawing as pid-designer saved it, for pid-designer's own canvas to draw. */
@@ -537,6 +597,122 @@ export interface Drawing {
 
 export const getDrawing = (diagram: string) =>
   json<Drawing>(`/api/diagram?diagram=${diagram}`);
+
+// ------------------------------------------------------------------ drawing
+
+export interface ParamValue {
+  value: number;
+  unit: string;
+  source: string;
+  reference: string;
+}
+
+export interface OverrideValue extends ParamValue {
+  by: string;
+  at: string;
+  /** What the drawing said when the override was made. */
+  was: ParamValue | null;
+}
+
+/** One number on one symbol: as drawn, as filled in, as typed over. */
+export interface DrawingParam {
+  name: string;
+  drawing: ParamValue | null;
+  assumed: ParamValue | null;
+  override: OverrideValue | null;
+  effective: ParamValue | null;
+  /** The drawing changed this value after the override was made. */
+  stale: boolean;
+  /** Why it cannot be overridden, if it cannot. */
+  locked: string;
+  units: string[];
+}
+
+export interface DrawingElement {
+  id: string;
+  kind: 'symbol' | 'line';
+  tag: string;
+  type: string;
+  role: string;
+  fluid: string;
+  params: DrawingParam[];
+  options: Record<string, string>;
+  segments: number;
+  on_console: boolean;
+  console_hidden: boolean;
+  hidden_by: string;
+}
+
+export interface DrawingData {
+  diagram_id: string;
+  /** The drawing's name — what overrides are kept under across re-imports. */
+  key: string;
+  source: string;
+  imported_at: string;
+  elements: DrawingElement[];
+  orphaned: string[];
+  overrides_hash: string;
+  override_sources: string[];
+}
+
+/** What feed-twin read from the drawing, for the P&ID tab's panel. Not the
+ *  drawing itself -- that is `getDrawing`. */
+export const getDrawingData = (diagram: string, engine: string, fluidSet = 'hotfire') =>
+  json<DrawingData>(
+    `/api/drawing?diagram=${diagram}&engine=${engine}&fluid_set=${fluidSet}`,
+  );
+
+export const setOverride = (body: {
+  diagram: string;
+  element: string;
+  parameter: string;
+  value: number;
+  unit: string;
+  source: string;
+  reference: string;
+}) =>
+  json<unknown>('/api/drawing/override', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+export const clearOverride = (diagram: string, element: string, parameter: string) =>
+  json<unknown>(
+    `/api/drawing/override?${new URLSearchParams({ diagram, element, parameter })}`,
+    { method: 'DELETE' },
+  );
+
+export interface ConsoleShared {
+  hidden: string[];
+  order?: { pts?: string[]; tanks?: string[] };
+}
+
+export const getConsoleHidden = (diagram: string) =>
+  json<ConsoleShared>(`/api/drawing/console?diagram=${diagram}`);
+
+/** The order the console draws transducers and tanks in, for everyone. */
+export const setConsoleOrder = (diagram: string, order: { pts: string[]; tanks: string[] }) =>
+  json<ConsoleShared>('/api/drawing/console/order', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, order }),
+  });
+
+/** Make the console exactly what a saved stand had. */
+export const setConsoleView = (diagram: string, hidden: string[], order: { pts: string[]; tanks: string[] }) =>
+  json<ConsoleShared>('/api/drawing/console/view', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, hidden, order }),
+  });
+
+export const setConsoleHidden = (diagram: string, element: string, hidden: boolean) =>
+  json<{ hidden: string[] }>('/api/drawing/console', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ diagram, element, hidden }),
+  });
 
 export interface Where {
   diagram: string;
@@ -569,7 +745,8 @@ export const sessionT0 = (id: string) => post<SessionState>(`/api/session/${id}/
 export const tickSession = (id: string, dt: number) =>
   post<SessionState>(`/api/session/${id}/tick`, { dt });
 
-/** Change state, take a valve by hand, release one, turn the dome knob. */
+/** Change state, take a valve by hand, release one, turn the dome knob, or skip
+ *  a load's chilldown (`skip_chill`: true for every tank, or one tank's id). */
 export const commandSession = (
   id: string,
   body: {
@@ -579,6 +756,12 @@ export const commandSession = (
     release?: string;
     setup?: Partial<StandSetup>;
     knob?: { id: string; value: number };
+    skip_chill?: true | string;
+    /** Rename what the console shows, live (the hookup's aliases). */
+    aliases?: Record<string, string>;
+    /** Rename aliases and connectors live; refused (409) when that would
+     *  change what a table row drives. */
+    names?: { aliases: Record<string, string>; channels: ChannelDef[] | null };
   },
 ) => post<SessionState>(`/api/session/${id}/command`, body);
 
@@ -592,12 +775,55 @@ export interface KnobDef {
   high: number;
 }
 
-/** What a person decided about a drawing's controls. `valves` pins a table
- *  actuator to a drawing valve ("" = no valve here); unpinned ones are matched
- *  automatically. */
+/** A board in the DAQ box. */
+export type BoardId = 'sol12' | 'sol24' | 'pt_low' | 'pt_high' | 'rtd' | 'tc';
+export type SymbolKind = 'valve' | 'pt' | 'rtd' | 'tc';
+
+export interface BoardDef {
+  id: BoardId;
+  label: string;
+  /** What plugs into it. */
+  kind: SymbolKind;
+}
+
+/** One connector on the DAQ box: board, connector number (from 1), the name
+ *  the DAQ gives it (console name; for a valve, the state table's row), and
+ *  the drawing id its cable goes to. */
+export interface ChannelDef {
+  board: BoardId;
+  slot: number;
+  name: string;
+  symbol: string;
+}
+
+/** A symbol a connector can take. */
+export interface HookupSymbol {
+  id: string;
+  label: string;
+  type: string;
+  page: string;
+  kind: SymbolKind;
+  /** The board it goes on unless somebody says otherwise. */
+  board: BoardId;
+  /** On the cart, not the vehicle. */
+  ground: boolean;
+}
+
+/** What a person decided about a drawing's controls: the DAQ box
+ *  (`channels`), the stand's own state table (`machine`, null = the DAQ's),
+ *  the knobs. `valves` are pins from before the box ("" = no valve here). */
 export interface HookupBody {
   valves: Record<string, string>;
   knobs: KnobDef[];
+  /** What the console calls a symbol that is not on the box, by drawing
+   *  (channel) id: a tank, the engine's channels. */
+  aliases?: Record<string, string>;
+  /** Always a list from the API: the box the twin's matching amounts to when
+   *  nobody has wired it (`Hookup.wired` false). */
+  channels?: ChannelDef[] | null;
+  /** Rows of five connectors each board shows. */
+  rows?: Partial<Record<BoardId, number>>;
+  machine?: MachineDef | null;
 }
 
 export interface Hookup {
@@ -615,6 +841,23 @@ export interface Hookup {
   by_user: string[];
   pages: string[];
   mated: string[][];
+  /** `bound` and the rest are the rocket-only stand's wiring. */
+  vehicle_only?: boolean;
+  /** The box was written down (saved, or the stand's). False: `hookup`'s
+   *  channels are the twin's suggestion. */
+  wired: boolean;
+  boards: BoardDef[];
+  symbols: HookupSymbol[];
+  /** The DAQ's table as shipped. */
+  machine_shipped: MachineDef;
+  /** What is wrong with the table this hookup runs. */
+  machine_warnings: string[];
+  /** Rows the twin reads by name, and what each does with no valve wired to
+   *  it (the built-in COPV charge and dump, the transfer tank's press). */
+  builtin?: Record<string, string>;
+  /** What this drawing cannot have: a cable to a symbol it lost, a knob on a
+   *  regulator it lacks. A save is refused until they are unplugged. */
+  problems?: string[];
 }
 
 /** The id of the knob the session's dome setting drives. */
@@ -633,21 +876,46 @@ export interface LiveKnob {
   regulators: string[];
 }
 
-const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
-  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}`;
+/** ``ignoreGse``: wired as a rocket-only stand runs it (the hookup itself is
+ *  still the whole drawing's). */
+const whereQuery = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
+  `diagram=${w.diagram}&engine=${w.engine}&fluid_set=${w.fluidSet}&machine=${w.machine}` +
+  (w.ignoreGse ? '&ignore_gse=true' : '');
 
-export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const getHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`);
 
-export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }, body: HookupBody) =>
+export const saveHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }, body: HookupBody) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
-export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string }) =>
+export const resetHookup = (w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean }) =>
   json<Hookup>(`/api/hookup?${whereQuery(w)}`, { method: 'DELETE' });
+
+/** A stand's own hookup, shown and bound as the drawing's would be. Saves
+ *  nothing; refuses what a save would, unless `check` is false (only
+ *  showing it, with what is wrong in `problems`). */
+export const viewHookup = (
+  w: { diagram: string; engine: string; fluidSet: string; machine: string; ignoreGse?: boolean },
+  body: HookupBody,
+  check = true,
+) =>
+  json<Hookup>(`/api/hookup/view?${whereQuery(w)}${check ? '' : '&check=false'}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+/** What the twin would say about a table being edited. */
+export const checkMachine = (table: MachineDef) =>
+  json<{ ok: boolean; error: string; warnings: string[] }>('/api/statemachine/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(table),
+  });
 
 /** The solver tab: per tick, as columns (feedtwin.session.diagnostics). */
 export interface SolverTrace {
@@ -663,11 +931,31 @@ export interface SolverTrace {
   mass_error_kg: number[];
   guard_kg: number[];
   guard_J: number[];
+  /** Cumulative mass across the boundary, in plus out [kg]. */
+  crossed_kg?: number[];
   summary: Record<string, number>;
+  /** The watcher's flags (feedtwin.session.watch), one per episode, newest last. */
+  flags?: WatchFlag[];
+}
+
+/** One episode of a law the stand broke. */
+export interface WatchFlag {
+  check: string;
+  title: string;
+  subject: string;
+  started: number;
+  last: number;
+  detail: string;
+  open: boolean;
 }
 
 export const sessionSolver = (id: string, seconds = 300, maxPoints = 600) =>
   json<SolverTrace>(`/api/session/${id}/solver?seconds=${seconds}&max_points=${maxPoints}`);
+
+/** Everything needed to run this stand again elsewhere: the drawing, engine,
+ *  setup, hookup and every command at its stand time
+ *  (`scripts/replay_repro.py` plays it). */
+export const sessionRepro = (id: string) => json<Record<string, unknown>>(`/api/session/${id}/repro`);
 
 /** Every burn still in the stand's history, oldest first. */
 export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burns`);
@@ -676,15 +964,15 @@ export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burn
 export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500) =>
   json<RunResult>(`/api/session/${id}/history?seconds=${seconds}&max_points=${maxPoints}`);
 
-/** Where a transducer's bar sits against its limits, keyed by tag. The DAQ
- *  reads these from its sensor config; a drawing does not carry them yet, so
- *  a high-pressure tag gets bottle limits and everything else tank limits.
- *  Wrong limits are worse than none, so both are stated. */
-export function limitsFor(tag: string): { nop: number; meop: number } {
-  const upper = tag.toUpperCase();
-  if (upper.includes('HI') || upper.includes('HIGH')) return { nop: 4500, meop: 5000 };
-  if (upper.includes('CHAMBER') || upper.includes('PC')) return { nop: 400, meop: 500 };
-  return { nop: 550, meop: 700 };
+/** A channel's amber and red lines: the drawing's, where the backend found
+ *  them (the vessel the transducer reads: its drawn operating pressure and
+ *  MAWP; the engine's design Pc). None where it found none -- a transducer on a
+ *  dome line or a manifold reads no vessel. The DAQ reads these from its
+ *  sensor config; they used to be guessed here from the tag (550/700 on a
+ *  dome PT, 4,500/5,000 on anything named HI), and a wrong line is worse than
+ *  none. */
+export function limitsOf(c: Pick<Channel, 'nop' | 'meop'>): { nop?: number; meop?: number } {
+  return { nop: c.nop ?? undefined, meop: c.meop ?? undefined };
 }
 
 /** One knob the twin assumes a value for: what it stands for, its unit,
@@ -695,48 +983,24 @@ export interface Tunable {
   unit: string;
   group: string;
   explains: string;
-  kind: 'number' | 'flag';
+  kind: 'number' | 'flag' | 'choice';
   low: number;
   high: number;
   step: number;
   applies: 'live' | 'reset';
-  default: number | boolean;
+  /** For a choice: its values and labels. */
+  choices?: { value: string; label: string }[];
+  default: number | boolean | string;
 }
 
 export const getTunables = () => json<Tunable[]>('/api/tunables');
 
-export const getStateMachine = (w: Where) =>
-  json<StateMachine>(`/api/statemachine?${query(w)}`);
+export const getStateMachine = (w: Where, ignoreGse = false) =>
+  json<StateMachine>(`/api/statemachine?${query(w)}&ignore_gse=${ignoreGse}`);
 
-/**
- * Solve the stand as it stands, in one state. Behind every click: picking a
- * state, taking a valve by hand. One steady solve, so it answers fast enough
- * to feel like the stand rather than like a report.
- */
-export const goToState = (
-  w: Where,
-  body: {
-    state: string;
-    /** Where the stand is now, so the server can refuse an illegal move. */
-    from: string;
-    forced: Record<string, number>;
-    dome: number;
-  },
-) => post<RunResult>(`/api/state?${query(w)}`, body);
-
-/** Run a burn: hold the pre-fire state, transition, sample. */
-export const fireStand = (
-  w: Where,
-  body: {
-    state: string;
-    prefire: string;
-    duration: number;
-    lead_in: number;
-    sample_hz: number;
-    dome: number;
-    forced: Record<string, number>;
-  },
-) => post<RunResult>(`/api/fire?${query(w)}`, body);
+/** The table a running stand commands, and how it is bound: a stand's own
+ *  hookup included. */
+export const sessionStateMachine = (id: string) => json<StateMachine>(`/api/session/${id}/statemachine`);
 
 /**
  * Channel colours, lifted from the DAQ's `lib/sensor-colors.ts` so the same
@@ -817,6 +1081,10 @@ export interface RunSummary {
   label: string;
   stand: RunStand | null;
   engine_model: string;
+  /** What it ran on: library ids, and whether the GSE was cut away. */
+  diagram?: string;
+  engine?: string;
+  rocket_only?: boolean;
   outcome: Record<string, number | null>;
   converged: boolean;
   mass_error_ppm: number | null;
@@ -910,8 +1178,6 @@ export const explainRuns = (a: RunSummary, b: RunSummary) =>
   post<ExplainState>('/api/twin/runs/explain', { a: a.id, b: b.id, owner_a: a.owner, owner_b: b.owner });
 export const explainStatus = () => json<ExplainState>('/api/twin/runs/explain');
 export const explainCancel = () => post<ExplainState>('/api/twin/runs/explain/cancel', {});
-export const recordRuns = (session: string, label = '') =>
-  post<RunSummary[]>(`/api/session/${session}/runs`, { label });
 
 /** What the model has been checked against (backend/version.py VALIDATION). */
 export interface Validation {

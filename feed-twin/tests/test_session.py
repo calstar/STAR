@@ -21,8 +21,8 @@ import pytest
 
 from backend.assembly import assemble
 from backend.library import Library
-from backend.run import PSI
-from backend.session import AMBIENT, AMBIENT_T, Session, Setup
+from feedtwin.session.gauge import PSI
+from backend.session import AMBIENT_T, Session, Setup
 from backend.statemachine import bind, load_machine
 
 CEA = (
@@ -205,8 +205,12 @@ def test_a_tank_vents_while_it_fills() -> None:
         session._last_flows.get("SV_LOX_VENT", 0.0) > 5.0e-3
     ), "the vent carries the gas the liquid displaces"
     hold(session, "Ox Fill", 9.0)
-    assert psi(session.tanks["OXT"].pressure) - 14.7 < 100.0
-    assert abs(session.tanks["OXT"].fixed_kg) < 1e-3, "no gas created by the floor"
+    ox = session.tanks["OXT"]
+    assert psi(ox.pressure) - 14.7 < 100.0
+    assert ox.floored_kg < 1e-6, "no gas created by the floor"
+    # The other clamps, less the liquid it refused at its outlet (booked since
+    # 2026-10-11: a gram over the fill that no tank sent).
+    assert abs(ox.fixed_kg + ox.refused_kg) < 1e-3
 
 
 def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
@@ -239,6 +243,29 @@ def test_a_lox_load_chills_the_wall_before_any_liquid_collects() -> None:
     saturation = CP.PropsSI("T", "P", ox.pressure, "Q", 0, "Oxygen")
     assert ox.state.ullage.wall_temperature <= saturation + ox.tank.boiling_onset + 1.0
     assert ox.state.liquid_mass > 0.5, "once chilled, the load collects"
+
+
+def test_a_skipped_chill_leaves_a_cold_ullage_and_the_fill_makes_no_gas() -> None:
+    """Skipping the chill cooled the wall and left the ullage warm; the gas
+    chilled on the wall, the venting tank dipped a fraction of a psi under
+    atmosphere, and the old floor asked for a whole atmosphere of nitrogen at
+    the wall's 92 K: 38 g of it in one step, booked as a clamp (2026-10-12).
+    The skip now leaves the ullage where a chill does -- cold, at its pressure,
+    the gas that takes booked as the load's boil-off -- and out of a chill the
+    floor is only what puts the tank back at atmosphere."""
+    session = stand(load_chill_s=30.0)
+    hold(session, "Ox Fill", 3.0, dt=0.25)
+    ox = session.tanks["OXT"]
+    assert ox.chilling
+    assert session.skip_chilldown() == [ox.label]
+    clamps = ox.fixed_kg
+    worst = 0.0
+    for _ in range(60):
+        held = ox.state.ullage.mass
+        session.step(0.05)
+        worst = max(worst, ox.state.ullage.mass - held)
+    assert worst < 1e-3, f"{worst * 1e3:.1f} g of gas in one step"
+    assert abs(ox.fixed_kg - clamps) < 5e-4
 
 
 def test_with_no_load_chill_the_liquid_collects_from_the_first_second() -> None:
@@ -524,6 +551,10 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     """
     session = stand(dome_psi=500.0)
     session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
+    # Ready shuts both press solenoids; held open by hand, each tank rides
+    # the regulator, which is the loop this test is about.
+    session.set_valve("SV_LOX_PRESS", True)
+    session.set_valve("SV_FUEL_PRESS", True)
 
     tau = session._coupling_timescale()
     assert tau > 0.0, "a stand with a droop regulator has a time constant"
@@ -574,105 +605,35 @@ def test_the_coupling_step_resolves_the_regulator_ullage_time_constant() -> None
     assert sum(calls) == pytest.approx(min(dt, mod.MAX_STEP), rel=1e-9)
 
 
-# ---------------------------------------------------- computed ahead, replayed
-
-
-def test_a_precomputed_run_replays_in_order_without_integrating() -> None:
-    """The burn is integrated ahead at study accuracy and handed back a frame
-    at a time, so the panel gets a real-time, noise-free run for the price of a
-    short wait before it. During replay `step` must not integrate: the frames
-    it returns are the buffered ones, in stand-time order, paced by dt.
-    """
-    session = stand(engine=True, dome_psi=500.0)
+def test_a_regulator_the_tank_cannot_reach_sets_no_coupling_step() -> None:
+    """The regulator-ullage loop is a loop only through an open path. In Ready
+    both press solenoids are shut, and the regulator's time constant is no
+    reason to re-solve the stand: it once paired every regulator with every
+    ullage, and a LOX tank topped in Ox Fill was stepped at the cart's fuel
+    regulator's constant, three solves every 20 ms for a loop that did not
+    exist."""
+    session = stand(dome_psi=500.0)
     session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    frames = session.precompute(horizon=0.6, dt=0.02)
-    assert frames >= 20 and not session.computing and session.replaying
-    end_t = session.t  # the stand itself is at the END of the run
-    buffered = {
-        round(f.t, 6) for f, _ in session._replay
-    }  # before replay consumes them
-    ts = []
-    for _ in range(12):
-        ts.append(session.step(0.05).t)
-    assert ts == sorted(ts) and ts[0] < ts[-1] < end_t + 1e-9
-    assert session.t == end_t, "replay integrated the stand further"
-    # Each shown frame is one that was buffered, not a fresh solve.
-    assert all(round(t, 6) in buffered for t in ts)
-    # The buffer is spent; the stand carries on live from where the run ended.
-    assert not session.replaying
-    assert session.step(0.05).t > end_t
-
-
-def test_a_command_during_replay_restores_the_stand_to_the_frame_shown() -> None:
-    """An abort mid-replay must act on the stand the operator is looking at,
-    not on the one four seconds further into the future that the precompute
-    left behind. Every buffered frame therefore carries the stand's state at
-    that instant, and a command restores it before it does anything else.
-    """
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    session.step(0.05)
-    session.state = "Fire"
-    session.precompute(horizon=0.6, dt=0.02)
-    for _ in range(5):
-        shown = session.step(0.05)
-    assert session.t > shown.t + 0.1, "the stand should be well ahead of the display"
-    ox = next(iter(session.tanks.values()))
-    shown_mass = (
-        shown.tanks[ox.id]["liquid_kg"] if "liquid_kg" in shown.tanks[ox.id] else None
+    signals = session.signals(0.02)
+    assert session._coupling_timescale(signals, 0.02, press=False) == 0.0
+    session.set_valve("SV_LOX_PRESS", True)
+    signals = session.signals(0.02)
+    lox = next(t for t in session.tanks.values() if t.label == "TK-LOX")
+    expected = (
+        lox.state.ullage.mass
+        / lox.pressure
+        * min(
+            c.p["flow_droop"] / c.p["rated_flow"]
+            for br in session.model.built.network.branches.values()
+            for c in [getattr(br, "component", None)]
+            if c is not None
+            and "Regulator" in type(c).__name__
+            and c.p.get("rated_flow", 0) > 0
+        )
     )
-
-    session.set_valve(next(iter(session.model.built.actuators)), False)
-
-    assert session.t == pytest.approx(
-        shown.t
-    ), "stand not restored to the shown instant"
-    assert not session._replay and not session.replaying
-    assert session.history[-1].t == pytest.approx(shown.t), "history not truncated"
-    if shown_mass is not None:
-        assert ox.state.liquid_mass == pytest.approx(shown_mass, rel=1e-9)
-    # ...and it carries on live from there.
-    nxt = session.step(0.05)
-    assert nxt.t > shown.t and session.t == pytest.approx(nxt.t)
-
-
-def test_a_command_while_computing_cancels_the_run_and_acts_on_the_held_frame() -> None:
-    """An abort during "running sim" must never be refused, and must act on the
-    stand the operator is looking at -- the frame held since the run began, not
-    the future the thread has integrated to. So a command cancels the run at
-    its next step, restores the stand to that frame, and goes through.
-    """
-    import threading
-
-    session = stand(engine=True, dome_psi=500.0)
-    session.prime(fill_fraction=0.95, tank_psi=550.0, copv_psi=4500.0, state="Ready")
-    held = session.step(0.05)
-    session.state = "Fire"
-    worker = threading.Thread(
-        target=session.precompute, args=(30.0,), kwargs={"dt": 0.02}
-    )
-    worker.start()
-    # Let it get a few frames in, and confirm the display is holding.
-    for _ in range(50):
-        if len(session._replay) >= 3:
-            break
-        import time as _t
-
-        _t.sleep(0.05)
-    assert session.computing and session.step(0.05).t == held.t
-    assert session.t > held.t, "the thread should have integrated ahead"
-
-    target = next(
-        s for s in session.machine.targets(session.state) if "abort" in s.lower()
-    )
-    session.command_state(target)  # must not raise
-    worker.join(timeout=30)
-    assert not session.computing and not session.replaying
-    assert session.state == target
-    assert session.t == pytest.approx(held.t), "not restored to the held frame"
-    assert session.step(0.05).t > held.t, "and it carries on live from there"
+    assert session._coupling_timescale(signals, 0.02, press=False) == pytest.approx(
+        expected, rel=1e-9
+    ), "the LOX tank, opened to the regulator, is paired with it alone"
 
 
 # ---------------------------------------------------- the operator's report

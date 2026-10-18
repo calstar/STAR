@@ -2,8 +2,7 @@
 
 The physics it produces is covered by the library and session tests and
 docs/PHYSICS-BENCHMARK.md. This is the request's arithmetic -- the case count
-a progress bar is built from, the cache key, the floor -- and that only one
-runs at a time. The Study tab's own study is ``tests/test_study.py``.
+a progress bar is built from, and the floor. The Study tab's own study is ``tests/test_study.py``.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from dataclasses import replace
 
 import pytest
 
-from backend.benchmark_study import StudyRequest, StudyRunner, Trace, _floor
+from backend.benchmark_study import StudyRequest, Trace, _floor
 
 # ------------------------------------------------------------- the case count
 
@@ -34,15 +33,6 @@ def test_the_case_count_is_what_the_view_promises(
     """The view multiplies these out to tell an operator how long to wait. If
     the two disagree, the progress bar lies about a job that takes minutes."""
     assert request_.cases() == expected
-
-
-def test_two_requests_that_differ_have_different_keys() -> None:
-    assert StudyRequest(gases=("gn2",)).key() != StudyRequest(gases=("he",)).key()
-    assert StudyRequest(sweep=True).key() != StudyRequest(sweep=False).key()
-    assert (
-        StudyRequest(gases=("gn2", "he")).key()
-        == StudyRequest(gases=("he", "gn2")).key()
-    ), "gas order is not a different study"
 
 
 # ------------------------------------------------------------------ the floor
@@ -92,29 +82,7 @@ def test_a_trace_with_nothing_usable_reports_zero_rather_than_raising() -> None:
     assert _floor(_trace(converged=[False] * 4)) == 0.0
 
 
-# -------------------------------------------------------------- the runner
-
-
-def test_only_one_study_runs_at_a_time() -> None:
-    """Each case pins a core for a minute. Two would make both slower and the
-    progress meaningless."""
-    runner = StudyRunner()
-    runner.running = True
-    assert runner.start(None, "", "", StudyRequest()) is False  # type: ignore[arg-type]
-
-
-def test_the_thermal_options_are_part_of_the_cache_key() -> None:
-    """Two runs that differ only in physics must not share a cached result.
-
-    `key()` is what decides whether a request is "the same run". Leaving the
-    thermal switches out of it would serve a no-vapour trace to someone who
-    asked for vapour, which is the worst possible failure for a study whose
-    whole output is a comparison.
-    """
-    base = StudyRequest(gases=("gn2", "he"))
-    assert base.key() != replace(base, vapour=True).key()
-    assert base.key() != replace(base, chilldown=50.0).key()
-    assert replace(base, chilldown=50.0).key() != replace(base, chilldown=200.0).key()
+# ------------------------------------------------------- the thermal options
 
 
 def test_the_thermal_options_default_off() -> None:

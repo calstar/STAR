@@ -46,6 +46,9 @@ export interface DesignMeta {
   accessRequests?: AccessRequest[];
   /** Curated apps only: have I asked to edit it? */
   requestedByMe?: boolean;
+  /** Curated apps only: someone else's, shared with me. Needed because an
+   *  admin may edit everything, so `editable` cannot say it. */
+  sharedWithMe?: boolean;
 }
 
 /** Someone asking to edit a design. */

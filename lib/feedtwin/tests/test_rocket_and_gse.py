@@ -317,6 +317,34 @@ def test_ox_fill_loads_the_flight_lox_tank_from_the_dewar() -> None:
     assert abs(last.mass_error_kg - last.guard_kg) < 1e-3
 
 
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_topped_lox_tank_on_its_vent_lands_where_the_solve_put_it() -> None:
+    """Topped to its load in Ox Fill, the LOX tank passes ~20 g/s of boil-off
+    through a 0.45 g ullage to its vent. The solve closed that ullage on the
+    stiffer of its gas-in and gas-out slopes, and over boiling LOX gas in is
+    eight times stiffer: the node the vent flowed from sat at 3.1 psig while
+    the tank read 7.2, a gap that grew with the coupling step. And the 10 %
+    mass rule counted the vented gas, so the whole stand was solved nine
+    times every 20 ms -- the fill ran at a third of real time. A venting
+    ullage is closed on its own gas-out slope, and gas gone to the sky asks
+    for no extra solves."""
+    from feedtwin.session.gauge import psig
+
+    ids = _ids()
+    session = _session(_with_lox_fill_drawn())
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "Ox Fill"
+    for _ in range(36):
+        session.step(0.25)
+    assert lox.state.liquid_mass == pytest.approx(lox._wanted(), rel=0.01)
+    session.step(0.02)
+    gas_in, gas_out = session._split_at(lox.ullage_node, session._last_flows)
+    assert gas_out > 20.0 * lox.state.ullage.mass, "the ullage turns over each 50 ms"
+    node = session._last_pressures[lox.ullage_node]
+    assert psig(lox.pressure) == pytest.approx(psig(node), abs=0.3)
+    assert session.solver_log[-1].couplings == 1
+
+
 # ------------------------------------------------------------ the cart rests
 
 
@@ -432,3 +460,91 @@ def test_t0_loads_the_fire_load_not_the_tank() -> None:
     # A pad load stops there too (the session hands it over each tick).
     session.step(0.02)
     assert lox._wanted() == pytest.approx(config["lox_tank"]["mass"])
+
+
+def test_the_cart_regulators_drawn_with_settings_get_knobs_at_them() -> None:
+    """A cart regulator the drawing sets is still turned by hand on the pad, so it
+    gets a knob -- starting where the drawing sets it. It used to get none, and the
+    dome and COPV fill started at 500 and 4,500 whatever the sheet said."""
+    from feedtwin.session import assemble_model
+    from feedtwin.session.hookup import CHARGE, DOME, knob_starts, suggest
+
+    ids = _ids()
+    payload = _payload()
+    settings = {"PR-1": 3750, "DR-REG-G": 535, "LP-PR": 150}
+    for node in payload["nodes"]:
+        label = node["data"]["label"]
+        if label in settings:
+            node["data"].setdefault("params", {})["setpoint"] = {
+                "value": settings[label],
+                "unit": "psi",
+                "source": "estimated",
+            }
+    model = assemble_model(read_diagram(payload, name="LE4"), diagram_id="le4")
+    hookup = suggest(model, 500.0, 4500.0)
+    knobs = {k.id: k for k in hookup.knobs}
+    assert knobs[DOME].regulators == (ids["DR-REG-G"],)
+    assert knobs[CHARGE].regulators == (ids["PR-1"],)
+    assert knobs[ids["LP-PR"]].regulators == (ids["LP-PR"],)
+    assert knob_starts(hookup, model) == {
+        DOME: pytest.approx(535.0),
+        CHARGE: pytest.approx(3750.0),
+        ids["LP-PR"]: pytest.approx(150.0),
+    }
+    assert knobs[DOME].psig == pytest.approx(535.0)
+    assert knobs[CHARGE].psig == pytest.approx(3750.0)
+    assert knobs[ids["LP-PR"]].psig == pytest.approx(150.0)
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_dry_tank_does_not_drain_back_through_its_fill_line() -> None:
+    """The flight fuel tank's fill line stays open to it when dry so it can be
+    loaded -- in its fill state, and only then. Open always, with a dump open
+    beyond it (LE4's FD-ROT-G, uncommanded and resting open; here the cart's
+    hand dump and transfer valve opened, the transfer held by hand), the dry
+    tank "drained" through the line forever and the vessel's floor re-made the
+    mass: ~0.46 kg/s of propellant from nothing, booked as guard."""
+    from feedtwin.session.burn import jump_to_t0
+
+    ids = _ids()
+    payload = _payload()
+    for node in payload["nodes"]:
+        if node["data"]["label"] == "FF-MAN-Dump":
+            node["data"].setdefault("options", {})["normalPosition"] = "open"
+    session = _session(payload)
+    jump_to_t0(session, copv_psi=4000.0, fill_fraction=0.95)
+    session.release(ids["FF-MAN-Output"])
+    session.set_valve(ids["FF-MAN-Output"], True)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    for _ in range(20):
+        session.step(0.05)
+    # Where the fuel is going is said, and that nothing commands the way out.
+    (leaving,) = [n for n in session.history[-1].notes if "losing ethanol" in n]
+    assert "FF-MAN-Dump" in leaving and "nothing in the state table" in leaving
+    for _ in range(280):  # 15 s: the tank drains through the dump, then is dry
+        session.step(0.05)
+    assert fuel.state.liquid_mass == pytest.approx(0.0, abs=1e-3)
+    guard = session.solver_log[-1].guard_kg
+    for _ in range(200):  # 10 s dry
+        session.step(0.05)
+    last = session.solver_log[-1]
+    assert last.guard_kg - guard < 0.05, "the floor is re-making propellant"
+    assert abs(last.mass_error_kg - last.guard_kg) < 1e-6
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_the_crews_transfer_valve_is_not_the_operators_hold() -> None:
+    """A fresh stand with a drawn load has the crew's transfer valve shut by the
+    twin. That is not the operator's hand: no "1 held", and Release leaves it."""
+    ids = _ids()
+    session = _session()
+    valve = ids["FF-MAN-Output"]
+    assert valve in session.forced
+    assert session.operator_held == []
+    session.set_valve(ids["FM-R"], True)
+    assert session.operator_held == [ids["FM-R"]]
+    session.release()
+    assert session.operator_held == [] and valve in session.forced
+    # Turned the other way by hand, it is the operator's.
+    session.set_valve(valve, True)
+    assert session.operator_held == [valve]

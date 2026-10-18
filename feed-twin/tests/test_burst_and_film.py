@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from backend.run import ATMOSPHERE, PSI
+from feedtwin.session.gauge import ATMOSPHERE, PSI
 from backend.session import TANK_WALL, _trip_limit, _vessel_wall
 from feedtwin.model.param import Param, Provenance
 from feedtwin.vessels.convection import GasFilm

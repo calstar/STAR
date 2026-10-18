@@ -74,10 +74,6 @@ def new_id(now: float | None = None) -> str:
     return f"{stamp:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
 
 
-def thin(values: list[float], keep: list[int]) -> list[float]:
-    return [values[i] for i in keep]
-
-
 def stride_indices(n: int, points: int = SERIES_POINTS) -> list[int]:
     """Evenly spaced indices into ``n`` samples, first and last always kept."""
     if n <= points:
@@ -114,15 +110,6 @@ class RunStore:
         loaded: dict[str, Any] = json.loads(path.read_text())
         return loaded
 
-    def delete(self, user: str, run_id: str) -> bool:
-        if not _ID.match(run_id):
-            return False
-        path = self.folder(user, create=False) / f"{run_id}.json"
-        if not path.is_file():
-            return False
-        path.unlink()
-        return True
-
     def list(
         self, users: Iterable[str], *, stand: str | None = None
     ) -> list[dict[str, Any]]:
@@ -148,6 +135,8 @@ class RunStore:
 def summary(record: Mapping[str, Any]) -> dict[str, Any]:
     outcome = record.get("outcome") or {}
     solver = record.get("solver") or {}
+    inputs = record.get("inputs") or {}
+    setup = inputs.get("setup") or {}
     return {
         "id": record.get("id"),
         "owner": record.get("owner"),
@@ -156,6 +145,11 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "label": record.get("label", ""),
         "stand": record.get("stand"),
         "engine_model": outcome.get("engine_model", ""),
+        # What it ran on, so a list of runs says which are comparable: the
+        # drawing and engine (library ids) and whether the GSE was cut away.
+        "diagram": inputs.get("diagram", ""),
+        "engine": inputs.get("engine", ""),
+        "rocket_only": bool(setup.get("ignore_gse", False)),
         "outcome": {k: outcome.get(k) for k, _, _ in OUTCOME_KEYS},
         "converged": not solver.get("unconverged"),
         # Unexplained mass where the record has it (error less the guards'
@@ -252,7 +246,10 @@ def diff(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
 
 #: Input groups, in the order the ladder swaps them, and the keys each owns.
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("drawing", ("diagram", "hookup", "multiphase")),
+    # An edited table rides with the hookup: a box's connector names are its
+    # rows, so swapping one without the other runs the mains unbound. Named
+    # for all of it: a rung that swaps only the table is not "the drawing".
+    ("drawing & hookup", ("diagram", "hookup", "machine_table", "multiphase")),
     ("engine", ("engine",)),
     ("fluids", ("fluid_set",)),
     ("state machine", ("machine",)),

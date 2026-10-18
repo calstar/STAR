@@ -1,12 +1,12 @@
-"""The regulator's opt-in compressible seat (``Setup.regulator_compressible_seat``).
+"""The regulator's compressible seat (``Setup.regulator_compressible_seat``).
 
 The seat a dome regulator saturates against was ``K rho v^2 / 2`` at the inlet
 density: no expansion factor, no choke (EngineDesign/docs/layerx/AUDIT.md 5.3).
 On GN2 near burnout that passes 0.398 kg/s across the 441 psi a 1092-50 has, where
 IEC 60534-2-1 with its expansion factor passes 0.319 (AUDIT.md 9.6 C3, by hand,
-Cv 0.8, xT 0.7 assumed, gamma 1.40). The opt-in reproduces that; off it is the old
-law exactly; on, a regulator that is regulating -- helium at the LE4's hot-fire
-flows -- does not move.
+Cv 0.8, xT 0.7 assumed, gamma 1.40). On -- the default since 2026-10-08, pinned off
+in the benchmark Study -- it reproduces that; off it is the old law exactly; on, a
+regulator that is regulating -- helium at the LE4's hot-fire flows -- does not move.
 
 States are the audit's (``scratchpad/audit/drawings/regcalc.py`` at the twin's
 recorded ``PR_D.in``): GN2 at 3.62 s, 1054.78 psia and 199.95 K, outlet target
@@ -61,8 +61,10 @@ def _gas(name: str, psia: float, T: float, signals=None):  # type: ignore[no-unt
     return conditions_from_fluid(Fluid(name), psia * PSI, T, signals, phase="gas")
 
 
-def test_off_by_default_everywhere() -> None:
-    assert Setup().regulator_compressible_seat is False
+def test_on_in_the_cockpit_and_off_in_the_benchmark_study() -> None:
+    """The team turned it on (2026-10-08); the benchmark keeps the law its
+    expectations were stated at."""
+    assert Setup().regulator_compressible_seat is True
     assert burn_setup().regulator_compressible_seat is False
     assert Setup().regulator_xT == pytest.approx(0.70)
 

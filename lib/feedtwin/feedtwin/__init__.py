@@ -27,7 +27,10 @@ What goes where, as the phases land::
     feedtwin.comps      Phase 03  pipes, fittings, valves, orifices [DONE]
     feedtwin.solve      Phase 04  steady network                    [DONE]
     feedtwin.vessels    Phase 05  gas side and tank thermodynamics  [DONE]
-    feedtwin.transient  Phase 07  stiff integration                 [DONE]
+    feedtwin.session    the stand in time: vessels marched against the
+                        network, the chamber closed, a burn [DONE]
+                        (Phase 07's stiff integrator, feedtwin.transient,
+                        was replaced by it and removed 2026-10-08)
     feedtwin.engine     Phase 08  a Layer-1 engine on the end       [DONE]
     feedtwin.pid        Phase 11  the drawing is the document       [DONE]
     feedtwin.vessels.vapour       Phase 14  ullage vapour, chilldown [DONE, opt-in]

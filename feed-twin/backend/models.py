@@ -53,17 +53,6 @@ class Actuator(BaseModel):
     signal: str
 
 
-class ControlSpec(BaseModel):
-    key: str
-    label: str
-    unit: str
-    default: float
-    minimum: float
-    maximum: float
-    step: float
-    note: str = ""
-
-
 class AssumptionOut(BaseModel):
     component: str
     parameter: str
@@ -88,6 +77,11 @@ class ReportOut(BaseModel):
     unchecked: int = 0
     assumptions: list[AssumptionOut] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    #: Operator overrides that took effect, as assumptions are shown: what,
+    #: how much, on whose say-so.
+    overrides: list[AssumptionOut] = Field(default_factory=list)
+    #: Short hash of `overrides`; empty when there are none.
+    overrides_hash: str = ""
 
 
 class ModelView(BaseModel):
@@ -98,13 +92,30 @@ class ModelView(BaseModel):
     engine_id: str = ""
     title: str
     actuators: list[Actuator]
-    controls: list[ControlSpec]
-    fluid_sets: list[str]
     report: ReportOut
     engine: dict[str, object] = Field(default_factory=dict)
     # Which sheet of the drawing each node is on, by node id. The console
     # splits its panels by it when a stand spans more than one.
     pages: dict[str, str] = Field(default_factory=dict)
+    #: What the team has hidden from the console, by node id. Shared, not per
+    #: browser; set from the console's menus or the P&ID tab.
+    console_hidden: list[str] = Field(default_factory=list)
+    #: The order the console draws transducers and tanks in ({pts, tanks}).
+    console_order: dict[str, list[str]] = Field(default_factory=dict)
+    # Drawing ids off the vehicle (feedtwin.pid.roles.ground_ids): the cart.
+    # The console starts its transducers and vessels hidden. Empty for a
+    # drawing of the rocket alone, or one built with the GSE ignored.
+    ground: list[str] = Field(default_factory=list)
+    # The cart's K-bottles and dewars: the console does not show them at all
+    # (nobody reads their level on the pad). The cart's tanks it can.
+    ground_bottles: list[str] = Field(default_factory=list)
+    # Built with the drawn GSE ignored: the vessels that were cut, by label.
+    # Empty when nothing was (a drawing of the rocket alone, or the GSE kept).
+    ground_cut: list[str] = Field(default_factory=list)
+    #: Where each knob starts on this drawing [psig], by knob id ("dome",
+    #: "charge", a regulator's): the regulators' drawn settings. What a
+    #: knob's "default" goes back to, not the library's 500 / 4,500.
+    drawn_knobs: dict[str, float] = Field(default_factory=dict)
 
 
 class Channel(BaseModel):
@@ -112,6 +123,13 @@ class Channel(BaseModel):
     tag: str
     unit: str
     values: list[float]
+    #: Where the console's bar turns amber and red [psig], from what the
+    #: transducer reads (main._channel_limits); absent, the console falls back
+    #: on the DAQ's guesses by tag.
+    nop: float | None = None
+    meop: float | None = None
+    #: Where those two came from, for the bar's hover.
+    limits: str = ""
 
 
 class EngineState(BaseModel):
@@ -192,16 +210,6 @@ class SourceDocument(BaseModel):
     releases: list[str] = Field(default_factory=list)
 
 
-class ActuatorOut(BaseModel):
-    """A valve on the drawing, and what the state machine calls it."""
-
-    id: str
-    tag: str
-    signal: str
-    role: str = ""
-    """The state machine's name for it, empty when nothing commands it."""
-
-
 class StateMachineOut(BaseModel):
     """The stand's states, its legal moves, and how it binds to this drawing."""
 
@@ -227,6 +235,23 @@ class StateMachineOut(BaseModel):
 
     warnings: list[str] = Field(default_factory=list)
     """Problems in the state tables themselves."""
+
+    layout: dict[str, list[int]] = Field(default_factory=dict)
+    """State -> ``[row, col]`` on the panel, the DAQ's ``panel_row/col``.
+    A state absent is not placed by the table (the console places it)."""
+
+    aborts: list[str] = Field(default_factory=list)
+    """The abort states: always reachable."""
+
+    table: dict[str, Any] = Field(default_factory=dict)
+    """The tables as an editor holds them (``StateMachine.to_dict``)."""
+
+    edited: bool = False
+    """The stand's own table, not the shipped DAQ one."""
+
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin acts on by name on this stand
+    (feedtwin.session.core.builtin_rows)."""
 
 
 class TankOut(BaseModel):
@@ -260,10 +285,23 @@ class TankOut(BaseModel):
     #: through its fill line, boiling on the wall or collecting. Zero when
     #: nothing is loading.
     fill_flow_g_s: float = 0.0
+    #: What a load fills this tank to [kg]: the engine's fire load where it
+    #: states one, else the full fraction. The pad guide's "loaded".
+    load_kg: float = 0.0
+    #: The engine's fire load for this tank [kg] (its config's lox_tank /
+    #: fuel_tank mass, fixed by the competition), ``None`` when it names none
+    #: and a load fills the tank to its full fraction instead.
+    fire_load_kg: float | None = None
     #: Where the regulator feeding this tank locks up right now [psig]:
     #: dome + bias - S x the vehicle bottle, so it climbs as the bottle falls.
     #: ``None`` for a tank no regulator feeds.
     lockup_psi: float | None = None
+    #: ``[charged, empty]``: where it locks up with the COPV at its fill
+    #: setting and with it empty [psig] -- the range over a burn.
+    lockup_range_psi: list[float] | None = None
+    #: The tank's drawn MAWP [psig] (the stand trips above it); ``None`` when
+    #: the drawing gives none.
+    mawp_psi: float | None = None
 
 
 class StudyCaseOut(BaseModel):
@@ -324,13 +362,21 @@ class SessionOut(BaseModel):
     id: str
     t: float
     knobs: list[LiveKnobOut] = Field(default_factory=list)
+    # The hookup's console names, by drawing (channel) id: what the console
+    # shows in place of a valve's or transducer's tag -- a connector's name
+    # for what is on the DAQ box, the alias for anything else.
+    aliases: dict[str, str] = Field(default_factory=dict)
+    wired: list[str] | None = None
+    """What the DAQ box sees, by drawing id: every symbol on a connector, and
+    every valve a state-table row drives. ``None`` on a hookup that is not
+    wired: everything is, as before the box."""
     state: str
     reachable: list[str]
     converged: bool
     pressure_psi: dict[str, float]
     """Instrument readings [psig]. Gauge, like the transducers on the stand: a
     vented line reads 0.0. Every `*_psi` on this API is gauge; the model
-    underneath is absolute (see backend.run.psig)."""
+    underneath is absolute (see feedtwin.session.gauge.psig)."""
     temperature_K: dict[str, float] = Field(default_factory=dict)
     node_psi: dict[str, float]
     flow_kg_s: dict[str, float]
@@ -338,45 +384,33 @@ class SessionOut(BaseModel):
     held: list[str]
     tanks: list[TankOut]
     bottles: list[TankOut]
-    setup: dict[str, float | bool] = Field(default_factory=dict)
+    setup: dict[str, float | bool | str] = Field(default_factory=dict)
     engine: "EngineState | None" = None
     notes: list[str] = Field(default_factory=list)
-    #: A run is being integrated ahead of the display; nothing advances yet.
-    computing: bool = False
     #: Why the stand stopped, if it has -- a vessel over its MAWP. Only a
     #: reset clears it.
     tripped: str | None = None
-    #: Fraction of that run finished, 0..1.
-    progress: float = 0.0
-    #: The display is serving a run computed ahead, at wall-clock pace.
-    replaying: bool = False
+    #: Hash of the operator overrides this stand was built with. A drawing
+    #: view whose hash differs is waiting on a Reset.
+    overrides_hash: str = ""
 
 
-class Frame(BaseModel):
+class StateEvent(BaseModel):
+    """The stand entering a state, for a rule across the plots."""
+
     t: float
-    pressure_psi: dict[str, float]
-    temperature_K: dict[str, float] = Field(default_factory=dict)
-    node_psi: dict[str, float] = Field(default_factory=dict)
-    flow_kg_s: dict[str, float] = Field(default_factory=dict)
-    open: dict[str, bool] = Field(default_factory=dict)
-    engine: EngineState | None = None
+    label: str
 
 
 class RunOut(BaseModel):
-    diagram_id: str
-    engine_id: str = ""
-    fluid_set: str
-    state: str = ""
-    """The state machine state this was solved in."""
+    """A session's trace, in the shape the plots read."""
 
-    converged: bool
     message: str
-    elapsed_s: float
     times_s: list[float]
     channels: list[Channel]
-    frames: list[Frame]
-    controls: dict[str, float] = Field(default_factory=dict)
-    report: ReportOut
+    #: Every state change in the window, from the unthinned history, so a
+    #: transition between two kept samples is not lost.
+    events: list[StateEvent] = Field(default_factory=list)
     balance: BalanceOut | None = None
     """Why the mixture ratio came out where it did, at the last solved instant.
     ``None`` when there is no engine, or when the drawing gave it only one
@@ -451,12 +485,56 @@ class KnobOut(BaseModel):
     high: float = 1000.0
 
 
+class ChannelOut(BaseModel):
+    """One connector on the DAQ box: board, connector number (from 1), the
+    name the DAQ gives it, and the drawing id its cable goes to."""
+
+    board: str
+    slot: int
+    name: str
+    symbol: str
+
+
 class HookupBody(BaseModel):
-    """What a person decided: pinned valves (actuator -> drawing id, "" for
-    none) and the knobs."""
+    """What a person decided: the DAQ box (``channels``), the stand's own
+    state table, the knobs -- and, from before the box, pinned valves
+    (actuator -> drawing id, "" for none)."""
 
     valves: dict[str, str] = Field(default_factory=dict)
     knobs: list[KnobOut] = Field(default_factory=list)
+    # What the console calls a valve or transducer, by drawing (channel) id.
+    aliases: dict[str, str] = Field(default_factory=dict)
+    channels: list[ChannelOut] | None = None
+    """``None`` on a hookup that is not wired (matched by name). Out of the
+    API it is always a list: the box the twin's matching amounts to."""
+    rows: dict[str, int] = Field(default_factory=dict)
+    machine: dict[str, Any] | None = None
+    """The stand's own state table (``StateMachine.to_dict``); ``None`` is
+    the shipped DAQ table."""
+
+
+class BoardOut(BaseModel):
+    """A board in the DAQ box and what plugs into it."""
+
+    id: str
+    label: str
+    kind: str
+    """``valve``, ``pt``, ``rtd`` or ``tc``."""
+
+
+class HookupSymbolOut(BaseModel):
+    """A symbol that can go on a connector."""
+
+    id: str
+    label: str
+    type: str
+    page: str
+    kind: str
+    """``valve`` (a solenoid board drives it), ``pt``, ``rtd`` or ``tc``."""
+    board: str
+    """The board it goes on unless somebody says otherwise."""
+    ground: bool = False
+    """On the cart (ground support), not the vehicle."""
 
 
 class HookupValveOut(BaseModel):
@@ -493,6 +571,27 @@ class HookupOut(BaseModel):
     by_user: list[str]
     pages: list[str]
     mated: list[list[str]]
+    #: ``bound`` and the rest are the rocket-only stand's wiring
+    #: (``Setup.ignore_gse``); ``hookup`` is still the whole drawing's.
+    vehicle_only: bool = False
+    wired: bool = False
+    """The box was written down (saved or the stand's). False: ``hookup``'s
+    channels are what the twin's matching amounts to."""
+    boards: list[BoardOut] = Field(default_factory=list)
+    symbols: list[HookupSymbolOut] = Field(default_factory=list)
+    machine_shipped: dict[str, Any] = Field(default_factory=dict)
+    """The DAQ's table as shipped, for "back to the DAQ's table"."""
+    machine_warnings: list[str] = Field(default_factory=list)
+    """What is wrong with the table this hookup runs."""
+    builtin: dict[str, str] = Field(default_factory=dict)
+    """Rows the twin reads by name, and what each does with no valve wired to
+    it (the built-in COPV charge and dump, the transfer tank's press) -- only
+    where it has something to act on: not the charge on a drawing whose cart
+    charges the COPV, unless rocket only."""
+    problems: list[str] = Field(default_factory=list)
+    """What this drawing cannot have: a cable to a symbol a later version of
+    the drawing dropped, a knob on a regulator it lacks. Saving is refused
+    until they are unplugged."""
 
 
 class SolverOut(BaseModel):
@@ -514,4 +613,77 @@ class SolverOut(BaseModel):
     mass_error_kg: list[float]
     guard_kg: list[float]
     guard_J: list[float]
+    #: Cumulative mass across the boundary, in plus out [kg]: what the mass
+    #: error is measured against, tick by tick.
+    crossed_kg: list[float] = Field(default_factory=list)
     summary: dict[str, float] = Field(default_factory=dict)
+    #: The watcher's flags (feedtwin.session.watch): laws the stand broke,
+    #: one per episode, newest last.
+    flags: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------------ drawing
+
+
+class ParamValue(BaseModel):
+    value: float
+    unit: str
+    source: str
+    reference: str = ""
+
+
+class OverrideOut(ParamValue):
+    by: str = ""
+    at: str = ""
+    #: What the drawing said when the override was made, if it said anything.
+    was: ParamValue | None = None
+
+
+class DrawingParam(BaseModel):
+    """One number on one symbol: what the drawing says, what was filled in,
+    what somebody typed over it, and which of those the model uses."""
+
+    name: str
+    drawing: ParamValue | None = None
+    assumed: ParamValue | None = None
+    """Filled in by the library because the drawing said nothing."""
+    override: OverrideOut | None = None
+    effective: ParamValue | None = None
+    #: The drawing has changed this value since the override was made.
+    stale: bool = False
+    #: Superseded by an itemised run; shown, not editable.
+    locked: str = ""
+    #: Units an override may be written in -- the same dimension.
+    units: list[str] = Field(default_factory=list)
+
+
+class DrawingElement(BaseModel):
+    id: str
+    kind: str
+    """``symbol`` or ``line``."""
+    tag: str
+    type: str
+    role: str = ""
+    fluid: str = ""
+    params: list[DrawingParam] = Field(default_factory=list)
+    options: dict[str, str] = Field(default_factory=dict)
+    segments: int = 0
+    #: Something the console draws: a gauge, a vessel, a valve.
+    on_console: bool = False
+    console_hidden: bool = False
+    hidden_by: str = ""
+
+
+class DrawingOut(BaseModel):
+    """What feed-twin pulled from a drawing, and what it did to it."""
+
+    diagram_id: str
+    key: str
+    """The name overrides are kept under; survives a re-import."""
+    source: str
+    imported_at: str
+    elements: list[DrawingElement]
+    #: Overrides naming a symbol or line this drawing does not have.
+    orphaned: list[str] = Field(default_factory=list)
+    overrides_hash: str = ""
+    override_sources: list[str] = Field(default_factory=list)

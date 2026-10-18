@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { NONE, readHidden, setAll, toggle, visible, writeHidden } from './shown';
+import { describe, expect, it } from 'vitest';
+import { NONE, moveTo, ordered, setAll, toggle, visible } from './shown';
 
 describe('what the console hides', () => {
   it('hides an item and shows it again', () => {
@@ -25,50 +25,14 @@ describe('what the console hides', () => {
   });
 });
 
-describe('remembering it, per stand', () => {
-  const store = new Map<string, string>();
-  beforeEach(() => {
-    store.clear();
-    (globalThis as { window?: unknown }).window = {
-      localStorage: {
-        getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => void store.set(k, v),
-        removeItem: (k: string) => void store.delete(k),
-      },
-    };
-  });
-  afterEach(() => {
-    delete (globalThis as { window?: unknown }).window;
+describe('the order the console draws things in', () => {
+  it('puts what the order names first, the rest after in their own order', () => {
+    expect(ordered(['a', 'b', 'c', 'd'], ['c', 'a'], (x) => x)).toEqual(['c', 'a', 'b', 'd']);
   });
 
-  it('keeps one stand\'s choices off another', () => {
-    writeHidden('ethalox', toggle(NONE, 'pts', 'PT-OX-UP'));
-    expect(readHidden('ethalox').pts).toEqual(['PT-OX-UP']);
-    expect(readHidden('other-stand')).toEqual(NONE);
-  });
-
-  it('forgets a stand with nothing hidden rather than storing an empty entry', () => {
-    writeHidden('ethalox', toggle(NONE, 'pts', 'PT-OX-UP'));
-    writeHidden('ethalox', NONE);
-    expect(store.size).toBe(0);
-  });
-
-  it('reads a damaged entry as nothing hidden', () => {
-    store.set('feedtwin.console.hidden.ethalox', '{not json');
-    expect(readHidden('ethalox')).toEqual(NONE);
-    store.set('feedtwin.console.hidden.ethalox', JSON.stringify({ pts: [3, 'PT-A'], tanks: 'x' }));
-    expect(readHidden('ethalox')).toEqual({ pts: ['PT-A'], tanks: [], actuators: [] });
-  });
-
-  it('still works with storage that throws', () => {
-    (globalThis as { window?: unknown }).window = {
-      localStorage: {
-        getItem: () => { throw new Error('blocked'); },
-        setItem: () => { throw new Error('blocked'); },
-        removeItem: () => { throw new Error('blocked'); },
-      },
-    };
-    expect(readHidden('ethalox')).toEqual(NONE);
-    expect(() => writeHidden('ethalox', toggle(NONE, 'pts', 'A'))).not.toThrow();
+  it('moves a dragged item onto the one it is dropped on', () => {
+    expect(moveTo(['a', 'b', 'c', 'd'], 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveTo(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    expect(moveTo(['a', 'b'], 'a', 'a')).toEqual(['a', 'b']);
   });
 });

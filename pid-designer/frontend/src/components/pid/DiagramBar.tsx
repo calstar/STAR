@@ -29,9 +29,11 @@ interface DiagramBarProps {
 /** A thin strip above the toolbar: pick a diagram, or open the Change dialog to
  *  create, rename, share, answer requests, or take a copy.
  *
- *  The list is the team's main diagram, the other STAR ones, your own, and
- *  those shared with you (for an admin, everyone's). Diagrams are never
- *  deleted -- see backend/routers/pid.py. */
+ *  The list is the STAR diagrams (the main one among them -- it is only what
+ *  a new tab opens on) and your own.
+ *  Shared diagrams (and, for an admin, everyone's) live in the Change dialog's
+ *  Mine and Other tabs. Diagrams are never deleted -- see
+ *  backend/routers/pid.py. */
 export function DiagramBar({
   diagrams, activeKey, onSelect, onOpenChange, checkout, editable, onCopyActive,
   requested, onRequestActive, requestCount, theme, onToggleTheme,
@@ -43,13 +45,13 @@ export function DiagramBar({
       {d.mine ? d.name : `${d.name} - ${d.ownerName || d.owner}`}
     </option>
   );
-  const main = diagrams.filter((d) => d.featured);
-  const star = diagrams.filter((d) => !d.featured && d.star);
+  const star = diagrams.filter((d) => d.featured || d.star);
   const mine = diagrams.filter((d) => !d.featured && !d.star && d.mine);
-  const team = diagrams.filter((d) => !d.featured && !d.star && !d.mine);
-  // Groups only once there is a main or STAR diagram to set apart; until then
-  // the list reads exactly as it always has.
-  const grouped = main.length + star.length > 0;
+  // Anything else opened from Change still has to be in the list, or the
+  // select would show a diagram that is not the one on the canvas.
+  const open = diagrams.filter(
+    (d) => !d.featured && !d.star && !d.mine && keyOf(refOf(d)) === activeKey,
+  );
   return (
     <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-1.5">
       <span className="mr-2 shrink-0 text-sm font-semibold text-[var(--color-text-primary)]">P&amp;ID Designer</span>
@@ -64,16 +66,9 @@ export function DiagramBar({
         className="min-w-[180px] max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)]"
       >
         {diagrams.length === 0 && <option value="">No diagrams</option>}
-        {grouped ? (
-          <>
-            {main.length > 0 && <optgroup label="Main">{main.map(option)}</optgroup>}
-            {star.length > 0 && <optgroup label="STAR">{star.map(option)}</optgroup>}
-            {mine.length > 0 && <optgroup label="Mine">{mine.map(option)}</optgroup>}
-            {team.length > 0 && <optgroup label="Others">{team.map(option)}</optgroup>}
-          </>
-        ) : (
-          diagrams.map(option)
-        )}
+        {star.length > 0 && <optgroup label="STAR">{star.map(option)}</optgroup>}
+        {mine.length > 0 && <optgroup label="Mine">{mine.map(option)}</optgroup>}
+        {open.length > 0 && <optgroup label="Open">{open.map(option)}</optgroup>}
       </select>
       <button
         onClick={onOpenChange}

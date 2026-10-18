@@ -29,114 +29,69 @@ html {
   filter: invert(1);
 }
 
-/* Color Gantt bars by task status (matching the status badges) as one solid
-   color per bar. frappe-gantt's own rules (grey bar, purple progress, grey
-   hover) share our specificity, so !important is needed to win regardless of
-   stylesheet load order. The progress overlay is hidden so bars aren't two-tone. */
-.gantt .bar-wrapper.status-backlog .bar,
-.gantt .bar-wrapper.status-backlog:hover .bar {
-  fill: #94a3b8 !important;
+/* Timeline (GanttChart.tsx). Each status sets --tl; bars are a muted fill
+   with a solid left edge so the common statuses don't flood the chart, and the
+   saturated treatments are kept for blocked and overdue work. Backlog is
+   lighter in dark mode so it doesn't vanish against the background. */
+.tl-backlog { --tl: #64748b; }
+.tl-todo { --tl: #3b82f6; }
+.tl-in_progress { --tl: #f59e0b; }
+.tl-blocked { --tl: #ef4444; }
+.tl-done { --tl: #22c55e; }
+.dark .tl-backlog { --tl: #cbd5e1; }
+.dark .tl-todo { --tl: #60a5fa; }
+.dark .tl-in_progress { --tl: #fbbf24; }
+.dark .tl-blocked { --tl: #f87171; }
+.dark .tl-done { --tl: #4ade80; }
+
+.tl-bar {
+  background: color-mix(in srgb, var(--tl) 20%, transparent);
+  box-shadow: inset 3px 0 0 var(--tl);
+  color: var(--tl);
 }
-.gantt .bar-wrapper.status-todo .bar,
-.gantt .bar-wrapper.status-todo:hover .bar {
-  fill: #3b82f6 !important;
+.dark .tl-bar {
+  background: color-mix(in srgb, var(--tl) 24%, transparent);
 }
-.gantt .bar-wrapper.status-in_progress .bar,
-.gantt .bar-wrapper.status-in_progress:hover .bar {
-  fill: #f59e0b !important;
+.tl-bar.tl-blocked {
+  background: color-mix(in srgb, var(--tl) 38%, transparent);
 }
-.gantt .bar-wrapper.status-blocked .bar,
-.gantt .bar-wrapper.status-blocked:hover .bar {
-  fill: #ef4444 !important;
+.tl-diamond {
+  background: color-mix(in srgb, var(--tl) 35%, transparent);
+  border: 1.5px solid var(--tl);
 }
-.gantt .bar-wrapper.status-done .bar,
-.gantt .bar-wrapper.status-done:hover .bar {
-  fill: #22c55e !important;
+.tl-overdue {
+  outline: 1.5px solid #ef4444;
+  outline-offset: 1px;
 }
-.gantt .bar-progress,
-.gantt .bar-wrapper:hover .bar-progress {
-  fill: transparent !important;
+.tl .tl-bar:hover,
+.tl .tl-diamond:hover {
+  filter: brightness(1.08) saturate(1.2);
 }
-.gantt .bar-wrapper:hover .bar {
-  filter: brightness(0.94);
+.tl-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.2));
+}
+.tl-bar:focus-visible,
+.tl-diamond:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
 }
 
-/* frappe-gantt wraps its fixed-width SVG in .gantt-container (overflow: auto),
-   which is the element that actually pans the timeline. Give it smooth touch
-   momentum and keep a horizontal swipe from chaining into browser navigation
-   or scrolling the page behind it. */
-.gantt-container {
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-}
+.tl-group { background: #fafafa; }
+.dark .tl-group { background: #1c1c1c; }
 
-/* Small screens: bar/row sizing is bumped via frappe-gantt options in
-   GanttChart.tsx (CSS can't reflow the SVG layout); here we just enlarge the
-   SVG text to stay legible on a phone and drop the grey tap flash so a tap on
-   a bar reads as opening the task modal, not a stray highlight. */
-@media (max-width: 640px) {
-  .gantt-container {
-    -webkit-tap-highlight-color: transparent;
-  }
-  .gantt .bar-label {
-    font-size: 13px !important;
-  }
-  .gantt .lower-text,
-  .gantt .upper-text {
-    font-size: 13px !important;
-  }
-}
-
-/* We open our own task modal on bar click, so hide frappe-gantt's popup. */
-.gantt-container .popup-wrapper,
-.popup-wrapper {
-  display: none !important;
-}
-
-/* Light-mode today marker (frappe's default is a pale fill); make it readable
-   and used across all views via our own marker. */
-.gantt .today-highlight {
-  fill: #fde68a;
-  opacity: 0.4;
-}
-
-/* frappe-gantt ships a light-only stylesheet; make it legible in dark mode. */
-.dark .gantt .grid-background {
-  fill: transparent;
-}
-.dark .gantt .grid-header {
-  fill: #1f1f1f;
-  stroke: #262626;
-}
-.dark .gantt .grid-row {
-  fill: #171717;
-}
-.dark .gantt .grid-row:nth-child(even) {
-  fill: #1f1f1f;
-}
-.dark .gantt .row-line {
-  stroke: #262626;
-}
-.dark .gantt .tick {
-  stroke: #3f3f46;
-}
-.dark .gantt .tick.thick {
-  stroke: #52525b;
-}
-.dark .gantt .today-highlight {
-  fill: #3f3f46;
-  opacity: 0.35;
-}
-.dark .gantt .lower-text,
-.dark .gantt .upper-text {
-  fill: #a3a3a3;
-}
-.dark .gantt .bar-label {
-  fill: #fff;
-}
-.dark .gantt .bar-label.big {
-  fill: #d4d4d4;
-}
+.tl-grid-day { stroke: #f5f5f5; }
+.tl-grid-week { stroke: #f0f0f0; }
+.tl-grid-month { stroke: #d4d4d4; }
+.tl-grid-row { stroke: #f5f5f5; }
+.dark .tl-grid-day { stroke: #1f1f1f; }
+.dark .tl-grid-week { stroke: #222; }
+.dark .tl-grid-month { stroke: #3f3f46; }
+.dark .tl-grid-row { stroke: #1f1f1f; }
+.tl-link { stroke: #a3a3a3; }
+.tl-link-head { fill: #a3a3a3; }
+.dark .tl-link { stroke: #737373; }
+.dark .tl-link-head { fill: #737373; }
 
 /* Rendered markdown (task description / blocked comment). Kept compact so it
    reads like a form field, not an article. Dark mode via the `.dark` variant. */
@@ -280,6 +235,7 @@ html {
   --viz-untagged: #d4d4d1;
   --viz-approved: #2a78d6;
   --viz-pending: #86b6ef;
+  --viz-over: #d92d20;
   --viz-grid: #ececea;
 }
 .dark .viz {
@@ -294,5 +250,6 @@ html {
   --viz-untagged: #4a4a47;
   --viz-approved: #3987e5;
   --viz-pending: #1c5cab;
+  --viz-over: #f04438;
   --viz-grid: #2a2a28;
 }

@@ -50,6 +50,7 @@ from feedtwin.session.model import (
 )
 
 from backend.library import Library, LibraryError
+from backend.overrides import Applied, apply_overrides
 
 __all__ = [
     "AssemblyError",
@@ -130,14 +131,26 @@ def assemble(
     *,
     engine_id: str = "",
     fluid_swap: Mapping[str, tuple[str, float]] | None = None,
+    gas_swap: Mapping[str, str] | None = None,
     cea_cache: str = "",
     cea_resolver: Callable[[EngineDesign], str] | None = None,
     multiphase: bool = False,
+    overrides: Mapping[str, Any] | None = None,
+    vehicle_only: bool = False,
 ) -> Model:
     """Read, resolve, build, and audit. The whole import in one call.
 
     Args:
+        overrides: One drawing's entry from the override store
+            (:mod:`backend.overrides`). Applied to the drawing before anything
+            reads it; what took effect is ``meta["overrides"]``, part of the
+            record for the same reason the artifact hashes are.
         cea_cache: An explicit combustion table. Direct and unconditional.
+        vehicle_only: Build the vehicle alone, the drawn GSE cut away
+            (``Setup.ignore_gse``; :func:`feedtwin.session.assemble_model`).
+        gas_swap: The pressurant replaced (``Setup.pressurant``;
+            :func:`feedtwin.session.model.swap_gases`). Not a cold flow: the
+            engine still burns on its card.
         cea_resolver: Called with the imported engine to *find* one, when which
             table is wanted depends on what the engine burns. Inverted this way
             round because the alternative is assembling twice -- once to learn
@@ -148,6 +161,9 @@ def assemble(
     """
     artifact = library.get(diagram_id)
     diagram = load_diagram_artifact(library, diagram_id)
+    applied: tuple[Applied, ...] = ()
+    if overrides:
+        diagram, applied = apply_overrides(diagram, overrides)
 
     # An explicit engine wins over the drawing's own reference, so a user can
     # try a different engine on the same stand without editing the drawing.
@@ -175,6 +191,13 @@ def assemble(
                     "firing feedtwin's simplified engine instead. Rebuild the card in Library."
                 )
                 engine_meta = {"engine_model": "simplified", "why": "card does not fit"}
+        elif card_meta.get("unreadable"):
+            notes.append(
+                "The engine card stored with this engine could not be read "
+                f"({card_meta['unreadable']}); firing feedtwin's simplified engine "
+                "instead. Rebuild the card in Library."
+            )
+            engine_meta = {"engine_model": "simplified", "why": "card unreadable"}
         else:
             notes.append(SIMPLIFIED_ENGINE)
             engine_meta = {"engine_model": "simplified", "why": "no card"}
@@ -187,11 +210,14 @@ def assemble(
         cea_cache=resolved,
         chamber=chamber,
         fluid_swap=fluid_swap,
+        gas_swap=gas_swap,
         multiphase=multiphase,
+        vehicle_only=vehicle_only,
         meta={
             "diagram_name": artifact.name,
             "diagram_sha256": artifact.sha256,
             **engine_meta,
+            **({"overrides": applied} if applied else {}),
         },
     )
     if notes:
@@ -215,7 +241,12 @@ def load_engine_card(
     library: Library, engine_id: str
 ) -> tuple[EngineCard | None, dict[str, Any]]:
     """The EngineDesign card stored with an engine, and what it says about
-    itself; ``(None, {})`` when there is none or it cannot be read."""
+    itself; ``(None, {})`` when there is none.
+
+    A card that is stored but cannot be read is ``(None, {"unreadable":
+    why})``. It used to be ``(None, {})`` too, and the report then said no
+    card was stored -- sending whoever read it to build one that already
+    exists, rather than to the attachment that is broken."""
     try:
         raw = library.attachment(engine_id, "card")
     except LibraryError:
@@ -225,8 +256,8 @@ def load_engine_card(
     try:
         stored = json.loads(raw.decode("utf-8"))
         card = EngineCard.from_dict(stored["card"])
-    except (ValueError, KeyError, TypeError):
-        return None, {}
+    except (ValueError, KeyError, TypeError) as exc:
+        return None, {"unreadable": f"{type(exc).__name__}: {exc}"}
     return card, card_summary(stored)
 
 

@@ -45,6 +45,11 @@ export interface DrawingViewProps {
   onSymbolClick?: (id: string) => void;
   /** Symbols that take a click, given a pointer cursor. */
   clickable?: ReadonlySet<string>;
+  /** The page shown, when the host keeps it (to put up the page a symbol
+   *  is on). Absent: the view keeps its own, starting on the first. */
+  page?: string;
+  /** A page tab was picked. */
+  onPageChange?: (page: string) => void;
   children?: ReactNode;
 }
 
@@ -62,7 +67,9 @@ export function DrawingView(props: DrawingViewProps) {
   );
 }
 
-function Sheet({ nodes: given, edges: givenEdges, colorMode = 'dark', onSymbolClick, clickable, children }: DrawingViewProps) {
+function Sheet({
+  nodes: given, edges: givenEdges, colorMode = 'dark', onSymbolClick, clickable, page: hostPage, onPageChange, children,
+}: DrawingViewProps) {
   const doc = useMemo(() => migrate({ nodes: given, edges: givenEdges }), [given, givenEdges]);
 
   // Kept as state only so React Flow's measurements land on the nodes: the
@@ -75,8 +82,13 @@ function Sheet({ nodes: given, edges: givenEdges, colorMode = 'dark', onSymbolCl
   }, []);
 
   const pages = useMemo(() => listPages(doc.nodes), [doc.nodes]);
-  const [page, setPage] = useState(pages[0]);
+  const [ownPage, setOwnPage] = useState(pages[0]);
+  const page = hostPage ?? ownPage;
   const current = pages.includes(page) ? page : pages[0];
+  const setPage = useCallback((p: string) => {
+    if (hostPage === undefined) setOwnPage(p);
+    onPageChange?.(p);
+  }, [hostPage, onPageChange]);
 
   const shown = useMemo(() => {
     const view = applyPage(nodes, doc.edges, current);

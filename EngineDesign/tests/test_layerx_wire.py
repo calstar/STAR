@@ -199,8 +199,11 @@ def test_a_trip_ends_the_burn_where_it_happened(tripped):
     # The burn's clock, burn time and totals end at the trip -- not a step later, not at the horizon.
     assert series["t"][-1] == pytest.approx(trip["t"], abs=1e-12) and series["firing"][-1]
     assert s["burn_time_s"] == pytest.approx(trip["t"], abs=1e-12)
-    # The trip landed inside the last 50 ms step: the session stopped there, so that step is short.
-    assert series["dt"][-1] < prep.plan.dt - 1e-6
+    # The trip landed inside the last 50 ms step and the session stopped there: that step ends at
+    # the trip and is no longer than one. (It used to assert the step was *short* -- true only while
+    # the crossing fell in the step's first half; correct oxygen-vapour properties moved it 0.3 psi
+    # and 25 ms later, onto the step's end, 2026-10-12.)
+    assert series["t"][-2] < trip["t"] <= series["t"][-2] + prep.plan.dt + 1e-9
     assert series["dt"][-1] == pytest.approx(series["t"][-1] - series["t"][-2], abs=1e-12)
     impulse = sum(f * dt for f, dt, on in zip(series["chamber"]["thrust_N"], series["dt"], series["firing"]) if on)
     assert s["total_impulse_Ns"] == pytest.approx(impulse, rel=1e-12)

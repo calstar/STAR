@@ -430,3 +430,37 @@ def test_an_impossible_operating_point_says_what_is_wrong() -> None:
     starved = FlowConditions(rho=999.0, mu=1.138e-3, p_upstream=0.34e5)
     with pytest.raises(InfeasibleOperatingPoint, match="cannot pass"):
         orifice.pressure_drop(3.0, starved)
+
+
+def test_a_valve_command_is_component_scoped() -> None:
+    """Two valves must not move together because they share a signal name.
+
+    An unqualified ``"command"`` reaching every valve converges perfectly and
+    models a system nobody built, so the component looks for its own id first.
+    """
+    valve = build_component(
+        ComponentInstance.build(
+            "MV-01",
+            "valve",
+            {
+                "Cv": Param(6.0, "Cv", M, "x"),
+                "bore": Param(12.7, "mm", M, "x"),
+                "leak_closed": Param(0.001, "Cv", Provenance.ESTIMATED, "x"),
+            },
+        )
+    )
+
+    def dp(signals: dict[str, float]) -> float:
+        return float(
+            valve.pressure_drop(
+                0.7,
+                FlowConditions(rho=1140.0, mu=2e-4, p_upstream=3.4e6, signals=signals),
+            )
+        )
+
+    wide_open = dp({})
+    assert dp({"MV-01.command": 0.0}) > 1e6 * wide_open
+    # Another valve's command must not touch this one.
+    assert dp({"MV-02.command": 0.0}) == pytest.approx(wide_open)
+    # The bare fallback still works for a single-actuator test.
+    assert dp({"command": 0.0}) > 1e6 * wide_open

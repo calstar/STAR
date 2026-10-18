@@ -1,0 +1,21 @@
+// ==============================================================================
+// STMicroelectronics Unico-GUI MLC Decision Tree Export
+// Tree 8: Emergency Chute Trigger
+// Description: Signals autonomous pyrotechnic recovery deployment override
+// Target Column: emergency_chute_trigger
+// Exported: 2026-10-05 19:50:10
+// Leaf Nodes: 4 | Total Nodes: 7
+// Max Depth: 2
+// Target Classes: ['0', '1']
+// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core
+// ==============================================================================
+
+mag_y_var <= 0.025895
+|   mag_norm_max <= 0.628473 : 0 (17177.0)
+|   mag_norm_max > 0.628473 : 1 (5.0)
+mag_y_var > 0.025895
+|   accel_norm_min <= 0.108324 : 0 (19.0)
+|   accel_norm_min > 0.108324 : 1 (399.0)
+
+Number of Leaves  : 4
+Size of the tree : 7

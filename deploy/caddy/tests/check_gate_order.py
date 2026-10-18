@@ -35,7 +35,14 @@ PUBLIC_HOSTS = {"auth"}
 #:   analytics /api/ingest -- (EC2 Caddyfile) where each box's agent pushes its
 #:   samples. Agents have no browser session; the hub checks a per-host bearer
 #:   token instead (server-analytics/internal/hub/ingest.go).
-PUBLIC_PATHS = {"parts": ("/panel/",), "analytics": ("/api/ingest",)}
+#:   project /api/mcp -- (EC2 Caddyfile) the MCP endpoint for agents. The app
+#:   checks a per-user bearer token itself (starproject/src/app/api/mcp/route.ts)
+#:   and the handle strips X-Auth-* so no identity header reaches it.
+PUBLIC_PATHS = {
+    "parts": ("/panel/",),
+    "analytics": ("/api/ingest",),
+    "project": ("/api/mcp",),
+}
 
 
 def _is_public(route, prefixes):

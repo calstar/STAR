@@ -5,6 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useRef } from "react";
 
 import { AssigneeChip } from "@/components/AssigneeChip";
+import { PointsBadge } from "@/components/PointsBadge";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
@@ -26,7 +27,6 @@ function CardBody({ task }: { task: BoardTask }) {
   return (
     <>
       <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-        <span className="text-neutral-400 dark:text-neutral-500">#{task.number}</span>{" "}
         {task.title}
       </p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
@@ -37,6 +37,7 @@ function CardBody({ task }: { task: BoardTask }) {
           />
         )}
         {blocked && <BlockedBadge />}
+        {task.points != null && task.points > 0 && <PointsBadge points={task.points} />}
         {task.priority && (
           <span
             className={`rounded px-1.5 py-0.5 font-medium capitalize ${PRIORITY_BADGE[task.priority]}`}

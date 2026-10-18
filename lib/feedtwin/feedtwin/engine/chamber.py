@@ -240,6 +240,34 @@ arrive for anything to burn: one alone is unburned liquid passing through the
 throat, not a mixture at the c* table's leanest ratio."""
 
 
+def burning(
+    mdot_oxidiser: float,
+    mdot_fuel: float,
+    mixture_ratios: tuple[float, float] | None,
+) -> float:
+    """The flow that burns [kg/s]: all of it inside the table's O/F range;
+    beyond it, the scarce propellant and as much of the other as burns with
+    it at the table's edge.
+
+    The rest passes through the throat unburned, as :func:`unlit` already says
+    a lone propellant does. Clamping the O/F instead kept the edge's hot c*
+    for the whole flow: an Engine Abort that vented the fuel tank ran LOX-rich
+    at O/F 20-70 with the c* of O/F ~4, held the chamber at the fuel tank's
+    own pressure, and pushed the fuel line backwards on every other step. This
+    is continuous at the table's edge and goes to the unlit chamber as one
+    side goes to zero. ``mixture_ratios`` None: no range, all of it burns.
+    """
+    if mixture_ratios is None or mdot_fuel <= 0.0:
+        return mdot_oxidiser + mdot_fuel
+    low, high = mixture_ratios
+    ratio = mdot_oxidiser / mdot_fuel
+    if ratio > high > 0.0:
+        return mdot_fuel * (1.0 + high)
+    if 0.0 < ratio < low:
+        return mdot_oxidiser * (1.0 + 1.0 / low)
+    return mdot_oxidiser + mdot_fuel
+
+
 def unlit(
     ambient_pressure: float, mdot_oxidiser: float, mdot_fuel: float
 ) -> "ChamberResult":
@@ -336,12 +364,19 @@ class Chamber:
         if min(mdot_oxidiser, mdot_fuel) <= MIN_CHAMBER_FLOW:
             return unlit(self.ambient_pressure, mdot_oxidiser, mdot_fuel)
 
+        table = self.cstar_model
+        ratios = (
+            (float(table.mixture_ratios[0]), float(table.mixture_ratios[-1]))
+            if isinstance(table, CEATable)
+            else None
+        )
+        burned = burning(mdot_oxidiser, mdot_fuel, ratios)
         pressure = max(self.ambient_pressure, 1.0e5)
         state = CombustionState(cstar=0.0)
         for _ in range(3):
             state = self.cstar_model.combustion(pressure, mixture_ratio)
             pressure = max(
-                total * state.cstar * self.efficiency / self.throat_area,
+                burned * state.cstar * self.efficiency / self.throat_area,
                 self.ambient_pressure,
             )
 

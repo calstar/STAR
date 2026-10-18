@@ -239,7 +239,7 @@ burned.
 **Every pressure in this tier is gauge (psig)**, because that is what the stand's
 transducers read and what the study traces report; a vented vessel is 0.0. The model
 underneath is absolute — the study primes at 473.5 psig, which is 488.2 psia — and the
-only two places the two meet are `backend.run.psig` / `from_psig`. Differential
+only two places the two meet are `feedtwin.session.gauge.psig` / `from_psig`. Differential
 pressures are the same in either.
 
 This is the headline regression. Run it after any change to the solver, the
@@ -590,11 +590,13 @@ check by 13 psi). Test:
 Every optional physics model must satisfy both:
 
 1. **Off is byte-identical.** `line_walls=False` reproduces the baseline trace
-   exactly, not to a tolerance. Where an option changes which quantity is read —
-   `_pressurant_enthalpy` reads the walked arrival instead of the bottle — that read
-   must be gated on the toggle, because an adiabatic walk agrees with the bottle only
-   to the walk's own convergence tolerance, and "agrees to a tolerance" is not
-   "unchanged".
+   exactly, not to a tolerance. Where an option changes which quantity is read, that
+   read must be gated on the toggle, because "agrees to a tolerance" is not
+   "unchanged". (Not every read an option once changed stays gated: the walked
+   arrival enthalpy at an ullage was first read only with line walls on, and is now
+   read always, because the bottle's enthalpy was the wrong price for gas that came
+   from the other tank — 2.4c item 5. That change was a fix to the baseline, made
+   with a fresh baseline, not an option.)
 2. **On, with nothing declared, is also byte-identical.** A drawing that never gave
    `wall_thickness` or `fitting_mass` has no metal, so the option must be inert rather
    than subtly perturbing. Gate on the model having something to do, not just on the
@@ -633,9 +635,15 @@ test's expectation — the second is the measurement.
 With a main valve shut, the leg beyond it must **hold its own pressure** and not
 track the tank down. Known-good: `MVO.out` sits at 14.7 psi while the tank vents.
 
-There is a related open defect — a leg that is a genuine *dead end* is back-filled
-from the node across the shut branch, and the hold-last-value guard does not arm for
-a plain valve because its `pressure_drop(0.0)` is identically zero. Check both.
+A leg that is a genuine *dead end* behind a shut valve -- a capped line, the run
+between two shut valves -- **holds what was trapped in it**. It is back-filled from
+the node across the shut branch (an upper bound), and the solve flags it undefined so
+the session shows the last value it read, atmosphere on a stand never pressed. The
+flag used to arm only for a component holding a drop at zero flow (a check valve
+behind its crack), and a plain valve's `pressure_drop(0.0)` is identically zero, so a
+transducer behind a shut ball valve followed the tank. Fixed 2026-10-08: a stub
+reached across a shut or isolated branch is flagged
+(`test_audit_regressions.py::test_a_leg_behind_a_shut_valve_is_flagged`). Check both.
 
 ### 3.3 Vents must exist at all
 
@@ -651,7 +659,8 @@ it (`components/pid/vents.ts`) and feedtwin now reads the same rule. Assert:
 ### 3.4 The state machine must fail closed
 
 `can_go` on a state whose row could not be parsed must refuse every non-abort target,
-while **aborts stay reachable**. The shipped Diablo table has 10 malformed rows; that
+while **aborts stay reachable**. The shipped Diablo table has 9 rows one cell short
+(the DAQ's own copy, 10); they are read left-aligned as the DAQ reads them, and that
 is expected and documented in `feed-twin/backend/statemachines/NEEDS-REPAIR.md`.
 
 Assert specifically: **`Idle → Armed → Fire` is refused.** That two-move path to
@@ -724,7 +733,8 @@ it); GSE Abort (GSE High Press Vent dumps the bottle — GSE-side fill and vent 
 driven by the table's own `GSE High Press Control` / `GSE High Press Vent` actuators,
 not by the state's name); Engine Abort from Fire (mains open, as the table says);
 Emergency Abort → Idle (nothing moves); hand holds defeating a press until released;
-Fire straight from Fuel Press (one of the seven bypasses — it burns, and warns); and a
+Fire straight from Fuel Press (one of the six bypasses left in the twin's table, seven
+in the DAQ's — it burns, and warns); and a
 200-move seeded random walk over the table. After every step: no NaN, nothing below
 vacuum, no inventory below zero, and **every commanded valve is where the table says
 unless a hand holds it**.
@@ -893,6 +903,60 @@ Plus exact-key caches that change no number: dead-end peeling per shut set and w
 
 If the console falls behind again, time `Session.step` against the tick endpoint before
 touching the physics: the panel's own pacing has cost more than the solve once already.
+
+### 3.10c Keeping up in a fill: the vented ullage (2026-10-09)
+
+The operator: fills "as low as 0.10x" after the cart went simple. Simplified GSE
+(3.10b) only acts while the engine burns; in a fill the cart is the thing working. LE4
+(6) with its LOX fill finished (`_with_lox_fill_drawn`), in-process, 0.25 s ticks: Ox
+Fill ran at 0.4x while the tank loaded and 0.34x once it held its load, 9-10 coupling
+solves in every 20 ms step. Profiled, nothing was slow per solve; the step asked for
+nine of them. Two rules, neither of them about a fill:
+
+* **The 10 % mass rule counted gas going to the sky.** Topped to its load, the LOX
+  tank's 0.4 L ullage holds 0.45 g and passes ~20 g/s of boil-off to its vent, so
+  "no coupling step moves more than a tenth of an ullage" asked for nine. That rule is
+  for a fast press (the regulator overshooting lockup); a vent ends at a fixed
+  pressure, and the solve already closes the ullage against it implicitly
+  (`_ullage_storage`). Gas a tank vents is no longer counted; gas it sends to
+  another vessel still is.
+* **Every regulator was paired with every ullage.** The regulator-ullage time constant
+  took the stiffest regulator on the stand against the smallest ullage, joined or not:
+  the topped LOX tank, press solenoid shut, was stepped at the cart's fuel regulator's
+  constant (8-10 ms: three solves a step). It now pairs each ullage with the regulators
+  it has an open path to (`Session._regulator_slopes`, walked per shut set, stopping at
+  vessels and the sky). In Ready, both press solenoids shut, there is no such loop.
+
+The first rule could not simply be dropped, because the closure was biased. It priced
+the ullage on the stiffer of its gas-in and gas-out slopes ("over-stating the
+stiffness only damps"). Over boiling LOX the two differ eightfold: warm gas arriving
+compresses the ullage, gas leaving is replaced by flash boil-off. With a steady one-way
+flow the slope is not a damping. The node lands at `reference - q dt / slope`, the
+vessel where its own slope puts it, and the gap grows with the step. The topped tank
+read 7.2 psig while the node its vent flowed from sat at 3.1, and the reading moved with
+the coupling: 7.3 at the default, 4.2 at a 3 % mass rule, 3.4 at 1 %. An ullage that
+mostly drains to the sky (`Session._venting`) is now closed on its gas-out slope alone.
+There is no second vessel across a vent to flip-flop with. The topped tank reads 3.1
+psig at every step tried (5 to 50 ms, mass rule 1 to 10 %), on one solve a step
+(`test_a_topped_lox_tank_on_its_vent_lands_where_the_solve_put_it`, red on the old code
+at 7.20 vs 3.09, and at 10 couplings with the mass rule alone reverted).
+
+Tier 2.1 at dt 10 ms: every trace bit-identical, 0 failed ticks (the study's tanks are
+pressed, not vented). LE4 (6) cockpit burn from T-0: impulse identical to the bit; after
+burnout the tanks blowing down through the engine move 0.06 psi. Tiers 1 and 2.3
+unchanged.
+
+| LE4 (6), LOX fill drawn, this container | before | after |
+|---|---|---|
+| Ox Fill, loading (20 s) | 0.42x | 1.84x |
+| Ox Fill, holding its load | 0.34x, 9-10 solves / step | 1.89x, 1 |
+| Fuel Fill (40 s) / holding | 1.47x / 1.42x | 2.82x / 3.01x |
+| topped LOX tank on its vent | 7.2 psig (node 3.1) | 3.1 psig (node 3.1) |
+
+The 3.10b table was measured on another machine; on this one the commit it was
+written at runs Fuel Fill at the same 1.47x as the "before" column, so compare the
+columns, not the two tables. What a fill still costs is the active LOX tank's
+own thermal model (chilldown, vapour, the surface layer): about a third of a step.
 
 ### 3.11 A shut LOX tank climbs at tens of psi a minute, and why
 
@@ -1126,6 +1190,32 @@ same tank pressure as before needs a dome of ~566. The study tiers moved accordi
 
 When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
 before suspecting the solver.
+
+
+### 4.12 Tables that interpolate across the saturation line
+
+CoolProp's bicubic tables -- first in every species' chain, 10-30x faster than HEOS --
+are wrong near the saturation line wherever a table cell straddles it. Against HEOS, on
+7.2 and 8.0, and on every species tried (nitrogen, oxygen, ethanol, methane, water):
+
+| state | tables | HEOS |
+|---|---|---|
+| N2, 1.07 bar, 10 K above its boiling point, rho | 83 kg/m³ | 4.26 |
+| O2 saturated vapour at 90 K, p from (rho, T) | 0.47 bar | 0.99 |
+| O2 saturated vapour at 140 K, p from (rho, T) | 15.5 bar | 27.9 |
+| O2 liquid 0.5 K subcooled at 16 bar, rho | 334 kg/m³ | 917 |
+
+Errors reached ~15 K above the line on the vapour side, 10 K below on the liquid side,
+and 20 % near the critical point. The saturation splines themselves (`p, q` and `T, q`)
+agree to 0.02 %, and so does (rho, u). Found when GN2 vented off a chilled LOX tank
+throttled onto its own boiling point and every solve failed for 7 s (2026-10-12).
+
+`backends.coolprop._Dome` now has the tables decline (p, T), (p, h) and vapour (rho, T)
+within `DOME_LIQUID_K` / `DOME_VAPOUR_K` (16 K) of the line and near the critical point;
+the chain's HEOS answers. Warm pressurant and LOX subcooled at tank pressure never come
+near it, which is why no burn or calibrated result moved; a cold LOX ullage, vent lines
+and nitrogen near 77 K do. Re-check on any CoolProp upgrade:
+`lib/feedtwin/tests/test_props_near_dome.py`.
 ---
 
 ## Reporting

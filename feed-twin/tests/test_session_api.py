@@ -103,9 +103,15 @@ def test_garbage_setup_is_ignored_rather_than_fatal() -> None:
 
 def test_a_huge_step_is_clamped() -> None:
     """A tab that was in the background for a minute must resume, not integrate
-    a minute of stand in one explicit step."""
+    a minute of stand in one explicit step. Time warp lets a tick carry a few
+    seconds (MAX_TICK_S), but as the session's own small steps."""
+    from backend.main import MAX_TICK_S
+
     state = open_session()
-    assert tick(state["id"], dt=1.0e6)["t"] < 5.0
+    after = tick(state["id"], dt=1.0e6)
+    assert after["t"] <= MAX_TICK_S + 0.01
+    solver = client.get(f"/api/session/{state['id']}/solver").json()
+    assert solver["summary"]["ticks"] >= 0.8 * MAX_TICK_S / 0.02, "one big step"
 
 
 @pytest.mark.parametrize("dt", [-1.0, 0.0, 1e-12])
@@ -399,3 +405,42 @@ def test_each_tank_says_which_leg_it_is_on() -> None:
     sides = {t["label"]: t["side"] for t in state["tanks"]}
     assert sorted(sides.values()) == ["fuel", "lox"], sides
     assert all(b["side"] == "" for b in state["bottles"])
+
+
+def test_a_lox_loads_chilldown_can_be_skipped() -> None:
+    """Nobody rehearsing waits out the minutes a LOX load spends chilling the
+    wall (the team, 2026-10-08). ``skip_chill`` puts it where the chill leaves
+    it and the pour collects from there; an unknown tank is a 404."""
+    sid = open_session()["id"]
+    command(sid, state="Armed")
+    command(sid, state="Ox Fill")
+    for _ in range(4):
+        state = tick(sid)
+    lox = next(t for t in state["tanks"] if t["side"] == "lox")
+    assert lox["chilling"] and lox["liquid_mass_kg"] == 0.0
+
+    lox = next(t for t in command(sid, skip_chill=True)["tanks"] if t["side"] == "lox")
+    assert not lox["chilling"] and lox["wall_temperature_K"] < 100.0
+    for _ in range(8):
+        state = tick(sid)
+    lox = next(t for t in state["tanks"] if t["side"] == "lox")
+    assert not lox["chilling"] and lox["liquid_mass_kg"] > 0.0
+
+    unknown = client.post(
+        f"/api/session/{sid}/command", json={"skip_chill": "no-such-tank"}
+    )
+    assert unknown.status_code == 404
+
+
+def test_the_history_says_when_each_state_began() -> None:
+    """The plots draw a rule where the stand changed state: every change in the
+    window, from the unthinned history, however hard the trace is thinned."""
+    state = open_session()
+    tick(state["id"], dt=0.5)
+    command(state["id"], state="Armed")
+    tick(state["id"], dt=0.5)
+    history = client.get(
+        f"/api/session/{state['id']}/history", params={"seconds": 60, "max_points": 3}
+    ).json()
+    assert [e["label"] for e in history["events"]] == ["Armed"]
+    assert 0.4 < history["events"][0]["t"] < 0.6

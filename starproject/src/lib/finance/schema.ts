@@ -71,6 +71,8 @@ export const reimbursementInputSchema = z
     specialInstructions: optional(1000),
     items: z.array(itemSchema).min(1, "Add at least one item").max(MAX_ITEMS, `At most ${MAX_ITEMS} items`),
     saveProfile: z.boolean().default(true),
+    // BOM lines this filing pays back (the BOM tab's "File reimbursement").
+    bomItemIds: z.array(z.string().max(40)).max(50).default([]),
   })
   .strict()
   .refine((r) => r.expenditureAction !== "Other" || !!r.specialInstructions, {

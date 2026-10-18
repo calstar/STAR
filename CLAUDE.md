@@ -139,8 +139,11 @@ very bugs they were written for.
   is mated (`pid/network.py _mate_disconnects`), and a cart drawn on another page fills
   the vehicle through the network while the session's built-in fills stand aside. Which
   valve each state-machine actuator drives and which knob sets which regulator is the
-  drawing's **hookup** (`feedtwin.session.hookup`, the Hookup tab), kept per drawing
-  lineage. With none saved it is `suggest()`, which is the old behaviour bit for bit.
+  drawing's **hookup** (`feedtwin.session.hookup`), kept per drawing lineage. Saved
+  from the P&ID tab it is *wired*: a DAQ box of named connectors (`channels`), and a
+  table row drives only the valve on the connector of its name; the table itself can
+  be the stand's own (`machine`, the State machine tab). With none saved it is
+  `suggest()`, which is the old behaviour bit for bit.
   Never hard-code a valve or regulator tag; see `docs/integration/gse-pages-and-hookup.md`.
 - **The drawing wires the twin** (ADR 0006). Vehicle vs ground support is
   `feedtwin.pid.roles` (the ENGINE's drawn-line component; a paired QD is the boundary).
@@ -149,9 +152,15 @@ very bugs they were written for.
   for what is *not* drawn. Every hand valve rests shut (unless drawn `normalPosition: open`)
   and is never bound to the table; MOVs are actuated. A liquid DEWAR is a supply tank;
   dome-line valves gate the dome (open to the loader: live; open vent: drained; else held). Lines on a regulator's
-  `dome` handle are loading, not feed. Every hand-loaded regulator gets a knob (`DOME`,
-  `CHARGE` = `copv_target_psi`, or its own). Before adding a Hookup-tab workaround, ask
-  what the drawing should say instead.
+  `dome` handle are loading, not feed. Every hand-loaded regulator -- every cart regulator, and any
+  regulator drawn with no setting -- gets a knob (`DOME`, `CHARGE` = `copv_target_psi`, or its
+  own), and every knob starts at the drawing's setting (`hookup.knob_starts`); a fresh
+  stand's dome and COPV fill are the drawing's unless the operator turned them. Before adding a hookup workaround (DAQ box, State machine tab, GSE Controls knobs), ask
+  what the drawing should say instead. `Setup.ignore_gse` (off by default) cuts the cart
+  away at assembly (`roles.vehicle_only`) and leaves only the built-in fills -- but
+  **never the vents**: the cart's vent lines stay plugged into the rocket until launch
+  (`roles.vent_branches`), so rocket only a tank still vents through the cart's vent
+  valve. It is a build-time choice, so changing it opens a new stand.
 - **Adiabatic is an assumption, not a fact.** Line walls (`feedtwin.comps.wall`) model
   the heat a tube and its fittings give the gas during a flow, which is worth ~50 psi
   of tank pressure late in a nitrogen burn. **On by default** in the library `Setup`,
@@ -181,5 +190,7 @@ very bugs they were written for.
 - `docs/integration/` — the cross-app agreements: line-loss method ladder, the
   pid-designer handoff, and `daq-k-fitting.md` for the K-fit reader that is meant to
   live inside the DAQ.
-- `feed-twin/backend/statemachines/NEEDS-REPAIR.md` — 10 malformed rows in the shipped
-  transition table, why they are not recoverable, and why the machine fails closed.
+- `feed-twin/backend/statemachines/NEEDS-REPAIR.md` — the transition table's rows one
+  cell short (9 in the twin's copy, 10 in the DAQ's), read left-aligned as the DAQ
+  reads them; the Fire bypasses that opens, the abort rows that open the mains, and
+  why an unreadable row still fails closed.

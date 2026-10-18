@@ -26,9 +26,8 @@ EngineDesign's own CEA cache, so ``c*``, chamber temperature, ``gamma`` and
 trace report chamber temperature and O/F drift rather than assuming them.
 
 The engine is a boundary, not a component: chamber pressure depends on the flows
-and the flows depend on chamber pressure, and
-:class:`~feedtwin.engine.component.EngineCoupling` closes that loop around the
-whole feed system.
+and the flows depend on chamber pressure, and the session closes that loop around
+the whole feed system (``feedtwin.session.core.Session._close_chamber``).
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ from feedtwin.engine.card import (
     InjectorCard,
     Table2D,
 )
-from feedtwin.engine.component import EngineCoupling, InjectorLeg, injector_legs
+from feedtwin.engine.component import InjectorLeg, injector_legs
 from feedtwin.engine.design import (
     PROPELLANT_ALIASES,
     DischargeModel,
@@ -93,7 +92,6 @@ __all__ = [
     "CombustionState",
     "ConstantCStar",
     "DischargeModel",
-    "EngineCoupling",
     "EngineDesign",
     "EngineImportError",
     "InjectorLeg",

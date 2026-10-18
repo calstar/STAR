@@ -29,11 +29,13 @@ class Tunable:
     group: str
     explains: str
     """What the number accounts for, and where it came from."""
-    kind: str = "number"  # "number" | "flag"
+    kind: str = "number"  # "number" | "flag" | "choice"
     low: float = 0.0
     high: float = 1.0e9
     step: float = 1.0
     applies: str = "live"  # "live" | "reset"
+    choices: tuple[tuple[str, str], ...] = ()
+    """For a ``choice``: (value, label) pairs, the first the default."""
 
 
 GROUPS = [
@@ -48,6 +50,42 @@ GROUPS = [
 
 TUNABLES: tuple[Tunable, ...] = (
     # --- cart and regulators (the GSE tab's knobs, repeated here) ---------
+    Tunable(
+        "ignore_gse",
+        "ignore_gse",
+        "Ignore the drawn GSE",
+        "",
+        GROUPS[0],
+        "On: the cart drawn on the GSE page is not simulated, except its vent lines, "
+        "which stay plugged into the rocket until the last moment before launch: a "
+        "tank still vents through the cart's vent valve. The stand is built from the "
+        "rocket and those vents, its other disconnects capped, and the fills are the simple "
+        "built-in ones at the GSE Controls settings: GN2 High Press charges the COPV "
+        "to the COPV fill knob over the COPV charge time, Fuel Fill pours the fuel "
+        "load, Ox Fill loads LOX from the LOX dewar pressure, and the dome knob sets "
+        "the tank regulator's dome directly. Off (the default) simulates the GSE as "
+        "drawn. Changing it opens a fresh stand. A drawing with no GSE page is the "
+        "same either way.",
+        kind="flag",
+        applies="reset",
+    ),
+    Tunable(
+        "pressurant",
+        "pressurant",
+        "Pressurant",
+        "",
+        GROUPS[0],
+        "The gas in the bottles and press lines. Drawing's: whatever the drawing "
+        "has. Helium or GN2: the drawing's other gas swapped for it at 293 K "
+        "wherever it is drawn -- the COPV, the press lines, the cart's bottles and "
+        "dome lines -- as the Study tab's pressurant cases do. For comparing a "
+        "helium hot-fire press against GN2 on one drawing (the team, 2026-10-02: "
+        "helium for hot fire, nitrogen for water flows). Each burn's run record "
+        "says which, so the Runs tab compares them. Changing it opens a fresh stand.",
+        kind="choice",
+        applies="reset",
+        choices=(("", "Drawing's"), ("nitrogen", "GN2"), ("helium", "Helium")),
+    ),
     Tunable(
         "dome",
         "dome_psi",
@@ -96,12 +134,12 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[0],
         "On: a wide-open dome regulator passes gas the way IEC 60534-2-1 says a "
         "valve of its Cv does -- with the expansion factor Y = 1 - x/(3 F_gamma xT) "
-        "and choking once the drop passes F_gamma xT of the inlet. Off (the "
-        "benchmarked setting): the seat is the incompressible Cv law at the inlet "
-        "density, which overstates a GN2 regulator's wide-open capacity by ~25 % "
-        "near burnout (0.398 vs 0.319 kg/s) and by up to 1.5x choked. Only a "
-        "saturated regulator is affected; on helium at the hot-fire flows it "
-        "regulates and nothing changes.",
+        "and choking once the drop passes F_gamma xT of the inlet. On by default. "
+        "Off: the seat is the incompressible Cv law at the inlet density (what "
+        "the benchmark study is stated at), which overstates a GN2 regulator's "
+        "wide-open capacity by ~25 % near burnout (0.398 vs 0.319 kg/s) and by up "
+        "to 1.5x choked. Only a saturated regulator is affected; on helium at the "
+        "hot-fire flows it regulates and nothing changes.",
         kind="flag",
     ),
     Tunable(
@@ -196,10 +234,11 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Everything on the fill line that is not tube: the dewar's liquid valve, the "
         "LOX Fill valve, the disconnect -- in practice how far the dewar valve is "
-        "open. Calibrated: 0.013 tops LE4 out at 30 psig during the chill with a "
-        "Cv 0.5 vent, which is what the stand shows (operator). A clean 3/8 in line "
-        "pours ~0.7 kg/s, all of which boils on a warm wall, and the tank rides up "
-        "to the dewar.",
+        "open. The stand tops out near 30 psig during the chill and takes ~10 min "
+        "(operator). LE4 (6) as drawn: 0.019 peaks at 57 psig and chills in 5.3 "
+        "min; 0.013 at 38 psig and 6.9 min. 'skip' on the tank card skips the "
+        "chill. A clean 3/8 in line pours ~0.7 kg/s, all of which boils on a warm "
+        "wall, and the tank rides up to the dewar.",
         low=0.0,
         high=10.0,
         step=0.001,
@@ -814,7 +853,6 @@ TUNABLES: tuple[Tunable, ...] = (
     ),
 )
 
-_BY_KEY = {t.key: t for t in TUNABLES}
 _SETUP_FIELDS = {f.name for f in fields(Setup)}
 for _t in TUNABLES:
     assert _t.field in _SETUP_FIELDS, _t.field
@@ -834,6 +872,10 @@ def parse_setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup
             continue
         if t.kind == "flag":
             changes[t.field] = bool(raw)
+            continue
+        if t.kind == "choice":
+            if str(raw) in {value for value, _ in t.choices}:
+                changes[t.field] = str(raw)
             continue
         try:
             value = float(raw)
@@ -867,6 +909,7 @@ def describe() -> list[dict[str, Any]]:
             "high": t.high,
             "step": t.step,
             "applies": t.applies,
+            "choices": [{"value": v, "label": label} for v, label in t.choices],
             "default": getattr(defaults, t.field),
         }
         for t in TUNABLES

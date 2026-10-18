@@ -8,7 +8,17 @@ export type ActivityKind =
   | "assigned"
   | "unassigned"
   | "blocker_added"
-  | "blocker_removed";
+  | "blocker_removed"
+  // A BOM line (taskTitle holds the line's name, taskId is null).
+  | "bom_added"
+  | "bom_updated"
+  | "bom_removed"
+  // A purchase request (taskTitle "PR-12 · 3 lines · $123.45", toValue the note
+  // or the reason given).
+  | "pr_created"
+  | "pr_approved"
+  | "pr_rejected"
+  | "pr_cancelled";
 
 export type ActivityInput = {
   actorId: string;

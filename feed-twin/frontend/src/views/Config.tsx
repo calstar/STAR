@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { getTunables, type StandSetup, type Tunable } from '../api';
+import { CHARGE_KNOB, DOME_KNOB, getTunables, type StandSetup, type Tunable } from '../api';
 import { useStand } from '../stand';
 
 /** How long a hand has to rest on a row before it explains itself. */
@@ -50,10 +50,22 @@ function Explain({ text, children }: { text: ReactNode; children: ReactNode }) {
   );
 }
 
+/** The value as it is, to the step's places at least: a step of 5 printed
+ *  the COPV charge time of 9.7 s as "10", and the row lied about the number
+ *  the stand ran on. */
 function fmt(v: number, step: number): string {
-  const places = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
+  const stepPlaces = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
+  const own = (String(Number(v)).split('.')[1] ?? '').length;
+  const places = Math.min(Math.max(stepPlaces, own), 6);
   return Number(v).toFixed(places).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m));
 }
+
+/** A row; ``drawn``: its default is the drawing's (a regulator's setting),
+ *  not the library's. */
+type Row = Tunable & { drawn?: boolean };
+
+/** The Setup fields a drawn regulator sets, by knob. */
+const DRAWN: Record<string, string> = { dome: DOME_KNOB, copv_target: CHARGE_KNOB };
 
 function Row({
   t,
@@ -61,9 +73,9 @@ function Row({
   onChange,
   disabled,
 }: {
-  t: Tunable;
-  value: number | boolean;
-  onChange: (v: number | boolean) => void;
+  t: Row;
+  value: number | boolean | string;
+  onChange: (v: number | boolean | string) => void;
   disabled: boolean;
 }) {
   const [draft, setDraft] = useState<string>(typeof value === 'number' ? fmt(value, t.step) : '');
@@ -83,13 +95,23 @@ function Row({
     },
     [onChange, t.high, t.low],
   );
-  const changed = typeof value === 'boolean' ? value !== t.default : Math.abs(Number(value) - Number(t.default)) > 1e-9;
+  const changed =
+    typeof value === 'number' ? Math.abs(value - Number(t.default)) > 1e-9 : value !== t.default;
+  const say = (v: number | boolean | string) =>
+    t.kind === 'choice'
+      ? (t.choices?.find((c) => c.value === v)?.label ?? String(v))
+      : typeof v === 'boolean'
+        ? v
+          ? 'on'
+          : 'off'
+        : `${fmt(Number(v), t.step)} ${t.unit}`;
   const explain = (
     <>
       <div className="mb-1 font-semibold text-white">{t.label}</div>
       <div>{t.explains}</div>
       <div className="mt-1.5 font-mono text-[11px] text-gray-400">
-        default {typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : `${fmt(Number(t.default), t.step)} ${t.unit}`}
+        default {say(t.default)}
+        {t.drawn && ', the drawing\'s setting'}
         {t.kind === 'number' && ` · ${fmt(t.low, t.step)} to ${fmt(t.high, t.step)}`}
         {t.applies === 'reset' && ' · takes effect on Reset'}
       </div>
@@ -111,7 +133,20 @@ function Row({
           )}
         </div>
         <div>
-          {t.kind === 'flag' ? (
+          {t.kind === 'choice' ? (
+            <select
+              value={String(value)}
+              disabled={disabled}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[12px] text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            >
+              {(t.choices ?? []).map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          ) : t.kind === 'flag' ? (
             <label className="flex items-center gap-2 text-gray-300">
               <input
                 type="checkbox"
@@ -142,7 +177,7 @@ function Row({
               type="button"
               disabled={disabled}
               onClick={() => onChange(t.default)}
-              title={`Back to ${typeof t.default === 'boolean' ? (t.default ? 'on' : 'off') : fmt(Number(t.default), t.step)}`}
+              title={`Back to ${say(t.default)}${t.drawn ? ', the drawing\'s setting' : ''}`}
               className="rounded px-1.5 py-0.5 font-mono text-[10px] text-blue-300 hover:bg-blue-900/40"
             >
               default
@@ -155,7 +190,7 @@ function Row({
 }
 
 export function Config() {
-  const { live, setup, setSetup, locked: readOnly } = useStand();
+  const { live, setup, setSetup, locked: readOnly, model } = useStand();
   const [tunables, setTunables] = useState<Tunable[]>([]);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -165,19 +200,62 @@ export function Config() {
   }, []);
   // Tripped, or a stand you have not taken: the settings are the stand's.
   const locked = Boolean(live?.tripped) || readOnly;
-  const groups = Array.from(new Set(tunables.map((t) => t.group)));
+  // Sixty-odd rows: find one by any word in its name or what it accounts for,
+  // or see only what differs from the default.
+  const [query, setQuery] = useState('');
+  const [changedOnly, setChangedOnly] = useState(false);
+  // The dome and the COPV charge default to what the drawing sets them to:
+  // 'default' on a 535 psig drawn dome went back to the library's 500.
+  const rows: Row[] = tunables.map((t) => {
+    const drawn = DRAWN[t.key] !== undefined ? model?.drawn_knobs?.[DRAWN[t.key]] : undefined;
+    return drawn === undefined ? t : { ...t, default: drawn, drawn: true };
+  });
+  const valueOf = (t: Tunable) => (setup as StandSetup)[t.key] ?? t.default;
+  const isChanged = (t: Tunable) => {
+    const v = valueOf(t);
+    return typeof v === 'boolean' ? v !== t.default : Math.abs(Number(v) - Number(t.default)) > 1e-9;
+  };
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = rows.filter(
+    (t) =>
+      (!changedOnly || isChanged(t)) &&
+      words.every((w) => `${t.label} ${t.key} ${t.explains} ${t.group}`.toLowerCase().includes(w)),
+  );
+  const groups = Array.from(new Set(shown.map((t) => t.group)));
 
   return (
     <div className="flex flex-col gap-4 p-4">
       <div className="max-w-3xl">
-        <h2 className="caps">Every number the twin assumes</h2>
-        <p className="mt-1 text-[12px] leading-relaxed text-gray-500">
-          Rest on a row for two seconds and it says what the number accounts for and where it came from. Edit
-          a value and the running stand uses it; rows marked <span className="font-mono text-[10px] uppercase">on reset</span>{' '}
-          are built into the vessels and take effect on the next Reset. Changed rows are tinted and carry a
-          way back to the default. What the <em>drawing</em> left unsaid — a defaulted volume, an estimated
-          bore — is on the <Link to="/report" className="text-blue-400 hover:underline">Report</Link> tab.
+        <h2 className="caps">Assumptions</h2>
+        <p className="mt-1 text-[12px] text-gray-500">
+          Hover a row for its source. <span className="font-mono text-[10px] uppercase">On reset</span> rows apply
+          after Reset. Drawing gaps are on{' '}
+          <Link to="/report" className="text-blue-400 hover:underline">
+            Checks
+          </Link>
+          .
         </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Find a setting — e.g. dome, chill, tolerance"
+          className="w-80 rounded-md border border-gray-700 bg-black/60 px-3 py-1.5 text-[12.5px] text-white placeholder:text-gray-600 focus:border-blue-500 focus:outline-none"
+        />
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-gray-400">
+          <input
+            type="checkbox"
+            checked={changedOnly}
+            onChange={(e) => setChangedOnly(e.target.checked)}
+            className="accent-blue-500"
+          />
+          Changed from the default only ({rows.filter(isChanged).length})
+        </label>
+        {shown.length === 0 && tunables.length > 0 && (
+          <span className="text-[12px] text-gray-500">Nothing matches.</span>
+        )}
       </div>
       {error && <p className="text-[12px] text-red-300">{error}</p>}
       <div className="grid gap-4 xl:grid-cols-2">
@@ -186,7 +264,7 @@ export function Config() {
             <h3 className="border-b border-gray-800 px-3 py-1.5 text-[11px] font-bold uppercase tracking-widest text-text-muted">
               {g}
             </h3>
-            {tunables
+            {shown
               .filter((t) => t.group === g)
               .map((t) => (
                 <Row

@@ -22,6 +22,10 @@ export interface Channel {
   tag: string;
   values: number[];
   color: string;
+  /** Dashed, e.g. a criterion drawn across the plot: `[6, 4]`. */
+  dash?: number[];
+  /** What the series is, for its legend pill's hover. */
+  hint?: string;
 }
 
 interface Props {
@@ -59,18 +63,6 @@ const NO_MARKS: { t: number; label: string }[] = [];
 
 /** Tick labels: small, monospace, the console's grey. */
 const AXIS_FONT = '11px "SF Mono", ui-monospace, Menlo, monospace';
-
-export function fmtAxisVal(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  if (abs >= 100) return value.toFixed(0);
-  if (abs >= 1) return value.toFixed(1);
-  if (abs === 0) return '0';
-  // Below a hundredth two decimals read "0.00" for every tick: a residual
-  // axis from 1e-9 to 1e-3 was a column of zeros.
-  if (abs < 0.01) return value.toExponential(0).replace('e-', 'e−');
-  return value.toFixed(2);
-}
 
 /** A linear tick label, as precise as the tick spacing and no more.
  *
@@ -251,12 +243,18 @@ export function DaqPlot({
   // poll of the same channels changes the data, not this, and the data goes
   // into the existing chart (`setData`) -- rebuilding it every poll lost the
   // cursor every two seconds, so nothing could be read off a live plot.
-  const shape = shown.map((c) => `${c.key}:${c.color}:${c.tag}`).join('|');
+  const shape = shown.map((c) => `${c.key}:${c.color}:${c.tag}:${c.dash?.join(',') ?? ''}`).join('|');
   const rangeRef = useRef(range);
   rangeRef.current = range;
+  // A value that is not a number is a gap, not a point: uPlot takes NaN as a
+  // value, its auto-range came out NaN, and the plot drew nothing at all --
+  // Runs compared two burns of different lengths (the shorter one resampled to
+  // NaN past its end) and both charts were empty.
   const dataFor = (): uPlot.AlignedData => [
     times,
-    ...shown.map((c) => (onLog ? c.values.map((v) => (v > 0 ? v : null)) : c.values)),
+    ...shown.map((c) =>
+      c.values.map((v) => (Number.isFinite(v) && (!onLog || v > 0) ? v : null)),
+    ),
   ];
   const dataRef = useRef(dataFor);
   dataRef.current = dataFor;
@@ -273,12 +271,28 @@ export function DaqPlot({
           ctx.strokeStyle = '#EAB308';
           ctx.setLineDash([4, 4]);
           ctx.lineWidth = 1;
+          const dpr = window.devicePixelRatio || 1;
+          ctx.font = `${10 * dpr}px ui-monospace, Menlo, monospace`;
+          ctx.fillStyle = 'rgba(234, 179, 8, 0.85)';
+          // Named at the top in three rows: each label takes the first row
+          // with room after the last label in it, and a state too close to
+          // its neighbours keeps its rule but not its name -- overprinted,
+          // a pad sequence read as a smear.
+          const rowEnd = [-Infinity, -Infinity, -Infinity];
           for (const m of marks) {
             const x = u.valToPos(m.t, 'x', true);
+            if (x < u.bbox.left || x > u.bbox.left + u.bbox.width) continue;
             ctx.beginPath();
             ctx.moveTo(x, u.bbox.top);
             ctx.lineTo(x, u.bbox.top + u.bbox.height);
             ctx.stroke();
+            if (!m.label) continue;
+            const left = x + 3 * dpr;
+            const width = ctx.measureText(m.label).width;
+            const row = rowEnd.findIndex((end) => left > end + 6 * dpr);
+            if (row < 0 || left + width > u.bbox.left + u.bbox.width) continue;
+            ctx.fillText(m.label, left, u.bbox.top + (10 + row * 12) * dpr);
+            rowEnd[row] = left + width;
           }
           ctx.restore();
         },
@@ -349,7 +363,8 @@ export function DaqPlot({
         ...shown.map((c) => ({
           label: c.tag,
           stroke: c.color,
-          width: lineWidth,
+          width: c.dash ? 1 : lineWidth,
+          ...(c.dash ? { dash: c.dash } : {}),
           points: { show: false },
         })),
       ],
@@ -428,6 +443,7 @@ export function DaqPlot({
               type="button"
               onClick={() => toggle(c.key)}
               aria-pressed={!off}
+              title={c.hint}
               className={`flex flex-shrink-0 items-center gap-2 py-0.5 transition-opacity ${
                 off ? 'opacity-35' : ''
               }`}
