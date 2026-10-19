@@ -31,7 +31,7 @@ describe("redact", () => {
       {
         position: 1, date: "2026-10-02", vendor: "Wildman", amountCents: 100, amountText: null, comment: null,
         type: null, location: null, invoice: null, receiptCount: 1,
-        receipts: [{ id: "r1", fileName: "label.pdf", size: 10, url: "/api/finance/receipts/r1" }],
+        receipts: [{ id: "r1", fileName: "label.pdf", size: 10, url: "/api/finance/receipts/r1", stored: true }],
       },
     ],
   };

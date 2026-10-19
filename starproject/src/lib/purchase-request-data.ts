@@ -15,6 +15,8 @@ const PERSON = { select: { id: true, name: true, email: true, displayName: true 
 
 const INCLUDE = {
   project: { select: { id: true, name: true, color: true } },
+  subteam: { select: { id: true, name: true, color: true } },
+  budgetLine: { select: { id: true, name: true, schoolYear: true } },
   createdBy: PERSON,
   decidedBy: PERSON,
   items: { orderBy: { position: "asc" }, include: { bomItem: { include: BOM_INCLUDE } } },
@@ -27,6 +29,9 @@ export type PurchaseRequestView = {
   number: number;
   status: PrStatus;
   project: { id: string; name: string; color: string | null };
+  /** Whose budget it spends; null on requests from before budgets. */
+  subteam: { id: string; name: string; color: string | null } | null;
+  budgetLine: { id: string; name: string; schoolYear: number } | null;
   note: string | null;
   createdBy: { id: string; name: string };
   createdAt: string;
@@ -83,6 +88,8 @@ export function toView(r: Row): PurchaseRequestView {
     number: r.number,
     status: r.status,
     project: r.project,
+    subteam: r.subteam,
+    budgetLine: r.budgetLine,
     note: r.note,
     createdBy: { id: r.createdBy.id, name: displayNameOf(r.createdBy) },
     createdAt: r.createdAt.toISOString(),

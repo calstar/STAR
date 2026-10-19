@@ -59,6 +59,9 @@ export const reimbursementInputSchema = z
   .object({
     subject: required("Subject", 150),
     description: optional(2000),
+    // What it was for, for the Finance tab's breakdown. Checked to exist on save.
+    projectId: optional(64),
+    subteamId: optional(64),
     payee: payeeSchema,
     uid: uidSchema,
     email: z.string().trim().toLowerCase().email("Enter the payee's email"),

@@ -53,6 +53,10 @@ model User {
   purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
   createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
   decidedPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestDecidedBy")
+  financeAccounts         FinanceAccount[]     @relation("FinanceAccountUpdatedBy")
+  plannedIncome           PlannedIncome[]      @relation("PlannedIncomeCreatedBy")
+  createdBudgetLines      BudgetLine[]         @relation("BudgetLineCreatedBy")
+  reimbursementDrafts     ReimbursementDraft[]
 }
 
 // A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
@@ -104,8 +108,10 @@ model Project {
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
 
+  reimbursements   Reimbursement[]
   bomItems         BomItem[]
   purchaseRequests PurchaseRequest[]
+  budgetLines      BudgetLine[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -120,6 +126,10 @@ model Subteam {
   digestSubs    DigestSubscription[]
   phaseStatuses SubteamPhase[]
   milestones    Milestone[]
+
+  reimbursements   Reimbursement[]
+  budgetLines      BudgetLine[]
+  purchaseRequests PurchaseRequest[]
 }
 
 // Where one subteam is in a featured project's phase list. `phase` indexes
@@ -373,13 +383,20 @@ model Reimbursement {
   createdBy      User?   @relation("ReimbursementCreatedBy", fields: [createdById], references: [id])
 
   approvedById String?
-  approvedBy   User?     @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
-  approvedAt   DateTime?
-  reviewNote   String?
-  leaseUntil   DateTime? // the worker's claim expires here
-  needsCheck   Boolean   @default(false) // the worker may have filed it but could not confirm
-  attempts     Int       @default(0)
-  lastError    String?
+  approvedBy   User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+
+  // What the money went to, for the Finance tab's spending breakdown. The member
+  // picks them on the form; an admin tags imported requests in the detail card.
+  projectId  String?
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  subteamId  String?
+  subteam    Subteam?  @relation(fields: [subteamId], references: [id], onDelete: SetNull)
+  approvedAt DateTime?
+  reviewNote String?
+  leaseUntil DateTime? // the worker's claim expires here
+  needsCheck Boolean   @default(false) // the worker may have filed it but could not confirm
+  attempts   Int       @default(0)
+  lastError  String?
 
   callinkId            Int?      @unique
   callinkRequestNumber String?
@@ -403,6 +420,8 @@ model Reimbursement {
   @@index([status])
   @@index([payeeEmail])
   @@index([submitterEmail])
+  @@index([projectId])
+  @@index([subteamId])
 }
 
 // The payee's address, phone and UID. Kept apart so list queries never select
@@ -450,6 +469,12 @@ model ReceiptFile {
   size              Int
   callinkDocumentId String?
   callinkHref       String?
+  // An imported receipt's bytes are fetched from CalLink only when someone asks
+  // for them (the MCP get_reimbursement_receipts tool sets fetchRequestedAt); the
+  // worker downloads what is requested (src/app/api/worker/receipts).
+  fetchRequestedAt  DateTime?
+  fetchFailedAt     DateTime?
+  fetchError        String?
   createdAt         DateTime          @default(now())
 
   blob ReceiptBlob?
@@ -513,6 +538,44 @@ model WorkerStatus {
   loginRequestedBy String?
   loginUpdatedAt   DateTime?
   loginNote        String?
+}
+
+// ---- the Finance tab (admins only) -----------------------------------------------
+
+// Money the team holds. A CalLink account (callinkAccountId set) is written only by
+// callink-worker, from the balance CalLink shows on a request's detail; its
+// SUMMARY account is the STAR total. Every other account is typed in by an admin.
+model FinanceAccount {
+  id               String   @id @default(cuid())
+  name             String
+  callinkAccountId Int?     @unique
+  balanceCents     Int
+  availableCents   Int? // CalLink's "available funds"; null for manual accounts
+  balanceAsOf      DateTime
+  note             String?
+  archived         Boolean  @default(false)
+  updatedById      String?
+  updatedBy        User?    @relation("FinanceAccountUpdatedBy", fields: [updatedById], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// Income the team expects in a school year (dues, sponsors, grants, ASUC), and
+// whether it has arrived.
+model PlannedIncome {
+  id          String    @id @default(cuid())
+  schoolYear  Int // the year it starts in: 2026 is 2026-27
+  source      String
+  amountCents Int
+  expectedOn  DateTime? @db.Date
+  received    Boolean   @default(false)
+  note        String?
+  createdById String?
+  createdBy   User?     @relation("PlannedIncomeCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([schoolYear])
 }
 
 // ---- Bill of materials -------------------------------------------------------
@@ -633,6 +696,14 @@ model PurchaseRequest {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   note      String?
 
+  // Whose budget it spends, and which of that subteam's budget lines. Required
+  // on every new request (actions/purchase-requests.ts); null only on requests
+  // made before budgets existed.
+  subteamId    String?
+  subteam      Subteam?    @relation(fields: [subteamId], references: [id], onDelete: SetNull)
+  budgetLineId String?
+  budgetLine   BudgetLine? @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+
   createdById String
   createdBy   User     @relation("PurchaseRequestCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
@@ -645,6 +716,7 @@ model PurchaseRequest {
   items PurchaseRequestItem[]
 
   @@index([status, createdAt])
+  @@index([budgetLineId])
 }
 
 model PurchaseRequestItem {
@@ -675,4 +747,67 @@ model PurchaseRequestItem {
 
   @@index([requestId])
   @@index([bomItemId])
+}
+
+// ---- Budgets ----------------------------------------------------------------------
+//
+// What a subteam expects to spend in a school year, one line per thing ("Avionics
+// boards", "Test-stand plumbing"), each optionally on a project. Any member can
+// keep their subteam's lines (Subteams → Budget); admins see every subteam's on
+// the Finance tab. A purchase request names the line it spends, and what PVPs
+// approve on it counts against the line (src/lib/finance/budget.ts). A line with
+// requests on it can't be deleted, so the record of what was approved stays whole
+// (deleting the subteam takes its lines and leaves the requests unbudgeted).
+model BudgetLine {
+  id           String   @id @default(cuid())
+  schoolYear   Int // the year it starts in: 2026 is 2026-27
+  subteamId    String
+  subteam      Subteam  @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name         String
+  plannedCents Int
+  note         String?
+  createdById  String
+  createdBy    User     @relation("BudgetLineCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  purchaseRequests PurchaseRequest[]
+
+  @@index([schoolYear, subteamId])
+}
+
+// ---- Reimbursement drafts ------------------------------------------------------------
+//
+// A reimbursement being put together (over MCP, for now) before it is filed:
+// whatever form fields are known so far, as the form's JSON, and the receipts
+// attached so far, one per item index. Private to whoever made it. Filing it runs
+// the same code as the web form (src/lib/finance/file.ts) and deletes the draft;
+// nothing about a draft reaches an admin or CalLink until then.
+model ReimbursementDraft {
+  id          String                      @id @default(cuid())
+  number      Int                         @unique @default(autoincrement()) // D-N
+  createdById String
+  createdBy   User                        @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  payload     Json // a partial ReimbursementInput
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
+  receipts    ReimbursementDraftReceipt[]
+
+  @@index([createdById])
+}
+
+model ReimbursementDraftReceipt {
+  id        String             @id @default(cuid())
+  draftId   String
+  draft     ReimbursementDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  item      Int // the item's index in payload.items, from 0
+  fileName  String
+  mimeType  String
+  size      Int
+  data      Bytes
+  createdAt DateTime           @default(now())
+
+  @@unique([draftId, item])
 }

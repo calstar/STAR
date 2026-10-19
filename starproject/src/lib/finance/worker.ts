@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db";
+import type { CallinkAccount } from "@/lib/finance/accounts";
 import { mapScrapedRecord, subjectTag, type MappedRequest, type ScrapedRecord } from "@/lib/finance/callink-import";
 import { LOGIN_PICKUP_MS } from "@/lib/finance/login";
 import { toWorkerRequest, type WorkerRequest } from "@/lib/finance/serialize";
@@ -310,6 +311,35 @@ export async function heartbeat(input: {
   await prisma.workerStatus.upsert({ where: { id: "callink" }, create: { id: "callink", ...data }, update: data });
   const queued = await prisma.reimbursement.count({ where: { status: "approved" } });
   return { queued };
+}
+
+// ---- CalLink account balances ------------------------------------------------------------
+
+/** The worker reports the CalLink accounts it saw and when. A report older than the
+ * stored balance (a slow request overtaken by a newer one) leaves it alone. */
+export async function recordCallinkAccounts(accounts: CallinkAccount[], asOf: Date) {
+  let updated = 0;
+  for (const a of accounts) {
+    const data = {
+      name: a.name,
+      balanceCents: a.balanceCents,
+      availableCents: a.availableCents,
+      balanceAsOf: asOf,
+      archived: a.deleted,
+    };
+    const existing = await prisma.financeAccount.findUnique({
+      where: { callinkAccountId: a.callinkAccountId },
+      select: { balanceAsOf: true },
+    });
+    if (existing && existing.balanceAsOf > asOf) continue;
+    await prisma.financeAccount.upsert({
+      where: { callinkAccountId: a.callinkAccountId },
+      create: { callinkAccountId: a.callinkAccountId, ...data },
+      update: data,
+    });
+    updated++;
+  }
+  return { updated };
 }
 
 // ---- the admin "Sign in to CalLink" button ---------------------------------------------

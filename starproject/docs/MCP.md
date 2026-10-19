@@ -210,6 +210,13 @@ defineTool(server, "archive_task", {
 
 ## Tools
 
+**PVPs only, for now:** every reimbursement tool (from `list_reimbursements` through
+`get_worker_status`, drafts included) and the purchase-request tools
+(`list_`/`get_`/`create_`/`approve_`/`reject_`/`cancel_purchase_request`) refuse anyone
+who is not a PVP (`src/lib/pvp.ts`), admins included, before they run
+(`guardedDefine` in `src/mcp/tools/_shared.ts`). The web pages are unchanged. The
+"admins only" notes below still apply on top.
+
 | Tool | Does | Notes |
 |---|---|---|
 | `whoami` | The token's user and admin flag | read |
@@ -267,7 +274,8 @@ defineTool(server, "archive_task", {
 | `delete_bom_item` | Remove a line | destructive; past Planned needs a PVP |
 | `list_purchase_requests` | Purchase requests, newest first, optionally by status: who asked and when, who decided, each line as requested and as it is now | read |
 | `get_purchase_request` | One request by PR number | read |
-| `create_purchase_request` | Ask a PVP to approve buying BOM lines (Planned, not already requested) | write |
+| `list_budget_lines` | This school year's budget lines by subteam: planned, left after approved requests, waiting on a PVP | read |
+| `create_purchase_request` | Ask a PVP to approve buying BOM lines (Planned, not already requested), naming the subteam and its budget line it spends | write; the line must be that subteam's, this school year |
 | `approve_purchase_request` | Approve a waiting request, all of it or the lines in `itemIds`; approved lines become Approved, the rest stay Planned | write; PVPs only |
 | `reject_purchase_request` | Reject a waiting request with a reason; lines stay Planned | write; PVPs only |
 | `cancel_purchase_request` | Withdraw a waiting request | write; its maker or a PVP |
@@ -285,10 +293,16 @@ defineTool(server, "archive_task", {
 | `delete_subteam` | Delete a subteam; its tasks keep existing with no subteam; returns `tasksDetached` | admins only; destructive |
 | `list_users` | Everyone who has signed in (the assignee picker's team): id, email, name, displayName, isAdmin, createdAt, openTaskCount | read |
 | `get_user` | One user by `userId` or `email` (exactly one): the same summary plus `assignedTaskCount`, `archivedTaskCount`, `tasksByStatus`. Never settings or tokens | read |
-| `list_reimbursements` | The Finance table, newest first, with the page's filters: `status` (a display-status key), `mine`, `review` (needs an admin), `search` | read |
+| `list_reimbursements` | Every reimbursement (STAR's and CalLink's), filtered by any of: `status`, `mine`, `review`, `search`, `person` (payee or submitter name), `vendor`, `minAmount`/`maxAmount` (dollars), `from`/`to` (Berkeley days), `schoolYear`, `source` (`callink`/`starproject`), `projectId`, `subteamId`; `sort` newest/oldest/largest/smallest, `limit`; `withItems` adds line items. Returns `{ total, totalCents, rows }` (totals before `limit`) | read |
 | `get_reimbursement` | One reimbursement by R-number: fields, items + receipts, timeline, `can`; PII and receipt links redacted unless you are the payee, the filer or an admin | read |
+| `get_reimbursement_receipts` | A reimbursement's line items plus the receipt files: PDFs as embedded resources, images as images (`item` for one item; up to 20 MB per call). A CalLink receipt not yet held is downloaded for that call (callink-worker, up to 30 s wait) and kept; nothing is downloaded unless asked for | read; payee, filer and admins only |
 | `get_payee_defaults` | What the New reimbursement form pre-fills for you (saved profile, else your newest CalLink request, else account) | read |
 | `file_reimbursement` | File a reimbursement like the form: the form's fields plus `receipts` (base64 PDF/PNG/JPEG, one per item, under 4 MB); lands as `pending_approval` | write; same code path as `POST /api/finance/requests` |
+| `draft_reimbursement` | Start a draft (D-number): any of the form's fields so far, plus `receipts` by item index; returns `problems`, what filing still needs | write; private to you |
+| `update_reimbursement_draft` | Change a draft: fields given replace (payee merges, `items` replaces the list), `receipts` set by item index, `removeReceipts` | write |
+| `list_reimbursement_drafts` / `get_reimbursement_draft` | Your drafts with their fields, receipts and `problems` | read |
+| `file_reimbursement_draft` | File a ready draft exactly as `file_reimbursement` does, then delete it | write; refused while it has problems |
+| `delete_reimbursement_draft` | Throw a draft away | destructive |
 | `approve_reimbursement` | Queue a pending reimbursement for the CalLink worker | admins only; write |
 | `reject_reimbursement` | Reject a pending reimbursement with a reason (≤1000 chars) | admins only; destructive (final) |
 | `retry_reimbursement` | Put a failed filing back in the queue | admins only; write |
