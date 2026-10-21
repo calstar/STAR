@@ -140,9 +140,6 @@ function ExportMenu({ job, onCopyLink, onNotice }: { job: LayerXJob; onCopyLink:
       </MenuItem>
       <MenuItem disabled={!result} onClick={() => { void job.printTestCard(); }} note="What to dial, what each channel should read, the lines not to cross">Print test card</MenuItem>
       <MenuItem onClick={onCopyLink} note="This run, page, cursor and comparison">Copy link</MenuItem>
-      <MenuSeparator />
-      <MenuItem disabled onClick={() => {}} note="Not built yet">Report (PDF)</MenuItem>
-      <MenuItem disabled onClick={() => {}} note="Not built yet">Test card vs DAQ export</MenuItem>
     </Menu>
   );
 }

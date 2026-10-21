@@ -24,10 +24,27 @@ top-level directory with its own README. Start with the one you're working on.
 | [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once they all needed the same permission check. | Python |
 | [`lib/stardesign-ui/`](lib/stardesign-ui/README.md) | The **client half** of the same thing — the Change dialog, the checkout chip, the read-only context, and the design API client. | TypeScript, React |
 | [`lib/feedtwin/`](lib/feedtwin/README.md) | The **feed system physics core** — real-gas properties, the component library, and the network and transient solvers. A library, not a service, so EngineDesign's optimizer can import it in-process ([ADR-0001](docs/adr/0001-feed-system-physics-is-a-library.md)). | Python, CoolProp, fluids |
-| [`EngineDesign/`](EngineDesign/README.md) | **Engine design & optimization pipeline** — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
-| [`pid-designer/`](pid-designer/README.md) | Interactive **P&ID (Piping & Instrumentation Diagram) editor** for the propulsion feed system, with git-backed versioning. | FastAPI, React + React Flow |
-| [`feed-twin/`](feed-twin/README.md) | **Feed system simulator** — COPV through regulator, tanks and lines to the injector face, parameterized down to individual fittings. Built on `lib/feedtwin`. Early: the shell is wired, the physics is being built phase by phase. | Python, FastAPI, React |
+| [`EngineDesign/`](EngineDesign/README.md) | **Hotbench Engine.** Engine design & optimization pipeline — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
+| [`pid-designer/`](pid-designer/README.md) | **Hotbench P&ID.** Interactive P&ID (Piping & Instrumentation Diagram) editor for the stand: the vehicle and its ground support, each part carrying its numbers and where they came from, with autosaved history and named releases. | FastAPI, React + React Flow |
+| [`feed-twin/`](feed-twin/README.md) | **Hotbench Twin.** The stand's digital twin — the drawn feed system and the designed engine as one transient model, COPV through regulator, tanks and lines to the chamber, driven from a copy of the DAQ console. Every burn is kept as a run record. Built on `lib/feedtwin`. | Python, FastAPI, React |
 | [`star-openrocket/`](star-openrocket/README.md) | **Onshape CM viewer, stability, ascent flight dynamics and recovery** (the recovery calculator merged in as a tab) — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
+
+### Hotbench
+
+**Hotbench** (a STAR project) is three of these apps used as one pipeline:
+
+1. **Hotbench P&ID** (`pid-designer/`) draws the stand — the vehicle page and
+   the ground-support page, joined at their paired disconnects.
+2. **Hotbench Engine** (`EngineDesign/`) designs the engine and publishes its
+   engine card.
+3. **Hotbench Twin** (`feed-twin/`) takes that drawing and that card and runs
+   the stand: load, press, fire, abort, at the console the operators use.
+
+The drawing is the feed system: the twin reads line sizes, volumes and
+settings from it and never invents one; what the drawing does not say yet is
+listed as a gap for the team to fill. Pressures a person reads are psia;
+differences are plain psi. Internal names (directories, packages, routes,
+environment variables) keep their old spelling.
 
 ### How they fit together
 

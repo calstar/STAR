@@ -79,7 +79,7 @@ from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
 from feedtwin.pid.document import BOUNDARY_TYPES, INLINE_TYPES, SOURCE_TYPES
 from feedtwin.pid.network import DOME_HANDLE, DomeLine, DomeLoader, propellant_side
-from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig
+from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig, say
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
 from feedtwin.session.hookup import CHARGE, DOME, Hookup
 from feedtwin.session.model import AssemblyError, Model
@@ -133,6 +133,11 @@ to take a temperature from -- which on a drawn stand is nothing."""
 
 #: Propellant per side that counts as "lit" [kg/s]; the chamber's own rule.
 MIN_CHAMBER_FLOW = ENGINE_MIN_CHAMBER_FLOW
+
+#: Seconds of Fire with no thrust before the console calls it a cold flow
+#: [s]. A display delay, not physics: the valves are still travelling for the
+#: first tenths of a real start, and "Not lit" flashed on every ignition.
+COLD_FLOW_S = 0.5
 
 DRY_MASS = 1.0e-3
 
@@ -556,15 +561,16 @@ class Setup:
     """
 
     dome_psi: float = 500.0
-    """Dome control regulator setting [psig] -- what the dial reads. The
-    1092-50 delivers dome + its 50 psi bias less its supply effect, S x inlet
-    gauge, so lockup is *not* dome + bias: on LE4 (6) off a full 4,500 psig
-    bottle, 500 here locks the tanks up at 483.7 psig
-    (docs/PHYSICS-BENCHMARK.md 4.11)."""
+    """Dome control regulator setting [psig] -- what the dial reads. Gauge on
+    the wire and in saved setups; a person sets and reads it in psia, 514.7
+    here (ADR 0007). The 1092-50 delivers dome + its 50 psi bias less its
+    supply effect, S x inlet gauge, so lockup is *not* dome + bias: on LE4 (6)
+    off a full 4,514.7 psia bottle, 514.7 psia here locks the tanks up at
+    498.4 psia (docs/PHYSICS-BENCHMARK.md 4.11)."""
 
     copv_target_psi: float = 4500.0
     """Bottle fill target [psig], as its gauge would read it: what GN2 High
-    Press fills the bottle to."""
+    Press fills the bottle to. Shown as psia, 4,514.7 here (ADR 0007)."""
 
     supply_press_s: float = 3.0
     """Seconds the cart's press line takes to bring a ground supply tank (a fuel
@@ -621,6 +627,7 @@ class Setup:
 
     dewar_psi: float = 100.0
     """LOX dewar pressure [psig] -- what pushes a cryogen load into its tank.
+    Shown as psia, 114.7 here (ADR 0007).
 
     The stand fills from a ~100 psig dewar (operator, 2026-10-05). The dewar
     and its fill line are GSE and not on the drawing yet, so they are this
@@ -854,7 +861,7 @@ class Setup:
     bottle_volume_L: float = 4.6871
     """Water volume of a pressurant bottle the drawing gives none [L]: the
     stand's COPV. A 45 scf SCBA cylinder holds 52.8 mol of free air (70 degF,
-    14.696 psia); at 4500 psi air's Z is 1.1145, so the cylinder is 4.64 L, plus
+    14.696 psia); at 4,500 psia air's Z is 1.1145, so the cylinder is 4.64 L, plus
     3 in^3 of fittings (operator). It was a 44 L K-bottle, which blew LE4's
     bottle down 250 psi in a burn its real one loses thousands in. A value on
     the drawing always wins."""
@@ -1073,7 +1080,8 @@ def _trip_limit(node: object, safety_factor: float, assumptions: list[str]) -> f
         sf = max(float(safety_factor), 1.0)
         across = (float(burst.si) - ATMOSPHERE) / sf
         assumptions.append(
-            f"{label} trip limit: burst pressure / {sf:g} ({across / PSI:.0f} psig)."
+            f"{label} trip limit: burst pressure / {sf:g} across the wall "
+            f"({say(across + ATMOSPHERE, 1)})."
         )
         return across + ATMOSPHERE
     rated_at = params.get("MAWP")
@@ -2211,6 +2219,10 @@ class Session:
         self.trip: Trip | None = None
         #: Set when Fire ended by a tank running dry (see _burnout_check).
         self.burnout: str | None = None
+        #: Stand time of the last step the engine made thrust; None: never.
+        #: Fire with nothing lit is a cold flow, not a burn (_burnout_check,
+        #: _notes).
+        self._lit_at: float | None = None
         #: Stand time the current state was entered at (command_state).
         self._state_since = 0.0
         self.t = 0.0
@@ -2654,7 +2666,7 @@ class Session:
                     f"{label} is ground support: it starts loaded, "
                     f"{loaded:.2f} kg ({self.setup.full_fraction:.0%} of its "
                     f"{litres * 1e3:.1f} L, Setup), at "
-                    + (f"its drawn {psig(held):.0f} psig." if dewar else "atmosphere.")
+                    + (f"its drawn {say(held, 1)}." if dewar else "atmosphere.")
                 )
 
         for node in self.model.diagram.nodes:
@@ -4508,11 +4520,11 @@ class Session:
         rate = wanted / max(span or self.setup.supply_press_s, 1e-3)
         h_cart = float(sim.tank.gas.get("h", p=target, T=self.setup.fill_supply_T))
         note = (
-            f"{sim.label} is held at its drawn {psig(target):.0f} psig by "
+            f"{sim.label} is held at its drawn {say(target, 1)} by "
             f"{pressing[0]} (not on the drawing; Setup supply_press_s "
             f"{self.setup.supply_press_s:g} s)."
             if pressing[0].startswith("its ")
-            else f"{sim.label} is pressed to its drawn {psig(target):.0f} psig while "
+            else f"{sim.label} is pressed to its drawn {say(target, 1)} while "
             f"{pressing[0]} is open, by the cart's press line (not on the "
             f"drawing; Setup supply_press_s {self.setup.supply_press_s:g} s)."
         )
@@ -4994,6 +5006,8 @@ class Session:
             if node not in held:
                 self._trapped[node] = value
         self.t += dt
+        if chamber is not None and chamber.thrust > 0.0:
+            self._lit_at = self.t
         self._check_limits()
         self._burnout_check()
         self._record_solver(couplings_done)
@@ -5494,11 +5508,71 @@ class Session:
         # T+ from Fire, not the stand clock: "T+302.7 s" after a 3.5 s burn
         # read as a five-minute one.
         lit = self.t - self._state_since
+        names = ", ".join(sim.label for sim in dry)
+        fired = self.lit_this_state
         self.command_state("Vent")
-        self.burnout = (
-            f"Burnout at T+{lit:.2f} s: {', '.join(sim.label for sim in dry)} ran "
-            "dry, so the sequence went to Vent."
-        )
+        # A tank drained through an engine that never lit, or with no engine
+        # on the stand, is not a burnout: "Burnout" there read as a burn that
+        # never happened (D-10), and the pad guide counted it as one.
+        if fired:
+            self.burnout = (
+                f"Burnout at T+{lit:.2f} s: {names} ran dry, so the sequence "
+                "went to Vent."
+            )
+        elif self.model.engine is None:
+            self.burnout = (
+                f"Flow test, no engine: {names} ran dry at T+{lit:.2f} s, so the "
+                "sequence went to Vent."
+            )
+        else:
+            self.burnout = (
+                f"Not lit: {names} ran dry at T+{lit:.2f} s on a cold flow, so "
+                "the sequence went to Vent."
+            )
+
+    @property
+    def lit_this_state(self) -> bool:
+        """Whether the engine has made thrust since the present state began."""
+        return self._lit_at is not None and self._lit_at > self._state_since
+
+    def _fire_notes(self) -> list[str]:
+        """What Fire is actually doing, and what an abort's row leaves open.
+
+        Fire with nothing lit is a cold flow: tanks too low to start the
+        engine push propellant through it at a few psi and no thrust, and the
+        console called that "Burning" for as long as anyone let it (D-10).
+        An abort the stand's table writes with a main open keeps feeding the
+        engine; the twin does what the DAQ would (NEEDS-REPAIR.md), and says
+        so where the operator is looking, with where to fix it (D-18).
+        """
+        out: list[str] = []
+        held = self.t - self._state_since
+        if self.state == "Fire" and held > COLD_FLOW_S and not self.lit_this_state:
+            tanks = ", ".join(
+                f"{sim.label} {say(sim.pressure)}"
+                for k, sim in self.tanks.items()
+                if k in self.vehicle_tanks
+            )
+            out.append(
+                "Flow test, no engine on this stand: nothing burns."
+                if self.model.engine is None
+                else "Not lit: cold flow. The engine makes no thrust at these "
+                f"tank pressures ({tanks}); abort and press the tanks first."
+            )
+        if self.machine.is_abort(self.state):
+            positions = self.machine.positions.get(self.state, {})
+            mains = sorted(
+                a
+                for a in self.machine.actuators
+                if "main" in a.lower() and positions.get(a)
+            )
+            if mains:
+                out.append(
+                    f"{self.state} leaves {' and '.join(mains)} open: the "
+                    "stand's state table says so. Fix the row on the State "
+                    "machine tab."
+                )
+        return out
 
     def _check_limits(self) -> None:
         """Trip the stand if a vessel is over the pressure the drawing rates it for.
@@ -5512,38 +5586,32 @@ class Session:
         """
         if self.tripped:
             return
-        for sim in self.tanks.values():
-            if sim.mawp > 0.0 and sim.pressure > sim.mawp:
-                self.trip = Trip(
-                    sim.id, sim.label, "tank", self.t, sim.pressure, sim.mawp
-                )
-                self.tripped = (
-                    f"{sim.label} reached {psig(sim.pressure):.0f} psig against a "
-                    f"{psig(sim.mawp):.0f} psig MAWP. The tank would have failed. "
-                    "Reset the stand and start over."
-                )
-                return
-        for bottle in self.bottles.values():
-            if bottle.mawp > 0.0 and bottle.pressure > bottle.mawp:
-                self.trip = Trip(
-                    bottle.id,
-                    bottle.label,
-                    "bottle",
-                    self.t,
-                    bottle.pressure,
-                    bottle.mawp,
-                )
-                self.tripped = (
-                    f"{bottle.label} reached {psig(bottle.pressure):.0f} psig against a "
-                    f"{psig(bottle.mawp):.0f} psig MAWP. The bottle would have failed. "
-                    "Reset the stand and start over."
-                )
-                return
+        # The vessel furthest over, not the first one looked at: two tanks
+        # primed over MAWP together named the fuel tank at 935.7 psia while
+        # the LOX tank sat at 963.5 (D-33).
+        over = [
+            (sim.pressure / sim.mawp, sim.id, sim.label, "tank", sim.pressure, sim.mawp)
+            for sim in self.tanks.values()
+            if sim.mawp > 0.0 and sim.pressure > sim.mawp
+        ] + [
+            (b.pressure / b.mawp, b.id, b.label, "bottle", b.pressure, b.mawp)
+            for b in self.bottles.values()
+            if b.mawp > 0.0 and b.pressure > b.mawp
+        ]
+        if not over:
+            return
+        _, vessel, label, kind, pressure, mawp = max(over, key=lambda o: o[0])
+        self.trip = Trip(vessel, label, kind, self.t, pressure, mawp)
+        self.tripped = (
+            f"{label} reached {say(pressure, 1)} against a {say(mawp, 1)} MAWP. "
+            f"The {kind} would have failed. Reset the stand and start over."
+        )
 
     def _notes(self) -> list[str]:
         out: list[str] = []
         if self.burnout and self.state == "Vent":
             out.append(self.burnout)
+        out.extend(self._fire_notes())
         for sim in self.tanks.values():
             if sim.chilling:
                 out.append(
@@ -5604,7 +5672,7 @@ class Session:
             if p_crit > 0.0 and sim.pressure > 0.97 * p_crit:
                 out.append(
                     f"{sim.label} is at its propellant's critical pressure "
-                    f"({p_crit / PSI - 14.7:.0f} psig) and the model can go no "
+                    f"({say(p_crit)}) and the model can go no "
                     "higher. The drawing has no relief valve; a real tank would "
                     "have lifted one long ago. Vent it."
                 )
@@ -5645,7 +5713,7 @@ class Session:
                 )
             elif bottle.pressure < LOW_BOTTLE * bottle.target:
                 out.append(
-                    f"{bottle.label} is down to {bottle.pressure / PSI:.0f} psi, "
+                    f"{bottle.label} is down to {say(bottle.pressure)}, "
                     f"{bottle.fraction * 100:.0f}% of what it was filled to."
                 )
         return out

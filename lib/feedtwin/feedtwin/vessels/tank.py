@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from feedtwin.model.pressure import say
 from feedtwin.props import Fluid
 from feedtwin.props.errors import PropertyError
 from feedtwin.vessels.collapse import (
@@ -530,7 +531,7 @@ class Tank:
         phase = self.gas.phase(p=p_gas, T=T_gas)
         if phase.is_liquid_like:
             raise ValueError(
-                f"pressurant {self.gas.name} at {p_gas / 1e5:.3g} bar and "
+                f"pressurant {self.gas.name} at {say(p_gas, 1)} and "
                 f"{T_gas:.4g} K is a liquid ({phase.value}); an ullage holds gas"
             )
         rho_g = self.gas.get("rho", p=p_gas, T=T_gas)

@@ -13,7 +13,7 @@ import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 
 const SAVE =
-  'rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:opacity-40';
+  'rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-40';
 
 export function HookupSaveBar({ compact = false }: { compact?: boolean }) {
   const hookup = useHookup();

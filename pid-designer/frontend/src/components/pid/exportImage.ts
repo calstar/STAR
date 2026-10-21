@@ -26,15 +26,53 @@ export interface SheetMeta {
   date?: Date;
 }
 
+/** Whose drawing it is, in the exported title block. */
+export const PROJECT = 'STAR';
+
+export interface ExportOptions {
+  /**
+   * White paper and dark ink, whatever the screen is set to. A sheet taken in
+   * the dark theme came out as a black page: fine on a screen, a waste of a
+   * cartridge and unreadable photocopied. See `onPaper`.
+   */
+  print?: boolean;
+}
+
 const PAD = 48;
 const BLOCK_H = 56;
 /** Pixels per flow unit. Two gives a print that survives being zoomed. */
 const SCALE = 2;
 
-const cssVar = (name: string, fallback: string) =>
-  getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+// Read off the canvas itself, not the document: for a print the canvas alone
+// is put on paper (`onPaper`), and its colours are the ones the sheet is in.
+const cssVar = (el: Element, name: string, fallback: string) =>
+  getComputedStyle(el).getPropertyValue(name).trim() || fallback;
 
-const BG = () => cssVar('--color-bg-primary', '#0a0a0a');
+const BG = (el: Element) => cssVar(el, '--color-bg-primary', '#0a0a0a');
+
+/**
+ * Take a shot of the canvas in the light theme, and put it back after.
+ *
+ * The theme is custom properties (tokens.css), and an element marked
+ * `data-theme="light"` takes the light ones for everything inside it -- so the
+ * canvas goes onto paper without the rest of the page changing. React Flow
+ * colours its own chrome by a `dark`/`light` class on the same element, which
+ * is swapped with it. The shot reads the computed styles of the live canvas,
+ * so the canvas is light for as long as the shot takes and no longer.
+ */
+async function onPaper<T>(flow: HTMLElement, print: boolean, shoot: () => Promise<T>): Promise<T> {
+  if (!print) return shoot();
+  const had = flow.dataset.theme;
+  const dark = flow.classList.contains('dark');
+  flow.dataset.theme = 'light';
+  if (dark) flow.classList.replace('dark', 'light');
+  try {
+    return await shoot();
+  } finally {
+    if (had === undefined) delete flow.dataset.theme; else flow.dataset.theme = had;
+    if (dark) flow.classList.replace('light', 'dark');
+  }
+}
 
 /**
  * How long a render may take before it is called off, so the menu cannot say
@@ -128,29 +166,37 @@ const notChrome = (el: HTMLElement) =>
  * SVG fires `onload` in a millisecond. Drawing it onto a canvas of our own
  * is also where the title block goes, so nothing is lost by owning the step.
  */
-export async function exportPng(flow: HTMLElement, nodes: Node[], meta: SheetMeta): Promise<Blob> {
+export async function exportPng(flow: HTMLElement, nodes: Node[], meta: SheetMeta, opts: ExportOptions = {}): Promise<Blob> {
   const f = frame(flow, nodes);
-  const url = await within(toSvg(f.viewport, {
-    backgroundColor: BG(), width: f.width, height: f.height, style: f.style, filter: notChrome,
-  }), 'rendering the drawing');
+  // The colours too are taken while the canvas is on paper: the title block
+  // and the sheet behind the drawing are drawn after the shot, here.
+  const { url, ink } = await onPaper(flow, !!opts.print, async () => ({
+    url: await within(toSvg(f.viewport, {
+      backgroundColor: BG(flow), width: f.width, height: f.height, style: f.style, filter: notChrome,
+    }), 'rendering the drawing'),
+    ink: inkOf(flow),
+  }));
   const img = await within(load(url), 'decoding the drawing');
   const canvas = document.createElement('canvas');
   canvas.width = f.width;
   canvas.height = f.height + BLOCK_H * SCALE;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = BG();
+  ctx.fillStyle = ink.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0);
-  drawTitleBlock(ctx, canvas.width, f.height, meta);
+  drawTitleBlock(ctx, canvas.width, f.height, meta, ink);
   return new Promise((resolve, reject) =>
     canvas.toBlob(b => (b ? resolve(b) : reject(new Error('could not encode PNG'))), 'image/png'));
 }
 
-export async function exportSvg(flow: HTMLElement, nodes: Node[], meta: SheetMeta): Promise<Blob> {
+export async function exportSvg(flow: HTMLElement, nodes: Node[], meta: SheetMeta, opts: ExportOptions = {}): Promise<Blob> {
   const f = frame(flow, nodes);
-  const url = await toSvg(f.viewport, {
-    backgroundColor: BG(), width: f.width, height: f.height, style: f.style, filter: notChrome,
-  });
+  const { url, ink } = await onPaper(flow, !!opts.print, async () => ({
+    url: await toSvg(f.viewport, {
+      backgroundColor: BG(flow), width: f.width, height: f.height, style: f.style, filter: notChrome,
+    }),
+    ink: inkOf(flow),
+  }));
   // `toSvg` hands back a data URL of an <svg> wrapping a foreignObject. The
   // title block is appended as plain SVG below it, and the sheet grown to fit.
   const svgText = decodeURIComponent(url.replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
@@ -159,7 +205,7 @@ export async function exportSvg(flow: HTMLElement, nodes: Node[], meta: SheetMet
   const total = f.height + BLOCK_H * SCALE;
   svg.setAttribute('height', String(total));
   svg.setAttribute('viewBox', `0 0 ${f.width} ${total}`);
-  svg.appendChild(titleBlockSvg(doc, f.width, f.height, meta));
+  svg.appendChild(titleBlockSvg(doc, f.width, f.height, meta, ink));
   const out = new XMLSerializer().serializeToString(svg);
   return new Blob([out], { type: 'image/svg+xml;charset=utf-8' });
 }
@@ -186,22 +232,36 @@ export function titleRows(meta: SheetMeta): [string, string][] {
   ];
 }
 
-// Read at export time, not module scope, so a title block drawn after a
-// theme toggle always matches what is on screen right now rather than
-// whatever theme happened to be active when this module first loaded.
-const INK = () => cssVar('--color-text-primary', '#f2f2f2');
-const MUTED = () => cssVar('--color-text-muted', '#737373');
-const RULE = () => cssVar('--color-border', '#2e2e2e');
+/**
+ * The exported block's rows: whose drawing it is first, then the rest. On
+ * screen the corner of the sheet leaves the project out -- there it is the
+ * app's own -- but a printout travels without the app round it.
+ */
+export function sheetRows(meta: SheetMeta): [string, string][] {
+  return [['PROJECT', PROJECT], ...titleRows(meta)];
+}
 
-function drawTitleBlock(ctx: CanvasRenderingContext2D, width: number, top: number, meta: SheetMeta) {
+interface Ink { bg: string; ink: string; muted: string; rule: string }
+
+// Read at export time, not module scope, so a title block drawn after a
+// theme toggle always matches the sheet it is drawn on rather than whatever
+// theme happened to be active when this module first loaded.
+const inkOf = (el: Element): Ink => ({
+  bg: BG(el),
+  ink: cssVar(el, '--color-text-primary', '#f2f2f2'),
+  muted: cssVar(el, '--color-text-muted', '#737373'),
+  rule: cssVar(el, '--color-border', '#2e2e2e'),
+});
+
+function drawTitleBlock(ctx: CanvasRenderingContext2D, width: number, top: number, meta: SheetMeta, c: Ink) {
   const h = BLOCK_H * SCALE;
-  ctx.strokeStyle = RULE();
+  ctx.strokeStyle = c.rule;
   ctx.lineWidth = SCALE;
   ctx.beginPath();
   ctx.moveTo(0, top + 0.5);
   ctx.lineTo(width, top + 0.5);
   ctx.stroke();
-  const rows = titleRows(meta);
+  const rows = sheetRows(meta);
   const cell = width / rows.length;
   rows.forEach(([label, value], i) => {
     const x = i * cell + 16 * SCALE;
@@ -211,16 +271,16 @@ function drawTitleBlock(ctx: CanvasRenderingContext2D, width: number, top: numbe
       ctx.lineTo(i * cell + 0.5, top + h);
       ctx.stroke();
     }
-    ctx.fillStyle = MUTED();
+    ctx.fillStyle = c.muted;
     ctx.font = `${9 * SCALE}px ui-monospace, Menlo, monospace`;
     ctx.fillText(label, x, top + 18 * SCALE);
-    ctx.fillStyle = INK();
-    ctx.font = `${i === 0 ? 'bold ' : ''}${13 * SCALE}px ui-monospace, Menlo, monospace`;
+    ctx.fillStyle = c.ink;
+    ctx.font = `${label === 'DRAWING' ? 'bold ' : ''}${13 * SCALE}px ui-monospace, Menlo, monospace`;
     ctx.fillText(value, x, top + 40 * SCALE);
   });
 }
 
-function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMeta): Element {
+function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMeta, c: Ink): Element {
   const NS = 'http://www.w3.org/2000/svg';
   const g = doc.createElementNS(NS, 'g');
   const h = BLOCK_H * SCALE;
@@ -228,7 +288,7 @@ function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMet
     const l = doc.createElementNS(NS, 'line');
     l.setAttribute('x1', String(x1)); l.setAttribute('y1', String(y1));
     l.setAttribute('x2', String(x2)); l.setAttribute('y2', String(y2));
-    l.setAttribute('stroke', RULE()); l.setAttribute('stroke-width', String(SCALE));
+    l.setAttribute('stroke', c.rule); l.setAttribute('stroke-width', String(SCALE));
     g.appendChild(l);
   };
   const text = (x: number, y: number, s: string, size: number, fill: string, bold = false) => {
@@ -242,13 +302,13 @@ function titleBlockSvg(doc: Document, width: number, top: number, meta: SheetMet
     g.appendChild(t);
   };
   line(0, top, width, top);
-  const rows = titleRows(meta);
+  const rows = sheetRows(meta);
   const cell = width / rows.length;
   rows.forEach(([label, value], i) => {
     const x = i * cell + 16 * SCALE;
     if (i > 0) line(i * cell, top, i * cell, top + h);
-    text(x, top + 18 * SCALE, label, 9, MUTED());
-    text(x, top + 40 * SCALE, value, 13, INK(), i === 0);
+    text(x, top + 18 * SCALE, label, 9, c.muted);
+    text(x, top + 40 * SCALE, value, 13, c.ink, label === 'DRAWING');
   });
   return g;
 }

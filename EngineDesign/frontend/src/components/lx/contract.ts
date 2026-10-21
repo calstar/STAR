@@ -101,7 +101,7 @@ export interface Network {
 
 // ------------------------------------------------------------------ 3. result.diagnostics
 
-export interface LadderElement { id: string; label: string; kind: string; dp_psi: Col; share?: Col }
+export interface LadderElement { id: string; label: string; kind: string; dp_psi: Col; share?: Col; from?: string; to?: string }
 export interface LadderSide { elements: LadderElement[]; total_psi: Col }
 export interface Ladder extends BlockBase { t: number[]; ox?: LadderSide; fuel?: LadderSide }
 
@@ -184,7 +184,15 @@ export interface HardwareDiag extends BlockBase {
     schmucker_pe_sep_psia?: Col; flag?: boolean; min_ratio?: number | null; t_min?: number | null;
   } | null;
   isp?: { ideal_s?: Col; cstar_loss_s?: Col; nozzle_loss_s?: Col; delivered_s?: Col } | null;
-  soak?: { available?: boolean; peak_K?: number | null; t_peak_s?: number | null; station?: string | null; duration_s?: number | null; basis?: string } | null;
+  soak?: {
+    available?: boolean; peak_K?: number | null; t_peak_s?: number | null; t_95_s?: number | null; station?: string | null;
+    duration_s?: number | null; basis?: string;
+    /** The outer face only approaches its equilibrium (both faces adiabatic): no peak time to quote. */
+    asymptotic?: boolean;
+    interface_peak_K?: number | null; t_interface_peak_s?: number | null; interface_station?: string | null;
+    stations?: { station: string; kind?: string; T_back_peak_K?: number; t_back_peak_s?: number; t_back_95_s?: number;
+                 T_interface_peak_K?: number; t_interface_peak_s?: number }[];
+  } | null;
   heatmap?: string;
 }
 
@@ -214,6 +222,9 @@ export interface StartDiag extends BlockBase {
 export interface ShutdownDiag extends BlockBase { first_dry?: 'ox' | 'fuel' | string; mode?: string; tail_mr_max?: number | null }
 
 export interface WaterHammerRow {
+  /** False when the drawing does not give this line's numbers; `error` says which. */
+  available?: boolean;
+  error?: string;
   line: string;
   side?: Side3 | null;
   closure_s?: number | null;

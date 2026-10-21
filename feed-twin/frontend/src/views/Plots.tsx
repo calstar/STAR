@@ -8,12 +8,27 @@
  */
 
 import { useMemo, useState } from 'react';
-import { channelColor, fixed, sessionHistory } from '../api';
+import { channelColor, channelPalette, fixed, sessionHistory } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
+import { PRESSURE_UNIT, isPressureChannel, toPsia, unitLabel } from '../lib/pressure';
 import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
 
-const PLOTTED = ['psig', 'K'];
+/** What a channel plots in, as a person reads it: pressure (gauge on the
+ *  wire, psia here) or temperature. Thrust, O/F and flows are the Engine
+ *  page's. */
+const shownUnit = (c: { unit?: string }) => (isPressureChannel(c) ? PRESSURE_UNIT : unitLabel(c.unit ?? ''));
+/** A channel's samples, in its shown unit. */
+const shownValues = (c: { unit?: string; values: number[] }) =>
+  isPressureChannel(c) ? c.values.map(toPsia) : c.values;
+
+const PLOTTED = [PRESSURE_UNIT, 'K'];
+
+/** A temperature channel the twin has nothing to read for: the node its
+ *  thermocouple sits on carries no temperature, and the wire sends 0 K --
+ *  which no sensor reads. Plotted, it was a flat line at absolute zero. */
+const unread = (c: { unit?: string; values: number[] }) =>
+  !isPressureChannel(c) && c.unit === 'K' && c.values.every((v) => !(v > 0));
 
 export function Plots() {
   const {
@@ -38,7 +53,7 @@ export function Plots() {
   const [showOff, setShowOff] = useState(false);
   const eventsKey = (result?.events ?? []).map((e) => `${e.t}:${e.label}`).join('|');
   const marks = useMemo(() => result?.events ?? [], [eventsKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const offConsole = channels.filter((c) => PLOTTED.includes(c.unit || 'psig') && consoleHidden[c.id]);
+  const offConsole = channels.filter((c) => PLOTTED.includes(shownUnit(c)) && consoleHidden[c.id]);
 
   // The whole trace at full rate, not the plot's thinned copy: what someone
   // takes into a spreadsheet or a notebook.
@@ -51,10 +66,20 @@ export function Plots() {
     let state = states.length ? '' : live.state;
     const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
     const lines = [
-      ['t_s', 'state', ...cols.map((c) => `${nameOf(c.id, c.tag)} [${c.unit || 'psig'}]`)].map(quote).join(','),
+      ['t_s', 'state', ...cols.map((c) => `${nameOf(c.id, c.tag)} [${shownUnit(c)}]`)].map(quote).join(','),
       ...full.times_s.map((t, i) => {
         while (at < states.length && states[at].t <= t) state = states[at++].label;
-        return [t.toFixed(3), quote(state), ...cols.map((c) => String(c.values[i] ?? ''))].join(',');
+        // Pressures in psia, as the column says: 3 places keeps the wire's
+        // hundredths of a psi.
+        return [
+          t.toFixed(3),
+          quote(state),
+          ...cols.map((c) => {
+            const v = c.values[i];
+            if (v === undefined || v === null) return '';
+            return isPressureChannel(c) ? toPsia(v).toFixed(3) : String(v);
+          }),
+        ].join(',');
       }),
     ];
     const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
@@ -76,19 +101,24 @@ export function Plots() {
   // The engine's own channels (thrust, O/F, flows) are on the Engine page;
   // chamber pressure is a pressure and plots here with the tanks.
   const groups = PLOTTED.flatMap((unit) => {
-    const inUnit = channels.filter((c) => (c.unit || 'psig') === unit);
-    if (inUnit.length === 0) return [];
+    const inUnit = channels.filter((c) => shownUnit(c) === unit && !unread(c));
+    const blind = channels.filter((c) => shownUnit(c) === unit && unread(c));
+    if (inUnit.length === 0 && blind.length === 0) return [];
+    // One colour per line on a panel: the DAQ's own where it has one, else
+    // the next unused shade -- the tags alone gave every thermocouple blue.
+    const colors = channelPalette(inUnit.map((c) => c.tag));
     return [{
       unit,
-      label: unit === 'K' ? 'Temperature (K)' : 'Pressure (psig)',
+      label: unit === 'K' ? 'Temperature (K)' : `Pressure (${PRESSURE_UNIT})`,
       all: inUnit,
+      blind,
       shown: inUnit
         .filter((c) => !hidden[c.id])
         .map((c): Channel => ({
           key: c.id,
           tag: nameOf(c.id, c.tag),
-          values: c.values,
-          color: channelColor(c.tag),
+          values: shownValues(c),
+          color: colors[c.tag] ?? channelColor(c.tag),
         })),
     }];
   });
@@ -125,8 +155,8 @@ export function Plots() {
             {result.channels.map((c) => (
               <span key={c.id} className="font-mono text-xs tabular-nums">
                 <span style={{ color: channelColor(c.tag) }}>{nameOf(c.id, c.tag)}</span>{' '}
-                <span className="text-text">{fixed(c.values[0] ?? 0, 1)}</span>
-                <span className="text-gray-600"> {c.unit || 'psig'}</span>
+                <span className="text-text">{fixed(shownValues(c)[0] ?? 0, 1)}</span>
+                <span className="text-gray-600"> {shownUnit(c)}</span>
               </span>
             ))}
           </div>
@@ -136,16 +166,28 @@ export function Plots() {
           {groups.map((g) => (
             <div
               key={g.unit}
-              className="bg-card flex min-h-[220px] flex-1 flex-col rounded-lg border border-gray-800 p-3"
+              className={`bg-card flex flex-col rounded-lg border border-gray-800 p-3 ${g.all.length ? 'min-h-[220px] flex-1' : ''}`}
             >
-              <DaqPlot
-                times={result.times_s}
-                channels={g.shown}
-                yLabel={g.label}
-                fill={g.unit === 'psig'}
-                allowLog={g.unit === 'psig'}
-                marks={marks}
-              />
+              {g.all.length > 0 && (
+                <DaqPlot
+                  times={result.times_s}
+                  channels={g.shown}
+                  yLabel={g.label}
+                  xLabel="stand time (s)"
+                  fill={g.unit === PRESSURE_UNIT}
+                  allowLog={g.unit === PRESSURE_UNIT}
+                  floor={g.unit === PRESSURE_UNIT ? 0 : undefined}
+                  marks={marks}
+                />
+              )}
+              {g.blind.length > 0 && (
+                <p
+                  className="mt-1 font-mono text-[11px] text-[var(--ink-3)]"
+                  title="The twin models no temperature where these sit, so there is nothing to plot. The real stand's sensors read here."
+                >
+                  no sensor reading: {g.blind.map((c) => nameOf(c.id, c.tag)).join(', ')}
+                </p>
+              )}
             </div>
           ))}
         </div>

@@ -65,7 +65,14 @@ if [ -n "$PAR" ]; then
 fi
 gate "app: black"   bash -c "cd feed-twin && $BLACK --check backend tests"
 gate "app: mypy"    bash -c "cd feed-twin && $PY -m mypy backend --strict --ignore-missing-imports"
-gate "app: pytest"  bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider $PAR ${MARK[@]+-m 'not slow'}"
+# The fast tier skips slow tests (the timing test is one). The full tier runs the
+# wall-clock test on its own when the rest go across workers, as CI does.
+APP_M="${MARK[@]+not slow}"
+if [ -n "$PAR" ] && [ -z "$APP_M" ]; then APP_M="not timing"; fi
+gate "app: pytest"  bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider $PAR ${APP_M:+-m '$APP_M'}"
+if [ "$APP_M" = "not timing" ]; then
+  gate "app: timing" bash -c "cd feed-twin && $PY -m pytest tests -q -p no:cacheprovider -m timing"
+fi
 gate "physics benchmark" $PY scripts/physics_benchmark.py
 if command -v npm >/dev/null && [ -d feed-twin/frontend/node_modules ]; then
   gate "frontend: build" bash -c "cd feed-twin/frontend && npm run build --silent"

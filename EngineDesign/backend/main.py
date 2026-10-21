@@ -10,8 +10,10 @@ import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Ensure project root is in path for imports
 project_root = Path(__file__).resolve().parents[1]
@@ -60,11 +62,60 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Pintle Engine Design API",
-    description="FastAPI backend for LOX/RP-1 pintle injector rocket engine simulation",
+    title="Hotbench Engine API",
+    description="Liquid engine design and analysis: Forward Mode, Time-Series, the optimizer layers and Layer X",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+def _sentence(text: str) -> str:
+    t = " ".join(str(text).split())
+    if not t:
+        return "Something went wrong."
+    t = t[0].upper() + t[1:]
+    return t if t[-1] in ".!?" else t + "."
+
+
+def _one_problem(err: dict) -> str:
+    loc = [str(p) for p in err.get("loc", ()) if p not in ("body", "query", "path")]
+    field = " ".join(loc).replace("_", " ")
+    msg = str(err.get("msg") or "is not valid").removeprefix("Value error, ")
+    return f"{field}: {msg}" if field else msg
+
+
+def validation_sentence(errors: list) -> str:
+    """FastAPI's request-validation list ([{loc, msg, type}, ...]) as the one plain sentence every
+    error response carries (``{"detail": "<sentence>"}``). Every problem, each named by its field,
+    joined with '; ' -- as feed-twin's backend/errors.validation_sentence does. A sentence that
+    names only the first leaves the person fixing one field per round trip."""
+    said = "; ".join(p for p in (_one_problem(e) for e in errors) if p)
+    if not said:
+        return "Some of the values were not accepted."
+    return _sentence(said)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_as_sentence(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = list(exc.errors())
+    # ``errors`` keeps each problem's field path next to the sentence, so a page that has its own
+    # names for its fields (Layer X's rail: "Dome (psia)") can still say them in its own words.
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": validation_sentence(errors),
+            "errors": [{"loc": [str(p) for p in e.get("loc", ())], "msg": str(e.get("msg", ""))} for e in errors],
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_as_sentence(request: Request, exc: Exception) -> JSONResponse:
+    # A JSON sentence instead of Starlette's bare "Internal Server Error"; the traceback still goes
+    # to the server log.
+    first = (str(exc).strip().splitlines() or [""])[0][:200]
+    what = f"{type(exc).__name__}: {first}" if first else type(exc).__name__
+    return JSONResponse(status_code=500, content={"detail": f"The engine design server hit an error ({what})."})
 
 if 'layerx' in _optional_routers:
     # Refuses an oversized drawing upload before Starlette reads (and spools) its body.

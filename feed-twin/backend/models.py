@@ -3,6 +3,14 @@
 Ids are **drawing ids** in every frame. The solver works in network ids and the
 dashboard works in what somebody clicked on; the translation happens once, on
 the way out, so neither side has to know the other's naming.
+
+Pressures cross it **gauge** (ADR 0007): every ``*_psi`` and ``psig`` field,
+and a channel whose ``unit`` is ``psig``, is what the stand's transducers log,
+vented at 0.0 -- the same numbers run records, hookups and saved stands keep.
+The model underneath is absolute (feedtwin.session.gauge). A person is shown
+psia: the client adds the atmosphere for display and takes it off what is
+typed, and text the server writes for people (notes, trips, hovers) already
+says psia (feedtwin.session.gauge.say).
 """
 
 from __future__ import annotations
@@ -25,6 +33,15 @@ class ArtifactOut(BaseModel):
     #: An engine's EngineDesign card, as it describes itself; empty when the
     #: engine has none and fires feedtwin's simplified model.
     card: dict[str, object] = Field(default_factory=dict)
+    #: The bundled sample's drawing or engine, under whatever name: the stand
+    #: a new viewer opens on.
+    featured: bool = False
+    #: Why this drawing could not be built into a stand the last time somebody
+    #: tried, or "".
+    problem: str = ""
+    #: Other provenances of the same artifact: pulls that turned out to be a
+    #: drawing already in the library, newest first.
+    aliases: list[str] = Field(default_factory=list)
 
 
 class ImportResult(BaseModel):
@@ -307,7 +324,8 @@ class TankOut(BaseModel):
 class StudyCaseOut(BaseModel):
     """One study case: the stand with its changes, burned from T-0.
 
-    Pressures are gauge. ``t`` is from Fire, negative through the lead-in."""
+    Pressures are gauge on the wire (shown psia). ``t`` is from Fire, negative
+    through the lead-in."""
 
     label: str
     x: float | None = None
@@ -374,9 +392,9 @@ class SessionOut(BaseModel):
     reachable: list[str]
     converged: bool
     pressure_psi: dict[str, float]
-    """Instrument readings [psig]. Gauge, like the transducers on the stand: a
-    vented line reads 0.0. Every `*_psi` on this API is gauge; the model
-    underneath is absolute (see feedtwin.session.gauge.psig)."""
+    """Instrument readings [psig]. Gauge, like the transducers on the stand log
+    them: a vented line reads 0.0. Every `*_psi` on this API is gauge; the
+    model underneath is absolute, and the console shows psia (ADR 0007)."""
     temperature_K: dict[str, float] = Field(default_factory=dict)
     node_psi: dict[str, float]
     flow_kg_s: dict[str, float]
@@ -393,6 +411,9 @@ class SessionOut(BaseModel):
     #: Hash of the operator overrides this stand was built with. A drawing
     #: view whose hash differs is waiting on a Reset.
     overrides_hash: str = ""
+    # The drawing's own gas in the vehicle's bottle ("nitrogen", "helium"), before
+    # any swap (Setup.pressurant): what the top bar's gas switch marks as drawn.
+    gas: str = ""
 
 
 class StateEvent(BaseModel):
@@ -432,7 +453,8 @@ class BurnTankOut(BaseModel):
 class BurnOut(BaseModel):
     """One burn, totalled from the stand's history (``feedtwin.session.report``).
 
-    Chamber pressure is gauge, like every pressure on the console.
+    Chamber pressure is gauge, like every ``*_psi`` on this API; the Engine tab
+    shows it in psia (ADR 0007).
     """
 
     start_s: float

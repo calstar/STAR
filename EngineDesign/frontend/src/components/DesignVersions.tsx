@@ -24,12 +24,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { getConfig, loadConfigJson, type EngineConfig } from '../api/client';
+import { adoptLoadToken, getConfig, lastOwnLoadToken, loadConfigJson, type EngineConfig } from '../api/client';
+import { mayWrite, onFirstUse, tickAction } from '../lib/sessionGuard';
 import * as api from '../api/documents';
 import type { DocMeta, DocRef, MicroVersion, ReleaseVersion } from '../api/documents';
 import { designApi, keyOf, refOf } from '../api/documents';
 import { btn, dangerBtn, ghostBtn, primaryBtn, relativeTime } from '../lib/ui';
 import { readActive, writeActive } from '../lib/activeDesign';
+import { pickInitialDesign } from '../lib/initialDesign';
 import { applyUiState, snapshotUiState } from '../lib/designState';
 import { ChangeModal, CheckoutControl, CheckoutLostDialog, useCheckout } from '@stardesign-ui';
 import { Modal } from './ui';
@@ -65,18 +67,20 @@ function nextLabel(releases: ReleaseVersion[]): string {
   return `0.${maxMinor + 1}`;
 }
 
-async function fetchConfig(): Promise<{ config: EngineConfig; epoch: string | null } | null> {
+async function fetchConfig(): Promise<{ config: EngineConfig; epoch: string | null; token: string | null } | null> {
   const res = await getConfig();
-  return res.data?.config ? { config: res.data.config, epoch: res.data.session_epoch ?? null } : null;
+  return res.data?.config
+    ? { config: res.data.config, epoch: res.data.session_epoch ?? null, token: res.data.load_token ?? null }
+    : null;
 }
 
 /**
  * The design as it stands right now: the authoritative config from the backend
  * session, plus the panel state that has no home in it (lib/designState.ts).
  */
-async function fetchDoc(): Promise<{ doc: api.EngineDesignDoc; epoch: string | null } | null> {
+async function fetchDoc(): Promise<{ doc: api.EngineDesignDoc; epoch: string | null; token: string | null } | null> {
   const got = await fetchConfig();
-  return got ? { doc: { config: got.config, ui: snapshotUiState() }, epoch: got.epoch } : null;
+  return got ? { doc: { config: got.config, ui: snapshotUiState() }, epoch: got.epoch, token: got.token } : null;
 }
 
 interface Props {
@@ -89,9 +93,17 @@ interface Props {
   /** Render just the bar row, no background or width container -- for dropping
    *  inside a parent (the header) that already provides both. */
   inline?: boolean;
+  /** The backend answers. The bar opens a design only from then on: mounted before the backend
+   *  was up, its one listing failed and the app fell back to configs/default.yaml. Defaults to
+   *  true for a caller that does not track the connection. */
+  ready?: boolean;
+  /** Called once, when the first design (or, failing that, the session's own config) has been
+   *  handed to `onRestore` -- the app shows its tabs from then on, so nothing on them is ever
+   *  drawn from the config a fresh backend session starts with. */
+  onBooted?: () => void;
 }
 
-export function DesignVersions({ onRestore, onEditableChange, inline = false }: Props) {
+export function DesignVersions({ onRestore, onEditableChange, inline = false, ready = true, onBooted }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([]);
   const [activeRef, setActiveRef] = useState<DocRef | null>(null);
   const activeKey = activeRef ? keyOf(activeRef) : null;
@@ -104,6 +116,13 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   // session holding configs/default.yaml; autosaving that would write the default over the
   // design (it did, 2026-10-01). A changed epoch means: put the design back, save nothing.
   const sessionEpoch = useRef<string | null>(null);
+  // Whether anybody has used this tab since it opened -- any click, key or field, a panel's own
+  // included. Until then it saves only a config that changed under it, never the panel state it
+  // derived on load (lib/sessionGuard.ts onFirstUse, mayWrite).
+  const touched = useRef(false);
+  useEffect(() => onFirstUse(window, () => {
+    touched.current = true;
+  }), []);
 
   const [showChange, setShowChange] = useState(false);
   // Name of a design that was unshared out from under us, or null.
@@ -112,6 +131,11 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   // read only. Said out loud, because the alternative is the user carrying on
   // typing into a design that is no longer theirs to change.
   const [lapsed, setLapsed] = useState<string | null>(null);
+  // Set when another tab of yours loaded its design into the session this tab shares with it:
+  // this tab has stopped saving (lib/sessionGuard.ts) until it reopens its own design.
+  const [displaced, setDisplaced] = useState<string | null>(null);
+  // The session token the last "displaced" note was raised (or dismissed) for, so it is said once.
+  const displacedFor = useRef<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [micro, setMicro] = useState<MicroVersion[]>([]);
   const [releases, setReleases] = useState<ReleaseVersion[]>([]);
@@ -151,14 +175,17 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     [onRestore],
   );
 
+  // Resolves true when the design carried a config and it is now the session's.
   const openDoc = useCallback(
-    async (ref: DocRef) => {
+    async (ref: DocRef): Promise<boolean> => {
       loadedKey.current = null;
       try {
         const doc = await api.loadDocument(ref);
         if (doc.config && Object.keys(doc.config).length > 0) {
           await apply(doc);
+          return true;
         }
+        return false;
       } finally {
         loadedKey.current = keyOf(ref);
       }
@@ -194,7 +221,7 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const reloadAndFallBack = useCallback(async () => {
     const docs = await api.listDocuments();
     setDocuments(docs);
-    const next = docs.find((x) => x.mine) ?? docs[0];
+    const next = pickInitialDesign(docs, null);
     if (next) select(refOf(next));
     else {
       setActiveRef(null);
@@ -221,13 +248,18 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const currentDoc = useCallback(async (): Promise<api.EngineDesignDoc | null> => {
     const got = await fetchDoc();
     if (!got) return null;
-    if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current && lastSaved.current) {
-      const saved = JSON.parse(lastSaved.current) as api.EngineDesignDoc;
-      if (saved?.config && Object.keys(saved.config).length > 0) {
-        await apply(saved);
-        return saved;
-      }
+    const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
+    const haveSaved = !!saved?.config && Object.keys(saved.config).length > 0;
+    const action = tickAction({
+      held: true, ownEpoch: sessionEpoch.current, sessionEpoch: got.epoch,
+      ownToken: lastOwnLoadToken(), sessionToken: got.token, haveSaved,
+    });
+    if (action === 'restore') {
+      await apply(saved!);
+      return saved;
     }
+    // Another tab's design is in the session: this design is the one last saved, not that.
+    if (action === 'displaced' && haveSaved) return saved;
     return got.doc;
   }, [apply]);
 
@@ -239,16 +271,29 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   const openDocRef = useRef(openDoc);
   openDocRef.current = openDoc;
 
-  // Mount: list documents; seed one from the current (default) config if none.
+  // `onRestore` and `onBooted` for the bootstrap below, without making them dependencies.
+  const onRestoreRef = useRef(onRestore);
+  onRestoreRef.current = onRestore;
+  const onBootedRef = useRef(onBooted);
+  onBootedRef.current = onBooted;
+  // Set once the first design is open. A reconnect flips `ready` again, and re-running the
+  // bootstrap then would put the stored design back over whatever you had edited since.
+  const booted = useRef(false);
+
+  // Once the backend answers: list documents and open one (lib/initialDesign.ts says which);
+  // seed one from the current (default) config if there are none.
   useEffect(() => {
+    if (!ready || booted.current) return;
     let cancelled = false;
     (async () => {
+      let applied = false;
       try {
         const docs = await api.listDocuments();
         if (cancelled) return;
         if (docs.length === 0) {
           const fetched = await fetchDoc();
           sessionEpoch.current = fetched?.epoch ?? null;
+          adoptLoadToken(fetched?.token);
           const seed = fetched?.doc ?? undefined;
           const meta = await api.createDocument('Design 1', seed);
           if (cancelled) return;
@@ -259,36 +304,46 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
           if (seed) {
             lastDoc.current = seed;
             lastSaved.current = JSON.stringify(seed);
+            onRestoreRef.current(seed.config);
+            applied = true;
           }
           writeActive(ref);
-          return;
+        } else {
+          setDocuments(docs);
+          // Never someone else's design by default: openDoc pushes it into your session, so that
+          // would not be a merely cosmetic surprise (pickInitialDesign prefers your own).
+          const pick = refOf(pickInitialDesign(docs, readActive())!);
+          setActiveRef(pick);
+          writeActive(pick);
+          applied = await openDocRef.current(pick);
+          if (cancelled) return;
         }
-        setDocuments(docs);
-        const remembered = readActive();
-        // Prefer your own designs in the fallback. `docs` now includes designs
-        // shared with you, so docs[0] could drop someone else's design straight
-        // into your session -- and openDoc pushes it to the backend session, so
-        // that would not be a merely cosmetic surprise.
-        const match = remembered
-          ? docs.find((d) => keyOf(refOf(d)) === keyOf(remembered))
-          : undefined;
-        const pick = refOf(match ?? docs.find((d) => d.mine) ?? docs[0]);
-        setActiveRef(pick);
-        writeActive(pick);
-        void openDocRef.current(pick);
       } catch {
         loadedKey.current = null; // backend/history unavailable
       }
+      if (cancelled) return;
+      // No design could be opened (none stored with a config, or the store is down): the app
+      // still needs an engine to show, and the session's own is the only one there is.
+      if (!applied) {
+        const got = await fetchConfig();
+        if (cancelled) return;
+        if (got) {
+          sessionEpoch.current = sessionEpoch.current ?? got.epoch;
+          if (!lastOwnLoadToken()) adoptLoadToken(got.token);
+          onRestoreRef.current(got.config);
+        }
+      }
+      booted.current = true;
+      onBootedRef.current?.();
     })();
     return () => {
       cancelled = true;
     };
-    // Mount only. This bootstrap pushes the stored design into the backend
-    // session, so re-running it would revert whatever you had just edited --
-    // and since it ends in `onRestore`, a `[openDoc]` dependency turns that
-    // into a self-feeding loop the moment `onRestore` is not memoised
-    // upstream. Keeping it at [] means that can no longer happen here.
-  }, []);
+    // Only `ready`. This bootstrap pushes the stored design into the backend session, so
+    // re-running it would revert whatever you had just edited -- and since it ends in
+    // `onRestore`, an `[openDoc]` dependency turns that into a self-feeding loop the moment
+    // `onRestore` is not memoised upstream. `booted` makes it once per page load.
+  }, [ready]);
 
   // Autosave: poll the authoritative config and write the working copy on change.
   useEffect(() => {
@@ -296,24 +351,54 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
     const key = keyOf(activeRef);
     let stopped = false;
     const tick = async () => {
-      // No checkout, no autosave. The inputs are read-only in that state
-      // anyway; this is the belt to that pair of braces.
-      if (stopped || loadedKey.current !== key || !live.current.checkout.held) return;
-      const got = await fetchDoc();
+      if (stopped || loadedKey.current !== key) return;
+      const held = live.current.checkout.held;
+      // Read only, the tick only asks whether the session is still the one the design was loaded
+      // into -- the cheap call -- and leaves the design alone. A restart or an idle eviction
+      // (2 h) used to leave a read-only viewer on configs/default.yaml with the design's name
+      // still in the bar: Evaluate then reported a methalox engine as the ethalox one.
+      const got = held
+        ? await fetchDoc()
+        : await fetchConfig().then((c) => (c ? { doc: null, epoch: c.epoch, token: c.token } : null));
       if (!got) return;
-      if (got.epoch && sessionEpoch.current && got.epoch !== sessionEpoch.current) {
-        // The backend session was recreated under us and holds the default config, not this
-        // design. Put the last saved design back; never autosave the default over it.
-        const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
-        if (saved?.config && Object.keys(saved.config).length > 0) await applyRef.current(saved);
-        else sessionEpoch.current = got.epoch;
+      if (got.epoch && !sessionEpoch.current) {
+        sessionEpoch.current = got.epoch;
+        if (!lastOwnLoadToken()) adoptLoadToken(got.token);
+      }
+      const saved = lastSaved.current ? (JSON.parse(lastSaved.current) as api.EngineDesignDoc) : null;
+      const action = tickAction({
+        held,
+        ownEpoch: sessionEpoch.current,
+        sessionEpoch: got.epoch,
+        ownToken: lastOwnLoadToken(),
+        sessionToken: got.token,
+        haveSaved: !!saved?.config && Object.keys(saved.config).length > 0,
+      });
+      if (action === 'restore') {
+        // The session was recreated under us and holds the default config, not this design.
+        // Put the last saved design back; never autosave the default over it.
+        await applyRef.current(saved!);
         return;
       }
-      if (got.epoch && !sessionEpoch.current) sessionEpoch.current = got.epoch;
+      if (action === 'displaced') {
+        // Another tab of yours loaded its design into the session this tab shares. Loading
+        // ours back would only displace that one (and from a viewer, with a stale copy);
+        // autosaving would write that design into this one. Do neither; say so once.
+        sessionEpoch.current = got.epoch ?? sessionEpoch.current;
+        if (displacedFor.current !== got.token) {
+          displacedFor.current = got.token;
+          setDisplaced(live.current.active?.name ?? 'This design');
+        }
+        return;
+      }
+      // No checkout, no autosave. The inputs are read-only in that state
+      // anyway; this is the belt to that pair of braces.
+      if (action !== 'save' || !got.doc) return;
       const doc = got.doc;
       const serialized = JSON.stringify(doc);
       lastDoc.current = doc;
       if (serialized === lastSaved.current) return;
+      if (!mayWrite(doc, lastSaved.current, touched.current)) return;
       try {
         await api.autosaveDocument(activeRef, doc);
         lastSaved.current = serialized;
@@ -354,7 +439,8 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
   useEffect(() => {
     const flush = () => {
       // A beacon cannot read a rejection, so gate it here instead.
-      if (activeRef && loadedKey.current === keyOf(activeRef) && lastDoc.current && checkout.held) {
+      if (activeRef && loadedKey.current === keyOf(activeRef) && lastDoc.current && checkout.held
+        && mayWrite(lastDoc.current, lastSaved.current, touched.current)) {
         api.flushDocument(activeRef, lastDoc.current);
       }
     };
@@ -672,6 +758,34 @@ export function DesignVersions({ onRestore, onEditableChange, inline = false }: 
           inputs are read only. A checkout ends on its own after a while without a save,
           and someone else may have taken it since. Press <b>Take</b> to pick it back up -
           that reloads the design first, so you will see any changes made in the meantime.
+        </p>
+      </Modal>
+
+      {/* Another tab of yours loaded a different design into the session both tabs share.
+          This tab stopped saving rather than write that design into this one. */}
+      <Modal
+        open={displaced !== null}
+        onClose={() => setDisplaced(null)}
+        title="Another tab opened a different design"
+        footer={
+          <>
+            <button onClick={() => setDisplaced(null)} className={ghostBtn}>Not now</button>
+            <button
+              onClick={() => {
+                setDisplaced(null);
+                if (activeRef) void openDoc(activeRef);
+              }}
+              className={primaryBtn}
+            >
+              Reopen here
+            </button>
+          </>
+        }
+      >
+        <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
+          Your other tab loaded its design into the engine model this tab uses, so "{displaced}"
+          has stopped saving here and nothing was written to it. Reopen it to keep working in this
+          tab; that tab will then stop saving in turn.
         </p>
       </Modal>
 

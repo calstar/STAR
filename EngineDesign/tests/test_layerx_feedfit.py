@@ -114,3 +114,28 @@ def test_writing_the_fit_does_not_move_layer_x(burned, config, drawing):
     prep = prepare(_with(config, upd), None, drawing, LayerXSettings(drawing_id=drawing.id, tank_pressure_psia=STUDY_LOCKUP_PSIA, ack_gn2_condensation=True, replay=False))
     again = run_prepared(prep, replay=False)
     assert again["summary"]["total_impulse_Ns"] == pytest.approx(burned["summary"]["total_impulse_Ns"], rel=1e-9)
+
+
+def test_a_k0_that_is_not_a_loss_is_never_offered_for_the_design():
+    """LE4 (6), flown on helium: its LOX side is drawn with no line (tank, OM-R, injector) and the
+    regulator's outlet climbs as the bottle empties, so the fit came out at K0 -0.448, and the Record
+    page offered to write it into the design (D-58). A loss coefficient at or below zero is refused,
+    in words, side by side; a positive one is written as before."""
+    from engine.layerx.feedfit import _refusal
+
+    side = {"label": "LOX", "K0": -0.448, "K_line": -0.0118, "K_supply": -0.4359, "line_loss_psi": -0.33,
+            "line_loss_design_psi": 16.15, "tank_firing_psia": 550.77, "lockup_psia": 539.82, "K0_design": 0.643,
+            "mdot_kg_s": 1.86, "supply_deficit_psi": -10.95, "design_path": "K0"}
+    why = _refusal("LOX", side["K0"], side["K_line"], side["K_supply"], side["line_loss_psi"],
+                   side["line_loss_design_psi"], side["tank_firing_psia"], side["lockup_psia"])
+    assert why and "likely undrawn" in why and "550.8 against 539.8 psia" in why
+    with pytest.raises(ValueError, match="not a loss"):
+        design_update({"sides": {"oxidizer": side}, "drawing": {"name": "LE4 (6)", "sha256": "a" * 64}}, run_id="t")
+    ok = dict(side, K0=0.31, K_line=0.29, K_supply=0.02, line_loss_psi=7.0, tank_firing_psia=538.0)
+    assert _refusal("LOX", ok["K0"], ok["K_line"], ok["K_supply"], ok["line_loss_psi"], 16.15, 538.0, 539.82) is None
+    upd = design_update({"sides": {"oxidizer": ok}, "drawing": {"name": "LE4 (6)", "sha256": "a" * 64}}, run_id="t")
+    assert upd["feed_system"]["oxidizer"]["K0"] == 0.31
+
+
+def test_the_study_fit_is_writable(burned):
+    assert burned["feed_fit"]["writable"] is True and burned["feed_fit"]["write_refused"] is None

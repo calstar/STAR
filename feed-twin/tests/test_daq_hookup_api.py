@@ -252,7 +252,7 @@ def test_two_connectors_of_one_name_are_refused() -> None:
         params={"diagram": diagram},
         json={**first["hookup"], "channels": twice},
     )
-    assert response.status_code == 422 and "two connectors" in response.text
+    assert response.status_code == 422 and "two connectors" in response.text.lower()
     once = box(("sol12", 1, "LOX Main", "MVO"), ("sol12", 2, "Fuel Main", "MVF"))
     assert save(diagram, {**first["hookup"], "channels": once})["bound"] == {
         "LOX Main": "MVO",
@@ -651,3 +651,39 @@ def test_a_disconnect_is_not_operated() -> None:
     assert capped, "rocket only, the vent QD stands in for the cart's vent"
     refused = command(rocket.json()["id"], {"valve": sorted(capped)[0], "open": True})
     assert refused.status_code == 409 and "disconnect" in refused.text
+
+
+def test_a_stand_table_can_shut_the_mains_in_engine_abort() -> None:
+    """The DAQ's Engine Abort row leaves the mains open, and the twin runs it as
+    the DAQ reads it, saying so on the console (NEEDS-REPAIR.md, D-18). A
+    corrected table saved with the stand's hookup (the State machine tab) is
+    the one its stand runs: the abort shuts the mains and the note goes."""
+    diagram = upload("daq box purge.json")
+    first = get(diagram)
+    shipped = first["machine_shipped"]
+    mains = [a for a in shipped["open"]["Engine Abort"] if "main" in a.lower()]
+    assert mains, "the shipped Engine Abort row opens a main"
+
+    plain = open_stand(diagram)
+    _SESSIONS[plain["id"]].state = "Engine Abort"
+    notes = _SESSIONS[plain["id"]]._fire_notes()
+    assert any(n.startswith("Engine Abort leaves") for n in notes), notes
+
+    fixed = json.loads(json.dumps(shipped))
+    fixed["open"]["Engine Abort"] = [
+        a for a in shipped["open"]["Engine Abort"] if "main" not in a.lower()
+    ]
+    save(diagram, {**first["hookup"], "machine": fixed})
+    try:
+        opened = open_stand(diagram)
+        session = _SESSIONS[opened["id"]]
+        assert not any(session.machine.positions["Engine Abort"].get(a) for a in mains)
+        session.state = "Engine Abort"
+        assert not any(
+            n.startswith("Engine Abort leaves") for n in session._fire_notes()
+        )
+        assert not opened_valves(opened["id"], "Engine Abort") & {
+            first["bound"][a] for a in mains if a in first["bound"]
+        }
+    finally:
+        client.delete("/api/hookup", params={"diagram": diagram})

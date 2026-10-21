@@ -20,8 +20,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CHARGE_KNOB, DOME_KNOB, fixed, type LiveKnob, type StandSetup } from '../api';
 import Knob from '../components/Knob';
+import { PsiaInput } from '../components/PsiaInput';
 import { useStand } from '../stand';
 import { KnobsEditor } from '../components/KnobsEditor';
+import { PRESSURE_UNIT, daqReads, fmtP, fromPsia, isPressureChannel, psiaText, toPsia } from '../lib/pressure';
 
 /** The knobs turn continuously; the stand hears about it a few times a
  *  second. Enough to feel live, not enough to flood the command channel. */
@@ -88,16 +90,17 @@ function HookupKnob({ knob, disabled }: { knob: LiveKnob; disabled: boolean }) {
   const { turnKnob } = useStand();
   const commit = useCallback((v: number) => turnKnob(knob.id, v), [turnKnob, knob.id]);
   const [value, setValue] = useCommitted(knob.psig, commit);
+  // The knob turns in psia and snaps to its detents there; the stand keeps gauge.
   return (
     <span title={`Sets ${knob.regulators.join(', ') || 'nothing yet'}`}>
       <Knob
         label={knob.label}
-        value={value}
-        min={knob.low}
-        max={knob.high}
+        value={toPsia(value)}
+        min={toPsia(knob.low)}
+        max={toPsia(knob.high)}
         step={5}
-        unit="psig"
-        onChange={setValue}
+        unit={PRESSURE_UNIT}
+        onChange={(psia) => setValue(fromPsia(psia))}
         disabled={disabled}
       />
     </span>
@@ -121,9 +124,11 @@ export function Gse() {
   // and the dome knob never showed what it read.
   const reading = (pattern: RegExp) => {
     if (!live) return undefined;
-    const channel = history?.channels.find((c) => (c.unit || 'psig') === 'psig' && pattern.test(c.tag));
+    const channel = history?.channels.find((c) => isPressureChannel(c) && pattern.test(c.tag));
     const value = channel ? live.pressure_psi[channel.id] : undefined;
-    return channel && value !== undefined ? { label: nameOf(channel.id, channel.tag), value } : undefined;
+    return channel && value !== undefined
+      ? { label: nameOf(channel.id, channel.tag), value: toPsia(value), hint: daqReads(value) }
+      : undefined;
   };
   // What the dome knob does, in numbers: where the tanks lock up, from the
   // COPV charged to its fill setting to empty -- the range a burn sweeps.
@@ -145,9 +150,22 @@ export function Gse() {
   const sameRange =
     lockups.length > 1 &&
     lockups.every((t) => JSON.stringify(t.lockup_range_psi) === JSON.stringify(lockups[0].lockup_range_psi));
+  // A run tank whose lockup is over its MAWP. At T-0 (the COPV full, the low
+  // end) T-0 refuses -- it primed both tanks there and tripped at once; only
+  // as the COPV empties (the high end), a burn trips partway through.
+  const overAt = (t: (typeof lockups)[number], end: 0 | 1) =>
+    !ground.has(t.id) && t.mawp_psi != null && (t.lockup_range_psi as [number, number])[end] > t.mawp_psi;
+  const overAtT0 = lockups.filter((t) => overAt(t, 0));
+  const overLater = lockups.filter((t) => !overAt(t, 0) && overAt(t, 1));
+  // What the dome reads, against what the knob asks: a shut dome line holds
+  // the dome where it was and the knob changes nothing on the stand.
+  const domeReads = reading(/DOME|DP-|^DP|REG/i);
+  const domeHeld = domeReads !== undefined && Math.abs(domeReads.value - toPsia(dome)) > 10 ? domeReads : undefined;
+  // Lockup and the redline are worked out in gauge, as the wire gives them,
+  // and shown absolute.
   const range = (r: [number, number]) => (
     <>
-      <span className="text-text">{fixed(r[0], 0)}</span> → <span className="text-text">{fixed(r[1], 0)}</span>
+      <span className="text-text">{psiaText(r[0])}</span> → <span className="text-text">{psiaText(r[1])}</span>
     </>
   );
 
@@ -208,17 +226,21 @@ export function Gse() {
         <div className="bg-card flex flex-wrap items-start justify-around gap-8 rounded-xl border border-gray-800 px-6 py-5">
           <Knob
             label={chargeKnob?.label ?? 'COPV fill (built-in)'}
-            value={high}
-            min={0}
-            max={6000}
+            value={toPsia(high)}
+            min={toPsia(0)}
+            max={toPsia(6000)}
             step={50}
-            unit="psig"
-            onChange={setHigh}
+            unit={PRESSURE_UNIT}
+            onChange={(psia) => setHigh(fromPsia(psia))}
             disabled={locked}
-            redline={bottle?.mawp_psi ?? undefined}
+            redline={bottle?.mawp_psi != null ? toPsia(bottle.mawp_psi) : undefined}
             actual={
               bottle
-                ? { label: `${bottle.label} reads`, value: bottle.pressure_psi }
+                ? {
+                    label: `${bottle.label} reads`,
+                    value: toPsia(bottle.pressure_psi),
+                    hint: daqReads(bottle.pressure_psi),
+                  }
                 : reading(/HI|HIGH/i)
             }
           />
@@ -228,31 +250,33 @@ export function Gse() {
             <div className="flex flex-col items-center gap-1">
               <Knob
                 label={live?.knobs?.find((k) => k.id === DOME_KNOB)?.label ?? 'Dome control regulator'}
-                value={dome}
-                min={0}
-                max={1000}
+                value={toPsia(dome)}
+                min={toPsia(0)}
+                max={toPsia(1000)}
                 step={5}
-                unit="psig"
-                onChange={setDome}
+                unit={PRESSURE_UNIT}
+                onChange={(psia) => setDome(fromPsia(psia))}
                 disabled={locked}
-                redline={domeRedline}
+                redline={domeRedline !== undefined ? toPsia(domeRedline) : undefined}
                 actual={reading(/DOME|DP-|^DP|REG/i) ?? reading(/UP/i)}
               />
               {/* What the knob does: the dome sets where the tanks lock up,
                   less the regulator's supply effect from the COPV behind it. */}
               {lockups.length > 0 && (
                 <span
-                  className="font-mono text-[11px] tabular-nums text-text-muted"
+                  className={`font-mono text-[11px] tabular-nums ${
+                    overAtT0.length ? 'text-[var(--color-danger)]' : overLater.length ? 'text-[var(--color-warning)]' : 'text-text-muted'
+                  }`}
                   title={
                     `Where each tank's regulator locks up: dome + its spring bias, less its supply effect × the COPV pressure. ` +
-                    `The low number is with the COPV at its fill setting (${fixed(setup.copv_target, 0)} psig), what the tanks see at T-0; ` +
+                    `The low number is with the COPV at its fill setting (${fmtP(setup.copv_target)}), what the tanks see at T-0; ` +
                     `it climbs to the high number as the COPV blows down.` +
-                    lockups.map((t) => `\n${t.label}: ${fixed(t.lockup_psi ?? 0, 0)} psig now`).join('')
+                    lockups.map((t) => `\n${t.label}: ${fmtP(t.lockup_psi ?? 0)} now`).join('')
                   }
                 >
                   {sameRange ? (
                     <>
-                      lockup {range(lockups[0].lockup_range_psi as [number, number])} psig
+                      lockup {range(lockups[0].lockup_range_psi as [number, number])} {PRESSURE_UNIT}
                     </>
                   ) : (
                     lockups.map((t, i) => (
@@ -262,8 +286,31 @@ export function Gse() {
                       </span>
                     ))
                   )}
-                  {sameRange ? '' : ' psig'}
+                  {sameRange ? '' : ` ${PRESSURE_UNIT}`}
                   <span className="text-gray-600"> · full → empty COPV</span>
+                </span>
+              )}
+              {overAtT0.length > 0 && (
+                <span className="max-w-[360px] text-center font-mono text-[11px] text-[var(--color-danger)]">
+                  Over MAWP at T-0:{' '}
+                  {overAtT0
+                    .map((t) => `${t.label} ${fmtP((t.lockup_range_psi as [number, number])[0], 1)} > ${fmtP(t.mawp_psi as number, 1)}`)
+                    .join(', ')}
+                  . T-0 is off until the dome comes down.
+                </span>
+              )}
+              {overLater.length > 0 && (
+                <span className="max-w-[360px] text-center font-mono text-[11px] text-[var(--color-warning)]">
+                  Over MAWP as the COPV empties: {overLater.map((t) => `${t.label} (MAWP ${fmtP(t.mawp_psi as number, 1)})`).join(', ')}
+                  . A long burn trips the stand.
+                </span>
+              )}
+              {domeHeld && (
+                <span
+                  className="max-w-[360px] text-center font-mono text-[11px] text-text-muted"
+                  title="The dome is loaded through its dome line. Shut, it holds the dome where it was and the knob changes nothing on the stand; open the dome loader on the P&ID tab."
+                >
+                  Dome held at {fixed(domeHeld.value, 1)} {PRESSURE_UNIT}: the dome line is shut or still filling
                 </span>
               )}
             </div>
@@ -296,11 +343,25 @@ export function Gse() {
         >
           <Number_ label="COPV charge time" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
           <Number_ label="Fuel load time" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
-          <span title="What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. 0: a fixed-rate load over the LOX load time.">
-            <Number_ label="LOX dewar pressure" value={setup.dewar_psi} unit="psig" step={5} onChange={(dewar_psi) => set({ dewar_psi })} />
-          </span>
+          <label
+            className="flex flex-col gap-1"
+            title={`What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. ${fmtP(0, 1)} (vented): a fixed-rate load over the LOX load time.`}
+          >
+            <span className="caps text-[11px]">LOX dewar pressure</span>
+            <span className="flex items-baseline gap-1.5">
+              <PsiaInput
+                value={setup.dewar_psi}
+                step={5}
+                low={0}
+                onCommit={(dewar_psi) => set({ dewar_psi })}
+                ariaLabel="LOX dewar pressure"
+                className="w-24 rounded-md border border-gray-700 bg-black/60 px-2 py-1.5 font-mono text-sm tabular-nums text-white focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[11px] text-text-muted">{PRESSURE_UNIT}</span>
+            </span>
+          </label>
           {setup.dewar_psi > 0 ? (
-            <span title="Everything on the fill line that is not tube -- in practice how far the dewar valve is open. The stand tops out near 30 psig during the chill; on LE4 (6) 0.019 peaks at 57 psig, 0.013 at 38.">
+            <span title={`Everything on the fill line that is not tube -- in practice how far the dewar valve is open. The stand tops out near ${fmtP(30)} during the chill; on LE4 (6) 0.019 peaks at ${fmtP(57)}, 0.013 at ${fmtP(38)}.`}>
               <Number_ label="Dewar valve Cv" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
             </span>
           ) : (
@@ -308,7 +369,10 @@ export function Gse() {
           )}
           {lox && setup.dewar_psi > 0 ? (
             <span className="pb-1.5 font-mono text-[12px] tabular-nums text-text-muted">
-              {lox.label} {lox.pressure_psi.toFixed(1)} psig · pouring {(lox.fill_flow_g_s ?? 0).toFixed(1)} g/s
+              <span title={daqReads(lox.pressure_psi)}>
+                {lox.label} {fmtP(lox.pressure_psi, 1)}
+              </span>{' '}
+              · pouring {(lox.fill_flow_g_s ?? 0).toFixed(1)} g/s
               {lox.chilling ? ' · chilling' : ''}
             </span>
           ) : null}

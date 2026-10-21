@@ -20,6 +20,15 @@ export interface Artifact {
   /** An engine's EngineDesign card, as it describes itself; empty when the
    *  engine fires feedtwin's simplified model. */
   card?: EngineCardInfo | Record<string, never>;
+  /** The bundled sample's drawing or engine, under whatever name: the stand
+   *  a new viewer opens on. */
+  featured?: boolean;
+  /** Why this drawing could not be built into a stand the last time somebody
+   *  tried, or ''. */
+  problem?: string;
+  /** Other provenances of the same artifact: pulls that matched a drawing
+   *  already in the library. */
+  aliases?: string[];
 }
 
 export interface EngineCardInfo {
@@ -429,6 +438,9 @@ export interface SessionState {
   tripped?: string | null;
   /** Hash of the operator overrides this stand was built with. */
   overrides_hash?: string;
+  /** The gas in the vehicle's bottle by species ("nitrogen", "helium"), when
+   *  the server says: the top bar names it even when it is the drawing's. */
+  gas?: string;
 }
 
 /** One study case as the view writes it: the stand, with these changes.
@@ -501,13 +513,15 @@ export interface StudyRequestIn {
 }
 
 /** Where the study has got to, and the cases it has finished. */
-export const getStudy = () => json<StudyState>('/api/study');
+export const getStudy = (session = '') =>
+  json<StudyState>(`/api/study${session ? `?session=${encodeURIComponent(session)}` : ''}`);
 
 /** Start a run on the open stand. Poll `getStudy` for progress. */
 export const startStudy = (request: StudyRequestIn) => post<StudyState>('/api/study', request);
 
 /** Stop after the case running now, keeping the ones finished. */
-export const cancelStudy = () => post<StudyState>('/api/study/cancel', {});
+export const cancelStudy = (session = '') =>
+  post<StudyState>(`/api/study/cancel${session ? `?session=${encodeURIComponent(session)}` : ''}`, {});
 
 /** A session's trace, in the shape the plots read. */
 export interface RunResult {
@@ -519,25 +533,75 @@ export interface RunResult {
   balance: Balance | null;
 }
 
+/** What a refused request says, as one plain sentence.
+ *
+ *  The server sends `{"detail": "<sentence>"}`. An older server, or a
+ *  validation failure that slipped through, sends a list of objects (FastAPI's
+ *  `[{loc, msg, type}]`) or an object, and the screen showed "[object
+ *  Object]". Whatever arrives is flattened here, once, for every caller. */
+export function sayDetail(detail: unknown, fallback: string): string {
+  const one = (d: unknown): string => {
+    if (d === null || d === undefined) return '';
+    if (typeof d === 'string') return d.trim();
+    if (typeof d === 'number' || typeof d === 'boolean') return String(d);
+    if (Array.isArray(d)) return d.map(one).filter(Boolean).join('; ');
+    if (typeof d === 'object') {
+      const o = d as Record<string, unknown>;
+      const msg = one(o.msg ?? o.message ?? o.detail ?? '');
+      if (msg) {
+        // "body.dome: Input should be a number": where, then what.
+        const at = Array.isArray(o.loc) ? o.loc.filter((x) => x !== 'body' && x !== 'query').join('.') : '';
+        return at ? `${at}: ${msg}` : msg;
+      }
+      return '';
+    }
+    return '';
+  };
+  const text = one(detail);
+  if (!text) return fallback;
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/** A refused request: the sentence the server gave, and its status. */
+export class RequestError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) {
     // The server explains itself in `detail`; showing "422" instead throws that
     // away and leaves the operator with nothing to act on.
-    let detail = `${response.status} ${response.statusText}`;
+    let detail = `The server refused it (${response.status}${response.statusText ? ` ${response.statusText}` : ''}).`;
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = (await response.json()) as { detail?: unknown };
+      detail = sayDetail(body.detail, detail);
     } catch {
       /* body was not JSON; the status line is all there is */
     }
-    throw new Error(detail);
+    throw new RequestError(detail, response.status);
   }
   return (await response.json()) as T;
 }
 
 export const listArtifacts = (kind?: 'diagram' | 'engine') =>
   json<Artifact[]>(`/api/library${kind ? `?kind=${kind}` : ''}`);
+
+/** Put the bundled sample stand (the LE4 stand drawing, the team's ethalox
+ *  engine and its card) into the library. Idempotent: the library as it
+ *  stands afterwards. */
+export const loadSampleStand = () =>
+  json<Artifact[]>('/api/library/sample', { method: 'POST' }).catch((e: unknown) => {
+    // A server from before the sample was bundled has no such route.
+    if (e instanceof RequestError && (e.status === 404 || e.status === 405)) {
+      throw new Error('This twin has no sample stand to load: import a drawing from P&ID instead.');
+    }
+    throw e;
+  });
 
 export function importFile(
   kind: 'diagram' | 'engine',
@@ -958,11 +1022,13 @@ export const sessionSolver = (id: string, seconds = 300, maxPoints = 600) =>
 export const sessionRepro = (id: string) => json<Record<string, unknown>>(`/api/session/${id}/repro`);
 
 /** Every burn still in the stand's history, oldest first. */
-export const sessionBurns = (id: string) => json<Burns>(`/api/session/${id}/burns`);
+export const sessionBurns = (id: string, signal?: AbortSignal) =>
+  json<Burns>(`/api/session/${id}/burns`, { signal });
 
-/** The trace so far, in the shape the plots already read. */
-export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500) =>
-  json<RunResult>(`/api/session/${id}/history?seconds=${seconds}&max_points=${maxPoints}`);
+/** The trace so far, in the shape the plots already read. `signal` drops a
+ *  pull still in flight when the stand it asked about is replaced. */
+export const sessionHistory = (id: string, seconds = 300, maxPoints = 1500, signal?: AbortSignal) =>
+  json<RunResult>(`/api/session/${id}/history?seconds=${seconds}&max_points=${maxPoints}`, { signal });
 
 /** A channel's amber and red lines: the drawing's, where the backend found
  *  them (the vessel the transducer reads: its drawn operating pressure and
@@ -991,6 +1057,10 @@ export interface Tunable {
   /** For a choice: its values and labels. */
   choices?: { value: string; label: string }[];
   default: number | boolean | string;
+  /** A pressure kept gauge on the wire -- its value, bounds and default are
+   *  psig -- and shown and typed psia (lib/pressure.ts), snapped to `step` in
+   *  psia: the dome, the COPV charge, the dewar. */
+  gauge_wire?: boolean;
 }
 
 export const getTunables = () => json<Tunable[]>('/api/tunables');
@@ -1021,7 +1091,55 @@ export const CHANNEL_COLORS: Record<string, string> = {
   'Fuel flow': '#FF4500',
 };
 
-export const channelColor = (tag: string) => CHANNEL_COLORS[tag] ?? '#3498DB';
+/** Each leg's own shades, the DAQ's colour first: LOX blues, fuel reds, the
+ *  pressurant greens, the dome a violet. A stand whose tags are not the DAQ's
+ *  (LE4's OU-PT-R, FU-PT-R, PT-HP-1, DP-PT-R) still reads by leg, and two
+ *  channels on one leg get two shades of it, not one blue for everything. */
+const LEG_SHADES: Record<string, string[]> = {
+  lox: ['#38BDF8', '#4169E1', '#7DD3FC', '#1E90FF'],
+  fuel: ['#FF4500', '#CC0000', '#FB923C', '#F87171'],
+  gas: ['#ADFF2F', '#228B22', '#84CC16', '#4ADE80'],
+  dome: ['#C084FC', '#A855F7', '#E879F9'],
+  other: ['#F5D90A', '#2DD4BF', '#F472B6', '#A3A3A3', '#FDBA74', '#93C5FD'],
+};
+
+/** Which leg a transducer's tag reads, by the words tags are written in. */
+export function legOf(tag: string): keyof typeof LEG_SHADES {
+  const t = tag.toUpperCase();
+  if (/(^|[-_ ])(DP|DR|DOME)([-_ ]|$)|DOME/.test(t)) return 'dome';
+  if (/(^|[-_ ])(OX|OU|LOX|O2|OF)([-_ ]|\d|$)|LOX|OXID/.test(t)) return 'lox';
+  if (/(^|[-_ ])(FU|FF|ETH|FUEL|ETOH|RP|IPA)([-_ ]|\d|$)|FUEL|ETHANOL/.test(t)) return 'fuel';
+  if (/(^|[-_ ])(HP|HI|GN2|N2|HE|COPV|LP|REG|K|6K|2K)([-_ ]|\d|$)|GN2|COPV|HELIUM/.test(t)) return 'gas';
+  return 'other';
+}
+
+/** One channel's colour: the DAQ's for its own tags, else its leg's first
+ *  shade. For a set drawn together use `channelPalette`, which keeps them
+ *  apart. */
+export const channelColor = (tag: string) => CHANNEL_COLORS[tag] ?? LEG_SHADES[legOf(tag)][0];
+
+/** Colours for channels drawn together, by tag: the DAQ's where it has one,
+ *  otherwise the next unused shade of the channel's leg, then any unused
+ *  colour -- so no two lines on one plot share one. Stable for a given list. */
+export function channelPalette(tags: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const used = new Set<string>();
+  for (const tag of tags) {
+    const own = CHANNEL_COLORS[tag];
+    if (own && !used.has(own)) {
+      out[tag] = own;
+      used.add(own);
+    }
+  }
+  const spare = [...LEG_SHADES.other, ...Object.values(LEG_SHADES).flat()];
+  for (const tag of tags) {
+    if (out[tag]) continue;
+    const pick = [...LEG_SHADES[legOf(tag)], ...spare].find((c) => !used.has(c)) ?? channelColor(tag);
+    out[tag] = pick;
+    used.add(pick);
+  }
+  return out;
+}
 
 export const fixed = (value: number, places = 1) => {
   // A vented gauge reads 0, never "-0.0": the model's rounding noise around
