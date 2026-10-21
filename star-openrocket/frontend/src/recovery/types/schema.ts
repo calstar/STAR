@@ -293,6 +293,8 @@ export interface InputSources {
   massFromDesign: boolean
   /** When on, the lateral velocity magnitude + bearing are pulled from the ascent. */
   lateralFromDesign: boolean
+  /** When on, the Ejection & Pins burnout mass and drag follow the ascent. */
+  burnoutFromDesign: boolean
 }
 
 /** The ascent design's values offered to the recovery inputs. Null when there
@@ -305,6 +307,56 @@ export interface DesignSource {
   /** Horizontal ground speed at apogee (m/s) and the bearing it points toward. */
   lateralVelocity: number | null
   lateralBearing: number | null
+  /** Whole vehicle at burnout, kg: the Flight Dynamics run's, else the CAD
+   *  structure plus the spent motor (the same thing, without a run). */
+  burnoutMass: number | null
+  /** Whole-vehicle drag at burnout, N, from the Flight Dynamics run. */
+  burnoutDrag: number | null
+}
+
+/** Which descent the joint opens for. Only a `main` joint can feel the drogue's
+ *  opening load, and only with dual separation. */
+export type JointRole = 'drogue' | 'main' | 'other'
+
+/** One separation joint held by shear pins and opened by a charge. SI. */
+export interface UiJoint {
+  name: string
+  role: JointRole
+  /** Inner diameter the charge pushes on, m. */
+  bay_id: number
+  /** Free length the charge pressurises, m. */
+  bay_length: number
+  /** Everything forward of the joint, kg. */
+  m_forward: number
+  /** The pin chosen from the joint's options (a `GET /api/ejection/pins` key),
+   *  or null while undecided. UI-side: every option is sized regardless. */
+  pin: string | null
+}
+
+/** The avionics bay's static ports. SI. */
+export interface UiVent {
+  bay_id: number
+  bay_length: number
+  n_holes: number
+}
+
+/** The Ejection & Pins page. Saved with the design; sent as-is to
+ *  POST /api/ejection beside the wire config. */
+export interface EjectionInputs {
+  /** Whole vehicle at burnout, kg, and its drag there, N: drag separation. */
+  m_burnout: number
+  D_burnout: number
+  /** Pins hold the largest load by this factor, at their weakest. */
+  sf_hold: number
+  /** The charge shears the pins by this factor, at their strongest. */
+  sf_eject: number
+  /** A sealed bay keeps pad pressure to apogee. Off = the bay is vented. */
+  trapped_pressure: boolean
+  /** Drogue and main out of separate joints, so the drogue's opening load
+   *  pulls on the main joint. Off = single separation (cable cutter). */
+  dual_separation: boolean
+  joints: UiJoint[]
+  vent: UiVent
 }
 
 export interface UiConfig {
@@ -325,6 +377,8 @@ export interface UiConfig {
    *  the Drift tab but stored HERE, on the persisted config, so Full Flight sees it from
    *  the save file — never as a side effect of whether the Drift tab was opened. */
   airframeBound: 'axial' | 'broadside'
+  /** Shear pins, ejection charges and vent holes (the Ejection & Pins tab). */
+  ejection: EjectionInputs
 }
 
 // ============================================================================
@@ -571,4 +625,56 @@ export interface DriftResult {
   /** What the wind actually was at the ground in the run. */
   wind_ground: { speed: number; heading_deg: number }
   airframe_bound: string
+}
+
+// ============================================================================
+// EJECTION -- POST /api/ejection (backend/recovery/routers/ejection.py)
+// ============================================================================
+
+export interface PinSpec {
+  key: string
+  label: string
+  F_min: number
+  F_max: number
+  source: string
+}
+
+export interface JointResult {
+  name: string
+  role: JointRole
+  area: number
+  volume: number
+  F_drag: number
+  F_trapped: number
+  F_drogue: number
+  F_hold: number
+  governing: 'drag' | 'trapped' | 'drogue' | 'none'
+  /** One per catalog pin: how many it takes, and the charge that shears them. */
+  options: PinOption[]
+  warnings: string[]
+}
+
+export interface PinOption {
+  key: string
+  label: string
+  n_pins: number
+  hold_margin: number | null
+  P_eject: number
+  F_eject: number
+  m_bp: number
+  high_pressure: boolean
+}
+
+export interface EjectionResult {
+  joints: JointResult[]
+  vent: { d: number; d_64ths: number; volume: number; n_holes: number } | null
+  conditions: {
+    h_apogee: number
+    p_pad: number
+    p_apogee: number
+    m_descending: number
+    drogue: { F: number; basis: string; device: string; m_descending: number } | null
+  }
+  sources: { black_powder: string; vent: string }
+  warnings: string[]
 }

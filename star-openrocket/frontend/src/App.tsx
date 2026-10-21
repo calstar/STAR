@@ -318,6 +318,9 @@ export default function App() {
       massKg: manifest ? centreOfMass(parts).mass + (stability?.motor?.dryMass ?? 0) : null,
       lateralVelocity: flightDynResult?.lateralVelocityAtApogee ?? null,
       lateralBearing: flightDynResult?.lateralBearingAtApogee ?? null,
+      burnoutMass: flightDynResult?.burnoutMass
+        ?? (manifest ? centreOfMass(parts).mass + (stability?.motor?.dryMass ?? 0) : null),
+      burnoutDrag: flightDynResult?.burnoutDrag ?? null,
     }),
     [flightDynResult, manifest, parts, stability],
   )
