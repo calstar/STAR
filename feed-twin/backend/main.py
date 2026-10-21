@@ -1986,6 +1986,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         held=session.operator_held,
         tripped=session.tripped,
         overrides_hash=fingerprint(_applied(session.model)),
+        gas=_drawn_gas(session),
         tanks=[
             TankOut(
                 id=sim.id,
@@ -3575,6 +3576,37 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
             f"The burn that ended at t = {sample.t:.1f} s was not recorded "
             f"({type(exc).__name__}: {exc}); it is not in Runs."
         )
+
+
+_DRAWN_FLUIDS: dict[str, dict[str, str]] = {}
+
+
+def _drawn_gas(session: Session) -> str:
+    """The drawing's own gas in the vehicle's bottle (a cart's first if the
+    vehicle has none), before any swap (``Setup.pressurant``): read off the
+    drawing itself, since a swap to the gas already drawn changes nothing and
+    cannot be undone from the built stand. "" on a stand with no bottle."""
+    opened = _OPENED.get(session.id)
+    if not session.setup.pressurant or opened is None:
+        return _pressurant_of(session)
+    fluids = _DRAWN_FLUIDS.get(opened.diagram)
+    if fluids is None:
+        try:
+            payload = json.loads(library.read(opened.diagram).decode("utf-8"))
+            fluids = {
+                str(n.get("id")): str((n.get("data") or {}).get("fluid") or "").lower()
+                for n in payload.get("nodes", [])
+                if isinstance(n, dict)
+            }
+        except (LibraryError, ValueError):
+            fluids = {}
+        _DRAWN_FLUIDS[opened.diagram] = fluids
+    ground = set(session.ground)
+    for bottle in sorted(session.bottles.values(), key=lambda b: b.id in ground):
+        if fluids.get(bottle.id):
+            return fluids[bottle.id]
+        break
+    return _pressurant_of(session)
 
 
 def _pressurant_swap(pressurant: str) -> dict[str, str]:

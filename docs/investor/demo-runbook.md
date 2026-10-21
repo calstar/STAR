@@ -44,12 +44,14 @@ then prints:
    - **Hotbench Twin:** a fresh browser opens on **LE4 (6)** (the featured stand).
      The top bar should read `LE4 (6) · Ethalox 7200N Doublet`. If it shows another
      drawing, click **LE4 (6)** in the Library.
-   - **Hotbench Twin, GSE Controls, then Pressurant:** choose **Helium** (the hot-fire
-     gas). The top bar shows HELIUM.
+   - **Hotbench Twin, top bar:** click **HE** in the GN2 · | HE switch (the dot marks
+     the drawing's own gas, GN2). Click **GN2** to compare; each burn's run record
+     says which gas it ran on.
    - **Hotbench Twin, Console:** set the history window to **10 s**, and scroll so the
      **ENGINE** panel is in view. A 4 s burn is lost in a longer window.
    - **Hotbench Engine, Layer X:** check that **Drawing** says **LE4 (6)** (a fresh
-     browser opens on it) and click **Use helium** when the rail offers it.
+     browser opens on it) and set **Pressurant** to **He** (or GN2 to compare; GN2
+     runs too, with a "condensation not modelled" caveat).
    - The browser remembers these. The first stand build takes about 30 s, so do it
      now rather than in front of anyone.
 
@@ -82,8 +84,8 @@ accident, press Cmd+Z.
 **Forward Mode**, click **Evaluate** (tanks at 578 psia). In a few seconds it shows
 chamber pressure, Isp, chug margin and cooling, plus an independent CEA check.
 
-**2:00 Layer X tab.** Check that **Drawing** says **LE4 (6)**. If the rail says
-"Nitrogen over LOX", click **Use helium**. Click **Run burn**, which takes under a
+**2:00 Layer X tab.** Check that **Drawing** says **LE4 (6)**. Set **Pressurant** to **He**
+or **GN2**; both run. Click **Run burn**, which takes under a
 minute. The overview shows mean thrust, burn time, apogee, a limits table, and what
 the design assumed against what the feed delivered.
 

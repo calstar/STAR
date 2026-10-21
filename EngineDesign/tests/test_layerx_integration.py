@@ -122,7 +122,7 @@ def _tank(T=None, fluid="oxygen", source="measured"):
     return SimpleNamespace(id="OXT", fluid=fluid, params=params)
 
 
-def test_gn2_on_lox_is_refused_above_nitrogens_saturation_pressure_by_hand():
+def test_gn2_on_lox_is_flagged_above_nitrogens_saturation_pressure_by_hand():
     import CoolProp.CoolProp as CP
 
     from engine.layerx.prepare import gn2_on_lox
@@ -134,11 +134,13 @@ def test_gn2_on_lox_is_refused_above_nitrogens_saturation_pressure_by_hand():
     edge = psat_n2 + pv_o2                       # the lockup at which the ullage's N2 reaches saturation
     below = gn2_on_lox("nitrogen", _tank(T), edge - 0.1 * PSI)
     above = gn2_on_lox("nitrogen", _tank(T), edge + 0.1 * PSI)
-    assert below["status"] == "info" and above["status"] == "fail"
-    assert f"{psat_n2 / PSI:.1f} psia" in above["detail"] and "Run anyway" in above["detail"]
+    # Flagged, never refused: helium and nitrogen are compared on the same drawing.
+    assert below["status"] == "info" and above["status"] == "warn"
+    assert f"{psat_n2 / PSI:.1f} psia" in above["detail"] and "optimistic" in above["detail"]
     # Words a person reads: the tank, never the graph's node id or a settings key.
     assert "OXT" not in above["detail"] and "ack_gn2" not in above["detail"] and "twin" not in above["detail"]
-    assert gn2_on_lox("nitrogen", _tank(T), 578.0 * PSI, acknowledged=True)["status"] == "warn"
+    # The old acknowledgement still loads and changes nothing.
+    assert gn2_on_lox("nitrogen", _tank(T), 578.0 * PSI, acknowledged=True) == gn2_on_lox("nitrogen", _tank(T), 578.0 * PSI)
     # Not a nitrogen bottle, not LOX, not a hot fire: the check does not apply.
     assert gn2_on_lox("helium", _tank(T), 578.0 * PSI) is None
     assert gn2_on_lox("nitrogen", _tank(T, fluid="ethanol"), 578.0 * PSI) is None
@@ -147,7 +149,7 @@ def test_gn2_on_lox_is_refused_above_nitrogens_saturation_pressure_by_hand():
     assert gn2_on_lox("nitrogen", _tank(130.0), 2000.0 * PSI)["status"] == "info"
     # No temperature on the drawing: LOX's normal boiling point, said so.
     nbp = gn2_on_lox("nitrogen", _tank(None), 578.0 * PSI)
-    assert nbp["status"] == "fail" and "normal boiling point" in nbp["detail"]
+    assert nbp["status"] == "warn" and "normal boiling point" in nbp["detail"]
 
 
 def test_the_492_psia_constant_is_gone():

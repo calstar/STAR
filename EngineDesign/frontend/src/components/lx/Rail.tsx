@@ -9,7 +9,7 @@ import type { GlossaryKey } from './glossary';
 import { Hint } from './pages/kit';
 import { Button, Field, Menu, MenuItem, MenuLabel, Segmented, STATUS_GLYPH, STATUS_VAR, Term, Toggle } from './ui';
 import { NBSP, STD_ATM_PSIA, useUnits } from './units';
-import { bottleFillPsia, drawingShelves, drawingTitle, heliumTwin, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
+import { bottleFillPsia, drawingShelves, drawingTitle, sectionsChanged, type LayerXJob, type RailSection } from './useLayerXJob';
 
 /**
  * The left rail: setup only (docs/layerx/GUI-SPEC.md, Layout). The drawing, how the stand is set
@@ -260,45 +260,13 @@ function CheckLine({ c, open }: { c: Check; open?: boolean }) {
 /** The preflight's nitrogen-over-LOX check (DATA-CONTRACT 7, gn2_condensation). */
 export const GN2_CHECK = 'gn2_condensation';
 
-/**
- * Nitrogen over LOX in a hot fire: a blocking error, not a note (the user: helium for hot fire,
- * nitrogen for water flows). The physical criterion is the server's sentence; the way out is
- * helium, or the explicit acknowledgement under Advanced.
- */
-function Gn2Block({ check, onHelium, onAcknowledge }: { check: Check; onHelium: () => void; onAcknowledge: () => void }) {
-  // The criterion and this burn's numbers up front (the server's first two sentences); the rest on demand.
-  const sentences = check.detail.split(/(?<=[.;])\s+(?=[A-Z])/);
-  const lead = sentences.slice(0, 2).join(' ');
-  const rest = sentences.slice(2).join(' ');
-  return (
-    <div role="alert" aria-label="Nitrogen over LOX blocks the run" className="rounded-[6px] border px-3 py-2.5"
-         style={{ borderColor: 'color-mix(in srgb, var(--lx-bad) 45%, transparent)', borderLeftWidth: 3, borderLeftColor: 'var(--lx-bad)', background: 'color-mix(in srgb, var(--lx-bad) 7%, var(--lx-surface))' }}>
-      <div className="flex items-baseline gap-2 text-[12px] font-medium text-[var(--lx-text)]">
-        <span aria-hidden className="font-semibold" style={{ color: 'var(--lx-bad)' }}>{STATUS_GLYPH.bad}</span>
-        <Term k="gn2OverLox">Nitrogen over LOX</Term>
-      </div>
-      <p className="mt-1 text-[11px] leading-snug text-[var(--lx-text-2)]">{lead}</p>
-      {rest && (
-        <details className="mt-1 text-[11px] leading-snug text-[var(--lx-text-3)]">
-          <summary className="cursor-pointer text-[var(--lx-text-2)]">Why it blocks</summary>
-          <p className="mt-1">{rest}</p>
-        </details>
-      )}
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        <Button size="sm" variant="primary" onClick={onHelium}>Use helium</Button>
-        <Button size="sm" onClick={onAcknowledge}>Run anyway…</Button>
-      </div>
-    </div>
-  );
-}
-
 /** What stands between the rail and a run: blocking checks spelled out, notes behind a count. */
 const HIDE_GN2 = 'lx.hideGn2Warning';
 const readHidden = () => { try { return localStorage.getItem(HIDE_GN2) === '1'; } catch { return false; } };
 
-function Preflight({ job, onAcknowledgeGn2 }: { job: LayerXJob; onAcknowledgeGn2: () => void }) {
+function Preflight({ job }: { job: LayerXJob }) {
   const [showNotes, setShowNotes] = useState(false);
-  // The "run anyway" warning, once read, can be put away: the run still says it in its notes.
+  // The nitrogen caveat, once read, can be put away: the run still says it in its notes.
   const [gn2Hidden, setGn2Hidden] = useState(readHidden);
   const hideGn2 = () => { setGn2Hidden(true); try { localStorage.setItem(HIDE_GN2, '1'); } catch { /* private window */ } };
   const { pf, pfLoading, pfError } = job;
@@ -309,19 +277,12 @@ function Preflight({ job, onAcknowledgeGn2 }: { job: LayerXJob; onAcknowledgeGn2
   const notes = pf.checks.filter((c) => c.status === 'warn' && c !== gn2);
   return (
     <div className={`space-y-2 transition-opacity ${pfLoading ? 'opacity-60' : ''}`} aria-busy={pfLoading || undefined}>
-      {gn2?.status === 'fail' && <Gn2Block check={gn2} onAcknowledge={onAcknowledgeGn2} onHelium={() => {
-        // The helium drawing itself, not a gas swap on the nitrogen one: the rail then names the
-        // drawing the run uses, and nothing else carries over from the nitrogen setup.
-        const he = heliumTwin(job.drawing, job.drawings);
-        if (he) job.setSettings((st) => ({ ...st, drawing_id: he, pressurant: null, ack_gn2_condensation: null }));
-        else job.set('pressurant', 'helium');
-      }} />}
       {gn2?.status === 'warn' && !gn2Hidden && (
         <div className="flex gap-2 text-[12px]" role="status">
           <span aria-hidden className="w-3 shrink-0 text-center font-semibold" style={{ color: 'var(--lx-warn)' }}>{STATUS_GLYPH.warn}</span>
-          <span className="min-w-0 flex-1 text-[var(--lx-text)]">Nitrogen over LOX, run anyway
+          <span className="min-w-0 flex-1 text-[var(--lx-text)]">Nitrogen over LOX
             <span className="mt-0.5 block text-[11px] leading-snug text-[var(--lx-text-3)]">
-              <Hint text={gn2.detail}>condensation left out</Hint>
+              <Hint text={gn2.detail}>condensation not modelled: tank pressure reads optimistic</Hint>
             </span>
           </span>
           <button type="button" onClick={hideGn2} aria-label="Hide this warning" title="Hide this warning"
@@ -370,20 +331,6 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
   const [paramsOpen, setParamsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const dots = sectionsChanged(settings, job.restated);
-  // The pressurant this burn would use: the rail's swap, else the drawing's bottle.
-  const gn2Pressurant = (settings.pressurant ?? job.drawing?.summary.bottles?.[0]?.fluid ?? null) === 'nitrogen';
-  const [ackFlash, setAckFlash] = useState(false);
-  const showAck = () => {
-    setAdvanced(true);
-    setAckFlash(true);
-    window.setTimeout(() => {
-      const el = document.querySelector<HTMLElement>('[data-lx-ack]');
-      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      el?.querySelector<HTMLElement>('button, input')?.focus({ preventScroll: true });
-    }, 30);
-    window.setTimeout(() => setAckFlash(false), 1600);
-  };
-
   const runLabel = job.live ? 'Burning…' : job.starting ? 'Starting…' : job.activeJob ? `A ${job.activeWord} is running…` : 'Run burn';
 
   if (collapsed) {
@@ -586,13 +533,6 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
                      allowEmpty min={0} max={5}
                      onCommit={(v) => set('fuel_lead_s', v === null || v === 0 ? null : v)} />
 
-              {gn2Pressurant && (
-                <div data-lx-ack className={`rounded-[6px] transition-[background-color] duration-300 ${ackFlash ? 'bg-[var(--lx-accent-soft)]' : ''}`}>
-                  <SwitchRow label="Run GN2 over LOX anyway" termKey="gn2OverLox" checked={!!settings.ack_gn2_condensation}
-                             onChange={(v) => set('ack_gn2_condensation', v ? true : null)} />
-                  <div className="pl-5 text-[11px] text-[var(--lx-text-3)]">Condensation into the LOX is not modelled.</div>
-                </div>
-              )}
             </div>
           )}
         </section>
@@ -600,7 +540,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
 
       <div data-lx-step="run"
            className={`shrink-0 space-y-3 border-t border-[var(--lx-line)] px-4 py-3 transition-[background-color] duration-300 ${highlight === 'run' ? 'bg-[var(--lx-accent-soft)]' : ''}`}>
-        <Preflight job={job} onAcknowledgeGn2={showAck} />
+        <Preflight job={job} />
         <Button variant="primary" className="w-full" disabled={!job.canRun} onClick={job.start}
                 aria-keyshortcuts="R" title={job.canRun ? 'Run the burn ( R )' : undefined} icon={<PlayIcon />}>
           {runLabel}

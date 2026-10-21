@@ -161,6 +161,15 @@ export function TopBar({ views }: { views: readonly View[] }) {
   const swapped = String(live?.setup?.pressurant ?? '');
   const gasName = (g: string) => (/^he/i.test(g) ? 'Helium' : /n2|nitrogen/i.test(g) ? 'GN2' : g);
   const gas = swapped ? gasName(swapped) : live?.gas ? `${gasName(live.gas)} · drawing's` : live ? "Drawing's gas" : '';
+  const norm = (g: string) => (/^he/i.test(g) ? 'helium' : /n2|nitrogen/i.test(g) ? 'nitrogen' : '');
+  const drawnGas = norm(String(live?.gas ?? ''));
+  const effective = norm(swapped) || drawnGas;
+  // A LOX tank on the stand: by its tag, or by a cryogenic liquid in it.
+  const hasLox = (live?.tanks ?? []).some(
+    (t) => /lox|oxid/i.test(t.label) || (t.liquid_mass_kg > 0 && t.liquid_temperature_K < 130),
+  );
+  // Mid-burn the stand is not swapped out from under the operator.
+  const running = /fire/i.test(String(live?.state ?? ''));
   const groups = views.reduce<{ name: string; views: View[] }[]>((out, v) => {
     const last = out[out.length - 1];
     if (last && last.name === v.group) last.views.push(v);
@@ -296,22 +305,47 @@ export function TopBar({ views }: { views: readonly View[] }) {
           </Link>
         )}
         {gas && (
-          <Link
-            to="/gse"
-            className={`flex-shrink-0 whitespace-nowrap px-2 py-0.5 text-[10px] tracking-[0.14em] hover:text-[var(--ink)] ${
-              swapped
-                ? 'border border-[var(--line-strong)] text-[var(--ink-2)]'
-                : // The drawing's own gas gives way on a laptop; a swap never does.
-                  'hidden text-[var(--ink-3)] min-[1600px]:inline'
-            }`}
+          // One click between the two gases, from any page: the team compares
+          // helium and nitrogen on the same drawing (the user, 2026-10-20). The
+          // drawing's own gas is marked; a swap opens a fresh stand, and each
+          // burn's run record says which gas it ran on, so Runs compares them.
+          <div
+            role="group"
+            aria-label="Pressurant"
+            className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-[10px] tracking-[0.14em]"
             title={
-              swapped
-                ? "The pressurant, swapped from the drawing's. Change it on GSE Controls."
-                : "The pressurant the drawing's bottle holds. Swap it on GSE Controls."
+              effective === 'nitrogen' && hasLox
+                ? 'GN2 over LOX: nitrogen condenses into the LOX and on the cold wall above about 52 psia, which the twin does not model, so tank pressure and gas use read optimistic. Switching opens a fresh stand.'
+                : "The gas in the bottles and press lines. The dot marks the drawing's own. Switching opens a fresh stand."
             }
           >
-            {gas}
-          </Link>
+            <div className="flex overflow-hidden border border-[var(--line-strong)]">
+              {(['nitrogen', 'helium'] as const).map((g) => {
+                const on = effective === g;
+                const drawn = drawnGas === g;
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    aria-pressed={on}
+                    disabled={stand.locked || (!on && running)}
+                    onClick={() => !on && stand.setSetup({ pressurant: drawn ? '' : g })}
+                    className={`px-2 py-0.5 disabled:opacity-50 ${
+                      on ? 'bg-white/10 text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    {g === 'helium' ? 'HE' : 'GN2'}
+                    {drawn ? <span aria-label=" (the drawing's)"> ·</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            {effective === 'nitrogen' && hasLox ? (
+              <span className="text-[var(--color-warning)]" aria-hidden>
+                ⚠
+              </span>
+            ) : null}
+          </div>
         )}
 
         <div className="ml-auto flex flex-shrink-0 items-center gap-4 normal-case tracking-normal">

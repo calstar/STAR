@@ -411,6 +411,9 @@ class SessionOut(BaseModel):
     #: Hash of the operator overrides this stand was built with. A drawing
     #: view whose hash differs is waiting on a Reset.
     overrides_hash: str = ""
+    # The drawing's own gas in the vehicle's bottle ("nitrogen", "helium"), before
+    # any swap (Setup.pressurant): what the top bar's gas switch marks as drawn.
+    gas: str = ""
 
 
 class StateEvent(BaseModel):

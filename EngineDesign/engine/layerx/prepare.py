@@ -256,10 +256,12 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
     temperature is the drawing's oxidiser tank ``temperature``; without one, LOX's normal boiling
     point. At or above nitrogen's critical temperature nothing condenses.
 
-    A hot fire over the line is a ``fail``: the twin models neither the condensation into the
-    propellant nor on the cold wall, so its pressurant use and tank pressure would be wrong on the
-    unsafe side. ``acknowledged`` (``ack_gn2_condensation``) makes it a ``warn`` and lets it run.
-    This replaces a warning above nitrogen's critical pressure (492.5 psia), which said nothing
+    A burn over the line is a ``warn``, never a ``fail``: the team compares helium and nitrogen on
+    the same drawing (the user, 2026-10-20: "we want the option to compare both ... not to fight
+    over it"), so the run goes ahead and says what it leaves out. The twin models neither the
+    condensation into the propellant nor on the cold wall, so its pressurant use and tank pressure
+    read optimistic. ``acknowledged`` (``ack_gn2_condensation``) is kept so saved settings still
+    load; it no longer changes the status. This replaces a warning above nitrogen's critical pressure (492.5 psia), which said nothing
     for a 300-490 psia nitrogen lockup that condenses just the same."""
     if (pressurant or "").lower() != "nitrogen" or ox_tank is None or (ox_tank.fluid or "").lower() != "oxygen":
         return None
@@ -288,8 +290,9 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
         pv_o2 = 0.0
     p_n2 = lockup_pa - pv_o2
     # Two short sentences a person reads first (the rail shows them), then why, with the sources.
-    lead = (f"Nitrogen condenses on LOX at {T:.1f} K above {psat_n2 / PSI:.1f} psia, and this burn would hold "
-            f"{p_n2 / PSI:.0f} psia of it over the LOX. ")
+    lead = (f"Nitrogen condenses on LOX at {T:.1f} K above {psat_n2 / PSI:.1f} psia, and this burn holds "
+            f"{p_n2 / PSI:.0f} psia of it over the LOX. The burn leaves the condensation out, so its tank "
+            "pressure and gas use read optimistic. ")
     why = (f"LOX at {T:.1f} K ({t_src}); nitrogen's saturation pressure there is {psat_n2 / PSI:.1f} psia "
            f"(CoolProp). At {lockup_pa / PSI:.0f} psia lockup the ullage's nitrogen is at {p_n2 / PSI:.0f} psia "
            f"(lockup less LOX's {pv_o2 / PSI:.1f} psia vapour pressure), so it condenses into the propellant "
@@ -299,10 +302,7 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
         return {"status": "info", "detail": (f"LOX at {T:.1f} K ({t_src}); nitrogen condenses there above "
                                              f"{psat_n2 / PSI:.1f} psia (CoolProp), and the ullage's nitrogen is at "
                                              f"{p_n2 / PSI:.0f} psia: below it, so nothing condenses on the liquid.")}
-    if acknowledged:
-        return {"status": "warn", "detail": lead + "Run anyway, as asked: the burn leaves the condensation out. " + why}
-    return {"status": "fail", "detail": lead + "Hot fires use helium; nitrogen is for water flows. " + why
-            + " Use helium, or Run anyway to burn it with the condensation left out."}
+    return {"status": "warn", "detail": lead + why}
 
 
 def _stated_requirement(config: Any, key: str) -> Optional[float]:
