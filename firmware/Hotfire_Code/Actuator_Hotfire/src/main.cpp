@@ -2,9 +2,12 @@
  * Actuator Hotfire — single firmware for all actuator boards (controller and
  * designated survivor).
  *
- * State machine: WaitingForServer -> Active <-> StandardAbort/NoConnectionAbort
- * -> PTAbort/NoPTAbort/StandaloneAbort -> AbortFinished. Behavior gated by
+ * State machine: WaitingForServer -> Active <-> ConnectionLossDetected ->
+ * NoConnectionAbort -> PTAbort/NoPTAbort -> AbortFinished. Behavior gated by
  * is_abort_controller from ACTUATOR_CONFIG. Uses DAQv2-Comms over Ethernet/UDP.
+ *
+ * Every decision lives in common/ActuatorLogic.h (host-tested); this file
+ * owns the pins, PWM and UDP and carries out what the controller asks.
  * Implements plan: Single Actuator Hotfire Script
  * (Hotfire_Code/Actuator_Hotfire).
  *
@@ -26,9 +29,9 @@
 #include <esp_mac.h>
 
 #include <cstring>
-#include <set>
 #include <vector>
 
+#include "ActuatorLogic.h"
 #include "actuator_board_pins.h"
 #include "actuator_config.h"
 #include "board_net.h"
@@ -75,51 +78,8 @@ static void otaFreezeAddress(void*, uint32_t) {
 }
 
 //-----------------------------------------------------------------------------
-// State machine
+// Local outputs: pins, PWM, UDP. The controller decides; this carries it out.
 //-----------------------------------------------------------------------------
-enum class ActuatorControllerState : uint8_t {
-    WaitingForServer = 1,  // SETUP
-    Active = 2,
-    ConnectionLossDetected = 3,
-    NoConnectionAbort = 4,
-    NoConnAbortFollower = 5,
-    PTAbort = 6,
-    NoPTAbort = 7,
-    AbortFinished = 8
-};
-
-static ActuatorControllerState state =
-    ActuatorControllerState::WaitingForServer;
-static unsigned long last_server_heartbeat_ms = 0;
-static unsigned long state_enter_ms = 0;
-
-// Config from server
-static bool is_abort_controller = false;
-static std::vector<daq::AbortActuatorLocation> abort_actuator_locations;
-static std::vector<daq::AbortPTLocation> abort_pt_locations;
-static bool config_valid = false;
-
-// NoConnectionAbort: vent sent once, then per-PT tracking (all received ->
-// PTAbort else NoPTAbort)
-static bool no_conn_abort_vent_sent = false;
-static bool no_conn_abort_pt_sent = false;
-static std::vector<bool>
-    pt_received_during_no_conn;  // index = abort_pt_locations index
-
-// ConnectionLossDetected: IPs we've received a packet from (any packet =
-// "reachable")
-static std::set<uint32_t> connection_loss_received_ips;
-
-// PT Abort: per-PT "below threshold" and vent/abort phase done
-static std::vector<bool> pt_below_threshold;
-static bool pt_abort_vent_done = false;
-static bool pt_abort_abort_done = false;
-
-// No PT Abort: vent done, then after 10s abort done
-static bool no_pt_abort_vent_done = false;
-static bool no_pt_abort_abort_done = false;
-
-// Sensor data
 const uint8_t NUM_SENSORS = NUM_ACTUATORS;
 static unsigned long last_adc_read_ms = 0;
 static uint8_t actuator_states[NUM_ACTUATORS];
@@ -138,62 +98,126 @@ struct PWMState {
 };
 static PWMState pwm_states[NUM_ACTUATORS];
 
+static uint32_t ipToU32(const IPAddress& ip) {
+    return static_cast<uint32_t>(ip[0]) << 24 |
+           static_cast<uint32_t>(ip[1]) << 16 |
+           static_cast<uint32_t>(ip[2]) << 8 | static_cast<uint32_t>(ip[3]);
+}
+
+static IPAddress uint32ToIPAddress(uint32_t ip) {
+    return IPAddress((ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF,
+                     ip & 0xFF);
+}
+
+static uint32_t getSelfIP() {
+    // Use the live stack address, not staticIP: the board sits on whatever
+    // the server leased it, and self-matching against ACTUATOR_CONFIG
+    // locations must reflect where we actually are.
+    return ipToU32(Ethernet.localIP());
+}
+
+class BoardOutputs : public ActuatorHotfire::Outputs {
+public:
+    void setActuator(uint8_t actuator_id, bool on) override {
+        const uint8_t idx = actuator_id - 1;
+        // A plain command, vent or abort always wins over a running PWM.
+        pwm_states[idx].active = false;
+        const int pin = getActuatorPin(actuator_id);
+        if (pin < 0)
+            return;
+        const uint8_t new_state = on ? 1 : 0;
+        HF_VERBOSE("Actuator ");
+        HF_VERBOSE(static_cast<unsigned>(actuator_id));
+        HF_VERBOSELN(on ? " -> ON" : " -> OFF");
+        if (actuator_states[idx] != new_state) {
+            digitalWrite(pin, on ? HIGH : LOW);
+            actuator_states[idx] = new_state;
+        }
+    }
+
+    void startPwm(const daq::PWMActuatorCommand& cmd) override {
+        const int pin = getActuatorPin(cmd.actuator_id);
+        if (pin < 0)
+            return;
+        HF_VERBOSE("PWM actuator ");
+        HF_VERBOSE(static_cast<unsigned>(cmd.actuator_id));
+        HF_VERBOSE(" duration_ms=");
+        HF_VERBOSE(cmd.duration);
+        HF_VERBOSE(" duty_cycle=");
+        HF_VERBOSE(cmd.duty_cycle);
+        HF_VERBOSE(" frequency=");
+        HF_VERBOSELN(cmd.frequency);
+        const uint8_t i = cmd.actuator_id - 1;
+        const uint32_t period_us =
+            (cmd.frequency > 0) ? (1000000 / cmd.frequency) : 0;
+        const uint32_t on_time_us =
+            (uint32_t)(cmd.duty_cycle * (float)period_us);
+
+        pwm_states[i].active = true;
+        pwm_states[i].start_time = millis();
+        pwm_states[i].duration = cmd.duration;
+        pwm_states[i].duty_cycle = cmd.duty_cycle;
+        pwm_states[i].period_micros = period_us;
+        pwm_states[i].on_time_micros = on_time_us;
+        pwm_states[i].last_cycle_start_micros = micros();
+
+        const bool initial_state = (cmd.duty_cycle > 0.0f);
+        pwm_states[i].current_pin_state = initial_state;
+        digitalWrite(pin, initial_state ? HIGH : LOW);
+        actuator_states[i] = initial_state ? 1 : 0;
+    }
+
+    void send(uint32_t ip, uint16_t port, const uint8_t* data,
+              size_t len) override {
+        const IPAddress dest = uint32ToIPAddress(ip);
+        udp.beginPacket(dest, port);
+        udp.write(data, len);
+        udp.endPacket();
+        HF_VERBOSE("Sent: type ");
+        HF_VERBOSE(static_cast<unsigned>(data[0]));
+        HF_VERBOSE(" to ");
+        HF_VERBOSE(dest);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(port);
+    }
+
+    void onStateChange(ActuatorHotfire::State,
+                       ActuatorHotfire::State to) override {
+        Serial.print("State -> ");
+        Serial.println(ActuatorHotfire::stateName(to));
+        Serial.flush();
+    }
+
+    void onCommandsIgnored(uint8_t packet_type,
+                           ActuatorHotfire::State in_state) override {
+        HF_VERBOSE("Ignored packet type ");
+        HF_VERBOSE(static_cast<unsigned>(packet_type));
+        HF_VERBOSE(" in state ");
+        HF_VERBOSELN(ActuatorHotfire::stateName(in_state));
+    }
+};
+
+static BoardOutputs g_outputs;
+static ActuatorHotfire::Controller g_ctl(g_outputs, NUM_ACTUATORS);
+
 //-----------------------------------------------------------------------------
-// Status LED: state numbers 1-11 (plan: 7=PTAbort, 8=NoPTAbort,
-// 9=StandaloneAbort)
+// Status LED: blinks the state number
 //-----------------------------------------------------------------------------
 enum class LedPhase { Idle, On, Off };
 static LedPhase led_phase = LedPhase::Idle;
 static unsigned long led_cycle_start_ms = 0;
 static uint8_t led_blink_index = 0;
 static unsigned long led_phase_start_ms = 0;
-static ActuatorControllerState last_led_state =
-    ActuatorControllerState::WaitingForServer;
-
-static uint8_t getStateNumber(ActuatorControllerState s) {
-    return static_cast<uint8_t>(s);
-}
-
-static const char* stateName(ActuatorControllerState s) {
-    switch (s) {
-        case ActuatorControllerState::WaitingForServer:
-            return "WaitingForServer";
-        case ActuatorControllerState::Active:
-            return "Active";
-        case ActuatorControllerState::NoConnectionAbort:
-            return "NoConnectionAbort";
-        case ActuatorControllerState::PTAbort:
-            return "PTAbort";
-        case ActuatorControllerState::NoPTAbort:
-            return "NoPTAbort";
-        case ActuatorControllerState::AbortFinished:
-            return "AbortFinished";
-        case ActuatorControllerState::ConnectionLossDetected:
-            return "ConnectionLossDetected";
-        case ActuatorControllerState::NoConnAbortFollower:
-            return "NoConnAbortFollower";
-        default:
-            return "?";
-    }
-}
-
-static void setState(ActuatorControllerState new_state) {
-    if (state != new_state) {
-        Serial.print("State -> ");
-        Serial.println(stateName(new_state));
-        Serial.flush();
-        state = new_state;
-        state_enter_ms = millis();
-    }
-}
+static ActuatorHotfire::State last_led_state =
+    ActuatorHotfire::State::WaitingForServer;
 
 static void updateLedNonBlocking() {
     const unsigned long now = millis();
-    const uint8_t nblinks = getStateNumber(state);
+    const uint8_t nblinks = static_cast<uint8_t>(g_ctl.state());
     const int pin = Actuator_Board.LED;
 
-    if (state != last_led_state) {
-        last_led_state = state;
+    if (g_ctl.state() != last_led_state) {
+        last_led_state = g_ctl.state();
         led_phase = LedPhase::Idle;
         led_cycle_start_ms = now;
     }
@@ -235,35 +259,12 @@ static void updateLedNonBlocking() {
 //-----------------------------------------------------------------------------
 // Heartbeat
 //-----------------------------------------------------------------------------
-static daq::BoardState getBoardStateForHeartbeat() {
-    switch (state) {
-        case ActuatorControllerState::WaitingForServer:
-            return daq::BoardState::SETUP;
-        case ActuatorControllerState::Active:
-            return daq::BoardState::ACTIVE;
-        case ActuatorControllerState::ConnectionLossDetected:
-            return daq::BoardState::CONNECTION_LOSS_DETECTED;
-        case ActuatorControllerState::NoConnectionAbort:
-            return daq::BoardState::NO_CONNECTION_ABORT;
-        case ActuatorControllerState::NoConnAbortFollower:
-            return daq::BoardState::NO_CONN_ABORT_FOLLOWER;
-        case ActuatorControllerState::PTAbort:
-            return daq::BoardState::PT_ABORT;
-        case ActuatorControllerState::NoPTAbort:
-            return daq::BoardState::NO_PT_ABORT;
-        case ActuatorControllerState::AbortFinished:
-            return daq::BoardState::ABORT_FINISHED;
-        default:
-            return daq::BoardState::SETUP;
-    }
-}
-
 static void sendBoardHeartbeatTo(IPAddress dest_ip, int dest_port) {
     daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = board_id;
     hb.engine_state = daq::EngineState::SAFE;
-    hb.board_state = getBoardStateForHeartbeat();
+    hb.board_state = g_ctl.boardState();
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
     size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
@@ -283,435 +284,6 @@ static void sendBoardHeartbeatTo(IPAddress dest_ip, int dest_port) {
 
 static void sendBoardHeartbeat() {
     sendBoardHeartbeatTo(serverIP, serverPort);
-}
-
-//-----------------------------------------------------------------------------
-// Helpers: self IP as uint32_t, IP in PT list
-//-----------------------------------------------------------------------------
-static uint32_t getSelfIP() {
-    // Use the live stack address, not staticIP: the board sits on whatever
-    // the server leased it, and self-matching against ACTUATOR_CONFIG
-    // locations must reflect where we actually are.
-    IPAddress self = Ethernet.localIP();
-    return static_cast<uint32_t>(self[0]) << 24 |
-           static_cast<uint32_t>(self[1]) << 16 |
-           static_cast<uint32_t>(self[2]) << 8 | static_cast<uint32_t>(self[3]);
-}
-
-static IPAddress uint32ToIPAddress(uint32_t ip) {
-    return IPAddress((ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF,
-                     ip & 0xFF);
-}
-
-static bool isIPInPTLocations(uint32_t ip) {
-    for (const auto& loc : abort_pt_locations) {
-        if (loc.ip_address == ip)
-            return true;
-    }
-    return false;
-}
-
-// NO_CONNECTION_ABORT: header-only packet (ABORT type) sent to PTs so they
-// enter standalone/abort path
-static size_t create_no_connection_abort_packet(uint8_t* buffer,
-                                                size_t buffer_size) {
-    if (buffer_size < sizeof(daq::PacketHeader))
-        return 0;
-    daq::PacketHeader header;
-    header.packet_type = daq::PacketType::NO_CONNECTION_ABORT;
-    header.version = 1;
-    header.timestamp = millis();
-    memcpy(buffer, &header, sizeof(header));
-    return sizeof(header);
-}
-
-// ABORT_DONE: header-only packet sent to PTs and generic actuators to signify
-// abort completion
-static size_t create_abort_done_packet(uint8_t* buffer, size_t buffer_size) {
-    if (buffer_size < sizeof(daq::PacketHeader))
-        return 0;
-    daq::PacketHeader header;
-    header.packet_type = daq::PacketType::ABORT_DONE;
-    header.version = 1;
-    header.timestamp = millis();
-    memcpy(buffer, &header, sizeof(header));
-    return sizeof(header);
-}
-
-//-----------------------------------------------------------------------------
-// Apply vent or abort to all actuators (self = local, others = UDP to that IP)
-//-----------------------------------------------------------------------------
-static void applyVentToAllActuators() {
-    const uint32_t self_ip = getSelfIP();
-    uint8_t packetBuffer[MAX_PACKET_SIZE];
-    for (const auto& loc : abort_actuator_locations) {
-        if (loc.ip_address == self_ip) {
-            int pin = getActuatorPin(loc.actuator_id);
-            if (pin >= 0) {
-                digitalWrite(pin, loc.vent_state ? HIGH : LOW);
-                actuator_states[loc.actuator_id - 1] = loc.vent_state ? 1 : 0;
-            }
-        } else {
-            std::vector<daq::ActuatorCommand> cmds;
-            cmds.push_back({loc.actuator_id, loc.vent_state
-                                                 ? static_cast<uint8_t>(1)
-                                                 : static_cast<uint8_t>(0)});
-            size_t len = daq::create_actuator_command_packet(
-                cmds, millis(), packetBuffer, sizeof(packetBuffer));
-            if (len > 0) {
-                udp.beginPacket(uint32ToIPAddress(loc.ip_address),
-                                udpListenPort);
-                udp.write(packetBuffer, len);
-                udp.endPacket();
-                HF_VERBOSE("Sent: actuator_command (vent) to ");
-                HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
-                HF_VERBOSE(":");
-                HF_VERBOSELN(udpListenPort);
-            }
-        }
-    }
-}
-
-static void applyAbortToAllActuators() {
-    const uint32_t self_ip = getSelfIP();
-    uint8_t packetBuffer[MAX_PACKET_SIZE];
-    for (const auto& loc : abort_actuator_locations) {
-        if (loc.ip_address == self_ip) {
-            int pin = getActuatorPin(loc.actuator_id);
-            if (pin >= 0) {
-                digitalWrite(pin, loc.abort_state ? HIGH : LOW);
-                actuator_states[loc.actuator_id - 1] = loc.abort_state ? 1 : 0;
-            }
-        } else {
-            std::vector<daq::ActuatorCommand> cmds;
-            cmds.push_back({loc.actuator_id, loc.abort_state
-                                                 ? static_cast<uint8_t>(1)
-                                                 : static_cast<uint8_t>(0)});
-            size_t len = daq::create_actuator_command_packet(
-                cmds, millis(), packetBuffer, sizeof(packetBuffer));
-            if (len > 0) {
-                udp.beginPacket(uint32ToIPAddress(loc.ip_address),
-                                udpListenPort);
-                udp.write(packetBuffer, len);
-                udp.endPacket();
-                HF_VERBOSE("Sent: actuator_command (abort) to ");
-                HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
-                HF_VERBOSE(":");
-                HF_VERBOSELN(udpListenPort);
-            }
-        }
-    }
-}
-
-static void applyVentLocalOnly() {
-    const uint32_t self_ip = getSelfIP();
-    for (const auto& loc : abort_actuator_locations) {
-        if (loc.ip_address != self_ip)
-            continue;
-        int pin = getActuatorPin(loc.actuator_id);
-        if (pin >= 0) {
-            digitalWrite(pin, loc.vent_state ? HIGH : LOW);
-            actuator_states[loc.actuator_id - 1] = loc.vent_state ? 1 : 0;
-        }
-    }
-}
-
-static void applyAbortLocalOnly() {
-    const uint32_t self_ip = getSelfIP();
-    for (const auto& loc : abort_actuator_locations) {
-        if (loc.ip_address != self_ip)
-            continue;
-        int pin = getActuatorPin(loc.actuator_id);
-        if (pin >= 0) {
-            digitalWrite(pin, loc.abort_state ? HIGH : LOW);
-            actuator_states[loc.actuator_id - 1] = loc.abort_state ? 1 : 0;
-        }
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Parse incoming UDP
-//-----------------------------------------------------------------------------
-static bool readPacketHeader(const uint8_t* buffer, size_t buffer_size,
-                             daq::PacketHeader& header_out) {
-    if (buffer_size < sizeof(daq::PacketHeader))
-        return false;
-    memcpy(&header_out, buffer, sizeof(daq::PacketHeader));
-    return true;
-}
-
-enum class IncomingPacketKind {
-    None,
-    ServerHeartbeat,
-    Config,
-    Abort,
-    AbortDone,
-    ClearAbort,
-    SensorData,
-    NoConnAbort
-};
-
-static void processActuatorCommands(
-    const std::vector<daq::ActuatorCommand>& commands);
-static void processPWMActuatorCommand(
-    const std::vector<daq::PWMActuatorCommand>& commands);
-
-static bool stateAcceptsActuatorCommand(uint32_t remote_ip32) {
-    uint32_t sip = (static_cast<uint32_t>(serverIP[0]) << 24) |
-                   (static_cast<uint32_t>(serverIP[1]) << 16) |
-                   (static_cast<uint32_t>(serverIP[2]) << 8) |
-                   static_cast<uint32_t>(serverIP[3]);
-
-    // All boards unconditionally ignore server commands when in AbortFinished
-    // or NoConnAbortFollower
-    if ((state == ActuatorControllerState::AbortFinished ||
-         state == ActuatorControllerState::NoConnAbortFollower) &&
-        remote_ip32 == sip) {
-        return false;
-    }
-
-    // Accept commands unconditionally if Active
-    if (state == ActuatorControllerState::Active)
-        return true;
-
-    // The designated survivor accepts commands from the server during its abort
-    // sequences
-    if (is_abort_controller) {
-        if (state == ActuatorControllerState::NoConnectionAbort ||
-            state == ActuatorControllerState::PTAbort ||
-            state == ActuatorControllerState::NoPTAbort ||
-            state == ActuatorControllerState::AbortFinished) {
-            return true;
-        }
-    } else {
-        // Generic boards accept commands from non-server IPs (i.e. the
-        // designated survivor) during aborts
-        if (state == ActuatorControllerState::NoConnAbortFollower ||
-            state == ActuatorControllerState::NoConnectionAbort ||
-            state == ActuatorControllerState::PTAbort ||
-            state == ActuatorControllerState::NoPTAbort ||
-            state == ActuatorControllerState::AbortFinished) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static const char* actuatorPacketTypeName(uint8_t type) {
-    switch (type) {
-        case 4:
-            return "ACTUATOR_COMMAND";
-        case 10:
-            return "PWM_ACTUATOR_COMMAND";
-        default:
-            return "UNKNOWN";
-    }
-}
-
-static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
-                                                size_t len,
-                                                IPAddress remoteIP) {
-    daq::PacketHeader hdr;
-    if (!readPacketHeader(buffer, len, hdr))
-        return IncomingPacketKind::None;
-
-    uint32_t remote_ip32 = static_cast<uint32_t>(remoteIP[0]) << 24 |
-                           static_cast<uint32_t>(remoteIP[1]) << 16 |
-                           static_cast<uint32_t>(remoteIP[2]) << 8 |
-                           static_cast<uint32_t>(remoteIP[3]);
-
-    switch (hdr.packet_type) {
-        case daq::PacketType::SERVER_HEARTBEAT: {
-            daq::PacketHeader dummy;
-            daq::ServerHeartbeatPacket data;
-            if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
-                last_server_heartbeat_ms = millis();
-#ifdef SENSOR_ETH_USE_DHCP
-                BoardNet::onServerPacket(net, remoteIP, serverIP);
-#endif
-                uint32_t sip = (static_cast<uint32_t>(serverIP[0]) << 24) |
-                               (static_cast<uint32_t>(serverIP[1]) << 16) |
-                               (static_cast<uint32_t>(serverIP[2]) << 8) |
-                               static_cast<uint32_t>(serverIP[3]);
-                connection_loss_received_ips.insert(sip);
-                return IncomingPacketKind::ServerHeartbeat;
-            }
-            return IncomingPacketKind::None;
-        }
-        case daq::PacketType::ACTUATOR_CONFIG: {
-            daq::PacketHeader dummy;
-            uint8_t is_controller = 0;
-            uint8_t enable_serial = 0;
-            std::vector<daq::AbortActuatorLocation> act_locs;
-            std::vector<daq::AbortPTLocation> pt_locs;
-            if (daq::parse_actuator_config_packet(buffer, len, dummy,
-                                                  is_controller, act_locs,
-                                                  pt_locs, enable_serial)) {
-                is_abort_controller = (is_controller != 0);
-                abort_actuator_locations = act_locs;
-                abort_pt_locations = pt_locs;
-                config_valid = true;
-                // enable_serial is the mode byte (0..3): bit0 = USB verbose,
-                // upper part = server log stream level. See hotfire_log.h.
-                g_verbose = (enable_serial & 1);
-                g_log_stream_level =
-                    (enable_serial >= 2) ? (enable_serial - 1) : 0;
-#ifdef SENSOR_ETH_USE_DHCP
-                BoardNet::onServerPacket(net, remoteIP, serverIP);
-#endif
-                return IncomingPacketKind::Config;
-            }
-            return IncomingPacketKind::None;
-        }
-        case daq::PacketType::ABORT:
-            return IncomingPacketKind::Abort;
-        case daq::PacketType::ABORT_DONE:
-            return IncomingPacketKind::AbortDone;
-        case daq::PacketType::CLEAR_ABORT:
-            return IncomingPacketKind::ClearAbort;
-        case daq::PacketType::SENSOR_DATA: {
-            connection_loss_received_ips.insert(remote_ip32);
-            if (state == ActuatorControllerState::NoConnectionAbort &&
-                config_valid && !abort_pt_locations.empty()) {
-                std::vector<daq::SensorDataChunkCollection> chunks;
-                daq::PacketHeader dummy;
-                if (daq::parse_sensor_data_packet(buffer, len, dummy, chunks)) {
-                    for (const auto& col : chunks)
-                        for (const auto& dp : col.datapoints)
-                            for (size_t i = 0; i < abort_pt_locations.size();
-                                 i++)
-                                if (abort_pt_locations[i].ip_address ==
-                                        remote_ip32 &&
-                                    abort_pt_locations[i].sensor_id ==
-                                        dp.sensor_id)
-                                    pt_received_during_no_conn[i] = true;
-                }
-            }
-            if (state == ActuatorControllerState::PTAbort && config_valid &&
-                !abort_pt_locations.empty()) {
-                std::vector<daq::SensorDataChunkCollection> chunks;
-                daq::PacketHeader dummy;
-                if (daq::parse_sensor_data_packet(buffer, len, dummy, chunks)) {
-                    for (const auto& col : chunks) {
-                        for (const auto& dp : col.datapoints) {
-                            for (size_t i = 0; i < abort_pt_locations.size();
-                                 i++) {
-                                if (abort_pt_locations[i].ip_address ==
-                                        remote_ip32 &&
-                                    abort_pt_locations[i].sensor_id ==
-                                        dp.sensor_id &&
-                                    dp.data < abort_pt_locations[i]
-                                                  .pressure_threshold_adc)
-                                    pt_below_threshold[i] = true;
-                            }
-                        }
-                    }
-                }
-            }
-            return IncomingPacketKind::SensorData;
-        }
-        case daq::PacketType::NO_CONNECTION_ABORT:
-            return IncomingPacketKind::NoConnAbort;
-        case daq::PacketType::ACTUATOR_COMMAND: {
-            daq::PacketHeader cmd_header;
-            std::vector<daq::ActuatorCommand> commands;
-            if (daq::parse_actuator_command_packet(buffer, len, cmd_header,
-                                                   commands)) {
-                HF_VERBOSELN("ACTUATOR_COMMAND received (DAQv2-Comms):");
-                for (size_t i = 0; i < commands.size(); ++i) {
-                    const auto& cmd = commands[i];
-                    HF_VERBOSE("  [");
-                    HF_VERBOSE(static_cast<unsigned>(i));
-                    HF_VERBOSE("] actuator_id=");
-                    HF_VERBOSE(static_cast<unsigned>(cmd.actuator_id));
-                    HF_VERBOSE(" actuator_state=");
-                    HF_VERBOSELN(static_cast<unsigned>(cmd.actuator_state));
-                }
-                Serial.flush();
-                if (stateAcceptsActuatorCommand(remote_ip32))
-                    processActuatorCommands(commands);
-            }
-            return IncomingPacketKind::None;
-        }
-        case daq::PacketType::PWM_ACTUATOR_COMMAND: {
-            daq::PacketHeader cmd_header;
-            std::vector<daq::PWMActuatorCommand> commands;
-            if (daq::parse_pwm_actuator_packet(buffer, len, cmd_header,
-                                               commands)) {
-                HF_VERBOSELN("PWM_ACTUATOR_COMMAND received (DAQv2-Comms):");
-                for (size_t i = 0; i < commands.size(); ++i) {
-                    const auto& cmd = commands[i];
-                    HF_VERBOSE("  [");
-                    HF_VERBOSE(static_cast<unsigned>(i));
-                    HF_VERBOSE("] actuator_id=");
-                    HF_VERBOSE(static_cast<unsigned>(cmd.actuator_id));
-                    HF_VERBOSE(" duration_ms=");
-                    HF_VERBOSE(cmd.duration);
-                    HF_VERBOSE(" duty_cycle=");
-                    HF_VERBOSE(cmd.duty_cycle);
-                    HF_VERBOSE(" frequency=");
-                    HF_VERBOSELN(cmd.frequency);
-                }
-                Serial.flush();
-                if (stateAcceptsActuatorCommand(remote_ip32))
-                    processPWMActuatorCommand(commands);
-            }
-            return IncomingPacketKind::None;
-        }
-        default:
-            return IncomingPacketKind::None;
-    }
-}
-
-static void processActuatorCommands(
-    const std::vector<daq::ActuatorCommand>& commands) {
-    for (const auto& cmd : commands) {
-        if (cmd.actuator_id < 1 || cmd.actuator_id > NUM_ACTUATORS)
-            continue;
-        uint8_t idx = cmd.actuator_id - 1;
-        if (pwm_states[idx].active) {
-            pwm_states[idx].active = false;
-        }
-        int pin = getActuatorPin(cmd.actuator_id);
-        if (pin < 0)
-            continue;
-        uint8_t new_state = (cmd.actuator_state != 0) ? 1 : 0;
-        if (actuator_states[idx] != new_state) {
-            digitalWrite(pin, new_state ? HIGH : LOW);
-            actuator_states[idx] = new_state;
-        }
-    }
-}
-
-static void processPWMActuatorCommand(
-    const std::vector<daq::PWMActuatorCommand>& commands) {
-    for (const auto& cmd : commands) {
-        if (cmd.actuator_id < 1 || cmd.actuator_id > NUM_ACTUATORS)
-            continue;
-        int pin = getActuatorPin(cmd.actuator_id);
-        if (pin < 0)
-            continue;
-        uint8_t array_index = cmd.actuator_id - 1;
-
-        uint32_t period_us =
-            (cmd.frequency > 0) ? (1000000 / cmd.frequency) : 0;
-        uint32_t on_time_us = (uint32_t)(cmd.duty_cycle * (float)period_us);
-
-        pwm_states[array_index].active = true;
-        pwm_states[array_index].start_time = millis();
-        pwm_states[array_index].duration = cmd.duration;
-        pwm_states[array_index].duty_cycle = cmd.duty_cycle;
-        pwm_states[array_index].period_micros = period_us;
-        pwm_states[array_index].on_time_micros = on_time_us;
-        pwm_states[array_index].last_cycle_start_micros = micros();
-
-        bool initial_state = (cmd.duty_cycle > 0.0f);
-        pwm_states[array_index].current_pin_state = initial_state;
-        digitalWrite(pin, initial_state ? HIGH : LOW);
-
-        actuator_states[array_index] = initial_state ? 1 : 0;
-    }
 }
 
 static void updatePWM() {
@@ -795,234 +367,11 @@ static void readCurrentSensePinsAndSend() {
     HF_VERBOSELN(serverPort);
 }
 
-static bool heartbeatTimedOut() {
-    if (last_server_heartbeat_ms == 0)
-        return false;
-    return (millis() - last_server_heartbeat_ms) > HEARTBEAT_TIMEOUT_MS;
-}
-
 static void streamSensorDataIfDue() {
     unsigned long now = millis();
     if (now - last_adc_read_ms >= ADC_READ_INTERVAL_MS) {
         last_adc_read_ms = now;
         readCurrentSensePinsAndSend();
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Send NO_CONNECTION_ABORT to all PTs
-//-----------------------------------------------------------------------------
-static void sendNoConnectionAbortToAllPTs() {
-    uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len =
-        create_no_connection_abort_packet(packetBuffer, sizeof(packetBuffer));
-    if (len == 0)
-        return;
-    for (const auto& loc : abort_pt_locations) {
-        udp.beginPacket(uint32ToIPAddress(loc.ip_address), ptBoardPort);
-        udp.write(packetBuffer, len);
-        udp.endPacket();
-        HF_VERBOSE("Sent: no_connection_abort to ");
-        HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
-        HF_VERBOSE(":");
-        HF_VERBOSELN(ptBoardPort);
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Broadcast ABORT_DONE to all boards (PTs and Actuators)
-//-----------------------------------------------------------------------------
-static void sendAbortDoneToAllBoards() {
-    uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = create_abort_done_packet(packetBuffer, sizeof(packetBuffer));
-    if (len == 0)
-        return;
-
-    HF_VERBOSELN("Broadcasting ABORT_DONE to network...");
-
-    // Broadcast to all PTs
-    for (const auto& loc : abort_pt_locations) {
-        udp.beginPacket(uint32ToIPAddress(loc.ip_address), ptBoardPort);
-        udp.write(packetBuffer, len);
-        udp.endPacket();
-    }
-
-    // Broadcast to all actuator boards (excluding self)
-    const uint32_t self_ip = getSelfIP();
-    for (const auto& loc : abort_actuator_locations) {
-        if (loc.ip_address == self_ip)
-            continue;
-        udp.beginPacket(uint32ToIPAddress(loc.ip_address), udpListenPort);
-        udp.write(packetBuffer, len);
-        udp.endPacket();
-    }
-}
-
-//-----------------------------------------------------------------------------
-// State handlers
-//-----------------------------------------------------------------------------
-static void run_WaitingForServer() {
-    (void)0;
-}
-
-static void run_Active() {
-    streamSensorDataIfDue();
-    // Stay in Active: no transition on connection loss (unless
-    // ENABLE_ALL_STATE_TRANSITIONS config allows it).
-    if (ENABLE_ALL_STATE_TRANSITIONS && heartbeatTimedOut()) {
-        setState(ActuatorControllerState::ConnectionLossDetected);
-        connection_loss_received_ips.clear();
-    }
-}
-
-static void run_NoConnectionAbort() {
-    if (is_abort_controller && config_valid) {
-        if (!no_conn_abort_pt_sent) {
-            // Broadcast NO_CONNECTION_ABORT to PTs 3 times
-            sendNoConnectionAbortToAllPTs();
-            delay(10);
-            sendNoConnectionAbortToAllPTs();
-            delay(10);
-            sendNoConnectionAbortToAllPTs();
-
-            no_conn_abort_pt_sent = true;
-        }
-        if (!no_conn_abort_vent_sent && !abort_actuator_locations.empty()) {
-            applyVentToAllActuators();
-            no_conn_abort_vent_sent = true;
-        }
-    }
-
-    unsigned long elapsed = millis() - state_enter_ms;
-    if (elapsed >= NO_CONN_ABORT_PT_WAIT_MS) {
-        no_conn_abort_pt_sent = false;
-        no_conn_abort_vent_sent = false;
-        bool all_pt_received = true;
-        if (!abort_pt_locations.empty()) {
-            for (size_t i = 0; i < pt_received_during_no_conn.size(); i++)
-                if (!pt_received_during_no_conn[i]) {
-                    all_pt_received = false;
-                    break;
-                }
-        }
-        if (all_pt_received && !abort_pt_locations.empty()) {
-            setState(ActuatorControllerState::PTAbort);
-            pt_below_threshold.resize(abort_pt_locations.size(), false);
-            pt_abort_vent_done = false;
-            pt_abort_abort_done = false;
-        } else {
-            setState(ActuatorControllerState::NoPTAbort);
-            no_pt_abort_vent_done = false;
-            no_pt_abort_abort_done = false;
-        }
-    }
-}
-
-static void run_PTAbort() {
-    if (!pt_abort_vent_done && config_valid) {
-        applyVentToAllActuators();
-        pt_abort_vent_done = true;
-    }
-    if (!pt_abort_abort_done) {
-        bool all_below = true;
-        if (!pt_below_threshold.empty()) {
-            for (bool b : pt_below_threshold)
-                if (!b) {
-                    all_below = false;
-                    break;
-                }
-        }
-        unsigned long elapsed = millis() - state_enter_ms;
-        if (all_below || elapsed >= PT_ABORT_THRESHOLD_TIMEOUT_MS) {
-            applyAbortToAllActuators();
-            sendAbortDoneToAllBoards();
-            pt_abort_abort_done = true;
-            setState(ActuatorControllerState::AbortFinished);
-        }
-    }
-}
-
-static void run_NoPTAbort() {
-    if (!no_pt_abort_vent_done && config_valid) {
-        applyVentToAllActuators();
-        no_pt_abort_vent_done = true;
-    }
-    if (no_pt_abort_vent_done && !no_pt_abort_abort_done) {
-        if ((millis() - state_enter_ms) >= NO_PT_ABORT_VENT_TO_ABORT_MS) {
-            applyAbortToAllActuators();
-            sendAbortDoneToAllBoards();
-            no_pt_abort_abort_done = true;
-            setState(ActuatorControllerState::AbortFinished);
-        }
-    }
-}
-
-static void run_AbortFinished() {
-    (void)0;
-}
-
-static void run_ConnectionLossDetected() {
-    if (connection_loss_received_ips.find(static_cast<uint32_t>(serverIP)) !=
-        connection_loss_received_ips.end()) {
-        setState(ActuatorControllerState::Active);
-        return;
-    }
-
-    if ((millis() - state_enter_ms) >= CONNECTION_LOSS_GRACE_MS) {
-        if (is_abort_controller) {
-            setState(ActuatorControllerState::NoConnectionAbort);
-            no_conn_abort_vent_sent = false;
-            no_conn_abort_pt_sent = false;
-            pt_received_during_no_conn.clear();
-            pt_received_during_no_conn.resize(abort_pt_locations.size(), false);
-        } else {
-            setState(ActuatorControllerState::NoConnAbortFollower);
-        }
-    }
-}
-
-static void run_NoConnAbortFollower() {
-    (void)0;  // Passive state; awaits UDP commands from designated survivor
-}
-
-//-----------------------------------------------------------------------------
-// Packet-driven transitions
-//-----------------------------------------------------------------------------
-static void applyPacketTransition(IncomingPacketKind kind) {
-    // Global Clear Abort recovery
-    if (kind == IncomingPacketKind::ClearAbort) {
-        if (state == ActuatorControllerState::AbortFinished) {
-            setState(ActuatorControllerState::Active);
-            return;
-        }
-    }
-
-    switch (state) {
-        case ActuatorControllerState::WaitingForServer:
-            if (kind == IncomingPacketKind::Config) {
-                setState(ActuatorControllerState::Active);
-            }
-            break;
-        case ActuatorControllerState::Active:
-            // Stay in Active: no transitions on Abort, AbortDone, or
-            // NoConnAbort (unless config allows).
-            if (ENABLE_ALL_STATE_TRANSITIONS) {
-                if (kind == IncomingPacketKind::Abort ||
-                    kind == IncomingPacketKind::AbortDone) {
-                    setState(ActuatorControllerState::AbortFinished);
-                } else if (kind == IncomingPacketKind::NoConnAbort &&
-                           !is_abort_controller) {
-                    setState(ActuatorControllerState::NoConnAbortFollower);
-                }
-            }
-            break;
-        case ActuatorControllerState::ConnectionLossDetected:
-            if (kind == IncomingPacketKind::ServerHeartbeat) {
-                setState(ActuatorControllerState::Active);
-            }
-            break;
-        default:
-            break;
     }
 }
 
@@ -1068,18 +417,22 @@ static void initializePWMStates() {
 // Board identified server-side by UDP source IP.
 //-----------------------------------------------------------------------------
 static void flushLogs() {
-    if (g_logbuf.empty())
-        return;
     static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
-    size_t n =
-        daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
-                               g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    size_t n = 0;
+    {
+        HfLogLock lock;
+        if (g_logbuf.empty())
+            return;
+        n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                                   g_logbuf.length(), millis(), pkt,
+                                   sizeof(pkt));
+        g_logbuf.clear();
+    }
     if (n > 0) {
         udp.beginPacket(serverIP, serverPort);
         udp.write(pkt, n);
         udp.endPacket();
     }
-    g_logbuf.clear();
 }
 
 //-----------------------------------------------------------------------------
@@ -1104,7 +457,7 @@ void setup() {
 
     pinMode(Actuator_Board.LED, OUTPUT);
     digitalWrite(Actuator_Board.LED, LOW);
-    last_led_state = state;
+    last_led_state = g_ctl.state();
     led_cycle_start_ms = millis();
 
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
@@ -1168,11 +521,9 @@ void setup() {
     Serial.print("UDP listening on port ");
     Serial.println(udpListenPort);
 
-    state = ActuatorControllerState::WaitingForServer;
+    g_ctl.begin(millis());
     Serial.println("State -> WaitingForServer");
     Serial.flush();
-    state_enter_ms = millis();
-    last_server_heartbeat_ms = 0;
 #ifdef SENSOR_ETH_USE_DHCP
     Serial.println(
         "[NET] address assigned by the server; broadcasting until one is "
@@ -1212,38 +563,26 @@ void loop() {
         uint8_t packetBuffer[MAX_PACKET_SIZE];
         int bytesRead = udp.read(packetBuffer, sizeof(packetBuffer));
         if (bytesRead > 0) {
-            const uint8_t pktType = bytesRead >= (int)sizeof(daq::PacketHeader)
-                                        ? packetBuffer[0]
-                                        : 0;
             HF_VERBOSE("Received packet from ");
             HF_VERBOSE(remoteIP);
             HF_VERBOSE(":");
             HF_VERBOSE(udp.remotePort());
             HF_VERBOSE(" type ");
-            HF_VERBOSE(static_cast<unsigned>(pktType));
-            if (pktType == 4 || pktType == 10) {
-                HF_VERBOSE(" (");
-                HF_VERBOSE(actuatorPacketTypeName(pktType));
-                HF_VERBOSE(") len=");
-                HF_VERBOSE(bytesRead);
-                HF_VERBOSE(" hex:");
-                for (int i = 0; i < bytesRead && i < 32; i++) {
-                    HF_VERBOSE(" ");
-                    if (packetBuffer[i] < 16)
-                        HF_VERBOSE("0");
-                    HF_VERBOSE(packetBuffer[i], HEX);
-                }
+            HF_VERBOSELN(static_cast<unsigned>(packetBuffer[0]));
+            const ActuatorHotfire::PacketResult r =
+                g_ctl.onPacket(packetBuffer, bytesRead, ipToU32(remoteIP),
+                               ipToU32(serverIP), getSelfIP(), millis());
+            if (r.has_log_mode) {
+                // The mode byte (0..3): bit0 = USB verbose, upper part =
+                // server log stream level. See hotfire_log.h.
+                g_verbose = (r.log_mode & 1);
+                g_log_stream_level = (r.log_mode >= 2) ? (r.log_mode - 1) : 0;
             }
-            HF_VERBOSELN("");
-            Serial.flush();
-            connection_loss_received_ips.insert(
-                static_cast<uint32_t>(remoteIP[0]) << 24 |
-                static_cast<uint32_t>(remoteIP[1]) << 16 |
-                static_cast<uint32_t>(remoteIP[2]) << 8 |
-                static_cast<uint32_t>(remoteIP[3]));
-            IncomingPacketKind kind =
-                processIncomingPacket(packetBuffer, bytesRead, remoteIP);
-            applyPacketTransition(kind);
+#ifdef SENSOR_ETH_USE_DHCP
+            if (r.kind == ActuatorHotfire::PacketKind::ServerHeartbeat ||
+                r.kind == ActuatorHotfire::PacketKind::Config)
+                BoardNet::onServerPacket(net, remoteIP, serverIP);
+#endif
         }
     }
 
@@ -1259,43 +598,18 @@ void loop() {
     }
 #endif
 
-    switch (state) {
-        case ActuatorControllerState::WaitingForServer:
-            run_WaitingForServer();
-            break;
-        case ActuatorControllerState::Active:
-            run_Active();
-            break;
-        case ActuatorControllerState::NoConnectionAbort:
-            run_NoConnectionAbort();
-            break;
-        case ActuatorControllerState::PTAbort:
-            run_PTAbort();
-            break;
-        case ActuatorControllerState::NoPTAbort:
-            run_NoPTAbort();
-            break;
-        case ActuatorControllerState::AbortFinished:
-            run_AbortFinished();
-            break;
-        case ActuatorControllerState::ConnectionLossDetected:
-            run_ConnectionLossDetected();
-            break;
-        case ActuatorControllerState::NoConnAbortFollower:
-            run_NoConnAbortFollower();
-            break;
-    }
+    g_ctl.tick(millis(), getSelfIP(), ipToU32(serverIP));
+    if (g_ctl.state() == ActuatorHotfire::State::Active)
+        streamSensorDataIfDue();
 
     unsigned long now = millis();
     if (now - lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeatMillis = now;
-        if (state == ActuatorControllerState::WaitingForServer) {
+        if (g_ctl.state() == ActuatorHotfire::State::WaitingForServer) {
             HF_VERBOSELN("Setup state: sending heartbeat");
             Serial.flush();
-            sendBoardHeartbeat();
-        } else {
-            sendBoardHeartbeat();
         }
+        sendBoardHeartbeat();
 #ifdef SENSOR_ETH_USE_DHCP
         // Discovery: announce to everyone on the wire until a server is
         // learned. Reuses the normal heartbeat packet on the same 1 s tick.
