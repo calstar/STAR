@@ -63,7 +63,10 @@ static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
         ads126x.setInputMux(getAdcChannel(cfg.sensor_ids[i], TEST_PIN),
                             ADS126X_AINCOM);
         delayMicroseconds(10);
-        SensorHotfire::waitDrdy(Pins.ADC_DRDY_1);
+        if (!SensorHotfire::waitDrdy(Pins.ADC_DRDY_1)) {
+            out.values[i] = 0;
+            continue;
+        }
         const auto reading = ads126x.readADC1();
         out.values[i] =
             reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;
@@ -126,6 +129,7 @@ void setup() {
     coreConfig.board_name = "TC";
     coreConfig.pins = &Pins;
     coreConfig.adc_rate_code = DATA_RATE;
+    coreConfig.adc_settle_conversions = settlePulses(FILTER, DATA_RATE);
     coreConfig.init_adc = init_adc_cb;
     coreConfig.read_chunk = read_chunk_cb;
     coreConfig.run_self_test = run_self_test_cb;

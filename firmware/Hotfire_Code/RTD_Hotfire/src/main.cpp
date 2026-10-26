@@ -91,7 +91,10 @@ static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
         const int drdy_pin = drdy_for_connector(conn);
         ADS126X& adc = adc_for_connector(conn);
         delayMicroseconds(10);
-        SensorHotfire::waitDrdy(drdy_pin);
+        if (!SensorHotfire::waitDrdy(drdy_pin)) {
+            out.values[i] = 0;
+            continue;
+        }
         const auto reading = adc.readADC1();
         out.values[i] =
             reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;
@@ -215,6 +218,7 @@ void setup() {
     coreConfig.board_name = "RTD";
     coreConfig.pins = &Pins;
     coreConfig.adc_rate_code = DATA_RATE;
+    coreConfig.adc_settle_conversions = settlePulses(FILTER, DATA_RATE);
     coreConfig.init_adc = init_adc_cb;
     coreConfig.read_chunk = read_chunk_cb;
     coreConfig.run_self_test = run_self_test_cb;

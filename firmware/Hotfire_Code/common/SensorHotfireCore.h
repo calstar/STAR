@@ -35,12 +35,15 @@
 #include <SPI.h>
 #include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
+#include <esp_idf_version.h>
 #include <esp_mac.h>
+#include <esp_task_wdt.h>
 
 #include <atomic>
 #include <cstring>
 
 #include "SensorCoreLogic.h"
+#include "SensorSelfTest.h"
 #include "board_net.h"
 #include "firmware_hash.h"
 
@@ -72,12 +75,19 @@ struct Config {
     const sense_board_pins::Layout* pins;
     /** The ADS126X_RATE_* the ADC runs at. Decides how waitDrdy() waits. */
     uint8_t adc_rate_code;
-    /** Called once from setup(), before the tasks start. */
+    /** Conversions the filter needs to settle after a channel switch
+     * (settlePulses(FILTER, DATA_RATE)). Sets the data-ready timeout. */
+    uint8_t adc_settle_conversions;
+    /** Called once from setup(), before the tasks start, and again on the
+     * ADC task if the ADC stops answering (see ADC_REINIT_AFTER_TIMEOUTS). */
     void (*init_adc)(void* user_data);
     /**
      * Read every channel in `config` once. The core has already filled in
      * `out`'s timestamp and sensor IDs (in config order); the board writes
      * `out.values[i]` for each. Return false to discard the chunk.
+     *
+     * Wait for data with waitDrdy(), and write 0 for a channel when it
+     * returns false (the ADC did not answer in time).
      */
     bool (*read_chunk)(void* user_data, const StoredSensorConfig& config,
                        Chunk& out);
@@ -121,6 +131,10 @@ constexpr UBaseType_t SENSOR_TASK_PRIORITY = 5;
 constexpr uint32_t ADC_TASK_STACK_BYTES = 6 * 1024;
 constexpr uint32_t NET_TASK_STACK_BYTES = 8 * 1024;
 constexpr TickType_t NET_TASK_PERIOD_TICKS = pdMS_TO_TICKS(1);
+/** Chunks in a row with a data-ready timeout before the ADC is re-set up. */
+constexpr uint8_t ADC_REINIT_AFTER_TIMEOUTS = 5;
+/** Task watchdog period: a task that stops checking in reboots the board. */
+constexpr uint32_t TASK_WATCHDOG_TIMEOUT_S = 5;
 
 struct CoreState {
     uint8_t board_id;
@@ -458,28 +472,70 @@ inline void setup(CoreState& s, const Config& cfg) {
 // ADC task
 //-----------------------------------------------------------------------------
 
-/** Set in setup() from Config::adc_rate_code; read by waitDrdy(). */
+// Set in startTasks() from the board's Config; read by waitDrdy().
 inline bool g_drdy_sleeps = false;
+inline uint32_t g_drdy_timeout_us = UINT32_MAX;
+// Set by the first timeout in a chunk; cleared by the ADC task per chunk.
+inline bool g_chunk_timed_out = false;
 
 /**
  * Wait for the ADC's data-ready line to go low. At fast data rates this spins
  * (a conversion is tens of microseconds); when a conversion takes 2 ms or
  * more it sleeps 1 ms between checks, so the ADC task gives up its core
- * while it waits. Returns false if `timeout_us` passes first.
+ * while it waits.
+ *
+ * Returns false if the ADC does not answer within 3x the conversions it
+ * needs (drdyTimeoutUs). After the first timeout in a chunk every further
+ * wait in that chunk fails at once, so a dead ADC costs one timeout per
+ * chunk rather than one per channel.
  *
  * ADC task only.
  */
-inline bool waitDrdy(int drdy_pin, uint32_t timeout_us = UINT32_MAX) {
+inline bool waitDrdy(int drdy_pin) {
+    if (g_chunk_timed_out)
+        return false;
     const uint32_t start = micros();
     while (digitalRead(drdy_pin) != LOW) {
-        if (micros() - start >= timeout_us)
+        if (micros() - start >= g_drdy_timeout_us) {
+            g_chunk_timed_out = true;
             return false;
+        }
         if (g_drdy_sleeps)
             vTaskDelay(1);
         else
             delayMicroseconds(10);
     }
     return true;
+}
+
+/**
+ * Subscribe the calling task to the task watchdog. If either sensor task
+ * stops calling watchdogCheckIn() for TASK_WATCHDOG_TIMEOUT_S, the board
+ * reboots and comes back in WaitingForServer.
+ */
+inline void watchdogSubscribe(const char* task_name) {
+    esp_err_t err = esp_task_wdt_add(nullptr);
+    if (err == ESP_ERR_INVALID_STATE) {
+        // This core's sdkconfig did not start the watchdog; start it.
+#if ESP_IDF_VERSION_MAJOR >= 5
+        esp_task_wdt_config_t wdt = {};
+        wdt.timeout_ms = TASK_WATCHDOG_TIMEOUT_S * 1000;
+        wdt.trigger_panic = true;
+        esp_task_wdt_init(&wdt);
+#else
+        esp_task_wdt_init(TASK_WATCHDOG_TIMEOUT_S, true);
+#endif
+        err = esp_task_wdt_add(nullptr);
+    }
+    if (err != ESP_OK) {
+        HF_LOG("[TASK] WARNING: ");
+        HF_LOG(task_name);
+        HF_LOGLN(" could not join the task watchdog");
+    }
+}
+
+inline void watchdogCheckIn() {
+    esp_task_wdt_reset();
 }
 
 /** Print how much of the calling task's stack has never been touched. */
@@ -549,8 +605,17 @@ inline void adcTask(void* arg) {
     bool sampling = false;
     unsigned long next_stack_log_ms = millis() + 5000;
     bool stack_logged = false;
+    uint8_t timeouts_in_a_row = 0;
+    uint32_t timeouts_total = 0;
+    uint32_t timeouts_logged = 0;
+    unsigned long last_timeout_log_ms = 0;
+
+    watchdogSubscribe("adc");
+    SensorSelfTest::g_check_in = watchdogCheckIn;
+    SensorSelfTest::g_drdy_timeout_us = g_drdy_timeout_us;
 
     for (;;) {
+        watchdogCheckIn();
         // Idle: sleep until told to do something. Sampling: just check.
         TickType_t wait = sampling ? 0 : pdMS_TO_TICKS(100);
         AdcCommand cmd;
@@ -589,9 +654,37 @@ inline void adcTask(void* arg) {
         chunk.config_seq = config_seq;
         chunk.num_sensors = config.num_sensors;
         memcpy(chunk.sensor_ids, config.sensor_ids, config.num_sensors);
-        if (cfg.read_chunk(cfg.user_data, config, chunk)) {
-            if (pushDropOldest(chunks, chunk))
-                s.chunks_dropped.fetch_add(1, std::memory_order_relaxed);
+        g_chunk_timed_out = false;
+        const bool keep = cfg.read_chunk(cfg.user_data, config, chunk);
+        if (g_chunk_timed_out) {
+            // The board wrote 0 for every channel from the timeout on.
+            timeouts_total++;
+            timeouts_in_a_row++;
+        } else {
+            timeouts_in_a_row = 0;
+        }
+        if (keep && pushDropOldest(chunks, chunk))
+            s.chunks_dropped.fetch_add(1, std::memory_order_relaxed);
+
+        if (timeouts_total != timeouts_logged &&
+            millis() - last_timeout_log_ms >= 1000) {
+            last_timeout_log_ms = millis();
+            timeouts_logged = timeouts_total;
+            HF_LOG("[ADC] WARNING: data-ready timeout (");
+            HF_LOG(static_cast<unsigned>(timeouts_in_a_row));
+            HF_LOG(" chunk(s) in a row, ");
+            HF_LOG(timeouts_total);
+            HF_LOGLN(" total); sending 0 for missed channels");
+        }
+        if (timeouts_in_a_row >= ADC_REINIT_AFTER_TIMEOUTS) {
+            HF_LOG("[ADC] ");
+            HF_LOG(static_cast<unsigned>(ADC_REINIT_AFTER_TIMEOUTS));
+            HF_LOGLN(" timeouts in a row -- re-initialising the ADC");
+            if (cfg.init_adc)
+                cfg.init_adc(cfg.user_data);
+            if (cfg.on_reference_voltage_config && have_reference)
+                cfg.on_reference_voltage_config(cfg.user_data, reference);
+            timeouts_in_a_row = 0;
         }
         // Same cadence as the old single loop: one chunk, then a short rest.
         vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
@@ -830,9 +923,10 @@ inline void networkStep(CoreState& s, const Config& cfg) {
     // Renew the lease as it expires; no-op while an OTA is in flight.
     BoardNet::maintainLease(s.net);
 #endif
-    // Blocks only while a client is actually transferring, and never returns
-    // on success (the board reboots into the new image).
-    g_ota_server.poll();
+    // One step of any OTA transfer; never blocks for more than a chunk, so the
+    // watchdog and heartbeats keep running during an upload. Reboots into the
+    // new image on success.
+    g_ota_server.service();
     // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
     // so consecutive OTA uploads are visibly different on the serial monitor.
     StarOTA::printTestMessage();
@@ -913,8 +1007,10 @@ inline void networkTask(void* arg) {
     const Config& cfg = *static_cast<TaskArgs*>(arg)->cfg;
     unsigned long next_stack_log_ms = millis() + 5000;
     bool stack_logged = false;
+    watchdogSubscribe("network");
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
+        watchdogCheckIn();
         networkStep(s, cfg);
         maybeLogStackHeadroom("network", next_stack_log_ms, stack_logged);
         vTaskDelayUntil(&last_wake, NET_TASK_PERIOD_TICKS);
@@ -927,6 +1023,8 @@ inline void startTasks(CoreState& s, const Config& cfg) {
     args.s = &s;
     args.cfg = &cfg;
     g_drdy_sleeps = conversionPeriodUs(cfg.adc_rate_code) >= 2000;
+    g_drdy_timeout_us =
+        drdyTimeoutUs(cfg.adc_rate_code, cfg.adc_settle_conversions);
 
     s.chunk_queue = xQueueCreate(CHUNK_QUEUE_DEPTH, sizeof(Chunk));
     s.adc_commands = xQueueCreate(ADC_COMMAND_QUEUE_DEPTH, sizeof(AdcCommand));

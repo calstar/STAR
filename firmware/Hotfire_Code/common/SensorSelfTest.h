@@ -32,6 +32,30 @@ constexpr unsigned long BIAS_SETTLE_MS = 50;
 // Number of ADC samples to average per channel during the bias test.
 constexpr uint8_t BIAS_AVG_SAMPLES = 4;
 
+// Set by the sensor core before a self-test runs (left at their defaults on
+// the host): how long to wait for one data-ready edge, and a hook called at
+// the start of each test step so the ADC task can check in with the task
+// watchdog. A test step gives up at its first timeout, so a dead ADC costs
+// one timeout per step, never one per conversion.
+inline uint32_t g_drdy_timeout_us = 0xFFFFFFFFu;
+inline void (*g_check_in)() = nullptr;
+
+inline void check_in() {
+    if (g_check_in)
+        g_check_in();
+}
+
+/** Wait for data-ready to go low; false if g_drdy_timeout_us passes first. */
+inline bool wait_drdy(uint8_t drdy_pin) {
+    const unsigned long start = micros();
+    while (digitalRead(drdy_pin) != LOW) {
+        if (micros() - start >= g_drdy_timeout_us)
+            return false;
+        delayMicroseconds(10);
+    }
+    return true;
+}
+
 enum class BiasResult : uint8_t {
     CONNECTED = 0,     // |code| < closed threshold — sensor is present
     AMBIGUOUS = 1,     // between thresholds — uncertain
@@ -49,11 +73,13 @@ struct AdcSelfTestResult {
     bool passed;
     int32_t code;  // raw ADC code read
     bool checksum_valid;
+    bool timed_out;  // data-ready never came: the ADC is not answering
 };
 
 inline AdcSelfTestResult run_adc_self_test(ADS126X& adc, uint8_t drdy_pin,
                                            uint8_t original_ref_neg,
                                            uint8_t original_ref_pos) {
+    check_in();
     adc.bypassPGA();
     adc.setInputMux(ADS126X_TDAC, ADS126X_TDAC);
 
@@ -64,18 +90,21 @@ inline AdcSelfTestResult run_adc_self_test(ADS126X& adc, uint8_t drdy_pin,
 
     adc.setReference(ADS126X_REF_NEG_VSS, ADS126X_REF_POS_VDD);
 
-    // Flush 5 conversions so SINC5 filter settles after mux/ref change
-    for (uint8_t i = 0; i < 5; i++) {
+    // Flush 5 conversions so SINC5 filter settles after mux/ref change, then
+    // take the real measurement.
+    bool answered = true;
+    for (uint8_t i = 0; i < 6 && answered; i++) {
         delayMicroseconds(10);
-        while (digitalRead(drdy_pin) != LOW)
-            delayMicroseconds(10);
-        adc.readADC1();
+        answered = wait_drdy(drdy_pin);
+        if (answered && i < 5)
+            adc.readADC1();
     }
-
-    // Real measurement
-    delayMicroseconds(10);
-    while (digitalRead(drdy_pin) != LOW)
-        delayMicroseconds(10);
+    if (!answered) {
+        adc.setOutputTDACP(0);
+        adc.setOutputTDACN(0);
+        adc.setReference(original_ref_neg, original_ref_pos);
+        return {false, 0, false, true};
+    }
 
     const auto reading = adc.readADC1();
     int32_t code = reading.value;
@@ -128,6 +157,7 @@ struct BiasReadResult {
 inline BiasReadResult read_sensor_bias(ADS126X& adc, uint8_t drdy_pin,
                                        uint8_t adc_channel, uint8_t aincom,
                                        uint8_t settle_cycles = 5) {
+    check_in();
     // Stop ADC so the filter doesn't fill with mid-transition data
     adc.stopADC1();
     adc.setInputMux(adc_channel, aincom);
@@ -141,8 +171,8 @@ inline BiasReadResult read_sensor_bias(ADS126X& adc, uint8_t drdy_pin,
     // Flush conversions so the digital filter (SINC5) fully settles
     for (uint8_t i = 0; i < settle_cycles; i++) {
         delayMicroseconds(10);
-        while (digitalRead(drdy_pin) != LOW)
-            delayMicroseconds(10);
+        if (!wait_drdy(drdy_pin))
+            return {BiasResult::AMBIGUOUS, 0, false};
         adc.readADC1();
     }
 
@@ -151,8 +181,8 @@ inline BiasReadResult read_sensor_bias(ADS126X& adc, uint8_t drdy_pin,
     uint8_t good_count = 0;
     for (uint8_t s = 0; s < BIAS_AVG_SAMPLES; s++) {
         delayMicroseconds(10);
-        while (digitalRead(drdy_pin) != LOW)
-            delayMicroseconds(10);
+        if (!wait_drdy(drdy_pin))
+            return {BiasResult::AMBIGUOUS, 0, false};
         auto reading = adc.readADC1();
         if (reading.checksumValid) {
             sum += reading.value;

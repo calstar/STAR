@@ -60,11 +60,13 @@ static SensorHotfire::Config coreConfig;
 // Set to true to enable Serial output from core and board; false to disable.
 bool g_verbose = true;
 
-static void flush_cycles(int cycles) {
+static bool flush_cycles(int cycles) {
     for (int i = 0; i < cycles; i++) {
-        SensorHotfire::waitDrdy(Pins.ADC_DRDY_1);
+        if (!SensorHotfire::waitDrdy(Pins.ADC_DRDY_1))
+            return false;
         ads126x.readADC1();
     }
+    return true;
 }
 
 static int last_mux_p = -1, last_mux_n = -1;
@@ -90,9 +92,14 @@ static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
         // hold the previous input's samples. Flushing unconditionally throws
         // away a perfectly good conversion every cycle, which halves the
         // output rate when a single connector is active.
-        if (mux_changed)
-            flush_cycles(settlePulses(FILTER, DATA_RATE));
-        SensorHotfire::waitDrdy(Pins.ADC_DRDY_1);
+        const bool settled =
+            !mux_changed || flush_cycles(settlePulses(FILTER, DATA_RATE));
+        if (!settled || !SensorHotfire::waitDrdy(Pins.ADC_DRDY_1)) {
+            out.values[i] = 0;
+            // Force a re-flush next time: the filter state is unknown.
+            last_mux_p = last_mux_n = -1;
+            continue;
+        }
         // DRDY asserts as the conversion register is being updated; reading
         // immediately catches it mid-update and yields corrupted samples.
         // LC_Calibration/PT_BOARD_Multi both pause here before reading.
@@ -165,6 +172,7 @@ void setup() {
     coreConfig.board_name = "LC";
     coreConfig.pins = &Pins;
     coreConfig.adc_rate_code = DATA_RATE;
+    coreConfig.adc_settle_conversions = settlePulses(FILTER, DATA_RATE);
     coreConfig.init_adc = init_adc_cb;
     coreConfig.read_chunk = read_chunk_cb;
     coreConfig.run_self_test = run_self_test_cb;
