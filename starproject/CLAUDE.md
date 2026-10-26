@@ -46,6 +46,13 @@ export DEV_AUTH_NAME="Your Name"
 
 **MCP server** (`src/app/api/mcp/route.ts`, `src/mcp/`). Streamable HTTP, stateless, one `McpServer` per request. Identity is a personal access token (`ApiToken`, minted under Settings → API tokens or `scripts/mcp-token.mjs`) resolved by `src/lib/apiTokens.ts` and injected with `runAsIdentity` from `src/lib/auth.ts`, so tools call the *real* server actions and get the same audit trail as the UI. Tool modules live in `src/mcp/tools/*.ts`, are listed in `src/mcp/tools/index.ts`, and use `defineTool`/`toFormData` from `_shared.ts`. Every user-facing action in the app should have a tool; a new server action gets a tool in the same PR. `scripts/mcp-smoke.mjs` is a real client for checking it. Docs: `docs/MCP.md`.
 
+**Every change to the platform updates the MCP tools in the same change.** The tools are the agent's copy of the UI and must never drift from it:
+- **Added** a page action, field, filter, server action or rule → add the tool, or the input/output field on the existing one.
+- **Removed** something → remove its tool or field; never leave a tool calling code that's gone or describing behaviour that changed.
+- **Changed** behaviour (validation, permissions, stage rules, defaults, what a read returns) → update the tool's schema, handler and description to match.
+- Then update the tools table in `docs/MCP.md`, and `src/mcp/server.test.ts` (`ADMIN_ONLY` / `DESTRUCTIVE`) when gating or destructiveness changed. If an area has a live script (`scripts/mcp-e2e.mjs`, `scripts/mcp-outreach-e2e.mjs`), extend it and run it against `npm run dev:local`.
+- A change with no MCP impact says so in the PR description ("MCP: no change, UI-only styling") so a reviewer can tell it was considered.
+
 **Email** (`src/lib/mail.ts`) sends via SES and no-ops when `SES_FROM` is unset, so dev/CI never send. Assignment emails are queued (`EmailQueueItem`) and flushed as one email per recipient by cron; `NotifLog` is the idempotency ledger so deadline emails never double-send. The cron endpoints under `src/app/api/cron/*` are POST routes hit by a sidecar container, gated by the `x-cron-secret` header (`CRON_SECRET`).
 
 **Tests** are colocated `*.test.ts` files in `src/lib/` covering pure logic (board ordering, gantt, name formatting, task helpers) — vitest, node environment, no DB or React. Keep testable logic in `src/lib` as pure functions.
