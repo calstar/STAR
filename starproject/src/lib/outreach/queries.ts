@@ -1,8 +1,11 @@
-// Reads for the /outreach pages. Server-only (Prisma). Every exported reader
-// assumes the caller already checked the viewer is an admin (outreachViewer /
-// requireAdmin): these rows hold donors' contact details and gifts.
+// Reads for the /outreach pages and MCP tools. Server-only (Prisma). These rows
+// hold donors' contact details and gifts, so every exported reader checks the
+// viewer is an admin itself (adminOnly). The layout's gate is not enough: Next
+// renders a page alongside its layout, and a page's data reaches the browser
+// even when the layout shows the "admins only" panel instead of it.
 
 import type { Prisma } from "@prisma/client";
+import { cache } from "react";
 
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
@@ -14,9 +17,14 @@ import { campaignMilestones, dealAttention, type Attention } from "./followups";
 import { CONTACT_PAGE } from "./page-size";
 import { segmentWhere, type SegmentFilter } from "./segments";
 
-export async function outreachViewer() {
+export const outreachViewer = cache(async () => {
   const user = await getCurrentDbUser();
   return { user, admin: await isAdmin(user.email) };
+});
+
+/** Throws unless the viewer is an admin. Once per request (cached). */
+async function adminOnly(): Promise<void> {
+  if (!(await outreachViewer()).admin) throw new Error("Forbidden: admins only");
 }
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
@@ -117,6 +125,7 @@ function toDealRow(d: DealWithRefs, now: Date): DealRow {
 }
 
 export async function listDeals(season?: string): Promise<DealRow[]> {
+  await adminOnly();
   const now = new Date();
   const rows = await prisma.outreachDeal.findMany({
     where: season ? { season } : {},
@@ -127,6 +136,7 @@ export async function listDeals(season?: string): Promise<DealRow[]> {
 }
 
 export async function listSeasons(): Promise<string[]> {
+  await adminOnly();
   const rows = await prisma.outreachDeal.findMany({ distinct: ["season"], select: { season: true } });
   const set = new Set(rows.map((r) => r.season));
   set.add(seasonOf(new Date()));
@@ -174,6 +184,7 @@ function toTouchRow(t: Prisma.OutreachTouchGetPayload<{ include: typeof TOUCH_IN
 }
 
 export async function getDealDetail(id: string) {
+  await adminOnly();
   const d = await prisma.outreachDeal.findUnique({ where: { id }, include: DEAL_INCLUDE });
   if (!d) return null;
   const touches = await prisma.outreachTouch.findMany({
@@ -191,6 +202,7 @@ export async function getDealDetail(id: string) {
 }
 
 export async function listOrgs() {
+  await adminOnly();
   return prisma.outreachOrg.findMany({
     select: { id: true, name: true, kind: true, channel: true },
     orderBy: { name: "asc" },
@@ -244,6 +256,7 @@ function toContactRow(c: Prisma.OutreachContactGetPayload<{ include: typeof CONT
 
 
 export async function listContacts(filter: SegmentFilter, page = 0) {
+  await adminOnly();
   const where = segmentWhere({ includeExcluded: true, ...filter });
   const [total, rows] = await Promise.all([
     prisma.outreachContact.count({ where }),
@@ -259,6 +272,7 @@ export async function listContacts(filter: SegmentFilter, page = 0) {
 }
 
 export async function getContactDetail(id: string) {
+  await adminOnly();
   const c = await prisma.outreachContact.findUnique({
     where: { id },
     include: {
@@ -302,6 +316,7 @@ export type ContactDetail = NonNullable<Awaited<ReturnType<typeof getContactDeta
 
 /** Every tag in use, most used first. */
 export async function allTags(): Promise<{ tag: string; count: number }[]> {
+  await adminOnly();
   const rows = await prisma.$queryRaw<{ tag: string; count: bigint }[]>`
     SELECT t AS tag, COUNT(*) AS count FROM "OutreachContact", unnest(tags) AS t GROUP BY t ORDER BY count DESC, t ASC`;
   return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }));
@@ -309,6 +324,7 @@ export async function allTags(): Promise<{ tag: string; count: number }[]> {
 
 /** Members credited as referrers, for the list builder's picker. */
 export async function allReferrers(): Promise<string[]> {
+  await adminOnly();
   const rows = await prisma.outreachReferral.findMany({
     distinct: ["ambassadorName", "ambassadorEmail"],
     select: { ambassadorName: true, ambassadorEmail: true },
@@ -332,6 +348,7 @@ export type Recipient = {
 
 /** Everyone a filter selects who has an address (the copyable part of a list). */
 export async function resolveSegment(filter: SegmentFilter): Promise<{ recipients: Recipient[]; withoutEmail: number }> {
+  await adminOnly();
   const where = segmentWhere(filter);
   const [rows, withoutEmail] = await Promise.all([
     prisma.outreachContact.findMany({
@@ -356,6 +373,7 @@ export async function resolveSegment(filter: SegmentFilter): Promise<{ recipient
 }
 
 export async function listSegments() {
+  await adminOnly();
   const lists = await prisma.outreachList.findMany({ orderBy: { name: "asc" } });
   return Promise.all(
     lists.map(async (l) => ({
@@ -373,6 +391,7 @@ export async function listSegments() {
 // ---- campaigns -------------------------------------------------------------
 
 export async function listCampaigns() {
+  await adminOnly();
   const rows = await prisma.outreachCampaign.findMany({
     include: { donations: { select: { amountCents: true, contactId: true } } },
     orderBy: [{ endsAt: "desc" }, { name: "asc" }],
@@ -395,6 +414,7 @@ export async function listCampaigns() {
 export type CampaignRow = Awaited<ReturnType<typeof listCampaigns>>[number];
 
 export async function getCampaignDetail(id: string) {
+  await adminOnly();
   const c = await prisma.outreachCampaign.findUnique({ where: { id } });
   if (!c) return null;
   const [donations, referrals] = await Promise.all([
@@ -453,6 +473,7 @@ export type CampaignDetail = NonNullable<Awaited<ReturnType<typeof getCampaignDe
 // ---- templates -------------------------------------------------------------
 
 export async function listTemplates() {
+  await adminOnly();
   const rows = await prisma.outreachTemplate.findMany({
     include: { _count: { select: { touches: true } } },
     orderBy: [{ kind: "asc" }, { name: "asc" }],
@@ -472,6 +493,7 @@ export type TemplateRow = Awaited<ReturnType<typeof listTemplates>>[number];
 // ---- dashboard -------------------------------------------------------------
 
 export async function dashboard() {
+  await adminOnly();
   const now = new Date();
   const season = seasonOf(now);
   const [deals, campaigns, recent, contacts, donors] = await Promise.all([
@@ -513,6 +535,7 @@ export async function dashboard() {
 
 /** Outreach Correspondence tasks with no deal yet, for "Bring in from the task board". */
 export async function unlinkedOutreachTasks() {
+  await adminOnly();
   const tasks = await prisma.task.findMany({
     where: {
       archived: false,
@@ -552,6 +575,7 @@ export type ComposeRow = {
  * contact at the org.
  */
 export async function composeRows(source: ComposeSource, sender: { name: string; email: string }): Promise<ComposeRow[]> {
+  await adminOnly();
   const season = seasonOf(new Date());
   const senderVars = {
     sender_name: sender.name,
@@ -641,6 +665,7 @@ export async function composeRows(source: ComposeSource, sender: { name: string;
 
 /** Rows already emailed with this template in the last `days` (so a merge can resume). */
 export async function recentlySent(templateId: string | null, keys: { contactId: string | null; dealId: string | null }[], days = 21) {
+  await adminOnly();
   if (!templateId) return [];
   const since = new Date(Date.now() - days * 86_400_000);
   const touches = await prisma.outreachTouch.findMany({

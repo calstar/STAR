@@ -1,5 +1,5 @@
 import { PeopleWorkspace } from "@/components/outreach/PeopleWorkspace";
-import { allTags, listContacts } from "@/lib/outreach/queries";
+import { allTags, listContacts, outreachViewer } from "@/lib/outreach/queries";
 import type { SegmentFilter } from "@/lib/outreach/segments";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,8 @@ export default async function PeoplePage({
 }: {
   searchParams: Promise<{ q?: string; tag?: string; aff?: string; page?: string; dnc?: string }>;
 }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const sp = await searchParams;
   const filter: SegmentFilter = {
     search: sp.q || undefined,

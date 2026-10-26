@@ -5,12 +5,14 @@ import { CampaignDonations } from "@/components/outreach/CampaignDonations";
 import { CampaignForm } from "@/components/outreach/CampaignForm";
 import { dollars, shortDate } from "@/components/outreach/format";
 import { CARD, MUTED, TD, TH } from "@/components/outreach/ui";
-import { daysLeftLabel } from "@/lib/outreach/followups";
-import { getCampaignDetail } from "@/lib/outreach/queries";
+import { calendarDaysUntil, daysLeftLabel } from "@/lib/outreach/followups";
+import { getCampaignDetail, outreachViewer } from "@/lib/outreach/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const { id } = await params;
   const d = await getCampaignDetail(id);
   if (!d) notFound();
@@ -18,7 +20,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
   const raised = donations.reduce((s, x) => s + x.amountCents, 0);
   const donors = new Set(donations.map((x) => x.contact.id)).size;
   const pct = c.goalCents ? Math.min(100, Math.round((raised / c.goalCents) * 100)) : null;
-  const left = c.endsAt ? Math.ceil((new Date(c.endsAt).getTime() - Date.now()) / 86_400_000) : null;
+  const left = c.endsAt && new Date(c.endsAt) >= new Date() ? calendarDaysUntil(new Date(c.endsAt), new Date()) : null;
   const perksPending = donations.filter((x) => x.perkStatus === "pending").length;
   const listLink = (filter: object) => `/outreach/lists?filter=${encodeURIComponent(JSON.stringify(filter))}`;
 

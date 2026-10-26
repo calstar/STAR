@@ -15,6 +15,8 @@ import { getTeamUsers } from "@/lib/user";
 export const dynamic = "force-dynamic";
 
 export default async function DealPage({ params }: { params: Promise<{ id: string }> }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const { id } = await params;
   const [{ user }, detail, team, templates, campaigns] = await Promise.all([
     outreachViewer(),

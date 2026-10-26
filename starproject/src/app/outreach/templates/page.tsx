@@ -5,6 +5,8 @@ import { STARTER_TEMPLATES } from "@/lib/outreach/starter-templates";
 export const dynamic = "force-dynamic";
 
 export default async function TemplatesPage() {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const [{ user }, templates] = await Promise.all([outreachViewer(), listTemplates()]);
   const names = new Set(templates.map((t) => t.name));
   const missingStarters = STARTER_TEMPLATES.filter((t) => !names.has(t.name)).length;

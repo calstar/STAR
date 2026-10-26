@@ -74,13 +74,24 @@ export function dealAttention(d: DealForAttention, now: Date, quietDays = DEFAUL
 
 export type CampaignForAttention = { name: string; endsAt: Date | null; thankYouDueAt: Date | null };
 
+/** The Berkeley calendar day of an instant, as a day number (for "in N days"). */
+function pacificDay(d: Date): number {
+  const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  return Math.round(Date.parse(`${ymd}T00:00:00Z`) / DAY);
+}
+
+/** Whole calendar days (Berkeley time) from `now` to `at`: Oct 31 seen on Oct 26 is 5. */
+export function calendarDaysUntil(at: Date, now: Date): number {
+  return pacificDay(at) - pacificDay(now);
+}
+
 /** Deadlines within `horizonDays`, soonest first. */
 export function campaignMilestones(c: CampaignForAttention, now: Date, horizonDays = 21) {
   const out: { label: string; at: Date; daysLeft: number }[] = [];
   const consider = (at: Date | null, label: string) => {
     if (!at) return;
-    const left = Math.ceil((at.getTime() - now.getTime()) / DAY);
-    if (left >= 0 && left <= horizonDays) out.push({ label, at, daysLeft: left });
+    const left = calendarDaysUntil(at, now);
+    if (at >= now && left <= horizonDays) out.push({ label, at, daysLeft: left });
   };
   consider(c.endsAt, `${c.name} closes`);
   consider(c.thankYouDueAt, `${c.name} thank-you update due`);

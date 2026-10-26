@@ -10,6 +10,8 @@ import { dashboard, outreachViewer } from "@/lib/outreach/queries";
 export const dynamic = "force-dynamic";
 
 export default async function OutreachToday() {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const [{ user }, d] = await Promise.all([outreachViewer(), dashboard()]);
   const empty = d.contacts === 0 && d.queue.length === 0 && d.openCount === 0 && d.wonCount === 0;
 
@@ -64,7 +66,7 @@ export default async function OutreachToday() {
         </section>
       )}
 
-      <section className="grid gap-3 sm:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label={`Committed ${d.season}`} value={dollars(d.wonCents)} sub={`${d.wonCount} sponsors`} />
         <Stat label="In play" value={String(d.openCount)} sub="drafting, contacted, in talks" />
         <Stat label="Need you today" value={String(d.queue.length)} sub="follow-ups, forms, renewals" />

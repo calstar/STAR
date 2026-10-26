@@ -6,6 +6,8 @@ import { segmentFilterSchema, type SegmentFilter } from "@/lib/outreach/segments
 export const dynamic = "force-dynamic";
 
 export default async function ListsPage({ searchParams }: { searchParams: Promise<{ filter?: string; id?: string }> }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const sp = await searchParams;
   const [{ user }, lists, tags, referrers, campaigns, seasons] = await Promise.all([
     outreachViewer(),

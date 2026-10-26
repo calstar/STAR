@@ -17,6 +17,8 @@ export const dynamic = "force-dynamic";
 type SP = { list?: string; stages?: string; season?: string; deal?: string; contact?: string; template?: string; campaign?: string };
 
 export default async function ComposePage({ searchParams }: { searchParams: Promise<SP> }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const sp = await searchParams;
   const { user } = await outreachViewer();
   let source: ComposeSource | null = null;

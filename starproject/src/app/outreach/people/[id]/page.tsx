@@ -11,6 +11,8 @@ import { getContactDetail, listCampaigns, listTemplates, outreachViewer, personN
 export const dynamic = "force-dynamic";
 
 export default async function PersonPage({ params }: { params: Promise<{ id: string }> }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const { id } = await params;
   const [{ user }, detail, templates, campaigns] = await Promise.all([
     outreachViewer(),

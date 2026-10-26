@@ -81,14 +81,14 @@ describe("campaignMilestones", () => {
     const m = campaignMilestones(
       {
         name: "October 2026",
-        endsAt: new Date("2026-10-31T23:59:00Z"),
-        thankYouDueAt: new Date("2026-11-04T23:59:00Z"),
+        endsAt: new Date("2026-10-31T23:59:00-07:00"),
+        thankYouDueAt: new Date("2026-11-04T23:59:00-08:00"),
       },
       now,
     );
     expect(m.map((x) => [x.label, x.daysLeft])).toEqual([
-      ["October 2026 closes", 6],
-      ["October 2026 thank-you update due", 10],
+      ["October 2026 closes", 5],
+      ["October 2026 thank-you update due", 9],
     ]);
     expect(campaignMilestones({ name: "x", endsAt: addDays(now, -1), thankYouDueAt: null }, now)).toEqual([]);
   });

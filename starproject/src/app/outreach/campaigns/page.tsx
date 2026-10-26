@@ -3,11 +3,13 @@ import Link from "next/link";
 import { CampaignForm } from "@/components/outreach/CampaignForm";
 import { dollars, shortDate, titleCase } from "@/components/outreach/format";
 import { CARD, MUTED } from "@/components/outreach/ui";
-import { listCampaigns } from "@/lib/outreach/queries";
+import { listCampaigns, outreachViewer } from "@/lib/outreach/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function CampaignsPage() {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const campaigns = await listCampaigns();
   return (
     <div className="space-y-4">

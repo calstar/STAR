@@ -12,6 +12,8 @@ export default async function SponsorsPage({
 }: {
   searchParams: Promise<{ season?: string; stage?: string }>;
 }) {
+  // Non-admins see the layout's notice; nothing here may load for them.
+  if (!(await outreachViewer()).admin) return null;
   const sp = await searchParams;
   const season = sp.season ?? seasonOf(new Date());
   const [{ user }, deals, seasons, tasks, team] = await Promise.all([
