@@ -3,6 +3,7 @@ import { seasonOf } from "@/lib/outreach/constants";
 import { listDeals, listSeasons, outreachViewer, unlinkedOutreachTasks } from "@/lib/outreach/queries";
 import { getTeamUsers } from "@/lib/user";
 import { displayNameOf } from "@/lib/names";
+import { orgFromTaskTitle } from "@/lib/outreach/tracker";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export default async function SponsorsPage({
       season={season}
       seasons={seasons}
       initialStage={sp.stage ?? null}
-      unlinkedTasks={tasks.length}
+      unlinkedTasks={tasks.filter((t) => orgFromTaskTitle(t.title)).length}
       viewerEmail={user.email}
       team={team.map((u) => ({ id: u.id, name: displayNameOf(u) }))}
     />

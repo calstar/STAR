@@ -5,6 +5,9 @@ export const CARD =
   "rounded-lg border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900";
 export const INPUT =
   "w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-950";
+/** A select/input that sits inline in a toolbar (INPUT without the full width). */
+export const INPUT_INLINE =
+  "w-auto rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-950";
 export const LABEL = "mb-1 block text-xs font-medium text-neutral-500 dark:text-neutral-400";
 export const BTN =
   "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800";

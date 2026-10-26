@@ -297,6 +297,22 @@ defineTool(server, "archive_task", {
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
 
+| `get_outreach_dashboard` | The /outreach Today page: deals needing attention by urgency, season pipeline and committed dollars, campaign deadlines, recent touches | admins only; read |
+| `list_sponsors` / `get_sponsor` | Sponsor deals (season, stage, needs-attention filters); one deal with its touch history and other seasons | admins only; read |
+| `save_sponsor` | Create a deal (org by name or id, created if new) or change its fields; stage changes are noted | admins only; write |
+| `save_outreach_org` | Create or edit an org: kind, website, and whether requests go by email or a web form (`formUrl`) | admins only; write |
+| `log_outreach_touch` | Record an email sent, reply, form submitted, call, meeting or note; on a deal it moves the stage and resets the follow-up | admins only; write |
+| `delete_outreach_touch` / `delete_outreach_contacts` | Remove a mis-logged touch; delete people with their history | admins only; destructive |
+| `schedule_sponsor_follow_up` | Remind in N days, or clear | admins only; idempotent |
+| `import_sponsors_from_tasks` | One deal per Outreach Correspondence task, read from its title, linked back | admins only; write |
+| `list_outreach_contacts` / `get_outreach_contact` | People by segment filter (paged); one person with gifts, referrers and history | admins only; read |
+| `save_outreach_contact` / `tag_outreach_contacts` | Create or edit a person (including `bounced` / `doNotContact`); bulk add/remove tags | admins only; write |
+| `list_outreach_lists` / `get_outreach_list_emails` / `save_outreach_list` | Saved mailing lists with live counts; the addresses a list or filter selects (with a BCC string); save one | admins only |
+| `list_outreach_templates` | Email templates with merge fields | admins only; read |
+| `get_outreach_merge` | Render a template for a list, sponsors by stage, a deal or a person: subject, body, missing fields and a Gmail compose link per recipient. Sends nothing | admins only; read |
+| `list_outreach_campaigns` / `get_outreach_campaign` / `save_outreach_campaign` | Campaigns with totals; one with gifts, perk status and the ambassador table; create or edit | admins only |
+| `import_outreach_sheet` | Import TSV/CSV text (contacts, member list, ScaleFunder export, Current Sponsors sheet); `dryRun` (default) previews | admins only; write |
+
 Modules append their tools here as they land.
 
 ## Resources

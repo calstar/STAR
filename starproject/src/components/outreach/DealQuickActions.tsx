@@ -14,7 +14,7 @@ export type QuickDeal = {
   orgName: string;
   channel: string;
   formUrl: string | null;
-  contacts: { email: string | null }[];
+  contacts: { email: string | null; bounced?: boolean }[];
 };
 
 /**
@@ -32,10 +32,10 @@ export function DealQuickActions({ deal, viewerEmail }: { deal: QuickDeal; viewe
       setMsg(r.ok ? done : (r.error ?? "Failed"));
       router.refresh();
     });
-  const to = deal.contacts.map((c) => c.email).filter((e): e is string => !!e);
+  const to = deal.contacts.filter((c) => !c.bounced).map((c) => c.email).filter((e): e is string => !!e);
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-1">
       {to.length > 0 && (
         <a
           className={BTN_SMALL}

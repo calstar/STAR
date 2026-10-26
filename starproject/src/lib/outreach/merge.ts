@@ -35,8 +35,7 @@ const isSet = (v: MergeVars[string]) => v !== undefined && v !== null && v !== f
 export type Rendered = { text: string; missing: string[] };
 
 export function render(template: string, vars: MergeVars): Rendered {
-  const missing = new Set<string>();
-  // Sections first (innermost-first by repetition), so their insides merge too.
+  // Sections first (repeated, so nested ones resolve), so their insides merge too.
   let text = template;
   const section = /\{\{([#^])\s*([a-z_]+)\s*\}\}([\s\S]*?)\{\{\/\s*\2\s*\}\}/g;
   for (let guard = 0; guard < 10 && section.test(text); guard++) {
@@ -45,10 +44,22 @@ export function render(template: string, vars: MergeVars): Rendered {
       (kind === "#") === isSet(vars[name]) ? inner : "",
     );
   }
-  text = text.replace(/\{\{\s*([a-z_]+)\s*(?:\|([^}]*))?\}\}/g, (_m, name: string, fallback?: string) => {
-    const v = vars[name];
-    if (isSet(v) && typeof v !== "boolean") return String(v);
-    if (fallback !== undefined) return fallback;
+  // Fields innermost first, so a fallback may hold a field: {{first_name|{{org}} team}}.
+  // A missing field leaves a marker; only markers that survive into the final
+  // text (not ones inside a fallback that wasn't needed) count as missing.
+  const MARK = "\u0000";
+  const field = /\{\{\s*([a-z_]+)\s*(?:\|([^{}]*))?\}\}/g;
+  for (let guard = 0; guard < 10 && field.test(text); guard++) {
+    field.lastIndex = 0;
+    text = text.replace(field, (_m, name: string, fallback?: string) => {
+      const v = vars[name];
+      if (isSet(v) && typeof v !== "boolean") return String(v);
+      if (fallback !== undefined) return fallback;
+      return `${MARK}${name}${MARK}`;
+    });
+  }
+  const missing = new Set<string>();
+  text = text.replace(/\u0000([a-z_]+)\u0000/g, (_m, name: string) => {
     missing.add(name);
     return `[${name}]`;
   });

@@ -10,7 +10,7 @@ import type { DealRow } from "@/lib/outreach/queries";
 
 import { DealQuickActions } from "./DealQuickActions";
 import { dollars, relative } from "./format";
-import { BTN, BTN_PRIMARY, CARD, INPUT, MUTED, PILL, STAGE_TONE, TD, TH } from "./ui";
+import { BTN, BTN_PRIMARY, CARD, INPUT, MUTED, PILL, STAGE_TONE, TD, TH, INPUT_INLINE } from "./ui";
 
 type View = "table" | "board";
 
@@ -80,7 +80,7 @@ export function SponsorsWorkspace({
           onChange={(e) => setQ(e.target.value)}
         />
         <select
-          className={`${INPUT} w-auto`}
+          className={INPUT_INLINE}
           value={season}
           onChange={(e) => router.push(`/outreach/sponsors?season=${encodeURIComponent(e.target.value)}`)}
           aria-label="Season"
@@ -92,7 +92,7 @@ export function SponsorsWorkspace({
           ))}
           <option value="all">All seasons</option>
         </select>
-        <select className={`${INPUT} w-auto`} value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
+        <select className={INPUT_INLINE} value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
           <option value="">All types</option>
           {DEAL_TYPES.map((t) => (
             <option key={t} value={t}>
@@ -100,7 +100,7 @@ export function SponsorsWorkspace({
             </option>
           ))}
         </select>
-        <select className={`${INPUT} w-auto`} value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner">
+        <select className={INPUT_INLINE} value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner">
           <option value="">Anyone</option>
           {team.map((u) => (
             <option key={u.id} value={u.id}>
@@ -115,7 +115,7 @@ export function SponsorsWorkspace({
         <div className="ml-auto flex gap-2">
           {unlinkedTasks > 0 && (
             <button className={BTN} disabled={pending} onClick={bringIn} title="One sponsor per Outreach Correspondence task">
-              Bring in {unlinkedTasks} tasks from the board
+              Bring in {unlinkedTasks} sponsors from the task board
             </button>
           )}
           <div className="inline-flex overflow-hidden rounded-md border border-neutral-300 dark:border-neutral-700">
@@ -249,7 +249,7 @@ function DealTable({ deals, viewerEmail }: { deals: DealRow[]; viewerEmail: stri
                   <span className={MUTED}>—</span>
                 )}
               </td>
-              <td className={`${TD} text-right`}>
+              <td className={`${TD} w-1 whitespace-nowrap text-right`}>
                 <DealQuickActions deal={d} viewerEmail={viewerEmail} />
               </td>
             </tr>

@@ -12,7 +12,7 @@ import type { ComposeRow, ComposeSource, TemplateRow } from "@/lib/outreach/quer
 
 import { CopyButton } from "./CopyButton";
 import { relative } from "./format";
-import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, LABEL, MUTED, TAG } from "./ui";
+import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, LABEL, MUTED, TAG, INPUT_INLINE } from "./ui";
 
 type SP = { list?: string; stages?: string; season?: string; deal?: string; contact?: string; template?: string; campaign?: string };
 
@@ -139,7 +139,7 @@ export function ComposeWorkspace({
             ))}
           </div>
           <div className="mt-1 flex gap-1">
-            <select className={`${INPUT} w-auto`} value={seasonPick} onChange={(e) => setSeasonPick(e.target.value)}>
+            <select className={INPUT_INLINE} value={seasonPick} onChange={(e) => setSeasonPick(e.target.value)}>
               {seasons.map((s) => (
                 <option key={s}>{s}</option>
               ))}
@@ -226,6 +226,10 @@ export function ComposeWorkspace({
               </button>
             )}
             {msg && <span className={`text-sm ${MUTED}`}>{msg}</span>}
+            <span className={`w-full text-xs ${MUTED}`}>
+              Each email opens as a filled-in Gmail draft in {viewerEmail}. Review it, attach the sponsorship packet if
+              the email mentions it (links can&apos;t carry attachments), send, then mark it sent here so the follow-up clock starts.
+            </span>
           </div>
           {rows.length === 0 && <p className={`p-4 text-sm ${MUTED}`}>Nobody to write to (no addresses, or all do-not-contact).</p>}
           <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">

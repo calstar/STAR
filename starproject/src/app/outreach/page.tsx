@@ -66,7 +66,7 @@ export default async function OutreachToday() {
 
       <section className="grid gap-3 sm:grid-cols-4">
         <Stat label={`Committed ${d.season}`} value={dollars(d.wonCents)} sub={`${d.wonCount} sponsors`} />
-        <Stat label="Open conversations" value={String(d.openCount)} sub="prospect → in talks" />
+        <Stat label="In play" value={String(d.openCount)} sub="drafting, contacted, in talks" />
         <Stat label="Need you today" value={String(d.queue.length)} sub="follow-ups, forms, renewals" />
         <Stat label="People" value={String(d.contacts)} sub={`${d.donors} have given`} />
       </section>
@@ -82,30 +82,40 @@ export default async function OutreachToday() {
         </div>
       </section>
 
-      <section className={CARD}>
-        <div className="flex items-baseline justify-between border-b border-neutral-200 p-4 dark:border-neutral-800">
-          <h2 className="font-semibold">Needs attention</h2>
-          <span className={`text-xs ${MUTED}`}>Sorted by how overdue</span>
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-lg font-semibold">Needs attention</h2>
+          <span className={`text-xs ${MUTED}`}>Most urgent first in each group</span>
         </div>
-        {d.queue.length === 0 ? (
-          <p className={`p-4 text-sm ${MUTED}`}>You&apos;re caught up. Nothing is overdue.</p>
-        ) : (
-          <ul className="divide-y divide-neutral-100 dark:divide-neutral-800">
-            {d.queue.slice(0, 60).map((deal) => (
-              <li key={deal.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
-                <Link href={`/outreach/sponsors/${deal.id}`} className="min-w-40 font-medium hover:text-blue-600">
-                  {deal.orgName}
-                </Link>
-                <span className={`${PILL} ${STAGE_TONE[deal.stage]}`}>{STAGE_LABEL[deal.stage as keyof typeof STAGE_LABEL]}</span>
-                <span className="text-sm text-amber-800 dark:text-amber-300">{deal.attention!.label}</span>
-                {deal.ask && <span className={`hidden text-sm lg:inline ${MUTED}`}>· {deal.ask}</span>}
-                <span className="ml-auto">
-                  <DealQuickActions deal={deal} viewerEmail={user.email} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {d.queue.length === 0 && <p className={`${CARD} p-4 text-sm ${MUTED}`}>You&apos;re caught up. Nothing is overdue.</p>}
+        {QUEUE_GROUPS.map((g, gi) => {
+          const items = d.queue.filter((q) => q.attention!.kind === g.kind);
+          if (!items.length) return null;
+          return (
+            <details key={g.kind} open={gi < 3} className={CARD}>
+              <summary className="flex cursor-pointer items-baseline gap-2 px-4 py-3">
+                <span className="font-semibold">{g.title}</span>
+                <span className={`${PILL} bg-neutral-100 tabular-nums dark:bg-neutral-800`}>{items.length}</span>
+                <span className={`hidden text-sm sm:inline ${MUTED}`}>{g.help}</span>
+              </summary>
+              <ul className="divide-y divide-neutral-100 border-t border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+                {items.map((deal) => (
+                  <li key={deal.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+                    <Link href={`/outreach/sponsors/${deal.id}`} className="min-w-40 font-medium hover:text-blue-600">
+                      {deal.orgName}
+                    </Link>
+                    <span className={`${PILL} ${STAGE_TONE[deal.stage]}`}>{STAGE_LABEL[deal.stage as keyof typeof STAGE_LABEL]}</span>
+                    <span className="text-sm text-amber-800 dark:text-amber-300">{deal.attention!.label}</span>
+                    {deal.ask && <span className={`hidden max-w-md truncate text-sm lg:inline ${MUTED}`}>· {deal.ask}</span>}
+                    <span className="ml-auto">
+                      <DealQuickActions deal={deal} viewerEmail={user.email} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          );
+        })}
       </section>
 
       <section className={CARD}>
@@ -134,6 +144,16 @@ export default async function OutreachToday() {
     </div>
   );
 }
+
+const QUEUE_GROUPS = [
+  { kind: "bounced", title: "Bounced", help: "Nobody at the sponsor got your email" },
+  { kind: "their_move", title: "Your move", help: "They wrote back; nobody has answered" },
+  { kind: "follow_up_due", title: "Follow-ups due", help: "A reminder you (or the task board) set has come due" },
+  { kind: "no_reply", title: "Gone quiet", help: "Emailed, no reply in 10+ days" },
+  { kind: "draft_unsent", title: "Drafts never sent", help: "Written in Gmail, still sitting in Drafts" },
+  { kind: "form_to_submit", title: "Forms to submit", help: "These sponsors take requests through a web form" },
+  { kind: "renewal_not_started", title: "Renewals not started", help: "Last season's sponsors nobody has asked yet" },
+] as const;
 
 function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (

@@ -27,6 +27,8 @@ import { addDays } from "@/lib/outreach/followups";
 import { IMPORT_PRESETS, parseTags, planImport, planSummary, type ImportOptions, type ImportPlan } from "@/lib/outreach/importer";
 import { resolveSegment } from "@/lib/outreach/queries";
 import { segmentFilterSchema, type SegmentFilter } from "@/lib/outreach/segments";
+import { STARTER_TEMPLATES } from "@/lib/outreach/starter-templates";
+import { sameOrg } from "@/lib/outreach/orgs";
 import { orgFromTaskTitle } from "@/lib/outreach/tracker";
 
 // The outreach CRM's writes. Admins only (requireAdmin on every action): the
@@ -93,9 +95,17 @@ export async function saveOrg(input: z.input<typeof orgInput>): Promise<Result<{
   }
 }
 
+/**
+ * The org this name refers to, created if new. Matches loosely (sameOrg): the
+ * sponsor sheet and the task board name the same company differently, and two
+ * rows for one sponsor would split its history.
+ */
 async function orgIdFor(name: string, tx: Prisma.TransactionClient = prisma): Promise<string> {
   const n = name.trim();
-  const found = await tx.outreachOrg.findFirst({ where: { name: { equals: n, mode: "insensitive" } }, select: { id: true } });
+  const exact = await tx.outreachOrg.findFirst({ where: { name: { equals: n, mode: "insensitive" } }, select: { id: true } });
+  if (exact) return exact.id;
+  const all = await tx.outreachOrg.findMany({ select: { id: true, name: true } });
+  const found = all.find((o) => sameOrg(o.name, n));
   if (found) return found.id;
   return (await tx.outreachOrg.create({ data: { name: n }, select: { id: true } })).id;
 }
@@ -214,7 +224,12 @@ export async function importTrackerTasks(taskIds?: string[]): Promise<Result<{ c
       const orgId = await orgIdFor(parsed.orgName);
       const existing = await prisma.outreachDeal.findUnique({ where: { orgId_season: { orgId, season } } });
       if (existing) {
-        if (!existing.taskId) await prisma.outreachDeal.update({ where: { id: existing.id }, data: { taskId: t.id } });
+        if (!existing.taskId) {
+          await prisma.outreachDeal.update({
+            where: { id: existing.id },
+            data: { taskId: t.id, ask: existing.ask ?? parsed.ask, nextFollowUpAt: existing.nextFollowUpAt ?? t.dueDate },
+          });
+        }
         continue;
       }
       await prisma.outreachDeal.create({
@@ -293,7 +308,7 @@ async function applyTouch(tx: Prisma.TransactionClient, actorId: string, t: z.ou
     if (t.followUpDays !== undefined) data.nextFollowUpAt = t.followUpDays == null ? null : addDays(at, t.followUpDays);
     else data.nextFollowUpAt = null; // a fresh touch restarts the quiet clock
   } else if (kind === "reply") {
-    if (deal.stage === "contacted" || deal.stage === "ghosted") data.stage = "in_talks";
+    if (["prospect", "drafting", "contacted", "ghosted"].includes(deal.stage)) data.stage = "in_talks";
     data.nextFollowUpAt = t.followUpDays == null ? null : addDays(at, t.followUpDays);
   } else if (kind === "email_drafted" && deal.stage === "prospect") {
     data.stage = "drafting";
@@ -304,7 +319,7 @@ async function applyTouch(tx: Prisma.TransactionClient, actorId: string, t: z.ou
 /**
  * Record an interaction. On a deal, an outbound touch (email sent, form
  * submitted, call, meeting) sets last contact, moves a prospect to Contacted
- * and resets the follow-up; a reply moves Contacted to In talks.
+ * and resets the follow-up; a reply moves anything not yet committed to In talks.
  */
 export async function logTouch(input: TouchInput): Promise<Result> {
   try {
@@ -770,6 +785,20 @@ export async function commitImport(input: ImportInput): Promise<
     );
     revalidate();
     return { ok: true, contactsCreated, contactsUpdated, donations, deals, rejected: p.rejected.length };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Add any of the starter templates not already here (matched by name). */
+export async function installStarterTemplates(): Promise<Result<{ added: number }>> {
+  try {
+    await requireAdmin();
+    const have = new Set((await prisma.outreachTemplate.findMany({ select: { name: true } })).map((t) => t.name));
+    const missing = STARTER_TEMPLATES.filter((t) => !have.has(t.name));
+    if (missing.length) await prisma.outreachTemplate.createMany({ data: missing });
+    revalidate();
+    return { ok: true, added: missing.length };
   } catch (e) {
     return fail(e);
   }

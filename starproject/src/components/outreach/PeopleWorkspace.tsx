@@ -10,7 +10,7 @@ import type { ContactRow } from "@/lib/outreach/queries";
 import { CONTACT_PAGE } from "@/lib/outreach/page-size";
 
 import { dollars, relative, titleCase } from "./format";
-import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, MUTED, TAG, TD, TH } from "./ui";
+import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, MUTED, TAG, TD, TH, INPUT_INLINE } from "./ui";
 
 type Params = { q?: string; tag?: string; aff?: string; page?: string; dnc?: string };
 
@@ -70,7 +70,7 @@ export function PeopleWorkspace({
       <div className="flex flex-wrap items-center gap-2">
         <input className={`${INPUT} max-w-xs`} placeholder="Search name, email, org, notes…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select
-          className={`${INPUT} w-auto`}
+          className={INPUT_INLINE}
           value=""
           onChange={(e) => e.target.value && go({ aff: toggleList(activeAff, e.target.value) })}
           aria-label="Affiliation"
@@ -118,7 +118,7 @@ export function PeopleWorkspace({
       {sel.size > 0 && (
         <div className={`${CARD} flex flex-wrap items-center gap-2 p-2 text-sm`}>
           <span className="font-medium">{sel.size} selected</span>
-          <input className={`${INPUT} w-48`} placeholder="tag, tag" value={tagText} onChange={(e) => setTagText(e.target.value)} />
+          <input className={`${INPUT_INLINE} w-48`} placeholder="tag, tag" value={tagText} onChange={(e) => setTagText(e.target.value)} />
           <button className={BTN_SMALL} disabled={pending || !tagText} onClick={() => bulk(() => retagContacts(ids, [tagText], []), "Tagged")}>
             + Tag
           </button>

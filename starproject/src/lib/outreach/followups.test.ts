@@ -50,6 +50,32 @@ describe("dealAttention", () => {
   });
 });
 
+describe("replies and drafts", () => {
+  it("a reply after our last email is our move, ahead of silence", () => {
+    const a = dealAttention(deal({ stage: "in_talks", lastContactAt: addDays(now, -13), lastReplyAt: addDays(now, -12) }), now);
+    expect(a).toMatchObject({ kind: "their_move", label: "They replied 12 days ago; your move" });
+    // We answered since: back to waiting on them.
+    const b = dealAttention(deal({ stage: "in_talks", lastContactAt: addDays(now, -11), lastReplyAt: addDays(now, -12) }), now);
+    expect(b?.kind).toBe("no_reply");
+  });
+  it("a written draft that never went out", () => {
+    expect(dealAttention(deal({ stage: "drafting", lastDraftAt: addDays(now, -14) }), now)).toMatchObject({
+      kind: "draft_unsent",
+      label: "Draft written 14 days ago, never sent",
+    });
+    expect(dealAttention(deal({ stage: "drafting", lastDraftAt: addDays(now, -14), lastContactAt: addDays(now, -2) }), now)).toBeNull();
+  });
+});
+
+describe("bounces", () => {
+  it("a sponsor whose every address bounced comes first, whatever else is due", () => {
+    const a = dealAttention(deal({ allBounced: true, nextFollowUpAt: addDays(now, -5), lastContactAt: addDays(now, -12) }), now);
+    expect(a).toMatchObject({ kind: "bounced" });
+    expect(a!.weight).toBeGreaterThan(dealAttention(deal({ nextFollowUpAt: addDays(now, -60) }), now)!.weight);
+    expect(dealAttention(deal({ allBounced: false, lastContactAt: addDays(now, -2) }), now)).toBeNull();
+  });
+});
+
 describe("campaignMilestones", () => {
   it("lists deadlines inside the horizon, soonest first", () => {
     const m = campaignMilestones(

@@ -11,11 +11,16 @@ export type DealForAttention = {
   renewal: boolean;
   lastContactAt: Date | null;
   nextFollowUpAt: Date | null;
+  /** Their most recent reply, and our most recent unsent draft (from touches). */
+  lastReplyAt?: Date | null;
+  lastDraftAt?: Date | null;
+  /** Every address we have at the org bounced (and there is at least one). */
+  allBounced?: boolean;
   org: { channel: string; formUrl: string | null };
 };
 
 export type Attention = {
-  kind: "follow_up_due" | "no_reply" | "form_to_submit" | "renewal_not_started";
+  kind: "bounced" | "follow_up_due" | "their_move" | "no_reply" | "draft_unsent" | "form_to_submit" | "renewal_not_started";
   /** One line for the queue: "Follow-up was due 3 days ago". */
   label: string;
   /** How urgent, for sorting: bigger first. Days overdue, roughly. */
@@ -37,13 +42,26 @@ export function dealAttention(d: DealForAttention, now: Date, quietDays = DEFAUL
     }
     return null;
   }
+  // Nobody got it: a follow-up would bounce too.
+  if (d.allBounced && stage !== "prospect") {
+    return { kind: "bounced", label: "Every address bounced; find a new contact", weight: 200 };
+  }
   if (d.nextFollowUpAt && d.nextFollowUpAt <= now) {
     const n = days(now.getTime() - d.nextFollowUpAt.getTime());
     return { kind: "follow_up_due", label: `Follow-up was due ${ago(n)}`, weight: 100 + n };
   }
+  // They wrote back after our last email: the ball is in our court.
+  if (d.lastReplyAt && (!d.lastContactAt || d.lastReplyAt > d.lastContactAt)) {
+    const n = days(now.getTime() - d.lastReplyAt.getTime());
+    return { kind: "their_move", label: `They replied ${ago(n)}; your move`, weight: 90 + n };
+  }
   if (AWAITING_REPLY.includes(stage) && !d.nextFollowUpAt && d.lastContactAt) {
     const n = days(now.getTime() - d.lastContactAt.getTime());
     if (n >= quietDays) return { kind: "no_reply", label: `No reply since ${ago(n)}`, weight: 50 + n };
+  }
+  if (stage === "drafting" && d.org.channel !== "form" && d.lastDraftAt && (!d.lastContactAt || d.lastDraftAt > d.lastContactAt)) {
+    const n = days(now.getTime() - d.lastDraftAt.getTime());
+    return { kind: "draft_unsent", label: `Draft written ${ago(n)}, never sent`, weight: 40 + n };
   }
   if ((stage === "prospect" || stage === "drafting") && d.org.channel === "form") {
     return { kind: "form_to_submit", label: "Request goes in through their web form", weight: 30 };

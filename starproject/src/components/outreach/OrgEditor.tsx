@@ -110,7 +110,7 @@ export function OrgContacts({
 }: {
   orgId: string;
   orgName: string;
-  contacts: { id: string; email: string | null; name: string; title: string | null }[];
+  contacts: { id: string; email: string | null; name: string; title: string | null; bounced?: boolean }[];
   viewerEmail: string;
 }) {
   const router = useRouter();
@@ -121,7 +121,7 @@ export function OrgContacts({
   const [title, setTitle] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const emails = contacts.map((c) => c.email).filter((e): e is string => !!e);
+  const emails = contacts.filter((c) => !c.bounced).map((c) => c.email).filter((e): e is string => !!e);
 
   return (
     <div className={`${CARD} p-4`}>
@@ -150,6 +150,7 @@ export function OrgContacts({
             </Link>
             {c.title && <span className={MUTED}>{c.title}</span>}
             {c.email && c.name && <span className={MUTED}>{c.email}</span>}
+            {c.bounced && <span className="text-xs font-medium text-red-700 dark:text-red-300">bounced</span>}
           </li>
         ))}
       </ul>

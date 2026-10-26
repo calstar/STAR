@@ -24,6 +24,11 @@ describe("orgFromTaskTitle", () => {
   it("reads 'X sponsorship' titles and ignores the rest", () => {
     expect(orgFromTaskTitle("Swage Sponsorship")?.orgName).toBe("Swage");
     expect(orgFromTaskTitle("Get PT sponsorship")?.orgName).toBe("PT");
-    expect(orgFromTaskTitle("Source COPV tanks - 6 L minimum, 4500 psi rating")).toBeNull();
+    expect(
+      orgFromTaskTitle('Swagelok - request sponsorship/discount on 3/8" Swagelok-to-NPT fittings, 700 psi check valves'),
+    ).toEqual({ orgName: "Swagelok", ask: 'request sponsorship/discount on 3/8" Swagelok-to-NPT fittings, 700 psi check valves', renewal: false });
+    expect(
+      orgFromTaskTitle("Source COPV tanks - 6 L minimum, 4500 psi rating - identify vendors and request sponsorship/discount"),
+    ).toBeNull();
   });
 });

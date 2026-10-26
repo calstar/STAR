@@ -303,6 +303,21 @@ export function parseDate(s: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/**
+ * The dollar value a "Their Deliverables" cell states: "$3,000.00", "8330
+ * (outreach only)". A bare number counts only with a $ or three-plus digits,
+ * so "2 Go3s" and "15%" are not money.
+ */
+export function leadingAmount(s: string): number | null {
+  const exact = parseMoney(s);
+  if (exact != null) return exact;
+  const m = s.trim().match(/^(\$)?\s*(\d[\d,]*(?:\.\d{1,2})?)(?!\s*%)(?![\d.,])/);
+  if (!m) return null;
+  const digits = m[2].replace(/,/g, "").split(".")[0];
+  if (!m[1] && digits.length < 3) return null;
+  return parseMoney(m[2]);
+}
+
 function sponsorType(s: string): DealType {
   const v = s.toLowerCase();
   if (v.startsWith("discount")) return "discount";
@@ -442,7 +457,7 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
         responsibleEngineer: orNull(cell(row, cols.engineer)),
         theirDeliverables: orNull(theirs),
         ourDeliverables: orNull(cell(row, cols.ours)),
-        valueCents: parseMoney(theirs),
+        valueCents: leadingAmount(theirs),
         notes: orNull([info, !emails.length && contactCell ? `Contact: ${contactCell}` : ""].filter(Boolean).join("\n")),
       });
       for (const e of emails) {

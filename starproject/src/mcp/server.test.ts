@@ -27,6 +27,29 @@ const ADMIN_ONLY = [
   "run_digest",
   "list_email_queue",
   "list_notification_log",
+  "get_outreach_dashboard",
+  "list_sponsors",
+  "get_sponsor",
+  "save_sponsor",
+  "save_outreach_org",
+  "delete_outreach_touch",
+  "delete_outreach_contacts",
+  "log_outreach_touch",
+  "schedule_sponsor_follow_up",
+  "import_sponsors_from_tasks",
+  "list_outreach_contacts",
+  "get_outreach_contact",
+  "save_outreach_contact",
+  "tag_outreach_contacts",
+  "list_outreach_lists",
+  "get_outreach_list_emails",
+  "save_outreach_list",
+  "list_outreach_templates",
+  "get_outreach_merge",
+  "list_outreach_campaigns",
+  "get_outreach_campaign",
+  "save_outreach_campaign",
+  "import_outreach_sheet",
 ];
 
 const DESTRUCTIVE = [
@@ -37,6 +60,8 @@ const DESTRUCTIVE = [
   "remove_admin",
   "revoke_api_token",
   "untrack_subteam",
+  "delete_outreach_touch",
+  "delete_outreach_contacts",
 ];
 
 type Listed = Awaited<ReturnType<Client["listTools"]>>["tools"];

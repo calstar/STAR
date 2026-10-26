@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseDelimited } from "./csv";
-import { planImport, planSummary, type ImportOptions } from "./importer";
+import { leadingAmount, planImport, planSummary, type ImportOptions } from "./importer";
 
 const opts = (o: Partial<ImportOptions> = {}): ImportOptions => ({
   preset: "auto",
@@ -146,5 +146,17 @@ describe("no header", () => {
   it("says what it needs", () => {
     const plan = planImport([["just", "some"], ["words", "here"]], opts());
     expect(plan.rejected[0].reason).toMatch(/header/);
+  });
+});
+
+describe("leadingAmount", () => {
+  it("reads dollar amounts and leaves counts and percentages alone", () => {
+    expect(leadingAmount("$3,000.00")).toBe(300000);
+    expect(leadingAmount("8330 (outreach only)")).toBe(833000);
+    expect(leadingAmount("$500 in credits")).toBe(50000);
+    expect(leadingAmount("2 Go3s, 1 X3")).toBeNull();
+    expect(leadingAmount("15%")).toBeNull();
+    expect(leadingAmount("50% off MakerPasses")).toBeNull();
+    expect(leadingAmount("???")).toBeNull();
   });
 });

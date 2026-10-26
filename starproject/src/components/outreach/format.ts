@@ -4,7 +4,13 @@ export { formatCents } from "@/lib/finance/money";
 
 export function shortDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  // Berkeley time: a deadline at 23:59 Pacific is that day, not the next UTC one.
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/Los_Angeles",
+  });
 }
 
 export function relative(iso: string | null | undefined, now = Date.now()): string {

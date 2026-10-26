@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
-import { deleteTemplate, saveTemplate } from "@/lib/actions/outreach";
+import { deleteTemplate, installStarterTemplates, saveTemplate } from "@/lib/actions/outreach";
 import { TEMPLATE_KINDS, type TemplateKind } from "@/lib/outreach/constants";
 import { MERGE_FIELDS, render } from "@/lib/outreach/merge";
 import type { TemplateRow } from "@/lib/outreach/queries";
@@ -14,16 +14,22 @@ import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, LABEL, MUTED } from "./ui";
 
 export function TemplatesWorkspace({
   templates,
+  missingStarters,
   senderName,
   senderEmail,
 }: {
   templates: TemplateRow[];
+  missingStarters: number;
   senderName: string;
   senderEmail: string;
 }) {
   const router = useRouter();
   const [id, setId] = useState<string | null>(templates[0]?.id ?? null);
   const cur = templates.find((t) => t.id === id) ?? null;
+  useEffect(() => {
+    if (!id && templates.length && !f.name && !f.body) pick(templates[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates]);
   const [f, setF] = useState(() => ({
     name: cur?.name ?? "",
     kind: (cur?.kind ?? "sponsor_cold") as TemplateKind,
@@ -52,7 +58,7 @@ export function TemplatesWorkspace({
     renewal,
     last_gift: "$150.00",
     referrer: "Ada L.",
-    campaign_url: "https://crowdfund.berkeley.edu/star",
+    campaign_url: "https://crowdfund.berkeley.edu/project/50508",
     sender_name: senderName,
     sender_first_name: senderName.split(/\s+/)[0],
     sender_email: senderEmail,
@@ -69,6 +75,21 @@ export function TemplatesWorkspace({
             + New
           </button>
         </div>
+        {missingStarters > 0 && (
+          <button
+            className={`${BTN} mb-2 w-full`}
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await installStarterTemplates();
+                setMsg(r.ok ? `Added ${r.added} starter templates` : r.error);
+                router.refresh();
+              })
+            }
+          >
+            Add {missingStarters} starter templates
+          </button>
+        )}
         <ul className="space-y-0.5">
           {templates.map((t) => (
             <li key={t.id}>

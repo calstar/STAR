@@ -29,3 +29,14 @@ describe("fieldsUsed", () => {
     expect(fieldsUsed("{{#renewal}}x{{/renewal}} {{org}} {{org|y}}")).toEqual(["renewal", "org"]);
   });
 });
+
+describe("nested fallbacks", () => {
+  it("a fallback may hold another field", () => {
+    const t = "Hi {{first_name|{{org}} team}},";
+    expect(render(t, { org: "Boeing" })).toEqual({ text: "Hi Boeing team,", missing: [] });
+    expect(render(t, { first_name: "Megan", org: "Boeing" }).text).toBe("Hi Megan,");
+    // The inner field is only missing if its fallback was actually used.
+    expect(render(t, { first_name: "Megan" })).toEqual({ text: "Hi Megan,", missing: [] });
+    expect(render(t, {})).toEqual({ text: "Hi [org] team,", missing: ["org"] });
+  });
+});

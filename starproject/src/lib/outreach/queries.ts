@@ -9,7 +9,7 @@ import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
 import { getCurrentDbUser } from "@/lib/user";
 
-import { CLOSED_STAGES, WON_STAGES, seasonOf, type DealStage } from "./constants";
+import { WON_STAGES, seasonOf, type DealStage } from "./constants";
 import { campaignMilestones, dealAttention, type Attention } from "./followups";
 import { CONTACT_PAGE } from "./page-size";
 import { segmentWhere, type SegmentFilter } from "./segments";
@@ -31,7 +31,7 @@ const DEAL_INCLUDE = {
     include: {
       contacts: {
         where: { doNotContact: false },
-        select: { id: true, email: true, firstName: true, lastName: true, title: true },
+        select: { id: true, email: true, firstName: true, lastName: true, title: true, bounced: true },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -39,6 +39,13 @@ const DEAL_INCLUDE = {
   owner: { select: { id: true, email: true, name: true, displayName: true } },
   task: { select: { id: true, number: true, title: true, status: true } },
   _count: { select: { touches: true } },
+  // The newest reply and the newest unsent draft, for the attention rules.
+  touches: {
+    where: { kind: { in: ["reply", "email_drafted"] } },
+    select: { kind: true, at: true },
+    orderBy: { at: "desc" },
+    take: 20,
+  },
 } satisfies Prisma.OutreachDealInclude;
 
 type DealWithRefs = Prisma.OutreachDealGetPayload<{ include: typeof DEAL_INCLUDE }>;
@@ -66,7 +73,7 @@ export type DealRow = {
   nextFollowUpAt: string | null;
   task: { id: string; number: number; title: string } | null;
   notes: string | null;
-  contacts: { id: string; email: string | null; name: string; title: string | null }[];
+  contacts: { id: string; email: string | null; name: string; title: string | null; bounced: boolean }[];
   touchCount: number;
   attention: Attention | null;
 };
@@ -95,9 +102,17 @@ function toDealRow(d: DealWithRefs, now: Date): DealRow {
     nextFollowUpAt: iso(d.nextFollowUpAt),
     task: d.task ? { id: d.task.id, number: d.task.number, title: d.task.title } : null,
     notes: d.notes,
-    contacts: d.org.contacts.map((c) => ({ id: c.id, email: c.email, name: personName(c), title: c.title })),
+    contacts: d.org.contacts.map((c) => ({ id: c.id, email: c.email, name: personName(c), title: c.title, bounced: c.bounced })),
     touchCount: d._count.touches,
-    attention: dealAttention(d, now),
+    attention: dealAttention(
+      {
+        ...d,
+        lastReplyAt: d.touches.find((t) => t.kind === "reply")?.at ?? null,
+        lastDraftAt: d.touches.find((t) => t.kind === "email_drafted")?.at ?? null,
+        allBounced: d.org.contacts.length > 0 && d.org.contacts.every((c) => c.bounced),
+      },
+      now,
+    ),
   };
 }
 
@@ -470,7 +485,8 @@ export async function dashboard() {
   const byStage: Record<string, number> = {};
   for (const d of current) byStage[d.stage] = (byStage[d.stage] ?? 0) + 1;
   const won = current.filter((d) => WON_STAGES.includes(d.stage as DealStage));
-  const open = current.filter((d) => !CLOSED_STAGES.includes(d.stage as DealStage) && !WON_STAGES.includes(d.stage as DealStage));
+  // In play: written to, or being written to. Untouched prospects are the backlog.
+  const open = current.filter((d) => ["drafting", "contacted", "in_talks"].includes(d.stage));
   const queue = deals
     .filter((d) => d.attention)
     .sort((a, b) => b.attention!.weight - a.attention!.weight || a.orgName.localeCompare(b.orgName));
