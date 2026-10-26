@@ -926,7 +926,16 @@ inline void networkStep(CoreState& s, const Config& cfg) {
     // One step of any OTA transfer; never blocks for more than a chunk, so the
     // watchdog and heartbeats keep running during an upload. Reboots into the
     // new image on success.
-    g_ota_server.service();
+    //
+    // Updates are only allowed in WaitingForServer: never flash a board that
+    // is streaming for a test. Sampling is already off in that state, and a
+    // transfer under way is aborted if the board moves on.
+    const bool ota_allowed = s.state == State::WaitingForServer;
+    if (g_ota_server.service(ota_allowed) == StarOTA::Result::Refused) {
+        HF_LOG("[OTA] update refused: board is in ");
+        HF_LOG(stateName(s.state));
+        HF_LOGLN("; updates are only accepted in WaitingForServer");
+    }
     // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
     // so consecutive OTA uploads are visibly different on the serial monitor.
     StarOTA::printTestMessage();
