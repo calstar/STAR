@@ -428,21 +428,26 @@ export async function getCampaignDetail(id: string) {
       select: { ambassadorEmail: true, ambassadorName: true, contactId: true },
     }),
   ]);
-  // Who brought in what: gifts credited on the platform, plus contacts each
-  // member supplied and how many of those gave.
+  // Who brought in what: contacts each member supplied (and how many gave),
+  // plus gifts the platform credited to them. A member is keyed by email when
+  // known, so "Luke M." on a list and luke@ on a gift are one row.
   const gaveIds = new Set(donations.map((d) => d.contactId));
+  const nameByEmail = new Map<string, string>();
+  for (const r of referrals) if (r.ambassadorEmail && r.ambassadorName) nameByEmail.set(r.ambassadorEmail.toLowerCase(), r.ambassadorName);
   const board = new Map<string, { member: string; supplied: number; gave: number; raisedCents: number }>();
-  const row = (member: string) => {
-    const k = member.toLowerCase();
-    if (!board.has(k)) board.set(k, { member, supplied: 0, gave: 0, raisedCents: 0 });
+  const row = (email: string | null, name: string | null) => {
+    const k = (email ?? name ?? "?").toLowerCase();
+    if (!board.has(k)) board.set(k, { member: name ?? (email && nameByEmail.get(email.toLowerCase())) ?? email ?? "?", supplied: 0, gave: 0, raisedCents: 0 });
     return board.get(k)!;
   };
   for (const r of referrals) {
-    const b = row(r.ambassadorName ?? r.ambassadorEmail ?? "?");
+    const b = row(r.ambassadorEmail, r.ambassadorName);
     b.supplied++;
     if (gaveIds.has(r.contactId)) b.gave++;
   }
-  for (const d of donations) if (d.ambassadorEmail) row(d.ambassadorEmail).raisedCents += d.amountCents;
+  for (const d of donations) {
+    if (d.ambassadorEmail && d.ambassadorEmail !== "studentgiving@berkeley.edu") row(d.ambassadorEmail, null).raisedCents += d.amountCents;
+  }
   return {
     campaign: {
       id: c.id,

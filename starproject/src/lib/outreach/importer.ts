@@ -505,11 +505,14 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
     }
     if (!email && !first && !last) continue;
     const alt = splitEmails(cell(row, cols.altEmail)).filter((e) => e !== email);
-    const ambEmail = splitEmails(cell(row, cols.ambassadorEmail))[0] ?? null;
     const ambName =
       [cell(row, cols.ambassadorFirst), cell(row, cols.ambassadorLast)].filter(Boolean).join(" ") || cell(row, cols.ambassador);
-    // ScaleFunder credits the campus office when no member is named.
-    const realAmbassador = ambName && !/cal student philanthropy/i.test(ambName) ? ambName : "";
+    // ScaleFunder credits the campus office ("Cal Student Philanthropy",
+    // studentgiving@berkeley.edu) when no member is named: that is nobody.
+    const campusDefault = /cal student philanthropy/i.test(ambName);
+    const ambEmailRaw = splitEmails(cell(row, cols.ambassadorEmail))[0] ?? null;
+    const ambEmail = campusDefault || ambEmailRaw === "studentgiving@berkeley.edu" ? null : ambEmailRaw;
+    const realAmbassador = ambName && !campusDefault ? ambName : "";
     const address = [cell(row, cols.address), cell(row, cols.address2)].filter(Boolean).join(", ");
     const draft: ContactDraft = {
       ...emptyContact(),

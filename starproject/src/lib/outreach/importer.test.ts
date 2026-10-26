@@ -83,7 +83,7 @@ describe("ScaleFunder export", () => {
     [
       header,
       'STAR,2025-10-14 09:12:00,Lee,Park,lee@yahoo.com,1 Main St,,Berkeley,CA,94704,US,,ScaleFunder,"$2,000.00",Launch Anything On A Rocket,hide_amount,Ada,L,ada@berkeley.edu,SF1',
-      "STAR,2025-10-15 10:00:00,Lee,Park,LEE@yahoo.com,,,,,,,,ScaleFunder,75,Signed Polaroid From Launch,display,Cal Student,Philanthropy,,SF2",
+      "STAR,2025-10-15 10:00:00,Lee,Park,LEE@yahoo.com,,,,,,,,ScaleFunder,75,Signed Polaroid From Launch,display,Cal Student,Philanthropy,studentgiving@berkeley.edu,SF2",
       "STAR,2025-10-15 10:00:00,No,Amount,x@y.com,,,,,,,,ScaleFunder,,,display,,,,SF3",
     ].join("\n"),
     ",",
@@ -107,6 +107,7 @@ describe("ScaleFunder export", () => {
     expect(lee.address).toBe("1 Main St");
     // The campus default "Cal Student Philanthropy" is not a member.
     expect(lee.ambassadors).toEqual([{ email: "ada@berkeley.edu", name: "Ada L" }]);
+    expect(plan.donations[1].ambassadorEmail).toBeNull();
     expect(plan.rejected).toEqual([{ row: 4, reason: "no amount" }]);
     expect(planSummary(plan)).toMatchObject({ donations: 2, donationCents: 207500 });
   });

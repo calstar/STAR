@@ -80,13 +80,14 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
             {leaderboard.length === 0 ? (
               <p className={`p-3 text-sm ${MUTED}`}>Import member contact lists with this campaign selected to see who brought in whom.</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr>
                     <th className={TH}>Member</th>
                     <th className={`${TH} text-right`}>Contacts</th>
                     <th className={`${TH} text-right`}>Gave</th>
-                    <th className={`${TH} text-right`}>Credited</th>
+                    <th className={`${TH} text-right`}>Credited $</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
@@ -100,6 +101,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
           <CampaignForm campaign={c} />
