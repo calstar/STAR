@@ -53,6 +53,8 @@ model User {
   purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
   createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
   decidedPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestDecidedBy")
+  outreachDeals           OutreachDeal[]       @relation("OutreachDealOwner")
+  outreachTouches         OutreachTouch[]      @relation("OutreachTouchActor")
 }
 
 // A personal access token for the MCP endpoint (/api/mcp). Only the SHA-256 of
@@ -236,6 +238,7 @@ model Task {
   // Present only for a manufacturing task: the part's details.
   manufacturing TaskManufacturing?
   bomItems      BomItem[]
+  outreachDeals OutreachDeal[]
 
   @@index([projectId, status])
   @@index([status, completedAt])
@@ -675,4 +678,206 @@ model PurchaseRequestItem {
 
   @@index([requestId])
   @@index([bomItemId])
+}
+
+// ---------------------------------------------------------------------------
+// Outreach CRM (/outreach). Admins only: these rows hold donors' emails, home
+// addresses and gift amounts, so nothing here is written to the team-wide
+// Activity feed. OutreachTouch is the outreach audit trail instead (who did
+// what to whom, when). Kinds and stages are plain strings validated against the
+// lists in src/lib/outreach/constants.ts, so adding one needs no migration.
+
+// A company, foundation, campus office, school or club we talk to.
+model OutreachOrg {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  kind      String   @default("company") // ORG_KINDS
+  website   String?
+  industry  String?
+  // How they take a request: "email" (to a contact), "form" (paste into
+  // formUrl), "linkedin", "phone". Forms are what fall through the cracks.
+  channel   String   @default("email")
+  formUrl   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts OutreachContact[]
+  deals    OutreachDeal[]
+  touches  OutreachTouch[]
+}
+
+// One person: a sponsor's rep, a parent, an alumnus, a professor.
+model OutreachContact {
+  id           String       @id @default(cuid())
+  // Normalized (lowercase, trimmed) by src/lib/outreach/emails.ts; null for a
+  // person we only know by name or form.
+  email        String?      @unique
+  altEmails    String[]     @default([])
+  firstName    String?
+  lastName     String?
+  title        String?
+  phone        String?
+  // Mailing address, for physical perks. Shown only on the contact's page.
+  address      String?
+  city         String?
+  state        String?
+  zip          String?
+  country      String?
+  affiliation  String? // AFFILIATIONS
+  tags         String[]     @default([])
+  orgId        String?
+  org          OutreachOrg? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+  doNotContact Boolean      @default(false)
+  bounced      Boolean      @default(false)
+  source       String? // where the row came from, e.g. "import: ScaleFunder 2025"
+  notes        String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  referrals OutreachReferral[]
+  donations OutreachDonation[]
+  touches   OutreachTouch[]
+
+  @@index([orgId])
+}
+
+// "Member X brought in contact Y." Many-to-many: the same parent can sit on two
+// members' lists. ambassadorEmail is kept even when no User row exists yet.
+model OutreachReferral {
+  id              String            @id @default(cuid())
+  contactId       String
+  contact         OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  ambassadorEmail String?
+  ambassadorName  String?
+  campaignId      String?
+  campaign        OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  createdAt       DateTime          @default(now())
+
+  @@unique([contactId, ambassadorEmail, ambassadorName])
+  @@index([ambassadorEmail])
+}
+
+// One sponsorship conversation with one org for one season.
+model OutreachDeal {
+  id                  String      @id @default(cuid())
+  orgId               String
+  org                 OutreachOrg @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  season              String // "2026–27"
+  type                String      @default("monetary") // DEAL_TYPES
+  stage               String      @default("prospect") // DEAL_STAGES
+  ask                 String? // what we are asking for, in a sentence
+  theirDeliverables   String? // "$3,000", "50% off e-matches"
+  ourDeliverables     String? // "logo on the vehicle, resume book"
+  valueCents          Int?
+  project             String? // "Full Team", "LE4", "Caldera", "Alula"
+  ownerId             String?
+  owner               User?       @relation("OutreachDealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  responsibleEngineer String?
+  renewal             Boolean     @default(false) // a returning sponsor
+  lastContactAt       DateTime?
+  nextFollowUpAt      DateTime?
+  // The Outreach Correspondence task this deal grew out of, if any.
+  taskId              String?
+  task                Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  notes               String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  touches OutreachTouch[]
+
+  @@unique([orgId, season])
+  @@index([stage])
+  @@index([nextFollowUpAt])
+}
+
+// A crowdfunding push, newsletter, event drive.
+model OutreachCampaign {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  kind          String    @default("crowdfunding") // CAMPAIGN_KINDS
+  url           String?
+  goalCents     Int?
+  startsAt      DateTime?
+  endsAt        DateTime?
+  thankYouDueAt DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  donations OutreachDonation[]
+  referrals OutreachReferral[]
+  touches   OutreachTouch[]
+}
+
+model OutreachDonation {
+  id              String            @id @default(cuid())
+  contactId       String
+  contact         OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaignId      String?
+  campaign        OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  amountCents     Int
+  donatedAt       DateTime
+  perkName        String?
+  perkStatus      String            @default("none") // none | pending | sent
+  // display | hide_amount | hide_name, as the donor chose on the platform.
+  displayPref     String?
+  ambassadorEmail String?
+  // The platform's id for the gift (ScaleFunder sf_id), so the same export
+  // imports twice without doubling.
+  externalRef     String?           @unique
+  createdAt       DateTime          @default(now())
+
+  @@index([campaignId])
+  @@index([contactId])
+}
+
+// Every interaction: a drafted or sent email, a reply, a form submitted, a call.
+model OutreachTouch {
+  id         String            @id @default(cuid())
+  kind       String // TOUCH_KINDS
+  at         DateTime          @default(now())
+  contactId  String?
+  contact    OutreachContact?  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  orgId      String?
+  org        OutreachOrg?      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  dealId     String?
+  deal       OutreachDeal?     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  campaignId String?
+  campaign   OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  templateId String?
+  template   OutreachTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  subject    String?
+  note       String?
+  threadUrl  String?
+  actorId    String
+  actor      User              @relation("OutreachTouchActor", fields: [actorId], references: [id])
+
+  @@index([at])
+  @@index([contactId])
+  @@index([orgId])
+  @@index([dealId])
+}
+
+// A saved segment. `filter` is a SegmentFilter (src/lib/outreach/segments.ts);
+// membership is computed when the list is opened, never stored.
+model OutreachList {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  filter      Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// An email template with {{merge_fields}} (src/lib/outreach/merge.ts).
+model OutreachTemplate {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  kind      String   @default("sponsor_cold") // TEMPLATE_KINDS
+  subject   String
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  touches OutreachTouch[]
 }
