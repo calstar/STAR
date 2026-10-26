@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.16)
+project(star_self_test LANGUAGES C)
+
+enable_testing()
+option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" OFF)
+
+add_library(star_self_test STATIC ../../Core/Src/self_test.c ../../Core/Src/self_test_devices.c)
+target_include_directories(star_self_test PUBLIC ../../Core/Inc)
+target_compile_features(star_self_test PUBLIC c_std_99)
+set_target_properties(star_self_test PROPERTIES C_EXTENSIONS OFF)
+add_executable(test_self_test test_self_test.c)
+target_link_libraries(test_self_test PRIVATE star_self_test)
+
+add_executable(test_self_test_devices test_self_test_devices.c)
+target_link_libraries(test_self_test_devices PRIVATE star_self_test)
+
+foreach(target star_self_test test_self_test test_self_test_devices)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /WX)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    if(SELF_TEST_SANITIZERS)
+        if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+            message(FATAL_ERROR "Sanitizers require Clang or GCC")
+        endif()
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    endif()
+endforeach()
+add_test(NAME self_test_contract COMMAND test_self_test)
+
+add_test(NAME self_test_device_protocols COMMAND test_self_test_devices)
