@@ -6,6 +6,7 @@ import { dollars, shortDate } from "@/components/outreach/format";
 import { TouchLog } from "@/components/outreach/TouchLog";
 import { CARD, MUTED, TAG } from "@/components/outreach/ui";
 import { gmailComposeUrl } from "@/lib/outreach/compose";
+import { formatPhone, smsHref, telHref } from "@/lib/outreach/phones";
 import { getContactDetail, listCampaigns, listTemplates, outreachViewer, personName } from "@/lib/outreach/queries";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,18 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         </Link>
         <h2 className="text-xl font-semibold">{name}</h2>
         {c.org && <span className={MUTED}>{c.org.name}</span>}
+        {c.gradYear && <span className={MUTED}>Class of {c.gradYear}</span>}
+        {c.phone && !c.doNotContact && (
+          <span className="text-sm">
+            <a className="text-blue-600 hover:underline" href={telHref(c.phone)}>
+              ☎ {formatPhone(c.phone)}
+            </a>{" "}
+            ·{" "}
+            <a className="text-blue-600 hover:underline" href={smsHref(c.phone)}>
+              Text
+            </a>
+          </span>
+        )}
         {c.tags.map((t) => (
           <span key={t} className={TAG}>
             {t}

@@ -13,6 +13,11 @@ export const segmentFilterSchema = z.object({
   tagsNone: z.array(z.string()).optional(),
   affiliations: z.array(z.string()).optional(),
   orgKinds: z.array(z.string()).optional(),
+  /** Only people with a phone number on file. */
+  hasPhone: z.boolean().optional(),
+  /** Class-year range, inclusive (alumni). */
+  gradYearMin: z.number().int().optional(),
+  gradYearMax: z.number().int().optional(),
   /** Gave to this campaign (id), or to any when "any". */
   donatedTo: z.string().optional(),
   /** Did not give to this campaign (id). */
@@ -47,6 +52,10 @@ export function segmentWhere(f: SegmentFilter): Prisma.OutreachContactWhereInput
   if (has(f.tagsNone)) and.push({ NOT: { tags: { hasSome: f.tagsNone } } });
   if (has(f.affiliations)) and.push({ affiliation: { in: f.affiliations } });
   if (has(f.orgKinds)) and.push({ org: { kind: { in: f.orgKinds } } });
+  if (f.hasPhone) and.push({ phone: { not: null } });
+  if (f.gradYearMin != null || f.gradYearMax != null) {
+    and.push({ gradYear: { ...(f.gradYearMin != null ? { gte: f.gradYearMin } : {}), ...(f.gradYearMax != null ? { lte: f.gradYearMax } : {}) } });
+  }
   if (f.donatedTo) and.push({ donations: { some: f.donatedTo === "any" ? {} : { campaignId: f.donatedTo } } });
   if (f.notDonatedTo) and.push({ donations: { none: { campaignId: f.notDonatedTo } } });
   if (has(f.dealStages)) {
@@ -65,6 +74,8 @@ export type SegmentRow = {
   notes: string | null;
   tags: string[];
   affiliation: string | null;
+  phone?: string | null;
+  gradYear?: number | null;
   doNotContact: boolean;
   bounced: boolean;
   org: { name: string; kind: string; deals: { stage: string; season: string }[] } | null;
@@ -83,6 +94,9 @@ export function matchesSegment(f: SegmentFilter, c: SegmentRow): boolean {
   if (has(f.tagsNone) && f.tagsNone!.some((t) => c.tags.includes(t))) return false;
   if (has(f.affiliations) && !f.affiliations!.includes(c.affiliation ?? "")) return false;
   if (has(f.orgKinds) && !(c.org && f.orgKinds!.includes(c.org.kind))) return false;
+  if (f.hasPhone && !c.phone) return false;
+  if (f.gradYearMin != null && !(c.gradYear != null && c.gradYear >= f.gradYearMin)) return false;
+  if (f.gradYearMax != null && !(c.gradYear != null && c.gradYear <= f.gradYearMax)) return false;
   if (f.donatedTo) {
     const ok = f.donatedTo === "any" ? c.donationCampaignIds.length > 0 : c.donationCampaignIds.includes(f.donatedTo);
     if (!ok) return false;
@@ -105,6 +119,12 @@ export function describeSegment(f: SegmentFilter, campaignName: (id: string) => 
   if (has(f.tagsNone)) parts.push(`not tagged ${f.tagsNone!.join(", ")}`);
   if (has(f.affiliations)) parts.push(f.affiliations!.join(" / "));
   if (has(f.orgKinds)) parts.push(`at a ${f.orgKinds!.join(" / ")}`);
+  if (f.gradYearMin != null || f.gradYearMax != null) {
+    const lo = f.gradYearMin;
+    const hi = f.gradYearMax;
+    parts.push(lo != null && hi != null ? (lo === hi ? `class of ${lo}` : `class of ${lo}–${hi}`) : lo != null ? `class of ${lo} or later` : `class of ${hi} or earlier`);
+  }
+  if (f.hasPhone) parts.push("with a phone number");
   if (f.donatedTo) parts.push(f.donatedTo === "any" ? "who have given" : `who gave to ${campaignName(f.donatedTo)}`);
   if (f.notDonatedTo) parts.push(`who haven't given to ${campaignName(f.notDonatedTo)}`);
   if (has(f.dealStages)) parts.push(`sponsor ${f.dealStages!.join(" / ")}${f.dealSeason ? ` (${f.dealSeason})` : ""}`);

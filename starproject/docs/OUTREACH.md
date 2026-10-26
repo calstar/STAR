@@ -12,7 +12,7 @@ by its link, so bookmark `/outreach`.
 |---|---|
 | **Today** | What needs you: bounced, your move (they replied), follow-ups due, gone quiet, drafts never sent, forms to submit, renewals not started. Each row has ✉ Gmail, ✓ Sent (reminds you in 10 days), ↩ Replied, ⏰ +7d and **+ Task**. |
 | **Sponsors** | One deal per org per season: stage, ask, what they give, value, last contact, next follow-up, notes. |
-| **People** | One row per email, with tags, affiliation, gifts and history. |
+| **People** | One row per person, with tags, affiliation, class year, phone, gifts and history. |
 | **Lists** | Saved filters with live counts → copy the addresses, CSV, or Gmail BCC batches. |
 | **Compose** | A template merged per sponsor or person, opened one by one in Gmail, then marked sent. |
 | **Campaigns** | Crowdfunding: gifts, goal, deadlines, perk checklist. |
@@ -38,6 +38,21 @@ board.
 3. For a blast: **Lists** → **Open in Gmail as BCC batches** (≤400 a message).
 4. After a campaign: import the ScaleFunder export again (gifts match on
    `sf_id`, so it's safe to repeat), then email *Donors (for the thank-you)*.
+
+## Alumni
+
+Alumni are people with affiliation **Alumni**, and can carry a **class year** and
+a **phone**. Phones are stored as `+1…` whatever way they were typed, and show
+as tap-to-call and **Text** links. On **Lists**, *Alumni* and *Alumni with phone
+numbers* are quick starts. Filter by class year ("class of 2015–2020") and
+*Has a phone number*. Every list shows its phone numbers beside its emails
+(**Copy numbers**, **Copy as Name: number**, per-person Text links), including
+alumni who have a phone but no email, and the CSV has both. Templates can say
+`{{class_year}}`.
+
+Import an alumni sheet with *Affiliation: Alumni*. The importer reads `Phone` /
+`Cell` / `Mobile` and `Class Year` / `Class of` / `Grad Year` columns. A row
+with only a name and a phone is kept.
 
 ## Importing a sheet
 

@@ -8,7 +8,8 @@ import { deleteSegment, previewSegment, saveSegment } from "@/lib/actions/outrea
 import { DEFAULT_BATCH, batches, clipboardText, gmailComposeUrl } from "@/lib/outreach/compose";
 import { AFFILIATIONS, DEAL_STAGES, STAGE_LABEL, WON_STAGES } from "@/lib/outreach/constants";
 import { toCsvLine } from "@/lib/outreach/csv";
-import type { Recipient } from "@/lib/outreach/queries";
+import { formatPhone, smsHref, telHref } from "@/lib/outreach/phones";
+import type { PhoneRow, Recipient } from "@/lib/outreach/queries";
 import { describeSegment, type SegmentFilter } from "@/lib/outreach/segments";
 
 import { CopyButton } from "./CopyButton";
@@ -81,7 +82,7 @@ export function ListBuilder({
   const [name, setName] = useState(initialList?.name ?? "");
   const [description, setDescription] = useState(initialList?.description ?? "");
   const [filter, setFilter] = useState<SegmentFilter>(initialList?.filter ?? initialFilter);
-  const [preview, setPreview] = useState<{ recipients: Recipient[]; withoutEmail: number } | null>(null);
+  const [preview, setPreview] = useState<{ recipients: Recipient[]; withoutEmail: number; phones: PhoneRow[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [batchSize, setBatchSize] = useState(DEFAULT_BATCH);
   const [subject, setSubject] = useState("");
@@ -112,6 +113,7 @@ export function ListBuilder({
   }, [filter]);
 
   const recipients = useMemo(() => preview?.recipients ?? [], [preview]);
+  const phones = useMemo(() => preview?.phones ?? [], [preview]);
   const emails = recipients.map((r) => r.email);
   const chunks = useMemo(() => batches(emails, { size: batchSize, subject, body, authuser: viewerEmail }), [emails, batchSize, subject, body, viewerEmail]);
   const campaignName = (id: string) => campaigns.find((c) => c.id === id)?.name ?? "that campaign";
@@ -128,11 +130,14 @@ export function ListBuilder({
     { label: `Current sponsors' contacts (${currentSeason})`, filter: { dealStages: [...WON_STAGES], dealSeason: currentSeason } },
     { label: "Every sponsor contact", filter: { tagsAny: ["sponsor-contact"] } },
     { label: "Alumni", filter: { affiliations: ["alumni"] } },
+    { label: "Alumni with phone numbers", filter: { affiliations: ["alumni"], hasPhone: true } },
   ];
 
   const downloadCsv = () => {
-    const lines = [toCsvLine(["email", "first_name", "last_name", "organization"])];
-    for (const r of recipients) lines.push(toCsvLine([r.email, r.firstName, r.lastName, r.org]));
+    // Everyone with an email, plus those reachable only by phone.
+    const lines = [toCsvLine(["name", "email", "phone", "class_year", "organization"])];
+    for (const r of recipients) lines.push(toCsvLine([r.name, r.email, formatPhone(r.phone), r.gradYear, r.org]));
+    for (const p of phones) if (!p.email) lines.push(toCsvLine([p.name, "", formatPhone(p.phone), p.gradYear, ""]));
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -270,6 +275,32 @@ export function ListBuilder({
               </select>
             </label>
           </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label>
+              <span className={LABEL}>Class of (from)</span>
+              <input
+                className={`${INPUT} w-28`}
+                inputMode="numeric"
+                placeholder="2015"
+                value={filter.gradYearMin ?? ""}
+                onChange={(e) => set("gradYearMin", e.target.value ? Number(e.target.value.replace(/\D/g, "")) || undefined : undefined)}
+              />
+            </label>
+            <label>
+              <span className={LABEL}>to</span>
+              <input
+                className={`${INPUT} w-28`}
+                inputMode="numeric"
+                placeholder="2026"
+                value={filter.gradYearMax ?? ""}
+                onChange={(e) => set("gradYearMax", e.target.value ? Number(e.target.value.replace(/\D/g, "")) || undefined : undefined)}
+              />
+            </label>
+            <label className="flex items-center gap-1.5 pb-2 text-sm">
+              <input type="checkbox" checked={!!filter.hasPhone} onChange={(e) => set("hasPhone", e.target.checked || undefined)} />
+              Has a phone number
+            </label>
+          </div>
           <label className="flex items-center gap-1.5 text-sm">
             <input type="checkbox" checked={!!filter.includeExcluded} onChange={(e) => set("includeExcluded", e.target.checked || undefined)} />
             Include do-not-contact and bounced addresses
@@ -315,7 +346,7 @@ export function ListBuilder({
             <CopyButton label="Copy emails" getText={() => clipboardText(recipients)} disabled={!recipients.length} />
             <CopyButton label="Copy as Name <email>" getText={() => clipboardText(recipients, "named")} disabled={!recipients.length} />
             <CopyButton label="Copy one per line" getText={() => clipboardText(recipients, "lines")} disabled={!recipients.length} />
-            <button className={BTN} onClick={downloadCsv} disabled={!recipients.length}>
+            <button className={BTN} onClick={downloadCsv} disabled={!recipients.length && !phones.length}>
               Download CSV
             </button>
           </div>
@@ -362,6 +393,44 @@ export function ListBuilder({
               ))}
             </div>
           </details>
+          {phones.length > 0 && (
+            <details className="rounded border border-neutral-200 p-3 text-sm dark:border-neutral-800">
+              <summary className="cursor-pointer font-medium">
+                {phones.length} with a phone number{phones.some((p) => !p.email) ? ` (${phones.filter((p) => !p.email).length} have no email)` : ""}
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <CopyButton label="Copy numbers" getText={() => phones.map((p) => formatPhone(p.phone)).join(", ")} />
+                <CopyButton
+                  label="Copy as Name: number"
+                  getText={() => phones.map((p) => `${p.name || p.email || "?"}${p.gradYear ? ` ('${String(p.gradYear).slice(2)})` : ""}: ${formatPhone(p.phone)}`).join("\n")}
+                />
+              </div>
+              <table className="mt-2 w-full text-sm">
+                <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
+                  {phones.slice(0, 500).map((p) => (
+                    <tr key={p.contactId}>
+                      <td className="px-2 py-1">
+                        <Link href={`/outreach/people/${p.contactId}`} className="hover:text-blue-600">
+                          {p.name || p.email || "—"}
+                        </Link>
+                        {p.gradYear && <span className={`ml-1 text-xs ${MUTED}`}>&apos;{String(p.gradYear).slice(2)}</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-2 py-1">
+                        <a className="hover:text-blue-600" href={telHref(p.phone)}>
+                          {formatPhone(p.phone)}
+                        </a>
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <a className="text-blue-600 hover:underline" href={smsHref(p.phone)}>
+                          Text
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
           <div className="max-h-96 overflow-y-auto rounded border border-neutral-100 dark:border-neutral-800">
             <table className="w-full text-sm">
               <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">

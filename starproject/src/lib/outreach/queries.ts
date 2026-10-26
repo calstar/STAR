@@ -205,7 +205,9 @@ export type ContactRow = {
   name: string;
   firstName: string | null;
   lastName: string | null;
+  phone: string | null;
   affiliation: string | null;
+  gradYear: number | null;
   tags: string[];
   org: { id: string; name: string } | null;
   doNotContact: boolean;
@@ -228,7 +230,9 @@ function toContactRow(c: Prisma.OutreachContactGetPayload<{ include: typeof CONT
     name: personName(c),
     firstName: c.firstName,
     lastName: c.lastName,
+    phone: c.phone,
     affiliation: c.affiliation,
+    gradYear: c.gradYear,
     tags: c.tags,
     org: c.org,
     doNotContact: c.doNotContact,
@@ -305,6 +309,8 @@ export async function allTags(): Promise<{ tag: string; count: number }[]> {
 export type Recipient = {
   contactId: string;
   email: string;
+  phone: string | null;
+  gradYear: number | null;
   name: string;
   firstName: string | null;
   lastName: string | null;
@@ -312,22 +318,47 @@ export type Recipient = {
   orgId: string | null;
 };
 
-/** Everyone a filter selects who has an address (the copyable part of a list). */
-export async function resolveSegment(filter: SegmentFilter): Promise<{ recipients: Recipient[]; withoutEmail: number }> {
+export type PhoneRow = { contactId: string; name: string; phone: string; email: string | null; gradYear: number | null };
+
+/**
+ * Everyone a filter selects: `recipients` are those with an email (the
+ * copyable part of a list), `phones` everyone with a phone number, email or
+ * not (alumni are often reachable only by text).
+ */
+export async function resolveSegment(
+  filter: SegmentFilter,
+): Promise<{ recipients: Recipient[]; withoutEmail: number; phones: PhoneRow[] }> {
   await adminOnly();
   const where = segmentWhere(filter);
-  const [rows, withoutEmail] = await Promise.all([
+  const select = {
+    id: true,
+    email: true,
+    phone: true,
+    gradYear: true,
+    firstName: true,
+    lastName: true,
+    org: { select: { id: true, name: true } },
+  } as const;
+  const [rows, withoutEmail, phoneRows] = await Promise.all([
     prisma.outreachContact.findMany({
       where: { AND: [where, { email: { not: null } }] },
-      select: { id: true, email: true, firstName: true, lastName: true, org: { select: { id: true, name: true } } },
+      select,
       orderBy: [{ lastName: "asc" }, { email: "asc" }],
     }),
     prisma.outreachContact.count({ where: { AND: [where, { email: null }] } }),
+    prisma.outreachContact.findMany({
+      where: { AND: [where, { phone: { not: null } }] },
+      select,
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    }),
   ]);
   return {
+    phones: phoneRows.map((c) => ({ contactId: c.id, name: personName(c), phone: c.phone!, email: c.email, gradYear: c.gradYear })),
     recipients: rows.map((c) => ({
       contactId: c.id,
       email: c.email!,
+      phone: c.phone,
+      gradYear: c.gradYear,
       name: personName(c),
       firstName: c.firstName,
       lastName: c.lastName,
@@ -578,6 +609,7 @@ export async function composeRows(source: ComposeSource, sender: { name: string;
         full_name: personName(c) || null,
         email: c.email,
         org: c.org?.name ?? null,
+        class_year: c.gradYear ? String(c.gradYear) : null,
         last_gift: c.donations[0] ? `$${(c.donations[0].amountCents / 100).toFixed(2)}` : null,
       },
     };

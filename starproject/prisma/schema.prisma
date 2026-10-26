@@ -723,6 +723,8 @@ model OutreachContact {
   zip          String?
   country      String?
   affiliation  String? // AFFILIATIONS
+  // Class of (graduation year), for alumni: "class of 2019".
+  gradYear     Int?
   tags         String[]     @default([])
   orgId        String?
   org          OutreachOrg? @relation(fields: [orgId], references: [id], onDelete: SetNull)
@@ -741,21 +743,21 @@ model OutreachContact {
 
 // One sponsorship conversation with one org for one season.
 model OutreachDeal {
-  id                  String      @id @default(cuid())
-  orgId               String
-  org                 OutreachOrg @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  season              String // "2026–27"
-  type                String      @default("monetary") // DEAL_TYPES
-  stage               String      @default("prospect") // DEAL_STAGES
-  ask                 String? // what we are asking for, in a sentence
-  theirDeliverables   String? // "$3,000", "50% off e-matches"
-  valueCents          Int?
-  renewal             Boolean     @default(false) // a returning sponsor
-  lastContactAt       DateTime?
-  nextFollowUpAt      DateTime?
-  notes               String?
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  id                String      @id @default(cuid())
+  orgId             String
+  org               OutreachOrg @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  season            String // "2026–27"
+  type              String      @default("monetary") // DEAL_TYPES
+  stage             String      @default("prospect") // DEAL_STAGES
+  ask               String? // what we are asking for, in a sentence
+  theirDeliverables String? // "$3,000", "50% off e-matches"
+  valueCents        Int?
+  renewal           Boolean     @default(false) // a returning sponsor
+  lastContactAt     DateTime?
+  nextFollowUpAt    DateTime?
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
   touches OutreachTouch[]
 
@@ -782,21 +784,21 @@ model OutreachCampaign {
 }
 
 model OutreachDonation {
-  id              String            @id @default(cuid())
-  contactId       String
-  contact         OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  campaignId      String?
-  campaign        OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  amountCents     Int
-  donatedAt       DateTime
-  perkName        String?
-  perkStatus      String            @default("none") // none | pending | sent
+  id          String            @id @default(cuid())
+  contactId   String
+  contact     OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  amountCents Int
+  donatedAt   DateTime
+  perkName    String?
+  perkStatus  String            @default("none") // none | pending | sent
   // display | hide_amount | hide_name, as the donor chose on the platform.
-  displayPref     String?
+  displayPref String?
   // The platform's id for the gift (ScaleFunder sf_id), so the same export
   // imports twice without doubling.
-  externalRef     String?           @unique
-  createdAt       DateTime          @default(now())
+  externalRef String?           @unique
+  createdAt   DateTime          @default(now())
 
   @@index([campaignId])
   @@index([contactId])

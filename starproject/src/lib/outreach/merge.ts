@@ -20,6 +20,7 @@ export const MERGE_FIELDS: { name: string; help: string }[] = [
   { name: "their_deliverables", help: "What they gave / give (deal)" },
   { name: "season", help: "2026–27" },
   { name: "renewal", help: "Set for a returning sponsor: use with {{#renewal}}…{{/renewal}}" },
+  { name: "class_year", help: "Their class year, e.g. 2019 (alumni)" },
   { name: "last_gift", help: "Their most recent gift, e.g. $150.00" },
   { name: "campaign_url", help: "The campaign page (campaign)" },
   { name: "sender_name", help: "Your name" },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { parseDelimited } from "./csv";
-import { leadingAmount, planImport, planSummary, type ImportOptions } from "./importer";
+import { leadingAmount, parseGradYear, planImport, planSummary, type ImportOptions } from "./importer";
 
 const opts = (o: Partial<ImportOptions> = {}): ImportOptions => ({
   preset: "auto",
@@ -155,5 +155,28 @@ describe("leadingAmount", () => {
     expect(leadingAmount("15%")).toBeNull();
     expect(leadingAmount("50% off MakerPasses")).toBeNull();
     expect(leadingAmount("???")).toBeNull();
+  });
+});
+
+describe("alumni sheets: phones and class years", () => {
+  it("normalizes phones and reads class years, keeping a phone-only row", () => {
+    const rows = sheet([
+      "First Name\tLast Name\tEmail\tCell\tClass Of",
+      "Sam\tRivera\tsam@alum.berkeley.edu\t(650) 555-0199\t2019",
+      "Kim\tLee\t\t650.555.0134\t'21",
+      "Pat\tNg\tpat@x.com\tn/a\tsometime",
+    ]);
+    const plan = planImport(rows, opts({ affiliation: "alumni" }));
+    expect(plan.contacts.map((c) => [c.firstName, c.phone, c.gradYear, c.affiliation])).toEqual([
+      ["Sam", "+16505550199", 2019, "alumni"],
+      ["Pat", null, null, "alumni"],
+      ["Kim", "+16505550134", 2021, "alumni"],
+    ]);
+  });
+  it("parseGradYear", () => {
+    expect(parseGradYear("Class of 2019")).toBe(2019);
+    expect(parseGradYear("May 2023")).toBe(2023);
+    expect(parseGradYear("'18")).toBe(2018);
+    expect(parseGradYear("junior")).toBeNull();
   });
 });

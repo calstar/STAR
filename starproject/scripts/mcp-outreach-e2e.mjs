@@ -137,6 +137,15 @@ try {
   check("get_outreach_list_emails gives the BCC string", emails.count === 1 && emails.bcc === EMAIL, emails.bcc);
   const adhoc = await must("get_outreach_list_emails", { filter: { tagsAny: [TAG_SLUG], dealStages: ["committed"] } });
   check("ad-hoc filter by sponsor stage", adhoc.count === 1);
+  // Alumni-style details: a phone in any format, a class year, and the filters on them.
+  const withPhone = await must("save_outreach_contact", { contactId: person.contact.id, phone: "(650) 555-0100", gradYear: 2019 });
+  check("phone is stored as +1…, class year kept", withPhone.contact.phone === "+16505550100" && withPhone.contact.gradYear === 2019);
+  const byYear = await must("get_outreach_list_emails", { filter: { tagsAny: [TAG_SLUG], hasPhone: true, gradYearMin: 2018, gradYearMax: 2020 } });
+  check("phones list by class year and has-phone", byYear.phoneCount === 1 && byYear.phones[0].phone === "+16505550100", JSON.stringify(byYear.phones));
+  const wrongYear = await must("get_outreach_list_emails", { filter: { tagsAny: [TAG_SLUG], gradYearMin: 2021 } });
+  check("a class year outside the range is left out", wrongYear.count === 0 && wrongYear.phoneCount === 0);
+  const badPhone = await call("save_outreach_contact", { contactId: person.contact.id, phone: "555-1234" });
+  check("a 7-digit phone is refused", !badPhone.ok && /phone/i.test(badPhone.text), badPhone.text.slice(0, 100));
   const contact = await must("get_outreach_contact", { contactId: person.contact.id });
   check("get_outreach_contact has the history", contact.touches.length >= 2, String(contact.touches.length));
 

@@ -43,6 +43,25 @@ describe("matchesSegment", () => {
   });
 });
 
+describe("alumni filters", () => {
+  it("class-year range and has-phone", () => {
+    const a = row({ affiliation: "alumni", gradYear: 2019, phone: "+16505550199" });
+    const b = row({ affiliation: "alumni", gradYear: 2023, phone: null });
+    const f = { affiliations: ["alumni"], gradYearMin: 2018, gradYearMax: 2020 };
+    expect(matchesSegment(f, a)).toBe(true);
+    expect(matchesSegment(f, b)).toBe(false);
+    expect(matchesSegment({ hasPhone: true }, a)).toBe(true);
+    expect(matchesSegment({ hasPhone: true }, b)).toBe(false);
+    expect(matchesSegment({ gradYearMin: 2018 }, row())).toBe(false);
+    expect(describeSegment({ affiliations: ["alumni"], gradYearMin: 2019, gradYearMax: 2019, hasPhone: true })).toBe(
+      "Everyone alumni, class of 2019, with a phone number",
+    );
+    expect(segmentWhere({ hasPhone: true, gradYearMin: 2018 })).toEqual({
+      AND: [{ doNotContact: false, bounced: false }, { phone: { not: null } }, { gradYear: { gte: 2018 } }],
+    });
+  });
+});
+
 describe("segmentWhere", () => {
   it("always excludes do-not-contact by default and adds one clause per criterion", () => {
     expect(segmentWhere({})).toEqual({ AND: [{ doNotContact: false, bounced: false }] });

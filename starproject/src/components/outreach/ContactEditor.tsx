@@ -21,6 +21,7 @@ export function ContactEditor({ contact: c }: { contact: ContactDetail["contact"
     phone: c.phone ?? "",
     orgName: c.org?.name ?? "",
     affiliation: (c.affiliation ?? "") as Affiliation | "",
+    gradYear: c.gradYear ? String(c.gradYear) : "",
     tags: c.tags.join(", "),
     address: c.address ?? "",
     city: c.city ?? "",
@@ -53,6 +54,7 @@ export function ContactEditor({ contact: c }: { contact: ContactDetail["contact"
             email: f.email || null,
             altEmails: f.altEmails.split(",").map((s) => s.trim()).filter(Boolean),
             affiliation: f.affiliation || null,
+            gradYear: f.gradYear ? Number(f.gradYear) : null,
             tags: f.tags.split(","),
           });
           setMsg(r.ok ? "Saved" : r.error);
@@ -79,6 +81,7 @@ export function ContactEditor({ contact: c }: { contact: ContactDetail["contact"
           </select>
         </label>
         {text("phone", "Phone")}
+        {text("gradYear", "Class year (alumni)")}
       </div>
       {text("tags", "Tags (comma separated)", "block")}
       <details className="text-sm">

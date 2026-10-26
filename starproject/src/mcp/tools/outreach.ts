@@ -252,7 +252,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "list_outreach_contacts",
     {
-      description: `${admin} People, as /outreach/people lists them (200 a page), filtered by a segment filter: search, tagsAny/All/None, affiliations, orgKinds, donatedTo (campaign id or "any"), notDonatedTo, dealStages(+dealSeason), includeExcluded.`,
+      description: `${admin} People, as /outreach/people lists them (200 a page), filtered by a segment filter: search, tagsAny/All/None, affiliations, orgKinds, donatedTo (campaign id or "any"), notDonatedTo, dealStages(+dealSeason), hasPhone, gradYearMin/gradYearMax (class years), includeExcluded.`,
       inputSchema: { filter: segmentFilterSchema.default({}), page: z.number().int().min(0).default(0) },
       annotations: READ,
     },
@@ -289,7 +289,8 @@ export const outreachTools: ToolModule = (server) => {
         firstName: z.string().nullish(),
         lastName: z.string().nullish(),
         title: z.string().nullish(),
-        phone: z.string().nullish(),
+        phone: z.string().nullish().describe("Any US format or +country; stored as +1XXXXXXXXXX"),
+        gradYear: z.number().int().min(1950).max(2100).nullish().describe("Class year, for alumni"),
         orgName: z.string().nullish(),
         affiliation: z.enum(AFFILIATIONS).nullish(),
         tags: z.array(z.string()).optional(),
@@ -338,7 +339,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "get_outreach_list_emails",
     {
-      description: `${admin} The addresses a saved list (listId) or an ad-hoc filter selects, excluding do-not-contact and bounced unless includeExcluded; plus a comma-joined string ready to paste into BCC.`,
+      description: `${admin} The addresses a saved list (listId) or an ad-hoc filter selects, excluding do-not-contact and bounced unless includeExcluded; a comma-joined string ready to paste into BCC; and \`phones\`: everyone it selects with a phone number (email or not), with class year.`,
       inputSchema: { listId: z.string().optional(), filter: segmentFilterSchema.optional() },
       annotations: READ,
     },
@@ -351,7 +352,7 @@ export const outreachTools: ToolModule = (server) => {
         f = l.filter;
       }
       const r = await resolveSegment(f);
-      return { ...r, count: r.recipients.length, bcc: r.recipients.map((x) => x.email).join(", ") };
+      return { ...r, count: r.recipients.length, bcc: r.recipients.map((x) => x.email).join(", "), phoneCount: r.phones.length };
     },
   );
 

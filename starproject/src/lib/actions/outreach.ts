@@ -24,6 +24,7 @@ import {
 } from "@/lib/outreach/constants";
 import { parseDelimited } from "@/lib/outreach/csv";
 import { normalizeEmail, isValidEmail } from "@/lib/outreach/emails";
+import { normalizePhone } from "@/lib/outreach/phones";
 import { addDays } from "@/lib/outreach/followups";
 import { IMPORT_PRESETS, parseTags, planImport, planSummary, type ImportOptions, type ImportPlan } from "@/lib/outreach/importer";
 import { resolveSegment } from "@/lib/outreach/queries";
@@ -371,7 +372,13 @@ const contactInput = z.object({
   firstName: optText(100),
   lastName: optText(100),
   title: optText(200),
-  phone: optText(50),
+  phone: z
+    .string()
+    .max(50)
+    .nullish()
+    .transform((v) => (v == null || !v.trim() ? (v == null ? v : null) : (normalizePhone(v) ?? "invalid")))
+    .refine((v) => v !== "invalid", "not a phone number (10 digits, or +country code)"),
+  gradYear: z.number().int().min(1950).max(2100).nullish(),
   address: optText(500),
   city: optText(100),
   state: optText(100),
@@ -723,6 +730,7 @@ export async function commitImport(input: ImportInput): Promise<
                 zip: fill(prev.zip, c.zip),
                 country: fill(prev.country, c.country),
                 affiliation: fill(prev.affiliation, c.affiliation),
+                gradYear: fill(prev.gradYear, c.gradYear),
                 orgId: fill(prev.orgId, orgId),
                 notes: fill(prev.notes, c.notes),
                 tags: [...new Set([...prev.tags, ...c.tags])],
@@ -746,6 +754,7 @@ export async function commitImport(input: ImportInput): Promise<
                 zip: c.zip,
                 country: c.country,
                 affiliation: c.affiliation,
+                gradYear: c.gradYear,
                 tags: c.tags,
                 orgId,
                 notes: c.notes,

@@ -10,6 +10,7 @@ import type { ContactRow } from "@/lib/outreach/queries";
 import { CONTACT_PAGE } from "@/lib/outreach/page-size";
 
 import { dollars, relative, titleCase } from "./format";
+import { formatPhone, telHref } from "@/lib/outreach/phones";
 import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, MUTED, TAG, TD, TH, INPUT_INLINE } from "./ui";
 
 type Params = { q?: string; tag?: string; aff?: string; page?: string; dnc?: string };
@@ -189,12 +190,22 @@ export function PeopleWorkspace({
                     {c.name || c.email || "(no name)"}
                   </Link>
                   {c.name && c.email && <div className={`text-xs ${MUTED}`}>{c.email}</div>}
+                  {c.phone && (
+                    <a className={`text-xs ${MUTED} hover:text-blue-600`} href={telHref(c.phone)}>
+                      {formatPhone(c.phone)}
+                    </a>
+                  )}
                   {c.doNotContact && <div className="text-xs text-red-700">do not contact</div>}
                   {c.bounced && <div className="text-xs text-red-700">bounced</div>}
                 </td>
                 <td className={`${TD} hidden md:table-cell`}>
                   {c.org?.name ?? ""}
-                  {c.affiliation && <div className={`text-xs ${MUTED}`}>{titleCase(c.affiliation)}</div>}
+                  {c.affiliation && (
+                    <div className={`text-xs ${MUTED}`}>
+                      {titleCase(c.affiliation)}
+                      {c.gradYear ? ` '${String(c.gradYear).slice(2)}` : ""}
+                    </div>
+                  )}
                 </td>
                 <td className={TD}>
                   <div className="flex max-w-xs flex-wrap gap-1">

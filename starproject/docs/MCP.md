@@ -318,8 +318,8 @@ defineTool(server, "archive_task", {
 | `schedule_sponsor_follow_up` | Remind in N days, or clear | admins only; idempotent |
 | `add_sponsor_task` | The sponsor page's + Task: a "Correspondence - <org>" task in Outreach Correspondence, assigned to you; returns the open one if it exists | admins only; write |
 | `list_outreach_contacts` / `get_outreach_contact` | People by segment filter (paged); one person with gifts and history | admins only; read |
-| `save_outreach_contact` / `tag_outreach_contacts` | Create or edit a person (including `bounced` / `doNotContact`); bulk add/remove tags | admins only; write |
-| `list_outreach_lists` / `get_outreach_list_emails` / `save_outreach_list` | Saved mailing lists with live counts; the addresses a list or filter selects (with a BCC string); save one | admins only |
+| `save_outreach_contact` / `tag_outreach_contacts` | Create or edit a person (phone normalized to +1…, `gradYear`, `bounced` / `doNotContact`); bulk add/remove tags | admins only; write |
+| `list_outreach_lists` / `get_outreach_list_emails` / `save_outreach_list` | Saved mailing lists with live counts; the addresses a list or filter selects (with a BCC string) and its phone numbers (`phones`, email or not); save one. Filters include `hasPhone` and `gradYearMin`/`gradYearMax` | admins only |
 | `list_outreach_templates` | Email templates with merge fields | admins only; read |
 | `save_outreach_template` / `delete_outreach_template` / `install_outreach_starter_templates` | Write, remove, or add the built-in starter templates | admins only |
 | `log_outreach_touches` | Many touches in one transaction (Compose's Mark sent) | admins only; write |

@@ -16,6 +16,7 @@ import { parseMoney } from "@/lib/finance/money";
 
 import { AFFILIATIONS, type Affiliation, type DealStage, type DealType, type OrgKind } from "./constants";
 import { checkEmail, splitEmails } from "./emails";
+import { normalizePhone } from "./phones";
 
 export const IMPORT_PRESETS = ["auto", "contacts", "member_list", "scalefunder", "sponsors"] as const;
 export type ImportPreset = (typeof IMPORT_PRESETS)[number];
@@ -58,6 +59,7 @@ export type ContactDraft = {
   zip: string | null;
   country: string | null;
   affiliation: Affiliation | null;
+  gradYear: number | null;
   tags: string[];
   orgName: string | null;
   notes: string | null;
@@ -115,6 +117,7 @@ type Field =
   | "zip"
   | "country"
   | "affiliation"
+  | "gradYear"
   | "tags"
   | "org"
   | "notes"
@@ -155,6 +158,16 @@ const ALIASES: Record<string, Field> = {
   role: "title",
   phone: "phone",
   "phone number": "phone",
+  "cell phone": "phone",
+  cell: "phone",
+  mobile: "phone",
+  "mobile phone": "phone",
+  "class year": "gradYear",
+  "class of": "gradYear",
+  "grad year": "gradYear",
+  "graduation year": "gradYear",
+  "year of graduation": "gradYear",
+  "alumni year": "gradYear",
   address: "address",
   "street address": "address",
   address2: "address2",
@@ -297,6 +310,14 @@ export function leadingAmount(s: string): number | null {
   return parseMoney(m[2]);
 }
 
+/** "2019", "Class of 2019", "'19", "May 2019" → 2019; anything else → null. */
+export function parseGradYear(s: string): number | null {
+  const full = s.match(/\b(19[89]\d|20[0-4]\d)\b/);
+  if (full) return Number(full[1]);
+  const short = s.trim().match(/^[’']?(\d{2})$/);
+  return short ? 2000 + Number(short[1]) : null;
+}
+
 function sponsorType(s: string): DealType {
   const v = s.toLowerCase();
   if (v.startsWith("discount")) return "discount";
@@ -319,6 +340,7 @@ function emptyContact(): ContactDraft {
     zip: null,
     country: null,
     affiliation: null,
+    gradYear: null,
     tags: [],
     orgName: null,
     notes: null,
@@ -342,6 +364,7 @@ export function mergeContact(a: ContactDraft, b: ContactDraft): ContactDraft {
     zip: pick("zip"),
     country: pick("country"),
     affiliation: pick("affiliation"),
+    gradYear: pick("gradYear"),
     tags: [...new Set([...a.tags, ...b.tags])],
     orgName: pick("orgName"),
     notes: a.notes && b.notes && a.notes !== b.notes ? `${a.notes}\n${b.notes}` : pick("notes"),
@@ -469,7 +492,7 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
       first = n.first;
       last = n.last;
     }
-    if (!email && !first && !last) continue;
+    if (!email && !first && !last && !normalizePhone(cell(row, cols.phone))) continue;
     const alt = splitEmails(cell(row, cols.altEmail)).filter((e) => e !== email);
     const address = [cell(row, cols.address), cell(row, cols.address2)].filter(Boolean).join(", ");
     const draft: ContactDraft = {
@@ -479,13 +502,14 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
       firstName: first,
       lastName: last,
       title: orNull(cell(row, cols.title)),
-      phone: orNull(cell(row, cols.phone)),
+      phone: normalizePhone(cell(row, cols.phone)),
       address: orNull(address),
       city: orNull(cell(row, cols.city)),
       state: orNull(cell(row, cols.state)),
       zip: orNull(cell(row, cols.zip)),
       country: orNull(cell(row, cols.country)),
       affiliation: asAffiliation(cell(row, cols.affiliation)) ?? options.affiliation,
+      gradYear: parseGradYear(cell(row, cols.gradYear)),
       tags: [...new Set([...baseTags, ...parseTags(cell(row, cols.tags))])],
       orgName: orNull(cell(row, cols.org)),
       notes: orNull(cell(row, cols.notes)),
