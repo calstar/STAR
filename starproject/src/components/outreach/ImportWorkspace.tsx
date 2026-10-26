@@ -115,7 +115,7 @@ export function ImportWorkspace({
             </select>
           </label>
           <label>
-            <span className={LABEL}>Campaign (gifts and referrals)</span>
+            <span className={LABEL}>Campaign (for gifts)</span>
             <select className={INPUT} value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
               <option value="">None</option>
               {campaigns.map((c) => (
@@ -216,7 +216,6 @@ export function ImportWorkspace({
                           </span>
                         ))}
                       </td>
-                      <td className={`${TD} ${MUTED}`}>{c.ambassadors.length ? `via ${c.ambassadors.join(", ")}` : ""}</td>
                       <td className={TD}>{c.exists && <span className="text-xs text-blue-700">merge</span>}</td>
                     </tr>
                   ))}

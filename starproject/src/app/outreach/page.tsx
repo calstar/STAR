@@ -22,8 +22,8 @@ export default async function OutreachToday() {
           <h2 className="text-lg font-semibold">Nothing here yet</h2>
           <p className={`mt-1 text-sm ${MUTED}`}>
             Start by pasting a sheet into <Link className="text-blue-600 hover:underline" href="/outreach/import">Import</Link>{" "}
-            (the Current Sponsors List, a member contact list, or a ScaleFunder export), or bring the Outreach
-            Correspondence tasks over from <Link className="text-blue-600 hover:underline" href="/outreach/sponsors">Sponsors</Link>.
+            (the Current Sponsors List, a contact list, or a ScaleFunder export), or add a sponsor on{" "}
+            <Link className="text-blue-600 hover:underline" href="/outreach/sponsors">Sponsors</Link>.
           </p>
         </div>
       )}
@@ -175,7 +175,7 @@ export default async function OutreachToday() {
 const QUEUE_GROUPS = [
   { kind: "bounced", title: "Bounced", help: "Nobody at the sponsor got your email" },
   { kind: "their_move", title: "Your move", help: "They wrote back; nobody has answered" },
-  { kind: "follow_up_due", title: "Follow-ups due", help: "A reminder you (or the task board) set has come due" },
+  { kind: "follow_up_due", title: "Follow-ups due", help: "A reminder you set has come due" },
   { kind: "no_reply", title: "Gone quiet", help: "Emailed, no reply in 10+ days" },
   { kind: "draft_unsent", title: "Drafts never sent", help: "Written in Gmail, still sitting in Drafts" },
   { kind: "form_to_submit", title: "Forms to submit", help: "These sponsors take requests through a web form" },

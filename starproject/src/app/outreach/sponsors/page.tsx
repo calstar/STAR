@@ -1,9 +1,6 @@
 import { SponsorsWorkspace } from "@/components/outreach/SponsorsWorkspace";
 import { seasonOf } from "@/lib/outreach/constants";
-import { listDeals, listSeasons, outreachViewer, unlinkedOutreachTasks } from "@/lib/outreach/queries";
-import { getTeamUsers } from "@/lib/user";
-import { displayNameOf } from "@/lib/names";
-import { orgFromTaskTitle } from "@/lib/outreach/tracker";
+import { listDeals, listSeasons, outreachViewer } from "@/lib/outreach/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -13,25 +10,18 @@ export default async function SponsorsPage({
   searchParams: Promise<{ season?: string; stage?: string }>;
 }) {
   // Non-admins see the layout's notice; nothing here may load for them.
-  if (!(await outreachViewer()).admin) return null;
+  const { user, admin } = await outreachViewer();
+  if (!admin) return null;
   const sp = await searchParams;
   const season = sp.season ?? seasonOf(new Date());
-  const [{ user }, deals, seasons, tasks, team] = await Promise.all([
-    outreachViewer(),
-    listDeals(season === "all" ? undefined : season),
-    listSeasons(),
-    unlinkedOutreachTasks(),
-    getTeamUsers(),
-  ]);
+  const [deals, seasons] = await Promise.all([listDeals(season === "all" ? undefined : season), listSeasons()]);
   return (
     <SponsorsWorkspace
       deals={deals}
       season={season}
       seasons={seasons}
       initialStage={sp.stage ?? null}
-      unlinkedTasks={tasks.filter((t) => orgFromTaskTitle(t.title)).length}
       viewerEmail={user.email}
-      team={team.map((u) => ({ id: u.id, name: displayNameOf(u) }))}
     />
   );
 }

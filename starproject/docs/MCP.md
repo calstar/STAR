@@ -316,8 +316,8 @@ defineTool(server, "archive_task", {
 | `log_outreach_touch` | Record an email sent, reply, form submitted, call, meeting or note; on a deal it moves the stage and resets the follow-up | admins only; write |
 | `delete_outreach_touch` / `delete_outreach_contacts` | Remove a mis-logged touch; delete people with their history | admins only; destructive |
 | `schedule_sponsor_follow_up` | Remind in N days, or clear | admins only; idempotent |
-| `import_sponsors_from_tasks` | One deal per Outreach Correspondence task, read from its title, linked back | admins only; write |
-| `list_outreach_contacts` / `get_outreach_contact` | People by segment filter (paged); one person with gifts, referrers and history | admins only; read |
+| `add_sponsor_task` | The sponsor page's + Task: a "Correspondence - <org>" task in Outreach Correspondence, assigned to you; returns the open one if it exists | admins only; write |
+| `list_outreach_contacts` / `get_outreach_contact` | People by segment filter (paged); one person with gifts and history | admins only; read |
 | `save_outreach_contact` / `tag_outreach_contacts` | Create or edit a person (including `bounced` / `doNotContact`); bulk add/remove tags | admins only; write |
 | `list_outreach_lists` / `get_outreach_list_emails` / `save_outreach_list` | Saved mailing lists with live counts; the addresses a list or filter selects (with a BCC string); save one | admins only |
 | `list_outreach_templates` | Email templates with merge fields | admins only; read |
@@ -326,7 +326,7 @@ defineTool(server, "archive_task", {
 | `delete_sponsor` / `delete_outreach_org` / `delete_outreach_list` | Remove a season's deal (and its touches) / an org with all its deals / a saved list | admins only; destructive |
 | `set_outreach_perk_status` | Perk checklist: none / pending / sent | admins only; idempotent |
 | `get_outreach_merge` | Render a template for a list, sponsors by stage, a deal or a person: subject, body, missing fields and a Gmail compose link per recipient. Sends nothing | admins only; read |
-| `list_outreach_campaigns` / `get_outreach_campaign` / `save_outreach_campaign` / `delete_outreach_campaign` | Campaigns with totals; one with gifts, perk status and the ambassador table; create or edit; delete (with its gifts) | admins only |
+| `list_outreach_campaigns` / `get_outreach_campaign` / `save_outreach_campaign` / `delete_outreach_campaign` | Campaigns with totals; one with gifts and perk status; create or edit; delete (with its gifts) | admins only |
 | `import_outreach_sheet` | Import TSV/CSV text (contacts, member list, ScaleFunder export, Current Sponsors sheet); `dryRun` (default) previews | admins only; write |
 
 Modules append their tools here as they land.

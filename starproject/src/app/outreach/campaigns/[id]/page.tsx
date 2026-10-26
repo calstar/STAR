@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { CampaignDonations } from "@/components/outreach/CampaignDonations";
 import { CampaignForm } from "@/components/outreach/CampaignForm";
 import { dollars, shortDate } from "@/components/outreach/format";
-import { CARD, MUTED, TD, TH } from "@/components/outreach/ui";
+import { CARD, MUTED } from "@/components/outreach/ui";
 import { calendarDaysUntil, daysLeftLabel } from "@/lib/outreach/followups";
 import { getCampaignDetail, outreachViewer } from "@/lib/outreach/queries";
 
@@ -16,7 +16,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const d = await getCampaignDetail(id);
   if (!d) notFound();
-  const { campaign: c, donations, leaderboard } = d;
+  const { campaign: c, donations } = d;
   const raised = donations.reduce((s, x) => s + x.amountCents, 0);
   const donors = new Set(donations.map((x) => x.contact.id)).size;
   const pct = c.goalCents ? Math.min(100, Math.round((raised / c.goalCents) * 100)) : null;
@@ -75,35 +75,6 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <CampaignDonations donations={donations} />
         <div className="space-y-4">
-          <div className={CARD}>
-            <h3 className="border-b border-neutral-200 p-3 font-semibold dark:border-neutral-800">Ambassadors</h3>
-            {leaderboard.length === 0 ? (
-              <p className={`p-3 text-sm ${MUTED}`}>Import member contact lists with this campaign selected to see who brought in whom.</p>
-            ) : (
-              <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr>
-                    <th className={TH}>Member</th>
-                    <th className={`${TH} text-right`}>Contacts</th>
-                    <th className={`${TH} text-right`}>Gave</th>
-                    <th className={`${TH} text-right`}>Credited $</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-                  {leaderboard.map((b) => (
-                    <tr key={b.member}>
-                      <td className={TD}>{b.member}</td>
-                      <td className={`${TD} text-right tabular-nums`}>{b.supplied}</td>
-                      <td className={`${TD} text-right tabular-nums`}>{b.gave}</td>
-                      <td className={`${TD} text-right tabular-nums`}>{b.raisedCents ? dollars(b.raisedCents) : ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              </div>
-            )}
-          </div>
           <CampaignForm campaign={c} />
         </div>
       </div>

@@ -157,7 +157,6 @@ export function PeopleWorkspace({
               <th className={TH}>Person</th>
               <th className={`${TH} hidden md:table-cell`}>Org / affiliation</th>
               <th className={TH}>Tags</th>
-              <th className={`${TH} hidden lg:table-cell`}>Referred by</th>
               <th className={`${TH} text-right`}>Given</th>
               <th className={`${TH} hidden sm:table-cell`}>Last touch</th>
             </tr>
@@ -165,7 +164,7 @@ export function PeopleWorkspace({
           <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className={`p-4 ${MUTED}`}>
+                <td colSpan={6} className={`p-4 ${MUTED}`}>
                   No one matches. <Link className="text-blue-600 hover:underline" href="/outreach/import">Import a sheet</Link> to get started.
                 </td>
               </tr>
@@ -206,7 +205,6 @@ export function PeopleWorkspace({
                     ))}
                   </div>
                 </td>
-                <td className={`${TD} hidden lg:table-cell`}>{c.referrers.join(", ")}</td>
                 <td className={`${TD} text-right tabular-nums`}>{c.gifts ? dollars(c.givenCents) : ""}</td>
                 <td className={`${TD} hidden whitespace-nowrap sm:table-cell`}>{c.lastTouchAt ? relative(c.lastTouchAt) : ""}</td>
               </tr>

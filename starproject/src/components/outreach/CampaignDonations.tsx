@@ -40,7 +40,6 @@ export function CampaignDonations({ donations }: { donations: CampaignDetail["do
                 <th className={`${TH} text-right`}>Amount</th>
                 <th className={TH}>Date</th>
                 <th className={TH}>Perk</th>
-                <th className={`${TH} hidden md:table-cell`}>Ambassador</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
@@ -71,7 +70,6 @@ export function CampaignDonations({ donations }: { donations: CampaignDetail["do
                       <span className={MUTED}>—</span>
                     )}
                   </td>
-                  <td className={`${TD} hidden md:table-cell`}>{d.ambassadorEmail ?? ""}</td>
                 </tr>
               ))}
             </tbody>

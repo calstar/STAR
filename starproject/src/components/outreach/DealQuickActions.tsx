@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { logTouch, scheduleFollowUp } from "@/lib/actions/outreach";
 import { gmailComposeUrl } from "@/lib/outreach/compose";
 
+import { DealTaskButton } from "./DealTaskButton";
 import { BTN_SMALL } from "./ui";
 
 export type QuickDeal = {
@@ -85,6 +86,7 @@ export function DealQuickActions({ deal, viewerEmail }: { deal: QuickDeal; viewe
       >
         ⏰ +7d
       </button>
+      <DealTaskButton dealId={deal.id} />
       {msg && <span className="text-xs text-neutral-500">{msg}</span>}
     </div>
   );

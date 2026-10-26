@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireAdmin } from "@/lib/admins";
+import { createTask } from "@/lib/actions/tasks";
 import { prisma } from "@/lib/db";
 import {
   AFFILIATIONS,
@@ -29,7 +30,6 @@ import { resolveSegment } from "@/lib/outreach/queries";
 import { segmentFilterSchema, type SegmentFilter } from "@/lib/outreach/segments";
 import { STARTER_TEMPLATES } from "@/lib/outreach/starter-templates";
 import { sameOrg } from "@/lib/outreach/orgs";
-import { orgFromTaskTitle } from "@/lib/outreach/tracker";
 
 // The outreach CRM's writes. Admins only (requireAdmin on every action): the
 // tables hold donors' contact details and gifts. Nothing here goes to the
@@ -133,15 +133,10 @@ const dealInput = z.object({
   stage: z.enum(DEAL_STAGES).optional(),
   ask: optText(),
   theirDeliverables: optText(),
-  ourDeliverables: optText(),
   valueCents: z.number().int().min(0).max(100_000_000).nullish(),
-  project: optText(100),
-  ownerId: z.string().nullish(),
-  responsibleEngineer: optText(200),
   renewal: z.boolean().optional(),
   lastContactAt: optDate,
   nextFollowUpAt: optDate,
-  taskId: z.string().nullish(),
   notes: optText(10000),
 });
 export type DealInput = z.input<typeof dealInput>;
@@ -166,7 +161,7 @@ export async function saveDeal(input: DealInput): Promise<Result<{ id: string }>
     if (!oid) return { ok: false, error: "Which organization is this deal with?" };
     const season = fields.season ?? seasonOf(new Date());
     const deal = await prisma.outreachDeal.create({
-      data: { ...fields, season, orgId: oid, ownerId: fields.ownerId === undefined ? user.id : fields.ownerId },
+      data: { ...fields, season, orgId: oid },
     });
     revalidate();
     return { ok: true, id: deal.id };
@@ -204,62 +199,53 @@ export async function deleteDeal(id: string): Promise<Result> {
   }
 }
 
+/** The task-board project the "Add task" button files into. */
+const OUTREACH_TASK_PROJECT = "Outreach Correspondence";
+
 /**
- * One deal per Outreach Correspondence task that has none, read from its title
- * ("Correspondence - Garmin (inReach …)"), linked back to the task. Tasks whose
- * title names no org are skipped and listed.
+ * "Add task": put a correspondence task for this sponsor on the task board
+ * (the Outreach Correspondence project, assigned to you, due on the deal's
+ * follow-up date). The task is an ordinary task made by createTask, with the
+ * same activity entry and assignment email; nothing links it back, so the
+ * board and the CRM stay separate. An open task for the same sponsor is
+ * returned instead of making a second one.
  */
-export async function importTrackerTasks(taskIds?: string[]): Promise<Result<{ created: number; skipped: string[] }>> {
+export async function createDealTask(
+  dealId: string,
+  input: { title?: string | null; dueDate?: string | null } = {},
+): Promise<Result<{ taskId: string; number: number; existed: boolean }>> {
   try {
     const user = await requireAdmin();
-    const season = seasonOf(new Date());
-    const tasks = await prisma.task.findMany({
-      where: {
-        archived: false,
-        outreachDeals: { none: {} },
-        ...(taskIds?.length ? { id: { in: taskIds } } : {}),
-        OR: [
-          { project: { name: { contains: "Outreach", mode: "insensitive" } } },
-          { subteam: { name: { equals: "Outreach", mode: "insensitive" } } },
-        ],
-      },
-      select: { id: true, number: true, title: true, dueDate: true, status: true, assignees: { select: { id: true } } },
+    const deal = await prisma.outreachDeal.findUnique({ where: { id: dealId }, include: { org: true } });
+    if (!deal) return { ok: false, error: "No such deal." };
+    const project = await prisma.project.findFirst({
+      where: { name: { equals: OUTREACH_TASK_PROJECT, mode: "insensitive" }, archived: false },
+      select: { id: true },
     });
-    let created = 0;
-    const skipped: string[] = [];
-    for (const t of tasks) {
-      const parsed = orgFromTaskTitle(t.title);
-      if (!parsed) {
-        skipped.push(`#${t.number} ${t.title}`);
-        continue;
-      }
-      const orgId = await orgIdFor(parsed.orgName);
-      const existing = await prisma.outreachDeal.findUnique({ where: { orgId_season: { orgId, season } } });
-      if (existing) {
-        if (!existing.taskId) {
-          await prisma.outreachDeal.update({
-            where: { id: existing.id },
-            data: { taskId: t.id, ask: existing.ask ?? parsed.ask, nextFollowUpAt: existing.nextFollowUpAt ?? t.dueDate },
-          });
-        }
-        continue;
-      }
-      await prisma.outreachDeal.create({
-        data: {
-          orgId,
-          season,
-          ask: parsed.ask,
-          renewal: parsed.renewal,
-          stage: t.status === "in_progress" ? "drafting" : "prospect",
-          taskId: t.id,
-          ownerId: t.assignees[0]?.id ?? user.id,
-          nextFollowUpAt: t.dueDate,
-        },
-      });
-      created++;
-    }
+    if (!project) return { ok: false, error: `There is no "${OUTREACH_TASK_PROJECT}" project on the task board.` };
+    const prefix = `Correspondence - ${deal.org.name}`;
+    const open = await prisma.task.findFirst({
+      where: { projectId: project.id, archived: false, status: { not: "done" }, title: { startsWith: prefix, mode: "insensitive" } },
+      select: { id: true, number: true },
+    });
+    if (open) return { ok: true, taskId: open.id, number: open.number, existed: true };
+    const title = (input.title?.trim() || `${prefix}${deal.ask ? ` (${deal.ask})` : ""}`).slice(0, 300);
+    const due = input.dueDate ?? (deal.nextFollowUpAt ? deal.nextFollowUpAt.toISOString().slice(0, 10) : "");
+    const subteam = await prisma.subteam.findFirst({ where: { name: { equals: "Outreach", mode: "insensitive" } }, select: { id: true } });
+    const fd = new FormData();
+    fd.set("projectId", project.id);
+    fd.set("title", title);
+    fd.set("description", [deal.ask, deal.theirDeliverables && `They give: ${deal.theirDeliverables}`].filter(Boolean).join("\n"));
+    fd.set("assigneeIds", user.id);
+    fd.set("subteamId", subteam?.id ?? "");
+    fd.set("dueDate", due);
+    const { id } = await createTask(fd);
+    const task = await prisma.task.findUniqueOrThrow({ where: { id }, select: { number: true } });
+    await prisma.outreachTouch.create({
+      data: { kind: "note", dealId, orgId: deal.orgId, actorId: user.id, note: `Task #${task.number} added to ${OUTREACH_TASK_PROJECT}` },
+    });
     revalidate();
-    return { ok: true, created, skipped };
+    return { ok: true, taskId: id, number: task.number, existed: false };
   } catch (e) {
     return fail(e);
   }
@@ -655,7 +641,6 @@ export async function previewImport(input: ImportInput) {
         name: [c.firstName, c.lastName].filter(Boolean).join(" "),
         org: c.orgName,
         tags: c.tags,
-        ambassadors: c.ambassadors.map((a) => a.name ?? a.email).filter(Boolean),
         exists: !!c.email && existing.has(c.email),
       })),
       sampleDeals: p.deals.slice(0, 50),
@@ -670,8 +655,8 @@ export type ImportPreview = Extract<Awaited<ReturnType<typeof previewImport>>, {
 
 /**
  * Write an import. Re-parses the text on the server (the preview is advisory).
- * Contacts merge by email: existing values win, empty ones are filled, tags and
- * referrals are added. Donations upsert on their platform ref, so importing the
+ * Contacts merge by email: existing values win, empty ones are filled, tags are
+ * added. Donations upsert on their platform ref, so importing the
  * same export twice changes nothing. Sponsor rows become one deal per org for
  * the chosen season (left alone if that deal exists).
  */
@@ -679,7 +664,7 @@ export async function commitImport(input: ImportInput): Promise<
   Result<{ contactsCreated: number; contactsUpdated: number; donations: number; deals: number; rejected: number }>
 > {
   try {
-    const user = await requireAdmin();
+    await requireAdmin();
     const { plan: p, options } = plan(input);
     let contactsCreated = 0;
     let contactsUpdated = 0;
@@ -710,13 +695,9 @@ export async function commitImport(input: ImportInput): Promise<
               type: d.type,
               stage: d.stage,
               renewal: d.renewal,
-              project: d.project,
-              responsibleEngineer: d.responsibleEngineer,
               theirDeliverables: d.theirDeliverables,
-              ourDeliverables: d.ourDeliverables,
               valueCents: d.valueCents,
               notes: d.notes,
-              ownerId: user.id,
             },
           });
           deals++;
@@ -775,17 +756,6 @@ export async function commitImport(input: ImportInput): Promise<
             contactsCreated++;
           }
           if (c.email) idByEmail.set(c.email, id);
-          for (const a of c.ambassadors) {
-            const dup = await tx.outreachReferral.findFirst({
-              where: { contactId: id, ambassadorEmail: a.email, ambassadorName: a.name },
-              select: { id: true },
-            });
-            if (!dup) {
-              await tx.outreachReferral.create({
-                data: { contactId: id, ambassadorEmail: a.email, ambassadorName: a.name, campaignId: options.campaignId },
-              });
-            }
-          }
         }
 
         for (const d of p.donations) {
@@ -799,7 +769,6 @@ export async function commitImport(input: ImportInput): Promise<
             perkName: d.perkName,
             perkStatus: d.perkName ? "pending" : "none",
             displayPref: d.displayPref,
-            ambassadorEmail: d.ambassadorEmail,
             externalRef: d.externalRef,
           };
           const existing = await tx.outreachDonation.findUnique({ where: { externalRef: d.externalRef } });

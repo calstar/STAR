@@ -27,16 +27,17 @@ describe("member list (NAME | EMAILS)", () => {
     "\tMOM@gmail.com",
   ]);
 
-  it("detects the layout and fills the member down their block", () => {
+  it("detects the layout and never takes the member's NAME as the contact's", () => {
     const plan = planImport(rows, opts({ tags: ["crowdfunding-2026"], affiliation: "family" }));
     expect(plan.preset).toBe("member_list");
     const mom = plan.contacts.find((c) => c.email === "mom@gmail.com")!;
     const dad = plan.contacts.find((c) => c.email === "dad@yahoo.com")!;
-    expect(dad.ambassadors).toEqual([{ email: null, name: "Ada L." }]);
+    expect(dad.firstName).toBeNull();
+    expect(mom.firstName).toBeNull();
     expect(dad.affiliation).toBe("family");
     expect(dad.tags).toEqual(["crowdfunding-2026"]);
-    // The same parent on two members' lists is one contact with both referrals.
-    expect(mom.ambassadors.map((a) => a.name)).toEqual(["Ada L.", "Grace H."]);
+    // The same parent on two members' lists is one contact.
+    expect(plan.contacts.filter((c) => c.email === "mom@gmail.com")).toHaveLength(1);
     expect(plan.merged).toBe(1);
   });
 
@@ -50,8 +51,8 @@ describe("member list (NAME | EMAILS)", () => {
   });
 });
 
-describe("contact list with a referrer (2024 Friends and Family)", () => {
-  it("separates the contact from the member who referred them", () => {
+describe("contact list (2024 Friends and Family)", () => {
+  it("reads the contact's own name, not the member columns beside it", () => {
     const rows = sheet([
       "First Name\tLast name\tEmail address\tContact First Name\tContact Last Name\tEmail Sent",
       "Jo\tSmith\tjo@x.com\tAda\tLovelace\tFALSE",
@@ -64,7 +65,6 @@ describe("contact list with a referrer (2024 Friends and Family)", () => {
       firstName: "Jo",
       lastName: "Smith",
       affiliation: "friend",
-      ambassadors: [{ email: null, name: "Ada Lovelace" }],
     });
     expect(plan.contacts[1].email).toBe("nobody@x.com");
   });
@@ -98,16 +98,12 @@ describe("ScaleFunder export", () => {
       amountCents: 200000,
       perkName: "Launch Anything On A Rocket",
       displayPref: "hide_amount",
-      ambassadorEmail: "ada@berkeley.edu",
       externalRef: "SF1",
     });
     expect(plan.donations[0].donatedAt.startsWith("2025-10-14")).toBe(true);
     const lee = plan.contacts.find((c) => c.email === "lee@yahoo.com")!;
     expect(lee.tags).toContain("donor");
     expect(lee.address).toBe("1 Main St");
-    // The campus default "Cal Student Philanthropy" is not a member.
-    expect(lee.ambassadors).toEqual([{ email: "ada@berkeley.edu", name: "Ada L" }]);
-    expect(plan.donations[1].ambassadorEmail).toBeNull();
     expect(plan.rejected).toEqual([{ row: 4, reason: "no amount" }]);
     expect(planSummary(plan)).toMatchObject({ donations: 2, donationCents: 207500 });
   });

@@ -65,15 +65,6 @@ function IconCart() {
     </svg>
   );
 }
-function IconMegaphone() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" />
-      <path d="M15 9a4 4 0 0 1 0 6" />
-      <path d="M18 6a8 8 0 0 1 0 12" />
-    </svg>
-  );
-}
 function IconChevron({ direction }: { direction: "left" | "right" }) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5" aria-hidden>
@@ -320,7 +311,6 @@ export function SidebarNav({
   const isActivity = pathname.startsWith("/activity");
   const isFinance = pathname.startsWith("/finance");
   const isPurchases = pathname.startsWith("/purchase-requests");
-  const isOutreach = pathname.startsWith("/outreach");
 
   // Shared between the desktop rail (which alone may be `collapsed`) and the
   // mobile drawer (always full) so the two never drift apart otherwise.
@@ -340,10 +330,6 @@ export function SidebarNav({
           <NavLink href="/activity/leaderboard" label="Activity" icon={<IconActivity />} active={isActivity} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/finance" label="Finance" icon={<IconFinance />} active={isFinance} collapsed={collapsed} onClick={onNavigate} />
           <NavLink href="/purchase-requests" label="Purchase Requests" icon={<IconCart />} active={isPurchases} collapsed={collapsed} onClick={onNavigate} badge={purchaseBadge} />
-          {/* The outreach CRM holds donors' details: admins only (src/app/outreach/layout.tsx). */}
-          {isAdmin && (
-            <NavLink href="/outreach" label="Outreach" icon={<IconMegaphone />} active={isOutreach} collapsed={collapsed} onClick={onNavigate} />
-          )}
           {collapsed && (
             <>
               <NavLink href="/projects" label="Projects" icon={<IconFolder />} active={isProjects} collapsed onClick={onNavigate} />

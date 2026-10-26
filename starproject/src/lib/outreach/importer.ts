@@ -7,8 +7,8 @@
 //
 // Presets, each matching a sheet the team actually keeps:
 //   contacts     any sheet with an email column (Alumni, Friends & Family, ...)
-//   member_list  NAME | EMAILS, where NAME is the STAR member who supplied the
-//                contact and is only written on the first row of their block
+//   member_list  NAME | EMAILS, the members' crowdfunding lists (NAME is the member
+//                who supplied the address, not the contact, so it is ignored)
 //   scalefunder  the campus crowdfunding "fulfill" export (sf_id, amount, perk_name, ...)
 //   sponsors     the Current Sponsors List master sheet
 
@@ -24,7 +24,7 @@ export type ResolvedPreset = Exclude<ImportPreset, "auto">;
 export const PRESET_LABEL: Record<ImportPreset, string> = {
   auto: "Detect from the headers",
   contacts: "Contact list (any sheet with an Email column)",
-  member_list: "Member contact list (NAME | EMAILS, ambassador per block)",
+  member_list: "Member contact list (NAME | EMAILS)",
   scalefunder: "ScaleFunder donations export",
   sponsors: "Current Sponsors List (master sheet)",
 };
@@ -35,7 +35,7 @@ export type ImportOptions = {
   tags: string[];
   /** Affiliation for contacts whose row doesn't say. */
   affiliation: Affiliation | null;
-  /** Campaign the donations / referrals belong to (its id; resolved by the action). */
+  /** Campaign the donations belong to (its id; resolved by the action). */
   campaignId: string | null;
   /** Season the sponsor deals are for ("2026–27"). */
   season: string;
@@ -61,8 +61,6 @@ export type ContactDraft = {
   tags: string[];
   orgName: string | null;
   notes: string | null;
-  /** Who brought them in: STAR members, by email when known, else by name. */
-  ambassadors: { email: string | null; name: string | null }[];
   /** Spreadsheet rows (1-based) this draft came from, for the preview. */
   rows: number[];
 };
@@ -73,7 +71,6 @@ export type DonationDraft = {
   donatedAt: string; // ISO
   perkName: string | null;
   displayPref: string | null;
-  ambassadorEmail: string | null;
   externalRef: string;
 };
 
@@ -83,10 +80,7 @@ export type DealDraft = {
   type: DealType;
   stage: DealStage;
   renewal: boolean;
-  project: string | null;
-  responsibleEngineer: string | null;
   theirDeliverables: string | null;
-  ourDeliverables: string | null;
   valueCents: number | null;
   notes: string | null;
 };
@@ -124,10 +118,6 @@ type Field =
   | "tags"
   | "org"
   | "notes"
-  | "ambassador"
-  | "ambassadorFirst"
-  | "ambassadorLast"
-  | "ambassadorEmail"
   | "amount"
   | "date"
   | "perk"
@@ -135,11 +125,8 @@ type Field =
   | "sfId"
   | "serviceRef"
   | "sponsorType"
-  | "project"
-  | "engineer"
   | "contact"
   | "theirs"
-  | "ours"
   | "status"
   | "info";
 
@@ -190,13 +177,6 @@ const ALIASES: Record<string, Field> = {
   notes: "notes",
   note: "notes",
   comments: "notes",
-  "referred by": "ambassador",
-  ambassador: "ambassador",
-  "contact first name": "ambassadorFirst",
-  "contact last name": "ambassadorLast",
-  "ambassador first name": "ambassadorFirst",
-  "ambassador last name": "ambassadorLast",
-  "ambassador email": "ambassadorEmail",
   amount: "amount",
   "date created": "date",
   date: "date",
@@ -205,12 +185,8 @@ const ALIASES: Record<string, Field> = {
   "sf id": "sfId",
   "service ref": "serviceRef",
   "sponsorship type": "sponsorType",
-  project: "project",
-  "res engineer": "engineer",
-  "responsible engineer": "engineer",
   contact: "contact",
   "their deliverables": "theirs",
-  "our deliverables": "ours",
   status: "status",
   satus: "status",
   "addt info": "info",
@@ -228,12 +204,13 @@ function mapHeader(row: string[]): Columns {
     const f = ALIASES[norm(h)];
     if (f && cols[f] === undefined) cols[f] = i;
   });
-  // A sheet whose only person column is "Name": a full name, unless it is the
-  // member-list layout (NAME | EMAILS), where Name is the ambassador.
+  // A sheet whose only person column is "Name": a full name, except in the
+  // member-list layout (NAME | EMAILS), where it names the member, not the contact.
   const nameIdx = row.findIndex((h) => norm(h) === "name");
   if (nameIdx >= 0) {
-    if (cols.emails !== undefined && cols.email === undefined) cols.ambassador ??= nameIdx;
-    else if (cols.sponsorType !== undefined || cols.contact !== undefined) cols.org ??= nameIdx;
+    if (cols.emails !== undefined && cols.email === undefined) {
+      // left unmapped
+    } else if (cols.sponsorType !== undefined || cols.contact !== undefined) cols.org ??= nameIdx;
     else cols.fullName ??= nameIdx;
   }
   return cols;
@@ -243,7 +220,9 @@ function mapHeader(row: string[]): Columns {
 function findHeader(rows: string[][]): { index: number; cols: Columns } | null {
   for (let i = 0; i < Math.min(rows.length, 15); i++) {
     const cols = mapHeader(rows[i]);
-    if (Object.keys(cols).length >= 2) return { index: i, cols };
+    // A "Name" column counts toward spotting the header even where it is left unmapped.
+    const named = rows[i].some((h) => norm(h) === "name") && cols.fullName === undefined && cols.org === undefined;
+    if (Object.keys(cols).length + (named ? 1 : 0) >= 2) return { index: i, cols };
   }
   return null;
 }
@@ -343,7 +322,6 @@ function emptyContact(): ContactDraft {
     tags: [],
     orgName: null,
     notes: null,
-    ambassadors: [],
     rows: [],
   };
 }
@@ -351,10 +329,6 @@ function emptyContact(): ContactDraft {
 /** Fold `b` into `a`: a's values win, lists are unioned. */
 export function mergeContact(a: ContactDraft, b: ContactDraft): ContactDraft {
   const pick = <K extends keyof ContactDraft>(k: K) => (a[k] ?? b[k]) as ContactDraft[K];
-  const amb = [...a.ambassadors];
-  for (const x of b.ambassadors) {
-    if (!amb.some((y) => (y.email ?? y.name) === (x.email ?? x.name))) amb.push(x);
-  }
   return {
     email: a.email ?? b.email,
     altEmails: [...new Set([...a.altEmails, ...b.altEmails])].filter((e) => e !== (a.email ?? b.email)),
@@ -371,7 +345,6 @@ export function mergeContact(a: ContactDraft, b: ContactDraft): ContactDraft {
     tags: [...new Set([...a.tags, ...b.tags])],
     orgName: pick("orgName"),
     notes: a.notes && b.notes && a.notes !== b.notes ? `${a.notes}\n${b.notes}` : pick("notes"),
-    ambassadors: amb,
     rows: [...a.rows, ...b.rows],
   };
 }
@@ -427,7 +400,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
   };
 
   const baseTags = options.tags;
-  let lastAmbassador = "";
 
   for (let i = header.index + 1; i < rows.length; i++) {
     const row = rows[i];
@@ -453,10 +425,7 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
         // season; "Planned" is a prospect we never closed.
         stage: ghosted ? "ghosted" : "prospect",
         renewal: status === "current",
-        project: orNull(cell(row, cols.project)),
-        responsibleEngineer: orNull(cell(row, cols.engineer)),
         theirDeliverables: orNull(theirs),
-        ourDeliverables: orNull(cell(row, cols.ours)),
         valueCents: leadingAmount(theirs),
         notes: orNull([info, !emails.length && contactCell ? `Contact: ${contactCell}` : ""].filter(Boolean).join("\n")),
       });
@@ -469,8 +438,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
     }
 
     if (preset === "member_list") {
-      const amb = cell(row, cols.ambassador);
-      if (amb) lastAmbassador = amb;
       const raw = cell(row, cols.emails);
       if (!raw) continue; // the blank rows of a member's block of five
       const emails = splitEmails(raw);
@@ -486,7 +453,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
           email,
           affiliation: options.affiliation,
           tags: [...baseTags],
-          ambassadors: lastAmbassador ? [{ email: null, name: lastAmbassador }] : [],
           rows: [rowNo],
         });
       }
@@ -505,14 +471,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
     }
     if (!email && !first && !last) continue;
     const alt = splitEmails(cell(row, cols.altEmail)).filter((e) => e !== email);
-    const ambName =
-      [cell(row, cols.ambassadorFirst), cell(row, cols.ambassadorLast)].filter(Boolean).join(" ") || cell(row, cols.ambassador);
-    // ScaleFunder credits the campus office ("Cal Student Philanthropy",
-    // studentgiving@berkeley.edu) when no member is named: that is nobody.
-    const campusDefault = /cal student philanthropy/i.test(ambName);
-    const ambEmailRaw = splitEmails(cell(row, cols.ambassadorEmail))[0] ?? null;
-    const ambEmail = campusDefault || ambEmailRaw === "studentgiving@berkeley.edu" ? null : ambEmailRaw;
-    const realAmbassador = ambName && !campusDefault ? ambName : "";
     const address = [cell(row, cols.address), cell(row, cols.address2)].filter(Boolean).join(", ");
     const draft: ContactDraft = {
       ...emptyContact(),
@@ -531,7 +489,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
       tags: [...new Set([...baseTags, ...parseTags(cell(row, cols.tags))])],
       orgName: orNull(cell(row, cols.org)),
       notes: orNull(cell(row, cols.notes)),
-      ambassadors: ambEmail || realAmbassador ? [{ email: ambEmail, name: orNull(realAmbassador) }] : [],
       rows: [rowNo],
     };
 
@@ -550,7 +507,6 @@ export function planImport(rows: string[][], options: ImportOptions): ImportPlan
         donatedAt: date,
         perkName: orNull(cell(row, cols.perk)),
         displayPref: orNull(cell(row, cols.display)),
-        ambassadorEmail: ambEmail,
         externalRef:
           cell(row, cols.sfId) || cell(row, cols.serviceRef) || `${email}|${date.slice(0, 10)}|${amount}`,
       });

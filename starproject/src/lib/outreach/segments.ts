@@ -17,8 +17,6 @@ export const segmentFilterSchema = z.object({
   donatedTo: z.string().optional(),
   /** Did not give to this campaign (id). */
   notDonatedTo: z.string().optional(),
-  /** Referred by this member (email or name, case-insensitive). */
-  referredBy: z.string().optional(),
   /** Their org has a deal in one of these stages. */
   dealStages: z.array(z.string()).optional(),
   dealSeason: z.string().optional(),
@@ -51,19 +49,6 @@ export function segmentWhere(f: SegmentFilter): Prisma.OutreachContactWhereInput
   if (has(f.orgKinds)) and.push({ org: { kind: { in: f.orgKinds } } });
   if (f.donatedTo) and.push({ donations: { some: f.donatedTo === "any" ? {} : { campaignId: f.donatedTo } } });
   if (f.notDonatedTo) and.push({ donations: { none: { campaignId: f.notDonatedTo } } });
-  if (f.referredBy) {
-    const r = f.referredBy;
-    and.push({
-      referrals: {
-        some: {
-          OR: [
-            { ambassadorEmail: { equals: r, mode: "insensitive" } },
-            { ambassadorName: { equals: r, mode: "insensitive" } },
-          ],
-        },
-      },
-    });
-  }
   if (has(f.dealStages)) {
     and.push({
       org: { deals: { some: { stage: { in: f.dealStages }, ...(f.dealSeason ? { season: f.dealSeason } : {}) } } },
@@ -84,7 +69,6 @@ export type SegmentRow = {
   bounced: boolean;
   org: { name: string; kind: string; deals: { stage: string; season: string }[] } | null;
   donationCampaignIds: (string | null)[];
-  referrals: { ambassadorEmail: string | null; ambassadorName: string | null }[];
 };
 
 export function matchesSegment(f: SegmentFilter, c: SegmentRow): boolean {
@@ -104,11 +88,6 @@ export function matchesSegment(f: SegmentFilter, c: SegmentRow): boolean {
     if (!ok) return false;
   }
   if (f.notDonatedTo && c.donationCampaignIds.includes(f.notDonatedTo)) return false;
-  if (f.referredBy) {
-    const r = f.referredBy.toLowerCase();
-    if (!c.referrals.some((x) => x.ambassadorEmail?.toLowerCase() === r || x.ambassadorName?.toLowerCase() === r))
-      return false;
-  }
   if (has(f.dealStages)) {
     const deals = c.org?.deals ?? [];
     if (!deals.some((d) => f.dealStages!.includes(d.stage) && (!f.dealSeason || d.season === f.dealSeason)))
@@ -128,7 +107,6 @@ export function describeSegment(f: SegmentFilter, campaignName: (id: string) => 
   if (has(f.orgKinds)) parts.push(`at a ${f.orgKinds!.join(" / ")}`);
   if (f.donatedTo) parts.push(f.donatedTo === "any" ? "who have given" : `who gave to ${campaignName(f.donatedTo)}`);
   if (f.notDonatedTo) parts.push(`who haven't given to ${campaignName(f.notDonatedTo)}`);
-  if (f.referredBy) parts.push(`referred by ${f.referredBy}`);
   if (has(f.dealStages)) parts.push(`sponsor ${f.dealStages!.join(" / ")}${f.dealSeason ? ` (${f.dealSeason})` : ""}`);
   if (f.includeExcluded) parts.push("including do-not-contact");
   return parts.length ? `Everyone ${parts.join(", ")}` : "Everyone";

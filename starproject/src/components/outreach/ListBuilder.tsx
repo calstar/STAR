@@ -59,7 +59,6 @@ function Multi({
 export function ListBuilder({
   lists,
   tags,
-  referrers,
   campaigns,
   seasons,
   currentSeason,
@@ -69,7 +68,6 @@ export function ListBuilder({
 }: {
   lists: SavedList[];
   tags: string[];
-  referrers: string[];
   campaigns: Campaign[];
   seasons: string[];
   currentSeason: string;
@@ -227,7 +225,7 @@ export function ListBuilder({
           <Multi label="Tagged all of" options={tags} value={filter.tagsAll} onChange={(v) => set("tagsAll", v)} />
           <Multi label="Not tagged" options={tags} value={filter.tagsNone} onChange={(v) => set("tagsNone", v)} />
           <Multi label="Affiliation" options={[...AFFILIATIONS]} value={filter.affiliations} onChange={(v) => set("affiliations", v)} render={titleCase} />
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <label>
               <span className={LABEL}>Gave to</span>
               <select className={INPUT} value={filter.donatedTo ?? ""} onChange={(e) => set("donatedTo", e.target.value || undefined)}>
@@ -247,17 +245,6 @@ export function ListBuilder({
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className={LABEL}>Brought in by</span>
-              <select className={INPUT} value={filter.referredBy ?? ""} onChange={(e) => set("referredBy", e.target.value || undefined)}>
-                <option value="">Anyone</option>
-                {referrers.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
                   </option>
                 ))}
               </select>

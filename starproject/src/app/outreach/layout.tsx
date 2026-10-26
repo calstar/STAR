@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 
 // The outreach CRM is admins only: it holds donors' contact details, home
 // addresses and gift amounts. The gate is here for every /outreach page, and
-// again on every server action (requireAdmin), so a typed URL or a crafted
-// request gets nothing.
+// again in every page, reader and server action, so a typed URL or a crafted
+// request gets nothing. It is deliberately not in the sidebar: a separate tool,
+// reached by its link (bookmark /outreach).
 export default async function OutreachLayout({ children }: { children: React.ReactNode }) {
   const { admin } = await outreachViewer();
   if (!admin) {

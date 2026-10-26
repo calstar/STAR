@@ -53,7 +53,6 @@ model User {
   purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
   createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
   decidedPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestDecidedBy")
-  outreachDeals           OutreachDeal[]       @relation("OutreachDealOwner")
   outreachTouches         OutreachTouch[]      @relation("OutreachTouchActor")
 }
 
@@ -238,7 +237,6 @@ model Task {
   // Present only for a manufacturing task: the part's details.
   manufacturing TaskManufacturing?
   bomItems      BomItem[]
-  outreachDeals OutreachDeal[]
 
   @@index([projectId, status])
   @@index([status, completedAt])
@@ -735,27 +733,10 @@ model OutreachContact {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
-  referrals OutreachReferral[]
   donations OutreachDonation[]
   touches   OutreachTouch[]
 
   @@index([orgId])
-}
-
-// "Member X brought in contact Y." Many-to-many: the same parent can sit on two
-// members' lists. ambassadorEmail is kept even when no User row exists yet.
-model OutreachReferral {
-  id              String            @id @default(cuid())
-  contactId       String
-  contact         OutreachContact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  ambassadorEmail String?
-  ambassadorName  String?
-  campaignId      String?
-  campaign        OutreachCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  createdAt       DateTime          @default(now())
-
-  @@unique([contactId, ambassadorEmail, ambassadorName])
-  @@index([ambassadorEmail])
 }
 
 // One sponsorship conversation with one org for one season.
@@ -768,18 +749,10 @@ model OutreachDeal {
   stage               String      @default("prospect") // DEAL_STAGES
   ask                 String? // what we are asking for, in a sentence
   theirDeliverables   String? // "$3,000", "50% off e-matches"
-  ourDeliverables     String? // "logo on the vehicle, resume book"
   valueCents          Int?
-  project             String? // "Full Team", "LE4", "Caldera", "Alula"
-  ownerId             String?
-  owner               User?       @relation("OutreachDealOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  responsibleEngineer String?
   renewal             Boolean     @default(false) // a returning sponsor
   lastContactAt       DateTime?
   nextFollowUpAt      DateTime?
-  // The Outreach Correspondence task this deal grew out of, if any.
-  taskId              String?
-  task                Task?       @relation(fields: [taskId], references: [id], onDelete: SetNull)
   notes               String?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
@@ -805,7 +778,6 @@ model OutreachCampaign {
   createdAt     DateTime  @default(now())
 
   donations OutreachDonation[]
-  referrals OutreachReferral[]
   touches   OutreachTouch[]
 }
 
@@ -821,7 +793,6 @@ model OutreachDonation {
   perkStatus      String            @default("none") // none | pending | sent
   // display | hide_amount | hide_name, as the donor chose on the platform.
   displayPref     String?
-  ambassadorEmail String?
   // The platform's id for the gift (ScaleFunder sf_id), so the same export
   // imports twice without doubling.
   externalRef     String?           @unique

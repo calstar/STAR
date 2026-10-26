@@ -85,22 +85,6 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
               </ul>
             )}
           </div>
-          <div className={`${CARD} p-4`}>
-            <h3 className="mb-2 font-semibold">Brought in by</h3>
-            {c.referrals.length === 0 ? (
-              <p className={`text-sm ${MUTED}`}>No referrer recorded.</p>
-            ) : (
-              <ul className="space-y-1 text-sm">
-                {c.referrals.map((r) => (
-                  <li key={r.id}>
-                    {r.ambassadorName ?? r.ambassadorEmail}
-                    {r.ambassadorName && r.ambassadorEmail ? ` (${r.ambassadorEmail})` : ""}
-                    {r.campaign && <span className={MUTED}> · {r.campaign}</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
           <p className={`text-xs ${MUTED}`}>
             Source: {c.source ?? "unknown"} · added {shortDate(c.createdAt)}
           </p>

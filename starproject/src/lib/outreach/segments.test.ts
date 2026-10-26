@@ -13,7 +13,6 @@ const row = (o: Partial<SegmentRow> = {}): SegmentRow => ({
   bounced: false,
   org: null,
   donationCampaignIds: [],
-  referrals: [],
   ...o,
 });
 
@@ -35,11 +34,6 @@ describe("matchesSegment", () => {
     expect(matchesSegment(f, row({ tags: ["crowdfunding-2026"], donationCampaignIds: ["c26"] }))).toBe(false);
     expect(matchesSegment({ donatedTo: "any" }, row({ donationCampaignIds: ["c25"] }))).toBe(true);
     expect(matchesSegment({ donatedTo: "c26" }, row({ donationCampaignIds: ["c25"] }))).toBe(false);
-  });
-  it("referrer by email or name, any case", () => {
-    const c = row({ referrals: [{ ambassadorEmail: null, ambassadorName: "Ada L." }] });
-    expect(matchesSegment({ referredBy: "ada l." }, c)).toBe(true);
-    expect(matchesSegment({ referredBy: "grace" }, c)).toBe(false);
   });
   it("sponsor stage, optionally per season", () => {
     const c = row({ org: { name: "Boeing", kind: "company", deals: [{ stage: "committed", season: "2025–26" }] } });

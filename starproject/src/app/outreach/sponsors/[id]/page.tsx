@@ -5,12 +5,10 @@ import { DealEditor } from "@/components/outreach/DealEditor";
 import { DealQuickActions } from "@/components/outreach/DealQuickActions";
 import { OrgContacts, OrgEditor } from "@/components/outreach/OrgEditor";
 import { TouchLog } from "@/components/outreach/TouchLog";
-import { CARD, MUTED, PILL, STAGE_TONE } from "@/components/outreach/ui";
+import { MUTED, PILL, STAGE_TONE } from "@/components/outreach/ui";
 import { STAGE_LABEL, type DealStage } from "@/lib/outreach/constants";
 import { getDealDetail, listCampaigns, listTemplates, outreachViewer } from "@/lib/outreach/queries";
 import { prisma } from "@/lib/db";
-import { displayNameOf } from "@/lib/names";
-import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -18,10 +16,9 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
   // Non-admins see the layout's notice; nothing here may load for them.
   if (!(await outreachViewer()).admin) return null;
   const { id } = await params;
-  const [{ user }, detail, team, templates, campaigns] = await Promise.all([
+  const [{ user }, detail, templates, campaigns] = await Promise.all([
     outreachViewer(),
     getDealDetail(id),
-    getTeamUsers(),
     listTemplates(),
     listCampaigns(),
   ]);
@@ -59,7 +56,7 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
       )}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="space-y-4">
-          <DealEditor deal={deal} team={team.map((u) => ({ id: u.id, name: displayNameOf(u) }))} />
+          <DealEditor deal={deal} />
           <TouchLog
             touches={touches}
             target={{ dealId: deal.id, orgId: deal.orgId }}
@@ -83,14 +80,6 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
               notes: org.notes,
             }}
           />
-          {deal.task && (
-            <div className={`${CARD} p-4 text-sm`}>
-              From the task board:{" "}
-              <Link className="text-blue-600 hover:underline" href={`/tasks?task=${deal.task.id}`}>
-                #{deal.task.number} {deal.task.title}
-              </Link>
-            </div>
-          )}
         </div>
       </div>
     </div>

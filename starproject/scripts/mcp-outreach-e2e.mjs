@@ -4,6 +4,8 @@
 // and campaign, walks them through every outreach tool, deletes them again, and
 // exits 1 if any check fails. Nothing real is touched except
 // install_outreach_starter_templates (idempotent: it only adds missing ones).
+// add_sponsor_task needs an "Outreach Correspondence" project on the board; the
+// task it files is deleted at the end.
 //
 //   MCP_URL=http://localhost:3100/api/mcp MCP_TOKEN=sp_<admin> \
 //     [MCP_MEMBER_TOKEN=sp_<non-admin>] node scripts/mcp-outreach-e2e.mjs
@@ -60,7 +62,7 @@ async function must(name, args) {
 const EXPECTED = [
   "get_outreach_dashboard", "list_sponsors", "get_sponsor", "save_sponsor", "delete_sponsor",
   "save_outreach_org", "delete_outreach_org", "log_outreach_touch", "log_outreach_touches", "delete_outreach_touch",
-  "schedule_sponsor_follow_up", "import_sponsors_from_tasks", "list_outreach_contacts", "get_outreach_contact",
+  "schedule_sponsor_follow_up", "add_sponsor_task", "list_outreach_contacts", "get_outreach_contact",
   "save_outreach_contact", "tag_outreach_contacts", "delete_outreach_contacts", "list_outreach_lists",
   "get_outreach_list_emails", "save_outreach_list", "delete_outreach_list", "list_outreach_templates",
   "save_outreach_template", "delete_outreach_template", "install_outreach_starter_templates", "get_outreach_merge",
@@ -109,6 +111,19 @@ try {
   check("list_sponsors needsAttention includes it", queued.some((x) => x.id === deal.id));
   const saved = await must("save_sponsor", { dealId: deal.id, stage: "committed", theirDeliverables: "2 transducers" });
   check("save_sponsor updates and returns the deal", saved.stage === "committed" && saved.theirDeliverables === "2 transducers");
+
+  // "+ Task": one ordinary task on the board, the second click finds it.
+  const task = await must("add_sponsor_task", { dealId: deal.id });
+  made.taskId = task.taskId;
+  check("add_sponsor_task files a task", !task.existed && Number.isInteger(task.number), JSON.stringify(task));
+  const taskAgain = await must("add_sponsor_task", { dealId: deal.id });
+  check("a second + Task returns the open one", taskAgain.existed && taskAgain.taskId === task.taskId);
+  const onBoard = await call("get_task", { taskId: task.taskId });
+  check(
+    "the task sits in Outreach Correspondence, titled for the sponsor",
+    onBoard.ok && /^Correspondence - \[mcp-e2e/.test(onBoard.data?.title ?? "") && /Outreach Correspondence/.test(JSON.stringify(onBoard.data?.project ?? onBoard.data)),
+    onBoard.data?.title,
+  );
 
   // People, tags, lists.
   await must("tag_outreach_contacts", { contactIds: [person.contact.id], add: [TAG_SLUG], remove: [] });
@@ -203,6 +218,7 @@ try {
   check("run", false, e.message);
 } finally {
   // Clean up everything this run made.
+  if (made.taskId) check("delete_task (the + Task task)", (await call("delete_task", { taskId: made.taskId })).ok);
   if (made.listId) await call("delete_outreach_list", { listId: made.listId });
   if (made.templateId) await call("delete_outreach_template", { templateId: made.templateId });
   if (made.campaignId) check("delete_outreach_campaign", (await call("delete_outreach_campaign", { campaignId: made.campaignId })).ok);

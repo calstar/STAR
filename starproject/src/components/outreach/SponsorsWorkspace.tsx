@@ -4,71 +4,49 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
-import { importTrackerTasks, saveDeal, setDealStage } from "@/lib/actions/outreach";
+import { saveDeal, setDealStage } from "@/lib/actions/outreach";
 import { DEAL_STAGES, DEAL_TYPES, DEAL_TYPE_LABEL, STAGE_LABEL, type DealStage, type DealType } from "@/lib/outreach/constants";
 import type { DealRow } from "@/lib/outreach/queries";
 
 import { DealQuickActions } from "./DealQuickActions";
 import { dollars, relative } from "./format";
-import { BTN, BTN_PRIMARY, CARD, INPUT, MUTED, PILL, STAGE_TONE, TD, TH, INPUT_INLINE } from "./ui";
-
-type View = "table" | "board";
+import { BTN_PRIMARY, CARD, INPUT, MUTED, PILL, STAGE_TONE, TD, TH, INPUT_INLINE } from "./ui";
 
 export function SponsorsWorkspace({
   deals,
   season,
   seasons,
   initialStage,
-  unlinkedTasks,
   viewerEmail,
-  team,
 }: {
   deals: DealRow[];
   season: string;
   seasons: string[];
   initialStage: string | null;
-  unlinkedTasks: number;
   viewerEmail: string;
-  team: { id: string; name: string }[];
 }) {
   const router = useRouter();
-  const [view, setView] = useState<View>("table");
   const [q, setQ] = useState("");
   const [stages, setStages] = useState<string[]>(initialStage ? [initialStage] : []);
   const [type, setType] = useState<string>("");
-  const [owner, setOwner] = useState<string>("");
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [pending, start] = useTransition();
-  const [note, setNote] = useState<string | null>(null);
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return deals.filter(
       (d) =>
         (!needle ||
-          [d.orgName, d.ask, d.theirDeliverables, d.notes, d.project, ...d.contacts.map((c) => c.email)]
+          [d.orgName, d.ask, d.theirDeliverables, d.notes, ...d.contacts.map((c) => c.email)]
             .filter(Boolean)
             .some((v) => v!.toLowerCase().includes(needle))) &&
         (!stages.length || stages.includes(d.stage)) &&
         (!type || d.type === type) &&
-        (!owner || d.owner?.id === owner) &&
         (!attentionOnly || d.attention),
     );
-  }, [deals, q, stages, type, owner, attentionOnly]);
+  }, [deals, q, stages, type, attentionOnly]);
 
   const toggleStage = (s: string) => setStages((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-
-  const bringIn = () =>
-    start(async () => {
-      const r = await importTrackerTasks();
-      setNote(
-        r.ok
-          ? `Added ${r.created} sponsors from the task board${r.skipped.length ? `; ${r.skipped.length} tasks didn't name an org` : ""}.`
-          : r.error,
-      );
-      router.refresh();
-    });
 
   return (
     <div className="space-y-4">
@@ -100,35 +78,11 @@ export function SponsorsWorkspace({
             </option>
           ))}
         </select>
-        <select className={INPUT_INLINE} value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner">
-          <option value="">Anyone</option>
-          {team.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
-          ))}
-        </select>
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={attentionOnly} onChange={(e) => setAttentionOnly(e.target.checked)} />
           Needs attention
         </label>
         <div className="ml-auto flex gap-2">
-          {unlinkedTasks > 0 && (
-            <button className={BTN} disabled={pending} onClick={bringIn} title="One sponsor per Outreach Correspondence task">
-              Bring in {unlinkedTasks} sponsors from the task board
-            </button>
-          )}
-          <div className="inline-flex overflow-hidden rounded-md border border-neutral-300 dark:border-neutral-700">
-            {(["table", "board"] as View[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`px-3 py-1.5 text-sm ${view === v ? "bg-neutral-200 font-medium dark:bg-neutral-700" : "bg-white dark:bg-neutral-900"}`}
-              >
-                {v === "table" ? "Table" : "Board"}
-              </button>
-            ))}
-          </div>
           <button className={BTN_PRIMARY} onClick={() => setAdding((a) => !a)}>
             + Sponsor
           </button>
@@ -156,14 +110,9 @@ export function SponsorsWorkspace({
         )}
       </div>
 
-      {note && <p className="text-sm text-neutral-600 dark:text-neutral-300">{note}</p>}
       {adding && <NewDeal season={season === "all" ? seasons[0] : season} onDone={() => setAdding(false)} />}
 
-      {view === "table" ? (
-        <DealTable deals={shown} viewerEmail={viewerEmail} />
-      ) : (
-        <DealBoard deals={shown} />
-      )}
+      <DealTable deals={shown} viewerEmail={viewerEmail} />
       <p className={`text-xs ${MUTED}`}>
         {shown.length} of {deals.length} sponsors · value is what they give or gave, as typed on the deal
       </p>
@@ -210,7 +159,6 @@ function DealTable({ deals, viewerEmail }: { deals: DealRow[]; viewerEmail: stri
             <th className={TH}>Sponsor</th>
             <th className={TH}>Stage</th>
             <th className={`${TH} hidden md:table-cell`}>Ask / gives</th>
-            <th className={`${TH} hidden lg:table-cell`}>Owner</th>
             <th className={TH}>Last contact</th>
             <th className={TH}>Next</th>
             <th className={TH}></th>
@@ -226,9 +174,7 @@ function DealTable({ deals, viewerEmail }: { deals: DealRow[]; viewerEmail: stri
                 <div className={`text-xs ${MUTED}`}>
                   {DEAL_TYPE_LABEL[d.type as DealType] ?? d.type}
                   {d.renewal ? " · returning" : ""}
-                  {d.project && d.project !== "Full Team" ? ` · ${d.project}` : ""}
                   {d.channel === "form" ? " · web form" : ""}
-                  {d.task ? ` · #${d.task.number}` : ""}
                 </div>
               </td>
               <td className={TD}>
@@ -238,7 +184,6 @@ function DealTable({ deals, viewerEmail }: { deals: DealRow[]; viewerEmail: stri
                 <div className="line-clamp-2">{d.ask ?? d.theirDeliverables ?? <span className={MUTED}>—</span>}</div>
                 {d.valueCents != null && <div className="text-xs font-medium tabular-nums">{dollars(d.valueCents)}</div>}
               </td>
-              <td className={`${TD} hidden lg:table-cell`}>{d.owner?.name ?? <span className={MUTED}>—</span>}</td>
               <td className={`${TD} whitespace-nowrap`}>{relative(d.lastContactAt)}</td>
               <td className={`${TD} whitespace-nowrap`}>
                 {d.attention ? (
@@ -256,44 +201,6 @@ function DealTable({ deals, viewerEmail }: { deals: DealRow[]; viewerEmail: stri
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function DealBoard({ deals }: { deals: DealRow[] }) {
-  return (
-    <div className="flex gap-3 overflow-x-auto pb-2">
-      {DEAL_STAGES.map((s) => {
-        const col = deals.filter((d) => d.stage === s);
-        return (
-          <div key={s} className="w-64 shrink-0">
-            <div className="mb-2 flex items-center justify-between">
-              <span className={`${PILL} ${STAGE_TONE[s]}`}>{STAGE_LABEL[s]}</span>
-              <span className={`text-xs ${MUTED}`}>{col.length}</span>
-            </div>
-            <div className="space-y-2">
-              {col.map((d) => (
-                <div key={d.id} className={`${CARD} p-2.5 text-sm`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <Link href={`/outreach/sponsors/${d.id}`} className="font-medium hover:text-blue-600">
-                      {d.orgName}
-                    </Link>
-                    <StageSelect id={d.id} stage={d.stage} />
-                  </div>
-                  {(d.ask ?? d.theirDeliverables) && (
-                    <div className={`mt-1 line-clamp-2 text-xs ${MUTED}`}>{d.ask ?? d.theirDeliverables}</div>
-                  )}
-                  <div className="mt-1 flex justify-between text-xs">
-                    <span className={MUTED}>{relative(d.lastContactAt)}</span>
-                    {d.valueCents != null && <span className="font-medium tabular-nums">{dollars(d.valueCents)}</span>}
-                  </div>
-                  {d.attention && <div className="mt-1 text-xs text-amber-800 dark:text-amber-300">{d.attention.label}</div>}
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }

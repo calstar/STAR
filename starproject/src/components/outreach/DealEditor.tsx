@@ -13,18 +13,14 @@ import { BTN, BTN_PRIMARY, CARD, INPUT, LABEL } from "./ui";
 const day = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 
 /** Every field of a deal, saved together. */
-export function DealEditor({ deal, team }: { deal: DealRow; team: { id: string; name: string }[] }) {
+export function DealEditor({ deal }: { deal: DealRow }) {
   const router = useRouter();
   const [f, setF] = useState({
     stage: deal.stage as DealStage,
     type: deal.type as DealType,
     ask: deal.ask ?? "",
     theirDeliverables: deal.theirDeliverables ?? "",
-    ourDeliverables: deal.ourDeliverables ?? "",
     value: deal.valueCents != null ? (deal.valueCents / 100).toFixed(2) : "",
-    project: deal.project ?? "",
-    ownerId: deal.owner?.id ?? "",
-    responsibleEngineer: deal.responsibleEngineer ?? "",
     renewal: deal.renewal,
     nextFollowUpAt: day(deal.nextFollowUpAt),
     lastContactAt: day(deal.lastContactAt),
@@ -45,11 +41,7 @@ export function DealEditor({ deal, team }: { deal: DealRow; team: { id: string; 
         type: f.type,
         ask: f.ask,
         theirDeliverables: f.theirDeliverables,
-        ourDeliverables: f.ourDeliverables,
         valueCents,
-        project: f.project,
-        ownerId: f.ownerId || null,
-        responsibleEngineer: f.responsibleEngineer,
         renewal: f.renewal,
         nextFollowUpAt: f.nextFollowUpAt || null,
         lastContactAt: f.lastContactAt || null,
@@ -92,42 +84,10 @@ export function DealEditor({ deal, team }: { deal: DealRow; team: { id: string; 
         <span className={LABEL}>What we&apos;re asking for</span>
         <input className={INPUT} value={f.ask} onChange={(e) => set("ask", e.target.value)} />
       </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label>
-          <span className={LABEL}>What they give</span>
-          <input className={INPUT} value={f.theirDeliverables} onChange={(e) => set("theirDeliverables", e.target.value)} />
-        </label>
-        <label>
-          <span className={LABEL}>What we give them</span>
-          <input
-            className={INPUT}
-            value={f.ourDeliverables}
-            onChange={(e) => set("ourDeliverables", e.target.value)}
-            placeholder="logo on the vehicle, resume book…"
-          />
-        </label>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label>
-          <span className={LABEL}>Project</span>
-          <input className={INPUT} value={f.project} onChange={(e) => set("project", e.target.value)} placeholder="Full Team, LE4…" />
-        </label>
-        <label>
-          <span className={LABEL}>Owner</span>
-          <select className={INPUT} value={f.ownerId} onChange={(e) => set("ownerId", e.target.value)}>
-            <option value="">Nobody</option>
-            {team.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span className={LABEL}>Responsible engineer</span>
-          <input className={INPUT} value={f.responsibleEngineer} onChange={(e) => set("responsibleEngineer", e.target.value)} />
-        </label>
-      </div>
+      <label className="block">
+        <span className={LABEL}>What they give</span>
+        <input className={INPUT} value={f.theirDeliverables} onChange={(e) => set("theirDeliverables", e.target.value)} />
+      </label>
       <div className="grid gap-3 sm:grid-cols-3">
         <label>
           <span className={LABEL}>Last contact</span>

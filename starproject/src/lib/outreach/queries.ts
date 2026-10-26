@@ -44,8 +44,6 @@ const DEAL_INCLUDE = {
       },
     },
   },
-  owner: { select: { id: true, email: true, name: true, displayName: true } },
-  task: { select: { id: true, number: true, title: true, status: true } },
   _count: { select: { touches: true } },
   // The newest reply and the newest unsent draft, for the attention rules.
   touches: {
@@ -71,15 +69,10 @@ export type DealRow = {
   stage: string;
   ask: string | null;
   theirDeliverables: string | null;
-  ourDeliverables: string | null;
   valueCents: number | null;
-  project: string | null;
-  owner: { id: string; name: string } | null;
-  responsibleEngineer: string | null;
   renewal: boolean;
   lastContactAt: string | null;
   nextFollowUpAt: string | null;
-  task: { id: string; number: number; title: string } | null;
   notes: string | null;
   contacts: { id: string; email: string | null; name: string; title: string | null; bounced: boolean }[];
   touchCount: number;
@@ -100,15 +93,10 @@ function toDealRow(d: DealWithRefs, now: Date): DealRow {
     stage: d.stage,
     ask: d.ask,
     theirDeliverables: d.theirDeliverables,
-    ourDeliverables: d.ourDeliverables,
     valueCents: d.valueCents,
-    project: d.project,
-    owner: d.owner ? { id: d.owner.id, name: displayNameOf(d.owner) } : null,
-    responsibleEngineer: d.responsibleEngineer,
     renewal: d.renewal,
     lastContactAt: iso(d.lastContactAt),
     nextFollowUpAt: iso(d.nextFollowUpAt),
-    task: d.task ? { id: d.task.id, number: d.task.number, title: d.task.title } : null,
     notes: d.notes,
     contacts: d.org.contacts.map((c) => ({ id: c.id, email: c.email, name: personName(c), title: c.title, bounced: c.bounced })),
     touchCount: d._count.touches,
@@ -225,13 +213,11 @@ export type ContactRow = {
   givenCents: number;
   gifts: number;
   lastTouchAt: string | null;
-  referrers: string[];
 };
 
 const CONTACT_INCLUDE = {
   org: { select: { id: true, name: true } },
   donations: { select: { amountCents: true } },
-  referrals: { select: { ambassadorEmail: true, ambassadorName: true } },
   touches: { select: { at: true }, orderBy: { at: "desc" }, take: 1 },
 } satisfies Prisma.OutreachContactInclude;
 
@@ -250,7 +236,6 @@ function toContactRow(c: Prisma.OutreachContactGetPayload<{ include: typeof CONT
     givenCents: c.donations.reduce((s, d) => s + d.amountCents, 0),
     gifts: c.donations.length,
     lastTouchAt: iso(c.touches[0]?.at),
-    referrers: [...new Set(c.referrals.map((r) => r.ambassadorName ?? r.ambassadorEmail ?? "").filter(Boolean))],
   };
 }
 
@@ -278,7 +263,6 @@ export async function getContactDetail(id: string) {
     include: {
       org: { select: { id: true, name: true } },
       donations: { include: { campaign: { select: { id: true, name: true } } }, orderBy: { donatedAt: "desc" } },
-      referrals: { include: { campaign: { select: { name: true } } } },
     },
   });
   if (!c) return null;
@@ -302,12 +286,6 @@ export async function getContactDetail(id: string) {
         displayPref: d.displayPref,
         campaign: d.campaign,
       })),
-      referrals: c.referrals.map((r) => ({
-        id: r.id,
-        ambassadorEmail: r.ambassadorEmail,
-        ambassadorName: r.ambassadorName,
-        campaign: r.campaign?.name ?? null,
-      })),
     },
     touches: touches.map(toTouchRow),
   };
@@ -320,18 +298,6 @@ export async function allTags(): Promise<{ tag: string; count: number }[]> {
   const rows = await prisma.$queryRaw<{ tag: string; count: bigint }[]>`
     SELECT t AS tag, COUNT(*) AS count FROM "OutreachContact", unnest(tags) AS t GROUP BY t ORDER BY count DESC, t ASC`;
   return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }));
-}
-
-/** Members credited as referrers, for the list builder's picker. */
-export async function allReferrers(): Promise<string[]> {
-  await adminOnly();
-  const rows = await prisma.outreachReferral.findMany({
-    distinct: ["ambassadorName", "ambassadorEmail"],
-    select: { ambassadorName: true, ambassadorEmail: true },
-  });
-  return [...new Set(rows.map((r) => r.ambassadorEmail ?? r.ambassadorName ?? "").filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b),
-  );
 }
 
 // ---- segments --------------------------------------------------------------
@@ -417,37 +383,11 @@ export async function getCampaignDetail(id: string) {
   await adminOnly();
   const c = await prisma.outreachCampaign.findUnique({ where: { id } });
   if (!c) return null;
-  const [donations, referrals] = await Promise.all([
-    prisma.outreachDonation.findMany({
-      where: { campaignId: id },
-      include: { contact: { select: { id: true, email: true, firstName: true, lastName: true, address: true } } },
-      orderBy: { donatedAt: "desc" },
-    }),
-    prisma.outreachReferral.findMany({
-      where: { campaignId: id },
-      select: { ambassadorEmail: true, ambassadorName: true, contactId: true },
-    }),
-  ]);
-  // Who brought in what: contacts each member supplied (and how many gave),
-  // plus gifts the platform credited to them. A member is keyed by email when
-  // known, so "Luke M." on a list and luke@ on a gift are one row.
-  const gaveIds = new Set(donations.map((d) => d.contactId));
-  const nameByEmail = new Map<string, string>();
-  for (const r of referrals) if (r.ambassadorEmail && r.ambassadorName) nameByEmail.set(r.ambassadorEmail.toLowerCase(), r.ambassadorName);
-  const board = new Map<string, { member: string; supplied: number; gave: number; raisedCents: number }>();
-  const row = (email: string | null, name: string | null) => {
-    const k = (email ?? name ?? "?").toLowerCase();
-    if (!board.has(k)) board.set(k, { member: name ?? (email && nameByEmail.get(email.toLowerCase())) ?? email ?? "?", supplied: 0, gave: 0, raisedCents: 0 });
-    return board.get(k)!;
-  };
-  for (const r of referrals) {
-    const b = row(r.ambassadorEmail, r.ambassadorName);
-    b.supplied++;
-    if (gaveIds.has(r.contactId)) b.gave++;
-  }
-  for (const d of donations) {
-    if (d.ambassadorEmail && d.ambassadorEmail !== "studentgiving@berkeley.edu") row(d.ambassadorEmail, null).raisedCents += d.amountCents;
-  }
+  const donations = await prisma.outreachDonation.findMany({
+    where: { campaignId: id },
+    include: { contact: { select: { id: true, email: true, firstName: true, lastName: true, address: true } } },
+    orderBy: { donatedAt: "desc" },
+  });
   return {
     campaign: {
       id: c.id,
@@ -467,10 +407,8 @@ export async function getCampaignDetail(id: string) {
       perkName: d.perkName,
       perkStatus: d.perkStatus,
       displayPref: d.displayPref,
-      ambassadorEmail: d.ambassadorEmail,
       contact: { id: d.contact.id, email: d.contact.email, name: personName(d.contact), hasAddress: !!d.contact.address },
     })),
-    leaderboard: [...board.values()].sort((a, b) => b.raisedCents - a.raisedCents || b.gave - a.gave || b.supplied - a.supplied),
   };
 }
 export type CampaignDetail = NonNullable<Awaited<ReturnType<typeof getCampaignDetail>>>;
@@ -538,24 +476,6 @@ export async function dashboard() {
   };
 }
 
-/** Outreach Correspondence tasks with no deal yet, for "Bring in from the task board". */
-export async function unlinkedOutreachTasks() {
-  await adminOnly();
-  const tasks = await prisma.task.findMany({
-    where: {
-      archived: false,
-      outreachDeals: { none: {} },
-      OR: [
-        { project: { name: { contains: "Outreach", mode: "insensitive" } } },
-        { subteam: { name: { equals: "Outreach", mode: "insensitive" } } },
-      ],
-    },
-    select: { id: true, number: true, title: true, status: true, project: { select: { name: true } } },
-    orderBy: { number: "asc" },
-  });
-  return tasks;
-}
-
 // ---- compose ---------------------------------------------------------------
 
 export type ComposeSource =
@@ -588,11 +508,9 @@ export async function composeRows(source: ComposeSource, sender: { name: string;
     sender_email: sender.email,
     season,
   };
-  const dealVars = (d: { ask: string | null; theirDeliverables: string | null; ourDeliverables: string | null; project: string | null; renewal: boolean; season: string } | null) => ({
+  const dealVars = (d: { ask: string | null; theirDeliverables: string | null; renewal: boolean; season: string } | null) => ({
     ask: d?.ask ?? null,
     their_deliverables: d?.theirDeliverables ?? null,
-    our_deliverables: d?.ourDeliverables ?? null,
-    project: d?.project ?? null,
     renewal: d?.renewal ?? false,
     ...(d ? { season: d.season } : {}),
   });
@@ -640,7 +558,6 @@ export async function composeRows(source: ComposeSource, sender: { name: string;
     include: {
       org: { include: { deals: { where: { season }, take: 1 } } },
       donations: { orderBy: { donatedAt: "desc" }, take: 1 },
-      referrals: { take: 1 },
     },
     orderBy: [{ lastName: "asc" }, { email: "asc" }],
   });
@@ -662,7 +579,6 @@ export async function composeRows(source: ComposeSource, sender: { name: string;
         email: c.email,
         org: c.org?.name ?? null,
         last_gift: c.donations[0] ? `$${(c.donations[0].amountCents / 100).toFixed(2)}` : null,
-        referrer: c.referrals[0]?.ambassadorName ?? c.referrals[0]?.ambassadorEmail ?? null,
       },
     };
   });

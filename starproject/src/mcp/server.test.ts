@@ -36,7 +36,7 @@ const ADMIN_ONLY = [
   "delete_outreach_contacts",
   "log_outreach_touch",
   "schedule_sponsor_follow_up",
-  "import_sponsors_from_tasks",
+  "add_sponsor_task",
   "list_outreach_contacts",
   "get_outreach_contact",
   "save_outreach_contact",

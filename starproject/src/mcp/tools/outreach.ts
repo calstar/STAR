@@ -14,7 +14,7 @@ import {
   logTouches,
   saveTemplate,
   setPerkStatus,
-  importTrackerTasks,
+  createDealTask,
   logTouch,
   previewImport,
   retagContacts,
@@ -103,7 +103,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "list_sponsors",
     {
-      description: `${admin} Sponsor deals as /outreach/sponsors lists them: org, season, type, stage, ask, what they give, value, owner, last contact, next follow-up, contacts, and why it needs attention. Filter by season ("2026–27"; omit for all) and stage.`,
+      description: `${admin} Sponsor deals as /outreach/sponsors lists them: org, season, type, stage, ask, what they give, value, last contact, next follow-up, contacts, and why it needs attention. Filter by season ("2026–27"; omit for all) and stage.`,
       inputSchema: {
         season: z.string().optional(),
         stage: z.enum(DEAL_STAGES).optional(),
@@ -147,9 +147,7 @@ export const outreachTools: ToolModule = (server) => {
         stage: z.enum(DEAL_STAGES).optional(),
         ask: z.string().max(2000).nullish(),
         theirDeliverables: z.string().max(2000).nullish(),
-        ourDeliverables: z.string().max(2000).nullish(),
         valueCents: z.number().int().min(0).nullish(),
-        project: z.string().max(100).nullish(),
         renewal: z.boolean().optional(),
         nextFollowUpAt: z.string().nullish().describe("YYYY-MM-DD; null clears"),
         notes: z.string().max(10000).nullish(),
@@ -214,7 +212,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "delete_outreach_contacts",
     {
-      description: `${admin} Delete people with their gifts, referrals and touches. To stop emailing someone, prefer save_outreach_contact doNotContact.`,
+      description: `${admin} Delete people with their gifts and touches. To stop emailing someone, prefer save_outreach_contact doNotContact.`,
       inputSchema: { contactIds: z.array(z.string()).min(1).max(1000) },
       annotations: DESTRUCTIVE,
     },
@@ -237,20 +235,24 @@ export const outreachTools: ToolModule = (server) => {
 
   defineTool(
     server,
-    "import_sponsors_from_tasks",
+    "add_sponsor_task",
     {
-      description: `${admin} One deal per Outreach Correspondence task with none, read from its title ("Correspondence - Garmin (inReach …)") and linked to the task. Returns how many were created and the titles it couldn't read.`,
-      inputSchema: {},
+      description: `${admin} The sponsor page's "+ Task": put a "Correspondence - <org> (<ask>)" task in the task board's Outreach Correspondence project, assigned to you and due on the deal's follow-up date (or dueDate). If an open task for that sponsor is already there it is returned instead (existed: true). Nothing links the task back to the deal.`,
+      inputSchema: {
+        dealId: z.string().min(1),
+        title: z.string().max(300).optional().describe("Default: Correspondence - <org> (<ask>)"),
+        dueDate: z.string().optional().describe("YYYY-MM-DD; default the deal's follow-up date"),
+      },
       annotations: WRITE,
     },
-    async () => check(await importTrackerTasks()),
+    async ({ dealId, title, dueDate }) => check(await createDealTask(dealId, { title, dueDate })),
   );
 
   defineTool(
     server,
     "list_outreach_contacts",
     {
-      description: `${admin} People, as /outreach/people lists them (200 a page), filtered by a segment filter: search, tagsAny/All/None, affiliations, orgKinds, donatedTo (campaign id or "any"), notDonatedTo, referredBy, dealStages(+dealSeason), includeExcluded.`,
+      description: `${admin} People, as /outreach/people lists them (200 a page), filtered by a segment filter: search, tagsAny/All/None, affiliations, orgKinds, donatedTo (campaign id or "any"), notDonatedTo, dealStages(+dealSeason), includeExcluded.`,
       inputSchema: { filter: segmentFilterSchema.default({}), page: z.number().int().min(0).default(0) },
       annotations: READ,
     },
@@ -264,7 +266,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "get_outreach_contact",
     {
-      description: `${admin} One person: details, mailing address, gifts, who referred them, touch history.`,
+      description: `${admin} One person: details, mailing address, gifts, touch history.`,
       inputSchema: { contactId: z.string().min(1) },
       annotations: READ,
     },
@@ -452,7 +454,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "get_outreach_campaign",
     {
-      description: `${admin} One campaign: every gift (with perk status and display preference), and the ambassador table (contacts each member supplied, how many gave, dollars credited).`,
+      description: `${admin} One campaign: every gift, with perk status and display preference.`,
       inputSchema: { campaignId: z.string().min(1) },
       annotations: READ,
     },
@@ -535,7 +537,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "delete_outreach_campaign",
     {
-      description: `${admin} Delete a campaign and the gifts recorded under it. People, referrals and touches stay.`,
+      description: `${admin} Delete a campaign and the gifts recorded under it. People and touches stay.`,
       inputSchema: { campaignId: z.string().min(1) },
       annotations: DESTRUCTIVE,
     },

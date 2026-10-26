@@ -36,7 +36,7 @@ ${SIGNATURE}`,
   {
     name: "Sponsor: cold ask",
     kind: "sponsor_cold",
-    subject: "Sponsorship Request: UC Berkeley STAR Rocketry ({{project|LE4 Liquid Rocket}})",
+    subject: "Sponsorship Request: UC Berkeley STAR Rocketry (LE4 Liquid Rocket)",
     body: `Hi {{first_name|{{org}} team}},
 
 My name is {{sender_name}}, and I'm on the outreach team for Space Technologies and Rocketry at Berkeley (STAR). ${ABOUT}
