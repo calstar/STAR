@@ -100,6 +100,18 @@ export async function saveOrg(input: z.input<typeof orgInput>): Promise<Result<{
  * sponsor sheet and the task board name the same company differently, and two
  * rows for one sponsor would split its history.
  */
+/** Delete an org with its deals and touches. Its people stay, with no org. */
+export async function deleteOrg(id: string): Promise<Result> {
+  try {
+    await requireAdmin();
+    await prisma.outreachOrg.delete({ where: { id } });
+    revalidate();
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 async function orgIdFor(name: string, tx: Prisma.TransactionClient = prisma): Promise<string> {
   const n = name.trim();
   const exact = await tx.outreachOrg.findFirst({ where: { name: { equals: n, mode: "insensitive" } }, select: { id: true } });
@@ -551,6 +563,21 @@ export async function saveCampaign(input: z.input<typeof campaignInput>): Promis
       : await prisma.outreachCampaign.create({ data });
     revalidate();
     return { ok: true, id: c.id };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Delete a campaign with its gifts. Referrals and touches stay, unlinked. */
+export async function deleteCampaign(id: string): Promise<Result> {
+  try {
+    await requireAdmin();
+    await prisma.$transaction([
+      prisma.outreachDonation.deleteMany({ where: { campaignId: id } }),
+      prisma.outreachCampaign.delete({ where: { id } }),
+    ]);
+    revalidate();
+    return { ok: true };
   } catch (e) {
     return fail(e);
   }

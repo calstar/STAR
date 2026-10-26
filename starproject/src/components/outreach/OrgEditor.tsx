@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { saveContact, saveOrg } from "@/lib/actions/outreach";
+import { deleteOrg, saveContact, saveOrg } from "@/lib/actions/outreach";
 import { gmailComposeUrl } from "@/lib/outreach/compose";
 import { CHANNELS, ORG_KINDS, type Channel, type OrgKind } from "@/lib/outreach/constants";
 
@@ -96,6 +96,21 @@ export function OrgEditor({ org }: { org: Org }) {
           Save org
         </button>
         {msg && <span className={`text-sm ${MUTED}`}>{msg}</span>}
+        <button
+          type="button"
+          className={`${BTN} ml-auto text-red-700 dark:text-red-300`}
+          disabled={pending}
+          onClick={() => {
+            if (!confirm(`Delete ${org.name} with every season's deal and its history? Its people stay.`)) return;
+            start(async () => {
+              const r = await deleteOrg(org.id);
+              if (r.ok) router.push("/outreach/sponsors");
+              else setMsg(r.error);
+            });
+          }}
+        >
+          Delete org
+        </button>
       </div>
     </form>
   );

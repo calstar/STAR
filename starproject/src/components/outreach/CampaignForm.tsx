@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { saveCampaign } from "@/lib/actions/outreach";
+import { deleteCampaign, saveCampaign } from "@/lib/actions/outreach";
 import { parseMoney } from "@/lib/finance/money";
 import { CAMPAIGN_KINDS, type CampaignKind } from "@/lib/outreach/constants";
 
@@ -124,6 +124,23 @@ export function CampaignForm({ campaign }: { campaign?: Campaign }) {
           </button>
         )}
         {msg && <span className={`text-sm ${MUTED}`}>{msg}</span>}
+        {campaign && (
+          <button
+            type="button"
+            className={`${BTN} ml-auto text-red-700 dark:text-red-300`}
+            disabled={pending}
+            onClick={() => {
+              if (!confirm(`Delete ${campaign.name} and the gifts recorded under it? People stay.`)) return;
+              start(async () => {
+                const r = await deleteCampaign(campaign.id);
+                if (r.ok) router.push("/outreach/campaigns");
+                else setMsg(r.error);
+              });
+            }}
+          >
+            Delete campaign
+          </button>
+        )}
       </div>
     </form>
   );

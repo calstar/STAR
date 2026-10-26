@@ -3,8 +3,17 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/admins";
 import {
   commitImport,
+  deleteCampaign,
   deleteContacts,
+  deleteDeal,
+  deleteOrg,
+  deleteSegment,
+  deleteTemplate,
   deleteTouch,
+  installStarterTemplates,
+  logTouches,
+  saveTemplate,
+  setPerkStatus,
   importTrackerTasks,
   logTouch,
   previewImport,
@@ -23,6 +32,8 @@ import {
   CAMPAIGN_KINDS,
   CHANNELS,
   ORG_KINDS,
+  PERK_STATUSES,
+  TEMPLATE_KINDS,
   DEAL_STAGES,
   DEAL_TYPES,
   TOUCH_KINDS,
@@ -54,6 +65,20 @@ import { DESTRUCTIVE, IDEMPOTENT_WRITE, READ, WRITE, defineTool, type ToolModule
 
 const admin = "Admins only.";
 
+const TOUCH_SHAPE = {
+        kind: z.enum(TOUCH_KINDS),
+        dealId: z.string().optional(),
+        orgId: z.string().optional(),
+        contactId: z.string().optional(),
+        campaignId: z.string().optional(),
+        templateId: z.string().optional(),
+        subject: z.string().max(500).optional(),
+        note: z.string().max(5000).optional(),
+        threadUrl: z.string().max(1000).optional(),
+        at: z.string().optional().describe("ISO date-time; default now"),
+        followUpDays: z.number().int().min(0).max(365).nullish(),
+      };
+
 function check<T extends { ok: boolean }>(r: T): Extract<T, { ok: true }> {
   if (!r.ok) throw new Error((r as unknown as { error: string }).error);
   return r as Extract<T, { ok: true }>;
@@ -64,7 +89,7 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "get_outreach_dashboard",
     {
-      description: `${admin} The /outreach Today page: deals needing attention (follow-up due, no reply, form to submit, renewal not started) sorted by urgency, this season's pipeline counts and committed dollars, campaign deadlines coming up, and recent touches.`,
+      description: `${admin} The /outreach Today page: deals needing attention (every address bounced, they replied and it's our move, follow-up due, gone quiet, draft never sent, form to submit, renewal not started) sorted by urgency, this season's pipeline counts and committed dollars, campaign deadlines coming up, and recent touches.`,
       inputSchema: {},
       annotations: READ,
     },
@@ -162,18 +187,7 @@ export const outreachTools: ToolModule = (server) => {
     "log_outreach_touch",
     {
       description: `${admin} Record an interaction (${TOUCH_KINDS.join(", ")}) with a person, org or deal. On a deal an outbound touch sets last contact, moves Prospect/Drafting to Contacted and sets the follow-up (followUpDays; omit to clear); a reply moves anything not yet committed to In talks.`,
-      inputSchema: {
-        kind: z.enum(TOUCH_KINDS),
-        dealId: z.string().optional(),
-        orgId: z.string().optional(),
-        contactId: z.string().optional(),
-        campaignId: z.string().optional(),
-        subject: z.string().max(500).optional(),
-        note: z.string().max(5000).optional(),
-        threadUrl: z.string().max(1000).optional(),
-        at: z.string().optional().describe("ISO date-time; default now"),
-        followUpDays: z.number().int().min(0).max(365).nullish(),
-      },
+      inputSchema: TOUCH_SHAPE,
       annotations: WRITE,
     },
     async (args) => {
@@ -490,5 +504,128 @@ export const outreachTools: ToolModule = (server) => {
       annotations: WRITE,
     },
     async ({ dryRun, ...input }) => (dryRun ? check(await previewImport(input)) : check(await commitImport(input))),
+  );
+
+  defineTool(
+    server,
+    "log_outreach_touches",
+    {
+      description: `${admin} Log several touches at once, in one transaction (what Compose's "Mark sent" does after a merge): each item is a log_outreach_touch.`,
+      inputSchema: { touches: z.array(z.object(TOUCH_SHAPE)).min(1).max(2000) },
+      annotations: WRITE,
+    },
+    async ({ touches }) => check(await logTouches(touches)),
+  );
+
+  defineTool(
+    server,
+    "delete_outreach_org",
+    {
+      description: `${admin} Delete an organization with every season's deal and its touches. Its people stay, with no org.`,
+      inputSchema: { orgId: z.string().min(1) },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ orgId }) => {
+      check(await deleteOrg(orgId));
+      return { deleted: true };
+    },
+  );
+
+  defineTool(
+    server,
+    "delete_outreach_campaign",
+    {
+      description: `${admin} Delete a campaign and the gifts recorded under it. People, referrals and touches stay.`,
+      inputSchema: { campaignId: z.string().min(1) },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ campaignId }) => {
+      check(await deleteCampaign(campaignId));
+      return { deleted: true };
+    },
+  );
+
+  defineTool(
+    server,
+    "delete_sponsor",
+    {
+      description: `${admin} Delete one season's deal with a sponsor, with its touches. The org and its people stay.`,
+      inputSchema: { dealId: z.string().min(1) },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ dealId }) => {
+      check(await deleteDeal(dealId));
+      return { deleted: true };
+    },
+  );
+
+  defineTool(
+    server,
+    "delete_outreach_list",
+    {
+      description: `${admin} Delete a saved mailing list. Nobody on it is deleted.`,
+      inputSchema: { listId: z.string().min(1) },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ listId }) => {
+      check(await deleteSegment(listId));
+      return { deleted: true };
+    },
+  );
+
+  defineTool(
+    server,
+    "save_outreach_template",
+    {
+      description: `${admin} Create or update (templateId) an email template. Body and subject take {{field}}, {{field|fallback}}, {{#field}}…{{/field}} and {{^field}}…{{/field}}; see list_outreach_templates and get_outreach_merge.`,
+      inputSchema: {
+        templateId: z.string().optional(),
+        name: z.string().min(1).max(200),
+        kind: z.enum(TEMPLATE_KINDS).optional(),
+        subject: z.string().min(1).max(500),
+        body: z.string().min(1).max(50_000),
+      },
+      annotations: WRITE,
+    },
+    async ({ templateId, ...rest }) => check(await saveTemplate({ id: templateId, ...rest })),
+  );
+
+  defineTool(
+    server,
+    "delete_outreach_template",
+    {
+      description: `${admin} Delete an email template. Touches that used it keep their subject.`,
+      inputSchema: { templateId: z.string().min(1) },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ templateId }) => {
+      check(await deleteTemplate(templateId));
+      return { deleted: true };
+    },
+  );
+
+  defineTool(
+    server,
+    "install_outreach_starter_templates",
+    {
+      description: `${admin} Add whichever of the built-in starter templates (sponsor renewal, cold ask, follow-up, thank-you; crowdfunding ask, final days, thank-you; event) are missing, matched by name.`,
+      inputSchema: {},
+      annotations: IDEMPOTENT_WRITE,
+    },
+    async () => check(await installStarterTemplates()),
+  );
+
+  defineTool(
+    server,
+    "set_outreach_perk_status",
+    {
+      description: `${admin} Mark donations' perks ${PERK_STATUSES.join(" / ")} (the campaign page's perk checklist).`,
+      inputSchema: { donationIds: z.array(z.string()).min(1).max(2000), status: z.enum(PERK_STATUSES) },
+      annotations: IDEMPOTENT_WRITE,
+    },
+    async ({ donationIds, status }) => {
+      check(await setPerkStatus(donationIds, status));
+      return { done: true };
+    },
   );
 };

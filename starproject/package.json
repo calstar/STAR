@@ -13,6 +13,7 @@
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "mcp:e2e": "node scripts/mcp-e2e.mjs",
+    "mcp:outreach-e2e": "node scripts/mcp-outreach-e2e.mjs",
     "dev:local": "node scripts/dev-local.mjs",
     "smoke:local": "node scripts/smoke-local.mjs"
   },
