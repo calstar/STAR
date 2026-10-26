@@ -7,17 +7,16 @@
  * driver's enable input to GND; a 10k pull-up to 5 V holds the input HIGH
  * otherwise. So the output is active-low: ON = LOW, OFF = HIGH.
  *
- * GPIO2 is a strapping pin that must be LOW or floating to enter download mode,
- * so the MOSFET module's gate pull-down is fine here (on GPIO0 it held the
- * board in download mode). The cost: that pull-down holds the gate LOW, i.e.
- * the driver ON, from reset until setup() drives the pin, and for the whole of
- * a USB upload. GPIO2 is also the dev board's blue LED: lit = motor OFF.
+ * GPIO25 has no boot strapping role. A 10k pull-up from the gate to 3.3 V
+ * holds it HIGH, i.e. the driver OFF, from power-up through boot, USB uploads
+ * and whenever the firmware is not running. (GPIO0 held the board in download
+ * mode; GPIO2 needed a pull-down that ran the motor during boot.)
  */
 
 namespace motor_testing_pins {
 
 // 4-20 mA driver enable (active-low: ON = LOW, OFF = HIGH)
-constexpr int PIN_MOTOR_ENABLE = 2;
+constexpr int PIN_MOTOR_ENABLE = 25;
 
 // W5500 / Ethernet SPI on the default VSPI pins
 constexpr int ETH_CS = 5;

@@ -5,20 +5,14 @@
  * N-channel MOSFET on PIN_MOTOR_ENABLE pulls it to 0 V, so the pin is
  * active-low (see motor_testing_pins.h).
  *
- * Two ways to switch it:
- *   - Ethernet: DAQv2 ACTUATOR_COMMAND packets on port 5005. This board owns
- *     actuator_id 1 (1-based, like the actuator board), state 1 = ON, 0 = OFF.
- *     Any packet sender works, e.g. test_guis/actuator_testing_gui.py with
- *     "send server heartbeat" ticked.
- *   - USB serial (115200): type "on", "off" or "status" and press Enter, for
- *     bench tests without a network.
+ * Commands are DAQv2 ACTUATOR_COMMAND packets on UDP port 5005. This board
+ * owns actuator_id 1 (1-based, like the actuator board), state 1 = ON, 0 = OFF.
+ * test_guis/motor_gui.py sends them, with the heartbeats below.
  *
- * Failsafe: the output is OFF at boot. An Ethernet ON is ignored unless a
+ * Failsafe: the output is OFF at boot. An ON is ignored unless a
  * SERVER_HEARTBEAT is current, and drops to OFF if none arrives for
  * HEARTBEAT_TIMEOUT_MS, so a sender that stops talking cannot leave the motor
- * running. A serial ON is not tied to heartbeats -- the operator is at the
- * keyboard -- and holds until "off", an Ethernet OFF, or a reset. OFF from
- * either source is always obeyed.
+ * running. OFF is always obeyed.
  *
  * Networking, heartbeats, firmware hash and Ethernet OTA match the hotfire
  * boards — see Hotfire_Code/common/board_net.h.
@@ -68,8 +62,10 @@ static unsigned long last_server_heartbeat_ms = 0;
 static bool server_heartbeat_seen = false;
 static daq::EngineState last_engine_state = daq::EngineState::SAFE;
 static bool motor_on = false;
-// Who turned it on: a serial ON is exempt from the heartbeat failsafe.
-static bool motor_on_from_serial = false;
+// False when no W5500 answered at boot. The Ethernet library then reads
+// garbage socket state and the loop's network calls can stall, so every
+// network call is skipped and the output stays OFF.
+static bool eth_present = false;
 
 /** Freeze our DHCP address for the duration of an OTA flash. */
 static void otaFreezeAddress(void*, uint32_t) {
@@ -102,7 +98,6 @@ static void processActuatorCommands(
         if (cmd.actuator_state == 0) {
             setMotor(false, "ethernet command");
         } else if (serverHeartbeatCurrent()) {
-            motor_on_from_serial = false;
             setMotor(true, "ethernet command");
         } else {
             Serial.println(
@@ -113,56 +108,36 @@ static void processActuatorCommands(
     }
 }
 
-static void printStatus() {
-    Serial.print("[MOTOR] ");
-    Serial.print(motor_on ? "ON" : "OFF");
-    if (motor_on)
-        Serial.print(motor_on_from_serial ? " (serial)" : " (ethernet)");
-    Serial.print(", server heartbeat ");
-    Serial.print(serverHeartbeatCurrent() ? "current" : "none");
-    Serial.print(", link ");
-    Serial.print(Ethernet.linkStatus() == LinkON ? "up" : "down");
-    Serial.print(", IP ");
-    Serial.println(Ethernet.localIP());
+/**
+ * Read the W5500's VERSIONR (common register 0x0039, always 0x04) straight
+ * over SPI and say what the answer implies, so a dead link can be traced to
+ * a wire without a logic analyser.
+ */
+static void probeW5500Version() {
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(ETH_CS, LOW);
+    SPI.transfer(0x00);  // address high
+    SPI.transfer(0x39);  // address low: VERSIONR
+    SPI.transfer(0x00);  // control: common block, read, variable length
+    uint8_t version = SPI.transfer(0x00);
+    digitalWrite(ETH_CS, HIGH);
+    SPI.endTransaction();
+
+    Serial.print("[ETH] W5500 VERSIONR read: 0x");
+    if (version < 0x10)
+        Serial.print("0");
+    Serial.print(version, HEX);
+    if (version == 0x04)
+        Serial.println(" -- chip answers; init failed, try a reset");
+    else if (version == 0x00)
+        Serial.println(" -- MISO stuck low: check MISO (19), SCK (18), CS (5)"
+                       " and the module's GND");
+    else if (version == 0xFF)
+        Serial.println(" -- MISO floating/high: check MISO (19), CS (5) and"
+                       " the module's 3.3 V");
+    else
+        Serial.println(" -- garbled: check MOSI (23), SCK (18), loose jumpers");
     Serial.flush();
-}
-
-static void handleSerialLine(String line) {
-    line.trim();
-    line.toLowerCase();
-    if (line.length() == 0)
-        return;
-    if (line == "on" || line == "1" || line == "off" || line == "0") {
-        bool on = (line == "on" || line == "1");
-        if (on == motor_on) {
-            // setMotor() only logs a change; acknowledge the operator anyway.
-            Serial.println(on ? "[MOTOR] already ON" : "[MOTOR] already OFF");
-            Serial.flush();
-        }
-        if (on)
-            motor_on_from_serial = true;
-        setMotor(on, "serial command");
-    } else if (line == "status") {
-        printStatus();
-    } else {
-        Serial.print("[SERIAL] unknown command '");
-        Serial.print(line);
-        Serial.println("' -- use on, off or status");
-    }
-}
-
-/** Non-blocking: collect characters until a newline, then act on the line. */
-static void pollSerial() {
-    static String line;
-    while (Serial.available() > 0) {
-        char c = static_cast<char>(Serial.read());
-        if (c == '\n' || c == '\r') {
-            handleSerialLine(line);
-            line = "";
-        } else if (line.length() < 32) {
-            line += c;
-        }
-    }
 }
 
 static void sendBoardHeartbeatTo(IPAddress ip, uint16_t port) {
@@ -250,31 +225,36 @@ void setup() {
 #endif
     delay(ETHERNET_BEGIN_DELAY_MS);
 
+    eth_present = Ethernet.hardwareStatus() == EthernetW5500;
     Serial.print("Hardware: ");
-    Serial.println(Ethernet.hardwareStatus() == EthernetW5500
-                       ? "W5500"
-                       : "no W5500 detected -- check CS / SPI wiring");
-    Serial.print("Link status: ");
-    Serial.println(Ethernet.linkStatus() == LinkON ? "Connected"
-                                                   : "Disconnected");
-    Serial.print("Ethernet IP: ");
-    Serial.println(Ethernet.localIP());
+    Serial.println(eth_present ? "W5500"
+                               : "no W5500 detected -- check CS / SPI wiring "
+                                 "and power. Ethernet disabled; motor stays "
+                                 "OFF.");
+    if (!eth_present)
+        probeW5500Version();
+    if (eth_present) {
+        Serial.print("Link status: ");
+        Serial.println(Ethernet.linkStatus() == LinkON ? "Connected"
+                                                       : "Disconnected");
+        Serial.print("Ethernet IP: ");
+        Serial.println(Ethernet.localIP());
 
-    udp.begin(SENSOR_UDP_LISTEN_PORT);
-    otaServer.onStart(otaFreezeAddress);
-    otaServer.begin();
-    Serial.print("UDP listen port ");
-    Serial.println(SENSOR_UDP_LISTEN_PORT);
-    Serial.print("OTA TCP port ");
-    Serial.println(HOTFIRE_OTA_PORT);
+        udp.begin(SENSOR_UDP_LISTEN_PORT);
+        otaServer.onStart(otaFreezeAddress);
+        otaServer.begin();
+        Serial.print("UDP listen port ");
+        Serial.println(SENSOR_UDP_LISTEN_PORT);
+        Serial.print("OTA TCP port ");
+        Serial.println(HOTFIRE_OTA_PORT);
+    }
     Serial.print("Motor: actuator_id ");
     Serial.print(MOTOR_ACTUATOR_ID);
     Serial.println(", OFF");
-    Serial.println("Serial commands: on, off, status");
     Serial.flush();
 }
 
-void loop() {
+static void pollNetwork() {
 #ifdef SENSOR_ETH_USE_DHCP
     BoardNet::maintainLease(net);
 #endif
@@ -291,12 +271,6 @@ void loop() {
             handlePacket(packetBuffer, static_cast<size_t>(bytesRead),
                          remoteIP);
     }
-
-    pollSerial();
-
-    // Failsafe: an Ethernet ON with no current server heartbeat -> driver off.
-    if (motor_on && !motor_on_from_serial && !serverHeartbeatCurrent())
-        setMotor(false, "server heartbeat lost");
 
 #ifdef SENSOR_ETH_USE_DHCP
     if (BoardNet::serverWentSilent(net)) {
@@ -318,6 +292,15 @@ void loop() {
                                  HOTFIRE_SERVER_PORT);
 #endif
     }
+}
+
+void loop() {
+    // Failsafe: no current server heartbeat -> driver off.
+    if (motor_on && !serverHeartbeatCurrent())
+        setMotor(false, "server heartbeat lost");
+
+    if (eth_present)
+        pollNetwork();
 
     delay(LOOP_DELAY_MS);
 }
