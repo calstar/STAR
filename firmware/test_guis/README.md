@@ -15,20 +15,21 @@ Options:
 - `-p`, `--port` — UDP listen port (default: 5006)
 - `-r`, `--ref-voltage` — ADC reference voltage in V (default: 2.5)
 
-## Motor Serial GUI (`motor_serial_gui.py`)
+## Motor GUI (`motor_gui.py`)
 
-Switches the `Motor_Testing` board's 4-20 mA driver on and off over USB serial
-(115200 baud), so the motor can be bench-tested without Ethernet. Pick the port,
-Connect, and wait for the state to change from BOOTING to MOTOR OFF before the
-ON/OFF buttons enable.
+Switches the `Motor_Testing` board's 4-20 mA driver on and off over Ethernet.
+Start heartbeats, wait for "Board: ACTIVE", then use ON/OFF. It sends
+SERVER_HEARTBEAT every 500 ms and ACTUATOR_COMMAND (actuator_id 1) to UDP 5005,
+and shows the board's BOARD_HEARTBEAT from UDP 5006.
 
 ```bash
 pip install -r requirements.txt
-python motor_serial_gui.py            # or: -p /dev/cu.usbserial-0001
+python motor_gui.py                   # or: --ip 192.168.2.71
 ```
 
-Opening or closing the port resets the ESP32, which turns the motor off, so the
-GUI keeps the port open while connected. Close any `pio device monitor` first.
+Give your computer an address on the board's subnet (e.g. 192.168.2.20/24).
+The board turns the motor off 5 s after heartbeats stop, so stopping them or
+closing the window stops the motor.
 
 ## Combined GUI (`combined_gui/`)
 

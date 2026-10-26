@@ -4,4 +4,3 @@ PyQt5>=5.15
 # PyQt6>=6.4,<6.5
 pyqtgraph>=0.13.4
 numpy>=1.24
-pyserial>=3.5
