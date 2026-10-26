@@ -8,6 +8,19 @@
  *
  * Every decision lives in common/ActuatorLogic.h (host-tested); this file
  * owns the pins, PWM and UDP and carries out what the controller asks.
+ *
+ * Two FreeRTOS tasks share the work, so Serial, network traffic or an OTA
+ * client can never delay a vent or abort:
+ *
+ *   control task (core 1, 1 ms tick)   owns the controller, abort timers,
+ *                                      every output pin, PWM and the LED.
+ *   network task (core 0, 1 ms poll)   owns Ethernet: receives (forwarding
+ *                                      raw packets to the control task),
+ *                                      sends, heartbeats, current-sense
+ *                                      streaming, logs and OTA.
+ *
+ * The control task publishes its state in one atomic byte for heartbeats;
+ * packets cross between the tasks only through the two queues below.
  * Implements plan: Single Actuator Hotfire Script
  * (Hotfire_Code/Actuator_Hotfire).
  *
@@ -28,6 +41,7 @@
 #include <daq-protocol.h>
 #include <esp_mac.h>
 
+#include <atomic>
 #include <cstring>
 #include <vector>
 
@@ -36,6 +50,7 @@
 #include "actuator_config.h"
 #include "board_net.h"
 #include "firmware_hash.h"
+#include "hotfire_tasks.h"
 
 using namespace actuator_board_pins;
 
@@ -116,6 +131,38 @@ static uint32_t getSelfIP() {
     return ipToU32(Ethernet.localIP());
 }
 
+//-----------------------------------------------------------------------------
+// Task plumbing
+//-----------------------------------------------------------------------------
+/** A packet crossing between the tasks, in either direction. */
+struct PacketMsg {
+    uint32_t ip;  // sender (incoming) or destination (outgoing)
+    uint16_t port;
+    uint16_t len;
+    uint8_t data[MAX_PACKET_SIZE];
+};
+
+constexpr UBaseType_t PACKET_QUEUE_DEPTH = 16;
+constexpr uint32_t CONTROL_TASK_STACK_BYTES = 6 * 1024;
+constexpr uint32_t NET_TASK_STACK_BYTES = 8 * 1024;
+constexpr TickType_t TASK_PERIOD_TICKS = pdMS_TO_TICKS(1);
+
+static QueueHandle_t g_incoming;  // network -> control: received packets
+static QueueHandle_t g_outgoing;  // control -> network: packets to send
+static std::atomic<uint32_t> g_incoming_dropped{0};
+static std::atomic<uint32_t> g_outgoing_dropped{0};
+
+// Published by the control task, read by the network task.
+static std::atomic<uint8_t> g_published_state{
+    static_cast<uint8_t>(ActuatorHotfire::State::WaitingForServer)};
+// Published by the network task, read by the control task.
+static std::atomic<uint32_t> g_server_ip32{0};
+static std::atomic<uint32_t> g_self_ip32{0};
+
+static ActuatorHotfire::State publishedState() {
+    return static_cast<ActuatorHotfire::State>(g_published_state.load());
+}
+
 class BoardOutputs : public ActuatorHotfire::Outputs {
 public:
     void setActuator(uint8_t actuator_id, bool on) override {
@@ -167,25 +214,26 @@ public:
         actuator_states[i] = initial_state ? 1 : 0;
     }
 
+    // Control task: hand the packet to the network task, which owns UDP.
     void send(uint32_t ip, uint16_t port, const uint8_t* data,
               size_t len) override {
-        const IPAddress dest = uint32ToIPAddress(ip);
-        udp.beginPacket(dest, port);
-        udp.write(data, len);
-        udp.endPacket();
-        HF_VERBOSE("Sent: type ");
-        HF_VERBOSE(static_cast<unsigned>(data[0]));
-        HF_VERBOSE(" to ");
-        HF_VERBOSE(dest);
-        HF_VERBOSE(":");
-        HF_VERBOSELN(port);
+        if (len > MAX_PACKET_SIZE)
+            return;
+        PacketMsg msg;
+        msg.ip = ip;
+        msg.port = port;
+        msg.len = static_cast<uint16_t>(len);
+        memcpy(msg.data, data, len);
+        if (xQueueSend(g_outgoing, &msg, 0) != pdTRUE)
+            g_outgoing_dropped.fetch_add(1);
     }
 
     void onStateChange(ActuatorHotfire::State,
                        ActuatorHotfire::State to) override {
-        Serial.print("State -> ");
-        Serial.println(ActuatorHotfire::stateName(to));
-        Serial.flush();
+        g_published_state.store(static_cast<uint8_t>(to));
+        // No Serial.flush(): the control task must never wait on the host.
+        HF_LOG("State -> ");
+        HF_LOGLN(ActuatorHotfire::stateName(to));
     }
 
     void onCommandsIgnored(uint8_t packet_type,
@@ -264,7 +312,7 @@ static void sendBoardHeartbeatTo(IPAddress dest_ip, int dest_port) {
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = board_id;
     hb.engine_state = daq::EngineState::SAFE;
-    hb.board_state = g_ctl.boardState();
+    hb.board_state = ActuatorHotfire::boardStateFor(publishedState());
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
     size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
@@ -438,6 +486,8 @@ static void flushLogs() {
 //-----------------------------------------------------------------------------
 // Setup and loop
 //-----------------------------------------------------------------------------
+static void startTasks();
+
 void setup() {
     Serial.begin(115200);
     delay(SERIAL_MONITOR_READY_DELAY_MS);
@@ -540,50 +590,136 @@ void setup() {
     HF_LOG(Ethernet.localIP());
     HF_LOGLN_();
     flushLogs();
+
+    startTasks();
 }
 
-void loop() {
-#ifdef SENSOR_ETH_USE_DHCP
-    // Renew the lease as it expires; no-op while an OTA is in flight.
-    BoardNet::maintainLease(net);
-#endif
-    // Non-blocking OTA check — blocks only if a client actually connects,
-    // and never returns on success (the board reboots into the new image).
-    otaServer.poll();
-    // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
-    // so consecutive OTA uploads are visibly different on the serial monitor.
-    StarOTA::printTestMessage();
+//-----------------------------------------------------------------------------
+// Control task
+//-----------------------------------------------------------------------------
+static void controlTask(void*) {
+    watchdogSubscribe("control");
+    unsigned long next_stack_log_ms = millis() + 5000;
+    bool stack_logged = false;
+    TickType_t last_wake = xTaskGetTickCount();
+    for (;;) {
+        watchdogCheckIn();
 
-    updateLedNonBlocking();
-    updatePWM();
-
-    int packetSize = udp.parsePacket();
-    if (packetSize > 0) {
-        IPAddress remoteIP = udp.remoteIP();
-        uint8_t packetBuffer[MAX_PACKET_SIZE];
-        int bytesRead = udp.read(packetBuffer, sizeof(packetBuffer));
-        if (bytesRead > 0) {
-            HF_VERBOSE("Received packet from ");
-            HF_VERBOSE(remoteIP);
-            HF_VERBOSE(":");
-            HF_VERBOSE(udp.remotePort());
-            HF_VERBOSE(" type ");
-            HF_VERBOSELN(static_cast<unsigned>(packetBuffer[0]));
+        PacketMsg msg;
+        while (xQueueReceive(g_incoming, &msg, 0) == pdTRUE) {
             const ActuatorHotfire::PacketResult r =
-                g_ctl.onPacket(packetBuffer, bytesRead, ipToU32(remoteIP),
-                               ipToU32(serverIP), getSelfIP(), millis());
+                g_ctl.onPacket(msg.data, msg.len, msg.ip, g_server_ip32.load(),
+                               g_self_ip32.load(), millis());
             if (r.has_log_mode) {
                 // The mode byte (0..3): bit0 = USB verbose, upper part =
                 // server log stream level. See hotfire_log.h.
                 g_verbose = (r.log_mode & 1);
                 g_log_stream_level = (r.log_mode >= 2) ? (r.log_mode - 1) : 0;
             }
-#ifdef SENSOR_ETH_USE_DHCP
-            if (r.kind == ActuatorHotfire::PacketKind::ServerHeartbeat ||
-                r.kind == ActuatorHotfire::PacketKind::Config)
-                BoardNet::onServerPacket(net, remoteIP, serverIP);
-#endif
         }
+
+        g_ctl.tick(millis(), g_self_ip32.load(), g_server_ip32.load());
+        updatePWM();
+        updateLedNonBlocking();
+        maybeLogStackHeadroom("control", next_stack_log_ms, stack_logged);
+        vTaskDelayUntil(&last_wake, TASK_PERIOD_TICKS);
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Network task
+//-----------------------------------------------------------------------------
+
+/** Read one waiting packet and hand it to the control task. */
+static bool receiveOnePacket() {
+    int packetSize = udp.parsePacket();
+    if (packetSize <= 0)
+        return false;
+    IPAddress remoteIP = udp.remoteIP();
+    PacketMsg msg;
+    int bytesRead = udp.read(msg.data, sizeof(msg.data));
+    if (bytesRead <= 0)
+        return true;
+    msg.ip = ipToU32(remoteIP);
+    msg.port = static_cast<uint16_t>(udp.remotePort());
+    msg.len = static_cast<uint16_t>(bytesRead);
+    HF_VERBOSE("Received packet from ");
+    HF_VERBOSE(remoteIP);
+    HF_VERBOSE(":");
+    HF_VERBOSE(msg.port);
+    HF_VERBOSE(" type ");
+    HF_VERBOSELN(static_cast<unsigned>(msg.data[0]));
+
+#ifdef SENSOR_ETH_USE_DHCP
+    // Server discovery is the network task's job, so it looks at the type;
+    // everything else about the packet is the control task's to decide.
+    if (bytesRead >= static_cast<int>(sizeof(daq::PacketHeader))) {
+        const uint8_t type = msg.data[0];
+        if (type == static_cast<uint8_t>(daq::PacketType::SERVER_HEARTBEAT) ||
+            type == static_cast<uint8_t>(daq::PacketType::ACTUATOR_CONFIG)) {
+            BoardNet::onServerPacket(net, remoteIP, serverIP);
+            g_server_ip32.store(ipToU32(serverIP));
+        }
+    }
+#endif
+    if (xQueueSend(g_incoming, &msg, 0) != pdTRUE)
+        g_incoming_dropped.fetch_add(1);
+    return true;
+}
+
+/** Send everything the control task queued. */
+static void sendQueuedPackets() {
+    PacketMsg msg;
+    while (xQueueReceive(g_outgoing, &msg, 0) == pdTRUE) {
+        const IPAddress dest = uint32ToIPAddress(msg.ip);
+        udp.beginPacket(dest, msg.port);
+        udp.write(msg.data, msg.len);
+        udp.endPacket();
+        HF_VERBOSE("Sent: type ");
+        HF_VERBOSE(static_cast<unsigned>(msg.data[0]));
+        HF_VERBOSE(" to ");
+        HF_VERBOSE(dest);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(msg.port);
+    }
+}
+
+static void logQueueDrops() {
+    static uint32_t logged_in = 0, logged_out = 0;
+    static unsigned long last_ms = 0;
+    const uint32_t in = g_incoming_dropped.load();
+    const uint32_t out = g_outgoing_dropped.load();
+    if ((in == logged_in && out == logged_out) || millis() - last_ms < 1000)
+        return;
+    last_ms = millis();
+    HF_LOG("[TASK] WARNING: packet queue full; dropped incoming=");
+    HF_LOG(in);
+    HF_LOG(" outgoing=");
+    HF_LOGLN(out);
+    logged_in = in;
+    logged_out = out;
+}
+
+static void networkStep() {
+#ifdef SENSOR_ETH_USE_DHCP
+    // Renew the lease as it expires; no-op while an OTA is in flight.
+    BoardNet::maintainLease(net);
+#endif
+    // One step of any OTA transfer, never blocking for more than a chunk.
+    // Updates are only accepted in WaitingForServer: never flash a board
+    // that may be holding valves for a test.
+    const bool ota_allowed =
+        publishedState() == ActuatorHotfire::State::WaitingForServer;
+    if (otaServer.service(ota_allowed) == StarOTA::Result::Refused) {
+        HF_LOG("[OTA] update refused: board is in ");
+        HF_LOG(ActuatorHotfire::stateName(publishedState()));
+        HF_LOGLN("; updates are only accepted in WaitingForServer");
+    }
+    // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
+    // so consecutive OTA uploads are visibly different on the serial monitor.
+    StarOTA::printTestMessage();
+
+    while (receiveOnePacket()) {
     }
 
 #ifdef SENSOR_ETH_USE_DHCP
@@ -593,22 +729,27 @@ void loop() {
     if (BoardNet::serverWentSilent(net)) {
         net.serverLearned = false;
         serverIP = IPAddress(192, 168, 2, HOTFIRE_SERVER_IP_OCTET_4);
+        g_server_ip32.store(ipToU32(serverIP));
         Serial.println("[NET] server silent -- resuming discovery");
-        Serial.flush();
     }
 #endif
 
-    g_ctl.tick(millis(), getSelfIP(), ipToU32(serverIP));
-    if (g_ctl.state() == ActuatorHotfire::State::Active)
+    // Our own address only moves with the lease; re-read it now and then.
+    static unsigned long s_last_self_ip_ms = 0;
+    if (millis() - s_last_self_ip_ms >= 100) {
+        s_last_self_ip_ms = millis();
+        g_self_ip32.store(getSelfIP());
+    }
+
+    sendQueuedPackets();
+    if (publishedState() == ActuatorHotfire::State::Active)
         streamSensorDataIfDue();
 
     unsigned long now = millis();
     if (now - lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeatMillis = now;
-        if (g_ctl.state() == ActuatorHotfire::State::WaitingForServer) {
+        if (publishedState() == ActuatorHotfire::State::WaitingForServer)
             HF_VERBOSELN("Setup state: sending heartbeat");
-            Serial.flush();
-        }
         sendBoardHeartbeat();
 #ifdef SENSOR_ETH_USE_DHCP
         // Discovery: announce to everyone on the wire until a server is
@@ -619,14 +760,54 @@ void loop() {
 #endif
     }
 
+    logQueueDrops();
+
     // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is
     // filling).
     static unsigned long s_last_log_flush_ms = 0;
-    if (!g_logbuf.empty() &&
-        (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {
+    bool flush_due;
+    {
+        HfLogLock lock;
+        flush_due = !g_logbuf.empty() &&
+                    (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000);
+    }
+    if (flush_due) {
         s_last_log_flush_ms = now;
         flushLogs();
     }
+}
 
-    delay(LOOP_DELAY_MS);
+static void networkTask(void*) {
+    watchdogSubscribe("network");
+    unsigned long next_stack_log_ms = millis() + 5000;
+    bool stack_logged = false;
+    TickType_t last_wake = xTaskGetTickCount();
+    for (;;) {
+        watchdogCheckIn();
+        networkStep();
+        maybeLogStackHeadroom("network", next_stack_log_ms, stack_logged);
+        vTaskDelayUntil(&last_wake, TASK_PERIOD_TICKS);
+    }
+}
+
+static void startTasks() {
+    g_server_ip32.store(ipToU32(serverIP));
+    g_self_ip32.store(getSelfIP());
+    g_incoming = xQueueCreate(PACKET_QUEUE_DEPTH, sizeof(PacketMsg));
+    g_outgoing = xQueueCreate(PACKET_QUEUE_DEPTH, sizeof(PacketMsg));
+    if (!g_incoming || !g_outgoing) {
+        Serial.println("FATAL: could not allocate task queues; restarting");
+        Serial.flush();
+        delay(1000);
+        ESP.restart();
+    }
+    xTaskCreatePinnedToCore(controlTask, "control", CONTROL_TASK_STACK_BYTES,
+                            nullptr, HOTFIRE_TASK_PRIORITY, nullptr, 1);
+    xTaskCreatePinnedToCore(networkTask, "network", NET_TASK_STACK_BYTES,
+                            nullptr, HOTFIRE_TASK_PRIORITY, nullptr, 0);
+}
+
+/** Arduino's loop() has nothing left to do: the tasks run the board. */
+void loop() {
+    vTaskDelete(nullptr);
 }
