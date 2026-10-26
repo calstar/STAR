@@ -33,10 +33,14 @@ export default async function OutreachToday() {
           {d.activeCampaigns.map((c) => {
             const pct = c.goalCents ? Math.min(100, Math.round((c.raisedCents / c.goalCents) * 100)) : null;
             const ms = d.milestones.filter((m) => m.campaignId === c.id);
+            const listLink = (filter: object) => `/outreach/lists?filter=${encodeURIComponent(JSON.stringify(filter))}`;
+            const open = !c.endsAt || new Date(c.endsAt) >= new Date();
             return (
-              <Link key={c.id} href={`/outreach/campaigns/${c.id}`} className={`${CARD} block p-4 hover:border-blue-300`}>
+              <div key={c.id} className={`${CARD} p-4`}>
                 <div className="flex items-baseline justify-between gap-2">
-                  <h2 className="font-semibold">{c.name}</h2>
+                  <Link href={`/outreach/campaigns/${c.id}`} className="font-semibold hover:text-blue-600">
+                    {c.name}
+                  </Link>
                   <span className={`text-xs ${MUTED}`}>{titleCase(c.kind)}</span>
                 </div>
                 <div className="mt-2 flex items-baseline gap-2">
@@ -60,7 +64,28 @@ export default async function OutreachToday() {
                     ))}
                   </ul>
                 )}
-              </Link>
+                {c.kind === "crowdfunding" && (
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                    {open ? (
+                      <>
+                        <Link className="text-blue-600 hover:underline" href={listLink({ notDonatedTo: c.id, tagsNone: ["sponsor-contact"] })}>
+                          Who hasn&apos;t given →
+                        </Link>
+                        <Link className="text-blue-600 hover:underline" href={listLink({ donatedTo: "any", notDonatedTo: c.id })}>
+                          Past donors, not yet this time →
+                        </Link>
+                      </>
+                    ) : (
+                      <Link className="text-blue-600 hover:underline" href={listLink({ donatedTo: c.id })}>
+                        Donors to thank →
+                      </Link>
+                    )}
+                    <Link className="text-blue-600 hover:underline" href="/outreach/import">
+                      Import the latest ScaleFunder export →
+                    </Link>
+                  </div>
+                )}
+              </div>
             );
           })}
         </section>
