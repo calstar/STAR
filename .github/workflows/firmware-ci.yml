@@ -11,6 +11,19 @@ on:
       - '.github/workflows/firmware-ci.yml'
 
 jobs:
+  stm32-self-test-host:
+    name: STM32 portable self-test (host only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure portable tests with sanitizers
+        run: cmake -S firmware/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
+      - name: Build portable tests
+        run: cmake --build /tmp/star-self-test
+      - name: Run portable tests
+        run: ctest --test-dir /tmp/star-self-test --output-on-failure
+
   build-firmware:
     name: Build ${{ matrix.project }}
     runs-on: ubuntu-latest
