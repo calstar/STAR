@@ -23,6 +23,7 @@
 
 #include <cstring>
 
+#include "SensorCoreLogic.h"
 #include "board_net.h"
 #include "firmware_hash.h"
 
@@ -44,32 +45,6 @@
 namespace SensorHotfire {
 
 inline StarOTA::Server g_ota_server{HOTFIRE_OTA_PORT};
-
-enum class State : uint8_t {
-    WaitingForServer = 1,  // SETUP
-    Active = 2,            // ACTIVE
-    StandaloneAbort = 9,   // STANDALONE_ABORT
-    SelfTest = 10          // SELF_TEST
-};
-
-enum class IncomingPacketKind {
-    None,
-    ServerHeartbeat,
-    SensorConfig,
-    ClearAbort,
-    NoConnAbort
-};
-
-struct StoredSensorConfig {
-    bool valid;
-    uint8_t reference_voltage;  // 0 = internal 2.5V, 1 = VDD, 2 = 5V (ignored;
-                                // treat as 0)
-    bool necessary_for_abort;
-    uint32_t actuator_controller_ip;
-    uint8_t num_sensors;                        // 0 = use board default
-    uint8_t sensor_ids[MAX_SENSORS_PER_BOARD];  // connector IDs to read and
-                                                // transmit
-};
 
 struct Config {
     const char* board_name;
@@ -132,190 +107,92 @@ inline void otaFreezeAddress(void* user_data, uint32_t image_bytes) {
         BoardNet::beginOtaHold(static_cast<CoreState*>(user_data)->net);
 }
 
-//-----------------------------------------------------------------------------
-// Packet header / parsing helpers
-//-----------------------------------------------------------------------------
-inline bool readPacketHeader(const uint8_t* buffer, size_t len,
-                             daq::PacketHeader& hdr_out) {
-    if (len < sizeof(daq::PacketHeader))
-        return false;
-    memcpy(&hdr_out, buffer, sizeof(daq::PacketHeader));
-    return true;
-}
-
-inline const char* packetTypeName(uint8_t type) {
-    switch (type) {
-        case 1:
-            return "BOARD_HEARTBEAT";
-        case 2:
-            return "SERVER_HEARTBEAT";
-        case 3:
-            return "SENSOR_DATA";
-        case 4:
-            return "ACTUATOR_COMMAND";
-        case 5:
-            return "SENSOR_CONFIG";
-        case 6:
-            return "ACTUATOR_CONFIG";
-        case 7:
-            return "ABORT";
-        case 8:
-            return "ABORT_DONE";
-        case 9:
-            return "CLEAR_ABORT";
-        case 10:
-            return "PWM_ACTUATOR_COMMAND";
-        case SENSOR_HOTFIRE_NO_CONN_ABORT_TYPE:
-            return "NO_CONNECTION_ABORT";
-        case 12:
-            return "SELF_TEST";
-        default:
-            return "UNKNOWN";
-    }
-}
-
 inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
                                                 const uint8_t* buffer,
                                                 size_t len, IPAddress remote_ip,
                                                 int remote_port) {
-    daq::PacketHeader hdr;
-    if (!readPacketHeader(buffer, len, hdr))
-        return IncomingPacketKind::None;
+    (void)remote_port;
+    uint8_t log_mode = 1;
+    const IncomingPacketKind kind =
+        parseIncoming(buffer, len, s.stored_config, log_mode);
 
-    if (hdr.packet_type == daq::PacketType::SERVER_HEARTBEAT) {
-        daq::PacketHeader dummy;
-        daq::ServerHeartbeatPacket data;
-        if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
-#ifdef SENSOR_ETH_USE_DHCP
-            BoardNet::onServerPacket(s.net, remote_ip, s.serverIP);
-#else
-            // Server IP/port are hardcoded; do not update from packet
-#endif
-            return IncomingPacketKind::ServerHeartbeat;
-        }
-        return IncomingPacketKind::None;
-    }
-
-    if (hdr.packet_type == daq::PacketType::SENSOR_CONFIG) {
-        daq::PacketHeader dummy;
-        std::vector<uint8_t> sensor_ids;
-        uint8_t reference_voltage = 0;
-        bool necessary_for_abort = false;
-        uint32_t controller_ip = 0;
-        uint8_t enable_serial_printing = 1;
-
-        if (!daq::parse_sensor_config_packet(
-                buffer, len, dummy, sensor_ids, reference_voltage,
-                necessary_for_abort, controller_ip, enable_serial_printing)) {
-            Serial.println("SENSOR_CONFIG parse failed (DAQv2-Comms)");
-            Serial.flush();
-            return IncomingPacketKind::None;
-        }
-
-        s.stored_config.valid = true;
-        s.stored_config.reference_voltage = reference_voltage;
-        s.stored_config.necessary_for_abort = necessary_for_abort;
-        s.stored_config.actuator_controller_ip = controller_ip;
-        s.stored_config.num_sensors = static_cast<uint8_t>(
-            sensor_ids.size() <= MAX_SENSORS_PER_BOARD ? sensor_ids.size()
-                                                       : MAX_SENSORS_PER_BOARD);
-        for (uint8_t i = 0; i < s.stored_config.num_sensors; ++i)
-            s.stored_config.sensor_ids[i] = sensor_ids[i];
-
-        if (cfg.on_reference_voltage_config)
-            cfg.on_reference_voltage_config(cfg.user_data,
-                                            s.stored_config.reference_voltage);
-
-        // enable_serial_printing is the mode byte (0..3): bit0 = USB verbose,
-        // upper part = server log stream level. See hotfire_log.h.
-        const uint8_t log_mode = enable_serial_printing;
-        g_verbose = (log_mode & 1);
-        g_log_stream_level = (log_mode >= 2) ? (log_mode - 1) : 0;
-
-        HF_LOGLN("SENSOR_CONFIG received:");
-        // Field-by-field breakdown is verbose-only; the header above is Tier 1.
-        HF_VERBOSE("  num_sensors=");
-        HF_VERBOSELN(static_cast<unsigned>(sensor_ids.size()));
-        HF_VERBOSE("  sensor_ids=");
-        if (!sensor_ids.empty()) {
-            for (size_t i = 0; i < sensor_ids.size(); ++i) {
-                if (i)
-                    HF_VERBOSE(",");
-                HF_VERBOSE(static_cast<unsigned>(sensor_ids[i]));
-            }
-            HF_VERBOSELN_();
-        } else {
-            HF_VERBOSELN("(none)");
-        }
-        HF_VERBOSE("  reference_voltage=");
-        HF_VERBOSELN(static_cast<unsigned>(s.stored_config.reference_voltage));
-        HF_VERBOSE("  necessary_for_abort=");
-        HF_VERBOSELN(s.stored_config.necessary_for_abort ? 1 : 0);
-        HF_VERBOSE("  actuator_controller_ip=");
-        if (s.stored_config.actuator_controller_ip != 0) {
-            const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
-                &s.stored_config.actuator_controller_ip);
-            IPAddress actuatorIP(ip_bytes[0], ip_bytes[1], ip_bytes[2],
-                                 ip_bytes[3]);
-            HF_VERBOSELN(actuatorIP);
-        } else {
-            HF_VERBOSELN("0.0.0.0");
-        }
-        HF_VERBOSE("  enable_serial_printing=");
-        HF_VERBOSELN(g_verbose ? 1 : 0);
-        Serial.flush();
+    if (kind == IncomingPacketKind::ServerHeartbeat) {
 #ifdef SENSOR_ETH_USE_DHCP
         BoardNet::onServerPacket(s.net, remote_ip, s.serverIP);
+#else
+        // Server IP/port are hardcoded; do not update from packet
 #endif
-        return IncomingPacketKind::SensorConfig;
+        return kind;
     }
 
-    if (hdr.packet_type == daq::PacketType::CLEAR_ABORT)
-        return IncomingPacketKind::ClearAbort;
-
-    if (hdr.packet_type == daq::PacketType::NO_CONNECTION_ABORT) {
-        if (len >= sizeof(daq::PacketHeader))
-            return IncomingPacketKind::NoConnAbort;
-        return IncomingPacketKind::None;
+    if (kind == IncomingPacketKind::None && len >= sizeof(daq::PacketHeader) &&
+        buffer[0] == static_cast<uint8_t>(daq::PacketType::SENSOR_CONFIG)) {
+        Serial.println("SENSOR_CONFIG parse failed (DAQv2-Comms)");
+        Serial.flush();
+        return kind;
     }
-    return IncomingPacketKind::None;
+
+    if (kind != IncomingPacketKind::SensorConfig)
+        return kind;
+
+    if (cfg.on_reference_voltage_config)
+        cfg.on_reference_voltage_config(cfg.user_data,
+                                        s.stored_config.reference_voltage);
+
+    // enable_serial_printing is the mode byte (0..3): bit0 = USB verbose,
+    // upper part = server log stream level. See hotfire_log.h.
+    g_verbose = (log_mode & 1);
+    g_log_stream_level = (log_mode >= 2) ? (log_mode - 1) : 0;
+
+    HF_LOGLN("SENSOR_CONFIG received:");
+    // Field-by-field breakdown is verbose-only; the header above is Tier 1.
+    HF_VERBOSE("  num_sensors=");
+    HF_VERBOSELN(static_cast<unsigned>(s.stored_config.num_sensors));
+    HF_VERBOSE("  sensor_ids=");
+    if (s.stored_config.num_sensors > 0) {
+        for (uint8_t i = 0; i < s.stored_config.num_sensors; ++i) {
+            if (i)
+                HF_VERBOSE(",");
+            HF_VERBOSE(static_cast<unsigned>(s.stored_config.sensor_ids[i]));
+        }
+        HF_VERBOSELN_();
+    } else {
+        HF_VERBOSELN("(none)");
+    }
+    HF_VERBOSE("  reference_voltage=");
+    HF_VERBOSELN(static_cast<unsigned>(s.stored_config.reference_voltage));
+    HF_VERBOSE("  necessary_for_abort=");
+    HF_VERBOSELN(s.stored_config.necessary_for_abort ? 1 : 0);
+    HF_VERBOSE("  actuator_controller_ip=");
+    if (s.stored_config.actuator_controller_ip != 0) {
+        const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
+            &s.stored_config.actuator_controller_ip);
+        IPAddress actuatorIP(ip_bytes[0], ip_bytes[1], ip_bytes[2],
+                             ip_bytes[3]);
+        HF_VERBOSELN(actuatorIP);
+    } else {
+        HF_VERBOSELN("0.0.0.0");
+    }
+    HF_VERBOSE("  enable_serial_printing=");
+    HF_VERBOSELN(g_verbose ? 1 : 0);
+    Serial.flush();
+#ifdef SENSOR_ETH_USE_DHCP
+    BoardNet::onServerPacket(s.net, remote_ip, s.serverIP);
+#endif
+    return kind;
 }
 
 inline void applyPacketTransition(CoreState& s, const Config& cfg,
                                   IncomingPacketKind kind) {
-    switch (s.state) {
-        case State::WaitingForServer:
-            if (kind == IncomingPacketKind::SensorConfig) {
-                if (cfg.run_self_test) {
-                    s.state = State::SelfTest;
-                    Serial.println("State -> SelfTest");
-                } else {
-                    s.state = State::Active;
-                    Serial.println("State -> Active");
-                }
-                Serial.flush();
-            }
-            break;
-        case State::Active:
-            if (kind == IncomingPacketKind::NoConnAbort &&
-                s.stored_config.necessary_for_abort) {
-                s.state = State::StandaloneAbort;
-                Serial.println("State -> StandaloneAbort");
-                Serial.flush();
-            }
-            break;
-        case State::StandaloneAbort:
-            if (kind == IncomingPacketKind::ClearAbort) {
-                s.state = State::Active;
-                Serial.println("State -> Active");
-                Serial.flush();
-            }
-            break;
-        case State::SelfTest:
-            // State handled in loop(), it's a transient state returning to
-            // Active
-            break;
-    }
+    const State next =
+        nextState(s.state, kind, s.stored_config.necessary_for_abort,
+                  cfg.run_self_test != nullptr);
+    if (next == s.state)
+        return;
+    s.state = next;
+    Serial.print("State -> ");
+    Serial.println(stateName(next));
+    Serial.flush();
 }
 
 inline void sendBoardHeartbeat(CoreState& s, const Config& cfg,
@@ -662,23 +539,16 @@ inline void loop(CoreState& s, const Config& cfg) {
     }
     if (now - s.lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         s.lastHeartbeatMillis = now;
+        if (s.state == State::WaitingForServer)
+            HF_VERBOSELN("Setup state: sending heartbeat");
+        sendBoardHeartbeat(s, cfg, boardStateFor(s.state), s.serverIP,
+                           s.serverPort);
         switch (s.state) {
             case State::WaitingForServer:
-                HF_VERBOSELN("Setup state: sending heartbeat");
-                sendBoardHeartbeat(s, cfg, daq::BoardState::SETUP, s.serverIP,
-                                   s.serverPort);
-                break;
             case State::Active:
-                sendBoardHeartbeat(s, cfg, daq::BoardState::ACTIVE, s.serverIP,
-                                   s.serverPort);
-                break;
             case State::SelfTest:
-                sendBoardHeartbeat(s, cfg, daq::BoardState::SELF_TEST,
-                                   s.serverIP, s.serverPort);
                 break;
             case State::StandaloneAbort:
-                sendBoardHeartbeat(s, cfg, daq::BoardState::STANDALONE_ABORT,
-                                   s.serverIP, s.serverPort);
                 if (s.stored_config.valid &&
                     s.stored_config.actuator_controller_ip != 0) {
                     const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
@@ -694,17 +564,10 @@ inline void loop(CoreState& s, const Config& cfg) {
 #ifdef SENSOR_ETH_USE_DHCP
         // Discovery: announce to everyone on the wire until a server is
         // learned. Reuses the normal heartbeat packet on the same 1 s tick.
-        if (!s.net.serverLearned) {
-            daq::BoardState bs = daq::BoardState::SETUP;
-            if (s.state == State::Active)
-                bs = daq::BoardState::ACTIVE;
-            else if (s.state == State::SelfTest)
-                bs = daq::BoardState::SELF_TEST;
-            else if (s.state == State::StandaloneAbort)
-                bs = daq::BoardState::STANDALONE_ABORT;
-            sendBoardHeartbeat(s, cfg, bs, IPAddress(255, 255, 255, 255),
+        if (!s.net.serverLearned)
+            sendBoardHeartbeat(s, cfg, boardStateFor(s.state),
+                               IPAddress(255, 255, 255, 255),
                                HOTFIRE_SERVER_PORT);
-        }
 #endif
     }
 

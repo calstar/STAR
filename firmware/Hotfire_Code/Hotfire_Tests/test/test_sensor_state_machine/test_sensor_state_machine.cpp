@@ -1,16 +1,15 @@
 /**
  * Sensor state machine unit tests
  *
- * Tests the sensor state machine transitions, packet processing, and
- * heartbeat state encoding.
- *
- * Rather than including SensorHotfireCore.h directly (which pulls in
- * heavy ESP32 dependencies), we extract the testable pure-logic functions
- * here. This mirrors the approach used for the actuator tests.
+ * Exercises SensorCoreLogic.h, the hardware-free half of the sensor hotfire
+ * core, directly: packet classification, state transitions, heartbeat state
+ * encoding, chunk batching, the drop-oldest queue rule and data-ready
+ * timeouts.
  */
 #include <unity.h>
 
 #include <cstring>
+#include <deque>
 #include <vector>
 
 // DAQv2-Comms
@@ -18,133 +17,33 @@
 #include "DiabloPacketUtils.cpp"
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
+#include "SensorCoreLogic.h"
 
-// ---------------------------------------------------------------------------
-// Replicate the sensor state machine enums and transition logic
-// (extracted from SensorHotfireCore.h for testability)
-// ---------------------------------------------------------------------------
+using SensorHotfire::IncomingPacketKind;
+using SensorHotfire::State;
 
 namespace SensorSM {
 
-enum class State : uint8_t {
-    WaitingForServer = 1,
-    Active = 2,
-    StandaloneAbort = 9,
-    SelfTest = 10
-};
+using StoredConfig = SensorHotfire::StoredSensorConfig;
 
-enum class IncomingPacketKind {
-    None,
-    ServerHeartbeat,
-    SensorConfig,
-    NoConnAbort,
-    ClearAbort
-};
-
-// Extracted config for testing
-struct StoredConfig {
-    bool valid = false;
-    uint8_t num_sensors = 0;
-    uint8_t sensor_ids[10] = {};
-    uint8_t reference_voltage = 0;
-    bool necessary_for_abort = false;
-    uint32_t actuator_controller_ip = 0;
-    uint8_t enable_serial_printing = 0;
-};
-
-// Replicate applyPacketTransition from SensorHotfireCore.h
 static State applyPacketTransition(State state, IncomingPacketKind kind,
                                    bool necessary_for_abort,
                                    bool run_self_test) {
-    switch (state) {
-        case State::WaitingForServer:
-            if (kind == IncomingPacketKind::SensorConfig) {
-                if (run_self_test) {
-                    return State::SelfTest;
-                } else {
-                    return State::Active;
-                }
-            }
-            break;
-        case State::Active:
-            if (kind == IncomingPacketKind::NoConnAbort &&
-                necessary_for_abort) {
-                return State::StandaloneAbort;
-            }
-            break;
-        case State::StandaloneAbort:
-            if (kind == IncomingPacketKind::ClearAbort) {
-                return State::Active;
-            }
-            break;
-    }
-    return state;  // No transition
+    return SensorHotfire::nextState(state, kind, necessary_for_abort,
+                                    run_self_test);
 }
 
-// Replicate readPacketHeader from SensorHotfireCore.h
-static IncomingPacketKind readPacketHeader(const uint8_t* buf, size_t len) {
-    if (len < sizeof(daq::PacketHeader))
-        return IncomingPacketKind::None;
-    daq::PacketHeader hdr;
-    memcpy(&hdr, buf, sizeof(hdr));
-    switch (hdr.packet_type) {
-        case daq::PacketType::SERVER_HEARTBEAT:
-            return IncomingPacketKind::ServerHeartbeat;
-        case daq::PacketType::SENSOR_CONFIG:
-            return IncomingPacketKind::SensorConfig;
-        case daq::PacketType::CLEAR_ABORT:
-            return IncomingPacketKind::ClearAbort;
-        default:
-            return IncomingPacketKind::None;
-    }
-}
+static uint8_t g_last_log_mode = 0;
 
-// Replicate processIncomingPacket (simplified, testing-focused)
 static IncomingPacketKind processIncomingPacket(StoredConfig& stored_config,
                                                 const uint8_t* buf,
                                                 size_t len) {
-    IncomingPacketKind kind = readPacketHeader(buf, len);
-
-    if (kind == IncomingPacketKind::SensorConfig) {
-        // Parse the config packet
-        daq::PacketHeader hdr_out;
-        std::vector<uint8_t> ids;
-        uint8_t ref;
-        bool abort_needed;
-        uint32_t controller_ip;
-        uint8_t serial;
-        if (daq::parse_sensor_config_packet(buf, len, hdr_out, ids, ref,
-                                            abort_needed, controller_ip,
-                                            serial)) {
-            stored_config.valid = true;
-            stored_config.num_sensors = ids.size();
-            for (size_t i = 0; i < ids.size() && i < 10; i++) {
-                stored_config.sensor_ids[i] = ids[i];
-            }
-            stored_config.reference_voltage = ref;
-            stored_config.necessary_for_abort = abort_needed;
-            stored_config.actuator_controller_ip = controller_ip;
-            stored_config.enable_serial_printing = serial;
-        }
-    }
-
-    return kind;
+    return SensorHotfire::parseIncoming(buf, len, stored_config,
+                                        g_last_log_mode);
 }
 
-// Replicate the heartbeat state→BoardState mapping from loop()
 static daq::BoardState getBoardStateForHeartbeat(State state) {
-    switch (state) {
-        case State::WaitingForServer:
-            return daq::BoardState::SETUP;
-        case State::Active:
-            return daq::BoardState::ACTIVE;
-        case State::StandaloneAbort:
-            return daq::BoardState::STANDALONE_ABORT;
-        case State::SelfTest:
-            return daq::BoardState::SELF_TEST;
-        default:
-            return daq::BoardState::SETUP;
-    }
+    return SensorHotfire::boardStateFor(state);
 }
 
 }  // namespace SensorSM
@@ -154,64 +53,64 @@ static daq::BoardState getBoardStateForHeartbeat(State state) {
 // ===========================================================================
 
 void test_sensor_initial_state() {
-    SensorSM::State s = SensorSM::State::WaitingForServer;
-    TEST_ASSERT_EQUAL((int)SensorSM::State::WaitingForServer, (int)s);
+    State s = State::WaitingForServer;
+    TEST_ASSERT_EQUAL((int)State::WaitingForServer, (int)s);
 }
 
 void test_sensor_config_transitions_to_active() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::WaitingForServer,
-        SensorSM::IncomingPacketKind::SensorConfig, false, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
+        State::WaitingForServer,
+        IncomingPacketKind::SensorConfig, false, false);
+    TEST_ASSERT_EQUAL((int)State::Active, (int)next);
 }
 
 void test_sensor_config_transitions_to_selftest() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::WaitingForServer,
-        SensorSM::IncomingPacketKind::SensorConfig, false, true);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::SelfTest, (int)next);
+        State::WaitingForServer,
+        IncomingPacketKind::SensorConfig, false, true);
+    TEST_ASSERT_EQUAL((int)State::SelfTest, (int)next);
 }
 
 void test_sensor_heartbeat_stays_waiting() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::WaitingForServer,
-        SensorSM::IncomingPacketKind::ServerHeartbeat, false, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::WaitingForServer, (int)next);
+        State::WaitingForServer,
+        IncomingPacketKind::ServerHeartbeat, false, false);
+    TEST_ASSERT_EQUAL((int)State::WaitingForServer, (int)next);
 }
 
 void test_sensor_noconn_abort_with_necessary() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active, SensorSM::IncomingPacketKind::NoConnAbort,
+        State::Active, IncomingPacketKind::NoConnAbort,
         true, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::StandaloneAbort, (int)next);
+    TEST_ASSERT_EQUAL((int)State::StandaloneAbort, (int)next);
 }
 
 void test_sensor_noconn_abort_without_necessary() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active, SensorSM::IncomingPacketKind::NoConnAbort,
+        State::Active, IncomingPacketKind::NoConnAbort,
         false, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
+    TEST_ASSERT_EQUAL((int)State::Active, (int)next);
 }
 
 void test_sensor_clear_abort_returns_to_active() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::StandaloneAbort,
-        SensorSM::IncomingPacketKind::ClearAbort, true, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
+        State::StandaloneAbort,
+        IncomingPacketKind::ClearAbort, true, false);
+    TEST_ASSERT_EQUAL((int)State::Active, (int)next);
 }
 
 void test_sensor_clear_abort_in_active_stays() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active, SensorSM::IncomingPacketKind::ClearAbort,
+        State::Active, IncomingPacketKind::ClearAbort,
         false, false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
+    TEST_ASSERT_EQUAL((int)State::Active, (int)next);
 }
 
 void test_sensor_none_packet_doesnt_transition() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active, SensorSM::IncomingPacketKind::None, false,
+        State::Active, IncomingPacketKind::None, false,
         false);
-    TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
+    TEST_ASSERT_EQUAL((int)State::Active, (int)next);
 }
 
 // ===========================================================================
@@ -233,7 +132,7 @@ void test_sensor_process_server_heartbeat_packet() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, total);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::ServerHeartbeat,
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::ServerHeartbeat,
                       (int)kind);
 }
 
@@ -246,7 +145,7 @@ void test_sensor_process_sensor_config_packet() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, n);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig,
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::SensorConfig,
                       (int)kind);
 
     TEST_ASSERT_TRUE(cfg.valid);
@@ -266,14 +165,14 @@ void test_sensor_process_sensor_config_with_abort() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, n);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig,
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::SensorConfig,
                       (int)kind);
 
     TEST_ASSERT_TRUE(cfg.valid);
     TEST_ASSERT_TRUE(cfg.necessary_for_abort);
     TEST_ASSERT_EQUAL(1, cfg.reference_voltage);
     TEST_ASSERT_EQUAL_HEX32(0xC0A80232, cfg.actuator_controller_ip);
-    TEST_ASSERT_EQUAL(1, cfg.enable_serial_printing);
+    TEST_ASSERT_EQUAL(1, SensorSM::g_last_log_mode);
 }
 
 void test_sensor_process_clear_abort_packet() {
@@ -286,14 +185,14 @@ void test_sensor_process_clear_abort_packet() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, sizeof(hdr));
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::ClearAbort, (int)kind);
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::ClearAbort, (int)kind);
 }
 
 void test_sensor_process_too_short_returns_none() {
     uint8_t buf[2] = {0, 0};
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, 2);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::None, (int)kind);
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::None, (int)kind);
 }
 
 // ===========================================================================
@@ -302,13 +201,13 @@ void test_sensor_process_too_short_returns_none() {
 
 void test_sensor_heartbeat_state_mapping_table() {
     struct {
-        SensorSM::State state;
+        State state;
         daq::BoardState expected;
     } mappings[] = {
-        {SensorSM::State::WaitingForServer, daq::BoardState::SETUP},
-        {SensorSM::State::Active, daq::BoardState::ACTIVE},
-        {SensorSM::State::StandaloneAbort, daq::BoardState::STANDALONE_ABORT},
-        {SensorSM::State::SelfTest, daq::BoardState::SELF_TEST},
+        {State::WaitingForServer, daq::BoardState::SETUP},
+        {State::Active, daq::BoardState::ACTIVE},
+        {State::StandaloneAbort, daq::BoardState::STANDALONE_ABORT},
+        {State::SelfTest, daq::BoardState::SELF_TEST},
     };
 
     for (auto& m : mappings) {
@@ -337,6 +236,197 @@ void test_sensor_heartbeat_state_mapping_table() {
         TEST_ASSERT_EQUAL((int)daq::EngineState::SAFE,
                           (int)hb_out.engine_state);
     }
+}
+
+// ===========================================================================
+// Config parsing edge cases
+// ===========================================================================
+
+void test_sensor_bad_config_leaves_stored_config_untouched() {
+    std::vector<uint8_t> sensor_ids = {4, 5};
+    uint8_t buf[512];
+    size_t n = daq::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
+                                                9004u, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, n);
+
+    SensorSM::StoredConfig cfg{};
+    cfg.num_sensors = 7;
+    // Truncate the packet so the body no longer parses.
+    auto kind = SensorSM::processIncomingPacket(cfg, buf, n - 1);
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::None, (int)kind);
+    TEST_ASSERT_FALSE(cfg.valid);
+    TEST_ASSERT_EQUAL(7, cfg.num_sensors);
+}
+
+void test_sensor_no_conn_abort_packet() {
+    daq::PacketHeader hdr{};
+    hdr.packet_type = daq::PacketType::NO_CONNECTION_ABORT;
+    uint8_t buf[16];
+    memcpy(buf, &hdr, sizeof(hdr));
+    SensorSM::StoredConfig cfg{};
+    auto kind = SensorSM::processIncomingPacket(cfg, buf, sizeof(hdr));
+    TEST_ASSERT_EQUAL((int)IncomingPacketKind::NoConnAbort, (int)kind);
+}
+
+void test_sensor_selftest_ignores_packets() {
+    auto next = SensorSM::applyPacketTransition(
+        State::SelfTest, IncomingPacketKind::NoConnAbort, true, true);
+    TEST_ASSERT_EQUAL((int)State::SelfTest, (int)next);
+}
+
+void test_sensor_same_sensor_list() {
+    SensorSM::StoredConfig a{}, b{};
+    a.num_sensors = b.num_sensors = 2;
+    a.sensor_ids[0] = b.sensor_ids[0] = 1;
+    a.sensor_ids[1] = b.sensor_ids[1] = 3;
+    TEST_ASSERT_TRUE(SensorHotfire::sameSensorList(a, b));
+    b.sensor_ids[1] = 4;
+    TEST_ASSERT_FALSE(SensorHotfire::sameSensorList(a, b));
+    b.sensor_ids[1] = 3;
+    b.num_sensors = 1;
+    TEST_ASSERT_FALSE(SensorHotfire::sameSensorList(a, b));
+}
+
+// ===========================================================================
+// Chunk batching
+// ===========================================================================
+
+static SensorHotfire::Chunk makeChunk(uint32_t ts, uint32_t seq, uint8_t n) {
+    SensorHotfire::Chunk c{};
+    c.timestamp_ms = ts;
+    c.config_seq = seq;
+    c.num_sensors = n;
+    for (uint8_t i = 0; i < n; ++i) {
+        c.sensor_ids[i] = i + 1;
+        c.values[i] = ts * 100 + i;
+    }
+    return c;
+}
+
+void test_batch_fills_to_capacity() {
+    SensorHotfire::ChunkBatch batch(3);
+    TEST_ASSERT_TRUE(batch.add(makeChunk(1, 0, 2)));
+    TEST_ASSERT_TRUE(batch.add(makeChunk(2, 0, 2)));
+    TEST_ASSERT_TRUE(batch.add(makeChunk(3, 0, 2)));
+    TEST_ASSERT_TRUE(batch.full());
+    TEST_ASSERT_TRUE(batch.mustSendBefore(makeChunk(4, 0, 2)));
+    TEST_ASSERT_FALSE(batch.add(makeChunk(4, 0, 2)));
+    TEST_ASSERT_EQUAL(3, batch.size());
+}
+
+void test_batch_round_trips_through_packet() {
+    SensorHotfire::ChunkBatch batch(9);
+    for (uint32_t t = 1; t <= 9; ++t)
+        TEST_ASSERT_TRUE(batch.add(makeChunk(t, 5, 3)));
+
+    uint8_t buf[512];
+    size_t n = batch.buildPacket(1234, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, n);
+
+    daq::PacketHeader hdr;
+    std::vector<daq::SensorDataChunkCollection> out;
+    TEST_ASSERT_TRUE(daq::parse_sensor_data_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(9, out.size());
+    TEST_ASSERT_EQUAL(9, out[8].timestamp);
+    TEST_ASSERT_EQUAL(3, out[8].datapoints.size());
+    TEST_ASSERT_EQUAL(902, out[8].datapoints[2].data);
+}
+
+void test_batch_config_change_forces_short_packet() {
+    SensorHotfire::ChunkBatch batch(9);
+    TEST_ASSERT_TRUE(batch.add(makeChunk(1, 1, 3)));
+    TEST_ASSERT_TRUE(batch.add(makeChunk(2, 1, 3)));
+
+    // New config, same channel count: still must not join.
+    SensorHotfire::Chunk next = makeChunk(3, 2, 3);
+    TEST_ASSERT_TRUE(batch.mustSendBefore(next));
+    TEST_ASSERT_FALSE(batch.add(next));
+
+    uint8_t buf[512];
+    size_t n = batch.buildPacket(10, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, n);
+    daq::PacketHeader hdr;
+    std::vector<daq::SensorDataChunkCollection> out;
+    TEST_ASSERT_TRUE(daq::parse_sensor_data_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(2, out.size());
+
+    batch.clear();
+    TEST_ASSERT_TRUE(batch.add(next));
+    TEST_ASSERT_EQUAL(1, batch.size());
+}
+
+void test_batch_channel_count_change_forces_send() {
+    SensorHotfire::ChunkBatch batch(9);
+    TEST_ASSERT_TRUE(batch.add(makeChunk(1, 1, 3)));
+    TEST_ASSERT_TRUE(batch.mustSendBefore(makeChunk(2, 1, 2)));
+}
+
+void test_batch_empty_builds_nothing() {
+    SensorHotfire::ChunkBatch batch(9);
+    uint8_t buf[512];
+    TEST_ASSERT_EQUAL(0, batch.buildPacket(0, buf, sizeof(buf)));
+    TEST_ASSERT_FALSE(batch.mustSendBefore(makeChunk(1, 0, 1)));
+}
+
+// ===========================================================================
+// Drop-oldest queue rule
+// ===========================================================================
+
+struct FakeQueue {
+    size_t capacity;
+    std::deque<int> items;
+    bool trySend(const int& v) {
+        if (items.size() >= capacity)
+            return false;
+        items.push_back(v);
+        return true;
+    }
+    bool tryReceive(int& v) {
+        if (items.empty())
+            return false;
+        v = items.front();
+        items.pop_front();
+        return true;
+    }
+};
+
+void test_push_drop_oldest_keeps_newest() {
+    FakeQueue q{3, {}};
+    TEST_ASSERT_FALSE(SensorHotfire::pushDropOldest(q, 1));
+    TEST_ASSERT_FALSE(SensorHotfire::pushDropOldest(q, 2));
+    TEST_ASSERT_FALSE(SensorHotfire::pushDropOldest(q, 3));
+    TEST_ASSERT_TRUE(SensorHotfire::pushDropOldest(q, 4));
+    TEST_ASSERT_TRUE(SensorHotfire::pushDropOldest(q, 5));
+    TEST_ASSERT_EQUAL(3, q.items.size());
+    TEST_ASSERT_EQUAL(3, q.items[0]);
+    TEST_ASSERT_EQUAL(4, q.items[1]);
+    TEST_ASSERT_EQUAL(5, q.items[2]);
+}
+
+// ===========================================================================
+// Data-ready timeouts (rate codes are the ADS126X_RATE_* values)
+// ===========================================================================
+
+void test_conversion_periods() {
+    TEST_ASSERT_EQUAL(400000, SensorHotfire::conversionPeriodUs(0b0000));
+    TEST_ASSERT_EQUAL(50000, SensorHotfire::conversionPeriodUs(0b0100));
+    TEST_ASSERT_EQUAL(2500, SensorHotfire::conversionPeriodUs(0b1000));
+    TEST_ASSERT_EQUAL(27, SensorHotfire::conversionPeriodUs(0b1111));
+}
+
+void test_drdy_timeout_20sps() {
+    // TC / RTD: FIR @ 20 SPS, one conversion per read.
+    TEST_ASSERT_EQUAL(150000, SensorHotfire::drdyTimeoutUs(0b0100));
+    // LC: SINC4 @ 20 SPS after a mux change, 4 settling + 1 real.
+    TEST_ASSERT_EQUAL(750000, SensorHotfire::drdyTimeoutUs(0b0100, 5));
+}
+
+void test_drdy_timeout_floor_at_high_rate() {
+    // PT: SINC5 @ 38400 SPS; 3 periods is ~81 us, so the floor applies.
+    TEST_ASSERT_EQUAL(SensorHotfire::DRDY_TIMEOUT_FLOOR_US,
+                      SensorHotfire::drdyTimeoutUs(0b1111));
+    TEST_ASSERT_EQUAL(SensorHotfire::DRDY_TIMEOUT_FLOOR_US,
+                      SensorHotfire::drdyTimeoutUs(0b1111, 0));
 }
 
 // ===========================================================================
@@ -371,6 +461,27 @@ int main(int argc, char** argv) {
 
     // Heartbeat state encoding
     RUN_TEST(test_sensor_heartbeat_state_mapping_table);
+
+    // Config parsing edge cases
+    RUN_TEST(test_sensor_bad_config_leaves_stored_config_untouched);
+    RUN_TEST(test_sensor_no_conn_abort_packet);
+    RUN_TEST(test_sensor_selftest_ignores_packets);
+    RUN_TEST(test_sensor_same_sensor_list);
+
+    // Chunk batching
+    RUN_TEST(test_batch_fills_to_capacity);
+    RUN_TEST(test_batch_round_trips_through_packet);
+    RUN_TEST(test_batch_config_change_forces_short_packet);
+    RUN_TEST(test_batch_channel_count_change_forces_send);
+    RUN_TEST(test_batch_empty_builds_nothing);
+
+    // Drop-oldest
+    RUN_TEST(test_push_drop_oldest_keeps_newest);
+
+    // Data-ready timeouts
+    RUN_TEST(test_conversion_periods);
+    RUN_TEST(test_drdy_timeout_20sps);
+    RUN_TEST(test_drdy_timeout_floor_at_high_rate);
 
     return UNITY_END();
 }
