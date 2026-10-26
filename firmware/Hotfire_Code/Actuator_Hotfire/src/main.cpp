@@ -100,18 +100,58 @@ static unsigned long last_adc_read_ms = 0;
 static uint8_t actuator_states[NUM_ACTUATORS];
 static unsigned long lastHeartbeatMillis = 0;
 
-// PWM state (for PWM_ACTUATOR_COMMAND)
-struct PWMState {
+// PWM_ACTUATOR_COMMAND runs on the LEDC hardware, so every edge lands on
+// time whatever the software is doing. Only even channels are used: the core
+// maps channel -> timer as (channel / 2) % 4, so each of these gets a timer to
+// itself and two PWMs at different frequencies cannot disturb each other.
+// Duty 1.0 is a timed constant HIGH and needs no channel.
+constexpr uint8_t PWM_CHANNELS[] = {0, 2, 4, 6};
+constexpr size_t NUM_PWM_SLOTS = sizeof(PWM_CHANNELS);
+constexpr uint8_t NO_CHANNEL = 0xFF;
+#ifdef SOC_LEDC_TIMER_BIT_WIDE_NUM
+constexpr uint8_t PWM_MAX_RESOLUTION_BITS = SOC_LEDC_TIMER_BIT_WIDE_NUM;
+#else
+constexpr uint8_t PWM_MAX_RESOLUTION_BITS = 14;
+#endif
+
+struct PwmSlot {
     bool active;
-    unsigned long start_time;
-    uint32_t duration;
-    float duty_cycle;
-    uint32_t period_micros;
-    uint32_t on_time_micros;
-    unsigned long last_cycle_start_micros;
-    bool current_pin_state;
+    uint8_t actuator_id;
+    uint8_t channel;  // NO_CHANNEL for a constant-HIGH "PWM"
+    unsigned long start_ms;
+    uint32_t duration_ms;
 };
-static PWMState pwm_states[NUM_ACTUATORS];
+static PwmSlot pwm_slots[NUM_PWM_SLOTS];
+
+/** End any PWM on this actuator and leave its pin driven LOW. */
+static void stopPwm(uint8_t actuator_id) {
+    for (auto& slot : pwm_slots) {
+        if (!slot.active || slot.actuator_id != actuator_id)
+            continue;
+        const int pin = getActuatorPin(actuator_id);
+        if (slot.channel != NO_CHANNEL) {
+            ledcWrite(slot.channel, 0);
+            if (pin >= 0)
+                ledcDetachPin(pin);
+        }
+        if (pin >= 0) {
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, LOW);
+        }
+        actuator_states[actuator_id - 1] = 0;
+        slot.active = false;
+    }
+}
+
+static PwmSlot* freePwmSlot(bool needs_channel) {
+    for (size_t i = 0; i < NUM_PWM_SLOTS; i++) {
+        if (pwm_slots[i].active)
+            continue;
+        pwm_slots[i].channel = needs_channel ? PWM_CHANNELS[i] : NO_CHANNEL;
+        return &pwm_slots[i];
+    }
+    return nullptr;
+}
 
 static uint32_t ipToU32(const IPAddress& ip) {
     return static_cast<uint32_t>(ip[0]) << 24 |
@@ -168,7 +208,7 @@ public:
     void setActuator(uint8_t actuator_id, bool on) override {
         const uint8_t idx = actuator_id - 1;
         // A plain command, vent or abort always wins over a running PWM.
-        pwm_states[idx].active = false;
+        stopPwm(actuator_id);
         const int pin = getActuatorPin(actuator_id);
         if (pin < 0)
             return;
@@ -194,24 +234,70 @@ public:
         HF_VERBOSE(cmd.duty_cycle);
         HF_VERBOSE(" frequency=");
         HF_VERBOSELN(cmd.frequency);
-        const uint8_t i = cmd.actuator_id - 1;
-        const uint32_t period_us =
-            (cmd.frequency > 0) ? (1000000 / cmd.frequency) : 0;
-        const uint32_t on_time_us =
-            (uint32_t)(cmd.duty_cycle * (float)period_us);
 
-        pwm_states[i].active = true;
-        pwm_states[i].start_time = millis();
-        pwm_states[i].duration = cmd.duration;
-        pwm_states[i].duty_cycle = cmd.duty_cycle;
-        pwm_states[i].period_micros = period_us;
-        pwm_states[i].on_time_micros = on_time_us;
-        pwm_states[i].last_cycle_start_micros = micros();
+        const uint8_t idx = cmd.actuator_id - 1;
+        stopPwm(cmd.actuator_id);  // a new command replaces a running one
 
-        const bool initial_state = (cmd.duty_cycle > 0.0f);
-        pwm_states[i].current_pin_state = initial_state;
-        digitalWrite(pin, initial_state ? HIGH : LOW);
-        actuator_states[i] = initial_state ? 1 : 0;
+        // Duty 0 (or no duration) is just OFF.
+        if (cmd.duty_cycle <= 0.0f || cmd.duration == 0) {
+            digitalWrite(pin, LOW);
+            actuator_states[idx] = 0;
+            return;
+        }
+
+        const bool constant_high = cmd.duty_cycle >= 1.0f;
+        PwmSlot* slot = freePwmSlot(!constant_high);
+        if (!slot) {
+            HF_LOG("[PWM] rejected: all ");
+            HF_LOG(static_cast<unsigned>(NUM_PWM_SLOTS));
+            HF_LOGLN(" PWM outputs are busy");
+            return;
+        }
+
+        if (!constant_high) {
+            // LEDC takes whole hertz.
+            const uint32_t freq_hz =
+                static_cast<uint32_t>(cmd.frequency + 0.5f);
+            uint8_t bits = 0;
+            uint32_t actual_hz = 0;
+            if (freq_hz >= 1) {
+                // Highest resolution first: low frequencies need it.
+                for (bits = PWM_MAX_RESOLUTION_BITS; bits >= 1; bits--) {
+                    actual_hz = ledcSetup(slot->channel, freq_hz, bits);
+                    if (actual_hz != 0)
+                        break;
+                }
+            }
+            if (actual_hz == 0) {
+                HF_LOG("[PWM] rejected: frequency ");
+                HF_LOG(cmd.frequency);
+                HF_LOGLN(" Hz is outside what the LEDC hardware can make");
+                return;
+            }
+            const uint32_t full = 1u << bits;
+            uint32_t duty = static_cast<uint32_t>(cmd.duty_cycle * full);
+            if (duty < 1)
+                duty = 1;
+            if (duty > full - 1)
+                duty = full - 1;
+            if (actual_hz != freq_hz || cmd.frequency != (float)freq_hz) {
+                HF_LOG("[PWM] note: asked for ");
+                HF_LOG(cmd.frequency);
+                HF_LOG(" Hz, running at ");
+                HF_LOG(actual_hz);
+                HF_LOGLN(" Hz");
+            }
+            ledcAttachPin(pin, slot->channel);
+            ledcWrite(slot->channel, duty);
+        } else {
+            digitalWrite(pin, HIGH);
+        }
+
+        slot->active = true;
+        slot->actuator_id = cmd.actuator_id;
+        slot->start_ms = millis();
+        slot->duration_ms = cmd.duration;
+        actuator_states[idx] = 1;
     }
 
     // Control task: hand the packet to the network task, which owns UDP.
@@ -334,50 +420,12 @@ static void sendBoardHeartbeat() {
     sendBoardHeartbeatTo(serverIP, serverPort);
 }
 
+/** Control task: end each PWM once its duration is up. */
 static void updatePWM() {
-    unsigned long now_ms = millis();
-    unsigned long now_us = micros();
-    for (int i = 0; i < NUM_ACTUATORS; i++) {
-        if (!pwm_states[i].active)
-            continue;
-        int pin = getActuatorPin(i + 1);
-        if (pin < 0)
-            continue;
-
-        if (now_ms - pwm_states[i].start_time >= pwm_states[i].duration) {
-            digitalWrite(pin, LOW);
-            pwm_states[i].active = false;
-            actuator_states[i] = 0;
-            continue;
-        }
-
-        if (pwm_states[i].period_micros > 0) {
-            unsigned long elapsed_in_cycle =
-                now_us - pwm_states[i].last_cycle_start_micros;
-
-            if (elapsed_in_cycle >= pwm_states[i].period_micros) {
-                pwm_states[i].last_cycle_start_micros +=
-                    (elapsed_in_cycle / pwm_states[i].period_micros) *
-                    pwm_states[i].period_micros;
-                elapsed_in_cycle =
-                    now_us - pwm_states[i].last_cycle_start_micros;
-            }
-
-            if (elapsed_in_cycle >= pwm_states[i].on_time_micros) {
-                if (pwm_states[i].current_pin_state &&
-                    pwm_states[i].duty_cycle < 1.0f) {
-                    digitalWrite(pin, LOW);
-                    pwm_states[i].current_pin_state = false;
-                }
-            } else {
-                if (!pwm_states[i].current_pin_state &&
-                    pwm_states[i].duty_cycle > 0.0f) {
-                    digitalWrite(pin, HIGH);
-                    pwm_states[i].current_pin_state = true;
-                }
-            }
-        }
-    }
+    const unsigned long now = millis();
+    for (const auto& slot : pwm_slots)
+        if (slot.active && now - slot.start_ms >= slot.duration_ms)
+            stopPwm(slot.actuator_id);
 }
 
 //-----------------------------------------------------------------------------
@@ -448,16 +496,8 @@ static void initializeCurrentSensePins() {
 }
 
 static void initializePWMStates() {
-    for (int i = 0; i < NUM_ACTUATORS; i++) {
-        pwm_states[i].active = false;
-        pwm_states[i].start_time = 0;
-        pwm_states[i].duration = 0;
-        pwm_states[i].duty_cycle = 0.0f;
-        pwm_states[i].period_micros = 0;
-        pwm_states[i].on_time_micros = 0;
-        pwm_states[i].last_cycle_start_micros = 0;
-        pwm_states[i].current_pin_state = false;
-    }
+    for (auto& slot : pwm_slots)
+        slot = PwmSlot{false, 0, NO_CHANNEL, 0, 0};
 }
 
 //-----------------------------------------------------------------------------
