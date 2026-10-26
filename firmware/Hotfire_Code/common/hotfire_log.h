@@ -91,6 +91,31 @@ private:
 };
 
 inline LogBuffer g_logbuf;
+
+// g_logbuf is written from more than one FreeRTOS task (the sensor boards'
+// ADC and network tasks both log), so every write and the flush hold this
+// lock. Recursive, so a lock holder can log. Host builds have no RTOS and
+// need no lock.
+#if defined(ESP_PLATFORM)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+inline SemaphoreHandle_t hfLogMutex() {
+    static SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+    return m;
+}
+struct HfLogLock {
+    HfLogLock() {
+        xSemaphoreTakeRecursive(hfLogMutex(), portMAX_DELAY);
+    }
+    ~HfLogLock() {
+        xSemaphoreGiveRecursive(hfLogMutex());
+    }
+    HfLogLock(const HfLogLock&) = delete;
+    HfLogLock& operator=(const HfLogLock&) = delete;
+};
+#else
+struct HfLogLock {};
+#endif
 inline uint8_t g_log_stream_level =
     1;  // default: stream Tier 1 once Ethernet is up
 
@@ -100,25 +125,25 @@ inline uint8_t g_log_stream_level =
     do {                                 \
         Serial.print(__VA_ARGS__);       \
         if (g_log_stream_level >= 1)     \
-            g_logbuf.print(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.print(__VA_ARGS__); } \
     } while (0)
 #define HF_LOGLN(...)                      \
     do {                                   \
         Serial.println(__VA_ARGS__);       \
         if (g_log_stream_level >= 1)       \
-            g_logbuf.println(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.println(__VA_ARGS__); } \
     } while (0)
 #define HF_LOGLN_()                  \
     do {                             \
         Serial.println();            \
         if (g_log_stream_level >= 1) \
-            g_logbuf.println();      \
+            { HfLogLock hf_lock_; g_logbuf.println(); }      \
     } while (0)
 #define HF_LOGF(...)                      \
     do {                                  \
         Serial.printf(__VA_ARGS__);       \
         if (g_log_stream_level >= 1)      \
-            g_logbuf.printf(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.printf(__VA_ARGS__); } \
     } while (0)
 
 // Tier 2 — USB only when g_verbose; stream when level >= 2.
@@ -127,28 +152,28 @@ inline uint8_t g_log_stream_level =
         if (g_verbose)                   \
             Serial.print(__VA_ARGS__);   \
         if (g_log_stream_level >= 2)     \
-            g_logbuf.print(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.print(__VA_ARGS__); } \
     } while (0)
 #define HF_VERBOSELN(...)                  \
     do {                                   \
         if (g_verbose)                     \
             Serial.println(__VA_ARGS__);   \
         if (g_log_stream_level >= 2)       \
-            g_logbuf.println(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.println(__VA_ARGS__); } \
     } while (0)
 #define HF_VERBOSELN_()              \
     do {                             \
         if (g_verbose)               \
             Serial.println();        \
         if (g_log_stream_level >= 2) \
-            g_logbuf.println();      \
+            { HfLogLock hf_lock_; g_logbuf.println(); }      \
     } while (0)
 #define HF_VERBOSEF(...)                  \
     do {                                  \
         if (g_verbose)                    \
             Serial.printf(__VA_ARGS__);   \
         if (g_log_stream_level >= 2)      \
-            g_logbuf.printf(__VA_ARGS__); \
+            { HfLogLock hf_lock_; g_logbuf.printf(__VA_ARGS__); } \
     } while (0)
 
 #endif  // HOTFIRE_LOG_H

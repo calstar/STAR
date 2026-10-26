@@ -1,9 +1,25 @@
 /**
- * Shared sensor hotfire state machine core — PT / TC / LC boards
+ * Shared sensor hotfire state machine core — PT / TC / LC / RTD boards
  *
- * Single implementation of: UDP rx, packet processing, 3-state machine,
- * state LED, board heartbeat, Ethernet init.
- * Board-specific: ADC init, collect_chunk(), send_chunks_to() via callbacks.
+ * Single implementation of: UDP rx, packet processing, the state machine,
+ * state LED, board heartbeat, Ethernet init, chunk batching and sending.
+ * Board-specific: ADC init, reading one chunk, reference voltage, self-test,
+ * via callbacks.
+ *
+ * Two FreeRTOS tasks share the work, so a slow round of ADC readings never
+ * holds up the network:
+ *
+ *   ADC task (core 1)      owns the ADC's SPI bus. Samples while told to,
+ *                          pushes each chunk onto a queue (dropping the
+ *                          oldest when full), runs self-test on request.
+ *   network task (core 0)  owns Ethernet and all board state: reads every
+ *                          waiting packet each 1 ms pass, runs the state
+ *                          machine, sends heartbeats, batches chunks into
+ *                          packets, flushes logs, serves OTA.
+ *
+ * The network task drives the ADC task with commands over a queue; nothing
+ * else is shared between them except the log buffer (locked, hotfire_log.h)
+ * and a drop counter.
  *
  * Include after: Arduino.h, Ethernet, DAQv2-Comms, main.h, sense_board_pins.h
  * Define before include (or use defaults):
@@ -21,6 +37,7 @@
 #include <daq-protocol.h>
 #include <esp_mac.h>
 
+#include <atomic>
 #include <cstring>
 
 #include "SensorCoreLogic.h"
@@ -46,18 +63,25 @@ namespace SensorHotfire {
 
 inline StarOTA::Server g_ota_server{HOTFIRE_OTA_PORT};
 
+/**
+ * What a board provides. Every callback except init_adc runs on the ADC
+ * task, and none of them may touch Ethernet.
+ */
 struct Config {
     const char* board_name;
     const sense_board_pins::Layout* pins;
+    /** The ADS126X_RATE_* the ADC runs at. Decides how waitDrdy() waits. */
+    uint8_t adc_rate_code;
+    /** Called once from setup(), before the tasks start. */
     void (*init_adc)(void* user_data);
-    void (*collect_chunk)(void* user_data);
-    /** Send collected chunks to primary dest; if also_to_abort_controller then
-     * send same data to abort_controller_ip:port as well, then drain. */
-    void (*send_chunks_to)(void* user_data, IPAddress dest_ip, int dest_port,
-                           bool also_to_abort_controller,
-                           IPAddress abort_controller_ip,
-                           int abort_controller_port);
-    /** Called when SENSOR_CONFIG is received with reference_voltage byte
+    /**
+     * Read every channel in `config` once. The core has already filled in
+     * `out`'s timestamp and sensor IDs (in config order); the board writes
+     * `out.values[i]` for each. Return false to discard the chunk.
+     */
+    bool (*read_chunk)(void* user_data, const StoredSensorConfig& config,
+                       Chunk& out);
+    /** Called when the configured reference_voltage byte changes
      * (0=2.5V internal, 1=VDD, 2=ignore). */
     void (*on_reference_voltage_config)(void* user_data,
                                         uint8_t reference_voltage);
@@ -71,6 +95,32 @@ struct Config {
                           std::vector<daq::SelfTestResult>& results_out);
     void* user_data;
 };
+
+/** Network task -> ADC task. */
+struct AdcCommand {
+    enum class Type : uint8_t { ApplyConfig, SetSampling, RunSelfTest };
+    Type type;
+    bool sampling;        // SetSampling
+    uint32_t config_seq;  // ApplyConfig
+    StoredSensorConfig config;  // ApplyConfig
+};
+
+/** ADC task -> network task: the outcome of a self-test. */
+struct AdcSelfTestResult {
+    uint8_t adc_good;
+    uint8_t num_results;
+    daq::SelfTestResult results[MAX_SENSORS_PER_BOARD];
+};
+
+constexpr UBaseType_t CHUNK_QUEUE_DEPTH = 2 * HOTFIRE_CHUNKS_PER_PACKET;
+constexpr UBaseType_t ADC_COMMAND_QUEUE_DEPTH = 8;
+// Priority does not rank these against each other: each task has a core to
+// itself. 5 keeps them above Arduino's loopTask (1) and the idle tasks (0),
+// and well below ESP-IDF's system tasks (esp_timer 22, ipc 24).
+constexpr UBaseType_t SENSOR_TASK_PRIORITY = 5;
+constexpr uint32_t ADC_TASK_STACK_BYTES = 6 * 1024;
+constexpr uint32_t NET_TASK_STACK_BYTES = 8 * 1024;
+constexpr TickType_t NET_TASK_PERIOD_TICKS = pdMS_TO_TICKS(1);
 
 struct CoreState {
     uint8_t board_id;
@@ -88,12 +138,26 @@ struct CoreState {
     BoardNet::State net;
     EthernetUDP udp;
     State state;
-    StoredSensorConfig stored_config;
+    StoredSensorConfig stored_config;  // latest config from the server
     unsigned long lastHeartbeatMillis;
     unsigned long last_led_cycle_millis;
     unsigned long last_led_edge_millis;
     int led_blink_index;
     bool led_on;
+
+    // --- task plumbing ---
+    QueueHandle_t chunk_queue;   // ADC -> network, Chunk
+    QueueHandle_t adc_commands;  // network -> ADC, AdcCommand
+    QueueHandle_t adc_results;   // ADC -> network, AdcSelfTestResult
+    std::atomic<uint32_t> chunks_dropped;  // written by the ADC task only
+
+    // --- network-task-only state ---
+    StoredSensorConfig adc_config;  // last config handed to the ADC task
+    bool adc_config_sent;
+    uint32_t config_seq;
+    bool sampling_sent;
+    ChunkBatch batch;
+    uint32_t chunks_dropped_logged;
 };
 
 /**
@@ -134,10 +198,7 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
 
     if (kind != IncomingPacketKind::SensorConfig)
         return kind;
-
-    if (cfg.on_reference_voltage_config)
-        cfg.on_reference_voltage_config(cfg.user_data,
-                                        s.stored_config.reference_voltage);
+    (void)cfg;
 
     // enable_serial_printing is the mode byte (0..3): bit0 = USB verbose,
     // upper part = server log stream level. See hotfire_log.h.
@@ -258,19 +319,26 @@ inline void updateStateLed(CoreState& s, const Config& cfg, int state_num) {
 // Flush the accumulated log buffer to the server as one LOGS packet (type 15).
 // The board is identified server-side by UDP source IP, so no board_id is sent.
 inline void flushLogs(CoreState& s) {
-    if (g_logbuf.empty())
-        return;
     static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
-    size_t n =
-        daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
-                               g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    size_t n = 0;
+    {
+        // Copy out under the lock, send after: the ADC task may be logging.
+        HfLogLock lock;
+        if (g_logbuf.empty())
+            return;
+        n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                                   g_logbuf.length(), millis(), pkt,
+                                   sizeof(pkt));
+        g_logbuf.clear();
+    }
     if (n > 0) {
         s.udp.beginPacket(s.serverIP, s.serverPort);
         s.udp.write(pkt, n);
         s.udp.endPacket();
     }
-    g_logbuf.clear();
 }
+
+inline void startTasks(CoreState& s, const Config& cfg);
 
 inline void setup(CoreState& s, const Config& cfg) {
     Serial.begin(115200);
@@ -382,74 +450,400 @@ inline void setup(CoreState& s, const Config& cfg) {
     HF_LOG(Ethernet.localIP());
     HF_LOGLN_();
     flushLogs(s);
+
+    startTasks(s, cfg);
 }
 
-inline void loop(CoreState& s, const Config& cfg) {
+//-----------------------------------------------------------------------------
+// ADC task
+//-----------------------------------------------------------------------------
+
+/** Set in setup() from Config::adc_rate_code; read by waitDrdy(). */
+inline bool g_drdy_sleeps = false;
+
+/**
+ * Wait for the ADC's data-ready line to go low. At fast data rates this spins
+ * (a conversion is tens of microseconds); when a conversion takes 2 ms or
+ * more it sleeps 1 ms between checks, so the ADC task gives up its core
+ * while it waits. Returns false if `timeout_us` passes first.
+ *
+ * ADC task only.
+ */
+inline bool waitDrdy(int drdy_pin, uint32_t timeout_us = UINT32_MAX) {
+    const uint32_t start = micros();
+    while (digitalRead(drdy_pin) != LOW) {
+        if (micros() - start >= timeout_us)
+            return false;
+        if (g_drdy_sleeps)
+            vTaskDelay(1);
+        else
+            delayMicroseconds(10);
+    }
+    return true;
+}
+
+/** Print how much of the calling task's stack has never been touched. */
+inline void logStackHeadroom(const char* task_name) {
+    HF_LOG("[TASK] ");
+    HF_LOG(task_name);
+    HF_LOG(" stack headroom: ");
+    HF_LOG(static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    HF_LOGLN(" bytes");
+}
+
+/** Periodic headroom report: once 5 s after start, then every 30 s when
+ *  verbose. */
+inline void maybeLogStackHeadroom(const char* task_name,
+                                  unsigned long& next_ms, bool& first_done) {
+    const unsigned long now = millis();
+    if (static_cast<long>(now - next_ms) < 0)
+        return;
+    if (!first_done || g_verbose)
+        logStackHeadroom(task_name);
+    first_done = true;
+    next_ms = now + 30000;
+}
+
+struct FreeRtosChunkQueue {
+    QueueHandle_t q;
+    bool trySend(const Chunk& c) {
+        return xQueueSend(q, &c, 0) == pdTRUE;
+    }
+    bool tryReceive(Chunk& c) {
+        return xQueueReceive(q, &c, 0) == pdTRUE;
+    }
+};
+
+struct TaskArgs {
+    CoreState* s;
+    const Config* cfg;
+};
+
+inline void runSelfTestOnAdc(CoreState& s, const Config& cfg,
+                             const StoredSensorConfig& config) {
+    std::vector<daq::SelfTestResult> results;
+    cfg.run_self_test(cfg.user_data, config, results);
+
+    AdcSelfTestResult out{};
+    if (!results.empty() && results[0].sensor_id == 0) {
+        out.adc_good = results[0].result;
+        results.erase(results.begin());
+    }
+    out.num_results = static_cast<uint8_t>(
+        results.size() <= MAX_SENSORS_PER_BOARD ? results.size()
+                                                : MAX_SENSORS_PER_BOARD);
+    for (uint8_t i = 0; i < out.num_results; ++i)
+        out.results[i] = results[i];
+    xQueueSend(s.adc_results, &out, portMAX_DELAY);
+}
+
+inline void adcTask(void* arg) {
+    CoreState& s = *static_cast<TaskArgs*>(arg)->s;
+    const Config& cfg = *static_cast<TaskArgs*>(arg)->cfg;
+    FreeRtosChunkQueue chunks{s.chunk_queue};
+
+    StoredSensorConfig config{};
+    uint32_t config_seq = 0;
+    bool have_reference = false;
+    uint8_t reference = 0;
+    bool sampling = false;
+    unsigned long next_stack_log_ms = millis() + 5000;
+    bool stack_logged = false;
+
+    for (;;) {
+        // Idle: sleep until told to do something. Sampling: just check.
+        TickType_t wait = sampling ? 0 : pdMS_TO_TICKS(100);
+        AdcCommand cmd;
+        while (xQueueReceive(s.adc_commands, &cmd, wait) == pdTRUE) {
+            wait = 0;
+            switch (cmd.type) {
+                case AdcCommand::Type::ApplyConfig:
+                    config = cmd.config;
+                    config_seq = cmd.config_seq;
+                    if (cfg.on_reference_voltage_config &&
+                        (!have_reference ||
+                         reference != config.reference_voltage)) {
+                        cfg.on_reference_voltage_config(
+                            cfg.user_data, config.reference_voltage);
+                        reference = config.reference_voltage;
+                        have_reference = true;
+                    }
+                    break;
+                case AdcCommand::Type::SetSampling:
+                    sampling = cmd.sampling;
+                    break;
+                case AdcCommand::Type::RunSelfTest:
+                    if (cfg.run_self_test)
+                        runSelfTestOnAdc(s, cfg, config);
+                    break;
+            }
+        }
+
+        maybeLogStackHeadroom("adc", next_stack_log_ms, stack_logged);
+
+        if (!sampling || config.num_sensors == 0 || !cfg.read_chunk)
+            continue;
+
+        Chunk chunk{};
+        chunk.timestamp_ms = millis();
+        chunk.config_seq = config_seq;
+        chunk.num_sensors = config.num_sensors;
+        memcpy(chunk.sensor_ids, config.sensor_ids, config.num_sensors);
+        if (cfg.read_chunk(cfg.user_data, config, chunk)) {
+            if (pushDropOldest(chunks, chunk))
+                s.chunks_dropped.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Same cadence as the old single loop: one chunk, then a short rest.
+        vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Network task
+//-----------------------------------------------------------------------------
+
+inline void sendAdcCommand(CoreState& s, const AdcCommand& cmd) {
+    if (xQueueSend(s.adc_commands, &cmd, pdMS_TO_TICKS(100)) != pdTRUE)
+        HF_LOGLN("[ADC] WARNING: command queue full, command dropped");
+}
+
+/** Hand the ADC task the server's config, but only when it changed. */
+inline void syncAdcConfig(CoreState& s) {
+    const StoredSensorConfig& now = s.stored_config;
+    const bool layout_changed =
+        !s.adc_config_sent || !sameSensorList(now, s.adc_config);
+    if (!layout_changed &&
+        now.reference_voltage == s.adc_config.reference_voltage)
+        return;
+    if (layout_changed)
+        s.config_seq++;
+    AdcCommand cmd{};
+    cmd.type = AdcCommand::Type::ApplyConfig;
+    cmd.config_seq = s.config_seq;
+    cmd.config = now;
+    sendAdcCommand(s, cmd);
+    s.adc_config = now;
+    s.adc_config_sent = true;
+}
+
+inline bool shouldSample(State st) {
+    return st == State::Active || st == State::StandaloneAbort;
+}
+
+inline void syncSampling(CoreState& s) {
+    const bool want = shouldSample(s.state);
+    if (want == s.sampling_sent)
+        return;
+    AdcCommand cmd{};
+    cmd.type = AdcCommand::Type::SetSampling;
+    cmd.sampling = want;
+    sendAdcCommand(s, cmd);
+    s.sampling_sent = want;
+}
+
+inline IPAddress actuatorControllerIP(const CoreState& s) {
+    const uint8_t* ip_bytes =
+        reinterpret_cast<const uint8_t*>(&s.stored_config.actuator_controller_ip);
+    return IPAddress(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]);
+}
+
+/** Send the batch as one SENSOR_DATA packet (short is fine), then clear it. */
+inline void sendBatch(CoreState& s) {
+    if (s.batch.empty())
+        return;
+    if (!shouldSample(s.state)) {
+        s.batch.clear();
+        return;
+    }
+    uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
+    size_t packetSize =
+        s.batch.buildPacket(millis(), packetBuffer, sizeof(packetBuffer));
+    if (packetSize == 0) {
+        HF_VERBOSE("Send FAIL: create_sensor_data_packet returned 0 (n=");
+        HF_VERBOSE(s.batch.size());
+        HF_VERBOSE(", buf=");
+        HF_VERBOSE(SENSOR_HOTFIRE_MAX_PACKET_SIZE);
+        HF_VERBOSELN(")");
+        s.batch.clear();
+        return;
+    }
+    s.udp.beginPacket(s.serverIP, s.serverPort);
+    s.udp.write(packetBuffer, packetSize);
+    s.udp.endPacket();
+    HF_VERBOSE("Sent: sensor_data to ");
+    HF_VERBOSE(s.serverIP);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(s.serverPort);
+
+    static unsigned long s_last_dump_ms = 0;
+    unsigned long now = millis();
+    if (now - s_last_dump_ms >= 1000) {
+        s_last_dump_ms = now;
+        HF_VERBOSELN("SENSOR_DATA contents:");
+        for (uint8_t i = 0; i < s.batch.size(); ++i) {
+            const Chunk& chunk = s.batch.at(i);
+            HF_VERBOSE("  chunk ");
+            HF_VERBOSE(i);
+            HF_VERBOSE(" ts=");
+            HF_VERBOSE(chunk.timestamp_ms);
+            HF_VERBOSE(" :");
+            for (uint8_t j = 0; j < chunk.num_sensors; ++j) {
+                HF_VERBOSE(" (id=");
+                HF_VERBOSE(static_cast<unsigned>(chunk.sensor_ids[j]));
+                HF_VERBOSE(", data=");
+                HF_VERBOSE(chunk.values[j]);
+                HF_VERBOSE(")");
+            }
+            HF_VERBOSELN_();
+        }
+    }
+
+    if (s.state == State::StandaloneAbort && s.stored_config.valid &&
+        s.stored_config.actuator_controller_ip != 0) {
+        const IPAddress actuatorIP = actuatorControllerIP(s);
+        s.udp.beginPacket(actuatorIP, s.serverPortDefault);
+        s.udp.write(packetBuffer, packetSize);
+        s.udp.endPacket();
+        HF_VERBOSE("Sent: sensor_data to ");
+        HF_VERBOSE(actuatorIP);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(s.serverPortDefault);
+    }
+    s.batch.clear();
+}
+
+/** Move every chunk the ADC task has queued into packets. */
+inline void drainChunks(CoreState& s) {
+    Chunk chunk;
+    while (xQueueReceive(s.chunk_queue, &chunk, 0) == pdTRUE) {
+        if (s.batch.mustSendBefore(chunk))
+            sendBatch(s);
+        s.batch.add(chunk);
+        if (s.batch.full())
+            sendBatch(s);
+    }
+
+    const uint32_t dropped = s.chunks_dropped.load(std::memory_order_relaxed);
+    static unsigned long s_last_drop_log_ms = 0;
+    if (dropped != s.chunks_dropped_logged &&
+        millis() - s_last_drop_log_ms >= 1000) {
+        s_last_drop_log_ms = millis();
+        HF_LOG("[ADC] WARNING: chunk queue full, dropped ");
+        HF_LOG(dropped - s.chunks_dropped_logged);
+        HF_LOG(" oldest chunk(s) (");
+        HF_LOG(dropped);
+        HF_LOGLN(" total)");
+        s.chunks_dropped_logged = dropped;
+    }
+}
+
+/** A self-test finished on the ADC task: report it and go Active. */
+inline void handleSelfTestResult(CoreState& s) {
+    AdcSelfTestResult r;
+    if (xQueueReceive(s.adc_results, &r, 0) != pdTRUE)
+        return;
+    if (s.state != State::SelfTest)
+        return;
+    std::vector<daq::SelfTestResult> results(r.results,
+                                             r.results + r.num_results);
+    uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
+    size_t packetSize = daq::create_self_test_packet(
+        r.adc_good, results, millis(), packetBuffer, sizeof(packetBuffer));
+    if (packetSize > 0) {
+        s.udp.beginPacket(s.serverIP, s.serverPort);
+        s.udp.write(packetBuffer, packetSize);
+        s.udp.endPacket();
+        HF_VERBOSE("Sent: SELF_TEST to ");
+        HF_VERBOSE(s.serverIP);
+        HF_VERBOSE(":");
+        HF_VERBOSELN(s.serverPort);
+    }
+    s.state = State::Active;
+    Serial.println("State -> Active");
+    Serial.flush();
+}
+
+/** Read and act on one waiting packet. Returns false when none is waiting. */
+inline bool receiveOnePacket(CoreState& s, const Config& cfg) {
+    int packetSize = s.udp.parsePacket();
+    if (packetSize <= 0)
+        return false;
+
+    IPAddress remoteIP = s.udp.remoteIP();
+    int remotePort = s.udp.remotePort();
+    uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
+    int bytesRead = s.udp.read(packetBuffer, sizeof(packetBuffer));
+    if (bytesRead <= 0) {
+        HF_LOG("WARNING: parsePacket returned ");
+        HF_LOG(packetSize);
+        HF_LOGLN(" but read() returned 0");
+        return true;
+    }
+    HF_VERBOSE("Received packet from ");
+    HF_VERBOSE(remoteIP);
+    HF_VERBOSE(":");
+    HF_VERBOSE(remotePort);
+    HF_VERBOSE(" type ");
+    HF_VERBOSE(static_cast<unsigned>(packetBuffer[0]));
+    HF_VERBOSE(" (");
+    HF_VERBOSE(packetTypeName(packetBuffer[0]));
+    HF_VERBOSE(") len=");
+    HF_VERBOSE(bytesRead);
+    HF_VERBOSE(" hex:");
+    for (int i = 0; i < bytesRead && i < 12; i++) {
+        HF_VERBOSE(" ");
+        if (packetBuffer[i] < 16)
+            HF_VERBOSE("0");
+        HF_VERBOSE(packetBuffer[i], HEX);
+    }
+    HF_VERBOSELN_();
+
+    IncomingPacketKind kind = processIncomingPacket(
+        s, cfg, packetBuffer, bytesRead, remoteIP, remotePort);
+    if (kind == IncomingPacketKind::SensorConfig) {
+        HF_VERBOSELN("SENSOR_CONFIG parsed");
+        syncAdcConfig(s);
+    } else if (static_cast<uint8_t>(packetBuffer[0]) == 6) {
+        Serial.println(
+            "(Packet type 6 = ACTUATOR_CONFIG; sensor boards expect "
+            "SENSOR_CONFIG type 5)");
+        Serial.flush();
+    } else if (static_cast<uint8_t>(packetBuffer[0]) == 5) {
+        Serial.println(
+            "(Type 5 received but parse failed - check header/length)");
+        Serial.flush();
+    }
+
+    const State before = s.state;
+    applyPacketTransition(s, cfg, kind);
+    if (before != State::SelfTest && s.state == State::SelfTest) {
+        AdcCommand cmd{};
+        cmd.type = AdcCommand::Type::RunSelfTest;
+        sendAdcCommand(s, cmd);
+    }
+    return true;
+}
+
+/** One pass of the network task. */
+inline void networkStep(CoreState& s, const Config& cfg) {
 #ifdef SENSOR_ETH_USE_DHCP
     // Renew the lease as it expires; no-op while an OTA is in flight.
     BoardNet::maintainLease(s.net);
 #endif
-    // Non-blocking OTA check — blocks only if a client actually connects,
-    // and never returns on success (the board reboots into the new image).
+    // Blocks only while a client is actually transferring, and never returns
+    // on success (the board reboots into the new image).
     g_ota_server.poll();
     // Bench marker: prints only on builds made with -DSTAR_OTA_TEST_MESSAGE,
     // so consecutive OTA uploads are visibly different on the serial monitor.
     StarOTA::printTestMessage();
 
-    const size_t maxPacket = SENSOR_HOTFIRE_MAX_PACKET_SIZE;
     static uint32_t s_udp_check_count = 0;
     static unsigned long s_last_debug_ms = 0;
-    static int s_last_parse_result = -1;
-
     s_udp_check_count++;
-    int packetSize = s.udp.parsePacket();
-    s_last_parse_result = packetSize;
 
-    if (packetSize > 0) {
-        IPAddress remoteIP = s.udp.remoteIP();
-        int remotePort = s.udp.remotePort();
-        uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
-        int bytesRead = s.udp.read(packetBuffer, maxPacket);
-        if (bytesRead <= 0) {
-            HF_LOG("WARNING: parsePacket returned ");
-            HF_LOG(packetSize);
-            HF_LOGLN(" but read() returned 0");
-        } else {
-            HF_VERBOSE("Received packet from ");
-            HF_VERBOSE(remoteIP);
-            HF_VERBOSE(":");
-            HF_VERBOSE(remotePort);
-            HF_VERBOSE(" type ");
-            HF_VERBOSE(static_cast<unsigned>(packetBuffer[0]));
-            HF_VERBOSE(" (");
-            HF_VERBOSE(packetTypeName(packetBuffer[0]));
-            HF_VERBOSE(") len=");
-            HF_VERBOSE(bytesRead);
-            HF_VERBOSE(" hex:");
-            for (int i = 0; i < bytesRead && i < 12; i++) {
-                HF_VERBOSE(" ");
-                if (packetBuffer[i] < 16)
-                    HF_VERBOSE("0");
-                HF_VERBOSE(packetBuffer[i], HEX);
-            }
-            HF_VERBOSELN_();
-            IncomingPacketKind kind = processIncomingPacket(
-                s, cfg, packetBuffer, bytesRead, remoteIP, remotePort);
-            if (kind == IncomingPacketKind::SensorConfig) {
-                Serial.println("SENSOR_CONFIG parsed -> transitioning");
-                Serial.flush();
-            } else if (static_cast<uint8_t>(packetBuffer[0]) == 6) {
-                Serial.println(
-                    "(Packet type 6 = ACTUATOR_CONFIG; PT expects "
-                    "SENSOR_CONFIG type 5)");
-                Serial.flush();
-            } else if (static_cast<uint8_t>(packetBuffer[0]) == 5) {
-                Serial.println(
-                    "(Type 5 received but parse failed - check header/length)");
-                Serial.flush();
-            }
-            applyPacketTransition(s, cfg, kind);
-        }
+    // Read everything that is waiting, not one packet per pass: the server
+    // broadcasts a heartbeat every 200 ms, and anything less falls behind.
+    while (receiveOnePacket(s, cfg)) {
     }
 
 #ifdef SENSOR_ETH_USE_DHCP
@@ -464,78 +858,20 @@ inline void loop(CoreState& s, const Config& cfg) {
     }
 #endif
 
-    if (s.state == State::Active || s.state == State::StandaloneAbort) {
-        if (cfg.collect_chunk)
-            cfg.collect_chunk(cfg.user_data);
-    } else if (s.state == State::SelfTest) {
-        if (cfg.run_self_test) {
-            std::vector<daq::SelfTestResult> results;
-            cfg.run_self_test(cfg.user_data, s.stored_config, results);
+    handleSelfTestResult(s);
+    syncSampling(s);
+    drainChunks(s);
 
-            uint8_t adc_good = 0;
-            if (!results.empty() && results[0].sensor_id == 0) {
-                adc_good = results[0].result;
-                results.erase(results.begin());
-            }
-
-            uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
-            size_t packetSize = daq::create_self_test_packet(
-                adc_good, results, millis(), packetBuffer,
-                sizeof(packetBuffer));
-            if (packetSize > 0) {
-                s.udp.beginPacket(s.serverIP, s.serverPort);
-                s.udp.write(packetBuffer, packetSize);
-                s.udp.endPacket();
-                HF_VERBOSE("Sent: SELF_TEST to ");
-                HF_VERBOSE(s.serverIP);
-                HF_VERBOSE(":");
-                HF_VERBOSELN(s.serverPort);
-            }
-        }
-        s.state = State::Active;
-        Serial.println("State -> Active");
-        Serial.flush();
-    }
-
-    switch (s.state) {
-        case State::WaitingForServer:
-            break;
-        case State::Active:
-            if (cfg.send_chunks_to)
-                cfg.send_chunks_to(cfg.user_data, s.serverIP, s.serverPort,
-                                   false, IPAddress(0, 0, 0, 0), 0);
-            break;
-        case State::StandaloneAbort:
-            if (cfg.send_chunks_to) {
-                bool also_abort = s.stored_config.valid &&
-                                  s.stored_config.actuator_controller_ip != 0;
-                IPAddress actuatorIP(0, 0, 0, 0);
-                if (also_abort) {
-                    const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
-                        &s.stored_config.actuator_controller_ip);
-                    actuatorIP = IPAddress(ip_bytes[0], ip_bytes[1],
-                                           ip_bytes[2], ip_bytes[3]);
-                }
-                cfg.send_chunks_to(cfg.user_data, s.serverIP, s.serverPort,
-                                   also_abort, actuatorIP, s.serverPortDefault);
-            }
-            break;
-        case State::SelfTest:
-            break;
-    }
-
-    int state_num = static_cast<int>(s.state);
-    updateStateLed(s, cfg, state_num);
+    updateStateLed(s, cfg, static_cast<int>(s.state));
 
     unsigned long now = millis();
     if (s.state == State::WaitingForServer && (now - s_last_debug_ms >= 2000)) {
         s_last_debug_ms = now;
-        HF_VERBOSE("PT debug: state=WaitingForServer IP=");
+        HF_VERBOSE(cfg.board_name);
+        HF_VERBOSE(" debug: state=WaitingForServer IP=");
         HF_VERBOSE(Ethernet.localIP());
-        HF_VERBOSE(" udp_checks=");
-        HF_VERBOSE(s_udp_check_count);
-        HF_VERBOSE(" last_parse=");
-        HF_VERBOSELN(s_last_parse_result);
+        HF_VERBOSE(" network_passes=");
+        HF_VERBOSELN(s_udp_check_count);
     }
     if (now - s.lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         s.lastHeartbeatMillis = now;
@@ -543,24 +879,10 @@ inline void loop(CoreState& s, const Config& cfg) {
             HF_VERBOSELN("Setup state: sending heartbeat");
         sendBoardHeartbeat(s, cfg, boardStateFor(s.state), s.serverIP,
                            s.serverPort);
-        switch (s.state) {
-            case State::WaitingForServer:
-            case State::Active:
-            case State::SelfTest:
-                break;
-            case State::StandaloneAbort:
-                if (s.stored_config.valid &&
-                    s.stored_config.actuator_controller_ip != 0) {
-                    const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
-                        &s.stored_config.actuator_controller_ip);
-                    IPAddress actuatorIP(ip_bytes[0], ip_bytes[1], ip_bytes[2],
-                                         ip_bytes[3]);
-                    sendBoardHeartbeat(s, cfg,
-                                       daq::BoardState::STANDALONE_ABORT,
-                                       actuatorIP, s.serverPortDefault);
-                }
-                break;
-        }
+        if (s.state == State::StandaloneAbort && s.stored_config.valid &&
+            s.stored_config.actuator_controller_ip != 0)
+            sendBoardHeartbeat(s, cfg, daq::BoardState::STANDALONE_ABORT,
+                               actuatorControllerIP(s), s.serverPortDefault);
 #ifdef SENSOR_ETH_USE_DHCP
         // Discovery: announce to everyone on the wire until a server is
         // learned. Reuses the normal heartbeat packet on the same 1 s tick.
@@ -574,13 +896,59 @@ inline void loop(CoreState& s, const Config& cfg) {
     // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is
     // filling).
     static unsigned long s_last_log_flush_ms = 0;
-    if (!g_logbuf.empty() &&
-        (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {
+    bool flush_due;
+    {
+        HfLogLock lock;
+        flush_due = !g_logbuf.empty() &&
+                    (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000);
+    }
+    if (flush_due) {
         s_last_log_flush_ms = now;
         flushLogs(s);
     }
+}
 
-    delay(LOOP_DELAY_MS);
+inline void networkTask(void* arg) {
+    CoreState& s = *static_cast<TaskArgs*>(arg)->s;
+    const Config& cfg = *static_cast<TaskArgs*>(arg)->cfg;
+    unsigned long next_stack_log_ms = millis() + 5000;
+    bool stack_logged = false;
+    TickType_t last_wake = xTaskGetTickCount();
+    for (;;) {
+        networkStep(s, cfg);
+        maybeLogStackHeadroom("network", next_stack_log_ms, stack_logged);
+        vTaskDelayUntil(&last_wake, NET_TASK_PERIOD_TICKS);
+    }
+}
+
+/** Create the queues and start both tasks. Called at the end of setup(). */
+inline void startTasks(CoreState& s, const Config& cfg) {
+    static TaskArgs args;
+    args.s = &s;
+    args.cfg = &cfg;
+    g_drdy_sleeps = conversionPeriodUs(cfg.adc_rate_code) >= 2000;
+
+    s.chunk_queue = xQueueCreate(CHUNK_QUEUE_DEPTH, sizeof(Chunk));
+    s.adc_commands = xQueueCreate(ADC_COMMAND_QUEUE_DEPTH, sizeof(AdcCommand));
+    s.adc_results = xQueueCreate(1, sizeof(AdcSelfTestResult));
+    if (!s.chunk_queue || !s.adc_commands || !s.adc_results) {
+        Serial.println("FATAL: could not allocate task queues; restarting");
+        Serial.flush();
+        delay(1000);
+        ESP.restart();
+    }
+
+    xTaskCreatePinnedToCore(adcTask, "adc", ADC_TASK_STACK_BYTES, &args,
+                            SENSOR_TASK_PRIORITY, nullptr, 1);
+    xTaskCreatePinnedToCore(networkTask, "network", NET_TASK_STACK_BYTES,
+                            &args, SENSOR_TASK_PRIORITY, nullptr, 0);
+}
+
+/** Arduino's loop() has nothing left to do: the tasks run the board. */
+inline void loop(CoreState& s, const Config& cfg) {
+    (void)s;
+    (void)cfg;
+    vTaskDelete(nullptr);
 }
 
 }  // namespace SensorHotfire
