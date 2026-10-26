@@ -617,7 +617,9 @@ inline void adcTask(void* arg) {
     for (;;) {
         watchdogCheckIn();
         // Idle: sleep until told to do something. Sampling: just check.
-        TickType_t wait = sampling ? 0 : pdMS_TO_TICKS(100);
+        const bool will_sample =
+            sampling && config.num_sensors > 0 && cfg.read_chunk;
+        TickType_t wait = will_sample ? 0 : pdMS_TO_TICKS(100);
         AdcCommand cmd;
         while (xQueueReceive(s.adc_commands, &cmd, wait) == pdTRUE) {
             wait = 0;
@@ -647,7 +649,7 @@ inline void adcTask(void* arg) {
         maybeLogStackHeadroom("adc", next_stack_log_ms, stack_logged);
 
         if (!sampling || config.num_sensors == 0 || !cfg.read_chunk)
-            continue;
+            continue;  // the command wait above was the sleep
 
         Chunk chunk{};
         chunk.timestamp_ms = millis();
