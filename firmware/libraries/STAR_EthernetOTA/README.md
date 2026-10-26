@@ -29,6 +29,27 @@ reboots into the new image and never returns.
 Projects already have `lib_extra_dirs = ../../libraries`, so no platformio.ini
 change is needed to *use* the library.
 
+### Without blocking
+
+A board that has to keep heartbeating or sampling during a transfer calls
+`service()` instead, every pass of the task that owns Ethernet:
+
+```cpp
+// In the network task, every pass:
+ota.service(board_is_idle);              // never blocks for more than a chunk
+```
+
+Each call does at most one step: accept a client, read the size header, or
+write one chunk to flash. It returns `Result::Idle` when nothing is happening,
+`Result::InProgress` while a transfer is under way, and the final result when
+it ends. A client that connects and goes quiet only costs a timeout check per
+call.
+
+The argument is the board's state gate. With `false`, a waiting client is
+dropped with `Result::Refused`, and a transfer already under way is aborted,
+so flash is never written outside the states the board allows. `poll()` is
+`service()` in a loop, so both behave the same way end to end.
+
 ### Callbacks
 
 ```cpp

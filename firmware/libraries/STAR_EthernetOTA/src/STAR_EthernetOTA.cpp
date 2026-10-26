@@ -39,6 +39,10 @@ const char* resultName(Result r) {
             return "flash write size mismatch";
         case Result::EndFailed:
             return "Update.end() failed";
+        case Result::InProgress:
+            return "transfer in progress";
+        case Result::Refused:
+            return "refused: not allowed in the current state";
     }
     return "unknown";
 }
@@ -78,140 +82,183 @@ bool Server::clientWaiting() {
 }
 
 Result Server::poll() {
-    EthernetClient client = server_.available();
-    if (!client)
-        return Result::Idle;
-    return handleClient(client);
+    Result r = service();
+    while (r == Result::InProgress) {
+        delay(1);
+        r = service();
+    }
+    return r;
 }
 
 Result Server::handleClient(EthernetClient& client) {
-    Result r = transfer(client);
-    last_result_ = r;
-    if (on_end_)
-        on_end_(on_end_data_, r);
-
-    if (r == Result::Success) {
-        Serial.println("[OTA] update successful");
-        Serial.flush();
-        client.println("OK");
-        client.flush();
-        client.stop();
-        if (config.reboot_on_success) {
-            Serial.println("[OTA] rebooting into the new image");
-            Serial.flush();
-            delay(500);
-            ESP.restart();
-        }
-    }
-    return r;
-}
-
-Result Server::fail(EthernetClient& client, Result r, const char* why) {
-    // Always printed: a silent OTA failure is worse than a noisy one.
-    Serial.print("[OTA] ERROR: ");
-    Serial.println(why);
-    Serial.flush();
-    client.stop();
-    return r;
-}
-
-bool Server::readSize(EthernetClient& client, uint32_t& size_out) {
-    unsigned long start = millis();
-    while (client.available() < 4) {
-        if (millis() - start > config.timeout_ms)
-            return false;
-        delay(1);
-    }
-    size_out = 0;
-    size_out |= static_cast<uint32_t>(client.read()) << 24;
-    size_out |= static_cast<uint32_t>(client.read()) << 16;
-    size_out |= static_cast<uint32_t>(client.read()) << 8;
-    size_out |= static_cast<uint32_t>(client.read());
-    return true;
-}
-
-Result Server::transfer(EthernetClient& client) {
+    if (phase_ != Phase::Listening)
+        return Result::InProgress;  // already busy with another client
+    client_ = client;
+    phase_ = Phase::Header;
+    header_len_ = 0;
+    last_activity_ms_ = millis();
     logf(config.verbose, "[OTA] client connected -- starting transfer\n");
+    Result r = service();
+    while (r == Result::InProgress) {
+        delay(1);
+        r = service();
+    }
+    return r;
+}
 
-    uint32_t image_bytes = 0;
-    if (!readSize(client, image_bytes))
-        return fail(client, Result::HeaderTimeout,
-                    "timed out waiting for the 4-byte size header");
+Result Server::service(bool allowed) {
+    if (phase_ == Phase::Listening) {
+        EthernetClient c = server_.available();
+        if (!c)
+            return Result::Idle;
+        client_ = c;
+        if (!allowed) {
+            Serial.println("[OTA] refused: board is not in a state that allows "
+                           "updates");
+            Serial.flush();
+            client_.stop();
+            last_result_ = Result::Refused;
+            return Result::Refused;
+        }
+        phase_ = Phase::Header;
+        header_len_ = 0;
+        last_activity_ms_ = millis();
+        logf(config.verbose, "[OTA] client connected -- starting transfer\n");
+    }
 
-    if (image_bytes == 0 || image_bytes > config.max_image_bytes) {
+    if (!allowed) {
+        if (phase_ == Phase::Receiving)
+            Update.abort();
+        return finish(Result::Refused,
+                      "aborted: board left the state that allows updates");
+    }
+
+    return phase_ == Phase::Header ? stepHeader() : stepReceive();
+}
+
+Result Server::stepHeader() {
+    while (header_len_ < sizeof(header_) && client_.available() > 0) {
+        int b = client_.read();
+        if (b < 0)
+            break;
+        header_[header_len_++] = static_cast<uint8_t>(b);
+        last_activity_ms_ = millis();
+    }
+    if (header_len_ < sizeof(header_)) {
+        if (millis() - last_activity_ms_ > config.timeout_ms)
+            return finish(Result::HeaderTimeout,
+                          "timed out waiting for the 4-byte size header");
+        return Result::InProgress;
+    }
+
+    image_bytes_ = (static_cast<uint32_t>(header_[0]) << 24) |
+                   (static_cast<uint32_t>(header_[1]) << 16) |
+                   (static_cast<uint32_t>(header_[2]) << 8) |
+                   static_cast<uint32_t>(header_[3]);
+    if (image_bytes_ == 0 || image_bytes_ > config.max_image_bytes) {
         Serial.print("[OTA] announced size: ");
-        Serial.println(image_bytes);
-        return fail(client, Result::BadSize, "implausible image size");
+        Serial.println(image_bytes_);
+        return finish(Result::BadSize, "implausible image size");
     }
     logf(config.verbose, "[OTA] image size: %u bytes\n",
-         static_cast<unsigned>(image_bytes));
+         static_cast<unsigned>(image_bytes_));
 
-    // Tell the board before touching flash — the hotfire boards use this to
+    // Tell the board before touching flash -- the hotfire boards use this to
     // freeze their address so they cannot re-address mid-flash.
     if (on_start_)
-        on_start_(on_start_data_, image_bytes);
+        on_start_(on_start_data_, image_bytes_);
 
-    if (!Update.begin(image_bytes)) {
+    if (!Update.begin(image_bytes_)) {
         Update.printError(Serial);
-        return fail(client, Result::BeginFailed, "Update.begin() refused");
+        return finish(Result::BeginFailed, "Update.begin() refused");
     }
+    received_ = 0;
+    last_percent_bucket_ = -1;
+    last_activity_ms_ = millis();
+    phase_ = Phase::Receiving;
+    return Result::InProgress;
+}
 
-    uint8_t buf[STAR_OTA_CHUNK_SIZE];
-    uint32_t received = 0;
-    int last_percent_bucket = -1;
-    unsigned long last_data_ms = millis();
-
-    while (received < image_bytes) {
-        int available = client.available();
-        if (available <= 0) {
-            if (millis() - last_data_ms > config.timeout_ms) {
-                Update.abort();
-                return fail(client, Result::DataTimeout,
-                            "transfer stalled partway through");
-            }
-            delay(1);
-            continue;
-        }
-
-        int to_read = available < static_cast<int>(sizeof(buf))
-                          ? available
-                          : static_cast<int>(sizeof(buf));
-        const uint32_t remaining = image_bytes - received;
-        if (static_cast<uint32_t>(to_read) > remaining)
-            to_read = static_cast<int>(remaining);
-
-        int bytes_read = client.read(buf, to_read);
-        if (bytes_read <= 0)
-            continue;
-
-        if (Update.write(buf, bytes_read) != static_cast<size_t>(bytes_read)) {
-            Update.printError(Serial);
+Result Server::stepReceive() {
+    int available = client_.available();
+    if (available <= 0) {
+        if (millis() - last_activity_ms_ > config.timeout_ms) {
             Update.abort();
-            return fail(client, Result::WriteFailed,
-                        "flash write came up short");
+            return finish(Result::DataTimeout,
+                          "transfer stalled partway through");
         }
-
-        received += bytes_read;
-        last_data_ms = millis();
-
-        if (on_progress_)
-            on_progress_(on_progress_data_, received, image_bytes);
-
-        int percent = static_cast<int>((received * 100UL) / image_bytes);
-        if (percent / 5 != last_percent_bucket) {
-            last_percent_bucket = percent / 5;
-            logf(config.verbose, "[OTA] progress: %d%% (%u / %u bytes)\n",
-                 percent, static_cast<unsigned>(received),
-                 static_cast<unsigned>(image_bytes));
-        }
+        return Result::InProgress;
     }
+
+    int to_read = available < static_cast<int>(sizeof(buf_))
+                      ? available
+                      : static_cast<int>(sizeof(buf_));
+    const uint32_t remaining = image_bytes_ - received_;
+    if (static_cast<uint32_t>(to_read) > remaining)
+        to_read = static_cast<int>(remaining);
+
+    int bytes_read = client_.read(buf_, to_read);
+    if (bytes_read <= 0)
+        return Result::InProgress;
+
+    if (Update.write(buf_, bytes_read) != static_cast<size_t>(bytes_read)) {
+        Update.printError(Serial);
+        Update.abort();
+        return finish(Result::WriteFailed, "flash write came up short");
+    }
+
+    received_ += bytes_read;
+    last_activity_ms_ = millis();
+
+    if (on_progress_)
+        on_progress_(on_progress_data_, received_, image_bytes_);
+
+    int percent = static_cast<int>((received_ * 100UL) / image_bytes_);
+    if (percent / 5 != last_percent_bucket_) {
+        last_percent_bucket_ = percent / 5;
+        logf(config.verbose, "[OTA] progress: %d%% (%u / %u bytes)\n",
+             percent, static_cast<unsigned>(received_),
+             static_cast<unsigned>(image_bytes_));
+    }
+
+    if (received_ < image_bytes_)
+        return Result::InProgress;
 
     logf(config.verbose, "[OTA] all bytes received -- finalizing\n");
     if (!Update.end(true)) {
         Update.printError(Serial);
-        return fail(client, Result::EndFailed, "image failed validation");
+        return finish(Result::EndFailed, "image failed validation");
     }
-    return Result::Success;
+    return finish(Result::Success, nullptr);
+}
+
+Result Server::finish(Result r, const char* why) {
+    phase_ = Phase::Listening;
+    last_result_ = r;
+    if (on_end_)
+        on_end_(on_end_data_, r);
+
+    if (r != Result::Success) {
+        // Always printed: a silent OTA failure is worse than a noisy one.
+        Serial.print("[OTA] ERROR: ");
+        Serial.println(why);
+        Serial.flush();
+        client_.stop();
+        return r;
+    }
+
+    Serial.println("[OTA] update successful");
+    Serial.flush();
+    client_.println("OK");
+    client_.flush();
+    client_.stop();
+    if (config.reboot_on_success) {
+        Serial.println("[OTA] rebooting into the new image");
+        Serial.flush();
+        delay(500);
+        ESP.restart();
+    }
+    return r;
 }
 
 //-----------------------------------------------------------------------------
