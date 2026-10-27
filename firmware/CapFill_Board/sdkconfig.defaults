@@ -1,0 +1,14 @@
+# CapFill board: ESP32-S3-WROOM-1-N16R2
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Logs/console over the native USB-C port (IO19/IO20)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# W5500 SPI Ethernet breakout
+CONFIG_ETH_USE_SPI_ETHERNET=y
+CONFIG_ETH_SPI_ETHERNET_W5500=y
+
+# Two OTA app slots (see partitions.csv) for Ethernet firmware updates
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
