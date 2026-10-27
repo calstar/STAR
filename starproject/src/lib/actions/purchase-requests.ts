@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { recordActivity } from "@/lib/activity";
 import { BOM_INCLUDE, toBomLine } from "@/lib/bom-data";
 import { prisma } from "@/lib/db";
+import { budgetProblem } from "@/lib/finance/budget";
 import { prTitle } from "@/lib/purchase-request-data";
 import {
   MAX_NOTE,
@@ -20,10 +21,14 @@ import { getCurrentDbUser } from "@/lib/user";
 
 // Purchase requests: any member asks, only a PVP decides. Approving moves every
 // line still Planned to Approved (each logged as a BOM change too); rejecting
-// or cancelling leaves the lines Planned, free to be requested again.
+// or cancelling leaves the lines Planned, free to be requested again. Every
+// request names the subteam and budget line it spends; what is approved counts
+// against that line on the Finance tab and the subteam's Budget page.
 
 function revalidate() {
   revalidatePath("/purchase-requests");
+  revalidatePath("/finance");
+  revalidatePath("/subteams/[id]/budget", "page");
   revalidatePath("/projects/[id]", "page");
   revalidatePath("/activity");
   revalidatePath("/", "layout"); // the sidebar's pending count
@@ -40,11 +45,13 @@ const cleanNote = (note: string | null | undefined) => {
   return v || null;
 };
 
-/** Ask for these BOM lines to be bought. `projectId` is the BOM page it was made from. */
+/** Ask for these BOM lines to be bought. `projectId` is the BOM page it was made
+ * from; `budget` the subteam and the budget line (of this school year) it spends. */
 export async function createPurchaseRequest(
   projectId: string,
   bomItemIds: string[],
-  note?: string | null,
+  note: string | null | undefined,
+  budget: { subteamId: string; budgetLineId: string },
 ): Promise<{ number?: number; error?: string }> {
   const { user } = await actor();
   let text: string | null;
@@ -55,6 +62,11 @@ export async function createPurchaseRequest(
   }
   const project = await prisma.project.findUnique({ where: { id: projectId }, select: { id: true } });
   if (!project) return { error: "Project not found." };
+  const line = budget?.budgetLineId
+    ? await prisma.budgetLine.findUnique({ where: { id: budget.budgetLineId }, select: { subteamId: true, schoolYear: true } })
+    : null;
+  const unbudgeted = budgetProblem(budget?.subteamId, line, budget?.budgetLineId, new Date());
+  if (unbudgeted) return { error: unbudgeted };
 
   const ids = [...new Set(bomItemIds)];
   const rows = await prisma.bomItem.findMany({
@@ -72,7 +84,14 @@ export async function createPurchaseRequest(
 
   const items = rows.map((r, i) => snapshotOf(toBomLine(r), r.project.name, i));
   const created = await prisma.purchaseRequest.create({
-    data: { projectId, note: text, createdById: user.id, items: { create: items } },
+    data: {
+      projectId,
+      note: text,
+      subteamId: budget.subteamId,
+      budgetLineId: budget.budgetLineId,
+      createdById: user.id,
+      items: { create: items },
+    },
     select: { number: true },
   });
   await recordActivity({

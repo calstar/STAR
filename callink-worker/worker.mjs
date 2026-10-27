@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { starproject } from './lib/api.mjs';
-import { RUNS, brief, listAll, log, openSession, sessionAlive, sessionExpiresAt } from './lib/callink.mjs';
+import { accountProbes } from './lib/accounts.mjs';
+import { BASE, ORG, RUNS, SessionExpired, brief, get, getJson, listAll, log, openSession, sessionAlive, sessionExpiresAt } from './lib/callink.mjs';
 import { MaybeFiled, NotFiled, fileRequest } from './lib/file.mjs';
 import { findByTag } from './lib/match.mjs';
 import { scrapeAll } from './lib/scrape.mjs';
@@ -24,7 +25,10 @@ const once = process.argv.includes('--once');
 const POLL_MS = 60_000;
 const EXPIRED_POLL_MS = 5 * 60_000;
 const SCRAPE_EVERY_MS = 24 * 3600_000;
+const ACCOUNTS_EVERY_MS = 3600_000;
 const LOGIN_POLL_MS = 10_000;
+// Receipts someone asked for (MCP), downloaded per check, one at a time; checked every LOGIN_POLL_MS.
+const RECEIPT_BATCH = 25;
 
 // Deployed before it's configured (auto-deploy brings up the whole stack), it waits
 // rather than crash-looping under `restart: unless-stopped`.
@@ -192,22 +196,80 @@ async function scrapeAndPush(ctx) {
   const { records, listedIds, failedIds } = await scrapeAll(ctx, { cached: true });
   const out = await api.pushScrape(records, failedIds.length ? null : listedIds);
   log(`pushed scrape: ${JSON.stringify({ ...out, failed: out.failed.length })}`);
-  saveState({ ...state(), lastScrapeAt: new Date().toISOString() });
+  saveState({ ...state(), lastScrapeAt: new Date().toISOString(), accountProbes: accountProbes(records) });
+  await refreshAccounts(ctx).catch(e => log('account balances failed:', brief(e)));
+}
+
+/** STAR's CalLink balances for the Finance tab: the detail of the newest request on
+ * each account the last scrape saw, plus the newest request overall (a few GETs). */
+async function refreshAccounts(ctx) {
+  const asOf = new Date().toISOString();
+  // Stamped first, so a failure waits an hour like a success instead of retrying each poll.
+  saveState({ ...state(), lastAccountsAt: asOf });
+  const ids = new Set(Object.values(state().accountProbes ?? {}));
+  const [newest] = await listAll(ctx, { limit: 1, quiet: true });
+  if (newest) ids.add(newest.id);
+  const accounts = new Map();
+  for (const id of ids) {
+    const a = (await getJson(ctx, `/api/finance/${ORG}/requests/purchase/${id}/`)).financeAccount;
+    if (a && Number.isInteger(a.id)) accounts.set(a.id, a);
+  }
+  if (accounts.size) {
+    const out = await api.accounts([...accounts.values()], asOf);
+    log(`reported ${accounts.size} CalLink account balance${accounts.size > 1 ? 's' : ''} (${out.updated} updated)`);
+  }
+}
+
+/** Download the imported receipts someone has asked STARProject for (the MCP
+ * get_reimbursement_receipts tool) and hand it the bytes. Only what was asked for:
+ * nothing is downloaded in bulk. Read-only on CalLink, so a dry run does it too.
+ * Returns how many it was offered. */
+async function fetchReceipts(ctx) {
+  const { receipts } = await api.missingReceipts(RECEIPT_BATCH);
+  let got = 0;
+  for (const r of receipts) {
+    if (stopping) break;
+    // Only ever CalLink: the worker's signed-in browser goes nowhere else.
+    if (new URL(r.href).origin !== new URL(BASE).origin) {
+      await api.receiptFailed(r.id, 'not a CalLink address');
+      continue;
+    }
+    const res = await get(ctx, r.href);
+    if (res.status() >= 300 && res.status() < 400) throw new SessionExpired('receipt download');
+    if (res.status() !== 200) {
+      await api.receiptFailed(r.id, `CalLink answered ${res.status()}`);
+      continue;
+    }
+    await api.putReceipt(r.id, await res.body());
+    got++;
+  }
+  if (receipts.length) log(`receipts: downloaded ${got} of ${receipts.length} requested`);
+  return receipts.length;
+}
+
+function receiptsFailed(e) {
+  // Signed out mid-download: stop trying until the main loop sees a live session again.
+  if (e instanceof SessionExpired) sessionOk = false;
+  log('receipt downloads failed:', brief(e));
 }
 
 log(`worker starting (${live ? 'LIVE: files on CalLink' : 'dry run'}${once ? ', one pass' : ''})`);
 await replayJournal();
 let ctx = await openSession();
 let stopping = false;
+let sessionOk = false;
 let wake = () => {};
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; wake(); log(`${sig}: finishing the current step`); });
 const nap = ms => new Promise(res => { const t = setTimeout(res, ms); wake = () => { clearTimeout(t); res(); }; });
-// Wait between polls, but stop waiting the moment we're asked to stop, and answer a
-// sign-in request within seconds (then go round the loop at once to report it).
+// Wait between polls, but stop waiting the moment we're asked to stop, answer a
+// sign-in request within seconds (then go round the loop at once to report it), and
+// bring in receipts someone is waiting on over MCP.
 async function idle(ms) {
   for (const end = Date.now() + ms; !stopping && Date.now() < end; ) {
     await nap(Math.min(LOGIN_POLL_MS, end - Date.now()));
-    if (!stopping && !once && (await loginIfAsked())) return;
+    if (stopping || once) continue;
+    if (await loginIfAsked()) return;
+    if (sessionOk) await fetchReceipts(ctx).catch(receiptsFailed);
   }
 }
 
@@ -215,6 +277,7 @@ try {
   while (!stopping) {
     if (!once) await loginIfAsked();
     const alive = await sessionAlive(ctx).catch(() => false);
+    sessionOk = alive;
     const expires = alive ? await sessionExpiresAt(ctx) : null;
     await api.heartbeat({
       session: alive ? 'ok' : 'expired',
@@ -222,16 +285,27 @@ try {
       lastScrapeAt: state().lastScrapeAt ?? null,
     }).catch(e => log('heartbeat failed:', brief(e)));
     if (!alive) {
-      log('CalLink session expired: press "Sign in to CalLink" on /finance (or run `node session.mjs login`) and approve the Duo push');
+      log('CalLink session expired: press "Sign in to CalLink" on /reimbursements (or run `node session.mjs login`) and approve the Duo push');
       if (once) break;
       await idle(EXPIRED_POLL_MS);
       continue;
     }
 
     const last = state().lastScrapeAt;
-    if (!once && (!last || Date.now() - new Date(last).getTime() > SCRAPE_EVERY_MS)) {
-      await scrapeAndPush(ctx).catch(e => log('scrape failed:', brief(e)));
+    // A state from before account balances has no probes yet: scrape now to find them.
+    if (!once && (!last || !state().accountProbes || Date.now() - new Date(last).getTime() > SCRAPE_EVERY_MS)) {
+      await scrapeAndPush(ctx).catch(e => {
+        log('scrape failed:', brief(e));
+        // Not again every poll: the next try is the nightly one.
+        if (last) saveState({ ...state(), accountProbes: state().accountProbes ?? {} });
+      });
     }
+    const lastAccounts = state().lastAccountsAt;
+    if (!once && (!lastAccounts || Date.now() - new Date(lastAccounts).getTime() > ACCOUNTS_EVERY_MS)) {
+      await refreshAccounts(ctx).catch(e => log('account balances failed:', brief(e)));
+    }
+
+    if (!once) await fetchReceipts(ctx).catch(receiptsFailed);
 
     const claimed = await api.claim().catch(e => { log('claim failed:', brief(e)); return null; });
     if (claimed?.kind === 'reconcile') await reconcile(ctx, claimed.job);

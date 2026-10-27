@@ -32,6 +32,21 @@ export function starproject() {
     /** true once per admin press of "Sign in to CalLink". */
     loginRequested: async () => (await call('GET', '/api/worker/login')).login === true,
     reportLogin: (state, note) => call('POST', '/api/worker/login', { state, note }),
+    /** CalLink's financeAccount objects, as read at `asOf`. */
+    accounts: (accounts, asOf) => call('POST', '/api/worker/accounts', { accounts, asOf }),
+    /** Imported receipts someone asked STARProject for that it doesn't hold yet: { receipts: [{ id, href }] }. */
+    missingReceipts: limit => call('GET', `/api/worker/receipts?limit=${limit}`),
+    /** A receipt's bytes as downloaded from CalLink. */
+    async putReceipt(id, bytes) {
+      const r = await fetch(`${base}/api/worker/receipts/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${WORKER_TOKEN}`, 'content-type': 'application/octet-stream' },
+        body: bytes,
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!r.ok) throw Object.assign(new Error(`PUT receipt ${id} -> ${r.status}: ${(await r.text()).slice(0, 200)}`), { status: r.status });
+    },
+    receiptFailed: (id, error) => call('POST', `/api/worker/receipts/${encodeURIComponent(id)}`, { error }),
     async receipt(url) {
       const r = await fetch(base + url, { headers: { authorization: `Bearer ${WORKER_TOKEN}` }, signal: AbortSignal.timeout(60_000) });
       if (!r.ok) throw new Error(`GET ${url} -> ${r.status}`);
