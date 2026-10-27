@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
-import { deleteTemplate, installStarterTemplates, saveTemplate } from "@/lib/actions/outreach";
-import { TEMPLATE_KINDS, type TemplateKind } from "@/lib/outreach/constants";
+import { deleteTemplate, saveTemplate } from "@/lib/actions/outreach";
+import { seasonOf, TEMPLATE_KINDS, type TemplateKind } from "@/lib/outreach/constants";
 import { MERGE_FIELDS, render } from "@/lib/outreach/merge";
 import type { TemplateRow } from "@/lib/outreach/queries";
 
@@ -14,12 +14,10 @@ import { BTN, BTN_PRIMARY, BTN_SMALL, CARD, INPUT, LABEL, MUTED } from "./ui";
 
 export function TemplatesWorkspace({
   templates,
-  missingStarters,
   senderName,
   senderEmail,
 }: {
   templates: TemplateRow[];
-  missingStarters: number;
   senderName: string;
   senderEmail: string;
 }) {
@@ -44,18 +42,19 @@ export function TemplatesWorkspace({
     setF({ name: t?.name ?? "", kind: (t?.kind ?? "sponsor_cold") as TemplateKind, subject: t?.subject ?? "", body: t?.body ?? "" });
     setMsg(null);
   };
+  // Placeholder values for the preview only; real merges use the CRM's rows.
   const sample = {
-    first_name: "Cindy",
-    last_name: "Pederson",
-    full_name: "Cindy Pederson",
-    email: "dana@example.com",
-    org: "Mechanics Bank",
-    ask: "renewing your $8,330 outreach scholarship",
-    their_deliverables: "$8,330",
-    season: "2026–27",
+    first_name: "Alex",
+    last_name: "Rivera",
+    full_name: "Alex Rivera",
+    email: "alex@example.com",
+    org: "Example Co",
+    ask: "a sponsorship",
+    their_deliverables: "your support",
+    season: seasonOf(new Date()),
     renewal,
-    last_gift: "$150.00",
-    campaign_url: "https://crowdfund.berkeley.edu/project/50508",
+    last_gift: "$100.00",
+    campaign_url: "https://example.com/campaign",
     sender_name: senderName,
     sender_first_name: senderName.split(/\s+/)[0],
     sender_email: senderEmail,
@@ -72,21 +71,6 @@ export function TemplatesWorkspace({
             + New
           </button>
         </div>
-        {missingStarters > 0 && (
-          <button
-            className={`${BTN} mb-2 w-full`}
-            disabled={pending}
-            onClick={() =>
-              start(async () => {
-                const r = await installStarterTemplates();
-                setMsg(r.ok ? `Added ${r.added} starter templates` : r.error);
-                router.refresh();
-              })
-            }
-          >
-            Add {missingStarters} starter templates
-          </button>
-        )}
         <ul className="space-y-0.5">
           {templates.map((t) => (
             <li key={t.id}>

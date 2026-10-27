@@ -240,7 +240,7 @@ function NewDeal({ season, onDone }: { season: string; onDone: () => void }) {
       </label>
       <label className="min-w-64 flex-[2]">
         <span className="mb-1 block text-xs font-medium text-neutral-500">What we&apos;re asking for</span>
-        <input className={INPUT} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="2 GO 3S cameras, $2,000, 50% off fittings…" />
+        <input className={INPUT} value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="2 cameras, $2,000, 50% off parts…" />
       </label>
       <label className="flex items-center gap-1.5 pb-2 text-sm">
         <input type="checkbox" checked={renewal} onChange={(e) => setRenewal(e.target.checked)} /> Returning sponsor

@@ -2,10 +2,9 @@
 // End-to-end check of the outreach CRM's MCP tools against a running app, as a
 // real MCP client. Creates an "[mcp-e2e …]" org, deal, person, list, template
 // and campaign, walks them through every outreach tool, deletes them again, and
-// exits 1 if any check fails. Nothing real is touched except
-// install_outreach_starter_templates (idempotent: it only adds missing ones).
-// add_sponsor_task needs an "Outreach Correspondence" project on the board; the
-// task it files is deleted at the end.
+// exits 1 if any check fails. Nothing real is touched: add_sponsor_task files
+// into a "[mcp-e2e …]" project this run creates on the task board, and the
+// project (with its task) is deleted at the end.
 //
 //   MCP_URL=http://localhost:3100/api/mcp MCP_TOKEN=sp_<admin> \
 //     [MCP_MEMBER_TOKEN=sp_<non-admin>] node scripts/mcp-outreach-e2e.mjs
@@ -65,7 +64,7 @@ const EXPECTED = [
   "schedule_sponsor_follow_up", "add_sponsor_task", "list_outreach_contacts", "get_outreach_contact",
   "save_outreach_contact", "tag_outreach_contacts", "delete_outreach_contacts", "list_outreach_lists",
   "get_outreach_list_emails", "save_outreach_list", "delete_outreach_list", "list_outreach_templates",
-  "save_outreach_template", "delete_outreach_template", "install_outreach_starter_templates", "get_outreach_merge",
+  "save_outreach_template", "delete_outreach_template", "get_outreach_merge",
   "list_outreach_campaigns", "get_outreach_campaign", "save_outreach_campaign", "delete_outreach_campaign",
   "set_outreach_perk_status", "import_outreach_sheet",
 ];
@@ -113,15 +112,19 @@ try {
   check("save_sponsor updates and returns the deal", saved.stage === "committed" && saved.theirDeliverables === "2 transducers");
 
   // "+ Task": one ordinary task on the board, the second click finds it.
-  const task = await must("add_sponsor_task", { dealId: deal.id });
+  const project = await must("create_project", { name: `${TAG} Correspondence` });
+  made.projectId = project.id;
+  const badProject = await call("add_sponsor_task", { dealId: deal.id, projectId: "no-such-project" });
+  check("add_sponsor_task refuses a project that isn't on the board", !badProject.ok, JSON.stringify(badProject));
+  const task = await must("add_sponsor_task", { dealId: deal.id, projectId: project.id });
   made.taskId = task.taskId;
   check("add_sponsor_task files a task", !task.existed && Number.isInteger(task.number), JSON.stringify(task));
-  const taskAgain = await must("add_sponsor_task", { dealId: deal.id });
+  const taskAgain = await must("add_sponsor_task", { dealId: deal.id, projectId: project.id });
   check("a second + Task returns the open one", taskAgain.existed && taskAgain.taskId === task.taskId);
   const onBoard = await call("get_task", { taskId: task.taskId });
   check(
-    "the task sits in Outreach Correspondence, titled for the sponsor",
-    onBoard.ok && /^Correspondence - \[mcp-e2e/.test(onBoard.data?.title ?? "") && /Outreach Correspondence/.test(JSON.stringify(onBoard.data?.project ?? onBoard.data)),
+    "the task sits in the chosen project, titled for the sponsor",
+    onBoard.ok && /^Correspondence - \[mcp-e2e/.test(onBoard.data?.title ?? "") && JSON.stringify(onBoard.data?.project ?? onBoard.data).includes(project.id),
     onBoard.data?.title,
   );
 
@@ -170,8 +173,6 @@ try {
   check("merge for one sponsor addresses its people", mergeDeal[0]?.to?.includes(EMAIL));
   const batch = await must("log_outreach_touches", { touches: [{ kind: "email_sent", contactId: person.contact.id, dealId: deal.id, templateId: tpl.id, subject: m0.subject }] });
   check("log_outreach_touches logs the merge as sent", batch.logged === 1);
-  const starters = await must("install_outreach_starter_templates");
-  check("starter templates install idempotently", typeof starters.added === "number");
 
   // A campaign, a gift imported from a ScaleFunder export, perks.
   const camp = await must("save_outreach_campaign", { name: `${TAG} campaign`, kind: "crowdfunding", goalCents: 100000, endsAt: new Date(Date.now() + 5 * 86_400_000).toISOString() });
@@ -228,6 +229,7 @@ try {
 } finally {
   // Clean up everything this run made.
   if (made.taskId) check("delete_task (the + Task task)", (await call("delete_task", { taskId: made.taskId })).ok);
+  if (made.projectId) check("delete_project (the run's project)", (await call("delete_project", { projectId: made.projectId })).ok);
   if (made.listId) await call("delete_outreach_list", { listId: made.listId });
   if (made.templateId) await call("delete_outreach_template", { templateId: made.templateId });
   if (made.campaignId) check("delete_outreach_campaign", (await call("delete_outreach_campaign", { campaignId: made.campaignId })).ok);

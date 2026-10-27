@@ -29,7 +29,6 @@ import { addDays } from "@/lib/outreach/followups";
 import { IMPORT_PRESETS, parseTags, planImport, planSummary, type ImportOptions, type ImportPlan } from "@/lib/outreach/importer";
 import { resolveSegment } from "@/lib/outreach/queries";
 import { segmentFilterSchema, type SegmentFilter } from "@/lib/outreach/segments";
-import { STARTER_TEMPLATES } from "@/lib/outreach/starter-templates";
 import { sameOrg } from "@/lib/outreach/orgs";
 
 // The outreach CRM's writes. Admins only (requireAdmin on every action): the
@@ -200,12 +199,28 @@ export async function deleteDeal(id: string): Promise<Result> {
   }
 }
 
-/** The task-board project the "Add task" button files into. */
-const OUTREACH_TASK_PROJECT = "Outreach Correspondence";
+/**
+ * Where "+ Task" can file: the task board's own projects and subteams, read
+ * from the same tables the board uses (nothing is named in code).
+ */
+export async function outreachTaskTargets(): Promise<
+  Result<{ projects: { id: string; name: string }[]; subteams: { id: string; name: string }[] }>
+> {
+  try {
+    await requireAdmin();
+    const [projects, subteams] = await Promise.all([
+      prisma.project.findMany({ where: { archived: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+      prisma.subteam.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    ]);
+    return { ok: true, projects, subteams };
+  } catch (e) {
+    return fail(e);
+  }
+}
 
 /**
  * "Add task": put a correspondence task for this sponsor on the task board
- * (the Outreach Correspondence project, assigned to you, due on the deal's
+ * (in the project and subteam you pick, assigned to you, due on the deal's
  * follow-up date). The task is an ordinary task made by createTask, with the
  * same activity entry and assignment email; nothing links it back, so the
  * board and the CRM stay separate. An open task for the same sponsor is
@@ -213,17 +228,19 @@ const OUTREACH_TASK_PROJECT = "Outreach Correspondence";
  */
 export async function createDealTask(
   dealId: string,
-  input: { title?: string | null; dueDate?: string | null } = {},
+  input: { projectId: string; subteamId?: string | null; title?: string | null; dueDate?: string | null },
 ): Promise<Result<{ taskId: string; number: number; existed: boolean }>> {
   try {
     const user = await requireAdmin();
     const deal = await prisma.outreachDeal.findUnique({ where: { id: dealId }, include: { org: true } });
     if (!deal) return { ok: false, error: "No such deal." };
     const project = await prisma.project.findFirst({
-      where: { name: { equals: OUTREACH_TASK_PROJECT, mode: "insensitive" }, archived: false },
-      select: { id: true },
+      where: { id: input.projectId, archived: false },
+      select: { id: true, name: true },
     });
-    if (!project) return { ok: false, error: `There is no "${OUTREACH_TASK_PROJECT}" project on the task board.` };
+    if (!project) return { ok: false, error: "Pick a project on the task board (that one is missing or archived)." };
+    if (input.subteamId && !(await prisma.subteam.findUnique({ where: { id: input.subteamId }, select: { id: true } })))
+      return { ok: false, error: "That subteam no longer exists." };
     const prefix = `Correspondence - ${deal.org.name}`;
     const open = await prisma.task.findFirst({
       where: { projectId: project.id, archived: false, status: { not: "done" }, title: { startsWith: prefix, mode: "insensitive" } },
@@ -232,18 +249,17 @@ export async function createDealTask(
     if (open) return { ok: true, taskId: open.id, number: open.number, existed: true };
     const title = (input.title?.trim() || `${prefix}${deal.ask ? ` (${deal.ask})` : ""}`).slice(0, 300);
     const due = input.dueDate ?? (deal.nextFollowUpAt ? deal.nextFollowUpAt.toISOString().slice(0, 10) : "");
-    const subteam = await prisma.subteam.findFirst({ where: { name: { equals: "Outreach", mode: "insensitive" } }, select: { id: true } });
     const fd = new FormData();
     fd.set("projectId", project.id);
     fd.set("title", title);
     fd.set("description", [deal.ask, deal.theirDeliverables && `They give: ${deal.theirDeliverables}`].filter(Boolean).join("\n"));
     fd.set("assigneeIds", user.id);
-    fd.set("subteamId", subteam?.id ?? "");
+    fd.set("subteamId", input.subteamId ?? "");
     fd.set("dueDate", due);
     const { id } = await createTask(fd);
     const task = await prisma.task.findUniqueOrThrow({ where: { id }, select: { number: true } });
     await prisma.outreachTouch.create({
-      data: { kind: "note", dealId, orgId: deal.orgId, actorId: user.id, note: `Task #${task.number} added to ${OUTREACH_TASK_PROJECT}` },
+      data: { kind: "note", dealId, orgId: deal.orgId, actorId: user.id, note: `Task #${task.number} added to ${project.name}` },
     });
     revalidate();
     return { ok: true, taskId: id, number: task.number, existed: false };
@@ -790,20 +806,6 @@ export async function commitImport(input: ImportInput): Promise<
     );
     revalidate();
     return { ok: true, contactsCreated, contactsUpdated, donations, deals, rejected: p.rejected.length };
-  } catch (e) {
-    return fail(e);
-  }
-}
-
-/** Add any of the starter templates not already here (matched by name). */
-export async function installStarterTemplates(): Promise<Result<{ added: number }>> {
-  try {
-    await requireAdmin();
-    const have = new Set((await prisma.outreachTemplate.findMany({ select: { name: true } })).map((t) => t.name));
-    const missing = STARTER_TEMPLATES.filter((t) => !have.has(t.name));
-    if (missing.length) await prisma.outreachTemplate.createMany({ data: missing });
-    revalidate();
-    return { ok: true, added: missing.length };
   } catch (e) {
     return fail(e);
   }

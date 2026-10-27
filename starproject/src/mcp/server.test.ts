@@ -57,7 +57,6 @@ const ADMIN_ONLY = [
   "delete_outreach_list",
   "save_outreach_template",
   "delete_outreach_template",
-  "install_outreach_starter_templates",
   "set_outreach_perk_status",
 ];
 

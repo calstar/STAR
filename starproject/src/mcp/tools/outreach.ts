@@ -10,7 +10,6 @@ import {
   deleteSegment,
   deleteTemplate,
   deleteTouch,
-  installStarterTemplates,
   logTouches,
   saveTemplate,
   setPerkStatus,
@@ -237,15 +236,18 @@ export const outreachTools: ToolModule = (server) => {
     server,
     "add_sponsor_task",
     {
-      description: `${admin} The sponsor page's "+ Task": put a "Correspondence - <org> (<ask>)" task in the task board's Outreach Correspondence project, assigned to you and due on the deal's follow-up date (or dueDate). If an open task for that sponsor is already there it is returned instead (existed: true). Nothing links the task back to the deal.`,
+      description: `${admin} The sponsor page's "+ Task": put a "Correspondence - <org> (<ask>)" task in the task-board project you name (projectId, from list_projects; optional subteamId from list_subteams), assigned to you and due on the deal's follow-up date (or dueDate). If an open task for that sponsor is already in that project it is returned instead (existed: true). Nothing links the task back to the deal.`,
       inputSchema: {
         dealId: z.string().min(1),
+        projectId: z.string().min(1).describe("The task-board project to file in (list_projects)"),
+        subteamId: z.string().optional().describe("Optional subteam tag (list_subteams)"),
         title: z.string().max(300).optional().describe("Default: Correspondence - <org> (<ask>)"),
         dueDate: z.string().optional().describe("YYYY-MM-DD; default the deal's follow-up date"),
       },
       annotations: WRITE,
     },
-    async ({ dealId, title, dueDate }) => check(await createDealTask(dealId, { title, dueDate })),
+    async ({ dealId, projectId, subteamId, title, dueDate }) =>
+      check(await createDealTask(dealId, { projectId, subteamId, title, dueDate })),
   );
 
   defineTool(
@@ -605,17 +607,6 @@ export const outreachTools: ToolModule = (server) => {
       check(await deleteTemplate(templateId));
       return { deleted: true };
     },
-  );
-
-  defineTool(
-    server,
-    "install_outreach_starter_templates",
-    {
-      description: `${admin} Add whichever of the built-in starter templates (sponsor renewal, cold ask, follow-up, thank-you; crowdfunding ask, final days, thank-you; event) are missing, matched by name.`,
-      inputSchema: {},
-      annotations: IDEMPOTENT_WRITE,
-    },
-    async () => check(await installStarterTemplates()),
   );
 
   defineTool(

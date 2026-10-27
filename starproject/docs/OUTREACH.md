@@ -22,10 +22,19 @@ by its link, so bookmark `/outreach`.
 
 The CRM and the board stay separate. **+ Task** (on a sponsor, or its row on
 Today) files one ordinary task, "Correspondence - <org> (<ask>)", in the
-**Outreach Correspondence** project, assigned to you and due on the deal's
-follow-up date. If an open task for that sponsor is already there you get a
-link to it instead. Nothing links the task back, and the CRM never reads the
-board.
+board project and subteam you pick (the board's own lists; your last pick is
+remembered in your browser), assigned to you and due on the deal's follow-up
+date. If an open task for that sponsor is already in that project you get a
+link to it instead. Nothing links the task back, and apart from that picker
+the CRM never reads the board.
+
+## Data
+
+The CRM ships empty: no sponsors, people, templates or campaigns are built into
+the code. Everything comes in through **Import** (or is typed in) once the site
+is live, and lives in the same Postgres database as the task board: the
+`Outreach*` tables sit next to `Task` and `Project`, and every owner, sender
+and touch points at the board's own `User` rows.
 
 ## A week of outreach
 

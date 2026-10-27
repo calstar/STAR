@@ -1,6 +1,6 @@
 // What the outreach dashboard puts in front of you. The failure it exists for:
 // forty renewal emails sent in two days, most never answered, and nothing that
-// says "it's been ten days, nudge Boeing". Pure: rules over plain rows.
+// says "it's been ten days, nudge them". Pure: rules over plain rows.
 
 import { AWAITING_REPLY, CLOSED_STAGES, DEFAULT_FOLLOW_UP_DAYS, type DealStage } from "./constants";
 

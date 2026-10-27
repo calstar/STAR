@@ -316,12 +316,12 @@ defineTool(server, "archive_task", {
 | `log_outreach_touch` | Record an email sent, reply, form submitted, call, meeting or note; on a deal it moves the stage and resets the follow-up | admins only; write |
 | `delete_outreach_touch` / `delete_outreach_contacts` | Remove a mis-logged touch; delete people with their history | admins only; destructive |
 | `schedule_sponsor_follow_up` | Remind in N days, or clear | admins only; idempotent |
-| `add_sponsor_task` | The sponsor page's + Task: a "Correspondence - <org>" task in Outreach Correspondence, assigned to you; returns the open one if it exists | admins only; write |
+| `add_sponsor_task` | The sponsor page's + Task: a "Correspondence - <org>" task in the board project you pass (`projectId`, optional `subteamId`), assigned to you; returns the open one there if it exists | admins only; write |
 | `list_outreach_contacts` / `get_outreach_contact` | People by segment filter (paged); one person with gifts and history | admins only; read |
 | `save_outreach_contact` / `tag_outreach_contacts` | Create or edit a person (phone normalized to +1…, `gradYear`, `bounced` / `doNotContact`); bulk add/remove tags | admins only; write |
 | `list_outreach_lists` / `get_outreach_list_emails` / `save_outreach_list` | Saved mailing lists with live counts; the addresses a list or filter selects (with a BCC string) and its phone numbers (`phones`, email or not); save one. Filters include `hasPhone` and `gradYearMin`/`gradYearMax` | admins only |
 | `list_outreach_templates` | Email templates with merge fields | admins only; read |
-| `save_outreach_template` / `delete_outreach_template` / `install_outreach_starter_templates` | Write, remove, or add the built-in starter templates | admins only |
+| `save_outreach_template` / `delete_outreach_template` | Write or remove a template | admins only |
 | `log_outreach_touches` | Many touches in one transaction (Compose's Mark sent) | admins only; write |
 | `delete_sponsor` / `delete_outreach_org` / `delete_outreach_list` | Remove a season's deal (and its touches) / an org with all its deals / a saved list | admins only; destructive |
 | `set_outreach_perk_status` | Perk checklist: none / pending / sent | admins only; idempotent |
