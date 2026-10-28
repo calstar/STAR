@@ -69,6 +69,10 @@ add_executable(test_environmental_config test/test_environmental_config.cpp)
 target_link_libraries(test_environmental_config fsw_daq_lib)
 add_test(NAME environmental_config COMMAND test_environmental_config)
 
+add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
+target_link_libraries(test_ball_valve_config fsw_daq_lib)
+add_test(NAME ball_valve_config COMMAND test_ball_valve_config)
+
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include

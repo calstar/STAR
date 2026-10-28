@@ -168,6 +168,7 @@ def actuator_counts_to_volts(data_u32: int) -> float:
         return data_u32 / ACT_ADC_MAX * ACT_ADC_VREF
     return struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[0]
 
+
 # Plotting constants
 DEFAULT_WINDOW_SECONDS = 10.0
 MAX_POINTS = 200000

@@ -86,7 +86,7 @@ export default function BoardsPage() {
     }).catch(() => {});
   }, []);
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
+  const TYPE_ORDER = ['ACTUATOR', 'BALL_VALVE', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
@@ -161,14 +161,15 @@ export default function BoardsPage() {
             return (
               <section key={boardType}>
                 <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-4">
-                  {boardType}
+                  {boardType.replace(/_/g, ' ')}
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {boards.map((b, index) => {
                     const stale = isBoardLiveTelemetryStale(b);
                     const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
+                    // Neither the environmental nor the ball valve firmware sends SELF_TEST.
                     let testStatus: 'Untested' | 'Passed' | 'Failed' | 'Pending' | 'N/A' =
-                      b.type === 'ENVIRONMENTAL' ? 'N/A' : 'Untested';
+                      b.type === 'ENVIRONMENTAL' || b.type === 'BALL_VALVE' ? 'N/A' : 'Untested';
                     if (testStatus !== 'N/A' && testKeys.length > 0) {
                       const anyFail = testKeys.some(k => sensorData[k] === 0);
                       const expected = expectedCountById[b.id] ?? 0;

@@ -12,7 +12,7 @@ import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
 // The validation rules the backend's session-start gate evaluates. Imported rather than
 // re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
 import {
-  parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
+  parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName, ballValveBoardIds,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
 } from '@/lib/config-validation';
 import {
@@ -2320,7 +2320,9 @@ export default function ConfigPage() {
                   // statement of which channels exist. There is no separate count any more.
                   const channels = b.type === 'ACTUATOR'
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
-                    : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
+                    : b.type === 'BALL_VALVE'
+                      ? (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} valve` : null)
+                      : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
                   // The board DECLARES its sensor interface via pt_type — the same key the backend
                   // (isCurrentLoopBoard) and the C++ calibration service read, so there is one
                   // source of truth. There is deliberately no type = "HP_PT": the hardware is
@@ -2404,7 +2406,7 @@ export default function ConfigPage() {
                           (board as any).type,
                           (val) => updateBoard(boardKey, 'type', val),
                           'select',
-                          ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL']
+                          ['PT', 'ACTUATOR', 'BALL_VALVE', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL']
                         )}
                         <div className="space-y-1">
                           {renderField(
@@ -2551,7 +2553,7 @@ export default function ConfigPage() {
                           (val) => updateBoard(boardKey, 'necessary_for_abort', val),
                           'boolean'
                         )}
-                        {(board as any).designated_survivor !== undefined && renderField(
+                        {(board as any).designated_survivor !== undefined && (board as any).type === 'ACTUATOR' && renderField(
                           'Designated survivor (actuator only)',
                           (board as any).designated_survivor,
                           (val) => updateBoard(boardKey, 'designated_survivor', val),
@@ -3020,7 +3022,9 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
-                {Object.entries(config.actuator_roles || {})
+                {(() => {
+                const bvBoards = ballValveBoardIds(config);
+                return Object.entries(config.actuator_roles || {})
                   // File (insertion) order so editing a channel/board/name doesn't move the row.
                   // Re-sorted by board_id then channel only on Save (sortRolesForSave), not mid-edit.
                   .map(([name, value], idx) => {
@@ -3034,6 +3038,9 @@ export default function ConfigPage() {
                   // silently drop the assignment — which would hand the valve back to the
                   // sequencer during a burn without anyone touching that field.
                   const assignment = typeof arr[3] === 'string' ? arr[3] : '';
+                  // A ball valve has no NO/NC (1 opens it on the wire) and is never a PWM output,
+                  // so neither control is offered; its role is always written as NC.
+                  const isBallValve = boardId !== undefined && bvBoards.has(boardId);
                   const writeRole = (t: string, ch: number, b: number | undefined, assign: string) => {
                     const next: any[] = [t, ch];
                     if (b !== undefined) next.push(b);
@@ -3061,6 +3068,15 @@ export default function ConfigPage() {
                       className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                     />
                     <span className="text-text-muted">=</span>
+                    {isBallValve ? (
+                      <span
+                        data-testid={`ball-valve-kind:${name}`}
+                        title="Ball valve: no NO/NC — 1 opens it, 0 closes it"
+                        className="w-[11.5rem] px-3 py-2 text-text-muted"
+                      >
+                        Ball valve
+                      </span>
+                    ) : (
                     <select
                       value={type}
                       onChange={(e) => writeRole(e.target.value, actuatorId, boardId, assignment)}
@@ -3069,22 +3085,30 @@ export default function ConfigPage() {
                       <option value="NO">NO (Normally Open)</option>
                       <option value="NC">NC (Normally Closed)</option>
                     </select>
+                    )}
                     <CommitOnBlurNumber
                       value={actuatorId}
-                      onCommit={(n) => { if (n !== undefined) writeRole(type, n, boardId, assignment); }}
+                      onCommit={(n) => { if (n !== undefined) writeRole(isBallValve ? 'NC' : type, n, boardId, isBallValve ? '' : assignment); }}
                       className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Ch"
                     />
                     <CommitOnBlurNumber
                       value={Number.isFinite(boardId as number) ? (boardId as number) : undefined}
                       allowEmpty
-                      onCommit={(n) => writeRole(type, actuatorId, n, assignment)}
+                      onCommit={(n) => {
+                        // Moving a role onto a ball valve board drops what a ball valve cannot have.
+                        const toBv = n !== undefined && bvBoards.has(n);
+                        writeRole(toBv ? 'NC' : type, actuatorId, n, toBv ? '' : assignment);
+                      }}
                       className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Board ID"
                     />
                     {/* Assigning an actuator here is what hands it to controller_service: the
                         controller resolves its PWM output from this, and the sequencer stops
                         commanding the actuator during a burn so there is one writer. */}
+                    {isBallValve ? (
+                      <span className="w-40 px-3 py-2 text-text-muted">Sequencer</span>
+                    ) : (
                     <select
                       value={assignment}
                       onChange={(e) => writeRole(type, actuatorId, boardId, e.target.value)}
@@ -3096,6 +3120,7 @@ export default function ConfigPage() {
                       <option value="pwm_fuel">Controller: fuel</option>
                       <option value="pwm_ox">Controller: ox</option>
                     </select>
+                    )}
                     <button
                       onClick={() => {
                         const updated = { ...config.actuator_roles };
@@ -3108,7 +3133,8 @@ export default function ConfigPage() {
                     </button>
                   </div>
                   );
-                })}
+                });
+                })()}
                 <button
                   onClick={() => {
                     const updated = { ...config.actuator_roles };

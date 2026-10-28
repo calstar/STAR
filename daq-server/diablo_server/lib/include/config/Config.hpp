@@ -210,7 +210,8 @@ struct StateDef {  // one per [[states]]
 // and the fire-state handoff never engaged on a real rig.
 struct ActuatorRole {
     std::string kind = "NC";  // raw first element; polarity only (NC/NO)
-    bool is_no = false;       // kind == "NO"
+    bool is_no = false;       // kind == "NO"; always false on a ball valve board
+    bool ball_valve = false;  // its board_id names a [boards.*] with type = "BALL_VALVE"
     int channel = 0;
     int board_id = 0;
     std::string controller_role;  // "pwm_fuel" | "pwm_ox"; empty = sequencer-owned
@@ -219,7 +220,7 @@ struct ActuatorRole {
 // One [boards.*] section. Superset of every reader's keys so a single parse serves all binaries.
 struct BoardConfig {
     std::string section;  // e.g. "boards.pt_board" (order/diagnostics)
-    std::string type;     // "PT"/"TC"/"RTD"/"LC"/"ACTUATOR"/"ENCODER" (raw, unquoted)
+    std::string type;     // "PT"/"TC"/"RTD"/"LC"/"ACTUATOR"/"ENCODER"/"BALL_VALVE" (raw, unquoted)
     std::string ip;
     int board_id = -1;  // board_id, with legacy "id" fallback
     bool enabled = true;
@@ -326,6 +327,9 @@ Config load_from_string(const std::string& text);
  * daq_bridge/calibration/sequencer.
  */
 std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> active_boards(const Config& cfg);
+
+/** [boards.*].type string -> kind; anything unrecognised is UNKNOWN. */
+ActiveBoardKind kind_of(const std::string& type_str);
 
 /** Derive PT board 4-20 mA parameters keyed by Elodin slot (mirrors old load_pt_boards()). */
 std::map<uint8_t, PtBoardConfig> pt_boards(const Config& cfg);
