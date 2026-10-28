@@ -21,7 +21,9 @@ export default function SolenoidCharacterizationPage() {
   const ws = getWebSocketClient();
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
-  const { actuators, loading: actuatorsLoading } = useActuatorsFromConfig();
+  const { actuators: configActuators, loading: actuatorsLoading } = useActuatorsFromConfig();
+  // A ball valve board has no PWM: its firmware ignores PWM_ACTUATOR_COMMAND.
+  const actuators = configActuators.filter((a) => !a.ballValve);
   const allSensors = useSensorConfig();
 
   const [actuatorName, setActuatorName] = useState<string>('');

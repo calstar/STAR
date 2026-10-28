@@ -7,8 +7,10 @@ import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { getAliasedSensorRate, useAliasedSensorRate } from '@/lib/aliased-sensor-rate';
 import { getEntityColor } from '@/lib/sensor-colors';
+import { BALL_VALVE_STATUS_NO_SIGNAL } from '@/lib/ball-valve';
 import {
   buildActChannelsFromBoards,
+  buildBallValveChannelsFromBoards,
   buildEncoderDataFromBoards,
   buildLcDataFromBoards,
   buildRtdDataFromBoards,
@@ -303,6 +305,37 @@ function ActRow({ entity: _entity, calEntity, label, color }: { entity: string; 
   );
 }
 
+// ── Ball valve row (4-20 mA position across 100 Ω, 12-bit ADC) ───────────────
+
+function BvRow({ entity, calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
+  const counts = useSensorValue(entity, 'raw_adc_counts');
+  const pct = useSensorValue(calEntity, 'position_pct');
+  const status = useSensorValue(calEntity, 'cal_status');
+  const rate = useAliasedSensorRate(entity, 'raw_adc_counts');
+  // Same conversion as calibration/ValvePosition.hpp: counts / 4095 * 3.3 V / 100 Ω.
+  const ma = counts != null ? (counts / 4095) * 3.3 * 10 : null;
+
+  return (
+    <tr className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+          <span className="text-gray-200 font-sans font-medium text-xs">{label}</span>
+        </div>
+      </td>
+      <td className="px-4 py-2 tabular-nums text-purple-300">{fmtAdc(counts)}</td>
+      <td className="px-4 py-2 tabular-nums text-yellow-400">
+        {fmtMa(ma)} <span className="text-gray-600 text-xs">mA</span>
+      </td>
+      <td className="px-4 py-2 tabular-nums text-green-400">
+        {status === BALL_VALVE_STATUS_NO_SIGNAL ? 'NO SIGNAL'
+          : pct != null && Number.isFinite(pct) ? `${pct.toFixed(1)} %` : '---'}
+      </td>
+      <td className="px-4 py-2 tabular-nums text-cyan-400">{fmtHz(rate)} <span className="text-gray-600 text-xs">Hz</span></td>
+    </tr>
+  );
+}
+
 // ── Encoder row (raw_angle counts → °) ───────────────────────────────────────
 
 function EncRow({ row, color }: { row: EncoderRowConfig; color: string }) {
@@ -401,6 +434,10 @@ export default function SensorInfoPage() {
     { entity: string; calEntity: string; label: string; boardId: number; localCh: number }[]
   >(SENSOR_INFO_DEFAULT_ACT_DATA);
   const [encData, setEncData] = useState<EncoderRowConfig[]>(SENSOR_INFO_DEFAULT_ENCODER_DATA);
+  // No defaults: the table appears only on a rig that configures a ball valve board.
+  const [bvData, setBvData] = useState<
+    { entity: string; calEntity: string; label: string; boardId: number; localCh: number }[]
+  >([]);
 
   const loadChannelConfig = useCallback(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
@@ -422,6 +459,7 @@ export default function SensorInfoPage() {
         if (lc.length) setLcData(lc);
         const act = buildActChannelsFromBoards(boards as Record<string, unknown>);
         if (act.length) setActData(act);
+        setBvData(buildBallValveChannelsFromBoards(boards as Record<string, unknown>));
         const enc = buildEncoderDataFromBoards(boards as Record<string, unknown>, encRoles ?? null);
         if (enc.length) setEncData(enc);
       })
@@ -670,6 +708,25 @@ export default function SensorInfoPage() {
             />
           ))}
         </SensorTable>
+
+        {/* ── Ball valves (BALL_VALVE boards) ─────────────────────────────── */}
+        {bvData.length > 0 && (
+          <SensorTable
+            title="Ball Valves — Position (4-20 mA)"
+            color="#22C55E"
+            headers={['Channel', 'ADC Code', 'Loop', 'Open', 'Frontend Rate']}
+          >
+            {bvData.map((d, i) => (
+              <BvRow
+                key={`${d.boardId}-${d.localCh}`}
+                entity={d.entity}
+                calEntity={d.calEntity}
+                label={d.label}
+                color={SENSE_COLORS[i % SENSE_COLORS.length]}
+              />
+            ))}
+          </SensorTable>
+        )}
 
       </div>
     </main>

@@ -166,6 +166,34 @@ export function buildActChannelsFromBoards(boards: Record<string, unknown>): {
   return out;
 }
 
+/** One row per channel of each enabled BALL_VALVE board: BV<n>.CH<m> raw counts and
+ *  BV<n>_Cal.CH<m> position_pct (its own Elodin namespace, so slot 1 is not ACT1). */
+export function buildBallValveChannelsFromBoards(boards: Record<string, unknown>): {
+  entity: string;
+  calEntity: string;
+  label: string;
+  boardId: number;
+  localCh: number;
+}[] {
+  const out: { entity: string; calEntity: string; label: string; boardId: number; localCh: number }[] = [];
+  for (const board of Object.values(boards)) {
+    const b = board as Record<string, unknown>;
+    if (b.type !== 'BALL_VALVE' || b.enabled === false || typeof b.board_id !== 'number') continue;
+    const bn = elodinSlotFromBoardId(b.board_id);
+    const active: number[] = Array.isArray(b.active_connectors) ? (b.active_connectors as number[]) : [];
+    for (const ch of active) {
+      out.push({
+        entity: `BV${bn}.CH${ch}`,
+        calEntity: `BV${bn}_Cal.CH${ch}`,
+        label: `B${b.board_id} Ch${ch}`,
+        boardId: b.board_id,
+        localCh: ch,
+      });
+    }
+  }
+  return out;
+}
+
 /** Defaults aligned with integration config.toml (tc_board 51, rtd 31, lc 42, act 12/14). */
 export const SENSOR_INFO_DEFAULT_TC_DATA: TcRowConfig[] = [
   { entity: 'TC1.CH2', calEntity: 'TC1_Cal.CH2', label: 'TC Ch2', voltageReference: 0 },
