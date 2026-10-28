@@ -108,6 +108,7 @@ type StreamBudget = 'gui' | 'encoder' | null;
 function streamBudgetFor(high: number, _low: number): StreamBudget {
   if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
   if (high === 0x30 || high === 0x31) return 'gui';
+  if (high === 0x33 || high === 0x34) return 'gui';  // ball valve position
   if (high === 0x24) return 'encoder';
   return null;
 }
@@ -294,6 +295,7 @@ import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdow
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
+import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
 import { countByLevel } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
@@ -449,7 +451,8 @@ function broadcastCommandedActuatorsForState(state: SystemState): void {
 
 // ── Actuator state mismatch detection ────────────────────────────────────────
 
-/** Last-known actuator_state (sensed from [0x31] current-sense) per entity */
+/** Last-known actuator_state per entity: [0x31] current-sense (ACT*), or a ball valve's position
+ *  (BV*, see ball-valve.ts). Absent = not known, which never raises a mismatch. */
 const actuatorSensedState = new Map<string, number>();
 const ACTUATOR_MISMATCH_DELAY_MS = 5000;
 let actuatorMismatchTimer: NodeJS.Timeout | null = null;
@@ -509,6 +512,7 @@ function updateBoard(low: number, payload: Buffer): void {
   else if (boardType === 5) typeStr = 'ACTUATOR';
   else if (boardType === 6 || boardId === 61) typeStr = 'ENCODER';
   else if (boardType === 7) typeStr = 'ENVIRONMENTAL';
+  else if (boardType === 8) typeStr = 'BALL_VALVE';
 
   let status = boardsStatus.get(boardId);
   const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > BOARD_HEARTBEAT_STALE_MS;
@@ -1655,6 +1659,22 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
     for (const parsed of parsedList) {
       if (!Number.isFinite(parsed.value)) continue;
+
+      // A ball valve's sensed state comes from its position [0x34]: open/closed near the ends of
+      // travel, nothing while it travels or its loop is dead (ball-valve.ts).
+      if (parsed.component === 'position_pct') {
+        const sensedEntity = ballValveSensedEntity(parsed.entity);
+        if (sensedEntity) {
+          const status = parsedList.find((p) => p.entity === parsed.entity && p.component === 'cal_status')?.value;
+          const sensed = sensedStateFromPosition(parsed.value, status);
+          const prev = actuatorSensedState.get(sensedEntity);
+          if (sensed === undefined) actuatorSensedState.delete(sensedEntity);
+          else actuatorSensedState.set(sensedEntity, sensed);
+          if (prev !== sensed && activeNotificationKeys.has('actuator_mismatch')) {
+            scheduleActuatorMismatchCheck(currentState);
+          }
+        }
+      }
 
       // Track actuator sensed state [0x31] for mismatch detection
       if (parsed.component === 'actuator_state') {

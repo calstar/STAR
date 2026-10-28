@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import { SystemState } from '../../../shared/types.js';
 import { readConfig } from '../routes/config.js';
 import { csvStateMap } from './state-ids.js';
+import { ballValveBoardIds } from '../ball-valve.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -99,8 +100,12 @@ export interface StateActuatorMap {
  * Map a CSV / role / GUI actuator name to the Elodin [0x32] entity the thin server and parser use.
  * Uses the same board slot rule as FSW: board_id % 10 with 0 → 10.
  */
-/** Resolve role / CSV name → { board slot, local channel } from actuator_roles (same rule as FSW). */
-export function resolveActuatorBoardSlotAndChannel(actuatorName: string): { bn: number; localCh: number } | null {
+/**
+ * Resolve role / CSV name → { board slot, local channel } from actuator_roles (same rule as FSW).
+ * `ballValve`: the role's board is a BALL_VALVE board, whose entities live under BV* rather than
+ * ACT* (its own Elodin namespace, so board 71 and actuator board 11 never share slot 1's keys).
+ */
+export function resolveActuatorBoardSlotAndChannel(actuatorName: string): { bn: number; localCh: number; ballValve: boolean } | null {
   try {
     const config = readConfig();
     const roles = config.actuator_roles as Record<string, unknown[]> | undefined;
@@ -116,24 +121,26 @@ export function resolveActuatorBoardSlotAndChannel(actuatorName: string): { bn: 
     const boardId = entry.length >= 3 && typeof entry[2] === 'number' ? entry[2] : 12;
     const mod = boardId % 10;
     const bn = mod === 0 ? 10 : mod;
-    return { bn, localCh };
+    return { bn, localCh, ballValve: ballValveBoardIds(config).has(boardId) };
   } catch {
     return null;
   }
 }
 
-/** Elodin [0x32] commanded entity — matches sequencer / DatabaseConfig. */
+/** Elodin commanded entity — [0x32] ACT_CMD, or [0x35] BV_CMD for a ball valve. Matches the
+ *  sequencer (ActuatorCommander) and DatabaseConfig. */
 export function resolveActuatorCmdEntity(actuatorName: string): string | null {
   const r = resolveActuatorBoardSlotAndChannel(actuatorName);
   if (!r) return null;
-  return `ACT_CMD.B${r.bn}.CH${r.localCh}`;
+  return `${r.ballValve ? 'BV_CMD' : 'ACT_CMD'}.B${r.bn}.CH${r.localCh}`;
 }
 
-/** Telemetry entity for [0x31] actuator_state — must match elodin-protocol.ts */
+/** Sensed-state entity for the mismatch check: [0x31] actuator_state ACT<n>.CH<m>, or for a ball
+ *  valve BV<n>.CH<m>, which server.ts derives from its position (ball-valve.ts). */
 export function resolveActuatorTelemetryEntity(actuatorName: string): string | null {
   const r = resolveActuatorBoardSlotAndChannel(actuatorName);
   if (!r) return null;
-  return `ACT${r.bn}.CH${r.localCh}`;
+  return `${r.ballValve ? 'BV' : 'ACT'}${r.bn}.CH${r.localCh}`;
 }
 
 export function getActuatorChannel(
