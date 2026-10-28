@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { getApiBaseUrl } from './websocket';
+import { ballValveBoardIds } from './config-validation';
 
 export interface ActuatorFromConfig {
   name: string;
@@ -12,6 +13,8 @@ export interface ActuatorFromConfig {
   channel: number;
   boardId?: number;
   boardIp?: string;
+  /** On a BALL_VALVE board: shows its position (% open / % closed) rather than a current. */
+  ballValve?: boolean;
 }
 
 let cached: ActuatorFromConfig[] | null = null;
@@ -31,13 +34,17 @@ export async function fetchActuatorsFromConfig(): Promise<ActuatorFromConfig[]> 
     const data = await res.json();
     const roles = data?.config?.actuator_roles ?? data?.actuator_roles;
     if (!roles || typeof roles !== 'object') return [];
+    const bvBoards = ballValveBoardIds(data?.config ?? data);
     const list: ActuatorFromConfig[] = Object.entries(roles).map(([name, value]) => {
       const arr = Array.isArray(value) ? value : [];
       // [type, channel] or [type, channel, board_id number] or [type, channel, board_ip string]
       const channel = arr.length >= 2 && typeof arr[1] === 'number' ? arr[1] : 1;
       const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : undefined;
       const boardIp = arr.length >= 3 && typeof arr[2] === 'string' ? arr[2] : undefined;
-      return { name, entity: entityFromName(name), channel, boardId, boardIp };
+      return {
+        name, entity: entityFromName(name), channel, boardId, boardIp,
+        ballValve: boardId != null && bvBoards.has(boardId),
+      };
     });
     return list;
   } catch {
