@@ -563,6 +563,7 @@ int main(int argc, char* argv[]) {
     const auto& env_boards = active_boards[BoardType::ENVIRONMENTAL];
     const auto& lc_boards = active_boards[BoardType::LC];
     const auto& enc_boards = active_boards[BoardType::ENCODER];
+    const auto& bv_boards = active_boards[BoardType::BALL_VALVE];
 
     std::vector<uint8_t> config_board_ids;
     for (const auto& [ip, cfg] : board_map) {
@@ -582,6 +583,9 @@ int main(int argc, char* argv[]) {
         // Register CALIBRATED VTables
         fsw::elodin::DatabaseConfig::register_calibrated_tables(
             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        if (!bv_boards.empty() &&
+            !fsw::elodin::DatabaseConfig::register_ball_valve_tables(elodin_client, bv_boards))
+            std::cerr << "⚠️  Ball valve RAW VTable registration failed" << std::endl;
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
@@ -758,6 +762,9 @@ int main(int argc, char* argv[]) {
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(
                             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
                             act_boards);
+                        if (!bv_boards.empty())
+                            fsw::elodin::DatabaseConfig::register_ball_valve_tables(elodin_client,
+                                                                                    bv_boards);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
                                                                                config_board_ids);
                         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client,
