@@ -34,6 +34,8 @@ export DEV_AUTH_NAME="Your Name"
 
 **Mutations are server actions** in `src/lib/actions/*` (`"use server"`), validated with Zod schemas from `src/lib/validation.ts`, followed by `revalidatePath`. Every mutation appends to the `Activity` model via `recordActivity` (`src/lib/activity.ts`) — an append-only audit log that stores human-readable value strings *at the time of the change*, so history renders correctly even after entities are renamed or deleted. Don't skip activity recording when adding a mutation.
 
+**Outreach CRM** (`/outreach`, `docs/OUTREACH.md`) is the one admin-only area: its `Outreach*` models hold donors' contact details and gifts. Three rules hold it shut: every reader in `src/lib/outreach/queries.ts` calls `adminOnly()` itself, every page returns `null` for a non-admin before loading anything (a layout's gate is not enough: Next renders the page alongside it and ships its data), and every action calls `requireAdmin()`. Outreach mutations do **not** call `recordActivity`, because the Activity feed is team-wide; `OutreachTouch` is their audit trail. Email leaves only as Gmail compose links, never SES. It is a separate tool on purpose: no sidebar link (reached by URL), and the only bridge to the task board is `createDealTask` ("+ Task"), which files an ordinary task through `createTask` in a board project and subteam the user picks (`outreachTaskTargets`) and stores no link back. Keep it that way: no deal↔task foreign keys, no reading the board beyond that picker, and no data in code (no seeded sponsors, templates or project names; everything arrives through Import).
+
 **Inline field edits** go through `src/lib/fieldUpdate.ts:updateField()`, which calls the `updateTask` action directly instead of via a `<form>` — a form action would trigger React 19's automatic post-submit form reset and snap controls back. Follow this pattern for new inline editors.
 
 **Data model notes** (`prisma/schema.prisma`, well-commented — read it first):
@@ -43,6 +45,13 @@ export DEV_AUTH_NAME="Your Name"
 - `boardOrder` is a float for kanban ordering; `archived` hides done tasks from active views. A done task is stamped `completedAt` and stays in the board's Done column (most recently completed first) for `DONE_ON_BOARD_DAYS` (30) before it is only under Archived; the list and timeline never show done tasks. The rules are `onBoard` / `inLists` / `onBoardWhere` in `src/lib/board.ts`.
 
 **MCP server** (`src/app/api/mcp/route.ts`, `src/mcp/`). Streamable HTTP, stateless, one `McpServer` per request. Identity is a personal access token (`ApiToken`, minted under Settings → API tokens or `scripts/mcp-token.mjs`) resolved by `src/lib/apiTokens.ts` and injected with `runAsIdentity` from `src/lib/auth.ts`, so tools call the *real* server actions and get the same audit trail as the UI. Tool modules live in `src/mcp/tools/*.ts`, are listed in `src/mcp/tools/index.ts`, and use `defineTool`/`toFormData` from `_shared.ts`. Every user-facing action in the app should have a tool; a new server action gets a tool in the same PR. `scripts/mcp-smoke.mjs` is a real client for checking it. Docs: `docs/MCP.md`.
+
+**Every change to the platform updates the MCP tools in the same change.** The tools are the agent's copy of the UI and must never drift from it:
+- **Added** a page action, field, filter, server action or rule → add the tool, or the input/output field on the existing one.
+- **Removed** something → remove its tool or field; never leave a tool calling code that's gone or describing behaviour that changed.
+- **Changed** behaviour (validation, permissions, stage rules, defaults, what a read returns) → update the tool's schema, handler and description to match.
+- Then update the tools table in `docs/MCP.md`, and `src/mcp/server.test.ts` (`ADMIN_ONLY` / `DESTRUCTIVE`) when gating or destructiveness changed. If an area has a live script (`scripts/mcp-e2e.mjs`, `scripts/mcp-outreach-e2e.mjs`), extend it and run it against `npm run dev:local`.
+- A change with no MCP impact says so in the PR description ("MCP: no change, UI-only styling") so a reviewer can tell it was considered.
 
 **Email** (`src/lib/mail.ts`) sends via SES and no-ops when `SES_FROM` is unset, so dev/CI never send. Assignment emails are queued (`EmailQueueItem`) and flushed as one email per recipient by cron; `NotifLog` is the idempotency ledger so deadline emails never double-send. The cron endpoints under `src/app/api/cron/*` are POST routes hit by a sidecar container, gated by the `x-cron-secret` header (`CRON_SECRET`).
 
