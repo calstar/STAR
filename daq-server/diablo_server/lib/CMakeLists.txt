@@ -73,6 +73,10 @@ add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
 target_link_libraries(test_ball_valve_config fsw_daq_lib)
 add_test(NAME ball_valve_config COMMAND test_ball_valve_config)
 
+add_executable(test_ball_valve_position test/test_ball_valve_position.cpp)
+target_link_libraries(test_ball_valve_position fsw_daq_lib)
+add_test(NAME ball_valve_position COMMAND test_ball_valve_position)
+
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -202,6 +206,21 @@ add_test(NAME script_positions COMMAND test_script_positions)
 # RUN_SERIAL: binds a fixed UDP port, and every case is a wall-clock measurement that a loaded
 # box would skew.
 set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
+add_executable(test_ball_valve_commander
+    test/test_ball_valve_commander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_include_directories(test_ball_valve_commander PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_ball_valve_commander
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME ball_valve_commander COMMAND test_ball_valve_commander)
+# RUN_SERIAL: binds a fixed UDP port.
+set_tests_properties(ball_valve_commander PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp

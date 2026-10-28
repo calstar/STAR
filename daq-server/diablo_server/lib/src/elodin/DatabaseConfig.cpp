@@ -538,6 +538,78 @@ static bool register_calibration_command_vtable(ElodinClient& client) {
     return true;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PUBLIC API — ball valve boards (0x33 raw, 0x34 calibrated, 0x35 commanded)
+// ════════════════════════════════════════════════════════════════════════════
+
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_raw_tables(
+    const std::vector<BoardChannels>& bv_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, bv_boards, kBallValveRawHi, 0x00);
+    return t;
+}
+
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_calibrated_tables(
+    const std::vector<BoardChannels>& bv_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, bv_boards, kBallValveCalHi, 0x10);
+    return t;
+}
+
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_cmd_tables(
+    const std::vector<BoardChannels>& bv_boards) {
+    std::vector<std::pair<uint8_t, uint8_t>> t;
+    appendTables(t, bv_boards, kBallValveCmdHi, 0x00);
+    return t;
+}
+
+bool DatabaseConfig::register_ball_valve_tables(ElodinClient& client,
+                                                const std::vector<BoardChannels>& bv_boards) {
+    bool ok = true;
+    for (const auto& board : bv_boards)
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "BV" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(kBallValveRawHi) << 8) | lo;
+            ok = register_raw_sensor_vtable(client, kBallValveRawHi, lo, entity_id, entity,
+                                            "raw_adc_counts") &&
+                 ok;
+        }
+    return ok;
+}
+
+bool DatabaseConfig::register_ball_valve_calibrated_tables(
+    ElodinClient& client, const std::vector<BoardChannels>& bv_boards) {
+    bool ok = true;
+    for (const auto& board : bv_boards)
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "BV" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(kBallValveCalHi) << 8) | lo;
+            ok = register_calibrated_vtable(client, kBallValveCalHi, lo, entity_id, entity,
+                                            "position_pct", "raw_adc") &&
+                 ok;
+        }
+    return ok;
+}
+
+bool DatabaseConfig::register_ball_valve_cmd_tables(ElodinClient& client,
+                                                    const std::vector<BoardChannels>& bv_boards) {
+    bool ok = true;
+    for (const auto& board : bv_boards)
+        for (uint8_t ch : board.channels) {
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            std::string entity =
+                "BV_CMD.B" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint64_t entity_id = (static_cast<uint64_t>(kBallValveCmdHi) << 8) | lo;
+            ok = register_actuator_state_vtable(client, kBallValveCmdHi, lo, entity_id, entity) &&
+                 ok;
+        }
+    return ok;
+}
+
 bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client,
                                                 const std::vector<BoardChannels>& act_boards) {
     bool ok = true;

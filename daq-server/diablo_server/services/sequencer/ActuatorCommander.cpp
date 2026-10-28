@@ -14,8 +14,10 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include <tuple>
 
 #include "config/Config.hpp"
+#include "elodin/DatabaseConfig.hpp"
 
 // daqv2comms — all packet construction goes through here
 #include "DiabloPacketUtils.h"
@@ -23,11 +25,11 @@
 
 namespace sequencer {
 
-// ── Actuator commanded state [0x32, ch] — published to Elodin DB ─────────────
+// ── Actuator commanded state [0x32 or 0x35, ch] — published to Elodin DB ─────
 // Layout: u64 timestamp_ns | u8 channel_id | u8 actuator_state = 10 bytes
-// No alignment issue: all post-u64 fields are u8.
+// No alignment issue: all post-u64 fields are u8. The table byte is per role
+// (ActuatorRole::cmd_table_hi): 0x32 ACT_CMD, 0x35 BV_CMD for a ball valve.
 using ActuatorCommandedMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
-static constexpr uint8_t VTABLE_ACT_CMD_HI = 0x32;
 
 /** Elodin low byte for [0x32, lo]: (board_slot - 1) * 0x20 + local_channel; slot = board_id % 10, 0
  * → 10. */
@@ -100,6 +102,10 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
         role.is_pwm = !r.controller_role.empty();
         role.channel = r.channel;
         role.board_id = r.board_id;
+        // A ball valve role is already pass-through (Config forces is_no off); it only differs in
+        // where its commanded state is recorded.
+        if (r.ball_valve)
+            role.cmd_table_hi = fsw::elodin::kBallValveCmdHi;
         auto it = board_id_to_ip.find(r.board_id);
         role.board_ip =
             (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(r.board_id);
@@ -405,6 +411,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         uint8_t hw_state;
         uint8_t global_ch;
         uint8_t logical_pos;
+        uint8_t cmd_table_hi;
     };
     std::vector<PendingCmd> pending;
 
@@ -446,7 +453,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         uint8_t global_ch =
             actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
         pending.push_back({act_name, role.board_ip, static_cast<uint8_t>(role.channel), hw_state,
-                           global_ch, static_cast<uint8_t>(pos)});
+                           global_ch, static_cast<uint8_t>(pos), role.cmd_table_hi});
     }
     lock.unlock();
 
@@ -515,7 +522,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         }
 
         std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>> by_ip;
-        std::vector<std::pair<uint8_t, uint8_t>> logical;
+        std::vector<std::tuple<uint8_t, uint8_t, uint8_t>> logical;  // table_hi, channel, pos
         for (const auto& pc : cmds) {
             uint8_t hw = pc.hw_state;
             uint8_t pos = pc.logical_pos;
@@ -535,7 +542,7 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
                 }
             }
             by_ip[pc.board_ip].emplace_back(pc.channel, hw);
-            logical.emplace_back(pc.global_ch, pos);
+            logical.emplace_back(pc.cmd_table_hi, pc.global_ch, pos);
         }
         if (by_ip.empty())
             return;
@@ -552,8 +559,8 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
             std::cerr << "[ActuatorCommander] UDP send failed for state " << state_name
                       << std::endl;
         }
-        for (const auto& [ch, pos] : logical)
-            publishCommandedState(ch, pos);
+        for (const auto& [hi, ch, pos] : logical)
+            publishCommandedState(hi, ch, pos);
     };
 
     // Stage 0 goes out on this thread, immediately.
@@ -703,7 +710,7 @@ bool ActuatorCommander::sendSingleActuator(const std::string& name, int pos) {
                   << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
         uint8_t global_ch =
             actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
-        publishCommandedState(global_ch, static_cast<uint8_t>(pos));
+        publishCommandedState(role.cmd_table_hi, global_ch, static_cast<uint8_t>(pos));
     }
     return ok;
 }
@@ -785,9 +792,10 @@ void ActuatorCommander::clearAllManualOverrides() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// publishCommandedState — write [0x32, channel_id] to Elodin DB
+// publishCommandedState — write [0x32 or 0x35, channel_id] to Elodin DB
 // ─────────────────────────────────────────────────────────────────────────────
-void ActuatorCommander::publishCommandedState(uint8_t channel_id, uint8_t logical_pos) {
+void ActuatorCommander::publishCommandedState(uint8_t table_hi, uint8_t channel_id,
+                                              uint8_t logical_pos) {
     if (!elodin_ || !elodin_->is_connected())
         return;
 
@@ -796,7 +804,7 @@ void ActuatorCommander::publishCommandedState(uint8_t channel_id, uint8_t logica
                                            .count());
 
     ActuatorCommandedMsg msg(ts_ns, channel_id, logical_pos);
-    std::array<uint8_t, 2> table_id = {VTABLE_ACT_CMD_HI, channel_id};
+    std::array<uint8_t, 2> table_id = {table_hi, channel_id};
     elodin_->publish(table_id, msg);
 }
 
@@ -812,7 +820,7 @@ void ActuatorCommander::publishInitialState() {
         uint8_t logical_pos = role.is_no ? 1 : 0;
         uint8_t global_ch =
             actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
-        publishCommandedState(global_ch, logical_pos);
+        publishCommandedState(role.cmd_table_hi, global_ch, logical_pos);
     }
     std::cout << "[ActuatorCommander] Published initial state for " << roles_.size()
               << " actuators to Elodin DB" << std::endl;

@@ -52,6 +52,7 @@
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
+#include "calibration/ValvePosition.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "config/Config.hpp"
@@ -710,6 +711,7 @@ int main(int argc, char* argv[]) {
     std::vector<BoardChannels> lc_boards = boards_of(fsw::config::ActiveBoardKind::LC);
     std::vector<BoardChannels> enc_boards = boards_of(fsw::config::ActiveBoardKind::ENCODER);
     std::vector<BoardChannels> act_boards = boards_of(fsw::config::ActiveBoardKind::ACTUATOR);
+    std::vector<BoardChannels> bv_boards = boards_of(fsw::config::ActiveBoardKind::BALL_VALVE);
 
     // Per-PT-board sensor interface and 4-20 mA conversion parameters, keyed by Elodin slot.
     // board_simulator.py back-calculates i_ma from the target PSI and sends valid 4-20 mA ADC
@@ -1339,19 +1341,34 @@ int main(int argc, char* argv[]) {
     // Single ElodinClient for both subscribe (read) and publish (write)
     fsw::elodin::ElodinClient elodin_client;
 
+    // Every table this service writes, and every raw table it calibrates (ball valves have their
+    // own type_hi bytes, so they sit beside the six sensor kinds rather than among them).
+    auto register_calibrated = [&]() {
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        if (!bv_boards.empty())
+            fsw::elodin::DatabaseConfig::register_ball_valve_calibrated_tables(elodin_client,
+                                                                               bv_boards);
+    };
+    auto raw_tables = [&]() {
+        auto t = fsw::elodin::raw_sensor_tables(pt_boards, act_boards, tc_boards, rtd_boards,
+                                                lc_boards, enc_boards);
+        const auto bv = fsw::elodin::ball_valve_raw_tables(bv_boards);
+        t.insert(t.end(), bv.begin(), bv.end());
+        return t;
+    };
+
     auto connect_and_register = [&]() -> bool {
         if (!elodin_client.connect(elodin_host, elodin_port)) {
             std::cerr << "[Cal] Failed to connect to Elodin at " << elodin_host << ":"
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(
-            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        register_calibrated();
         // The raw sensor tables this service calibrates, built from the boards actually in
         // config. This used to be subscribe_stream(), which guessed boards 1-8 x channels 1-10
         // and sent 481 subscribe messages regardless of the rig.
-        if (!elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards))) {
+        if (!elodin_client.subscribe_tables(raw_tables())) {
             std::cerr << "[Cal] Failed to subscribe to raw sensor tables" << std::endl;
             return false;
         }
@@ -1389,11 +1406,8 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(
-                    elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
-                    act_boards);
-                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
+                register_calibrated();
+                elodin_client.subscribe_tables(raw_tables());
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
                 elodin_client.set_recv_timeout_ms(3000);
                 last_resubscribe = std::chrono::steady_clock::now();
@@ -1418,8 +1432,7 @@ int main(int argc, char* argv[]) {
             if (since_pkt >= 5 && since_sub >= 5) {
                 std::cout << "[Cal] No packets for " << since_pkt
                           << "s — re-subscribing to raw streams" << std::endl;
-                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
+                elodin_client.subscribe_tables(raw_tables());
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
                 last_resubscribe = now_s;
             }
@@ -1637,7 +1650,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30)
+        if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30 &&
+            type_hi != fsw::elodin::kBallValveRawHi)
             continue;
         // Within each 32-slot block: raw = offset 0x01-0x0A, cal = offset 0x11-0x1A
         // Check if this is a calibrated packet (our own output) by testing if
@@ -1830,6 +1844,13 @@ int main(int argc, char* argv[]) {
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a),
                 adc_u32, cal_status);
             elodin_client.publish(static_cast<uint16_t>((0x31 << 8) | cal_lo), cal_msg);
+        } else if (type_hi == fsw::elodin::kBallValveRawHi) {  // Ball valve position (4-20 mA)
+            const auto pos = fsw::calibration::valve_position::from_counts(adc_u32);
+            comms::messages::sensor::CalibratedValvePositionMessage cal_msg(
+                ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, pos.percent_open, adc_u32,
+                pos.status);
+            elodin_client.publish(
+                static_cast<uint16_t>((fsw::elodin::kBallValveCalHi << 8) | cal_lo), cal_msg);
         }
 
         elodin_client.flush_batch();

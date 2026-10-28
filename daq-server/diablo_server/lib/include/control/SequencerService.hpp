@@ -271,6 +271,7 @@ private:
     // Actuator boards as they were at init(). Held so an Elodin reconnect can re-register the
     // VTables without re-reading config.toml — config is frozen for the life of a run.
     std::vector<fsw::elodin::BoardChannels> actuator_boards_;
+    std::vector<fsw::elodin::BoardChannels> ball_valve_boards_;  // BV_CMD [0x35] tables
 
     // Elodin connection retry. sensor-actuator.service is started alongside sensor-elodin, so the
     // first connect can lose the race by milliseconds; without this the service runs forever with
