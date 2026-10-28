@@ -23,6 +23,7 @@ except ModuleNotFoundError:
 
 # DiabloAvionics Packet Types (DAQv2-Comms DiabloEnums.h)
 PACKET_TYPE_HEARTBEAT = 1
+PACKET_TYPE_SERVER_HEARTBEAT = 2
 PACKET_TYPE_SENSOR_DATA = 3
 PACKET_TYPE_ACTUATOR_COMMAND = 4
 PACKET_TYPE_SENSOR_CONFIG = 5
@@ -41,6 +42,13 @@ BOARD_TYPE_LC = 2
 BOARD_TYPE_RTD = 3
 BOARD_TYPE_TC = 4
 BOARD_TYPE_ACTUATOR = 5
+BOARD_TYPE_BALL_VALVE = 8
+
+# Motorized ball valve (firmware/Hotfire_Code/BallValve_Hotfire): position is a 4-20 mA loop across
+# 100 ohm into a 12-bit, 3.3 V ADC; the valve opens itself 5 s after server heartbeats stop.
+BALL_VALVE_TRAVEL_S = 3.0  # full stroke, either direction
+BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5.0
+BALL_VALVE_SAFE_STATE = 1  # open
 
 
 class TimingPathology:
@@ -140,6 +148,7 @@ class SimulatedBoard:
             # Diablo::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
             "ENCODER": 0,
             "ENVIRONMENTAL": 7,
+            "BALL_VALVE": BOARD_TYPE_BALL_VALVE,
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
@@ -175,6 +184,12 @@ class SimulatedBoard:
         # once the pipeline is ready. (Same idea as board_startup_sim's send burst.)
         self._selftest_resend_until = 0.0  # wall-clock deadline; 0 = not arming
         self._selftest_last_resend = 0.0
+
+        # Ball valve: commanded state and simulated position (% open) per connector. Boots closed.
+        self.valve_target = {ch: 0 for ch in self.active_connectors}
+        self.valve_pos = {ch: 0.0 for ch in self.active_connectors}
+        self._valve_last_step = time.time()
+        self._last_server_heartbeat = None  # wall clock of the last SERVER_HEARTBEAT heard
 
         self.running = False
         self.sock = None
@@ -305,10 +320,13 @@ class SimulatedBoard:
                 if self.can_receive:
                     self._check_for_sensor_config()
 
+            if self.board_type == BOARD_TYPE_BALL_VALVE:
+                self._step_ball_valve(now)
+
             # --- skip-startup: no CONFIG, so emit one SELF_TEST pass burst (DAQ→Elodin→thin→WS) ---
             if (
                 self.skip_startup
-                and self.board_type_str != "ENVIRONMENTAL"
+                and self.board_type_str not in ("ENVIRONMENTAL", "BALL_VALVE")
                 and self.board_state == BOARD_STATE_ACTIVE
                 and not self._skip_startup_self_test_sent
                 and now - run_started >= 2.0
@@ -363,6 +381,11 @@ class SimulatedBoard:
             data, addr = self.sock.recvfrom(4096)
             if data and len(data) >= 1 and data[0] in (PACKET_TYPE_SENSOR_CONFIG, PACKET_TYPE_ACTUATOR_CONFIG):
                 pkt_name = "ACTUATOR_CONFIG" if data[0] == PACKET_TYPE_ACTUATOR_CONFIG else "SENSOR_CONFIG"
+                if self.board_type == BOARD_TYPE_BALL_VALVE:
+                    # The ball valve firmware sends no SELF_TEST; config only sets its log mode.
+                    self.board_state = BOARD_STATE_ACTIVE
+                    print(f"[{self.name}] {pkt_name} received from {addr}, ACTIVE", flush=True)
+                    return
                 print(
                     f"[{self.name}] {pkt_name} received from {addr}, running self-test",
                     flush=True,
@@ -378,6 +401,55 @@ class SimulatedBoard:
                 )
         except (BlockingIOError, socket.timeout, OSError):
             pass
+
+    def _step_ball_valve(self, now):
+        """Read server heartbeats and actuator commands, apply the firmware's failsafe, and move
+        each valve toward its command at BALL_VALVE_TRAVEL_S per full stroke.
+
+        Like the firmware, CLOSE is refused while server heartbeats are not current, and the valve
+        opens itself 5 s after they stop. Unlike it, the gating only starts once a heartbeat has
+        been heard: a sim stack on loopback may never deliver the broadcast heartbeat, and a valve
+        that could never be closed would make the sim useless for exercising state transitions.
+        """
+        if self.board_state == BOARD_STATE_ACTIVE and self.can_receive:
+            while True:
+                try:
+                    data, _addr = self.sock.recvfrom(4096)
+                except (BlockingIOError, socket.timeout, OSError):
+                    break
+                if not data:
+                    continue
+                if data[0] == PACKET_TYPE_SERVER_HEARTBEAT:
+                    self._last_server_heartbeat = now
+                elif data[0] == PACKET_TYPE_ACTUATOR_COMMAND and len(data) >= 7:
+                    n = data[6]
+                    for i in range(n):
+                        off = 7 + 2 * i
+                        if off + 2 > len(data):
+                            break
+                        aid, state = data[off], 1 if data[off + 1] else 0
+                        if aid not in self.valve_target:
+                            continue
+                        hb_current = self._last_server_heartbeat is None or (
+                            now - self._last_server_heartbeat <= BALL_VALVE_HEARTBEAT_TIMEOUT_S
+                        )
+                        if state == BALL_VALVE_SAFE_STATE or hb_current:
+                            self.valve_target[aid] = state
+
+        if (
+            self._last_server_heartbeat is not None
+            and now - self._last_server_heartbeat > BALL_VALVE_HEARTBEAT_TIMEOUT_S
+        ):
+            for ch in self.valve_target:
+                self.valve_target[ch] = BALL_VALVE_SAFE_STATE
+
+        dt = max(0.0, now - self._valve_last_step)
+        self._valve_last_step = now
+        step = 100.0 * dt / BALL_VALVE_TRAVEL_S
+        for ch, target in self.valve_target.items():
+            goal = 100.0 if target else 0.0
+            pos = self.valve_pos[ch]
+            self.valve_pos[ch] = min(goal, pos + step) if goal > pos else max(goal, pos - step)
 
     def _send_self_test(self):
         """Send SELF_TEST packet with pass results for all active connectors.
@@ -543,6 +615,13 @@ class SimulatedBoard:
             base = int(wave * 2500)  # 0-2500 counts ≈ 0-2.0A
             noise = 0 if self.low_noise else random.randint(-5, 5)
             return max(0, min(base + noise, 4095))
+
+        elif self.board_type == BOARD_TYPE_BALL_VALVE:
+            # 4-20 mA position across 100 ohm into a 12-bit, 3.3 V ADC (calibration/ValvePosition.hpp).
+            ma = 4.0 + 16.0 * self.valve_pos.get(sensor_id, 0.0) / 100.0
+            counts = int(round(ma / 1000.0 * 100.0 / 3.3 * 4095.0))
+            noise = 0 if self.low_noise else random.randint(-2, 2)
+            return max(0, min(counts + noise, 4095))
 
         elif self.board_type_str == "ENCODER":
             # Deterministic encoder-ish counts for Elodin raw path (signed-friendly magnitude)

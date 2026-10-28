@@ -1,5 +1,22 @@
 # Plan: motorized ball valve board in daq-server
 
+## Status (2026-10-28): built
+
+All seven phases below are in. Where the build departs from the plan:
+
+- **No CLOSE-in-abort warning.** Every validation issue gates session start, and a ball valve
+  that should close in an abort is a legitimate config, so the warning would fire on correct
+  configs. The ball valve rules are errors only: NO, or a PWM assignment, on a ball valve role.
+- **Thresholds are constants, not config fields:** open >= 95 %, closed <= 5 %
+  (`backend/src/ball-valve.ts`).
+- **No role in any profile, and the board stays disabled everywhere** — including
+  `config_base.toml`, which the integration test runs from. Enabling it is: `enabled = true`, a
+  role such as `"Main Ball Valve" = ["NC", 1, 71]`, and a row in both state CSVs.
+- **config_broadcast's abort-list filter has no unit test** (`buildPackets` reads files); the
+  `ball_valve` flag it reads is covered by `lib/test/test_ball_valve_config.cpp`.
+- **The simulator** gates CLOSE on heartbeats only once one has been heard, so a loopback sim
+  stack that never delivers the broadcast heartbeat can still close it.
+
 Firmware: `firmware/Hotfire_Code/BallValve_Hotfire` (board 71). One valve per
 board today, a second later.
 

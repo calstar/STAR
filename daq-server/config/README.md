@@ -49,6 +49,14 @@ has no reservation yet and will pull a dynamic-pool address — read its MAC fro
 the lease table, fill it in here, and run `deploy/dhcp/reload_dhcp.sh`. The IP is
 handed out unchanged, so filling in `mac` never renumbers a board.
 
+### Ball valve boards
+
+A motorized ball valve board is `type = "BALL_VALVE"` (`[boards.ball_valve_board]`, board_id 71,
+disabled until it is on the stand). Its valve is named in `[actuator_roles]` like any actuator —
+`"Main Ball Valve" = ["NC", 1, 71]` — and needs a row in each state CSV. Ball valves have no NO/NC;
+the GUI shows their position (% open / % closed) instead of a current. Board 71 shares slot 1 with
+actuator board 11 but has its own Elodin namespace (0x33-0x35), so the two never collide.
+
 ## Ports (from `config.toml`)
 
 - `5006` — sensor data (boards → bridge)

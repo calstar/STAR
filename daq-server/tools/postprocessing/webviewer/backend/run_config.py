@@ -75,6 +75,7 @@ _ENTITY_PREFIX = {
 _BOARD_TYPE_LABEL = {
     "PT": "PT",
     "ACTUATOR": "Actuator",
+    "BALL_VALVE": "Ball Valve",
     "LC": "LC",
     "TC": "TC",
     "RTD": "RTD",
@@ -151,12 +152,24 @@ def entity_labels(cfg: dict) -> dict[str, str]:
     # Actuators: [actuator_roles] is role = [NO|NC, channel, board_id]. It wins over any
     # sensor role on the same channel — on an actuator board the valve IS the channel.
     # board_id defaults to 11 (the first actuator board), as sensor-config.ts does.
+    # A role on a BALL_VALVE board is recorded under its own namespace (DatabaseConfig.cpp):
+    # BV<n>.CH<c> position counts, BV<n>_Cal.CH<c> % open, BV_CMD.B<n>.CH<c> commanded.
+    ball_valve_ids = {
+        b.get("board_id")
+        for b in boards.values()
+        if isinstance(b, dict) and b.get("type") == "BALL_VALVE"
+    }
     for role, spec in (cfg.get("actuator_roles") or {}).items():
         if not isinstance(spec, list) or len(spec) < 2 or not isinstance(spec[1], int):
             continue
         ch = spec[1]
         board_id = spec[2] if len(spec) >= 3 and isinstance(spec[2], int) else 11
         n = _slot(board_id)
+        if board_id in ball_valve_ids:
+            labels[f"BV{n}.CH{ch}"] = role
+            labels[f"BV{n}_Cal.CH{ch}"] = role  # its position, % open
+            labels[f"BV_CMD.B{n}.CH{ch}"] = role
+            continue
         labels[f"ACT{n}.CH{ch}"] = role
         labels[f"ACT{n}_Cal.CH{ch}"] = role  # current sense on that valve
         labels[f"ACT_CMD.B{n}.CH{ch}"] = role  # what the sequencer commanded it to
