@@ -342,6 +342,25 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# Motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). Commanded like an
+# actuator through [actuator_roles] -- ["NC", 1, 71]; a ball valve has no NO/NC -- and streams the
+# valve position (4-20 mA) instead of a current sense. It opens the valve itself 5 s after server
+# heartbeats stop, and is left out of the abort lists sent to actuator boards.
+# Disabled until the board is on the stand; fill `mac` from its serial log for a DHCP lease.
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+ip = "192.168.2.71"
+mac = ""
+send_port = 5005
+listen_port = 5005
+board_id = 71
+enabled = false
+enable_serial_printing = 0
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1 ]
+
 # Stacklight board: add to the board registry once it has a real IP / MAC.
 # (Kept out for now: it has no simulator, so the GUI would list it as DISCONNECTED,
 # and the config tests need an active_connectors list on every registered board.)

@@ -54,6 +54,7 @@ def actuator_counts_to_volts(data_u32: int) -> float:
         return data_u32 / ACT_ADC_MAX * ACT_ADC_VREF
     return struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[0]
 
+
 ACTUATOR_COMMAND_PACKET_FORMAT = "<B"
 ACTUATOR_COMMAND_PACKET_SIZE = 1
 ACTUATOR_COMMAND_FORMAT = "<BB"

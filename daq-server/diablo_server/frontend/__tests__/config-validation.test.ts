@@ -320,6 +320,59 @@ describe('roles vs active_connectors', () => {
   });
 });
 
+// A motorized ball valve board is commanded through [actuator_roles] like any actuator, but it has
+// no NO/NC (1 opens it on the wire) and is never a PWM output.
+describe('ball valve boards', () => {
+  const withValve = (role: unknown[]) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.ball_valve_board = {
+      type: 'BALL_VALVE', board_id: 71, enabled: true, ip: '192.0.2.71', active_connectors: [1],
+    };
+    cfg.actuator_roles['Main Ball Valve'] = role;
+    const csv = cleanCsv();
+    csv.actuators += '\nMain Ball Valve,CLOSE,CLOSE,OPEN';
+    csv.delays += '\nMain Ball Valve,0,0,0';
+    return { cfg, csv };
+  };
+
+  it('a ball valve role marked NC raises nothing', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    expect(validateConfigForRun(cfg, csv)).toEqual([]);
+  });
+
+  it('refuses NO on a ball valve role — the sequencer would invert it on the wire', () => {
+    const { cfg, csv } = withValve(['NO', 1, 71]);
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/NO\/NC/);
+  });
+
+  it('refuses a PWM assignment on a ball valve role', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71, 'pwm_fuel']);
+    const issues = validateConfigForRun(cfg, csv);
+    expect(issues.some((i) => i.level === 'error' && i.message.includes('not a PWM output'))).toBe(true);
+  });
+
+  it('still lets an ACTUATOR role be NO', () => {
+    // cleanConfig's LOX Press is ["NO", 8, 12, ...] on an ACTUATOR board.
+    expect(messages(validateConfigForRun(cleanConfig(), cleanCsv()))).not.toMatch(/NO\/NC/);
+  });
+
+  it('does not judge a ball valve board by the sensor-role map', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.ball_valve_board.active_connectors = [];
+    expect(validateConfigForRun(cfg, csv).some((i) => i.message.includes('ball_valve_board'))).toBe(false);
+  });
+
+  it('does not report slot 1 as shared with an actuator board on board_id 11', () => {
+    // Its own Elodin namespace (0x33-0x35), so board 71 and actuator board 11 never merge.
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.act_11 = { type: 'ACTUATOR', board_id: 11, enabled: true, ip: '192.0.2.11' };
+    expect(validateConfigForRun(cfg, csv).some((i) => i.page === 'boards')).toBe(false);
+  });
+});
+
 /**
  * Dynamic states.
  *
