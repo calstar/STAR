@@ -38,6 +38,22 @@ SENSOR_DATA_CHUNK_SIZE = 4
 SENSOR_DATAPOINT_FORMAT = "<BI"
 SENSOR_DATAPOINT_SIZE = 5
 
+# Actuator current sense: raw 12-bit ESP32 ADC counts, 3.3 V full scale.
+ACT_ADC_MAX = 4095
+ACT_ADC_VREF = 3.3
+
+
+def actuator_counts_to_volts(data_u32: int) -> float:
+    """Actuator current-sense datapoint -> volts.
+
+    Boards send raw 12-bit counts (<= 4095). Firmware from before that sent
+    float volts as bits; any nonzero voltage float encodes far above 4095, so
+    those are still read as floats until every board is reflashed.
+    """
+    if data_u32 <= ACT_ADC_MAX:
+        return data_u32 / ACT_ADC_MAX * ACT_ADC_VREF
+    return struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[0]
+
 ACTUATOR_COMMAND_PACKET_FORMAT = "<B"
 ACTUATOR_COMMAND_PACKET_SIZE = 1
 ACTUATOR_COMMAND_FORMAT = "<BB"
@@ -640,12 +656,7 @@ class ActuatorTestingWindow(QtWidgets.QMainWindow):
             else:
                 continue
 
-            try:
-                voltage = struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[
-                    0
-                ]
-            except struct.error:
-                continue
+            voltage = actuator_counts_to_volts(data_u32)
 
             hist = self.voltage_history[actuator_id]
             hist.append((t_rel, float(voltage)))
