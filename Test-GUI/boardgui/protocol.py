@@ -232,18 +232,40 @@ def raw_to_voltage(raw_u32: int, ref_voltage: float) -> float:
 
 
 def raw_to_float(raw_u32: int) -> float:
-    """Reinterpret a u32 as an IEEE-754 float (actuator current-sense volts).
+    """Reinterpret a u32 as an IEEE-754 float.
 
-    The actuator board memcpy()s a float voltage into the u32 datapoint field
-    (see Actuator_Hotfire readCurrentSensePinsAndSend), unlike the sense
-    boards which send signed ADC codes.
+    Actuator firmware from before raw counts memcpy()d float volts into the
+    u32 datapoint field; act_raw_to_voltage still reads those.
     """
     return struct.unpack("<f", struct.pack("<I", raw_u32 & 0xFFFFFFFF))[0]
 
 
 def float_to_raw(value: float) -> int:
-    """Inverse of raw_to_float (used by the demo actuator board)."""
+    """Inverse of raw_to_float."""
     return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
+# Actuator current sense: raw 12-bit ESP32 ADC counts, 3.3 V full scale
+# (Actuator_Hotfire readCurrentSensePinsAndSend; what daq_bridge and
+# calibration_service read).
+ACT_ADC_MAX = 4095
+ACT_ADC_VREF = 3.3
+
+
+def act_raw_to_voltage(raw_u32: int) -> float:
+    """Actuator current-sense datapoint -> volts.
+
+    Counts are <= 4095. Older firmware sent float volts as bits; any nonzero
+    voltage float encodes far above 4095, so those still decode as floats.
+    """
+    if raw_u32 <= ACT_ADC_MAX:
+        return raw_u32 * ACT_ADC_VREF / ACT_ADC_MAX
+    return raw_to_float(raw_u32)
+
+
+def act_voltage_to_raw(volts: float) -> int:
+    """Volts -> 12-bit counts, as the firmware's analogRead() reports them."""
+    return max(0, min(ACT_ADC_MAX, round(volts / ACT_ADC_VREF * ACT_ADC_MAX)))
 
 
 def ip_str_to_u32(ip: str) -> int:
@@ -714,8 +736,13 @@ def _self_test() -> None:
     assert pc.abort_pts[0].pressure_threshold_adc == 123456
     assert pc.enable_serial_printing is True
 
-    # --- float-encoded datapoints (actuator current sense) ----------------
+    # --- actuator current sense: 12-bit counts, legacy float bits ----------
     assert abs(raw_to_float(float_to_raw(1.234)) - 1.234) < 1e-6
+    assert act_voltage_to_raw(1.2) == 1489
+    assert abs(act_raw_to_voltage(1489) - 1.2) < 1e-3
+    assert act_raw_to_voltage(0) == 0.0 and act_raw_to_voltage(4095) == ACT_ADC_VREF
+    assert abs(act_raw_to_voltage(float_to_raw(1.234)) - 1.234) < 1e-6  # old firmware
+    assert act_voltage_to_raw(-1.0) == 0 and act_voltage_to_raw(9.9) == ACT_ADC_MAX
     assert ip_str_to_u32("192.168.2.20") == ((192 << 24) | (168 << 16) | (2 << 8) | 20)
     assert u32_to_ip_str(ip_str_to_u32("10.0.0.1")) == "10.0.0.1"
 

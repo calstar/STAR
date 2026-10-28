@@ -7,7 +7,7 @@ It behaves like the real firmware's UDP side (Actuator_Hotfire/src/main.cpp):
   * listens for SERVER_HEARTBEAT / ACTUATOR_CONFIG / ACTUATOR_COMMAND /
     PWM_ACTUATOR_COMMAND / ABORT / CLEAR_ABORT,
   * once Active: streams SENSOR_DATA at 10 Hz — one chunk of per-actuator
-    current-sense voltages, IEEE-754 float encoded in the u32 datapoint field
+    current-sense readings as raw 12-bit ADC counts in the u32 datapoint field
     exactly like readCurrentSensePinsAndSend(). An actuator that is ON draws
     ~1.5 V of "current"; OFF sits near 0 V — so toggling in the GUI visibly
     moves the plot.
@@ -82,12 +82,12 @@ class SimActuator:
 
 
 def build_sensor_data(actuators: Dict[int, SimActuator], board_ms: int) -> bytes:
-    """One chunk, all channels, float volts in the u32 field (firmware-alike)."""
+    """One chunk, all channels, 12-bit ADC counts in the u32 field (firmware-alike)."""
     now = time.time()
     body = bytearray(struct.pack(protocol.SENSOR_DATA_HEADER_FORMAT, 1, len(actuators)))
     body += struct.pack(protocol.SENSOR_DATA_CHUNK_FORMAT, board_ms & 0xFFFFFFFF)
     for aid in sorted(actuators):
-        raw = protocol.float_to_raw(actuators[aid].volts(now))
+        raw = protocol.act_voltage_to_raw(actuators[aid].volts(now))
         body += struct.pack(protocol.SENSOR_DATAPOINT_FORMAT, aid, raw)
     return protocol._make_header(protocol.PacketType.SENSOR_DATA, board_ms) + bytes(body)
 
