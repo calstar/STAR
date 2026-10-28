@@ -62,6 +62,8 @@ _UNIT_BY_FIELD = {
     "f_ref": "N", "f_estimated": "N",
     # current (actuator sense)
     "current_a": "A",
+    # ball valve position (BV<n>_Cal), 0 closed / 100 open
+    "position_pct": "%",
     # raw ADC counts
     "raw_adc": "counts", "raw_adc_counts": "counts",
     # encoder

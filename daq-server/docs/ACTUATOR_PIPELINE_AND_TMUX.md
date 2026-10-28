@@ -74,6 +74,13 @@ actuator-role mapping come from `[boards.*]` and `[actuator_roles]` in
 **NC/NO:** open/closed is converted using `actuator_roles` (e.g. `["NO", 1, 12]`).
 Bug risk: wrong NO/NC mapping flips valve states (e.g. LOX Press).
 
+**Ball valves:** a role on a `type = "BALL_VALVE"` board (motorized ball valve,
+`firmware/Hotfire_Code/BallValve_Hotfire`) has no NC/NO — 1 is open on the wire, and a stray
+`"NO"` is forced to pass-through (and refused by config validation). Its commanded state is
+recorded on `[0x35] BV_CMD.B<n>.CH<m>` rather than `[0x32] ACT_CMD`, its position on `[0x33]` raw
+/ `[0x34] BV<n>_Cal.CH<m>.position_pct` (% open), so board 71 never shares a key with actuator board
+11 on slot 1. See `docs/BALL_VALVE_BOARD_PLAN.md`.
+
 ---
 
 ### 3. PWM_ACTUATOR_COMMAND (type 10) — from **controller_service**
@@ -91,6 +98,10 @@ Bug risk: wrong NO/NC mapping flips valve states (e.g. LOX Press).
 - **Format:** Header(6) + is_abort_controller(1) + N(1) + N×[actuator_ip(4), actuator_id(1), vent_state(1), abort_state(1)] + X(1) + X×[pt_ip(4), sensor_id(1), threshold_adc(4)] + enable_serial(1)
 - **Includes:** Abort actuator list, abort PT thresholds (from calibration inverse), designated survivor IP
 - **Failure mode:** No designated survivor → config packet not built → config never sent
+- **Ball valve boards** get ACTUATOR_CONFIG too, with `is_abort_controller = 0` (their firmware
+  reads only the log mode), and ball valve roles are **left out** of the abort list: in a
+  no-connection abort the valve board opens itself 5 s after the last server heartbeat and ignores
+  CLOSE, so a survivor's command could not hold it anywhere else.
 
 (Sent by `diablo_server/services/config_broadcast/config_broadcast_service_main.cpp`.)
 
