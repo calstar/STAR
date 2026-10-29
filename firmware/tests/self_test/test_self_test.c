@@ -25,6 +25,7 @@ typedef struct {
     self_test_status_t sent;
     bool fresh_battery;
     uint32_t expected_budget;
+    uint32_t last_probe_budget;
 } fake_t;
 
 static self_test_reply_t probe(void* context, uint16_t id, uint8_t attempt,
@@ -33,6 +34,7 @@ static self_test_reply_t probe(void* context, uint16_t id, uint8_t attempt,
     (void)now_ms;
     CHECK(id >= 10 && id < 10 + SELF_TEST_MAX_DEVICES);
     CHECK(budget_ms > 0 && budget_ms <= f->expected_budget);
+    f->last_probe_budget = budget_ms;
     CHECK(f->total_probes < 64);
     f->call_order[f->total_probes++] = id;
     ++f->calls[id - 10];
@@ -392,7 +394,7 @@ static void test_invalid_inputs(void) {
     CHECK(!self_test_init(NULL, &c, &port, NULL, 0));
     CHECK(!self_test_init(&t, NULL, &port, NULL, 0));
     CHECK(!self_test_init(&t, &c, NULL, NULL, 0));
-    for (unsigned i = 0; i < 12; ++i) {
+    for (unsigned i = 0; i < 13; ++i) {
         c = config();
         switch (i) {
             case 0:
@@ -427,6 +429,9 @@ static void test_invalid_inputs(void) {
                 break;
             case 10:
                 c.publication_max_attempts = 0;
+                break;
+            case 12:
+                c.session_timeout_ms = 30000;
                 break;
             case 11:
                 c.callback_budget_ms = UINT32_MAX;
@@ -477,6 +482,98 @@ static void test_full_inventory_budget(void) {
     CHECK(self_test_status(&t)->probes_outcome == SELF_TEST_PASS);
 }
 
+static void test_session_deadline(void) {
+    const uint32_t starts[] = {0, UINT32_MAX - 20U};
+    for (unsigned n = 0; n < 2; ++n) {
+        self_test_t t = {0};
+        fake_t f;
+        self_test_config_t c = config();
+        c.session_timeout_ms = 50;
+        c.callback_budget_ms = 7;
+        c.tick_budget_ms = 21;
+        c.devices[1].required = false;
+        uint32_t start = starts[n];
+        setup(&t, &f, &c, start);
+        f.replies[1].result = SELF_TEST_PENDING;
+        self_test_tick(&t, start);
+        CHECK(self_test_status(&t)->probes_outcome == SELF_TEST_PASS);
+        CHECK(!self_test_status(&t)->probes_complete);
+        self_test_tick(&t, start + 49U);
+        CHECK(f.last_probe_budget == 1);
+        CHECK(!self_test_status(&t)->deadline_expired);
+        unsigned calls = f.total_probes;
+        self_test_tick(&t, start + 50U);
+        const self_test_status_t* status = self_test_status(&t);
+        CHECK(status->probes_complete && status->deadline_expired);
+        CHECK(status->devices[0].reply.result == SELF_TEST_PASS);
+        CHECK(status->devices[1].reply.result == SELF_TEST_TIMEOUT);
+        CHECK(status->devices[1].reply.diagnostic ==
+              SELF_TEST_DIAG_SESSION_TIMEOUT);
+        CHECK(status->devices[1].attempts == 1);
+        CHECK(status->probes_outcome == SELF_TEST_PASS);
+        self_test_tick(&t, start + 1000U);
+        CHECK(f.total_probes == calls);
+        CHECK(f.sent.probes_complete && f.sent.deadline_expired);
+        CHECK(self_test_reset(&t, start + 1001U));
+        CHECK(!self_test_status(&t)->probes_complete);
+        CHECK(!self_test_status(&t)->deadline_expired);
+        f.replies[1].result = SELF_TEST_PASS;
+        self_test_tick(&t, start + 1001U);
+        self_test_tick(&t, start + 1002U);
+        CHECK(self_test_status(&t)->probes_complete);
+        self_test_tick(&t, start + 2000U);
+        CHECK(!self_test_status(&t)->deadline_expired);
+    }
+}
+
+static void test_deadline_retry_and_unstarted(void) {
+    self_test_t t = {0};
+    fake_t f;
+    self_test_config_t c = config();
+    c.session_timeout_ms = 20;
+    c.probe_max_attempts = 3;
+    setup(&t, &f, &c, 0);
+    f.replies[0].result = SELF_TEST_FAIL;
+    self_test_tick(&t, 0);
+    CHECK(!self_test_status(&t)->probes_complete);
+    self_test_tick(&t, 20);
+    CHECK(f.total_probes == 1);
+    CHECK(self_test_status(&t)->probes_complete);
+    CHECK(self_test_status(&t)->probes_outcome == SELF_TEST_FAIL);
+    CHECK(self_test_status(&t)->devices[0].reply.result == SELF_TEST_TIMEOUT);
+    CHECK(self_test_status(&t)->devices[1].reply.result == SELF_TEST_TIMEOUT);
+    CHECK(self_test_status(&t)->devices[1].attempts == 0);
+    c.session_timeout_ms = 0;
+    setup(&t, &f, &c, 0);
+    self_test_tick(&t, 29000);
+    CHECK(f.total_probes == 0);
+    CHECK(self_test_status(&t)->probes_complete);
+    CHECK(self_test_status(&t)->deadline_expired);
+    c.device_count = 0;
+    setup(&t, &f, &c, 0);
+    CHECK(self_test_status(&t)->probes_complete);
+    self_test_tick(&t, 29000);
+    CHECK(!self_test_status(&t)->deadline_expired);
+}
+
+static void test_failure_completes_after_three_attempts(void) {
+    self_test_t t = {0};
+    fake_t f;
+    self_test_config_t c = config();
+    c.device_count = 1;
+    c.probe_max_attempts = 3;
+    setup(&t, &f, &c, 0);
+    f.replies[0].result = SELF_TEST_FAIL;
+    self_test_tick(&t, 0);
+    self_test_tick(&t, 20);
+    CHECK(!self_test_status(&t)->probes_complete);
+    self_test_tick(&t, 40);
+    CHECK(self_test_status(&t)->probes_complete);
+    CHECK(self_test_status(&t)->probes_outcome == SELF_TEST_FAIL);
+    CHECK(!self_test_status(&t)->deadline_expired);
+    CHECK(f.attempts[0] == 3);
+}
+
 int main(void) {
     test_pass_and_inventory();
     test_terminal_results();
@@ -492,6 +589,9 @@ int main(void) {
     test_invalid_inputs();
     test_malformed_driver_results();
     test_full_inventory_budget();
-    puts("14 self-test test groups passed");
+    test_session_deadline();
+    test_deadline_retry_and_unstarted();
+    test_failure_completes_after_three_attempts();
+    puts("17 self-test test groups passed");
     return 0;
 }

@@ -36,7 +36,7 @@ static self_test_reply_t exchange(void* context, uint16_t id, uint8_t mode,
             CHECK(frames[i].rx[j] == 0);
     }
     if (id == SELF_TEST_DEVICE_BAROMETER) {
-        CHECK(mode == 0 && max_hz == 20000000U && count == 8);
+        CHECK(mode == 3 && max_hz == 20000000U && count == 8);
         for (uint8_t i = 0; i < count; ++i) {
             CHECK(frames[i].length == 3);
             CHECK(frames[i].tx[0] == 0xA0 + 2 * i);

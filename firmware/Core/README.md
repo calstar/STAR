@@ -57,9 +57,13 @@ Call `self_test_tick()` from one owner. It makes at most one probe, one battery,
 
 The coordinator passes an explicit one-based probe attempt number. Repeated `PENDING` polls keep that number. Each attempt expires at `probe_timeout_ms`, measured from its first call; the callback budget is capped by the remaining attempt time. `FAIL` and `TIMEOUT` retry after `retry_interval_ms`, up to `probe_max_attempts`. `PASS`, `NOT_CONFIGURED`, and `NOT_IMPLEMENTED` are terminal until reset. Other devices keep advancing in round-robin order. Timeout recognition may be delayed until the next visit to that device, at most one full inventory rotation with regular ticks. There are at most eight devices and IDs must be unique.
 
+The inventory scan has a separate `session_timeout_ms` deadline measured from init/reset. Zero selects 29000 ms; explicit values must be 1–29000 ms. Probe callback budgets also respect the remaining session time. At the first tick on or after expiry, all unfinished entries become terminal `TIMEOUT` with `SELF_TEST_DIAG_SESSION_TIMEOUT`, including optional entries and retries. Completed results are preserved. `probes_complete` is true when every inventory entry is terminal (also true for an empty inventory), and `deadline_expired` records forced completion. Both flags reset on a new session. No further probes run once complete, while battery and heartbeat work continues until the caller leaves the state.
+
+Inez confirmed that self-test always hands off to Idle, including when probes fail. Use `probes_complete` to finish the scan, not `probes_outcome == PASS`. The state machine must separately bound report transmission/storage and the Idle transition. The 29-second default reserves one second toward the under-30-second requirement but is not a full boot deadline: schedule ticks often enough and account for callback time, board startup and final reporting. Choose a shorter scan budget when those jobs need more time. Drivers must respect their cooperative budgets.
+
 `self_test_reset()` starts a fresh session without changing configuration or invoking drivers. It clears results, attempt counts, battery validity, and heartbeat timing. Driver callbacks must not require cancellation on reset because they cannot leave owned transactions running between calls. Use reset on re-entry from a future wake/state transition; power-mode control belongs to the caller.
 
-All intervals must be between 1 and `INT32_MAX` milliseconds. Use a monotonically increasing `uint32_t` clock, allowing unsigned wraparound, and tick at gaps shorter than `2^31` milliseconds. Reset after a longer suspension or a clock reset.
+Except for the session deadline described above, all intervals must be between 1 and `INT32_MAX` milliseconds. Use a monotonically increasing `uint32_t` clock, allowing unsigned wraparound, and tick at gaps shorter than `2^31` milliseconds. Reset after a longer suspension or a clock reset.
 
 ## Results and heartbeat policy
 
@@ -71,26 +75,17 @@ Battery validity and publication are independent fields. A required-probe pass c
 
 The first heartbeat is attempted on the first tick, after that tick's probe and battery work. Subsequent heartbeats occur on the first tick at or after the configured interval. After a long gap, one current snapshot is published and the schedule restarts from that tick; missed heartbeats are not replayed. A proposed starting interval is 1000 ms, with both 1000 ms and 500 ms covered by tests. No board configuration is selected by this library.
 
-Publication failures, timeouts, and pending delivery retry at `retry_interval_ms`, capped by `publication_max_attempts` per heartbeat interval. Exhausted pending delivery becomes `TIMEOUT`. Unsupported publication does not retry within the interval. Each new heartbeat starts a new attempt budget and supersedes old retries. Snapshots sent to the callback include the previous publication result and the current attempt count; the returned status reflects the new result. `PASS` requires the adapter's documented delivery criterion. Enqueueing bytes alone must not imply a verified link. Telemetry encoding, destination, and acknowledgements belong outside the coordinator.
+Publication failures, timeouts, and pending delivery retry at `retry_interval_ms`, capped by `publication_max_attempts` per heartbeat interval. Exhausted pending delivery becomes `TIMEOUT`. Unsupported publication does not retry within the interval. Each new heartbeat starts a new attempt budget and supersedes old retries. Snapshots sent to the callback include the previous publication result and the current attempt count; the returned status reflects the new result. `PASS` requires SX1262 TxDone within a timeout. The destination is the ground station, and no acknowledgement is required. This confirms local transmission, not reception. Ryan still owns the packet byte layout. The adapter must bridge the C coordinator to the C++ radio API and cannot return pass for a no-op send.
 
 ## Current hardware support and integration decisions
 
-The inspected flight-computer baseline is `d8c5c06ae5bfecc1a927a044371915037cf9a025`. The following scaffold exists:
+The reviewed baseline is `f8e110d5`, including Inez's `.ioc` corrections in `550e5483`. The [component map](DEVICE_CHECKS.md) records confirmed parts, intended peripheral settings, and remaining questions from [#137](https://github.com/calstar/STAR/issues/137#issuecomment-6486161496).
 
-| Area | Present | Still needed |
-| --- | --- | --- |
-| Target | `.ioc` selects STM32H723VET6 and CMSIS-RTOS v2 | Confirm this is the tracker task's intended base |
-| SPI | SPI1 radio, SPI2 Ethernet, SPI3 sensors, SPI4 NAND routing | Five protocol checks supplied; confirm populated parts and implement bounded SPI adapter/startup |
-| UART/I2C | UART9 at 115200 and initialized I2C4 | Confirm peers, addresses and health-check protocols |
-| Battery | PA0/ADC1 channel 16, 16-bit configuration | HAL acquisition, sampling suitability, calibration, divider and reference before volts/thresholds |
-| Heartbeat | Portable publication callback and schedule | Destination, packet format, transport and delivery criterion |
-| Task | Generated default task with 512-byte stack | Verified target build, adapters, stack and timing measurements before invocation |
+Five SPI protocol checks exist: IMU, high-g accelerometer, barometer, Ethernet and radio. All three sensor probes request mode 3 for shared SPI3. GNSS UART, SD NAND, eMMC, HAL transport, battery acquisition and telemetry adapters remain unimplemented. Configure three probe attempts for board integration. The required/optional list is still an Arm-policy proposal, so the library does not choose it.
 
-IMU, high-g accelerometer, barometer, Ethernet and radio protocol checks are supplied in `self_test_devices.c`. No HAL transport, ADC acquisition, or telemetry adapter is supplied yet. The repository lacks the STM32 HAL driver sources/headers, CMSIS device/core and RTOS dependencies, system/startup source, linker configuration, and target project/build files. `stm32h7xx_hal_conf.h` and `FreeRTOSConfig.h` are configuration headers, not those dependencies. `.ioc` records STM32Cube FW_H7 V1.13.0 and `EWARM V8.50`; confirm the team's generation version and toolchain before creating build files. Existing PlatformIO targets and firmware CI build ESP32 projects, not this STM32 scaffold.
+The `.ioc` now contains the corrected SPI, UART and ADC settings, but generated C is stale. The agreed build is CubeMX 6.18.1, FW_H7 V1.13.0, CMake and arm-none-eabi-gcc. The target build dependencies, startup and linker files remain absent. Existing ESP32 CI and host tests cannot verify an STM32 build.
 
-Before integration, confirm the tracker acceptance criteria and required device inventory. Then provide verified adapters through `self_test_port_t`, passing existing HAL handles by pointer in context. Add `self_test.c` and `self_test_devices.c` to the confirmed target build. Keep substantial adapter logic in separate files and initialization/tick calls inside generated user-code sections. Use static storage for the coordinator and measure task stack high-water usage, including driver and encoding calls; do not place the entire instance or large snapshots on the 512-byte task stack. Do not enable calls in `StartDefaultTask()` until that build and timing review succeeds.
-
-The generated scaffold also needs hardware review independently of this seam. All four SPI initializers use 4-bit data frames. Several chip selects and peripheral reset pins start low. GPIO names involving pyro enable/power-good have differing input/output roles, and the RTOS stack-overflow hook is empty. Their suitability cannot be established from pin names. This implementation leaves those settings and all arming/pyro controls unchanged.
+Once the board layer and build exist, pass existing HAL handles in adapter context, add both self-test C sources to that build, and call the coordinator in generated user-code sections. Use static coordinator storage and measure stack high-water usage and execution time before enabling it in the default task. Report persistence, bounded LoRa delivery and the actual Idle transition remain caller responsibilities. Pyro outputs are outside this module.
 
 ## Documentation
 

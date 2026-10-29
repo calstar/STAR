@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 
+#define SELF_TEST_DEFAULT_SESSION_TIMEOUT_MS 29000U
+
 typedef struct {
     uint16_t device_id;
     bool required;
@@ -24,6 +26,8 @@ typedef struct {
     uint32_t tick_budget_ms;
     uint8_t probe_max_attempts;
     uint8_t publication_max_attempts;
+    /* Zero selects 29 s; explicit values must be 1..29000 ms. */
+    uint32_t session_timeout_ms;
 } self_test_config_t;
 
 typedef struct {
@@ -40,6 +44,7 @@ typedef struct {
     void* context;
     self_test_status_t status;
     self_test_probe_state_t probes[SELF_TEST_MAX_DEVICES];
+    uint32_t session_started_ms;
     uint32_t last_heartbeat_ms;
     uint32_t last_battery_ms;
     uint32_t last_publication_ms;
