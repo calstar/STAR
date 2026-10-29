@@ -29,7 +29,8 @@ static bool config_valid(const self_test_config_t* c) {
         !interval_valid(c->callback_budget_ms) ||
         !interval_valid(c->tick_budget_ms) ||
         c->callback_budget_ms > c->tick_budget_ms / 3U ||
-        c->probe_max_attempts == 0U || c->publication_max_attempts == 0U) {
+        c->probe_max_attempts == 0U || c->publication_max_attempts == 0U ||
+        c->session_timeout_ms > SELF_TEST_DEFAULT_SESSION_TIMEOUT_MS) {
         return false;
     }
     for (uint8_t i = 0; i < c->device_count; ++i) {
@@ -43,6 +44,12 @@ static bool config_valid(const self_test_config_t* c) {
 }
 
 static void aggregate(self_test_t* t) {
+    t->status.probes_complete = true;
+    for (uint8_t i = 0; i < t->config.device_count; ++i) {
+        if (!t->status.devices[i].complete) {
+            t->status.probes_complete = false;
+        }
+    }
     bool required = false;
     bool pending = false;
     t->status.probes_outcome = SELF_TEST_NOT_CONFIGURED;
@@ -76,6 +83,7 @@ bool self_test_reset(self_test_t* t, uint32_t now_ms) {
         t->status.devices[i].device_id = t->config.devices[i].device_id;
         t->status.devices[i].required = t->config.devices[i].required;
     }
+    t->session_started_ms = now_ms;
     t->next_probe = 0;
     t->last_heartbeat_ms = now_ms;
     t->last_battery_ms = now_ms;
@@ -98,6 +106,9 @@ bool self_test_init(self_test_t* t, const self_test_config_t* config,
         return false;
     }
     t->config = *config;
+    if (t->config.session_timeout_ms == 0U) {
+        t->config.session_timeout_ms = SELF_TEST_DEFAULT_SESSION_TIMEOUT_MS;
+    }
     t->port = *port;
     t->context = context;
     t->initialized = true;
@@ -146,6 +157,12 @@ static void probe_one(self_test_t* t, uint32_t now_ms) {
         if (t->port.probe) {
             uint32_t remaining = t->config.probe_timeout_ms -
                                  (uint32_t)(now_ms - p->started_at_ms);
+            uint32_t session_remaining =
+                t->config.session_timeout_ms -
+                (uint32_t)(now_ms - t->session_started_ms);
+            if (session_remaining < remaining) {
+                remaining = session_remaining;
+            }
             uint32_t budget = t->config.callback_budget_ms;
             if (remaining < budget) {
                 budget = remaining;
@@ -229,7 +246,22 @@ void self_test_tick(self_test_t* t, uint32_t now_ms) {
         return;
     }
     t->status.now_ms = now_ms;
-    probe_one(t, now_ms);
+    if (!t->status.probes_complete) {
+        if (elapsed(now_ms, t->session_started_ms,
+                    t->config.session_timeout_ms)) {
+            t->status.deadline_expired = true;
+            for (uint8_t i = 0; i < t->config.device_count; ++i) {
+                self_test_device_status_t* d = &t->status.devices[i];
+                if (!d->complete) {
+                    d->reply = (self_test_reply_t){
+                        SELF_TEST_TIMEOUT, SELF_TEST_DIAG_SESSION_TIMEOUT};
+                    d->complete = true;
+                }
+            }
+        } else {
+            probe_one(t, now_ms);
+        }
+    }
     aggregate(t);
     sample_battery(t, now_ms);
     publish(t, now_ms);
