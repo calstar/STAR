@@ -338,7 +338,9 @@ active_connectors = [ 1, 2 ]
 # actuator through [actuator_roles] -- ["NC", 1, 71]; a ball valve has no NO/NC -- and streams the
 # valve position (4-20 mA) instead of a current sense. It opens the valve itself 5 s after server
 # heartbeats stop, and is left out of the abort lists sent to actuator boards.
-# Disabled until the board is on the stand; fill `mac` from its serial log for a DHCP lease.
+# Enabled here, the sim/test config, so the simulator, test_integration.sh and the Playwright stack
+# all carry it; disabled in every deployed profile until the board is on the stand. Fill `mac`
+# from its serial log for a DHCP lease. No role here: test_integration.sh names one in its own copy.
 [boards.ball_valve_board]
 type = "BALL_VALVE"
 ip = "192.168.2.71"
@@ -346,7 +348,7 @@ mac = ""
 send_port = 5005
 listen_port = 5005
 board_id = 71
-enabled = false
+enabled = true
 enable_serial_printing = 0
 necessary_for_abort = false
 designated_survivor = false

@@ -230,7 +230,7 @@ mkdir -p "$REPO_ROOT/.tmp"
 # config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
 # are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
 if [ "$(uname)" = "Darwin" ]; then
-  LOOPBACK_IPS=(11 12 13 14 21 22 25 31 32 41 42 51 52 60 61)
+  LOOPBACK_IPS=(11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71)
   NEED_ALIAS=false
   for i in "${LOOPBACK_IPS[@]}"; do
     if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
@@ -484,6 +484,9 @@ def save(path, rows):
 NAME = 'Flow Test'
 RETURN = 'Press Standby'
 GATE = 'Fuel Main'
+# The ball valve the harness enables (see "Ball valve" below): closed in every state, so only
+# the ball_valve check's manual commands ever open it.
+BALL_VALVE = 'Main Ball Valve'
 
 # Transitions: reachable only from the hub, and able to get back to it — the sequencer refuses to
 # make a state holdable at all if it cannot reach its return target.
@@ -497,6 +500,7 @@ save(out_t, t)
 # Actuators: the gate opens, everything else stays shut. RETURN already closes Fuel Main, which is
 # what actually ends the flow.
 a = load('state_machine_actuators.csv')
+a.append([BALL_VALVE] + ['CLOSE'] * (len(a[0]) - 1))
 a[0].append(NAME)
 for r in a[1:]:
     r.append('OPEN' if r[0] == GATE else 'CLOSE')
@@ -505,6 +509,7 @@ save(out_a, a)
 # Delays: the gate is staggered on the way IN only, so the hold must come out as
 # requested + gate delay.
 d = load('state_machine_actuator_delays.csv')
+d.append([BALL_VALVE] + ['0'] * (len(d[0]) - 1))
 d[0].append(NAME)
 for r in d[1:]:
     r.append(gate_delay if r[0] == GATE else '0')
@@ -639,6 +644,25 @@ sedi "/^\[controller_service\]/,/^\[/ s/^port = .*/port = $TEST_CONTROLLER_PORT/
 # Test 4 (actuator commands) validates via Elodin SENSOR_UPDATE, not UDP.
 # Encoder board #1 (config [boards.encoder_board_61]) — dedicated loopback so sim can bind without colliding
 sedi 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
+# Ball valve: config_base enables the board but names no valve. Put it on its own loopback
+# address and name its valve, so the ball_valve check can close the whole loop — a command from
+# the GUI reaches the simulated valve (it binds 127.0.0.71 on the actuator port below), and the
+# position it reports comes back through daq_bridge → calibration → backend. The state CSVs get
+# its row in the Flow Test block above.
+python3 - "$TEST_CONFIG" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+text = open(path).read()
+sec = re.search(r'^\[boards\.ball_valve_board\]\n(?:(?!\[).*\n)*', text, re.M)
+assert sec, 'config_base.toml has no [boards.ball_valve_board]'
+block = sec.group(0).replace('enabled = false', 'enabled = true')
+block = block.replace('ip = "192.168.2.71"', 'ip = "127.0.0.71"')
+text = text[:sec.start()] + block + text[sec.end():]
+text, n = re.subn(r'^\[actuator_roles\]\n', '[actuator_roles]\n"Main Ball Valve" = ["NC", 1, 71]\n',
+                  text, count=1, flags=re.M)
+assert n == 1, 'config_base.toml has no [actuator_roles]'
+open(path, 'w').write(text)
+PYEOF
 # Replace listen_port on actuator boards to use our test port
 sedi "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
