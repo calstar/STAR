@@ -1,0 +1,4 @@
+# abort thresholds — one line per PT: uid  target_psi  raw_adc
+# regenerated on every capture/clear/reload. generated_unix 1790457954
+2101 400 858993460
+2105 400 858993460

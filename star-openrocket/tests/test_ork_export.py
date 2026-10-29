@@ -238,7 +238,10 @@ def test_exported_cp_and_cg_match_the_app():
     assert finset.findtext("crosssection") == "square"
     assert float(finset.findtext("thickness")) == pytest.approx(THICK, rel=0.02)
     pts = [(float(p.get("x")), float(p.get("y"))) for p in finset.find("finpoints")]
-    assert pts == pytest.approx(fin_points(aero_core(store, faces)))
+    expected = fin_points(aero_core(store, faces))
+    # pytest.approx does not compare nested (x, y) pairs, so compare coordinates flat.
+    assert len(pts) == len(expected)
+    assert [c for p in pts for c in p] == pytest.approx([c for p in expected for c in p])
 
 
 def test_motor_is_mounted_at_its_placed_aft_end():
