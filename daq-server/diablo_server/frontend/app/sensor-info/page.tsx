@@ -327,7 +327,7 @@ function BvRow({ entity, calEntity, label, color }: { entity: string; calEntity:
       <td className="px-4 py-2 tabular-nums text-yellow-400">
         {fmtMa(ma)} <span className="text-gray-600 text-xs">mA</span>
       </td>
-      <td className="px-4 py-2 tabular-nums text-green-400">
+      <td data-testid={`ball-valve-open:${label}`} className="px-4 py-2 tabular-nums text-green-400">
         {status === BALL_VALVE_STATUS_NO_SIGNAL ? 'NO SIGNAL'
           : pct != null && Number.isFinite(pct) ? `${pct.toFixed(1)} %` : '---'}
       </td>

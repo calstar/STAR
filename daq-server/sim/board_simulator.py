@@ -202,7 +202,13 @@ class SimulatedBoard:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         bind_ip = self.ip
-        bind_port = self.listen_port if self.board_state == BOARD_STATE_SETUP else 0
+        # A ball valve always takes its command port, even with --skip-startup: ACTUATOR_COMMAND
+        # arrives there for its whole life, not just during SETUP.
+        bind_port = (
+            self.listen_port
+            if self.board_state == BOARD_STATE_SETUP or self.board_type == BOARD_TYPE_BALL_VALVE
+            else 0
+        )
 
         try:
             self.sock.bind((bind_ip, bind_port))

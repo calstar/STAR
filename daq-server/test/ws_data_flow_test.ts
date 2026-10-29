@@ -18,7 +18,7 @@
  * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation, config_validate, environmental — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate, environmental, ball_valve — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -99,7 +99,7 @@ function parseOnlyTests(): Set<string> | null {
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
-    'config_validate', 'environmental',
+    'config_validate', 'environmental', 'ball_valve',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -1894,6 +1894,121 @@ async function testUdpActuatorCommands(): Promise<void> {
   }
 }
 
+// ── Ball valve: the whole loop ───────────────────────────────────────────────
+//
+// test_integration.sh enables [boards.ball_valve_board] (board 71 @ 127.0.0.71) with the role
+// "Main Ball Valve", closed in every state. The simulated valve binds the actuator command port on
+// its own address, so unlike the other actuators (whose 192.168.2.x is unroutable here) its
+// commands actually arrive, and it moves: a 3 s stroke, reported as a 4-20 mA position.
+//
+// One command therefore crosses everything this board added: WS → backend → sequencer (BV_CMD
+// [0x35]) → UDP → board → daq_bridge ([0x33]) → calibration (position_pct, [0x34]) → backend → WS.
+// Board 71 shares slot 1 with actuator board 11, so it must never surface as ACT1.* or
+// ACT_CMD.B1.*; board 11 is disabled in config_base, so any such update is the valve leaking.
+
+const BALL_VALVE_ROLE = 'Main Ball Valve';
+const BALL_VALVE_CMD = 'BV_CMD.B1.CH1';
+const BALL_VALVE_CAL = 'BV1_Cal.CH1';
+const BALL_VALVE_TRAVEL_TIMEOUT_MS = 12000;  // 3 s stroke + pipeline + GUI downsampling
+
+async function testBallValve(ws: WebSocket): Promise<void> {
+  console.log('\n🟢 Test: Ball Valve (command → board → % open, own Elodin namespace)');
+
+  const leaked: string[] = [];
+  const onMsg = (data: WebSocket.RawData) => {
+    try {
+      const m = JSON.parse(data.toString());
+      const e = m?.payload?.entity;
+      if (m?.type === MessageType.SENSOR_UPDATE && typeof e === 'string'
+          && (/^ACT1(_Cal)?\.CH/.test(e) || /^ACT_CMD\.B1\./.test(e))) {
+        if (!leaked.includes(e)) leaked.push(e);
+      }
+    } catch { /* not JSON */ }
+  };
+  ws.on('message', onMsg);
+
+  const position = (pred: (pct: number) => boolean) =>
+    waitForMessage(ws, MessageType.SENSOR_UPDATE, BALL_VALVE_TRAVEL_TIMEOUT_MS,
+      (p) => p.entity === BALL_VALVE_CAL && p.component === 'position_pct' && pred(p.value));
+  const commanded = (state: number) =>
+    waitForMessage(ws, MessageType.SENSOR_UPDATE, COMMAND_TIMEOUT_MS,
+      (p) => p.entity === BALL_VALVE_CMD && p.component === 'actuator_state_commanded' && p.value === state);
+  const command = (state: ActuatorState) => send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'actuator', data: { actuatorName: BALL_VALVE_ROLE, actuatorState: state } },
+  });
+
+  try {
+    try {
+      const { payload } = await position(() => true);
+      assert(true, `Ball valve position streams as ${BALL_VALVE_CAL}.position_pct (${payload.value.toFixed(1)} %)`);
+    } catch {
+      assert(false, `Ball valve: no ${BALL_VALVE_CAL}.position_pct within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms (sim → daq_bridge [0x33] → calibration [0x34] → backend)`);
+      return;
+    }
+
+    const debug = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS, (p) => p.debugMode === true);
+    send(ws, {
+      type: MessageType.SEND_COMMAND,
+      timestamp: Date.now(),
+      payload: { commandType: 'debug_mode', data: { debugMode: true } },
+    });
+    try {
+      await debug;
+    } catch {
+      assert(false, 'Ball valve: could not enter debug mode for manual commands');
+      return;
+    }
+
+    // OPEN: commanded state on BV_CMD, then the valve itself travels to the end.
+    const openCmd = commanded(1);
+    const openPos = position((pct) => pct >= 95);
+    command(ActuatorState.OPEN);
+    try {
+      await openCmd;
+      assert(true, `Ball valve OPEN recorded on ${BALL_VALVE_CMD}`);
+    } catch {
+      assert(false, `Ball valve OPEN: no ${BALL_VALVE_CMD}.actuator_state_commanded = 1 (sequencer [0x35])`);
+    }
+    try {
+      const { payload } = await openPos;
+      assert(true, `Ball valve reached open: ${payload.value.toFixed(1)} % (command reached the board)`);
+    } catch {
+      assert(false, `Ball valve never reported >= 95 % open within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms of OPEN`);
+    }
+
+    // CLOSE: and back.
+    const closeCmd = commanded(0);
+    const closePos = position((pct) => pct <= 5);
+    command(ActuatorState.CLOSED);
+    try {
+      await closeCmd;
+      assert(true, `Ball valve CLOSE recorded on ${BALL_VALVE_CMD}`);
+    } catch {
+      assert(false, `Ball valve CLOSE: no ${BALL_VALVE_CMD}.actuator_state_commanded = 0`);
+    }
+    try {
+      const { payload } = await closePos;
+      assert(true, `Ball valve reached closed: ${payload.value.toFixed(1)} % open`);
+    } catch {
+      assert(false, `Ball valve never reported <= 5 % open within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms of CLOSE`);
+    }
+
+    assert(leaked.length === 0, leaked.length === 0
+      ? 'Ball valve never surfaced under actuator board 11\'s slot-1 entities (ACT1.*, ACT_CMD.B1.*)'
+      : `Ball valve leaked into actuator slot 1: ${leaked.join(', ')}`);
+  } finally {
+    ws.removeListener('message', onMsg);
+    send(ws, {
+      type: MessageType.SEND_COMMAND,
+      timestamp: Date.now(),
+      payload: { commandType: 'debug_mode', data: { debugMode: false } },
+    });
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
 // ── Test 10: Calibrated Data Stability ────────────────────────────────────────
 
 async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
@@ -3142,6 +3257,7 @@ async function testSampleConservation(): Promise<void> {
     if (/^tc/.test(name)) return 'tc';
     if (/^encoder/.test(name)) return 'enc';
     if (/^actuator/.test(name)) return 'act';
+    if (/^ball_valve/.test(name)) return 'bv';
     return 'other';
   };
   const sentByGroup: Record<string, number> = {};
@@ -3398,7 +3514,7 @@ async function main(): Promise<void> {
   }
 
   if (ONLY_TESTS) {
-    const needsSeq = ['state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync']
+    const needsSeq = ['state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync', 'ball_valve']
       .some(id => ONLY_TESTS!.has(id));
     if (needsSeq && !canRunCommandTests) {
       console.error('❌ Selected tests require sequencer_service (integration must start sequencer or pass --has-sequencer)');
@@ -3438,6 +3554,7 @@ async function main(): Promise<void> {
       if (runTest('state_debug')) await testStateTransitionDebugMode(ws);
       if (runTest('actuator_ws')) await testActuatorCommands(ws);
       if (runTest('actuator_udp')) await testUdpActuatorCommands();
+      if (runTest('ball_valve')) await testBallValve(ws);
       if (runTest('elodin_sync')) await testElodinStateSync();
     } else if (!ONLY_TESTS) {
       console.log('\n🔄 Test 2: State Transition — SKIPPED (thin backend requires sequencer_service)');
