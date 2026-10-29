@@ -4,6 +4,23 @@ Reviewed on October 19, 2026 against `origin/inez/flight_computer` at `d8c5c06ae
 
 The [component page](https://starberkeley.notion.site/Flight-Computer-components-3be50d7304ab806498d3cb20449516c2) supplies component candidates and datasheets. The branch supplies routing in [`main.h`](Inc/main.h), [`stm32h7xx_hal_msp.c`](Src/stm32h7xx_hal_msp.c), [`main.c`](Src/main.c), and [`firmware.ioc`](../firmware.ioc). Combining these sources gives the map below; a schematic or confirmed assembly BOM must establish the actual populated parts.
 
+## Repository follow-up: October 28, 2026
+
+Inez merged [self-test PR #138](https://github.com/calstar/STAR/pull/138) into `inez/flight_computer` on October 26 as `88ca4c0d`. The hardware questions in [issue #137](https://github.com/calstar/STAR/issues/137) remain unanswered. The following related work exists on other branches; it does not establish board wiring or replace the missing target build.
+
+| Related work | What it establishes | Self-test integration decision |
+| --- | --- | --- |
+| [Radio API #139](https://github.com/calstar/STAR/pull/139), merged into `main` as `333d3332` | C++11 `radio_link::radio_probe`, `radio_receive`, and `radio_send` declarations in `firmware/Flight_Computer/src/radio.h`; SX1262 command-link intent | Share the eventual radio driver through a C-compatible adapter. Do not provide another competing radio implementation. The header has no implementation, deadline argument or delivery guarantee. |
+| [ISM330DHCX driver #140](https://github.com/calstar/STAR/pull/140), open at `02656fc2` | Register-level read/write callbacks and WHO_AM_I `0x6B`, consistent with our identity check | Reuse the eventual bus owner, but retain a read-only identity probe. Do not call `ism330dhcx_init` from self-test: it resets and reconfigures the sensor. This proposed driver is not yet a dependency of the flight-computer branch. |
+
+The current radio header explicitly permits `radio_send` to do nothing and return `Ok`. Therefore an adapter must not translate that return value into `publish_status = PASS`. Keep publication unsupported until the driver actually sends and the team defines its delivery criterion. Likewise, `radio_probe()` has no execution-time contract; calling it inside a bounded coordinator callback requires a driver deadline guarantee or a separate service that owns the operation and exposes a cached result.
+
+The proposed IMU read callback also has no budget argument. Its adapter must enforce the coordinator's remaining deadline at the bus layer and serialize access with acquisition/MLC operations. Raw SPI identity reads assume the main register bank is selected; ownership must prevent them from racing with register-bank changes.
+
+A host reproducer against #140 at `02656fc2` held the reset bit high for every read. `ism330dhcx_software_reset` returned `0` (success), instead of `ISM330DHCX_ERR_TIMEOUT` (`-4`): the unsigned `while (timeout--)` counter wraps when exhausted. The reset loop also ignores read errors. Before using that initializer, its owner should fix timeout/error handling and add stuck-reset, last-poll-success and read-failure tests. This finding concerns the proposed IMU driver; our existing read-only identity check does not call that function.
+
+Next integration work remains: supply a complete STM32 build, confirm the populated parts and startup settings, implement bounded bus/ADC adapters, define heartbeat delivery and required-device policy, then validate on hardware. A merged portable-check PR is not evidence that these steps are complete.
+
 ## Component map
 
 | Component in supplied documentation | Branch connection | Implemented check / remaining gap |
