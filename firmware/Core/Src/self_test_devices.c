@@ -56,6 +56,7 @@ self_test_reply_t self_test_devices_probe(void* context, uint16_t device_id,
             expected = device_id == SELF_TEST_DEVICE_IMU ? 0x6B : 0x32;
             break;
         case SELF_TEST_DEVICE_BAROMETER:
+            mode = 3; /* Shared SPI3 with the IMU and high-g accelerometer. */
             max_hz = 20000000U;
             count = 8;
             for (uint8_t i = 0; i < count; ++i) {
