@@ -23,6 +23,7 @@ jobs:
           - Hotfire_Code/RTD_Hotfire
           - Hotfire_Code/LC_Hotfire
           - Hotfire_Code/Actuator_Hotfire
+          - Hotfire_Code/BallValve_Hotfire
 
     steps:
       - name: Checkout repository

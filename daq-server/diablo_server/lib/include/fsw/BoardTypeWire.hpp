@@ -15,6 +15,7 @@ constexpr uint8_t kRtd = 3;
 constexpr uint8_t kThermocouple = 4;
 constexpr uint8_t kActuator = 5;
 constexpr uint8_t kEnvironmental = 7;
+constexpr uint8_t kBallValve = 8;
 
 }  // namespace daq_wire
 }  // namespace fsw

@@ -98,7 +98,27 @@ export const diffKeys = (have: string[], want: string[]) => ({
 
 const BOARD_TYPE_LABEL: Record<string, string> = {
   PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
-  ENVIRONMENTAL: 'Environmental',
+  ENVIRONMENTAL: 'Environmental', BALL_VALVE: 'Ball Valve',
+};
+
+/** [boards.*].type of a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). */
+export const BALL_VALVE_TYPE = 'BALL_VALVE';
+
+/**
+ * board_ids of every [boards.*] with type BALL_VALVE, enabled or not. An actuator role whose
+ * board_id is in this set is a ball valve: no NO/NC (1 is open on the wire), no PWM, and its
+ * position (not a current) is what shows under it.
+ */
+export const ballValveBoardIds = (config: any): Set<number> => {
+  const boards: Record<string, any> = (config?.boards && typeof config.boards === 'object')
+    ? config.boards : {};
+  const ids = new Set<number>();
+  for (const b of Object.values(boards)) {
+    if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE) continue;
+    const id = Number(b?.board_id ?? b?.id);
+    if (Number.isInteger(id)) ids.add(id);
+  }
+  return ids;
 };
 
 /**
@@ -197,8 +217,10 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
     const b = boards[key] ?? {};
     // A disabled board samples nothing, so nothing about its channels can be wrong.
     if (b.enabled === false) continue;
-    // An ACTUATOR board names its channels in [actuator_roles], not sensor_roles_<board>.
-    if (String(b.type ?? '').toUpperCase() === 'ACTUATOR') continue;
+    // ACTUATOR and BALL_VALVE boards name their channels in [actuator_roles], not
+    // sensor_roles_<board>.
+    const type = String(b.type ?? '').toUpperCase();
+    if (type === 'ACTUATOR' || type === BALL_VALVE_TYPE) continue;
 
     const declared: number[] = Array.isArray(b.active_connectors)
       ? b.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
@@ -213,6 +235,23 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
         `${boardDisplayName(boards, key)} (${key}): ${orphans.join(', ')} name channel(s) the ` +
         'board is not told to sample, so those roles can never show data. Add them to Active ' +
         'Connectors, or remove the roles.');
+    }
+  }
+
+  // ── Ball valve roles ──────────────────────────────────────────────────────
+  // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would
+  // close it. The C++ forces pass-through anyway; this says so where it can be fixed. Nor is it a
+  // PWM output: a 4th element would hand it to the controller and skip it in the fire state.
+  const bvIds = ballValveBoardIds(config);
+  if (bvIds.size > 0) {
+    for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}) as Record<string, any>)) {
+      if (!Array.isArray(tup) || !bvIds.has(Number(tup[2]))) continue;
+      if (String(tup[0] ?? '').toUpperCase() === 'NO')
+        add('roles', 'error',
+          `${role} is on ball valve board ${tup[2]} and is marked NO. A ball valve has no NO/NC — 1 opens it — so set it to NC.`);
+      if (tup.length >= 4 && String(tup[3] ?? '') !== '')
+        add('roles', 'error',
+          `${role} is on ball valve board ${tup[2]} but is assigned to the controller (${tup[3]}). A ball valve is not a PWM output.`);
     }
   }
 

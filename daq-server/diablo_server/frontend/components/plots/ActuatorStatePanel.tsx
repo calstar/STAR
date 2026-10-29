@@ -1,17 +1,34 @@
 'use client'
 
-import { useActuatorCommandedState } from '@/lib/store';
+import { useActuatorCommandedState, useSensorValue } from '@/lib/store';
 import { ActuatorState } from '@/lib/types';
+import { formatBallValvePosition } from '@/lib/ball-valve';
 
 interface ActuatorRowProps {
   label: string;
   entity: string;
   color: string;
   channel?: number;
+  /** A ball valve also shows where it is: % open / % closed. */
+  ballValve?: boolean;
 }
 
-/** Display follows commanded state only (state machine / user command); no ADC. */
-function ActuatorRow({ label, entity, color }: ActuatorRowProps) {
+/** Ball valve position beside its commanded state (ACT_Cal.{Role} aliases to BV<n>_Cal.CH<m>). */
+export function BallValvePositionText({ entity, commanded, className }: {
+  entity: string; commanded: ActuatorState | null; className?: string;
+}) {
+  const calEntity = entity.replace('ACT.', 'ACT_Cal.');
+  const pct = useSensorValue(calEntity, 'position_pct');
+  const status = useSensorValue(calEntity, 'cal_status');
+  return (
+    <span data-testid={`ball-valve-position:${entity}`} className={className}>
+      {formatBallValvePosition(pct, status, commanded)}
+    </span>
+  );
+}
+
+/** Display follows commanded state (state machine / user command); a ball valve adds its position. */
+function ActuatorRow({ label, entity, color, ballValve }: ActuatorRowProps) {
   const commanded = useActuatorCommandedState(entity);
   const isOpen = commanded === ActuatorState.OPEN;
   const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
@@ -23,6 +40,10 @@ function ActuatorRow({ label, entity, color }: ActuatorRowProps) {
         <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-center gap-3">
+        {ballValve && (
+          <BallValvePositionText entity={entity} commanded={commanded}
+            className="text-sm font-mono tabular-nums text-yellow-400" />
+        )}
         <span
           className={`text-base font-black font-mono px-4 py-2 rounded-lg ${
             !hasState ? 'bg-gray-800 text-gray-600' :
@@ -39,7 +60,7 @@ function ActuatorRow({ label, entity, color }: ActuatorRowProps) {
 
 interface ActuatorStatePanelProps {
   title: string;
-  actuators: { label: string; entity: string; color: string; channel?: number }[];
+  actuators: { label: string; entity: string; color: string; channel?: number; ballValve?: boolean }[];
 }
 
 export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePanelProps) {
@@ -47,7 +68,7 @@ export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePa
     <div className="bg-card rounded-lg p-4 flex flex-col gap-3">
       <h3 className="text-base font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
       {actuators.map((a) => (
-        <ActuatorRow key={a.entity} label={a.label} entity={a.entity} color={a.color} />
+        <ActuatorRow key={a.entity} label={a.label} entity={a.entity} color={a.color} ballValve={a.ballValve} />
       ))}
     </div>
   );

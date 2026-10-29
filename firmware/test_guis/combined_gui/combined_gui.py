@@ -152,6 +152,23 @@ SENSOR_DATA_CHUNK_SIZE = 4
 SENSOR_DATAPOINT_FORMAT = "<BI"  # 5 bytes: uint8_t sensor_id + uint32_t data
 SENSOR_DATAPOINT_SIZE = 5
 
+# Actuator current sense: raw 12-bit ESP32 ADC counts, 3.3 V full scale.
+ACT_ADC_MAX = 4095
+ACT_ADC_VREF = 3.3
+
+
+def actuator_counts_to_volts(data_u32: int) -> float:
+    """Actuator current-sense datapoint -> volts.
+
+    Boards send raw 12-bit counts (<= 4095). Firmware from before that sent
+    float volts as bits; any nonzero voltage float encodes far above 4095, so
+    those are still read as floats until every board is reflashed.
+    """
+    if data_u32 <= ACT_ADC_MAX:
+        return data_u32 / ACT_ADC_MAX * ACT_ADC_VREF
+    return struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[0]
+
+
 # Plotting constants
 DEFAULT_WINDOW_SECONDS = 10.0
 MAX_POINTS = 200000
@@ -2608,23 +2625,7 @@ class ActuatorControlWidget(QtWidgets.QWidget):
             if not (0 <= array_idx < get_num_actuators()):
                 continue
 
-            # Actuator_Testing sends voltage as float bits (IEEE754) in the uint32 field.
-            # For compatibility with raw ADC-code senders, fall back if decoded float is implausible.
-            try:
-                voltage = struct.unpack("<f", struct.pack("<I", data_u32 & 0xFFFFFFFF))[
-                    0
-                ]
-                if not (math.isfinite(voltage) and -1.0 <= voltage <= 10.0):
-                    raise ValueError("implausible float")
-            except Exception:
-                # Interpret as signed ADC code and scale to volts (legacy behavior)
-                if data_u32 >= 0x80000000:
-                    code_int32 = data_u32 - 0x100000000
-                else:
-                    code_int32 = data_u32
-                voltage = (code_int32 * 2.5) / 2147483648.0
-
-            self.voltage_readings[array_idx] = float(voltage)
+            self.voltage_readings[array_idx] = actuator_counts_to_volts(data_u32)
 
     def update_button_highlight(self, array_idx: int, actuator_state: int):
         """Update button highlighting based on actuator state. Selected OPEN = saturated green, selected CLOSED = saturated red."""

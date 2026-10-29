@@ -199,6 +199,8 @@ static void load_board_map_from_config(const std::string& config_path,
             return BoardType::ENCODER;
         if (t == "ENVIRONMENTAL")
             return BoardType::ENVIRONMENTAL;
+        if (t == "BALL_VALVE")
+            return BoardType::BALL_VALVE;
         return BoardType::UNKNOWN;
     };
     for (const auto& b : c.boards) {
@@ -229,7 +231,8 @@ static void load_board_map_from_config(const std::string& config_path,
     // 127.0.0.<host octet> (one per board); resolve_board_config_by_source_ip maps that back.
 }
 
-// Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
+// Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC, 7=ENV,
+// 8=BALL_VALVE)
 static BoardType discovery_board_type_to_enum(uint8_t t) {
     switch (t) {
         case fsw::daq_wire::kPressureTransducer:
@@ -246,6 +249,8 @@ static BoardType discovery_board_type_to_enum(uint8_t t) {
             return BoardType::ENCODER;
         case fsw::daq_wire::kEnvironmental:
             return BoardType::ENVIRONMENTAL;
+        case fsw::daq_wire::kBallValve:
+            return BoardType::BALL_VALVE;
         default:
             return BoardType::UNKNOWN;
     }
@@ -267,6 +272,8 @@ static uint8_t config_board_type_to_wire_u8(BoardType t) {
             return 6;
         case BoardType::ENVIRONMENTAL:
             return fsw::daq_wire::kEnvironmental;
+        case BoardType::BALL_VALVE:
+            return fsw::daq_wire::kBallValve;
         default:
             return fsw::daq_wire::kUnknown;
     }
@@ -400,6 +407,9 @@ int main(int argc, char* argv[]) {
             case BoardType::ENVIRONMENTAL:
                 type_str = "ENVIRONMENTAL";
                 break;
+            case BoardType::BALL_VALVE:
+                type_str = "BALL_VALVE";
+                break;
             default:
                 break;
         }
@@ -494,7 +504,7 @@ int main(int argc, char* argv[]) {
     int proactive_count = 0;
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR ||
-            cfg.type == BoardType::ENVIRONMENTAL)
+            cfg.type == BoardType::ENVIRONMENTAL || cfg.type == BoardType::BALL_VALVE)
             continue;
         daq::BoardHeartbeatPacket synthetic{};
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
@@ -553,6 +563,7 @@ int main(int argc, char* argv[]) {
     const auto& env_boards = active_boards[BoardType::ENVIRONMENTAL];
     const auto& lc_boards = active_boards[BoardType::LC];
     const auto& enc_boards = active_boards[BoardType::ENCODER];
+    const auto& bv_boards = active_boards[BoardType::BALL_VALVE];
 
     std::vector<uint8_t> config_board_ids;
     for (const auto& [ip, cfg] : board_map) {
@@ -572,6 +583,9 @@ int main(int argc, char* argv[]) {
         // Register CALIBRATED VTables
         fsw::elodin::DatabaseConfig::register_calibrated_tables(
             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        if (!bv_boards.empty() &&
+            !fsw::elodin::DatabaseConfig::register_ball_valve_tables(elodin_client, bv_boards))
+            std::cerr << "⚠️  Ball valve RAW VTable registration failed" << std::endl;
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
@@ -748,6 +762,9 @@ int main(int argc, char* argv[]) {
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(
                             elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
                             act_boards);
+                        if (!bv_boards.empty())
+                            fsw::elodin::DatabaseConfig::register_ball_valve_tables(elodin_client,
+                                                                                    bv_boards);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
                                                                                config_board_ids);
                         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client,
@@ -947,6 +964,13 @@ int main(int argc, char* argv[]) {
                     publish_raw_sample(0x24, sample);
                 break;
             }
+            case BoardType::BALL_VALVE: {
+                // Valve position (raw 12-bit counts of a 4-20 mA signal). Its own type_hi so a
+                // ball valve never shares a key with an ACTUATOR board on the same slot.
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x33, sample);
+                break;
+            }
             default:
                 break;
         }
@@ -1011,6 +1035,9 @@ int main(int argc, char* argv[]) {
                             break;
                         case BoardType::ENCODER:
                             tag = "ENC";
+                            break;
+                        case BoardType::BALL_VALVE:
+                            tag = "BV";
                             break;
                         default:
                             break;

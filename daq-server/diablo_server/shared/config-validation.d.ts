@@ -53,6 +53,14 @@ export declare const diffKeys: (have: string[], want: string[]) => {
     orphan: string[];
     missing: string[];
 };
+/** [boards.*].type of a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). */
+export declare const BALL_VALVE_TYPE = "BALL_VALVE";
+/**
+ * board_ids of every [boards.*] with type BALL_VALVE, enabled or not. An actuator role whose
+ * board_id is in this set is a ball valve: no NO/NC (1 is open on the wire), no PWM, and its
+ * position (not a current) is what shows under it.
+ */
+export declare const ballValveBoardIds: (config: any) => Set<number>;
 /**
  * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
  * Numbered by position among boards of the same type, so it tracks what is actually configured

@@ -34,6 +34,19 @@ describe('board self-test capability', () => {
     },
   );
 
+  it('lists a ball valve board under its own heading, self-test N/A', () => {
+    // Its firmware sends no SELF_TEST, so UNTESTED would never clear.
+    useSensorStore.getState().updateBoards([
+      { id: 71, type: 'BALL_VALVE', boardNumber: 1, ip: '127.0.0.71', expected: true, connected: true,
+        lastHeartbeatMs: Date.now(), boardState: 2, engineState: 0 },
+    ]);
+    render(<MemoryRouter><BoardsPage /></MemoryRouter>);
+    expect(screen.getByText('BALL VALVE')).toBeInTheDocument();
+    const card = within(screen.getByTestId('boards-heartbeat-card'));
+    expect(card.getByText('N/A')).toBeInTheDocument();
+    expect(card.queryByText('UNTESTED')).not.toBeInTheDocument();
+  });
+
   it.each([
     [{}, 'UNTESTED'],
     [{ 'SELF_TEST.BOARD_21.sensor_1': 1 }, 'ALL PASSED'],

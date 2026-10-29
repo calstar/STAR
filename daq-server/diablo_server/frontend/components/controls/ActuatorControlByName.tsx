@@ -5,6 +5,7 @@ import { useSensorStore, useActuatorCommandedState, useSensorValue } from '@/lib
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
+import { formatBallValvePosition } from '@/lib/ball-valve';
 
 /** Config-driven actuator control: sends command by role name (config.toml actuator_roles). */
 export interface ActuatorControlByNameProps {
@@ -12,18 +13,24 @@ export interface ActuatorControlByNameProps {
   channel: number;
   entity: string;
   boardId?: number;
+  /** On a BALL_VALVE board: shows % open / % closed (its position) in place of the current. */
+  ballValve?: boolean;
 }
 
-export default function ActuatorControlByName({ name, channel, entity, boardId }: ActuatorControlByNameProps) {
+export default function ActuatorControlByName({ name, channel, entity, boardId, ballValve = false }: ActuatorControlByNameProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
   const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
   // Subscribe to canonical commanded-state stream emitted by backend parser:
-  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded
-  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.CH${channel}` : entity;
+  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded, or BV_CMD.* for a ball valve
+  const cmdPrefix = ballValve ? 'BV_CMD' : 'ACT_CMD';
+  const commandedEntity = boardNumber != null ? `${cmdPrefix}.B${boardNumber}.CH${channel}` : entity;
   const commanded = useActuatorCommandedState(commandedEntity);
   const calEntity = entity.replace('ACT.', 'ACT_Cal.');
   const currentA = useSensorValue(calEntity, 'current_a');
+  // A ball valve's ACT_Cal.{Role} aliases resolve to BV<n>_Cal.CH<m> (store.buildAliasesFromConfig).
+  const positionPct = useSensorValue(calEntity, 'position_pct');
+  const positionStatus = useSensorValue(calEntity, 'cal_status');
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
@@ -54,8 +61,13 @@ export default function ActuatorControlByName({ name, channel, entity, boardId }
         <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
       </div>
       <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden px-0.5">
-        <span className="text-[9px] tabular-nums text-yellow-400 font-mono">
-          {currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
+        <span
+          data-testid={`actuator-reading:${name}`}
+          className="text-[9px] tabular-nums text-yellow-400 font-mono"
+        >
+          {ballValve
+            ? formatBallValvePosition(positionPct, positionStatus, commanded)
+            : currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
         </span>
       </div>
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
