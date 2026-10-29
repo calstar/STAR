@@ -8,6 +8,8 @@ The portable C self-test coordinator checks a caller-supplied device inventory t
 
 The existing STM32 scaffold initializes peripherals but does not connect the device-level self-test checks to hardware. `StartDefaultTask()` still only calls `osDelay(1)`. The portable coordinator is not invoked on the board yet.
 
+See [the repository follow-up](DEVICE_CHECKS.md#repository-follow-up-october-28-2026) for compatibility with the new radio API and proposed IMU driver, including deadline and heartbeat-delivery gaps.
+
 ## Architecture
 
 ```text
