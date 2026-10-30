@@ -922,7 +922,7 @@ export function Layer2Optimization({
                                     <ResultCard
                                         label="COPV Initial Pressure (P0)"
                                         value={results.summary.copv_P0_Pa ? results.summary.copv_P0_Pa / 6894.76 : undefined}
-                                        unit="psi"
+                                        unit="psia"
                                         decimals={0}
                                         color="purple"
                                     />
@@ -965,7 +965,7 @@ export function Layer2Optimization({
                                                 yAxisId="left"
                                                 stroke="var(--color-text-secondary)"
                                                 tick={{ fontSize: 12 }}
-                                                label={{ value: 'Tank Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                                                label={{ value: 'Tank Pressure (psia)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
                                             />
                                             {/* Right Y-axis for COPV pressure */}
                                             <YAxis
@@ -973,7 +973,7 @@ export function Layer2Optimization({
                                                 orientation="right"
                                                 stroke="#a855f7"
                                                 tick={{ fontSize: 12 }}
-                                                label={{ value: 'COPV Pressure (psi)', angle: 90, position: 'insideRight', fill: '#a855f7' }}
+                                                label={{ value: 'COPV Pressure (psia)', angle: 90, position: 'insideRight', fill: '#a855f7' }}
                                             />
                                             <Tooltip
                                                 contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
@@ -1278,7 +1278,7 @@ export function Layer2Optimization({
                                         }))}>
                                             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
                                             <XAxis dataKey="time" unit=" s" stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} />
-                                            <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} label={{ value: 'Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }} />
+                                            <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} label={{ value: 'Pressure (psia)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }} />
                                             <Tooltip contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }} />
                                             <Legend />
                                             <Line type="monotone" dataKey="copv" name="COPV" stroke="#a855f7" strokeWidth={2} dot={false} />

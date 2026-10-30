@@ -11,9 +11,13 @@ import path from 'node:path';
  *
  * PLAYWRIGHT_BASE_URL overrides the browser origin; with a stack already running
  * (e.g. ./dev.sh), reuseExistingServer skips the boot locally.
+ *
+ * ENGINE_DESIGN_API_PORT / ENGINE_DESIGN_UI_PORT (dev.sh's names) move both servers,
+ * so the suite can boot its own stack beside a dev stack already on 8000/5173
+ * instead of reusing it -- and the stored designs in it.
  */
-const UI_PORT = 5173;
-const API_PORT = 8000;
+const UI_PORT = Number(process.env.ENGINE_DESIGN_UI_PORT || 5173);
+const API_PORT = Number(process.env.ENGINE_DESIGN_API_PORT || 8000);
 
 /**
  * A throwaway data root for the backend, fresh on every run.
@@ -56,8 +60,10 @@ export default defineConfig({
       // can resolve to IPv6 ::1 while Playwright polls 127.0.0.1 -> the server
       // never looks ready and the run times out. stdout/stderr piped so vite's
       // output is visible (a silent webServer is undiagnosable on timeout).
-      command: `npm run dev -- --host 127.0.0.1 --port ${UI_PORT}`,
+      command: `npm run dev -- --host 127.0.0.1 --port ${UI_PORT} --strictPort`,
       url: `http://127.0.0.1:${UI_PORT}`,
+      // vite.config.ts proxies /api to this port.
+      env: { ENGINE_DESIGN_API_PORT: String(API_PORT) },
       timeout: 180_000,
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',

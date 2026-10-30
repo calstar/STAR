@@ -89,17 +89,20 @@ def fit_feed(prep: Prepared, result: Dict[str, Any], config: Any) -> Dict[str, A
         fitted = [design_manifold(r[0], fitted_cfg) for r in rows]
         mean = lambda v: sum(v) / len(v)  # noqa: E731
         rms = lambda a, b: (sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)) ** 0.5  # noqa: E731
+        line_loss = mean([r[3] - r[4] for r in rows])
+        line_loss_design = mean([delta_p_feed(r[0], rho, fs.model_copy(update={"K_exit": 0.0}), lockup * PSI, mu=mu) / PSI
+                                 for r in rows])
+        tank_firing = mean([r[3] for r in rows])
         sides[cside] = {
             "label": label,
             "mdot_kg_s": m_mean,
             "velocity_head_psi": q_mean,
             "lockup_psia": lockup,
-            "tank_firing_psia": mean([r[3] for r in rows]),
+            "tank_firing_psia": tank_firing,
             "supply_deficit_psi": deficit,
             "supply_deficit_worst_psi": max(r[2] - r[3] for r in rows),
-            "line_loss_psi": mean([r[3] - r[4] for r in rows]),
-            "line_loss_design_psi": mean([delta_p_feed(r[0], rho, fs.model_copy(update={"K_exit": 0.0}), lockup * PSI, mu=mu) / PSI
-                                          for r in rows]),
+            "line_loss_psi": line_loss,
+            "line_loss_design_psi": line_loss_design,
             "manifold_psia": mean(twin_man),
             "manifold_design_psia": mean(today),
             "manifold_gap_psi": mean(twin_man) - mean(today),
@@ -111,9 +114,15 @@ def fit_feed(prep: Prepared, result: Dict[str, Any], config: Any) -> Dict[str, A
             "K0_design": float(fs.K0),
             "design_path": ("friction (roughness_m) + fittings" if getattr(fs, "roughness_m", None) is not None
                             else "K0" + (" + fittings" if getattr(fs, "fittings", None) else "")),
+            "write_refused": _refusal(label, k0, k_line, k_supply, line_loss, line_loss_design, tank_firing, lockup),
         }
+    refused = [s["write_refused"] for s in sides.values() if s["write_refused"]]
     return {
         "available": True,
+        # A loss coefficient is never negative: a side whose fit comes out at or below zero is not
+        # written into the design (D-58), and the reason is said in words.
+        "writable": not refused,
+        "write_refused": " ".join(refused) or None,
         "flown": flown,
         "basis": (("In flight: every liquid column at the flight's acceleration. " if flown else "On the pad, one g. ")
                   + f"Settled firing steps ({len(idx)}, from {SETTLED_S:g} s after Fire, last step left out), "
@@ -124,9 +133,35 @@ def fit_feed(prep: Prepared, result: Dict[str, Any], config: Any) -> Dict[str, A
     }
 
 
+def _refusal(label: str, k0: float, k_line: float, k_supply: float, line_psi: float, line_design_psi: float,
+             tank_psia: float, lockup_psia: float) -> Optional[str]:
+    """Why a side's fitted K0 cannot go into the design, or ``None`` when it can. K0 is a loss in
+    velocity heads; at or below zero the fit is saying the feed *adds* pressure, which a loss
+    coefficient cannot hold. Said by its parts: the lines (a side drawn with no line loses nothing
+    between the tank and the injector) and the supply (the regulator's outlet climbs as the bottle
+    empties, the supply-pressure effect, so the tank sits above its T-0 pressure while firing)."""
+    if k0 > 0.0:
+        return None
+    why = []
+    if k_line <= 0.0:
+        why.append(f"the drawing loses {line_psi:.1f} psi between the tank and the injector against the design's "
+                   f"{line_design_psi:.1f}, so its lines are likely undrawn")
+    if k_supply < 0.0:
+        why.append(f"the tank sits above its T-0 pressure while firing ({tank_psia:.1f} against {lockup_psia:.1f} "
+                   "psia: the regulator's outlet climbs as the bottle empties)")
+    return f"{label}: K0 {k0:.3f} is not a loss; " + (" and ".join(why) or "the fit adds pressure") + "."
+
+
 def design_update(fit: Dict[str, Any], run_id: str, when: Optional[float] = None) -> Dict[str, Any]:
     """The ``feed_system`` update that writes the fit into the design: K0 per side on the lumped
-    path (the method ladder's "measured K", here fitted from the drawing), with its record."""
+    path (the method ladder's "measured K", here fitted from the drawing), with its record.
+    Refused (``ValueError``) when a side's K0 is not a loss (:func:`_refusal`)."""
+    refused = [s.get("write_refused") or _refusal(s["label"], s["K0"], s["K_line"], s["K_supply"],
+                                                  s.get("line_loss_psi", 0.0), s.get("line_loss_design_psi", 0.0),
+                                                  s.get("tank_firing_psia", 0.0), s.get("lockup_psia", 0.0))
+               for s in fit["sides"].values()]
+    if any(refused):
+        raise ValueError(" ".join(r for r in refused if r))
     stamp = time.strftime("%Y-%m-%d", time.localtime(when or time.time()))
     out: Dict[str, Any] = {}
     for cside, s in fit["sides"].items():

@@ -42,6 +42,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+from feedtwin.session.gauge import ATMOSPHERE_PSI
+
 from backend import userdata
 
 #: Record layout version. Bump on a change a reader must know about.
@@ -54,6 +56,8 @@ APP = "runs"
 SERIES_POINTS = 600
 
 #: The outcome numbers a diff compares and the ladder attributes, with units.
+#: ``psig`` is the wire's tag for a pressure carried gauge, as records have
+#: always kept it: the client shows it in psia (ADR 0007).
 OUTCOME_KEYS: tuple[tuple[str, str, str], ...] = (
     ("thrust_mean_N", "Mean thrust", "N"),
     ("impulse_Ns", "Impulse", "N·s"),
@@ -64,6 +68,11 @@ OUTCOME_KEYS: tuple[tuple[str, str, str], ...] = (
     ("oxidiser_kg", "LOX used", "kg"),
     ("fuel_kg", "Fuel used", "kg"),
 )
+
+#: Outcome keys carried gauge. A change in one is a percentage of the absolute
+#: pressure -- 10 psi on a 350 psia chamber is 2.9 %, not the 3.0 % of its
+#: gauge reading -- so the diff says what a person reading psia would work out.
+GAUGE_KEYS = frozenset(key for key, _, unit in OUTCOME_KEYS if unit == "psig")
 
 _ID = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$")
 
@@ -137,6 +146,15 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
     solver = record.get("solver") or {}
     inputs = record.get("inputs") or {}
     setup = inputs.get("setup") or {}
+    t0_tanks = dict((inputs.get("t0") or {}).get("tanks") or {})
+    # The tanks the engine drew liquid from: a cart's dewar sits in the burn's
+    # tank list too, full at the end as at the start.
+    burned = [
+        str(t.get("id"))
+        for t in outcome.get("tanks") or []
+        if isinstance(t, Mapping)
+        and float(t.get("start_kg") or 0.0) - float(t.get("end_kg") or 0.0) > 1e-3
+    ]
     return {
         "id": record.get("id"),
         "owner": record.get("owner"),
@@ -150,6 +168,16 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
         "diagram": inputs.get("diagram", ""),
         "engine": inputs.get("engine", ""),
         "rocket_only": bool(setup.get("ignore_gse", False)),
+        # The gas that pressed the burn: the record's own (kept since
+        # 2026-10-17), else the swap it asked for; "" when neither says --
+        # an older record on the drawing's own gas.
+        "pressurant": str(record.get("pressurant") or setup.get("pressurant") or ""),
+        # The tanks the engine burned from, at T-0 [psig, as recorded].
+        "t0_tanks": {
+            str(t0_tanks[k].get("label") or k): t0_tanks[k].get("psig")
+            for k in burned
+            if isinstance(t0_tanks.get(k), Mapping)
+        },
         "outcome": {k: outcome.get(k) for k, _, _ in OUTCOME_KEYS},
         "converged": not solver.get("unconverged"),
         # Unexplained mass where the record has it (error less the guards'
@@ -217,11 +245,12 @@ def diff(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(va, (int, float)) and isinstance(vb, (int, float))
             else None
         )
-        pct = (
-            delta / float(va) * 100.0
-            if delta is not None and isinstance(va, (int, float)) and va
-            else None
+        base = (
+            float(va) + (ATMOSPHERE_PSI if key in GAUGE_KEYS else 0.0)
+            if isinstance(va, (int, float))
+            else 0.0
         )
+        pct = delta / base * 100.0 if delta is not None and base else None
         outcome.append(
             {
                 "key": key,

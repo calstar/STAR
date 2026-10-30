@@ -316,15 +316,20 @@ interface ChamberContourPlotProps {
   title?: string;
   showCfBadge?: boolean;
   className?: string;
+  /** Given, the parent's one full-section switch drives this chart and its own is not shown
+   *  (Chamber Geometry had two "Show Full Cross-Section" boxes driving different charts). */
+  showLowerHalf?: boolean;
 }
 
 export function ChamberContourPlot({
   geometry,
   title = "Chamber Contour",
   showCfBadge = true,
-  className = ""
+  className = "",
+  showLowerHalf: showLowerHalfProp,
 }: ChamberContourPlotProps) {
-  const [showLowerHalf, setShowLowerHalf] = useViewState('chamberContour.fullSection', false);
+  const [showLowerHalfOwn, setShowLowerHalf] = useViewState('chamberContour.fullSection', false);
+  const showLowerHalf = showLowerHalfProp ?? showLowerHalfOwn;
   const [ceaUnit, setCeaUnit] = useState<'mm' | 'inch'>('mm');
 
   // Download DXF handler
@@ -406,18 +411,21 @@ export function ChamberContourPlot({
               in
             </button>
           </div>
-          <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-            <input
-              type="checkbox"
-              checked={showLowerHalf}
-              onChange={(e) => setShowLowerHalf(e.target.checked)}
-              className="w-4 h-4 rounded border-[var(--color-border)] text-rose-600 focus:ring-rose-500"
-            />
-            Show Full Cross-Section
-          </label>
+          {showLowerHalfProp === undefined && (
+            <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+              <input
+                type="checkbox"
+                checked={showLowerHalf}
+                onChange={(e) => setShowLowerHalf(e.target.checked)}
+                className="w-4 h-4 rounded border-[var(--color-border)] text-rose-600 focus:ring-rose-500"
+              />
+              Full section
+            </label>
+          )}
           {showCfBadge && geometry.Cf !== null && geometry.Cf !== undefined && (
-            <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400">
-              Cf = {geometry.Cf.toFixed(4)}
+            <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400"
+                  title="The thrust coefficient the nozzle was sized at (the design point). Forward Mode's Cf is at the tank pressures you evaluate, so the two differ.">
+              Cf {geometry.Cf.toFixed(4)} at the sizing point
             </span>
           )}
           {/* Download DXF button */}
@@ -544,7 +552,7 @@ export function ChamberContourPlot({
       <div className="mt-2 space-y-1">
         <p className="text-xs text-[var(--color-text-secondary)]">
           {geometry.chamber_contour_method === 'solved' && (
-            <>Full chamber contour from optimized geometry (cylindrical + contraction + nozzle).</>
+            <>The gas-side contour from the design's sizing: cylinder, convergence and nozzle.</>
           )}
           {geometry.chamber_contour_method === 'cea_iterative' && (
             <>

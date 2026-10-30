@@ -15,6 +15,7 @@ Run with::
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import hashlib
 import logging
@@ -22,9 +23,10 @@ import re
 import json
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+import threading
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, AsyncIterator, Mapping, Sequence, cast
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,8 +106,9 @@ from backend.models import (
     TankOut,
 )
 from backend.live import Stand
-from feedtwin.session.gauge import PSI, from_psig, psig
+from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig, say
 from backend.session import MAX_STEP, Sample as SessionSample, Session, Setup
+from feedtwin.session.core import COLD_FLOW_S, DRY_MASS
 from feedtwin.session.burn import (
     BurnPlan,
     find_probes,
@@ -141,11 +144,33 @@ from backend.statemachine import available as sm_available, load_machine
 from backend import daqbox
 from feedtwin.session.statemachine import StateMachine, machine_from_dict
 from feedtwin.session.core import builtin_rows
+from backend import errors
 from backend import runs as run_records
 from backend import userdata
 from backend.routers import stands, users
 
-app = FastAPI(title="feed-twin API", version=feedtwin.__version__)
+
+@contextlib.asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Seed the sample stand into a library with no drawing (a first run, or
+    one emptied by hand), then warm the default stand off the request path
+    (:func:`_warm`). A library emptied by hand keeps what was removed out
+    (``Library.forget``); the first-run panel offers the sample instead."""
+    if _FIRST_RUN or not library.list("diagram"):
+        try:
+            _seed_sample()
+        except (OSError, LibraryError, ValueError):
+            logging.getLogger("feed-twin.library").warning(
+                "could not seed the sample stand", exc_info=True
+            )
+    threading.Thread(target=_warm, name="warm-stand", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="feed-twin API", version=feedtwin.__version__, lifespan=_lifespan)
+# Every refusal is {"detail": "<one plain sentence>"}, validation lists and
+# unexpected errors included (backend.errors).
+errors.install(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -242,25 +267,34 @@ FLUID_SETS: dict[str, dict[str, tuple[str, float]]] = {
 }
 
 
-def _seed() -> None:
+def _seed(revive: bool = False) -> None:
     """Put the shipped drawings in the library, once.
 
     Content-addressed, so this is idempotent -- restarting does not multiply
     them, and a shipped drawing that never changes keeps the same id forever.
+    One somebody removed stays removed (``Library.forget``): every restart
+    used to put them back with a new import time (D-78). ``revive`` puts them
+    back anyway.
     """
     if not SEEDS.is_dir():
         return
+    removed = set() if revive else library.forgotten()
     for path in sorted(SEEDS.glob("*.json")):
         data = path.read_bytes()
         try:
             payload = json.loads(data)
         except json.JSONDecodeError:
             continue
+        source = f"shipped:{path.name}"
+        if source in removed or f"sha256:{drawing_digest(payload)}" in removed:
+            continue
+        if revive:
+            library.unforget(source, f"sha256:{drawing_digest(payload)}")
         current, _ = library.add(
             data,
             kind="diagram",
             name=path.stem.replace("_", " ").title(),
-            source=f"shipped:{path.name}",
+            source=source,
             suffix=".json",
             summary=diagram_summary(payload),
         )
@@ -274,12 +308,219 @@ def _seed() -> None:
                 library.remove(stale.id)
 
 
+# ------------------------------------------------------------------ sample
+#
+# The stand a first run opens on: the LE4 stand drawing, the team's ethalox
+# engine and its EngineDesign card, bundled in backend/sample/ with a manifest
+# that says where each came from. Seeded at startup into a library with no
+# drawing, put back on request (POST /api/library/sample), and *featured*:
+# whatever library holds the same drawing or engine -- under any name, as an
+# upload or a pull -- offers it as the stand a new viewer opens on (D-08).
+
+SAMPLE = Path(__file__).parent / "sample"
+
+
+def drawing_digest(payload: Mapping[str, Any]) -> str:
+    """A drawing's identity, whatever its formatting: the sha256 of its nodes
+    and edges (all a stand is built from) with sorted keys and no whitespace.
+    A pull re-serialises the drawing (``designtools._diagram_bytes``), so the
+    same drawing pulled and uploaded used to be two artifacts (D-52)."""
+    canonical = json.dumps(
+        {"nodes": payload.get("nodes") or [], "edges": payload.get("edges") or []},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+@functools.lru_cache(maxsize=256)
+def _digest_of(artifact_id: str, sha256: str) -> str:
+    """:func:`drawing_digest` of a diagram in the library, or its sha256 for
+    anything that is not a readable drawing. Keyed by the bytes' hash, so a
+    cached answer never goes stale."""
+    try:
+        payload = json.loads(library.read(artifact_id).decode("utf-8"))
+    except (LibraryError, UnicodeDecodeError, json.JSONDecodeError):
+        return sha256
+    return drawing_digest(payload) if isinstance(payload, Mapping) else sha256
+
+
+def _identity(artifact: Artifact) -> str:
+    """What two artifacts must share to be the same thing: a drawing's
+    :func:`drawing_digest`, an engine's bytes."""
+    if artifact.kind == "diagram":
+        return _digest_of(artifact.id, artifact.sha256)
+    return artifact.sha256
+
+
+def _same_drawing(payload: Mapping[str, Any]) -> Artifact | None:
+    """The drawing already in the library that ``payload`` is, if any."""
+    digest = drawing_digest(payload)
+    return next((a for a in library.list("diagram") if _identity(a) == digest), None)
+
+
+@functools.lru_cache(maxsize=1)
+def _sample_entries() -> tuple[dict[str, Any], ...]:
+    """The bundled sample's manifest entries, each with its bytes and identity."""
+    try:
+        manifest = json.loads((SAMPLE / "sample.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    out = []
+    for entry in manifest.get("artifacts", []):
+        try:
+            data = (SAMPLE / entry["file"]).read_bytes()
+        except (OSError, KeyError):
+            continue
+        if entry.get("kind") == "diagram":
+            identity = drawing_digest(json.loads(data))
+        else:
+            identity = hashlib.sha256(data).hexdigest()
+        out.append({**entry, "data": data, "identity": identity})
+    return tuple(out)
+
+
+def _featured(artifact: Artifact) -> bool:
+    """Whether this is the sample's drawing or engine, under whatever name."""
+    return any(
+        e["kind"] == artifact.kind and e["identity"] == _identity(artifact)
+        for e in _sample_entries()
+    )
+
+
+def _seed_sample(revive: bool = False) -> list[Artifact]:
+    """Put the sample stand in the library; the artifacts it is, in order.
+
+    Idempotent. A drawing the library already holds under another name is
+    left as it is (it is featured all the same); an engine without a card
+    gets the sample's. One somebody removed is left out unless ``revive``."""
+    removed = set() if revive else library.forgotten()
+    out: list[Artifact] = []
+    for entry in _sample_entries():
+        kind, data = entry["kind"], entry["data"]
+        source = f"sample:{entry['file']}"
+        marks = (source, f"sha256:{entry['identity']}")
+        if removed & set(marks):
+            continue
+        if revive:
+            library.unforget(*marks)
+        if kind == "diagram":
+            payload = json.loads(data)
+            artifact = (
+                _same_drawing(payload)
+                or library.add(
+                    data,
+                    kind="diagram",
+                    name=entry["name"],
+                    source=source,
+                    suffix=".json",
+                    summary=diagram_summary(payload),
+                    notes=entry.get("provenance", ""),
+                )[0]
+            )
+        else:
+            try:
+                summary = engine_summary(engine_from_bytes(data, name=entry["file"]))
+            except (AssemblyError, EngineImportError):
+                logging.getLogger("feed-twin.library").warning(
+                    "the sample engine %s does not import", entry["file"]
+                )
+                continue
+            artifact, _ = library.add(
+                data,
+                kind="engine",
+                name=entry["name"],
+                source=source,
+                suffix=".yaml",
+                summary=summary,
+                notes=entry.get("provenance", ""),
+            )
+            card = entry.get("card")
+            if card and library.attachment(artifact.id, "card") is None:
+                library.attach(artifact.id, "card", (SAMPLE / card).read_bytes())
+        out.append(artifact)
+    return out
+
+
+#: Whether the library held no drawing before anything was seeded into it:
+#: a first run, which gets the sample stand at startup (:func:`_lifespan`).
+_FIRST_RUN = not library.list("diagram")
 _seed()
 
 
+def _warm() -> None:
+    """Build the stand a fresh browser opens first, so its first open is not
+    the one that pays for the property tables, the engine and the assembly.
+
+    The cockpit's own pick (frontend lib/standPick.ts): the featured drawing,
+    else the first whose name says "stand", else the first; the featured
+    engine, else the first. A first open in a new browser took 33 s once the
+    API had restarted under it (D-79). Off the request path, and a failure
+    here is only a cold first open."""
+    started = time.monotonic()
+    try:
+        diagrams = library.list("diagram")
+        engines = library.list("engine")
+        diagram = (
+            next((a for a in diagrams if _featured(a)), None)
+            or next((a for a in diagrams if re.search("stand", a.name, re.I)), None)
+            or (diagrams[0] if diagrams else None)
+        )
+        engine = next((a for a in engines if _featured(a)), None) or (
+            engines[0] if engines else None
+        )
+        if diagram is None:
+            return
+        stand = _stand(diagram.id, engine.id if engine else "", "hotfire", "diablo")
+        Session(stand.model, stand.machine, stand.binding, hookup=stand.hookup).step(
+            1e-3
+        )
+        _log.info("warmed %s in %.1f s", diagram.name, time.monotonic() - started)
+    except Exception:  # noqa: BLE001 - a cold first open, nothing worse
+        _log.warning("could not warm the default stand", exc_info=True)
+
+
 def _out(artifact: Artifact) -> ArtifactOut:
-    fields = {k: getattr(artifact, k) for k in ArtifactOut.model_fields if k != "card"}
-    return ArtifactOut(**fields, card=_card_info(artifact))
+    computed = ("card", "featured", "problem", "aliases")
+    fields = {
+        k: getattr(artifact, k) for k in ArtifactOut.model_fields if k not in computed
+    }
+    return ArtifactOut(
+        **fields,
+        card=_card_info(artifact),
+        featured=_featured(artifact),
+        problem=_UNBUILDABLE.get(artifact.id, ""),
+        aliases=_aliases(artifact.id),
+    )
+
+
+#: Why a drawing could not be built into a stand, by artifact id, from the
+#: last time somebody tried: the Library badges it rather than letting the
+#: next person find out the same way (D-47). Content-addressed, so the
+#: reason holds for the artifact until the code changes (a restart).
+_UNBUILDABLE: dict[str, str] = {}
+
+#: The record kind an artifact's other names are kept under: the pulls that
+#: turned out to be a drawing already in the library (D-52).
+ALIASES = "aliases"
+
+
+def _aliases(artifact_id: str) -> list[str]:
+    """Where else this artifact came from: pulls of the same drawing."""
+    found = library.record(ALIASES, artifact_id)
+    sources = found.get("sources") if found else None
+    return [str(s) for s in sources] if isinstance(sources, list) else []
+
+
+def _alias(artifact: Artifact, provenance: str) -> None:
+    """Remember that ``provenance`` was this artifact too."""
+    if provenance == artifact.source:
+        return
+    known = _aliases(artifact.id)
+    # The newest first: freshness asks the latest pull.
+    sources = [provenance, *(s for s in known if s != provenance)][:20]
+    if sources != known:
+        library.put_record(ALIASES, artifact.id, {"sources": sources})
 
 
 def _card_info(artifact: Artifact) -> dict[str, object]:
@@ -482,6 +723,11 @@ async def import_diagram(file: UploadFile) -> ImportResult:
             detail="that JSON has no 'nodes'. Export the diagram from "
             "pid-designer rather than a browser page save.",
         )
+    # The same drawing saved with other formatting is the drawing already
+    # here, not a second copy under another name (D-52).
+    same = _same_drawing(payload)
+    if same is not None:
+        return ImportResult(artifact=_out(same), already_present=True)
     artifact, existed = library.add(
         data,
         kind="diagram",
@@ -613,11 +859,20 @@ async def import_from_source(
     summary: dict[str, object] = {}
     if tool.kind == "diagram":
         try:
-            summary = diagram_summary(json.loads(data.decode("utf-8")))
+            payload = json.loads(data.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=422, detail=f"{tool.label} returned unreadable JSON ({exc})"
             ) from exc
+        # A pull is re-serialised, so the drawing uploaded last week and
+        # pulled today were two artifacts with one drawing between them, both
+        # in every menu (D-52). Matched by content: the one already here, with
+        # this pull remembered as another of its sources.
+        same = _same_drawing(payload)
+        if same is not None:
+            _alias(same, provenance)
+            return ImportResult(artifact=_out(same), already_present=True)
+        summary = diagram_summary(payload)
     else:
         try:
             summary = engine_summary(engine_from_bytes(data, name=name or doc_id))
@@ -669,12 +924,29 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    parsed = designtools.parse_source(artifact.source)
+    # An upload that a pull later matched is compared with that pull's
+    # document (the newest alias).
+    parsed = next(
+        (
+            found
+            for found in map(
+                designtools.parse_source, [artifact.source, *_aliases(artifact_id)]
+            )
+            if found is not None
+        ),
+        None,
+    )
     if parsed is None:
         return FreshnessOut(
             artifact_id=artifact_id,
             tracked=False,
-            detail="Uploaded, not pulled from a design tool: nothing to compare with.",
+            detail=(
+                "The bundled sample, not pulled from a design tool: nothing to "
+                "compare with."
+                if artifact.source.startswith("sample:")
+                else "Uploaded, not pulled from a design tool: nothing to compare "
+                "with."
+            ),
         )
     key, owner, doc_id, release = parsed
     if release:
@@ -690,7 +962,17 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         )
     except DesignToolError as exc:
         return FreshnessOut(artifact_id=artifact_id, tracked=True, detail=str(exc))
-    current = hashlib.sha256(data).hexdigest() == artifact.sha256
+    if artifact.kind == "diagram":
+        # By drawing, not by bytes: an upload matched by a pull has the
+        # pull's drawing in other formatting.
+        try:
+            current = drawing_digest(json.loads(data.decode("utf-8"))) == _identity(
+                artifact
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            current = False
+    else:
+        current = hashlib.sha256(data).hexdigest() == artifact.sha256
     return FreshnessOut(
         artifact_id=artifact_id,
         tracked=True,
@@ -731,7 +1013,12 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     else:
-        summary = diagram_summary(json.loads(data.decode("utf-8")))
+        payload = json.loads(data.decode("utf-8"))
+        same = _same_drawing(payload)
+        if same is not None:
+            _alias(same, provenance)
+            return ImportResult(artifact=_out(same), already_present=True)
+        summary = diagram_summary(payload)
     fresh, existed = library.add(
         data,
         kind=tool.kind,
@@ -750,11 +1037,35 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
 
 @app.delete("/api/library/{artifact_id}")
 async def remove_artifact(artifact_id: str) -> dict[str, str]:
+    """Remove an artifact. Removed means removed: a shipped drawing or the
+    sample is not put back on the next restart (D-78)."""
     try:
+        artifact = library.get(artifact_id)
+        identity = _identity(artifact)
         library.remove(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    marks = [f"sha256:{identity}"]
+    if artifact.source.startswith(("shipped:", "sample:")):
+        marks.append(artifact.source)
+    library.forget(*marks)
+    library.drop_record(ALIASES, artifact_id)
+    _UNBUILDABLE.pop(artifact_id, None)
     return {"removed": artifact_id}
+
+
+@app.post("/api/library/sample")
+async def load_sample() -> list[ArtifactOut]:
+    """Put the sample stand in the library -- the LE4 stand drawing, the team's
+    ethalox engine and its EngineDesign card -- even if it was removed before.
+    Idempotent; answers with the library as it stands afterwards."""
+    try:
+        _seed_sample(revive=True)
+    except (OSError, LibraryError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail=f"The sample stand could not be loaded: {exc}"
+        ) from exc
+    return [_out(a) for a in library.list()]
 
 
 # -------------------------------------------------------------------- model
@@ -1294,18 +1605,49 @@ def _shipped_machine(machine: str) -> StateMachine:
 HOOKUPS = "hookups"
 
 
+def _source_lineage(source: str) -> str | None:
+    """The lineage a provenance names: the pid-designer document, or the
+    shipped file; None for anything else (an upload, named by its artifact)."""
+    parsed = designtools.parse_source(source)
+    if parsed is not None:
+        key, owner, doc_id, _ = parsed
+        return f"{key}:{owner}/{doc_id}"
+    if source.startswith("shipped:"):
+        return source
+    return None
+
+
 def _lineage(artifact: Artifact) -> str:
     """Where a drawing comes from, whatever its bytes: the pid-designer
     document, the shipped file, or the name it was uploaded under (a browser's
     " (3)" on a re-download stripped). A hookup is kept per lineage, so saving
     the drawing again -- a new artifact by content -- keeps what was linked."""
-    parsed = designtools.parse_source(artifact.source)
-    if parsed is not None:
-        key, owner, doc_id, _ = parsed
-        return f"{key}:{owner}/{doc_id}"
-    if artifact.source.startswith("shipped:"):
-        return artifact.source
+    own = _source_lineage(artifact.source)
+    if own is not None:
+        return own
     return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+
+
+def _lineages(artifact: Artifact) -> list[str]:
+    """Every lineage this drawing answers to: its own, then each pull that
+    turned out to be this drawing (D-52), newest first. A pull of an existing
+    drawing returns that artifact, so a hookup saved under the pull's lineage
+    -- when each pull made its own artifact -- is this drawing's too."""
+    out = [_lineage(artifact)]
+    for source in _aliases(artifact.id):
+        lineage = _source_lineage(source)
+        if lineage is not None and lineage not in out:
+            out.append(lineage)
+    return out
+
+
+def _hookup_lineage(artifact: Artifact) -> tuple[str, list[str]]:
+    """The lineage whose saved hookup this drawing wires -- the first of
+    :func:`_lineages` that has one, else its own, where a save goes -- and the
+    other lineages that hold a hookup the stand does not wire."""
+    held = [lin for lin in _lineages(artifact) if library.record(HOOKUPS, lin)]
+    used = held[0] if held else _lineage(artifact)
+    return used, [lin for lin in held if lin != used]
 
 
 def _drawn_knobs(
@@ -1335,7 +1677,7 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     never saved, and used to be indistinguishable from it: the stand ran on a
     different wiring and nothing said so."""
     try:
-        lineage = _lineage(library.get(diagram_id))
+        lineage, shadowed = _hookup_lineage(library.get(diagram_id))
     except LibraryError:
         suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
         return suggested, False, ""
@@ -1344,7 +1686,15 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     if stored is not None:
         try:
             raw = stored.get("hookup")
-            return Hookup.from_dict(raw if isinstance(raw, Mapping) else {}), True, ""
+            unused = (
+                f"This drawing also has a hookup saved for {', '.join(shadowed)} "
+                f"(the same drawing, pulled from there); the one saved for "
+                f"{lineage} is wired."
+                if shadowed
+                else ""
+            )
+            hookup = Hookup.from_dict(raw if isinstance(raw, Mapping) else {})
+            return hookup, True, unused
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
                 f"This drawing's saved hookup could not be read ({exc}); the "
@@ -1391,7 +1741,19 @@ def _engine_state(chamber: ChamberResult | None) -> EngineState | None:
 # happen if"; this one answers "what is happening". See backend.session.
 
 _SESSIONS: dict[str, Session] = {}
-_SESSION_LIMIT = 8
+#: Stands held open at once. Each is a whole model and its history in memory.
+_SESSION_LIMIT = 12
+#: When each session was last touched (time.monotonic()), for eviction.
+_TOUCHED: dict[str, float] = {}
+#: A stand touched this recently is being watched: a console ticks every
+#: 200 ms, and a browser throttles a hidden tab's to about once a second
+#: (once a minute after five). A full server of these refuses a new stand
+#: rather than close one of them [s]: closing a watched one sent its console
+#: to reopen, which closed the next, and so round all of them.
+_WATCHED_S = 30.0
+#: Why a session id is gone, for the console that asks after it: closed to
+#: make room, or replaced by a Reset. Bounded; an unknown id is a restart.
+_CLOSED: dict[str, str] = {}
 
 
 @dataclass
@@ -1419,6 +1781,9 @@ class _Opened:
     session's own ``assumptions`` reach only the run record."""
     unrecorded: str = ""
     """Why the last burn could not be recorded; cleared once a record lands."""
+    lit_t: float | None = None
+    """Stand time of the last sample the engine made thrust in, until the burn
+    it belongs to is recorded."""
     body: dict[str, Any] = field(default_factory=dict)
     """The setup the session was opened with, as sent: a repro reopens on it."""
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -1450,10 +1815,49 @@ def _session(session_id: str) -> Session:
     if found is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No session {session_id!r}. It may have been dropped on a "
-            "restart -- start a new one.",
+            detail=_CLOSED.get(session_id)
+            or f"No session {session_id} on the server: it was restarted, so "
+            "start a new stand.",
         )
+    _TOUCHED[session_id] = time.monotonic()
     return found
+
+
+def _close_session(session_id: str, why: str) -> None:
+    """Forget a session, remembering why for whoever asks after it."""
+    _SESSIONS.pop(session_id, None)
+    _OPENED.pop(session_id, None)
+    _TOUCHED.pop(session_id, None)
+    _CLOSED[session_id] = why
+    while len(_CLOSED) > 200:
+        _CLOSED.pop(next(iter(_CLOSED)))
+
+
+def _make_room() -> None:
+    """Close the least recently touched stand when the server is full.
+
+    It used to pop the first one opened, whoever was watching it: a console
+    T-0'd and mid-load vanished when someone else opened a stand, and came
+    back as a fresh Idle stand with nothing said (D-17). A console being
+    watched is touched every tick, so it is the last one this reaches; the
+    one closed is told why when it next asks (:data:`_CLOSED`). None is
+    closed while it is watched (:data:`_WATCHED_S`): the new stand is refused
+    instead, 503."""
+    if len(_SESSIONS) < _SESSION_LIMIT:
+        return
+    oldest = min(_SESSIONS, key=lambda k: _TOUCHED.get(k, 0.0))
+    if time.monotonic() - _TOUCHED.get(oldest, 0.0) < _WATCHED_S:
+        raise HTTPException(
+            503,
+            f"The server is full: {len(_SESSIONS)} stands are open and every one "
+            "is being watched, so none was closed for this one. Close a console "
+            "tab, or try again when one goes idle.",
+        )
+    _close_session(
+        oldest,
+        f"No session {oldest} on the server: this stand sat idle and was closed "
+        "to make room for another, so a fresh one was opened.",
+    )
 
 
 def _live_knobs(session: Session) -> list[LiveKnobOut]:
@@ -1494,7 +1898,24 @@ def _lockup_psig(
         return None
     inlet = None if inlet_psig is None else from_psig(inlet_psig)
     lockup = regulator_lockup(session, tank_id, inlet, loaded_dome=loaded_dome)
-    return None if lockup is None else round(psig(lockup), 1)
+    # At or under atmosphere the regulator is shut, not locked up: an unloaded
+    # dome (its line shut on the pad) has no bias to hold against the supply
+    # effect, and "-1.4 psia" let the pad guide call 15 psia tanks pressed.
+    if lockup is None or lockup <= ATMOSPHERE:
+        return None
+    if not loaded_dome:
+        # Nor is a dome short of its knob loaded: its spring bias alone holds
+        # the outlet at tens of psi, which the guide then took as "pressed".
+        # A dome as the knob sets it is the lockup the pad presses to.
+        knob = regulator_lockup(session, tank_id, inlet, loaded_dome=True)
+        if knob is not None and lockup < knob - DOME_UNLOADED_PSI * PSI:
+            return None
+    return float(round(psig(lockup), 1))
+
+
+#: How far under the knob's own lockup a regulator's lockup may sit before the
+#: console reads its dome as not loaded [psi]. A display rule, not physics.
+DOME_UNLOADED_PSI = 10.0
 
 
 def _lockup_range(session: Session, tank_id: str) -> list[float] | None:
@@ -1565,6 +1986,7 @@ def _session_out(session: Session, sample: SessionSample) -> SessionOut:
         held=session.operator_held,
         tripped=session.tripped,
         overrides_hash=fingerprint(_applied(session.model)),
+        gas=_drawn_gas(session),
         tanks=[
             TankOut(
                 id=sim.id,
@@ -1651,16 +2073,31 @@ async def open_session(
     a thirtieth of the density. Not ready for flashing work yet.
     """
     settings = dict(body or {})
+    # The session this one replaces (a Reset, a new drawing): closed now, not
+    # left holding a seat until the server is full.
+    replaces = str(settings.pop("replaces", "") or "")
+    closed = _CLOSED.get(replaces, "")
+    if replaces in _SESSIONS:
+        _close_session(
+            replaces,
+            f"No session {replaces} on the server: it was replaced by a fresh "
+            "stand.",
+        )
     setup = _setup(settings)
-    stand = _stand(
-        diagram,
-        engine,
-        fluid_set,
-        machine,
-        multiphase,
-        vehicle_only=setup.ignore_gse,
-        gas=_pressurant_swap(setup.pressurant),
-    )
+    try:
+        stand = _stand(
+            diagram,
+            engine,
+            fluid_set,
+            machine,
+            multiphase,
+            vehicle_only=setup.ignore_gse,
+            gas=_pressurant_swap(setup.pressurant),
+        )
+    except HTTPException as exc:
+        if exc.status_code == 422:
+            _note_unbuildable(diagram, engine, str(exc.detail))
+        raise
     # The dome and the COPV fill start where the drawing sets them; the
     # client sends them only when the operator has turned them (or a stand
     # carries them). They used to start at 500 and 4,500 whatever was drawn.
@@ -1713,17 +2150,30 @@ async def open_session(
     except AssemblyError as exc:
         # A drawing that assembles can still fail to *start* -- a COPV drawn
         # as a tank has no liquid to begin from. Said, not a bare 500.
+        _note_unbuildable(diagram, engine, str(exc))
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     # The drawing's hookup notes, while it is the drawing's hookup that is wired.
     notices = [
+        *(
+            [
+                "The stand you had open sat idle and was closed on the server to "
+                "make room for another; this is a fresh one."
+            ]
+            if "to make room" in closed
+            else []
+        ),
         *(stand.notes if hookup is stand.hookup else ()),
         *hookup_notes,
         *session.short_loads(),
     ]
     session.assumptions.extend(notices)
-    if len(_SESSIONS) >= _SESSION_LIMIT:
-        _OPENED.pop(_SESSIONS.pop(next(iter(_SESSIONS))).id, None)
+    # The first frame before the session is kept: a stand whose first step
+    # fails is not left on the server half built, holding a seat, for a
+    # console that was told it failed (D-14).
+    first = session.step(1e-3)
+    _make_room()
     _SESSIONS[session.id] = session
+    _TOUCHED[session.id] = time.monotonic()
     _OPENED[session.id] = _Opened(
         diagram=diagram,
         engine=engine,
@@ -1735,7 +2185,24 @@ async def open_session(
         notices=notices,
         body=json.loads(json.dumps(settings, default=str)),
     )
-    return _session_out(session, session.step(1e-3))
+    _UNBUILDABLE.pop(diagram, None)
+    return _session_out(session, first)
+
+
+def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
+    """Badge the drawing in the Library when it is the drawing that cannot be
+    built: asked again without the engine, so an engine's fault is not
+    pinned on a good drawing."""
+    if engine:
+        try:
+            alone = _stand(diagram, "", "hotfire", "diablo")
+            Session(alone.model, alone.machine, alone.binding, hookup=alone.hookup)
+            return
+        except (HTTPException, AssemblyError):
+            pass
+        except Exception:  # noqa: BLE001 - only a badge rides on this
+            return
+    _UNBUILDABLE[diagram] = reason
 
 
 #: Events a session keeps for its repro; a stand driven for hours keeps the
@@ -1858,11 +2325,28 @@ async def tick_session(
 MAX_TICK_S = 6.0
 
 
-_STUDY = StudyRunner()
+#: Studies by whose and on which stand, ``"user|stand"`` (:func:`_study_key`).
+#: One per server let every viewer watch, and cancel, someone else's study,
+#: and refused a second person's with a 409 (D-51). Each keeps its last result.
+_STUDIES: dict[str, StudyRunner] = {}
+#: The study a person last started, by user: what a status asked without a
+#: session shows.
+_LAST_STUDY: dict[str, str] = {}
 
 
-def _study_out() -> StudyOut:
-    runner = _STUDY
+def _study_key(request: Request, session_id: str) -> str:
+    """Whose study, on which stand: a session's stand document, or its drawing.
+    Without a session, the caller's last study."""
+    user = userdata.store.current_user(request)
+    opened = _OPENED.get(session_id) if session_id else None
+    if opened is None:
+        return _LAST_STUDY.get(user, f"{user}|")
+    stand = (opened.stand or {}).get("id") or opened.diagram
+    return f"{user}|{stand}"
+
+
+def _study_out(key: str = "") -> StudyOut:
+    runner = _STUDIES.get(key) or StudyRunner()
     request = runner.request
     cases = runner.result.cases if runner.result is not None else list(runner.partial)
     return StudyOut(
@@ -1883,7 +2367,7 @@ def _study_out() -> StudyOut:
 def _study_outcome(session: Session) -> dict[str, Any]:
     """The study case's burn, totalled as the Engine tab and a run total it."""
     history = list(session.history)
-    found = find_burns(history, find_probes(session).injector_inlet)
+    found = _lit_burns(history, find_probes(session).injector_inlet)
     if not found:
         return {}
     longest = max(found, key=lambda b: b.duration_s)
@@ -1894,13 +2378,16 @@ def _study_outcome(session: Session) -> dict[str, Any]:
 
 
 @app.get("/api/study")
-async def study_status() -> StudyOut:
-    """Where the study has got to, and the cases it has finished."""
-    return _study_out()
+async def study_status(request: Request, session: str = "") -> StudyOut:
+    """Where your study on this session's stand has got to, and the cases it
+    has finished. Someone else's study is theirs: not shown, not cancelled."""
+    return _study_out(_study_key(request, session))
 
 
 @app.post("/api/study")
-async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
+async def start_study(
+    http: Request, body: dict[str, Any] | None = Body(None)
+) -> StudyOut:
     """Run a study on the stand a cockpit session has open.
 
     ``{"session": id, "cases": [...], "horizon_s": s, "sweep": "what x is"}``.
@@ -1979,16 +2466,27 @@ async def start_study(body: dict[str, Any] | None = Body(None)) -> StudyOut:
         stand=str(stand),
         engine_name=engine_name,
     )
-    if not _STUDY.start(request, _session_from_inputs, _study_outcome):
-        raise HTTPException(status_code=409, detail="a study is already running")
-    return _study_out()
+    key = _study_key(http, session_id)
+    runner = _STUDIES.setdefault(key, StudyRunner())
+    if not runner.start(request, _session_from_inputs, _study_outcome):
+        raise HTTPException(
+            status_code=409,
+            detail="Your study on this stand is still running; cancel it or "
+            "wait for it to finish.",
+        )
+    _LAST_STUDY[userdata.store.current_user(http)] = key
+    return _study_out(key)
 
 
 @app.post("/api/study/cancel")
-async def cancel_study() -> StudyOut:
-    """Stop at the end of the case running now, keeping the ones finished."""
-    _STUDY.cancel()
-    return _study_out()
+async def cancel_study(request: Request, session: str = "") -> StudyOut:
+    """Stop your study at the end of the case running now, keeping the ones
+    finished. Only your own: a study is cancelled by whoever started it."""
+    key = _study_key(request, session)
+    runner = _STUDIES.get(key)
+    if runner is not None:
+        runner.cancel()
+    return _study_out(key)
 
 
 @app.post("/api/session/{session_id}/command")
@@ -2180,7 +2678,8 @@ async def session_history(
 
 #: The chamber's bar turns amber this far over the engine's design chamber
 #: pressure, and red this far over: a display band, not a limit of the engine
-#: (it has no MAWP on the drawing). The DAQ's fixed 400 / 500 psig made a
+#: (it has no MAWP on the drawing). Over the absolute pressure, as the design
+#: chamber pressure is quoted. The DAQ's fixed 414.7 / 514.7 psia made a
 #: nominal 7 kN burn read amber from ignition to burnout.
 PC_NOP_OVER_DESIGN = 1.10
 PC_MEOP_OVER_DESIGN = 1.25
@@ -2194,14 +2693,21 @@ def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
     The chamber: bands over the engine's design chamber pressure. Anything
     else -- a line, a dome -- is left to the console's guess by tag. The
     guesses were all there was, and a COPV transducer tagged HP-1 read red at
-    1,800 psig against the propellant tanks' 700.
+    1,814.7 psia against the propellant tanks' 714.7.
+
+    The lines are gauge, like the channel values they mark; ``limits`` is the
+    hover a person reads, in psia (ADR 0007).
     """
     out: dict[str, dict[str, Any]] = {}
     params = {n.id: n.params for n in session.model.diagram.nodes}
 
     def drawn(vessel_id: str) -> float | None:
+        """The vessel's drawn pressure, absolute [Pa]."""
         param = params.get(vessel_id, {}).get("pressure")
-        return psig(param.si) if param is not None else None
+        return float(param.si) if param is not None else None
+
+    def gauge(pa: float | None) -> float | None:
+        return None if pa is None else round(psig(pa), 1)
 
     for inst in session.model.built.instruments:
         if inst.type in THERMAL_INSTRUMENTS:
@@ -2209,43 +2715,43 @@ def _channel_limits(session: Session) -> dict[str, dict[str, Any]]:
         for sim in session.tanks.values():
             if inst.node in (sim.ullage_node, sim.outlet_node) and sim.mawp > 0.0:
                 nop = drawn(sim.id)
-                meop = psig(sim.mawp)
                 out[inst.id] = {
-                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
-                    "meop": round(meop, 1),
+                    "nop": gauge(nop) if nop is not None and nop < sim.mawp else None,
+                    "meop": gauge(sim.mawp),
                     "limits": f"{sim.label}: "
                     + (
-                        f"operating {nop:.0f} psig on the drawing · "
+                        f"operating {say(nop, 1)} on the drawing · "
                         if nop is not None
                         else ""
                     )
-                    + f"trips at {meop:.0f} psig (MAWP)",
+                    + f"trips at {say(sim.mawp, 1)} (MAWP)",
                 }
         for bottle in session.bottles.values():
             if inst.node == bottle.node and bottle.mawp > 0.0:
                 nop = drawn(bottle.id)
-                meop = psig(bottle.mawp)
                 out[inst.id] = {
-                    "nop": round(nop, 1) if nop is not None and nop < meop else None,
-                    "meop": round(meop, 1),
+                    "nop": (
+                        gauge(nop) if nop is not None and nop < bottle.mawp else None
+                    ),
+                    "meop": gauge(bottle.mawp),
                     "limits": f"{bottle.label}: "
                     + (
-                        f"charged to {nop:.0f} psig on the drawing · "
+                        f"charged to {say(nop, 1)} on the drawing · "
                         if nop is not None
                         else ""
                     )
-                    + f"trips at {meop:.0f} psig (MAWP)",
+                    + f"trips at {say(bottle.mawp, 1)} (MAWP)",
                 }
     engine = session.model.engine
     design = (
         getattr(engine, "design_chamber_pressure", 0.0) if engine is not None else 0.0
     )
     if design > 0.0:
-        pc = psig(design)
         out["engine.pc"] = {
-            "nop": round(pc * PC_NOP_OVER_DESIGN, 1),
-            "meop": round(pc * PC_MEOP_OVER_DESIGN, 1),
-            "limits": f"design chamber {pc:.0f} psig · amber 10 % over, red 25 % over",
+            "nop": gauge(design * PC_NOP_OVER_DESIGN),
+            "meop": gauge(design * PC_MEOP_OVER_DESIGN),
+            "limits": f"design chamber {say(design)} · amber "
+            f"{PC_NOP_OVER_DESIGN - 1:.0%} over, red {PC_MEOP_OVER_DESIGN - 1:.0%} over",
         }
     # A missing NOP falls back on the tag's own, which may sit over a drawn
     # MEOP: say nothing rather than draw red under amber.
@@ -2273,12 +2779,15 @@ def _session_balance(session: Session) -> BalanceOut | None:
     for sample in reversed(history[-BALANCE_LOOKBACK:]):
         if sample.chamber is None or sample.chamber.mdot_total <= 0.0:
             continue
+        # A panel, never the frame: whatever the split cannot say about a
+        # sample (a leg flowing backwards in an abort) leaves it blank rather
+        # than failing /history and freezing the plot.
         try:
             found = mixture_balance(session.model, cast(Any, sample), sample.signals)
-        except (ValueError, ZeroDivisionError):
-            found = None
-        if found is not None:
-            return _balance(found)
+            if found is not None:
+                return _balance(found)
+        except (ValueError, ZeroDivisionError, OverflowError):
+            continue
     return None
 
 
@@ -2352,7 +2861,7 @@ def _hookup_out(
         runs = cut
     suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
-        lineage=_lineage(library.get(diagram)),
+        lineage=_hookup_lineage(library.get(diagram))[0],
         saved=saved,
         hookup=_hookup_body(daqbox.wiring(hookup, model, table)),
         suggested=_hookup_body(daqbox.wiring(suggested, model, shipped)),
@@ -2465,7 +2974,7 @@ async def save_hookup(
     _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
         HOOKUPS,
-        _lineage(library.get(diagram)),
+        _hookup_lineage(library.get(diagram))[0],
         {"hookup": hookup.to_dict(), "diagram": diagram},
     )
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
@@ -2480,7 +2989,7 @@ async def reset_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
-    library.drop_record(HOOKUPS, _lineage(library.get(diagram)))
+    library.drop_record(HOOKUPS, _hookup_lineage(library.get(diagram))[0])
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
@@ -2507,7 +3016,7 @@ async def session_burns(session_id: str) -> BurnsOut:
     inlets = find_probes(session).injector_inlet
     live = [
         _burn_out(session, history, burn, model_kind)
-        for burn in find_burns(history, inlets)
+        for burn in _lit_burns(history, inlets)
     ]
     # A recorded burn carries its run and its traces, and stays listed after
     # the history has rolled past it.
@@ -2559,7 +3068,9 @@ def _burn_out(
     if first is not None and last is not None:
         built = session.model.built
         for sim in session.tanks.values():
-            if sim.id not in first.tanks:
+            # The vehicle's: a cart's dewar and transfer tank are not burned
+            # from, and read as tanks at -0.0 on the Engine tab (D-19).
+            if sim.id not in first.tanks or sim.id in session.ground:
                 continue
             tanks.append(
                 BurnTankOut(
@@ -2570,8 +3081,8 @@ def _burn_out(
                     min_psi=round(
                         min(s.tanks[sim.id]["pressure_psi"] for s in full), 1
                     ),
-                    start_kg=round(first.tanks[sim.id]["liquid_mass_kg"], 3),
-                    end_kg=round(last.tanks[sim.id]["liquid_mass_kg"], 3),
+                    start_kg=round(first.tanks[sim.id]["liquid_mass_kg"], 3) + 0.0,
+                    end_kg=round(last.tanks[sim.id]["liquid_mass_kg"], 3) + 0.0,
                 )
             )
     r = burn
@@ -2604,7 +3115,8 @@ def _burn_out(
 
 
 #: The engine's channels on the plots, beside the instruments: id, tag, unit,
-#: and how each is read off a sample's chamber. Zero while it is not burning.
+#: and how each is read off a sample's chamber. Zero while it is not burning,
+#: except those in ``IDLE_READS``.
 ENGINE_CHANNELS: tuple[tuple[str, str, str, Any], ...] = (
     ("engine.pc", "PC", "psig", lambda c: round(psig(c.pressure), 2)),
     ("engine.thrust", "Thrust", "N", lambda c: round(c.thrust, 1)),
@@ -2614,15 +3126,26 @@ ENGINE_CHANNELS: tuple[tuple[str, str, str, Any], ...] = (
 )
 
 
+#: Channels that read the chamber with the engine out too: its pressure is
+#: the site's air then, which the Pc tile shows (13.6 psia on a card with site
+#: ambient). A literal zero gauge plotted and exported as 14.7 psia beside it.
+IDLE_READS = frozenset({"engine.pc"})
+
+
 def _engine_channels(kept: list[SessionSample]) -> list[Channel]:
     from feedtwin.session.report import is_burning
+
+    def value(key: str, read: Any, s: SessionSample) -> float:
+        if is_burning(s) or (key in IDLE_READS and s.chamber is not None):
+            return float(read(s.chamber))
+        return 0.0
 
     return [
         Channel(
             id=key,
             tag=tag,
             unit=unit,
-            values=[read(s.chamber) if is_burning(s) else 0.0 for s in kept],
+            values=[value(key, read, s) for s in kept],
         )
         for key, tag, unit, read in ENGINE_CHANNELS
     ]
@@ -2824,10 +3347,136 @@ def _burn_series(
         "tanks": {
             sim.id: [round(s.tanks[sim.id]["pressure_psi"], 2) for s in picked]
             for sim in session.tanks.values()
-            if all(sim.id in s.tanks for s in picked)
+            if sim.id not in session.ground and all(sim.id in s.tanks for s in picked)
         },
-        "labels": {sim.id: sim.label for sim in session.tanks.values()},
+        "labels": {
+            sim.id: sim.label
+            for sim in session.tanks.values()
+            if sim.id not in session.ground
+        },
     }
+
+
+def _lit_burns(history: list[SessionSample], inlets: Mapping[str, str]) -> list[Any]:
+    """The burns in ``history`` that lit: both propellants in the chamber *and*
+    thrust. Both flowing is what totals a burn (feedtwin.session.report); it
+    is not what makes one. An Engine Abort's trickle through open mains and a
+    Fire off unpressed tanks both put the two propellants in the chamber at a
+    few psi and no thrust, and every such run was recorded as a 0 N burn --
+    nineteen of them in thirty seconds of an abort (D-01, D-10)."""
+    out = []
+    for burn in find_burns(history, inlets):
+        if burn.thrust_peak_N <= 0.0:
+            continue
+        out.extend(_lit_parts(history, inlets, burn))
+    return out
+
+
+def _lit_parts(
+    history: list[SessionSample], inlets: Mapping[str, str], burn: Any
+) -> list[Any]:
+    """``burn`` as the engine lit it: one burn per stretch of thrust, split
+    where the engine was out for longer than COLD_FLOW_S though both
+    propellants kept flowing.
+
+    The engine went out but the propellant did not stop: an abort row with a
+    main open trickles on unlit for as long as the stand sits there, so a burn
+    ends with its thrust, not with that trickle; a tail-off shorter than
+    COLD_FLOW_S is left exactly as totalled. And a burn that lights again in
+    the same flow -- Fire after such an abort, or a card's zero-thrust floor
+    crossed mid-flow -- is a burn of its own: one start for the whole flow
+    was recorded once, cut at the first flame-out, and the re-lit part never
+    reached a run record while /burns showed it."""
+    lit = [
+        s.t
+        for s in history
+        if burn.start_s < s.t <= burn.end_s + 1e-9
+        and s.chamber is not None
+        and s.chamber.thrust > 0.0
+    ]
+    if not lit:
+        return [burn]
+    stretches: list[list[float]] = [[lit[0], lit[0]]]
+    for t in lit[1:]:
+        if t - stretches[-1][1] > COLD_FLOW_S:
+            stretches.append([t, t])
+        else:
+            stretches[-1][1] = t
+    if len(stretches) == 1 and burn.end_s - lit[-1] <= COLD_FLOW_S:
+        return [burn]
+    parts = []
+    for i, (first, last) in enumerate(stretches):
+        final = i == len(stretches) - 1
+        # The last stretch runs to the burn's end unless the engine went out
+        # for good before it; every other ends at its last thrust.
+        end = burn.end_s if final and burn.end_s - last <= COLD_FLOW_S else last
+        # The first is the burn's own start; a re-light starts at its flame,
+        # timed from the step before (feedtwin.session.report.burns).
+        cut = [
+            s for s in history if s.t <= end + 1e-9 and (i == 0 or s.t >= first - 1e-9)
+        ]
+        found = find_burns(cut, inlets)
+        part = (
+            next((b for b in found if b.start_s == burn.start_s), None)
+            if i == 0
+            else (found[0] if found else None)
+        )
+        if part is None:
+            continue
+        parts.append(
+            replace(part, burning=burn.burning if end == burn.end_s else False)
+        )
+    return parts
+
+
+def _after_abort(session: Session, history: list[SessionSample], burn: Any) -> str:
+    """A note when a burn ran on past an abort, or "": the stand's table can
+    leave the mains open in one, and the engine burns on until they shut."""
+    for sample in history:
+        if burn.start_s < sample.t <= burn.end_s and session.machine.is_abort(
+            sample.state
+        ):
+            return (
+                f"The engine burned on {burn.end_s - sample.t:.2f} s after "
+                f"{sample.state}: the state table's {sample.state} row leaves a "
+                "main open. Fix it on the State machine tab."
+            )
+    return ""
+
+
+def _assumed_droop(session: Session) -> str:
+    """A note when a vehicle regulator's flow droop is not on the drawing, or
+    "". The build's fallback (20 psi at 0.05 kg/s, feedtwin.pid.network
+    FALLBACKS) then sets how far the tanks sag under flow, and with it most of
+    the He-vs-GN2 difference: a nitrogen burn draws several times the mass
+    flow, so it droops several times as far (D-22). Said on every burn it
+    shapes, rather than changed: the number is the team's to measure."""
+    from feedtwin.comps.regulator import Regulator
+    from feedtwin.model.param import Provenance
+
+    labels = {n.id: n.label or n.id for n in session.model.diagram.nodes}
+    ground = session.ground
+    assumed = []
+    for branch_id, branch in session.model.built.network.branches.items():
+        component = branch.component
+        if not isinstance(component, Regulator) or branch_id in ground:
+            continue
+        params = getattr(getattr(component, "instance", None), "params", {})
+        droop = params.get("flow_droop")
+        if droop is not None and droop.source == Provenance.DEFAULT:
+            rated = params.get("rated_flow")
+            assumed.append(
+                f"{labels.get(branch_id, branch_id)} ({droop.value:g} {droop.unit}"
+                + (f" at {rated.value:g} {rated.unit}" if rated is not None else "")
+                + ")"
+            )
+    if not assumed:
+        return ""
+    return (
+        f"Regulator droop assumed, not on the drawing: {', '.join(assumed)}. It "
+        "sets how far the tanks sag under flow, and most of a helium-vs-nitrogen "
+        "difference; measure it and draw it before quoting one."
+    )
 
 
 def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
@@ -2838,7 +3487,7 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
     inlets = find_probes(session).injector_inlet
     model_kind = str(session.model.meta.get("engine_model", ""))
     saved: list[dict[str, Any]] = []
-    for burn in find_burns(history, inlets):
+    for burn in _lit_burns(history, inlets):
         key = round(burn.start_s, 3)
         if burn.burning or key in opened.recorded:
             continue
@@ -2858,12 +3507,22 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
             "stand": opened.stand,
             "code": code_version(),
             "validation": VALIDATION["status"],
+            # The gas that pressed it, as built: helium, nitrogen. Outside
+            # the inputs, so a diff and the ladder never see it twice (the
+            # swap that chose it is `setup.pressurant`).
+            "pressurant": _pressurant_of(session),
             "inputs": _inputs(session, opened, before),
             "outcome": _burn_out(session, history, burn, model_kind).model_dump(),
             "solver": _burn_solver(session, burn.start_s, burn.end_s),
             "series": _burn_series(session, history, burn.start_s, burn.end_s),
             "clock": {"start_s": burn.start_s, "end_s": burn.end_s},
-            "notes": list(dict.fromkeys(session.assumptions))[-40:],
+            "notes": [
+                *filter(
+                    None,
+                    [_after_abort(session, history, burn), _assumed_droop(session)],
+                ),
+                *list(dict.fromkeys(session.assumptions))[-40:],
+            ],
         }
         owner = opened.stand["owner"] if opened.stand else opened.user
         saved.append(run_records.store.save(owner, record))
@@ -2882,6 +3541,15 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
     return saved
 
 
+def _pressurant_of(session: Session) -> str:
+    """The gas in the vehicle's bottle (a cart's first if the vehicle has
+    none), by species name; "" on a stand with no bottle."""
+    ground = set(session.ground)
+    for bottle in sorted(session.bottles.values(), key=lambda b: b.id in ground):
+        return str(bottle.volume.fluid.name).lower()
+    return ""
+
+
 def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     from feedtwin.session.report import is_burning
 
@@ -2889,10 +3557,15 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     if opened is None:
         return
     burning = is_burning(sample)
+    if burning and sample.chamber is not None and sample.chamber.thrust > 0.0:
+        opened.lit_t = sample.t
     ended = opened.burning and not burning
+    # Out, though still flowing: the trickle an abort's open main leaves.
+    out = opened.lit_t is not None and sample.t - opened.lit_t > COLD_FLOW_S
     opened.burning = burning
-    if not ended:
+    if not (ended or out):
         return
+    opened.lit_t = None
     try:
         _record_burns(session, opened)
     except Exception as exc:  # noqa: BLE001 - a lost record must not stop the stand
@@ -2903,6 +3576,37 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
             f"The burn that ended at t = {sample.t:.1f} s was not recorded "
             f"({type(exc).__name__}: {exc}); it is not in Runs."
         )
+
+
+_DRAWN_FLUIDS: dict[str, dict[str, str]] = {}
+
+
+def _drawn_gas(session: Session) -> str:
+    """The drawing's own gas in the vehicle's bottle (a cart's first if the
+    vehicle has none), before any swap (``Setup.pressurant``): read off the
+    drawing itself, since a swap to the gas already drawn changes nothing and
+    cannot be undone from the built stand. "" on a stand with no bottle."""
+    opened = _OPENED.get(session.id)
+    if not session.setup.pressurant or opened is None:
+        return _pressurant_of(session)
+    fluids = _DRAWN_FLUIDS.get(opened.diagram)
+    if fluids is None:
+        try:
+            payload = json.loads(library.read(opened.diagram).decode("utf-8"))
+            fluids = {
+                str(n.get("id")): str((n.get("data") or {}).get("fluid") or "").lower()
+                for n in payload.get("nodes", [])
+                if isinstance(n, dict)
+            }
+        except (LibraryError, ValueError):
+            fluids = {}
+        _DRAWN_FLUIDS[opened.diagram] = fluids
+    ground = set(session.ground)
+    for bottle in sorted(session.bottles.values(), key=lambda b: b.id in ground):
+        if fluids.get(bottle.id):
+            return fluids[bottle.id]
+        break
+    return _pressurant_of(session)
 
 
 def _pressurant_swap(pressurant: str) -> dict[str, str]:
@@ -2987,10 +3691,14 @@ def _replay(
         loads={k: float(v["liquid_kg"]) for k, v in tanks.items()} or None,
         horizon_s=horizon_s,
         end_on_depletion=True,
+        # Where the cockpit's burn it replays ended: a tank empty (DRY_MASS),
+        # not BurnPlan's 60 g design residual -- a replay that stopped 60 g
+        # early read 0.6 % short of the burn it was replaying (D-80).
+        dry_kg=DRY_MASS,
     )
     trace = run_burn(session, plan, cancelled=cancelled)
     history = list(session.history)
-    found = find_burns(history, find_probes(session).injector_inlet)
+    found = _lit_burns(history, find_probes(session).injector_inlet)
     if not found:
         raise RuntimeError("the replay did not burn: " + "; ".join(trace.notes[-3:]))
     longest = max(found, key=lambda b: b.duration_s)
@@ -3025,6 +3733,21 @@ async def session_t0(session_id: str) -> SessionOut:
     run record of the next burn carries as its notes.
     """
     session = _session(session_id)
+    # A dome turned past a tank's MAWP primed the tanks over it and tripped
+    # the stand on the first frame (D-33). Asked first, at the knobs as set
+    # and the bottle at its charge, with nothing moved.
+    for tank_id in session.vehicle_tanks:
+        sim = session.tanks[tank_id]
+        lockup = _lockup_psig(
+            session, tank_id, float(session.setup.copv_target_psi), loaded_dome=True
+        )
+        if lockup is not None and sim.mawp > 0.0 and from_psig(lockup) > sim.mawp:
+            raise HTTPException(
+                status_code=422,
+                detail=f"T-0 would prime {sim.label} at {say(from_psig(lockup), 1)}, "
+                f"over its {say(sim.mawp, 1)} MAWP: turn the dome down on the GSE "
+                "tab first.",
+            )
     _remember(session_id, session, {"t0": True})
     try:
         t0 = jump_to_t0(
@@ -3038,12 +3761,13 @@ async def session_t0(session_id: str) -> SessionOut:
     if opened is not None:
         opened.burning = False
     lockups = ", ".join(
-        f"{session.tanks[k].label} {v:.0f}" for k, v in t0.lockup_psi.items()
+        f"{session.tanks[k].label} {say(from_psig(v), 1)}"
+        for k, v in t0.lockup_psi.items()
     )
     session.assumptions.append(
-        f"Jumped to T-0: tanks primed at {t0.tank_psi:.0f} psig"
-        + (f" (regulator lockup: {lockups} psig)" if lockups else "")
-        + f", bottle at {session.setup.copv_target_psi:.0f} psig."
+        f"Jumped to T-0: tanks primed at {say(from_psig(t0.tank_psi), 1)}"
+        + (f" (regulator lockup: {lockups})" if lockups else "")
+        + f", bottle at {say(from_psig(session.setup.copv_target_psi), 1)}."
     )
     session.assumptions.extend(t0.notes)
     return _session_out(session, session.step(1e-3))

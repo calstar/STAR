@@ -178,7 +178,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
           <MetricCard
             label="Chamber Pressure"
             value={formatNumber(results.Pc * PA_TO_PSI, 1)}
-            unit="psi"
+            unit="psia"
             color="yellow"
           />
           <MetricCard
@@ -216,10 +216,10 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
           <div className="p-3 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
             <div className="text-xs text-[var(--color-text-secondary)] mb-1">Exit Pressure</div>
             <div className="text-lg font-semibold text-[var(--color-text-primary)]">
-              {formatNumber(results.P_exit * PA_TO_PSI, 2)} <span className="text-sm font-normal text-[var(--color-text-secondary)]">psi</span>
+              {formatNumber(results.P_exit * PA_TO_PSI, 2)} <span className="text-sm font-normal text-[var(--color-text-secondary)]">psia</span>
               {targetExitPressure && (
                 <span className="text-xs font-normal text-[var(--color-text-secondary)] ml-1">
-                  (Target: {formatNumber(targetExitPressure * PA_TO_PSI, 2)} psi)
+                  (Target: {formatNumber(targetExitPressure * PA_TO_PSI, 2)} psia)
                 </span>
               )}
             </div>
@@ -275,7 +275,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
               <SmallMetric 
                 label="P_injector (LOX)" 
                 value={formatNumber(injector.P_injector_O ? injector.P_injector_O * PA_TO_PSI : null, 1)} 
-                unit="psi" 
+                unit="psia" 
                 colorClass="text-cyan-400"
               />
               <SmallMetric 
@@ -294,7 +294,7 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure, config 
               <SmallMetric 
                 label="P_injector (Fuel)" 
                 value={formatNumber(injector.P_injector_F ? injector.P_injector_F * PA_TO_PSI : null, 1)} 
-                unit="psi" 
+                unit="psia" 
                 colorClass="text-orange-400"
               />
               <SmallMetric 

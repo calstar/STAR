@@ -226,6 +226,27 @@ def test_a_dead_leg_does_not_raise() -> None:
     assert balance.residual == 0.0
 
 
+def test_a_leg_flowing_backwards_does_not_raise() -> None:
+    """An Engine Abort with the mains open trickles: the chamber can sit above
+    the ox injector inlet while fuel still drops forwards. sqrt(dp_ox/dp_fuel)
+    of that raised a math domain error, and the cockpit's /history failed on
+    every frame until the stand was reset (D-53)."""
+    design = _design()
+    balance = balance_from(
+        design,
+        mdot_oxidiser=0.01,
+        mdot_fuel=0.02,
+        density_oxidiser=1140.0,
+        density_fuel=789.0,
+        injector_dp_oxidiser=-3.0e3,
+        injector_dp_fuel=2.0e3,
+        chamber_pressure=1.0e5,
+    )
+    assert balance.feed_term == 0.0
+    assert balance.trim_pressure() == 0.0
+    assert isinstance(balance.notes(), list)
+
+
 # ------------------------------------------------ the engine's own band
 
 

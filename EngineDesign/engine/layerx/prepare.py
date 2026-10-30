@@ -256,10 +256,12 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
     temperature is the drawing's oxidiser tank ``temperature``; without one, LOX's normal boiling
     point. At or above nitrogen's critical temperature nothing condenses.
 
-    A hot fire over the line is a ``fail``: the twin models neither the condensation into the
-    propellant nor on the cold wall, so its pressurant use and tank pressure would be wrong on the
-    unsafe side. ``acknowledged`` (``ack_gn2_condensation``) makes it a ``warn`` and lets it run.
-    This replaces a warning above nitrogen's critical pressure (492.5 psia), which said nothing
+    A burn over the line is a ``warn``, never a ``fail``: the team compares helium and nitrogen on
+    the same drawing (the user, 2026-10-20: "we want the option to compare both ... not to fight
+    over it"), so the run goes ahead and says what it leaves out. The twin models neither the
+    condensation into the propellant nor on the cold wall, so its pressurant use and tank pressure
+    read optimistic. ``acknowledged`` (``ack_gn2_condensation``) is kept so saved settings still
+    load; it no longer changes the status. This replaces a warning above nitrogen's critical pressure (492.5 psia), which said nothing
     for a 300-490 psia nitrogen lockup that condenses just the same."""
     if (pressurant or "").lower() != "nitrogen" or ox_tank is None or (ox_tank.fluid or "").lower() != "oxygen":
         return None
@@ -267,14 +269,16 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
         return None
     import CoolProp.CoolProp as CP
 
+    # The tank by the tag on the drawing (an operator reads "LOX-Tank", never the graph's node id).
+    tank = str(getattr(ox_tank, "label", "") or "") or "the LOX tank"
     param = ox_tank.params.get("temperature") if getattr(ox_tank, "params", None) else None
     if param is not None:
         T = float(param.si)
         source = str(getattr(param.source, "value", param.source) or "unstated")
-        t_src = f"the drawing's {ox_tank.id} temperature, {source}"
+        t_src = f"{tank}'s temperature on the drawing, {source}"
     else:
         T = float(CP.PropsSI("T", "P", 101325.0, "Q", 0, "Oxygen"))
-        t_src = "LOX's normal boiling point (CoolProp): the drawing states no tank temperature"
+        t_src = "LOX's normal boiling point: the drawing states no tank temperature"
     t_crit = float(CP.PropsSI("Tcrit", "Nitrogen"))
     if T >= t_crit:
         return {"status": "info", "detail": f"LOX at {T:.1f} K ({t_src}) is above nitrogen's critical temperature "
@@ -285,20 +289,20 @@ def gn2_on_lox(pressurant: Optional[str], ox_tank: Any, lockup_pa: float, *, tes
     except Exception:  # noqa: BLE001 - outside oxygen's two-phase range: count the ullage as all nitrogen
         pv_o2 = 0.0
     p_n2 = lockup_pa - pv_o2
-    state = (f"LOX at {T:.1f} K ({t_src}); nitrogen condenses there above {psat_n2 / PSI:.1f} psia, its saturation "
-             f"pressure (CoolProp). At {lockup_pa / PSI:.0f} psia lockup the ullage's nitrogen is at "
-             f"{p_n2 / PSI:.0f} psia (lockup less LOX's {pv_o2 / PSI:.1f} psia vapour pressure)")
+    # Two short sentences a person reads first (the rail shows them), then why, with the sources.
+    lead = (f"Nitrogen condenses on LOX at {T:.1f} K above {psat_n2 / PSI:.1f} psia, and this burn holds "
+            f"{p_n2 / PSI:.0f} psia of it over the LOX. The burn leaves the condensation out, so its tank "
+            "pressure and gas use read optimistic. ")
+    why = (f"LOX at {T:.1f} K ({t_src}); nitrogen's saturation pressure there is {psat_n2 / PSI:.1f} psia "
+           f"(CoolProp). At {lockup_pa / PSI:.0f} psia lockup the ullage's nitrogen is at {p_n2 / PSI:.0f} psia "
+           f"(lockup less LOX's {pv_o2 / PSI:.1f} psia vapour pressure), so it condenses into the propellant "
+           f"and on the cold tank wall. The model leaves that out, so the gas used and {tank}'s pressure it "
+           "reports are optimistic.")
     if p_n2 <= psat_n2:
-        return {"status": "info", "detail": state + ": below it, so nothing condenses on the liquid."}
-    if acknowledged:
-        return {"status": "warn", "detail": state + ", so it condenses into the propellant and on the cold tank "
-                "wall. Run anyway as asked (ack_gn2_condensation): the condensation is not modelled, so the "
-                "pressurant use and the LOX tank's pressure read optimistic."}
-    return {"status": "fail", "detail": state + ", so it condenses into the propellant and on the cold tank wall, "
-            "which the twin does not model: the pressurant use and the LOX tank's pressure it would report for "
-            "this hot fire are wrong on the unsafe side. Fire on helium (the helium drawing, or pressurant: "
-            "helium); nitrogen is for the water flows. To burn it anyway, set ack_gn2_condensation (run anyway, "
-            "condensation unmodelled)."}
+        return {"status": "info", "detail": (f"LOX at {T:.1f} K ({t_src}); nitrogen condenses there above "
+                                             f"{psat_n2 / PSI:.1f} psia (CoolProp), and the ullage's nitrogen is at "
+                                             f"{p_n2 / PSI:.0f} psia: below it, so nothing condenses on the liquid.")}
+    return {"status": "warn", "detail": lead + why}
 
 
 def _stated_requirement(config: Any, key: str) -> Optional[float]:
@@ -380,7 +384,8 @@ def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, 
     for side, tank_id in roles.items():
         vol = volumes.get(tank_id)
         if vol is None:
-            return {"status": "info", "detail": f"No estimate of the tanks' rise over the burn: {tank_id} has no volume "
+            label = next((t.label for t in tanks if t.id == tank_id and getattr(t, "label", "")), tank_id)
+            return {"status": "info", "detail": f"No estimate of the tanks' rise over the burn: {label} has no volume "
                                                 "on the drawing."}
         liquid = loads[tank_id] / rho[side] if loads else settings.fill_fraction * vol
         expelled += liquid
@@ -719,6 +724,8 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
     vehicle = vehicle_ids(diagram)
     tanks = on_vehicle([n for n in diagram.nodes if n.type == "TANK"], vehicle)
     roles: Dict[str, str] = {}
+    # Tanks are named by their tags on the drawing in what a person reads; the roles keep the ids.
+    tag = {t.id: (t.label or t.id) for t in tanks}
     for side, sp in species.items():
         found = [t.id for t in tanks if (t.fluid or "").lower() == sp.lower()]
         if len(found) == 1:
@@ -726,13 +733,13 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         elif not found:
             add(f"tank_{side}", f"{side.capitalize()} tank on the drawing", "fail",
                 f"The engine burns {sp}; no tank on '{drawing.name}' holds it "
-                f"(tanks: {', '.join(f'{t.id} [{t.fluid}]' for t in tanks) or 'none'}).")
+                f"(tanks: {', '.join(f'{tag[t.id]} [{t.fluid}]' for t in tanks) or 'none'}).")
         else:
             add(f"tank_{side}", f"{side.capitalize()} tank on the drawing", "fail",
-                f"{len(found)} tanks on the vehicle hold {sp} ({', '.join(found)}); Layer X needs exactly one.")
+                f"{len(found)} tanks on the vehicle hold {sp} ({', '.join(tag[f] for f in found)}); Layer X needs exactly one.")
     if len(roles) == 2:
         add("tanks", "Tanks match the engine's propellants", "ok",
-            f"{roles['oxidiser']} holds {species['oxidiser']}, {roles['fuel']} holds {species['fuel']}.")
+            f"{tag[roles['oxidiser']]} holds {species['oxidiser']}, {tag[roles['fuel']]} holds {species['fuel']}.")
     prep.roles = roles
 
     cea = cea_table_path(config)

@@ -12,21 +12,54 @@
  * later mistakes it for a milestone.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  hasCard,
   importFromSource,
   listSourceDocuments,
   listSources,
+  when,
+  type EngineCardInfo,
+  type ImportResult,
   type Source,
   type SourceDocument,
 } from '../api';
 
+/** What an import says when it lands: what came in, and for an engine,
+ *  whether it carries EngineDesign's card and how close that card is. */
+export function importedNote(result: ImportResult, name: string, release = ''): string {
+  const what = result.already_present
+    ? result.artifact.name !== name
+      ? `${name} is already in the library as ${result.artifact.name} — the same ${result.artifact.kind === 'engine' ? 'file' : 'drawing'}.`
+      : `${name} was already in the library — the same ${result.artifact.kind === 'engine' ? 'file' : 'drawing'}.`
+    : `Imported ${name}${release ? ` at ${release}` : ''}`;
+  const a = result.artifact;
+  if (a.kind !== 'engine') return result.already_present ? what : `${what}.`;
+  if (hasCard(a)) {
+    const err = (a.card as EngineCardInfo).card_error;
+    return result.already_present
+      ? what
+      : `${what} with its EngineDesign card (worst error ${(err * 100).toFixed(2)} %).`;
+  }
+  return `${result.already_present ? what : `${what}.`} No EngineDesign card${
+    result.card_error ? `: ${result.card_error}` : ''
+  } — it fires feedtwin's simplified engine until you Build EngineDesign card on the Engine page.`;
+}
+
+/** A design tool to open: the first one of `kind` that answers. `n` counts
+ *  the asks, so asking again re-opens it. */
+export interface Want {
+  kind: 'diagram' | 'engine';
+  n: number;
+}
+
 interface Props {
   onImported: (kind: 'diagram' | 'engine', id: string) => void;
   busy: boolean;
+  want?: Want | null;
 }
 
-export function SourcePanel({ onImported, busy }: Props) {
+export function SourcePanel({ onImported, busy, want }: Props) {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [docs, setDocs] = useState<Record<string, SourceDocument[]>>({});
   const [open, setOpen] = useState('');
@@ -57,11 +90,37 @@ export function SourcePanel({ onImported, busy }: Props) {
     [open, docs],
   );
 
+  // Asked to open a tool (a link, an empty list's button): the first of
+  // that kind that answers, scrolled to. Once per ask.
+  const served = useRef(0);
+  useEffect(() => {
+    if (!want || !sources || served.current === want.n) return;
+    served.current = want.n;
+    const source = sources.find((s) => s.kind === want.kind && s.reachable);
+    if (!source) {
+      setError(
+        want.kind === 'engine'
+          ? 'Hotbench Engine is not answering, so there is nothing to pull from; drop an engine config below instead.'
+          : 'Hotbench P&ID is not answering, so there is nothing to pull from; drop a drawing below instead.',
+      );
+      return;
+    }
+    if (open !== source.key) void expand(source.key);
+    window.requestAnimationFrame(() =>
+      document.getElementById(`source-${source.key}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+    );
+  }, [want, sources, open, expand]);
+
   async function pull(source: Source, doc: SourceDocument, release: string) {
     const tag = `${doc.id}@${release}`;
     setPulling(tag);
     setError('');
-    setNote('');
+    // An engine pull asks EngineDesign for its card too: seconds, not a blink.
+    setNote(
+      source.kind === 'engine'
+        ? `Pulling ${doc.name}… building its EngineDesign card (5-15 s).`
+        : `Pulling ${doc.name}…`,
+    );
     try {
       const result = await importFromSource(source.key, {
         doc_id: doc.id,
@@ -69,14 +128,10 @@ export function SourcePanel({ onImported, busy }: Props) {
         release,
         name: doc.name,
       });
-      setNote(
-        (result.already_present
-          ? `${doc.name} was already imported — identical bytes.`
-          : `Imported ${doc.name}${release ? ` at ${release}` : ''}.`) +
-          (result.card_error ? ` No EngineDesign card: ${result.card_error}` : ''),
-      );
+      setNote(importedNote(result, doc.name, release));
       onImported(source.kind, result.artifact.id);
     } catch (e) {
+      setNote('');
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPulling('');
@@ -99,11 +154,16 @@ export function SourcePanel({ onImported, busy }: Props) {
         </p>
       )}
       {note && !error && (
-        <p className="text-[12px] text-[var(--dim)]">{note}</p>
+        <p className={`text-[12px] ${pulling ? 'text-[var(--muted)]' : 'text-[var(--dim)]'}`} role="status">
+          {pulling && (
+            <span aria-hidden className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--muted)] align-middle" />
+          )}
+          {note}
+        </p>
       )}
 
       {sources.map((source) => (
-        <section key={source.key}>
+        <section key={source.key} id={`source-${source.key}`}>
           <button
             type="button"
             onClick={() => void expand(source.key)}
@@ -146,6 +206,13 @@ export function SourcePanel({ onImported, busy }: Props) {
                     {!doc.mine && (
                       <span className="shrink-0 text-[11px] text-[var(--dim)]">
                         {doc.owner_name || doc.owner}
+                      </span>
+                    )}
+                    {/* Two drawings a word apart are told apart by when
+                        they were last saved. */}
+                    {doc.updated_at && (
+                      <span className="num ml-auto shrink-0 text-[10.5px] text-[var(--dim)]" title={`Last saved ${doc.updated_at}`}>
+                        saved {when(doc.updated_at)}
                       </span>
                     )}
                   </div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Edge, Node } from '@xyflow/react';
 import { runChecks, countProblems } from './checks';
-import { reseatJunctions } from './junctions';
+import { J_HALF, reseatJunctions } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import { translateSubgraph } from './graphOps';
 import { unmeasuredEnd } from './unmeasured';
@@ -53,8 +53,131 @@ describe('quick disconnect pairing', () => {
   });
 
   it('is quiet about a correct pair', () => {
-    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'A')];
-    expect(ids(nodes).filter(i => i.startsWith('qd-'))).toEqual([]);
+    // Each half plumbed on one side, its other side free to couple.
+    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'A'), node('V1', 'MAN'), node('V2', 'MAN')];
+    const edges = [edge('a', 'V1', 'A', 'r', 'l'), edge('b', 'B', 'V2', 'r', 'l')];
+    expect(ids(nodes, edges).filter(i => i.startsWith('qd-'))).toEqual([]);
+  });
+});
+
+/**
+ * Pairs as feed-twin reads them (`feedtwin.pid.network._mate_disconnects`).
+ *
+ * The LE4 stand's GSE page called OF-QDA and OF-QDB a good pair while the
+ * twin left them apart -- OF-QDA had no line on it -- so the cart could not
+ * fill LOX; and it reported both halves of a pair written on one side as
+ * "no mating half" while the twin read them as one coupling.
+ */
+describe('disconnects as the twin couples them', () => {
+  const valve = (id: string) => node(id, 'MAN');
+  const plumbed = [valve('V1'), valve('V2')];
+
+  it('reads a pair written on one half only as a pair', () => {
+    // HP-QD-B names HP-QD-A; HP-QD-A names nobody.
+    const nodes = [qd('A', 'fluid', ''), qd('B', 'fluid', 'A'), ...plumbed];
+    const edges = [edge('a', 'V1', 'A', 'r', 'l'), edge('b', 'B', 'V2', 'r', 'l')];
+    expect(ids(nodes, edges).filter(i => i.startsWith('qd-'))).toEqual([]);
+  });
+
+  it('notes a half with no line on it: the pair passes nothing', () => {
+    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'A'), ...plumbed];
+    const edges = [edge('b', 'B', 'V2', 'r', 'l')];
+    const f = runChecks(nodes, edges).find(x => x.id.startsWith('qd-uncoupled'))!;
+    expect(f.title).toBe('A and B do not couple');
+    expect(f.detail).toMatch(/^A has no line on it/);
+    expect(f).toMatchObject({ severity: 'info', gap: true });
+  });
+
+  it('flags a half with lines on both sides: it has nothing free to couple', () => {
+    const nodes = [qd('A', 'fluid', 'B'), qd('B', 'fluid', 'A'), ...plumbed, valve('V3')];
+    const edges = [edge('a', 'V1', 'A', 'r', 'l'), edge('c', 'A', 'V3', 'r', 'l'), edge('b', 'B', 'V2', 'r', 'l')];
+    const f = runChecks(nodes, edges).find(x => x.id.startsWith('qd-uncoupled'))!;
+    expect(f.severity).toBe('warning');
+    expect(f.detail).toMatch(/A has lines on both sides/);
+  });
+
+  it('says nothing of two halves joined by a line of their own', () => {
+    // A cart's own disconnect drawn as two halves in series: mated on the page.
+    const nodes = [qd('A', 'fluid', ''), qd('B', 'fluid', 'A'), ...plumbed, qd('C', 'fluid'), qd('D', 'fluid')];
+    const edges = [
+      edge('a', 'V1', 'A', 'r', 'l'), edge('ab', 'A', 'B', 'r', 'l'), edge('b', 'B', 'V2', 'r', 'l'),
+      edge('cd', 'C', 'D', 'r', 'l'),
+    ];
+    expect(ids(nodes, edges).filter(i => i.startsWith('qd-'))).toEqual([]);
+  });
+
+  it('lists every unpaired half on one row', () => {
+    const found = runChecks([qd('OV-QD-A', 'fluid'), qd('QD-OV-B', 'fluid'), qd('FF-QD', 'fluid')], []);
+    const rows = found.filter(f => f.id.startsWith('qd-unpaired'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('3 disconnects have no mating half');
+    expect(rows[0].detail).toContain('OV-QD-A, QD-OV-B and FF-QD');
+  });
+
+  it('treats a mate that is not a disconnect as gone', () => {
+    expect(ids([qd('A', 'fluid', 'V1'), valve('V1')])).toContain('qd-missing-A');
+  });
+});
+
+describe('a line that stops short of a port', () => {
+  // An open end at (cx, cy): a junction with one line on it.
+  const end = (id: string, cx: number, cy: number) =>
+    ({ id, type: 'JUNCTION', position: { x: cx - J_HALF, y: cy - J_HALF }, data: { page: 'Main' } }) as unknown as Node;
+  // A disconnect at the origin, 60 wide: its left port is at (-3, 30).
+  const half = (id: string, pairedWith = '') =>
+    ({ ...qd(id, 'fluid', pairedWith), position: { x: 0, y: 0 }, width: 60, height: 60 }) as Node;
+  const from = (id: string) => ({ ...node(id, 'MAN'), position: { x: -300, y: 0 } }) as Node;
+
+  it('flags an open end sitting on a free port, the way OF-QDA looked joined', () => {
+    // Three pixels off the port, as on the drawing: on the screen, joined.
+    const nodes = [half('OF-QDA', 'OF-QDB'), half('OF-QDB', 'OF-QDA'), from('OF-Manifold'), end('j86', -6, 30)];
+    // Move the mate out of the way so only OF-QDA's port is near.
+    nodes[1] = { ...nodes[1], position: { x: 600, y: 0 } };
+    const edges = [edge('l', 'OF-Manifold', 'j86', 'r', 'l')];
+    const found = runChecks(nodes, edges);
+    const f = found.find(x => x.id === 'open-end-on-port-j86')!;
+    expect(f.severity).toBe('warning');
+    expect(f.title).toBe('The open end of the line from OF-Manifold stops at OF-QDA without joining it');
+    expect(f.nodeIds).toEqual(['j86']);
+    expect(f.edgeIds).toEqual(['l']);
+    expect(f.focusIds).toEqual(['OF-QDA']);
+    // ... and the pair it should have fed does not couple, as the twin says.
+    expect(found.some(x => x.id.startsWith('qd-uncoupled'))).toBe(true);
+    // Said once: the disconnect is not listed again as one nothing is joined to.
+    expect(found.find(x => x.id === 'components-unjoined')?.nodeIds ?? []).not.toContain('OF-QDA');
+  });
+
+  it('notes an open end in the clear, quietly', () => {
+    const nodes = [half('QD-1', 'none'), from('V1'), end('j', -150, 200)];
+    const edges = [edge('l', 'V1', 'j', 'r', 'l')];
+    const found = runChecks(nodes, edges);
+    expect(found.some(x => x.id.startsWith('open-end-on-port'))).toBe(false);
+    expect(found.find(x => x.id === 'lines-open-ended')).toMatchObject({ severity: 'info', gap: true });
+  });
+
+  it('leaves an end a few grid steps off the port to read as the open end it is', () => {
+    const nodes = [half('QD-1', 'none'), from('V1'), end('j', -3 - 30, 30)];
+    const edges = [edge('l', 'V1', 'j', 'r', 'l')];
+    expect(ids(nodes, edges).some(i => i.startsWith('open-end-on-port'))).toBe(false);
+  });
+
+  it('does not count a port that already has a line', () => {
+    const nodes = [half('QD-1', 'none'), from('V1'), from('V2'), end('j', -3, 30)];
+    const edges = [edge('a', 'V2', 'QD-1', 'r', 'l'), edge('l', 'V1', 'j', 'r', 'l')];
+    expect(ids(nodes, edges).some(i => i.startsWith('open-end-on-port'))).toBe(false);
+  });
+});
+
+describe('a component nothing is joined to', () => {
+  it('is listed, quietly, as one the drawing has not plumbed', () => {
+    const f = runChecks([node('MAN-1', 'MAN'), node('TK-1', 'TANK')], []).find(x => x.id === 'components-unjoined')!;
+    expect(f).toMatchObject({ severity: 'info', gap: true });
+    expect(f.nodeIds).toEqual(['MAN-1', 'TK-1']);
+  });
+
+  it('leaves out probes, notes and section boxes', () => {
+    const found = runChecks([node('RTD-1', 'RTD'), node('t', 'TEXT'), node('r', 'REGION')], []);
+    expect(found.some(x => x.id === 'components-unjoined')).toBe(false);
   });
 });
 

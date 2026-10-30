@@ -25,9 +25,11 @@ import { ShortcutSheet, TopBar } from './TopBar';
 import { Badge, Button, Panel, STATUS_GLYPH, STATUS_VAR, Tabs, tabPanelProps, type TabSpec } from './ui';
 import { UnitsProvider, useUnits } from './units';
 import { LX_PAGES, readLxUrl, replaceLxUrl, type LxPage } from './url';
-import { bottleFillPsia, stageOf, useLayerXJob, type LayerXJob, type RailSection } from './useLayerXJob';
+import { bottleFillPsia, drawingTitle, stageOf, useLayerXJob, type LayerXJob, type RailSection } from './useLayerXJob';
 import { useRunData, type RunData } from './useRunData';
 import { withContract } from './dev/contractFixture';
+import { Chart } from './charts/Chart';
+import type { ChartSeries } from './charts/types';
 
 /** DEV ONLY: `&lxfixture=contract` dresses the open run in made-up DATA-CONTRACT blocks
  * (dev/contractFixture.ts) so the pages can be checked before the backend writes them. */
@@ -66,12 +68,32 @@ function Elapsed({ since }: { since: number }) {
   return <>{Math.floor(s / 60)}:{String(s % 60).padStart(2, '0')}</>;
 }
 
-/** Settle → Pass n: Burn / Erosion / Flight → Checks, with the progress and a cancel. */
+/** The first pass as it burns (the backend's job.live), until the run is done. */
+type LiveBurn = { t: number[]; thrust_N: number[]; pc_psia: number[] };
+
+/**
+ * Thrust and chamber pressure drawn as the first pass burns them: the page used to sit on a
+ * progress bar for the half minute a flown LE4 burn takes (D-61). The finished run replaces it.
+ */
+function LiveCharts({ live }: { live: LiveBurn }) {
+  const thrust = useMemo<ChartSeries[]>(() => [{ key: 'thrust', label: 'Thrust', color: '--lx-hot', values: live.thrust_N }], [live]);
+  const pc = useMemo<ChartSeries[]>(() => [{ key: 'pc', label: 'Chamber', color: '--lx-text', values: live.pc_psia }], [live]);
+  if (live.t.length < 2) return null;
+  return (
+    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2" aria-label="The first pass as it burns">
+      <Chart t={live.t} series={thrust} yUnit="N" quantity="force" xLabel="s" height={150} store={null} digits={0} title="Thrust, first pass" />
+      <Chart t={live.t} series={pc} yUnit="psia" quantity="pressure" xLabel="s" height={150} store={null} digits={0} title="Chamber pressure, first pass" />
+    </div>
+  );
+}
+
+/** Settle → Pass n: Burn / Erosion / Flight → Checks, with the progress, the burn so far and a cancel. */
 function Running({ run, onCancel }: { run: RunView; onCancel: () => void }) {
   const st = stageOf(run);
+  const live = (run as RunView & { live?: LiveBurn | null }).live ?? null;
   const top = ['Settle', st.pass > 0 ? `Pass ${st.pass}` : 'Passes', 'Checks'];
   return (
-    <Panel ariaLabel="The burn is running" className="mx-auto mt-6 max-w-3xl">
+    <Panel ariaLabel="The burn is running" className="mx-auto mt-6 max-w-5xl">
       <ol className="flex items-center gap-2" aria-label="Stages">
         {top.map((label, k) => {
           const state = k < st.phase ? 'done' : k === st.phase ? 'now' : 'next';
@@ -109,6 +131,7 @@ function Running({ run, onCancel }: { run: RunView; onCancel: () => void }) {
         <span className="lx-num"><Elapsed since={run.started} /> · {run.stage}</span>
         <Button size="sm" onClick={onCancel}>Cancel</Button>
       </div>
+      {live && <LiveCharts live={live} />}
     </Panel>
   );
 }
@@ -131,13 +154,24 @@ function Failed({ run }: { run: RunView }) {
 }
 
 /** The guided start (GUI-SPEC "States"): three steps, each lights its rail control. */
-function GuidedStart({ job, onShow }: { job: LayerXJob; onShow: (step: RailStep) => void }) {
+function GuidedStart({ job, onShow, firstArrival }: {
+  job: LayerXJob; onShow: (step: RailStep) => void;
+  /** True the first time it is asked in this page load (the root keeps the answer, so it outlives
+   *  this panel): closing the burn opened on arrival shows this panel instead of reopening it. */
+  firstArrival: () => boolean;
+}) {
   const u = useUnits();
   const last = [...job.burns].filter((r) => r.status === 'done').sort(byPinThenNewest)[0];
+  // Layer X opens on the team's last burn when there is one, not on an empty set-up (its pages,
+  // Uncertainty included, have nothing to show without a burn open). Once per page load.
+  const lastId = last?.id;
+  useEffect(() => {
+    if (lastId && firstArrival()) job.openRun(lastId);
+  }, [lastId, job, firstArrival]);
   const tank = job.settings.tank_pressure_psia ?? job.derived?.target_lockup_psia ?? job.configTankPsia;
   const fill = bottleFillPsia(job.settings, job.derived);
   const steps: { step: RailStep; n: string; title: string; now: ReactNode; done: boolean }[] = [
-    { step: 'drawing', n: '1', title: 'Pick the drawing', now: job.drawing?.name ?? 'none yet', done: !!job.drawing },
+    { step: 'drawing', n: '1', title: 'Pick the drawing', now: job.drawing ? drawingTitle(job.drawing) : 'none yet', done: !!job.drawing },
     { step: 'before', n: '2', title: 'Set the dome (or tank pressure) and bottle fill', done: tank !== null && fill !== null,
       now: <span className="lx-num">{u.fmt(u.p(tank))} · {u.fmt(u.p(fill))}</span> },
     { step: 'run', n: '3', title: 'Run', done: false,
@@ -265,13 +299,30 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   // ---- the page fills the window below the app's header; the main column scrolls, the rail and
   // the timeline stay put.
   const rootRef = useRef<HTMLDivElement>(null);
+  // Every page shares the one scrolling column: a page opens at its top, not at the depth the last
+  // one was scrolled to (Feed and Flight opened with their top charts cut off).
+  const mainRef = useRef<HTMLDivElement>(null);
+  const arrived = useRef(false);
+  const firstArrival = useCallback(() => {
+    if (arrived.current) return false;
+    arrived.current = true;
+    return true;
+  }, []);
+  useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [page]);
   const [top, setTop] = useState(112);
   useLayoutEffect(() => {
     if (!isVisible) return;
     const measure = () => { const el = rootRef.current; if (el) setTop(Math.max(0, Math.round(el.getBoundingClientRect().top + window.scrollY))); };
     measure();
     window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    // The header above can still grow after the first measure (a web font arriving, a label
+    // wrapping): measured once, the page then overhung the window by the difference and the
+    // window scrolled. Watching the body catches any of it; a re-measure that finds the same top
+    // sets the same number and renders nothing.
+    const watch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    watch?.observe(document.body);
+    void document.fonts?.ready.then(measure);
+    return () => { window.removeEventListener('resize', measure); watch?.disconnect(); };
   }, [isVisible]);
 
   // ---- the URL: read once, applied once; then kept in step.
@@ -396,7 +447,7 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   } else if (job.openRunId && !job.run) {
     main = <Quiet>Opening the run…</Quiet>;
   } else {
-    main = <GuidedStart job={job} onShow={showStep} />;
+    main = <GuidedStart job={job} onShow={showStep} firstArrival={firstArrival} />;
   }
 
   const tabs = data && burn && !job.live && job.run?.status === 'done' ? tabsFor(data) : null;
@@ -409,7 +460,10 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   );
 
   return (
-    <div ref={rootRef} className="lx flex flex-col overflow-hidden" data-theme={theme} style={{ height: `calc(100vh - ${top}px)`, minHeight: 520 }}>
+    // `relative` on the root and on each scroller: an absolutely placed element with no positioned
+    // ancestor (a table's screen-reader caption) otherwise escapes both and lengthens the document,
+    // so the browser window scrolled the whole app away into an empty band below it.
+    <div ref={rootRef} className="lx relative flex flex-col overflow-hidden" data-theme={theme} style={{ height: `calc(100vh - ${top}px)`, minHeight: 520 }}>
       <UnitsProvider gaugeZeroPsia={data?.gaugeZeroPsia}>
         <TimeProvider store={store} series={data?.t ?? NO_TIMES} events={data?.events ?? NO_EVENTS}>
           {!tabs && topBar(false)}
@@ -418,7 +472,7 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
               <Rail job={job} collapsed={railCollapsed} onToggle={toggleRail} highlight={highlight} onExpandTo={showStep} />
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto" data-lx-main>
+              <div ref={mainRef} className="relative min-h-0 flex-1 overflow-y-auto" data-lx-main>
                 <div className="mx-auto w-full max-w-[1600px] px-6 pb-10">
                   {tabs ? (
                     <div className="sticky top-0 z-10 -mx-6 mb-5 bg-[var(--lx-bg)] px-6 pt-2">

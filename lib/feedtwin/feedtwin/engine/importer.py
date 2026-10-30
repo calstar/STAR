@@ -37,6 +37,7 @@ from feedtwin.engine.design import (
     registered_injector_types,
     species_for,
 )
+from feedtwin.model.pressure import say
 
 
 class EngineImportError(ValueError):
@@ -269,17 +270,17 @@ def engine_from_config(
         "(no optimal_of_ratio in the config)"
     )
     provenance["design_chamber_pressure"] = (
-        f"{name}:design_requirements.target_chamber_pressure_psi = {target_pc:.0f} psi"
+        f"{name}:design_requirements.target_chamber_pressure_psi = {say(target_pa)}"
         + (
             f" (chamber_geometry.design_pressure says "
-            f"{design_pc / 6894.757:.0f} psi; intent wins)"
+            f"{say(design_pc)}; intent wins)"
             if design_pc > 0.0
             and abs(design_pc - target_pa) / max(target_pa, 1e-9) > 0.05
             else ""
         )
         if target_pa > 0.0
         else f"{name}:chamber_geometry.design_pressure = "
-        f"{design_pc / 6894.757:.0f} psi (no target in the config)"
+        f"{say(design_pc)} (no target in the config)"
     )
 
     # eta_n is a scalar in the config and is read. eta_c* is not: Layer 1

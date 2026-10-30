@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Replay } from '../../../api/layerx';
-import { fmt, PSI } from '../../layerx/format';
+import { PSI } from '../../layerx/format';
 import { Chart } from '../charts/Chart';
 import { alignOnto } from '../charts/resample';
 import type { ChartSeries } from '../charts/types';
@@ -9,6 +9,7 @@ import { Badge, Figure, NotComputed, Panel } from '../ui';
 import { NBSP, useUnits, type Units } from '../units';
 import { convert as conv, type RunData } from '../useRunData';
 import { EngineSection } from '../hero/EngineSection';
+import { afterBurnout, soakFigures } from './soak';
 import { ChartPanel, FigureRow, Hint, NotYet, Table } from './kit';
 import type { PageProps } from './Overview';
 import { useClockIndex } from './side';
@@ -169,14 +170,23 @@ function SoakPanel({ data, hw }: { data: RunData; hw: HardwareDiag }) {
   const back = colOf(hw.insert_back_K, hw.t.length);
   const bound = isAdiabatic(soak?.basis) || isAdiabatic(hw.insert_back_basis);
   const series = useMemo<ChartSeries[] | null>(() => (back ? [{ key: 'insert_back', label: 'Insert back face', color: '--lx-hot', values: back }] : null), [back]);
+  const f = soak && soak.available !== false ? soakFigures(soak) : null;
+  const bondWhen = afterBurnout(f?.bondT);
+  const outerWhen = afterBurnout(f?.outerT);
+  const followed = afterBurnout(soak?.duration_s);
   return (
-    <Panel title={<Hint text="After shutdown the hot insert keeps heating what it touches. The peak here is with no heat lost to anything else, so the real one is lower.">Soak-back</Hint>}
+    <Panel title={<Hint text={'After shutdown the hot insert keeps heating what it touches, with no heat lost to the gas or the room, so the real temperatures are lower: an upper bound. '
+      + 'Behind the insert: the interface where it meets its backing, which peaks seconds after shutdown. Outside: the outer face of the wall, which with no heat lost '
+      + 'never peaks but climbs to the stored heat\'s equilibrium; its time is when it has made 95 % of that rise.'
+      + (followed.value !== '—' ? ` The wall was followed for ${followed.value.replace(/^\+/, '')} ${followed.unit} after burnout.` : '')}>Soak-back</Hint>}
            right={bound ? <span>adiabatic upper bound</span> : undefined} className="lg:col-span-6">
-      {soak && soak.available !== false ? (
-        <div className="grid grid-cols-3 gap-x-6">
-          <Figure label={bound ? 'Peak, at most' : 'Peak'} q={u.temp(soak.peak_K ?? null)} sub={soak.station ?? undefined} />
-          <Figure label="When" value={soak.t_peak_s === null || soak.t_peak_s === undefined ? '—' : `+${fmt(soak.t_peak_s, soak.t_peak_s < 10 ? 2 : 0)}`} unit="s" sub="after burnout" />
-          <Figure label="Followed for" value={soak.duration_s === null || soak.duration_s === undefined ? "—" : String(Math.round(soak.duration_s))} unit="s" />
+      {f ? (
+        <div className="grid grid-cols-2 gap-x-6">
+          <Figure label="Behind the insert, peak"
+                  q={u.temp(f.bondK)} sub={bondWhen.value === '—' ? undefined : `${bondWhen.value} ${bondWhen.unit} after burnout`} />
+          <Figure label={bound ? 'Outside, at most' : 'Outside, peak'}
+                  q={u.temp(f.outerK)} sub={outerWhen.value === '—' ? soak?.station ?? undefined
+                    : f.asymptotic ? `no heat lost outside: 95 % by ${outerWhen.value} ${outerWhen.unit}` : `${outerWhen.value} ${outerWhen.unit} after burnout`} />
         </div>
       ) : <NotComputed height={60}>Soak-back not computed for this run</NotComputed>}
       {series && <Chart t={hw.t} series={series} yUnit="K" height={150} events={data.events} digits={0} className="mt-3" />}
@@ -270,7 +280,8 @@ export function Hardware({ data, vs, job }: PageProps) {
           {liner && <Figure label="Thinnest liner" q={u.len((last(liner) ?? NaN) / 1000)} sub="at burnout" />}
           {replay?.heat_flux_throat_MW_m2 && <Figure label="Throat heat flux" value={(peak(replay.heat_flux_throat_MW_m2) ?? NaN).toFixed(1)} unit="MW/m²" sub="peak" />}
           {replay?.T_graphite_surface_K && <Figure label="Graphite surface" q={u.temp(peak(replay.T_graphite_surface_K))} sub="peak" />}
-          {hw?.soak?.peak_K !== null && hw?.soak?.peak_K !== undefined && <Figure label="Soak-back" q={u.temp(hw.soak.peak_K)} sub={soakBound ? 'at most' : 'peak'} />}
+          {hw?.soak && hw.soak.available !== false && soakFigures(hw.soak).bondK !== null
+            && <Figure label="Soak-back" q={u.temp(soakFigures(hw.soak).bondK)} sub={soakBound ? 'behind the insert, at most' : 'behind the insert'} />}
         </FigureRow>
       </Panel>
       <Panel title="The engine through the burn" className="lg:col-span-12">

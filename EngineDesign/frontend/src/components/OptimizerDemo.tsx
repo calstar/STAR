@@ -479,82 +479,71 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
   }, []);
 
   // Continue to Layer 4 (Flight Simulation)
+  //
+  // Flown on the arrays Layer 3 (else Layer 2) returned and the design's own vehicle and fire load.
+  // This used to fill every gap with a number of its own -- an Isp of 250 s to turn thrust into
+  // mass flow, a 50 kg airframe, 10 % propellant margin -- and print what it flew to the console.
+  // A missing input now stops the layer and says which.
   const handleContinueToLayer4 = useCallback(async () => {
     setDemoState('running_layer4');
     setLayer4Progress(50); // Show indeterminate progress
     setLayer4Error(null); // Clear previous errors
-    
-    try {
-      // Debug: log available data
-      console.log('Layer 2 results:', layer2Results);
-      console.log('Layer 3 results:', layer3Results);
-      
-      // Get time-series data from Layer 3 results or Layer 2
-      // The backend returns time in summary.thrust_curve_time or time_array
-      const summary3 = layer3Results?.summary || {};
-      const summary2 = layer2Results?.summary || {};
-      const timeArray = summary3.thrust_curve_time || summary2.thrust_curve_time || 
-                        layer3Results?.time_array || layer2Results?.time_array || [];
-      
-      // Get thrust array from summary (Layer 2/3 return thrust_curve_values in summary)
-      const thrustArray = summary3.thrust_curve_values || summary2.thrust_curve_values || 
-                          timeArray.map(() => requirements.target_thrust);
-      
-      // Calculate mass flow from thrust and Isp
-      // F = mdot * Ve, Ve ~ Isp * g0
-      const g0 = 9.81;
-      const estimatedIsp = 250; // Conservative estimate
-      const Ve = estimatedIsp * g0;
-      
-      const mdotOArray = timeArray.map((_: number, i: number) => {
-        const thrust = thrustArray[i] || requirements.target_thrust;
-        const totalMdot = thrust / Ve;
-        const OF = requirements.optimal_of_ratio || 2.0;
-        return totalMdot * OF / (1 + OF);
-      });
-      
-      const mdotFArray = timeArray.map((_: number, i: number) => {
-        const thrust = thrustArray[i] || requirements.target_thrust;
-        const totalMdot = thrust / Ve;
-        const OF = requirements.optimal_of_ratio || 2.0;
-        return totalMdot / (1 + OF);
-      });
 
-      // Estimate propellant masses from burn time and mass flows
-      const avgMdotO = mdotOArray.length > 0 ? mdotOArray.reduce((a: number, b: number) => a + b, 0) / mdotOArray.length : 1.5;
-      const avgMdotF = mdotFArray.length > 0 ? mdotFArray.reduce((a: number, b: number) => a + b, 0) / mdotFArray.length : 0.75;
-      const burnTime = requirements.target_burn_time || 10;
-      
-      console.log('Flight sim input:', { 
-        timeArrayLength: timeArray.length, 
-        thrustArrayLength: thrustArray.length,
-        avgMdotO, avgMdotF, burnTime 
-      });
-      
-      // Ensure we have valid arrays for the simulation
-      const finalTimeArray = timeArray.length > 0 ? timeArray : Array.from({ length: 100 }, (_, i) => i * burnTime / 99);
-      const finalThrustArray = thrustArray.length === finalTimeArray.length 
-        ? thrustArray 
-        : finalTimeArray.map(() => requirements.target_thrust);
-      const finalMdotO = mdotOArray.length === finalTimeArray.length ? mdotOArray : finalTimeArray.map(() => avgMdotO);
-      const finalMdotF = mdotFArray.length === finalTimeArray.length ? mdotFArray : finalTimeArray.map(() => avgMdotF);
-      
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const arr = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number) : []);
+    const fail = (msg: string) => {
+      setLayer4Error(msg);
+      setLayer4Progress(100);
+      setDemoState('complete');
+    };
+
+    try {
+      const perf3 = (layer3Results?.performance ?? {}) as Record<string, unknown>;
+      const perf2 = (layer2Results?.performance ?? {}) as Record<string, unknown>;
+      const perf = arr(perf3.F).length ? perf3 : perf2;
+      const timeArray = arr(layer3Results?.time_array).length ? arr(layer3Results?.time_array) : arr(layer2Results?.time_array);
+      const thrust = arr(perf.F);
+      const mdotO = arr(perf.mdot_O);
+      const mdotF = arr(perf.mdot_F);
+      const n = timeArray.length;
+      if (n < 2 || thrust.length !== n || mdotO.length !== n || mdotF.length !== n) {
+        fail('Layers 2 and 3 did not return a thrust and mass-flow history to fly. Run the burn on the Time-Series tab and fly it on the Flight tab instead.');
+        return;
+      }
+
+      const rocket = (config?.rocket ?? {}) as Record<string, unknown>;
+      const loxLoad = num((config?.lox_tank as Record<string, unknown> | undefined)?.mass);
+      const fuelLoad = num((config?.fuel_tank as Record<string, unknown> | undefined)?.mass);
+      const need: [string, unknown][] = [
+        ['airframe mass', rocket.airframe_mass], ['engine mass', rocket.engine_mass],
+        ['LOX tank mass', rocket.lox_tank_structure_mass], ['fuel tank mass', rocket.fuel_tank_structure_mass],
+        ['radius', rocket.radius], ['length', rocket.rocket_length], ['motor position', rocket.motor_position],
+        ['LOX load', loxLoad], ['fuel load', fuelLoad],
+      ];
+      const missing = need.filter(([, v]) => num(v) === null).map(([k]) => k);
+      const inertia = arr(rocket.inertia);
+      if (inertia.length < 3) missing.push('inertia');
+      if (missing.length) {
+        fail(`The design's vehicle is missing ${missing.join(', ')}. Fill them in on the Flight tab and save.`);
+        return;
+      }
+
       const response = await runFlightSimulation({
-        time_array: finalTimeArray,
-        thrust_array: finalThrustArray,
-        mdot_O_array: finalMdotO,
-        mdot_F_array: finalMdotF,
-        lox_mass_kg: avgMdotO * burnTime * 1.1, // 10% margin
-        fuel_mass_kg: avgMdotF * burnTime * 1.1,
+        time_array: timeArray,
+        thrust_array: thrust,
+        mdot_O_array: mdotO,
+        mdot_F_array: mdotF,
+        lox_mass_kg: loxLoad!,
+        fuel_mass_kg: fuelLoad!,
         rocket: {
-          airframe_mass: 50,
-          engine_mass: 10,
-          lox_tank_structure_mass: 3,
-          fuel_tank_structure_mass: 2,
-          radius: 0.1,
-          rocket_length: 3.0,
-          motor_position: 0.5,
-          inertia: [10, 10, 0.5],
+          airframe_mass: num(rocket.airframe_mass)!,
+          engine_mass: num(rocket.engine_mass)!,
+          lox_tank_structure_mass: num(rocket.lox_tank_structure_mass)!,
+          fuel_tank_structure_mass: num(rocket.fuel_tank_structure_mass)!,
+          radius: num(rocket.radius)!,
+          rocket_length: num(rocket.rocket_length)!,
+          motor_position: num(rocket.motor_position)!,
+          inertia: [inertia[0], inertia[1], inertia[2]],
         },
       });
 
@@ -565,21 +554,20 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
         if (response.data.error) {
           setLayer4Error(response.data.error);
         } else if (response.data.status === 'error') {
-          setLayer4Error('Flight simulation failed - check backend logs');
+          setLayer4Error('The flight simulation did not finish.');
         } else {
           setLayer4Results(response.data);
         }
       } else {
-        setLayer4Error('No response from flight simulation');
+        setLayer4Error('The flight simulation returned nothing.');
       }
     } catch (err) {
-      console.error('Layer 4 error:', err);
-      setLayer4Error(err instanceof Error ? err.message : 'Flight simulation failed');
+      setLayer4Error(err instanceof Error ? err.message : 'The flight simulation failed.');
     }
-    
+
     setLayer4Progress(100);
     setDemoState('complete');
-  }, [layer2Results, layer3Results, requirements]);
+  }, [layer2Results, layer3Results, config]);
 
   // Stop current layer
   const handleStop = async () => {
@@ -636,8 +624,8 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
       { label: 'Chamber Pressure', value: (perf.Pc || 0) / 1e6, unit: 'MPa', color: 'blue' as const },
       { label: 'O/F Ratio', value: perf.MR || 0, color: 'cyan' as const },
       { label: 'Isp', value: perf.Isp || 0, unit: 's', color: 'green' as const },
-      { label: 'LOX Pressure', value: perf.P_O_start_psi || 0, unit: 'psi', color: 'orange' as const },
-      { label: 'Fuel Pressure', value: perf.P_F_start_psi || 0, unit: 'psi', color: 'yellow' as const },
+      { label: 'LOX Pressure', value: perf.P_O_start_psi || 0, unit: 'psia', color: 'orange' as const },
+      { label: 'Fuel Pressure', value: perf.P_F_start_psi || 0, unit: 'psia', color: 'yellow' as const },
       { label: 'Stability Score', value: perf.stability_results?.stability_score || 0, color: perf.stability_results?.is_stable ? 'green' as const : 'red' as const },
     ];
   };
@@ -808,7 +796,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
               </div>
               {/* Tank Pressures */}
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Max LOX Pressure [psi]</label>
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Max LOX Pressure [psia]</label>
                 <input
                   type="number"
                   value={requirements.max_lox_tank_pressure_psi}
@@ -818,7 +806,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Max Fuel Pressure [psi]</label>
+                <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1">Max Fuel Pressure [psia]</label>
                 <input
                   type="number"
                   value={requirements.max_fuel_tank_pressure_psi}

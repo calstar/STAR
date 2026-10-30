@@ -18,7 +18,7 @@
  * under a trace before believing it.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fixed, sessionRepro, sessionSolver, type SolverTrace, type WatchFlag } from '../api';
 import { DaqPlot, fmtReading, type Channel } from '../components/DaqPlot';
 import { useStand } from '../stand';
@@ -44,6 +44,9 @@ const COLOURS = {
   mass: '#60A5FA',
   criterion: '#8a8a8a',
 };
+
+/** Where the Advanced fold was left, for this viewer. */
+const ADVANCED_KEY = 'feedtwin.solver.advanced';
 
 const exp = (v: number) => (v === 0 ? '0' : v.toExponential(2));
 
@@ -87,7 +90,7 @@ export function Solver() {
     };
   }, [trace, networkTol, chamberTol]);
 
-  if (error) return <p className="p-6 text-sm text-red-400">{error}</p>;
+  if (error) return <p className="p-6 text-sm text-[var(--bad)]">{error}</p>;
   if (!trace || !rows) return <p className="p-6 text-sm text-text-muted">Reading the solver…</p>;
 
   const s = trace.summary;
@@ -143,10 +146,10 @@ export function Solver() {
   const monitor: Channel[] = [
     {
       key: 'newton',
-      tag: 'network (Newton)',
+      tag: 'network solve',
       values: rows.newton,
       color: COLOURS.newton,
-      hint: `Worst scaled residual of the network solves in the tick ÷ the network tolerance (${networkTol}). Each solve stops below 1.`,
+      hint: `Worst scaled residual of the network solves in the tick (Newton) ÷ the network tolerance (${networkTol}). Each solve stops below 1.`,
     },
     {
       key: 'continuity',
@@ -179,15 +182,21 @@ export function Solver() {
     },
   ];
 
+  // Nothing has been solved while the stand sits idle with nothing flowing:
+  // every residual is zero, which a log axis cannot draw, and the monitor
+  // showed only its dashed criterion, as if the lines had gone missing.
+  // (The mass balance is no sign of a solve: its round-off reads 1e-12.)
+  const solved = monitor.slice(0, 3).some((c) => c.values.some((v) => v > 0));
   return (
     <div className="flex flex-col gap-3 p-4">
+      <h2 className="caps">Solver</h2>
       <div className="flex flex-wrap items-center gap-x-8 gap-y-2 border border-gray-800 px-5 py-3">
         {checks.map((c) => (
           <span key={c.key} className="flex items-center gap-2 font-mono text-[12.5px]" title={c.hint}>
             <span className="text-[var(--ink-2)]">{c.label}</span>
             <span
               className={`rounded px-1.5 py-px text-[11px] font-semibold ${
-                c.ok ? 'bg-emerald-950/60 text-emerald-300' : 'bg-red-950/60 text-red-300'
+                c.ok ? 'bg-[var(--ok)]/10 text-[var(--ok)]' : 'bg-[var(--bad)]/10 text-[var(--bad)]'
               }`}
             >
               {c.ok ? 'PASS' : 'FAIL'}
@@ -209,28 +218,42 @@ export function Solver() {
                   Residuals
                 </span>
               </div>
-              <DaqPlot
-                times={trace.t}
-                channels={monitor}
-                yLabel="residual ÷ criterion"
-                xLabel="stand time (s)"
-                height={340}
-                minSpan={1}
-                initialLog
-                allowLog
-                lineWidth={1.5}
-              />
+              {solved ? (
+                <DaqPlot
+                  times={trace.t}
+                  channels={monitor}
+                  yLabel="residual ÷ criterion"
+                  xLabel="stand time (s)"
+                  height={340}
+                  minSpan={1}
+                  initialLog
+                  allowLog
+                  logCeil={10}
+                  lineWidth={1.5}
+                />
+              ) : (
+                <div className="flex h-[340px] flex-col items-center justify-center gap-1 text-center">
+                  <p className="text-[13px] text-[var(--ink-2)]">No solve yet</p>
+                  <p className="max-w-sm text-[12px] text-[var(--ink-3)]">
+                    The stand is idle: nothing flows, so there is nothing to solve. The residuals start with the
+                    first valve that opens.
+                  </p>
+                </div>
+              )}
             </section>
             <IterationLog trace={trace} rows={rows} />
           </div>
-
+        </>
+      )}
+      <Advanced>
+        {trace.t.length >= 2 && (
           <div className="grid gap-3 lg:grid-cols-3">
             <Monitor
-              title="Iterations per tick"
-              hint="Newton iterations summed over the tick, the most any one solve took, and the network solves (couplings) the tick needed. A climb is the solver working harder, usually at a state change."
+              title="Steps per tick"
+              hint="Newton steps summed over the tick, the most any one solve took, and the network solves (couplings) the tick needed. A climb is the solver working harder, usually at a state change."
               times={trace.t}
               channels={[
-                { key: 'iterations', tag: 'iterations', values: trace.iterations, color: '#3498DB' },
+                { key: 'iterations', tag: 'steps', values: trace.iterations, color: '#3498DB' },
                 { key: 'max', tag: 'worst solve', values: trace.iterations_max, color: '#9B59B6' },
                 { key: 'couplings', tag: 'solves', values: trace.couplings, color: '#94A3B8' },
               ]}
@@ -259,17 +282,54 @@ export function Solver() {
               minSpan={1e-6}
             />
           </div>
-        </>
-      )}
-      {live?.id && <ExportRepro id={live.id} />}
+        )}
+        {live?.id && <ExportRepro id={live.id} />}
+      </Advanced>
     </div>
+  );
+}
+
+/** What a person checking the solver's arithmetic wants and nobody else
+ *  does: the work per tick, the tank model's clamps, the repro export.
+ *  Folded, and left as this viewer left it. */
+function Advanced({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem(ADVANCED_KEY) === 'open';
+    } catch {
+      return false;
+    }
+  });
+  const flip = () => {
+    setOpen((was) => {
+      try {
+        window.localStorage.setItem(ADVANCED_KEY, was ? 'closed' : 'open');
+      } catch {
+        // Storage can be unavailable; the fold still works for this visit.
+      }
+      return !was;
+    });
+  };
+  return (
+    <section className="flex flex-col gap-3">
+      <button
+        type="button"
+        onClick={flip}
+        aria-expanded={open}
+        className="caps self-start hover:text-[var(--ink)]"
+        title="Steps per tick, the mass balance, the clamps, and the repro export"
+      >
+        {open ? '−' : '+'} Advanced
+      </button>
+      {open && children}
+    </section>
   );
 }
 
 /** The watcher's flags: what broke, on what, when; the numbers on hover. */
 function Flags({ flags }: { flags: WatchFlag[] }) {
   return (
-    <section className="bg-card border border-red-900/60 p-3">
+    <section className="bg-card border border-[var(--color-danger-solid)]/60 p-3">
       <div className="caps mb-2 text-[11px]" title="Laws a correct stand cannot break, checked every tick (feedtwin.session.watch). One row per episode.">
         Flags
       </div>
@@ -279,7 +339,7 @@ function Flags({ flags }: { flags: WatchFlag[] }) {
             <span className="w-[9.5rem] shrink-0 tabular-nums text-[var(--ink-2)]">
               {fixed(f.started, 1)}–{f.open ? 'now' : `${fixed(f.last, 1)} s`}
             </span>
-            <span className={f.open ? 'text-red-300' : 'text-amber-300/80'}>{f.title}</span>
+            <span className={f.open ? 'text-[var(--bad)]' : 'text-[var(--warn)]/80'}>{f.title}</span>
             <span className="truncate text-[var(--ink-2)]">{f.subject}</span>
           </div>
         ))}
@@ -344,7 +404,7 @@ function Monitor({
     <section className="bg-card min-w-0 border border-gray-800 p-3" title={hint}>
       <div className="mb-1 flex items-baseline gap-2">
         <span className="caps text-[11px]">{title}</span>
-        {flat && <span className="font-mono text-[11px] text-emerald-300/80">zero throughout</span>}
+        {flat && <span className="font-mono text-[11px] text-[var(--ok)]/80">zero throughout</span>}
       </div>
       <DaqPlot times={times} channels={channels} yLabel="" xLabel="stand time (s)" height={150} minSpan={minSpan} lineWidth={1.5} />
     </section>
@@ -367,9 +427,15 @@ function IterationLog({
   const following = useRef(true);
   const n = trace.t.length;
   const from = Math.max(0, n - 300);
+  // Following the newest row, scrolled to a whole row: the header is
+  // sticky, and a scroll that stopped mid-row left the top row half under it.
+  // The spacer row at the foot gives the last whole-row stop room.
   useEffect(() => {
     const el = box.current;
-    if (el && following.current) el.scrollTop = el.scrollHeight;
+    if (!el || !following.current) return;
+    const rh = (el.querySelector('tbody tr') as HTMLElement | null)?.offsetHeight ?? 0;
+    const end = el.scrollHeight - el.clientHeight;
+    el.scrollTop = rh > 0 ? Math.max(0, Math.ceil((end - rh) / rh) * rh) : end;
   }, [n, trace]);
 
   const head = 'px-2 py-1 text-right font-normal';
@@ -388,10 +454,10 @@ function IterationLog({
         className="min-h-0 flex-1 overflow-auto"
       >
         <table className="w-full font-mono text-[11px]">
-          <thead className="sticky top-0 bg-[#0d0d0d] text-[10px] uppercase tracking-wider text-gray-500">
+          <thead className="sticky top-0 z-[1] bg-[var(--color-bg-secondary)] text-[10px] uppercase tracking-wider text-gray-500">
             <tr>
               <th className={head} title="Stand time [s]">t</th>
-              <th className={head} title="Network solves the tick took / Newton iterations">solves/it</th>
+              <th className={head} title="Network solves the tick took / Newton steps">solves/steps</th>
               <th className={head} style={{ color: COLOURS.newton }} title="Network residual ÷ tolerance">network</th>
               <th className={head} style={{ color: COLOURS.continuity }} title="Continuity ÷ 1 mg/s">contin.</th>
               <th className={head} style={{ color: COLOURS.chamber }} title="Chamber closure ÷ tolerance">chamber</th>
@@ -403,7 +469,7 @@ function IterationLog({
               const i = from + k;
               const ok = trace.converged[i];
               return (
-                <tr key={i} className={ok ? 'text-[var(--ink-2)]' : 'bg-red-950/40 text-red-300'}>
+                <tr key={i} className={ok ? 'text-[var(--ink-2)]' : 'bg-[var(--bad)]/10 text-[var(--bad)]'}>
                   <td className={cell}>{fixed(t, 2)}</td>
                   <td className={cell}>
                     {trace.couplings[i]}/{trace.iterations[i]}
@@ -415,6 +481,11 @@ function IterationLog({
                 </tr>
               );
             })}
+            <tr aria-hidden>
+              <td className={cell} colSpan={6}>
+                &#160;
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>

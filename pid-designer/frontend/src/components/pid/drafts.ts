@@ -26,7 +26,7 @@
 
 import type { ParamSpec } from './spec';
 import type { ParamValue, Provenance } from './params';
-import { unitsFor } from './params';
+import { explicitUnit, isAbsoluteField, toPsia, unitsFor } from './params';
 
 export interface Draft {
   value: string;
@@ -42,19 +42,30 @@ export const VERIFIED: ReadonlySet<Provenance> = new Set(['measured', 'manufactu
 
 export const isVerified = (source: Provenance) => VERIFIED.has(source);
 
-export function toDraft(spec: ParamSpec, existing?: ParamValue): Draft {
+export function toDraft(spec: ParamSpec, existing?: ParamValue, symbol = ''): Draft {
   const units = unitsFor(spec);
+  const pressureAt = spec.dimension === 'pressure' && isAbsoluteField(spec.key);
   if (existing) {
     // A supply coefficient stored as N psi/1000psi reopens as "N per 1000".
     const per = spec.ratio ? (existing.unit === 'psi/1000psi' ? '1000' : existing.unit === 'psi/100psi' ? '100' : '1') : undefined;
+    // A pressure at a place written in psi -- bare or psig -- reopens in psia,
+    // the number the sheet prints beside the symbol: a COPV drawn at "4000
+    // psi" opens at 4014.696 psia, not at a second number for the same thing.
+    // Three decimals, so a Save that rewrites it moves it by less than a
+    // ten-thousandth of a psi. Any other unit reopens saying its reference
+    // (a bare bar reads as barg, as feed-twin reads it) and keeps its number.
+    const unit = pressureAt ? explicitUnit(spec.key, existing.unit, symbol) : existing.unit;
+    const psia = unit === 'psig' ? toPsia(existing, symbol) : undefined;
     return {
-      value: String(existing.value),
-      unit: existing.unit || units[0],
+      value: psia !== undefined ? String(Number(psia.toFixed(3))) : String(existing.value),
+      unit: (psia !== undefined ? 'psia' : unit) || units[0],
       source: existing.source,
       ...(existing.reference ? { reference: existing.reference } : {}),
       ...(per ? { per } : {}),
     };
   }
+  // A new pressure at a place is typed in psia: what everything else shows.
+  if (pressureAt) return { value: '', unit: units[0], source: 'estimated' };
   return { value: '', unit: spec.suggested?.unit ?? spec.unit ?? units[0], source: 'estimated' };
 }
 
@@ -96,6 +107,12 @@ export function pickProvenance(draft: Draft, verified: boolean): Draft {
 }
 
 /** The placeholder a blank field shows: the suggestion, said as a suggestion. */
-export function placeholderFor(spec: ParamSpec): string {
-  return spec.suggested ? `${spec.suggested.value} ${spec.suggested.unit} if blank` : '—';
+export function placeholderFor(spec: ParamSpec, symbol = ''): string {
+  if (!spec.suggested) return '—';
+  // Said in the unit the field opens in: a pressure at a place, in psia.
+  if (spec.dimension === 'pressure' && isAbsoluteField(spec.key)) {
+    const psia = toPsia({ ...spec.suggested, source: 'default' }, symbol);
+    if (psia !== undefined) return `${Math.round(psia)} psia if blank`;
+  }
+  return `${spec.suggested.value} ${spec.suggested.unit} if blank`;
 }

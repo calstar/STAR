@@ -2,11 +2,14 @@
 
 A drawing is the hardware record (ADR-0002): topology, line geometry, tank and
 bottle volumes, the regulator. Layer X never edits one. It reads drawings from
-three places and treats them identically once read, because what identifies a
+these places and treats them identically once read, because what identifies a
 drawing is its **bytes**:
 
 * the feed-twin set shipped in ``feed-twin/backend/diagrams`` (the stand and the
-  two COPV-study drawings);
+  two COPV-study drawings), listed as benchmarks;
+* the feed twin's own library, and the sample set it bundles in
+  ``feed-twin/backend/sample`` (the team's current stand, which is *featured*:
+  a browser with no drawing of its own opens on it);
 * drawings uploaded to Layer X, kept per user;
 * pid-designer documents, pulled by the router (it owns the HTTP) and stored
   here like an upload, with where they came from recorded.
@@ -43,6 +46,12 @@ def feedtwin_library_dir() -> Path:
     """The feed twin's own library: every drawing its cockpit can open (the shipped ones and what it
     pulled from pid-designer), as ``manifest.json`` plus ``blobs/``."""
     return Path(os.environ.get("LAYERX_FEEDTWIN_LIBRARY") or (feedtwin_root() / "backend" / "library"))
+
+
+def sample_dir() -> Path:
+    """The sample set feed-twin bundles (the team's current stand drawing and engine): the drawing
+    in it is the featured one, the stand a fresh browser opens on."""
+    return Path(os.environ.get("LAYERX_SAMPLE") or (feedtwin_root() / "backend" / "sample"))
 
 
 def machines_dir() -> Path:
@@ -166,6 +175,42 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
     }
 
 
+#: Words for the tokens of a file stem, so a menu reads "COPV study, helium", not "copv_study_he".
+_STEM_WORDS = {"copv": "COPV", "gn2": "GN2", "he": "helium", "n2": "N2", "ln2": "LN2", "lox": "LOX", "le4": "LE4"}
+_GAS_WORDS = {"GN2", "helium", "N2", "LN2"}
+
+
+def display_name(name: str) -> str:
+    """A drawing's name as a person reads it. A file stem (``copv_study_he``, what a shipped drawing
+    is named by) comes back in words (``COPV study, helium``); any other name, which a person chose,
+    comes back as it is."""
+    if not re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", name or ""):
+        return name
+    words = [_STEM_WORDS.get(w, w) for w in name.split("_")]
+    if len(words) > 2 and words[-1] in _GAS_WORDS:
+        text = " ".join(words[:-1]) + ", " + words[-1]
+    else:
+        text = " ".join(words)
+    return text[:1].upper() + text[1:]
+
+
+def origin_words(source: str) -> str:
+    """Where a drawing came from, in words, for the menu's second line (the raw ``source`` stays in
+    the run record)."""
+    if source.startswith("shipped:"):
+        return "benchmark, shipped with the code"
+    if source.startswith("sample:"):
+        return "Hotbench sample stand"
+    if source.startswith("feed-twin library"):
+        rest = source.split(":", 1)[1].strip() if ":" in source else ""
+        return "Feed Twin library, from pid-designer" if rest.startswith("pid-designer") else "Feed Twin library"
+    if source.startswith("pid-designer:"):
+        return "pid-designer, " + ("working copy" if source.endswith("working copy") else "release")
+    if source == "upload":
+        return "uploaded here"
+    return source
+
+
 @dataclass
 class Drawing:
     """One drawing, read and addressed by content."""
@@ -173,10 +218,14 @@ class Drawing:
     id: str
     name: str
     source: str
-    """``shipped:<file>``, ``upload``, or ``pid-designer:<owner>/<id>@<release|working copy>``."""
+    """``shipped:<file>``, ``sample:<file>``, ``feed-twin library: <its source>``, ``upload``, or
+    ``pid-designer:<owner>/<id>@<release|working copy>``."""
     sha256: str
     payload: Dict[str, Any] = field(repr=False)
     added: float = 0.0
+    featured: bool = False
+    """The team's current stand: the sample feed-twin bundles, or a library entry marked featured.
+    A browser with no drawing of its own opens on it."""
 
     def summary(self) -> Dict[str, Any]:
         return summarize(self.payload, self.name)
@@ -185,6 +234,12 @@ class Drawing:
         return {
             "id": self.id,
             "name": self.name,
+            # What a menu shows: the name in words, where it came from in words, and which shelf it
+            # sits on (the team's stands, or the benchmarks shipped with the code).
+            "label": display_name(self.name),
+            "origin": origin_words(self.source),
+            "group": "Benchmarks" if self.source.startswith("shipped:") else "Stands",
+            "featured": self.featured,
             "source": self.source,
             "sha256": self.sha256,
             "added": self.added,
@@ -276,8 +331,43 @@ class DrawingStore:
             out.append(Drawing(id=drawing_id(raw), name=str(entry.get("name") or entry["filename"]),
                                source=f"feed-twin library: {entry.get('source') or 'library'}",
                                sha256=sha256(raw), payload=payload,
-                               added=time.mktime(time.strptime(imported[:19], "%Y-%m-%dT%H:%M:%S")) if imported else 0.0))
+                               added=time.mktime(time.strptime(imported[:19], "%Y-%m-%dT%H:%M:%S")) if imported else 0.0,
+                               featured=entry.get("featured") is True))
         _SHIPPED_CACHE[stamp] = tuple(out)
+        return out
+
+    def _sample(self) -> List[Drawing]:
+        """The drawings in feed-twin's sample set, read in place: featured. A library that already
+        holds the same bytes lists it under the library's name (``list`` keeps the first met)."""
+        out: List[Drawing] = []
+        base = sample_dir()
+        if not base.is_dir():
+            return out
+        for path in sorted(base.glob("*.json")):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            stamp = ("sample", str(path), st.st_mtime_ns, st.st_size)
+            hit = _SHIPPED_CACHE.get(stamp)
+            if hit is None:
+                raw = _read(path)
+                if raw is None:
+                    continue
+                try:
+                    payload = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                # The set also carries the engine's card and the like: only a drawing is listed.
+                if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list) \
+                        or not summarize(payload, path.stem).get("readable"):
+                    _SHIPPED_CACHE[stamp] = False
+                    continue
+                hit = Drawing(id=drawing_id(raw), name=path.stem, source=f"sample:{path.name}",
+                              sha256=sha256(raw), payload=payload, added=st.st_mtime, featured=True)
+                _SHIPPED_CACHE[stamp] = hit
+            if hit:
+                out.append(hit)
         return out
 
     def _own_one(self, path: Path) -> List[Drawing]:
@@ -312,16 +402,20 @@ class DrawingStore:
         return out
 
     def list(self) -> List[Drawing]:
+        from dataclasses import replace
+
         seen: Dict[str, Drawing] = {}
         # The same bytes are one drawing, under the first name met: the shipped file, then the
-        # feed twin's library copy, then this user's own.
-        for drawing in self._shipped() + self._feedtwin_library() + self._own():
+        # feed twin's library copy, then the sample set, then this user's own. Featured if any copy
+        # of it is: the sample's bytes, or a library entry marked so.
+        everything = self._shipped() + self._feedtwin_library() + self._sample() + self._own()
+        featured = {d.id for d in everything if d.featured}
+        for drawing in everything:
             seen.setdefault(drawing.id, drawing)
-        out = list(seen.values())
+        out = [replace(d, featured=True) if d.id in featured and not d.featured else d for d in seen.values()]
         # Two versions under one name (an older study, a re-import from pid-designer) are told apart
         # by when they arrived; the first of a name keeps it plain.
         from collections import Counter
-        from dataclasses import replace
 
         count = Counter(d.name for d in out)
         named: Dict[str, int] = {}
@@ -340,7 +434,7 @@ class DrawingStore:
                 for drawing in self._own_one(path):
                     if drawing.id == drawing_id_:
                         return drawing
-        for drawing in self._shipped() + self._feedtwin_library():
+        for drawing in self._shipped() + self._feedtwin_library() + self._sample():
             if drawing.id == drawing_id_:
                 return drawing
         for drawing in self._own():

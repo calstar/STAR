@@ -38,7 +38,7 @@ const RULES: Rule[] = [
   {
     kind: 'fix',
     match: /simplified model/,
-    title: () => "Feedtwin's simplified engine is firing, not EngineDesign's — build the engine card in Library",
+    title: () => "Feedtwin's simplified engine is firing, not EngineDesign's — Build EngineDesign card on the Engine page",
     items: () => [],
   },
   {
@@ -137,9 +137,8 @@ export function groupChecks(warnings: readonly string[]): CheckGroup[] {
   return [...groups.values(), ...other].sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
 }
 
-/** What the tab's badge counts: the things worth fixing, one per symbol. */
+/** What the tab's badge counts: the lines the Checks tab lists under "to
+ *  fix", one per kind. Counted per symbol it said 11 over a list of 9. */
 export function checksToFix(warnings: readonly string[]): number {
-  return groupChecks(warnings)
-    .filter((g) => g.kind === 'fix')
-    .reduce((n, g) => n + Math.max(g.items.length, 1), 0);
+  return groupChecks(warnings).filter((g) => g.kind === 'fix').length;
 }

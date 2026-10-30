@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { engineIdentity } from './engineIdentity';
+import { engineIdentity, identityTransition } from './engineIdentity';
 import type { EngineConfig } from '../api/client';
 
 const base = {
@@ -77,5 +77,24 @@ describe('configFingerprint', () => {
     const other = JSON.parse(JSON.stringify(base));
     other.injector.geometry.oxidizer.d_jet = 0.0017;
     expect(fp(other)).not.toBe(fp(base));
+  });
+});
+
+describe('identityTransition (the "propellant or injector changed" banner)', () => {
+  const ethalox = engineIdentity(withPatch({ propellant_preset: 'ethalox', fluids: { oxidizer: { name: 'LOX' }, fuel: { name: 'Ethanol' } } }));
+  const methalox = engineIdentity(base);
+
+  it('adopts the first engine silently: the design opening on page load is not a change', () => {
+    // 2026-10-17 dry run: every fresh load showed the amber banner before anyone touched anything.
+    expect(identityTransition(engineIdentity(null), ethalox, false)).toEqual({ clear: false, warn: false });
+  });
+  it('clears and warns when a shown result belonged to the previous engine', () => {
+    expect(identityTransition(methalox, ethalox, true)).toEqual({ clear: true, warn: true });
+  });
+  it('clears without a banner when there was no result to clear', () => {
+    expect(identityTransition(methalox, ethalox, false)).toEqual({ clear: true, warn: false });
+  });
+  it('does nothing when the engine is the same', () => {
+    expect(identityTransition(ethalox, ethalox, true)).toEqual({ clear: false, warn: false });
   });
 });

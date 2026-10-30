@@ -1,4 +1,8 @@
-# Liquid Rocket Engine Design Pipeline
+# Hotbench Engine (EngineDesign)
+
+*Hotbench, a STAR project: [Hotbench P&ID](../pid-designer/README.md) draws the stand, Hotbench Engine designs the engine and publishes its engine card, and [Hotbench Twin](../feed-twin/README.md) runs the two together.*
+
+## Liquid Rocket Engine Design Pipeline
 
 A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Presets ship for **LOX/RP‑1** and **LOX/CH₄ (methalox)** with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a Numba‑compiled physics kernel.
 
