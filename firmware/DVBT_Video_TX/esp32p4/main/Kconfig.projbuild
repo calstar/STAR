@@ -100,4 +100,7 @@ menu "DVB-T transmitter"
     config DVBT_ADRF_TXDIS
         int "ADRF6755 TXDIS (RF off when high) GPIO"
         default 26
+    config DVBT_CALLSIGN
+        string "Service name in the SDT (your callsign: station ID)"
+        default "N0CALL"
 endmenu

@@ -12,8 +12,9 @@
 //    powered down), wait for LDET.
 // 5. Modulator configured (2K, QPSK 1/2, guard 1/8), TS primed, tx on;
 //    then the ADRF6755's modulator on and TXDIS low: RF out.
-// 6. TS: for now null packets only (the RF signal is real DVB-T, with no
-//    services in it); the H.264 encoder and the muxer come next.
+// 6. TS from ts_mux at exactly the channel rate: PAT/PMT, an SDT naming the
+//    service after the callsign, PCR, nulls; video joins when the camera
+//    and H.264 encoder pipeline puts access units in (next step).
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,6 +28,8 @@
 #include "adrf6755.h"
 #include "spi_bus_esp.h"
 #include "ecp5_cfg.h"
+#include "ts_mux.h"
+#include "esp_heap_caps.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 
@@ -38,11 +41,7 @@ static void dac_reset(void *ctx, bool high)
     gpio_set_level(CONFIG_DVBT_DAC_RESET, high);
 }
 
-static void null_packet(uint8_t *p)
-{
-    memset(p, 0xFF, TS_PACKET);
-    p[0] = 0x47; p[1] = 0x1F; p[2] = 0xFF; p[3] = 0x10;
-}
+static ts_mux_t s_mux;
 
 void app_main(void)
 {
@@ -121,22 +120,34 @@ void app_main(void)
     ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_CTRL, ctrl));
     ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_STATUS, 0x8000000Fu));              // clear flags
 
+    ts_mux_config_t mc = {
+        .tsid = 1, .onid = 1, .program = 1, .pmt_pid = 0x1000, .video_pid = 0x100,
+        .provider = "STAR", .service = CONFIG_DVBT_CALLSIGN,
+        .buf_size = 256 * 1024,
+    };
+    ts_dvbt_rate(6, 0, 0, 2, &mc.rate_num, &mc.rate_den);   // must match CTRL above
+    mc.buf = heap_caps_malloc(mc.buf_size, MALLOC_CAP_8BIT);
+    ESP_ERROR_CHECK(mc.buf ? ESP_OK : ESP_ERR_NO_MEM);
+    ts_mux_init(&s_mux, &mc);
     static uint8_t pkts[2 * TS_PACKET];
-    null_packet(pkts);
-    null_packet(pkts + TS_PACKET);
+    ts_mux_next(&s_mux, pkts);
     // Prime the TS FIFO while tx_en is low: send until the status byte says
     // DREQ has fallen (it is sampled at the start of each frame, so this
     // overshoots by at most the packet in flight -- DREQ leaves room for 2).
     uint8_t sb = DVBT_SB_DREQ;
-    while (sb & DVBT_SB_DREQ)
+    while (sb & DVBT_SB_DREQ) {
         ESP_ERROR_CHECK(fpga_ts_send(pkts, 1, 100, &sb));
+        ts_mux_next(&s_mux, pkts);
+    }
     ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_CTRL, ctrl | DVBT_CTRL_TX_EN));
     ESP_ERROR_CHECK(adrf6755_modulator_on(&mod, true));     // only after lock (step 34)
     gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 0);
     ESP_LOGI(TAG, "transmitting at %.3f MHz", lo.lo_hz / 1e6);
 
     for (uint32_t n = 0;; n++) {
+        ts_mux_next(&s_mux, pkts + TS_PACKET);
         ESP_ERROR_CHECK(fpga_ts_send(pkts, 2, 1000, &sb));
+        ts_mux_next(&s_mux, pkts);
         if ((n & 0x3FFF) == 0) {
             uint32_t st = 0;
             fpga_reg_read(DVBT_REG_STATUS, &st);

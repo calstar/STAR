@@ -22,6 +22,7 @@ esptool.py --chip esp32p4 -p /dev/ttyUSB0 write_flash 0x310000 build/fpga.img   
 | `fpga_link` | the SPI link to the FPGA (SPI2): register read/write, TS packets paced by DREQ. `dvbt_regs.h` mirrors `gateware/rtl/dvbt_host.v`; `fpga_proto.c` is the frame encoding, pure C |
 | `spi_bus_esp` | `spi_bus_if` on the P4's second SPI host (SPI3), the setup bus: AD9116 (3-wire, half duplex) and ADRF6755 (4-wire, its SDO back) share SCLK and the data line; chip selects are GPIOs so CS-only pulses work. `spi_bus_pack.c` is the bit packing, pure C |
 | `ecp5_cfg` | loads the FPGA at boot over its slave-SPI configuration port from the `fpga` partition (`tools/make_fpga_image.py` wraps the `.bit` with a CRC-checked header); if the image is missing, corrupt, for the wrong part, or the load fails, it releases the CFG pins to the board straps and pulses PROGRAMN so the FPGA boots from its own W25Q32 |
+| `ts_mux` | MPEG-TS multiplexer at exactly the DVB-T channel rate (`ts_dvbt_rate`): PAT/PMT every 100 ms, an SDT naming the service after the callsign, PCR every 20 ms derived from the packet count, H.264 access units as PES with PTS, nulls in the gaps. Pure C, no allocation |
 | `si5351` | Si5351A frequency planning (exact rationals, AN619 encoding) and I²C programming; CLK0 = 192/7 MHz for the FPGA and DAC |
 | `ad9116` | AD9114/5/6/7 setup over any `spi_bus_if`: reset, data format, retimer lock (datasheet Rev. F) |
 | `adrf6755` | ADRF6755 modulator + PLL over any `spi_bus_if`: SPI-mode lock (3 CS pulses), LO planning (Equations 1-5, Table 6), the datasheet's power-up sequence (Rev. B p. 35), modulator power |
@@ -46,7 +47,8 @@ esptool.py --chip esp32p4 -p /dev/ttyUSB0 write_flash 0x310000 build/fpga.img   
 6. FPGA CTRL: 2K, QPSK 1/2, guard 1/8, two's complement; prime the TS FIFO
    until DREQ falls; tx_en. Then the ADRF6755's modulator on (CR29 = 0x81,
    only once locked, as the datasheet asks) and TXDIS low: RF out.
-7. Stream TS, two packets per frame whenever DREQ is high.
+7. Stream the muxer's TS, two packets per frame whenever DREQ is high:
+   for now the service with no video (the receiver lists it by callsign).
 
 ## Tests
 
@@ -60,7 +62,13 @@ against an SPI-port model that refuses traffic before the SPI-mode lock;
 the FPGA loader against an emulated ECP5 configuration port (command order,
 SRAM-erase operand, the bitstream delivered intact, CFG released after) and
 every fallback to the W25Q32: empty or corrupt image, wrong device, INITN
-stuck, DONE never rising. The gateware's cocotb host test builds its
+stuck, DONE never rising. The muxer: real H.264 from x264 (720p30,
+3 Mbit/s, no B-frames) through it, then ffprobe (program, service name,
+all 120 frames) and ffmpeg's decoder (no errors or warnings), plus a parse
+of the stream: PAT/PMT gaps <= 100 ms, PCR <= 40 ms and within 1 tick of
+the channel-rate timeline, every PTS ahead of the clock, continuity
+counters right (including adaptation-only packets), and the channel rate
+against EN 300 744's table. The gateware's cocotb host test builds its
 SPI frames with this same `fpga_proto.c`, so firmware and RTL are checked
 against each other.
 
@@ -71,7 +79,7 @@ against each other.
   come from open-source loaders (ecpprog, openFPGALoader), and a wrong
   guess falls back to the W25Q32 rather than bricking the board.
 
-- **Video:** MIPI-CSI camera → ISP → hardware H.264 encoder → MPEG-TS muxer
-  at a constant 4.15 Mbit/s (PCR from the byte count, nulls for stuffing).
+- **Video:** MIPI-CSI camera (OV5647: the IMX708 has no ESP32-P4 driver)
+  → ISP → hardware H.264 encoder → `ts_mux`.
 - Board pinout: the GPIO numbers in Kconfig are placeholders until the
   schematic exists.
