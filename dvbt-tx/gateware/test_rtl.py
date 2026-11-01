@@ -51,6 +51,7 @@ CASES = [
     # I/O (tb/test_io.py)
     ("dvbt_fifo", "fifo", "qpsk", "1/2"),
     ("dvbt_host", "host", "qpsk", "1/2"),
+    ("dvbt_tx_core", "tx_core", "qpsk", "1/2", 40),
 ]
 CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
 OFDM_TESTS = {"fft2048", "modulator"}
@@ -85,7 +86,7 @@ def test_rtl(top: str, test: str, mod: str, rate: str, n_pkt: int, seed: int) ->
         test_dir=TB,
         build_dir=build_dir,
         test_filter=rf"\.{test}$",
-        extra_env={"MOD": mod, "RATE": rate, "TB_SEED": str(seed), "N_PKT": str(n_pkt)},
+        extra_env={**({"TB_DUMP": os.environ["TB_DUMP"]} if "TB_DUMP" in os.environ else {}), "MOD": mod, "RATE": rate, "TB_SEED": str(seed), "N_PKT": str(n_pkt)},
         results_xml=str(build_dir / f"{test}-{mod}-{rate.replace('/', '')}-{seed}.xml"),
     )
     # The runner does not raise on a failed or missing test: check the results.

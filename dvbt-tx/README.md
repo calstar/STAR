@@ -7,10 +7,41 @@ under a second instead of ~20 s, lower power, hardware ISP and H.264 encoder);
 this gateware turns that stream into DVB-T baseband I/Q for the AD9116 DAC,
 per ETSI EN 300 744.
 
-Interfaces: ESP32-P4 → FPGA is SPI (FPGA slave) carrying TS bytes at the
-channel rate, paced by a DREQ line from the FPGA's input FIFO, plus register
-commands on the same bus. FPGA → AD9116 is a 12-bit DDR bus with I and Q
-interleaved (27.43 MS/s each) and a 3-wire SPI for setup.
+Interfaces: ESP32-P4 → FPGA is SPI (FPGA slave, mode 0, up to ~20 MHz)
+carrying TS bytes at the channel rate, paced by a DREQ line from the FPGA's
+input FIFO, plus register commands on the same bus. FPGA → AD9116 is a
+12-bit DDR bus with I and Q interleaved (27.43 MS/s each) and a forwarded
+data clock; the FPGA also has an SPI master for the AD9116's and the
+ADRF6755's setup registers, driven from the ESP32 through FPGA registers.
+
+### The ESP32-P4's view (full detail in `rtl/dvbt_host.v`)
+
+| SPI frame (CS low…high) | meaning |
+|---|---|
+| `00`, then whole 188-byte packets | transport stream; send a packet only while DREQ is high |
+| `80\|a`, 4 bytes | write register *a* (MSB first) |
+| `40\|a`, 1 dummy byte, 4 bytes | read register *a* |
+
+MISO during every command byte returns a status byte
+`{dreq, tx_en, underflow, err_align, ts_bad, ts_overflow, spi_busy, 0}`.
+
+| reg | name | contents |
+|---|---|---|
+| 0 | CTRL | tx_en, constellation, code rate, guard, DAC data format, I/Q edge swap |
+| 1 | GAIN | I and Q gain (Q2.14; reset 2.5 → DAC RMS about −13.5 dBFS) |
+| 2 | PHASE | I-into-Q phase trim |
+| 3 | DCOFF | DC offsets I and Q (DAC LSBs) |
+| 4 | SPIDATA | write: send to AD9116/ADRF6755; read: bits returned |
+| 5 | SPICFG | bit count, device, clock divider; busy |
+| 6 | STATUS | sticky flags (write 1 to clear), null packets inserted |
+| 7 | ID | `D7B70001` |
+
+Bring-up: program the Si5351A over I²C (the FPGA has no clock until it
+runs), set up the AD9116 and ADRF6755 through SPIDATA/SPICFG, write CTRL
+with tx_en low, send TS until DREQ falls, set tx_en. A TS packet enters the
+FIFO only once all 188 bytes have arrived starting 0x47, so a packet cut
+short by CS or with a bad sync byte is dropped whole, and the stream is
+never misaligned; if the FIFO ever runs dry the FPGA sends null packets.
 
 Flight mode: 2K, QPSK, code rate 1/2, guard 1/8, 6 MHz channel → 4.15 Mbit/s.
 
@@ -29,9 +60,11 @@ for. The interface between them is just TS bytes over SPI.
 gateware/rtl/        Verilog-2005, one file per EN 300 744 stage
 gateware/tb/         cocotb testbenches (stream driver with random stalls)
 gateware/test_rtl.py pytest entry: builds each top in Icarus, runs its test
-gateware/synth.sh    Yosys + nextpnr-ecp5 utilisation / Fmax for the LFE5U-25F
+gateware/synth.sh    Yosys + nextpnr-ecp5 (YoWASP): utilisation, Fmax, bitstream config
+gateware/board/      pin constraints for the TQFP144
 model/golden.py      golden vectors from GNU Radio gr-dtv
-scripts/             table generators (RS generator polynomial)
+scripts/             table generators (RS generator, mapper levels, twiddles,
+                     half-band filters) and mutation_check.py
 ```
 
 ## Verification: against gr-dtv, never against ourselves
@@ -57,7 +90,7 @@ Tooling (Ubuntu 24.04):
 
 ```bash
 sudo apt-get install iverilog verilator yosys nextpnr-ecp5 fpga-trellis gnuradio
-/usr/bin/python3.12 -m pip install --break-system-packages cocotb pytest pytest-xdist
+/usr/bin/python3.12 -m pip install --break-system-packages cocotb pytest pytest-xdist yowasp-nextpnr-ecp5
 ```
 
 Ubuntu's gnuradio bindings are built for the system `python3.12`, and cocotb
@@ -65,9 +98,10 @@ embeds the interpreter pytest runs under, so use that interpreter:
 
 ```bash
 cd dvbt-tx/gateware
-/usr/bin/python3.12 -m pytest -q -n auto test_rtl.py     # all stages, ~2 min on 4 cores
+/usr/bin/python3.12 -m pytest -q -n auto test_rtl.py     # every block + the whole transmitter, ~7 min on 4 cores
 /usr/bin/python3.12 ../scripts/mutation_check.py         # every planted bug must be caught
-./synth.sh                                               # utilisation + Fmax
+./synth.sh                                               # board top: utilisation, Fmax (~5 min)
+yowasp-ecppack build/dvbt_tx_top/dvbt_tx_top.config build/dvbt_tx_top/dvbt_tx.bit
 verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.v
 ```
 
@@ -88,15 +122,31 @@ verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.
 | 2048-point FFT (R2²SDF, used as IFFT) | `dvbt_fft2048.v` | vs numpy: 71 dB SNR |
 | carrier → bin reorder, guard interval | `dvbt_ifft_in.v`, `dvbt_gi_insert.v` | in the modulator test |
 | **whole modulator, TS → baseband OFDM** | `dvbt_modulator.v` | vs gr-dtv sample by sample: 70 dB SNR, MER 71 dB |
-| 4× interpolation, I/Q trims, AD9116 DDR bus | — | next |
-| TS input (SPI slave, sync lock, null-packet rate matching) | — | |
-| control: SPI masters for ADRF6755/AD9116, register file | — | |
+| gain / I/Q trims, 4× interpolation (two half-band stages) | `dvbt_iq_corr.v`, `dvbt_halfband.v`, `dvbt_interp.v` | vs scipy `upfirdn` with the design coefficients, within 1.5 LSB; 75 dB image rejection measured |
+| AD9116 data port (12-bit DDR, offsets, format, underflow) | `dvbt_dac_out.v` | pins sampled in each half clock vs the definition |
+| TS input: SPI slave, packet-atomic FIFO, DREQ, null packets | `dvbt_spi_slave.v`, `dvbt_fifo.v`, `dvbt_host.v`, `dvbt_ts_source.v` | ESP32-side SPI model on an unrelated 20 MHz clock |
+| register file, setup SPI master (AD9116, ADRF6755) | `dvbt_host.v`, `dvbt_spi_master.v` | same test, with a slave model |
+| **whole transmitter, SPI in → DAC pins out** | `dvbt_tx_core.v` | vs gr-dtv: DAC samples decimated and FFT'd as a receiver would, MER ≥ 50 dB every symbol (12-bit limit ~53 dB at unity gain) |
+| board top: PLL, 90° forwarded DAC clock, reset | `dvbt_tx_top.v`, `dvbt_pll.v`, `board/dvbt_tx.lpf` | places, routes and packs a bitstream on TQFP144 |
 
-Synthesis of the whole `dvbt_modulator` on LFE5U-25F (speed 7): about 5.2k
-LUT4 (21%), 30 of 56 block RAMs, 20 of 28 multipliers (the FFT's five complex
-multipliers), Fmax about 62 MHz against the 27.43 MHz sample clock. The 8
-multipliers left are for the interpolation filters, which can time-share them
-(each runs at 4+ clocks per sample).
+Synthesis and place-and-route of the whole board top (`./synth.sh`) on the
+LFE5U-25F-7TG144C with the provisional pinout:
+
+| resource | used | of | |
+|---|---|---|---|
+| logic cells (LUT4 + carry) | 16.1k (8.0k LUT4, 3.0k CCU2C) | 24,288 | 66% |
+| flip-flops | 7.8k | 24,288 | 32% |
+| block RAM (DP16KD) | 32 | 56 | 57% |
+| multipliers (MULT18X18D) | 23 | 28 | 82% |
+| I/O | 25 | 98 on TQFP144 | |
+| Fmax, system clock | 65.8 MHz | needs 27.43 | 2.4× margin |
+| Fmax, SPI clock domain | 71 MHz | needs 20 | |
+
+The FFT takes 20 multipliers and most of the RAM; the interpolation filters
+use none (shift-and-add constants), the trims three. The interpolator is
+the second-largest block (about 3k LUT4 + 1k carry, 3.2k flip-flops, mostly
+delay lines; moving those into block RAM would roughly halve it if room is
+ever needed). The LFE5U-12F would not fit (12k LUTs, 32 block RAMs).
 
 Output level: carriers at 1.0 = 8192 leave the IFFT as their sum / 32, RMS
 about 11k with peaks under 40k of the 18-bit range (PAPR ~11 dB) in steady
@@ -117,10 +167,19 @@ scale; the RTL clips those few samples, and the test pins that down.
 
 ## Open items
 
-- **Package.** The design doc picks the TQFP144. Ubuntu's Project Trellis
-  database has pin data only for CABGA256/381 and CSFBGA285 on this die;
-  `synth.sh` sizes on CABGA256 (same die, same resources and timing). Confirm
-  the open flow supports the TQFP144 pinout before the board is laid out on it.
+- **AD9116 details to confirm against the datasheet** (both are register
+  bits, so a wrong guess costs a register write, not a board spin): which
+  clock edge carries I (CTRL bit 9 swaps), and the data format at power-up
+  (CTRL bit 8 selects offset binary). Also whether its interface wants the
+  forwarded data clock, the Si5351A's clock, or both; the board top forwards
+  one from the 90° PLL output on pin 84 either way.
+- **Pinout** in `board/dvbt_tx.lpf` is provisional, chosen from the
+  TQFP144 pin data (clock on the right PLL input, DAC bus on the same bank,
+  ESP32 SCK on a clock-capable pin, configuration-flash bank untouched).
+  Re-run `./synth.sh` after any change; it checks timing against the real
+  pins.
+- **Package (resolved).** Ubuntu's Trellis lacks TQFP144 for this die;
+  upstream has it, and `synth.sh` uses YoWASP's nextpnr build for it.
 - **Outer interleaver after reset.** Its RAM is zeroed at power-up (matching
   gr-dtv) but not by a reset, so the first 1122 bytes after a warm reset are
   stale. A receiver sees one burst error and locks; harmless, but known.

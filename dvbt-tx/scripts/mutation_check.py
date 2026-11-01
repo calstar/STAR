@@ -113,6 +113,8 @@ MUTATIONS = [
      "host and 1]", "status byte LSB first"),
     ("dvbt_spi_master.v", "assign mosi = sh[31];", "assign mosi = sh[0];",
      "host and 1]", "setup SPI LSB first"),
+    ("dvbt_ts_source.v", "assign f_ready = !rst && en", "assign f_ready = en",
+     "tx_core and 1]", "TS FIFO drained while the transmitter is off"),
 ]
 
 
