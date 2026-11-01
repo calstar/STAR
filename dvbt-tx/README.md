@@ -82,27 +82,36 @@ verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.
 | §4.3.4.1 bit interleaver | `dvbt_bit_interleaver.v` | yes, QPSK/16QAM/64QAM |
 | §4.3.4.2 symbol interleaver (2K) | `dvbt_symbol_interleaver.v` | yes |
 | chain of the above | `dvbt_fec_chain.v` | yes |
-| §4.3.5 mapping | — | next |
-| §4.4–4.6 frame: continual/scattered pilots, TPS | — | next |
-| 2048-point IFFT, cyclic prefix | — | |
-| 4× interpolation, I/Q trims, AD9116 DDR bus | — | |
+| §4.3.5 mapping | `dvbt_mapper.v` | yes, within 1 LSB, all constellations |
+| §4.4–4.6 frame: continual/scattered pilots, TPS (DBPSK, BCH) | `dvbt_frame_builder.v` | yes, > 2 frames, via FFT of gr-dtv output |
+| TS → carriers | `dvbt_carrier_chain.v` | yes, QPSK 1/2 and 64QAM 2/3 |
+| 2048-point FFT (R2²SDF, used as IFFT) | `dvbt_fft2048.v` | vs numpy: 71 dB SNR |
+| carrier → bin reorder, guard interval | `dvbt_ifft_in.v`, `dvbt_gi_insert.v` | in the modulator test |
+| **whole modulator, TS → baseband OFDM** | `dvbt_modulator.v` | vs gr-dtv sample by sample: 70 dB SNR, MER 71 dB |
+| 4× interpolation, I/Q trims, AD9116 DDR bus | — | next |
 | TS input (SPI slave, sync lock, null-packet rate matching) | — | |
 | control: SPI masters for ADRF6755/AD9116, register file | — | |
 
-Synthesis of `dvbt_fec_chain` on LFE5U-25F (speed 7): about 2.3k LUTs (9%),
-3 of 56 block RAMs, no multipliers, Fmax about 72 MHz against the 27.43 MHz sample
-clock.
+Synthesis of the whole `dvbt_modulator` on LFE5U-25F (speed 7): about 5.2k
+LUT4 (21%), 30 of 56 block RAMs, 20 of 28 multipliers (the FFT's five complex
+multipliers), Fmax about 62 MHz against the 27.43 MHz sample clock. The 8
+multipliers left are for the interpolation filters, which can time-share them
+(each runs at 4+ clocks per sample).
+
+Output level: carriers at 1.0 = 8192 leave the IFFT as their sum / 32, RMS
+about 11k with peaks under 40k of the 18-bit range (PAPR ~11 dB) in steady
+state. The one exception is the first ~5 symbols after reset: the outer
+interleaver powers up zeroed (as gr-dtv's does), zeros bypass the energy
+dispersal, and the identical cells they produce add up at t = 0 beyond full
+scale; the RTL clips those few samples, and the test pins that down.
 
 ## Notes for the next stages
 
 - gr-dtv 3.10's `dvbt_reference_signals` already includes the 2048-point IFFT:
-  its output is time-domain (an FFT of it shows 1512 data + 17 TPS carriers at
-  one level, 176 pilots at exactly 4/3 of it, 343 empty bins). So the next
-  golden boundary after the symbol interleaver is time-domain samples; the
-  mapper, pilots/TPS and IFFT get checked together there (fixed-point RTL
-  against float gr-dtv, by error-vector magnitude rather than bit equality),
-  with the mapper and frame builder also checked in the frequency domain by
-  taking the FFT of gr-dtv's output.
+  its output is time-domain. The frame builder is checked against the FFT of
+  it (carrier k in bin (k - 852) mod 2048, scale from the k = 0 continual
+  pilot), and the modulator against gr-dtv's carriers put back through an
+  exact IFFT at the RTL's scale with the cyclic prefix in front.
 - The symbol interleaver's `m_sos` marks OFDM symbol starts; symbol parity and
   the frame's 68-symbol count both start at reset, as gr-dtv's do.
 

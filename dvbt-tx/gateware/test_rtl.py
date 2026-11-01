@@ -40,8 +40,13 @@ CASES = [
     ("dvbt_frame_builder", "frame_builder", "16qam", "3/4", 400),
     ("dvbt_carrier_chain", "carrier_chain", "qpsk", "1/2", 160),
     ("dvbt_carrier_chain", "carrier_chain", "64qam", "2/3", 576),
+    # OFDM back end (tb/test_ofdm.py): FFT core vs numpy, modulator vs gr-dtv.
+    ("dvbt_fft2048", "fft2048", "qpsk", "1/2"),
+    ("dvbt_modulator", "modulator", "qpsk", "1/2", 48),
+    ("dvbt_modulator", "modulator", "16qam", "3/4", 160),
 ]
 CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
+OFDM_TESTS = {"fft2048", "modulator"}
 
 
 @pytest.mark.parametrize("seed", [1, 2])
@@ -57,13 +62,14 @@ def test_rtl(top: str, test: str, mod: str, rate: str, n_pkt: int, seed: int) ->
         hdl_toplevel=top,
         build_dir=build_dir,
         build_args=["-Wall"],
+        defines={"DVBT_ROM_DIR": f'"{RTL}/rom"'},
         timescale=("1ns", "1ps"),
         always=True,
     )
     # The filter matches the full name, "test_stages.<test>".
     results = runner.test(
         hdl_toplevel=top,
-        test_module="test_stages",
+        test_module="test_ofdm" if test in OFDM_TESTS else "test_stages",
         test_dir=TB,
         build_dir=build_dir,
         test_filter=rf"\.{test}$",

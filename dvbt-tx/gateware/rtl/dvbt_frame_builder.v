@@ -113,7 +113,7 @@ module dvbt_frame_builder (
 
     wire is_cp = (k == cp_pos(cp_n));
     wire is_tps = (k == tps_pos(tps_n));
-    wire is_sp = ({1'b0, m12} == {l[1:0], 1'b0} + {3'b000, l[1:0]});  // 3 (l mod 4)
+    wire is_sp = ({1'b0, m12} == {2'b00, l[1:0], 1'b0} + {3'b000, l[1:0]});  // 3 (l mod 4)
     wire is_pilot = is_cp || is_sp;
     wire is_data = !is_pilot && !is_tps;
     wire wbit = w[10];

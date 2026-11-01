@@ -23,6 +23,11 @@
 //
 // For an IFFT, swap re and im on the way in and on the way out.
 `default_nettype none
+/* verilator lint_off WIDTHEXPAND */
+/* verilator lint_off WIDTHTRUNC */
+// Function temporaries: blocking and partly used by design.
+/* verilator lint_off BLKSEQ */
+/* verilator lint_off UNUSEDSIGNAL */
 
 // Folder holding rom/tw_<M>.hex (scripts/gen_twiddles.py), relative to where
 // the simulator or synthesis runs; the test runner passes an absolute path.
@@ -229,12 +234,12 @@ module dvbt_fft_tw #(
     wire signed [36:0] y_im = p_ri + p_ir + 37'sd32768;
 
     function signed [17:0] sat(input signed [36:0] v);  // v >> 16, saturated
-        reg signed [20:0] t;
+        reg signed [20:0] sh;
         begin
-            t = v[36:16];
-            if (t > 21'sd131071) sat = 18'sd131071;
-            else if (t < -21'sd131071) sat = -18'sd131071;
-            else sat = t[17:0];
+            sh = v[36:16];
+            if (sh > 21'sd131071) sat = 18'sd131071;
+            else if (sh < -21'sd131071) sat = -18'sd131071;
+            else sat = sh[17:0];
         end
     endfunction
 
@@ -339,4 +344,8 @@ module dvbt_fft2048 (
     end
 endmodule
 
+/* verilator lint_on UNUSEDSIGNAL */
+/* verilator lint_on BLKSEQ */
+/* verilator lint_on WIDTHTRUNC */
+/* verilator lint_on WIDTHEXPAND */
 `default_nettype wire
