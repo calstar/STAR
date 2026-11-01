@@ -27,18 +27,42 @@ MISO during every command byte returns a status byte
 
 | reg | name | contents |
 |---|---|---|
-| 0 | CTRL | tx_en, constellation, code rate, guard, DAC data format, I/Q edge swap |
+| 0 | CTRL | tx_en, constellation, code rate, guard, DAC data format (resets to unsigned, as the AD9116 does), I/Q edge swap |
 | 1 | GAIN | I and Q gain (Q2.14; reset 2.5 → DAC RMS about −13.5 dBFS) |
 | 2 | PHASE | I-into-Q phase trim |
 | 3 | DCOFF | DC offsets I and Q (DAC LSBs) |
-| 4 | SPIDATA | write: send to AD9116/ADRF6755; read: bits returned |
-| 5 | SPICFG | bit count, device, clock divider; busy |
+| 4 | SPIDATA | write: send on the setup SPI bus; read: bits returned |
+| 5 | SPICFG | bit count, device, 3-wire mode and turnaround point, clock divider; busy |
 | 6 | STATUS | sticky flags (write 1 to clear), null packets inserted |
-| 7 | ID | `D7B70001` |
+| 7 | ID | `D7B70002` |
+| 8 | GPIO | general outputs; bit 0 is the AD9116's RESET/PINMD |
+
+The setup SPI master is generic: the FPGA knows no device; the ESP32
+sends each chip's own instruction and data bits, in 4-wire framing or
+3-wire (data back on the same line after a set number of written bits).
 
 Bring-up: program the Si5351A over I²C (the FPGA has no clock until it
 runs), set up the AD9116 and ADRF6755 through SPIDATA/SPICFG, write CTRL
-with tx_en low, send TS until DREQ falls, set tx_en. A TS packet enters the
+with tx_en low, send TS until DREQ falls, set tx_en.
+
+AD9116 (datasheet Rev. F; register numbers in its Table 14), through the
+FPGA's registers:
+
+1. GPIO = 1, then GPIO = 0: a ≥ 50 ns pulse on RESET/PINMD resets its SPI
+   registers and leaves it in SPI mode (pp. 34, 36).
+2. SPICFG = 3-wire, device 0, 16 bits, 16 driven: write `02 B4` to Data
+   Control (0x02): TWOS = 1 (two's complement), IFIRST = 1, IRISING = 1 (I
+   latched on DCLKIO's rising edge, which is how the FPGA drives it),
+   DCI_EN = 1 (DCLKIO is the data clock input). Then clear CTRL bit 8 to
+   match. (Or skip the write: the AD9116 powers up unsigned binary and
+   CTRL resets to unsigned too.)
+3. Full-scale current: the defaults use the external FSADJ resistors;
+   IRSET (0x04/0x07) and the fine gain (0x03/0x06) adjust it.
+4. Read CLKMODE (0x14), 16 bits with 8 driven (`94 00`): bit 4, Searching,
+   must be 0, meaning the retimer has found the DCLKIO-to-CLKIN phase; the
+   output is not valid until then. Version (0x1F) reads `0A`.
+
+A TS packet enters the
 FIFO only once all 188 bytes have arrived starting 0x47, so a packet cut
 short by CS or with a bad sync byte is dropped whole, and the stream is
 never misaligned; if the FIFO ever runs dry the FPGA sends null packets.
@@ -76,7 +100,7 @@ failure names one block; `fec_chain` then runs the whole chain from raw TS.
 Every test runs with random input stalls and random output backpressure, for
 two seeds.
 
-Current state: 84 test cases pass (42 cases × 2 seeds), and all 44 planted bugs are caught.
+Current state: 84 test cases pass (42 cases × 2 seeds), and all 47 planted bugs are caught.
 
 The tests are broken on purpose to prove they can fail:
 `scripts/mutation_check.py` copies `rtl/`, plants one plausible bug per stage
@@ -140,9 +164,9 @@ LFE5U-25F-7TG144C with the provisional pinout:
 | flip-flops | 7.8k | 24,288 | 32% |
 | block RAM (DP16KD) | 32 | 56 | 57% |
 | multipliers (MULT18X18D) | 23 | 28 | 82% |
-| I/O | 25 | 98 on TQFP144 | |
-| Fmax, system clock | 65.8 MHz | needs 27.43 | 2.4× margin |
-| Fmax, SPI clock domain | 71 MHz | needs 20 | |
+| I/O | 29 | 98 on TQFP144 | |
+| Fmax, system clock | 67.4 MHz | needs 27.43 | 2.5× margin |
+| Fmax, SPI clock domain | 72 MHz | needs 20 | |
 
 The FFT takes 20 multipliers and most of the RAM; the interpolation filters
 use none (shift-and-add constants), the trims three. The interpolator is
@@ -169,12 +193,20 @@ scale; the RTL clips those few samples, and the test pins that down.
 
 ## Open items
 
-- **AD9116 details to confirm against the datasheet** (both are register
-  bits, so a wrong guess costs a register write, not a board spin): which
-  clock edge carries I (CTRL bit 9 swaps), and the data format at power-up
-  (CTRL bit 8 selects offset binary). Also whether its interface wants the
-  forwarded data clock, the Si5351A's clock, or both; the board top forwards
-  one from the 90° PLL output on pin 84 either way.
+- **AD9116, checked against its datasheet (Rev. F):** I is latched on
+  DCLKIO's rising edge and paired first by default, which is what the FPGA
+  sends; it powers up expecting unsigned binary, so CTRL now resets to
+  that. DCLKIO is the data clock input (from the FPGA's 90° clock) and
+  CLKIN the sampling clock (the Si5351A); the on-chip retimer bridges them.
+  Its SPI is 3-wire only (SDIO), hence the 3-wire mode in the setup SPI
+  master, and its RESET/PINMD pin is now an FPGA output (GPIO bit 0).
+- **Design doc correction:** the doc powers the AD9116's DVDD from an
+  AP2112K-1.8 LDO. Per the datasheet DVDD is the *output* of the AD9116's
+  own 1.8 V LDO when DVDDIO > 1.8 V: bypass it with 1 µF and connect
+  nothing else (pin table; the text on p. 33 says 0.1 µF). The external
+  1.8 V regulator is not needed for the DAC. Also CVDD must be ≥ DVDD
+  (3.3 V is fine), and RESET/PINMD needs a board pull-down so the DAC stays
+  in SPI mode while the FPGA is unconfigured.
 - **Pinout** in `board/dvbt_tx.lpf` is provisional, chosen from the
   TQFP144 pin data (clock on the right PLL input, DAC bus on the same bank,
   ESP32 SCK on a clock-capable pin, configuration-flash bank untouched).
