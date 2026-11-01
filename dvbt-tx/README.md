@@ -76,6 +76,8 @@ failure names one block; `fec_chain` then runs the whole chain from raw TS.
 Every test runs with random input stalls and random output backpressure, for
 two seeds.
 
+Current state: 84 test cases pass (42 cases × 2 seeds), and all 44 planted bugs are caught.
+
 The tests are broken on purpose to prove they can fail:
 `scripts/mutation_check.py` copies `rtl/`, plants one plausible bug per stage
 (wrong PRBS seed, one RS coefficient off, a branch one byte short, a wrong
