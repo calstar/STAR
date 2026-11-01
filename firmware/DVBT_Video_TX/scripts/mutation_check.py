@@ -6,7 +6,7 @@ scratch directory, apply one small, plausible bug, and run the test meant to
 catch it. The script fails if any mutant survives (its test still passes) or
 if a mutation no longer applies (the code it targets moved).
 
-    /usr/bin/python3.12 dvbt-tx/scripts/mutation_check.py
+    /usr/bin/python3.12 firmware/DVBT_Video_TX/scripts/mutation_check.py
 """
 
 from __future__ import annotations

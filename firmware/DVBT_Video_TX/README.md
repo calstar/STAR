@@ -1,4 +1,4 @@
-# dvbt-tx — the rocket video transmitter's DVB-T modulator
+# DVBT_Video_TX — the rocket video transmitter (DVB-T at 1.28 GHz)
 
 FPGA gateware for the DIY 1.28 GHz DVB-T transmitter (design doc: *DIY 1.28 GHz
 DVB-T Rocket Video Transmitter — Design & BOM*). An **ESP32-P4** encodes H.264
@@ -81,6 +81,7 @@ for. The interface between them is just TS bytes over SPI.
 ## Layout
 
 ```
+esp32p4/             ESP32-P4 firmware (ESP-IDF v5.5): bring-up drivers, TS to the FPGA
 gateware/rtl/        Verilog-2005, one file per EN 300 744 stage
 gateware/tb/         cocotb testbenches (stream driver with random stalls)
 gateware/test_rtl.py pytest entry: builds each top in Icarus, runs its test
@@ -123,7 +124,7 @@ Ubuntu's gnuradio bindings are built for the system `python3.12`, and cocotb
 embeds the interpreter pytest runs under, so use that interpreter:
 
 ```bash
-cd dvbt-tx/gateware
+cd firmware/DVBT_Video_TX/gateware
 /usr/bin/python3.12 -m pytest -q -n auto test_rtl.py     # every block + the whole transmitter, ~7 min on 4 cores
 /usr/bin/python3.12 ../scripts/mutation_check.py         # every planted bug must be caught
 ./synth.sh                                               # board top: utilisation, Fmax (~5 min)

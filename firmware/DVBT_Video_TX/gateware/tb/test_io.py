@@ -162,10 +162,10 @@ async def host(dut):
 
     # registers
     assert await esp.read(7) == 0xD7B70002, "ID"
-    # The firmware's own frame encoder (firmware/components/fpga_link,
+    # The firmware's own frame encoder (esp32p4/components/fpga_link,
     # compiled for the host) against this RTL.
     import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "firmware/test/host"))
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "esp32p4/test/host"))
     import fwlib
     await esp.frame(fwlib.frame_write(2, 0x0000ABCD))
     assert fwlib.parse_read(await esp.frame(fwlib.frame_read(2))) == 0xABCD, "firmware frames vs RTL"

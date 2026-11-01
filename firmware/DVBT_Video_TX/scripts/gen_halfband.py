@@ -12,7 +12,7 @@ Prints the quantized odd-phase coefficients (1.0 = 2^17, sum 2^17 exactly so
 DC gain is unity), the response achieved after quantization, and the number
 of signed digits each costs (the RTL multiplies by shift-and-add).
 
-    python3 dvbt-tx/scripts/gen_halfband.py
+    python3 firmware/DVBT_Video_TX/scripts/gen_halfband.py
 """
 from __future__ import annotations
 

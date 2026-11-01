@@ -1,4 +1,4 @@
-# dvbt-tx firmware — ESP32-P4 (ESP-IDF)
+# DVBT_Video_TX/esp32p4 — the transmitter's ESP32-P4 firmware (ESP-IDF)
 
 The transmitter's processor: it clocks the board, configures the FPGA and
 the DAC, and (next) turns camera video into the MPEG transport stream the

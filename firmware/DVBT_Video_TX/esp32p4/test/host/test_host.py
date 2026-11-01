@@ -1,6 +1,6 @@
 """Host tests for the ESP32-P4 firmware's pure logic.
 
-    /usr/bin/python3.12 -m pytest -q dvbt-tx/firmware/test/host
+    /usr/bin/python3.12 -m pytest -q firmware/DVBT_Video_TX/esp32p4/test/host
 
 The Si5351A plans are checked by decoding the register bytes with AN619's
 equations in exact fractions; the AD9116 driver against a model of the
