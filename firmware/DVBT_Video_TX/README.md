@@ -32,7 +32,7 @@ MISO during every command byte returns a status byte
 | 2 | PHASE | I-into-Q phase trim |
 | 3 | DCOFF | DC offsets I and Q (DAC LSBs) |
 | 4 | SPIDATA | write: send on the setup SPI bus; read: bits returned |
-| 5 | SPICFG | bit count, device, 3-wire mode and turnaround point, clock divider; busy |
+| 5 | SPICFG | bit count, device, 3-wire mode and turnaround point, clock divider, chip-select-only pulse; busy |
 | 6 | STATUS | sticky flags (write 1 to clear), null packets inserted |
 | 7 | ID | `D7B70002` |
 | 8 | GPIO | general outputs; bit 0 is the AD9116's RESET/PINMD |

@@ -27,7 +27,8 @@
 //             read: the bits clocked in by the last one (right-aligned)
 //   5 SPICFG  [4:0] bits-1  [8] device (0 AD9116, 1 ADRF6755)  [9] 3-wire
 //             [15:10] bits driven before the 3-wire turnaround  [23:16]
-//             clock divider; read [31] busy        reset: 24 bits, 4-wire, div 4
+//             clock divider  [24] chip-select pulse only (no clock, no data)
+//             read [31] busy                       reset: 24 bits, 4-wire, div 4
 //             (dvbt_spi_master: generic, the ESP32 sends each device's bytes)
 //   6 STATUS  [0] DAC underflow [1] err_align [2] ts_bad [3] ts_overflow
 //             (sticky; write 1 to clear)  [31:16] null packets inserted
@@ -155,7 +156,7 @@ module dvbt_host (
     dvbt_spi_master u_sm (
         .clk(clk), .rst(rst), .start(sm_start), .tx(r_spidata), .nbits_m1(r_spicfg[4:0]),
         .dev(r_spicfg[8]), .div(r_spicfg[23:16]), .three_wire(r_spicfg[9]),
-        .wr_bits(r_spicfg[15:10]), .rx(sm_rx), .busy(sm_busy),
+        .wr_bits(r_spicfg[15:10]), .cs_only(r_spicfg[24]), .rx(sm_rx), .busy(sm_busy),
         .sclk(sm_sclk), .sdo(sm_sdo), .sdo_oe(sm_sdo_oe), .sdio_in(sm_sdio_in),
         .miso(sm_miso), .cs_n(sm_cs_n)
     );

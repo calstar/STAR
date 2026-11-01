@@ -113,8 +113,23 @@ static esp_err_t bridge_xfer(void *ctx, int dev, int nbits, bool three_wire, int
     return ESP_ERR_TIMEOUT;
 }
 
+static esp_err_t bridge_cs_pulse(void *ctx, int dev)
+{
+    int div = (int)(intptr_t)ctx;
+    ESP_RETURN_ON_ERROR(fpga_reg_write(DVBT_REG_SPICFG,
+                        DVBT_SPICFG(1, dev, 0, 0, div) | DVBT_SPICFG_CS_ONLY), TAG, "spicfg");
+    ESP_RETURN_ON_ERROR(fpga_reg_write(DVBT_REG_SPIDATA, 0), TAG, "start");
+    uint32_t cfg;
+    for (int tries = 0; tries < 100; tries++) {
+        ESP_RETURN_ON_ERROR(fpga_reg_read(DVBT_REG_SPICFG, &cfg), TAG, "busy");
+        if (!(cfg & DVBT_SPICFG_BUSY)) return ESP_OK;
+    }
+    return ESP_ERR_TIMEOUT;
+}
+
 void fpga_setup_bus(spi_bus_if_t *bus, int div)
 {
     bus->xfer = bridge_xfer;
+    bus->cs_pulse = bridge_cs_pulse;
     bus->ctx = (void *)(intptr_t)div;
 }

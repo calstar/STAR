@@ -35,6 +35,7 @@ enum dvbt_reg {
     ((((uint32_t)(nbits) - 1u) & 0x1Fu) | (((uint32_t)(dev) & 1u) << 8) | \
      (((uint32_t)(three_wire) & 1u) << 9) | (((uint32_t)(wr_bits) & 0x3Fu) << 10) | \
      (((uint32_t)(div) & 0xFFu) << 16))
+#define DVBT_SPICFG_CS_ONLY     (1u << 24)
 #define DVBT_SPICFG_BUSY        (1u << 31)
 
 // STATUS

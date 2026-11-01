@@ -115,6 +115,8 @@ MUTATIONS = [
      "host and 1]", "setup SPI LSB first"),
     ("dvbt_spi_master.v", "if (tw && sent + 6'd1 >= wb) sdo_oe <= 1'b0;", "if (tw && sent >= wb) sdo_oe <= 1'b0;",
      "host and 1]", "3-wire turnaround one bit late (bus contention)"),
+    ("dvbt_spi_master.v", "end else if (co) begin", "end else if (1'b0) begin",
+     "host and 1]", "chip-select-only pulse clocks data anyway"),
     ("dvbt_spi_master.v", "wire sdi = tw ? sdio_in : miso;", "wire sdi = miso;",
      "host and 1]", "3-wire read listens on MISO"),
     ("dvbt_host.v", "r_ctrl    <= 32'h0000_0180;", "r_ctrl    <= 32'h0000_0080;",

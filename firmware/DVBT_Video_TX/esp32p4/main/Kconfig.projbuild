@@ -29,4 +29,20 @@ menu "DVB-T transmitter"
     config DVBT_SI5351_LOAD_PF
         int "Si5351A crystal load (6, 8 or 10 pF)"
         default 8
+    config DVBT_ADRF_REFIN_HZ
+        int "ADRF6755 reference (TCXO) frequency (Hz)"
+        default 40000000
+    config DVBT_LO_KHZ
+        int "Carrier (LO) frequency (kHz)"
+        default 1279000
+    config DVBT_ADRF_ATTEN_DB
+        int "ADRF6755 output attenuation (dB, 0-47)"
+        range 0 47
+        default 0
+    config DVBT_ADRF_LDET
+        int "ADRF6755 LDET (lock detect) GPIO"
+        default 25
+    config DVBT_ADRF_TXDIS
+        int "ADRF6755 TXDIS (RF off when high) GPIO"
+        default 26
 endmenu
