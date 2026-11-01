@@ -113,3 +113,85 @@ async def interp_spectrum(dut):
     rej = 10 * np.log10(np.mean(inband) / image.max())
     cocotb.log.info("spectrum: image rejection %.1f dB (worst bin vs in-band mean)", rej)
     assert rej >= 60, f"image rejection {rej:.1f} dB < 60"
+
+
+def to12(x: int, off: int) -> int:
+    """The DAC word, from the definition: x/64 rounded half up, + offset, saturated."""
+    v = int(np.floor(x / 64 + 0.5)) + off
+    return max(-2047, min(2047, v))
+
+
+@cocotb.test()
+async def dac_out(dut):
+    """The pins, sampled mid-way through each half clock, carry I then Q
+    (or Q then I with cfg_swap), in two's complement or offset binary; gaps
+    after the first sample latch err_underflow and send mid-scale; tx_en low
+    sends mid-scale."""
+    from cocotb.clock import Clock
+    from cocotb.triggers import FallingEdge, RisingEdge, Timer
+
+    rng = np.random.default_rng(seed())
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+
+    async def run(n, obin, swap, off_i, off_q, p_valid, tx_en=1, armed_before=False):
+        dut.cfg_obin.value = obin
+        dut.cfg_swap.value = swap
+        dut.cfg_off_i.value = off_i & 0xFFF
+        dut.cfg_off_q.value = off_q & 0xFFF
+        dut.tx_en.value = tx_en
+        dut.rst.value = 1
+        dut.s_valid.value = 0
+        for _ in range(3):
+            await RisingEdge(dut.clk)
+        dut.rst.value = 0
+        sent, seen = [], []
+        for k in range(n + 4):
+            await FallingEdge(dut.clk)
+            v = k < n and (k < 3 or rng.random() < p_valid)  # first samples always valid
+            if v:
+                x = (int(rng.integers(-140000, 140000)), int(rng.integers(-140000, 140000)))
+                x = tuple(max(-131071, min(131071, a)) for a in x)
+                dut.s_i.value = x[0] & 0x3FFFF
+                dut.s_q.value = x[1] & 0x3FFFF
+                sent.append((to12(x[0], off_i), to12(x[1], off_q)) if tx_en else (0, 0))
+            elif k < n:
+                sent.append((0, 0))
+            dut.s_valid.value = int(v)
+            await RisingEdge(dut.clk)
+            await Timer(2.5, unit="ns")
+            hi = int(dut.dac_d.value)
+            await Timer(5, unit="ns")
+            lo = int(dut.dac_d.value)
+            seen.append((hi, lo))
+            if k == n - 1:
+                flag = int(dut.err_underflow.value)  # before the trailing empty clocks
+        run.flag = flag
+        return sent, seen
+
+    def decode(w, obin):
+        w ^= 0x800 if obin else 0
+        return w - 4096 if w & 0x800 else w
+
+    for obin, swap, p_valid in [(0, 0, 1.0), (1, 0, 1.0), (0, 1, 1.0), (1, 1, 0.8)]:
+        off_i, off_q = int(rng.integers(-60, 60)), int(rng.integers(-60, 60))
+        sent, seen = await run(300, obin, swap, off_i, off_q, p_valid)
+        got = [(decode(h, obin), decode(l, obin)) for h, l in seen]
+        if swap:
+            got = [(b, a) for a, b in got]
+        # Sampled after the edge following the input: output register + ODDR
+        # register put the pins one more clock behind.
+        lat = 1
+        assert got[lat:lat + len(sent)] == sent, (
+            f"obin {obin} swap {swap}: {first_diff(got[lat:], sent)}")
+        assert run.flag == int(p_valid < 1.0), "err_underflow wrong"
+    # tx_en low: mid-scale whatever comes in.
+    sent, seen = await run(50, 0, 0, 5, -5, 1.0, tx_en=0)
+    assert all(h == 0 and l == 0 for h, l in seen[1:]), "tx_en low did not hold mid-scale"
+    cocotb.log.info("dac_out: formats, swap, offsets, saturation, underflow, tx_en ok")
+
+
+def first_diff(a, b) -> str:
+    for k, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return f"at {k}: got {x} want {y}"
+    return "lengths differ"
