@@ -79,8 +79,8 @@ module dvbt_symbol_interleaver (
         .clk(clk), .restart(rst || rdone), .next(give && rodd), .h(hr), .h_valid(hr_ok)
     );
 
-    wire [11:0] wa = (wbank ? N : 0) + (wodd ? wq : hw);
-    wire [11:0] ra = (rbank ? N : 0) + (rodd ? hr : rq);
+    wire [11:0] wa = (wbank ? N : 0) + {1'b0, wodd ? wq : hw};
+    wire [11:0] ra = (rbank ? N : 0) + {1'b0, rodd ? hr : rq};
 
     always @(posedge clk) begin
         if (take) mem[wa] <= s_sym;

@@ -34,6 +34,8 @@ module dvbt_rs_encoder (
     endfunction
 
     // GF(2^8) multiply; with b constant, synthesis reduces it to XORs.
+    // (Blocking assignments are local to the function.)
+    /* verilator lint_off BLKSEQ */
     function [7:0] gf_mul(input [7:0] a, input [7:0] b);
         integer k;
         reg [7:0] x, r;
@@ -47,6 +49,7 @@ module dvbt_rs_encoder (
             gf_mul = r;
         end
     endfunction
+    /* verilator lint_on BLKSEQ */
 
     reg [7:0] par[0:15];
     reg [7:0] cnt;        // data byte index (0..187) or parity index (0..15)
