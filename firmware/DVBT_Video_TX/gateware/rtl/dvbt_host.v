@@ -6,7 +6,7 @@
 //   80|a, b3 b2 b1 b0       write register a (0..15; 32 bits, MSB first)
 //   40|a, xx, b3 b2 b1 b0   read register a (xx: turnaround byte)
 // MISO during the command byte is the status byte:
-//   {dreq, tx_en, underflow, err_align, ts_bad, ts_overflow, spi_busy, 0}
+//   {dreq, tx_en, underflow, err_align, ts_bad, ts_overflow, 0, 0}
 //
 // TS: a packet enters the FIFO only when all 188 bytes have arrived with
 // 0x47 first; a packet cut short by CS, with a bad sync byte, or that found
@@ -23,19 +23,13 @@
 //   1 GAIN    [31:16] gain_i  [15:0] gain_q  (Q2.14)          reset 2.5, 2.5
 //   2 PHASE   [15:0] I-into-Q phase trim (signed Q2.14)       reset 0
 //   3 DCOFF   [27:16] DC offset I  [11:0] DC offset Q (signed DAC LSBs)
-//   4 SPIDATA write: start an SPI transaction with these bits (MSB first);
-//             read: the bits clocked in by the last one (right-aligned)
-//   5 SPICFG  [4:0] bits-1  [8] device (0 AD9116, 1 ADRF6755)  [9] 3-wire
-//             [15:10] bits driven before the 3-wire turnaround  [23:16]
-//             clock divider  [24] chip-select pulse only (no clock, no data)
-//             read [31] busy                       reset: 24 bits, 4-wire, div 4
-//             (dvbt_spi_master: generic, the ESP32 sends each device's bytes)
+//   4, 5      reserved (read 0)
 //   6 STATUS  [0] DAC underflow [1] err_align [2] ts_bad [3] ts_overflow
 //             (sticky; write 1 to clear)  [31:16] null packets inserted
 //             (saturating; write bit 31 to clear)
-//   7 ID      0xD7B70002
-//   8 GPIO    [3:0] general outputs (gpio[0]: AD9116 RESET/PINMD -- pulse
-//             high >= 50 ns then leave low for SPI mode)    reset 0
+//   7 ID      0xD7B70003
+// The AD9116's and ADRF6755's setup buses, RESET, TXDIS and LDET are wired
+// to the ESP32-P4 directly; the FPGA only carries the stream.
 // tx_en low holds the whole modulator in reset and the DAC at mid-scale;
 // set the configuration, then raise tx_en. The TS FIFO keeps filling while
 // tx_en is low, so the stream can be primed first.
@@ -71,26 +65,14 @@ module dvbt_host (
     output wire [11:0] off_q,
     // status in
     input  wire        st_underflow,
-    input  wire        st_align,
-    // setup SPI to the DAC and the synthesizer
-    output wire        sm_sclk,
-    output wire        sm_sdo,
-    output wire        sm_sdo_oe,
-    input  wire        sm_sdio_in,
-    input  wire        sm_miso,
-    output wire  [1:0] sm_cs_n,
-    output wire  [3:0] gpio
+    input  wire        st_align
 );
-    localparam [31:0] ID = 32'hD7B7_0002;
+    localparam [31:0] ID = 32'hD7B7_0003;
 
     // ---- registers ----------------------------------------------------------
-    reg [31:0] r_ctrl, r_gain, r_phase, r_dcoff, r_spidata, r_spicfg;
-    reg  [3:0] r_gpio;
+    reg [31:0] r_ctrl, r_gain, r_phase, r_dcoff;
     reg  [3:0] flags;               // underflow, align, ts_bad, ts_overflow
     reg [15:0] nulls;
-    wire [31:0] sm_rx;
-    wire        sm_busy;
-    reg         sm_start;
 
     assign tx_en     = r_ctrl[0];
     assign cfg_mod   = r_ctrl[2:1];
@@ -103,7 +85,6 @@ module dvbt_host (
     assign phase     = r_phase[15:0];
     assign off_i     = r_dcoff[27:16];
     assign off_q     = r_dcoff[11:0];
-    assign gpio      = r_gpio;
 
     function [31:0] rd(input [3:0] a);
         case (a)
@@ -111,11 +92,8 @@ module dvbt_host (
             4'd1: rd = r_gain;
             4'd2: rd = r_phase;
             4'd3: rd = r_dcoff;
-            4'd4: rd = sm_rx;
-            4'd5: rd = {sm_busy, r_spicfg[30:0]};
             4'd6: rd = {nulls, 12'd0, flags};
             4'd7: rd = ID;
-            4'd8: rd = {28'd0, r_gpio};
             default: rd = 32'd0;
         endcase
     endfunction
@@ -137,7 +115,7 @@ module dvbt_host (
     wire        f_valid, f_ready, f_sready;
     wire [11:0] f_free;
     wire [11:0] f_level;            // unused: DREQ works from free space
-    wire        unused = &{1'b0, f_level, r_spicfg[31]};
+    wire        unused = &{1'b0, f_level};
     reg         f_push, f_commit, f_abort;
     reg   [7:0] f_wdata;
     dvbt_fifo #(.W(8), .AW(11)) u_fifo (
@@ -151,14 +129,6 @@ module dvbt_host (
         .clk(clk), .rst(ts_rst), .f_data(f_data), .f_valid(f_valid), .f_ready(f_ready),
         .m_data(ts_data), .m_sop(ts_sop), .m_valid(ts_valid), .m_ready(ts_ready),
         .null_pkt(null_pkt)
-    );
-
-    dvbt_spi_master u_sm (
-        .clk(clk), .rst(rst), .start(sm_start), .tx(r_spidata), .nbits_m1(r_spicfg[4:0]),
-        .dev(r_spicfg[8]), .div(r_spicfg[23:16]), .three_wire(r_spicfg[9]),
-        .wr_bits(r_spicfg[15:10]), .cs_only(r_spicfg[24]), .rx(sm_rx), .busy(sm_busy),
-        .sclk(sm_sclk), .sdo(sm_sdo), .sdo_oe(sm_sdo_oe), .sdio_in(sm_sdio_in),
-        .miso(sm_miso), .cs_n(sm_cs_n)
     );
 
     // ---- command decoding -----------------------------------------------------
@@ -176,16 +146,12 @@ module dvbt_host (
             r_gain    <= {16'd40960, 16'd40960};
             r_phase   <= 32'd0;
             r_dcoff   <= 32'd0;
-            r_spidata <= 32'd0;
-            r_spicfg  <= 32'h0004_0017;
-            r_gpio    <= 4'd0;
             flags     <= 4'd0;
             nulls     <= 16'd0;
             mode      <= C_NONE;
             f_push    <= 1'b0;
             f_commit  <= 1'b0;
             f_abort   <= 1'b0;
-            sm_start  <= 1'b0;
             dreq      <= 1'b0;
             stat      <= 8'd0;
             rd_word   <= 32'd0;
@@ -194,10 +160,9 @@ module dvbt_host (
             f_push   <= 1'b0;
             f_commit <= 1'b0;
             f_abort  <= 1'b0;
-            sm_start <= 1'b0;
             dreq     <= (f_free >= 12'd376);
             if (!frame_open)
-                stat <= {dreq, r_ctrl[0], flags[0], flags[1], flags[2], flags[3], sm_busy, 1'b0};
+                stat <= {dreq, r_ctrl[0], flags[0], flags[1], flags[2], flags[3], 2'b00};
             if (st_underflow) flags[0] <= 1'b1;
             if (st_align)     flags[1] <= 1'b1;
             if (null_pkt && nulls != 16'hFFFF) nulls <= nulls + 16'd1;
@@ -242,12 +207,6 @@ module dvbt_host (
                         4'd1: r_gain  <= {wsh, rx_byte};
                         4'd2: r_phase <= {wsh, rx_byte};
                         4'd3: r_dcoff <= {wsh, rx_byte};
-                        4'd8: r_gpio  <= rx_byte[3:0];
-                        4'd4: begin
-                            r_spidata <= {wsh, rx_byte};
-                            sm_start  <= !sm_busy;
-                        end
-                        4'd5: r_spicfg <= {wsh, rx_byte};
                         4'd6: begin
                             flags <= flags & ~rx_byte[3:0];
                             if (wsh[23]) nulls <= 16'd0;

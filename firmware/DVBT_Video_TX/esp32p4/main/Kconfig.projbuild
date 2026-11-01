@@ -29,6 +29,27 @@ menu "DVB-T transmitter"
     config DVBT_SI5351_LOAD_PF
         int "Si5351A crystal load (6, 8 or 10 pF)"
         default 8
+    config DVBT_SETUP_SCLK
+        int "Setup bus SCLK GPIO (AD9116 + ADRF6755)"
+        default 30
+    config DVBT_SETUP_SDIO
+        int "Setup bus data GPIO (AD9116 SDIO, ADRF6755 SDI)"
+        default 31
+    config DVBT_SETUP_MISO
+        int "ADRF6755 SDO GPIO"
+        default 32
+    config DVBT_DAC_CS
+        int "AD9116 CS GPIO"
+        default 33
+    config DVBT_ADRF_CS
+        int "ADRF6755 CS GPIO"
+        default 36
+    config DVBT_DAC_RESET
+        int "AD9116 RESET/PINMD GPIO (needs a board pull-down)"
+        default 37
+    config DVBT_SETUP_SPI_HZ
+        int "Setup bus clock (Hz, <= 20 MHz)"
+        default 10000000
     config DVBT_ADRF_REFIN_HZ
         int "ADRF6755 reference (TCXO) frequency (Hz)"
         default 40000000

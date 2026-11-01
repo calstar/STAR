@@ -11,8 +11,10 @@ Interfaces: ESP32-P4 → FPGA is SPI (FPGA slave, mode 0, up to ~20 MHz)
 carrying TS bytes at the channel rate, paced by a DREQ line from the FPGA's
 input FIFO, plus register commands on the same bus. FPGA → AD9116 is a
 12-bit DDR bus with I and Q interleaved (27.43 MS/s each) and a forwarded
-data clock; the FPGA also has an SPI master for the AD9116's and the
-ADRF6755's setup registers, driven from the ESP32 through FPGA registers.
+data clock. The AD9116's and ADRF6755's setup buses (SPI), the AD9116's
+RESET and the ADRF6755's TXDIS and LDET go straight to the ESP32-P4: the
+FPGA only carries the stream, and the RF chips can be set up without it.
+(Their drivers are in `esp32p4/`.)
 
 ### The ESP32-P4's view (full detail in `rtl/dvbt_host.v`)
 
@@ -23,7 +25,7 @@ ADRF6755's setup registers, driven from the ESP32 through FPGA registers.
 | `40\|a`, 1 dummy byte, 4 bytes | read register *a* |
 
 MISO during every command byte returns a status byte
-`{dreq, tx_en, underflow, err_align, ts_bad, ts_overflow, spi_busy, 0}`.
+`{dreq, tx_en, underflow, err_align, ts_bad, ts_overflow, 0, 0}`.
 
 | reg | name | contents |
 |---|---|---|
@@ -31,36 +33,17 @@ MISO during every command byte returns a status byte
 | 1 | GAIN | I and Q gain (Q2.14; reset 2.5 → DAC RMS about −13.5 dBFS) |
 | 2 | PHASE | I-into-Q phase trim |
 | 3 | DCOFF | DC offsets I and Q (DAC LSBs) |
-| 4 | SPIDATA | write: send on the setup SPI bus; read: bits returned |
-| 5 | SPICFG | bit count, device, 3-wire mode and turnaround point, clock divider, chip-select-only pulse; busy |
+| 4, 5 | — | reserved |
 | 6 | STATUS | sticky flags (write 1 to clear), null packets inserted |
-| 7 | ID | `D7B70002` |
-| 8 | GPIO | general outputs; bit 0 is the AD9116's RESET/PINMD |
+| 7 | ID | `D7B70003` |
 
-The setup SPI master is generic: the FPGA knows no device; the ESP32
-sends each chip's own instruction and data bits, in 4-wire framing or
-3-wire (data back on the same line after a set number of written bits).
-
-Bring-up: program the Si5351A over I²C (the FPGA has no clock until it
-runs), set up the AD9116 and ADRF6755 through SPIDATA/SPICFG, write CTRL
-with tx_en low, send TS until DREQ falls, set tx_en.
-
-AD9116 (datasheet Rev. F; register numbers in its Table 14), through the
-FPGA's registers:
-
-1. GPIO = 1, then GPIO = 0: a ≥ 50 ns pulse on RESET/PINMD resets its SPI
-   registers and leaves it in SPI mode (pp. 34, 36).
-2. SPICFG = 3-wire, device 0, 16 bits, 16 driven: write `02 B4` to Data
-   Control (0x02): TWOS = 1 (two's complement), IFIRST = 1, IRISING = 1 (I
-   latched on DCLKIO's rising edge, which is how the FPGA drives it),
-   DCI_EN = 1 (DCLKIO is the data clock input). Then clear CTRL bit 8 to
-   match. (Or skip the write: the AD9116 powers up unsigned binary and
-   CTRL resets to unsigned too.)
-3. Full-scale current: the defaults use the external FSADJ resistors;
-   IRSET (0x04/0x07) and the fine gain (0x03/0x06) adjust it.
-4. Read CLKMODE (0x14), 16 bits with 8 driven (`94 00`): bit 4, Searching,
-   must be 0, meaning the retimer has found the DCLKIO-to-CLKIN phase; the
-   output is not valid until then. Version (0x1F) reads `0A`.
+Bring-up (`esp32p4/main/main.c`; the steps and register values are in
+`esp32p4/README.md`): program the Si5351A over I²C (the FPGA has no clock
+until it runs); set up the ADRF6755 and AD9116 on the P4's own SPI bus;
+write CTRL with tx_en low (two's complement, to match the AD9116's Data
+Control write); send TS until DREQ falls; set tx_en. CTRL resets to
+unsigned binary, the AD9116's own power-up format, so the two agree even
+before any setup.
 
 A TS packet enters the
 FIFO only once all 188 bytes have arrived starting 0x47, so a packet cut
@@ -101,7 +84,7 @@ failure names one block; `fec_chain` then runs the whole chain from raw TS.
 Every test runs with random input stalls and random output backpressure, for
 two seeds.
 
-Current state: 84 test cases pass (42 cases × 2 seeds), and all 47 planted bugs are caught.
+Current state: 84 test cases pass (42 cases × 2 seeds), and all 44 planted bugs are caught.
 
 The tests are broken on purpose to prove they can fail:
 `scripts/mutation_check.py` copies `rtl/`, plants one plausible bug per stage
@@ -152,7 +135,7 @@ verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.
 | gain / I/Q trims, 4× interpolation (two half-band stages) | `dvbt_iq_corr.v`, `dvbt_halfband.v`, `dvbt_interp.v` | vs scipy `upfirdn` with the design coefficients, within 1.5 LSB; 75 dB image rejection measured |
 | AD9116 data port (12-bit DDR, offsets, format, underflow) | `dvbt_dac_out.v` | pins sampled in each half clock vs the definition |
 | TS input: SPI slave, packet-atomic FIFO, DREQ, null packets | `dvbt_spi_slave.v`, `dvbt_fifo.v`, `dvbt_host.v`, `dvbt_ts_source.v` | ESP32-side SPI model on an unrelated 20 MHz clock |
-| register file, setup SPI master (AD9116, ADRF6755) | `dvbt_host.v`, `dvbt_spi_master.v` | same test, with a slave model |
+| register file | `dvbt_host.v` | same test |
 | **whole transmitter, SPI in → DAC pins out** | `dvbt_tx_core.v` | vs gr-dtv: DAC samples decimated and FFT'd as a receiver would, MER ≥ 50 dB every symbol (12-bit limit ~53 dB at unity gain) |
 | board top: PLL, 90° forwarded DAC clock, reset | `dvbt_tx_top.v`, `dvbt_pll.v`, `board/dvbt_tx.lpf` | places, routes and packs a bitstream on TQFP144 |
 
@@ -161,13 +144,13 @@ LFE5U-25F-7TG144C with the provisional pinout:
 
 | resource | used | of | |
 |---|---|---|---|
-| logic cells (LUT4 + carry) | 16.1k (8.0k LUT4, 3.0k CCU2C) | 24,288 | 66% |
-| flip-flops | 7.8k | 24,288 | 32% |
+| logic cells (LUT4 + carry) | 16.0k | 24,288 | 65% |
+| flip-flops | 7.7k | 24,288 | 31% |
 | block RAM (DP16KD) | 32 | 56 | 57% |
 | multipliers (MULT18X18D) | 23 | 28 | 82% |
-| I/O | 29 | 98 on TQFP144 | |
-| Fmax, system clock | 67.4 MHz | needs 27.43 | 2.5× margin |
-| Fmax, SPI clock domain | 72 MHz | needs 20 | |
+| I/O | 20 | 98 on TQFP144 | |
+| Fmax, system clock | 64.5 MHz | needs 27.43 | 2.4× margin |
+| Fmax, SPI clock domain | 75 MHz | needs 20 | |
 
 The FFT takes 20 multipliers and most of the RAM; the interpolation filters
 use none (shift-and-add constants), the trims three. The interpolator is
@@ -199,8 +182,8 @@ scale; the RTL clips those few samples, and the test pins that down.
   sends; it powers up expecting unsigned binary, so CTRL now resets to
   that. DCLKIO is the data clock input (from the FPGA's 90° clock) and
   CLKIN the sampling clock (the Si5351A); the on-chip retimer bridges them.
-  Its SPI is 3-wire only (SDIO), hence the 3-wire mode in the setup SPI
-  master, and its RESET/PINMD pin is now an FPGA output (GPIO bit 0).
+  Its SPI is 3-wire only (SDIO); it and RESET/PINMD are driven by the
+  ESP32-P4 (`esp32p4/components/ad9116`, `spi_bus_esp`).
 - **Design doc correction:** the doc powers the AD9116's DVDD from an
   AP2112K-1.8 LDO. Per the datasheet DVDD is the *output* of the AD9116's
   own 1.8 V LDO when DVDDIO > 1.8 V: bypass it with 1 µF and connect

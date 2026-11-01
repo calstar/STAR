@@ -24,13 +24,6 @@ module dvbt_tx_top (
     output wire        dreq,
     output wire [11:0] dac_d,
     output wire        dac_dclk,
-    output wire        sm_sclk,
-    inout  wire        sm_sdio,     // AD9116 SDIO (3-wire); MOSI for 4-wire devices
-    input  wire        sm_miso,     // 4-wire devices' data out (ADRF6755)
-    output wire        dac_cs_n,
-    output wire        syn_cs_n,
-    output wire        dac_reset,   // AD9116 RESET/PINMD: needs a pull-down on the board
-    output wire  [2:0] gpio_aux,
     output wire        led_tx
 );
     wire clk, clk90, locked;
@@ -45,22 +38,12 @@ module dvbt_tx_top (
         rst <= !por[10];
     end
 
-    wire [1:0] sm_cs;
-    wire       sm_sdo, sm_sdo_oe;
-    wire [3:0] gpio;
-    assign sm_sdio = sm_sdo_oe ? sm_sdo : 1'bz;
-    assign dac_reset = gpio[0];
-    assign gpio_aux  = gpio[3:1];
     dvbt_tx_core u_core (
         .clk(clk), .rst(rst),
         .spi_sck(spi_sck), .spi_cs_n(spi_cs_n), .spi_mosi(spi_mosi), .spi_miso(spi_miso),
         .dreq(dreq), .dac_d(dac_d),
-        .sm_sclk(sm_sclk), .sm_sdo(sm_sdo), .sm_sdo_oe(sm_sdo_oe), .sm_sdio_in(sm_sdio),
-        .sm_miso(sm_miso), .sm_cs_n(sm_cs), .gpio(gpio),
         .tx_on(led_tx)
     );
-    assign dac_cs_n = sm_cs[0];
-    assign syn_cs_n = sm_cs[1];
 
     ODDRX1F u_dclk (.SCLK(clk90), .RST(1'b0), .D0(1'b1), .D1(1'b0), .Q(dac_dclk));
 endmodule
