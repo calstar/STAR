@@ -74,12 +74,30 @@ MUTATIONS = [
      "modulator-qpsk and 1]", "IFFT input not swapped (I on both)"),
     ("dvbt_gi_insert.v", "(12'd2048 - ng + j)", "(12'd2047 - ng + j)",
      "modulator-qpsk and 1]", "cyclic prefix taken one sample early"),
+    ("dvbt_interp.v", "18'sd3057, -18'sd4495", "18'sd3057, 18'sd4495",
+     "interp-qpsk and 1]", "one stage-1 coefficient sign flipped"),
+    ("dvbt_interp.v", "-18'sd17916", "-18'sd17016",
+     "interp-qpsk and 1]", "one stage-2 coefficient wrong"),
+    ("dvbt_halfband.v", "d = ((v & 3) == 1) ? 1 : -1;", "d = ((v & 3) == 1) ? -1 : 1;",
+     "interp-qpsk and 1]", "signed-digit recoding sign swapped"),
+    ("dvbt_halfband.v", "({di[K-1-j][17], di[K-1-j]} + {di[K+j][17], di[K+j]})",
+     "({di[K-1-j][17], di[K-1-j]} + {di[K+1+j][17], di[K+1+j]})",
+     "interp-qpsk and 1]", "pre-add pairs off by one"),
+    ("dvbt_halfband.v", "m_i <= h_ei;  m_q <= h_eq;", "m_i <= h_oi;  m_q <= od_x;",
+     "interp-qpsk and 1]", "odd sample emitted twice, even lost"),
+    ("dvbt_iq_corr.v", "p_x <= s_i * $signed", "p_x <= s_q * $signed",
+     "interp-qpsk and 1]", "phase trim from Q instead of I"),
+    ("dvbt_interp.v", "18'sd83108})", "18'sd83108 - 18'sd2000})",
+     "interp_spectrum and 1]", "stage-1 centre pair off (images leak)"),
 ]
 
 
 def main() -> int:
     survivors, stale = [], []
+    only = sys.argv[1:]  # optional file-name substrings to restrict the run
     for fname, old, new, kexpr, what in MUTATIONS:
+        if only and not any(o in fname for o in only):
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             rtl = Path(tmp) / "rtl"
             shutil.copytree(GW / "rtl", rtl)
@@ -104,7 +122,7 @@ def main() -> int:
     if survivors or stale:
         print(f"\n{len(survivors)} survived / did not run, {len(stale)} stale")
         return 1
-    print(f"\nall {len(MUTATIONS)} mutants killed")
+    print("\nall mutants killed")
     return 0
 
 

@@ -44,9 +44,13 @@ CASES = [
     ("dvbt_fft2048", "fft2048", "qpsk", "1/2"),
     ("dvbt_modulator", "modulator", "qpsk", "1/2", 48),
     ("dvbt_modulator", "modulator", "16qam", "3/4", 160),
+    # Sample-rate back end (tb/test_dsp.py): trims + 4x interpolation.
+    ("dvbt_interp", "interp", "qpsk", "1/2"),
+    ("dvbt_interp", "interp_spectrum", "qpsk", "1/2"),
 ]
 CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
 OFDM_TESTS = {"fft2048", "modulator"}
+DSP_TESTS = {"interp", "interp_spectrum"}
 
 
 @pytest.mark.parametrize("seed", [1, 2])
@@ -69,7 +73,7 @@ def test_rtl(top: str, test: str, mod: str, rate: str, n_pkt: int, seed: int) ->
     # The filter matches the full name, "test_stages.<test>".
     results = runner.test(
         hdl_toplevel=top,
-        test_module="test_ofdm" if test in OFDM_TESTS else "test_stages",
+        test_module="test_ofdm" if test in OFDM_TESTS else "test_dsp" if test in DSP_TESTS else "test_stages",
         test_dir=TB,
         build_dir=build_dir,
         test_filter=rf"\.{test}$",
