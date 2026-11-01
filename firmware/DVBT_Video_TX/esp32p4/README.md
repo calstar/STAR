@@ -64,8 +64,8 @@ against an SPI-port model that refuses traffic before the SPI-mode lock;
 the FPGA loader against an emulated ECP5 configuration port (command order,
 SRAM-erase operand, the bitstream delivered intact, CFG released after) and
 every fallback to the W25Q32: empty or corrupt image, wrong device, INITN
-stuck, DONE never rising. The muxer: real H.264 from x264 (720p30,
-3 Mbit/s, no B-frames) through it, then ffprobe (program, service name,
+stuck, DONE never rising. The muxer: real H.264 from x264 (1080p30,
+3.3 Mbit/s, no B-frames) through it, then ffprobe (program, service name,
 all 120 frames) and ffmpeg's decoder (no errors or warnings), plus a parse
 of the stream: PAT/PMT gaps <= 100 ms, PCR <= 40 ms and within 1 tick of
 the channel-rate timeline, every PTS ahead of the clock, continuity

@@ -46,9 +46,9 @@ def test_dvbt_rate_matches_en300744():
     assert dvbt_rate(6, 0, 0, 2) == Fraction(1512 * 188, 204) / Fraction(336, 1_000_000)
 
 
-def x264_access_units(tmp: Path, seconds=4, kbps=3000):
+def x264_access_units(tmp: Path, seconds=4, kbps=3300):
     raw = tmp / "v.h264"
-    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size=1280x720:rate=30",
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size=1920x1080:rate=30",
                     "-t", str(seconds), "-c:v", "libx264", "-preset", "veryfast", "-bf", "0",
                     "-g", "30", "-b:v", f"{kbps}k", "-maxrate", f"{kbps}k", "-bufsize", f"{kbps // 2}k",
                     "-x264-params", "aud=1:nal-hrd=none", "-pix_fmt", "yuv420p", str(raw)], check=True)
@@ -135,14 +135,14 @@ def test_mux_with_real_h264():
     out = tmp / "out.ts"
     out.write_bytes(ts)
 
-    # 1. ffprobe: one program, H.264 720p, the service name, every frame.
+    # 1. ffprobe: one program, H.264 1080p, the service name, every frame.
     pr = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_programs", "-show_streams",
                                     "-count_frames", "-of", "json", str(out)],
                                    capture_output=True, text=True, check=True).stdout)
     prog = pr["programs"][0]
     assert prog["tags"]["service_name"] == "N0CALL" and prog["tags"]["service_provider"] == "STAR"
     st = prog["streams"][0]
-    assert (st["codec_name"], st["width"], st["height"]) == ("h264", 1280, 720)
+    assert (st["codec_name"], st["width"], st["height"]) == ("h264", 1920, 1080)
     assert int(st["nb_read_frames"]) == len(aus), f"{st['nb_read_frames']} frames decoded of {len(aus)}"
 
     # 2. ffmpeg's decoder and TS demuxer: no errors or warnings at all.
