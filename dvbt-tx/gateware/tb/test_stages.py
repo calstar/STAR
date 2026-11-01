@@ -119,3 +119,81 @@ async def fec_chain(dut):
     _check([o["sym"] for o in out], want, "FEC chain")
     sos = [k for k, o in enumerate(out) if o["sos"]]
     assert sos == list(range(0, len(out), 1512)), "m_sos not on every 1512th symbol"
+
+
+ONE = 8192  # fixed-point 1.0 in the mapper and frame builder
+
+
+def _signed16(v: int) -> int:
+    return v - 65536 if v >= 32768 else v
+
+
+def _check_cplx(got_i, got_q, want: np.ndarray, what: str, tol: float = 1.0) -> None:
+    """Fixed-point (1.0 = 8192) against gr-dtv's float, within ``tol`` LSB.
+
+    Rounding to 1/8192 costs at most 0.5 LSB; the closest distinct points the
+    stages can produce are ~2000 LSB apart, so 1 LSB is still exact in kind.
+    """
+    g = (np.array(got_i, dtype=np.float64) + 1j * np.array(got_q, dtype=np.float64)) / ONE
+    n = min(len(g), len(want))
+    assert n > 0, f"{what}: nothing to compare"
+    err = np.abs(g[:n] - want[:n]) * ONE
+    bad = np.nonzero(err > tol)[0]
+    assert len(bad) == 0, (
+        f"{what}: {len(bad)} of {n} off by > {tol} LSB; first at {bad[0]}: "
+        f"got {g[bad[0]]:.5f} want {want[bad[0]]:.5f}"
+    )
+    cocotb.log.info("%s: %d cells within %.1f LSB of gr-dtv (max %.2f; %s, %s, seed %d)",
+                    what, n, tol, err.max(), MOD, RATE, seed())
+
+
+@cocotb.test()
+async def mapper(dut):
+    ts = _ts()
+    x = golden.run("symbol", ts, MOD, RATE)
+    want = golden.run("map", ts, MOD, RATE).astype(np.complex128)
+    dut.cfg_mod.value = MOD_CODE
+    await reset(dut)
+    ins = [{"s_sym": int(v), "s_sos": int(k % 1512 == 0)} for k, v in enumerate(x)]
+    out = await stream(dut, ins, ["i", "q", "sos"], len(want))
+    _check_cplx([_signed16(o["i"]) for o in out], [_signed16(o["q"]) for o in out], want, "mapper")
+    assert [k for k, o in enumerate(out) if o["sos"]] == list(range(0, len(out), 1512))
+
+
+def _frame_outputs(out, want):
+    _check_cplx([_signed16(o["i"]) for o in out], [_signed16(o["q"]) for o in out],
+                want.reshape(-1), "frame")
+    n_sym = len(out) // 1705
+    assert [k for k, o in enumerate(out) if o["sos"]] == [s * 1705 for s in range(n_sym)]
+    assert [k for k, o in enumerate(out) if o["sof"]] == [s * 1705 for s in range(0, n_sym, 68)]
+    assert n_sym > 136, f"only {n_sym} symbols: need > 2 frames to cover frame wrap and TPS"
+
+
+@cocotb.test()
+async def frame_builder(dut):
+    ts = _ts()
+    mapped = golden.run("map", ts, MOD, RATE).astype(np.complex128)
+    want = golden.carriers(ts, MOD, RATE)
+    dut.cfg_mod.value = MOD_CODE
+    dut.cfg_rate.value = RATE_CODE
+    dut.cfg_guard.value = 2  # 1/8, as the golden model
+    await reset(dut)
+    q = np.round(mapped * ONE)
+    ins = [{"s_i": int(a.real) & 0xFFFF, "s_q": int(a.imag) & 0xFFFF, "s_sos": int(k % 1512 == 0)}
+           for k, a in enumerate(q)]
+    out = await stream(dut, ins, ["i", "q", "sos", "sof"], want.size)
+    _frame_outputs(out, want)
+    assert int(dut.err_align.value) == 0, "err_align set on an aligned stream"
+
+
+@cocotb.test()
+async def carrier_chain(dut):
+    ts = _ts()
+    want = golden.carriers(ts, MOD, RATE)
+    dut.cfg_mod.value = MOD_CODE
+    dut.cfg_rate.value = RATE_CODE
+    dut.cfg_guard.value = 2
+    await reset(dut)
+    out = await stream(dut, ts_inputs(ts), ["i", "q", "sos", "sof"], want.size, p_valid=0.9)
+    _frame_outputs(out, want)
+    assert int(dut.err_align.value) == 0, "err_align set"

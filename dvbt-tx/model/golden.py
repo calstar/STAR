@@ -101,3 +101,22 @@ def run(stage: str, ts: np.ndarray, constellation: str = "qpsk", rate: str = "1/
     if complex_out:
         return np.array(sink.data(), dtype=np.complex64)
     return np.array(sink.data(), dtype=np.uint8)
+
+
+ACTIVE = 1705  # carriers k = 0..1704 in 2K mode
+CENTRE = 852   # carrier at DC
+
+
+def carriers(ts: np.ndarray, constellation: str = "qpsk", rate: str = "1/2") -> np.ndarray:
+    """The OFDM carriers gr-dtv transmits, shape (symbols, 1705), unit scale.
+
+    gr-dtv 3.10's dvbt_reference_signals already includes the IFFT, so this
+    takes the FFT of its time-domain output, picks carrier k from bin
+    (k - 852) mod 2048, and divides out gr-dtv's IFFT scaling using the
+    continual pilot at k = 0, which is always +-4/3.
+    """
+    t = run("frame", ts, constellation, rate).reshape(-1, 2048)
+    x = np.fft.fft(t.astype(np.complex128), axis=1)
+    x = x[:, [(k - CENTRE) % 2048 for k in range(ACTIVE)]]
+    scale = np.mean(np.abs(x[:, 0])) / (4 / 3)
+    return x / scale

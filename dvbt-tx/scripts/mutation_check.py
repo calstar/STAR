@@ -44,6 +44,20 @@ MUTATIONS = [
     ("dvbt_symbol_interleaver.v", ".restart(rst || rdone), .next(give && rodd)",
      ".restart(rst || rdone), .next(give && !rodd)",
      "symbol_interleaver-qpsk and 1]", "even/odd direction swapped on read"),
+    ("dvbt_mapper.v", "QAM16_3 = 16'sd7772", "QAM16_3 = 16'sd7700",
+     "mapper-16qam and 1]", "16QAM outer level wrong"),
+    ("dvbt_mapper.v", "m_q     <= y[1] ? -mq : mq;", "m_q     <= y[1] ? mq : -mq;",
+     "mapper-qpsk and 1]", "Q sign inverted"),
+    ("dvbt_frame_builder.v", "w   <= {w[9:0], w[10] ^ w[8]};", "w   <= {w[9:0], w[10] ^ w[7]};",
+     "frame_builder-qpsk and 1]", "pilot PRBS wrong tap"),
+    ("dvbt_frame_builder.v", "16'b0011010111101110", "16'b0011010111101111",
+     "frame_builder-qpsk and 1]", "TPS sync word one bit wrong"),
+    ("dvbt_frame_builder.v", "14'b00_0011_0111_0111", "14'b00_0011_0111_0110",
+     "frame_builder-qpsk and 1]", "BCH generator one bit wrong"),
+    ("dvbt_frame_builder.v", "{l[1:0], 1'b0} + {3'b000, l[1:0]}", "{l[1:0], 1'b0}",
+     "frame_builder-qpsk and 1]", "scattered pilots at 2 (l mod 4), not 3"),
+    ("dvbt_frame_builder.v", "40: cp_pos = 1323;", "40: cp_pos = 1324;",
+     "frame_builder-qpsk and 1]", "one continual pilot moved"),
 ]
 
 
