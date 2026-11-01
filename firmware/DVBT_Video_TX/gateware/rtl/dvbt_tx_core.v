@@ -21,13 +21,6 @@ module dvbt_tx_core (
     output wire        spi_miso,
     output wire        dreq,
     output wire [11:0] dac_d,
-    output wire        sm_sclk,
-    output wire        sm_sdo,
-    output wire        sm_sdo_oe,
-    input  wire        sm_sdio_in,
-    input  wire        sm_miso,
-    output wire  [1:0] sm_cs_n,
-    output wire  [3:0] gpio,
     output wire        tx_on
 );
     wire        tx_en, cfg_obin, cfg_swap;
@@ -53,9 +46,7 @@ module dvbt_tx_core (
         .tx_en(tx_en), .cfg_mod(cfg_mod), .cfg_rate(cfg_rate), .cfg_guard(cfg_guard),
         .cfg_obin(cfg_obin), .cfg_swap(cfg_swap), .gain_i(gain_i), .gain_q(gain_q),
         .phase(phase), .off_i(off_i), .off_q(off_q),
-        .st_underflow(underflow), .st_align(err_align),
-        .sm_sclk(sm_sclk), .sm_sdo(sm_sdo), .sm_sdo_oe(sm_sdo_oe), .sm_sdio_in(sm_sdio_in),
-        .sm_miso(sm_miso), .sm_cs_n(sm_cs_n), .gpio(gpio)
+        .st_underflow(underflow), .st_align(err_align)
     );
 
     wire signed [17:0] o_i, o_q;

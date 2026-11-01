@@ -301,3 +301,55 @@ def test_adrf6755_driver():
     assert m.log == [r for r, _ in aseq(p, 10)], "driver must send the planned sequence, in order"
     assert m.regs[29] == 0x80
     assert lib.adrf6755_modulator_on(ctypes.byref(dev), ctypes.c_bool(True)) == 0 and m.regs[29] == 0x81
+
+
+# ---- ESP SPI backend bit packing ----------------------------------------------------
+class Frame(ctypes.Structure):
+    _fields_ = [("tx", ctypes.c_uint8 * 4), ("tx_bits", ctypes.c_int), ("rx_bits", ctypes.c_int)]
+
+
+def pack(nbits, three_wire, wr_bits, tx):
+    f = Frame()
+    fwlib.load().spi_bus_pack(nbits, ctypes.c_bool(three_wire), wr_bits, ctypes.c_uint32(tx), ctypes.byref(f))
+    return f
+
+
+def unpack(f, rx: bytes):
+    lib = fwlib.load()
+    lib.spi_bus_unpack.restype = ctypes.c_uint32
+    return lib.spi_bus_unpack(ctypes.byref(f), (ctypes.c_uint8 * 4)(*rx))
+
+
+def test_spi_pack_ad9116():
+    """3-wire: a write is all bits out; a read writes the instruction byte,
+    then clocks the data byte in on the same line (Rev. F p. 34)."""
+    f = pack(16, True, 16, 0x02B4)                         # write Data Control = 0xB4
+    assert (bytes(f.tx[:2]), f.tx_bits, f.rx_bits) == (b"\x02\xb4", 16, 0)
+    f = pack(16, True, 8, 0x8200)                          # read 0x02
+    assert (f.tx[0], f.tx_bits, f.rx_bits) == (0x82, 8, 8)
+    assert unpack(f, b"\xb4\x00\x00\x00") == 0xB4
+    f = pack(24, True, 8, 0xA20000)                        # 2-byte read
+    assert (f.tx[0], f.tx_bits, f.rx_bits) == (0xA2, 8, 16)
+    assert unpack(f, b"\xb4\x40\x00\x00") == 0xB440
+
+
+def test_spi_pack_adrf6755():
+    """4-wire full duplex: 24-bit D4|reg|data writes; the D5 read's data is
+    the last 8 of 16 bits clocked in on SDO (Rev. B p. 27)."""
+    f = pack(24, False, 0, 0xD41C08)
+    assert (bytes(f.tx[:3]), f.tx_bits, f.rx_bits) == (b"\xd4\x1c\x08", 24, 24)
+    f = pack(16, False, 0, 0xD500)
+    assert bytes(f.tx[:2]) == b"\xd5\x00"
+    assert unpack(f, b"\x00\x1f\x00\x00") & 0xFF == 0x1F
+
+
+@pytest.mark.parametrize("nbits", [1, 5, 8, 13, 24, 32])
+def test_spi_pack_roundtrip(nbits):
+    """Any width: the bits on the wire, MSB first, are exactly the low nbits of tx."""
+    rng = random.Random(nbits)
+    for _ in range(50):
+        tx = rng.getrandbits(nbits)
+        f = pack(nbits, False, 0, tx)
+        wire = "".join(f"{b:08b}" for b in bytes(f.tx))[:nbits]
+        assert wire == f"{tx:0{nbits}b}"
+        assert unpack(f, bytes(f.tx)) == tx                 # loopback

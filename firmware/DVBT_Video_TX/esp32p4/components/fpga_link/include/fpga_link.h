@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
-#include "spi_bus_if.h"
 
 typedef struct {
     int spi_host;           // spi_host_device_t, e.g. SPI2_HOST
@@ -21,7 +20,3 @@ esp_err_t fpga_reg_read(unsigned addr, uint32_t *val);
 // burst. DREQ guarantees room for two packets, so bursts are of at most 2.
 // Returns the last status byte seen in *status (may be NULL).
 esp_err_t fpga_ts_send(const uint8_t *pkts, size_t n, uint32_t timeout_ms, uint8_t *status);
-
-// The FPGA's setup-bus SPI master (dvbt_spi_master.v) as a generic bus for
-// chip drivers. dev 0: AD9116, dev 1: ADRF6755. SCLK = 27.43 MHz / (2 (div+1)).
-void fpga_setup_bus(spi_bus_if_t *bus, int div);

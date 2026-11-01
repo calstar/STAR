@@ -2,9 +2,10 @@
 //
 // 1. Si5351A CLK0 = 192/7 MHz (27.428571 MHz) for the FPGA and the DAC.
 // 2. FPGA link up (ID check).
-// 3. Setup bus: lock the ADRF6755 into SPI mode first (it powers up in I2C
-//    mode on the same SCLK/SDIO lines), then the AD9116: reset, two's
-//    complement, retimer.
+// 3. Setup bus (the P4's own SPI host, wired to both chips): lock the
+//    ADRF6755 into SPI mode first (it powers up in I2C mode on the same
+//    SCLK/SDIO lines), then the AD9116: reset, two's complement, retimer.
+//    The AD9116 and ADRF6755 need no FPGA: this could run before it.
 // 4. ADRF6755: PLL to the carrier with the RF off (TXDIS high, modulator
 //    powered down), wait for LDET.
 // 5. Modulator configured (2K, QPSK 1/2, guard 1/8), TS primed, tx on;
@@ -22,6 +23,7 @@
 #include "si5351.h"
 #include "ad9116.h"
 #include "adrf6755.h"
+#include "spi_bus_esp.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 
@@ -30,7 +32,7 @@ static const char *TAG = "dvbt";
 static void dac_reset(void *ctx, bool high)
 {
     (void)ctx;
-    fpga_reg_write(DVBT_REG_GPIO, high ? 1 : 0);
+    gpio_set_level(CONFIG_DVBT_DAC_RESET, high);
 }
 
 static void null_packet(uint8_t *p)
@@ -68,8 +70,16 @@ void app_main(void)
     gpio_config_t ldet = { .pin_bit_mask = 1ULL << CONFIG_DVBT_ADRF_LDET, .mode = GPIO_MODE_INPUT };
     ESP_ERROR_CHECK(gpio_config(&ldet));
 
+    gpio_config_t rst = { .pin_bit_mask = 1ULL << CONFIG_DVBT_DAC_RESET, .mode = GPIO_MODE_OUTPUT };
+    ESP_ERROR_CHECK(gpio_config(&rst));
+    gpio_set_level(CONFIG_DVBT_DAC_RESET, 0);           // low = SPI mode
     spi_bus_if_t setup;
-    fpga_setup_bus(&setup, 4);              // 27.43 MHz / 10 = 2.7 MHz SCLK
+    spi_bus_esp_config_t sc = {
+        .spi_host = SPI3_HOST, .pin_sclk = CONFIG_DVBT_SETUP_SCLK, .pin_sdio = CONFIG_DVBT_SETUP_SDIO,
+        .pin_miso = CONFIG_DVBT_SETUP_MISO, .pin_cs = { CONFIG_DVBT_DAC_CS, CONFIG_DVBT_ADRF_CS },
+        .n_dev = 2, .clock_hz = CONFIG_DVBT_SETUP_SPI_HZ,
+    };
+    ESP_ERROR_CHECK(spi_bus_esp_init(&sc, &setup));
     adrf6755_t mod = { .bus = &setup, .dev = 1 };
     ESP_ERROR_CHECK(adrf6755_lock_spi(&mod));
     ad9116_t dac = { .bus = &setup, .dev = 0, .set_reset = dac_reset };

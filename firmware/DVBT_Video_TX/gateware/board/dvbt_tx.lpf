@@ -1,7 +1,7 @@
 # LFE5U-25F-7TG144C pin assignment -- PROVISIONAL until the board is laid out.
 # Chosen from Project Trellis' TQFP144 pin data: clock on the right PLL's
 # input, the DAC bus on the same bank (3), ESP32 SPI on bank 2 with SCK on a
-# clock-capable pin, the setup bus on bank 1; bank 8 is left to the
+# clock-capable pin; bank 8 is left to the
 # configuration flash. All 3.3 V LVCMOS: the AD9116 runs its digital I/O
 # from DVDDIO = 3.3 V (VIH 2.1 V, datasheet Rev. F Table 2); its DVDD pin is
 # the output of its own 1.8 V LDO and takes only a bypass capacitor.
@@ -31,16 +31,7 @@ LOCATE COMP "spi_mosi" SITE "92";
 LOCATE COMP "spi_miso" SITE "93";
 LOCATE COMP "dreq"     SITE "94";
 
-LOCATE COMP "sm_sclk"  SITE "110";
-LOCATE COMP "sm_sdio"  SITE "111";   # AD9116 SDIO (3-wire) / ADRF6755 data in
-LOCATE COMP "sm_miso"  SITE "112";
-LOCATE COMP "dac_cs_n" SITE "113";
-LOCATE COMP "syn_cs_n" SITE "114";
 LOCATE COMP "led_tx"   SITE "115";
-LOCATE COMP "dac_reset"   SITE "116";   # AD9116 RESET/PINMD (pin 35)
-LOCATE COMP "gpio_aux[0]" SITE "117";
-LOCATE COMP "gpio_aux[1]" SITE "118";
-LOCATE COMP "gpio_aux[2]" SITE "119";
 
 IOBUF PORT "clk_in"   IO_TYPE=LVCMOS33;
 IOBUF PORT "spi_sck"  IO_TYPE=LVCMOS33;
@@ -61,16 +52,4 @@ IOBUF PORT "dac_d[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
 IOBUF PORT "dac_d[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
 IOBUF PORT "dac_d[11]" IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
 IOBUF PORT "dac_dclk"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
-IOBUF PORT "sm_sclk"  IO_TYPE=LVCMOS33;
-IOBUF PORT "sm_sdio"  IO_TYPE=LVCMOS33 PULLMODE=UP;
-IOBUF PORT "sm_miso"  IO_TYPE=LVCMOS33 PULLMODE=UP;
-IOBUF PORT "dac_cs_n" IO_TYPE=LVCMOS33;
-IOBUF PORT "syn_cs_n" IO_TYPE=LVCMOS33;
 IOBUF PORT "led_tx"   IO_TYPE=LVCMOS33;
-# RESET/PINMD high = pin mode, where SCLK/SDIO/CS turn into CLKMD/FORMAT/
-# PWRDN: the board needs a pull-down so the DAC stays in SPI mode while the
-# FPGA is unconfigured.
-IOBUF PORT "dac_reset"   IO_TYPE=LVCMOS33 PULLMODE=DOWN;
-IOBUF PORT "gpio_aux[0]" IO_TYPE=LVCMOS33;
-IOBUF PORT "gpio_aux[1]" IO_TYPE=LVCMOS33;
-IOBUF PORT "gpio_aux[2]" IO_TYPE=LVCMOS33;

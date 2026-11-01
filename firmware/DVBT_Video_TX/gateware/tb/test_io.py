@@ -151,8 +151,6 @@ async def host(dut):
     dut.ts_ready.value = 0
     dut.st_underflow.value = 0
     dut.st_align.value = 0
-    dut.sm_miso.value = 0
-    dut.sm_sdio_in.value = 0
     dut.rst.value = 1
     for _ in range(4):
         await RisingEdge(dut.clk)
@@ -161,7 +159,7 @@ async def host(dut):
     await Timer(10 * CLK_PS, unit="ps")
 
     # registers
-    assert await esp.read(7) == 0xD7B70002, "ID"
+    assert await esp.read(7) == 0xD7B70003, "ID"
     # The firmware's own frame encoder (esp32p4/components/fpga_link,
     # compiled for the host) against this RTL.
     import sys as _sys
@@ -169,15 +167,11 @@ async def host(dut):
     import fwlib
     await esp.frame(fwlib.frame_write(2, 0x0000ABCD))
     assert fwlib.parse_read(await esp.frame(fwlib.frame_read(2))) == 0xABCD, "firmware frames vs RTL"
-    assert fwlib.parse_read(await esp.frame(fwlib.frame_read(7))) == 0xD7B70002
+    assert fwlib.parse_read(await esp.frame(fwlib.frame_read(7))) == 0xD7B70003
     await esp.write(2, 0)
     # guard 1/8, tx off, unsigned binary with I on the high half: the
     # AD9116's own power-up format (TWOS = 0, IFIRST = IRISING = 1)
     assert await esp.read(0) == 0x180, "CTRL reset value"
-    assert int(dut.gpio.value) == 0, "GPIO must reset low (AD9116 RESET/PINMD low = SPI mode)"
-    await esp.write(8, 0x5)
-    assert await esp.read(8) == 0x5 and int(dut.gpio.value) == 0x5, "GPIO"
-    await esp.write(8, 0x0)
     assert await esp.read(1) == (40960 << 16) | 40960, "GAIN reset value"
     await esp.write(1, 0x12345678)
     await esp.write(3, 0x07FF0801)
@@ -254,110 +248,7 @@ async def host(dut):
     assert len(pkts) == len(sent) + 1 and pkts[-1] == extra[0], (
         f"{len(pkts) - len(sent)} of the 2 extra packets came out (1 fits)")
 
-    # Setup SPI master, 4-wire: 24 bits to device 1, a pattern back on MISO.
-    await esp.write(5, (3 << 16) | (1 << 8) | 23)
-    pattern = 0x5A3C96
-    bits_seen, cs_seen = [], set()
-
-    async def slave():
-        k = 0
-        dut.sm_miso.value = (pattern >> 23) & 1
-        while len(bits_seen) < 24:
-            await RisingEdge(dut.sm_sclk)
-            assert int(dut.sm_sdo_oe.value) == 1, "4-wire: SDO released"
-            bits_seen.append(int(dut.sm_sdo.value))
-            cs_seen.add(int(dut.sm_cs_n.value))
-            await FallingEdge(dut.sm_sclk)
-            k += 1
-            dut.sm_miso.value = (pattern >> (23 - k)) & 1 if k < 24 else 0
-
-    sl = cocotb.start_soon(slave())
-    await esp.write(4, 0xABCDEF00)
-    await sl
-    while (await esp.read(5)) >> 31:
-        pass
-    word = int("".join(map(str, bits_seen)), 2)
-    assert word == 0xABCDEF, f"SPI master sent {word:06x}"
-    assert cs_seen == {0b01}, f"chip selects seen {cs_seen}"
-    assert int(dut.sm_cs_n.value) == 0b11
-    assert await esp.read(4) == pattern, "SPI master read-back"
-
-    # Chip-select-only pulses (the ADRF6755's SPI-mode lock: 3 of them):
-    # CS low then high, no SCLK edge, for each.
-    sclk_edges, cs_lows = [0], [0]
-
-    async def watch():
-        prev_cs = 1
-        while True:
-            await RisingEdge(dut.clk)
-            if int(dut.sm_sclk.value):
-                sclk_edges[0] += 1
-            cs = (int(dut.sm_cs_n.value) >> 1) & 1
-            if prev_cs and not cs:
-                cs_lows[0] += 1
-            prev_cs = cs
-
-    w = cocotb.start_soon(watch())
-    await esp.write(5, (1 << 24) | (2 << 16) | (1 << 8))
-    for _ in range(3):
-        await esp.write(4, 0)
-        while (await esp.read(5)) >> 31:
-            pass
-    w.cancel()
-    assert cs_lows[0] == 3 and sclk_edges[0] == 0, f"{cs_lows[0]} CS pulses, {sclk_edges[0]} SCLK-high clocks"
-    assert int(dut.sm_cs_n.value) == 0b11
-
-    # 3-wire, against an AD9116 SPI port as its datasheet (Rev. F, pp. 34-36)
-    # describes it: instruction byte R/W N1 N0 A4..A0, MSB first, data in on
-    # SCLK rising, read data driven on SCLK falling on the one SDIO line.
-    # The model fails if the FPGA still drives SDIO while the DAC does.
-    regs = {0x00: 0x00, 0x02: 0x34, 0x1F: 0x0A}
-
-    async def ad9116():
-        while True:
-            while int(dut.sm_cs_n.value) & 1:      # wait for its chip select
-                await RisingEdge(dut.clk)
-            bits = []
-            for _ in range(8):
-                await RisingEdge(dut.sm_sclk)
-                bits.append(int(dut.sm_sdo.value))
-            ins = int("".join(map(str, bits)), 2)
-            rd, n, a = ins >> 7, ((ins >> 5) & 3) + 1, ins & 0x1F
-            for b in range(n):
-                if rd:
-                    v = regs.get(a - b, 0)
-                    for k in range(8):
-                        await FallingEdge(dut.sm_sclk)
-                        await Timer(1, unit="ns")
-                        assert int(dut.sm_sdo_oe.value) == 0, "FPGA drives SDIO during a read"
-                        dut.sm_sdio_in.value = (v >> (7 - k)) & 1
-                else:
-                    v = 0
-                    for k in range(8):
-                        await RisingEdge(dut.sm_sclk)
-                        assert int(dut.sm_sdo_oe.value) == 1, "SDIO released during a write"
-                        v = (v << 1) | int(dut.sm_sdo.value)
-                    regs[a - b] = v
-            while not int(dut.sm_cs_n.value) & 1:
-                await RisingEdge(dut.clk)
-
-    cocotb.start_soon(ad9116())
-
-    async def spi3(nbits, wr_bits, word):
-        await esp.write(5, (3 << 16) | (wr_bits << 10) | (1 << 9) | (nbits - 1))
-        await esp.write(4, word << (32 - nbits))
-        while (await esp.read(5)) >> 31:
-            pass
-        return await esp.read(4)
-
-    await spi3(16, 16, (0x02 << 8) | 0xB4)          # write Data Control: TWOS, IFIRST, IRISING, DCI_EN
-    assert regs[0x02] == 0xB4, f"AD9116 model got {regs[0x02]:02x}"
-    assert (await spi3(16, 8, (0x82 << 8))) & 0xFF == 0xB4, "3-wire read of 0x02"
-    assert (await spi3(16, 8, (0x9F << 8))) & 0xFF == 0x0A, "3-wire read of Version"
-    # two-byte read, MSB-first addresses count down: 0x02 then 0x01
-    regs[0x01] = 0x40
-    assert (await spi3(24, 8, (0xA2 << 16))) & 0xFFFF == 0xB440, "3-wire 2-byte read"
-    cocotb.log.info("host: registers, GPIO, TS commit/discard, DREQ, overflow, nulls, SPI 4-wire and 3-wire ok")
+    cocotb.log.info("host: registers, TS commit/discard, DREQ, overflow, nulls ok")
 
 
 # ---- the whole transmitter -----------------------------------------------------
@@ -385,8 +276,6 @@ async def tx_core(dut):
 
     cocotb.start_soon(Clock(dut.clk, CLK_PS, unit="ps").start())
     esp = Esp32(dut, rng)
-    dut.sm_miso.value = 0
-    dut.sm_sdio_in.value = 0
     dut.rst.value = 1
     for _ in range(4):
         await RisingEdge(dut.clk)

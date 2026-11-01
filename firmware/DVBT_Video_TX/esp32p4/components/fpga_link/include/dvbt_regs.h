@@ -4,7 +4,7 @@
 #pragma once
 #include <stdint.h>
 
-#define DVBT_ID             0xD7B70002u
+#define DVBT_ID             0xD7B70003u
 
 #define DVBT_CMD_TS         0x00u           // then whole 188-byte packets
 #define DVBT_CMD_WRITE(a)   (0x80u | ((a) & 0x0Fu))   // then 4 bytes, MSB first
@@ -15,11 +15,8 @@ enum dvbt_reg {
     DVBT_REG_GAIN    = 1,
     DVBT_REG_PHASE   = 2,
     DVBT_REG_DCOFF   = 3,
-    DVBT_REG_SPIDATA = 4,
-    DVBT_REG_SPICFG  = 5,
     DVBT_REG_STATUS  = 6,
     DVBT_REG_ID      = 7,
-    DVBT_REG_GPIO    = 8,
 };
 
 // CTRL
@@ -29,14 +26,6 @@ enum dvbt_reg {
 #define DVBT_CTRL_GUARD(g)      (((g) & 3u) << 6)    // 0 1/32, 1 1/16, 2 1/8, 3 1/4
 #define DVBT_CTRL_DAC_UNSIGNED  (1u << 8)
 #define DVBT_CTRL_DAC_Q_HIGH    (1u << 9)
-
-// SPICFG
-#define DVBT_SPICFG(nbits, dev, three_wire, wr_bits, div) \
-    ((((uint32_t)(nbits) - 1u) & 0x1Fu) | (((uint32_t)(dev) & 1u) << 8) | \
-     (((uint32_t)(three_wire) & 1u) << 9) | (((uint32_t)(wr_bits) & 0x3Fu) << 10) | \
-     (((uint32_t)(div) & 0xFFu) << 16))
-#define DVBT_SPICFG_CS_ONLY     (1u << 24)
-#define DVBT_SPICFG_BUSY        (1u << 31)
 
 // STATUS
 #define DVBT_ST_UNDERFLOW       (1u << 0)
@@ -53,6 +42,5 @@ enum dvbt_reg {
 #define DVBT_SB_ALIGN           0x10u
 #define DVBT_SB_TS_BAD          0x08u
 #define DVBT_SB_TS_OVERFLOW     0x04u
-#define DVBT_SB_SPI_BUSY        0x02u
 
 #define TS_PACKET               188
