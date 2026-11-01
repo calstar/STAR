@@ -4,6 +4,7 @@ insertion, SPI master, and the whole transmitter core."""
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
@@ -161,6 +162,15 @@ async def host(dut):
 
     # registers
     assert await esp.read(7) == 0xD7B70002, "ID"
+    # The firmware's own frame encoder (firmware/components/fpga_link,
+    # compiled for the host) against this RTL.
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "firmware/test/host"))
+    import fwlib
+    await esp.frame(fwlib.frame_write(2, 0x0000ABCD))
+    assert fwlib.parse_read(await esp.frame(fwlib.frame_read(2))) == 0xABCD, "firmware frames vs RTL"
+    assert fwlib.parse_read(await esp.frame(fwlib.frame_read(7))) == 0xD7B70002
+    await esp.write(2, 0)
     # guard 1/8, tx off, unsigned binary with I on the high half: the
     # AD9116's own power-up format (TWOS = 0, IFIRST = IRISING = 1)
     assert await esp.read(0) == 0x180, "CTRL reset value"
@@ -202,7 +212,7 @@ async def host(dut):
             await esp.frame(b"\x00" + b"".join(pk), cut_after=1 + 188 * (len(pk) - 1) + rng.randrange(1, 187))
             good += pk[:-1]
         else:
-            await esp.frame(b"\x00" + b"".join(pk))
+            await esp.frame(fwlib.frame_ts(b"".join(pk)))     # the firmware's TS framing
             good += pk
         n += 10
         if rng.random() < 0.3:

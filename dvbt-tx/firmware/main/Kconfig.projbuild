@@ -1,0 +1,32 @@
+menu "DVB-T transmitter"
+    config DVBT_FPGA_SCK
+        int "FPGA SPI SCK GPIO"
+        default 20
+    config DVBT_FPGA_MOSI
+        int "FPGA SPI MOSI GPIO"
+        default 21
+    config DVBT_FPGA_MISO
+        int "FPGA SPI MISO GPIO"
+        default 22
+    config DVBT_FPGA_CS
+        int "FPGA SPI CS GPIO"
+        default 23
+    config DVBT_FPGA_DREQ
+        int "FPGA DREQ GPIO"
+        default 24
+    config DVBT_FPGA_SPI_HZ
+        int "FPGA SPI clock (Hz, <= 20 MHz)"
+        default 20000000
+    config DVBT_I2C_SDA
+        int "I2C SDA GPIO (Si5351A)"
+        default 7
+    config DVBT_I2C_SCL
+        int "I2C SCL GPIO (Si5351A)"
+        default 8
+    config DVBT_SI5351_XTAL_HZ
+        int "Si5351A crystal (Hz)"
+        default 25000000
+    config DVBT_SI5351_LOAD_PF
+        int "Si5351A crystal load (6, 8 or 10 pF)"
+        default 8
+endmenu
