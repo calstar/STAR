@@ -1,9 +1,16 @@
 # dvbt-tx — the rocket video transmitter's DVB-T modulator
 
 FPGA gateware for the DIY 1.28 GHz DVB-T transmitter (design doc: *DIY 1.28 GHz
-DVB-T Rocket Video Transmitter — Design & BOM*). The Pi Zero 2W / ESP32-P4
-encodes H.264 into an MPEG transport stream; this gateware turns that stream
-into DVB-T baseband I/Q for the AD9116 DAC, per ETSI EN 300 744.
+DVB-T Rocket Video Transmitter — Design & BOM*). An **ESP32-P4** encodes H.264
+into an MPEG transport stream (chosen over the Pi Zero 2W, 2026-11-01: boots in
+under a second instead of ~20 s, lower power, hardware ISP and H.264 encoder);
+this gateware turns that stream into DVB-T baseband I/Q for the AD9116 DAC,
+per ETSI EN 300 744.
+
+Interfaces: ESP32-P4 → FPGA is SPI (FPGA slave) carrying TS bytes at the
+channel rate, paced by a DREQ line from the FPGA's input FIFO, plus register
+commands on the same bus. FPGA → AD9116 is a 12-bit DDR bus with I and Q
+interleaved (27.43 MS/s each) and a 3-wire SPI for setup.
 
 Flight mode: 2K, QPSK, code rate 1/2, guard 1/8, 6 MHz channel → 4.15 Mbit/s.
 
@@ -11,8 +18,8 @@ Flight mode: 2K, QPSK, code rate 1/2, guard 1/8, 6 MHz channel → 4.15 Mbit/s.
 
 H.264 needs motion search over stored frames (a 1080p frame is 25 Mbit; the
 ECP5-25F has ~1 Mbit of block RAM), an ISP for the raw Bayer camera, and
-commercial encoder IP several times the size of this part. The Pi and the
-ESP32-P4 do all of that in hardened silicon. DVB-T modulation is the
+commercial encoder IP several times the size of this part. The ESP32-P4 does
+all of that in hardened silicon. DVB-T modulation is the
 opposite: fixed-rate, deterministic streaming DSP, which is what the FPGA is
 for. The interface between them is just TS bytes over SPI.
 

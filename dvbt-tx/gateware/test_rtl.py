@@ -20,7 +20,7 @@ RTL = Path(os.environ.get("DVBT_RTL_DIR", HERE / "rtl"))
 TB = HERE / "tb"
 
 CASES = [
-    # (toplevel, cocotb test, MOD, RATE)
+    # (toplevel, cocotb test, MOD, RATE[, N_PKT])
     ("dvbt_energy_dispersal", "energy_dispersal", "qpsk", "1/2"),
     ("dvbt_rs_encoder", "rs_encoder", "qpsk", "1/2"),
     ("dvbt_outer_interleaver", "outer_interleaver", "qpsk", "1/2"),
@@ -34,14 +34,21 @@ CASES = [
     ("dvbt_fec_chain", "fec_chain", "qpsk", "1/2"),
     ("dvbt_fec_chain", "fec_chain", "qpsk", "2/3"),
     ("dvbt_fec_chain", "fec_chain", "16qam", "1/2"),
+    *[("dvbt_mapper", "mapper", m, "1/2") for m in ("qpsk", "16qam", "64qam")],
+    # > 2 frames (136 OFDM symbols) of TS: frame wrap and every TPS field.
+    ("dvbt_frame_builder", "frame_builder", "qpsk", "1/2", 160),
+    ("dvbt_frame_builder", "frame_builder", "16qam", "3/4", 400),
+    ("dvbt_carrier_chain", "carrier_chain", "qpsk", "1/2", 160),
+    ("dvbt_carrier_chain", "carrier_chain", "64qam", "2/3", 576),
 ]
+CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
 
 
 @pytest.mark.parametrize("seed", [1, 2])
 @pytest.mark.parametrize(
-    "top,test,mod,rate", CASES, ids=[f"{c[1]}-{c[2]}-{c[3].replace('/', '')}" for c in CASES]
+    "top,test,mod,rate,n_pkt", CASES, ids=[f"{c[1]}-{c[2]}-{c[3].replace('/', '')}" for c in CASES]
 )
-def test_rtl(top: str, test: str, mod: str, rate: str, seed: int) -> None:
+def test_rtl(top: str, test: str, mod: str, rate: str, n_pkt: int, seed: int) -> None:
     runner = get_runner("icarus")
     # One build directory per case, so pytest -n (xdist) runs don't collide.
     build_dir = Path(os.environ.get("DVBT_SIM_BUILD", HERE / "sim_build")) / f"{top}-{test}-{mod}-{rate.replace('/', '')}-{seed}"
@@ -60,7 +67,7 @@ def test_rtl(top: str, test: str, mod: str, rate: str, seed: int) -> None:
         test_dir=TB,
         build_dir=build_dir,
         test_filter=rf"\.{test}$",
-        extra_env={"MOD": mod, "RATE": rate, "TB_SEED": str(seed)},
+        extra_env={"MOD": mod, "RATE": rate, "TB_SEED": str(seed), "N_PKT": str(n_pkt)},
         results_xml=str(build_dir / f"{test}-{mod}-{rate.replace('/', '')}-{seed}.xml"),
     )
     # The runner does not raise on a failed or missing test: check the results.
