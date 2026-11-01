@@ -46,11 +46,14 @@ module dvbt_gi_insert (
     wire rdone = give && (j == last);
 
     // Time index of output j: the prefix replays the symbol's tail.
-    wire [11:0] t = (j < ng) ? (12'd2048 - ng + j) : (j - ng);
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire [11:0] t = (j < ng) ? (12'd2048 - ng + j) : (j - ng);  // < 2048
+    /* verilator lint_on UNUSEDSIGNAL */
+    wire [10:0] waddr = bitrev(wn);
     wire [35:0] rword = mem[{rbank, t[10:0]}];
 
     always @(posedge clk) begin
-        if (take) mem[{wbank, bitrev(wn)}] <= {s_re, s_im};
+        if (take) mem[{wbank, waddr}] <= {s_re, s_im};
         if (give) begin
             m_i <= rword[17:0];   // swap back: I = FFT im
             m_q <= rword[35:18];  //            Q = FFT re

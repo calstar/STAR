@@ -61,6 +61,7 @@ async def fft2048(dut):
 
 
 GUARD = {0: 64, 1: 128, 2: 256, 3: 512}
+STARTUP_SYMS = 10  # symbols still carrying the outer interleaver's zero fill
 
 
 @cocotb.test()
@@ -99,12 +100,29 @@ async def modulator(dut):
     assert sos == [s * (N + ng) for s in range(n_sym)], f"m_sos at {sos[:4]}"
     assert int(dut.err_align.value) == 0, "err_align set"
 
-    s = snr_db(got, want)
-    rx = np.fft.fft(got[:, ng:], axis=1)[:, [(k - 852) % N for k in range(1705)]] / (8192 * N / SCALE)
-    mer = snr_db(rx, car[:n_sym])
-    peak = np.abs(got).max()
-    rms = np.sqrt(np.mean(np.abs(got) ** 2))
-    cocotb.log.info("modulator %s %s: %d symbols, SNR %.1f dB vs gr-dtv, MER %.1f dB, "
-                    "RMS %.0f, peak %.0f (PAPR %.1f dB) of 131071",
-                    mod, rate, n_sym, s, mer, rms, peak, 20 * np.log10(peak / rms))
+    if os.environ.get("TB_DUMP"):
+        np.savez(os.environ["TB_DUMP"], got=got, want=want, car=car[:n_sym])
+    # Start-up: the outer interleaver's delay lines power up zeroed (as
+    # gr-dtv's do) and zeros bypass the energy dispersal, so the first few
+    # symbols carry long runs of identical cells that add up coherently at
+    # t = 0 -- beyond the 18-bit range. The RTL must clip those to the rail;
+    # it may do so only in those symbols, and nothing else may differ.
+    over = (np.abs(want.real) > 131071) | (np.abs(want.imag) > 131071)
+    clipped_syms = sorted(set(np.nonzero(over)[0].tolist()))
+    assert all(sy < STARTUP_SYMS for sy in clipped_syms), (
+        f"full-scale overflow outside start-up, symbols {clipped_syms}")
+    rails = np.clip(want.real, -131071, 131071) + 1j * np.clip(want.imag, -131071, 131071)
+    assert np.all(np.abs(got[over] - rails[over]) < 64), "overflowing samples not clipped to the rail"
+    ok = ~over
+    s = snr_db(got[ok], want[ok])
+    steady = got[STARTUP_SYMS:]
+    rx = np.fft.fft(steady[:, ng:], axis=1)[:, [(k - 852) % N for k in range(1705)]]
+    mer = snr_db(rx / (8192 * N / SCALE), car[STARTUP_SYMS:n_sym])
+    peak = np.abs(steady).max()
+    rms = np.sqrt(np.mean(np.abs(steady) ** 2))
+    cocotb.log.info("modulator %s %s: %d symbols, SNR %.1f dB vs gr-dtv (%d start-up samples "
+                    "clipped, symbols %s), steady state: MER %.1f dB, RMS %.0f, peak %.0f "
+                    "(PAPR %.1f dB) of 131071", mod, rate, n_sym, s, int(over.sum()),
+                    clipped_syms, mer, rms, peak, 20 * np.log10(peak / rms))
     assert s >= MIN_SNR_DB, f"SNR {s:.1f} dB < {MIN_SNR_DB}"
+    assert n_sym > STARTUP_SYMS + 4, "too few steady-state symbols"
