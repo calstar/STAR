@@ -44,6 +44,25 @@ class ArtifactOut(BaseModel):
     aliases: list[str] = Field(default_factory=list)
 
 
+class BundleExportBody(BaseModel):
+    """A stand to export: its name and payload (the stand document's, or the
+    console's unsaved set-up)."""
+
+    name: str = ""
+    stand: dict[str, Any]
+
+
+class BundleImportOut(BaseModel):
+    """A bundle unpacked into this server's library: the stand to create, with
+    its drawing and engine ids now this library's, and what the import did."""
+
+    name: str
+    stand: dict[str, Any]
+    drawing: ArtifactOut
+    engine: ArtifactOut | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
 class ImportResult(BaseModel):
     artifact: ArtifactOut
     already_present: bool

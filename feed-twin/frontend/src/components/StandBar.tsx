@@ -1,6 +1,7 @@
 /**
  * The stand document this cockpit is on: open one, save the cockpit into it,
- * share it, cut a named release ("TRR rev B").
+ * share it, cut a named release ("TRR rev B"), or carry it to another server as
+ * one file (Export / Import, backend/bundle.py).
  *
  * The dialog, the checkout and the store are pid-designer's own
  * (lib/stardesign-ui, lib/stardesign), so sharing works here exactly as it does
@@ -10,7 +11,7 @@
  * every tick.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ApiError,
   ChangeModal,
@@ -24,7 +25,7 @@ import {
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
-import { standApi } from '../stands';
+import { exportStand, importStand, saveBundle, standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
@@ -45,6 +46,10 @@ export function StandBar() {
   const [label, setLabel] = useState('');
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
+  // What an import did that the person should know (a matched drawing, a
+  // state table carried as the stand's own): said once, not an error.
+  const [notice, setNotice] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
 
@@ -89,8 +94,69 @@ export function StandBar() {
       setSaved(new Date().toISOString());
     });
 
+  // A stand as one file: the open stand, or the console's unsaved set-up.
+  const exportBundle = () =>
+    act(async () => {
+      setMenu(false);
+      saveBundle(await exportStand(standDoc?.name ?? running, await snapshot()));
+    });
+
+  // A bundle becomes a stand document of this person's, opened and taken.
+  const importBundle = (file: File) =>
+    act(async () => {
+      setNotice('');
+      let bundle: unknown;
+      try {
+        bundle = JSON.parse(await file.text());
+      } catch {
+        throw new Error(`${file.name} is not a Hotbench stand (not JSON).`);
+      }
+      const got = await importStand(bundle);
+      const made = await standApi.create(got.name, got.stand);
+      await list();
+      await openStand(refOf({ ...made, mine: true }), made.name, true);
+      setNotice(got.notes.join(' '));
+    });
+
+  const item =
+    'px-3 py-1.5 text-left text-[12px] text-[var(--ink-2)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--ink)] disabled:text-[var(--ink-4)]';
+  const carryItems = (
+    <>
+      <button
+        role="menuitem"
+        className={item}
+        onClick={() => void exportBundle()}
+        title="Save this stand as one file: the drawing, the engine and its card, the state table, the drawing's overrides, every setting, the hookup and the knobs. Another Hotbench opens it with Import."
+      >
+        Export stand…
+      </button>
+      <button
+        role="menuitem"
+        className={item}
+        onClick={() => {
+          setMenu(false);
+          fileRef.current?.click();
+        }}
+        title="Open a stand exported from any Hotbench (*.hotbench.json). Its drawing, engine and the rest come into this library, and it becomes a stand of yours."
+      >
+        Import stand…
+      </button>
+    </>
+  );
+
   return (
     <div className="relative flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void importBundle(file);
+        }}
+      />
       <button
         className={`${btn} max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
         onClick={() => { void list(); setPicking(true); }}
@@ -153,7 +219,7 @@ export function StandBar() {
                 onClick={() => setMenu((m) => !m)}
                 aria-haspopup="menu"
                 aria-expanded={menu}
-                title="More: save a release, leave the stand"
+                title="More: save a release, export or import a stand, leave the stand"
               >
                 ⋯
               </button>
@@ -175,9 +241,10 @@ export function StandBar() {
                   >
                     Save as release…
                   </button>
+                  {carryItems}
                   <button
                     role="menuitem"
-                    className="px-3 py-1.5 text-left text-[12px] text-[var(--ink-2)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--ink)]"
+                    className={item}
                     onClick={() => {
                       setMenu(false);
                       closeStand();
@@ -193,6 +260,33 @@ export function StandBar() {
           {saved && <span className="text-gray-500" title={saved}>saved {relativeTime(saved)}</span>}
           <CheckoutLostDialog checkout={checkout} noun="stand" name={standDoc.name} />
         </>
+      )}
+      {!standDoc && (
+        <span className="relative">
+          <button
+            className={btn}
+            onClick={() => setMenu((m) => !m)}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            title="Export this set-up as a stand file, or import one"
+          >
+            ⋯
+          </button>
+          {menu && (
+            <span
+              role="menu"
+              className="absolute right-0 top-full z-40 mt-1 flex min-w-[200px] flex-col border border-[var(--line-strong)] bg-black py-1"
+              onMouseLeave={() => setMenu(false)}
+            >
+              {carryItems}
+            </span>
+          )}
+        </span>
+      )}
+      {notice && !error && (
+        <span className="max-w-[260px] truncate text-[var(--ink-3)]" title={notice}>
+          {notice}
+        </span>
       )}
       {error && (
         <span className="max-w-[260px] truncate text-red-400" title={error}>

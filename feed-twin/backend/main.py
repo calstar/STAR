@@ -51,6 +51,7 @@ from feedtwin.engine.balance import MixtureBalance, SideBalance
 from feedtwin.engine.chamber import ChamberResult
 from feedtwin.engine.importer import EngineImportError
 
+from backend import bundle as stand_bundle
 from backend import designtools
 from backend.designtools import DesignTool, DesignToolError, tools
 from backend.library import Artifact, Library, LibraryError
@@ -66,6 +67,8 @@ from backend.overrides import (
 from feedtwin.model.param import Param
 from feedtwin.model.units import UnknownUnit, dimension_of, registered_units
 from backend.models import (
+    BundleExportBody,
+    BundleImportOut,
     DrawingElement,
     DrawingOut,
     DrawingParam,
@@ -763,6 +766,192 @@ async def import_engine(request: Request, file: UploadFile) -> ImportResult:
         problem = await _build_card(artifact.id, data, request.headers)
     return ImportResult(
         artifact=_out(artifact), already_present=existed, card_error=problem
+    )
+
+
+# ------------------------------------------------------------- stand bundles
+#
+# A stand document names library ids; a bundle carries what they name, so a
+# stand can be handed to another server (backend.bundle). The client creates
+# the stand document itself, through the stands router, so ownership, sharing
+# and checkout stay where they are.
+
+
+def _carried(artifact: Artifact) -> dict[str, Any]:
+    return stand_bundle.blob(
+        artifact_id=artifact.id,
+        name=artifact.name,
+        kind=artifact.kind,
+        source=artifact.source,
+        suffix=Path(artifact.filename).suffix,
+        data=library.read(artifact.id),
+    )
+
+
+@app.post("/api/twin/bundle/export")
+async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
+    """A stand and everything it names, as one ``*.hotbench.json``: the
+    drawing, the engine and its card, the state table, the drawing's
+    overrides, and the hookup it runs on."""
+    stand = {**stands.EMPTY, **body.stand}
+    if not stand["diagram"]:
+        raise HTTPException(
+            status_code=422, detail="This stand has no drawing to export."
+        )
+    try:
+        drawing_art = library.get(str(stand["diagram"]))
+        drawing = _carried(drawing_art)
+        engine: dict[str, Any] | None = None
+        card: str | None = None
+        if stand["engine"]:
+            engine_art = library.get(str(stand["engine"]))
+            engine = _carried(engine_art)
+            raw_card = library.attachment(engine_art.id, "card")
+            card = raw_card.decode("utf-8") if raw_card else None
+    except LibraryError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"This stand names something the library no longer has ({exc}).",
+        ) from exc
+    except stand_bundle.BundleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # A stand with no hookup of its own runs the drawing's saved one, which is
+    # kept beside this library under the drawing's lineage: carried, or the
+    # importer would run a different wiring.
+    if not stand.get("hookup"):
+        lineage, _ = _hookup_lineage(drawing_art)
+        record = library.record(HOOKUPS, lineage) or {}
+        saved = record.get("hookup")
+        if isinstance(saved, Mapping):
+            stand["hookup"] = dict(saved)
+    try:
+        machine: dict[str, Any] | None = load_machine(str(stand["machine"])).to_dict()
+    except (OSError, ValueError, HTTPException):
+        machine = None
+    return stand_bundle.pack(
+        name=body.name or drawing_art.name,
+        stand=stand,
+        drawing=drawing,
+        engine=engine,
+        card=card,
+        machine=machine,
+        overrides=overrides.entry(drawing_art.name),
+        code=code_version(),
+    )
+
+
+@app.post("/api/twin/bundle/import")
+async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOut:
+    """Unpack a bundle into this library: the drawing and engine (same bytes,
+    so the same ids), the engine's card, the drawing's overrides, and the
+    state table when this server's differs. Returns the stand to create."""
+    try:
+        stand_bundle.check(raw)
+    except stand_bundle.BundleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    notes: list[str] = []
+    stand = {**stands.EMPTY, **raw["stand"]}
+
+    carried = raw["drawing"]
+    try:
+        payload = json.loads(carried["text"])
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"That bundle's drawing is not readable JSON ({exc}).",
+        ) from exc
+    same = _same_drawing(payload)
+    if same is not None:
+        drawing_art = same
+        if same.id != carried.get("id"):
+            notes.append(f"The drawing matched {same.name}, already in this library.")
+    else:
+        drawing_art, _ = library.add(
+            carried["text"].encode("utf-8"),
+            kind="diagram",
+            name=str(carried.get("name") or raw.get("name") or "imported drawing"),
+            source=str(carried.get("source") or "upload"),
+            suffix=str(carried.get("suffix") or ".json"),
+            summary=diagram_summary(payload),
+        )
+
+    engine_art: Artifact | None = None
+    carried_engine = raw.get("engine")
+    if carried_engine:
+        data = carried_engine["text"].encode("utf-8")
+        name = str(carried_engine.get("name") or "imported engine")
+        try:
+            design = engine_from_bytes(data, name=name)
+        except (AssemblyError, EngineImportError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        engine_art, _ = library.add(
+            data,
+            kind="engine",
+            name=name,
+            source=str(carried_engine.get("source") or "upload"),
+            suffix=str(carried_engine.get("suffix") or ".yaml"),
+            summary=engine_summary(design),
+        )
+        card = carried_engine.get("card")
+        if card and library.attachment(engine_art.id, "card") is None:
+            library.attach(engine_art.id, "card", str(card).encode("utf-8"))
+        elif not card and library.attachment(engine_art.id, "card") is None:
+            notes.append(
+                f"{engine_art.name} came without EngineDesign's card, so it fires "
+                "the simplified engine until the card is built (Engine page)."
+            )
+
+    # The state table: the stand's own travels in its hookup already. A named
+    # table this server ships differently, or not at all, travels as the
+    # stand's own -- when the stand has a hookup to carry it.
+    machine = raw.get("machine") or {}
+    table = machine.get("table")
+    hookup = dict(stand.get("hookup") or {})
+    named = str(machine.get("name") or stand["machine"])
+    if isinstance(table, Mapping) and not hookup.get("machine"):
+        try:
+            local: dict[str, Any] | None = load_machine(named).to_dict()
+        except (OSError, ValueError, HTTPException):
+            local = None
+        if local != dict(table):
+            if hookup:
+                hookup["machine"] = dict(table)
+                stand["hookup"] = hookup
+                notes.append(
+                    f"This server's {named!r} state table differs from the one "
+                    "exported; the stand carries the exported table as its own."
+                )
+            else:
+                notes.append(
+                    f"This server's {named!r} state table differs from the one "
+                    "exported, and the stand has no hookup to carry it: it runs "
+                    "this server's."
+                )
+    if stand["machine"] not in sm_available():
+        fallback = sm_available()[0]
+        if not (stand.get("hookup") or {}).get("machine"):
+            notes.append(
+                f"This server ships no {stand['machine']!r} state table; the stand "
+                f"runs {fallback!r}."
+            )
+        stand["machine"] = fallback
+
+    incoming = raw.get("overrides") or {}
+    if any(incoming.values()):
+        merged, more = stand_bundle.merge_overrides(
+            overrides.entry(drawing_art.name), incoming
+        )
+        overrides.put_entry(drawing_art.name, merged)
+        notes.extend(more)
+
+    stand["diagram"] = drawing_art.id
+    stand["engine"] = engine_art.id if engine_art is not None else ""
+    return BundleImportOut(
+        name=str(raw.get("name") or drawing_art.name),
+        stand=stand,
+        drawing=_out(drawing_art),
+        engine=_out(engine_art) if engine_art is not None else None,
+        notes=notes,
     )
 
 
