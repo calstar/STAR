@@ -23,7 +23,10 @@ module dvbt_fec_chain (
     wire       ic_valid, ic_ready, bi_valid, bi_ready;
     wire [7:0] ed_data, rs_data, oi_data;
     wire       ed_sop, ed_valid, ed_ready;
-    wire       rs_sop, rs_valid, rs_ready;
+    wire       rs_valid, rs_ready;
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire       rs_sop;  // not needed downstream, see below
+    /* verilator lint_on UNUSEDSIGNAL */
     wire       oi_valid, oi_ready;
 
     dvbt_energy_dispersal u_ed (

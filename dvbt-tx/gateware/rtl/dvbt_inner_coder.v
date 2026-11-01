@@ -60,7 +60,9 @@ module dvbt_inner_coder (
     wire       encode = (bits_left != 4'd0) && (acc_n < {1'b0, v});
     wire       emit = (acc_n >= {1'b0, v}) && (!m_valid || m_ready);
 
-    wire [7:0] sym_bits = acc >> (acc_n - {1'b0, v});
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire [7:0] sym_bits = acc >> (acc_n - {1'b0, v});  // low v bits used
+    /* verilator lint_on UNUSEDSIGNAL */
 
     always @(posedge clk) begin
         if (rst) begin

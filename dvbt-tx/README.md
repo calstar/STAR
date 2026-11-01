@@ -82,8 +82,8 @@ verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.
 | TS input (SPI slave, sync lock, null-packet rate matching) | — | |
 | control: SPI masters for ADRF6755/AD9116, register file | — | |
 
-Synthesis of `dvbt_fec_chain` on LFE5U-25F (speed 7): about 2.6k LUTs (10%),
-533 FFs, 3 of 56 block RAMs, Fmax about 70 MHz against the 27.43 MHz sample
+Synthesis of `dvbt_fec_chain` on LFE5U-25F (speed 7): about 2.3k LUTs (9%),
+3 of 56 block RAMs, no multipliers, Fmax about 72 MHz against the 27.43 MHz sample
 clock.
 
 ## Notes for the next stages

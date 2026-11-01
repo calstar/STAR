@@ -62,12 +62,14 @@ module dvbt_bit_interleaver (
     endfunction
 
     wire [7:0] wa = (wbank ? N : 0) + {1'b0, wk};
-    wire a0 = mem0[raddr(rbank, rw, 7'd0)];
-    wire a1 = mem1[raddr(rbank, rw, 7'd63)];
-    wire a2 = mem2[raddr(rbank, rw, 7'd105)];
-    wire a3 = mem3[raddr(rbank, rw, 7'd42)];
-    wire a4 = mem4[raddr(rbank, rw, 7'd21)];
-    wire a5 = mem5[raddr(rbank, rw, 7'd84)];
+    wire [7:0] ra0 = raddr(rbank, rw, 7'd0);
+    wire [7:0] ra1 = raddr(rbank, rw, 7'd63);
+    wire [7:0] ra2 = raddr(rbank, rw, 7'd105);
+    wire [7:0] ra3 = raddr(rbank, rw, 7'd42);
+    wire [7:0] ra4 = raddr(rbank, rw, 7'd21);
+    wire [7:0] ra5 = raddr(rbank, rw, 7'd84);
+    wire a0 = mem0[ra0], a1 = mem1[ra1], a2 = mem2[ra2];
+    wire a3 = mem3[ra3], a4 = mem4[ra4], a5 = mem5[ra5];
 
     assign s_ready = !full[wbank];
     wire take = s_valid && s_ready;
