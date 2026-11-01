@@ -45,6 +45,8 @@ firmware/
 ├── Ethernet OTA Testing/      # over-the-air update validation
 ├── LC_Board/                  # load-cell calibration GUI + sketches
 ├── test_guis/                 # Python GUIs for bench-testing boards over the network
+├── DVBT_Video_TX/             # rocket video transmitter: ESP32-P4 firmware (ESP-IDF,
+│                              #   not PlatformIO) + DVB-T FPGA gateware; own README
 └── Archive/                   # deprecated boards & old DAQ versions — not built
 ```
 

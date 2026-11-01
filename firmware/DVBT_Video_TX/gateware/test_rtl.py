@@ -1,6 +1,6 @@
 """pytest entry point: build each RTL top with Icarus and run its cocotb test.
 
-    cd dvbt-tx/gateware && /usr/bin/python3.12 -m pytest -q -n auto test_rtl.py
+    cd firmware/DVBT_Video_TX/gateware && /usr/bin/python3.12 -m pytest -q -n auto test_rtl.py
 
 python3.12 because Ubuntu's gnuradio bindings (the golden model) are built
 for it; cocotb embeds the interpreter pytest runs under.

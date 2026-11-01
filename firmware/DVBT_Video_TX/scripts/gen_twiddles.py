@@ -6,7 +6,7 @@ pair's merged twiddle W_M^(n2 (h + 2b)) reaches is 3 (M/4 - 1)).
 Each line is 9 hex digits: {re[17:0], im[17:0]} of W_M^e = exp(-j 2 pi e / M),
 scaled by 2^16 and rounded (so 1.0 = 65536, inside an 18-bit signed word).
 
-    python3 dvbt-tx/scripts/gen_twiddles.py     # writes gateware/rtl/rom/tw_<M>.hex
+    python3 firmware/DVBT_Video_TX/scripts/gen_twiddles.py     # writes gateware/rtl/rom/tw_<M>.hex
 """
 from math import cos, pi, sin
 from pathlib import Path

@@ -5,8 +5,8 @@
 # so the Python environment is installed without Espressif's constraints
 # file and an equivalent one is written from what got installed.
 #
-#   dvbt-tx/firmware/tools/install-idf.sh
-#   . dvbt-tx/firmware/tools/env.sh && cd dvbt-tx/firmware && idf.py build
+#   firmware/DVBT_Video_TX/esp32p4/tools/install-idf.sh
+#   . firmware/DVBT_Video_TX/esp32p4/tools/env.sh && cd firmware/DVBT_Video_TX/esp32p4 && idf.py build
 set -euo pipefail
 IDF_ROOT=${IDF_ROOT:-/opt/esp}
 IDF_VER=${IDF_VER:-v5.5.1}
