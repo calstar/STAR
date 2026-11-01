@@ -64,13 +64,16 @@ for. The interface between them is just TS bytes over SPI.
 ## Layout
 
 ```
-esp32p4/             ESP32-P4 firmware (ESP-IDF v5.5): bring-up drivers, TS to the FPGA
+esp32p4/             ESP32-P4 firmware (ESP-IDF v5.5): bring-up, TS mux, health watchdog, SD recording
+test/e2e/            end-to-end: the firmware against the Verilated RTL and chip models,
+                     then a gr-dtv DVB-T receiver and ffmpeg (see its README)
 gateware/rtl/        Verilog-2005, one file per EN 300 744 stage
 gateware/tb/         cocotb testbenches (stream driver with random stalls)
 gateware/test_rtl.py pytest entry: builds each top in Icarus, runs its test
 gateware/synth.sh    Yosys + nextpnr-ecp5 (YoWASP): utilisation, Fmax, bitstream config
 gateware/board/      pin constraints for the TQFP144
 model/golden.py      golden vectors from GNU Radio gr-dtv
+model/dvbt_rx.py     a gr-dtv DVB-T receiver (for the end-to-end test)
 scripts/             table generators (RS generator, mapper levels, twiddles,
                      half-band filters) and mutation_check.py
 ```
@@ -84,7 +87,15 @@ failure names one block; `fec_chain` then runs the whole chain from raw TS.
 Every test runs with random input stalls and random output backpressure, for
 two seeds.
 
-Current state: 84 test cases pass (42 cases × 2 seeds), and all 44 planted bugs are caught.
+Current state: 84 test cases pass (42 cases × 2 seeds), and all 45 planted bugs are caught.
+
+On top of the per-block tests, `test/e2e` runs the firmware that flies
+against the whole FPGA top level and datasheet models of the Si5351A,
+ECP5, AD9116 and ADRF6755, demodulates the DAC output with gr-dtv's
+receiver and decodes the 1080p video with ffmpeg, in nine scenarios from a
+clean boot to the FPGA losing its configuration mid-flight; its own
+`mutation_check.py` plants integration bugs (firmware and RTL) and
+requires a scenario to go red for each.
 
 The tests are broken on purpose to prove they can fail:
 `scripts/mutation_check.py` copies `rtl/`, plants one plausible bug per stage
@@ -113,6 +124,9 @@ cd firmware/DVBT_Video_TX/gateware
 ./synth.sh                                               # board top: utilisation, Fmax (~5 min)
 yowasp-ecppack build/dvbt_tx_top/dvbt_tx_top.config build/dvbt_tx_top/dvbt_tx.bit
 verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.v
+cd ../test/e2e
+/usr/bin/python3.12 -m pytest -q -n 4 test_e2e.py         # end to end, ~2 min on 4 cores
+/usr/bin/python3.12 mutation_check.py                     # every planted integration bug must be caught
 ```
 
 ## Status

@@ -1,0 +1,93 @@
+# End-to-end test: firmware + FPGA + chips + receiver
+
+```bash
+cd firmware/DVBT_Video_TX/test/e2e
+/usr/bin/python3.12 -m pytest -q -n 4 test_e2e.py        # all scenarios, a few minutes
+/usr/bin/python3.12 -m pytest -q test_e2e.py -m "not slow" # the quick ones
+python3 build.py [dir] [--trace]                           # just the harness (--trace: VCD via E2E_VCD=file)
+```
+
+Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
+
+## What runs
+
+```
+ firmware (components/tx_app + every driver, the code that flies, built for the host)
+   │ tx_board_t HAL: each call advances simulated time
+   ├─ I²C ───────────▶ Si5351A model ── CLK0 ──▶ FPGA clock (whatever was programmed)
+   │                                   └ CLK1 ──▶ AD9116 CLKIN
+   ├─ config SPI ────▶ ECP5 sysCONFIG model ── DONE ──▶ FPGA logic starts
+   ├─ stream SPI ────▶ dvbt_tx_top (gateware/rtl, Verilated), bit by bit at 20 MHz
+   │   DREQ ◀────────┘          │ 12-bit DDR bus + DCLKIO
+   ├─ setup SPI ─────▶ AD9116 model ◀────────┘ latches on DCLKIO edges per DATA_CTRL
+   │   (spi_bus_pack) └▶ ADRF6755 model ── LO, LDET, TXDIS, modulator power
+   └─ GPIO: TXDIS, DAC RESET, LDET
+                                ▼
+                rf.iq: I/Q at 27.43 MS/s while the RF is on
+                                ▼
+   decimate 4x ─▶ gr-dtv DVB-T receiver ─▶ rx.ts ─▶ compared with sent.ts, ffprobe, ffmpeg
+```
+
+- **Time** is simulated in femtoseconds and owned by the harness
+  (`e2e.cpp`). An SPI frame clocks its bits into the RTL at the real SCK
+  rate while the FPGA clock runs alongside; a delay runs the clock; a DREQ
+  wait runs it until DREQ rises. Before the ECP5 model says DONE the FPGA
+  has no clock and its pins float.
+- **The models** (`models.h`) are written from the datasheets, not from the
+  drivers, and every rule they state is a violation in the report: the
+  Si5351A's SYS_INIT and register 183, the ECP5's command order and that
+  its port goes quiet after wake-up, the AD9116's RESET width, instruction
+  format and read-only registers, setup/hold of the DAC data against
+  DCLKIO, the retimer's 128 cycles of CLKIN and DCLKIO, the ADRF6755's I²C
+  power-up mode, every "set to" bit, all writable registers written before
+  CR0, Equations 1-3 and Table 6, the VCO range, and the modulator powered
+  only after lock.
+- **The FPGA starts from zero** (`--x-initial 0`), as the ECP5's global
+  set/reset leaves every flip-flop and BRAM after configuration.
+- **The receiver** (`model/dvbt_rx.py`) is gr-dtv's: synchronisation,
+  channel estimation, Viterbi, Reed-Solomon, descrambling. It needs ~0.1 s
+  to lock, so runs carry margin.
+
+## Scenarios (`test_e2e.py`)
+
+| test | what it proves |
+|---|---|
+| `boot_to_video` | power-up to 1080p30 H.264 on a receiver: clocks exact, LO 1279 MHz, DAC format agreed, RF only after lock, every received packet equal to what the firmware sent with none lost, PCR within 2 ticks of the channel timeline, every PTS ahead of the clock, the service named after the callsign, ffmpeg decodes with no errors or warnings |
+| `no_image_boots_from_flash` | empty partition: W25Q32 fallback, link and stream work |
+| `corrupt_image_boots_from_flash` | bad image CRC: never sent to the FPGA, fallback |
+| `rejected_bitstream_boots_from_flash` | a valid image the FPGA rejects: FAIL status, fallback |
+| `nothing_boots_keeps_rf_off` | no image and no flash: bring-up fails with the RF never on |
+| `pll_never_locks_keeps_rf_off` | the ADRF6755 never locks: bring-up stops (LDET timeout), RF never on |
+| `lo_unlock_recovers` | the VCO drifts out of its band in flight (unlocked until reprogrammed): RF off within one health period, relock, back on air, received again |
+| `fpga_loss_recovers` | the FPGA loses its configuration: ID check, RF off, reload, DAC re-sync, re-prime, back on air |
+| `p4_stall_fills_with_nulls` | the P4 stops for 5 ms: the FPGA fills with nulls, no packet lost, the health check counts them |
+
+## Can it fail? (`mutation_check.py`)
+
+Fifteen planted integration bugs, each of the kind that only shows when
+the pieces meet, must each turn a scenario red: stale-status FIFO priming,
+a 1 s DREQ wait with the FPGA gone, FPGA offset binary against a two's
+complement DAC, RF on without waiting for lock, a health check blind to
+LDET, the DAC's CLKIN never enabled, the mux at the wrong guard's rate,
+I/Q swapped by the DAC's latch edge, the modulator on in the init
+sequence, RFDIV off by one, a 3-wire read one bit long, DCLKIO inverted,
+DCLKIO in phase with the data, and DREQ promising one packet of room
+where the firmware sends two. A control mutant (an erase delay removed)
+is expected to survive: the ECP5 model does not time the erase.
+
+## What it found while being written
+
+- The ECP5 loader read the status register after `ISC_DISABLE`, when the
+  slave-SPI port has gone quiet and reads all ones (FAIL included): every
+  slave-SPI load would have been judged failed. Now read before.
+- Priming the TS FIFO trusted the status byte from the start of the last
+  frame, which can say "room" after that frame filled the FIFO; with
+  tx_en low nothing drains it, so bring-up hung on DREQ. Now the pin.
+- The default pins put DREQ and LDET on GPIO24/25, the P4's USB
+  Serial/JTAG (flashing, console), and the AD9116's pulled-down RESET on a
+  strapping pin. Moved.
+- With the FPGA gone, the stream pump waited up to a second for DREQ with
+  the RF on; it now runs the health check after one health period.
+- The half-band filter's shift-and-add chains, written as wire arrays,
+  made Verilator re-evaluate whole arrays every edge (12x slower); now a
+  function over constant digit masks, the same adders after synthesis.

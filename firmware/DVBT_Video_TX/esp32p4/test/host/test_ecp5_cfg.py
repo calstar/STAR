@@ -22,8 +22,9 @@ OK, TIMEOUT, NOT_FOUND, BAD_CRC, BAD_VER, FAIL = 0, 0x107, 0x105, 0x109, 0x10A, 
 class ECP5:
     """The FPGA's configuration port as the loader must drive it."""
 
-    def __init__(self, idcode=ID, flash_ok=True, initn_works=True, corrupt=False):
+    def __init__(self, idcode=ID, flash_ok=True, initn_works=True, corrupt=False, wakes=True):
         self.idcode, self.flash_ok, self.initn_works, self.corrupt = idcode, flash_ok, initn_works, corrupt
+        self.wakes = wakes                        # False: a good bitstream, but DONE never rises
         self.sspi = False
         self.programn = True
         self.cs = False
@@ -86,7 +87,10 @@ class ECP5:
         if f[:1] == b"\xE0":
             val = self.idcode.to_bytes(4, "big")
         elif f[:1] == b"\x3C":
-            st = (1 << 8 if self.done else 0) | (1 << 9 if self.state == "enabled" else 0)
+            if self.state == "user":              # woken up: the port is released, MISO floats
+                return bytes([0xFF]) * n
+            bad = self.state == "loaded" and (self.loaded != self.expected or self.corrupt)
+            st = (1 << 8 if self.done else 0) | (1 << 9 if self.state == "enabled" else 0) | (1 << 13 if bad else 0)
             val = st.to_bytes(4, "big")
         else:
             return payload
@@ -98,7 +102,7 @@ class ECP5:
 
     def end_frame(self):
         f = bytes(self.frame)
-        if not f:
+        if not f or self.state == "user":         # woken up: the port is released
             return
         op = f[0]
         self.log.append(f"{op:02X}")
@@ -120,9 +124,9 @@ class ECP5:
             self.state = "loaded"
         elif op == 0x26:
             assert self.state == "loaded", "ISC_DISABLE without a burst"
-            good = self.loaded == self.expected and not self.corrupt
+            good = self.loaded == self.expected and not self.corrupt and self.wakes
             self.done = good
-            self.state = "wait_cmd"
+            self.state = "user" if good else "wait_cmd"
         elif op in (0xE0, 0x3C, 0xFF):
             pass
         else:
@@ -188,9 +192,10 @@ def test_loads_over_slave_spi():
     rc, res = run(f, make_fpga_image.make(BIT))
     assert rc == OK and res.via == 1 and res.sspi_err == OK, (rc, res.via, res.sspi_err)
     assert f.loaded == BIT, "bitstream not delivered intact"
-    assert f.log[:6] == ["E0", "C6", "0E", "3B", "7A", "26"], f.log
+    # Status before ISC_DISABLE: after the wake-up the port reads all ones.
+    assert f.log[:7] == ["E0", "C6", "0E", "3B", "7A", "3C", "26"], f.log
     assert "flash_boot" not in f.log
-    assert res.idcode == ID and res.status & (1 << 8)
+    assert res.idcode == ID and not res.status & (1 << 13), hex(res.status)
     assert not f.sspi, "CFG must be released to the straps afterwards"
 
 
@@ -220,8 +225,17 @@ def test_wrong_device_boots_from_flash():
     assert "7A" not in f.log, "no burst into the wrong part"
 
 
-def test_failed_load_boots_from_flash():
-    f = ECP5(corrupt=True)                          # DONE never rises
+def test_rejected_bitstream_boots_from_flash():
+    f = ECP5(corrupt=True)                          # status FAIL bit, DONE never rises
+    f.expected = BIT
+    rc, res = run(f, make_fpga_image.make(BIT))
+    assert rc == OK and res.via == 2 and res.sspi_err == BAD_CRC
+    assert "26" not in f.log, "no wake-up command after the FPGA reported FAIL"
+    assert f.log[-1] == "flash_boot"
+
+
+def test_no_wake_up_boots_from_flash():
+    f = ECP5(wakes=False)                           # status clean, DONE never rises
     f.expected = BIT
     rc, res = run(f, make_fpga_image.make(BIT))
     assert rc == OK and res.via == 2 and res.sspi_err == FAIL

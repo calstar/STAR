@@ -1,4 +1,7 @@
 menu "DVB-T transmitter"
+    # Pins: GPIO24/25 (USB Serial/JTAG: flashing, console, FPGA updates)
+    # and GPIO26/27 (USB OTG FS) are left free; nothing here sits on the
+    # strapping pins GPIO34-38.
     config DVBT_FPGA_SCK
         int "FPGA SPI SCK GPIO"
         default 20
@@ -13,7 +16,7 @@ menu "DVB-T transmitter"
         default 23
     config DVBT_FPGA_DREQ
         int "FPGA DREQ GPIO"
-        default 24
+        default 28
     config DVBT_FPGA_SPI_HZ
         int "FPGA SPI clock (Hz, <= 20 MHz)"
         default 20000000
@@ -43,10 +46,10 @@ menu "DVB-T transmitter"
         default 33
     config DVBT_ADRF_CS
         int "ADRF6755 CS GPIO"
-        default 36
+        default 50
     config DVBT_DAC_RESET
         int "AD9116 RESET/PINMD GPIO (needs a board pull-down)"
-        default 37
+        default 51
     config DVBT_SETUP_SPI_HZ
         int "Setup bus clock (Hz, <= 20 MHz)"
         default 10000000
@@ -96,10 +99,10 @@ menu "DVB-T transmitter"
         default 0
     config DVBT_ADRF_LDET
         int "ADRF6755 LDET (lock detect) GPIO"
-        default 25
+        default 29
     config DVBT_ADRF_TXDIS
         int "ADRF6755 TXDIS (RF off when high) GPIO"
-        default 26
+        default 49
     config DVBT_VIDEO
         bool "Camera + H.264 video (needs tools/fetch-video-deps.sh)"
         default y
@@ -130,6 +133,27 @@ menu "DVB-T transmitter"
     config DVBT_VIDEO_DELAY_MS
         int "Decoder delay added to the PTS (ms)"
         default 400
+    config DVBT_SD_RECORD
+        bool "Record the transmitted TS to a microSD card"
+        default y
+    config DVBT_SD_CLK
+        int "microSD CLK GPIO (SDMMC slot 1, 1-bit)"
+        default 52
+        depends on DVBT_SD_RECORD
+    config DVBT_SD_CMD
+        int "microSD CMD GPIO"
+        default 53
+        depends on DVBT_SD_RECORD
+    config DVBT_SD_D0
+        int "microSD D0 GPIO"
+        default 54
+        depends on DVBT_SD_RECORD
+    config DVBT_USB_FPGA_UPDATE
+        bool "Accept FPGA images over the USB serial port (tools/fpga_update.py)"
+        default y
+    config DVBT_HEALTH_MS
+        int "Health check period (ms)"
+        default 100
     config DVBT_CALLSIGN
         string "Service name in the SDT (your callsign: station ID)"
         default "N0CALL"

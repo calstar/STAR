@@ -1,5 +1,5 @@
 // Si5351A clock generator: generic frequency planning (pure, host-tested)
-// and register writes over the ESP-IDF I2C master driver.
+// and register writes over any I2C transport (i2c_bus_if).
 //
 // Plan per Silicon Labs AN619: PLL (VCO 600-900 MHz) = xtal * (a + b/c),
 // output multisynth an even integer (integer mode, lowest jitter) chosen
@@ -27,12 +27,13 @@ si5351_params_t si5351_encode(uint32_t a, uint32_t b, uint32_t c);   // AN619 eq
 // regs 42-49, with R divider and integer bit handled by the caller).
 void si5351_pack(const si5351_params_t *pp, uint32_t r_div_log2, uint8_t out[8]);
 
-#ifdef ESP_PLATFORM
 #include "esp_err.h"
-#include "driver/i2c_master.h"
+#include "i2c_bus_if.h"
+
+#define SI5351_ADDR 0x60
 // Program CLK0..CLK(n_out-1) (n_out 1..3), all the same frequency, from
 // PLLA with the plan; crystal load in pF (6, 8 or 10). The board uses CLK0
-// for the FPGA and CLK1 for the AD9116's CLKIN.
-esp_err_t si5351_start(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
+// for the FPGA and CLK1 for the AD9116's CLKIN. Waits for SYS_INIT to clear
+// first (up to 100 ms). Generic over the I2C transport.
+esp_err_t si5351_start(const i2c_bus_if_t *bus, uint32_t xtal_hz, int load_pf,
                        uint64_t fout_num, uint64_t fout_den, int n_out, si5351_plan_t *plan);
-#endif
