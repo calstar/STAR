@@ -47,10 +47,16 @@ CASES = [
     # Sample-rate back end (tb/test_dsp.py): trims + 4x interpolation.
     ("dvbt_interp", "interp", "qpsk", "1/2"),
     ("dvbt_interp", "interp_spectrum", "qpsk", "1/2"),
+    ("dvbt_dac_out", "dac_out", "qpsk", "1/2"),
+    # I/O (tb/test_io.py)
+    ("dvbt_fifo", "fifo", "qpsk", "1/2"),
+    ("dvbt_host", "host", "qpsk", "1/2"),
 ]
 CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
 OFDM_TESTS = {"fft2048", "modulator"}
-DSP_TESTS = {"interp", "interp_spectrum"}
+DSP_TESTS = {"interp", "interp_spectrum", "dac_out"}
+IO_TESTS = {"fifo", "host", "tx_core"}
+PARAMS = {"dvbt_fifo": {"AW": 4}}  # small instances where the corners matter
 
 
 @pytest.mark.parametrize("seed", [1, 2])
@@ -62,18 +68,20 @@ def test_rtl(top: str, test: str, mod: str, rate: str, n_pkt: int, seed: int) ->
     # One build directory per case, so pytest -n (xdist) runs don't collide.
     build_dir = Path(os.environ.get("DVBT_SIM_BUILD", HERE / "sim_build")) / f"{top}-{test}-{mod}-{rate.replace('/', '')}-{seed}"
     runner.build(
-        sources=sorted(RTL.glob("*.v")),
+        sources=sorted(RTL.glob("*.v")) + sorted((TB / "models").glob("*.v")),
         hdl_toplevel=top,
         build_dir=build_dir,
         build_args=["-Wall"],
         defines={"DVBT_ROM_DIR": f'"{RTL}/rom"'},
         timescale=("1ns", "1ps"),
+        parameters=PARAMS.get(top, {}),
         always=True,
     )
     # The filter matches the full name, "test_stages.<test>".
     results = runner.test(
         hdl_toplevel=top,
-        test_module="test_ofdm" if test in OFDM_TESTS else "test_dsp" if test in DSP_TESTS else "test_stages",
+        test_module=("test_ofdm" if test in OFDM_TESTS else "test_dsp" if test in DSP_TESTS
+                     else "test_io" if test in IO_TESTS else "test_stages"),
         test_dir=TB,
         build_dir=build_dir,
         test_filter=rf"\.{test}$",
