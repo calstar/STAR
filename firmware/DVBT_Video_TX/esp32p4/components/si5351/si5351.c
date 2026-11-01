@@ -1,63 +1,51 @@
 #include "si5351.h"
-#include "esp_check.h"
-#include "freertos/FreeRTOS.h"
 
-static const char *TAG = "si5351";
-#define ADDR 0x60
+#define TRY(x) do { esp_err_t e_ = (x); if (e_ != ESP_OK) return e_; } while (0)
 
-static esp_err_t wr(i2c_master_dev_handle_t d, uint8_t reg, const uint8_t *v, size_t n)
+static esp_err_t wr(const i2c_bus_if_t *b, uint8_t reg, const uint8_t *v, size_t n)
 {
     uint8_t buf[9];
     buf[0] = reg;
     for (size_t i = 0; i < n; i++) buf[1 + i] = v[i];
-    return i2c_master_transmit(d, buf, n + 1, 100);
+    return b->write(b->ctx, SI5351_ADDR, buf, n + 1);
 }
 
-static esp_err_t wr1(i2c_master_dev_handle_t d, uint8_t reg, uint8_t v)
+static esp_err_t wr1(const i2c_bus_if_t *b, uint8_t reg, uint8_t v)
 {
-    return wr(d, reg, &v, 1);
+    return wr(b, reg, &v, 1);
 }
 
-esp_err_t si5351_start(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
+esp_err_t si5351_start(const i2c_bus_if_t *b, uint32_t xtal_hz, int load_pf,
                        uint64_t fout_num, uint64_t fout_den, int n_out, si5351_plan_t *plan)
 {
-    ESP_RETURN_ON_FALSE(n_out >= 1 && n_out <= 3, ESP_ERR_INVALID_ARG, TAG, "n_out");
-    ESP_RETURN_ON_FALSE(si5351_plan(xtal_hz, fout_num, fout_den, plan), ESP_ERR_INVALID_ARG,
-                        TAG, "no plan for that frequency");
-    i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADDR,
-                               .scl_speed_hz = 400000 };
-    i2c_master_dev_handle_t d;
-    ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(bus, &dc, &d), TAG, "add");
+    if (n_out < 1 || n_out > 3) return ESP_ERR_INVALID_ARG;
+    if (!si5351_plan(xtal_hz, fout_num, fout_den, plan)) return ESP_ERR_INVALID_ARG;
 
     // Wait for SYS_INIT to clear (reg 0 bit 7) after power-up.
     uint8_t reg0 = 0, st = 0x80;
     for (int i = 0; i < 100 && (st & 0x80); i++) {
-        ESP_RETURN_ON_ERROR(i2c_master_transmit_receive(d, &reg0, 1, &st, 1, 100), TAG, "status");
-        if (st & 0x80) vTaskDelay(pdMS_TO_TICKS(1));
+        TRY(b->write_read(b->ctx, SI5351_ADDR, &reg0, 1, &st, 1));
+        if (st & 0x80) b->delay_us(b->ctx, 1000);
     }
-    ESP_RETURN_ON_FALSE(!(st & 0x80), ESP_ERR_TIMEOUT, TAG, "SYS_INIT stuck");
+    if (st & 0x80) return ESP_ERR_TIMEOUT;
 
-    ESP_RETURN_ON_ERROR(wr1(d, 3, 0xFF), TAG, "outputs off");
-    for (uint8_t r = 16; r <= 23; r++) ESP_RETURN_ON_ERROR(wr1(d, r, 0x80), TAG, "pdn");
+    TRY(wr1(b, 3, 0xFF));                                   // outputs off
+    for (uint8_t r = 16; r <= 23; r++) TRY(wr1(b, r, 0x80)); // all CLKn powered down
     uint8_t load = load_pf <= 6 ? 0x40 : load_pf <= 8 ? 0x80 : 0xC0;
-    ESP_RETURN_ON_ERROR(wr1(d, 183, load | 0x12), TAG, "xtal load");
-    ESP_RETURN_ON_ERROR(wr1(d, 149, 0x00), TAG, "spread spectrum off");
+    TRY(wr1(b, 183, load | 0x12));                          // crystal load
+    TRY(wr1(b, 149, 0x00));                                 // spread spectrum off
 
-    uint8_t b[8];
+    uint8_t v[8];
     si5351_params_t pll = si5351_encode(plan->pll_a, plan->pll_b, plan->pll_c);
-    si5351_pack(&pll, 0, b);
-    ESP_RETURN_ON_ERROR(wr(d, 26, b, 8), TAG, "PLLA");
+    si5351_pack(&pll, 0, v);
+    TRY(wr(b, 26, v, 8));                                   // PLLA (MSNA)
     si5351_params_t ms = si5351_encode(plan->ms_div, 0, 1);
-    si5351_pack(&ms, plan->r_div_log2, b);
-    for (int i = 0; i < n_out; i++)                     // MS0 at 42, MS1 at 50, MS2 at 58
-        ESP_RETURN_ON_ERROR(wr(d, 42 + 8 * i, b, 8), TAG, "MSn");
-    ESP_RETURN_ON_ERROR(wr1(d, 177, 0x20), TAG, "PLLA reset");
+    si5351_pack(&ms, plan->r_div_log2, v);
+    for (int i = 0; i < n_out; i++)                         // MS0 at 42, MS1 at 50, MS2 at 58
+        TRY(wr(b, 42 + 8 * i, v, 8));
+    TRY(wr1(b, 177, 0x20));                                 // PLLA reset
     // CLKn: powered up, MSn integer mode, from PLLA, not inverted, from MSn, 8 mA.
-    for (int i = 0; i < n_out; i++)
-        ESP_RETURN_ON_ERROR(wr1(d, 16 + i, 0x4F), TAG, "CLKn ctrl");
-    ESP_RETURN_ON_ERROR(wr1(d, 3, (uint8_t)~((1u << n_out) - 1)), TAG, "outputs on");
-    ESP_LOGI(TAG, "CLK0..%d %.3f Hz (VCO %.3f Hz = %lu x (%lu + %lu/%lu), MS %lu)", n_out - 1, plan->out_hz,
-             plan->vco_hz, (unsigned long)xtal_hz, (unsigned long)plan->pll_a,
-             (unsigned long)plan->pll_b, (unsigned long)plan->pll_c, (unsigned long)plan->ms_div);
+    for (int i = 0; i < n_out; i++) TRY(wr1(b, 16 + i, 0x4F));
+    TRY(wr1(b, 3, (uint8_t)~((1u << n_out) - 1)));          // outputs on
     return ESP_OK;
 }

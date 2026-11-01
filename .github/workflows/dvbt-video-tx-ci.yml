@@ -1,0 +1,81 @@
+name: DVB-T video TX CI
+
+on:
+  push:
+    paths:
+      - 'firmware/DVBT_Video_TX/**'
+      - '.github/workflows/dvbt-video-tx-ci.yml'
+  pull_request:
+    paths:
+      - 'firmware/DVBT_Video_TX/**'
+      - '.github/workflows/dvbt-video-tx-ci.yml'
+
+defaults:
+  run:
+    working-directory: firmware/DVBT_Video_TX
+
+jobs:
+  host:
+    name: Firmware host tests (drivers, muxer, loader)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg && pip install pytest
+      - name: Host tests
+        run: cd esp32p4/test/host && python3 -m pytest -q
+
+  rtl:
+    name: RTL regression + mutation check (Icarus, gr-dtv golden model)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        # Ubuntu 24.04's gnuradio bindings are built for its python3.12.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog gnuradio python3-scipy python3-numpy python3-pip
+          /usr/bin/python3.12 -m pip install --break-system-packages cocotb==2.1.0 pytest pytest-xdist
+      - name: RTL regression
+        run: cd gateware && /usr/bin/python3.12 -m pytest -q -n auto test_rtl.py
+      - name: Mutation check (every mutant must be killed)
+        run: /usr/bin/python3.12 scripts/mutation_check.py
+
+  synth:
+    name: Synthesis + place and route (LFE5U-25F TQFP144)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y yosys && pip install yowasp-nextpnr-ecp5
+      - run: cd gateware && ./synth.sh
+
+  e2e:
+    name: End-to-end (firmware + RTL + chip models + DVB-T receiver)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator ffmpeg gnuradio python3-scipy python3-numpy python3-pip
+          /usr/bin/python3.12 -m pip install --break-system-packages pytest pytest-xdist
+      - name: End-to-end scenarios
+        run: cd test/e2e && /usr/bin/python3.12 -m pytest -q -n auto test_e2e.py
+
+  idf:
+    name: ESP-IDF build (ESP32-P4)
+    runs-on: ubuntu-24.04
+    container: espressif/idf:v5.5.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build without the camera stack
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          cd esp32p4 && idf.py set-target esp32p4 && idf.py build
+      - name: Build with the camera stack
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          cd esp32p4 && ./tools/fetch-video-deps.sh && idf.py fullclean && idf.py build

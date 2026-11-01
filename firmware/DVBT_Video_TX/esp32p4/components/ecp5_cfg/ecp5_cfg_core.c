@@ -103,16 +103,20 @@ esp_err_t ecp5_load_sspi(const ecp5_hal_t *h, const ecp5_image_t *img, uint32_t 
     h->set_cs(h->ctx, false);
     if (e != ESP_OK) return e;
 
+    // Status while the configuration port is still ours: after ISC_DISABLE
+    // the FPGA wakes up and, unless the bitstream keeps the slave-SPI port
+    // (a persistence option), the port goes quiet and reads all ones --
+    // FAIL bit included. So read it here, and after the wake-up trust only
+    // the DONE pin.
+    if ((e = cmd(h, OP_READ_STATUS, 0, r, 4)) != ESP_OK) return e;
+    *status = be32(r);
+    if (*status & ST_FAIL) return ESP_ERR_INVALID_CRC;     // the FPGA rejected the bitstream
     if ((e = cmd(h, OP_ISC_DISABLE, 0, NULL, 0)) != ESP_OK) return e;
     const uint8_t nop[4] = {0xFF, 0xFF, 0xFF, 0xFF};
     h->set_cs(h->ctx, true);
     h->spi(h->ctx, nop, NULL, 4);
     h->set_cs(h->ctx, false);
-    bool done = wait_pin(h, h->get_done, 100000);
-    if ((e = cmd(h, OP_READ_STATUS, 0, r, 4)) != ESP_OK) return e;
-    *status = be32(r);
-    if (!done || !(*status & ST_DONE) || (*status & ST_FAIL)) return ESP_FAIL;
-    return ESP_OK;
+    return wait_pin(h, h->get_done, 100000) ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t ecp5_boot_flash(const ecp5_hal_t *h)

@@ -126,21 +126,39 @@ module dvbt_halfband #(
     end
 
     // ---- products: shift-and-add over each coefficient's signed digits ---
+    // POS/NEG: the bit positions of the coefficient's +1 and -1 CSD digits,
+    // constants per tap, so the loop unrolls to just those adders (no
+    // multipliers). One expression, not a chain of array elements:
+    // simulators evaluate it once per clock.
+    function [18:0] csd_mask(input integer c, input integer sign);
+        integer b;
+        begin
+            csd_mask = 19'd0;
+            for (b = 0; b < 19; b = b + 1)
+                if (csd_dig(c, b) == sign) csd_mask[b] = 1'b1;
+        end
+    endfunction
+    function signed [AW-1:0] csd_mul(input signed [AW-1:0] x, input [18:0] pos, input [18:0] neg);
+        integer b;
+        reg signed [AW-1:0] a;
+        begin
+            a = 0;
+            for (b = 0; b < 19; b = b + 1) begin
+                if (pos[b]) a = a + (x <<< b);
+                if (neg[b]) a = a - (x <<< b);
+            end
+            csd_mul = a;
+        end
+    endfunction
     reg signed [AW-1:0] pr [0:K-1];
-    genvar gk, gb;
+    genvar gk;
     generate
         for (gk = 0; gk < K; gk = gk + 1) begin : g_mul
+            localparam [18:0] POS = csd_mask(coef(gk), 1);
+            localparam [18:0] NEG = csd_mask(coef(gk), -1);
             wire signed [AW-1:0] x = pa[gk];          // sign-extended
-            wire signed [AW-1:0] acc [0:19];
-            assign acc[0] = 0;
-            for (gb = 0; gb < 19; gb = gb + 1) begin : g_dig
-                localparam integer D = csd_dig(coef(gk), gb);
-                if (D > 0)      assign acc[gb+1] = acc[gb] + (x <<< gb);
-                else if (D < 0) assign acc[gb+1] = acc[gb] - (x <<< gb);
-                else            assign acc[gb+1] = acc[gb];
-            end
             always @(posedge clk)
-                if (en) pr[gk] <= acc[19];
+                if (en) pr[gk] <= csd_mul(x, POS, NEG);
         end
     endgenerate
     reg               pr_v, pr_b;

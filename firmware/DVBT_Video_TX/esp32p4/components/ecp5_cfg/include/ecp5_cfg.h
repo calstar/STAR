@@ -12,9 +12,12 @@
 //   0E 010000                   ISC_ERASE (SRAM)
 //   3B 000000                   LSC_RESET_CRC
 //   7A 000000 + bitstream       LSC_BITSTREAM_BURST, CS held low throughout
-//   26 000000                   ISC_DISABLE
-//   FF FF FF FF                 NOPs, then DONE must go high
-//   3C 000000 + 4 bytes in      LSC_READ_STATUS: bit 8 DONE, bit 13 FAIL
+//   3C 000000 + 4 bytes in      LSC_READ_STATUS: bit 13 FAIL (bitstream rejected)
+//   26 000000                   ISC_DISABLE: the FPGA wakes up
+//   FF FF FF FF                 NOPs, then the DONE pin must go high
+// The status is read before ISC_DISABLE because after the wake-up the
+// slave-SPI port is released (unless the bitstream keeps it) and reads
+// all ones; from then on only the DONE pin tells.
 // To verify against Lattice TN1260 on the first board.
 //
 // The core is pure (HAL callbacks) so it runs in host tests; ecp5_cfg_esp.c
@@ -79,5 +82,10 @@ typedef struct {
     const char *partition;        // "fpga"
 } ecp5_esp_config_t;
 
-esp_err_t ecp5_configure_esp(const ecp5_esp_config_t *cfg, ecp5_result_t *res);
+// Take the configuration pins and the SPI host and fill *hal (bound to the
+// "fpga" partition, whose size goes in *part_size); ecp5_esp_close hands
+// the pins back (CFG released to the straps, SN high-impedance, the SPI
+// host freed for the stream link).
+esp_err_t ecp5_esp_open(const ecp5_esp_config_t *cfg, ecp5_hal_t *hal, size_t *part_size);
+void ecp5_esp_close(void);
 #endif

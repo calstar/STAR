@@ -1,168 +1,175 @@
-// Rocket video transmitter, ESP32-P4: bring-up and the transport stream.
-//
-// 1. Si5351A CLK0 (FPGA) and CLK1 (AD9116 CLKIN) = 192/7 MHz (27.428571 MHz).
-// 2. FPGA: bitstream from the "fpga" partition over slave SPI; if that is
-//    missing or fails, the FPGA boots from its own W25Q32. Then the stream
-//    link (ID check).
-// 3. Setup bus (the P4's own SPI host, wired to both chips): lock the
-//    ADRF6755 into SPI mode first (it powers up in I2C mode on the same
-//    SCLK/SDIO lines), then the AD9116: reset, two's complement, retimer.
-//    The AD9116 and ADRF6755 need no FPGA: this could run before it.
-// 4. ADRF6755: PLL to the carrier with the RF off (TXDIS high, modulator
-//    powered down), wait for LDET.
-// 5. Modulator configured (2K, QPSK 1/2, guard 1/8), TS primed, tx on;
-//    then the ADRF6755's modulator on and TXDIS low: RF out.
-// 6. TS from ts_mux at exactly the channel rate: PAT/PMT, an SDT naming the
-//    service after the callsign, PCR, nulls; video joins when the camera
-//    and H.264 encoder pipeline puts access units in (next step).
+// Rocket video transmitter, ESP32-P4: binds the application (components/
+// tx_app: bring-up, the transport stream, the health watchdog) to the P4's
+// drivers, then runs the camera, the SD recorder and the USB FPGA updater
+// around it. The sequence itself is documented in tx_app.h; the end-to-end
+// test (test/e2e) runs that same code against the FPGA's RTL.
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/i2c_master.h"
-#include "driver/spi_master.h"
-#include "esp_log.h"
-#include "fpga_link.h"
-#include "dvbt_regs.h"
-#include "si5351.h"
-#include "ad9116.h"
-#include "adrf6755.h"
-#include "spi_bus_esp.h"
-#include "ecp5_cfg.h"
-#include "ts_mux.h"
-#include "esp_heap_caps.h"
 #include "freertos/semphr.h"
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_rom_sys.h"
+#include "esp_timer.h"
+#include "tx_app.h"
+#include "fpga_link_esp.h"
+#include "spi_bus_esp.h"
+#include "i2c_bus_esp.h"
+#include "ecp5_cfg.h"
 #if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
 #include "video_src.h"
 #endif
-#include "driver/gpio.h"
-#include "esp_timer.h"
+#if CONFIG_DVBT_SD_RECORD
+#include "recorder.h"
+#endif
+#if CONFIG_DVBT_USB_FPGA_UPDATE
+#include "fpga_update.h"
+#endif
 
 static const char *TAG = "dvbt";
+static tx_app_t s_app;
+static SemaphoreHandle_t s_mux_lock;
 
-static void dac_reset(void *ctx, bool high)
+static const int PINS[] = {
+    [TX_PIN_TXDIS] = CONFIG_DVBT_ADRF_TXDIS,
+    [TX_PIN_DAC_RESET] = CONFIG_DVBT_DAC_RESET,
+    [TX_PIN_LDET] = CONFIG_DVBT_ADRF_LDET,
+};
+
+static void gpio_set(void *ctx, tx_pin_t p, bool v) { gpio_set_level(PINS[p], v); }
+static bool gpio_get(void *ctx, tx_pin_t p) { return gpio_get_level(PINS[p]); }
+static int64_t now_us(void *ctx) { return esp_timer_get_time(); }
+
+static void delay_us(void *ctx, uint32_t us)
 {
-    (void)ctx;
-    gpio_set_level(CONFIG_DVBT_DAC_RESET, high);
+    if (us >= 2000) vTaskDelay(pdMS_TO_TICKS((us + 999) / 1000));
+    else esp_rom_delay_us(us);
 }
 
-static ts_mux_t s_mux;
-static SemaphoreHandle_t s_mux_lock;
-static uint32_t s_dropped;
+static void log_cb(void *ctx, char lvl, const char *m)
+{
+    if (lvl == 'E') ESP_LOGE(TAG, "%s", m);
+    else if (lvl == 'W') ESP_LOGW(TAG, "%s", m);
+    else ESP_LOGI(TAG, "%s", m);
+}
+
+static void mux_lock(void *ctx, bool take)
+{
+    if (take) xSemaphoreTake(s_mux_lock, portMAX_DELAY);
+    else xSemaphoreGive(s_mux_lock);
+}
+
+static const ecp5_esp_config_t CFG_PORT = {
+    .spi_host = SPI2_HOST, .pin_cclk = CONFIG_DVBT_CFG_CCLK, .pin_mosi = CONFIG_DVBT_CFG_MOSI,
+    .pin_miso = CONFIG_DVBT_CFG_MISO, .pin_sn = CONFIG_DVBT_CFG_SN,
+    .pin_programn = CONFIG_DVBT_CFG_PROGRAMN, .pin_initn = CONFIG_DVBT_CFG_INITN,
+    .pin_done = CONFIG_DVBT_CFG_DONE, .pin_cfg0 = CONFIG_DVBT_CFG_CFG0,
+    .pin_cfg1 = CONFIG_DVBT_CFG_CFG1, .cfg_sspi = CONFIG_DVBT_CFG_SSPI_CODE,
+    .clock_hz = CONFIG_DVBT_CFG_SPI_HZ, .partition = "fpga",
+};
+static const fpga_link_esp_config_t LINK = {
+    .spi_host = SPI2_HOST, .pin_sck = CONFIG_DVBT_FPGA_SCK, .pin_mosi = CONFIG_DVBT_FPGA_MOSI,
+    .pin_miso = CONFIG_DVBT_FPGA_MISO, .pin_cs = CONFIG_DVBT_FPGA_CS,
+    .pin_dreq = CONFIG_DVBT_FPGA_DREQ, .clock_hz = CONFIG_DVBT_FPGA_SPI_HZ,
+};
+#if CONFIG_DVBT_SD_RECORD
+static void on_sent(void *ctx, const uint8_t *pkts, size_t n) { recorder_push(pkts, n); }
+#else
+#define on_sent NULL
+#endif
+static ecp5_hal_t s_ecp5;
+static fpga_link_t s_link;
+
+// SPI2 serves the configuration port during a load and the stream link after.
+static esp_err_t fpga_port(void *ctx, bool open)
+{
+    size_t part = 0;
+    if (open) {
+        fpga_link_esp_deinit();
+        return ecp5_esp_open(&CFG_PORT, &s_ecp5, &part);
+    }
+    ecp5_esp_close();
+    return fpga_link_esp_init(&LINK, &s_link);
+}
 
 #if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
-// An encoded frame: stamp it on the mux clock (the capture time, then the
-// decoder delay) and queue it; if the channel is behind, drop it.
 static void on_frame(const uint8_t *au, size_t n, bool key, int64_t capture_us, void *arg)
 {
+    tx_put_frame(&s_app, au, n, key, capture_us);
+}
+#endif
+
+#if CONFIG_DVBT_USB_FPGA_UPDATE
+static void before_update(void)
+{
+    // Flash writes stall the CPU caches: stop transmitting cleanly first.
     xSemaphoreTake(s_mux_lock, portMAX_DELAY);
-    uint64_t age_90k = (uint64_t)(esp_timer_get_time() - capture_us) * 9 / 100;
-    uint64_t pts = ts_mux_now_90k(&s_mux) - age_90k + CONFIG_DVBT_VIDEO_DELAY_MS * 90ull;
-    if (!ts_mux_put(&s_mux, au, n, pts, key)) s_dropped++;
-    xSemaphoreGive(s_mux_lock);
+    tx_rf_off(&s_app);
+    ESP_LOGW(TAG, "FPGA update: RF off; restarting when it is written");
 }
 #endif
 
 void app_main(void)
 {
-    i2c_master_bus_config_t ic = {
-        .i2c_port = -1, .sda_io_num = CONFIG_DVBT_I2C_SDA, .scl_io_num = CONFIG_DVBT_I2C_SCL,
-        .clk_source = I2C_CLK_SRC_DEFAULT, .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_master_bus_handle_t i2c;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&ic, &i2c));
-    si5351_plan_t plan;
-    ESP_ERROR_CHECK(si5351_start(i2c, CONFIG_DVBT_SI5351_XTAL_HZ, CONFIG_DVBT_SI5351_LOAD_PF,
-                                 192000000ull, 7, 2, &plan));
+    s_mux_lock = xSemaphoreCreateMutex();
+    gpio_config_t out = { .pin_bit_mask = (1ULL << CONFIG_DVBT_ADRF_TXDIS) | (1ULL << CONFIG_DVBT_DAC_RESET),
+                          .mode = GPIO_MODE_OUTPUT };
+    gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 1);              // RF off from the first instant
+    ESP_ERROR_CHECK(gpio_config(&out));
+    gpio_config_t in = { .pin_bit_mask = 1ULL << CONFIG_DVBT_ADRF_LDET, .mode = GPIO_MODE_INPUT };
+    ESP_ERROR_CHECK(gpio_config(&in));
 
-    ecp5_esp_config_t cc = {
-        .spi_host = SPI2_HOST, .pin_cclk = CONFIG_DVBT_CFG_CCLK, .pin_mosi = CONFIG_DVBT_CFG_MOSI,
-        .pin_miso = CONFIG_DVBT_CFG_MISO, .pin_sn = CONFIG_DVBT_CFG_SN,
-        .pin_programn = CONFIG_DVBT_CFG_PROGRAMN, .pin_initn = CONFIG_DVBT_CFG_INITN,
-        .pin_done = CONFIG_DVBT_CFG_DONE, .pin_cfg0 = CONFIG_DVBT_CFG_CFG0,
-        .pin_cfg1 = CONFIG_DVBT_CFG_CFG1, .cfg_sspi = CONFIG_DVBT_CFG_SSPI_CODE,
-        .clock_hz = CONFIG_DVBT_CFG_SPI_HZ, .partition = "fpga",
-    };
-    ecp5_result_t cr;
-    ESP_ERROR_CHECK(ecp5_configure_esp(&cc, &cr));
-    vTaskDelay(pdMS_TO_TICKS(10));          // FPGA PLL lock + its 2^10-clock reset
-
-    fpga_link_config_t fc = {
-        .spi_host = SPI2_HOST, .pin_sck = CONFIG_DVBT_FPGA_SCK, .pin_mosi = CONFIG_DVBT_FPGA_MOSI,
-        .pin_miso = CONFIG_DVBT_FPGA_MISO, .pin_cs = CONFIG_DVBT_FPGA_CS,
-        .pin_dreq = CONFIG_DVBT_FPGA_DREQ, .clock_hz = CONFIG_DVBT_FPGA_SPI_HZ,
-    };
-    ESP_ERROR_CHECK(fpga_link_init(&fc));
-    ESP_LOGI(TAG, "FPGA up");
-
-    // RF stays off until the end: TXDIS high.
-    gpio_config_t txdis = { .pin_bit_mask = 1ULL << CONFIG_DVBT_ADRF_TXDIS, .mode = GPIO_MODE_OUTPUT };
-    ESP_ERROR_CHECK(gpio_config(&txdis));
-    gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 1);
-    gpio_config_t ldet = { .pin_bit_mask = 1ULL << CONFIG_DVBT_ADRF_LDET, .mode = GPIO_MODE_INPUT };
-    ESP_ERROR_CHECK(gpio_config(&ldet));
-
-    gpio_config_t rst = { .pin_bit_mask = 1ULL << CONFIG_DVBT_DAC_RESET, .mode = GPIO_MODE_OUTPUT };
-    ESP_ERROR_CHECK(gpio_config(&rst));
-    gpio_set_level(CONFIG_DVBT_DAC_RESET, 0);           // low = SPI mode
-    spi_bus_if_t setup;
+    static i2c_bus_if_t i2c;
+    ESP_ERROR_CHECK(i2c_bus_esp_init(CONFIG_DVBT_I2C_SDA, CONFIG_DVBT_I2C_SCL, &i2c));
+    static spi_bus_if_t setup;
     spi_bus_esp_config_t sc = {
         .spi_host = SPI3_HOST, .pin_sclk = CONFIG_DVBT_SETUP_SCLK, .pin_sdio = CONFIG_DVBT_SETUP_SDIO,
         .pin_miso = CONFIG_DVBT_SETUP_MISO, .pin_cs = { CONFIG_DVBT_DAC_CS, CONFIG_DVBT_ADRF_CS },
         .n_dev = 2, .clock_hz = CONFIG_DVBT_SETUP_SPI_HZ,
     };
     ESP_ERROR_CHECK(spi_bus_esp_init(&sc, &setup));
-    adrf6755_t mod = { .bus = &setup, .dev = 1 };
-    ESP_ERROR_CHECK(adrf6755_lock_spi(&mod));
-    ad9116_t dac = { .bus = &setup, .dev = 0, .set_reset = dac_reset };
-    uint8_t ver = 0;
-    ESP_ERROR_CHECK(ad9116_init(&dac, true, &ver));
-    ESP_LOGI(TAG, "AD9116 version %02x, retimer locked", ver);
+    size_t part = 0;
+    ESP_ERROR_CHECK(ecp5_esp_open(&CFG_PORT, &s_ecp5, &part));   // for the partition size
+    ecp5_esp_close();
 
-    adrf6755_plan_t lo;
-    if (!adrf6755_plan(CONFIG_DVBT_ADRF_REFIN_HZ, (uint64_t)CONFIG_DVBT_LO_KHZ * 1000, &lo)) {
-        ESP_LOGE(TAG, "no ADRF6755 plan for %d kHz from %d Hz", CONFIG_DVBT_LO_KHZ, CONFIG_DVBT_ADRF_REFIN_HZ);
-        abort();
-    }
-    ESP_ERROR_CHECK(adrf6755_init(&mod, &lo, CONFIG_DVBT_ADRF_ATTEN_DB));
-    int64_t t0 = esp_timer_get_time();
-    while (!gpio_get_level(CONFIG_DVBT_ADRF_LDET)) {
-        if (esp_timer_get_time() - t0 > 10000) {
-            ESP_LOGE(TAG, "ADRF6755 PLL did not lock (LDET low after 10 ms)");
-            abort();
-        }
-    }
-    ESP_LOGI(TAG, "ADRF6755 locked: LO %.1f Hz (PFD %lu, INT %u, FRAC %lu, RFDIV %u)", lo.lo_hz,
-             (unsigned long)lo.pfd_hz, lo.intg, (unsigned long)lo.frac, lo.rfdiv);
-
-    uint32_t ctrl = DVBT_CTRL_MOD(0) | DVBT_CTRL_RATE(0) | DVBT_CTRL_GUARD(2);   // two's complement
-    ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_CTRL, ctrl));
-    ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_STATUS, 0x8000000Fu));              // clear flags
-
-    ts_mux_config_t mc = {
-        .tsid = 1, .onid = 1, .program = 1, .pmt_pid = 0x1000, .video_pid = 0x100,
-        .provider = "STAR", .service = CONFIG_DVBT_CALLSIGN,
-        .buf_size = 256 * 1024,
+    static tx_board_t board;
+    board = (tx_board_t){
+        .i2c = &i2c, .ecp5 = &s_ecp5, .fpga_part_size = part, .fpga_port = fpga_port,
+        .link = &s_link, .setup = &setup, .gpio_set = gpio_set, .gpio_get = gpio_get,
+        .now_us = now_us, .delay_us = delay_us, .log = log_cb, .mux_lock = mux_lock,
+        .on_sent = on_sent,
     };
-    ts_dvbt_rate(6, 0, 0, 2, &mc.rate_num, &mc.rate_den);   // must match CTRL above
-    mc.buf = heap_caps_malloc(mc.buf_size, MALLOC_CAP_8BIT);
-    ESP_ERROR_CHECK(mc.buf ? ESP_OK : ESP_ERR_NO_MEM);
-    ts_mux_init(&s_mux, &mc);
-    s_mux_lock = xSemaphoreCreateMutex();
-    static uint8_t pkts[2 * TS_PACKET];
-    ts_mux_next(&s_mux, pkts);
-    // Prime the TS FIFO while tx_en is low: send until the status byte says
-    // DREQ has fallen (it is sampled at the start of each frame, so this
-    // overshoots by at most the packet in flight -- DREQ leaves room for 2).
-    uint8_t sb = DVBT_SB_DREQ;
-    while (sb & DVBT_SB_DREQ) {
-        ESP_ERROR_CHECK(fpga_ts_send(pkts, 1, 100, &sb));
-        ts_mux_next(&s_mux, pkts);
+    tx_config_t cfg = {
+        .xtal_hz = CONFIG_DVBT_SI5351_XTAL_HZ, .xtal_load_pf = CONFIG_DVBT_SI5351_LOAD_PF,
+        .refin_hz = CONFIG_DVBT_ADRF_REFIN_HZ, .lo_hz = (uint64_t)CONFIG_DVBT_LO_KHZ * 1000,
+        .atten_db = CONFIG_DVBT_ADRF_ATTEN_DB,
+        .bw_mhz = 6, .mod = 0, .rate = 0, .guard = 2,        // QPSK 1/2, guard 1/8
+        .provider = "STAR", .service = CONFIG_DVBT_CALLSIGN,
+        .video_delay_ms = CONFIG_DVBT_VIDEO_DELAY_MS,
+        .mux_buf_size = 256 * 1024, .health_ms = CONFIG_DVBT_HEALTH_MS,
+    };
+    cfg.mux_buf = heap_caps_malloc(cfg.mux_buf_size, MALLOC_CAP_SPIRAM);
+    ESP_ERROR_CHECK(cfg.mux_buf ? ESP_OK : ESP_ERR_NO_MEM);
+    esp_err_t e = tx_bringup(&s_app, &board, &cfg);
+    if (e != ESP_OK) {
+        // RF stays off. Keep the USB updater alive so a bad FPGA image can be replaced.
+        ESP_LOGE(TAG, "bring-up failed (0x%x): RF off", e);
     }
-    ESP_ERROR_CHECK(fpga_reg_write(DVBT_REG_CTRL, ctrl | DVBT_CTRL_TX_EN));
-    ESP_ERROR_CHECK(adrf6755_modulator_on(&mod, true));     // only after lock (step 34)
-    gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 0);
-    ESP_LOGI(TAG, "transmitting at %.3f MHz", lo.lo_hz / 1e6);
+
+#if CONFIG_DVBT_USB_FPGA_UPDATE
+    if (fpga_update_usb_start("fpga", before_update) != ESP_OK)
+        ESP_LOGW(TAG, "USB FPGA updater not started");
+#endif
+    if (e != ESP_OK) {
+        for (;;) vTaskDelay(portMAX_DELAY);
+    }
+#if CONFIG_DVBT_SD_RECORD
+    recorder_config_t rc = { .pin_clk = CONFIG_DVBT_SD_CLK, .pin_cmd = CONFIG_DVBT_SD_CMD,
+                             .pin_d0 = CONFIG_DVBT_SD_D0, .ring_bytes = 1024 * 1024 };
+    if (recorder_start(&rc) != ESP_OK) ESP_LOGW(TAG, "no microSD card: not recording");
+#endif
 #if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
     video_src_config_t vc = {
         .sccb_port = 1, .sccb_scl = CONFIG_DVBT_CAM_SCCB_SCL, .sccb_sda = CONFIG_DVBT_CAM_SCCB_SDA,
@@ -176,19 +183,10 @@ void app_main(void)
 #endif
 
     for (uint32_t n = 0;; n++) {
-        xSemaphoreTake(s_mux_lock, portMAX_DELAY);
-        ts_mux_next(&s_mux, pkts + TS_PACKET);
-        xSemaphoreGive(s_mux_lock);
-        ESP_ERROR_CHECK(fpga_ts_send(pkts, 2, 1000, &sb));
-        xSemaphoreTake(s_mux_lock, portMAX_DELAY);
-        ts_mux_next(&s_mux, pkts);
-        xSemaphoreGive(s_mux_lock);
-        if ((n & 0x3FFF) == 0) {
-            uint32_t st = 0;
-            fpga_reg_read(DVBT_REG_STATUS, &st);
-            ESP_LOGI(TAG, "status %08lx, FPGA nulls %lu, frames dropped %lu, video backlog %u bytes",
-                     (unsigned long)st, (unsigned long)DVBT_ST_NULLS(st), (unsigned long)s_dropped,
-                     (unsigned)ts_mux_backlog(&s_mux));
-        }
+        tx_pump(&s_app);
+        if ((n & 0x1FFF) == 0)
+            ESP_LOGI(TAG, "faults %03lx, recoveries %lu, nulls %llu, frames %llu (dropped %llu), backlog %u B",
+                     (unsigned long)s_app.faults, (unsigned long)s_app.recoveries, s_app.nulls,
+                     s_app.frames, s_app.frames_dropped, (unsigned)ts_mux_backlog(&s_app.mux));
     }
 }
