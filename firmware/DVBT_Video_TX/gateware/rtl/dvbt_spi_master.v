@@ -15,6 +15,9 @@
 //     then 8 per data byte: nbits = 8 + 8n, wr_bits = 8. For a write, set
 //     wr_bits to the total (or use 4-wire framing).
 // Bits clocked in are returned right-aligned in rx.
+//   cs_only: no clock, no data: chip select low for 2 (div + 1) clocks,
+//     then high as usual (the ADRF6755 selects and locks SPI mode on the
+//     third such pulse; datasheet Rev. B, Figure 67).
 `default_nettype none
 
 module dvbt_spi_master (
@@ -27,6 +30,7 @@ module dvbt_spi_master (
     input  wire  [7:0] div,
     input  wire        three_wire,
     input  wire  [5:0] wr_bits,    // 3-wire: bits driven before the turnaround
+    input  wire        cs_only,    // pulse chip select only
     output reg  [31:0] rx,
     output reg         busy,
     output reg         sclk,
@@ -43,6 +47,7 @@ module dvbt_spi_master (
     reg        tail;               // CS hold after the last falling edge
     reg        tw;
     reg  [5:0] wb;
+    reg        co;
     assign sdo = sh[31];
     wire sdi = tw ? sdio_in : miso;
 
@@ -65,6 +70,7 @@ module dvbt_spi_master (
                 tail <= 1'b0;
                 tw   <= three_wire;
                 wb   <= wr_bits;
+                co   <= cs_only;
                 sdo_oe <= !(three_wire && wr_bits == 6'd0);
                 cs_n <= dev ? 2'b01 : 2'b10;
             end
@@ -75,6 +81,8 @@ module dvbt_spi_master (
             if (tail) begin
                 cs_n <= 2'b11;
                 busy <= 1'b0;
+            end else if (co) begin
+                tail <= 1'b1;          // one tick low, then the tail raises CS
             end else if (!sclk) begin
                 sclk <= 1'b1;
                 rx   <= {rx[30:0], sdi};

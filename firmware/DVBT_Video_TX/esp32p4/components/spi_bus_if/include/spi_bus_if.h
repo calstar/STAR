@@ -14,6 +14,9 @@
 typedef struct spi_bus_if {
     esp_err_t (*xfer)(void *ctx, int dev, int nbits, bool three_wire, int wr_bits,
                       uint32_t tx, uint32_t *rx);
+    // Chip select low then high with no clock or data (e.g. the ADRF6755's
+    // SPI-mode lock). May be NULL if the bus cannot do it.
+    esp_err_t (*cs_pulse)(void *ctx, int dev);
     void *ctx;
 } spi_bus_if_t;
 

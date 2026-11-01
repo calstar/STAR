@@ -282,6 +282,31 @@ async def host(dut):
     assert int(dut.sm_cs_n.value) == 0b11
     assert await esp.read(4) == pattern, "SPI master read-back"
 
+    # Chip-select-only pulses (the ADRF6755's SPI-mode lock: 3 of them):
+    # CS low then high, no SCLK edge, for each.
+    sclk_edges, cs_lows = [0], [0]
+
+    async def watch():
+        prev_cs = 1
+        while True:
+            await RisingEdge(dut.clk)
+            if int(dut.sm_sclk.value):
+                sclk_edges[0] += 1
+            cs = (int(dut.sm_cs_n.value) >> 1) & 1
+            if prev_cs and not cs:
+                cs_lows[0] += 1
+            prev_cs = cs
+
+    w = cocotb.start_soon(watch())
+    await esp.write(5, (1 << 24) | (2 << 16) | (1 << 8))
+    for _ in range(3):
+        await esp.write(4, 0)
+        while (await esp.read(5)) >> 31:
+            pass
+    w.cancel()
+    assert cs_lows[0] == 3 and sclk_edges[0] == 0, f"{cs_lows[0]} CS pulses, {sclk_edges[0]} SCLK-high clocks"
+    assert int(dut.sm_cs_n.value) == 0b11
+
     # 3-wire, against an AD9116 SPI port as its datasheet (Rev. F, pp. 34-36)
     # describes it: instruction byte R/W N1 N0 A4..A0, MSB first, data in on
     # SCLK rising, read data driven on SCLK falling on the one SDIO line.
