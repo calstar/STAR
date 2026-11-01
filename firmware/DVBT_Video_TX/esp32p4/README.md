@@ -9,6 +9,8 @@ tools/install-idf.sh            # once per machine: ESP-IDF + RISC-V toolchain i
 . tools/env.sh
 idf.py set-target esp32p4 build
 idf.py -p /dev/ttyUSB0 flash monitor
+tools/make_fpga_image.py ../gateware/build/dvbt_tx_top/dvbt_tx.bit build/fpga.img
+esptool.py --chip esp32p4 -p /dev/ttyUSB0 write_flash 0x310000 build/fpga.img   # "fpga" partition
 /usr/bin/python3.12 -m pytest -q test/host     # host tests, no hardware
 ```
 
@@ -19,6 +21,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 | `spi_bus_if` | a generic SPI transaction interface (4-wire or 3-wire with turnaround), so chip drivers don't care what bus they're on |
 | `fpga_link` | the SPI link to the FPGA (SPI2): register read/write, TS packets paced by DREQ. `dvbt_regs.h` mirrors `gateware/rtl/dvbt_host.v`; `fpga_proto.c` is the frame encoding, pure C |
 | `spi_bus_esp` | `spi_bus_if` on the P4's second SPI host (SPI3), the setup bus: AD9116 (3-wire, half duplex) and ADRF6755 (4-wire, its SDO back) share SCLK and the data line; chip selects are GPIOs so CS-only pulses work. `spi_bus_pack.c` is the bit packing, pure C |
+| `ecp5_cfg` | loads the FPGA at boot over its slave-SPI configuration port from the `fpga` partition (`tools/make_fpga_image.py` wraps the `.bit` with a CRC-checked header); if the image is missing, corrupt, for the wrong part, or the load fails, it releases the CFG pins to the board straps and pulses PROGRAMN so the FPGA boots from its own W25Q32 |
 | `si5351` | Si5351A frequency planning (exact rationals, AN619 encoding) and I²C programming; CLK0 = 192/7 MHz for the FPGA and DAC |
 | `ad9116` | AD9114/5/6/7 setup over any `spi_bus_if`: reset, data format, retimer lock (datasheet Rev. F) |
 | `adrf6755` | ADRF6755 modulator + PLL over any `spi_bus_if`: SPI-mode lock (3 CS pulses), LO planning (Equations 1-5, Table 6), the datasheet's power-up sequence (Rev. B p. 35), modulator power |
@@ -26,8 +29,10 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 ## Bring-up order (main.c)
 
-1. Si5351A CLK0 = 27.428571 MHz (the FPGA has no clock before this).
-2. FPGA link: ID register must read `D7B70003`.
+1. Si5351A CLK0 (FPGA) and CLK1 (AD9116 CLKIN) = 27.428571 MHz.
+2. FPGA configured: slave SPI from the P4's `fpga` partition, or the
+   W25Q32 fallback; then the stream link, whose ID register must read
+   `D7B70003`.
 3. TXDIS high (RF off). ADRF6755 locked into SPI mode (three CS pulses):
    it powers up in I²C mode on the same SCLK/SDIO lines as the AD9116 (at
    address 0x60, the Si5351A's too -- so it must not share the Si5351A's
@@ -51,11 +56,20 @@ decoding the register bytes with AN619's equations in exact fractions (the
 27.428571 MHz plan is exact: 25 MHz × (35 + 19/175) / 32); the AD9116 driver
 against a model of its SPI port; the ADRF6755 planner against the
 datasheet's three worked examples (1875, 2000 and 925 MHz) and its driver
-against an SPI-port model that refuses traffic before the SPI-mode lock. The gateware's cocotb host test builds its
+against an SPI-port model that refuses traffic before the SPI-mode lock;
+the FPGA loader against an emulated ECP5 configuration port (command order,
+SRAM-erase operand, the bitstream delivered intact, CFG released after) and
+every fallback to the W25Q32: empty or corrupt image, wrong device, INITN
+stuck, DONE never rising. The gateware's cocotb host test builds its
 SPI frames with this same `fpga_proto.c`, so firmware and RTL are checked
 against each other.
 
 ## Not done yet
+
+- **Confirm against Lattice TN1260 on the first board:** the CFG codes
+  (`CONFIG_DVBT_CFG_SSPI_CODE`) and the slave-SPI command sequence; both
+  come from open-source loaders (ecpprog, openFPGALoader), and a wrong
+  guess falls back to the W25Q32 rather than bricking the board.
 
 - **Video:** MIPI-CSI camera → ISP → hardware H.264 encoder → MPEG-TS muxer
   at a constant 4.15 Mbit/s (PCR from the byte count, nulls for stuffing).

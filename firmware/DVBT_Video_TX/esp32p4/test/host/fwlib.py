@@ -11,10 +11,11 @@ from pathlib import Path
 FW = Path(__file__).resolve().parents[2]
 SRCS = ["components/fpga_link/fpga_proto.c", "components/si5351/si5351_plan.c",
         "components/ad9116/ad9116.c", "components/adrf6755/adrf6755_plan.c",
-        "components/adrf6755/adrf6755.c", "components/spi_bus_esp/spi_bus_pack.c"]
+        "components/adrf6755/adrf6755.c", "components/spi_bus_esp/spi_bus_pack.c",
+        "components/ecp5_cfg/ecp5_cfg_core.c"]
 INCS = ["test/host/shim", "components/spi_bus_if/include", "components/fpga_link/include",
         "components/si5351/include", "components/ad9116/include", "components/adrf6755/include",
-        "components/spi_bus_esp/include"]
+        "components/spi_bus_esp/include", "components/ecp5_cfg/include"]
 
 _lib = None
 

@@ -1,7 +1,9 @@
 // Rocket video transmitter, ESP32-P4: bring-up and the transport stream.
 //
-// 1. Si5351A CLK0 = 192/7 MHz (27.428571 MHz) for the FPGA and the DAC.
-// 2. FPGA link up (ID check).
+// 1. Si5351A CLK0 (FPGA) and CLK1 (AD9116 CLKIN) = 192/7 MHz (27.428571 MHz).
+// 2. FPGA: bitstream from the "fpga" partition over slave SPI; if that is
+//    missing or fails, the FPGA boots from its own W25Q32. Then the stream
+//    link (ID check).
 // 3. Setup bus (the P4's own SPI host, wired to both chips): lock the
 //    ADRF6755 into SPI mode first (it powers up in I2C mode on the same
 //    SCLK/SDIO lines), then the AD9116: reset, two's complement, retimer.
@@ -24,6 +26,7 @@
 #include "ad9116.h"
 #include "adrf6755.h"
 #include "spi_bus_esp.h"
+#include "ecp5_cfg.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
 
@@ -51,8 +54,19 @@ void app_main(void)
     i2c_master_bus_handle_t i2c;
     ESP_ERROR_CHECK(i2c_new_master_bus(&ic, &i2c));
     si5351_plan_t plan;
-    ESP_ERROR_CHECK(si5351_start_clk0(i2c, CONFIG_DVBT_SI5351_XTAL_HZ, CONFIG_DVBT_SI5351_LOAD_PF,
-                                      192000000ull, 7, &plan));
+    ESP_ERROR_CHECK(si5351_start(i2c, CONFIG_DVBT_SI5351_XTAL_HZ, CONFIG_DVBT_SI5351_LOAD_PF,
+                                 192000000ull, 7, 2, &plan));
+
+    ecp5_esp_config_t cc = {
+        .spi_host = SPI2_HOST, .pin_cclk = CONFIG_DVBT_CFG_CCLK, .pin_mosi = CONFIG_DVBT_CFG_MOSI,
+        .pin_miso = CONFIG_DVBT_CFG_MISO, .pin_sn = CONFIG_DVBT_CFG_SN,
+        .pin_programn = CONFIG_DVBT_CFG_PROGRAMN, .pin_initn = CONFIG_DVBT_CFG_INITN,
+        .pin_done = CONFIG_DVBT_CFG_DONE, .pin_cfg0 = CONFIG_DVBT_CFG_CFG0,
+        .pin_cfg1 = CONFIG_DVBT_CFG_CFG1, .cfg_sspi = CONFIG_DVBT_CFG_SSPI_CODE,
+        .clock_hz = CONFIG_DVBT_CFG_SPI_HZ, .partition = "fpga",
+    };
+    ecp5_result_t cr;
+    ESP_ERROR_CHECK(ecp5_configure_esp(&cc, &cr));
     vTaskDelay(pdMS_TO_TICKS(10));          // FPGA PLL lock + its 2^10-clock reset
 
     fpga_link_config_t fc = {

@@ -18,9 +18,10 @@ static esp_err_t wr1(i2c_master_dev_handle_t d, uint8_t reg, uint8_t v)
     return wr(d, reg, &v, 1);
 }
 
-esp_err_t si5351_start_clk0(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
-                            uint64_t fout_num, uint64_t fout_den, si5351_plan_t *plan)
+esp_err_t si5351_start(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
+                       uint64_t fout_num, uint64_t fout_den, int n_out, si5351_plan_t *plan)
 {
+    ESP_RETURN_ON_FALSE(n_out >= 1 && n_out <= 3, ESP_ERR_INVALID_ARG, TAG, "n_out");
     ESP_RETURN_ON_FALSE(si5351_plan(xtal_hz, fout_num, fout_den, plan), ESP_ERR_INVALID_ARG,
                         TAG, "no plan for that frequency");
     i2c_device_config_t dc = { .dev_addr_length = I2C_ADDR_BIT_LEN_7, .device_address = ADDR,
@@ -48,12 +49,14 @@ esp_err_t si5351_start_clk0(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int l
     ESP_RETURN_ON_ERROR(wr(d, 26, b, 8), TAG, "PLLA");
     si5351_params_t ms = si5351_encode(plan->ms_div, 0, 1);
     si5351_pack(&ms, plan->r_div_log2, b);
-    ESP_RETURN_ON_ERROR(wr(d, 42, b, 8), TAG, "MS0");
+    for (int i = 0; i < n_out; i++)                     // MS0 at 42, MS1 at 50, MS2 at 58
+        ESP_RETURN_ON_ERROR(wr(d, 42 + 8 * i, b, 8), TAG, "MSn");
     ESP_RETURN_ON_ERROR(wr1(d, 177, 0x20), TAG, "PLLA reset");
-    // CLK0: powered up, MS0 integer mode, from PLLA, not inverted, from MS0, 8 mA.
-    ESP_RETURN_ON_ERROR(wr1(d, 16, 0x4F), TAG, "CLK0 ctrl");
-    ESP_RETURN_ON_ERROR(wr1(d, 3, 0xFE), TAG, "CLK0 on");
-    ESP_LOGI(TAG, "CLK0 %.3f Hz (VCO %.3f Hz = %lu x (%lu + %lu/%lu), MS %lu)", plan->out_hz,
+    // CLKn: powered up, MSn integer mode, from PLLA, not inverted, from MSn, 8 mA.
+    for (int i = 0; i < n_out; i++)
+        ESP_RETURN_ON_ERROR(wr1(d, 16 + i, 0x4F), TAG, "CLKn ctrl");
+    ESP_RETURN_ON_ERROR(wr1(d, 3, (uint8_t)~((1u << n_out) - 1)), TAG, "outputs on");
+    ESP_LOGI(TAG, "CLK0..%d %.3f Hz (VCO %.3f Hz = %lu x (%lu + %lu/%lu), MS %lu)", n_out - 1, plan->out_hz,
              plan->vco_hz, (unsigned long)xtal_hz, (unsigned long)plan->pll_a,
              (unsigned long)plan->pll_b, (unsigned long)plan->pll_c, (unsigned long)plan->ms_div);
     return ESP_OK;
