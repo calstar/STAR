@@ -100,6 +100,36 @@ menu "DVB-T transmitter"
     config DVBT_ADRF_TXDIS
         int "ADRF6755 TXDIS (RF off when high) GPIO"
         default 26
+    config DVBT_VIDEO
+        bool "Camera + H.264 video (needs tools/fetch-video-deps.sh)"
+        default y
+    config DVBT_CAM_SCCB_SCL
+        int "Camera I2C (SCCB) SCL GPIO"
+        default 9
+    config DVBT_CAM_SCCB_SDA
+        int "Camera I2C (SCCB) SDA GPIO"
+        default 10
+    config DVBT_CAM_RESET
+        int "Camera reset GPIO (-1: none)"
+        default -1
+    config DVBT_CAM_PWDN
+        int "Camera power-down GPIO (-1: none)"
+        default -1
+    config DVBT_VIDEO_WIDTH
+        int "Video width (match the OV5647 format in menuconfig)"
+        default 1920
+    config DVBT_VIDEO_HEIGHT
+        int "Video height"
+        default 1080
+    config DVBT_VIDEO_KBPS
+        int "H.264 bit rate (kbit/s; the channel carries 4147)"
+        default 3300
+    config DVBT_VIDEO_GOP
+        int "Frames between key frames (receiver lock time = GOP / 30 s)"
+        default 30
+    config DVBT_VIDEO_DELAY_MS
+        int "Decoder delay added to the PTS (ms)"
+        default 400
     config DVBT_CALLSIGN
         string "Service name in the SDT (your callsign: station ID)"
         default "N0CALL"

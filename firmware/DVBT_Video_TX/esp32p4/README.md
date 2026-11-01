@@ -6,6 +6,7 @@ FPGA modulates. ESP-IDF v5.5.1, plain C, no Arduino/PlatformIO.
 
 ```bash
 tools/install-idf.sh            # once per machine: ESP-IDF + RISC-V toolchain into /opt/esp
+tools/fetch-video-deps.sh       # Espressif camera + H.264 components from GitHub (pinned)
 . tools/env.sh
 idf.py set-target esp32p4 build
 idf.py -p /dev/ttyUSB0 flash monitor
@@ -23,6 +24,7 @@ esptool.py --chip esp32p4 -p /dev/ttyUSB0 write_flash 0x310000 build/fpga.img   
 | `spi_bus_esp` | `spi_bus_if` on the P4's second SPI host (SPI3), the setup bus: AD9116 (3-wire, half duplex) and ADRF6755 (4-wire, its SDO back) share SCLK and the data line; chip selects are GPIOs so CS-only pulses work. `spi_bus_pack.c` is the bit packing, pure C |
 | `ecp5_cfg` | loads the FPGA at boot over its slave-SPI configuration port from the `fpga` partition (`tools/make_fpga_image.py` wraps the `.bit` with a CRC-checked header); if the image is missing, corrupt, for the wrong part, or the load fails, it releases the CFG pins to the board straps and pulses PROGRAMN so the FPGA boots from its own W25Q32 |
 | `ts_mux` | MPEG-TS multiplexer at exactly the DVB-T channel rate (`ts_dvbt_rate`): PAT/PMT every 100 ms, an SDT naming the service after the callsign, PCR every 20 ms derived from the packet count, H.264 access units as PES with PTS, nulls in the gaps. Pure C, no allocation |
+| `video_src` | OV5647 over MIPI CSI → ISP → YUV420 → the P4's hardware H.264 encoder (Espressif `esp_video`, V4L2), each access unit to a callback with its capture time and key-frame flag; `main` stamps it on the mux clock (+ decoder delay) and queues it in `ts_mux`, dropping frames the channel cannot carry. Without `third_party/` the firmware builds without video |
 | `si5351` | Si5351A frequency planning (exact rationals, AN619 encoding) and I²C programming; CLK0 = 192/7 MHz for the FPGA and DAC |
 | `ad9116` | AD9114/5/6/7 setup over any `spi_bus_if`: reset, data format, retimer lock (datasheet Rev. F) |
 | `adrf6755` | ADRF6755 modulator + PLL over any `spi_bus_if`: SPI-mode lock (3 CS pulses), LO planning (Equations 1-5, Table 6), the datasheet's power-up sequence (Rev. B p. 35), modulator power |
@@ -79,7 +81,15 @@ against each other.
   come from open-source loaders (ecpprog, openFPGALoader), and a wrong
   guess falls back to the W25Q32 rather than bricking the board.
 
-- **Video:** MIPI-CSI camera (OV5647: the IMX708 has no ESP32-P4 driver)
-  → ISP → hardware H.264 encoder → `ts_mux`.
+- **Video on hardware:** the camera → H.264 → mux chain compiles and links
+  (OV5647 driver and hardware encoder in the binary) but has only run in
+  host tests of its pure parts. Settings to tune on the bench: bit rate
+  (3.3 Mbit/s of the channel's 4.15), GOP, QP range, decoder delay, ISP
+  pipeline controller (auto exposure/white balance).
+- **Third-party components** come from GitHub at pinned commits
+  (`tools/fetch-video-deps.sh`): esp_video 2.5.0, esp_cam_sensor 2.6.0,
+  esp_ipa 2.4.0, esp_sccb_intf 1.0.0, esp_h264 1.5.0, cmake_utilities
+  1.3.0. Their DVP camera driver needs a newer ESP-IDF than 5.5.1 and is
+  switched off (MIPI CSI only).
 - Board pinout: the GPIO numbers in Kconfig are placeholders until the
   schematic exists.

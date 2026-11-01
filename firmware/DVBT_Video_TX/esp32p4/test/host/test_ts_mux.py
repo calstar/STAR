@@ -178,3 +178,14 @@ def test_idle_stream_is_valid():
     pkts, pids, pcrs, pts, cc_err = parse(ts)
     assert not pts and cc_err == 0 and len(pcrs) >= 45
     assert len(pids[0x1FFF]) > 0.9 * len(pkts)
+
+
+def test_idr_detection_matches_x264():
+    """video_src flags key frames with h264_au_is_idr: it must agree with the
+    NAL types x264 wrote (one IDR per 30-frame GOP)."""
+    tmp = Path(tempfile.mkdtemp())
+    aus, keys = x264_access_units(tmp, seconds=3)
+    lib = fwlib.load()
+    lib.h264_au_is_idr.restype = ctypes.c_bool
+    got = [lib.h264_au_is_idr(au, len(au)) for au in aus]
+    assert got == keys and sum(got) == 3 and got[0] and got[30] and got[60]

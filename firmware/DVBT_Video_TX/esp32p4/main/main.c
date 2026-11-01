@@ -30,6 +30,10 @@
 #include "ecp5_cfg.h"
 #include "ts_mux.h"
 #include "esp_heap_caps.h"
+#include "freertos/semphr.h"
+#if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
+#include "video_src.h"
+#endif
 #include "driver/gpio.h"
 #include "esp_timer.h"
 
@@ -42,6 +46,21 @@ static void dac_reset(void *ctx, bool high)
 }
 
 static ts_mux_t s_mux;
+static SemaphoreHandle_t s_mux_lock;
+static uint32_t s_dropped;
+
+#if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
+// An encoded frame: stamp it on the mux clock (the capture time, then the
+// decoder delay) and queue it; if the channel is behind, drop it.
+static void on_frame(const uint8_t *au, size_t n, bool key, int64_t capture_us, void *arg)
+{
+    xSemaphoreTake(s_mux_lock, portMAX_DELAY);
+    uint64_t age_90k = (uint64_t)(esp_timer_get_time() - capture_us) * 9 / 100;
+    uint64_t pts = ts_mux_now_90k(&s_mux) - age_90k + CONFIG_DVBT_VIDEO_DELAY_MS * 90ull;
+    if (!ts_mux_put(&s_mux, au, n, pts, key)) s_dropped++;
+    xSemaphoreGive(s_mux_lock);
+}
+#endif
 
 void app_main(void)
 {
@@ -129,6 +148,7 @@ void app_main(void)
     mc.buf = heap_caps_malloc(mc.buf_size, MALLOC_CAP_8BIT);
     ESP_ERROR_CHECK(mc.buf ? ESP_OK : ESP_ERR_NO_MEM);
     ts_mux_init(&s_mux, &mc);
+    s_mux_lock = xSemaphoreCreateMutex();
     static uint8_t pkts[2 * TS_PACKET];
     ts_mux_next(&s_mux, pkts);
     // Prime the TS FIFO while tx_en is low: send until the status byte says
@@ -143,16 +163,32 @@ void app_main(void)
     ESP_ERROR_CHECK(adrf6755_modulator_on(&mod, true));     // only after lock (step 34)
     gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 0);
     ESP_LOGI(TAG, "transmitting at %.3f MHz", lo.lo_hz / 1e6);
+#if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
+    video_src_config_t vc = {
+        .sccb_port = 1, .sccb_scl = CONFIG_DVBT_CAM_SCCB_SCL, .sccb_sda = CONFIG_DVBT_CAM_SCCB_SDA,
+        .reset_pin = CONFIG_DVBT_CAM_RESET, .pwdn_pin = CONFIG_DVBT_CAM_PWDN,
+        .width = CONFIG_DVBT_VIDEO_WIDTH, .height = CONFIG_DVBT_VIDEO_HEIGHT,
+        .bitrate = CONFIG_DVBT_VIDEO_KBPS * 1000, .gop = CONFIG_DVBT_VIDEO_GOP,
+        .min_qp = 20, .max_qp = 45, .cb = on_frame,
+    };
+    if (video_src_start(&vc) != ESP_OK)
+        ESP_LOGE(TAG, "no camera: transmitting the service without video");
+#endif
 
     for (uint32_t n = 0;; n++) {
+        xSemaphoreTake(s_mux_lock, portMAX_DELAY);
         ts_mux_next(&s_mux, pkts + TS_PACKET);
+        xSemaphoreGive(s_mux_lock);
         ESP_ERROR_CHECK(fpga_ts_send(pkts, 2, 1000, &sb));
+        xSemaphoreTake(s_mux_lock, portMAX_DELAY);
         ts_mux_next(&s_mux, pkts);
+        xSemaphoreGive(s_mux_lock);
         if ((n & 0x3FFF) == 0) {
             uint32_t st = 0;
             fpga_reg_read(DVBT_REG_STATUS, &st);
-            ESP_LOGI(TAG, "status %08lx, %lu nulls inserted", (unsigned long)st,
-                     (unsigned long)DVBT_ST_NULLS(st));
+            ESP_LOGI(TAG, "status %08lx, FPGA nulls %lu, frames dropped %lu, video backlog %u bytes",
+                     (unsigned long)st, (unsigned long)DVBT_ST_NULLS(st), (unsigned long)s_dropped,
+                     (unsigned)ts_mux_backlog(&s_mux));
         }
     }
 }
