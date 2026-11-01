@@ -91,6 +91,7 @@ class Chain:
     a_radial: Param = P(0.0, "m/s^2", "", "range acceleration")
     rx_ant_dbi: Param = P(12.0, "dBi", DOC, "RHCP helix 12-15 dBi")
     rx_point_loss_db: Param = P(1.0, "dB", "assumption", "hand-aimed helix")
+    rx_cable_loss_db: Param = P(0.0, "dB", "", "coax from the helix to the UT-130B; no LNA (operator 2026-11-01), so every dB is a dB of SNR")
     rx_nf_db: Param = P(6.0, "dB", "assumption", "USB DVB-T receiver without LNA (typ 5-8 dB)")
     # ---- receiver ---------------------------------------------------------------------
     rx_lo_ppm: Param = P(0.0, "ppm", "assumption", "receiver tuner crystal")
@@ -195,7 +196,7 @@ def run(iq_path: str, fs_dac: float, ch: Chain, lo_offset_hz: float = 0.0, chunk
     if ch.v("range_m") > 0:
         fspl = 20 * math.log10(4 * math.pi * ch.v("range_m") / lam)
         path_db = (-ch.v("filt_loss_db") + ch.v("tx_ant_dbi") - fspl - ch.v("pol_loss_db")
-                   + ch.v("rx_ant_dbi") - ch.v("rx_point_loss_db"))
+                   + ch.v("rx_ant_dbi") - ch.v("rx_point_loss_db") - ch.v("rx_cable_loss_db"))
     noise_dbm_hz = -174 + ch.v("rx_nf_db")
     out = []
     prev_codes = np.zeros(2)

@@ -37,7 +37,7 @@ receiver noise figure, tuner frequency error, sample-clock error and ADC.
 | rocket antenna pointing its tail at the station | -15 dBi toward the station at 15 km: SNR 2.6 dB, **link lost** (-10 dBi still clean) | **antenna/placement**: aft coverage, or the station off to the side of the pad |
 | deep roll nulls | 20 dB nulls at 2 rev/s: clean at 15 km, at 30 km whole 50 ms bursts lost (DVB-T's interleaving is far shorter than a fade) | **antenna**: keep roll ripple well under 10 dB |
 | receiver frequency error | gr-dtv locks to 25 kHz, not 30 kHz; a tuner crystal at 20-30 ppm is 25-38 kHz at 1.28 GHz, plus 3 kHz TCXO and 3 kHz Doppler | **bench**: sweep the UT-130B's offset tolerance; trim the LO in 1 kHz steps to its crystal if needed |
-| noise | clean down to SNR 9 dB (40 km), errors at 5.5 dB (60 km), lost at 3 dB | 12 dB of margin at 15 km with an average antenna; an LNA adds ~4.5 dB |
+| noise | clean down to SNR 9 dB (40 km), errors at 5.5 dB (60 km), lost at 3 dB | 12 dB of margin at 15 km with an average rocket antenna, the helix straight into the UT-130B (no LNA, NF 6 dB assumed). Coax between them comes off that margin dB for dB (`rx_cable_loss_db`; 1 m of RG316 is about 1.2 dB at 1.28 GHz) |
 | receiver model | gr-dtv crashed (heap corruption) at +50 ppm receiver clock | a bug in the reference receiver, not the transmitter |
 
 Not breaking anything: DAC errors (MER 33 → 29 dB worst case), phase noise
@@ -81,7 +81,7 @@ in the worst profile), Si5351A ±50 ppm.
 | 15 km, linear tx (3 dB pol) | ok | 12.7 / 12.4 | 14.6 | 0 | 0 | 0 | 33 | 0 |
 | rx ADC 8 bit | ok | 31.3 / 30.1 |  | 0 | 0 | 0 | 33 | 0 |
 | flight 15 km (typical everything) | ok | 13.9 / 10.8 | 17.6 | 0 | 0 | 0 | 33 | 0 |
-| flight 15 km, LNA (NF 1.5) | ok | 16.6 / 14.1 | 22.1 | 0 | 0 | 0 | 33 | 0 |
+| flight 15 km, LNA (NF 1.5; not planned, for comparison) | ok | 16.6 / 14.1 | 22.1 | 0 | 0 | 0 | 33 | 0 |
 | TCXO +2 ppm (firmware) | ok | 32.7 / 31.0 |  | 0 | 0 | 0 | 33 | 0 |
 | digital typical only | ok | 29.9 / 28.4 |  | 0 | 0 | 0 | 33 | 0 |
 | digital worst only | degraded | 24.6 / 24.1 |  | 0 | 0 | 0 | 32 | 0 |
@@ -98,3 +98,24 @@ in the worst profile), Si5351A ±50 ppm.
 | lpf 8 MHz, 5% mismatch | ok | 25.6 / 24.8 |  | 0 | 0 | 0 | 33 | 0 |
 | lpf 8 MHz, 2% mismatch | ok | 30.2 / 28.3 |  | 0 | 0 | 0 | 33 | 0 |
 | flight, worst digital (fixed) | ok | 13.3 / 10.4 | 17.6 | 0 | 0 | 0 | 32 | 0 |
+
+## How good each model is
+
+Graded by what it can catch. "Exact": the code that flies. "Behavioural": a model written from the datasheet's rules and numbers. "First-order": the effect is there, its size comes from one or two numbers.
+
+| part | model | detail and accuracy | not modelled |
+|---|---|---|---|
+| ESP32-P4 firmware | **exact**: tx_app and every driver, built for the host | bit-for-bit the logic that flies; ESP-IDF calls replaced by HAL bindings that advance simulated time | FreeRTOS scheduling and SPI DMA, which stand in as delays, ISR latency and stalls (`p4_gap_us`, `isr_us`, `stall_*`) |
+| H.264 source | ffmpeg x264 1080p30 at the mux rate, camera ppm, encoder jitter | right bitrate and timing; the content and the encoder are stand-ins | the P4 hardware encoder's own rate control and GOP behaviour |
+| FPGA | **exact RTL**, Verilated, cycle-accurate, GSR zero-init | every flop, FIFO, filter and DDR edge | post-place-and-route timing (nextpnr says 64.1 MHz separately); the PLL is a behavioural model with phase and jitter |
+| Si5351A | behavioural: registers, SYS_INIT, reg 183, multisynth arithmetic | output frequencies exact to the programmed ratios; ppm exact | jitter is a number (about 12 ps RMS, assumed; the datasheet figure isn't in hand); start-up glitches |
+| ECP5 sysCONFIG | protocol state machine: commands, status bits, DONE, quiet port after wake-up | catches order, status and fallback bugs | erase and program times (the control mutant survives on purpose) |
+| AD9116 digital | registers, 3-wire SPI, RESET width, retimer 128-cycle lock, setup/hold check on every DCLKIO edge | datasheet rules, checked every sample | IBIS-level edges and ringing on the bus (6 ns of margin makes it moot) |
+| AD9116 analog | first-order: gain, offset, INL bow, NSD, aperture jitter (Table 1 numbers) | min/max datasheet numbers | SFDR harmonic structure; **output compliance and common-mode into the filter** |
+| reconstruction filter | **first-order**: ideal 5th-order Butterworth, tolerance as a cutoff shift per rail | right shape and I/Q mismatch trend | real source/load terminations, inductor Q and SRF, layout parasitics: **the weakest analog model** |
+| ADRF6755 digital | behavioural: I²C→SPI, every register rule, Eq. 1–3, VCO range, Table 7 LDET timing | catches every planner and sequencing bug found so far | PLL lock transient and frequency settling (LDET is a delay, not a loop) |
+| ADRF6755 RF | first-order: quadrature error, LO feedthrough, datasheet phase-noise curve, Rapp compression, noise floor | typical values; phase noise from the 1.8 GHz table (pessimistic at 1.28 GHz) | spurs, baseband input impedance, temperature |
+| driver + PA | memoryless Rapp AM-AM plus AM-PM | gain and P1dB from datasheets at **other frequencies**; PA at 1.28 GHz assumed | memory effects, heating over the flight, antenna mismatch (VSWR) |
+| LFCN-1400+ | flat 1 dB loss | | harmonics (don't reach the receiver; they matter for emissions) |
+| air | free-space loss, antenna gains as numbers, roll ripple as a sinusoid, two-ray ground fade, Doppler and its rate | the link budget is as good as the antenna numbers, which are assumed | real antenna patterns, **motor plume attenuation**, airframe shadowing, multipath at the pad |
+| receiver | gr-dtv's DVB-T receiver, NF 6 dB, no LNA, ideal AGC, 8-16 bit ADC | a full real demodulator (sync, channel estimate, Viterbi, RS) | the UT-130B's own demodulator chip: its offset and sync tolerance differ (bench item) |
