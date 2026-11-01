@@ -13,6 +13,8 @@
 // Outputs (in --out): rf.iq (int16 I, Q per DAC sample, zero while the RF
 // is off), sent.ts (every packet the FPGA accepted), report.json.
 #include <cinttypes>
+#include <cmath>
+#include <random>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -50,10 +52,75 @@ struct Opts {
     double video_start_ms = 50;     // camera running this long after bring-up
     bool flash_ok = true;
     bool pll_broken = false;
+    int cal_dc_i = 0, cal_dc_q = 0, cal_gain_i = 0, cal_gain_q = 0, cal_phase = 0;
     unsigned seed = 1;
     uint32_t good_crc = 0;
 };
 static Opts O;
+
+// ------------------------------------------------------------ impairments --
+// Everything that is not ideal on a real board, set with --impair k=v,...
+// Defaults are ideal (0); test_impairments.py states the realistic values and
+// where each comes from.
+struct Impair {
+    double si_ppm = 0;          // Si5351A crystal error (25 MHz, +-10..30 ppm + aging)
+    double tcxo_ppm = 0;        // ADRF6755 reference TCXO error (+-2.5 ppm typ)
+    double clk_jitter_ps = 0;   // FPGA clock edge jitter, RMS TIE (Si5351A CLK0 + ECP5 PLL)
+    double pll_phase_ps = 0;    // ECP5 PLL clk90 static phase error
+    double pll_jitter_ps = 0;   // extra RMS jitter on clk90 (DCLKIO)
+    double io_skew_ps = 0;      // DAC data pins: FPGA output + trace skew, uniform +-
+    double dclk_delay_ps = 0;   // DCLKIO path delay relative to the data pins
+    double p4_gap_us = 0;       // P4: mean extra time between SPI frames (exponential)
+    double isr_us = 0;          // P4: mean DREQ interrupt-to-task latency (exponential)
+    double stall_prob = 0;      // P4: chance per TS burst that another task preempts
+    double stall_ms = 0;        // ... for up to this long (uniform)
+    double sck_ppm = 0;         // P4 crystal error on SCK
+    double sck_jitter_ps = 0;   // RMS jitter per SCK edge
+    double cam_ppm = 0;         // camera frame clock error
+    double enc_jitter_ms = 0;   // encoder latency spread (uniform 0..x on top of 40 ms)
+} IM;
+static std::mt19937_64 g_rng;
+static int g_load_salt = 0;           // a new FPGA load: fresh jitter
+static double urand() { return std::uniform_real_distribution<double>(0, 1)(g_rng); }
+static double expo(double mean) { return mean > 0 ? -mean * std::log(1 - urand()) : 0; }
+static double nrand() { return std::normal_distribution<double>(0, 1)(g_rng); }
+// A Gaussian drawn from (seed, k) alone: an edge's jitter is the same every
+// time its time is asked for.
+static double hgauss(uint64_t k)
+{
+    auto mix = [](uint64_t z) {
+        z += 0x9E3779B97F4A7C15ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    uint64_t a = mix(k * 2 + 0x1234 + ((uint64_t)O.seed << 40)), b = mix(k * 2 + 1 + ((uint64_t)O.seed << 40));
+    double u1 = ((a >> 11) + 0.5) / 9007199254740992.0, u2 = (b >> 11) / 9007199254740992.0;
+    return std::sqrt(-2 * std::log(u1)) * std::cos(2 * M_PI * u2);
+}
+static bool parse_impair(const std::string &spec)
+{
+    struct { const char *k; double *v; } T[] = {
+        {"si_ppm", &IM.si_ppm}, {"tcxo_ppm", &IM.tcxo_ppm}, {"clk_jitter_ps", &IM.clk_jitter_ps},
+        {"pll_phase_ps", &IM.pll_phase_ps}, {"pll_jitter_ps", &IM.pll_jitter_ps}, {"io_skew_ps", &IM.io_skew_ps},
+        {"dclk_delay_ps", &IM.dclk_delay_ps}, {"p4_gap_us", &IM.p4_gap_us}, {"isr_us", &IM.isr_us},
+        {"stall_prob", &IM.stall_prob}, {"stall_ms", &IM.stall_ms}, {"sck_ppm", &IM.sck_ppm},
+        {"sck_jitter_ps", &IM.sck_jitter_ps}, {"cam_ppm", &IM.cam_ppm}, {"enc_jitter_ms", &IM.enc_jitter_ms},
+    };
+    size_t p = 0;
+    while (p < spec.size()) {
+        size_t c = spec.find(',', p);
+        std::string kv = spec.substr(p, c == std::string::npos ? std::string::npos : c - p);
+        p = c == std::string::npos ? spec.size() : c + 1;
+        size_t e = kv.find('=');
+        if (e == std::string::npos) return false;
+        std::string k = kv.substr(0, e);
+        bool ok = false;
+        for (auto &t : T) if (k == t.k) { *t.v = atof(kv.c_str() + e + 1); ok = true; }
+        if (!ok) { fprintf(stderr, "unknown impairment %s\n", k.c_str()); return false; }
+    }
+    return true;
+}
 
 // ------------------------------------------------------------------ world --
 static Report R;
@@ -75,6 +142,13 @@ static int64_t g_edge = 0;
 static bool g_last_dclk = false;
 static uint16_t g_last_d = 0;
 static fs_t g_last_d_change = -1, g_last_latch = -1;
+// DAC data-bus timing: per-bit output skew (static), the data's last
+// transition and which bits changed then.
+static double g_bit_skew_ps[12];
+static double g_dclk_skew_ps = 0;
+static uint16_t g_prev_d = 0;
+static double g_setup_min_ps = 1e18, g_hold_min_ps = 1e18;
+static uint64_t g_dac_timing_errors = 0;
 
 // statistics
 static uint64_t n_rf_samples = 0, n_rf_unlocked_fs = 0, n_samples = 0, n_dac_off_rf = 0;
@@ -116,8 +190,9 @@ static void start_fpga_clock()
         g_running = false;
         return;
     }
-    if (std::fabs(f - 192e6 / 7) > 192e6 / 7 * 1e-6)
-        R.violation("FPGA clock " + std::to_string(f) + " Hz, not 27.428571 MHz (DVB-T 6 MHz needs 4 x 48/7)");
+    if (std::fabs(f - 192e6 / 7) > 192e6 / 7 * 100e-6)
+        R.violation("FPGA clock " + std::to_string(f) + " Hz, more than 100 ppm off 27.428571 MHz");
+    g_load_salt++;
     g_period_fs = 1e15 / f;
     g_clk_t0 = g_now;
     g_edge = 0;
@@ -131,7 +206,18 @@ static void stop_fpga()
     R.event("FPGA unconfigured: outputs high-impedance, logic stopped");
 }
 
-static fs_t edge_time(int64_t k) { return g_clk_t0 + (fs_t)llround(k * g_period_fs / 4); }
+// Edge k (k mod 4: clk rise, clk90 rise, clk fall, clk90 fall): nominal
+// time plus its jitter (and the PLL's static clk90 phase error), clamped to
+// an eighth of a period so edges never reorder.
+static fs_t edge_time(int64_t k)
+{
+    double t = k * g_period_fs / 4;
+    double j = IM.clk_jitter_ps * hgauss((uint64_t)k + ((uint64_t)g_load_salt << 50));
+    if (k & 1) j += IM.pll_phase_ps + IM.pll_jitter_ps * hgauss(~(uint64_t)k);
+    double lim = g_period_fs / 8 / 1000;
+    j = std::max(-lim, std::min(lim, j));
+    return g_clk_t0 + (fs_t)llround(t + j * 1000);
+}
 
 static void track_rf(int i, int q)
 {
@@ -168,6 +254,7 @@ static void clock_edge()
     uint16_t d = g_top->dac_d;
     if (d != g_last_d) {
         if (g_last_latch == g_now) R.violation("AD9116 hold: DAC data changed on a DCLKIO edge");
+        g_prev_d = g_last_d;
         g_last_d = d;
         g_last_d_change = g_now;
     }
@@ -177,6 +264,28 @@ static void clock_edge()
         if (g_last_d_change == g_now && g_dac->output_on())
             R.violation("AD9116 setup: DCLKIO edge in the same instant the data changed");
         g_last_latch = g_now;
+        // Setup/hold at the DAC pins (AD9116 Rev. F Table 2, DVDDIO = 3.3 V:
+        // tS -0.2 ns both edges, tH 1.6 ns rising / 1.5 ns falling). Data
+        // left the FPGA at its clk edge plus each pin's skew; DCLKIO at this
+        // clk90 edge plus its path delay. Setup counts the bits that changed
+        // at the last data edge; hold, conservatively, every bit at the next.
+        if (g_dac->output_on() && g_last_d_change >= 0) {
+            double te = g_now / 1000.0 + IM.dclk_delay_ps + g_dclk_skew_ps;   // ps
+            double tprev = g_last_d_change / 1000.0, tnext = edge_time(g_edge) / 1000.0;
+            uint16_t changed = (g_prev_d ^ d) & 0xFFF, bad = 0;
+            double ts = -200, th = dclk ? 1600 : 1500;
+            for (int b = 0; b < 12; b++) {
+                double setup = te - (tprev + g_bit_skew_ps[b]);
+                double hold = (tnext + g_bit_skew_ps[b]) - te;
+                if ((changed >> b) & 1) g_setup_min_ps = std::min(g_setup_min_ps, setup - ts);
+                g_hold_min_ps = std::min(g_hold_min_ps, hold - th);
+                if ((((changed >> b) & 1) && setup < ts) || hold < th) bad |= 1 << b;
+            }
+            if (bad) {                       // a violated latch: those bits come out random
+                g_dac_timing_errors++;
+                d = (d & ~bad) | ((uint16_t)g_rng() & bad);
+            }
+        }
         // CLKIN (Si5351A CLK1) at the DCLKIO rate: re-derived from the
         // registers every 4096 edges (they change only during bring-up).
         static bool clkin_ok = false;
@@ -257,7 +366,13 @@ static esp_err_t e_read(void *, size_t off, uint8_t *buf, size_t n)
 }
 
 // ------------------------------------------------------- HAL: FPGA link --
-static const fs_t SCK_HALF = 25 * FS_PER_NS;                     // 20 MHz
+static const fs_t SCK_HALF_NOM = 25 * FS_PER_NS;                 // 20 MHz
+static fs_t sck_half()
+{
+    double h = SCK_HALF_NOM * (1 - IM.sck_ppm * 1e-6) + IM.sck_jitter_ps * 1000 * nrand();
+    return (fs_t)std::max(h, SCK_HALF_NOM * 0.5);
+}
+#define SCK_HALF sck_half()
 static bool miso()
 {
     return g_running ? g_top->spi_miso : true;                   // unconfigured: floats (pulled high)
@@ -294,12 +409,17 @@ static esp_err_t link_frame(void *, const uint8_t *tx, uint8_t *rx, size_t n)
         for (size_t i = 0; i < n; i++) fprintf(stderr, " %02x/%02x", tx[i], rx[i]);
         fprintf(stderr, " dreq=%d\n", g_running ? (int)g_top->dreq : -1);
     }
-    advance(g_now + 1500 * FS_PER_NS);                           // driver overhead between frames
+    // driver overhead between frames, plus whatever else the P4 is doing
+    advance(g_now + 1500 * FS_PER_NS + (fs_t)(expo(IM.p4_gap_us) * FS_PER_US));
     return ESP_OK;
 }
 static bool link_dreq(void *, uint32_t timeout_ms)
 {
-    return run_until([] { return g_running && g_top->dreq; }, g_now + (fs_t)timeout_ms * 1000 * FS_PER_US);
+    bool was_high = g_running && g_top->dreq;
+    bool ok = run_until([] { return g_running && g_top->dreq; }, g_now + (fs_t)timeout_ms * 1000 * FS_PER_US);
+    // DREQ rose while the task slept: the interrupt and the task switch take time.
+    if (ok && !was_high && timeout_ms) advance(g_now + (fs_t)(expo(IM.isr_us) * FS_PER_US));
+    return ok;
 }
 
 // ------------------------------------------------------- HAL: setup bus --
@@ -405,7 +525,10 @@ static void usage()
 {
     fprintf(stderr, "e2e --out DIR [--image FILE] [--good-crc HEX] [--aus FILE] [--video-start-ms N] [--air-ms N]\n"
                     "    [--health-ms N]\n"
-                    "    [--no-flash] [--inject-ldet MS[,DUR]] [--inject-fpga MS] [--inject-stall MS[,DUR]] [--seed N]\n");
+                    "    [--no-flash] [--inject-ldet MS[,DUR]] [--inject-fpga MS] [--inject-stall MS[,DUR]] [--seed N]\n"
+                    "    [--impair si_ppm=..,tcxo_ppm=..,clk_jitter_ps=..,pll_phase_ps=..,pll_jitter_ps=..,io_skew_ps=..,\n"
+                    "              dclk_delay_ps=..,p4_gap_us=..,isr_us=..,stall_prob=..,stall_ms=..,sck_ppm=..,\n"
+                    "              sck_jitter_ps=..,cam_ppm=..,enc_jitter_ms=..]\n");
     exit(2);
 }
 
@@ -422,6 +545,21 @@ int main(int argc, char **argv)
         else if (a == "--health-ms") O.health_ms = atof(val().c_str());
         else if (a == "--no-flash") O.flash_ok = false;
         else if (a == "--pll-broken") O.pll_broken = true;
+        else if (a == "--impair") { if (!parse_impair(val())) usage(); }
+        else if (a == "--cal") {           // dc_i=..,dc_q=..,gain_i=..,gain_q=..,phase=..
+            std::string v = val();
+            for (size_t p = 0; p < v.size();) {
+                size_t c = v.find(',', p);
+                std::string kv = v.substr(p, c == std::string::npos ? std::string::npos : c - p);
+                p = c == std::string::npos ? v.size() : c + 1;
+                size_t e = kv.find('=');
+                std::string k = kv.substr(0, e);
+                int x = atoi(kv.c_str() + e + 1);
+                if (k == "dc_i") O.cal_dc_i = x; else if (k == "dc_q") O.cal_dc_q = x;
+                else if (k == "gain_i") O.cal_gain_i = x; else if (k == "gain_q") O.cal_gain_q = x;
+                else if (k == "phase") O.cal_phase = x; else usage();
+            }
+        }
         else if (a == "--seed") O.seed = atoi(val().c_str());
         else if (a == "--video-start-ms") O.video_start_ms = atof(val().c_str());
         else if (a == "--inject-ldet") { std::string v = val(); O.inject_ldet_ms = atof(v.c_str());
@@ -453,13 +591,16 @@ int main(int argc, char **argv)
         fclose(f);
     }
     g_part.resize(0x100000, 0xFF);                               // erased flash beyond the image
-    g_si.reset(new Si5351(R, 25e6));
+    g_rng.seed(O.seed * 7919 + 1);
+    for (auto &k : g_bit_skew_ps) k = (2 * urand() - 1) * IM.io_skew_ps;
+    g_dclk_skew_ps = (2 * urand() - 1) * IM.io_skew_ps;
+    g_si.reset(new Si5351(R, 25e6 * (1 + IM.si_ppm * 1e-6)));
     g_ecp5.reset(new Ecp5(R, O.good_crc));
     g_ecp5->flash_ok = O.flash_ok;
     g_ecp5->on_configured = start_fpga_clock;
     g_ecp5->on_cleared = stop_fpga;
     g_dac.reset(new Ad9116(R));
-    g_adrf.reset(new Adrf6755(R, 40e6));
+    g_adrf.reset(new Adrf6755(R, 40e6 * (1 + IM.tcxo_ppm * 1e-6)));
     g_adrf->broken = O.pll_broken;
     std::vector<Au> aus = load_aus(O.aus);
 
@@ -485,6 +626,7 @@ int main(int argc, char **argv)
     cfg.xtal_hz = 25000000;
     cfg.xtal_load_pf = 8;
     cfg.refin_hz = 40000000;
+    cfg.refin_tol_ppm = 5;
     cfg.lo_hz = 1279000000ull;
     cfg.atten_db = 0;
     cfg.bw_mhz = 6;
@@ -497,6 +639,11 @@ int main(int argc, char **argv)
     cfg.mux_buf = muxbuf;
     cfg.mux_buf_size = sizeof muxbuf;
     cfg.health_ms = (uint32_t)O.health_ms;
+    cfg.dc_i = (int16_t)O.cal_dc_i;
+    cfg.dc_q = (int16_t)O.cal_dc_q;
+    cfg.gain_i = (uint16_t)O.cal_gain_i;
+    cfg.gain_q = (uint16_t)O.cal_gain_q;
+    cfg.phase = (int16_t)O.cal_phase;
 
     static tx_app_t app;
     // The P4 boots ~0.3 s after power-up (ROM, bootloader, app start).
@@ -509,13 +656,17 @@ int main(int argc, char **argv)
 
     fs_t t_end = t_up + (fs_t)(O.air_ms * 1000 * FS_PER_US);
     size_t next_au = 0;
-    const fs_t frame_fs = (fs_t)(1e15 / 30), enc_latency = 40 * 1000 * FS_PER_US;
+    const fs_t frame_fs = (fs_t)(1e15 / 30 / (1 + IM.cam_ppm * 1e-6)), enc_latency = 40 * 1000 * FS_PER_US;
+    std::vector<fs_t> enc_extra(aus.size());
+    for (auto &x : enc_extra) x = (fs_t)(urand() * IM.enc_jitter_ms * 1e12);
+    uint64_t stalls = 0;
+    fs_t stall_max = 0;
     fs_t video_t0 = t_up + (fs_t)(O.video_start_ms * 1e12);     // camera starts after bring-up
     bool ldet_done = false, fpga_done = false, stall_done = false;
     uint64_t frames_put = 0, frames_dropped = 0;
     while (e == ESP_OK && g_now < t_end) {
         // Encoded frames: frame k captured at video_t0 + k/30 s, ready 40 ms later.
-        while (next_au < aus.size() && g_now >= video_t0 + (fs_t)next_au * frame_fs + enc_latency) {
+        while (next_au < aus.size() && g_now >= video_t0 + (fs_t)next_au * frame_fs + enc_latency + enc_extra[next_au]) {
             fs_t cap = video_t0 + (fs_t)next_au * frame_fs;
             if (!tx_put_frame(&app, aus[next_au].d.data(), aus[next_au].d.size(), aus[next_au].key, cap / FS_PER_US))
                 frames_dropped++;
@@ -538,6 +689,12 @@ int main(int argc, char **argv)
             R.event("injected: the P4 stalls (no TS sent)");
             advance(g_now + (fs_t)(O.inject_stall_dur_ms * 1e12));
             stall_done = true;
+        }
+        if (IM.stall_prob > 0 && urand() < IM.stall_prob) {     // another task holds the CPU
+            fs_t st = (fs_t)(urand() * IM.stall_ms * 1e12);
+            advance(g_now + st);
+            stalls++;
+            stall_max = std::max(stall_max, st);
         }
         tx_pump(&app);
     }
@@ -568,6 +725,10 @@ int main(int argc, char **argv)
             g_sent_pkts, n_samples, n_rf_samples);
     fprintf(j, " \"rf_while_dac_off\": %" PRIu64 ",\n \"rf_unlocked_max_s\": %.9f,\n", n_dac_off_rf, g_rf_unlocked_max / 1e15);
     fprintf(j, " \"dac_rate_hz\": %.6f,\n", g_period_fs > 0 ? 1e15 / g_period_fs : 0.0);
+    fprintf(j, " \"dac_setup_margin_ps\": %.1f,\n \"dac_hold_margin_ps\": %.1f,\n \"dac_timing_errors\": %" PRIu64 ",\n",
+            g_setup_min_ps < 1e17 ? g_setup_min_ps : 0.0, g_hold_min_ps < 1e17 ? g_hold_min_ps : 0.0, g_dac_timing_errors);
+    fprintf(j, " \"p4_stalls\": %" PRIu64 ",\n \"p4_stall_max_s\": %.6f,\n", stalls, stall_max / 1e15);
+    fprintf(j, " \"tx_status\": %u,\n", app.last_status);
     fprintf(j, " \"violations\": [");
     for (size_t i = 0; i < R.violations.size(); i++) fprintf(j, "%s\n  %s", i ? "," : "", jstr(R.violations[i]).c_str());
     fprintf(j, "],\n \"events\": [");

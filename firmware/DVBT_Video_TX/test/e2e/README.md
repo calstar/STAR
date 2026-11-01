@@ -60,11 +60,23 @@ Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
 | `pll_never_locks_keeps_rf_off` | the ADRF6755 never locks: bring-up stops (LDET timeout), RF never on |
 | `lo_unlock_recovers` | the VCO drifts out of its band in flight (unlocked until reprogrammed): RF off within one health period, relock, back on air, received again |
 | `fpga_loss_recovers` | the FPGA loses its configuration: ID check, RF off, reload, DAC re-sync, re-prime, back on air |
-| `p4_stall_fills_with_nulls` | the P4 stops for 5 ms: the FPGA fills with nulls, no packet lost, the health check counts them |
+| `p4_stall_longer_than_fifo` | the P4 stops for 40 ms (past the 16 KB FIFO): the FPGA fills with nulls, no packet lost, and the mux's clock catches up so the PCRs stay on the air's timeline |
+| `p4_under_load_needs_no_nulls` | a busy P4 (8 ms preemptions, interrupt latency, frame gaps) never makes the FPGA insert a null |
+| `tcxo_tolerance_still_locks` | the ADRF6755 locks with its TCXO 2.5 ppm fast or slow (20 MHz PFD) |
+| `lo_feedthrough_calibration` | through the RF chain: the -43 dBc LO feedthrough corrupts every 4th symbol until the DC-offset calibration removes it |
+| `flight_profile_15km` | every typical impairment at once, through the RF chain and the air at 15 km: every packet, clean video |
+
+## Real-world imperfections
+
+`impairments.py` adds them everywhere (clock ppm and jitter, PLL phase,
+DAC-bus skew against setup/hold, P4 latency and stalls, DAC errors, filter
+tolerances, modulator quadrature error, feedthrough and phase noise, PA
+compression, path loss, roll fading, Doppler, receiver offsets) and finds
+where the link breaks: see [IMPAIRMENTS.md](IMPAIRMENTS.md).
 
 ## Can it fail? (`mutation_check.py`)
 
-Fifteen planted integration bugs, each of the kind that only shows when
+Eighteen planted integration bugs, each of the kind that only shows when
 the pieces meet, must each turn a scenario red: stale-status FIFO priming,
 a 1 s DREQ wait with the FPGA gone, FPGA offset binary against a two's
 complement DAC, RF on without waiting for lock, a health check blind to
@@ -72,7 +84,9 @@ LDET, the DAC's CLKIN never enabled, the mux at the wrong guard's rate,
 I/Q swapped by the DAC's latch edge, the modulator on in the init
 sequence, RFDIV off by one, a 3-wire read one bit long, DCLKIO inverted,
 DCLKIO in phase with the data, and DREQ promising one packet of room
-where the firmware sends two. A control mutant (an erase delay removed)
+where the firmware sends two, the 2 KB FIFO back, the mux clock not
+caught up after FPGA nulls, the PFD sized for a nominal TCXO, and the
+bench calibration never written. A control mutant (an erase delay removed)
 is expected to survive: the ECP5 model does not time the erase.
 
 ## What it found while being written

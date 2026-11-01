@@ -67,9 +67,12 @@ def harness(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def bitstream(tmp_path_factory):
+    return make_bitstream(tmp_path_factory.mktemp("fpga"))
+
+
+def make_bitstream(d: Path):
     """A stand-in bitstream the size of the LFE5U-25F's (the ECP5 model only
     checks it arrives intact), its image, and a valid image of another one."""
-    d = tmp_path_factory.mktemp("fpga")
     bit = random.Random(7).randbytes(579_000)
     other = random.Random(8).randbytes(579_000)
     (d / "fpga.img").write_bytes(make_fpga_image.make(bit))
@@ -82,13 +85,16 @@ def bitstream(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def video(tmp_path_factory):
+    return make_video(tmp_path_factory.mktemp("video"))
+
+
+def make_video(d: Path, seconds: int = 2) -> Path:
     """1080p30 H.264 as the P4's encoder makes it (GOP 30, no B-frames,
     3.3 Mbit/s), one access unit per frame without access-unit delimiters
     (the muxer must add them)."""
-    d = tmp_path_factory.mktemp("video")
     raw = d / "v.h264"
     subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30",
-                    "-t", "2", "-c:v", "libx264", "-preset", "veryfast", "-bf", "0", "-g", "30",
+                    "-t", str(seconds), "-c:v", "libx264", "-preset", "veryfast", "-bf", "0", "-g", "30",
                     "-b:v", "3300k", "-maxrate", "3300k", "-bufsize", "1650k",
                     "-x264-params", "aud=1:nal-hrd=none", "-pix_fmt", "yuv420p", str(raw)], check=True)
     data = raw.read_bytes()
@@ -353,19 +359,101 @@ def test_fpga_loss_recovers(harness, bitstream, video, tmp_path):
 
 
 @pytest.mark.slow
-def test_p4_stall_fills_with_nulls(harness, bitstream, video, tmp_path):
-    """The P4 stops sending for 5 ms (longer than the FIFO's 3.6 ms): the
-    FPGA fills with null packets, so the multiplex stays valid and the
-    receiver never loses sync; the health check counts the nulls."""
+def test_p4_stall_longer_than_fifo(harness, bitstream, video, tmp_path):
+    """The P4 stops sending for 40 ms, longer than the FPGA's 16 KB FIFO
+    (~29 ms): the FPGA fills the gap with null packets, so the multiplex
+    stays valid and the receiver never loses sync, and the health check
+    moves the mux's clock on by the nulls, so the PCRs stay on the air's
+    timeline (without that they are late by ~2.9 ms for good)."""
     d, crc = bitstream
     rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--aus", video,
-              "--air-ms", 450, "--health-ms", 10, "--inject-stall", "250,5")
+              "--air-ms", 500, "--health-ms", 10, "--inject-stall", "250,40")
     common_checks(rep)
     assert rep["faults"] & F_NULLS and rep["nulls"] > 0 and rep["faults"] & F_NOT_NULLS == 0, hex(rep["faults"])
     rx = demodulate(tmp_path)
     ok, bad, where = match(rx, (tmp_path / "sent.ts").read_bytes())
     assert bad == 0 and ok > 400, (ok, bad)
     assert all(b == a + 1 for a, b in zip(where, where[1:])), "packets lost across the stall"
-    nulls_rx = sum(pid(p) == 0x1FFF for p in packets(rx))
-    nulls_tx = sum(pid(p) == 0x1FFF for p in packets((tmp_path / "sent.ts").read_bytes()))
-    assert nulls_rx > 0 and rep["nulls"] > 0, (nulls_rx, nulls_tx)
+    assert sum(pid(p) == 0x1FFF for p in packets(rx)) > rep["nulls"] // 2
+    ts_timing(rx)                                         # PCR steps match the packet count again
+
+
+@pytest.mark.slow
+def test_p4_under_load_needs_no_nulls(harness, bitstream, video, tmp_path):
+    """A busy P4 (frame gaps, interrupt latency, 8 ms preemptions: the
+    'worst' profile of impairments.py) is absorbed by the 16 KB FIFO: the
+    FPGA never has to insert a null packet. (With the old 2 KB FIFO it
+    inserted 47 and the PCRs went 2.9 ms late.)"""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--aus", video,
+              "--air-ms", 600, "--impair", "p4_gap_us=10,isr_us=40,stall_prob=0.02,stall_ms=8,sck_ppm=-30,"
+              "sck_jitter_ps=500,cam_ppm=-100,enc_jitter_ms=20")
+    common_checks(rep)
+    assert rep["p4_stalls"] >= 10 and rep["nulls"] == 0, (rep["p4_stalls"], rep["nulls"])
+
+
+@pytest.mark.parametrize("ppm", [2.5, -2.5])
+def test_tcxo_tolerance_still_locks(harness, bitstream, tmp_path, ppm):
+    """A 40 MHz TCXO 2.5 ppm fast used to put the ADRF6755's PFD past its
+    40 MHz maximum and the PLL never locked; the planner now divides by 2."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 10,
+              "--impair", f"tcxo_ppm={ppm}")
+    assert rep["violations"] == [] and rep["bringup_err"] == 0, rep["violations"]
+    assert rep["pfd_hz"] < 40e6 and abs(rep["lo_hz"] - 1279e6 * (1 + ppm * 1e-6)) < 1
+
+
+def rf_receive(tmp_path, rep, **over):
+    import rf_chain
+    import dvbt_rx
+    z, _ = rf_chain.run(str(tmp_path / "rf.iq"), rep["dac_rate_hz"], rf_chain.Chain().with_(**over),
+                        lo_offset_hz=rep["lo_hz"] - 1279e6)
+    ts, car = dvbt_rx.receive(z, carriers=True)
+    return ts, dvbt_rx.mer_db(car[120:])
+
+
+@pytest.mark.slow
+def test_lo_feedthrough_calibration(harness, bitstream, tmp_path):
+    """The ADRF6755's -43 dBc LO feedthrough is above a single OFDM carrier at
+    our back-off, and corrupts the receiver's channel estimate on the symbols
+    whose scattered pilot sits on the centre carrier. The bench calibration
+    (DC offsets into the FPGA's DCOFF) removes it."""
+    import rf_chain
+    d, crc = bitstream
+    leak = dict(lo_leak_dbc=-43)
+    dc = rf_chain.lo_null_codes(rf_chain.Chain().with_(**leak))
+    ref = run(harness, tmp_path / "raw", "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 400)
+    cal = run(harness, tmp_path / "cal", "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 400,
+              "--cal", f"dc_i={dc[0]},dc_q={dc[1]}")
+    _, m_raw = rf_receive(tmp_path / "raw", ref, **leak)
+    _, m_cal = rf_receive(tmp_path / "cal", cal, **leak)
+    # The damage sits on one symbol in four (the scattered pilot crosses the
+    # centre carrier every fourth symbol): MER of the worst of the 4 phases.
+    def worst_phase(m):
+        return min(float(np.mean(m[k::4])) for k in range(4))
+    raw, cal_ = worst_phase(m_raw), worst_phase(m_cal)
+    assert raw < cal_ - 4, f"control: uncalibrated worst phase {raw:.1f} dB vs calibrated {cal_:.1f} dB"
+    assert cal_ > 28, f"calibrated MER on the centre-pilot symbols {cal_:.1f} dB"
+
+
+@pytest.mark.slow
+def test_flight_profile_15km(harness, bitstream, video, tmp_path):
+    """Everything typical at once, at 15 km: Si5351A/TCXO/P4/camera timing,
+    DAC errors, 5 % filter mismatch, modulator quadrature error, feedthrough
+    and phase noise, PA AM-PM, roll ripple, ground reflection, Doppler and
+    its rate, receiver tuner and clock offsets, a 10-bit ADC. The link must
+    carry every packet, and the video must decode cleanly."""
+    import impairments as I
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--aus", video,
+              "--air-ms", 1250, "--video-start-ms", 150, "--impair", I.DIG["typical"])
+    assert rep["violations"] == [] and rep["bringup_err"] == 0
+    rx, m = rf_receive(tmp_path, rep, **I.FLIGHT)
+    (tmp_path / "rx.ts").write_bytes(rx)
+    ok, bad, where = match(rx, (tmp_path / "sent.ts").read_bytes())
+    assert bad == 0 and ok > 1500 and all(b == a + 1 for a, b in zip(where, where[1:])), (ok, bad)
+    assert np.median(m) > 10, f"MER {np.median(m):.1f} dB"
+    ts_timing(rx)
+    (tmp_path / "rx_complete.ts").write_bytes(complete_frames(rx))
+    st = viewer(tmp_path / "rx_complete.ts", sdt=False)
+    assert int(st["nb_read_frames"]) >= 20

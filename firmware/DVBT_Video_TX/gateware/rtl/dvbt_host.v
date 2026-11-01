@@ -12,7 +12,7 @@
 // 0x47 first; a packet cut short by CS, with a bad sync byte, or that found
 // the FIFO full is discarded whole (and flagged), so the stream behind the
 // FIFO is always packet-aligned. DREQ is high while the FIFO has room for
-// two more packets: check it before each packet. Behind the FIFO,
+// two more packets: check it before each packet. FIFO depth: TS_FIFO_AW. Behind the FIFO,
 // dvbt_ts_source fills any gap with null packets.
 //
 // Registers (32-bit):
@@ -36,7 +36,13 @@
 `default_nettype none
 /* verilator lint_off SYNCASYNCNET */  // spi_cs_n: async reset of the SCK domain, synchronised for the system
 
-module dvbt_host (
+module dvbt_host #(
+    // TS FIFO depth 2^TS_FIFO_AW bytes. 16 KB holds ~29 ms of the 4.15 Mbit/s
+    // stream: the P4 can be held off that long (another task, a flash
+    // operation, a blocked console) before the FPGA has to insert nulls --
+    // which keep the multiplex valid but make the PCRs late by a packet each.
+    parameter integer TS_FIFO_AW = 14
+) (
     input  wire        clk,
     input  wire        rst,
     // ESP32-P4
@@ -113,12 +119,12 @@ module dvbt_host (
     // ---- TS FIFO --------------------------------------------------------------
     wire  [7:0] f_data;
     wire        f_valid, f_ready, f_sready;
-    wire [11:0] f_free;
-    wire [11:0] f_level;            // unused: DREQ works from free space
+    wire [TS_FIFO_AW:0] f_free;
+    wire [TS_FIFO_AW:0] f_level;    // unused: DREQ works from free space
     wire        unused = &{1'b0, f_level};
     reg         f_push, f_commit, f_abort;
     reg   [7:0] f_wdata;
-    dvbt_fifo #(.W(8), .AW(11)) u_fifo (
+    dvbt_fifo #(.W(8), .AW(TS_FIFO_AW)) u_fifo (
         .clk(clk), .rst(rst), .s_data(f_wdata), .s_valid(f_push), .s_ready(f_sready),
         .w_commit(f_commit), .w_abort(f_abort),
         .m_data(f_data), .m_valid(f_valid), .m_ready(f_ready), .level(f_level), .free(f_free)
@@ -160,7 +166,7 @@ module dvbt_host (
             f_push   <= 1'b0;
             f_commit <= 1'b0;
             f_abort  <= 1'b0;
-            dreq     <= (f_free >= 12'd376);
+            dreq     <= (f_free >= 376);
             if (!frame_open)
                 stat <= {dreq, r_ctrl[0], flags[0], flags[1], flags[2], flags[3], 2'b00};
             if (st_underflow) flags[0] <= 1'b1;

@@ -12,7 +12,9 @@
 // time) never reaches the DAC.
 `default_nettype none
 
-module dvbt_tx_core (
+module dvbt_tx_core #(
+    parameter integer TS_FIFO_AW = 14      // TS FIFO 16 KB (dvbt_host)
+) (
     input  wire        clk,
     input  wire        rst,
     input  wire        spi_sck,
@@ -37,7 +39,7 @@ module dvbt_tx_core (
     always @(posedge clk) dp_rst <= rst || !tx_en;
     assign tx_on = !dp_rst;
 
-    dvbt_host u_host (
+    dvbt_host #(.TS_FIFO_AW(TS_FIFO_AW)) u_host (
         .clk(clk), .rst(rst),
         .spi_sck(spi_sck), .spi_cs_n(spi_cs_n), .spi_mosi(spi_mosi), .spi_miso(spi_miso),
         .dreq(dreq),

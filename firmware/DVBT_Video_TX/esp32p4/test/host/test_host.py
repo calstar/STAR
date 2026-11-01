@@ -235,6 +235,25 @@ def test_adrf6755_flight_lo():
     assert abs(lo - 1_279_000_000) < 1, f"LO {float(lo)}"
 
 
+def test_adrf6755_pfd_margin_for_tcxo_tolerance():
+    """A 40 MHz TCXO a few ppm fast must not put the PFD past 40 MHz: with a
+    tolerance the planner divides by 2 and keeps the LO exact."""
+    lib = fwlib.load()
+    p = APlan()
+    assert lib.adrf6755_plan_tol(ctypes.c_uint32(40_000_000), ctypes.c_uint32(5),
+                                 ctypes.c_uint64(1_279_000_000), ctypes.byref(p))
+    assert p.pfd_hz == 20_000_000 and p.r_half and p.r == 1 and p.r_enable
+    assert 40_000_000 * (1 + 5e-6) / 2 <= 40e6
+    lo = Fraction(p.pfd_hz) * (p.intg + Fraction(p.frac, 1 << 25))
+    assert abs(lo - 1_279_000_000) < 1 and p.intg == 63
+    assert p.bscdiv == 50, "autocal 70 us at 20 MHz (Equation 3)"
+    r = regs_of(aseq(p))
+    assert r[13] == 0xA8 and r[10] & 0x40 and r[5] & 0x10, "2048-cycle LDET count, R/2 selected and enabled"
+    q = APlan()                                               # a 38.4 MHz TCXO keeps its full PFD
+    assert lib.adrf6755_plan_tol(ctypes.c_uint32(38_400_000), ctypes.c_uint32(5),
+                                 ctypes.c_uint64(1_279_000_000), ctypes.byref(q)) and q.pfd_hz == 38_400_000
+
+
 def test_adrf6755_init_sequence_order():
     """Step order of the Suggested Power-Up Sequence: every writable register,
     CR0 after all the other double-buffered ones, CR27 last, modulator off."""

@@ -57,7 +57,8 @@ CASES = [c if len(c) == 5 else (*c, 48) for c in CASES]
 OFDM_TESTS = {"fft2048", "modulator"}
 DSP_TESTS = {"interp", "interp_spectrum", "dac_out"}
 IO_TESTS = {"fifo", "host", "tx_core"}
-PARAMS = {"dvbt_fifo": {"AW": 4}}  # small instances where the corners matter
+# small instances where the corners matter (the host test counts packets to a full 2 KB FIFO)
+PARAMS = {"dvbt_fifo": {"AW": 4}, "dvbt_host": {"TS_FIFO_AW": 11}}
 
 
 @pytest.mark.parametrize("seed", [1, 2])

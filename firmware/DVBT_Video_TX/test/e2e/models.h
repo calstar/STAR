@@ -536,13 +536,17 @@ struct Adrf6755 {
         if (act[28] & 0x10) bad("RF divider powered down (CR28 bit 4)");
         if (autocal < 50e-6 || autocal > 100e-6)
             rep.violation("ADRF6755 autocalibration time " + std::to_string(autocal * 1e6) + " us (recommended 70)");
-        if (std::fabs(pfd_hz - 40e6) > 1 && (act[23] == 0x70 || act[13] == 0xE8))
-            rep.violation("ADRF6755 lock detector set for a 40 MHz PFD, PFD is " + std::to_string(pfd_hz));
+        // LDET: up/down pulses narrower than the target, then a count of PFD
+        // cycles (Table 7: CR13[6], CR23[3] -> 2048/3072/4096/16384).
+        static const int ldc[4] = {2048, 3072, 4096, 16384};
+        double ld_s = ldc[((act[13] >> 6) & 1) * 2 + ((act[23] >> 3) & 1)] / pfd_hz;
         char b[160];
         snprintf(b, sizeof b, "ADRF6755 acquisition: PFD %.0f Hz, INT %u, FRAC %u, RFDIV %d -> LO %.3f Hz",
                  pfd_hz, intg, frac, rfdiv, lo_hz);
         rep.event(b);
-        lock_at = ok && !broken ? t + (fs_t)(autocal * 1e15) + 100 * FS_PER_US : -1;
+        // Datasheet: autocal (Eq. 3), then frequency acquisition (~0.17 ms total
+        // in its example), LDET after the count.
+        lock_at = ok && !broken ? t + (fs_t)((autocal + 30e-6 + ld_s) * 1e15) : -1;
     }
     bool locked(fs_t t)
     {

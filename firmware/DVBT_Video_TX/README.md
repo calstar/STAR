@@ -92,8 +92,10 @@ Current state: 84 test cases pass (42 cases × 2 seeds), and all 45 planted bugs
 On top of the per-block tests, `test/e2e` runs the firmware that flies
 against the whole FPGA top level and datasheet models of the Si5351A,
 ECP5, AD9116 and ADRF6755, demodulates the DAC output with gr-dtv's
-receiver and decodes the 1080p video with ffmpeg, in nine scenarios from a
-clean boot to the FPGA losing its configuration mid-flight; its own
+receiver and decodes the 1080p video with ffmpeg, in fifteen scenarios from a
+clean boot to the FPGA losing its configuration mid-flight and a full
+15 km flight profile with every realistic impairment (`test/e2e/IMPAIRMENTS.md`
+says what breaks the link and what was fixed); its own
 `mutation_check.py` plants integration bugs (firmware and RTL) and
 requires a scenario to go red for each.
 

@@ -24,10 +24,11 @@ GUARDS = {"1/32": (dtv.GI_1_32, 64), "1/16": (dtv.GI_1_16, 128), "1/8": (dtv.GI_
 
 
 def receive(x: np.ndarray, constellation: str = "qpsk", rate: str = "1/2", guard: str = "1/8",
-            snr_db: float = 30.0) -> bytes:
+            snr_db: float = 30.0, carriers: bool = False):
     """Demodulate complex baseband x (48/7 MS/s, 2K mode) to TS bytes. The
     output starts at the first packet the receiver recovered after locking
-    (the decoder chain discards its start-up)."""
+    (the decoder chain discards its start-up). carriers=True also returns
+    the equalised data carriers (symbols x 1512), for MER."""
     c, r = MODS[constellation], RATES[rate]
     gi, cp = GUARDS[guard]
     with tempfile.TemporaryDirectory() as d:
@@ -50,9 +51,30 @@ def receive(x: np.ndarray, constellation: str = "qpsk", rate: str = "1/2", guard
         dst = blocks.file_sink(1, dst_path, False)
         dst.set_unbuffered(False)
         tb.connect(src, acq, dft, ref, demap, sdi, bdi, v2s, vit, cdi, rs, des, dst)
+        car_path = os.path.join(d, "car.c64")
+        if carriers:
+            csink = blocks.file_sink(gr.sizeof_gr_complex * 1512, car_path, False)
+            tb.connect(ref, csink)
         tb.run()
         dst.close()
-        return open(dst_path, "rb").read()
+        ts = open(dst_path, "rb").read()
+        if not carriers:
+            return ts
+        csink.close()
+        return ts, np.fromfile(car_path, np.complex64).reshape(-1, 1512)
+
+
+def mer_db(car: np.ndarray, constellation: str = "qpsk") -> np.ndarray:
+    """Per-symbol MER of equalised data carriers, decision-directed (as a
+    receiver's signal-quality readout does it). QPSK only."""
+    assert constellation == "qpsk"
+    out = []
+    for s in car:
+        a = np.mean(np.abs(s.real) + np.abs(s.imag)) / 2 or 1.0
+        d = a * (np.sign(s.real) + 1j * np.sign(s.imag))
+        e = np.mean(np.abs(s - d) ** 2)
+        out.append(10 * np.log10(np.mean(np.abs(d) ** 2) / e) if e > 0 else 99.0)
+    return np.array(out)
 
 
 def ofdm_time(car: np.ndarray, guard_len: int = 256) -> np.ndarray:
