@@ -13,6 +13,8 @@
 // first sample a clock without one is an underflow: mid-scale again, and
 // err_underflow latches (cleared by reset).
 `default_nettype none
+/* verilator lint_off BLKSEQ */       // r, v: temporaries inside a function
+/* verilator lint_off UNUSEDSIGNAL */ // r[5:0]: rounded away
 
 module dvbt_dac_out (
     input  wire               clk,

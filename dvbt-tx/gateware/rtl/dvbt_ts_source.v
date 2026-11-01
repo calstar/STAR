@@ -23,7 +23,7 @@ module dvbt_ts_source (
     reg       is_null;
     wire en = !m_valid || m_ready;
     wire boundary = (cnt == 8'd0);
-    assign f_ready = en && (boundary || !is_null);
+    assign f_ready = !rst && en && (boundary || !is_null);   // held in reset: leave the FIFO alone
 
     function [7:0] null_byte(input [7:0] k);
         case (k)

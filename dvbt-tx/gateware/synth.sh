@@ -3,7 +3,8 @@
 # with the open-source flow, and report utilisation and Fmax against the
 # 27.428571 MHz sample clock (36.46 ns).
 #
-#   ./synth.sh [top]      default top: dvbt_modulator
+#   ./synth.sh [top]      default top: dvbt_tx_top (the board, with pins;
+#                         then: yowasp-ecppack build/dvbt_tx_top/dvbt_tx_top.config out.bit)
 #
 # Sub-blocks have no pin constraints, so nextpnr places IO freely; the
 # numbers are for sizing.
@@ -14,11 +15,11 @@
 #   NEXTPNR=nextpnr-ecp5 PACKAGE=CABGA256 ./synth.sh   # the Ubuntu tools
 set -euo pipefail
 cd "$(dirname "$0")"
-TOP=${1:-dvbt_modulator}
+TOP=${1:-dvbt_tx_top}
 OUT=build/$TOP
 mkdir -p "$OUT"
 
 yosys -q -l "$OUT/yosys.log" -p "read_verilog -DDVBT_ROM_DIR=\"rtl/rom\" rtl/*.v; synth_ecp5 -top $TOP -json $OUT/$TOP.json; tee -o $OUT/stat.txt stat"
 ${NEXTPNR:-yowasp-nextpnr-ecp5} --25k --package "${PACKAGE:-TQFP144}" --speed 7 --json "$OUT/$TOP.json" \
-    --freq 27.43 --report "$OUT/report.json" --log "$OUT/nextpnr.log" -q
+    --freq 27.43 $( [ "$TOP" = dvbt_tx_top ] && echo --lpf board/dvbt_tx.lpf --textcfg "$OUT/$TOP.config" ) --report "$OUT/report.json" --log "$OUT/nextpnr.log" -q
 grep -E "Info: (Max frequency|\s+(TRELLIS_COMB|TRELLIS_FF|DP16KD|MULT18X18D|TRELLIS_IO|TRELLIS_RAMW)):" "$OUT/nextpnr.log" | sed 's/^Info: *//'

@@ -171,6 +171,7 @@ module dvbt_host (
             sm_start  <= 1'b0;
             dreq      <= 1'b0;
             stat      <= 8'd0;
+            rd_word   <= 32'd0;
             pc        <= 8'd0;
         end else begin
             f_push   <= 1'b0;

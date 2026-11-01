@@ -264,3 +264,110 @@ async def host(dut):
     assert int(dut.sm_cs_n.value) == 0b11
     assert await esp.read(4) == pattern, "SPI master read-back"
     cocotb.log.info("host: registers, TS commit/discard, DREQ, overflow, nulls, SPI master ok")
+
+
+# ---- the whole transmitter -----------------------------------------------------
+@cocotb.test()
+async def tx_core(dut):
+    """TS over SPI in, AD9116 pins out, against gr-dtv.
+
+    The ESP32 model primes the TS FIFO with tx_en low, raises tx_en, and
+    keeps sending a packet whenever DREQ is high. The DAC pins are sampled
+    in both halves of every clock (I, Q), the 27.43 MS/s signal is
+    decimated back to 48/7 MS/s with scipy, each symbol's guard is dropped,
+    and its FFT is compared with gr-dtv's carriers: MER, as a receiver would
+    measure it. Also: no underflow, no null packets, no alignment error.
+    """
+    import os
+    import numpy as np
+    from scipy import signal
+    import golden
+
+    rng = random.Random(seed())
+    n_pkt = int(os.environ.get("N_PKT", "48"))
+    ts = golden.random_ts(n_pkt, seed=seed())
+    car = golden.carriers(ts, "qpsk", "1/2")
+    packets = [bytes(ts[188 * k: 188 * (k + 1)]) for k in range(n_pkt)]
+
+    cocotb.start_soon(Clock(dut.clk, CLK_PS, unit="ps").start())
+    esp = Esp32(dut, rng)
+    dut.sm_miso.value = 0
+    dut.rst.value = 1
+    for _ in range(4):
+        await RisingEdge(dut.clk)
+    dut.rst.value = 0
+    await Timer(10 * CLK_PS, unit="ps")
+
+    await esp.write(1, (16384 << 16) | 16384)          # unity trims
+    await esp.write(0, 0x80)                           # QPSK 1/2, guard 1/8, off
+    sent = 0
+    while int(dut.dreq.value) and sent < n_pkt:
+        await esp.frame(b"\x00" + packets[sent])
+        sent += 1
+    cocotb.log.info("tx_core: %d packets primed", sent)
+
+    samples = []
+
+    async def dac_capture():
+        while True:
+            await RisingEdge(dut.clk)
+            await Timer(CLK_PS // 4, unit="ps")
+            i = int(dut.dac_d.value)
+            await Timer(CLK_PS // 2, unit="ps")
+            q = int(dut.dac_d.value)
+            samples.append(complex(i - 4096 * (i >> 11), q - 4096 * (q >> 11)))
+
+    await esp.write(0, 0x81)                           # transmit
+    assert await esp.read(0) == 0x81 and int(dut.tx_on.value) == 1, "tx_en did not take"
+    cap = cocotb.start_soon(dac_capture())
+    n_sym = len(car) - 4
+    need = int((n_sym + 1) * 2304 * 4 + 6000)
+    while len(samples) < need:
+        if sent < n_pkt and int(dut.dreq.value):
+            await esp.frame(b"\x00" + packets[sent])
+            sent += 1
+        else:
+            await Timer(2000 * CLK_PS, unit="ps")
+        assert sent == n_pkt or len(samples) < need, "ran out of TS"
+    cap.cancel()
+    st = await esp.read(6)
+    cocotb.log.info("tx_core: %d packets sent, %d DAC samples, status %08x", sent, len(samples), st)
+    assert st & 0x3 == 0, f"status {st:08x}: underflow or alignment error"
+    assert st >> 16 == 0, f"{st >> 16} null packets inserted while the FIFO was fed"
+
+    x = np.array(samples)
+    if os.environ.get("TB_DUMP"):
+        np.savez(os.environ["TB_DUMP"], x=x, car=car)
+    ng, N = 256, 2048
+    bins = np.zeros((n_sym, N), complex)
+    bins[:, [(k - 852) % N for k in range(1705)]] = car[:n_sym]
+    t = np.fft.ifft(bins, axis=1)
+    want = np.concatenate([t[:, -ng:], t], axis=1).reshape(-1)
+    # The receiver's part: decimate 4x with a sharp low-pass (the 1705
+    # carriers reach 2.85 MHz; scipy's default filter would eat the edge
+    # ones), find the sample phase and the symbol timing, equalise with one
+    # complex gain for the whole run, compare carriers after start-up.
+    STARTUP = 10
+    taps = signal.firwin(801, 3.2, window=("kaiser", 10), fs=4 * 48 / 7) * 4
+    best = None
+    for ph in range(4):
+        y = signal.resample_poly(x[ph:], 1, 4, window=taps)
+        L = 6 * (N + ng)
+        lag = int(np.argmax(np.abs(np.correlate(y[: L + 4000], want[:L], mode="valid"))))
+        if len(y) < lag + n_sym * (N + ng):
+            continue
+        yy = y[lag: lag + n_sym * (N + ng)].reshape(n_sym, N + ng)
+        rx = np.fft.fft(yy[:, ng:], axis=1)[:, [(k - 852) % N for k in range(1705)]]
+        ref, got = car[STARTUP:n_sym], rx[STARTUP:]
+        g = np.vdot(ref, got) / np.vdot(ref, ref)
+        err = got / g - ref
+        per = [10 * np.log10(np.sum(np.abs(r) ** 2) / np.sum(np.abs(e) ** 2)) for r, e in zip(ref, err)]
+        if best is None or min(per) > min(best[1]):
+            best = (ph, per, lag)
+    ph, per, lag = best
+    rms = np.sqrt(np.mean(np.abs(x[-4 * 8 * (N + ng):]) ** 2))
+    cocotb.log.info("tx_core: sample phase %d, symbol lag %d: MER %.1f dB worst of %d symbols "
+                    "(mean %.1f), DAC RMS %.0f of 2047", ph, lag, min(per), len(per),
+                    np.mean(per), rms)
+    # 12-bit quantization at unity gain (RMS ~172 LSB) allows ~53 dB.
+    assert min(per) >= 45, f"MER {min(per):.1f} dB in some symbol"
