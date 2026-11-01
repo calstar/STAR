@@ -189,3 +189,38 @@ def test_idr_detection_matches_x264():
     lib.h264_au_is_idr.restype = ctypes.c_bool
     got = [lib.h264_au_is_idr(au, len(au)) for au in aus]
     assert got == keys and sum(got) == 3 and got[0] and got[30] and got[60]
+
+
+def test_skip_keeps_pcr_on_the_air_timeline():
+    """The FPGA inserts nulls when the P4 falls behind; after ts_mux_skip(n)
+    the PCRs again equal the packets' true arrival times on air (within the
+    tick), as if the mux had made those nulls itself. Without the skip they
+    stay n packets late for good."""
+    lib = fwlib.load()
+    rate = dvbt_rate()
+    null = b"\x47\x1f\xff\x10" + bytes(184)
+
+    def stream(skip: bool):
+        ring = (ctypes.c_uint8 * (1 << 16))()
+        cfg = Cfg(rate.numerator, rate.denominator, 1, 1, 1, 0x1000, 0x100, b"STAR", b"N0CALL", 0, 0, 0,
+                  ctypes.cast(ring, ctypes.POINTER(ctypes.c_uint8)), len(ring))
+        m = ctypes.create_string_buffer(MUX_BYTES)
+        lib.ts_mux_init(m, ctypes.byref(cfg))
+        pkt = (ctypes.c_uint8 * 188)()
+        air = bytearray()
+        for n in range(3000):
+            if n == 1000:                     # a stall: the FPGA sends 47 nulls of its own
+                air += null * 47
+                if skip:
+                    lib.ts_mux_skip(m, ctypes.c_uint64(47))
+            lib.ts_mux_next(m, pkt)
+            air += bytes(pkt)
+        return bytes(air)
+
+    for skip in (True, False):
+        _, _, pcrs, _, _ = parse(stream(skip))
+        late = [n for n, v in pcrs if n > 1100 and abs(v - (n * 188 + 10) * 8 * 27_000_000 / rate) > 1]
+        if skip:
+            assert not late, f"PCR off the air timeline at packets {late[:5]}"
+        else:
+            assert late, "control: without the skip the PCRs must be late"

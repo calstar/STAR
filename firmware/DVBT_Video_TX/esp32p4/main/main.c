@@ -3,10 +3,12 @@
 // drivers, then runs the camera, the SD recorder and the USB FPGA updater
 // around it. The sequence itself is documented in tx_app.h; the end-to-end
 // test (test/e2e) runs that same code against the FPGA's RTL.
+#include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
@@ -48,11 +50,31 @@ static void delay_us(void *ctx, uint32_t us)
     else esp_rom_delay_us(us);
 }
 
+// tx_app logs from the TS task. A console write can block (the USB
+// Serial/JTAG console with no host attached waits for its timeout), and a
+// TS task blocked for more than the FPGA FIFO's depth makes the FPGA insert
+// null packets. So the callback only queues the line; a low-priority task
+// prints it, and lines are dropped (counted) when the queue is full.
+typedef struct { char lvl; char m[120]; } log_line_t;
+static QueueHandle_t s_logq;
+static volatile uint32_t s_log_dropped;
+
+static void log_task(void *arg)
+{
+    log_line_t l;
+    for (;;) {
+        if (xQueueReceive(s_logq, &l, portMAX_DELAY) != pdTRUE) continue;
+        if (l.lvl == 'E') ESP_LOGE(TAG, "%s", l.m);
+        else if (l.lvl == 'W') ESP_LOGW(TAG, "%s", l.m);
+        else ESP_LOGI(TAG, "%s", l.m);
+    }
+}
+
 static void log_cb(void *ctx, char lvl, const char *m)
 {
-    if (lvl == 'E') ESP_LOGE(TAG, "%s", m);
-    else if (lvl == 'W') ESP_LOGW(TAG, "%s", m);
-    else ESP_LOGI(TAG, "%s", m);
+    log_line_t l = { .lvl = lvl };
+    strlcpy(l.m, m, sizeof l.m);
+    if (!s_logq || xQueueSend(s_logq, &l, 0) != pdTRUE) s_log_dropped++;
 }
 
 static void mux_lock(void *ctx, bool take)
@@ -114,6 +136,8 @@ static void before_update(void)
 void app_main(void)
 {
     s_mux_lock = xSemaphoreCreateMutex();
+    s_logq = xQueueCreate(32, sizeof(log_line_t));
+    xTaskCreate(log_task, "log", 3072, NULL, 1, NULL);
     gpio_config_t out = { .pin_bit_mask = (1ULL << CONFIG_DVBT_ADRF_TXDIS) | (1ULL << CONFIG_DVBT_DAC_RESET),
                           .mode = GPIO_MODE_OUTPUT };
     gpio_set_level(CONFIG_DVBT_ADRF_TXDIS, 1);              // RF off from the first instant
@@ -143,12 +167,14 @@ void app_main(void)
     };
     tx_config_t cfg = {
         .xtal_hz = CONFIG_DVBT_SI5351_XTAL_HZ, .xtal_load_pf = CONFIG_DVBT_SI5351_LOAD_PF,
-        .refin_hz = CONFIG_DVBT_ADRF_REFIN_HZ, .lo_hz = (uint64_t)CONFIG_DVBT_LO_KHZ * 1000,
+        .refin_hz = CONFIG_DVBT_ADRF_REFIN_HZ, .refin_tol_ppm = CONFIG_DVBT_ADRF_REFIN_TOL_PPM, .lo_hz = (uint64_t)CONFIG_DVBT_LO_KHZ * 1000,
         .atten_db = CONFIG_DVBT_ADRF_ATTEN_DB,
         .bw_mhz = 6, .mod = 0, .rate = 0, .guard = 2,        // QPSK 1/2, guard 1/8
         .provider = "STAR", .service = CONFIG_DVBT_CALLSIGN,
         .video_delay_ms = CONFIG_DVBT_VIDEO_DELAY_MS,
         .mux_buf_size = 256 * 1024, .health_ms = CONFIG_DVBT_HEALTH_MS,
+        .dc_i = CONFIG_DVBT_CAL_DC_I, .dc_q = CONFIG_DVBT_CAL_DC_Q,
+        .gain_i = CONFIG_DVBT_CAL_GAIN_I, .gain_q = CONFIG_DVBT_CAL_GAIN_Q, .phase = CONFIG_DVBT_CAL_PHASE,
     };
     cfg.mux_buf = heap_caps_malloc(cfg.mux_buf_size, MALLOC_CAP_SPIRAM);
     ESP_ERROR_CHECK(cfg.mux_buf ? ESP_OK : ESP_ERR_NO_MEM);
@@ -184,9 +210,12 @@ void app_main(void)
 
     for (uint32_t n = 0;; n++) {
         tx_pump(&s_app);
-        if ((n & 0x1FFF) == 0)
-            ESP_LOGI(TAG, "faults %03lx, recoveries %lu, nulls %llu, frames %llu (dropped %llu), backlog %u B",
-                     (unsigned long)s_app.faults, (unsigned long)s_app.recoveries, s_app.nulls,
-                     s_app.frames, s_app.frames_dropped, (unsigned)ts_mux_backlog(&s_app.mux));
+        if ((n & 0x1FFF) == 0) {                // through the queue: never blocks this task
+            char m[120];
+            snprintf(m, sizeof m, "faults %03lx, recoveries %lu, nulls %llu, frames %llu (dropped %llu), backlog %u B, log drops %lu",
+                     (unsigned long)s_app.faults, (unsigned long)s_app.recoveries, s_app.nulls, s_app.frames,
+                     s_app.frames_dropped, (unsigned)ts_mux_backlog(&s_app.mux), (unsigned long)s_log_dropped);
+            log_cb(NULL, 'I', m);
+        }
     }
 }

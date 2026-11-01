@@ -90,6 +90,13 @@ menu "DVB-T transmitter"
     config DVBT_ADRF_REFIN_HZ
         int "ADRF6755 reference (TCXO) frequency (Hz)"
         default 40000000
+    config DVBT_ADRF_REFIN_TOL_PPM
+        int "ADRF6755 reference worst-case error (ppm: TCXO tolerance + aging)"
+        default 5
+        help
+            The PLL's phase detector must stay at or below 40 MHz with the
+            reference at its fastest. A 40 MHz TCXO with any tolerance is
+            therefore divided by 2 (20 MHz PFD). 0 runs the PFD at REFIN.
     config DVBT_LO_KHZ
         int "Carrier (LO) frequency (kHz)"
         default 1279000
@@ -151,6 +158,28 @@ menu "DVB-T transmitter"
     config DVBT_USB_FPGA_UPDATE
         bool "Accept FPGA images over the USB serial port (tools/fpga_update.py)"
         default y
+    menu "Per-board RF calibration (bench, spectrum analyser)"
+        config DVBT_CAL_DC_I
+            int "I DC offset (DAC LSB): null the LO feedthrough"
+            range -2048 2047
+            default 0
+        config DVBT_CAL_DC_Q
+            int "Q DC offset (DAC LSB)"
+            range -2048 2047
+            default 0
+        config DVBT_CAL_GAIN_I
+            int "I gain, Q2.14 (0: default 2.5 = 40960)"
+            range 0 65535
+            default 0
+        config DVBT_CAL_GAIN_Q
+            int "Q gain, Q2.14 (0: default 2.5 = 40960)"
+            range 0 65535
+            default 0
+        config DVBT_CAL_PHASE
+            int "I-into-Q phase trim, Q2.14 (null the image)"
+            range -32768 32767
+            default 0
+    endmenu
     config DVBT_HEALTH_MS
         int "Health check period (ms)"
         default 100

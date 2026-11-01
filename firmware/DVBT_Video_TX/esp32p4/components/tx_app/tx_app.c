@@ -67,6 +67,11 @@ static esp_err_t stream_start(tx_app_t *a)
 {
     const fpga_link_t *l = a->b->link;
     TRY(fpga_reg_write(l, DVBT_REG_CTRL, a->ctrl));
+    // Bench calibration (tx_config_t): I/Q gain and phase trims, DC offsets.
+    uint16_t gi = a->c.gain_i ? a->c.gain_i : 40960, gq = a->c.gain_q ? a->c.gain_q : 40960;
+    TRY(fpga_reg_write(l, DVBT_REG_GAIN, ((uint32_t)gi << 16) | gq));
+    TRY(fpga_reg_write(l, DVBT_REG_PHASE, (uint16_t)a->c.phase));
+    TRY(fpga_reg_write(l, DVBT_REG_DCOFF, (((uint32_t)a->c.dc_i & 0xFFF) << 16) | ((uint32_t)a->c.dc_q & 0xFFF)));
     TRY(fpga_reg_write(l, DVBT_REG_STATUS, DVBT_ST_CLEAR_NULLS | 0xFu));
     // Send while the DREQ pin says there is room. (Not the status byte: it
     // is sampled at the start of a frame, so it can still say "room" after
@@ -132,7 +137,7 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
     logf_(a, 'I', "AD9116 version %02x, retimer locked", a->dac_version);
 
     // 4. LO.
-    if (!adrf6755_plan(c->refin_hz, c->lo_hz, &a->lo)) {
+    if (!adrf6755_plan_tol(c->refin_hz, c->refin_tol_ppm, c->lo_hz, &a->lo)) {
         logf_(a, 'E', "no ADRF6755 plan for %llu Hz from %lu Hz", (unsigned long long)c->lo_hz,
               (unsigned long)c->refin_hz);
         return ESP_ERR_INVALID_ARG;
@@ -223,8 +228,14 @@ uint32_t tx_health(tx_app_t *a)
         if (st & DVBT_ST_TS_BAD) f |= TX_F_TS_BAD;
         if (st & DVBT_ST_TS_OVERFLOW) f |= TX_F_TS_OVERFLOW;
         if (DVBT_ST_NULLS(st)) {
+            // The FPGA filled a gap with nulls: the channel is that many packets
+            // ahead of the mux's clock. Catch the clock up, so PCRs (and the PTS
+            // stamped from now on) match the air again.
             f |= TX_F_NULLS;
             a->nulls += DVBT_ST_NULLS(st);
+            lock(a, true);
+            ts_mux_skip(&a->mux, DVBT_ST_NULLS(st));
+            lock(a, false);
         }
         if (st & (0xFu | 0xFFFF0000u))
             fpga_reg_write(b->link, DVBT_REG_STATUS, (st & 0xFu) | (DVBT_ST_NULLS(st) ? DVBT_ST_CLEAR_NULLS : 0));

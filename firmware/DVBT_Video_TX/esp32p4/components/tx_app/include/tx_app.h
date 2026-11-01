@@ -66,6 +66,7 @@ typedef struct {
     uint32_t xtal_hz;                   // Si5351A crystal
     int xtal_load_pf;
     uint32_t refin_hz;                  // ADRF6755 REFIN
+    uint32_t refin_tol_ppm;             // its worst-case error (TCXO + aging): sizes the PFD
     uint64_t lo_hz;                     // carrier
     uint8_t atten_db;                   // ADRF6755 output attenuator
     int bw_mhz, mod, rate, guard;       // DVB-T: 6, 0 QPSK, 0 1/2, 2 1/8
@@ -74,6 +75,17 @@ typedef struct {
     uint8_t *mux_buf;                   // video ring (PSRAM on the P4)
     size_t mux_buf_size;
     uint32_t health_ms;                 // 0: 100
+    // Per-board calibration, measured on the bench with a spectrum analyser
+    // (written to the FPGA's trims before every tx_en):
+    //   dc_i, dc_q: DAC LSBs that null the ADRF6755's LO feedthrough (-43 dBc
+    //     of its nominal output, i.e. above a single OFDM carrier at our
+    //     back-off -- it corrupts the centre carrier and every 4th symbol's
+    //     channel estimate there);
+    //   gain_i, gain_q (Q2.14, 0 = the FPGA's reset 2.5) and phase (Q2.14):
+    //     null the image from DAC gain error and modulator quadrature error.
+    int16_t dc_i, dc_q;
+    uint16_t gain_i, gain_q;
+    int16_t phase;
     uint32_t ldet_timeout_us;           // 0: 10000
 } tx_config_t;
 

@@ -56,8 +56,16 @@ MUTANTS = [
      "no_image", "DCLKIO inverted: the DAC pairs Q with the next I"),
     ("rtl", "dvbt_tx_top.v", "ODDRX1F u_dclk (.SCLK(clk90)", "ODDRX1F u_dclk (.SCLK(clk)",
      "no_image", "DCLKIO in phase with the data: latched on the transition"),
-    ("rtl", "dvbt_host.v", "dreq     <= (f_free >= 12'd376);", "dreq     <= (f_free >= 12'd188);",
-     "p4_stall", "DREQ promises room for one packet, the firmware sends two"),
+    ("rtl", "dvbt_host.v", "dreq     <= (f_free >= 376);", "dreq     <= (f_free >= 188);",
+     "p4_stall_longer", "DREQ promises room for one packet, the firmware sends two"),
+    ("rtl", "dvbt_tx_core.v", "parameter integer TS_FIFO_AW = 14", "parameter integer TS_FIFO_AW = 11",
+     "p4_under_load", "the 2 KB TS FIFO again: a busy P4 makes the FPGA insert nulls"),
+    ("fw", "tx_app/tx_app.c", "ts_mux_skip(&a->mux, DVBT_ST_NULLS(st));", "",
+     "p4_stall_longer", "mux clock not caught up after FPGA nulls: PCRs late for good"),
+    ("fw", "adrf6755/adrf6755_plan.c", "uint64_t ref_max = refin_hz + ((uint64_t)refin_hz * tol_ppm + 999999) / 1000000;",
+     "uint64_t ref_max = refin_hz;", "tcxo", "PFD sized for the nominal TCXO: a fast one never locks"),
+    ("fw", "tx_app/tx_app.c", "TRY(fpga_reg_write(l, DVBT_REG_DCOFF,", "if (0) TRY(fpga_reg_write(l, DVBT_REG_DCOFF,",
+     "lo_feedthrough", "the bench calibration never reaches the FPGA"),
 ]
 EXPECT_SURVIVE = {"(control: removing a delay changes nothing)"}
 

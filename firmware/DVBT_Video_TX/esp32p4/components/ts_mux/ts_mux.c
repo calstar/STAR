@@ -53,6 +53,8 @@ void ts_mux_init(ts_mux_t *m, const ts_mux_config_t *c)
 }
 
 uint64_t ts_mux_now_90k(const ts_mux_t *m) { return t27_of_byte(m, m->pkt * TS_PKT) / 300; }
+
+void ts_mux_skip(ts_mux_t *m, uint64_t n) { m->pkt += n; }
 size_t ts_mux_backlog(const ts_mux_t *m) { return m->ring_used; }
 
 bool ts_mux_put(ts_mux_t *m, const uint8_t *au, size_t n, uint64_t pts_90k, bool key)

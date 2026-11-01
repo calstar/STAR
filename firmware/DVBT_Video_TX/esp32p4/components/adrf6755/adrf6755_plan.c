@@ -6,14 +6,21 @@
 
 bool adrf6755_plan(uint32_t refin_hz, uint64_t lo_hz, adrf6755_plan_t *p)
 {
+    return adrf6755_plan_tol(refin_hz, 0, lo_hz, p);
+}
+
+bool adrf6755_plan_tol(uint32_t refin_hz, uint32_t tol_ppm, uint64_t lo_hz, adrf6755_plan_t *p)
+{
     if (refin_hz < 10000000u || refin_hz > 165000000u) return false;   // ÷2 path not used
     if (lo_hz <= 100000000ull || lo_hz > 2400000000ull) return false;
+    // The PFD limit holds at the reference's fastest, not its nominal.
+    uint64_t ref_max = refin_hz + ((uint64_t)refin_hz * tol_ppm + 999999) / 1000000;
     // Reference path (Equation 1): no division if REFIN is a usable PFD
     // (then the R-divider and ÷2 are disabled, CR5[4] = 0, as recommended);
     // else the smallest total division r with REFIN / r <= 40 MHz -- even r
     // as ÷2 times R = r/2, odd r all in R, as the datasheet recommends.
     uint32_t r = 1;
-    while (refin_hz / r > PFD_MAX || (refin_hz / r == PFD_MAX && refin_hz % r)) r++;
+    while (ref_max / r > PFD_MAX || (ref_max / r == PFD_MAX && ref_max % r)) r++;
     p->doubler = false;
     p->r_half = (r % 2 == 0);
     p->r = (uint8_t)(p->r_half ? r / 2 : r);
@@ -63,7 +70,9 @@ int adrf6755_init_sequence(const adrf6755_plan_t *p, uint8_t atten_db, uint8_t s
         {22, 0x80}, {21, 0x00}, {20, 0x00}, {19, 0x80}, {18, 0x60},
         {17, 0x00}, {16, 0x00}, {15, 0x00},         //  9-16 reserved values
         {14, 0x80},                                 // 17 stop LO when TXDIS = 1
-        {13, 0xE8},                                 // 18 lock detector 2 (40 MHz PFD setting)
+        // 18 lock detector 2: count 4096 PFD cycles at 40 MHz (the datasheet's
+        // setting), 2048 below 30 MHz -- LDET ~100 us either way (Table 7)
+        {13, (uint8_t)(p->pfd_hz >= 30000000u ? 0xE8 : 0xA8)},
         {12, 0x18},                                 // 19 PLL powered up
         {11, 0x00},                                 // 20
         {10, (uint8_t)((p->r_half ? 0x40 : 0) | (p->doubler ? 0x20 : 0) | (r5 & 0x1F))},  // 21

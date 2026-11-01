@@ -66,5 +66,9 @@ void ts_mux_init(ts_mux_t *m, const ts_mux_config_t *c);
 bool ts_mux_put(ts_mux_t *m, const uint8_t *au, size_t n, uint64_t pts_90k, bool key);
 void ts_mux_next(ts_mux_t *m, uint8_t out[TS_PKT]);
 uint64_t ts_mux_now_90k(const ts_mux_t *m);      // time of the next packet
+// The FPGA inserted n null packets of its own (the P4 fell behind): the
+// channel is n packets further on than the mux's count, so move the mux's
+// clock (PCR, PTS stamping, table timers) forward to match.
+void ts_mux_skip(ts_mux_t *m, uint64_t n);
 size_t ts_mux_backlog(const ts_mux_t *m);        // video bytes queued
 uint32_t ts_crc32_mpeg(const uint8_t *p, size_t n);

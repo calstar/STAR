@@ -28,6 +28,11 @@ typedef struct {
 // division, PFD <= 40 MHz); RFDIV per Table 6; INT/FRAC per Equations 4-5
 // with FRAC rounded to the nearest 1/2^25.
 bool adrf6755_plan(uint32_t refin_hz, uint64_t lo_hz, adrf6755_plan_t *p);
+// The same, keeping the PFD within its 40 MHz limit at REFIN + tol_ppm: a
+// 40 MHz TCXO a few ppm fast would otherwise put the PFD past the datasheet
+// maximum, so with any tolerance it is divided by 2 (20 MHz PFD; about 3 dB
+// more in-band phase noise, still 0.3 deg rms class).
+bool adrf6755_plan_tol(uint32_t refin_hz, uint32_t tol_ppm, uint64_t lo_hz, adrf6755_plan_t *p);
 
 // Pure: the datasheet's initial register write sequence (Suggested
 // Power-Up Sequence, steps 1-32) for a plan: n (register, value) pairs.
