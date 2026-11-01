@@ -1,8 +1,20 @@
-// SPI master for the AD9116 and ADRF6755 setup registers. Mode 0, MSB
-// first, 1..32 bits per transaction (tx left-aligned: bit 31 goes first),
-// SCLK = clk / (2 (div + 1)). One chip select per device. Bits on SDI are
-// captured on the rising edges and returned right-aligned in rx (a device
-// in 3-wire mode needs its 4-wire SDO mode set first to be read back).
+// Generic SPI master for the setup buses (AD9116, ADRF6755, anything else
+// on the board): the FPGA knows no device, the ESP32 sends each device's
+// own instruction and data bits through it.
+//
+// Mode 0 (SCLK idle low, data out on the falling edge, sampled on the
+// rising edge), MSB first, 1..32 bits per transaction (tx left-aligned:
+// bit 31 goes first), SCLK = clk / (2 (div + 1)), one chip select per
+// device.
+//   4-wire (three_wire = 0): sdo drives all the time, bits come back on
+//     miso.
+//   3-wire (three_wire = 1): sdo drives the first wr_bits bits, then is
+//     released (sdo_oe low) at the falling edge after the last of them --
+//     where a 3-wire device starts driving -- and the rest come back on the
+//     same line (sdio_in). An AD9116 register read is 8 instruction bits,
+//     then 8 per data byte: nbits = 8 + 8n, wr_bits = 8. For a write, set
+//     wr_bits to the total (or use 4-wire framing).
+// Bits clocked in are returned right-aligned in rx.
 `default_nettype none
 
 module dvbt_spi_master (
@@ -13,33 +25,47 @@ module dvbt_spi_master (
     input  wire  [4:0] nbits_m1,   // bits - 1
     input  wire        dev,        // 0: cs_n[0], 1: cs_n[1]
     input  wire  [7:0] div,
+    input  wire        three_wire,
+    input  wire  [5:0] wr_bits,    // 3-wire: bits driven before the turnaround
     output reg  [31:0] rx,
     output reg         busy,
     output reg         sclk,
-    output wire        mosi,
+    output wire        sdo,
+    output reg         sdo_oe,
+    input  wire        sdio_in,
     input  wire        miso,
     output reg   [1:0] cs_n
 );
     reg [31:0] sh;
     reg  [4:0] left;
+    reg  [5:0] sent;               // bits completed (falling edges)
     reg  [7:0] tick;
     reg        tail;               // CS hold after the last falling edge
-    assign mosi = sh[31];
+    reg        tw;
+    reg  [5:0] wb;
+    assign sdo = sh[31];
+    wire sdi = tw ? sdio_in : miso;
 
     always @(posedge clk) begin
         if (rst) begin
-            busy <= 1'b0;
-            sclk <= 1'b0;
-            cs_n <= 2'b11;
-            tail <= 1'b0;
+            busy   <= 1'b0;
+            sclk   <= 1'b0;
+            cs_n   <= 2'b11;
+            tail   <= 1'b0;
+            sdo_oe <= 1'b1;
         end else if (!busy) begin
+            sdo_oe <= 1'b1;
             if (start) begin
                 busy <= 1'b1;
                 sh   <= tx;
                 left <= nbits_m1;
+                sent <= 6'd0;
                 rx   <= 32'd0;
                 tick <= div;
                 tail <= 1'b0;
+                tw   <= three_wire;
+                wb   <= wr_bits;
+                sdo_oe <= !(three_wire && wr_bits == 6'd0);
                 cs_n <= dev ? 2'b01 : 2'b10;
             end
         end else if (tick != 8'd0) begin
@@ -51,10 +77,12 @@ module dvbt_spi_master (
                 busy <= 1'b0;
             end else if (!sclk) begin
                 sclk <= 1'b1;
-                rx   <= {rx[30:0], miso};
+                rx   <= {rx[30:0], sdi};
             end else begin
                 sclk <= 1'b0;
                 sh   <= {sh[30:0], 1'b0};
+                sent <= sent + 6'd1;
+                if (tw && sent + 6'd1 >= wb) sdo_oe <= 1'b0;
                 if (left == 5'd0) tail <= 1'b1;
                 else left <= left - 5'd1;
             end
