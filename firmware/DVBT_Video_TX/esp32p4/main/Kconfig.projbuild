@@ -50,6 +50,40 @@ menu "DVB-T transmitter"
     config DVBT_SETUP_SPI_HZ
         int "Setup bus clock (Hz, <= 20 MHz)"
         default 10000000
+    config DVBT_CFG_CCLK
+        int "FPGA config CCLK GPIO"
+        default 40
+    config DVBT_CFG_MOSI
+        int "FPGA config D0/MOSI GPIO"
+        default 41
+    config DVBT_CFG_MISO
+        int "FPGA config D1/MISO GPIO"
+        default 42
+    config DVBT_CFG_SN
+        int "FPGA config SN (slave select) GPIO"
+        default 43
+    config DVBT_CFG_PROGRAMN
+        int "FPGA PROGRAMN GPIO (open drain)"
+        default 44
+    config DVBT_CFG_INITN
+        int "FPGA INITN GPIO"
+        default 45
+    config DVBT_CFG_DONE
+        int "FPGA DONE GPIO"
+        default 46
+    config DVBT_CFG_CFG0
+        int "FPGA CFG0 GPIO"
+        default 47
+    config DVBT_CFG_CFG1
+        int "FPGA CFG1 GPIO"
+        default 48
+    config DVBT_CFG_SSPI_CODE
+        int "CFG[1:0] value for slave SPI (confirm in Lattice TN1260)"
+        range 0 3
+        default 0
+    config DVBT_CFG_SPI_HZ
+        int "FPGA configuration SPI clock (Hz)"
+        default 20000000
     config DVBT_ADRF_REFIN_HZ
         int "ADRF6755 reference (TCXO) frequency (Hz)"
         default 40000000

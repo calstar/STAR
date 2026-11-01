@@ -30,7 +30,9 @@ void si5351_pack(const si5351_params_t *pp, uint32_t r_div_log2, uint8_t out[8])
 #ifdef ESP_PLATFORM
 #include "esp_err.h"
 #include "driver/i2c_master.h"
-// Program CLK0 from PLLA with the plan, crystal load in pF (6, 8 or 10).
-esp_err_t si5351_start_clk0(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
-                            uint64_t fout_num, uint64_t fout_den, si5351_plan_t *plan);
+// Program CLK0..CLK(n_out-1) (n_out 1..3), all the same frequency, from
+// PLLA with the plan; crystal load in pF (6, 8 or 10). The board uses CLK0
+// for the FPGA and CLK1 for the AD9116's CLKIN.
+esp_err_t si5351_start(i2c_master_bus_handle_t bus, uint32_t xtal_hz, int load_pf,
+                       uint64_t fout_num, uint64_t fout_den, int n_out, si5351_plan_t *plan);
 #endif
