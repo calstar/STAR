@@ -56,8 +56,14 @@ async def fft2048(dut):
         want = np.fft.fft(x[b])[perm] / SCALE
         s = snr_db(got[b], want)
         peak = np.abs(got[b]).max()
-        cocotb.log.info("block %d: SNR %.1f dB vs numpy, peak %.0f of 131071", b, s, peak)
+        # Rounding (not truncating) when halving: the error must be unbiased.
+        # Truncation leaves SNR above 60 dB but shifts every output by about
+        # -1 LSB per halving stage, an offset the DAC would show as carrier leak.
+        bias = np.mean(got[b] - want)
+        cocotb.log.info("block %d: SNR %.1f dB vs numpy, bias %.2f%+.2fj LSB, peak %.0f of 131071",
+                        b, s, bias.real, bias.imag, peak)
         assert s >= MIN_SNR_DB, f"block {b}: SNR {s:.1f} dB < {MIN_SNR_DB}"
+        assert abs(bias) < 0.2, f"block {b}: output biased by {bias:.2f} LSB"
 
 
 GUARD = {0: 64, 1: 128, 2: 256, 3: 512}
@@ -113,14 +119,20 @@ async def modulator(dut):
         f"full-scale overflow outside start-up, symbols {clipped_syms}")
     rails = np.clip(want.real, -131071, 131071) + 1j * np.clip(want.imag, -131071, 131071)
     assert np.all(np.abs(got[over] - rails[over]) < 64), "overflowing samples not clipped to the rail"
-    ok = ~over
-    s = snr_db(got[ok], want[ok])
+    # Per-symbol SNR: inside the start-up symbols the FFT's intermediate
+    # stages saturate too, so samples near (not only beyond) the rail differ.
+    per_sym = [snr_db(got[k], want[k]) for k in range(n_sym)]
+    bad = [k for k, v in enumerate(per_sym) if v < MIN_SNR_DB]
+    cocotb.log.info("per-symbol SNR, first %d: %s", STARTUP_SYMS,
+                    " ".join(f"{v:.0f}" for v in per_sym[:STARTUP_SYMS]))
+    assert all(k < STARTUP_SYMS for k in bad), f"symbols below {MIN_SNR_DB} dB: {bad}"
+    s = snr_db(got[STARTUP_SYMS:], want[STARTUP_SYMS:])
     steady = got[STARTUP_SYMS:]
     rx = np.fft.fft(steady[:, ng:], axis=1)[:, [(k - 852) % N for k in range(1705)]]
     mer = snr_db(rx / (8192 * N / SCALE), car[STARTUP_SYMS:n_sym])
     peak = np.abs(steady).max()
     rms = np.sqrt(np.mean(np.abs(steady) ** 2))
-    cocotb.log.info("modulator %s %s: %d symbols, SNR %.1f dB vs gr-dtv (%d start-up samples "
+    cocotb.log.info("modulator %s %s: %d symbols, steady-state SNR %.1f dB vs gr-dtv (%d start-up samples "
                     "clipped, symbols %s), steady state: MER %.1f dB, RMS %.0f, peak %.0f "
                     "(PAPR %.1f dB) of 131071", mod, rate, n_sym, s, int(over.sum()),
                     clipped_syms, mer, rms, peak, 20 * np.log10(peak / rms))

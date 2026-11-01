@@ -77,8 +77,10 @@ module dvbt_fft_bf #(
         reg signed [19:0] r;
         begin
             if (SHIFT != 0) begin
-                r = {v[18], v} + 20'sd1;
-                scale = r[18:1];
+                // round half to even: unbiased (round-half-up and
+                // truncation each leave ~0.5 LSB of DC at the output)
+                r = {v[18], v} + {19'd0, v[1]};
+                scale = ($signed(r[19:1]) > 19'sd131071) ? 18'sd131071 : r[18:1];
             end else if (v > 19'sd131071) scale = 18'sd131071;
             else if (v < -19'sd131071) scale = -18'sd131071;
             else scale = v[17:0];
