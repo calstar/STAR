@@ -2068,8 +2068,9 @@ class BottleSim:
     "down to" fifteen psi is wrong before anybody has put gas in it -- it is
     not down to anything, it is where it started."""
     peak: float = 0.0
-    """The highest pressure it has held [Pa abs]: what a "down to" note is
-    down from. A bottle climbing through its charge is not down to anything."""
+    """The highest pressure it has held since it was last charged or primed
+    [Pa abs]: what a "down to" note is down from. A bottle climbing through its
+    charge is not down to anything."""
     #: Ledger for the solver tab, cumulative [kg]: what the built-in charge
     #: put in, what the built-in dump took out beyond the network's draw, and
     #: what the floor at atmosphere added back.
@@ -2102,7 +2103,11 @@ class BottleSim:
         GSE is not drawn, which is charged by ``filling`` instead."""
         if self.pressure > 2.0 * AMBIENT:
             self.charged = True
-        self.peak = max(self.peak, self.pressure)
+        # The most it has held since the charge it is on: a charge starts what
+        # a later "down to" is down from. Kept from a charge before a dump, a
+        # recharge paused part way read "down to 781 psia, 19% of the 4,018
+        # psia it was filled to" of a bottle that had only gained since.
+        self.peak = self.pressure if self.filling else max(self.peak, self.pressure)
         # The GSE cart doing the filling is not on the drawing yet, so the fill
         # is commanded by the state at a rate the operator sets rather than
         # solved. Everything after the bottle -- the regulator, the tanks, the
@@ -3004,6 +3009,11 @@ class Session:
                 bottle.state = bottle.volume.initial_state(
                     pressure=from_psig(copv_psi), temperature=293.15
                 )
+                # Set, not reached: what a "down to" note is down from starts
+                # here. Kept from an earlier charge, a bottle primed under it
+                # read "down to 415 psia, 10% of the 4,015 psia it was filled
+                # to" of gas nobody had taken out of it.
+                bottle.peak = bottle.pressure
             bottle.charged = True
         if state in self.machine.states and state != self.state:
             self.state = state
@@ -5997,13 +6007,16 @@ class Session:
                     "Top up before Ready."
                 )
             elif (
-                bottle.pressure < LOW_BOTTLE * bottle.target
+                bottle.pressure < LOW_BOTTLE * bottle.target <= bottle.peak
                 and not bottle.filling
-                and bottle.pressure < bottle.peak
             ):
                 # Down from what it held, and not while it charges: the note
                 # read "down to 107 psia, 3% of what it was filled to" through
-                # the first quarter of every charge from empty.
+                # the first quarter of every charge from empty. Down past the
+                # line from above it, too: a bottle that never held more --
+                # primed low at T-0, a charge stopped short, a pulse fill
+                # paused -- read "down to 415 psia, 100% of the 415 psia it was
+                # filled to" the moment it cooled a pascal.
                 out.append(
                     f"{bottle.label} is down to {say(bottle.pressure)}, "
                     f"{bottle.pressure / bottle.peak * 100:.0f}% of the "

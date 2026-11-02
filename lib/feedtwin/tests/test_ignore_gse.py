@@ -219,6 +219,20 @@ def test_a_bottle_charging_is_not_down_to_anything() -> None:
     )
     (low,) = [n for n in session.step(0.02).notes if "down to" in n]
     assert low.startswith("COPV is down to 415 psia, 10% of the 4,01"), low
+    # Dumped and charged again, part way, then paused: it has only gained
+    # since the dump. What it held before is not what this charge filled it
+    # to, and "down to 8xx psia, 2x% of the 4,01x psia" read as a leak.
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(0.0), temperature=copv.state.wall_temperature
+    )
+    session.state = "GN2 High Press"
+    for _ in range(8):  # 2 s: a few hundred psi, short of a quarter
+        session.step(0.25)
+    assert 2.0 * 14.7 < psig(copv.pressure) < 0.25 * 4000.0
+    session.state = "Press Standby"
+    for _ in range(20):  # it cools from the charge and sags
+        notes = session.step(0.25).notes
+        assert not [n for n in notes if "down to" in n], notes
 
 
 @needs_tables
@@ -240,6 +254,34 @@ def test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere() -> None:
     assert psig(copv.pressure) == pytest.approx(0.0, abs=0.02)
     assert copv.volume.temperature(copv.state) == pytest.approx(293.0, abs=1.0)
     assert copv.state.mass == pytest.approx(held, rel=1e-3)
+
+
+@needs_tables
+def test_a_primed_bottle_is_down_from_its_prime() -> None:
+    """T-0 sets the bottle; it does not reach it. A bottle charged to 4,000
+    psig and then primed at 400 psig (a Study case, a second T-0 at a lower
+    charge) kept the 4,000 as the most it had held, and the console read
+    "down to 415 psia, 10% of the 4,015 psia it was filled to" of gas nobody had
+    taken out of it."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    session.prime(fill_fraction=0.5, tank_psi=500.0, copv_psi=4000.0, state="Ready")
+    session.step(0.02)
+    assert copv.peak == pytest.approx(from_psig(4000.0), rel=1e-5)
+    session.prime(fill_fraction=0.5, tank_psi=300.0, copv_psi=400.0, state="Ready")
+    assert copv.pressure < 0.25 * copv.target, "low enough for the note"
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "down to" in n], notes
+    # Nor once a burn has drawn a little of it: a bottle that never held a
+    # quarter of its target is not "down to" anything a psi under its prime
+    # ("down to 414 psia, 100% of the 414.7 psia it was filled to").
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(399.0), temperature=copv.state.wall_temperature
+    )
+    assert copv.pressure < copv.peak
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "down to" in n], notes
 
 
 @needs_tables
