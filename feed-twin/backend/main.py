@@ -3633,30 +3633,48 @@ async def session_burns(session_id: str) -> BurnsOut:
     # A recorded burn carries its run and its traces, and stays listed after
     # the history has rolled past it.
     opened = _OPENED.get(session_id)
-    kept = {
-        round(float(k["outcome"]["start_s"]), 3): k
-        for k in (opened.kept if opened else [])
-    }
+    kept = list(opened.kept if opened else [])
+
+    def recorded(k: Mapping[str, Any]) -> BurnOut:
+        return BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
+
     burns: list[BurnOut] = []
     for out in live:
-        found = kept.pop(round(out.start_s, 3), None)
-        if found is not None:
-            # A recorded burn is over -- a trip records one the frozen frame
-            # still shows burning.
-            out = out.model_copy(
+        # The recorded burn this one is part of, if any: by overlap, not by
+        # start alone. Once the history's head is inside a recorded burn,
+        # the burn found there is timed from the head with part of its
+        # impulse -- listed beside the record, and last, as "Last burn" (H008).
+        found = next(
+            (
+                k
+                for k in kept
+                if out.start_s <= float(k["outcome"]["end_s"]) + 1e-3
+                and out.end_s >= float(k["outcome"]["start_s"]) - 1e-3
+            ),
+            None,
+        )
+        if found is None:
+            # A trip ends the burn the frozen frame still shows burning.
+            burns.append(
+                out.model_copy(update={"burning": False}) if session.tripped else out
+            )
+            continue
+        kept.remove(found)
+        if round(out.start_s, 3) != round(float(found["outcome"]["start_s"]), 3):
+            burns.append(recorded(found))
+            continue
+        # A recorded burn is over -- a trip records one the frozen frame
+        # still shows burning.
+        burns.append(
+            out.model_copy(
                 update={
                     "run_id": found["run_id"],
                     "series": found["series"],
                     "burning": False,
                 }
             )
-        elif session.tripped:
-            out = out.model_copy(update={"burning": False})
-        burns.append(out)
-    burns.extend(
-        BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
-        for k in kept.values()
-    )
+        )
+    burns.extend(recorded(k) for k in kept)
     return BurnsOut(
         engine_id=session.model.report.engine,
         engine_model=model_kind,

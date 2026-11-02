@@ -169,6 +169,29 @@ def test_an_operator_cut_says_so_and_its_replay_repeats_it(
     assert replayed["impulse_Ns"] == pytest.approx(recorded["impulse_Ns"], rel=0.05)
 
 
+def test_a_burn_half_out_of_the_history_is_listed_once_as_recorded(
+    stand: tuple[TestClient, str, str],
+) -> None:
+    """The history rolls: about 80 s after a burn its head is inside it, and
+    the burn found there -- timed from the head, with part of its impulse --
+    was listed beside the recorded one and sorted last, as "Last burn"
+    (H008). The recorded one is the burn."""
+    client, diagram, engine = stand
+    sid = _fire(client, diagram, engine, 1.0)
+    client.post(f"/api/session/{sid}/command", json={"state": "Vent"})
+    _tick(client, sid, 1.5)
+    (record,) = _records(client)
+    session = main._SESSIONS[sid]
+    start = record["clock"]["start_s"]
+    rolled = [s for s in session.history if s.t > start + 0.4]
+    session.history.clear()
+    session.history.extend(rolled)
+    (burn,) = client.get(f"/api/session/{sid}/burns").json()["burns"]
+    assert burn["run_id"] == record["id"]
+    assert burn["start_s"] == record["outcome"]["start_s"]
+    assert burn["impulse_Ns"] == record["outcome"]["impulse_Ns"]
+
+
 def test_a_burn_flown_to_burnout_says_which_tank_ran_dry(
     stand: tuple[TestClient, str, str],
 ) -> None:
