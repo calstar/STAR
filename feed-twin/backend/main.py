@@ -2670,6 +2670,18 @@ async def study_status(request: Request, session: str = "") -> StudyOut:
     return _study_out(_study_key(request, session))
 
 
+def _knob_ranges(session: Session) -> dict[str, tuple[float, float]]:
+    """Each knob's range [psig] as this stand holds it: the GSE dial's arc,
+    and for the dome and the COPV charge also their Configuration rows, which
+    clamp them again -- the narrower of the two is what runs."""
+    rows = {t.key: (t.low, t.high) for t in TUNABLES}
+    out = {DOME: rows["dome"], CHARGE: rows["copv_target"]}
+    for knob in session.hookup.knobs if session.hookup is not None else ():
+        low, high = out.get(knob.id, (knob.low, knob.high))
+        out[knob.id] = (max(low, knob.low), min(high, knob.high))
+    return out
+
+
 #: A study's horizon when none is sent, and the range it is held to [s].
 STUDY_HORIZON_S = (20.0, 1.0, 120.0)
 
@@ -2740,6 +2752,24 @@ async def start_study(
             detail=f"No knob {', '.join(stray)} on this stand. Knobs: "
             f"{', '.join(sorted(known)) or 'none'}.",
         )
+    # Inside the range the stand would hold it to, or refused: the dome knob's
+    # arc is 0-1,000 psig, its Configuration row clamped 8,000 to 6,000, and
+    # the case still said "dome 8,014.7 psia".
+    ranges = _knob_ranges(session)
+    for i, case in enumerate(cases):
+        asked = [*case.knobs.items()]
+        if case.copv_psi is not None:
+            asked.append((CHARGE, case.copv_psi))
+        for knob, value in asked:
+            low, high = ranges.get(knob, (0.0, math.inf))
+            if not low <= value <= high:
+                name = "COPV" if knob == CHARGE and knob not in case.knobs else knob
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"case {i + 1}: {name} {say(from_psig(value), 1)} is "
+                    f"outside {say(from_psig(low), 1)} to {say(from_psig(high), 1)}, "
+                    "where this stand holds it.",
+                )
     keys = {t.key for t in TUNABLES}
     unknown = sorted({k for c in cases for k in c.setup} - keys)
     if unknown:

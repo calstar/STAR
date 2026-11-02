@@ -296,6 +296,29 @@ def test_a_case_cut_short_by_cancel_is_not_shown_as_a_burn(
     assert any("cancelled" in n and "a" in n for n in body["notes"]), body["notes"]
 
 
+@pytest.mark.parametrize(
+    "case, words",
+    [
+        # The dome knob's own arc is 0-1,000 psig; the Configuration row
+        # clamped 8,000 to 6,000 and the case still said 'dome 8,014.7 psia'.
+        ({"knobs": {"dome": 8000}}, "dome 8,014.7 psia"),
+        ({"knobs": {"dome": 2000}}, "dome 2,014.7 psia"),
+        # The COPV column is the charge; the row starts at 100 psig.
+        ({"copv_psi": 50}, "COPV 64.7 psia"),
+    ],
+)
+def test_a_case_outside_a_knobs_range_is_refused_not_clamped(
+    stand: str, case: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a", **case}]}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
+
+
 def test_a_case_fill_says_what_it_loaded(stand: str) -> None:
     """A fill is liquid over tank volume for a tank the engine's fire load
     does not name, and for one it names only the most it may hold. A case's
