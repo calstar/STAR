@@ -65,6 +65,7 @@ from feedtwin.comps.regulator import (
 from feedtwin.engine.balance import MixtureBalance
 from feedtwin.engine.chamber import MIN_CHAMBER_FLOW as ENGINE_MIN_CHAMBER_FLOW
 from feedtwin.engine.chamber import ChamberResult
+from feedtwin.engine.component import fold_injectors
 from feedtwin.comps.wall import (
     STAINLESS_DENSITY,
     LineWall,
@@ -4404,6 +4405,9 @@ class Session:
                     break
         self._chamber_guess = p
         net.nodes[node].pressure = p
+        if result.converged:
+            # An injector card read off its hull counts as extrapolated too.
+            eq = fold_injectors(eq, net, ports, result.flows, result.pressures)
         self._last_chamber = eq
         self._tick["chamber_gap"] = max(self._tick.get("chamber_gap", 0.0), abs(g))
         return result
