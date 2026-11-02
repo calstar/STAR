@@ -174,9 +174,11 @@ def test_launch_angle_costs_what_a_gravity_turn_says(shipped_flight):
 
 
 def test_thrust_curve_reference_is_the_solvers_ambient(shipped_flight):
-    """The time-varying solver computes the curve at 101325 exp(-M g h / (R T0)) for the pad."""
+    """The time-varying solver computes the curve at the pad's ISA 1976 pressure (test_ambient_isa.py)."""
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
     elev = shipped().environment.elevation
-    p_ref = 101325.0 * math.exp(-0.0289644 * G0 * elev / (8.31447 * 288.15))
+    p_ref = compute_ambient_pressure_from_elevation(elev)
     motor = shipped_flight["flight"].rocket.motor
     assert motor.reference_pressure == pytest.approx(p_ref, rel=1e-9)
     assert shipped_flight["flight_report"]["reference_pressure_pa"] == pytest.approx(p_ref, rel=1e-9)

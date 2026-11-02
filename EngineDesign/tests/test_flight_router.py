@@ -158,7 +158,10 @@ def test_reference_pressure_is_the_session_pad_not_the_tabs():
     cfg = shipped()
     env = EnvironmentConfig(latitude=35.35, longitude=-117.81, elevation=1500.0, date=[2026, 1, 30, 18])
     r = _simulate(cfg, _request(cfg, environment=env))
-    p_pad = 101325.0 * math.exp(-0.0289644 * 9.80665 * cfg.environment.elevation / (8.31447 * 288.15))
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
+    # the engine solver's ambient at the SESSION pad (ISA 1976, checked by hand in test_ambient_isa.py)
+    p_pad = compute_ambient_pressure_from_elevation(cfg.environment.elevation)
     assert r.report["reference_pressure_pa"] == pytest.approx(p_pad, rel=1e-9)
     stated = _simulate(cfg, _request(cfg, reference_pressure_pa=90000.0))
     assert stated.report["reference_pressure_pa"] == 90000.0
