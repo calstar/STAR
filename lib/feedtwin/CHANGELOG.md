@@ -37,6 +37,12 @@ be able to find why they differ.
   of CPU per 0.25 s tick, ~35 min of wall clock for the 52 s drain. A supply within
   its band of atmosphere is a vent and asks for nothing (now 1 coupling, 0.15 s CPU
   per tick).
+- **`Setup.supply_press_s` has a Configuration row** ("Transfer tank press time",
+  feed-twin `backend/tunables.py`), so it is dialled on the Configuration tab and
+  carried in every run record's inputs (`wire_setup`). It was the one assumed number
+  with neither. `feed-twin/tests/test_tunables.py` now holds every Setup field to a
+  row, less `tick_budget` (numerics, off) and `ullage_wall_T0_K` (a per-tank map,
+  dialled as `cryogen_ullage_wall_T0_K`).
 
 ### Changed results
 - A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in

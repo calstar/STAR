@@ -189,6 +189,21 @@ TUNABLES: tuple[Tunable, ...] = (
         step=5.0,
     ),
     Tunable(
+        "supply_press_s",
+        "supply_press_s",
+        "Transfer tank press time",
+        "s",
+        GROUPS[1],
+        "Seconds the cart's press line takes to bring a ground supply tank (the fuel "
+        "transfer tank) to its drawn pressure while its press actuator is open. "
+        "Assumed: a first-order rate standing in for a regulator and a line nobody "
+        "has drawn; the console's note names it whenever it acts. Draw the press "
+        "line and it is solved instead, and this is not used.",
+        low=0.1,
+        high=600.0,
+        step=0.5,
+    ),
+    Tunable(
         "load_chill_s",
         "load_chill_s",
         "LOX chilldown time",
