@@ -4,7 +4,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  Panel,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -1638,19 +1637,6 @@ function PIDCanvas({
         <BranchPreview />
         <Controls />
         <TitleBlock meta={{ ...sheet, page }} />
-        {/* One line, and only the gestures nothing else on screen mentions.
-            It used to list nine, which wrapped to four lines on any canvas
-            narrower than a desktop and climbed up through the middle of the
-            drawing -- printing the instructions over the thing they are about.
-            `nowrap` is what makes that impossible rather than unlikely, and
-            it stopped taking clicks meant for the canvas underneath. Only
-            where there is room beside the title block -- at 1440 the two
-            overlapped -- and only to someone who can draw. */}
-        <Panel position="bottom-center" className={`pointer-events-none max-w-full ${readOnly ? 'hidden' : 'hidden 2xl:block'}`}>
-          <span className="block truncate whitespace-nowrap text-[10px] text-[var(--color-text-muted)] select-none">
-            Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates
-          </span>
-        </Panel>
       </ReactFlow>
       </BranchDragProvider>
       </FluidProvider>
@@ -1660,6 +1646,13 @@ function PIDCanvas({
       <PageBar
         pages={pages}
         current={page}
+        // The gestures nothing else on screen mentions, to someone who can
+        // draw. In the page bar, under the canvas: as a panel at the canvas's
+        // bottom centre it was printed over the drawing at 1920 px -- over
+        // OX-RTD-1's tag on opening, over the Rocket section's border after
+        // Fit View.
+        hint={readOnly ? undefined
+          : 'Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates'}
         count={(p) => nodes.filter(n => pageOf(n.data as unknown as PIDNodeData) === p).length}
         // Leaving a page leaves its selection behind, cleared: what R,
         // Backspace, Cmd+C and Cmd+D act on has to be something on screen.
