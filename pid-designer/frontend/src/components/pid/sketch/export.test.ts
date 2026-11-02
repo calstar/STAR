@@ -70,3 +70,25 @@ describe('a sketch as the segments feed-twin reads', () => {
     expect(out.orientation).toBe('none');
   });
 });
+
+describe('what a sketch writes, to a sensible precision', () => {
+  // LE4 (3)'s junc_49-junc_48: an inch sketch whose bore, 0.43 in, is
+  // 10.921999999999999 mm in floating point, and whose fall comes off the
+  // geometry as 0.8029517354603677 m. Both were stored and shown that way.
+  const le4 = () => {
+    let s = emptySketch('in');
+    for (const to of [
+      { x: -25.665571994015636, y: 25.66557199401564 }, { x: -25.665571994015597, y: 730.4393719940156 },
+      { x: -5.909008527663417, y: 750.1959354603677 }, { x: -5.9090085276634134, y: 802.9517354603677 },
+    ]) s = addLeg(s, to, true);
+    return setSectionBore(s, null, 0.43 * 25.4);
+  };
+
+  it('writes the bore to a ten-thousandth of a millimetre', () => {
+    expect(exportSketch(le4()).segments[0].bore!.value).toBe(10.922);
+  });
+
+  it('writes the fall to a tenth of a millimetre', () => {
+    expect(exportSketch(le4()).elevationChange.value).toBe(-0.803);
+  });
+});

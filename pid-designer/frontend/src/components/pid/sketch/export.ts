@@ -24,6 +24,14 @@ export interface Exported {
 
 const SOURCE = 'from the centerline sketch';
 
+/**
+ * To a ten-thousandth: of a millimetre for a bore, of a metre for the fall.
+ * An inch sketch's 0.43 in is 10.921999999999999 mm in floating point, and a
+ * fall off its geometry 0.8029517354603677 m; written so, they were stored
+ * and shown so.
+ */
+const tidy = (x: number) => Math.round(x * 1e4) / 1e4;
+
 export function exportSketch(s: Sketch): Exported {
   const segments: LineSegment[] = [];
   let n = 0;
@@ -33,7 +41,7 @@ export function exportSketch(s: Sketch): Exported {
   // priced nothing for the run, tube or bends (LE4 (3)'s fuel tank-to-main).
   const open = (boreMm: number): LineSegment => ({
     id: `seg_${++n}`, method: 'itemised', standard: 'tube',
-    ...(boreMm > 0 ? { bore: { value: boreMm, unit: 'mm', source: 'estimated', reference: SOURCE } } : {}),
+    ...(boreMm > 0 ? { bore: { value: tidy(boreMm), unit: 'mm', source: 'estimated', reference: SOURCE } } : {}),
     length: { value: 0, unit: 'mm', source: 'measured', reference: SOURCE },
     lengthBasis: 'tube', fittings: [],
   });
@@ -48,7 +56,7 @@ export function exportSketch(s: Sketch): Exported {
       if (!current) { current = open(bore); currentBore = bore; }
       current.fittings!.push({
         id: `fit_${current.fittings!.length + 1}`, kind: 'bend', count: 1,
-        ...(bore > 0 ? { boreMm: bore, bendDiameters: piece.radiusMm! / bore } : {}),
+        ...(bore > 0 ? { boreMm: tidy(bore), bendDiameters: piece.radiusMm! / bore } : {}),
         lengthMm: piece.lengthMm,
         angleDeg: Math.abs((piece.angleRad! * 180) / Math.PI),
       });
@@ -79,7 +87,7 @@ export function exportSketch(s: Sketch): Exported {
 
   return {
     segments,
-    elevationChange: { value: -fallMm(s) / 1000, unit: 'm', source: 'measured', reference: SOURCE },
+    elevationChange: { value: -tidy(fallMm(s) / 1000), unit: 'm', source: 'measured', reference: SOURCE },
     totalLengthMm: segments.reduce((L, seg) => L + seg.length!.value, 0)
       + s.bends.reduce((L, b) => L + (pieces(s).find(p => p.kind === 'bend' && p.legIndex === b.atLeg)?.lengthMm ?? 0), 0),
     orientation,
