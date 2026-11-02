@@ -63,7 +63,19 @@ def _confined_yaml(path: str, *roots: Path, base: Path = _PROJECT_ROOT) -> Path:
 # an ``async def`` they ran on the event loop and froze every other request -- /api/health
 # included -- for as long (backend/session.py, run_compute). ``run_compute`` puts them in the
 # thread pool under the session's compute lock, so one user's controller (session.controller)
-# is still stepped by one request at a time, as it was on the loop.
+# is still stepped by one request at a time, as it was on the loop. That holds for every touch
+# of it: the SSE streams build and step it through run_compute too (one step per lock hold), and
+# /reset resets it there. On a bare pool thread a stream's step ran beside a /simulate or /reset
+# of the same controller from another tab -- mid-step, where on the loop they could only
+# interleave between steps.
+
+
+def _fresh_controller(session: UserSession, cfg, engine_config) -> RobustDDPController:
+    """A new controller for this session, reset; called through run_compute (under the lock)."""
+    controller = RobustDDPController(cfg, engine_config, logger=None)
+    controller.reset()
+    session.controller.controller = controller
+    return controller
 
 # The controller instance is per-user now, held on session.controller
 # (backend/session.py). It used to be a module global, so two users shared one
@@ -677,7 +689,8 @@ async def reset_controller(session: UserSession = Depends(get_session)):
     """Reset controller state."""
     if session.controller.controller is None:
         raise HTTPException(status_code=400, detail="Controller not initialized")
-    session.controller.controller.reset()
+    # Under the compute lock: a /simulate or a stream's step may be using this controller.
+    await run_compute(session, session.controller.controller.reset)
     return {"status": "reset"}
 
 
@@ -950,8 +963,7 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                 yield f"data: {safe_json_dumps({'type': 'error', 'error': 'No engine config loaded. Load a config first.'})}\n\n"
                 return
             engine_config = session.app_state.config
-            session.controller.controller = await run_in_threadpool(RobustDDPController, cfg, engine_config, logger=None)
-            session.controller.controller.reset()  # Reset to ensure fresh state
+            await run_compute(session, _fresh_controller, session, cfg, engine_config)  # fresh state
         except Exception as e:
             yield f"data: {safe_json_dumps({'type': 'error', 'error': f'Failed to initialize controller: {e}'})}\n\n"
             return
@@ -1037,7 +1049,7 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                 )
                 
                 # Controller step
-                actuation, diagnostics = await run_in_threadpool(session.controller.controller.step, meas, nav, cmd)
+                actuation, diagnostics = await run_compute(session, session.controller.controller.step, meas, nav, cmd)
                 
                 # Get diagnostics
                 eng_est = diagnostics.get("eng_est")
@@ -1368,8 +1380,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                 yield f"data: {safe_json_dumps({'type': 'error', 'error': 'No engine config loaded. Load a config first.'})}\n\n"
                 return
             engine_config = session.app_state.config
-            session.controller.controller = await run_in_threadpool(RobustDDPController, cfg, engine_config, logger=None)
-            session.controller.controller.reset()  # Reset to ensure fresh state
+            await run_compute(session, _fresh_controller, session, cfg, engine_config)  # fresh state
             
             # Continue with simulation (reuse code from simulate_layer2_controller_stream)
             # ... (rest of the simulation code)
@@ -1432,7 +1443,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                     thrust_desired=thrust_ref,
                 )
                 
-                actuation, diagnostics = await run_in_threadpool(session.controller.controller.step, meas, nav, cmd)
+                actuation, diagnostics = await run_compute(session, session.controller.controller.step, meas, nav, cmd)
                 
                 eng_est = diagnostics.get("eng_est")
                 solution = diagnostics.get("solution")
@@ -1636,7 +1647,7 @@ async def upload_config_and_simulate(
             if session.controller.controller is None:
                 cfg = get_default_config()
                 engine_config = config  # Use the uploaded config
-                session.controller.controller = await run_in_threadpool(RobustDDPController, cfg, engine_config, logger=None)
+                session.controller.controller = await run_compute(session, RobustDDPController, cfg, engine_config, logger=None)
             
             # Default initial conditions from config
             meas = Measurement(
@@ -1670,7 +1681,7 @@ async def upload_config_and_simulate(
                     thrust_desired=thrust_ref,
                 )
                 
-                actuation, diagnostics = await run_in_threadpool(session.controller.controller.step, meas, nav, cmd)
+                actuation, diagnostics = await run_compute(session, session.controller.controller.step, meas, nav, cmd)
                 
                 eng_est = diagnostics.get("eng_est")
                 solution = diagnostics.get("solution")
