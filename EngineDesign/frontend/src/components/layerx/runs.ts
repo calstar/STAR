@@ -41,11 +41,14 @@ export function runLabel(r: Pick<RunView, 'started' | 'settings' | 'summary' | '
   return `${r.meta?.name || runWhen(r)} · ${runContext(r as RunView)}${r.summary ? ` · ${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s` : ''}`;
 }
 
-/** The figures a finished burn is listed with. */
-export function runFigures(r: RunView): string {
+/** The figures a finished burn is listed with. `altitude` writes the apogee in the page's length unit
+ * (Layer X's units: `(m) => u.fmt(u.alt(m))`); without it, feet, as the old GUI did. The run menus printed
+ * '10,137 ft' beside an Overview reading 'Apogee 3,090 m'. */
+export function runFigures(r: RunView, altitude?: (m: number) => string): string {
   if (r.status !== 'done') return r.status;
   if (!r.summary) return '';
-  return `${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s${r.summary.apogee_agl_m ? ` · ${fmt(r.summary.apogee_agl_m * FT, 0)} ft` : ''}`;
+  const apogee = r.summary.apogee_agl_m;
+  return `${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s${apogee ? ` · ${altitude ? altitude(apogee) : `${fmt(apogee * FT, 0)} ft`}` : ''}`;
 }
 
 /** What each kind of job is called on the page. */
