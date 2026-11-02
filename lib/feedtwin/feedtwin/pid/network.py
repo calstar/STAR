@@ -37,6 +37,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable, Mapping
 
 from feedtwin.comps import HydraulicComponent, build_component
+from feedtwin.comps.elements import Fitting
 from feedtwin.model.component import ComponentInstance
 from feedtwin.model.param import Param, Provenance
 from feedtwin.model.pressure import say
@@ -1043,6 +1044,24 @@ def build_network(
     roles.update(_dome_valve_roles(dome_lines, ground))
     gse = _gse_vents(net, diagram, tanks, fluids, engine_ports, roles)
     gse_unsized = tuple(qd.id for qd, _ in gse if not {"Cv", "Cd"} & set(qd.params))
+    # A disconnect with no coefficient stays a fitting of the spec's default
+    # kind: a 5D long-radius 90-degree elbow, K ~0.25 -- a small fraction of a
+    # real QD's loss (a Cv 2 QD in 9.5 mm is K 4.35). It is not invented away
+    # here (no number for a QD is better sourced than another), it is said.
+    # The GSE vents just read are sized by the cart's valve and are not holes.
+    elbows = sorted(
+        node.label or node.id
+        for node in diagram.nodes
+        if node.type == "QD"
+        and node.id in net.branches
+        and isinstance(net.branches[node.id].component, Fitting)
+    )
+    if elbows:
+        warnings.append(
+            f"{len(elbows)} disconnect(s) have no Cv or Cd and are priced as a "
+            "long-radius 90-degree elbow (K ~0.25), far less loss than a real "
+            f"quick disconnect: {', '.join(elbows)}. Give each its datasheet Cv."
+        )
     if gse:
         for qd, _ in gse:
             actuators[qd.id] = f"{qd.label}.command"

@@ -38,6 +38,25 @@ def test_every_pressurant_node_is_declared_gas() -> None:
     assert undeclared == []
 
 
+def test_an_unsized_disconnect_is_a_visible_hole() -> None:
+    """A QD drawn with no Cv or Cd is priced as a long-radius elbow (K ~0.25,
+    a small fraction of a real disconnect's loss), and said so: the eight on
+    the team's drawing, four of them on the tank vent paths, were silent."""
+    built = _built()
+    from feedtwin.comps.elements import Fitting
+
+    unsized = sorted(
+        built.network.branches[n].component.id
+        for n in built.network.branches
+        if isinstance(built.network.branches[n].component, Fitting)
+    )
+    assert unsized, "the drawing has unsized disconnects"
+    notes = [w for w in built.warnings if "no Cv or Cd" in w]
+    assert len(notes) == 1
+    for label in unsized:
+        assert label in notes[0]
+
+
 def test_cold_vent_gas_is_priced_as_gas() -> None:
     """Below 126 K, at the cart's LOX vent solenoid: p / (R T), not the
     liquid line."""
