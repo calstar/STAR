@@ -1447,6 +1447,17 @@ def _gse_vents(
 #: to put the two lines on different sides.
 PORT_SIDES: Mapping[str, bool] = {"l": False, "r": True}  # True: the outlet
 
+#: Inline symbols whose two sides are not interchangeable, so the port a line
+#: is on decides its side whenever every line on the symbol says which port it
+#: was drawn on -- not only when the direction leaves a side empty. A check
+#: valve's inlet is ``l`` (pid-designer's ``CV_INLET``, its arrow, and its
+#: ``cv-backwards`` check); a regulator's is ``l`` by the same convention, which
+#: is how every regulator on the team's drawings is plumbed. Read by direction
+#: instead, a CV whose lines were both dragged from the far end -- correct on
+#: the page, nothing flagged -- sat with the bottle on its outlet and passed
+#: nothing, while one pid-designer flags as backwards flowed.
+DIRECTED_TYPES = frozenset({"CV", "PR"})
+
 
 def _sides_by_port(
     diagram: Diagram, plumbing: list[PidEdge]
@@ -1464,8 +1475,10 @@ def _sides_by_port(
 
     So where direction leaves one side of an inline symbol with nothing on it,
     and every line on the symbol says which of its ports it was drawn on, the
-    port decides instead. Nothing else changes: a symbol with lines on both
-    sides reads exactly as before, ports or no ports.
+    port decides instead. A symmetric valve with lines on both sides reads
+    exactly as before, ports or no ports. A directed one (:data:`DIRECTED_TYPES`)
+    is read by its ports whenever they are all drawn: there the port is the
+    valve's direction, and the end the mouse started at is not.
 
     Returns ``{(edge id, node id): outgoing}`` overrides, and one warning per
     symbol read this way.
@@ -1481,11 +1494,25 @@ def _sides_by_port(
         here = ends.get(node.id, [])
         if not node.is_inline or len(here) < 2:
             continue
-        if len({outgoing for _, outgoing, _ in here}) != 1:
-            continue  # lines on both sides already: the direction works
         ports = {port for _, _, port in here}
         if ports != set(PORT_SIDES):
             continue  # nothing to read, or not pid-designer's two ports
+        if len({outgoing for _, outgoing, _ in here}) != 1:
+            # Lines on both sides already: the direction works -- unless the
+            # symbol has a direction of its own and the lines say otherwise.
+            if node.type not in DIRECTED_TYPES or all(
+                outgoing == PORT_SIDES[port] for _, outgoing, port in here
+            ):
+                continue
+            for edge_id, _, port in here:
+                overrides[(edge_id, node.id)] = PORT_SIDES[port]
+            warnings.append(
+                f"{node.label or node.id}: its lines run against its ports, so "
+                "its inlet and outlet were read from the ports (l in, r out). "
+                "If the flow really enters on r, it is drawn backwards: turn it "
+                "180 degrees."
+            )
+            continue
         for edge_id, _, port in here:
             overrides[(edge_id, node.id)] = PORT_SIDES[port]
         drawn = "into" if not here[0][1] else "out of"

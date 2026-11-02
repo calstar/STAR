@@ -158,6 +158,78 @@ def test_a_valve_with_lines_on_both_sides_is_read_exactly_as_before() -> None:
     assert not [w for w in b.warnings if "port" in w]
 
 
+def _through(ctype: str, *lines: dict[str, object]) -> Any:
+    """Bottle, a check valve or regulator ``X``, vent: the smallest directed run."""
+    params = {"setpoint": P(500, "psi")} if ctype == "PR" else {}
+    return {
+        "nodes": [
+            node(
+                "KB",
+                "KBOTTLE",
+                "KB-N2",
+                fluid="nitrogen",
+                params={"pressure": P(4500, "psi"), "temperature": P(293.15, "K")},
+            ),
+            node("X", ctype, f"{ctype}-1", params=params),
+            node("V", "VENT", "VENT-1"),
+        ],
+        "edges": list(lines),
+    }
+
+
+def _flow(payload: Any) -> float:
+    from feedtwin.solve import solve_steady
+
+    result = solve_steady(built(payload).network, raise_on_failure=False)
+    return float(result.flows.get("X", 0.0))
+
+
+@pytest.mark.parametrize("ctype", ["CV", "PR"])
+def test_a_directed_valve_dragged_against_the_flow_reads_its_ports(
+    ctype: str,
+) -> None:
+    """Ports right (``l`` in, as pid-designer draws and checks a CV), both lines
+    dragged from the far end. pid-designer is silent, so the twin must flow;
+    it read the direction and put the bottle on the outlet, flowing nothing."""
+    payload = _through(
+        ctype,
+        line("x-kb", "X", "KB", from_port="l", to_port="r"),
+        line("v-x", "V", "X", from_port="l", to_port="r"),
+    )
+    net = built(payload).network
+    assert net.branches["x-kb"].upstream == "X.in", "the bottle is on the inlet"
+    assert net.branches["v-x"].downstream == "X.out"
+    assert _flow(payload) > 0.1
+
+
+@pytest.mark.parametrize("ctype", ["CV", "PR"])
+def test_a_directed_valve_drawn_in_flow_order_is_read_as_before(ctype: str) -> None:
+    payload = _through(
+        ctype,
+        line("kb-x", "KB", "X", from_port="r", to_port="l"),
+        line("x-v", "X", "V", from_port="r", to_port="l"),
+    )
+    b = built(payload)
+    assert b.network.branches["kb-x"].downstream == "X.in"
+    assert not [w for w in b.warnings if "port" in w]
+    assert _flow(payload) > 0.1
+
+
+def test_a_check_valve_drawn_backwards_checks_the_flow() -> None:
+    """Lines in flow order, but onto ``r`` from the bottle: pid-designer's
+    ``cv-backwards``. The valve's own inlet faces the vent, so it does not
+    pass the bottle -- and the build says why."""
+    payload = _through(
+        "CV",
+        line("kb-x", "KB", "X", from_port="r", to_port="r"),
+        line("x-v", "X", "V", from_port="l", to_port="l"),
+    )
+    b = built(payload)
+    assert b.network.branches["kb-x"].downstream == "X.out"
+    assert [w for w in b.warnings if "CV-1" in w and "port" in w], b.warnings
+    assert _flow(payload) <= 1e-6
+
+
 def test_without_ports_a_one_sided_valve_is_still_a_vent() -> None:
     """No port to read, so nothing to correct: the old reading stands."""
     b = built(

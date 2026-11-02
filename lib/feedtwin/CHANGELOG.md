@@ -155,6 +155,15 @@ be able to find why they differ.
   Hotbench or Layer X. Geometry now comes from the segments (bore, and the run as
   installed with fitting bodies); the metal from the line-level `fitting_count`, as
   on a plain line. A one-segment run builds the darcy line's wall.
+- **A check valve or regulator is read by its ports** (`pid/network.py`
+  `DIRECTED_TYPES`, `_sides_by_port`). With lines on both sides the line
+  direction decided, and pid-designer's line direction is only where the drag
+  started: a CV drawn right but with both lines dragged from the far end sat with
+  the bottle on its outlet and passed nothing, while one pid-designer flags
+  `cv-backwards` flowed. A CV or PR whose every line is on `l`/`r` now takes `l` as
+  its inlet, and says so when the lines ran the other way. Symmetric valves read as
+  before. No drawing in the repo, nor LE4 (3), builds a different network (36
+  builds compared; the only conflict, DR-REG-G, is a dome loader and not plumbed).
 
 ### Changed results
 - LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
@@ -169,6 +178,9 @@ be able to find why they differ.
 - `tests/test_line_walls.py`: one segment builds the darcy line's wall, the metal is
   worked by hand, a drawn wall thickness adds tube per segment, a run with no bore
   stays bare, and the LE4 press lines get walls. Four fail with the old build.
+- `tests/test_pid_drawn_freely.py`: a CV and a PR dragged against the flow flow,
+  in flow order read as before, and a CV drawn backwards checks the flow and says
+  why. Three fail with the old reading.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 
