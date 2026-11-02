@@ -75,6 +75,19 @@ def test_the_deployed_layer_x_reads_the_twins_library_and_its_featured_stand():
     assert mounts.get(volume) == twin_mounts[volume] and env["LAYERX_FEEDTWIN_LIBRARY"] == lib
 
 
+def test_the_drawing_summary_gives_the_droop_the_twin_runs_and_says_when_it_is_the_default():
+    """The rail's 'Dome regulator' row was blank and its hover said 'droop — psi (from the drawing)' while the
+    burn ran the twin's 20 psi library default (feedtwin.pid.network FALLBACKS)."""
+    he = json.loads((sources.shipped_drawings_dir() / "copv_study_gn2.json").read_text())
+    drawn = sources.summarize(he, "gn2")
+    reg = next(r for r in drawn["regulators"] if r["id"] == "PR_D")
+    assert reg["flow_droop_psi"] == 8.3 and reg["flow_droop_default"] is False
+    node = next(n for n in he["nodes"] if n["id"] == "PR_D")
+    del node["data"]["params"]["flow_droop"]
+    reg = next(r for r in sources.summarize(he, "gn2")["regulators"] if r["id"] == "PR_D")
+    assert reg["flow_droop_psi"] == 20.0 and reg["flow_droop_default"] is True
+
+
 def test_a_missing_drawing_source_is_said_not_listed_as_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("LAYERX_SAMPLE", str(tmp_path / "nowhere"))
     monkeypatch.setenv("LAYERX_FEEDTWIN_LIBRARY", str(tmp_path))

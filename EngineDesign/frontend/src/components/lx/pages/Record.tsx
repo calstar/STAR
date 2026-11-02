@@ -293,6 +293,19 @@ function kv(obj: Record<string, unknown>, psia?: { gaugeZero: number; fmt: Fmt }
     });
 }
 
+/** Pressure differences on a drawing (feedtwin.model.pressure.DIFFERENCE): psi. Every other pressure is absolute: psia. */
+const PRESSURE_DIFFERENCES = new Set(['dome_bias', 'flow_droop', 'lockup_rise', 'cracking_pressure', 'set_pressure',
+  'reseat_pressure', 'min_inlet_differential', 'pressure_drop', 'dp']);
+const PASCALS: Record<string, number> = { Pa: 1, kPa: 1e3, MPa: 1e6, bar: 1e5 };
+
+/** An unstated parameter's value with its unit. The library's own defaults come in SI: 'inlet_reference 0 Pa',
+ *  'lockup_rise 0 Pa' read to a person in Pa; a pressure is psi across a difference, psia otherwise (ADR 0007). */
+function assumedValue(parameter: string, value: number, unit: string): ReactNode {
+  const k = PASCALS[unit];
+  const [v, u] = k === undefined ? [value, unit] : [(value * k) / PSI, PRESSURE_DIFFERENCES.has(parameter) ? 'psi' : 'psia'];
+  return <>{sig(v)}<span className="lx-unit">{'\u00a0'}{u}</span></>;
+}
+
 /** Where the drawing came from, in words (the raw source in the hover). */
 const sourceWords = (src: string) => (src.startsWith('shipped:') ? 'Benchmark, shipped with the code'
   : src.startsWith('sample:') ? 'Hotbench sample stand'
@@ -331,7 +344,7 @@ function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }
           <Table caption="Parameters the drawing does not state" head={['Component', 'Parameter', 'Value', 'Basis', 'Reference']} align={['l', 'l', 'r', 'l', 'l']} maxHeight={300}
                  rows={rows.map((a) => [
                    <span key="c" title={a.component}>{partName(names, { label: a.component })}</span>, <span key="p" className="font-sans text-[var(--lx-text-2)]">{a.parameter}</span>,
-                   <span key="v">{sig(a.value)}<span className="lx-unit">{'\u00a0'}{a.unit}</span></span>,
+                   <span key="v">{assumedValue(a.parameter, a.value, a.unit)}</span>,
                    <span key="s" className="font-sans" style={{ color: a.source === 'default' ? 'var(--lx-warn)' : 'var(--lx-text-3)' }}>{SOURCE_LABEL[a.source] ?? a.source}</span>,
                    <span key="r" className="block max-w-[22rem] truncate font-sans text-[var(--lx-text-3)]" title={a.reference}>{a.reference}</span>,
                  ])} />

@@ -166,6 +166,21 @@ describe('the Burn pages', () => {
     expect(html).toMatch(/>120</);                          // a plain number stays plain
   });
 
+  it('Record: an unstated pressure reads in psi across a difference and psia otherwise, never Pa', () => {
+    // 'DR inlet_reference 0 Pa', 'lockup_rise 0 Pa', 'min_inlet_differential 0 Pa' in the Unspecified parameters.
+    const r = result();
+    r.provenance.assembly = { ...r.provenance.assembly, assumptions: [
+      { component: 'DR', parameter: 'lockup_rise', value: 0, unit: 'Pa', source: 'default', reference: '' },
+      { component: 'DR', parameter: 'inlet_reference', value: 101325, unit: 'Pa', source: 'default', reference: '' },
+      { component: 'DR', parameter: 'Cv', value: 0.8, unit: 'Cv', source: 'default', reference: '' },
+    ] } as typeof r.provenance.assembly;
+    const html = draw(PAGES[7][1], r);
+    expect(html).not.toContain('lx-unit"> Pa<');
+    expect(html).toContain('0<span class="lx-unit"> psi</span>');
+    expect(html).toContain('14.7<span class="lx-unit"> psia</span>');
+    expect(html).toContain('0.8<span class="lx-unit"> Cv</span>');
+  });
+
   it('Stand: names the run\'s own test and offers nothing it cannot do (D-24)', () => {
     const stand = PAGES[5][1];
     const plain = draw(stand, result());

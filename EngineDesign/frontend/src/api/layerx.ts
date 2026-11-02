@@ -114,7 +114,7 @@ export interface DrawingSummary {
   lines?: number;
   tanks?: { id: string; label: string; fluid: string; volume_L: number | null; mawp_psi: number | null }[];
   bottles?: { id: string; label: string; fluid: string; volume_L: number | null; pressure_psi: number | null; mawp_psi: number | null }[];
-  regulators?: { id: string; label: string; dome_loaded: boolean; setpoint_psi: number | null; dome_bias_psi: number | null; supply_coefficient: number | null; flow_droop_psi: number | null }[];
+  regulators?: { id: string; label: string; dome_loaded: boolean; setpoint_psi: number | null; dome_bias_psi: number | null; supply_coefficient: number | null; flow_droop_psi: number | null; flow_droop_default?: boolean }[];
   engines?: { id: string; label: string }[];
   valves?: number;
 }

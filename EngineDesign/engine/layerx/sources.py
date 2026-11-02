@@ -59,6 +59,18 @@ def machines_dir() -> Path:
     return Path(os.environ.get("LAYERX_STATEMACHINES") or (feedtwin_root() / "backend" / "statemachines"))
 
 
+def _fallback_psi(kind: str, name: str) -> Optional[float]:
+    """The feed twin's own default for a parameter a drawing leaves out, as a difference in psi."""
+    try:
+        from feedtwin.model.units import to_si
+        from feedtwin.pid.network import FALLBACKS
+
+        value, unit = FALLBACKS[kind][name]
+        return to_si(float(value), unit) / 6894.757293168361
+    except Exception:  # noqa: BLE001 - a summary never fails a listing
+        return None
+
+
 def source_problems() -> List[str]:
     """Each place Layer X reads drawings from that is not there, in words, for the server log and
     ``GET /api/layerx/status``. A missing one lists nothing and says nothing: the deployed image
@@ -165,13 +177,17 @@ def summarize(payload: Mapping[str, Any], name: str = "") -> Dict[str, Any]:
                 "mawp_psi": param(node, "MAWP", "psig"),
             })
         elif node.type == "PR":
+            droop = param(node, "flow_droop", "psi")
             regulators.append({
                 "id": node.id, "label": node.label,
                 "dome_loaded": node.options.get("domeLoaded") == "yes",
                 "setpoint_psi": param(node, "setpoint", "psig"),
                 "dome_bias_psi": param(node, "dome_bias", "psi"),
                 "supply_coefficient": param(node, "supply_coefficient", "value"),
-                "flow_droop_psi": param(node, "flow_droop", "psi"),
+                # Not on the drawing: the twin runs its library default (feedtwin.pid.network FALLBACKS),
+                # and the rail says so rather than leaving the row blank beside 'from the drawing'.
+                "flow_droop_psi": droop if droop is not None else _fallback_psi("regulator", "flow_droop"),
+                "flow_droop_default": droop is None,
             })
         elif node.type in ("ENGINE", "INJECTOR"):
             engines.append({"id": node.id, "label": node.label})
