@@ -79,9 +79,15 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
 
   return (
     // Never shorter than every row at its smallest; the Console's panel
-    // scrolls if the window cannot give it that.
-    <div className="flex h-full flex-col">
-      <div className="mb-4 flex flex-shrink-0 items-baseline justify-between gap-4">
+    // scrolls if the window cannot give it that. At least the panel's height,
+    // not exactly it: held to the panel (h-full), a grid taller than a
+    // 1280 x 720 window spilled out of this box, past the end of the panel's
+    // scroll, and READY could not be scrolled to whole.
+    <div className="flex min-h-full flex-col">
+      {/* Each label on one line; on a narrow column the aborts and the
+          current state wrap under the heading rather than break "STATE /
+          MACHINE" and "EMERGENCY / ABORT" over two lines each. */}
+      <div className="mb-4 flex flex-shrink-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-2 whitespace-nowrap">
         <h2 className="caps">State Machine</h2>
         {actions && <span className="ml-auto flex items-center gap-2">{actions}</span>}
         <span className="flex items-baseline gap-4">
