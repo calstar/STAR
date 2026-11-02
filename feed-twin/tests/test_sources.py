@@ -46,7 +46,12 @@ def seen() -> list[httpx.Request]:
                     {
                         "owner": "aidan@berkeley.edu",
                         "ownerName": "Aidan",
-                        "designs": [{"id": "ox-stand", "name": "Ox stand"}],
+                        "designs": [
+                            # Opens: an open_to_all store's older design.
+                            {"id": "ox-stand", "name": "Ox stand", "editable": True},
+                            # Copy-only: /load refuses it (R001).
+                            {"id": "private", "name": "Private", "editable": False},
+                        ],
                     }
                 ],
             )
@@ -105,6 +110,8 @@ async def test_nothing_but_identity_is_forwarded(seen: list[httpx.Request]) -> N
 async def test_listing_merges_mine_and_everyone_elses(
     seen: list[httpx.Request],
 ) -> None:
+    """Everything the caller may open. A copy-only browse entry is not, so
+    it is not offered: a pull of it is a 403 (R001)."""
     found = await list_documents(tools()["pid-designer"], {})
     ids = {d["id"] for d in found}
     assert ids == {"mine", "ox-stand"}

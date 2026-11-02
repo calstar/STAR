@@ -197,10 +197,17 @@ async def list_documents(
 ) -> list[dict[str, Any]]:
     """Everything the caller could import: their own, shared, and browsable.
 
-    Two calls, because the store separates them: ``/`` is what you may edit and
-    ``/browse`` is everyone else's, grouped by owner. feed-twin never edits
-    either, so the distinction it keeps is not "editable" but *whose it is* --
-    which is the only part a person picking a drawing cares about.
+    Two calls, because the store separates them: ``/`` is what you may open
+    and ``/browse`` is everyone else's, grouped by owner. A pull is a
+    ``/load``, which the store answers only for a design the caller may
+    *open*; ``/browse`` also lists designs that may only be copied
+    (``editable: false`` outside ``open_to_all``; stardesign.documents), and
+    offering those made a pull that could only 403 (R001). They are left out.
+
+    In the store's own order, which is the order its picker shows: its list
+    as it gave it (the main design, then the STAR set, then newest first),
+    then everyone else's, newest first. Sorting oldest first put a week-old
+    copy above the team's main drawing (R013).
     """
     async with _client(headers) as c:
         mine = await _get(c, tool, tool.documents)
@@ -221,11 +228,17 @@ async def list_documents(
                 "owner_name": record.get("ownerName") or "",
                 "updated_at": record.get("updatedAt") or "",
                 "mine": True,
+                "featured": bool(record.get("featured")),
+                "star": bool(record.get("star")),
             }
         )
+    browsed: list[dict[str, Any]] = []
     for group in others if isinstance(others, list) else []:
         for record in group.get("designs", []):
-            out.append(
+            # Copy-only: the store would refuse the /load a pull is.
+            if record.get("editable") is not True:
+                continue
+            browsed.append(
                 {
                     "id": record.get("id", ""),
                     "name": record.get("name") or record.get("id", ""),
@@ -233,10 +246,12 @@ async def list_documents(
                     "owner_name": group.get("ownerName") or group.get("owner", ""),
                     "updated_at": record.get("updatedAt") or "",
                     "mine": False,
+                    "featured": False,
+                    "star": False,
                 }
             )
-    out.sort(key=lambda d: (not d["mine"], d["updated_at"]), reverse=False)
-    return out
+    browsed.sort(key=lambda d: str(d["updated_at"]), reverse=True)
+    return out + browsed
 
 
 async def releases(

@@ -1109,17 +1109,22 @@ async def source_documents(
     tool = _tool(key)
     try:
         found = await designtools.list_documents(tool, request.headers)
-        out = [SourceDocument(**d) for d in found]
-        if with_releases:
-            for doc in out:
-                doc.releases = [
-                    r["label"]
-                    for r in await designtools.releases(
-                        tool, doc.id, doc.owner, request.headers
-                    )
-                ]
     except DesignToolError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    out = [SourceDocument(**d) for d in found]
+    if with_releases:
+        for doc in out:
+            # One document's releases, not the list: a design the store will
+            # not show this caller (or one that went away between the two
+            # calls) failed the whole panel for everyone (R001). Its working
+            # copy is still offered; the pull says why if that fails too.
+            try:
+                listed = await designtools.releases(
+                    tool, doc.id, doc.owner, request.headers
+                )
+            except DesignToolError:
+                continue
+            doc.releases = [r["label"] for r in listed]
     return out
 
 
