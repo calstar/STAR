@@ -2,6 +2,18 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 Golden baseline: the state-table fingerprint re-stated; no figure moved
+
+`test_layerx_golden.py::test_inputs_unchanged` failed on `state_machines`: the fingerprint hashes
+every file in `feed-twin/backend/statemachines`, and #109/#124 (2026-10-08/11) added
+`diablo_states.csv` (the DAQ panel's layout and abort flags; the three aborts it flags are the ones
+feedtwin already treated as aborts by name), `diablo_channels.json` (the DAQ's channel map, which
+Layer X does not read) and edited `NEEDS-REPAIR.md`. The tables a burn runs on,
+`diablo_transitions.csv` and `diablo_actuators.csv`, are byte-identical to the baseline's. Every
+golden figure passed against the baseline with these inputs (the 2026-11-02 baseline run: only
+`test_inputs_unchanged` and the inline-flight check failed), so the stored `state_machines_sha256` in
+`baseline-2026-10-07.json` is re-stated (6c12351c… → c0cb7d89…) rather than the burn re-baselined.
+
 ## 2026-11-02 One impulse per run, pressures at a tenth of a psi, words that say what they mean
 
 Display only; no burn moves.
