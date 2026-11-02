@@ -81,6 +81,37 @@ def test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle() -> None:
     assert any("wide open" in n for n in t0.notes)
 
 
+def test_subcooled_lox_over_its_critical_pressure_is_not_critical() -> None:
+    """Dome 735 on LE4: both tanks lock up at ~745 psia, over oxygen's 731 psia
+    critical pressure, and Ready said "LOX-Tank is at its propellant's critical
+    pressure and the model can go no higher. The drawing has no relief valve" --
+    with the tank above it, and a relief drawn. 90 K LOX under nitrogen is an
+    ordinary compressed liquid; what nears the critical point is the propellant
+    itself, a liquid warmed toward oxygen's 154.6 K."""
+    from dataclasses import replace
+
+    from test_ignore_gse import _session as _le4
+
+    session = _le4(True)
+    session.setup = replace(session.setup, dome_psi=735.0)
+    jump_to_t0(session, copv_psi=3750.0, fill_fraction=0.95)
+    lox = next(
+        sim for sim in session.tanks.values() if sim.state.liquid_temperature < 120.0
+    )
+    p_crit = float(lox.tank.liquid.critical_pressure)
+    assert lox.pressure > p_crit, "the total pressure is over oxygen's critical"
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "critical" in n], notes
+    # A liquid that has warmed to within a hair of its critical point is (a
+    # kilogram of it: the load at 154 K would not fit the tank).
+    lox.state = replace(lox.state, liquid_temperature=154.0, liquid_mass=1.0)
+    (near,) = [n for n in session._notes() if "critical" in n]
+    assert near.startswith("LOX-Tank") and "Vent it." in near
+    assert "can go no higher" not in near
+    if session._reliefs:
+        assert "no relief valve" not in near
+
+
 def test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere() -> None:
     """A dome turned to zero gives dome + bias - S x bottle under atmosphere on a
     charged COPV: the regulator is shut, and no regulator pulls a vacuum. T-0

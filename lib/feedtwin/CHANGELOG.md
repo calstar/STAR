@@ -56,6 +56,15 @@ be able to find why they differ.
   lasted. The dump now takes only what stands above an atmosphere at the gas's
   temperature, and the floor restates the energy with the mass, as
   `TankSim._settled` does.
+- **The critical-point note is about the propellant, not the total pressure**
+  (`_notes`). It compared a tank's total pressure with its propellant's critical
+  pressure and always added "the model can go no higher. The drawing has no relief
+  valve": LE4 (3) with the dome at 735 sat in Ready at 744.6 psia, above oxygen's
+  731 psia, with 90 K LOX under nitrogen (an ordinary compressed liquid) and OU-RV
+  drawn. It now fires when the propellant's vapour partial pressure, or the
+  saturation pressure of its liquid (bulk or surface, whichever is warmer), is
+  within 3 % of critical -- a shut LOX tank boiled up on its own oxygen still gets
+  it -- and says "no relief valve" only of a drawing with none.
 - **The tick split is documented as the code does it**: round(tick / live_step)
   equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
   ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
@@ -93,7 +102,8 @@ be able to find why they differ.
   `test_a_bottle_charging_is_not_down_to_anything`,
   `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`.
 - `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
-  `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`.
+  `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`,
+  `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.
 - `test_press_path_coupling.py`:
   `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`.
 

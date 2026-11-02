@@ -5816,16 +5816,47 @@ class Session:
                     "boiling it; keep the vent open until it chills, or the "
                     "tank climbs hard the moment it shuts."
                 )
+            # The propellant's own state, not the tank's total pressure: 90 K
+            # LOX under 745 psia of nitrogen is an ordinary compressed liquid,
+            # and the note said "at its critical pressure, the model can go no
+            # higher" of a tank already above it. What nears the critical point
+            # is the propellant: its vapour's own partial pressure (a shut tank
+            # boiled up on its own oxygen), or a liquid warmed toward it.
+            near = False
             try:
                 p_crit = float(sim.tank.liquid.critical_pressure)
+                t_crit = float(sim.tank.liquid.critical_temperature)
             except Exception:  # noqa: BLE001 - a measured table has no critical point
-                p_crit = 0.0
-            if p_crit > 0.0 and sim.pressure > 0.97 * p_crit:
+                p_crit = t_crit = 0.0
+            if p_crit > 0.0:
+                try:
+                    near = float(sim.tank.vapour_pressure(sim.state)) > 0.97 * p_crit
+                except Exception:  # noqa: BLE001 - no vapour state to read
+                    near = False
+            if p_crit > 0.0 and not near and not sim.empty:
+                hottest = max(
+                    sim.state.liquid_temperature, sim.state.surface_temperature or 0.0
+                )
+                try:
+                    near = hottest >= t_crit or (
+                        float(sim.tank.liquid.get("p", T=hottest, q=0.0))
+                        > 0.97 * p_crit
+                    )
+                except Exception:  # noqa: BLE001 - no saturation line to read
+                    near = False
+            if near:
+                # "No relief valve" only of a drawing with none on it.
                 out.append(
-                    f"{sim.label} is at its propellant's critical pressure "
-                    f"({say(p_crit)}) and the model can go no "
-                    "higher. The drawing has no relief valve; a real tank would "
-                    "have lifted one long ago. Vent it."
+                    f"{sim.label}'s propellant is near its critical point "
+                    f"({say(p_crit)}, {t_crit:.1f} K), where the model's liquid "
+                    "properties end. "
+                    + (
+                        ""
+                        if self._reliefs
+                        else "The drawing has no relief valve; a real tank "
+                        "would have lifted one long ago. "
+                    )
+                    + "Vent it."
                 )
         out.extend(self._leaking_notes())
         ground = self.ground
