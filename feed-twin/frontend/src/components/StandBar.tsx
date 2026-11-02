@@ -156,7 +156,9 @@ export function StandBar() {
   );
 
   return (
-    <div className="relative flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
+    // The last thing in the header to give way (TopBar): its name, then the
+    // checkout, clipped, before the ENG ABORT beside it moves off screen.
+    <div className="relative flex min-w-0 items-center gap-2 whitespace-nowrap font-mono text-[12px]">
       <input
         ref={fileRef}
         type="file"
@@ -170,7 +172,7 @@ export function StandBar() {
         }}
       />
       <button
-        className={`${btn} max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
+        className={`${btn} min-w-[3.5rem] max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
         onClick={() => { void list(); setMenu(false); setPicking(true); }}
         title={
           standDoc
@@ -187,6 +189,7 @@ export function StandBar() {
           {/* The checkout says "Read only" itself; the hover says what that
               covers -- running the stand never is. */}
           <span
+            className="min-w-0 overflow-hidden"
             title={
               locked
                 ? 'Read only: configuration, knobs, the hookup, the drawing and the engine are the stand\'s; take it to change them. States, valves, T-0 and Fire are operating it, and are never locked.'

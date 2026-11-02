@@ -233,15 +233,23 @@ export function TopBar({ views }: { views: readonly View[] }) {
         </nav>
       </div>
 
-      {/* One row, never wrapped: the drawing's name gives way first (it
-          truncates, whole on its hover), then the wall clock below 1600 px. */}
-      <div className="flex min-h-[44px] flex-nowrap items-center gap-x-6 py-2 font-mono text-[13px] uppercase tracking-[0.08em]">
+      {/* One row, never wrapped, and never wider than the window: ENG ABORT
+          is the one thing on it that must always be on screen. What gives way,
+          in order: below 1600 px the wall clock, and the gaps tighten; below
+          1400 the State label; then the drawing's name, which hides whole
+          rather than as an "L…" stub when there is no room for it (the stand
+          button still names the stand); last the stand bar. At 1280 with the
+          stand taken the row ran 55 px past the window and cut ENG ABORT to
+          "ENG". */}
+      <div className="flex min-h-[44px] flex-nowrap items-center gap-x-6 py-2 font-mono text-[13px] uppercase tracking-[0.08em] max-[1600px]:gap-x-4">
         <span className="flex flex-shrink-0 items-center gap-2 text-[var(--ink-2)]" title={h.title}>
           <span
             className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${h.pulse ? 'animate-pulse' : ''}`}
             style={{ background: h.dot }}
           />
-          {h.text}
+          {/* As wide as RUNNING, so the row does not shift 9 px when it
+              pauses. */}
+          <span className="inline-block min-w-[8ch]">{h.text}</span>
           {/* The speed has its own slot, held open whether or not there is a
               ratio to show: appearing at Fire, it shoved every item along. */}
           <span className="inline-block w-[4.2em] tabular-nums normal-case tracking-normal text-[var(--ink-3)]">
@@ -287,12 +295,20 @@ export function TopBar({ views }: { views: readonly View[] }) {
           {clock}
         </span>
         {title && (
+          // As wide as the name (the row is monospace, so a character is 1ch),
+          // shrinking with the window; the name shows only while 6rem of it
+          // fit, so a narrow window loses it whole, never to a stub.
           <span
-            className="min-w-0 truncate normal-case tracking-normal text-[var(--ink-2)]"
-            title={`Drawing: ${title}${engineName ? `\nEngine: ${engineName}${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}` : '\nNo engine'}`}
+            className="@container min-w-0 [flex-shrink:1000]"
+            style={{ width: `${title.length + (engineName ? engineName.length + 3 : 0)}ch` }}
           >
-            {title}
-            {engineName && <span className="text-[var(--ink-3)]"> · {engineName}</span>}
+            <span
+              className="hidden truncate normal-case tracking-normal text-[var(--ink-2)] @min-[6rem]:block"
+              title={`Drawing: ${title}${engineName ? `\nEngine: ${engineName}${model?.engine?.engine_model === 'simplified' ? " (feedtwin's simplified engine)" : ''}` : '\nNo engine'}`}
+            >
+              {title}
+              {engineName && <span className="text-[var(--ink-3)]"> · {engineName}</span>}
+            </span>
           </span>
         )}
         {rocketOnly && (
@@ -361,11 +377,14 @@ export function TopBar({ views }: { views: readonly View[] }) {
           </div>
         )}
 
-        <div className="ml-auto flex flex-shrink-0 items-center gap-4 normal-case tracking-normal">
+        {/* Shrinks only once the drawing's name is gone, and then only in
+            the stand bar (its name, then its checkout, clipped): the State
+            and ENG ABORT never move off screen. */}
+        <div className="ml-auto flex min-w-0 items-center gap-4 normal-case tracking-normal max-[1600px]:gap-3">
           <StandBar />
           {!onConsole && (
-            <span className="flex items-center gap-3 border-l border-[var(--line)] pl-4">
-              <span className="caps text-[11px]">State</span>
+            <span className="flex flex-shrink-0 items-center gap-3 border-l border-[var(--line)] pl-4 max-[1600px]:gap-2 max-[1600px]:pl-3">
+              <span className="caps text-[11px] max-[1400px]:hidden">State</span>
               <span className="font-mono text-[13px] font-bold uppercase tracking-[0.12em] text-[var(--ink)]">
                 {state}
               </span>
