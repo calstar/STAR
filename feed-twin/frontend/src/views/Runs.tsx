@@ -30,6 +30,7 @@ import {
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { holdOn, unionTimes } from '../lib/clock';
 import { PRESSURE_UNIT, fmtP, isGaugeInput, isGaugeTunable, isGaugeUnit, psiaText, toPsia, unitLabel } from '../lib/pressure';
+import { isSequence, sequenceText } from '../lib/sequence';
 import { useStand } from '../stand';
 
 /** The record's outcome columns. A run record keeps Pc gauge, as the wire
@@ -88,6 +89,8 @@ const software = (c: RunSummary['code']) => (c ? `${c.app} ${c.commit.slice(0, 7
  *  whole of it on hover) rather than printed as JSON that runs off the page. */
 const brief = (v: unknown): string => {
   if (v === null || v === undefined) return '—';
+  // A run's operator sequence: what was commanded mid-burn, and when.
+  if (isSequence(v)) return sequenceText(v);
   if (Array.isArray(v)) {
     const named = v.every((x) => x && typeof x === 'object' && 'label' in (x as object));
     return named
