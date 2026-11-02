@@ -23,6 +23,12 @@ jobs:
         run: cmake --build /tmp/star-self-test
       - name: Run portable tests
         run: ctest --test-dir /tmp/star-self-test --output-on-failure
+      - name: Configure Idle tests with sanitizers
+        run: cmake -S firmware/tests/idle -B /tmp/star-idle -DIDLE_SANITIZERS=ON
+      - name: Build Idle tests
+        run: cmake --build /tmp/star-idle
+      - name: Run Idle tests
+        run: ctest --test-dir /tmp/star-idle --output-on-failure
 
   build-firmware:
     name: Build ${{ matrix.project }}
