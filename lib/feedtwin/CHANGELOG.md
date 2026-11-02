@@ -21,6 +21,14 @@ be able to find why they differ.
   nitrogen from nothing on LE4 (3), opened by the watcher as "Mass not accounted
   for". The charge and the draw now land in one step (dm/dt = charge - draw); the
   stand's mass error stays at round-off.
+- **T-0 primes the tanks no higher than the bottle and no lower than atmosphere**
+  (`burn.reachable_lockup`, used by `prime_at_t0` and `jump_to_t0`). The
+  regulator's law, dome + bias - S x inlet, does not stop at the inlet: T-0 primed
+  LE4 (3) at 593.8 psia off a 414.7 psia COPV, and at 9.6 psia with the dome knob at
+  0. A bottle under the lockup leaves the regulator wide open and the tanks at the
+  bottle; a lockup under atmosphere is a shut regulator. A T-0 note says which.
+  `T0.lockup_psi` is still each regulator's own lockup; `T0.tank_psi` is where the
+  tanks went. `regulator_lockup` is unchanged (the GSE tab's range reads the law).
 
 ### Changed results
 - A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in
@@ -32,11 +40,18 @@ be able to find why they differ.
   at t=5 s, was 1,954.7; mass error 1e-16 kg, was 0.290 kg). The shipped table
   charges with the press valves shut, and T-0 and the benchmark set the bottle
   directly, so no burn moves.
+- T-0 with the COPV under the lockup, or the dome under the supply effect: LE4 (3)
+  COPV 100 / 400 psig -> tanks 114.7 / 414.7 psia (were 598.2 / 593.8); dome 0 ->
+  14.7 psia (was 9.6). The Study's low-charge cases start from the bottle. At the
+  stand's 3,750 psig charge and every benchmark case nothing moves
+  (`scripts/physics_benchmark.py` passes).
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
   `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`.
 - `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`.
+- `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
+  `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

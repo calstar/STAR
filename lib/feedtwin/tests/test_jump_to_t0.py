@@ -59,3 +59,41 @@ def test_reading_the_lockup_moves_nothing() -> None:
     for loaded in (False, True):
         regulator_lockup(session, tank_id, loaded_dome=loaded)
         assert {v: session._positions[v] for v in moving} == moving
+
+
+def test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle() -> None:
+    """A regulator delivers no more than its inlet. A bottle charged under the
+    lockup leaves the regulator wide open and the tanks where the bottle is: by
+    hand, 200 psig of helium presses the tanks to at most 200 psig. T-0 primed
+    them at the 560 psig the regulator's law gives, from gas the bottle never
+    had (LE4 (3), COPV 400 psig: tanks at 579 psig)."""
+    session = _helium_stand()
+    t0 = jump_to_t0(session, copv_psi=200.0, fill_fraction=0.9)
+    bottle = next(iter(session.bottles.values()))
+    assert psig(bottle.pressure) == pytest.approx(200.0, abs=1.0)
+    for sim in session.tanks.values():
+        assert psig(sim.pressure) <= psig(bottle.pressure) + 0.5
+        assert psig(sim.pressure) == pytest.approx(200.0, abs=1.0)
+    assert t0.tank_psi == pytest.approx(200.0, abs=1.0)
+    # The regulator's own lockup is still reported, and the note says why the
+    # tanks are not at it.
+    assert all(v > 500.0 for v in t0.lockup_psi.values())
+    assert any("wide open" in n for n in t0.notes)
+
+
+def test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere() -> None:
+    """A dome turned to zero gives dome + bias - S x bottle under atmosphere on a
+    charged COPV: the regulator is shut, and no regulator pulls a vacuum. T-0
+    primed the tanks at 9.6 psia on LE4 (3)."""
+    from dataclasses import replace
+
+    from test_ignore_gse import _session as _le4
+
+    session = _le4(True)
+    session.setup = replace(session.setup, dome_psi=0.0)
+    t0 = jump_to_t0(session, copv_psi=3750.0, fill_fraction=0.95)
+    assert all(v < 0.0 for v in t0.lockup_psi.values()), "under atmosphere"
+    for tank_id in session.vehicle_tanks:
+        assert psig(session.tanks[tank_id].pressure) == pytest.approx(0.0, abs=0.05)
+    assert t0.tank_psi == pytest.approx(0.0, abs=0.05)
+    assert any("shut" in n for n in t0.notes)

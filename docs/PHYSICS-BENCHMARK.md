@@ -1195,6 +1195,17 @@ same tank pressure as before needs a dome of ~566. The study tiers moved accordi
 When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
 before suspecting the solver.
 
+**The law stops at the inlet (2026-11-02).** Nothing in dome + bias - S x inlet stops at
+the inlet, and T-0 primed LE4 (3) at 593.8 psia off a 414.7 psia COPV, from gas the
+bottle never had; with the dome knob at 0 it primed the tanks at 9.6 psia, a vacuum no
+regulator pulls. By hand: a regulator delivers no more than its inlet (a bottle under
+the lockup leaves it wide open and the tanks end at the bottle), and a lockup under
+atmosphere is a shut regulator. `burn.reachable_lockup` caps T-0 there for
+`prime_at_t0` and `jump_to_t0` and says so in a note; `regulator_lockup` is still the
+law, which the GSE tab's lockup range reads. Check: COPV 400 psig at T-0 -> tanks
+<= 400 psig (`test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`); dome 0
+-> tanks at 14.7 psia. Nothing at a charged bottle moves; this tier passes unchanged.
+
 
 ### 4.12 Tables that interpolate across the saturation line
 
