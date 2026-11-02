@@ -369,3 +369,49 @@ def test_an_unreadable_stored_override_does_not_take_the_drawing_down() -> None:
     assert cleared.status_code == 200, cleared.text
     volume = bottle_volume(client.get("/api/drawing", params={"diagram": sid}).json())
     assert volume["override"] is None
+
+
+def _param(view: dict, element: str, name: str) -> dict:
+    el = next(e for e in view["elements"] if e["id"] == element)
+    return next(p for p in el["params"] if p["name"] == name)
+
+
+def test_the_drawing_view_shows_a_bare_psi_override_as_the_model_reads_it() -> None:
+    """The model reads '1200 psi' typed over an MAWP as gauge (ADR 0004); the
+    Drawing view, where it is typed and checked, still said '1200 psi', which
+    the panel shows as an absolute 1200 beside the drawing's psia. It says
+    psig, so the panel reads it 1,214.7 psia, as the model runs it. The
+    chamber's, on the ENGINE symbol, stays absolute."""
+    assert put("OXT", "MAWP", 1200.0, "psi").status_code == 200
+    assert put("ENG", "pressure", 300.0, "psi").status_code == 200
+    view = client.get("/api/drawing", params={"diagram": stand_id()}).json()
+    mawp = _param(view, "OXT", "MAWP")
+    assert mawp["override"]["unit"] == "psig", mawp["override"]
+    assert (mawp["effective"]["value"], mawp["effective"]["unit"]) == (1200.0, "psig")
+    chamber = _param(view, "ENG", "pressure")
+    assert chamber["effective"]["unit"] == "psi", chamber["effective"]
+    report = client.get("/api/model", params={"diagram": stand_id()}).json()
+    applied = {(o["component"], o["unit"]) for o in report["report"]["overrides"]}
+    assert ("OXT", "psig") in applied and ("ENG", "psi") in applied
+
+
+def test_an_unreadable_was_does_not_take_the_drawing_view_down() -> None:
+    """What the drawing had when the override was made rides in the store as
+    written; a bundle's import puts its entry in whole. One that did not fit
+    the panel's shape was a 500 on the Drawing view, the one place the
+    override could be cleared from."""
+    sid = stand_id()
+    name = library.get(sid).name
+    record = {"value": 4.0, "unit": "L", "source": "measured", "reference": "weighed"}
+    for was in (
+        {"value": "abc", "unit": "L", "source": "estimated"},
+        {"value": 4.6, "unit": "L", "source": "estimated", "reference": "r"},
+        {"value": 4.6},
+        "oops",
+    ):
+        overrides.put_entry(
+            name, {"params": {"KB1": {"volume": {**record, "was": was}}}}
+        )
+        view = client.get("/api/drawing", params={"diagram": sid})
+        assert view.status_code == 200, (was, view.text)
+        assert bottle_volume(view.json())["override"]["value"] == 4.0

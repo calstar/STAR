@@ -1545,6 +1545,24 @@ def _role(component_type: str) -> str:
     return "component"
 
 
+def _was(raw: Any) -> ParamValue | None:
+    """What a stored override says the drawing had when it was made, or None
+    when it says nothing readable. A store written whole (a bundle's import)
+    can hold any shape here, and one that did not fit took the Drawing view
+    down -- the one place the override could be cleared from."""
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        value = float(raw["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or "unit" not in raw:
+        return None
+    return ParamValue(
+        value=value, unit=str(raw["unit"]), source=str(raw.get("source", ""))
+    )
+
+
 def _same_dimension(unit: str) -> list[str]:
     try:
         dim = dimension_of(unit)
@@ -1628,23 +1646,26 @@ async def drawing_view(
             stale = False
             if o is not None:
                 record = o if isinstance(o, Mapping) else {}
-                was = record.get("was")
-                was = was if isinstance(was, Mapping) else None
+                was = _was(record.get("was"))
+                unit = str(record.get("unit", "-"))
                 override = OverrideOut(
                     value=0.0 if why else record["value"],
-                    unit=str(record.get("unit", "-")),
+                    # In the unit the model reads it in: a bare 'psi' typed
+                    # over an absolute pressure is applied as psig (ADR 0004),
+                    # and shown as that, not as the absolute 'psi' it is not.
+                    unit=unit if why else drawn_unit(name, unit, symbol),
                     source=str(record.get("source", "")),
                     reference=str(record.get("reference", "")),
                     by=str(record.get("by", "")),
                     at=str(record.get("at", "")),
-                    was=ParamValue(**was, reference="") if was else None,
+                    was=was,
                 )
                 if was is None:
                     stale = drawn is not None
                 else:
                     stale = drawn is None or (drawn.value, drawn.unit) != (
-                        was.get("value"),
-                        was.get("unit"),
+                        was.value,
+                        was.unit,
                     )
             base = _value(drawn) if drawn is not None else fill
             effective = (

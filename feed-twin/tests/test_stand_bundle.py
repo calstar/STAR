@@ -211,6 +211,55 @@ def test_a_newer_bundle_or_another_file_is_refused() -> None:
     )
 
 
+_RECORD = {"value": 4.0, "unit": "L", "source": "measured", "reference": "weighed"}
+
+
+@pytest.mark.parametrize(
+    "part, value, words",
+    [
+        # Each was a 500 halfway through the import, or stored and then never
+        # applied: one set_param would refuse went in as it came.
+        ("overrides", "oops", "overrides"),
+        ("overrides", {"params": ["x"]}, "params"),
+        ("overrides", {"params": {"node_1": "oops"}}, "node_1"),
+        (
+            "overrides",
+            {"params": {"node_1": {"volume": {**_RECORD, "source": "guess"}}}},
+            "guess",
+        ),
+        (
+            "overrides",
+            {"params": {"node_1": {"volume": {**_RECORD, "value": "lots"}}}},
+            "lots",
+        ),
+        (
+            "overrides",
+            {"params": {"node_2": {"dome_bias": {**_RECORD, "unit": "psig"}}}},
+            "difference",
+        ),
+        ("overrides", {"params": {}, "console_order": ["x"]}, "console_order"),
+        ("machine", ["x"], "state table"),
+        ("hookup", ["x"], "hookup"),
+    ],
+)
+def test_a_bundle_that_cannot_be_used_is_refused_before_anything_goes_in(
+    part: str, value: Any, words: str
+) -> None:
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    if part == "hookup":
+        out["stand"]["hookup"] = value
+    else:
+        out[part] = value
+    response = client.post("/api/twin/bundle/import", json=out)
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    with pytest.raises(LibraryError):
+        library.get(stand["diagram"])
+    assert overrides.entry(name)["params"] == {}
+
+
 def test_overrides_new_to_this_server_are_taken_as_they_are() -> None:
     incoming = {
         "params": {"n1": {"volume": {"value": 2.0, "unit": "L"}}},

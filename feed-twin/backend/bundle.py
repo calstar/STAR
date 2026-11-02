@@ -32,6 +32,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from backend.overrides import unreadable
+
 FORMAT = "hotbench-stand"
 VERSION = 1
 #: The file extension a bundle is saved under.
@@ -147,6 +149,41 @@ def check(bundle: Any) -> None:
                 "changed after it was exported, so it is not the engine the stand "
                 "fires. Export it again rather than editing the file."
             )
+    # The parts no hash covers, read before anything goes in the library: an
+    # override of the wrong shape was a 500 halfway through the import, and
+    # one this server would refuse to store went in and was never applied.
+    machine = bundle.get("machine")
+    if machine is not None and not isinstance(machine, Mapping):
+        raise BundleError("That bundle's state table is not readable.")
+    hookup = bundle["stand"].get("hookup")
+    if hookup is not None and not isinstance(hookup, Mapping):
+        raise BundleError("That bundle's hookup is not readable.")
+    _check_overrides(bundle.get("overrides"))
+
+
+def _check_overrides(raw: Any) -> None:
+    """Refuse overrides :meth:`backend.overrides.OverrideStore.set_param`
+    would refuse, or that are not shaped as the store keeps them."""
+    if raw is None:
+        return
+    if not isinstance(raw, Mapping):
+        raise BundleError("That bundle's overrides are not readable.")
+    for key in ("params", "console_hidden", "console_shown", "console_order"):
+        if raw.get(key) is not None and not isinstance(raw.get(key), Mapping):
+            raise BundleError(f"That bundle's overrides ({key}) are not readable.")
+    for element, by_param in (raw.get("params") or {}).items():
+        if not isinstance(by_param, Mapping):
+            raise BundleError(
+                f"That bundle's overrides for {element} are not readable."
+            )
+        for name, record in by_param.items():
+            why = unreadable(str(name), record)
+            if why:
+                raise BundleError(
+                    f"That bundle's override on {element} {name} cannot be "
+                    f"used: {why}. Clear it on the exporting server and export "
+                    "the stand again."
+                )
 
 
 def merge_overrides(
