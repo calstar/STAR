@@ -2,6 +2,17 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 Gaps in the drawn feed lines are said up front (W14, still open)
+
+The graded chug margin (drawing basis, 2026-10-03) and the line losses stand on the drawing's own
+tank-to-injector lines. LE4 (3) draws its LOX path as direct connections and its fuel tank line with a
+0 mm bore: the graded margin is 1.004 (warn) against 1.21 on EngineDesign's feed_system, and a pad
+preflight said nothing. Preflight now warns (`feed_lines`) per side when the path has no line at all
+or a line with no usable length or bore, and the graded `chug_margin` names those gaps in its hint
+(`drawing_gaps`). The decision stands and nothing is graded differently; the drawing is pid-designer's
+to fix (give node_15-node_38 its bore, draw the LOX tank → OM-R → injector lines). Guarded by
+`tests/test_layerx_feed_gaps.py` (both red on the old code).
+
 ## 2026-11-02 Golden baseline: the state-table fingerprint re-stated; no figure moved
 
 `test_layerx_golden.py::test_inputs_unchanged` failed on `state_machines`: the fingerprint hashes

@@ -514,6 +514,32 @@ def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, 
     return {"status": "warn" if over else "info", "detail": detail, "estimate": estimate}
 
 
+def _feed_line_gaps(prep: Any) -> List[str]:
+    """Per side, what the drawing leaves out of the tank-to-injector path the chug margin and the
+    line losses are computed on (``diag.stability.drawing_feed``): a path drawn with no line at all
+    (direct connections), and lines with no usable length or bore (a 0 mm bore is not a line)."""
+    try:
+        from engine.layerx.diag.stability import drawing_feed
+
+        feed = drawing_feed(prep)
+    except Exception:  # noqa: BLE001 - a path that cannot be traced is the burn's to report, not preflight's
+        return []
+    gaps: List[str] = []
+    for side, word in (("oxidiser", "LOX"), ("fuel", "Fuel")):
+        lines = (feed.get(side) or {}).get("lines") or []
+        if not lines:
+            gaps.append(f"{word}: the drawing declares no line from the tank to the injector (direct connections), so "
+                        "the path carries no line inertance or loss; the chug margin keeps EngineDesign's feed_system "
+                        "inertance for it")
+            continue
+        bad = [str(ln.get("label") or ln.get("id")) for ln in lines
+               if ln.get("length_m") is None or ln.get("bore_m") is None or not ln["bore_m"] > 0.0]
+        if bad:
+            gaps.append(f"{word}: {', '.join(bad)} {'has' if len(bad) == 1 else 'have'} no usable length or bore "
+                        "and is left out of the line inertance")
+    return gaps
+
+
 def _vehicle_dry_kg(config: Any) -> Optional[float]:
     from engine.layerx.flight import config_dry_kg
 
@@ -1248,6 +1274,15 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         end_on_depletion=True,
         dry_kg=settings.dry_kg,
     )
+    gaps = _feed_line_gaps(prep)
+    if gaps:
+        # Said up front (W14): the graded chug margin is on the drawing's own lines (2026-10-03), and the
+        # line losses are the drawing's, so a line the drawing does not give is a gap in both. LE4 (3):
+        # its LOX path is drawn as direct connections and its fuel tank line has a 0 mm bore; the graded
+        # margin there is 1.004 (warn) against 1.21 on EngineDesign's own feed_system.
+        add("feed_lines", "Feed lines on the drawing", "warn",
+            "; ".join(gaps) + ". The graded chug margin and the line losses rest on what is drawn: give these "
+            "lines a length and bore in pid-designer, or restate them under Enter measured values.")
     lead = float(getattr(prep.plan, "lead_in_s", 0.5))
     if abs(lead / settings.dt - round(lead / settings.dt)) > 1e-6:
         # The firing clock starts at Fire; a step that straddles it is counted short, and the first

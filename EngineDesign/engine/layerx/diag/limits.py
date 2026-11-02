@@ -313,12 +313,17 @@ def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset(),
             idx = _dig(st, "worst.index")
             freq = _num(_dig(st, "worst.frequency_hz"))
         i = idx if isinstance(idx, int) and 0 <= idx < len(run.t) else run.index_of(t)
+        # The gaps in the drawing this margin stands on, beside it rather than buried in the block's
+        # flags (W14: LE4 (3)'s LOX path is undrawn and its fuel tank line has a 0 mm bore).
+        gaps = [str(f) for f in (st.get("flags") or [])
+                if isinstance(f, str) and ("no usable length/bore" in f or "declares no line" in f)]
         out.append(_entry(
             "chug_margin", "Chug margin", "stability", value, "", red, warn, "min", _grade(value, red, warn, "min"),
             t, i, "diagnostics.stability.margin",
             f"EngineDesign double-time-lag chug model, {basis_name} feed basis, {scope}",
-            f"Feed-coupled gain margin, worst over the mixing-lag band. {why}",
-            frequency_hz=freq))
+            f"Feed-coupled gain margin, worst over the mixing-lag band. {why}"
+            + (f" It rests on gaps in the drawing: {'; '.join(gaps)}." if gaps else ""),
+            frequency_hz=freq, **({"drawing_gaps": gaps} if gaps else {})))
         if settled is not None and worst is not None and worst < settled:
             tw = _num(_dig(st, "worst.t"))
             iw = _dig(st, "worst.index")
