@@ -15,6 +15,7 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import hashlib
@@ -29,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Sequence, cast
 
-from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
@@ -691,6 +692,161 @@ def _alias(artifact: Artifact, provenance: str, pulled: str = "") -> None:
         library.put_record(ALIASES, artifact.id, record)
 
 
+# ------------------------------------------------------------------ access
+#
+# The library is one store for everyone on this server, and an artifact is
+# its bytes. A drawing pulled from a design tool came through that tool's
+# access rules (designtools forwards the caller's identity), and then it was
+# in every Hotbench user's library -- and Layer X's -- whatever the tool
+# would say to them: a private pid-designer drawing Alice pulled was Bob's to
+# open in full, though pid-designer answers him 403 (R002). So a pulled
+# artifact is shown, served and run only for someone the tool it came from
+# lets open it. An upload, a shipped drawing, the sample and an imported
+# bundle are everyone's, and so is a pulled artifact somebody also uploaded:
+# the same bytes are the same artifact.
+
+#: Record kind: who pulled an artifact, and whether it was published.
+ACCESS = "access"
+
+#: How long a design tool's answer for one person and one design is kept.
+ACCESS_TTL_S = 60.0
+
+#: ... and an answer of "could not be asked", so a tool that is down is not
+#: asked again for every artifact on every listing.
+ACCESS_DOWN_TTL_S = 10.0
+
+_ACCESS_SEEN: dict[tuple[str, str, str, str], tuple[float, bool | None]] = {}
+
+
+def _access(artifact_id: str) -> dict[str, Any]:
+    return dict(library.record(ACCESS, artifact_id) or {})
+
+
+def _pulled_by(artifact: Artifact, viewer: str) -> None:
+    """Remember that ``viewer`` pulled ``artifact``: the tool let them then,
+    and asks again when it can be asked (:func:`_may_read`)."""
+    if designtools.parse_source(artifact.source) is None:
+        return
+    record = _access(artifact.id)
+    pullers = [str(p) for p in record.get("pulled_by") or []]
+    if viewer not in pullers:
+        record["pulled_by"] = [*pullers, viewer]
+        record.pop("key", None)
+        library.put_record(ACCESS, artifact.id, record)
+
+
+def _publish(artifact: Artifact, by: str) -> None:
+    """``artifact`` reached this library by an upload or a bundle as well:
+    the bytes were the uploader's to give, so it is everyone's now."""
+    if designtools.parse_source(artifact.source) is None:
+        return
+    record = _access(artifact.id)
+    if not record.get("published"):
+        record.pop("key", None)
+        library.put_record(ACCESS, artifact.id, {**record, "published": by})
+
+
+def _gates(artifact: Artifact) -> list[tuple[str, str, str]]:
+    """The design-tool documents a reader of ``artifact`` must be let open,
+    any one of them: ``(tool, owner, doc id)`` of each pull of it. Empty for
+    anything everyone may read. A pull that named no owner was the puller's
+    own document."""
+    if designtools.parse_source(artifact.source) is None:
+        return []
+    record = _access(artifact.id)
+    if record.get("published"):
+        return []
+    pullers = [str(p) for p in record.get("pulled_by") or []] or ["local"]
+    out: list[tuple[str, str, str]] = []
+    for source in [artifact.source, *_aliases(artifact.id)]:
+        parsed = designtools.parse_source(source)
+        if parsed is None:
+            continue
+        key, owner, doc_id, _ = parsed
+        out.extend((key, who, doc_id) for who in ([owner] if owner else pullers))
+    return list(dict.fromkeys(out))
+
+
+async def _opens(request: Request, key: str, owner: str, doc_id: str) -> bool | None:
+    """Whether the design tool lets this caller open a document (cached)."""
+    viewer = _who(request)
+    seen = _ACCESS_SEEN.get((viewer, key, owner, doc_id))
+    now = time.monotonic()
+    if seen is not None:
+        at, answer = seen
+        if now - at < (ACCESS_TTL_S if answer is not None else ACCESS_DOWN_TTL_S):
+            return answer
+    answer = await designtools.can_open(tools()[key], doc_id, owner, request.headers)
+    _ACCESS_SEEN[(viewer, key, owner, doc_id)] = (now, answer)
+    return answer
+
+
+async def _may_read(request: Request, artifact: Artifact) -> str:
+    """ "" if the caller may read ``artifact``, else why not.
+
+    Its design tool decides: anyone it lets open the document (any one, if
+    the same drawing was pulled from several) may. When it cannot be asked,
+    the people who pulled it may, and nobody else."""
+    gates = _gates(artifact)
+    if not gates:
+        return ""
+    answers = [await _opens(request, *gate) for gate in gates]
+    if any(answers):
+        return ""
+    key, owner, doc_id = gates[0]
+    label = tools()[key].label
+    if None in answers:
+        if _who(request) in (_access(artifact.id).get("pulled_by") or []):
+            return ""
+        return (
+            f"{artifact.name} was pulled from {label} ({owner}/{doc_id}), which "
+            "could not be asked whether you may open it, so it is not shown."
+        )
+    return (
+        f"{artifact.name} was pulled from {label} ({owner}/{doc_id}), which "
+        "does not share it with you."
+    )
+
+
+async def _readable(request: Request) -> None:
+    """Refuse a request that names an artifact the caller may not read: a
+    ``diagram``, ``engine`` or ``artifact_id`` in its path, query or JSON
+    body (a stand bundle's ``stand`` included). A dependency of every route
+    that serves, runs or changes an artifact (:data:`READABLE`); one that
+    names nothing in the library is the route's own 404."""
+    named: list[Any] = [
+        request.query_params.get("diagram"),
+        request.query_params.get("engine"),
+        request.path_params.get("artifact_id"),
+    ]
+    if "json" in request.headers.get("content-type", ""):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        for scope in (body, body.get("stand") if isinstance(body, Mapping) else None):
+            if isinstance(scope, Mapping):
+                named += [scope.get("diagram"), scope.get("engine")]
+    for artifact_id in dict.fromkeys(str(n) for n in named if n):
+        try:
+            artifact = library.get(artifact_id)
+        except LibraryError:
+            continue
+        why = await _may_read(request, artifact)
+        if why:
+            raise HTTPException(status_code=403, detail=why)
+
+
+#: Every route that serves, runs or changes an artifact depends on this.
+READABLE = [Depends(_readable)]
+
+
+async def _visible(request: Request, artifacts: Sequence[Artifact]) -> list[Artifact]:
+    """``artifacts`` less the ones the caller may not read, in order."""
+    refused = await asyncio.gather(*(_may_read(request, a) for a in artifacts))
+    return [a for a, why in zip(artifacts, refused) if not why]
+
+
 def _pulled_sha(artifact_id: str, provenance: str) -> str:
     """The sha256 of the bytes ``provenance`` gave when it was aliased onto
     this artifact (:func:`_alias`); "" if not recorded."""
@@ -950,15 +1106,21 @@ async def version() -> dict[str, object]:
 
 
 @app.get("/api/library")
-async def list_artifacts(kind: str | None = None) -> list[ArtifactOut]:
+async def list_artifacts(
+    request: Request, kind: str | None = None
+) -> list[ArtifactOut]:
+    """What the caller may read: a pull only for someone its design tool
+    lets open it (:func:`_may_read`)."""
     if kind not in (None, "diagram", "engine"):
         raise HTTPException(status_code=400, detail="kind is 'diagram' or 'engine'")
-    return [_out(a) for a in library.list(kind)]  # type: ignore[arg-type]
+    listed = library.list(kind)  # type: ignore[arg-type]
+    return [_out(a) for a in await _visible(request, listed)]
 
 
 @app.post("/api/library/diagrams")
-async def import_diagram(file: UploadFile) -> ImportResult:
-    """Import a P&ID saved out of pid-designer."""
+async def import_diagram(request: Request, file: UploadFile) -> ImportResult:
+    """Import a P&ID saved out of pid-designer. An upload is everyone's: one
+    that is a drawing pulled here before publishes that one (:func:`_publish`)."""
     data = await file.read()
     try:
         payload = json.loads(data.decode("utf-8"))
@@ -999,6 +1161,7 @@ async def import_diagram(file: UploadFile) -> ImportResult:
     # here, not a second copy under another name (D-52).
     same = _same_drawing(payload)
     if same is not None:
+        _publish(same, _who(request))
         return ImportResult(artifact=_out(same), already_present=True)
     artifact, existed = library.add(
         data,
@@ -1030,6 +1193,7 @@ async def import_engine(request: Request, file: UploadFile) -> ImportResult:
         suffix=".yaml",
         summary=engine_summary(design),
     )
+    _publish(artifact, _who(request))
     problem = ""
     if not _card_info(artifact):
         problem = await _build_card(artifact.id, data, request.headers)
@@ -1101,7 +1265,7 @@ async def _carried_source(
     ]
 
 
-@app.post("/api/twin/bundle/export")
+@app.post("/api/twin/bundle/export", dependencies=READABLE)
 async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
     """A stand and everything it names, as one ``*.hotbench.json``: the
     drawing, the engine and its card, the state table, the drawing's
@@ -1303,6 +1467,10 @@ async def import_stand_bundle(
         overrides.put_entry(_change_key(drawing_art.id), merged)
         notes.extend(more)
 
+    # The bundle's bytes were the importer's to give, as an upload's are.
+    for given in (drawing_art, engine_art):
+        if given is not None:
+            _publish(given, _who(request))
     stand["diagram"] = drawing_art.id
     stand["engine"] = engine_art.id if engine_art is not None else ""
     # The name the client creates the stand under: not one of the caller's
@@ -1434,6 +1602,7 @@ async def import_from_source(
         same = _same_drawing(payload)
         if same is not None:
             _alias(same, provenance)
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
         summary = diagram_summary(payload)
     card: bytes | None = None
@@ -1446,6 +1615,7 @@ async def import_from_source(
         same, card, problem = await _engine_here(data, request.headers)
         if same is not None:
             _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
 
     label = name or doc_id
@@ -1457,6 +1627,10 @@ async def import_from_source(
         suffix=tool.suffix,
         summary=summary,
     )
+    # The same bytes pulled from another document are this artifact too, and
+    # whoever may open that document may read it (:func:`_may_read`).
+    _alias(artifact, provenance)
+    _pulled_by(artifact, _who(request))
     if tool.kind == "engine":
         problem = await _card_for(artifact, data, card, problem, request.headers)
     return ImportResult(
@@ -1464,7 +1638,7 @@ async def import_from_source(
     )
 
 
-@app.post("/api/library/{artifact_id}/card")
+@app.post("/api/library/{artifact_id}/card", dependencies=READABLE)
 async def build_engine_card(request: Request, artifact_id: str) -> ImportResult:
     """(Re)build an engine's EngineDesign card, so the stand fires the engine
     EngineDesign designed rather than feedtwin's simplified one."""
@@ -1480,7 +1654,7 @@ async def build_engine_card(request: Request, artifact_id: str) -> ImportResult:
     return ImportResult(artifact=_out(artifact), already_present=True)
 
 
-@app.get("/api/library/{artifact_id}/freshness")
+@app.get("/api/library/{artifact_id}/freshness", dependencies=READABLE)
 async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut:
     """Is this still what the design tool it was pulled from holds?
 
@@ -1546,7 +1720,7 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
     )
 
 
-@app.post("/api/library/{artifact_id}/refresh")
+@app.post("/api/library/{artifact_id}/refresh", dependencies=READABLE)
 async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
     """Pull the design tool's working copy again, as a new artifact, and (for
     an engine) build its card. The old artifact stays: runs made on it still
@@ -1580,12 +1754,14 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         same, card, problem = await _engine_here(data, request.headers)
         if same is not None:
             _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
     else:
         payload = json.loads(data.decode("utf-8"))
         same = _same_drawing(payload)
         if same is not None:
             _alias(same, provenance)
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
         summary = diagram_summary(payload)
     fresh, existed = library.add(
@@ -1596,6 +1772,8 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         suffix=tool.suffix,
         summary=summary,
     )
+    _alias(fresh, provenance)
+    _pulled_by(fresh, _who(request))
     if tool.kind == "engine":
         problem = await _card_for(fresh, data, card, problem, request.headers)
     return ImportResult(
@@ -1635,7 +1813,7 @@ def _references(artifact_id: str) -> list[str]:
     return found
 
 
-@app.delete("/api/library/{artifact_id}")
+@app.delete("/api/library/{artifact_id}", dependencies=READABLE)
 def remove_artifact(artifact_id: str) -> dict[str, str]:
     """Remove an artifact. Removed means removed: a shipped drawing or the
     sample is not put back on the next restart (D-78).
@@ -1667,11 +1845,12 @@ def remove_artifact(artifact_id: str) -> dict[str, str]:
             "it ran on.",
         }
     library.drop_record(ALIASES, artifact_id)
+    library.drop_record(ACCESS, artifact_id)
     return {"removed": artifact_id}
 
 
 @app.post("/api/library/sample")
-async def load_sample() -> list[ArtifactOut]:
+async def load_sample(request: Request) -> list[ArtifactOut]:
     """Put the sample stand in the library -- the LE4 stand drawing, the team's
     ethalox engine and its EngineDesign card -- even if it was removed before.
     Idempotent; answers with the library as it stands afterwards."""
@@ -1681,13 +1860,13 @@ async def load_sample() -> list[ArtifactOut]:
         raise HTTPException(
             status_code=500, detail=f"The sample stand could not be loaded: {exc}"
         ) from exc
-    return [_out(a) for a in library.list()]
+    return [_out(a) for a in await _visible(request, library.list())]
 
 
 # -------------------------------------------------------------------- model
 
 
-@app.get("/api/diagram")
+@app.get("/api/diagram", dependencies=READABLE)
 async def diagram_document(diagram: str) -> dict[str, list[Any]]:
     """The drawing itself, as pid-designer saved it.
 
@@ -1736,7 +1915,7 @@ def _not_operated(model: Model) -> frozenset[str]:
     return frozenset(n.id for n in model.diagram.nodes if n.type in daqbox.NOT_CABLED)
 
 
-@app.get("/api/model")
+@app.get("/api/model", dependencies=READABLE)
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire", ignore_gse: bool = False
 ) -> ModelView:
@@ -1849,7 +2028,7 @@ def _same_dimension(unit: str) -> list[str]:
     return [u for u in registered_units() if dimension_of(u) == dim]
 
 
-@app.get("/api/drawing")
+@app.get("/api/drawing", dependencies=READABLE)
 async def drawing_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire"
 ) -> DrawingOut:
@@ -2028,7 +2207,7 @@ async def drawing_view(
     )
 
 
-@app.put("/api/drawing/override")
+@app.put("/api/drawing/override", dependencies=READABLE)
 async def set_override(
     request: Request,
     diagram: str = Body(...),
@@ -2095,7 +2274,7 @@ async def set_override(
     return {"key": key, "params": entry["params"].get(element, {})}
 
 
-@app.delete("/api/drawing/override")
+@app.delete("/api/drawing/override", dependencies=READABLE)
 async def clear_override(diagram: str, element: str, parameter: str) -> dict[str, Any]:
     """Back to the drawing's number."""
     try:
@@ -2106,7 +2285,7 @@ async def clear_override(diagram: str, element: str, parameter: str) -> dict[str
     return {"key": key, "params": entry["params"].get(element, {})}
 
 
-@app.get("/api/drawing/console")
+@app.get("/api/drawing/console", dependencies=READABLE)
 async def console_visibility(diagram: str) -> dict[str, Any]:
     """Which symbols the console hides, and the order it draws its
     transducers and tanks in. Cheap; the console polls it."""
@@ -2120,7 +2299,7 @@ async def console_visibility(diagram: str) -> dict[str, Any]:
     }
 
 
-@app.put("/api/drawing/console")
+@app.put("/api/drawing/console", dependencies=READABLE)
 async def set_console_visibility(
     request: Request,
     diagram: str = Body(...),
@@ -2140,7 +2319,7 @@ async def set_console_visibility(
     return {"hidden": sorted(_console_hidden(diagram))}
 
 
-@app.put("/api/drawing/console/order")
+@app.put("/api/drawing/console/order", dependencies=READABLE)
 async def set_console_order(
     diagram: str = Body(...), order: dict[str, list[str]] = Body(...)
 ) -> dict[str, Any]:
@@ -2155,7 +2334,7 @@ async def set_console_order(
     }
 
 
-@app.put("/api/drawing/console/view")
+@app.put("/api/drawing/console/view", dependencies=READABLE)
 async def set_console_view(
     request: Request,
     diagram: str = Body(...),
@@ -2904,7 +3083,7 @@ def _stand_box_notes(own: Hookup, stand: Stand) -> list[str]:
     return [n for n in out if n]
 
 
-@app.post("/api/session")
+@app.post("/api/session", dependencies=READABLE)
 async def open_session(
     request: Request,
     diagram: str,
@@ -3965,7 +4144,7 @@ def _hookup_out(
     )
 
 
-@app.get("/api/hookup")
+@app.get("/api/hookup", dependencies=READABLE)
 async def get_hookup(
     diagram: str,
     engine: str = "",
@@ -3978,7 +4157,7 @@ async def get_hookup(
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
-@app.post("/api/hookup/view")
+@app.post("/api/hookup/view", dependencies=READABLE)
 async def view_hookup(
     diagram: str,
     body: HookupBody,
@@ -4016,7 +4195,7 @@ def _refuse_impossible(hookup: Hookup, model: Model) -> None:
         raise HTTPException(status_code=422, detail=" ".join(wrong))
 
 
-@app.put("/api/hookup")
+@app.put("/api/hookup", dependencies=READABLE)
 async def save_hookup(
     diagram: str,
     body: HookupBody,
@@ -4040,7 +4219,7 @@ async def save_hookup(
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
-@app.delete("/api/hookup")
+@app.delete("/api/hookup", dependencies=READABLE)
 async def reset_hookup(
     diagram: str,
     engine: str = "",
@@ -5535,7 +5714,7 @@ def _machine_out(
     )
 
 
-@app.get("/api/statemachine")
+@app.get("/api/statemachine", dependencies=READABLE)
 async def state_machine(
     diagram: str,
     engine: str = "",

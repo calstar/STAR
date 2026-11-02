@@ -107,6 +107,9 @@ def engine_design() -> list[httpx.Request]:
             )
         if request.url.path.endswith("/load"):
             return httpx.Response(200, json=current)
+        if request.url.path.endswith("/releases"):
+            # Whether the caller may open it (backend.main._may_read): yes.
+            return httpx.Response(200, json=[])
         return httpx.Response(404)
 
     designtools.transport = httpx.MockTransport(handler)

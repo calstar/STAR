@@ -273,6 +273,31 @@ async def releases(
     ]
 
 
+async def can_open(
+    tool: DesignTool, doc_id: str, owner: str, headers: Mapping[str, str]
+) -> bool | None:
+    """Whether the caller may open one document in ``tool``: ``True``,
+    ``False`` (the store refuses it, or has no such document), or ``None``
+    (the store could not be asked).
+
+    Asked as the store's ``/releases``, which wants exactly what ``/load``
+    and a release want -- leave to *view* the design -- and answers with a
+    few labels rather than the drawing."""
+    path = f"{tool.documents}/{doc_id}/releases"
+    try:
+        async with _client(headers) as c:
+            response = await c.get(
+                f"{tool.base_url}{path}", params={"owner": owner} if owner else {}
+            )
+    except httpx.HTTPError:
+        return None
+    if response.status_code == 200:
+        return True
+    if response.status_code in (401, 403, 404):
+        return False
+    return None
+
+
 async def fetch(
     tool: DesignTool,
     doc_id: str,
