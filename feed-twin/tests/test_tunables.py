@@ -90,6 +90,7 @@ def test_the_cart_press_time_is_a_row() -> None:
     low = next(t.low for t in TUNABLES if t.key == "supply_press_s")
     assert parse_setup({"supply_press_s": 0.0}).supply_press_s == low > 0.0
 
+
 #: Setup fields that carry no row, each for a reason.
 NO_ROW = {
     # Numerics, effectively off everywhere since the console took the Study's

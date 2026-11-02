@@ -715,6 +715,8 @@ def test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart() -> None:
     assert min(sim.outlet_pressure for sim in vehicle) > session._design_chamber
     chamber = session.model.built.network.nodes[session._chamber_node]
     assert chamber.pressure == pytest.approx(session._design_chamber)
+
+
 def test_a_pair_drawn_joined_is_not_called_unmated(built: Any) -> None:
     """HP-QD-A and HP-QD-B are paired and joined by their own line; OF-QDA has
     no line at all, which is worth saying."""
