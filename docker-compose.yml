@@ -139,7 +139,7 @@ services:
       # not follow and the mtime watch would never see.
       - ./auth/allowlists:/config:ro
 
-  # ── Engine Design ────────────────────────────────────────────────────────
+  # ── Engine Design (Hotbench Engine) ──────────────────────────────────────
   # Built from the repo root: the image copies several EngineDesign/ subtrees
   # plus lib/stardesign. Auth is Caddy's job, so no JWT_SECRET here.
   engine-design-api:
@@ -199,7 +199,7 @@ services:
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
-  # ── P&ID Designer ────────────────────────────────────────────────────────
+  # ── P&ID Designer (Hotbench P&ID) ────────────────────────────────────────
   # Auth is Caddy's job; the image is self-contained, so it builds from the
   # subproject dir.
   pid-designer-api:
@@ -247,7 +247,7 @@ services:
     mem_limit: 512m
     memswap_limit: 512m   # == mem_limit -> no swap; OOM this container alone
 
-  # ── Feed Twin ────────────────────────────────────────────────────────────
+  # ── Feed Twin (Hotbench Twin) ────────────────────────────────────────────
   # The digital twin of the feed system. Imports a drawing out of pid-designer
   # and an engine out of EngineDesign and solves the two together, so it is the
   # one app here that talks to its siblings rather than only to the browser.

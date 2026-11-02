@@ -24,8 +24,9 @@ interface Props {
   step: number;
   unit: string;
   onChange: (value: number) => void;
-  /** What the set point produced, read where the operator would read it. */
-  actual?: { label: string; value: number };
+  /** What the set point produced, read where the operator would read it;
+   *  `hint` is its hover (the DAQ's own number for a transducer). */
+  actual?: { label: string; value: number; hint?: string };
   /** Where the system's limit sits on the sweep, drawn as a red arc beyond it. */
   redline?: number;
   disabled?: boolean;
@@ -43,6 +44,17 @@ const polar = (cx: number, cy: number, r: number, deg: number) => {
   const a = ((deg - 90) * Math.PI) / 180;
   return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
 };
+
+/** The detent `count` clicks from `value` in direction `dir`, inside
+ *  [min, max]. From a value between detents -- a drawn setting, or a gauge
+ *  setting read in psia, 0.3 psi off a 5 psi detent -- the first click lands
+ *  on the nearer detent that way, not a whole step past it (4,514.7 down one
+ *  50 psi detent is 4,500, not 4,450). */
+export function nextDetent(value: number, step: number, dir: 1 | -1, count: number, min: number, max: number): number {
+  const k = value / step;
+  const n = dir > 0 ? Math.floor(k + 1e-9) + count : Math.ceil(k - 1e-9) - count;
+  return Math.min(max, Math.max(min, n * step));
+}
 
 const arc = (cx: number, cy: number, r: number, from: number, to: number) => {
   const a = polar(cx, cy, r, from);
@@ -70,6 +82,9 @@ export default function Knob({
     (v: number) => Math.min(max, Math.max(min, Math.round(v / step) * step)),
     [min, max, step],
   );
+  // Whole on a detent, a tenth off one: a drawn 500 psig is 514.7 psia, and
+  // "515" would be a setting nobody made.
+  const places = Math.abs(value - Math.round(value)) < 0.05 ? 0 : 1;
   const frac = (value - min) / (max - min);
   const angle = START + SWEEP * Math.min(Math.max(frac, 0), 1);
   const cx = size / 2;
@@ -124,11 +139,11 @@ export default function Knob({
     const onWheel = (e: WheelEvent) => {
       if (disabled) return;
       e.preventDefault();
-      onChange(clamp(value + (e.deltaY < 0 ? step : -step)));
+      onChange(nextDetent(value, step, e.deltaY < 0 ? 1 : -1, 1, min, max));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [clamp, disabled, onChange, step, value]);
+  }, [disabled, onChange, step, value, min, max]);
 
   const ticks = Array.from({ length: 11 }, (_, i) => START + (SWEEP * i) / 10);
   const tip = polar(cx, cy, r - 4, angle);
@@ -153,8 +168,8 @@ export default function Knob({
         onKeyDown={(e) => {
           if (disabled) return;
           const big = e.shiftKey ? 10 : 1;
-          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') onChange(clamp(value + step * big));
-          if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(clamp(value - step * big));
+          if (e.key === 'ArrowUp' || e.key === 'ArrowRight') onChange(nextDetent(value, step, 1, big, min, max));
+          if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(nextDetent(value, step, -1, big, min, max));
           if (e.key === 'Home') onChange(min);
           if (e.key === 'End') onChange(max);
         }}
@@ -198,14 +213,14 @@ export default function Knob({
           fill="#e2e2e2"
           style={{ pointerEvents: 'none' }}
         >
-          {fixed(value, 0)}
+          {fixed(value, places)}
         </text>
         <text x={cx} y={cy + r * 0.62 + 30} textAnchor="middle" fontSize={9} fill="#888" style={{ pointerEvents: 'none' }}>
           {unit}
         </text>
       </svg>
       {actual && (
-        <span className="font-mono text-[11px] tabular-nums text-text-muted">
+        <span className="font-mono text-[11px] tabular-nums text-text-muted" title={actual.hint}>
           {actual.label}: <span className="text-text">{fixed(actual.value, 1)}</span> {unit}
         </span>
       )}

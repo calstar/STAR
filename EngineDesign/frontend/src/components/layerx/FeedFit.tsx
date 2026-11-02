@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useReadOnly } from '@stardesign-ui';
 import type { EngineConfig } from '../../api/client';
 import { updateConfig } from '../../api/client';
-import type { FeedFit } from '../../api/layerx';
+import type { FeedFit, FeedFitSide } from '../../api/layerx';
 import { Hint } from '../Hint';
 import { fmt, LOX, FUEL } from './format';
 
@@ -32,8 +32,12 @@ export function FeedFitSummary({ fit }: { fit: FeedFit }) {
   return <>{fmt(o.manifold_gap_psi, 1)} psi LOX, {fmt(f.manifold_gap_psi, 1)} psi fuel vs the design</>;
 }
 
+/** What a run since 2026-10-17 also says: whether the fit is a loss on both sides (engine/layerx/feedfit.py). */
+type Refusal = { writable?: boolean; write_refused?: string | null };
+type SideRefusal = { write_refused?: string | null };
+
 export function FeedFitView({ fit, runId, onConfigUpdated, designMoved = false, whatIf = false, designSha = null }: {
-  fit: FeedFit; runId: string; onConfigUpdated?: (config: EngineConfig) => void; designMoved?: boolean; whatIf?: boolean;
+  fit: FeedFit & Refusal; runId: string; onConfigUpdated?: (config: EngineConfig) => void; designMoved?: boolean; whatIf?: boolean;
   /** The design this burn was made on: the server refuses the write if it is no longer the live one. */
   designSha?: string | null;
 }) {
@@ -42,6 +46,14 @@ export function FeedFitView({ fit, runId, onConfigUpdated, designMoved = false, 
   const [error, setError] = useState<string | null>(null);
   if (!fit.available || !fit.sides) return <div className="text-[13px] text-[var(--color-text-muted)]">{fit.error ?? 'No feed fit.'}</div>;
   const sides = [['oxidizer', LOX], ['fuel', FUEL]] as const;
+  // A loss coefficient is never negative (D-58): a side whose fit is at or below zero is shown, marked,
+  // and not offered for the design. A run before the server said so is judged here the same way.
+  const refusedSide = (k: 'oxidizer' | 'fuel') => {
+    const s = fit.sides![k] as FeedFitSide & SideRefusal;
+    return s.write_refused ?? (s.K0 <= 0 ? `${s.label}: K0 ${fmt(s.K0, 3)} is not a loss.` : null);
+  };
+  const refused = fit.writable === false ? (fit.write_refused ?? 'The fit is not a loss on every side.')
+    : sides.map(([k]) => refusedSide(k)).filter(Boolean).join(' ') || null;
 
   const write = async () => {
     if (!fit.design_update) return;
@@ -92,9 +104,10 @@ export function FeedFitView({ fit, runId, onConfigUpdated, designMoved = false, 
             </td>
             {sides.map(([k]) => {
               const s = fit.sides![k];
+              const no = refusedSide(k);
               return (
-                <td key={k} className="py-1 text-right font-medium text-[var(--color-text-primary)]">
-                  <Hint align="right" text={`${fmt(s.K_line, 3)} lines + ${fmt(s.K_supply, 3)} tank sag`}><span>{fmt(s.K0, 3)}</span></Hint>
+                <td key={k} className="py-1 text-right font-medium" style={{ color: no ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
+                  <Hint align="right" text={`${fmt(s.K_line, 3)} lines + ${fmt(s.K_supply, 3)} tank sag${no ? `. ${no}` : ''}`}><span>{no ? '! ' : ''}{fmt(s.K0, 3)}</span></Hint>
                 </td>
               );
             })}
@@ -102,17 +115,23 @@ export function FeedFitView({ fit, runId, onConfigUpdated, designMoved = false, 
         </tbody>
       </table>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" onClick={write} disabled={readOnly || designMoved || whatIf || state !== 'idle' || !fit.design_update}
-                title={readOnly ? 'Check the design out to change it.' : whatIf ? 'Fitted to what-if holes, not the design’s: write the holes first, then burn again.'
+        <button type="button" onClick={write} disabled={readOnly || designMoved || whatIf || state !== 'idle' || !fit.design_update || !!refused}
+                title={refused ? `Not written: ${refused}` : readOnly ? 'Check the design out to change it.' : whatIf ? 'Fitted to what-if holes, not the design’s: write the holes first, then burn again.'
                   : designMoved ? 'The design has changed since this burn; run it again first.' : undefined}
                 className="rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-[12px] font-medium text-white hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {state === 'written' ? 'Written' : state === 'writing' ? 'Writing…' : 'Write K0 from this burn into the design'}
         </button>
-        <Hint text={`Sets feed_system K0 per side ${fit.flown ? '(as flown)' : '(on the pad)'}, recording this drawing and run. Layer 1 and Forward mode use it; Layer X burns don't change.`}>
-          <span className="text-[12px] text-[var(--color-text-muted)]">
-            {state === 'written' ? 'Now re-run Layer 1 to resize the injector, then burn again.' : 'then re-run Layer 1'}
-          </span>
-        </Hint>
+        {refused ? (
+          <Hint text={`${refused} The design keeps its own K0. Draw the lines this side is missing in pid-designer and burn again.`}>
+            <span className="text-[12px] text-[var(--color-warning)]">The drawing carries less loss than the design: not written</span>
+          </Hint>
+        ) : (
+          <Hint text={`Sets feed_system K0 per side ${fit.flown ? '(as flown)' : '(on the pad)'}, recording this drawing and run. Layer 1 and Forward mode use it; Layer X burns don't change.`}>
+            <span className="text-[12px] text-[var(--color-text-muted)]">
+              {state === 'written' ? 'Now re-run Layer 1 to resize the injector, then burn again.' : 'then re-run Layer 1'}
+            </span>
+          </Hint>
+        )}
         {error && <span className="text-[12px] text-[var(--color-danger)]">{error}</span>}
       </div>
     </div>

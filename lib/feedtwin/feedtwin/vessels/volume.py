@@ -38,6 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from feedtwin.model.pressure import say
 from feedtwin.props import Fluid
 
 #: Standard acceleration due to gravity, by definition [m/s^2].
@@ -168,7 +169,7 @@ class GasVolume:
         phase = self.fluid.phase(p=pressure, T=temperature)
         if phase.is_liquid_like:
             raise ValueError(
-                f"{self.fluid.name} at {pressure / 1e5:.3g} bar and "
+                f"{self.fluid.name} at {say(pressure, 1)} and "
                 f"{temperature:.4g} K is a liquid ({phase.value}). A GasVolume "
                 "tracks a gas; liquid inventory belongs to a tank's liquid "
                 "volume, not to its ullage."

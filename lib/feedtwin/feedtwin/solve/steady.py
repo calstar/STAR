@@ -38,6 +38,7 @@ from scipy.sparse import csc_matrix
 from scipy.sparse.linalg import splu
 
 from feedtwin.comps import Violation
+from feedtwin.model.pressure import say
 from feedtwin.solve.network import DeadEnd, Network, NetworkError
 
 #: Floor on ``|d(dp)/d(mdot)|`` [Pa/(kg/s)] when building the Jacobian.
@@ -344,7 +345,7 @@ def solve_steady(
                     report=report,
                 ),
                 "the residual converged on a state with a non-physical "
-                f"pressure ({min(x[: len(free)]) / 1e5:.3g} bar absolute). A "
+                f"pressure ({say(min(x[: len(free)]), 1)}). A "
                 "branch is almost certainly stiff enough to have thrown the "
                 "step past zero -- check for reverse flow through a regulator "
                 "or a relief valve.",

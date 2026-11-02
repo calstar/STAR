@@ -200,9 +200,9 @@ describe('changing page', () => {
   const checksPanel = (c: ReturnType<typeof canvas>, viewports: Map<string, unknown>, framed: string[]) =>
     propHandler('onSelect={(nodeIds, edgeIds, focusIds = []) => {', [
       'nodes', 'edges', 'pageRef', 'setNodes', 'setEdges', 'setPage', 'pageOf', 'pageOfSubjects', 'selectOnPage',
-      'viewportsRef', 'diagramKey', 'fitViewTo',
+      'viewportsRef', 'diagramKey', 'fitViewTo', 'arriveWhole',
     ])(c.s.nodes, c.s.edges, c.pageRef, c.setNodes, c.setEdges, c.setPage, pageOf, pageOfSubjects, selectOnPage,
-      { current: viewports }, 'd', (n: Node) => { framed.push(n.id); }) as (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
+      { current: viewports }, 'd', (n: Node) => { framed.push(n.id); }, { current: false }) as (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
 
   it('a tab leaves nothing selected behind', () => {
     const c = canvas(drawing(), 'Main');

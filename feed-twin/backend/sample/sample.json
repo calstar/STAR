@@ -1,0 +1,18 @@
+{
+ "about": "The stand a first run opens on, bundled so the twin is never empty. Copies, not links: the library this came from keeps its own.",
+ "artifacts": [
+  {
+   "kind": "diagram",
+   "file": "le4-stand.json",
+   "name": "LE4 stand",
+   "provenance": "The LE4 two-page drawing (Rocket + GSE) as the team uploaded it to the feed-twin library on 2026-10-07 as 'LE4 (6)', artifact a22f706b60be. Copied byte for byte. No saved hookup: the stand runs on the hookup the drawing suggests."
+  },
+  {
+   "kind": "engine",
+   "file": "ethalox-doublet.yaml",
+   "card": "ethalox-doublet.card.json",
+   "name": "Ethalox 7200N Doublet",
+   "provenance": "EngineDesign design 'Ethalox 7200N Doublet' as drilled 2026-10-05 (578 psia line exit), uploaded to the feed-twin library on 2026-10-07 as 'ethalox 6800N doublet 578psia 2026-10-05 drilled', artifact d8d0f8b3073b, with the EngineDesign engine card built for it then. Copied byte for byte; the design in EngineDesign has moved on since (newer model options), so this is a snapshot, not the live design."
+  }
+ ]
+}

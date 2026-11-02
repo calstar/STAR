@@ -98,6 +98,16 @@ def test_a_stand_opens_on_helium_and_says_so() -> None:
 
 
 @pytest.mark.skipif(not DRAWING.exists(), reason="LE4 (6) fixture absent")
+def test_the_tick_names_the_drawings_own_gas_through_a_swap() -> None:
+    """The top bar's gas switch marks the drawing's gas: LE4 (6) draws GN2, and
+    stays "nitrogen" on the wire when the stand runs on helium."""
+    diagram = _upload()
+    assert _open(diagram)["gas"] == "nitrogen"
+    assert _open(diagram, pressurant="helium")["gas"] == "nitrogen"
+    assert _open(diagram, pressurant="nitrogen")["gas"] == "nitrogen"
+
+
+@pytest.mark.skipif(not DRAWING.exists(), reason="LE4 (6) fixture absent")
 def test_a_running_stand_keeps_the_gas_it_was_built_with() -> None:
     """The gas is in the network: a command cannot change it on a running
     stand (the cockpit opens a fresh one), and the setup keeps saying what the

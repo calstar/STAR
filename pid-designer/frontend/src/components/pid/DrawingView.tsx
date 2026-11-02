@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import '@xyflow/react/dist/style.css';
 import {
-  Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow, ReactFlowProvider, applyNodeChanges, useNodesInitialized, useReactFlow,
+  Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow, ReactFlowProvider, applyNodeChanges, useNodesInitialized,
 } from '@xyflow/react';
 import type { Edge, Node, NodeChange, NodeMouseHandler } from '@xyflow/react';
 import { ReadOnlyProvider } from '@stardesign-ui';
@@ -16,6 +16,7 @@ import { VentLayer } from './VentLayer';
 import { SignalLayer } from './SignalLayer';
 import { PageBar } from './PageBar';
 import { migrate } from './migrate';
+import { useArrive } from './arrival';
 import { applyPage, listPages, pageOf } from './pages';
 import type { PIDNodeData } from './types';
 
@@ -161,18 +162,20 @@ function Sheet({
 }
 
 /**
- * A new page, or a new drawing, is a new sheet: show the whole of it, once
- * its symbols are measured. React Flow's own `fitView` fits once, on the first
- * render, before a symbol has a size.
+ * A new page, or a new drawing, is a new sheet: put it up as the editor does
+ * on arrival (`useArrive`, arrival.ts) -- whole, or a tall page at full width
+ * from its top so its tags and pressures can be read -- once its symbols are
+ * measured. React Flow's own `fitView` fits once, on the first render, before
+ * a symbol has a size.
  */
 function FitOnChange({ sheet }: { sheet: unknown }) {
-  const { fitView } = useReactFlow();
+  const arrive = useArrive();
   const ready = useNodesInitialized();
   const fitted = useRef<unknown>(null);
   useEffect(() => {
     if (!ready || fitted.current === sheet) return;
     fitted.current = sheet;
-    void fitView();
-  }, [ready, sheet, fitView]);
+    void arrive();
+  }, [ready, sheet, arrive]);
   return null;
 }

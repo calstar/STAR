@@ -313,6 +313,13 @@ def test_soak_on_le4_is_an_adiabatic_upper_bound(replayed):
     assert insert["T_interface_peak_K"] > insert["T_back_peak_K"]
     for r in soak["stations"]:
         assert r["T_back_peak_K"] >= r["T_back_start_K"] - 1e-9
+    # The headline the page shows (D-60): the bond line's peak, which is a peak, seconds after
+    # shutdown; and the outer face said to be asymptotic, its clock the time to 95 % of the rise.
+    # The page used to print the outer face's "peak" 7.5 h after burnout.
+    bond = max(soak["stations"], key=lambda r: r["T_interface_peak_K"])
+    assert soak["interface_peak_K"] == bond["T_interface_peak_K"] and soak["interface_station"] == bond["station"]
+    assert soak["t_interface_peak_s"] < 60.0 < soak["t_95_s"]
+    assert soak["asymptotic"] is (soak["t_peak_s"] > 0.5 * soak["duration_s"])
     m = soak["model"]
     assert m["name"] and m["source"] and m["assumptions"] and m["inputs"]
     assert all({"value", "unit", "provenance"} <= set(v) for v in m["inputs"].values())

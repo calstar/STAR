@@ -14,6 +14,7 @@ import { convert as conv, ghostOf, ghostSeries as ghost, type GradedLimit, type 
 import { ChartPanel, Hint, NotYet, Readout, SideName, Table } from './kit';
 import { SIDE_TOKEN, SIDE_VAR, useClockIndex, type SideKey } from './side';
 import { anchorToVessel, coarseRungs, ladderView, rungsFromDiag, rungsFromNetwork, type LadderView } from './ladder';
+import { partName, scrubIds, type NetNames } from '../names';
 import type { PageProps } from './Overview';
 
 /**
@@ -26,12 +27,18 @@ import type { PageProps } from './Overview';
 
 const pctText = (u: Units, f: number | null) => (f === null ? '' : u.fmt({ value: f * 100, unit: '%', digits: 0 }));
 
+/** A rung's kind in its tooltip. */
+const KIND_TITLE: Record<string, string> = {
+  line: 'line', tank_head: 'liquid column in the tank: a gain', dump: 'line velocity lost into the manifold',
+  orifice: 'injector holes', valve: 'valve', solenoid: 'solenoid valve', regulator: 'regulator', fitting: 'fitting',
+};
+
 // ------------------------------------------------------------------ the ladder
 
 function LadderColumn({ side, view, u }: { side: 'ox' | 'fuel'; view: LadderView; u: Units }) {
   const color = SIDE_VAR[side];
   const p = (x: number | null) => u.fmt(u.p(x));
-  const row = 'grid grid-cols-[minmax(6rem,9rem)_minmax(3rem,1fr)_5.5rem_3rem] items-center gap-x-3 py-[3px]';
+  const row = 'grid grid-cols-[minmax(7rem,13rem)_minmax(3rem,1fr)_5.5rem_3rem] items-center gap-x-3 py-[3px]';
   const name = 'truncate text-[12px] text-[var(--lx-text-2)]';
   const val = 'lx-num whitespace-nowrap text-right text-[12px]';
   return (
@@ -69,7 +76,7 @@ function LadderColumn({ side, view, u }: { side: 'ox' | 'fuel'; view: LadderView
         const gain = r.dp !== null && r.dp < 0;
         return (
           <div key={r.key} className={row}>
-            <span className={name} title={`${r.label} (${r.kind})`}>{r.label}</span>
+            <span className={name} title={`${r.label} (${KIND_TITLE[r.kind] ?? r.kind})`}>{r.label}</span>
             <span aria-hidden className="relative h-2.5">
               <span className="absolute inset-y-[4px] left-0 right-0 bg-[var(--lx-line)]" />
               {r.dp !== null && (
@@ -104,20 +111,23 @@ function LadderPanel({ data, ladder }: { data: RunData; ladder: Diagnostics['lad
   const k = useClockIndex(ladder?.t);
   const res = data.result;
   const net = useMemo(() => (ladder ? null : networkOf(res)), [ladder, res]);
+  // The drawn tags every rung is named by (a line has none of its own: it is named by its ends).
+  const names = useMemo(() => networkOf(res), [res]);
+  const namer = useMemo(() => (p: Parameters<typeof partName>[1]) => partName(names, p), [names]);
   const kn = useClockIndex(net?.t);
   const pc = i >= 0 ? data.cols.pc[i] ?? null : null;
   const firing = i >= 0 && data.firing[i];
   const views = useMemo(() => {
     if (!firing) return null;
     return (['ox', 'fuel'] as const).map((side) => {
-      const fromDiag = ladder ? rungsFromDiag(ladder, side, k) : null;
+      const fromDiag = ladder ? rungsFromDiag(ladder, side, k, namer) : null;
       const vessel = res.series.copv_psia[i] ?? null;
       if (fromDiag) {
         const node = fromDiag.total !== null && pc !== null ? pc + fromDiag.total : null;
         const a = anchorToVessel(fromDiag.rungs, node, vessel);
         return { side, view: ladderView(a.rungs, { label: 'Bottle', p: a.start }, { label: 'Chamber', p: pc }) };
       }
-      const fromNet = net ? rungsFromNetwork(net, side, kn) : null;
+      const fromNet = net ? rungsFromNetwork(net, side, kn, namer) : null;
       if (fromNet) {
         // The recorded paths start at the bottle (DATA-CONTRACT 2).
         const a = anchorToVessel(fromNet.rungs, fromNet.start, vessel);
@@ -125,7 +135,7 @@ function LadderPanel({ data, ladder }: { data: RunData; ladder: Diagnostics['lad
       }
       return { side, view: ladderView(coarseRungs(res, side, i, pc), { label: 'Lockup', p: res.summary[side].t0_psia }, { label: 'Chamber', p: pc }) };
     });
-  }, [firing, ladder, k, i, pc, res, net, kn]);
+  }, [firing, ladder, k, i, pc, res, net, kn, namer]);
   return (
     <Panel title="Pressure ladder" className="lg:col-span-12"
            right={<span className="lx-num">{i >= 0 ? `at ${formatT(data.t[i])}` : ''}{ladder || net?.paths?.ox?.length ? '' : ' · coarse: lockup to chamber'}</span>}>
@@ -309,7 +319,39 @@ function MarginsPanel({ data, d, missing }: { data: RunData; d: Diagnostics; mis
   );
 }
 
-function WaterHammerPanel({ d, missing }: { d: Diagnostics; missing: string; limits: readonly GradedLimit[] }) {
+/** Rows a block computed; a row the drawing could not give the numbers for is a gap, not a "never". */
+const computed = <T extends { available?: boolean }>(rows: readonly T[] | undefined): T[] => (rows ?? []).filter((r) => r.available !== false);
+
+/**
+ * What a panel would show but the drawing does not give the numbers for: one quiet line per panel,
+ * in the drawing's tags, instead of an empty card (the drawing is the feed system; Layer X does not
+ * invent a tube or a diameter to fill one).
+ */
+function gapsOf(d: Diagnostics, names: NetNames | null): string[] {
+  const out: string[] = [];
+  const say = (title: string, rows: readonly { available?: boolean; error?: string }[] | undefined) => {
+    const why = [...new Set((rows ?? []).filter((r) => r.available === false && r.error)
+      .map((r) => scrubIds(names, String(r.error).replace(/^[\w\s]+:\s*/, ''))))];
+    if (why.length && !computed(rows).length) out.push(`${title}: ${why.join('; ')}`);
+  };
+  say('Opening surge', d.water_hammer);
+  say('Tank outflow', d.outflow);
+  return out;
+}
+
+function DrawingGaps({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 rounded-[6px] border border-dashed border-[var(--lx-line)] px-4 py-3 text-[12px] text-[var(--lx-text-3)] lg:col-span-12">
+      <Hint text="These panels read numbers the drawing does not carry. Add them to the drawing in pid-designer and burn again.">
+        <span>Needs the drawing to say more:</span>
+      </Hint>
+      {items.map((x, k) => <span key={x} className="text-[var(--lx-text-2)]">{x}{k < items.length - 1 ? <span className="text-[var(--lx-text-3)]"> ·</span> : null}</span>)}
+    </div>
+  );
+}
+
+function WaterHammerPanel({ d, missing, names }: { d: Diagnostics; missing: string; limits: readonly GradedLimit[]; names: NetNames | null }) {
   const u = useUnits();
   // The mains open for Fire and stay open (the team, 2026-10-03): only the opening surge is a case
   // the stand sees, so the closing surge the diagnostic also computes is not shown.
@@ -321,7 +363,7 @@ function WaterHammerPanel({ d, missing }: { d: Diagnostics; missing: string; lim
         <Table caption="Opening surge on each main line" head={[{ sr: 'Line' }, 'Peak', 'Rating']}
                align={['l', 'r', 'r']}
                rows={rows.map((w) => [
-                 <span key="l" className="whitespace-nowrap"><SideName side={w.side as SideKey}>{w.line}</SideName></span>,
+                 <span key="l" className="whitespace-nowrap"><SideName side={w.side as SideKey}>{partName(names, { label: w.line, kind: 'line' })}</SideName></span>,
                  u.fmt(u.p(w.opening?.peak_psia ?? null)),
                  u.fmt(u.p(w.rating_psia ?? null)),
                ])} />
@@ -332,14 +374,14 @@ function WaterHammerPanel({ d, missing }: { d: Diagnostics; missing: string; lim
 
 function OutflowPanel({ d, missing }: { d: Diagnostics; missing: string }) {
   const u = useUnits();
-  const rows = d.outflow ?? [];
+  const rows = computed(d.outflow);
   return (
     <Panel title={<Hint text="When the gas first reaches each tank's outlet as the liquid runs low (vortex or dip), and what is left in the tank then.">Tank outflow</Hint>}
            right={<span>as the tanks run low</span>} className="lg:col-span-4">
       {rows.length ? (
         <Table caption="Gas reaching each tank outlet" head={[{ sr: 'Tank' }, 'Gas at outlet', 'Left then', 'Outlet']} align={['l', 'r', 'r', 'r']}
                rows={rows.map((o) => [
-                 <span key="n" title={o.tank}><SideName side={o.side as SideKey}>{o.side === 'ox' ? 'LOX tank' : o.side === 'fuel' ? 'Fuel tank' : o.tank}</SideName></span>,
+                 <span key="n"><SideName side={o.side as SideKey}>{o.side === 'ox' ? 'LOX tank' : o.side === 'fuel' ? 'Fuel tank' : 'Tank'}</SideName></span>,
                  o.ingestion_onset_s === null || o.ingestion_onset_s === undefined ? 'never' : formatT(o.ingestion_onset_s),
                  u.fmt(u.m(o.residual_kg ?? null)),
                  u.fmt(u.len(o.outlet_d_mm === null || o.outlet_d_mm === undefined ? null : o.outlet_d_mm / 1000)),
@@ -400,6 +442,7 @@ function useFeedCharts(data: RunData, vs: RunData | null, u: Units, d: Diagnosti
 export function Feed({ data, vs }: PageProps) {
   const u = useUnits();
   const d = useMemo(() => diag(data.result), [data.result]);
+  const names = useMemo(() => networkOf(data.result), [data.result]);
   const ch = useFeedCharts(data, vs, u, d);
   const ev = data.events;
   const pin0 = useMemo(() => [0, null] as const, []);
@@ -426,8 +469,10 @@ export function Feed({ data, vs }: PageProps) {
       {d.solenoids
         ? <SolenoidsPanel data={data} sols={d.solenoids} />
         : diagFailed(r, 'solenoids') && <Panel title="Press solenoids" className="lg:col-span-4"><NotComputed height={96}>{diagMissing(r, 'solenoids')}</NotComputed></Panel>}
-      {(d.water_hammer || diagFailed(r, 'water_hammer')) && <WaterHammerPanel d={d} missing={diagMissing(r, 'water_hammer')} limits={data.limits} />}
-      {(d.outflow || diagFailed(r, 'outflow')) && <OutflowPanel d={d} missing={diagMissing(r, 'outflow')} />}
+      {((d.water_hammer && computed(d.water_hammer).length) || diagFailed(r, 'water_hammer'))
+        ? <WaterHammerPanel d={d} missing={diagMissing(r, 'water_hammer')} limits={data.limits} names={names} /> : null}
+      {((d.outflow && computed(d.outflow).length) || diagFailed(r, 'outflow')) ? <OutflowPanel d={d} missing={diagMissing(r, 'outflow')} /> : null}
+      <DrawingGaps items={gapsOf(d, names)} />
       <NotYet items={[
         !d.solenoids && !diagFailed(r, 'solenoids') && 'press solenoids',
         !d.saturation && !d.cavitation && !diagFailed(r, 'saturation') && !diagFailed(r, 'cavitation') && 'boiling and cavitation',

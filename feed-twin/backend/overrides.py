@@ -144,6 +144,15 @@ class OverrideStore:
             self._write(data)
             return self.entry(drawing)
 
+    def put_entry(self, drawing: str, entry: Mapping[str, Any]) -> dict[str, Any]:
+        """Replace the drawing's whole entry (a stand bundle's import)."""
+
+        def change(current: dict[str, Any]) -> None:
+            for key in ("params", "console_hidden", "console_shown", "console_order"):
+                current[key] = dict(entry.get(key) or {})
+
+        return self._update(drawing, change)
+
     # --------------------------------------------------------------- params
 
     def set_param(

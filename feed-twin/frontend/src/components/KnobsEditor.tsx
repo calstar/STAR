@@ -17,8 +17,21 @@
  */
 
 import { DOME_KNOB, type KnobDef } from '../api';
+import { PRESSURE_UNIT, fmtP } from '../lib/pressure';
 import { useHookup } from '../lib/useHookup';
 import { HookupSaveBar, HookupStatus, ReadOnly } from './HookupSaveBar';
+import { PsiaInput } from './PsiaInput';
+
+/** A knob's start and travel, as typed: psia on the screen, gauge in the
+ *  hookup (a saved file, which stays gauge), on the dial's 5 psi detent. None
+ *  goes under the atmosphere a hand-loaded regulator vents to: 14.7 psia typed
+ *  is the vented end, 0 on the wire. */
+const FIELDS: { label: string; hint: string; get: (k: KnobDef) => number; set: (v: number) => Partial<KnobDef> }[] = [
+  { label: 'start', hint: 'Where it starts', get: (k) => k.psig, set: (v) => ({ psig: v }) },
+  { label: 'low', hint: 'Lowest setting', get: (k) => k.low, set: (v) => ({ low: v }) },
+  { label: 'high', hint: 'Highest setting', get: (k) => k.high, set: (v) => ({ high: v }) },
+];
+const DETENT = 5;
 
 const BTN =
   'rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)] disabled:opacity-40';
@@ -27,7 +40,7 @@ export function KnobsEditor() {
   const { data, draft, setDraft, error, locked } = useHookup();
 
   if (!data || !draft) {
-    return error ? <p className="text-[12px] text-red-400">{error}</p> : null;
+    return error ? <p className="text-[12px] text-[var(--bad)]">{error}</p> : null;
   }
 
   const owner = (id: string) => draft.knobs.find((k) => k.regulators.includes(id));
@@ -45,8 +58,8 @@ export function KnobsEditor() {
         // The first regulator on a knob sets where it starts: its drawn setting,
         // so linking a regulator to a knob does not move it.
         const drawn = data.regulators.find((r) => r.id === id)?.drawn_psig;
-        const psig = k.regulators.length === 0 && drawn != null ? Math.round(drawn) : k.psig;
-        return { ...k, psig, regulators: [...k.regulators, id] };
+        const start = k.regulators.length === 0 && drawn != null ? Math.round(drawn) : k.psig;
+        return { ...k, psig: start, regulators: [...k.regulators, id] };
       }
       return { ...k, regulators: k.regulators.filter((r) => r !== id) };
     });
@@ -106,22 +119,21 @@ export function KnobsEditor() {
                   className="rounded border border-gray-700 bg-black/60 px-2 py-1 text-[13px] font-semibold"
                 />
                 <div className="flex items-center gap-2 text-[11px] text-text-muted">
-                  {(['psig', 'low', 'high'] as const).map((key) => (
-                    <label key={key} className="flex items-center gap-1" title={key === 'psig' ? 'Where it starts' : key === 'low' ? 'Lowest setting' : 'Highest setting'}>
-                      {key === 'psig' ? 'start' : key}
-                      <input
-                        type="number"
-                        value={knob[key]}
+                  {FIELDS.map((f) => (
+                    <label key={f.label} className="flex items-center gap-1" title={f.hint}>
+                      {f.label}
+                      <PsiaInput
+                        value={f.get(knob)}
+                        step={DETENT}
+                        low={0}
                         disabled={locked}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          if (Number.isFinite(v)) setKnob(index, { [key]: v });
-                        }}
+                        onCommit={(v) => setKnob(index, f.set(v))}
+                        ariaLabel={`${knob.label} ${f.label}`}
                         className="w-16 rounded border border-gray-700 bg-black/60 px-1 py-0.5 font-mono"
                       />
                     </label>
                   ))}
-                  <span>psig</span>
+                  <span>{PRESSURE_UNIT}</span>
                 </div>
                 {knob.id === DOME_KNOB && (
                   <span className="text-[11px] text-text-muted" title="Layer X's lockup solve and the Configuration tab's dome setting drive this one.">
@@ -145,7 +157,7 @@ export function KnobsEditor() {
                           : r.kind === 'dome'
                             ? 'Dome-loaded regulator: the knob sets its dome'
                             : 'Hand-loaded regulator: the knob sets its setpoint') +
-                        (r.drawn_psig != null ? `. Drawn at ${r.drawn_psig} psig.` : '.') +
+                        (r.drawn_psig != null ? `. Drawn at ${fmtP(r.drawn_psig, 1)}.` : '.') +
                         (elsewhere ? ` On "${elsewhere.label}" now; clicking moves it here.` : '')
                       }
                       className={`rounded border px-2 py-0.5 text-[12px] ${
@@ -171,7 +183,7 @@ export function KnobsEditor() {
                 onClick={() => setDraft({ ...draft, knobs: draft.knobs.filter((_, i) => i !== index) })}
                 aria-label={`Remove ${knob.label}`}
                 title={`Remove ${knob.label}`}
-                className="px-1 text-[13px] text-gray-500 hover:text-red-400 disabled:opacity-40"
+                className="px-1 text-[13px] text-gray-500 hover:text-[var(--bad)] disabled:opacity-40"
               >
                 ×
               </button>

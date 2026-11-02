@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
+import uuid
 import os
 from pathlib import Path
 from pydantic import ValidationError
@@ -50,10 +51,13 @@ async def upload_config(
         # loop -- inline it would block every other request (health included),
         # which is exactly the "stuck on Connecting…" hang.
         await run_in_threadpool(session.app_state.set_config, config, str(save_path))
+        session.load_token = uuid.uuid4().hex
         return {
             "status": "success",
             "message": f"Config loaded from {file.filename}",
             "config": config_to_dict(config),
+            "session_epoch": session.epoch,
+            "load_token": session.load_token,
         }
     except yaml.YAMLError as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
@@ -68,7 +72,8 @@ async def get_config(session: UserSession = Depends(get_session)):
     """Get the current config as JSON."""
     if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
-    return {"config": config_to_dict(session.app_state.config), "session_epoch": session.epoch}
+    return {"config": config_to_dict(session.app_state.config), "session_epoch": session.epoch,
+            "load_token": session.load_token}
 
 
 @router.post("/load")
@@ -93,7 +98,9 @@ async def load_config_json(body: dict, session: UserSession = Depends(get_sessio
     # Off the event loop: a cold CEA cache build here would block every other
     # request. See the note in upload_config.
     await run_in_threadpool(session.app_state.set_config, config, session.app_state.config_path)
-    return {"status": "success", "config": config_to_dict(config), "session_epoch": session.epoch}
+    session.load_token = uuid.uuid4().hex
+    return {"status": "success", "config": config_to_dict(config), "session_epoch": session.epoch,
+            "load_token": session.load_token}
 
 
 @router.get("/parameters")

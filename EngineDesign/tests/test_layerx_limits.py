@@ -148,8 +148,10 @@ def test_the_reference_run_matches_the_audits_hand_worked_worst_times():
     assert g["depletion_tie"]["grade"] == "info" and g["depletion_tie"]["value"] == pytest.approx(0.0177, abs=1e-4)
     # The design cap (600 psi) is read from the YAML the run recorded.
     assert g["tank_cap_fuel"]["limit"] == 600.0 and g["tank_cap_fuel"]["grade"] == "info"
-    # Its only amber was which tank runs dry first, information since 2026-10-03.
-    assert overall(list(g.values())) == "ok"
+    # Its only amber was which tank runs dry first, information since 2026-10-03. Its one red is the
+    # rail exit, 21.7 m/s against FAR-OUT's 85 ft/s (rule 5.1.4), which the design does not state.
+    assert [k for k, e in g.items() if e["grade"] == "bad"] == ["rail_exit"]
+    assert overall([e for k, e in g.items() if k != "rail_exit"]) == "ok"
 
 
 SERIES_BACKED = {"stiffness_ox": "ox.stiffness", "stiffness_fuel": "fuel.stiffness",
@@ -459,15 +461,25 @@ def test_nozzle_separation_from_the_delivered_exit_pressure():
     assert _by_key(grade(r))["separation"]["grade"] == "bad"
 
 
-def test_flight_limits_need_their_requirement():
+def test_flight_limits_fall_back_to_the_competition_rules():
+    """A design that states no rail-exit or static-margin requirement is graded against FAR-OUT's
+    (2024-25 rules 5.1.4 and 5.1.5), and says so: a 21.7 m/s rail exit used to drop out of the
+    limits altogether and leave the Overview reading "Within limits" (D-59)."""
     r = _result()
     r["flight"] = {"ok": True, "apogee_agl_m": 3000.0, "rail_exit_velocity_m_s": 21.7, "rail_exit_time_s": 0.3,
                    "stability": {"liftoff_static_margin_cal": 1.4, "min_static_margin_cal": 1.3,
                                  "min_static_margin_t": 0.2, "max_q_pa": 36800.0, "max_q_t": 0.4}}
     g = _by_key(grade(r))
-    assert "rail_exit" not in g
-    assert g["static_margin_min"]["grade"] == "info" and g["max_q"]["grade"] == "info"
-    assert g["max_q"]["index_worst"] == 9
+    assert g["rail_exit"]["grade"] == "bad" and g["rail_exit"]["limit"] == pytest.approx(85 * 0.3048)
+    assert "FAR-OUT" in g["rail_exit"]["hint"] and "5.1.4" in g["rail_exit"]["hint"]
+    assert g["static_margin_min"]["grade"] == "bad" and g["static_margin_min"]["limit"] == 1.5
+    assert "5.1.5" in g["static_margin_min"]["hint"]
+    assert g["max_q"]["grade"] == "info" and g["max_q"]["index_worst"] == 9
+    fast = copy.deepcopy(r)
+    fast["flight"]["rail_exit_velocity_m_s"] = 26.0
+    fast["flight"]["stability"].update(liftoff_static_margin_cal=7.7, min_static_margin_cal=7.3)
+    g = _by_key(grade(fast))
+    assert g["rail_exit"]["grade"] == "ok" and g["static_margin_min"]["grade"] == "ok"
 
     class Cfg:
         class design_requirements:  # noqa: N801
@@ -477,6 +489,16 @@ def test_flight_limits_need_their_requirement():
     g = _by_key(grade(r, config=Cfg))
     assert g["rail_exit"]["grade"] == "bad" and g["rail_exit"]["t_worst"] == 0.3
     assert g["static_margin_min"]["grade"] == "bad"
+
+    class Own:
+        class design_requirements:  # noqa: N801
+            min_rail_exit_velocity_m_s = 20.0
+            min_static_margin_cal = 1.0
+
+    # The design's own numbers win over the competition's.
+    g = _by_key(grade(r, config=Own))
+    assert g["rail_exit"]["grade"] == "ok" and g["rail_exit"]["limit"] == 20.0 and "FAR-OUT" not in g["rail_exit"]["hint"]
+    assert g["static_margin_min"]["grade"] == "ok" and g["static_margin_min"]["limit"] == 1.0
 
 
 def test_requirements_are_read_from_the_recorded_yaml_without_a_config():

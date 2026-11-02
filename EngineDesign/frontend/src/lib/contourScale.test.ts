@@ -34,12 +34,21 @@ describe('contourLayout', () => {
     const l = contourLayout(0, 154, 82.5, true, 1200);     // the 6500 N chamber over its sleeve
     expect(l.width).toBe(1200);
     expect(l.plotW).toBe(1200 - F.left - F.right - F.yAxis);
-    expect(l.plotH).toBeLessThanOrEqual(300);
+    expect(l.plotH).toBeLessThanOrEqual(600);     // two halves, 300 each
     expect(0.5 * (l.xDomain[0] + l.xDomain[1])).toBeCloseTo(77, 9);
     expect(l.xDomain[1] - l.xDomain[0]).toBeGreaterThan(154);
     const long = contourLayout(-154, 90, 63.5, false, 1200);   // a long part sets the scale by its length
     expect(long.plotH).toBeLessThan(300);
     expect(long.xDomain[1] - long.xDomain[0]).toBeCloseTo(244 * 1.06, 6);
+  });
+
+  it('draws the full section on the half view\'s axial range, not twice it', () => {
+    // The ethalox chamber: face at -225 mm, exit at +107 mm, case radius 82.6 mm, on a 1450 px card.
+    // Capping both halves at one half's height put it on -350..200 mm, a third of the plot blank.
+    const half = contourLayout(-225, 107, 82.6, false, 1450);
+    const full = contourLayout(-225, 107, 82.6, true, 1450);
+    const span = (l: ReturnType<typeof contourLayout>) => l.xDomain[1] - l.xDomain[0];
+    expect(span(full)).toBeLessThan(1.25 * span(half));
   });
 
   it('keeps the whole contour in view', () => {

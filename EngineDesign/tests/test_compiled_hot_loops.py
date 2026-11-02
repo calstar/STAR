@@ -40,7 +40,12 @@ def test_spray_march_matches_numpy_on_the_6500N(monkeypatch):
         assert fast[k] == pytest.approx(ref[k], rel=1e-10), k
     a, b = fast["diagnostics"]["cstar_efficiency"], ref["diagnostics"]["cstar_efficiency"]
     for k in ("eta_vaporization", "frac_vaporized_F", "x_vap95_O", "x_vap95_F"):
-        assert a[k] == pytest.approx(b[k], rel=1e-10), k
+        # None: the stream never reached 95 % in the chamber -- both paths must
+        # agree on that too (pytest 9's approx() refuses None).
+        if b[k] is None:
+            assert a[k] is None, k
+        else:
+            assert a[k] == pytest.approx(b[k], rel=1e-10), k
 
 
 def test_spray_march_matches_numpy_across_sprays(monkeypatch):

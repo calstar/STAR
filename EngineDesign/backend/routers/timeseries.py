@@ -10,7 +10,7 @@ import pandas as pd
 import io
 import yaml
 
-from backend.session import UserSession, get_session
+from backend.session import UserSession, get_session, run_compute
 from engine.pipeline.time_series import generate_pressure_profile
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.optimizer.layers.layer2_pressure import generate_pressure_curve_from_segments
@@ -701,8 +701,18 @@ async def generate_timeseries(request: GenerateProfileRequest, session: UserSess
     """Generate time-series results from simple pressure profiles.
     
     Supports linear, exponential, and power profile types.
+
+    The run goes to the thread pool (``run_compute``): the Time-Series tab runs every design it
+    opens, ~10 s here and ~23 s on a CI runner, and on the event loop that froze /api/health and
+    every other request for as long.
     """
-    if not session.app_state.has_config():
+    return await run_compute(session, _generate_timeseries, request, session)
+
+
+def _generate_timeseries(request: GenerateProfileRequest, session: UserSession) -> GenerateProfileResponse:
+    # The runner is taken once: off the event loop a PUT /api/config can land mid-run.
+    _, runner = session.app_state.snapshot()
+    if runner is None:
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first."
@@ -743,7 +753,7 @@ async def generate_timeseries(request: GenerateProfileRequest, session: UserSess
         
         # Compute time-series results
         data, summary = compute_timeseries_results(
-            session.app_state.runner,
+            runner,
             times,
             lox_pressures,
             fuel_pressures,
@@ -844,8 +854,19 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
     - k: blowdown decay constant (0.1-3.0)
     
     The blowdown formula: P(t) = P_end + (P_start - P_end) * exp(-k * t_norm)
+
+    Off the event loop, like /generate: a design whose Time-Series tab is set to segments runs
+    this on open.
     """
-    if not session.app_state.has_config():
+    return await run_compute(session, _generate_from_segments, request, session)
+
+
+def _generate_from_segments(request: SegmentsRequest, session: UserSession) -> SegmentsResponse:
+    # One runner for the whole run. Off the event loop a PUT /api/config can land mid-run, and
+    # the blowdown loop below calls the engine at every step: read live, half a burn would be
+    # one design and half another.
+    _, runner = session.app_state.snapshot()
+    if runner is None:
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first."
@@ -881,7 +902,7 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
 
             try:
                 V_lox, m_lox_init, _, V_fuel, m_fuel_init, _ = resolve_blowdown_tank_state(
-                    session.app_state.runner.config,
+                    runner.config,
                     total_propellant_kg=request.total_propellant_kg,
                     of_ratio=request.of_ratio,
                     lox_tank_volume_m3=request.lox_tank_volume_m3,
@@ -899,7 +920,7 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
                 # Run single-point evaluation
                 # Note: evaluate returns dict with mdot_O and mdot_F (kg/s)
                 try:
-                    res = session.app_state.runner.evaluate(
+                    res = runner.evaluate(
                         P_tank_O=P_lox_Pa,
                         P_tank_F=P_fuel_Pa,
                         silent=True
@@ -915,7 +936,7 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
                 evaluate_engine_fn=engine_evaluator,
                 P_lox_initial_Pa=request.lox_initial_pressure_psi * PSI_TO_PA,
                 P_fuel_initial_Pa=request.fuel_initial_pressure_psi * PSI_TO_PA,
-                config=session.app_state.runner.config,
+                config=runner.config,
                 R_pressurant=296.803,  # N2
                 T_lox_gas_K=250.0,
                 T_fuel_gas_K=293.0,
@@ -942,7 +963,7 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
             
             # Run final evaluation with actual blowdown pressures
             data, summary = compute_timeseries_results(
-                session.app_state.runner,
+                runner,
                 times,
                 lox_curve_psi,
                 fuel_curve_psi,
@@ -955,8 +976,8 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
             summary["blowdown_initial_fuel_mass_kg"] = float(m_fuel_init)
             summary["blowdown_lox_tank_volume_m3"] = float(V_lox)
             summary["blowdown_fuel_tank_volume_m3"] = float(V_fuel)
-            summary["blowdown_initial_lox_ullage_m3"] = float(V_lox - m_lox_init / float(session.app_state.runner.config.fluids["oxidizer"].density))
-            summary["blowdown_initial_fuel_ullage_m3"] = float(V_fuel - m_fuel_init / float(session.app_state.runner.config.fluids["fuel"].density))
+            summary["blowdown_initial_lox_ullage_m3"] = float(V_lox - m_lox_init / float(runner.config.fluids["oxidizer"].density))
+            summary["blowdown_initial_fuel_ullage_m3"] = float(V_fuel - m_fuel_init / float(runner.config.fluids["fuel"].density))
 
             # (COPV analysis skipped via flag, so no cleanup needed)
             
@@ -982,7 +1003,7 @@ async def generate_from_segments(request: SegmentsRequest, session: UserSession 
             
             # Compute time-series results (includes COPV analysis)
             data, summary = compute_timeseries_results(
-                session.app_state.runner,
+                runner,
                 times,
                 lox_curve_psi,
                 fuel_curve_psi,

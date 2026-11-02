@@ -127,13 +127,16 @@ very bugs they were written for.
   bottle holds a 1092-50 at dome 500 to 473.5 psig, not 550; never assume lockup =
   dome + bias. A drawn `inlet_reference` is ignored and warned. T-0 primes at the
   regulator's lockup off the vehicle's bottle. See `docs/PHYSICS-BENCHMARK.md` 4.11.
-- **Pressures: absolute inside, gauge on the drawing, never ambiguous** (ADR 0004).
-  A drawing's bare `psi` on an absolute pressure (tank, bottle, setpoint, dome, MAWP)
-  reads as psig; `psia` says absolute; a chamber pressure on the ENGINE symbol is
-  absolute. Differences (bias, droop, crack, relief set) take bare units only. The rule
-  is `feedtwin.model.pressure.drawn_unit`; never add an atmosphere by hand to a drawn
-  value -- `.si` is already absolute. Everything a person sets or reads is labelled
-  psig (`run.psig`/`from_psig`).
+- **Pressures: absolute inside, gauge on the drawing and the wire, psia to people**
+  (ADR 0004, ADR 0007). A drawing's bare `psi` on an absolute pressure (tank, bottle,
+  setpoint, dome, MAWP) reads as psig; `psia` says absolute; a chamber pressure on the
+  ENGINE symbol is absolute. Differences (bias, droop, crack, relief set) take bare
+  units only. The rule is `feedtwin.model.pressure.drawn_unit`; never add an
+  atmosphere by hand to a drawn value -- `.si` is already absolute. The API's `*_psi`
+  and `psig` fields, run records, hookups and saved stands stay **gauge**
+  (`psig`/`from_psig`), as the DAQ logs. Everything a person reads or types is
+  **psia**: server text through `feedtwin.session.gauge.say` (`"514.7 psia"`), the
+  client through `feed-twin/frontend/src/lib/pressure.ts`. A difference is plain psi.
 - **Pages join at paired disconnects; controls reach the drawing through its hookup.**
   pid-designer's rocket and GSE pages are one network: a QD pair (`options.pairedWith`)
   is mated (`pid/network.py _mate_disconnects`), and a cart drawn on another page fills

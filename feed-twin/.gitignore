@@ -13,3 +13,7 @@ dist/
 
 # Run artifacts: Parquet frame dumps from local solves (Phase 09).
 runs/
+
+# Playwright output (frontend/e2e).
+frontend/test-results/
+frontend/playwright-report/

@@ -188,14 +188,15 @@ def assemble(
             except ValueError as exc:
                 notes.append(
                     f"The engine card stored with this engine does not fit it ({exc}); "
-                    "firing feedtwin's simplified engine instead. Rebuild the card in Library."
+                    "firing feedtwin's simplified engine instead. Rebuild it with "
+                    "Build EngineDesign card on the Engine page."
                 )
                 engine_meta = {"engine_model": "simplified", "why": "card does not fit"}
         elif card_meta.get("unreadable"):
             notes.append(
                 "The engine card stored with this engine could not be read "
                 f"({card_meta['unreadable']}); firing feedtwin's simplified engine "
-                "instead. Rebuild the card in Library."
+                "instead. Rebuild it with Build EngineDesign card on the Engine page."
             )
             engine_meta = {"engine_model": "simplified", "why": "card unreadable"}
         else:

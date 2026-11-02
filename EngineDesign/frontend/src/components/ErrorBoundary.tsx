@@ -44,18 +44,18 @@ export class ErrorBoundary extends Component<Props, State> {
       .join('\n\nComponent stack:');
 
     return (
-      <div className="m-4 rounded-lg border border-red-500/40 bg-red-500/5 p-4">
+      <div role="alert" className="m-4 rounded-lg border border-red-500/40 bg-red-500/5 p-4">
         <p className="font-medium text-red-300">
-          {this.props.label ? `${this.props.label} hit an error` : 'Something went wrong'}
+          {this.props.label ? `${this.props.label} could not be shown.` : 'This part of the page could not be shown.'}
         </p>
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-          The rest of the app is still running. Copy the detail below when reporting this.
+          The rest of the app still works, and your design is unchanged. Try again, or open Details to copy what went wrong into a report.
         </p>
-        <p className="mt-2 font-mono text-sm text-red-200">{String(error.message || error)}</p>
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">
-            Show stack
+            Details
           </summary>
+          <p className="mt-2 font-mono text-xs text-red-200">{String(error.message || error)}</p>
           <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 text-xs text-[var(--color-text-secondary)]">
             {detail}
           </pre>

@@ -52,6 +52,7 @@ import {
   wire,
 } from '../lib/hookupDraft';
 import { NO_UI, badge, clashNote, dropFreshRow, type DaqUi, type FreshRow, type Store } from '../lib/daqDrag';
+import { PRESSURE_UNIT, asShown } from '../lib/pressure';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 import { HookupStatus, ReadOnly } from './HookupSaveBar';
@@ -62,12 +63,19 @@ import { useDaqUi } from './DaqBox';
 const POLL_MS = 10000;
 
 const SOURCE_STYLE: Record<string, string> = {
-  measured: 'text-green-400 border-green-900/70',
+  measured: 'text-[var(--ok)] border-[var(--color-success-solid)]/70',
   manufacturer: 'text-sky-300 border-sky-900/70',
-  estimated: 'text-amber-300 border-amber-900/70',
-  default: 'text-red-300 border-red-900/70',
+  estimated: 'text-[var(--warn)] border-[var(--color-warning-solid)]/70',
+  default: 'text-[var(--bad)] border-[var(--color-danger-solid)]/70',
   resolved: 'text-gray-300 border-gray-700',
 };
+
+/** What a symbol is called here: its drawn tag, or what it is when the
+ *  drawing gave it none -- never its node id. */
+function shownTag(el: { id: string; tag: string; type: string; kind: string }): string {
+  if (el.tag && el.tag !== el.id) return el.tag;
+  return `unlabelled ${el.kind === 'line' ? 'line' : el.type.toLowerCase() || 'symbol'}`;
+}
 
 function num(v: number): string {
   if (v === 0) return '0';
@@ -88,10 +96,13 @@ function Source({ source, override = false }: { source: string; override?: boole
   );
 }
 
+/** A value as written, except a gauge pressure, which reads absolute like
+ *  every other pressure on the screen; the hover keeps what was written. */
 function Value({ v }: { v: ParamValue }) {
+  const shown = asShown(v);
   return (
-    <span className="font-mono tabular-nums">
-      {num(v.value)} <span className="text-gray-500">{v.unit}</span>
+    <span className="font-mono tabular-nums" title={shown === v ? undefined : `${num(v.value)} gauge, as written`}>
+      {num(shown.value)} <span className="text-gray-500">{shown.unit}</span>
     </span>
   );
 }
@@ -107,8 +118,13 @@ function EditForm({
   onSave: (v: { value: number; unit: string; source: string; reference: string }) => Promise<void>;
   onCancel: () => void;
 }) {
-  const start = param.override ?? param.effective;
-  const [value, setValue] = useState(start ? String(start.value) : '');
+  // A gauge value opens in psia, as the panel shows it; an override typed
+  // psia carries its unit, so the drawing reads it as absolute.
+  const written = param.override ?? param.effective;
+  const start = written && param.units.includes(PRESSURE_UNIT) ? asShown(written) : written;
+  const [value, setValue] = useState(
+    start ? String(start === written ? start.value : Number(start.value.toFixed(3))) : '',
+  );
   const [unit, setUnit] = useState(start?.unit ?? param.units[0] ?? '');
   // No source is preselected: there is no default provenance, on purpose.
   const [source, setSource] = useState(param.override?.source ?? '');
@@ -165,7 +181,7 @@ function EditForm({
         </select>
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        <span className={`mr-1 text-[10px] uppercase tracking-wider ${source ? 'text-gray-500' : 'text-amber-300'}`}>
+        <span className={`mr-1 text-[10px] uppercase tracking-wider ${source ? 'text-gray-500' : 'text-[var(--warn)]'}`}>
           source
         </span>
         {sources.map((s) => (
@@ -190,13 +206,13 @@ function EditForm({
           if (e.key === 'Enter') void save();
           if (e.key === 'Escape') onCancel();
         }}
-        className={`${field} ${reference.trim() ? '' : 'border-amber-900/70'}`}
+        className={`${field} ${reference.trim() ? '' : 'border-[var(--color-warning-solid)]/70'}`}
         aria-label="reference"
       />
-      {error && <p className="text-[11px] text-red-300">{error}</p>}
+      {error && <p className="text-[11px] text-[var(--bad)]">{error}</p>}
       <div className="flex items-center justify-end gap-1.5">
         {missing.length > 0 && (
-          <span className="mr-auto text-[11px] text-amber-300">Needs {missing.join(', ')}</span>
+          <span className="mr-auto text-[11px] text-[var(--warn)]">Needs {missing.join(', ')}</span>
         )}
         <button type="button" onClick={onCancel} className="rounded px-2 py-0.5 text-[11px] text-gray-400 hover:text-white">
           Cancel
@@ -205,7 +221,7 @@ function EditForm({
           type="button"
           disabled={!ready || saving}
           onClick={() => void save()}
-          className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded bg-blue-600 px-2.5 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
@@ -281,11 +297,11 @@ function ParamRow({
         </div>
       )}
       {param.stale && override && (
-        <p className="mt-0.5 pl-2 text-[11px] leading-snug text-amber-300">
+        <p className="mt-0.5 pl-2 text-[11px] leading-snug text-[var(--warn)]">
           The drawing changed underneath this override
           {override.was ? (
             <>
-              {' '}— it said {num(override.was.value)} {override.was.unit} when the override was made
+              {' '}— it said {num(asShown(override.was).value)} {asShown(override.was).unit} when the override was made
             </>
           ) : (
             ' — it said nothing when the override was made'
@@ -323,7 +339,7 @@ function ConnectorBadge({
   if (!channel) {
     return (
       <span
-        className="shrink-0 rounded border border-amber-900/60 px-1 font-mono text-[9.5px] text-amber-300/80"
+        className="shrink-0 rounded border border-[var(--color-warning-solid)]/60 px-1 font-mono text-[9.5px] text-[var(--warn)]/80"
         title={
           valve
             ? 'Not on the DAQ box: no state moves it and the console does not show it.'
@@ -419,7 +435,7 @@ function NameInput({
           if (e.key === 'Enter' && !clash) (e.target as HTMLInputElement).blur();
           if (e.key === 'Escape') setTyped(value);
         }}
-        className={`${control} ${clash ? 'border-red-500' : ''}`}
+        className={`${control} ${clash ? 'border-[var(--bad)]' : ''}`}
       />
       {rows && (
         <datalist id={listId}>
@@ -430,7 +446,7 @@ function NameInput({
       )}
       {(clash || hint) && (
         <span
-          className={`mt-0.5 truncate text-[10.5px] ${clash ? 'text-red-300' : 'text-gray-500'}`}
+          className={`mt-0.5 truncate text-[10.5px] ${clash ? 'text-[var(--bad)]' : 'text-gray-500'}`}
           title={clash ? 'Another connector has this name: leaving the field puts the old one back' : hint?.title}
         >
           {clash ?? hint?.text}
@@ -546,7 +562,7 @@ function DaqSection({ symbol, cut }: { symbol: HookupSymbol; cut: boolean }) {
             type="button"
             disabled={locked}
             onClick={unplug}
-            className="shrink-0 rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:border-red-400/60 hover:text-red-300 disabled:opacity-40"
+            className="shrink-0 rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:border-[var(--bad)]/60 hover:text-[var(--bad)] disabled:opacity-40"
             title={isValve ? 'Pull the cable. Its actuator stays in the state table.' : 'Pull the cable'}
           >
             Unplug
@@ -642,8 +658,11 @@ function ElementCard({
       <div className="flex items-center gap-2 px-2 py-1.5">
         <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-baseline gap-2 text-left">
           <span className="w-2 shrink-0 font-mono text-[10px] text-gray-600">{open ? '−' : '+'}</span>
-          <span className={`truncate text-[12.5px] ${consoleable && consoleHidden ? 'text-gray-500' : 'text-gray-100'}`}>
-            {el.tag}
+          <span
+            className={`truncate text-[12.5px] ${consoleable && consoleHidden ? 'text-gray-500' : 'text-gray-100'}`}
+            title={shownTag(el)}
+          >
+            {shownTag(el)}
           </span>
           {name && name !== el.tag && (
             <span className="truncate text-[11.5px] text-gray-400" title="Its name on the console">
@@ -663,10 +682,10 @@ function ElementCard({
               {overridden} override{overridden > 1 ? 's' : ''}
             </span>
           )}
-          {stale && <span className="shrink-0 font-mono text-[9px] text-amber-300">changed</span>}
+          {stale && <span className="shrink-0 font-mono text-[9px] text-[var(--warn)]">changed</span>}
           {assumed > 0 && (
             <span
-              className="shrink-0 font-mono text-[9px] text-red-300/80"
+              className="shrink-0 font-mono text-[9px] text-[var(--bad)]/80"
               title="Numbers the drawing did not give; the library filled them in"
             >
               {assumed} filled in
@@ -706,7 +725,7 @@ function ElementCard({
                 <input
                   type="text"
                   value={alias}
-                  placeholder={el.tag}
+                  placeholder={shownTag(el)}
                   disabled={hookup.locked}
                   onChange={(e) => hookup.update((d) => setAlias(d, el.id, e.target.value))}
                   className={`${control} flex-1`}
@@ -912,7 +931,7 @@ export function DrawingPanel({
         {issues.unwired.length > 0 && (
           <Link
             to="/statemachine"
-            className="mt-0.5 block text-[11px] text-amber-300/80 hover:underline"
+            className="mt-0.5 block text-[11px] text-[var(--warn)]/80 hover:underline"
             title={`Actuators in the state table no connector goes by, so they command nothing: ${issues.unwired.join(', ')}`}
           >
             {issues.unwired.length} actuator{issues.unwired.length > 1 ? 's' : ''} not wired
@@ -926,13 +945,13 @@ export function DrawingPanel({
             <button
               type="button"
               onClick={restart}
-              className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-500"
+              className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700"
             >
               Reset
             </button>
           </div>
         )}
-        {error && <p className="mt-1 text-[11px] text-red-300">{error}</p>}
+        {error && <p className="mt-1 text-[11px] text-[var(--bad)]">{error}</p>}
         <input
           type="search"
           value={query}
@@ -1013,7 +1032,7 @@ export function DrawingPanel({
           </ElementGroup>
         ))}
         {view.orphaned.length > 0 && (
-          <li className="mt-2 rounded-md border border-amber-900/50 px-2 py-1.5 text-[11px] leading-snug text-amber-300/80">
+          <li className="mt-2 rounded-md border border-[var(--color-warning-solid)]/50 px-2 py-1.5 text-[11px] leading-snug text-[var(--warn)]/80">
             Kept for symbols this version of the drawing doesn't have: {view.orphaned.join(', ')}. They come back
             if the symbol does.
           </li>

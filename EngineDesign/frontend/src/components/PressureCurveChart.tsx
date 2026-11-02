@@ -9,6 +9,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { TimeSeriesData, TimeSeriesSummary } from '../api/client';
+import { correlationIsInformative } from '../lib/correlation';
 import { HeatFluxProfileChart } from './HeatFluxProfileChart';
 
 interface PressureCurveChartProps {
@@ -241,12 +242,13 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
   const getUnit = (dataKey: string): string => {
     switch (dataKey) {
       case 'thrust': return 'kN';
+      // Absolute pressures are psia; an injector drop is a difference, psi.
       case 'Pc':
       case 'P_tank_O':
       case 'P_tank_F':
+      case 'copv_pressure': return 'psia';
       case 'delta_P_injector_O':
-      case 'delta_P_injector_F':
-      case 'copv_pressure': return 'psi';
+      case 'delta_P_injector_F': return 'psi';
       case 'Isp': return 's';
       case 'MR': return '';
       case 'mdot_total':
@@ -330,7 +332,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <YAxis
               stroke="#3b82f6"
               tick={{ fill: '#3b82f6', fontSize: 11 }}
-              label={{ value: 'Thrust (kN)', angle: -90, position: 'insideLeft', fill: '#3b82f6' }}
+              label={{ value: 'kN', angle: -90, position: 'insideLeft', fill: '#3b82f6' }}
             />
             <Tooltip content={customTooltip} />
             <Legend verticalAlign="top" height={30} />
@@ -368,7 +370,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <YAxis
               stroke="#10b981"
               tick={{ fill: '#10b981', fontSize: 11 }}
-              label={{ value: 'Pc (psi)', angle: -90, position: 'insideLeft', fill: '#10b981' }}
+              label={{ value: 'psia', angle: -90, position: 'insideLeft', fill: '#10b981' }}
             />
             <Tooltip content={customTooltip} />
             <Legend verticalAlign="top" height={30} />
@@ -406,7 +408,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <YAxis
               stroke="var(--color-text-secondary)"
               tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-              label={{ value: 'Mass Flow Rate (kg/s)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+              label={{ value: 'kg/s', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
             />
             <Tooltip content={customTooltip} />
             <Legend verticalAlign="top" height={30} />
@@ -460,7 +462,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <YAxis
               stroke="#eab308"
               tick={{ fill: '#eab308', fontSize: 11 }}
-              label={{ value: 'O/F Ratio', angle: -90, position: 'insideLeft', fill: '#eab308' }}
+              label={{ value: 'O/F', angle: -90, position: 'insideLeft', fill: '#eab308' }}
             />
             <Tooltip content={customTooltip} />
             <Legend verticalAlign="top" height={30} />
@@ -486,7 +488,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             {summary.copv_initial_pressure_psi && (
               <div className="flex gap-4 text-xs">
                 <span className="text-green-400">
-                  P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psi
+                  P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
                 </span>
                 <span className="text-[var(--color-text-secondary)]">
                   m₀: {formatValue(summary.copv_initial_mass_kg || 0, 3)} kg
@@ -514,7 +516,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'psia', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -570,7 +572,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Mass (kg)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'kg', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -622,7 +624,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Pressure Drop (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'psi', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -670,7 +672,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="#a855f7"
                 tick={{ fill: '#a855f7', fontSize: 11 }}
-                label={{ value: 'L* (mm)', angle: -90, position: 'insideLeft', fill: '#a855f7' }}
+                label={{ value: 'mm', angle: -90, position: 'insideLeft', fill: '#a855f7' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -710,7 +712,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Recession Rate (µm/s)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'µm/s', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -772,7 +774,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Cumulative Recession (mm)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'mm', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -834,7 +836,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               <YAxis
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Change (%)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: '%', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
               <Tooltip content={customTooltip} />
               <Legend verticalAlign="top" height={30} />
@@ -862,19 +864,35 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
       {/* 10. Heat Flux Profile Charts */}
       <HeatFluxProfileChart data={data} />
 
-      {/* Correlation Heatmap */}
+      {/* Correlation Heatmap. On a profile where every output follows one input (a linear or
+          monotonic tank ramp) every cell reads ±1.00 and the grid says nothing; then it is
+          folded away behind a line that says so. */}
       {data.correlation_matrix && data.correlation_labels && data.correlation_labels.length >= 2 && (
-        <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-          <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
-            Correlation Heatmap
-          </h4>
-          <div className="overflow-x-auto">
-            <CorrelationHeatmap
-              matrix={data.correlation_matrix}
-              labels={data.correlation_labels}
-            />
+        correlationIsInformative(data.correlation_matrix, data.P_tank_O_psi, data.P_tank_F_psi) ? (
+          <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+            <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
+              Correlation Heatmap
+            </h4>
+            <div className="overflow-x-auto">
+              <CorrelationHeatmap
+                matrix={data.correlation_matrix}
+                labels={data.correlation_labels}
+              />
+            </div>
           </div>
-        </div>
+        ) : (
+          <details className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+            <summary className="cursor-pointer text-sm text-[var(--color-text-secondary)]">
+              Correlations between outputs: on this one-way pressure ramp every output moves with the tank pressure, so every cell is about ±1
+            </summary>
+            <div className="overflow-x-auto mt-4">
+              <CorrelationHeatmap
+                matrix={data.correlation_matrix}
+                labels={data.correlation_labels}
+              />
+            </div>
+          </details>
+        )
       )}
 
       {/* Data Table */}
@@ -886,7 +904,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           <button
             onClick={() => {
               // Generate CSV and download
-              const headers = ['time (s)', 'P_tank_O (psi)', 'P_tank_F (psi)', 'Pc (psi)', 'Thrust (kN)', 'Isp (s)', 'O/F', 'mdot_total (kg/s)'];
+              const headers = ['time (s)', 'P_tank_O (psia)', 'P_tank_F (psia)', 'Pc (psia)', 'Thrust (kN)', 'Isp (s)', 'O/F', 'mdot_total (kg/s)'];
               const rows = data.time.map((t, i) => [
                 t.toFixed(4),
                 data.P_tank_O_psi[i].toFixed(2),
@@ -920,9 +938,9 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <thead className="sticky top-0 bg-[var(--color-bg-secondary)]">
               <tr className="border-b border-[var(--color-border)]">
                 <th className="text-left py-2 px-2 text-[var(--color-text-secondary)] font-medium">Time (s)</th>
-                <th className="text-right py-2 px-2 text-cyan-400 font-medium">LOX (psi)</th>
-                <th className="text-right py-2 px-2 text-orange-400 font-medium">Fuel (psi)</th>
-                <th className="text-right py-2 px-2 text-green-400 font-medium">Pc (psi)</th>
+                <th className="text-right py-2 px-2 text-cyan-400 font-medium">LOX (psia)</th>
+                <th className="text-right py-2 px-2 text-orange-400 font-medium">Fuel (psia)</th>
+                <th className="text-right py-2 px-2 text-green-400 font-medium">Pc (psia)</th>
                 <th className="text-right py-2 px-2 text-blue-400 font-medium">Thrust (kN)</th>
                 <th className="text-right py-2 px-2 text-purple-400 font-medium">Isp (s)</th>
                 <th className="text-right py-2 px-2 text-yellow-400 font-medium">O/F</th>

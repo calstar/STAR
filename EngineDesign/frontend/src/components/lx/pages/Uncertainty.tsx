@@ -3,7 +3,7 @@ import type { SweepFactor, SweepMetric } from '../../../api/layerx';
 import { UncertaintyView } from '../../layerx/Uncertainty';
 import { Badge, Button, NotComputed, Panel, STATUS_GLYPH, STATUS_VAR } from '../ui';
 import { NBSP, useUnits, type Units } from '../units';
-import { Hint, Legacy, NotYet, Table } from './kit';
+import { Hint, Legacy, Table } from './kit';
 import { measureNext } from './measure';
 import type { PageProps } from './Overview';
 
@@ -112,7 +112,6 @@ export function Uncertainty({ data, job, theme }: PageProps) {
           ? <Legacy theme={theme}><UncertaintyView sweep={sweepResult} /></Legacy>
           : <NotComputed>{sweepLive ? `Sweeping: ${sweep?.stage ?? ''}` : 'Not swept yet'}</NotComputed>}
       </Panel>
-      <NotYet items={['off-nominal scenario presets, each graded (backend pending)']} />
     </div>
   );
 }
