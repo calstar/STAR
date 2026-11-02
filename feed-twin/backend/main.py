@@ -2262,6 +2262,9 @@ async def open_session(
     a thirtieth of the density. Not ready for flashing work yet.
     """
     settings = dict(body or {})
+    # The stand it is opened from, checked before anything is built, seated or
+    # closed: a refused open leaves the server as it was.
+    stand_ref = _stand_ref(request, settings.get("stand"))
     # The session this one replaces (a Reset, a new drawing): closed now, not
     # left holding a seat until the server is full.
     replaces = str(settings.pop("replaces", "") or "")
@@ -2370,7 +2373,7 @@ async def open_session(
         machine=machine,
         multiphase=multiphase,
         user=userdata.store.current_user(request),
-        stand=_stand_ref(request, settings.get("stand")),
+        stand=stand_ref,
         notices=notices,
         body=json.loads(json.dumps(settings, default=str)),
     )
@@ -3414,7 +3417,13 @@ _log = logging.getLogger("feed-twin.runs")
 
 
 def _stand_ref(request: Request, raw: Any) -> dict[str, Any] | None:
-    """The stand a session is opened from, checked: the caller may edit it."""
+    """The stand a session is opened from, checked: the caller may view it.
+
+    Viewing is the stand store's rule (stardesign ``_can_view``): its owner,
+    its share list, and anyone at all for the featured stand -- the one a
+    fresh browser opens on. Running a stand changes nothing in it; its burns
+    file under the owner. This used to ask for owner or share list only, so
+    behind Caddy everyone else's first console came up failed."""
     if not isinstance(raw, Mapping) or not raw.get("id"):
         return None
     viewer = userdata.store.current_user(request)
@@ -3424,7 +3433,17 @@ def _stand_ref(request: Request, raw: Any) -> dict[str, Any] | None:
     if record is None:
         raise HTTPException(status_code=404, detail=f"No stand {doc_id!r}")
     shared = record.get("sharedWith") or []
-    if viewer != owner and not any(slug_user(str(e)) == viewer for e in shared):
+    featured = stands.store.read_featured()
+    main = featured is not None and (
+        slug_user(str(featured["owner"])),
+        str(featured["id"]),
+    ) == (owner, doc_id)
+    if not (
+        main
+        or stands.store.open_to_all
+        or viewer == owner
+        or any(slug_user(str(e)) == viewer for e in shared)
+    ):
         raise HTTPException(status_code=403, detail="This stand is not shared with you")
     return {
         "id": doc_id,
