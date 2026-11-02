@@ -267,10 +267,30 @@ function Scroll({ label, children }: { label: string; children: ReactNode }) {
 
 const SOURCE_LABEL: Record<string, string> = { default: 'Default', estimated: 'Estimated', manufacturer: 'Datasheet', measured: 'Measured', drawing: 'Drawing' };
 
-function kv(obj: Record<string, unknown>): [string, string][] {
+/** The run record's pressures are the wire's, gauge (ADR 0004: the API and run records stay gauge). A
+ * person reads psia (ADR 0007), as the rail shows the same burn: Record listed 'dome_psi 535' beside a
+ * rail reading 'Dome 550 psia'. */
+const GAUGE_KEYS = new Set(['dome_psi', 'copv_target_psi', 'dewar_psi', 'tank_psi', 'copv_psi', 'lockup_psi']);
+
+/** Settings the record carries that this burn did not use, and what was used instead. */
+const NOT_USED: Record<string, string> = {
+  copv_target_psi: 'the cockpit\u2019s COPV charge target; not used by Layer X, whose bottle fill is the burn\u2019s copv_psi',
+};
+
+type Fmt = (psia: number) => string;
+
+function kv(obj: Record<string, unknown>, psia?: { gaugeZero: number; fmt: Fmt }): [ReactNode, ReactNode][] {
   return Object.entries(obj)
     .filter(([, v]) => v === null || ['string', 'number', 'boolean'].includes(typeof v))
-    .map(([k, v]) => [k, typeof v === 'number' ? (Number.isInteger(v) ? String(v) : sig(v)) : String(v)]);
+    .map(([k, v]): [ReactNode, ReactNode] => {
+      const unused = NOT_USED[k];
+      const key = unused ? <span title={unused}>{k} <span className="text-[var(--lx-text-3)]">(not used)</span></span> : k;
+      if (v === null || v === '') return [key, '—'];
+      if (typeof v === 'number' && psia && GAUGE_KEYS.has(k)) {
+        return [key, <span key="v" title={`${sig(v)} psig on the wire`}>{psia.fmt(v + psia.gaugeZero)}</span>];
+      }
+      return [key, typeof v === 'number' ? (Number.isInteger(v) ? String(v) : sig(v)) : String(v)];
+    });
 }
 
 /** Where the drawing came from, in words (the raw source in the hover). */
@@ -282,6 +302,8 @@ const sourceWords = (src: string) => (src.startsWith('shipped:') ? 'Benchmark, s
 
 function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }) {
   const [all, setAll] = useState<'defaults' | 'all'>('defaults');
+  const u = useUnits();
+  const gauged = { gaugeZero: ((p.derived?.gauge_zero_pa as number | undefined) ?? 101325) / PSI, fmt: (x: number) => u.fmt(u.p(x)) };
   const defaults = p.assembly.assumptions.filter((a) => a.source === 'default');
   const rows = all === 'all' ? p.assembly.assumptions : defaults;
   const short = (h: string) => (h ? h.slice(0, 12) : '—');
@@ -297,10 +319,10 @@ function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }
         ]} />
       </Panel>
       <Panel title="Solver settings" right={<span className="lx-num">{kv(p.setup).length}</span>} className="lg:col-span-4">
-        <Scroll label="Solver settings"><Pairs rows={kv(p.setup)} /></Scroll>
+        <Scroll label="Solver settings"><Pairs rows={kv(p.setup, gauged)} /></Scroll>
       </Panel>
       <Panel title="Burn settings" right={<span className="lx-num">{kv(p.plan).length}</span>} className="lg:col-span-4">
-        <Scroll label="Burn settings"><Pairs rows={kv(p.plan)} /></Scroll>
+        <Scroll label="Burn settings"><Pairs rows={kv(p.plan, gauged)} /></Scroll>
       </Panel>
       <Panel title="Unspecified parameters" className="lg:col-span-12"
              right={<Segmented ariaLabel="Which parameters" size="sm" value={all} onChange={setAll}

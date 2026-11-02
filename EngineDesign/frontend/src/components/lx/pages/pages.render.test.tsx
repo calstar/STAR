@@ -151,6 +151,21 @@ describe('the Burn pages', () => {
     expect(draw(PAGES[5][1], r)).toContain('COPV-PT <span class="text-[var(--color-text-muted)]">psia</span>');
   });
 
+  it('Record: the settings read in psia, a null as a dash, and the cockpit’s charge target as not used', () => {
+    // Record listed 'dome_psi 535', 'copv_psi 3750', 'bottle_litres null' and 'copv_target_psi 4500' beside a rail
+    // reading Dome 550 psia and Bottle fill 3765 psia, for a burn whose bottle was 3750 psig, not 4500.
+    const r = result();
+    r.provenance.setup = { dome_psi: 535, copv_target_psi: 4500, max_iterations: 120 };
+    r.provenance.plan = { tank_psi: 529.875, copv_psi: 3750, bottle_litres: null, lockup_psi: null };
+    const html = draw(PAGES[7][1], r);
+    expect(html).toMatch(/>550\u00a0psia</);               // 535 psig + 14.696, at the rail's resolution
+    expect(html).toMatch(/>3,765\u00a0psia</);
+    expect(html).toContain('title="535 psig on the wire"');
+    expect(html).not.toMatch(/>null</);
+    expect(html).toContain('(not used)');
+    expect(html).toMatch(/>120</);                          // a plain number stays plain
+  });
+
   it('Stand: names the run\'s own test and offers nothing it cannot do (D-24)', () => {
     const stand = PAGES[5][1];
     const plain = draw(stand, result());
