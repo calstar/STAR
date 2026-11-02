@@ -2,15 +2,13 @@
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from starlette.concurrency import run_in_threadpool
-import uuid
-import os
 from pathlib import Path
 from pydantic import ValidationError
 import yaml
 
 from engine.pipeline.config_schemas import PintleEngineConfig
 from backend.checkout import DesignCheckout
-from backend.session import UserSession, get_session
+from backend.session import UserSession, get_session, replace_config
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -27,39 +25,49 @@ async def upload_config(
     _: None = DesignCheckout,
 ):
     """Upload a YAML config file and parse it."""
-    if not file.filename or not file.filename.endswith((".yaml", ".yml")):
+    # The multipart filename is the client's to choose, path and all ("../../x.yaml", an
+    # absolute "/app/configs/default.yaml"); pathlib's `/` with an absolute right side throws
+    # the left side away. Only the final component is a name; the folder is ours.
+    name = Path(file.filename or "").name
+    if not name.endswith((".yaml", ".yml")) or name.startswith("."):
         raise HTTPException(status_code=400, detail="File must be a YAML file (.yaml or .yml)")
 
     try:
         content = await file.read()
+        # Parse and validate first: a file that is not a config is never written anywhere.
+        data = yaml.safe_load(content.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid YAML: the file is not a config mapping")
+        config = PintleEngineConfig(**data)
 
         # Save uploads outside configs/ — personal exports must not land in the
         # tracked tree — and under the caller's own folder, so two users
         # uploading files with the same name do not overwrite each other.
         from backend.main import project_root
-        uploads_dir = project_root / "output" / "user_configs" / session.user
+        uploads_dir = (project_root / "output" / "user_configs" / session.user).resolve()
         uploads_dir.mkdir(parents=True, exist_ok=True)
-        save_path = uploads_dir / file.filename
+        save_path = (uploads_dir / name).resolve()
+        if save_path.parent != uploads_dir:
+            raise HTTPException(status_code=400, detail="File must be a YAML file (.yaml or .yml)")
 
         with open(save_path, "wb") as f:
             f.write(content)
 
-        data = yaml.safe_load(content.decode("utf-8"))
-        config = PintleEngineConfig(**data)
         # set_config builds/loads the CEA cache (PintleEngineRunner). A cold
         # cache is a multi-minute synchronous build, so run it off the event
         # loop -- inline it would block every other request (health included),
         # which is exactly the "stuck on Connecting…" hang.
-        await run_in_threadpool(session.app_state.set_config, config, str(save_path))
-        session.load_token = uuid.uuid4().hex
+        await replace_config(session, config, str(save_path))
         return {
             "status": "success",
-            "message": f"Config loaded from {file.filename}",
+            "message": f"Config loaded from {name}",
             "config": config_to_dict(config),
             "session_epoch": session.epoch,
             "load_token": session.load_token,
         }
-    except yaml.YAMLError as e:
+    except HTTPException:
+        raise
+    except (yaml.YAMLError, UnicodeDecodeError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
@@ -97,8 +105,7 @@ async def load_config_json(body: dict, session: UserSession = Depends(get_sessio
         raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
     # Off the event loop: a cold CEA cache build here would block every other
     # request. See the note in upload_config.
-    await run_in_threadpool(session.app_state.set_config, config, session.app_state.config_path)
-    session.load_token = uuid.uuid4().hex
+    await replace_config(session, config, session.app_state.config_path)
     return {"status": "success", "config": config_to_dict(config), "session_epoch": session.epoch,
             "load_token": session.load_token}
 
