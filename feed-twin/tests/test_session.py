@@ -874,6 +874,23 @@ def test_a_panel_tick_integrates_on_the_study_grid() -> None:
     assert Setup().tick_budget >= 1e6, "no wall-clock fold"
 
 
+def test_a_tick_off_the_grid_is_rounded_to_it() -> None:
+    """The split is round(tick / live_step) equal steps, as the Configuration row
+    and PHYSICS-BENCHMARK 3.10 say (they said a ceiling, which the code never
+    did). A wall-clock tick of 0.21 s is ten 0.021 s steps, and a burn's 0.05 s
+    step -- Layer X's -- is two of 0.025 s; a ceiling would make it three and
+    move every Layer X number."""
+    for dt, n in ((0.21, 10), (0.05, 2), (0.25, 12)):
+        session = stand()
+        before = len(session.history)
+        session.step(dt)
+        assert len(session.history) - before == n, dt
+        recent = list(session.history)[-n:]
+        dts = [b.t - a.t for a, b in zip(recent, recent[1:])]
+        # The history clock is kept to 0.1 ms.
+        assert all(abs(step - dt / n) < 2e-4 for step in dts), (dt, dts)
+
+
 def test_a_vessel_over_its_mawp_trips_the_stand() -> None:
     """Dome turned up to 1400: the LOX tank presses past the 1000 psig the
     drawing rates it for, the stand stops on that frame and says so, and it

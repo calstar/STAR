@@ -43,6 +43,12 @@ be able to find why they differ.
   with neither. `feed-twin/tests/test_tunables.py` now holds every Setup field to a
   row, less `tick_budget` (numerics, off) and `ullage_wall_T0_K` (a per-tank map,
   dialled as `cryogen_ullage_wall_T0_K`).
+- **The tick split is documented as the code does it**: round(tick / live_step)
+  equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
+  ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
+  ceiling would make it three and move every Layer X number, so it stays a decision
+  for a fresh golden. `feed-twin/tests/test_session.py`:
+  `test_a_tick_off_the_grid_is_rounded_to_it`. No number moves.
 
 ### Changed results
 - A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in

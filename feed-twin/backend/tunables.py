@@ -765,8 +765,10 @@ TUNABLES: tuple[Tunable, ...] = (
         "Outer step",
         "s",
         GROUPS[6],
-        "A panel tick is integrated as ceil(tick / this) steps, so the console runs on "
-        "the Study's grid. Smaller is slower and no more accurate below the coupling "
+        "A panel tick is integrated as round(tick / this) equal steps, at least one, so "
+        "the console runs on the Study's grid to within half a step: a 0.2 s tick is "
+        "ten 0.02 s steps, a 0.21 s tick ten of 0.021 s, and a tick under 1.5 x this "
+        "is one step. Smaller is slower and no more accurate below the coupling "
         "rules; larger lets a fast press alias.",
         low=0.002,
         high=0.25,

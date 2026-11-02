@@ -845,7 +845,12 @@ budget** that folded the remaining coupling steps into one when the solver fell 
 which on a stiff stand is every tick, so the console was integrating a different scheme
 from the one benchmarked here, and Fire was precomputed and replayed to hide it. Now
 (`LIVE_STEP = 0.02`, `LIVE_ITERATIONS = 120`, `TICK_BUDGET = 1e9`): a panel tick of dt is
-integrated as ⌈dt/0.02⌉ outer steps of 0.02 s, exactly the study grid, and nothing folds.
+integrated as round(dt/0.02) equal outer steps (at least one), the study grid to within
+half a step, and nothing folds. (This read ⌈dt/0.02⌉ until 2026-11-02; the code has
+always rounded. The panel sends wall-clock ticks, so a 0.21 s tick is ten 0.021 s steps
+and a tick under 0.03 s one step. Rounding is what Layer X's 0.05 s step and the settle
+run on -- two 0.025 s steps; a ceiling would make them three of 0.0167 s and move every
+Layer X number, so changing it is a decision with a fresh golden, not a fix.)
 When a stand cannot keep up it runs in **slow motion** and the top bar says the ratio.
 Asserted by `test_a_panel_tick_integrates_on_the_study_grid` (a 0.2 s tick advances the
 clock in ten 0.02 s steps).
