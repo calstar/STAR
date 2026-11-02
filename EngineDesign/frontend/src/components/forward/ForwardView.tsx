@@ -101,7 +101,7 @@ const BURN_PLOTS: { key: keyof TimeSeriesData; label: string; unit: string; digi
   { key: 'thrust_kN', label: 'Thrust', unit: 'kN', digits: 2 },
 ];
 
-function Burn({ burn, when }: { burn: TimeSeriesData; when: number | null }) {
+function Burn({ burn, when, source }: { burn: TimeSeriesData; when: number | null; source?: string | null }) {
   const rows = burn.time.map((t, i) => {
     const row: Record<string, number> = { t };
     for (const p of BURN_PLOTS) {
@@ -115,7 +115,9 @@ function Burn({ burn, when }: { burn: TimeSeriesData; when: number | null }) {
       <div className="mb-3 flex items-baseline justify-between">
         <span className="text-sm font-medium text-[var(--color-text-primary)]">Over the burn</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">
-          from the Time-Series tab{when ? `, run ${new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+          {source
+            ? `from ${source}${when ? `, sent ${new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
+            : `from the Time-Series tab${when ? `, run ${new Date(when).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`}
         </span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
@@ -324,10 +326,12 @@ function Inputs({ calibration, measurements, readOnly, onSave }: {
   );
 }
 
-export function ForwardView({ report, burn, burnWhen, extras = {}, measurements = {}, readOnly = false, onSaveMeasurements }: {
+export function ForwardView({ report, burn, burnWhen, burnSource = null, extras = {}, measurements = {}, readOnly = false, onSaveMeasurements }: {
   report: ForwardReport;
   burn: TimeSeriesData | null;
   burnWhen: number | null;
+  /** Who made the burn when not the Time-Series tab (Layer X's send). */
+  burnSource?: string | null;
   /** Charts shown under a section when it is open, by section key (stability, spray). */
   extras?: Record<string, ReactNode>;
   /** The config's measurements block, and how to save changes to it. */
@@ -349,7 +353,7 @@ export function ForwardView({ report, burn, burnWhen, extras = {}, measurements 
     <div className="space-y-9" style={SANS}>
       <Headline report={report} burn={burn} />
       <Verdicts verdicts={report.verdicts} calibration={report.calibration} />
-      {burn && <Burn burn={burn} when={burnWhen} />}
+      {burn && <Burn burn={burn} when={burnWhen} source={burnSource} />}
 
       <div className="border-b border-[var(--color-border)]">
         {report.sections.map((s) => (

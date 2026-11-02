@@ -12,7 +12,7 @@ import { pollJob } from '../layerx/jobs';
 import { burnCsv } from '../layerx/csv';
 import { testCardHtml } from '../layerx/testcard';
 import { fmt, LB } from '../layerx/format';
-import { drawingWords, KIND_WORD, runLabel } from '../layerx/runs';
+import { drawingWords, KIND_WORD, runLabel, runWhen } from '../layerx/runs';
 
 /**
  * Layer X's run lifecycle, lifted out of layerx/LayerX.tsx so the rebuilt shell is only layout:
@@ -648,7 +648,13 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     sent: !!run && sentId === run.id,
     canSend: !!result?.timeseries && !designMoved && !designUnknown && !whatIf,
     sendNote,
-    sendToForward: () => { if (result?.timeseries && run) { saveTimeSeriesResults(result.timeseries, configFingerprint(config)); setSentId(run.id); } },
+    // Named, so Forward and Flight say whose burn they show (Forward read 'from the Time-Series tab').
+    sendToForward: () => {
+      if (result?.timeseries && run) {
+        saveTimeSeriesResults(result.timeseries, configFingerprint(config), `the Layer X burn ${run.meta?.name || runWhen(run)}`);
+        setSentId(run.id);
+      }
+    },
     printTestCard: async () => {
       if (!result || !run) return;
       // Opened on the click itself, so a popup blocker lets it through; filled once the channel map is in.
