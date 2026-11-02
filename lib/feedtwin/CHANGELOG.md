@@ -189,6 +189,14 @@ be able to find why they differ.
   was debited for it again; a wall colder than the liquid warmed the layer above the
   bulk, the gas and the wall. The exchange now sees only what reaches the surface.
   `docs/PHYSICS-BENCHMARK.md` 1.5b.
+- **A probe clipped to a line reads the line** (`build_network` step 3b,
+  `PidNode.attached_at`, `roles._clip_with`). pid-designer clips an RTD, TC or load
+  cell to a line (`attachedTo` = the line's id, `attachedAt` = the fraction from its
+  source end); the twin resolved clips against symbols only, so the probe read
+  nothing, was reported "not clipped to anything", and with the cart cut was dropped
+  from the vehicle without a word. It now reads the end of the line it sits nearer
+  to, and stays with whichever side holds both ends. No drawing in the repo nor
+  LE4 (3) clips a probe to a line.
 
 ### Changed results
 - LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
@@ -223,6 +231,9 @@ be able to find why they differ.
 - `test_vapour.py`: the four quadrants and a vented ethanol tank losing heat;
   `test_stratification.py::test_the_wall_heat_that_goes_to_the_bulk_boils_nothing_at_the_surface`.
   Five fail on the old model; the evaporating quadrant passes both ways.
+- `tests/test_probes_on_lines.py`: each end of the line, a clip saved without a
+  position, and the vehicle cut keeping it. Four fail on the old build; a probe on a
+  tank reads as before.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

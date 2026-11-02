@@ -656,10 +656,17 @@ def build_network(
             hand.add(node.id)
 
     # 3. Instruments observe. They join the network at the place they clip to.
+    #    One clipped to a *line* (pid-designer clips probes to lines too) waits
+    #    for step 4, which is where a line's two ends become network nodes.
+    edge_ids = {edge.id for edge in diagram.edges}
+    on_lines: list[PidNode] = []
     for node in diagram.nodes:
         if node.id in dome_loaders:
             placements.append(Placement(node.id, node.label, node.type, node.x, node.y))
         if not node.is_instrument:
+            continue
+        if node.attached_to in edge_ids and node.attached_to not in by_id:
+            on_lines.append(node)
             continue
         anchor = _instrument_anchor(node, by_id, node_of, diagram)
         if anchor is None:
@@ -675,6 +682,9 @@ def build_network(
     #    line leaves. Unless the direction leaves a symbol one-sided and the
     #    ports say better; see _sides_by_port.
     plumbing: list[PidEdge] = []
+    #: Each landed line's two ends, source end first: where a probe clipped to
+    #: the line reads.
+    line_ends: dict[str, tuple[str, str]] = {}
     for edge in diagram.edges:
         source = by_id.get(edge.source)
         target = by_id.get(edge.target)
@@ -721,6 +731,7 @@ def build_network(
         if upstream == downstream:
             continue
         landed.update((upstream, downstream))
+        line_ends[edge.id] = (upstream, downstream)
 
         kind, model = LINE_KINDS.get(edge.line_type, LINE_KINDS["pipe"])
         # Named apart from the symbol loop's `params`/`options` above: this
@@ -771,6 +782,21 @@ def build_network(
         )
         net.add_branch(edge.id, component, upstream, downstream)
         branches_of[edge.id] = (edge.id,)
+
+    # 3b. Probes clipped to a line read the end of it they sit nearer to: the
+    #     line is one pipe, and its ends are the places the network solves.
+    #     Before the direct joins below, which rename the ends with the rest.
+    for node in on_lines:
+        ends = line_ends.get(node.attached_to)
+        if ends is None:
+            warnings.append(
+                f"{node.label} is clipped to a line the twin does not solve as "
+                "plumbing (a dome or clip line), and reads nothing."
+            )
+            continue
+        anchor = ends[0] if node.attached_at < 0.5 else ends[1]
+        instruments.append(Instrument(node.id, node.label, node.type, anchor))
+        placements.append(Placement(node.id, node.label, node.type, node.x, node.y))
 
     # 4a. Disconnects paired across the drawing's pages are mated: the rocket
     #     half and the GSE half are one coupling, so their free sides are one
