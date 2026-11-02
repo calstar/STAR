@@ -132,7 +132,12 @@ export interface PressurantDiag extends BlockBase {
   jt_dT_K?: Col;
 }
 
-export interface SaturationNode { id: string; label: string; side?: Side3 | null; margin_psi: Col; min_psi?: number | null; t_min?: number | null }
+export interface SaturationNode {
+  id: string; label: string; side?: Side3 | null; margin_psi: Col; min_psi?: number | null; t_min?: number | null;
+  /** The static margin: the node's total less the line's dynamic head, what boils a moving liquid and what
+   *  the limits grade. Null where the drawing gives no bore to price the head. */
+  margin_static_psi?: Col; min_static_psi?: number | null; t_min_static?: number | null;
+}
 export interface SaturationDiag extends BlockBase { nodes: SaturationNode[] }
 
 export interface CavitationSide { K: Col; K_incipient?: number | null; L_over_d?: number | null; flip_risk?: boolean; min_K?: number | null; t_min?: number | null }

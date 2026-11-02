@@ -79,6 +79,21 @@ describe('the Burn pages', () => {
     expect(full).toContain('Regulator outlet');
   });
 
+  it('Feed: the saturation margin is the one the limits grade, the static one, with the total beside it', () => {
+    // Run 20261102-120705-5a3c15: Feed said LOX-Tank outlet 481 psi above boiling (the total) while the
+    // Limits graded 'Saturation margin, LOX-Tank outlet' at 444 psi (static), at the same instant.
+    const r = withContract(result()) as unknown as { diagnostics: { saturation: { nodes: Record<string, unknown>[] } } };
+    const node = r.diagnostics.saturation.nodes[0];
+    Object.assign(node, { min_psi: 481.1, t_min: 0.6, min_static_psi: 444.2, t_min_static: 0.6,
+                          margin_static_psi: (node.margin_psi as (number | null)[]).map((v) => (v === null ? null : v - 37)) });
+    const html = draw(PAGES[1][1], r as unknown as LayerXResult);
+    expect(html).toMatch(/>444(\.2)? psi</);
+    expect(html).not.toMatch(/>481(\.1)? psi</);
+    expect(html).toContain('Total (with the head): lowest 481');
+    // A node with no bore to price the head says its number is the total.
+    expect(html).toMatch(/ psi total</);
+  });
+
   it('Feed: a failed block keeps its panel and says why', () => {
     const html = draw(PAGES[1][1], withContract(result(), { failed: ['water_hammer', 'ladder'] }));
     expect(html).toContain('Not computed: fixture: water_hammer failed on purpose');
