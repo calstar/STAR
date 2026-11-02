@@ -88,6 +88,11 @@ store = DesignStore(
     default_slug="stand",
     micro_interval=int(os.environ.get("FEEDTWIN_MICRO_INTERVAL", "300")),
     empty_payload=lambda: dict(EMPTY),
+    # The stand a fresh browser opens on (``.site/stand/featured.json``): the
+    # demo's, or the team's current one. Anyone who may edit a stand may
+    # choose it -- a local install has no admins to ask.
+    featured=True,
+    main_admin_only=False,
 )
 
 router = make_router(store, prefix="/api/twin", sub="/stands")
