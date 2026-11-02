@@ -6,7 +6,7 @@ import { withContract } from '../dev/contractFixture';
 import { result } from '../dev/testRun';
 import { TimeProvider } from '../time/TimeProvider';
 import { createTimeStore } from '../time/store';
-import { DEFAULT_SYSTEM, UnitsProvider } from '../units';
+import { DEFAULT_SYSTEM, PRESETS, UnitsProvider, type UnitSystem } from '../units';
 import type { LayerXJob } from '../useLayerXJob';
 import { deriveRunData } from '../useRunData';
 import { Engine } from './Engine';
@@ -45,14 +45,14 @@ function jobOf(over: Partial<LayerXJob> = {}): LayerXJob {
   } as unknown as LayerXJob;
 }
 
-function draw(page: (p: PageProps) => ReactElement, r: LayerXResult, t = 0.15, job = jobOf()): string {
+function draw(page: (p: PageProps) => ReactElement, r: LayerXResult, t = 0.15, job = jobOf(), system: UnitSystem = DEFAULT_SYSTEM): string {
   const data = deriveRunData(r);
   const store = createTimeStore();
   store.setSeries(data.t);
   store.setT(t);
   store.flush();
   return renderToStaticMarkup(
-    <UnitsProvider initial={DEFAULT_SYSTEM} persist={false}>
+    <UnitsProvider initial={system} persist={false}>
       <TimeProvider store={store}>{page({ data, vs: null, vsLabel: null, job, theme: 'dark' })}</TimeProvider>
     </UnitsProvider>,
   );
@@ -136,6 +136,19 @@ describe('the Burn pages', () => {
     const html = draw(PAGES[0][1], r as unknown as LayerXResult);
     expect(html).toContain('>erosion off<');
     expect(html).toMatch(/355 – 362/);
+  });
+
+  it('Stand: the predicted channel readings follow the unit system, with the DAQ’s psig in the hover', () => {
+    // In SI the rail read 'Dome 37.9 bar(a)' and Feed '164.8 bar(a)' while Stand listed 'COPV-PT psia 3,761.6'.
+    const r = result();
+    (r.series as unknown as Record<string, unknown>).instruments = {
+      PT_COPV: { tag: 'COPV-PT', type: 'PT', unit: 'psia', values: r.series.t.map(() => 3764.696) },
+    };
+    const si = draw(PAGES[5][1], r, 0.15, jobOf(), PRESETS.si);
+    expect(si).toContain('COPV-PT <span class="text-[var(--color-text-muted)]">bar(a)</span>');
+    expect(si).toMatch(/>259\.6</);                                // 3764.7 psia = 259.57 bar(a)
+    expect(si).toContain('title="3,750.0 psig on the DAQ"');
+    expect(draw(PAGES[5][1], r)).toContain('COPV-PT <span class="text-[var(--color-text-muted)]">psia</span>');
   });
 
   it('Stand: names the run\'s own test and offers nothing it cannot do (D-24)', () => {
