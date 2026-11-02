@@ -105,7 +105,9 @@ const RULES: Rule[] = [
   },
   {
     kind: 'read',
-    match: /^\d+ hand valve\(s\) rest shut until opened by hand: (.+?)\.?$/,
+    // The names end at the first full stop: after it the sentence says how to
+    // draw one that stands open, which read as part of the last valve's name.
+    match: /^\d+ hand valve\(s\) rest shut until opened by hand: (.+?)\.(?:\s|$)/,
     title: () => 'Hand valves rest shut until opened on the P&ID',
     items: (m) => m[1].split(', '),
   },

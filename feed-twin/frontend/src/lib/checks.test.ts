@@ -25,6 +25,16 @@ describe('the checks, grouped', () => {
     expect(groups.find((g) => g.title.startsWith('Hand valves'))?.items).toEqual(['OF-MAN-Vent', 'OF-MAN-Fill', 'FV-MAN']);
   });
 
+  it('names the hand valves only, not the advice after them', () => {
+    // As feedtwin.pid.network says it: the names, then how to draw one that
+    // stands open. The advice used to come out as the last valve's name.
+    const said = '2 hand valve(s) rest shut until opened by hand: OV-MAN, FV-MAN. A hand valve that stands open '
+      + "is drawn so: pid-designer's Normal position set to Normally open (normalPosition: open).";
+    const hand = groupChecks([said]).find((g) => g.title.startsWith('Hand valves'));
+    expect(hand?.items).toEqual(['OV-MAN', 'FV-MAN']);
+    expect(hand?.detail).toBe(said);
+  });
+
   it('says "no loss" only of a segment with no bore anywhere on its run', () => {
     // feedtwin.pid.segments, word for word. A bare stretch of a bored run is
     // sized at the run's narrowest bore -- priced, on an assumption.

@@ -945,8 +945,9 @@ def build_network(
     if resting_shut:
         warnings.append(
             f"{len(resting_shut)} hand valve(s) rest shut until opened by hand: "
-            f"{', '.join(resting_shut)}. A hand valve that stands open draws "
-            "normalPosition: open."
+            f"{', '.join(resting_shut)}. A hand valve that stands open is drawn "
+            "so: pid-designer's Normal position set to Normally open "
+            "(normalPosition: open)."
         )
 
     if vents:
