@@ -1057,6 +1057,50 @@ def _carried(artifact: Artifact) -> dict[str, Any]:
     )
 
 
+async def _carried_source(
+    source: str, data: bytes, what: str, headers: Mapping[str, str]
+) -> tuple[str, list[str]]:
+    """The provenance a bundle's drawing or engine is stored under here, and
+    what to say about it.
+
+    A pull's provenance names a document on the *exporting* server's design
+    tool -- ``pid-designer:local/le4-3@working copy``, where every dev
+    install's user is ``local`` and an id is its name's slug -- and freshness
+    and refresh read it on this one's. Taken as it came, a teammate's own
+    design of the same name was compared, and "Pull the current design"
+    swapped the stand onto it (R012). It is kept only when this server's
+    tool holds that document as these bytes; otherwise it is stored as
+    ``bundle:<what it said>``, which nothing tracks, and the note says so."""
+    parsed = designtools.parse_source(source)
+    if parsed is None:
+        return source, []
+    key, owner, doc_id, release = parsed
+    try:
+        here, _ = await designtools.fetch(
+            _tool(key), doc_id, owner=owner, release=release, headers=headers
+        )
+    except (DesignToolError, HTTPException):
+        here = b""
+    if here:
+        if what == "drawing":
+            try:
+                same = drawing_digest(json.loads(here)) == drawing_digest(
+                    json.loads(data)
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                same = False
+        else:
+            same = here == data
+        if same:
+            return source, []
+    return f"bundle:{source}", [
+        f"The stand's {what} was pulled from {source} on the server that "
+        "exported it; this server's design tool does not hold that document "
+        "as these bytes, so it is kept as the bundle's and not compared with "
+        "or refreshed from anything here."
+    ]
+
+
 @app.post("/api/twin/bundle/export")
 async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
     """A stand and everything it names, as one ``*.hotbench.json``: the
@@ -1136,13 +1180,21 @@ async def import_stand_bundle(
         if same.id != carried.get("id"):
             notes.append(f"The drawing matched {same.name}, already in this library.")
     else:
+        drawing_source, said = await _carried_source(
+            str(carried.get("source") or "upload"),
+            carried["text"].encode("utf-8"),
+            "drawing",
+            request.headers,
+        )
+        notes.extend(said)
         drawing_art, _ = library.add(
             carried["text"].encode("utf-8"),
             kind="diagram",
             name=str(carried.get("name") or raw.get("name") or "imported drawing"),
-            source=str(carried.get("source") or "upload"),
+            source=drawing_source,
             suffix=str(carried.get("suffix") or ".json"),
             summary=diagram_summary(payload),
+            notes=" ".join(said),
         )
 
     engine_art: Artifact | None = None
@@ -1154,7 +1206,13 @@ async def import_stand_bundle(
             design = engine_from_bytes(data, name=name)
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        source = str(carried_engine.get("source") or "upload")
+        source, said = await _carried_source(
+            str(carried_engine.get("source") or "upload"),
+            data,
+            "engine",
+            request.headers,
+        )
+        notes.extend(said)
         engine_art, existed = library.add(
             data,
             kind="engine",
@@ -1162,6 +1220,7 @@ async def import_stand_bundle(
             source=source,
             suffix=str(carried_engine.get("suffix") or ".yaml"),
             summary=engine_summary(design),
+            notes=" ".join(said),
         )
         if existed and (engine_art.name, engine_art.source) != (name, source):
             # The same bytes are the same artifact, whatever the stand called

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from backend import bundle
 from backend.assembly import card_version
 from backend.library import LibraryError
+from tests.design_stores import Tools, stores, who  # noqa: F401  (fixture)
 from backend.main import (
     HOOKUPS,
     _drawing_key,
@@ -405,3 +406,64 @@ def test_an_imported_stand_is_not_named_like_one_already_yours(
     assert made.status_code in (200, 201), made.text
     second = client.post("/api/twin/bundle/import", json=out).json()
     assert second["name"] == "Twice imported (2)"
+
+
+# --------------------------------------------- provenance from another server
+
+
+def test_a_pull_on_the_exporting_server_is_not_tracked_against_this_ones(
+    stores: Tools,
+) -> None:
+    """An export from a stand on pulled artifacts says where they were pulled
+    from: ``pid-designer:local/le4-3@working copy``, on *that* server. Every
+    dev install's user is ``local`` and an id is its name's slug, so stored
+    as it came, freshness here compared this server's own le4-3 -- another
+    drawing -- and offered to refresh the stand onto it (R012)."""
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    pulled = "pid-designer:local/le4-3@working copy"
+    out["drawing"]["source"] = pulled
+    # This server's local/le4-3 is somebody's other drawing.
+    me = who("local")
+    stores.pid.post("/api/pid/diagrams", json={"name": "le4-3"}, headers=me)
+    other = json.loads(out["drawing"]["text"])
+    other["nodes"] = other["nodes"][:3]
+    other["edges"] = []
+    stores.pid.post("/api/pid/diagrams/le4-3/autosave", json=other, headers=me)
+
+    got = client.post("/api/twin/bundle/import", json=out)
+    assert got.status_code == 200, got.text
+    drawing = library.get(got.json()["stand"]["diagram"])
+    assert drawing.source == f"bundle:{pulled}"
+    assert pulled in drawing.notes
+    assert any(pulled in n for n in got.json()["notes"])
+    fresh = client.get(f"/api/library/{drawing.id}/freshness").json()
+    assert fresh["tracked"] is False, fresh
+    refresh = client.post(f"/api/library/{drawing.id}/refresh")
+    assert refresh.status_code == 400, refresh.text
+
+
+def test_a_pull_this_server_holds_as_those_bytes_stays_tracked(
+    stores: Tools,
+) -> None:
+    """The other half: where this server's tool does hold that document as
+    the bundle's drawing, the provenance is kept, and freshness follows it."""
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    pulled = "pid-designer:local/le4-3@working copy"
+    out["drawing"]["source"] = pulled
+    me = who("local")
+    stores.pid.post("/api/pid/diagrams", json={"name": "le4-3"}, headers=me)
+    stores.pid.post(
+        "/api/pid/diagrams/le4-3/autosave",
+        json=json.loads(out["drawing"]["text"]),
+        headers=me,
+    )
+
+    got = client.post("/api/twin/bundle/import", json=out).json()
+    drawing = library.get(got["stand"]["diagram"])
+    assert drawing.source == pulled
+    fresh = client.get(f"/api/library/{drawing.id}/freshness").json()
+    assert fresh["tracked"] is True and fresh["current"] is True, fresh
