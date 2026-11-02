@@ -258,6 +258,11 @@ services:
       # the physics core it shares with EngineDesign.
       context: .
       dockerfile: feed-twin/Dockerfile.api
+      args:
+        # The commit every run record names (feed-twin/backend/version.py):
+        # `FEEDTWIN_COMMIT=$(git rev-parse HEAD) docker compose build`.
+        # Unset, the image says commit '' rather than a wrong one.
+        FEEDTWIN_COMMIT: ${FEEDTWIN_COMMIT:-}
     restart: unless-stopped
     # Larger than the other design tools on purpose: CoolProp's bicubic tables
     # are built per species on first use and held for the life of the process.

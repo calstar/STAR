@@ -21,6 +21,7 @@ import functools
 import hashlib
 import logging
 import math
+import os
 import re
 import json
 from dataclasses import asdict, dataclass, field, replace
@@ -287,11 +288,25 @@ def _who(request: Request) -> str:
     return str(userdata.store.current_user(request))
 
 
-#: Where a CEA table is looked for. Absent, the chamber falls back to a constant
-#: c* and says so in the warnings.
+#: Where a CEA table is looked for in a checkout: EngineDesign's committed
+#: cache. Absent, the simplified engine has no combustion table, and the
+#: report says so (backend.assembly.NO_CEA_TABLE).
 CEA_SEARCH = [
     Path(__file__).resolve().parents[2] / "EngineDesign" / "output" / "cache",
 ]
+
+#: Directories searched first (``os.pathsep``-separated). The image sets it
+#: to the tables it carries (Dockerfile.api, /app/cea): there the checkout's
+#: path resolves to /EngineDesign/output/cache, which nothing puts there, and
+#: every engine without a card made 0 N, reported as a cold flow (R048).
+CEA_DIR_ENV = "FEEDTWIN_CEA_DIR"
+
+
+def _cea_dirs() -> list[Path]:
+    """Where :func:`_cea_for` looks, in order."""
+    configured = os.environ.get(CEA_DIR_ENV, "")
+    return [*(Path(d) for d in configured.split(os.pathsep) if d), *CEA_SEARCH]
+
 
 #: The stands shipped with the app, seeded into the library on first start so
 #: there is something real on screen before anybody imports anything.
@@ -953,7 +968,7 @@ def _cea_for(engine: EngineDesign) -> str:
     ox, fuel = engine.oxidiser.propellant, engine.fuel.propellant
     wanted = {"oxygen": "LOX", "ethanol": "Ethanol", "methane": "CH4"}
     key = f"{wanted.get(ox, ox)}_{wanted.get(fuel, fuel)}"
-    for directory in CEA_SEARCH:
+    for directory in _cea_dirs():
         if not directory.is_dir():
             continue
         for candidate in sorted(directory.glob("cea_cache_*.npz")):

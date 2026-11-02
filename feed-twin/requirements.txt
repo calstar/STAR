@@ -13,9 +13,10 @@ pydantic>=2.12
 # build context. See setup.sh, the CI workflow, and Dockerfile.api. It brings
 # CoolProp, fluids, ht, numpy and scipy with it.
 #
-# lib/stardesign (per-user documents, sharing, version history) is deliberately
-# NOT here yet: scenarios become shared documents in Phase 09, and wiring the
-# store in before there is anything to store would be dead code.
+# lib/stardesign (per-user documents, sharing, version history -- stands and
+# run records are stardesign documents, and backend.main imports it) is
+# installed the same way, from its path: setup.sh, dev.sh, Dockerfile.api and
+# the CI jobs each `pip install` ../lib/stardesign.
 
 # Asking the sibling design tools for their documents (backend.designtools).
 # Also what FastAPI's TestClient runs on, so it is not a new dependency

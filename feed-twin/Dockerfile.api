@@ -37,7 +37,24 @@ RUN python -c "import feedtwin; print('feedtwin', feedtwin.__version__)"
 COPY lib/stardesign/ /stardesign/
 RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
 
+# The combustion tables an engine without an EngineDesign card burns on
+# (backend.main._cea_for). In a checkout they are found at
+# EngineDesign/output/cache beside the app; here that path resolves to
+# /EngineDesign/output/cache, which nothing puts there, so every card-less
+# engine made 0 N and the console called it a cold flow (R048). Carried and
+# pointed at instead, and the build fails rather than ship without them.
+COPY EngineDesign/output/cache/cea_cache_*.npz /app/cea/
+ENV FEEDTWIN_CEA_DIR=/app/cea
+RUN python -c "import glob, sys; sys.exit(0 if glob.glob('/app/cea/cea_cache_*.npz') else 'no CEA table in /app/cea')"
+
 COPY feed-twin/backend/ ./backend/
+
+# The commit this image was built from, for every run record it writes
+# (backend.version): an image has no .git, so without it a deployed run said
+# commit '' (R053). Pass it: --build-arg FEEDTWIN_COMMIT=$(git rev-parse HEAD),
+# or docker-compose.yml's build args. Last, so a new commit rebuilds only this.
+ARG FEEDTWIN_COMMIT=
+ENV FEEDTWIN_COMMIT=${FEEDTWIN_COMMIT}
 
 ENV PYTHONPATH=/app
 EXPOSE 8003

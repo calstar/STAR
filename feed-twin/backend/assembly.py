@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from feedtwin.engine import EngineDesign
@@ -70,6 +71,7 @@ __all__ = [
     "load_engine_card",
     "card_summary",
     "card_version",
+    "NO_CEA_TABLE",
     "SIMPLIFIED_ENGINE",
     "swap_fluids",
 ]
@@ -225,6 +227,12 @@ def assemble(
             engine_meta = {"engine_model": "simplified", "why": "no card"}
         if card_meta.get("card_missing"):
             engine_meta["card_missing"] = card_meta["card_missing"]
+        # The simplified engine burning with no combustion table falls back to
+        # a constant c* with no thrust coefficient (feedtwin.session.model
+        # chamber_for): 0 N for the whole burn, which the console then read
+        # as a cold flow needing the tanks pressed (R048). Said, not taken.
+        if chamber is None and not fluid_swap and not Path(resolved or "").is_file():
+            notes.append(NO_CEA_TABLE)
 
     model = assemble_model(
         diagram,
@@ -258,6 +266,15 @@ SIMPLIFIED_ENGINE = (
     "off the CEA table, no manifold or nozzle losses), not EngineDesign's: no engine "
     "card is stored with it. On LE4 it read ~5 % low in thrust and ~10 % high in Isp "
     "against EngineDesign. Build the card in Library."
+)
+
+
+#: Said on the report when the simplified engine fires with no CEA table.
+NO_CEA_TABLE = (
+    "No CEA table was found for this engine's propellants (FEEDTWIN_CEA_DIR, or "
+    "EngineDesign/output/cache in a checkout), so the simplified engine has no "
+    "combustion table: it makes no thrust, and a burn reads as a cold flow. "
+    "Build the engine's EngineDesign card, or install the tables."
 )
 
 
