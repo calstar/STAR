@@ -515,6 +515,45 @@ sweep before trusting a wall result on new geometry.**
 **Quote the total thermal effect, not "+59 psi from line walls" alone**: the split
 between bottle wall and line walls still rides on an estimated `hA`.
 
+### 2.4b2 An itemised line carries its wall too (2026-11-02)
+
+A line the drawing itemises (pid-designer's segment list or centerline sketch) is
+solved as `model="segmented"`, and its line-level `bore` and `length` are dropped as
+superseded (`pid/network.py _SUPERSEDED_BY_SEGMENTS`). `Session._build_line_walls`
+read only `p["bore"]`, so every itemised line was left bare: on LE4 (3), where every
+sized line is itemised, the default-on fitting heat built **zero walls** in Hotbench
+and in Layer X, and Layer X's "line walls off" uncertainty case moved nothing.
+
+The geometry now comes from the segments (`SegmentedPipe.wetted_runs`, through
+`comps.wall.wall_runs`): each segment's bore, and its run as installed, fitting
+bodies included (the gas touches a bend's bore as much as the tube's; the loss path
+takes them out because they are already a K). The metal is the line-level
+`fitting_count` pid-designer writes from the segment list, as on a plain line.
+
+Expected: **a one-segment itemised run builds the same wall as the plain darcy line**
+-- same mass and bore to 1e-12, area to pid-designer's millimetre rounding of the
+line-level length (`tests/test_line_walls.py`). Hand check on LE4 (3)'s 0.817 m run
+off the regulator: 3 x 0.113 kg x (10.922/10.92)^2 = 0.339 kg, area
+pi x 10.922 mm x 816.85 mm = 0.0280 m^2. No shipped benchmark drawing itemises a line,
+so no figure in Tiers 1-2 moves (`scripts/physics_benchmark.py` passes unchanged).
+
+What moved, LE4 (3) as uploaded (ignore_gse, GN2, dome 535, COPV 3750):
+
+| | walls bare (before) | walls built |
+|---|---|---|
+| Hotbench T-0 burn, mean thrust | 6142.9 N | 6175.5 N (+0.53 %) |
+| Hotbench COPV at t = 4 s | 1140.8 psia | 1212.7 psia (+72) |
+| Hotbench tanks at t = 3 s (Eth / LOX) | 502.7 / 500.2 psia | 505.9 / 504.3 psia |
+| Layer X (replay off) mean thrust | 6148.9 N | 6175.2 N (+0.43 %) |
+| Layer X burn time | 3.860 s | 3.843 s |
+| Layer X COPV at burnout | 1211.6 psia | 1284.6 psia (+73) |
+| Layer X ox / fuel tank at end | 501.0 / 503.6 psia | 505.5 / 507.2 psia |
+| Layer X total impulse | 23,732 N·s | 23,730 N·s |
+
+The direction is 2.4's: warmer pressurant holds the same pressure on fewer kilograms,
+so the bottle keeps ~70 psi, and with the tanks under lockup late in the burn they sit
+3-4 psi higher. The golden (`copv_study_he`, no itemised lines) does not move.
+
 ### 2.4c T-0 is an initial condition, not a burn result
 
 A GN2 trace with collapse + vapour + walls + chilldown opened with a violent drop and

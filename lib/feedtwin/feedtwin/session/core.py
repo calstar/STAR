@@ -65,7 +65,13 @@ from feedtwin.comps.regulator import (
 from feedtwin.engine.balance import MixtureBalance
 from feedtwin.engine.chamber import MIN_CHAMBER_FLOW as ENGINE_MIN_CHAMBER_FLOW
 from feedtwin.engine.chamber import ChamberResult
-from feedtwin.comps.wall import STAINLESS_DENSITY, LineWall, fitting_metal
+from feedtwin.comps.wall import (
+    STAINLESS_DENSITY,
+    LineWall,
+    fitting_metal,
+    wall_bore,
+    wall_runs,
+)
 from feedtwin.props import Fluid, PropertyError
 from fluids.fittings import Cv_to_K
 from feedtwin.vessels.convection import GasFilm, still_gas_conductance
@@ -5349,14 +5355,15 @@ class Session:
         net = self.model.built.network
         for branch_id, branch in net.branches.items():
             component = branch.component
-            bore = component.p.get("bore", 0.0)
-            length = component.p.get("length", 0.0)
+            runs = wall_runs(component)
+            if not runs:
+                continue
+            bore = wall_bore(runs)
+            area = sum(math.pi * b * max(length, b) for b, length in runs)
             # One weighed figure for the whole run beats every estimate below.
             weighed = component.p.get("line_mass", 0.0)
-            if weighed > 0.0 and bore > 0.0:
-                self.walls[branch_id] = LineWall(
-                    mass=weighed, area=math.pi * bore * max(length, bore), bore=bore
-                )
+            if weighed > 0.0:
+                self.walls[branch_id] = LineWall(mass=weighed, area=area, bore=bore)
                 continue
             thickness = component.p.get("wall_thickness", 0.0)
             fittings = component.p.get("fitting_mass", 0.0)
@@ -5365,18 +5372,18 @@ class Session:
                 # Mass wins when both are given: somebody who went and weighed
                 # the run has better information than a bore-scaled estimate.
                 fittings = fitting_metal(component.p.get("fitting_count", 0.0), bore)
-            if bore <= 0.0:
-                continue
             tube = 0.0
-            if thickness > 0.0 and length > 0.0:
-                outer = bore + 2.0 * thickness
-                tube = math.pi / 4.0 * (outer**2 - bore**2) * length * STAINLESS_DENSITY
+            if thickness > 0.0:
+                for b, length in runs:
+                    if length > 0.0:
+                        outer = b + 2.0 * thickness
+                        tube += (
+                            math.pi / 4.0 * (outer**2 - b**2) * length
+                        ) * STAINLESS_DENSITY
             mass = tube + fittings
             if mass <= 0.0:
                 continue
-            self.walls[branch_id] = LineWall(
-                mass=mass, area=math.pi * bore * max(length, bore), bore=bore
-            )
+            self.walls[branch_id] = LineWall(mass=mass, area=area, bore=bore)
         # Temperatures are *not* set here. At build time a node still carries
         # whatever the drawing declared, so seeding the metal now would put the
         # line off a LOX ullage at liquid temperature rather than vapour

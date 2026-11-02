@@ -971,6 +971,35 @@ class SegmentedPipe(HydraulicComponent):
         )
         return K * _dynamic_head(mdot, small, flow.rho)
 
+    # ------------------------------------------------------- what it is made of
+
+    def wetted_runs(self) -> tuple[tuple[float, float], ...]:
+        """``(bore, length)`` of each sized segment as installed, end to end [m].
+
+        What the line's metal is wrapped around, for the line wall
+        (:class:`~feedtwin.comps.wall.LineWall`), and deliberately *not*
+        :meth:`~feedtwin.model.segments.LineSegment.tube_length`: that takes the
+        fitting bodies out because their loss is already priced as a K, but the
+        gas touches the inside of a bend or a union as much as the tube. On a
+        ``tube`` basis the bodies (less thread engagement) are added back; on an
+        ``overall`` basis the stated length already runs end to end. A segment
+        with no bore anywhere on the line cannot be sized and is left out, as
+        :meth:`_segment_dp` leaves it out of the loss.
+        """
+        runs: list[tuple[float, float]] = []
+        for segment in self.segments:
+            bore = segment.bore_si or self._bore
+            if bore <= 0.0:
+                continue
+            length = segment.stated_length
+            if segment.length_basis != "overall":
+                length += sum(
+                    max(f.length - f.engagement, 0.0) * f.count
+                    for f in segment.fittings
+                )
+            runs.append((bore, length))
+        return tuple(runs)
+
     # ---------------------------------------------------------- what it shows
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:

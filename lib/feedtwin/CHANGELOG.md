@@ -145,6 +145,30 @@ be able to find why they differ.
   `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.
 - `test_press_path_coupling.py`:
   `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`.
+## Unreleased — 2026-11-02: the drawing as built (overnight audit, network)
+
+### Fixed
+- **An itemised line gets its line wall** (`Session._build_line_walls`,
+  `comps.wall.wall_runs`, `SegmentedPipe.wetted_runs`). The wall build read only
+  the line-level `p["bore"]`, which the segment list supersedes, so every itemised
+  line was bare: on LE4 (3) the default-on fitting heat built no wall at all in
+  Hotbench or Layer X. Geometry now comes from the segments (bore, and the run as
+  installed with fitting bodies); the metal from the line-level `fitting_count`, as
+  on a plain line. A one-segment run builds the darcy line's wall.
+
+### Changed results
+- LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
+  at t = 4 s 1140.8 -> 1212.7 psia; Layer X (replay off) mean thrust 6148.9 ->
+  6175.2 N, burn 3.860 -> 3.843 s, COPV at burnout 1211.6 -> 1284.6 psia, ox/fuel at
+  end +4.5/+3.6 psi. Table in `docs/PHYSICS-BENCHMARK.md` 2.4b2. The same four lines
+  are itemised in `tests/fixtures/le4_rocket_and_gse.json` and the feed-twin sample
+  stand. No benchmark drawing itemises a line: `scripts/physics_benchmark.py` passes
+  unchanged, and the Layer X golden (`copv_study_he`) does not move.
+
+### Tests
+- `tests/test_line_walls.py`: one segment builds the darcy line's wall, the metal is
+  worked by hand, a drawn wall thickness adds tube per segment, a run with no bore
+  stays bare, and the LE4 press lines get walls. Four fail with the old build.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 
