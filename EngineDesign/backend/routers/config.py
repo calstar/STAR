@@ -189,10 +189,13 @@ async def switch_config_endpoint(
 
     A propellant overlay leaves the chamber seeded for the previous propellant; the response carries a
     ``design_warning`` ("needs re-optimization") so the UI can flag the design as a seed, not a solution.
+    That is the chamber's staleness only: fluid properties off their preset (a canonical config's
+    stale LOX block, say) come back separately as ``fluid_warning`` -- the chamber is still valid,
+    and a clean injector swap must not read as "needs re-optimization".
     """
     if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
-    from engine.pipeline.config_switch import switch_config, design_staleness
+    from engine.pipeline.config_switch import switch_config, chamber_staleness, preset_fluid_drift
     try:
         current = config_to_dict(session.app_state.config)
         reconciled = switch_config(
@@ -214,7 +217,8 @@ async def switch_config_endpoint(
         "status": "success",
         "config": config_to_dict(new_config),
         "binding_warnings": validate_config_bindings(new_config),
-        "design_warning": design_staleness(new_config),
+        "design_warning": chamber_staleness(new_config),
+        "fluid_warning": preset_fluid_drift(new_config),
     }
 
 

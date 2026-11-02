@@ -434,9 +434,18 @@ def switch_config(config: Dict[str, Any], *, injector_type: Optional[str] = None
 
 def design_staleness(config: Any) -> Optional[str]:
     """Return a human-readable warning if the live injector/propellant no longer match what the
-    chamber geometry was solved/seeded for (design_valid_for stamp), or if the fluid properties
+    chamber geometry was solved/seeded for (chamber_staleness), or if the fluid properties
     differ from the propellant preset's (preset_fluid_drift), else None. Accepts a dict or a
-    PintleEngineConfig. This powers the "Warn + flag for re-solve" forward-mode behaviour."""
+    PintleEngineConfig. This is the design warning forward mode shows."""
+    notes = [n for n in (chamber_staleness(config), preset_fluid_drift(config)) if n]
+    return " ".join(notes) or None
+
+
+def chamber_staleness(config: Any) -> Optional[str]:
+    """The "needs re-optimization" half of design_staleness: a sentence when the live
+    injector/propellant no longer match what the chamber geometry was solved/seeded for
+    (design_valid_for stamp), else None. Fluid drift is not part of it -- the chamber is still
+    the right one; the properties want refreshing (preset_fluid_drift)."""
     if config is None:
         return None
     if isinstance(config, dict):
@@ -447,20 +456,16 @@ def design_staleness(config: Any) -> Optional[str]:
         dvf = getattr(config, "design_valid_for", None)
         cur_inj = getattr(getattr(config, "injector", None), "type", None)
         cur_prop = getattr(config, "propellant_preset", None)
-    notes = []
     mism = []
     if dvf:
         if dvf.get("injector") and dvf["injector"] != cur_inj:
             mism.append(f"injector {dvf['injector']} -> {cur_inj}")
         if dvf.get("propellant") and dvf["propellant"] != cur_prop:
             mism.append(f"propellant {dvf['propellant']} -> {cur_prop}")
-    if mism:
-        notes.append("Chamber geometry was solved for " + ", ".join(mism) +
-                     ". It is being used as a seed only — re-run optimization for a valid design.")
-    drift = preset_fluid_drift(config)
-    if drift:
-        notes.append(drift)
-    return " ".join(notes) or None
+    if not mism:
+        return None
+    return ("Chamber geometry was solved for " + ", ".join(mism) +
+            ". It is being used as a seed only — re-run optimization for a valid design.")
 
 
 #: A fluid property further than this from its preset's value is reported. Wide enough that a

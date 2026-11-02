@@ -910,7 +910,8 @@ export function Layer1Optimization({
     }
     setMessage(
       'Switched the injector to impinging (canonical doublet, your propellant and requirements kept).' +
-        (res.data.design_warning ? ` ${res.data.design_warning}` : '')
+        (res.data.design_warning ? ` ${res.data.design_warning}` : '') +
+        (res.data.fluid_warning ? ` ${res.data.fluid_warning}` : '')
     );
     return true;
   };

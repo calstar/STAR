@@ -384,6 +384,9 @@ export interface SwitchResponse {
   // "Needs re-optimization": set when a propellant overlay left the chamber seeded for the old
   // propellant. null after a clean injector swap (canonical configs are internally coherent).
   design_warning?: string | null;
+  // The fluid properties differ from the propellant preset's (a canonical config's old LOX block):
+  // not a stale chamber, so not "needs re-optimization"; refresh them from the preset.
+  fluid_warning?: string | null;
 }
 
 export async function getSwitchOptions(): Promise<ApiResponse<SwitchOptions>> {
