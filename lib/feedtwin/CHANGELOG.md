@@ -197,6 +197,17 @@ be able to find why they differ.
   from the vehicle without a word. It now reads the end of the line it sits nearer
   to, and stays with whichever side holds both ends. No drawing in the repo nor
   LE4 (3) clips a probe to a line.
+- **A drawing holding two rockets is refused, with the pages named**
+  (`_separate_vehicles`). pid-designer's Duplicate page ("a hotfire and a launch
+  version") keeps every tag and checks tags per page; the twin builds every page
+  into one network, so LE4 with its Rocket page copied built two vehicles sharing
+  seven signals, no valve bound, and Fire sat at 0 N with no message. A drawing
+  whose engines sit on more than one drawn-line piece now raises
+  (`AssemblyError("build", ...)`): "... holds 2 separate vehicles, each with its own
+  engine: ENG-1 (page Rocket); ENG-1 (page Rocket (copy)) ... Keep one version on this
+  drawing and save the other as a drawing of its own." Two valves the table drives
+  under one tag (a copied cart page) are said, with their pages. No drawing in the
+  repo nor LE4 (3) has either.
 
 ### Changed results
 - LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
@@ -234,6 +245,9 @@ be able to find why they differ.
 - `tests/test_probes_on_lines.py`: each end of the line, a clip saved without a
   position, and the vehicle cut keeping it. Four fail on the old build; a probe on a
   tank reads as before.
+- `tests/test_two_vehicles.py`: LE4 with its Rocket page duplicated is refused, full
+  and rocket-only, naming both pages; a copied cart page says its shared tags; LE4
+  as drawn builds without either. Three fail on the old build.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

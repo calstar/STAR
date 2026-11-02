@@ -506,6 +506,21 @@ def build_network(
                 "make that explicit."
             )
 
+    vehicles = _separate_vehicles(diagram)
+    if len(vehicles) > 1:
+        named = "; ".join(
+            _and([f"{e.label or e.id} (page {e.page or 'Main'})" for e in engines])
+            for engines in vehicles
+        )
+        raise DiagramError(
+            f"{diagram.name}: this drawing holds {len(vehicles)} separate vehicles, "
+            f"each with its own engine: {named}. Every page is built into one "
+            "stand, so two versions of a rocket on one drawing -- pid-designer's "
+            "Duplicate page -- run as two vehicles sharing their tags, and no "
+            "valve binds. Keep one version on this drawing and save the other "
+            "as a drawing of its own."
+        )
+
     # 1. Places. Sources are boundaries; junctions and manifolds are free.
     sources = [n for n in diagram.nodes if n.is_source]
     if not sources:
@@ -654,6 +669,22 @@ def build_network(
         elif node.type in HAND_VALVE_TYPES:
             actuators[node.id] = f"{node.label}.command"
             hand.add(node.id)
+
+    # Two valves the table drives under one tag share one signal: whatever the
+    # state machine says, it says to both, and a role two valves share binds
+    # neither. pid-designer checks tags per page, so a copied page passes there.
+    tagged: dict[str, list[PidNode]] = {}
+    for node in diagram.nodes:
+        if node.type in ACTUATED_VALVE_TYPES and node.id in net.branches and node.label:
+            tagged.setdefault(node.label, []).append(node)
+    for tag, valves in sorted(tagged.items()):
+        if len(valves) > 1:
+            pages = sorted({v.page or "Main" for v in valves})
+            warnings.append(
+                f"{tag} is the tag of {len(valves)} valves (page "
+                f"{_and(pages)}): the state table drives them as one signal, "
+                "and binds neither by its job. Give each its own tag."
+            )
 
     # 3. Instruments observe. They join the network at the place they clip to.
     #    One clipped to a *line* (pid-designer clips probes to lines too) waits
@@ -1041,6 +1072,33 @@ def build_network(
         supplies=supplies,
         dome_lines=dome_lines,
     )
+
+
+def _separate_vehicles(diagram: Diagram) -> list[list[PidNode]]:
+    """The drawing's engines, grouped by the drawn-line piece each sits on.
+
+    One group is one vehicle: an engine and its injector, or a cluster on one
+    feed, are joined by lines and stay together. More than one group is more
+    than one rocket on the drawing -- most often the same rocket twice, a
+    hotfire and a launch version on two pages -- which :func:`build_network`
+    refuses rather than run as a stand whose shared tags bind nothing.
+    """
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        while parent.get(node, node) != node:
+            node = parent[node]
+        return node
+
+    for edge in diagram.edges:
+        a, b = find(edge.source), find(edge.target)
+        if a != b:
+            parent[a] = b
+    groups: dict[str, list[PidNode]] = {}
+    for node in diagram.nodes:
+        if node.type in ENGINE_TYPES:
+            groups.setdefault(find(node.id), []).append(node)
+    return list(groups.values())
 
 
 def _mate_disconnects(
