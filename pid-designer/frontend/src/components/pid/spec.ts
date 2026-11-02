@@ -239,13 +239,11 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       // measured from zero inlet (outlet = dome + bias - S x inlet), so there is
       // no reference inlet to give.
       { key: 'supply_coefficient', label: 'Supply effect', dimension: 'pressure_ratio', ratio: true },
-      // The datasheet's flow curve and seat, which feed-twin otherwise takes
-      // from its fallbacks (20 psi at 0.05 kg/s, perfect lockup, no dropout)
-      // and says so. Differences, so plain psi.
-      A('flow_droop', 'Flow droop', 'pressure'),
-      A('rated_flow', 'Rated flow', 'mass_flow'),
-      A('lockup_rise', 'Lockup rise', 'pressure'),
-      A('min_inlet_differential', 'Min inlet − outlet', 'pressure'),
+      // Not asked: flow_droop, rated_flow, lockup_rise, min_inlet_differential.
+      // Datasheet lines the team does not have (NOT_DRAWN in
+      // tests/test_spec_parity.py); feed-twin takes its fallbacks and its
+      // assembly report says so. One written on the drawing by hand is kept
+      // through a Save (ConfigDialog keeps what it does not own).
     ],
     options: [
       COEFFICIENT('Cv'),

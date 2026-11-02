@@ -221,29 +221,28 @@ describe('parameters the dialog does not own', () => {
     expect(out.params.setpoint).toBeDefined();
   });
 
-  it('asks for what feed-twin reads off a tank and a regulator, and keeps it', () => {
-    // The assembly report names each of these as assumed when the drawing
-    // does not say it; the dialog had no field for any of them.
+  it('asks a tank for the diameter feed-twin builds it from, and keeps it', () => {
+    // Without one the assembly report says "no diameter on the drawing; its
+    // static head assumes a 152 mm bore"; the dialog had no field for it.
     const dia = { value: 5.5, unit: 'in', source: 'measured' };
     const tank = dialog('node', {
       componentType: 'TANK', label: 'LOX-Tank', options: {}, params: { diameter: dia },
     } as unknown as Data);
     expect(tank.labels()).toContain('Inside diameter');
     expect(tank.save().params.diameter).toEqual(dia);
-    rt.reset();
+  });
 
+  it('keeps a regulator\'s datasheet lines written by hand, which it does not ask for', () => {
+    // flow_droop and the rest are NOT_DRAWN (tests/test_spec_parity.py): the
+    // team does not have them. One somebody wrote on the drawing is theirs.
     const droop = { value: 35, unit: 'psi', source: 'manufacturer' };
     const rated = { value: 0.2, unit: 'kg/s', source: 'manufacturer' };
     const lockup = { value: 12, unit: 'psi', source: 'manufacturer' };
     const dropout = { value: 75, unit: 'psi', source: 'manufacturer' };
-    const reg = dialog('node', {
+    const saved = dialog('node', {
       componentType: 'PR', label: 'DR', options: { domeLoaded: 'yes', flowCoefficient: 'Cv' },
       params: { flow_droop: droop, rated_flow: rated, lockup_rise: lockup, min_inlet_differential: dropout },
-    } as unknown as Data);
-    reg.more();
-    expect(reg.labels()).toEqual(expect.arrayContaining(['Flow droop', 'Rated flow', 'Lockup rise',
-      'Min inlet − outlet']));
-    const saved = reg.save().params;
+    } as unknown as Data).save().params;
     expect(saved).toMatchObject({ flow_droop: droop, rated_flow: rated, lockup_rise: lockup,
       min_inlet_differential: dropout });
   });
