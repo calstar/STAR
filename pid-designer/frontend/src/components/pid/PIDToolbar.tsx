@@ -4,6 +4,7 @@ import type { Capture, InteractionMode, MicroVersion, ReleaseVersion } from './P
 import { useReadOnly } from '@stardesign-ui';
 import { Modal } from '../ui';
 import { download, exportPng, exportSvg, fileStem } from './exportImage';
+import { drawingJSON } from '../../api/diagrams';
 import type { SheetMeta } from './exportImage';
 
 interface PIDToolbarProps {
@@ -150,7 +151,7 @@ export function PIDToolbar({
   // the PNG and SVG are it for a person. All named after the diagram, not
   // `pid_diagram.json`, which is what every export of every drawing was.
   const exportJSON = () => {
-    const blob = new Blob([JSON.stringify(getSnapshot(), null, 2)], { type: 'application/json' });
+    const blob = new Blob([drawingJSON(getSnapshot())], { type: 'application/json' });
     download(blob, `${sheet.name.replace(/[\\/:*?"<>|]+/g, '-').trim()}.json`);
     setExportOpen(false);
   };
