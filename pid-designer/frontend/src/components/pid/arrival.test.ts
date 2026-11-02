@@ -1,7 +1,37 @@
 // Arriving on a page (arrival.ts): a tall page is put up readable, from its
 // top, not whole at a size nobody can read.
 import { describe, expect, it } from 'vitest';
-import { arrivalViewport } from './arrival';
+import { arrivalViewport, sheetMeasured } from './arrival';
+
+describe('when a page is ready to be put up', () => {
+  type N = { hidden?: boolean; measured: { width?: number; height?: number } };
+  const sized = { measured: { width: 60, height: 40 } };
+  const unsized: N = { measured: {} };
+  // The canvas's lookup one frame after "GSE" was clicked: the Rocket page
+  // still measured, the GSE page shown but only partly measured.
+  const lookup = new Map<string, N>([
+    ['rocket-tank', { ...sized, hidden: true }],
+    ['ox-vent', sized],
+    ['pr-1', unsized],
+    ['hp-qd-a', unsized],
+  ]);
+  const gse = ['ox-vent', 'pr-1', 'hp-qd-a'];
+
+  it('waits until every symbol on the page has a size', () => {
+    // A fit taken now framed the few measured symbols at 2x (H063).
+    expect(sheetMeasured(lookup, gse)).toBe(false);
+    lookup.set('pr-1', sized);
+    lookup.set('hp-qd-a', sized);
+    expect(sheetMeasured(lookup, gse)).toBe(true);
+  });
+
+  it('is not ready on a page the canvas has not put up yet', () => {
+    // The store still showing the page left: the asked-for symbols are hidden.
+    expect(sheetMeasured(lookup, ['rocket-tank'])).toBe(false);
+    expect(sheetMeasured(lookup, ['not-there'])).toBe(false);
+    expect(sheetMeasured(lookup, [])).toBe(false);
+  });
+});
 
 // The LE4 stand's Rocket page as the 1080p editor measures it: a 690 x 1410
 // column in a 1672 x 939 pane, which framed whole came out at 0.65.

@@ -13,8 +13,8 @@
  */
 
 import { useCallback } from 'react';
-import { useReactFlow, useStoreApi } from '@xyflow/react';
-import type { Rect, Viewport } from '@xyflow/react';
+import { useReactFlow, useStore, useStoreApi } from '@xyflow/react';
+import type { ReactFlowState, Rect, Viewport } from '@xyflow/react';
 
 /** React Flow's own reading of a numeric fit padding: the pixels on each side (`parsePadding`). */
 function side(padding: number, extent: number): number {
@@ -51,6 +51,32 @@ export function arrivalViewport(
  * with `padding` as `fitView` takes it. The page is what the canvas shows: the
  * symbols it is not hiding.
  */
+/**
+ * Whether the page whose symbols are `ids` is up on the canvas and measured:
+ * every one of them shown and sized in React Flow's `lookup`.
+ *
+ * A fit has to wait for this. On a page switch the canvas puts the new page's
+ * symbols up a frame or more before it has measured them all, and a fit
+ * queued meanwhile is resolved by the first few measured -- feed-twin's GSE
+ * page came up at 2x on a corner of it. `useNodesInitialized` does not say
+ * this: read on the render that switches, it still answers for the page left.
+ * Asking about this page's own symbols does, whichever page the store holds.
+ */
+export function sheetMeasured(
+  lookup: ReadonlyMap<string, { hidden?: boolean; measured: { width?: number; height?: number } }>,
+  ids: readonly string[],
+): boolean {
+  return ids.length > 0 && ids.every(id => {
+    const n = lookup.get(id);
+    return Boolean(n && !n.hidden && (n.measured.width ?? 0) > 0 && (n.measured.height ?? 0) > 0);
+  });
+}
+
+/** `sheetMeasured` for the canvas this is rendered in, kept current. */
+export function useSheetMeasured(ids: readonly string[]): boolean {
+  return useStore(useCallback((s: ReactFlowState) => sheetMeasured(s.nodeLookup, ids), [ids]));
+}
+
 export function useArrive(): (padding?: number) => Promise<boolean> {
   const { fitView, setViewport, getNodes, getNodesBounds } = useReactFlow();
   const store = useStoreApi();
