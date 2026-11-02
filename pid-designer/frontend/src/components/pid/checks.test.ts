@@ -678,3 +678,46 @@ describe('a line drawn through a tee or an open end it does not join', () => {
     expect(onDots(plus(header(), down(300, 'Vehicle')))).toEqual([]);
   });
 });
+
+describe('lines with no size', () => {
+  const mm = (value: number) => ({ value, unit: 'mm', source: 'measured' as const });
+  const m = (value: number) => ({ value, unit: 'm', source: 'measured' as const });
+  const line = (id: string, data: Record<string, unknown>): Edge =>
+    ({ ...edge(id, 'TK', 'V'), data }) as unknown as Edge;
+  const unsized = (edges: Edge[]) =>
+    runChecks([node('TK', 'TANK'), node('V', 'MAN')], edges).find(f => f.id === 'lines-unsized')?.edgeIds ?? [];
+
+  it('counts a line with a length and a bore, by its numbers or by its segments, as sized', () => {
+    expect(unsized([
+      line('numbers', { params: { length: m(1), bore: mm(9.5) } }),
+      line('segments', { segments: [{ id: 'seg_1', method: 'itemised', length: mm(400), bore: mm(9.5) }] }),
+    ])).toEqual([]);
+  });
+
+  it('counts a bore of 0 as no bore, on a segment or on the line', () => {
+    // LE4 (3)'s fuel tank-to-main run, as the centreline sketch saved it
+    // before it had a diameter: a segment bore of 0 'estimated'. An object
+    // either way, and the check read objects, so it called the run sized
+    // while feed-twin priced nothing for it.
+    const le4 = line('le4', {
+      params: { length: m(0.519) },
+      segments: [{
+        id: 'seg_1', method: 'itemised', standard: 'tube',
+        bore: { value: 0, unit: 'mm', source: 'estimated', reference: 'from the centerline sketch' },
+        length: { value: 429.54, unit: 'mm', source: 'measured', reference: 'from the centerline sketch' },
+        fittings: [{ id: 'fit_1', kind: 'bend', count: 1, boreMm: 0, angleDeg: 45 }],
+      }],
+    });
+    const zero = line('zero', { params: { length: m(1), bore: mm(0) } });
+    expect(unsized([le4, zero])).toEqual(['le4', 'zero']);
+  });
+
+  it('reads the segments, not the line-level numbers, when the run has segments', () => {
+    // feed-twin does: the segments are the run, and a length and a bore left
+    // on the line are superseded (`_SUPERSEDED_BY_SEGMENTS`).
+    expect(unsized([line('stale', {
+      params: { length: m(1), bore: mm(9.5) },
+      segments: [{ id: 'seg_1', method: 'itemised', length: mm(400) }],
+    })])).toEqual(['stale']);
+  });
+});

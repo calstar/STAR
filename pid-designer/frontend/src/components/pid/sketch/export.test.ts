@@ -39,6 +39,31 @@ describe('a sketch as the segments feed-twin reads', () => {
     expect(exportSketch(addLeg(emptySketch('mm'), { x: 0, y: 200 })).orientation).toBe('down');
   });
 
+  it('states no bore for a run whose inner diameter was never given', () => {
+    // LE4 (3)'s fuel tank-to-main run: sketched, never given a diameter, and
+    // sent out as bore 0 'estimated' -- which the sheet's check counted as a
+    // size and feed-twin dropped, tube and bends together.
+    const s = setBend(addLeg(addLeg(emptySketch('in'), { x: 0, y: 200 }), { x: 150, y: 200 }), 0, 38.1)!;
+    const out = exportSketch(s);
+    expect(out.segments).toHaveLength(1);
+    expect(out.segments[0].bore).toBeUndefined();
+    expect(out.segments[0].length!.value).toBeGreaterThan(0);
+    const f = out.segments[0].fittings![0];
+    expect(f.kind).toBe('bend');
+    expect(f.angleDeg).toBeCloseTo(90, 6);
+    expect(f.boreMm).toBeUndefined();
+    expect(f.bendDiameters).toBeUndefined();
+  });
+
+  it('states a bore only on the stretches that have one', () => {
+    // Split before the diameter was given: the first stretch still has none.
+    let s = splitAt(addLeg(addLeg(emptySketch('mm'), { x: 300, y: 0 }), { x: 300, y: 400 }), 300);
+    s = setSectionBore(s, s.sections[0].id, 7.7);
+    const out = exportSketch(s);
+    expect(out.segments.map(x => x.bore?.value)).toEqual([undefined, 7.7]);
+    expect(out.segments.map(x => x.length!.value)).toEqual([300, 400]);
+  });
+
   it('is nothing for an empty sketch', () => {
     const out = exportSketch(emptySketch());
     expect(out.segments).toEqual([]);

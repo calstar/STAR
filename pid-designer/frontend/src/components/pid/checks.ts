@@ -504,12 +504,19 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   // Sized one of two ways: the one-number fields, or the itemised run, whose
   // segments carry the length and bore instead. The check used to read only
   // the first and fired on every line built the recommended way.
+  //
+  // A bore is a positive number, not a stated object: the centreline sketch
+  // once saved a run it had no diameter for as bore 0, this called that line
+  // sized, and feed-twin priced nothing for it. And when the run has segments
+  // they are what the solver reads -- the line-level numbers are superseded
+  // (feed-twin's `_SUPERSEDED_BY_SEGMENTS`) -- so they are what is judged.
+  const bored = (p: { value: number } | undefined) => !!p && p.value > 0;
   const bare = edges.filter(e => {
     const d = edgeDataOf(e);
     if (d.partNumber) return false;
-    if (d.params?.length && d.params?.bore) return false;
     const segs = d.segments ?? [];
-    return !(segs.length > 0 && segs.every(s => s.length && s.bore));
+    if (segs.length) return !segs.every(s => s.length && bored(s.bore));
+    return !(d.params?.length && bored(d.params?.bore));
   });
   if (bare.length) {
     push({

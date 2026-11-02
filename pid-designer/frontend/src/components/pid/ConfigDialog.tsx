@@ -215,8 +215,11 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         savedSegments = out.segments;
         params.elevation_change = out.elevationChange;
         params.length = { value: Math.round(out.totalLengthMm) / 1000, unit: 'm', source: 'measured', reference: 'from the centerline sketch' };
+        // Its bore, or none: a sketch with no inner diameter states none, and
+        // a bore typed on the line before it was sketched is not the run's.
         const first = out.segments[0];
         if (first?.bore) params.bore = { ...first.bore };
+        else delete params.bore;
         delete params.K_minor;
       }
     }
@@ -254,6 +257,13 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
   const sketched = kind === 'edge' && !!sketch && sketch.legs.length > 0;
   const superseded = kind === 'edge' && (segments.length > 0 || sketched);
+  // A run with a stretch of no stated bore: feed-twin can size neither its
+  // tube nor its fittings, and prices nothing for it. Said here, where it can
+  // be fixed, not only in the twin's assembly report.
+  const bored = (s: LineSegment) => !!s.bore && s.bore.value > 0;
+  const sketchSegments = sketched ? exportSketch(sketch!).segments : [];
+  const sketchUnbored = sketchSegments.some(s => !bored(s));
+  const listUnbored = !sketched && segments.some(s => !bored(s));
 
   const title = kind === 'edge' ? 'Line' : (data.label || type);
 
@@ -328,7 +338,8 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             ) : superseded && (
               <p className="text-[10px] text-amber-500/90">
                 This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
-                the solver reads that instead of the numbers here.{' '}
+                the solver reads that instead of the numbers here.
+                {listUnbored && ' Part of it states no bore, and the solver prices nothing for that part.'}{' '}
                 <button disabled={readOnly} onClick={() => setSegments([])}
                   className="underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   let it go
@@ -413,6 +424,13 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
               )}
             </div>
             {sketch && <SketchEditor sketch={sketch} onChange={setSketch} readOnly={readOnly} />}
+            {sketchUnbored && (
+              <p className="text-[10px] text-amber-500/90">
+                {sketchSegments.some(bored) ? 'Part of the run has' : 'The run has'} no inner diameter, so the solver can
+                size neither its tube nor its bends there and prices nothing for it. Set the inner diameter
+                above the sketch, or pick a size from the chart.
+              </p>
+            )}
           </div>
         )}
 
