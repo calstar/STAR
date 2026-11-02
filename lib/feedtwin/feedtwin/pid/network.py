@@ -956,6 +956,19 @@ def build_network(
             hint = "gas"
         elif fluids.get(drawing_id, "") in tank_contents:
             hint = "liquid"
+        elif (
+            fluids.get(drawing_id, default_fluid) == pressurant_species
+            and pressurant_species not in tank_contents
+        ):
+            # The pressurant where the reaches above do not go -- a vent run
+            # through a mated QD on the cart, say -- is still gas when no tank
+            # holds it as a liquid. Left undeclared it fell to the temperature
+            # rule, and GN2 vented off a chilling LOX tank was priced as liquid
+            # nitrogen (414-730 kg/m^3 against ~2.7) once it passed 126 K: the
+            # vent's back-pressure vanished mid-load. (A cold flow, where a
+            # tank holds the pressurant's own species, cannot be told apart
+            # by fluid and still falls to the rule.)
+            hint = "gas"
         else:
             continue
         for candidate in (anchor, f"{drawing_id}.in", f"{drawing_id}.out"):
