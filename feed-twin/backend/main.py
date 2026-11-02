@@ -4162,6 +4162,17 @@ async def session_t0(session_id: str) -> SessionOut:
                 f"over its {say(sim.mawp, 1)} MAWP: turn the dome down on the GSE "
                 "tab first.",
             )
+    # The vehicle's bottles too: T-0 charges them to the COPV target, and one
+    # charged over its MAWP tripped the stand on the first frame.
+    charge = from_psig(float(session.setup.copv_target_psi))
+    for bottle in session.bottles.values():
+        if bottle.id not in session.ground and 0.0 < bottle.mawp < charge:
+            raise HTTPException(
+                status_code=422,
+                detail=f"T-0 would charge {bottle.label} to {say(charge, 1)}, over "
+                f"its {say(bottle.mawp, 1)} MAWP: turn the COPV fill down on the "
+                "GSE tab first.",
+            )
     _remember(session_id, session, {"t0": True})
     try:
         t0 = jump_to_t0(
