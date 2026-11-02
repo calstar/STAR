@@ -4162,22 +4162,25 @@ def _settings_now(session: Session) -> dict[str, Any]:
     return {"setup": wire_setup(session.setup), "knobs": dict(session.knobs)}
 
 
-def _fired_on(opened: _Opened, fire_t: float, end_s: float) -> dict[str, Any] | None:
-    """The settings a burn was fired on, when the operator changed one between
-    Fire and its end: what the first such command found (``was``,
+def _fired_on(opened: _Opened, fire_t: float) -> dict[str, Any] | None:
+    """The settings a burn was fired on, when the operator has changed one
+    since its Fire: what the first such command found (``was``,
     :func:`_remember`). ``None`` when nothing changed them -- they are as they
     stand now.
 
-    A record's settings are read when the burn ends. A dome turned mid-burn
-    was recorded at its new value, and the replay -- which turns it again at
-    its T+ (``sequence``) -- burned the whole burn there: on the LE4 stand,
-    dome 535 turned to 435 at T+1.0 s replayed at 5,178 N mean thrust against
-    5,469 N recorded, 5.3 % short."""
+    A record's settings are read when it is written: when the burn ends, or
+    -- an engine out with Fire held -- COLD_FLOW_S after. A dome turned
+    mid-burn was recorded at its new value, and the replay -- which turns it
+    again at its T+ (``sequence``) -- burned the whole burn there: on the LE4
+    stand, dome 535 turned to 435 at T+1.0 s replayed at 5,178 N mean thrust
+    against 5,469 N recorded, 5.3 % short. A turn after the burn ended but
+    before its record was written is not in its sequence, and is not what it
+    was fired on either."""
     return next(
         (
             dict(c["was"])
             for c in opened.commands
-            if "was" in c and fire_t < float(c["t"]) <= end_s + 1e-9
+            if "was" in c and float(c["t"]) > fire_t
         ),
         None,
     )
@@ -4553,9 +4556,7 @@ def _record_burns(
             # swap that chose it is `setup.pressurant`).
             "pressurant": _pressurant_of(session),
             "inputs": {
-                **_inputs(
-                    session, opened, before, _fired_on(opened, fire_t, burn.end_s)
-                ),
+                **_inputs(session, opened, before, _fired_on(opened, fire_t)),
                 **({"sequence": sequence} if sequence else {}),
             },
             "outcome": outcome,

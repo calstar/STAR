@@ -209,6 +209,27 @@ def test_a_knob_turned_mid_burn_is_recorded_where_it_stood_at_fire(
         assert replayed[key] == pytest.approx(recorded[key], rel=tolerance), key
 
 
+def test_a_turn_after_the_burn_and_before_its_record_is_not_what_it_fired_on() -> None:
+    """An engine out with Fire held is recorded COLD_FLOW_S after it went out
+    (and a record that failed, at the next burnout): a knob turned in between
+    is in no burn's sequence, and the settings read then are not the ones the
+    burn was fired on. The first change since Fire says what they were."""
+    at_fire = {"setup": {"dome": 450.0}, "knobs": {"dome": 450.0}}
+    opened = main._Opened(
+        diagram="d", engine="e", fluid_set="hotfire", machine="diablo",
+        multiphase=False, user="local",
+        commands=[
+            {"t": 9.0, "command": {"state": "Fire"}},
+            # The burn ran 10.0 to 13.0; the knob turned at 13.2.
+            {"t": 13.2, "command": {"knob": {"id": "dome", "value": 600.0}},
+             "was": at_fire},
+        ],
+    )  # fmt: skip
+    assert main._fired_on(opened, 9.0) == at_fire
+    # A burn fired after the turn was fired at the turned value: as it stands.
+    assert main._fired_on(opened, 13.5) is None
+
+
 def test_a_burn_half_out_of_the_history_is_listed_once_as_recorded(
     stand: tuple[TestClient, str, str],
 ) -> None:
