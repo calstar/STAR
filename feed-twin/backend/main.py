@@ -2292,8 +2292,10 @@ def _close_session(session_id: str, why: str) -> None:
         and not opened.tripped
         and (opened.burning or opened.lit_t is not None)
     ):
+        # A stand replaced is a Reset, or another drawing, engine or setting
+        # that takes a new stand (stand.tsx): the server cannot tell which.
         how = (
-            "reset"
+            "reset or replaced"
             if "replaced" in why
             else "closed to make room" if "make room" in why else "closed"
         )

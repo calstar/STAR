@@ -136,7 +136,8 @@ def test_a_reset_mid_burn_records_the_burn_it_cut_short(
     _open(client, diagram, engine, replaces=sid)
     (record,) = _records(client)
     assert record["outcome"]["end_cause"] == "closed"
-    assert "reset" in record["outcome"]["ended"].lower()
+    # A Reset or a switch of drawing or engine: the server cannot tell which.
+    assert "reset or replaced" in record["outcome"]["ended"]
     assert record["outcome"]["duration_s"] == pytest.approx(1.0, abs=0.1)
     assert record["outcome"]["burning"] is False
 
