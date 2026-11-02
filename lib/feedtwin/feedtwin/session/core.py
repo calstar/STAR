@@ -77,7 +77,7 @@ from feedtwin.vessels.vapour import NoVapour, SaturatedVapour, latent_heat
 from feedtwin.vessels.tank import Tank, TankRates, TankState
 from feedtwin.vessels.volume import GRAVITY, GasVolume, VesselState
 
-from feedtwin.pid.document import BOUNDARY_TYPES, INLINE_TYPES, SOURCE_TYPES
+from feedtwin.pid.document import BOUNDARY_TYPES, INLINE_TYPES, SOURCE_TYPES, PidNode
 from feedtwin.pid.network import DOME_HANDLE, DomeLine, DomeLoader, propellant_side
 from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psig, say
 from feedtwin.session.diagnostics import SolverRecord, boundary_nodes, crossing
@@ -2350,6 +2350,12 @@ class Session:
         self._dome_ports: dict[str, frozenset[str]] = (
             self._find_cut_dome_ports() if self.gse_ignored else {}
         )
+        #: The vehicle's half of each such dome line, where valves are drawn on
+        #: it: the cart's dome supply stays plugged in at the capped disconnect
+        #: (the knob), and the rocket's valves gate it as a drawn line's do.
+        self._cut_dome_lines: dict[str, DomeLine] = (
+            self._find_cut_dome_lines() if self.gse_ignored else {}
+        )
         if self.gse_ignored:
             raw_cut = model.meta.get("ground_cut")
             cut = [str(c) for c in raw_cut] if isinstance(raw_cut, list) else []
@@ -2482,6 +2488,19 @@ class Session:
         (:func:`builtin_rows`), on the fills it found."""
         return builtin_rows(self.machine, self.model, self._drawn_fill)
 
+    def _cut_dome_regulators(self) -> list[PidNode]:
+        """The dome-loaded regulators whose loader is not on the drawing: it
+        was on the cart and went with it (:attr:`Setup.ignore_gse`)."""
+        built = self.model.built
+        loaded = {loader.signal for loader in built.dome_loaders.values()}
+        return [
+            node
+            for node in self.model.diagram.nodes
+            if node.type == "PR" and node.options.get("domeLoaded") == "yes"
+            # A loader still drawn sets it, or it was never built.
+            and built.actuators.get(node.id, "") not in loaded | {""}
+        ]
+
     def _find_cut_dome_ports(self) -> dict[str, frozenset[str]]:
         """The network nodes a dome-loaded regulator's dome line reaches, for
         each one with no loader left on the drawing: its loader was on the cart
@@ -2496,14 +2515,9 @@ class Session:
         for edge in diagram.edges:
             adjacent.setdefault(edge.source, set()).add(edge.target)
             adjacent.setdefault(edge.target, set()).add(edge.source)
-        loaded = {loader.signal for loader in built.dome_loaders.values()}
         stop = INLINE_TYPES | SOURCE_TYPES | BOUNDARY_TYPES
         out: dict[str, frozenset[str]] = {}
-        for node in diagram.nodes:
-            if node.type != "PR" or node.options.get("domeLoaded") != "yes":
-                continue
-            if built.actuators.get(node.id, "") in loaded | {""}:
-                continue  # a loader still drawn sets it, or it was never built
+        for node in self._cut_dome_regulators():
             frontier = [
                 e.target if e.source == node.id else e.source
                 for e in diagram.edges
@@ -2526,6 +2540,73 @@ class Session:
             places &= set(built.network.nodes)
             if places:
                 out[node.id] = frozenset(places)
+        return out
+
+    def _find_cut_dome_lines(self) -> dict[str, DomeLine]:
+        """Each cut dome line (:meth:`_find_cut_dome_ports`) with a valve drawn
+        on the vehicle's half of it, as a :class:`DomeLine` whose loader is the
+        capped disconnect the cart's dome supply came in through.
+
+        The dome line is loading gas off the cart, and like the cart's vents
+        it stays plugged into the rocket while the stand is on it: rocket only,
+        the dome comes in at the knob through that disconnect, and the
+        rocket's own dome valve decides whether it reaches the regulator.
+        :meth:`_gated_dome` walks it as it walks a drawn line, so a valve no
+        state-table row drives passes and the dome follows the knob exactly as
+        before; one a row drives loads the dome only in the states that open
+        it, and holds what was shut in otherwise. Walked from the ``dome``
+        handle through junctions, valves and instruments to one disconnect;
+        a line that reaches none, or more than one, is left as it was."""
+        built = self.model.built
+        diagram = self.model.diagram
+        by_id = {n.id: n for n in diagram.nodes}
+        adjacent: dict[str, set[str]] = {}
+        for edge in diagram.edges:
+            adjacent.setdefault(edge.source, set()).add(edge.target)
+            adjacent.setdefault(edge.target, set()).add(edge.source)
+        barrier = INLINE_TYPES - {"MAN", "ROT", "SOL", "MOV"} | SOURCE_TYPES
+        barrier |= BOUNDARY_TYPES
+        out: dict[str, DomeLine] = {}
+        for regulator in (node.id for node in self._cut_dome_regulators()):
+            ports = frozenset(
+                e.target if e.source == regulator else e.source
+                for e in diagram.edges
+                if (e.source == regulator and e.source_handle == DOME_HANDLE)
+                or (e.target == regulator and e.target_handle == DOME_HANDLE)
+            )
+            seen: set[str] = set()
+            couplings: set[str] = set()
+            frontier = list(ports)
+            while frontier:
+                here = frontier.pop()
+                if here in seen or here not in by_id or here == regulator:
+                    continue
+                seen.add(here)
+                if by_id[here].type == "QD":
+                    couplings.add(here)
+                    continue
+                if by_id[here].type not in barrier:
+                    frontier.extend(adjacent.get(here, ()))
+            valves = frozenset(
+                sid for sid in seen if sid in built.actuators and sid not in couplings
+            )
+            if len(couplings) != 1 or not valves:
+                continue
+            lines_on = {
+                sid: sum(1 for e in diagram.edges if sid in (e.source, e.target))
+                for sid in valves
+            }
+            out[regulator] = DomeLine(
+                loaded=regulator,
+                loader=next(iter(couplings)),
+                adjacent={
+                    sid: frozenset(o for o in adjacent.get(sid, ()) if o in seen)
+                    for sid in seen
+                },
+                ports=ports,
+                valves=valves,
+                vents=frozenset(v for v in valves if lines_on[v] == 1),
+            )
         return out
 
     def _build_vessels(self) -> None:
@@ -3106,7 +3187,12 @@ class Session:
                 if dome_signal:
                     out[dome_signal] = from_psig(self.setup.dome_psi)
 
-        # A dome line whose loader went with the GSE reads the dome it is set to.
+        # A dome line whose loader went with the GSE: gated by the rocket's own
+        # valves on it where it has any, then read as the dome it holds.
+        for regulator, line in self._cut_dome_lines.items():
+            signal = built.actuators[regulator]
+            if signal in out:
+                out[signal] = self._gated_dome(line, out[signal], commanded)
         for regulator, places in self._dome_ports.items():
             dome = out.get(built.actuators[regulator])
             if dome is not None:
