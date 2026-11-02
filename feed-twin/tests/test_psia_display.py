@@ -233,10 +233,13 @@ def test_an_old_record_replays_to_what_it_replayed_to_when_written(
         assert replayed[key] == pytest.approx(then[key], rel=5e-3), key
     # Since D-80 a replay burns to empty, as the cockpit burn it replays did,
     # not to BurnPlan's 60 g residual: the old replay stopped 0.05 s (20 %)
-    # short of the recording; this one lands on it.
+    # short of the recording; this one lands on it. Within 0.15 %, not 0.1:
+    # this record was burned by run_burn on BurnPlan's 0.05 s grid, and a
+    # replay steps on the cockpit's live step since H045 -- 0.12 % apart on a
+    # 0.25 s burn that is mostly its start (a console burn replays to 0.003 %).
     recorded = OLD["record"]["outcome"]
     for key in ("thrust_mean_N", "pc_mean_psi", "of_mean"):
-        assert replayed[key] == pytest.approx(recorded[key], rel=1e-3), key
+        assert replayed[key] == pytest.approx(recorded[key], rel=1.5e-3), key
     assert replayed["duration_s"] == pytest.approx(recorded["duration_s"], abs=0.01)
     assert abs(replayed["duration_s"] - recorded["duration_s"]) < abs(
         then["duration_s"] - recorded["duration_s"]
@@ -246,7 +249,8 @@ def test_an_old_record_replays_to_what_it_replayed_to_when_written(
     )
     assert difference["inputs"] == []
     pct = {o["key"]: abs(o["pct"] or 0.0) for o in difference["outcome"]}
-    assert max(pct[k] for k in ("thrust_mean_N", "pc_mean_psi", "of_mean")) < 0.1
+    # 0.15 %, as above: the record's grid and the replay's differ.
+    assert max(pct[k] for k in ("thrust_mean_N", "pc_mean_psi", "of_mean")) < 0.15
 
 
 def test_the_idle_chamber_channel_reads_what_the_pc_tile_reads() -> None:

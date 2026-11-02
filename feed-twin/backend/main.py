@@ -4565,6 +4565,41 @@ def _replay_command(session: Session, command: Mapping[str, Any]) -> None:
         pass
 
 
+def _replay_plan(
+    session: Session, inputs: Mapping[str, Any], horizon_s: float
+) -> BurnPlan:
+    """The T-0 a run's replay burns from: its tanks' loads and mean pressure,
+    the vehicle's bottle at its recorded charge, on the cockpit's grid."""
+    t0 = dict(inputs.get("t0") or {})
+    tanks = {k: v for k, v in dict(t0.get("tanks") or {}).items() if k in session.tanks}
+    pressures = [float(v["psig"]) for v in tanks.values()]
+    recorded = dict(t0.get("bottles") or {})
+    # The vehicle's bottle, whatever the drawing's order: T-0 records every
+    # bottle, the cart's too, and a cart K-bottle drawn first charged the
+    # COPV to 6,000 psig (H040).
+    ground = set(session.ground)
+    bottles = [
+        float(v["psig"])
+        for _, v in sorted(recorded.items(), key=lambda kv: kv[0] in ground)
+    ]
+    return BurnPlan(
+        tank_psi=sum(pressures) / len(pressures) if pressures else 550.0,
+        copv_psi=bottles[0] if bottles else 4500.0,
+        loads={k: float(v["liquid_kg"]) for k, v in tanks.items()} or None,
+        horizon_s=horizon_s,
+        end_on_depletion=True,
+        # Where the cockpit's burn it replays ended: a tank empty (DRY_MASS),
+        # not BurnPlan's 60 g design residual -- a replay that stopped 60 g
+        # early read 0.6 % short of the burn it was replaying (D-80).
+        dry_kg=DRY_MASS,
+        # The cockpit's grid -- the run's own live step, as the Study burns
+        # on (CLAUDE.md: the console runs the study's numerics). BurnPlan's
+        # 0.05 s split into two 0.025 s steps put grid error into the
+        # replayed-vs-recorded gap (H045).
+        dt=session.setup.live_step,
+    )
+
+
 def _replay(
     inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
 ) -> tuple[dict[str, float], list[str]]:
@@ -4578,21 +4613,7 @@ def _replay(
     window being compared.
     """
     session = _session_from_inputs(inputs)
-    t0 = dict(inputs.get("t0") or {})
-    tanks = {k: v for k, v in dict(t0.get("tanks") or {}).items() if k in session.tanks}
-    pressures = [float(v["psig"]) for v in tanks.values()]
-    bottles = [float(v["psig"]) for v in dict(t0.get("bottles") or {}).values()]
-    plan = BurnPlan(
-        tank_psi=sum(pressures) / len(pressures) if pressures else 550.0,
-        copv_psi=bottles[0] if bottles else 4500.0,
-        loads={k: float(v["liquid_kg"]) for k, v in tanks.items()} or None,
-        horizon_s=horizon_s,
-        end_on_depletion=True,
-        # Where the cockpit's burn it replays ended: a tank empty (DRY_MASS),
-        # not BurnPlan's 60 g design residual -- a replay that stopped 60 g
-        # early read 0.6 % short of the burn it was replaying (D-80).
-        dry_kg=DRY_MASS,
-    )
+    plan = _replay_plan(session, inputs, horizon_s)
     # What the operator commanded mid-burn, at its T+ from Fire: an abort, a
     # vent, a knob. Applied after the step that reaches it, as the console's
     # next tick would.

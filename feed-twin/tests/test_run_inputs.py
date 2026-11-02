@@ -184,6 +184,47 @@ def test_an_override_between_two_runs_is_in_the_diff_and_on_the_ladder() -> None
     assert run_records.with_swapped(a, b, rungs["drawing overrides"]) == b
 
 
+# --------------------------------------------------------------- the replay
+
+LE4 = (
+    Path(__file__).resolve().parents[2]
+    / "lib"
+    / "feedtwin"
+    / "tests"
+    / "fixtures"
+    / "le4_rocket_and_gse.json"
+)
+
+
+@pytest.mark.skipif(not LE4.is_file(), reason="no LE4 drawing")
+def test_a_replay_charges_the_vehicles_bottle_on_the_cockpits_grid() -> None:
+    """T-0 records every bottle, the cart's too, in drawing order: a cart
+    K-bottle drawn first charged the replay's COPV to 6,000 psig (H040). And
+    a replay steps on the run's own live step, not BurnPlan's 0.05 s (H045)."""
+    up = client.post(
+        "/api/library/diagrams",
+        files={"file": ("replay LE4.json", LE4.read_bytes(), "application/json")},
+    )
+    diagram = str(up.json()["artifact"]["id"])
+    try:
+        session = main._session_from_inputs(
+            {"diagram": diagram, "setup": {"ignore_gse": False}}
+        )
+        assert "node_63" in session.ground and "node_1" not in session.ground
+        t0 = {
+            "bottles": {
+                "node_63": {"label": "6K-GN2", "psig": 6000.0},
+                "node_1": {"label": "COPV", "psig": 3750.0},
+                "node_66": {"label": "2K-GN2", "psig": 2000.0},
+            }
+        }
+        plan = main._replay_plan(session, {"t0": t0}, 5.0)
+        assert plan.copv_psi == 3750.0
+        assert plan.dt == session.setup.live_step
+    finally:
+        main.library.remove(diagram)
+
+
 # ----------------------------------------------------------------------- card
 
 
