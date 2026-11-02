@@ -6,6 +6,26 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-11-02: the session on LE4 (3) (production pass)
+
+### Fixed
+- **Only the vehicle's tanks end a burn or hold a cold-flow chamber**
+  (`Session._burnout_check`, `Session._chamber`). Both counted every tank on the
+  stand, cart included: a cart transfer tank the loads had left dry sent every Fire
+  to Vent at T+0.00 s with both flight tanks full ("Burnout at T+0.00 s: Fuel
+  Transfer Tank ran dry"), and on a stand with no engine model a 50 psig dewar kept
+  the chamber at atmosphere. `burn()` already counted the vehicle alone.
+
+### Changed results
+- A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in
+  the transfer tank, Fuel Fill, T-0, Fire: 5.4 kN at T+0.25 s, was Vent at
+  T+0.00 s). Nothing moves on a stand without a cart or with a cart tank holding
+  propellant; the benchmark has neither.
+
+### Tests
+- `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
+  `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`.
+
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 
 ### Changed

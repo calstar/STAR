@@ -5572,7 +5572,14 @@ class Session:
         # flow, which reads as lit -- an Engine Abort on a 270 psia fuel tank
         # against a 385 psia drawing flipped every solve, and each backward
         # half took mass in from the chamber that no vessel held.
-        feeds = [sim.outlet_pressure for sim in self.tanks.values() if not sim.empty]
+        # The vehicle's tanks: a cart dewar at 50 psig, or a transfer tank the
+        # loads left dry, feeds no engine and kept a cold flow unlit.
+        vehicle = set(self.vehicle_tanks)
+        feeds = [
+            sim.outlet_pressure
+            for tank_id, sim in self.tanks.items()
+            if tank_id in vehicle and not sim.empty
+        ]
         lit = arriving > MIN_CHAMBER_FLOW and bool(feeds)
         lit = lit and min(feeds) > self._design_chamber
         net.nodes[chamber].pressure = self._design_chamber if lit else AMBIENT
@@ -5588,7 +5595,14 @@ class Session:
         """
         if not self.setup.auto_vent or self.state != "Fire":
             return
-        dry = [sim for sim in self.tanks.values() if sim.empty]
+        # The vehicle's tanks only, as `burn` counts them: a cart's transfer
+        # tank the loads left dry sent every Fire to Vent at T+0.00 s.
+        vehicle = set(self.vehicle_tanks)
+        dry = [
+            sim
+            for tank_id, sim in self.tanks.items()
+            if tank_id in vehicle and sim.empty
+        ]
         if not dry or not self.machine.can_go(self.state, "Vent"):
             return
         # T+ from Fire, not the stand clock: "T+302.7 s" after a 3.5 s burn

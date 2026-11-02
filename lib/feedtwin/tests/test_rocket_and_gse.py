@@ -609,3 +609,72 @@ def test_a_trip_names_the_vessel_furthest_over() -> None:
     session._check_limits()
     assert session.trip is not None and session.trip.vessel == ids["LOX-Tank"]
     assert session.tripped and session.tripped.startswith("LOX-Tank reached")
+
+
+# ------------------------------------------- the cart's tanks end no burn
+
+
+def _cart_tank_ran_dry(session: Any) -> Any:
+    """The cart's Fuel Transfer Tank after the loads it gave: dry, as a real fill
+    leaves it (``TankSim.advance`` sets ``empty``, and a resting cart vessel is
+    never advanced again to clear it)."""
+    cart = session.tanks[_ids()["Fuel Transfer Tank"]]
+    cart.state = replace(cart.state, liquid_mass=0.0)
+    cart.empty = True
+    return cart
+
+
+@pytest.mark.skipif(
+    not (ENGINE.exists() and CEA.exists() and TABLES.is_dir()),
+    reason="engine, CEA table or state machine tables absent",
+)
+def test_an_empty_cart_tank_is_not_a_burnout() -> None:
+    """Only the vehicle's tanks end a burn. ``_burnout_check`` counted every tank
+    on the stand, so a cart transfer tank emptied by the loads it gave sent each
+    Fire to Vent at T+0.00 s with the flight tanks full ("Burnout at T+0.00 s:
+    Fuel Transfer Tank ran dry")."""
+    import yaml
+
+    from feedtwin.engine.importer import engine_from_config
+    from feedtwin.session import assemble_model, load_machine
+    from feedtwin.session.burn import jump_to_t0, open_session
+    from feedtwin.session.hookup import suggest
+
+    design = engine_from_config(yaml.safe_load(ENGINE.read_text()), name="6800N")
+    model = assemble_model(
+        read_diagram(_payload(), name="LE4 (6)"),
+        diagram_id="le4",
+        engine=design,
+        cea_cache=str(CEA),
+    )
+    session = open_session(
+        model, load_machine(tables=TABLES), hookup=suggest(model, 500.0, 4500.0)
+    )
+    jump_to_t0(session, copv_psi=4500.0, fill_fraction=0.95)
+    _cart_tank_ran_dry(session)
+    session.command_state("Fire")
+    for _ in range(25):  # 0.5 s
+        session.step(0.02)
+    assert session.burnout is None
+    assert session.state == "Fire"
+    assert session.history[-1].chamber.thrust > 5000.0
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart() -> None:
+    """With no engine model the ENGINE symbol's design pressure is the boundary
+    while the feed can hold it. "The feed" counted the cart: a dewar at 50 psig
+    or a dry transfer tank under the 385 psia design kept the chamber at
+    atmosphere with both flight tanks pressed well above it."""
+    from feedtwin.session.burn import jump_to_t0
+
+    session = _session()
+    jump_to_t0(session, copv_psi=4000.0, fill_fraction=0.95)
+    _cart_tank_ran_dry(session)
+    session.command_state("Fire")
+    session.step(0.02)
+    session.step(0.02)
+    vehicle = [session.tanks[k] for k in session.vehicle_tanks]
+    assert min(sim.outlet_pressure for sim in vehicle) > session._design_chamber
+    chamber = session.model.built.network.nodes[session._chamber_node]
+    assert chamber.pressure == pytest.approx(session._design_chamber)
