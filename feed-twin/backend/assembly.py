@@ -50,7 +50,7 @@ from feedtwin.session.model import (
 )
 
 from backend.library import Library, LibraryError
-from backend.overrides import Applied, apply_overrides
+from backend.overrides import Applied, apply_overrides, unapplied
 
 __all__ = [
     "AssemblyError",
@@ -162,6 +162,9 @@ def assemble(
     artifact = library.get(diagram_id)
     diagram = load_diagram_artifact(library, diagram_id)
     applied: tuple[Applied, ...] = ()
+    # A stored override that cannot be read is left out and said, not raised
+    # through every view of the drawing.
+    notes: list[str] = unapplied(diagram, overrides) if overrides else []
     if overrides:
         diagram, applied = apply_overrides(diagram, overrides)
 
@@ -171,7 +174,6 @@ def assemble(
     engine: EngineDesign | None = None
     chamber = None
     resolved = ""
-    notes: list[str] = []
     engine_meta: dict[str, Any] = {}
     if reference:
         engine = load_engine_artifact(library, reference)

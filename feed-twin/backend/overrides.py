@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -39,7 +40,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from feedtwin.model.param import Param, Provenance
-from feedtwin.model.units import get_unit
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
+from feedtwin.model.units import UnknownUnit, get_unit
 from feedtwin.pid import Diagram
 
 #: Provenances an operator may give an override. ``default`` is refused: it
@@ -121,12 +123,18 @@ class OverrideStore:
         temporary.replace(self.path)
 
     def entry(self, drawing: str) -> dict[str, Any]:
-        found = self._read().get(drawing) or {}
+        found = self._read().get(drawing)
+        found = found if isinstance(found, Mapping) else {}
+
+        def part(key: str) -> dict[str, Any]:
+            # A store written by something else (a bundle's entry, by hand)
+            # may hold any shape: one that is not a table is nothing here.
+            value = found.get(key)
+            return dict(value) if isinstance(value, Mapping) else {}
+
         return {
-            "params": dict(found.get("params") or {}),
-            "console_hidden": dict(found.get("console_hidden") or {}),
-            "console_shown": dict(found.get("console_shown") or {}),
-            "console_order": dict(found.get("console_order") or {}),
+            key: part(key)
+            for key in ("params", "console_hidden", "console_shown", "console_order")
         }
 
     def _update(self, drawing: str, change: Any) -> dict[str, Any]:
@@ -183,7 +191,7 @@ class OverrideStore:
             get_unit(unit)
         except Exception as exc:  # UnknownUnit, but the message is the point
             raise OverrideError(f"unit {unit!r} is not a known unit ({exc})") from exc
-        if not isinstance(value, (int, float)) or value != value:
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
             raise OverrideError(f"value must be a number, got {value!r}")
 
         record = {
@@ -207,7 +215,9 @@ class OverrideStore:
 
     def clear_param(self, drawing: str, element: str, parameter: str) -> dict[str, Any]:
         def change(entry: dict[str, Any]) -> None:
-            own = entry["params"].get(element) or {}
+            own = entry["params"].get(element)
+            # One that is not a table of overrides goes with the clear.
+            own = dict(own) if isinstance(own, Mapping) else {}
             own.pop(parameter, None)
             if own:
                 entry["params"][element] = own
@@ -287,6 +297,66 @@ class OverrideStore:
 # ---------------------------------------------------------------- applying
 
 
+def unreadable(parameter: str, override: Any, symbol: str = "") -> str:
+    """Why a stored override cannot go into the drawing, or ``""`` if it can.
+
+    :meth:`OverrideStore.set_param` refuses each of these, but the store is
+    also written whole -- a stand bundle's import puts its entry in as it
+    came -- and one bad record made every assembly of the drawing raise: the
+    model, the session and the Drawing view, the one place it could be
+    cleared from. ``symbol``: the type of the symbol it is on, which decides
+    what a bare pressure unit means (:func:`feedtwin.model.pressure.drawn_unit`).
+    """
+    if not isinstance(override, Mapping):
+        return "it is not an override record"
+    source = override.get("source")
+    if source not in OVERRIDE_SOURCES:
+        return f"its source {source!r} is not one of {', '.join(OVERRIDE_SOURCES)}"
+    try:
+        value = float(override.get("value"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return f"its value {override.get('value')!r} is not a number"
+    if not math.isfinite(value):
+        return f"its value {value} is not a number"
+    unit = str(override.get("unit", ""))
+    try:
+        get_unit(unit)
+        drawn_unit(parameter, unit, symbol)
+    except PressureReferenceError as exc:
+        return str(exc)
+    except UnknownUnit:
+        return f"its unit {unit!r} is not a known unit"
+    return ""
+
+
+def unapplied(diagram: Diagram, entry: Mapping[str, Any]) -> list[str]:
+    """A sentence for each stored override on this drawing that cannot be
+    applied (:func:`unreadable`), for the assembly's warnings."""
+    params = entry.get("params")
+    if not isinstance(params, Mapping):
+        return []
+    symbols = {n.id: n.type for n in diagram.nodes}
+    here = set(symbols) | {e.id for e in diagram.edges}
+    out: list[str] = []
+    for element, own in sorted(params.items()):
+        if element not in here:
+            continue  # orphaned: the Drawing view lists those
+        if not isinstance(own, Mapping):
+            out.append(
+                f"The overrides stored for {element} cannot be read and are not "
+                "applied; clear them in the Drawing view."
+            )
+            continue
+        for name, o in sorted(own.items()):
+            why = unreadable(name, o, symbols.get(element, ""))
+            if why:
+                out.append(
+                    f"The override on {element} {name} is not applied: {why}. "
+                    "Clear it in the Drawing view."
+                )
+    return out
+
+
 def apply_overrides(
     diagram: Diagram, entry: Mapping[str, Any]
 ) -> tuple[Diagram, tuple[Applied, ...]]:
@@ -294,25 +364,36 @@ def apply_overrides(
 
     An override naming a symbol or line the drawing no longer has is skipped,
     not an error: the drawing was re-imported without it, and the drawing view
-    lists it as orphaned so somebody can clear it.
+    lists it as orphaned so somebody can clear it. One that cannot be read is
+    skipped too (:func:`unreadable`; :func:`unapplied` says which).
+
+    A pressure is read as the drawing reads its own: a bare ``psi`` on an
+    absolute pressure is gauge, except on the chamber (ADR 0004,
+    :func:`~feedtwin.model.pressure.drawn_unit`). Typed over a drawn
+    "1000 psi" MAWP, the same "1000 psi" was read absolute, 14.7 psi lower.
 
     Returns the *same* diagram object when nothing applies.
     """
     params = entry.get("params") or {}
-    if not params:
+    if not isinstance(params, Mapping) or not params:
         return diagram, ()
 
     applied: list[Applied] = []
 
-    def overlay(element: str, current: Mapping[str, Param]) -> Mapping[str, Param]:
-        own = params.get(element) or {}
-        if not own:
+    def overlay(
+        element: str, current: Mapping[str, Param], symbol: str = ""
+    ) -> Mapping[str, Param]:
+        own = params.get(element)
+        if not isinstance(own, Mapping) or not own:
             return current
         merged = dict(current)
         for name, o in sorted(own.items()):
+            if unreadable(name, o, symbol):
+                continue
+            unit = drawn_unit(name, str(o["unit"]), symbol)
             merged[name] = Param(
                 float(o["value"]),
-                str(o["unit"]),
+                unit,
                 Provenance(o["source"]),
                 f"override by {o.get('by') or 'unknown'} at {o.get('at', '')}: "
                 f"{o.get('reference', '')}",
@@ -322,7 +403,7 @@ def apply_overrides(
                     element=element,
                     parameter=name,
                     value=float(o["value"]),
-                    unit=str(o["unit"]),
+                    unit=unit,
                     source=str(o["source"]),
                     reference=str(o.get("reference", "")),
                     by=str(o.get("by", "")),
@@ -331,15 +412,18 @@ def apply_overrides(
             )
         return merged
 
+    def superseded(element: str) -> bool:
+        own = params.get(element)
+        return isinstance(own, Mapping) and bool(SUPERSEDED_BY_SEGMENTS & set(own))
+
     nodes = tuple(
-        replace(n, params=overlay(n.id, n.params)) if n.id in params else n
+        replace(n, params=overlay(n.id, n.params, n.type)) if n.id in params else n
         for n in diagram.nodes
     )
     edges = tuple(
         (
             replace(e, params=overlay(e.id, e.params))
-            if e.id in params
-            and not (e.segments.segments and SUPERSEDED_BY_SEGMENTS & set(params[e.id]))
+            if e.id in params and not (e.segments.segments and superseded(e.id))
             else e
         )
         for e in diagram.edges

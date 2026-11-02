@@ -288,3 +288,84 @@ def test_the_console_order_and_a_stands_view_are_kept() -> None:
         assert r.json()["order"] == {}
     finally:
         library.remove(diagram)
+
+
+# ------------------------------------------------- read as the drawing reads
+
+
+def _override(value: object, unit: str, source: str = "measured") -> dict:
+    return {"value": value, "unit": unit, "source": source, "reference": "gauge"}
+
+
+def test_a_bare_psi_override_reads_as_the_drawing_reads_it() -> None:
+    """ADR 0004: on an absolute pressure a bare 'psi' is gauge, as on the dial
+    -- the drawing's loader reads it so. An override typed the same way was
+    read absolute: an MAWP of '1000 psi' tripped the tank 14.7 psi early.
+    The chamber's, on the ENGINE symbol, stays absolute."""
+    diagram = read_diagram(json.loads(library.read(stand_id())))
+    drawn = diagram.node("OXT").params["MAWP"]
+    chamber = diagram.node("ENG").params["pressure"]
+    assert drawn.unit == "psig" and chamber.unit == "psi"
+    entry = {
+        "params": {
+            "OXT": {"MAWP": _override(drawn.value, "psi")},
+            "ENG": {"pressure": _override(chamber.value, "psi")},
+        }
+    }
+    changed, applied = apply_overrides(diagram, entry)
+    assert changed.node("OXT").params["MAWP"].si == drawn.si
+    assert changed.node("ENG").params["pressure"].si == chamber.si
+    assert {(a.element, a.unit) for a in applied} == {("OXT", "psig"), ("ENG", "psi")}
+
+
+def test_a_reference_on_a_pressure_difference_is_refused() -> None:
+    """A drawing refuses 'psig' on a difference (an atmosphere silently added
+    to a bias); an override said nothing and stored it."""
+    r = put("PR_D", "dome_bias", 50.0, "psig")
+    assert r.status_code == 422, r.text
+    assert "difference" in r.json()["detail"]
+
+
+def test_an_unreadable_stored_override_does_not_take_the_drawing_down() -> None:
+    """A stand bundle's overrides go into the store as they come. One with a
+    source nobody may give, a value that is not a number or a unit nobody
+    knows made every assembly raise: the model, the session and the Drawing
+    view -- the one place it could be cleared from -- all failed. It is now
+    left out and said, and the Drawing view still offers to clear it."""
+    sid = stand_id()
+    name = library.get(sid).name
+    overrides.put_entry(
+        name,
+        {
+            "params": {
+                "KB1": {
+                    "volume": _override(4.0, "L", source="guess"),
+                    "pressure": _override("lots", "psi"),
+                },
+                "OXT": {"volume": _override(float("nan"), "L"), "MAWP": "oops"},
+                "FUT": "oops",
+                "PR_D": {"setpoint": _override(480.0, "furlongs")},
+            }
+        },
+    )
+    model = client.get("/api/model", params={"diagram": sid})
+    assert model.status_code == 200, model.text
+    report = model.json()["report"]
+    assert report["overrides"] == []
+    said = " ".join(report["warnings"])
+    assert "KB1 volume" in said and "guess" in said, said
+    assert "PR_D setpoint" in said, said
+    session = client.post("/api/session", params={"diagram": sid}, json={})
+    assert session.status_code == 200, session.text
+    view = client.get("/api/drawing", params={"diagram": sid})
+    assert view.status_code == 200, view.text
+    volume = bottle_volume(view.json())
+    assert volume["override"]["source"] == "guess"
+    assert volume["locked"] and volume["effective"]["value"] == 4.6871
+    cleared = client.delete(
+        "/api/drawing/override",
+        params={"diagram": sid, "element": "KB1", "parameter": "volume"},
+    )
+    assert cleared.status_code == 200, cleared.text
+    volume = bottle_volume(client.get("/api/drawing", params={"diagram": sid}).json())
+    assert volume["override"] is None

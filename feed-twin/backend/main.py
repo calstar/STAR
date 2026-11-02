@@ -64,7 +64,9 @@ from backend.overrides import (
     OverrideStore,
     apply_overrides,
     fingerprint,
+    unreadable,
 )
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
 from feedtwin.model.param import Param
 from feedtwin.model.units import UnknownUnit, dimension_of, registered_units
 from backend.models import (
@@ -1478,9 +1480,10 @@ async def drawing_view(
     _, applied = apply_overrides(raw.diagram, entry)
 
     def params_of(
-        element: str, declared: Mapping[str, Param], segmented: bool
+        element: str, declared: Mapping[str, Param], segmented: bool, symbol: str = ""
     ) -> list[DrawingParam]:
-        own = stored.get(element) or {}
+        own = stored.get(element)
+        own = own if isinstance(own, Mapping) else {}
         filled = assumed.get(element, {})
         out = []
         for name in sorted(set(declared) | set(filled) | set(own)):
@@ -1489,30 +1492,35 @@ async def drawing_view(
             # drawing's own number, so it is shown once, as the drawing's.
             fill = filled.get(name) if drawn is None else None
             o = own.get(name)
+            # One that cannot be read is not applied: shown with why, and its
+            # revert, which is the only way to be rid of it.
+            why = unreadable(name, o, symbol) if o is not None else ""
             locked = (
                 "superseded by the line's itemised run"
                 if segmented and name in SUPERSEDED_BY_SEGMENTS
-                else ""
+                else f"Not applied: {why}." if why else ""
             )
             override = None
             stale = False
             if o is not None:
-                was = o.get("was")
+                record = o if isinstance(o, Mapping) else {}
+                was = record.get("was")
+                was = was if isinstance(was, Mapping) else None
                 override = OverrideOut(
-                    value=o["value"],
-                    unit=o["unit"],
-                    source=o["source"],
-                    reference=o.get("reference", ""),
-                    by=o.get("by", ""),
-                    at=o.get("at", ""),
+                    value=0.0 if why else record["value"],
+                    unit=str(record.get("unit", "-")),
+                    source=str(record.get("source", "")),
+                    reference=str(record.get("reference", "")),
+                    by=str(record.get("by", "")),
+                    at=str(record.get("at", "")),
                     was=ParamValue(**was, reference="") if was else None,
                 )
                 if was is None:
                     stale = drawn is not None
                 else:
                     stale = drawn is None or (drawn.value, drawn.unit) != (
-                        was["value"],
-                        was["unit"],
+                        was.get("value"),
+                        was.get("unit"),
                     )
             base = _value(drawn) if drawn is not None else fill
             effective = (
@@ -1552,7 +1560,7 @@ async def drawing_view(
                 type=n.type,
                 role=_role(n.type),
                 fluid=n.fluid,
-                params=params_of(n.id, n.params, False),
+                params=params_of(n.id, n.params, False, n.type),
                 options=dict(n.options),
                 on_console=n.id in console,
                 console_hidden=n.id in hidden,
@@ -1584,7 +1592,12 @@ async def drawing_view(
         imported_at=artifact.imported_at,
         elements=elements,
         orphaned=sorted(
-            [f"{el}.{p}" for el, ps in stored.items() if el not in known for p in ps]
+            [
+                f"{el}.{p}"
+                for el, ps in stored.items()
+                if el not in known
+                for p in (ps if isinstance(ps, Mapping) else ["(unreadable)"])
+            ]
             + [f"{el} (console)" for el in hidden if el not in known]
         ),
         overrides_hash=fingerprint(applied),
@@ -1634,6 +1647,14 @@ async def set_override(
             raise HTTPException(
                 status_code=422, detail=f"unknown unit {unit!r}"
             ) from exc
+    # Read as the drawing reads its own (ADR 0004): a gauge or absolute
+    # reference on a difference is refused there, so it is here.
+    try:
+        drawn_unit(parameter, unit, node.type if node is not None else "")
+    except PressureReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnknownUnit:
+        pass  # set_param says so
     try:
         entry = overrides.set_param(
             key,
