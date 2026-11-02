@@ -29,6 +29,8 @@ be able to find why they differ.
   bottle; a lockup under atmosphere is a shut regulator. A T-0 note says which.
   `T0.lockup_psi` is still each regulator's own lockup; `T0.tank_psi` is where the
   tanks went. `regulator_lockup` is unchanged (the GSE tab's range reads the law).
+  With regulators locking up apart, the spread note names where the tanks went too
+  (it said the lower lockup while the next note said the bottle).
 - **An abort in the LOX-chill window runs at real time** (`_press_path_timescale`).
   With the fuel loaded and the LOX tank empty, Engine Abort drains the fuel by
   gravity through its open main while its press path, the manifold, is vented
@@ -37,7 +39,7 @@ be able to find why they differ.
   of CPU per 0.25 s tick, ~35 min of wall clock for the 52 s drain. A supply within
   its band of atmosphere is a vent and asks for nothing (now 1 coupling, 0.15 s CPU
   per tick).
-- **`Setup.supply_press_s` has a Configuration row** ("Transfer tank press time",
+- **`Setup.supply_press_s` has a Configuration row** ("Cart supply press time",
   feed-twin `backend/tunables.py`), so it is dialled on the Configuration tab and
   carried in every run record's inputs (`wire_setup`). It was the one assumed number
   with neither. `feed-twin/tests/test_tunables.py` now holds every Setup field to a
@@ -46,8 +48,10 @@ be able to find why they differ.
 - **A COPV charging is not "down to" anything** (`BottleSim.peak`, `_notes`). The
   note read "COPV is down to 107 psia, 3% of what it was filled to" on every tick of
   the first quarter of a charge from empty. It now says how far a bottle is down
-  from the most it has held ("down to 415 psia, 10% of the 4,018 psia it was filled
-  to"), and nothing while it charges.
+  from the most it has held since its last charge or T-0 prime ("down to 415 psia,
+  10% of the 4,018 psia it was filled to"), only once it has fallen under a quarter
+  of its target from above it, and nothing while it charges. A bottle primed low, a
+  charge stopped short, or a recharge after a dump is not "down to" anything.
 - **A bottle dumped at atmosphere stays at atmosphere** (`BottleSim._at_atmosphere`,
   the built-in dump). The dump took a ninth of the gas a second whatever the bottle
   held, and the floor put it back at the wall's density with none of its energy:
@@ -64,7 +68,8 @@ be able to find why they differ.
   drawn. It now fires when the propellant's vapour partial pressure, or the
   saturation pressure of its liquid (bulk or surface, whichever is warmer), is
   within 3 % of critical -- a shut LOX tank boiled up on its own oxygen still gets
-  it -- and says "no relief valve" only of a drawing with none.
+  it -- and says "no relief valve" only of a tank with none drawn on it
+  (`Session._reliefs_on`: the COPV's relief does not lift for a tank).
 - **A trip says the vessel is past its rating, and names the reliefs it beat**
   (`_check_limits`, `Session._reliefs_on`). The limit is the drawing's burst over a
   factor of two, and the trip said "The tank would have failed" at half the burst.
@@ -144,7 +149,15 @@ be able to find why they differ.
   `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`,
   `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.
 - `test_press_path_coupling.py`:
-  `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`.
+  `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing` (also bounds the
+  one-coupling drain's ring under 0.05 psi).
+- Review (2026-11-02): `test_ignore_gse.py`: `test_a_bottle_at_the_air_drawn_on_reads_the_air`
+  (the floor apart from the dump, which passed on the old floor),
+  `test_a_primed_bottle_is_down_from_its_prime`, and a recharge after a dump in
+  `test_a_bottle_charging_is_not_down_to_anything`; `test_jump_to_t0.py`:
+  `test_regulators_apart_over_a_low_bottle_say_where_the_tanks_went`, and the
+  critical-point test now drops the LOX tank's own relief.
+
 ## Unreleased — 2026-11-02: the drawing as built (overnight audit, network)
 
 ### Fixed
