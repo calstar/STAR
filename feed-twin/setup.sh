@@ -78,9 +78,15 @@ ok "System packages ready"
 step "Python venv (feed-twin/.venv)"
 
 cd "$APP_DIR"
+# lib/feedtwin and lib/stardesign require Python 3.11 or newer; a bare
+# `python3` is the macOS system 3.9 beside the python3.11 installed above, or
+# Ubuntu 22.04's 3.10.
+PY="$(python_at_least 11)" || fail "feed-twin needs Python 3.11 or newer (lib/feedtwin and lib/stardesign require it); python3 here is $(python3 --version 2>&1). Install python3.11 or newer (brew install python@3.11; apt install python3.11 python3.11-venv) and run this again."
 if [ ! -d .venv ]; then
-  python3 -m venv .venv
-  ok ".venv created"
+  "$PY" -m venv .venv
+  ok ".venv created ($("$PY" --version 2>&1))"
+elif ! venv_at_least .venv 11; then
+  fail "feed-twin/.venv is $(.venv/bin/python --version 2>&1); feed-twin needs 3.11 or newer. Remove feed-twin/.venv and run this again to rebuild it on $("$PY" --version 2>&1)."
 else
   ok ".venv already exists"
 fi
