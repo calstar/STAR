@@ -351,7 +351,7 @@ export function Pid() {
             <div className="flex flex-shrink-0 border-b border-[var(--line)]" role="tablist" aria-label="Panel">
               {(
                 [
-                  ['symbols', 'Symbols', 'Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they are shared with everyone and follow the drawing when it is re-imported.'],
+                  ['symbols', 'Symbols', 'Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in the Twin and never touch the drawing in Hotbench P&ID; they are shared with everyone and follow the drawing when it is re-imported.'],
                   ['daq', 'DAQ box', 'The boards of connectors: which valve or sensor each one is cabled to'],
                 ] as const
               ).map(([m, label, hint]) => (

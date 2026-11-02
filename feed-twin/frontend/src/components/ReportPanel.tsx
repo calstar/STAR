@@ -15,7 +15,7 @@ import { asShown } from '../lib/pressure';
 const SECTION: Record<CheckKind, { title: string; hint: string; tone: string }> = {
   fix: {
     title: 'Worth fixing on the drawing',
-    hint: 'Each of these changes an answer, or leaves part of the stand out. Fix it in pid-designer (or Library for the engine).',
+    hint: 'Each of these changes an answer, or leaves part of the stand out. Fix it on the drawing in Hotbench P&ID (or in Library for the engine).',
     tone: 'var(--warn)',
   },
   assumed: {

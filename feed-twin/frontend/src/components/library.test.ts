@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, ImportResult } from '../api';
 import { isStandBundle, pulledFrom, superseded } from './LibraryPanel';
+import { importedNote, sourceName } from './SourcePanel';
 
 describe('a stand file dropped on the Library is a stand, not a drawing', () => {
   it('by the format it says it is', () => {
@@ -13,7 +14,6 @@ describe('a stand file dropped on the Library is a stand, not a drawing', () => 
     expect(isStandBundle('not json')).toBe(false);
   });
 });
-import { importedNote } from './SourcePanel';
 
 const art = (id: string, source: string, imported_at: string, name = 'Ethalox 7200N Doublet'): Artifact => ({
   id,
@@ -56,5 +56,15 @@ describe('what an import says when it lands', () => {
   });
   it('a new drawing is imported', () => {
     expect(importedNote(result('LE4 Stand', false), 'LE4 Stand')).toBe('Imported LE4 Stand.');
+  });
+});
+
+describe('the design tools by the names the header gives them', () => {
+  it('calls the drawing and engine tools Hotbench P&ID and Hotbench Engine', () => {
+    // The header's switcher says ENGINE | P&ID | TWIN; the Library's list said
+    // "pid-designer", the server's own key.
+    expect(sourceName({ key: 'pid-designer', label: 'pid-designer' })).toBe('Hotbench P&ID');
+    expect(sourceName({ key: 'engine-design', label: 'EngineDesign' })).toBe('Hotbench Engine');
+    expect(sourceName({ key: 'someone-else', label: 'Their tool' })).toBe('Their tool');
   });
 });
