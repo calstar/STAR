@@ -12,6 +12,7 @@ operator with a measurement puts the better number.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields, replace
 from typing import Any, Mapping
 
@@ -886,28 +887,74 @@ for _t in TUNABLES:
 GAUGE_WIRE = frozenset(t.key for t in TUNABLES if t.gauge_wire)
 
 
-def parse_setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
+class SetupError(ValueError):
+    """A Configuration value that cannot be read, said with its row."""
+
+
+#: How a person or a file writes a flag's two values.
+_ON = frozenset({"1", "true", "yes", "on"})
+_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _flag(raw: Any) -> bool | None:
+    """On, off, or ``None`` when it is neither. ``bool("false")`` is True:
+    the string turned every flag it was sent for on."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(raw)
+    word = str(raw).strip().lower()
+    return True if word in _ON else False if word in _OFF else None
+
+
+def parse_setup(
+    settings: Mapping[str, Any], base: Setup | None = None, *, strict: bool = False
+) -> Setup:
     """The dials, from whatever the client sent. Anything unsent is kept.
 
     ``replace`` on the base, never a fresh ``Setup``: building it field by
     field silently reset every dial the client did not send.
+
+    A value that cannot be read -- not a number, NaN or infinite, a flag that
+    is neither on nor off, a choice not offered -- is skipped and the dial
+    keeps its value; with ``strict`` it is refused instead
+    (:class:`SetupError`, naming the row). A stand opened from a saved
+    document still opens; an edit made now says why it did nothing. NaN went
+    through the clamp (``max(nan, low)`` is nan) and left a session that
+    failed every tick.
     """
     current = base or Setup()
     changes: dict[str, Any] = {}
+
+    def unreadable(t: Tunable, raw: Any, wanted: str) -> None:
+        if strict:
+            raise SetupError(f"{t.label} ({t.key}) is {wanted}; got {raw!r}")
+
     for t in TUNABLES:
         raw = settings.get(t.key)
         if raw is None:
             continue
         if t.kind == "flag":
-            changes[t.field] = bool(raw)
+            flag = _flag(raw)
+            if flag is None:
+                unreadable(t, raw, "on or off (true or false)")
+            else:
+                changes[t.field] = flag
             continue
         if t.kind == "choice":
-            if str(raw) in {value for value, _ in t.choices}:
+            known = [value for value, _ in t.choices]
+            if str(raw) in known:
                 changes[t.field] = str(raw)
+            else:
+                unreadable(t, raw, "one of " + ", ".join(repr(v) for v in known))
             continue
         try:
             value = float(raw)
         except (TypeError, ValueError):
+            unreadable(t, raw, "a number")
+            continue
+        if not math.isfinite(value):
+            unreadable(t, raw, "a finite number")
             continue
         value = min(max(value, t.low), t.high)
         if t.field == "max_iterations":

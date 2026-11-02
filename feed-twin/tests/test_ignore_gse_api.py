@@ -118,11 +118,21 @@ def test_a_stand_opened_ignoring_the_gse_is_the_rocket_alone() -> None:
     ).json()
     assert "GSE High Press Control" not in table["bound"]
 
-    # How the stand was built is not a live setting.
+    # How the stand was built is not a live setting: refused, not reverted
+    # with only the echo to say so. The cockpit reopens for it.
     flipped = client.post(
         f"/api/session/{rocket['id']}/command", json={"setup": {"ignore_gse": False}}
-    ).json()
-    assert flipped["setup"]["ignore_gse"] is True
+    )
+    assert flipped.status_code == 409, flipped.text
+    assert "Reset" in flipped.json()["detail"]
+    same = client.post(
+        f"/api/session/{rocket['id']}/command", json={"setup": {"ignore_gse": True}}
+    )
+    assert same.status_code == 200 and same.json()["setup"]["ignore_gse"] is True
+    gas = client.post(
+        f"/api/session/{rocket['id']}/command", json={"setup": {"pressurant": "helium"}}
+    )
+    assert gas.status_code == 409, gas.text
 
 
 def test_the_hookup_tab_shows_the_wiring_the_rocket_alone_runs() -> None:

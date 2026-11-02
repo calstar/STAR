@@ -86,6 +86,12 @@ def test_a_case_changes_only_what_it_says() -> None:
         ({"copv_psi": "lots"}, "convert"),
         # A knob typed 10 psia went on the wire as -4.7 psig and into the run.
         ({"knobs": {"DOME": -4.7}}, "DOME"),
+        # Shapes that were a TypeError or a cryptic dict() message.
+        ({"knobs": [1]}, "knobs"),
+        ({"knobs": "abc"}, "knobs"),
+        ({"knobs": {"dome": "abc"}}, "dome"),
+        ({"setup": [1]}, "setup"),
+        ({"setup": "x"}, "setup"),
     ],
 )
 def test_a_bad_case_is_refused_with_what_is_wrong(
@@ -93,6 +99,13 @@ def test_a_bad_case_is_refused_with_what_is_wrong(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         StudyCase.parse({"label": "x", **raw}, 0)
+
+
+@pytest.mark.parametrize("raw", ["x", None, 1, [1]])
+def test_a_case_that_is_not_an_object_is_refused(raw: Any) -> None:
+    """It was a 500, "'str' object has no attribute 'get'"."""
+    with pytest.raises(ValueError, match="case 3"):
+        StudyCase.parse(raw, 2)
 
 
 # ------------------------------------------------------------------- the API
@@ -170,6 +183,34 @@ def test_nothing_to_run_and_unknown_names_are_refused(stand: str) -> None:
         json={"session": sid, "cases": [{"label": "a", "setup": {"warp_drive": 1}}]},
     )
     assert row.status_code == 422 and "warp_drive" in row.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "body, words",
+    [
+        # Each was a 500, or ran: a horizon of 'abc' was a 500 and 'nan' ran
+        # and echoed null; a case's dome of 'nan' ran and reported 'dome = nan'
+        # .
+        ({"horizon_s": "abc"}, "horizon"),
+        ({"horizon_s": "nan"}, "horizon"),
+        ({"cases": ["x"]}, "Case 1"),
+        ({"cases": [None]}, "Case 1"),
+        ({"cases": [1]}, "Case 1"),
+        ({"cases": [{"setup": {"dome": "nan"}}]}, "dome"),
+        ({"cases": [{"setup": {"line_walls": "maybe"}}]}, "line_walls"),
+        ({"cases": [{"knobs": {"dome": "nan"}}]}, "dome"),
+    ],
+)
+def test_a_study_that_cannot_be_read_is_refused_before_it_runs(
+    stand: str, body: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a"}], **body}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
 
 
 def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:

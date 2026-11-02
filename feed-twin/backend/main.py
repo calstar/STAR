@@ -19,6 +19,7 @@ import contextlib
 import functools
 import hashlib
 import logging
+import math
 import re
 import json
 from dataclasses import asdict, dataclass, field, replace
@@ -33,7 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.document import Diagram, PidNode
+from feedtwin.pid.document import Diagram, PidNode, read_diagram
 from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
@@ -141,7 +142,8 @@ from feedtwin.session.report import (
 )
 from backend.version import VALIDATION, code_version
 from backend.tunables import TUNABLES
-from backend.tunables import describe as describe_tunables, parse_setup, wire_setup
+from backend.tunables import SetupError, describe as describe_tunables, parse_setup
+from backend.tunables import wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
 from backend.statemachine import available as sm_available, load_machine
 from backend import daqbox
@@ -726,6 +728,27 @@ async def import_diagram(file: UploadFile) -> ImportResult:
             detail="that JSON has no 'nodes'. Export the diagram from "
             "pid-designer rather than a browser page save.",
         )
+    # Refused here what could never be opened: only 'nodes' was checked, so a
+    # file without 'edges', or with nodes that are not symbols, was stored and
+    # failed every open from every picker.
+    nodes, edges = payload.get("nodes"), payload.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        raise HTTPException(
+            status_code=422,
+            detail="that is not a P&ID: expected 'nodes' and 'edges' lists. "
+            "Export the diagram from pid-designer.",
+        )
+    if not all(isinstance(item, dict) for item in (*nodes, *edges)):
+        raise HTTPException(
+            status_code=422,
+            detail="that is not a P&ID: every node and edge is an object.",
+        )
+    try:
+        read_diagram(payload, name=file.filename or "diagram")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"that P&ID cannot be read: {exc}"
+        ) from exc
     # The same drawing saved with other formatting is the drawing already
     # here, not a second copy under another name (D-52).
     same = _same_drawing(payload)
@@ -1929,6 +1952,9 @@ def _engine_state(chamber: ChamberResult | None) -> EngineState | None:
 # A stand that exists in time. Everything else in this API answers "what would
 # happen if"; this one answers "what is happening". See backend.session.
 
+#: A step that fails is said to the operator as a 422; its traceback is here.
+_session_log = logging.getLogger("feed-twin.session")
+
 _SESSIONS: dict[str, Session] = {}
 #: Stands held open at once. Each is a whole model and its history in memory.
 _SESSION_LIMIT = 12
@@ -1994,9 +2020,64 @@ _OPENED: dict[str, _Opened] = {}
 KEPT_BURNS = 20
 
 
-def _setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
-    """The dials, from whatever the client sent. Anything unsent is kept."""
-    return parse_setup(settings, base)
+def _setup(
+    settings: Mapping[str, Any], base: Setup | None = None, *, strict: bool = False
+) -> Setup:
+    """The dials, from whatever the client sent. Anything unsent is kept.
+
+    ``strict``: a value that cannot be read is a 422 naming its row, rather
+    than skipped (:func:`backend.tunables.parse_setup`)."""
+    try:
+        return parse_setup(settings, base, strict=strict)
+    except SetupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _command_setup(session: Session, settings: Mapping[str, Any]) -> dict[str, Any]:
+    """The Configuration rows a command changes, read before anything is
+    done: one that cannot be read is refused, naming its row, and the stand
+    is as it was. A row the stand was built from (ignoring the GSE,
+    the pressurant) is a different network, so a fresh stand -- stand.tsx
+    reopens for it; sent here it was reverted silently, the echo the only
+    sign, and is refused instead."""
+    raw = settings.get("setup")
+    if raw is not None and not isinstance(raw, Mapping):
+        raise HTTPException(
+            status_code=422,
+            detail="setup is an object of Configuration rows, {row: value}.",
+        )
+    asked = {
+        **dict(raw or {}),
+        **({"dome": settings["dome"]} if "dome" in settings else {}),
+    }
+    wanted = _setup(asked, session.setup, strict=True)
+    built = {"ignore_gse": session.gse_ignored, "pressurant": session.setup.pressurant}
+    for key, was in built.items():
+        if key in asked and getattr(wanted, key) != was:
+            label = next(t.label for t in TUNABLES if t.key == key)
+            raise HTTPException(
+                status_code=409,
+                detail=f"{label} is what the stand was built from: Reset to open "
+                "a fresh stand with it.",
+            )
+    return asked
+
+
+def _operated(session: Session, valve: str) -> str:
+    """``valve`` checked: a valve on this drawing a person may take by hand
+    (the console's and the P&ID's, the model view's actuators). An unknown id
+    was a 200 and listed as held, with nothing to release."""
+    if valve in _not_operated(session.model):
+        raise HTTPException(
+            status_code=409,
+            detail="A disconnect is not a valve: nobody opens or shuts it.",
+        )
+    signal = session.model.built.actuators.get(valve)
+    if signal is None or signal.endswith(".dome"):
+        raise HTTPException(
+            status_code=404, detail=f"No valve {valve!r} on this drawing."
+        )
+    return valve
 
 
 def _session(session_id: str) -> Session:
@@ -2497,7 +2578,17 @@ async def tick_session(
     # consecutive full steps of the session's own size -- nothing is coarsened,
     # it only goes faster when the machine can (a 20-minute LOX load watched at
     # x20). The cockpit drops back to x1 at Fire.
-    dt = min(max(float(settings.get("dt") or 0.1), 0.0), MAX_TICK_S)
+    try:
+        asked = float(settings.get("dt") or 0.1)
+    except (TypeError, ValueError):
+        asked = math.nan
+    if not math.isfinite(asked):
+        raise HTTPException(
+            status_code=422,
+            detail=f"A tick's dt is the stand time to run, in seconds; got "
+            f"{settings.get('dt')!r}",
+        )
+    dt = min(max(asked, 0.0), MAX_TICK_S)
     left = dt
     try:
         while True:
@@ -2508,6 +2599,9 @@ async def tick_session(
             if left <= 1e-9 or session.tripped or session.state == "Fire":
                 break
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
+        # Said to the operator, and kept for whoever debugs it: a physics
+        # crash in a live burn left no traceback on the server.
+        _session_log.exception("tick failed for session %s", session_id)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _session_out(session, sample)
 
@@ -2576,6 +2670,30 @@ async def study_status(request: Request, session: str = "") -> StudyOut:
     return _study_out(_study_key(request, session))
 
 
+#: A study's horizon when none is sent, and the range it is held to [s].
+STUDY_HORIZON_S = (20.0, 1.0, 120.0)
+
+
+def _horizon(raw: Any) -> float:
+    """The study's horizon: unsent is the default; a number is held to the
+    range, 0 to its floor (``or 20`` read 0 as unsent); anything else is a
+    422 -- 'abc' was a 500 and 'nan' ran, echoed null."""
+    default, low, high = STUDY_HORIZON_S
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = math.nan
+    if not math.isfinite(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"The horizon is a number of seconds, {low:g} to {high:g}; "
+            f"got {raw!r}",
+        )
+    return min(max(value, low), high)
+
+
 @app.post("/api/study")
 async def start_study(
     http: Request, body: dict[str, Any] | None = Body(None)
@@ -2628,7 +2746,14 @@ async def start_study(
         raise HTTPException(
             status_code=422, detail=f"No Configuration row {', '.join(unknown)}."
         )
-    horizon = min(max(float(settings.get("horizon_s") or 20.0), 1.0), 120.0)
+    # Read as the console reads an edit (strict): a case's 'nan' dome ran and
+    # reported "dome = nan".
+    for i, case in enumerate(cases):
+        try:
+            parse_setup(case.setup, strict=True)
+        except SetupError as exc:
+            raise HTTPException(status_code=422, detail=f"case {i + 1}: {exc}") from exc
+    horizon = _horizon(settings.get("horizon_s"))
     base = {
         "diagram": opened.diagram,
         "engine": opened.engine,
@@ -2691,6 +2816,41 @@ async def command_session(
     settings = dict(body or {})
     _remember(session_id, session, {"command": settings})
 
+    # Read before anything is done: a command that cannot be read is refused
+    # whole, and the stand is as it was.
+    asked = (
+        _command_setup(session, settings)
+        if "setup" in settings or "dome" in settings
+        else None
+    )
+    knob = settings.get("knob")
+    turned: tuple[Any, float] | None = None
+    if isinstance(knob, Mapping) and session.hookup is not None:
+        found = next((k for k in session.hookup.knobs if k.id == knob.get("id")), None)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"No knob {knob.get('id')!r}.")
+        try:
+            value = float(knob.get("value", ""))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="knob value is a number"
+            ) from exc
+        # NaN passed the clamp (max(nan, low) is nan): the dial read null and
+        # T-0 primed off it.
+        if not math.isfinite(value):
+            raise HTTPException(
+                status_code=422, detail=f"knob value is a finite number; got {value}"
+            )
+        turned = (found, min(max(value, found.low), found.high))
+    valve = _operated(session, str(settings["valve"])) if "valve" in settings else None
+    release: str | None = None
+    if settings.get("release") is not None:
+        # No id, or the console's Release all ('*', stand.tsx): every valve a
+        # person holds. '*' was read as a valve called '*' and released none.
+        wanted = str(settings.get("release") or "")
+        release = "" if wanted in ("", "*") else _operated(session, wanted)
+    had = session.setup
+
     if session.tripped and "state" in settings:
         raise HTTPException(status_code=409, detail=session.tripped)
     if "state" in settings:
@@ -2707,17 +2867,8 @@ async def command_session(
         # regulator-ullage loop is too stiff for real time now simply runs
         # slower than the wall clock, and the panel says by how much; that is
         # honest and it is never a frozen screen.
-    knob = settings.get("knob")
-    if isinstance(knob, Mapping) and session.hookup is not None:
-        found = next((k for k in session.hookup.knobs if k.id == knob.get("id")), None)
-        if found is None:
-            raise HTTPException(status_code=404, detail=f"No knob {knob.get('id')!r}.")
-        try:
-            value = min(max(float(knob.get("value", "")), found.low), found.high)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=422, detail="knob value is a number"
-            ) from exc
+    if turned is not None:
+        found, value = turned
         if found.id == DOME:
             session.setup = _setup({"dome": value}, session.setup)
         elif found.id == CHARGE:
@@ -2774,18 +2925,13 @@ async def command_session(
                 "restart the stand wired the new way.",
             )
         session.hookup = renamed
-    if "valve" in settings:
-        if str(settings["valve"]) in _not_operated(session.model):
-            raise HTTPException(
-                status_code=409,
-                detail="A disconnect is not a valve: nobody opens or shuts it.",
-            )
+    if valve is not None:
         try:
-            session.set_valve(str(settings["valve"]), bool(settings.get("open")))
+            session.set_valve(valve, bool(settings.get("open")))
         except PermissionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if settings.get("release") is not None:
-        session.release(str(settings.get("release") or ""))
+    if release is not None:
+        session.release(release)
     skip = settings.get("skip_chill")
     if skip:
         # True: every vehicle tank still chilling; a tank id: that one.
@@ -2793,27 +2939,30 @@ async def command_session(
             session.skip_chilldown("" if skip is True else str(skip))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if "setup" in settings or "dome" in settings:
-        built_gas = session.setup.pressurant
-        session.setup = _setup(
-            {
-                **dict(settings.get("setup") or {}),
-                **({"dome": settings["dome"]} if "dome" in settings else {}),
-            },
-            session.setup,
-        )
+    if asked is not None:
+        # Read already (_command_setup): what the stand was built from --
+        # ignoring the GSE, the pressurant -- is as built.
+        session.setup = _setup(asked, session.setup)
         # The tanks were built with the old knobs; a physics toggle that only
         # took effect on the next session was a toggle that did not work.
         session.apply_thermal()
-        # ...except what the stand was built from: ignoring the GSE is a
-        # different network, so it takes a new stand, and this one says what
-        # it is.
-        if session.setup.ignore_gse != session.gse_ignored:
-            session.setup = replace(session.setup, ignore_gse=session.gse_ignored)
-        # The pressurant is in the network too: a new stand.
-        session.setup = replace(session.setup, pressurant=built_gas)
 
-    return _session_out(session, session.step(1e-3))
+    try:
+        first = session.step(1e-3)
+    except Exception as exc:
+        if session.setup == had:
+            raise
+        # A value every clamp passes can still be one the stand cannot step
+        # with; kept, every tick after failed the same way.
+        _session_log.exception("command on %s could not be run", session_id)
+        session.setup = had
+        session.apply_thermal()
+        raise HTTPException(
+            status_code=422,
+            detail=f"The stand could not run with that setting, so it keeps the "
+            f"one it had: {exc}",
+        ) from exc
+    return _session_out(session, first)
 
 
 @app.get("/api/session/{session_id}/history")
@@ -3181,7 +3330,12 @@ async def reset_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
-    library.drop_record(HOOKUPS, _hookup_lineage(library.get(diagram))[0])
+    try:
+        artifact = library.get(diagram)
+    except LibraryError as exc:
+        # It escaped as a 500.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    library.drop_record(HOOKUPS, _hookup_lineage(artifact)[0])
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 

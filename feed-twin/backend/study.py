@@ -65,7 +65,21 @@ class StudyCase:
     """This case's value of the swept quantity, for the sweep plot."""
 
     @staticmethod
-    def parse(raw: Mapping[str, Any], index: int) -> "StudyCase":
+    def parse(raw: Any, index: int) -> "StudyCase":
+        """A case as the view sends it. ``ValueError`` saying what is wrong
+        with it, for anything that is not one: a case that was not an object
+        was a 500."""
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"case {index + 1} is an object of what it changes; got {raw!r}"
+            )
+        for key in ("knobs", "setup"):
+            if raw.get(key) is not None and not isinstance(raw.get(key), Mapping):
+                raise ValueError(
+                    f"case {index + 1}: {key} is an object, {{name: value}}; "
+                    f"got {raw.get(key)!r}"
+                )
+
         def number(key: str) -> float | None:
             value = raw.get(key)
             if value is None or value == "":
@@ -92,7 +106,14 @@ class StudyCase:
         fill = number("fill_fraction")
         if fill is not None and not 0.0 < fill <= 1.0:
             raise ValueError(f"case {index + 1}: fill {fill:g} is not in (0, 1]")
-        knobs = {str(k): float(v) for k, v in dict(raw.get("knobs") or {}).items()}
+        knobs: dict[str, float] = {}
+        for knob, setting in dict(raw.get("knobs") or {}).items():
+            try:
+                knobs[str(knob)] = float(setting)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"case {index + 1}: {knob} is a number; got {setting!r}"
+                ) from None
         for knob, value in knobs.items():
             # Gauge on the wire: below zero is a regulator set under the air
             # around it, which no knob reaches (a typed 10 psia was -4.7).
