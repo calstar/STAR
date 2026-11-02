@@ -15,16 +15,28 @@ be able to find why they differ.
   to Vent at T+0.00 s with both flight tanks full ("Burnout at T+0.00 s: Fuel
   Transfer Tank ran dry"), and on a stand with no engine model a 50 psig dewar kept
   the chamber at atmosphere. `burn()` already counted the vehicle alone.
+- **A bottle being charged gives what the network draws** (`BottleSim.advance`).
+  The built-in charge returned before the draw was applied, so a press valve opened
+  during GN2 High Press filled the LOX ullage from gas the COPV never lost: 290 g of
+  nitrogen from nothing on LE4 (3), opened by the watcher as "Mass not accounted
+  for". The charge and the draw now land in one step (dm/dt = charge - draw); the
+  stand's mass error stays at round-off.
 
 ### Changed results
 - A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in
   the transfer tank, Fuel Fill, T-0, Fire: 5.4 kN at T+0.25 s, was Vent at
   T+0.00 s). Nothing moves on a stand without a cart or with a cart tank holding
   propellant; the benchmark has neither.
+- A COPV charged by the built-in charge while something draws on it now loses what
+  is drawn (LE4 (3), LOX press valve opened 2 s into GN2 High Press: COPV 977.9 psia
+  at t=5 s, was 1,954.7; mass error 1e-16 kg, was 0.290 kg). The shipped table
+  charges with the press valves shut, and T-0 and the benchmark set the bottle
+  directly, so no burn moves.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
   `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`.
+- `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

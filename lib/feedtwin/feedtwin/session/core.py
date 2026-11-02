@@ -2078,10 +2078,15 @@ class BottleSim:
                 enthalpy = self.volume.fluid.get(
                     "h", p=self.target, T=self.fill_supply_T
                 )
+                # And what the network draws while it charges leaves in the
+                # same step: dm/dt = charge - draw. Returning with the charge
+                # alone let a press valve opened during GN2 High Press fill a
+                # tank from gas the bottle never lost (290 g on LE4 (3)).
                 rates = self.volume.rates(
                     self.state,
                     mdot_in=added / dt,
                     enthalpy_in=enthalpy,
+                    mdot_out=max(mdot_out, 0.0),
                     stirring=stirring,
                 )
                 self.state = self.volume.step(self.state, rates, dt)

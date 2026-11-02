@@ -171,6 +171,31 @@ def test_the_rocket_fills_at_the_settings_not_through_the_cart() -> None:
 
 
 @needs_tables
+def test_a_bottle_being_charged_gives_what_the_network_draws() -> None:
+    """The built-in charge and the network's draw land in one step: dm/dt =
+    charge - draw. The charge branch returned before the draw was applied, so a
+    press valve opened during GN2 High Press filled the LOX ullage from gas the
+    COPV never lost -- 290 g of nitrogen from nothing on LE4 (3), booked by no
+    vessel and opened by the watcher as "Mass not accounted for"."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "GN2 High Press"
+    for _ in range(4):
+        session.step(0.5)
+    assert copv.filling
+    session.set_valve(session.binding.to_symbol["LOX Press"], True)
+    before = lox.state.ullage.mass
+    for _ in range(8):
+        session.step(0.5)
+    assert copv.filling, "still charging: the draw happened during the charge"
+    assert lox.state.ullage.mass - before > 0.2, "the press valve drew gas"
+    last = session.solver_log[-1]
+    assert abs(last.mass_error_kg - last.guard_kg) < 1e-6
+
+
+@needs_tables
 def test_the_cart_actuators_drive_nothing() -> None:
     bound = _session(True).binding.to_symbol
     assert "GSE High Press Control" not in bound, "the built-in charge's command"
