@@ -563,6 +563,25 @@ def _aliases(artifact_id: str) -> list[str]:
     return [str(s) for s in sources] if isinstance(sources, list) else []
 
 
+def _compared(artifact: Artifact) -> tuple[str, str, str, str] | None:
+    """The pull freshness compares this artifact with, and refresh pulls
+    again (:func:`designtools.parse_source`); None if it was never pulled.
+
+    The newest working-copy pull: its own source is its *first* pull, and
+    the aliases are the later ones, newest first. Asked in the other order,
+    a drawing first pulled as a release said "a release never changes"
+    forever, after the working copy it was later pulled as had moved on
+    (R011). Only when every pull was a release is the newest release it."""
+    pulls = [
+        found
+        for found in map(
+            designtools.parse_source, [*_aliases(artifact.id), artifact.source]
+        )
+        if found is not None
+    ]
+    return next((p for p in pulls if not p[3]), pulls[0] if pulls else None)
+
+
 def _alias(artifact: Artifact, provenance: str) -> None:
     """Remember that ``provenance`` was this artifact too."""
     if provenance == artifact.source:
@@ -1262,18 +1281,7 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    # An upload that a pull later matched is compared with that pull's
-    # document (the newest alias).
-    parsed = next(
-        (
-            found
-            for found in map(
-                designtools.parse_source, [artifact.source, *_aliases(artifact_id)]
-            )
-            if found is not None
-        ),
-        None,
-    )
+    parsed = _compared(artifact)
     if parsed is None:
         return FreshnessOut(
             artifact_id=artifact_id,
@@ -1311,14 +1319,15 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
             current = False
     else:
         current = hashlib.sha256(data).hexdigest() == artifact.sha256
+    where = f"{owner}/{doc_id}" if owner else doc_id
     return FreshnessOut(
         artifact_id=artifact_id,
         tracked=True,
         current=current,
         detail=(
-            "Same as the working copy."
+            f"Same as the working copy of {where}."
             if current
-            else f"The working copy of {doc_id} has changed since this was pulled."
+            else f"The working copy of {where} has changed since this was pulled."
         ),
     )
 
@@ -1332,7 +1341,9 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    parsed = designtools.parse_source(artifact.source)
+    # What freshness compared with: an upload a pull later matched refreshes
+    # from that pull's document, as its freshness says it should.
+    parsed = _compared(artifact)
     if parsed is None:
         raise HTTPException(
             status_code=400, detail="uploaded, not pulled: nothing to refresh from"

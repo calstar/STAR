@@ -135,3 +135,38 @@ def test_an_editor_save_that_changes_no_symbol_keeps_a_pull_current(
     )
     fresh = client.get(f"/api/library/{pulled['id']}/freshness").json()
     assert fresh["current"] is True, fresh
+
+
+# ------------------------------------------------------------------ R011
+
+
+def test_freshness_asks_the_newest_working_copy_pull(
+    lib: Library, stores: Tools
+) -> None:
+    """A drawing first pulled as release 0.4, then pulled again as the
+    working copy (the same drawing, so the same artifact with an alias), said
+    "Release 0.4: a release never changes" after the working copy moved on:
+    freshness asked the first pull, not the newest (R011)."""
+    drawing = json.loads(SAMPLE_DRAWING.read_text("utf-8"))
+    me = who("local")
+    stores.pid.post("/api/pid/diagrams", json={"name": "le4-3"}, headers=me)
+    stores.pid.post("/api/pid/diagrams/le4-3/autosave", json=drawing, headers=me)
+    released = stores.pid.post(
+        "/api/pid/diagrams/le4-3/release", json={"label": "0.4"}, headers=me
+    )
+    assert released.status_code == 200, released.text
+    first = client.post(
+        "/api/sources/pid-designer/import",
+        json={"doc_id": "le4-3", "owner": "local", "release": "0.4", "name": "LE4"},
+    ).json()["artifact"]
+    again = client.post(
+        "/api/sources/pid-designer/import",
+        json={"doc_id": "le4-3", "owner": "local", "name": "LE4"},
+    ).json()
+    assert again["artifact"]["id"] == first["id"]
+
+    moved = {**drawing, "nodes": drawing["nodes"][:-1]}
+    stores.pid.post("/api/pid/diagrams/le4-3/autosave", json=moved, headers=me)
+    fresh = client.get(f"/api/library/{first['id']}/freshness").json()
+    assert fresh["current"] is False, fresh
+    assert "local/le4-3" in fresh["detail"]
