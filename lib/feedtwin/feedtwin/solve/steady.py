@@ -255,6 +255,7 @@ def solve_steady(
             stubs,
             isolated,
             report=report,
+            signals=signals,
         )
 
     x = _initial_guess(network, free, branch_ids, initial_flow)
@@ -343,6 +344,7 @@ def solve_steady(
                     isolated,
                     stores,
                     report=report,
+                    signals=signals,
                 ),
                 "the residual converged on a state with a non-physical "
                 f"pressure ({say(min(x[: len(free)]), 1)}). A "
@@ -379,6 +381,7 @@ def solve_steady(
                     isolated,
                     stores,
                     report=report,
+                    signals=signals,
                 ),
                 f"the Jacobian could not be factorised ({exc}). This usually "
                 "means a node with no path to a fixed pressure.",
@@ -417,6 +420,7 @@ def solve_steady(
         isolated,
         stores,
         report=report,
+        signals=signals,
     )
 
     if not converged and raise_on_failure:
@@ -930,8 +934,13 @@ def _result(
     stores: Mapping[str, tuple[float, float]] | None = None,
     *,
     report: bool = True,
+    signals: Mapping[str, float] | None = None,
 ) -> SteadyResult:
     """Package a solution vector as a result.
+
+    ``signals`` must be the solve's own: the report re-evaluates every branch
+    at the answer, and without them a dome-loaded regulator reported its drawn
+    setpoint and a part-open valve reported itself wide open.
 
     ``isolated`` is not optional and must be the same set the solve used. This
     function rebuilds the branch ordering to read ``x`` back, and that ordering
@@ -1076,7 +1085,7 @@ def _result(
             elapsed=time.perf_counter() - started,
         )
     try:
-        branch_rows = _branch_rows(network, x, node_index, branch_index)
+        branch_rows = _branch_rows(network, x, node_index, branch_index, signals)
     except Exception:  # noqa: BLE001 - the report must not fail the solve
         # Classifying branches (regularised, choked) re-evaluates every one at
         # the answer. A correlation refusing there is a reporting gap, not a
@@ -1084,7 +1093,9 @@ def _result(
         branch_rows = {}
     for branch_id, branch in network.branches.items():
         conditions = network.conditions(
-            branch.upstream, pressures.get(branch.upstream, 0.0) or 1.0e5
+            branch.upstream,
+            pressures.get(branch.upstream, 0.0) or 1.0e5,
+            dict(signals or {}),
         )
         try:
             diagnostics[branch_id] = branch.component.diagnostics(
@@ -1112,6 +1123,7 @@ def _result(
         diagnostics=diagnostics,
         violations=network.check(),
         regularised_branches=sorted(regularised),
+        choked_branches=sorted(choked),
         elapsed=time.perf_counter() - started,
         stack=stack_versions(),
     )
