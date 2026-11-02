@@ -1024,11 +1024,14 @@ def _result(
             # was trapped in it, not the pressure across the seat -- and a ball
             # valve's drop at zero flow is identically zero, so the test above
             # never caught it: a transducer there followed the tank.
-            if (
-                branch.component.pressure_drop(0.0, conditions) > 0.0
-                or dead.branch in isolated
-                or dead.live_end in indeterminate_nodes
-            ):
+            try:
+                holds = branch.component.pressure_drop(0.0, conditions) > 0.0
+            except Exception:  # noqa: BLE001 - the back-fill must not fail the solve
+                # A component that cannot price zero flow cannot say the stub
+                # is defined either; a measured curve off its range raised out
+                # of a solve asked not to raise from here.
+                holds = True
+            if holds or dead.branch in isolated or dead.live_end in indeterminate_nodes:
                 # Undefined-ness travels. A regulator with nothing drawing
                 # through it leaves its outlet undefined; the manifold that
                 # outlet feeds is then no better known, and reporting *it* as

@@ -759,10 +759,19 @@ class MeasuredElement(HydraulicComponent):
     and the same principle: inside the range you measured, your data wins.
 
     Unlike the property layer this does **not** fall through to a correlation
-    outside its range -- it raises. A property has a defensible fallback in an
-    equation of state; a component's measured curve has no equivalent, and
-    quietly switching to a correlation halfway up a flow sweep would produce a
-    kink nobody asked for and nobody would see.
+    outside its range. A property has a defensible fallback in an equation of
+    state; a component's measured curve has no equivalent, and quietly
+    switching to a correlation halfway up a flow sweep would produce a kink
+    nobody asked for and nobody would see.
+
+    Off its ends it is continued quadratically (:func:`_curve_dp`, the same
+    continuation a measured segment gets): ``dp ~ mdot^2`` is the law the curve
+    is a measurement of, and it runs through zero. It used to raise there, and
+    flow benches rarely sweep from zero: a solve starts every branch at 1 g/s,
+    so a curve over 0.05-0.2 kg/s that bracketed the answer could not be
+    solved at all, and a capped stub's zero-flow back-fill raised out of a
+    solve asked not to raise. :meth:`diagnostics` flags a flow that was not
+    measured (``extrapolated``), so the excursion is visible, not silent.
     """
 
     def __init__(self, instance: ComponentInstance) -> None:
@@ -776,7 +785,7 @@ class MeasuredElement(HydraulicComponent):
         self.curve: Curve = curve
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
-        return self.curve(abs(mdot))
+        return _curve_dp(self.curve, abs(mdot))
 
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
         low, high = self.curve.x_range_si
@@ -784,6 +793,7 @@ class MeasuredElement(HydraulicComponent):
             "dp": self.pressure_drop(mdot, flow),
             "mdot_min": low,
             "mdot_max": high,
+            "extrapolated": 0.0 if low <= abs(mdot) <= high else 1.0,
         }
 
 
