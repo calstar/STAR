@@ -32,6 +32,7 @@ import {
   listIsBehind,
   openingKnobs,
   pastIdle,
+  whyNotOpened,
   type KnobsOn,
   type Pending,
 } from './lib/standPick';
@@ -81,8 +82,9 @@ export type NoStand =
   | { kind: 'library' }
   /** The library holds no drawing: the first-run panel. */
   | { kind: 'empty' }
-  /** The drawing picked could not be built into a stand. */
-  | { kind: 'failed'; diagram: string; name: string; reason: string }
+  /** The drawing picked did not open as a stand: `drawing` when it cannot be
+   *  built (the server's 422), otherwise worth trying again (`whyNotOpened`). */
+  | { kind: 'failed'; diagram: string; name: string; reason: string; drawing: boolean }
   /** The library could not be read at all. */
   | { kind: 'unreachable'; reason: string };
 
@@ -749,7 +751,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
           kind: 'failed',
           diagram,
           name: artifactsRef.current.find((a) => a.id === diagram)?.name ?? 'This drawing',
-          reason: e instanceof Error ? e.message : String(e),
+          ...whyNotOpened(e),
         });
       } finally {
         if (!cancelled) setBusy(false);

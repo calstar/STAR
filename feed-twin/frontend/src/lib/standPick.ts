@@ -66,6 +66,16 @@ export function pendingWords(p: Pending): { ask: string; why: string; yes: strin
   return { ask: `Put ${p.kind === 'diagram' ? 'the drawing' : 'the engine'} ${p.name} on the console?`, why, yes: 'Switch' };
 }
 
+/** Why a stand did not open, and whether its drawing is to blame. Only a
+ *  build the server refused (422) is the drawing's; a full server (503), a
+ *  dropped connection or anything else is worth trying again. Every failure
+ *  used to read "The drawing needs fixing in Hotbench P&ID", with no retry. */
+export function whyNotOpened(e: unknown): { reason: string; drawing: boolean } {
+  const reason = e instanceof Error ? e.message : String(e);
+  const status = typeof e === 'object' && e !== null && 'status' in e ? Number((e as { status: unknown }).status) : NaN;
+  return { reason, drawing: status === 422 };
+}
+
 /** Whether the library list on screen is missing a drawing or engine the
  *  stand runs on. An imported stand brings both into the library on the
  *  server; read once at page load, the list never had them, and the Engine

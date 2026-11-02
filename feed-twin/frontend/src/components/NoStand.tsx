@@ -80,7 +80,7 @@ function Opening({ name }: { name: string }) {
 }
 
 export function NoStand() {
-  const { noStand, loadSample, artifacts, where } = useStand();
+  const { noStand, loadSample, artifacts, where, restart } = useStand();
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState('');
 
@@ -132,6 +132,24 @@ export function NoStand() {
         <button type="button" onClick={() => window.location.reload()} className="ctl h-10 self-start px-5 text-[11px]">
           Reload
         </button>
+      </Frame>
+    );
+  }
+
+  if (noStand.kind === 'failed' && !noStand.drawing) {
+    // Not the drawing: a full server, a dropped connection. Another go may work.
+    return (
+      <Frame title={`“${noStand.name}” did not open`}>
+        <p className="text-[var(--color-danger)]">{noStand.reason}</p>
+        <p className="text-[var(--ink-3)]">The twin could not open it just now. Try again, or pick another stand.</p>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <button type="button" onClick={restart} className="ctl h-10 self-start px-5 text-[11px]">
+            Try again
+          </button>
+          <Link to="/library" className={linkCls}>
+            Pick another in Library →
+          </Link>
+        </div>
       </Frame>
     );
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, SessionState } from '../api';
-import { NO_ENGINE, defaultPicks, listIsBehind, openingKnobs, pastIdle, pendingWords } from './standPick';
+import { RequestError } from '../api';
+import { NO_ENGINE, defaultPicks, listIsBehind, openingKnobs, pastIdle, pendingWords, whyNotOpened } from './standPick';
 
 const art = (id: string, kind: 'diagram' | 'engine', name: string, featured = false): Artifact => ({
   id,
@@ -105,6 +106,19 @@ describe('a held switch says what it does', () => {
   it('an engine taken off is remembered as none, and a reload does not put the featured one back', () => {
     expect(defaultPicks(library, { diagram: 'le4', engine: NO_ENGINE })).toEqual({ diagram: 'le4', engine: '' });
     expect(defaultPicks(library, { diagram: 'le4', engine: NO_ENGINE }, { engine: 'e2' }).engine).toBe('e2');
+  });
+});
+
+describe('a stand that did not open says whose fault it is', () => {
+  it('a build the server refused is the drawing\'s', () => {
+    expect(whyNotOpened(new RequestError('COPV drawn as a TANK has no liquid to begin from.', 422))).toEqual({
+      reason: 'COPV drawn as a TANK has no liquid to begin from.',
+      drawing: true,
+    });
+  });
+  it('a full server or a dropped connection is not, and is worth another go', () => {
+    expect(whyNotOpened(new RequestError('The server is full: 8 stands are open and every one is being watched.', 503)).drawing).toBe(false);
+    expect(whyNotOpened(new TypeError('Failed to fetch')).drawing).toBe(false);
   });
 });
 
