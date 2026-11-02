@@ -556,6 +556,20 @@ async def _build_card(artifact_id: str, data: bytes, headers: Mapping[str, str])
     return ""
 
 
+def _card_built(raw: bytes) -> str:
+    """When a stored card says it was built, for a note; "unknown" if it
+    does not say or cannot be read."""
+    try:
+        built = card_summary(json.loads(raw.decode("utf-8"))).get("card_built")
+    except (UnicodeDecodeError, ValueError, AttributeError):
+        built = None
+    if isinstance(built, (int, float)) and not isinstance(built, bool) and built > 0:
+        # EngineDesign stamps a card with the epoch seconds it was built at.
+        stamp = datetime.fromtimestamp(float(built), tz=timezone.utc)
+        return stamp.isoformat(timespec="minutes")
+    return str(built) if built else "unknown"
+
+
 def _keep_card(artifact_id: str, data: bytes) -> None:
     """Store ``data`` as the engine's card, keeping the one it replaces.
 
@@ -886,7 +900,9 @@ async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
 
 
 @app.post("/api/twin/bundle/import")
-async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOut:
+async def import_stand_bundle(
+    request: Request, raw: dict[str, Any] = Body(...)
+) -> BundleImportOut:
     """Unpack a bundle into this library: the drawing and engine (same bytes,
     so the same ids), the engine's card, the drawing's overrides, and the
     state table when this server's differs. Returns the stand to create."""
@@ -929,21 +945,51 @@ async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOu
             design = engine_from_bytes(data, name=name)
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        engine_art, _ = library.add(
+        source = str(carried_engine.get("source") or "upload")
+        engine_art, existed = library.add(
             data,
             kind="engine",
             name=name,
-            source=str(carried_engine.get("source") or "upload"),
+            source=source,
             suffix=str(carried_engine.get("suffix") or ".yaml"),
             summary=engine_summary(design),
         )
+        if existed and (engine_art.name, engine_art.source) != (name, source):
+            # The same bytes are the same artifact, whatever the stand called
+            # it: said, or the header names an engine the stand never did.
+            notes.append(
+                f"The stand's engine, {name!r} ({source}), is {engine_art.name!r} "
+                f"({engine_art.source}), already in this library: the same "
+                "config, so the same engine under this library's name."
+            )
+            if designtools.parse_source(source) is not None:
+                _alias(engine_art, source)
         card = carried_engine.get("card")
-        if card and library.attachment(engine_art.id, "card") is None:
-            library.attach(engine_art.id, "card", str(card).encode("utf-8"))
-        elif not card and library.attachment(engine_art.id, "card") is None:
+        here = library.attachment(engine_art.id, "card")
+        if card:
+            theirs = str(card).encode("utf-8")
+            if here is not None and here != theirs:
+                # The stand's card is the engine it was exported on; this
+                # server's rebuilt one would fire another (H005). As with an
+                # override, the stand's wins and the import says so; the one
+                # it replaces is kept for the runs that fired it.
+                notes.append(
+                    f"{engine_art.name}: this server's EngineDesign card (built "
+                    f"{_card_built(here)}) differs from the stand's (built "
+                    f"{_card_built(theirs)}); the stand's is used. The one it "
+                    "replaced is kept for the runs that fired it."
+                )
+            _keep_card(engine_art.id, theirs)
+        elif here is None:
             notes.append(
                 f"{engine_art.name} came without EngineDesign's card, so it fires "
                 "the simplified engine until the card is built (Engine page)."
+            )
+        else:
+            notes.append(
+                f"{engine_art.name} came without EngineDesign's card (the stand "
+                "fired the simplified engine); it fires this server's card, built "
+                f"{_card_built(here)}."
             )
 
     # The state table: the stand's own travels in its hookup already. A named
@@ -991,8 +1037,18 @@ async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOu
 
     stand["diagram"] = drawing_art.id
     stand["engine"] = engine_art.id if engine_art is not None else ""
+    # The name the client creates the stand under: not one of the caller's
+    # own already, or the picker lists two identical rows.
+    wanted = str(raw.get("name") or drawing_art.name)
+    taken = {
+        str(r.get("name") or "")
+        for r in stands.store.load_index(userdata.store.current_user(request))
+    }
+    named, n = wanted, 2
+    while named in taken:
+        named, n = f"{wanted} ({n})", n + 1
     return BundleImportOut(
-        name=str(raw.get("name") or drawing_art.name),
+        name=named,
         stand=stand,
         drawing=_out(drawing_art),
         engine=_out(engine_art) if engine_art is not None else None,

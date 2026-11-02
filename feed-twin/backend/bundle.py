@@ -13,8 +13,9 @@ A **bundle** (``*.hotbench.json``) carries the referents too:
   SHA-256 the library ids are cut from -- so an import onto any server rebuilds
   the same ids, and a bundle edited by hand is refused rather than quietly
   becoming a different drawing;
-* the engine's card (EngineDesign's performance tables, ADR 0003), so the
-  importer fires the same engine without EngineDesign running;
+* the engine's card (EngineDesign's performance tables, ADR 0003), with its
+  SHA-256, so the importer fires the same engine without EngineDesign
+  running -- the stand's card, where the importer's library holds another;
 * the state table the stand names, so a server whose shipped table differs (or
   has none of that name) still runs the stand's;
 * the drawing's operator overrides and console view (keyed by drawing name);
@@ -82,7 +83,19 @@ def pack(
         "name": name,
         "stand": dict(stand),
         "drawing": dict(drawing),
-        "engine": {**dict(engine), "card": card} if engine is not None else None,
+        "engine": (
+            {
+                **dict(engine),
+                "card": card,
+                # Checked like the drawing's and the engine's: a hand-edited
+                # card is a different engine under the same name.
+                "card_sha256": (
+                    hashlib.sha256(card.encode("utf-8")).hexdigest() if card else None
+                ),
+            }
+            if engine is not None
+            else None
+        ),
         "machine": {
             "name": str(stand.get("machine") or "diablo"),
             "table": dict(machine) if machine is not None else None,
@@ -118,6 +131,21 @@ def check(bundle: Any) -> None:
                 f"That bundle's {label} ({part.get('name') or 'unnamed'}) was "
                 "changed after it was exported, so it is not the one the stand "
                 "names. Export it again rather than editing the file."
+            )
+    engine = bundle.get("engine")
+    # A bundle exported before cards were hashed carries none: taken as it is.
+    if isinstance(engine, Mapping) and engine.get("card_sha256"):
+        card = engine.get("card")
+        actual = (
+            hashlib.sha256(card.encode("utf-8")).hexdigest()
+            if isinstance(card, str)
+            else ""
+        )
+        if actual != engine["card_sha256"]:
+            raise BundleError(
+                f"That bundle's engine card ({engine.get('name') or 'unnamed'}) was "
+                "changed after it was exported, so it is not the engine the stand "
+                "fires. Export it again rather than editing the file."
             )
 
 
