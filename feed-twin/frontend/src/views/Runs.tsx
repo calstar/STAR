@@ -28,6 +28,7 @@ import {
   type Tunable,
 } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
+import { holdOn, unionTimes } from '../lib/clock';
 import { PRESSURE_UNIT, fmtP, isGaugeInput, isGaugeTunable, isGaugeUnit, psiaText, toPsia, unitLabel } from '../lib/pressure';
 import { useStand } from '../stand';
 
@@ -419,23 +420,18 @@ export function Runs() {
 
 function Traces({ records }: { records: RunRecord[] }) {
   const colors = [A_COLOR, B_COLOR];
-  // Two runs share one time base only if they were thinned alike; plot each on
-  // the first's clock by nearest sample, which is close enough at 600 points.
-  const base = records[0].series.t;
-  const resample = (rec: RunRecord, values: number[]) =>
-    base.map((t) => {
-      const ts = rec.series.t;
-      let i = 0;
-      while (i < ts.length - 1 && ts[i + 1] <= t) i += 1;
-      return t < ts[0] || t > ts[ts.length - 1] ? NaN : values[i];
-    });
+  // Two runs share one time base only if they were thinned alike; plot both on
+  // the union of their clocks, each held at its own last sample, which is
+  // close enough at 600 points. On A's clock alone, a B that burned longer
+  // lost its tail-off and burnout.
+  const base = unionTimes(records.map((rec) => rec.series.t));
   // The record's chamber trace is gauge; the panel draws it absolute. O/F is
   // a gap outside the burn, not a 0: two zero flows have no ratio.
   const panel = (name: string, read: (s: RunRecord['series']) => number[]): Channel[] =>
     records.map((rec, i) => ({
       key: `${rec.id}.${name}`,
       tag: records.length > 1 ? (i === 0 ? 'A' : 'B') : name,
-      values: i === 0 ? read(rec.series) : resample(rec, read(rec.series)),
+      values: holdOn(base, rec.series.t, read(rec.series)),
       color: colors[i],
     }));
   return (
