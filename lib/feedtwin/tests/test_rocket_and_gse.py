@@ -611,6 +611,43 @@ def test_a_trip_names_the_vessel_furthest_over() -> None:
     assert session.tripped and session.tripped.startswith("LOX-Tank reached")
 
 
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_trip_says_what_it_is_and_which_reliefs_it_beat() -> None:
+    """The trip limit is the drawing's burst over a factor of two, and the trip
+    said "The tank would have failed" at half the burst. LE4's tank reliefs are
+    drawn at 750 psi, the trip limit itself, so they can never lift before it:
+    the message says so rather than leave the operator wondering why the drawn
+    relief did nothing."""
+    from feedtwin.session.gauge import PSI, psig
+
+    ids = _ids()
+    session = _session()
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.prime(fill_fraction=0.5, tank_psi=500.0, copv_psi=4000.0, state="Ready")
+    # Both tank reliefs at the limit; the COPV's well above it, behind a
+    # regulator, protecting something else.
+    sets = {
+        label: branch.component.set_pressure / PSI
+        for branch_id, branch in session._reliefs
+        for label in [next(k for k, v in ids.items() if v == branch_id)]
+    }
+    assert sets["RV_O"] == pytest.approx(psig(lox.mawp), abs=0.5), sets
+    assert sets["RV-HPF"] > psig(lox.mawp) + 1000.0, sets
+    lox.state = lox.tank.initial_state(
+        pressure=lox.mawp + 5.0 * PSI,
+        liquid_mass=lox.state.liquid_mass,
+        liquid_temperature=lox.state.liquid_temperature,
+        gas_temperature=293.15,
+    )
+    session._check_limits()
+    message = session.tripped or ""
+    assert message.startswith("LOX-Tank reached"), message
+    assert "would have failed" not in message
+    assert "MAWP" in message and "at risk" in message
+    assert "RV_O is set at or above that limit and cannot lift" in message, message
+    assert "RV-HPF" not in message, "the COPV relief protects the COPV"
+
+
 # ------------------------------------------- the cart's tanks end no burn
 
 

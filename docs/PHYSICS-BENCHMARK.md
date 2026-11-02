@@ -863,7 +863,13 @@ pressure it reached and a Reset. Dome knob to 1000 psig, LOX loaded, GN2 High Pr
 Ox Press: TK-LOX 722 → 1045 psig in one tick, trip
 (`test_a_vessel_over_its_mawp_trips_the_stand`). The model could go on to the
 propellant's critical pressure; a tank could not, and the point of the cockpit is that
-the operator learns which knob did it.
+the operator learns which knob did it. The limit is the drawing's burst over
+`burst_safety_factor` (2), so the trip says the vessel is past its rating, not that it
+failed; and a relief drawn on the vessel at or above that limit (LE4's 750 psi tank
+reliefs against a 764.7 psia limit) can never lift first, which the trip now names
+(`test_a_trip_says_what_it_is_and_which_reliefs_it_beat`, 2026-11-02). Letting such a
+relief act -- tripping at an ASME-style accumulation over MAWP when one is drawn -- is a
+decision for the team, not taken.
 
 **Regulators are knobs, not numbers.** The GSE Controls tab has two hand-loaded
 regulators — high press (what the cart charges the COPV to) and dome control (what the

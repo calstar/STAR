@@ -65,6 +65,14 @@ be able to find why they differ.
   saturation pressure of its liquid (bulk or surface, whichever is warmer), is
   within 3 % of critical -- a shut LOX tank boiled up on its own oxygen still gets
   it -- and says "no relief valve" only of a drawing with none.
+- **A trip says the vessel is past its rating, and names the reliefs it beat**
+  (`_check_limits`, `Session._reliefs_on`). The limit is the drawing's burst over a
+  factor of two, and the trip said "The tank would have failed" at half the burst.
+  It now reads "Eth-Tank reached 769.7 psia, over its 764.7 psia MAWP: past its
+  rating a real tank is at risk, so the stand stops here. RV-F is set at or above
+  that limit and cannot lift before it." A relief counts when it is drawn on the
+  vessel's gas side (reached without crossing a regulator, another vessel or another
+  relief). The trip limit itself is unchanged.
 - **The tick split is documented as the code does it**: round(tick / live_step)
   equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
   ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
@@ -97,7 +105,9 @@ be able to find why they differ.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
-  `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`.
+  `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`,
+  `test_a_trip_says_what_it_is_and_which_reliefs_it_beat`; feed-twin
+  `test_psia_display.py` follows the trip's new wording.
 - `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`,
   `test_a_bottle_charging_is_not_down_to_anything`,
   `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`.

@@ -118,7 +118,7 @@ def test_a_trip_says_psia() -> None:
     trip = main._SESSIONS[sid].trip
     assert out["tripped"] and trip is not None, out["tripped"]
     assert say(trip.limit, 1) == "1,014.7 psia"
-    assert f"reached {say(trip.pressure, 1)} against a 1,014.7 psia MAWP" in (
+    assert f"reached {say(trip.pressure, 1)}, over its 1,014.7 psia MAWP" in (
         out["tripped"]
     )
     for text in _all_text(out):

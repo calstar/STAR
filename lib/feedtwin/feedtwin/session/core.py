@@ -5753,10 +5753,68 @@ class Session:
             return
         _, vessel, label, kind, pressure, mawp = max(over, key=lambda o: o[0])
         self.trip = Trip(vessel, label, kind, self.t, pressure, mawp)
-        self.tripped = (
-            f"{label} reached {say(pressure, 1)} against a {say(mawp, 1)} MAWP. "
-            f"The {kind} would have failed. Reset the stand and start over."
+        # Past its rating, not failed: the limit is the drawing's burst over a
+        # factor of safety, and "would have failed" was said at half the burst.
+        # A relief drawn on the vessel at or above the limit can never lift
+        # before it, and the operator should hear that rather than wonder why
+        # the drawn relief did nothing.
+        labels = {n.id: n.label or n.id for n in self.model.diagram.nodes}
+        late = sorted(
+            labels.get(branch_id, branch_id)
+            for branch_id, branch in self._reliefs_on(vessel)
+            if float(branch.component.set_pressure) >= mawp - ATMOSPHERE - 0.5 * PSI
         )
+        reliefs = (
+            f"{' and '.join(late)} {'is' if len(late) == 1 else 'are'} set at or "
+            "above that limit and cannot lift before it. "
+            if late
+            else ""
+        )
+        self.tripped = (
+            f"{label} reached {say(pressure, 1)}, over its {say(mawp, 1)} MAWP: "
+            f"past its rating a real {kind} is at risk, so the stand stops here. "
+            f"{reliefs}Reset the stand and start over."
+        )
+
+    def _reliefs_on(self, vessel: str) -> list[tuple[str, Any]]:
+        """The relief branches drawn on ``vessel``'s gas side: reached from its
+        gas node without crossing a regulator, another vessel or another relief.
+        A COPV's relief does not protect the tanks behind its regulator, nor one
+        tank's relief the tank across the press manifold."""
+        net = self.model.built.network
+        if vessel in self.tanks:
+            start = self.tanks[vessel].ullage_node
+        elif vessel in self.bottles:
+            start = self.bottles[vessel].node
+        else:
+            return []
+        reliefs = dict(self._reliefs)
+        found: dict[str, Any] = {}
+        seen = {start}
+        frontier = [start]
+        while frontier:
+            nxt: list[str] = []
+            for node in frontier:
+                for branch_id, branch in net.branches.items():
+                    if node not in (branch.upstream, branch.downstream):
+                        continue
+                    if branch_id in reliefs:
+                        found[branch_id] = branch
+                        continue
+                    if isinstance(branch.component, Regulator):
+                        continue
+                    other = (
+                        branch.upstream
+                        if branch.downstream == node
+                        else branch.downstream
+                    )
+                    if other in seen:
+                        continue
+                    seen.add(other)
+                    if not net.nodes[other].is_fixed:
+                        nxt.append(other)
+            frontier = nxt
+        return list(found.items())
 
     def _notes(self) -> list[str]:
         out: list[str] = []
