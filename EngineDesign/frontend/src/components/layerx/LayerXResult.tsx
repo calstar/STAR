@@ -5,7 +5,7 @@ import {
 import type { LayerXResult, Series, Summary, BurnEvent, CrossCheck, Provenance, Calibration, EngineCheck, Delivered, Replay, ReplayPass } from '../../api/layerx';
 import { useViewState } from '../../lib/viewState';
 import { Hint } from '../Hint';
-import { fmt, niceTicks, sig, stepDigits, FT, LOX, FUEL, PSI, VERDICT } from './format';
+import { fmt, modelsLeftOut, niceTicks, sig, stepDigits, FT, LOX, FUEL, PSI, VERDICT } from './format';
 import { FeedFitSummary, FeedFitView } from './FeedFit';
 import { FeedSchematic } from './FeedSchematic';
 import type { NozzleState } from './plume';
@@ -109,12 +109,8 @@ function Figures({ cells }: { cells: Cell[] }) {
 
 /** What the figures leave out: each term the model does not carry, and the thermal models this
  * burn ran without (feed-twin's cockpit runs with them on, so the two answer differently). */
-function leftOut(settings: Provenance['settings']): { off: string[]; terms: string[]; dry: boolean } {
-  const off = [
-    !settings.ullage_collapse && 'ullage collapse',
-    !settings.ullage_vapour && 'propellant vapour',
-    !settings.line_walls && 'line-wall heat',
-  ].filter(Boolean) as string[];
+function leftOut(settings: Provenance['settings'], setup?: Record<string, unknown> | null): { off: string[]; terms: string[]; dry: boolean } {
+  const off = modelsLeftOut(settings, setup);
   const dry = (settings.dry_kg ?? 0.001) <= 0.002;
   const terms = [
     'The start transient: −0.7 to −1.5 % impulse.',
@@ -904,7 +900,7 @@ export function LayerXResultView({ result, uncertainty, runId = '', onConfigUpda
       ? figureCells(reference.result.summary, reference.result.delivered, reference.result.flight?.ok ? reference.result.flight.apogee_agl_m : null) : null;
     return withDeltas(figureCells(summary, result.delivered, flight ? flight.apogee_agl_m : null), ref);
   }, [summary, result.delivered, flight, reference]);
-  const out = leftOut(provenance.settings);
+  const out = leftOut(provenance.settings, provenance.setup);
   const cc = result.cross_check;
   const warnEvents = events.filter((e) => e.kind === 'warn').length;
   const w = result.engine_check?.worst;

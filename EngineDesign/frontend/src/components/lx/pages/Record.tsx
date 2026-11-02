@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { Calibration, CrossCheck, EngineCheck, Provenance } from '../../../api/layerx';
 import type { EngineConfig } from '../../../api/client';
 import { FeedFitSummary, FeedFitView } from '../../layerx/FeedFit';
-import { PSI, sig } from '../../layerx/format';
+import { modelsLeftOut, PSI, sig } from '../../layerx/format';
 import { drawingWords, runWhen } from '../../layerx/runs';
 import { partName, type NetNames } from '../names';
 import { useTimeStore } from '../time/hooks';
@@ -59,9 +59,7 @@ function RunNote({ job }: Pick<PageProps, 'job'>) {
 
 function LeftOut({ settings, setup, className }: { settings: Provenance['settings']; setup?: Record<string, unknown> | null; className: string }) {
   // What the burn ran: the feed twin's Setup (provenance.setup), else the run's own switches.
-  const ran = (k: 'ullage_collapse' | 'ullage_vapour' | 'line_walls') => (setup && k in setup ? !!setup[k] : !!settings[k]);
-  const off = [!ran('ullage_collapse') && 'ullage collapse', !ran('ullage_vapour') && 'propellant vapour', !ran('line_walls') && 'line-wall heat']
-    .filter(Boolean) as string[];
+  const off = modelsLeftOut(settings, setup);
   const dry = (settings.dry_kg ?? 0.001) <= 0.002;
   const items: [string, string][] = [
     ['Start transient', '−0.7 to −1.5 % impulse'],

@@ -1,5 +1,5 @@
 import type { LayerXResult, LimitRow, RunView, SweepResult } from '../../api/layerx';
-import { fmt, PSI, VERDICT } from './format';
+import { fmt, modelsLeftOut, PSI, VERDICT } from './format';
 
 /**
  * A run as the test card a stand operator and a reviewer read: what to dial, what each channel
@@ -94,7 +94,7 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
   }
 
   const settings = p.settings;
-  const off = [!settings.ullage_collapse && 'ullage collapse', !settings.ullage_vapour && 'propellant vapour', !settings.line_walls && 'line-wall heat'].filter(Boolean);
+  const off = modelsLeftOut(settings, p.setup);
   const when = new Date(run.started * 1000).toLocaleString('en-US');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Test card · ${esc(p.drawing.name)} · ${esc(run.meta?.name || when)}</title>
 <style>

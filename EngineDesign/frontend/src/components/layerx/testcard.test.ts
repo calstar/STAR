@@ -78,4 +78,19 @@ describe('the test card', () => {
     expect(html).not.toMatch(/\d psig<\/td>/);             // no redline in gauge
     expect(html).toContain('Hotfire 3 &lt;prediction&gt;');
   });
+
+  it('names a thermal model as left out only when the burn’s Setup ran without it', () => {
+    // Run 20261102-120705-5a3c15: the switches are null (left to the twin's Setup) and the Setup ran all
+    // three. The card said "run without ullage collapse, propellant vapour, line-wall heat".
+    const r = result();
+    r.provenance.settings = { ...r.provenance.settings, ullage_collapse: null, ullage_vapour: null, line_walls: null };
+    (r.provenance as unknown as Record<string, unknown>).setup = { ullage_collapse: true, ullage_vapour: true, line_walls: true };
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('Not in these numbers');
+    expect(card).not.toContain('run without');
+    // A Setup that ran without one names that one alone.
+    (r.provenance as unknown as Record<string, unknown>).setup = { ullage_collapse: true, ullage_vapour: false, line_walls: true };
+    const one = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(one).toContain('; run without propellant vapour.');
+  });
 });
