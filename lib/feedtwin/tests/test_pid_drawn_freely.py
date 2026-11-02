@@ -820,6 +820,89 @@ def test_a_segment_with_a_zero_bore_is_reported() -> None:
     assert any("seg_1" in w and "no bore" in w for w in b.warnings), b.warnings
 
 
+def test_a_line_bore_of_zero_is_said() -> None:
+    """A line-level 0 mm with no segments built without a word, as a branch no
+    flow can pass, and a steady solve through it stalls on its first step. It
+    is said; the line itself is left as drawn, because Layer X reads that 0 as
+    "not a line" (its preflight names it) and a fallback here would contradict
+    it."""
+    payload = _le4_like()
+    edge = next(e for e in payload["edges"] if e["id"] == "ot-om")
+    edge["data"]["params"] = {"length": P(0.5, "m"), "bore": P(0, "mm", "estimated")}
+    b = built(payload)
+    line = b.network.branches["ot-om"].component
+    assert line.p["bore"] == 0.0, "as drawn: said, not replaced"
+    assert any(
+        "ot-om (TK-3 -> OM-R)" in w and "bore of 0 mm" in w and "no flow" in w
+        for w in b.warnings
+    ), b.warnings
+    # The same line drawn with a real bore says nothing of the kind.
+    edge["data"]["params"]["bore"] = P(9.5, "mm")
+    sized = built(payload)
+    assert not any("ot-om" in w and "no flow can pass" in w for w in sized.warnings)
+
+
+def test_a_stretch_with_no_bore_on_a_bored_run_is_sized_at_the_run_and_said() -> None:
+    """A run split before its diameter was given, one stretch bored and one
+    not. The solver sizes the bare stretch at the run's narrowest stated bore
+    (`SegmentedPipe`), so it is priced -- and the reader used to say it
+    "contributes nothing", which the run report then repeated."""
+    from feedtwin.comps import build_component
+    from feedtwin.comps.base import FlowConditions
+    from feedtwin.model import ComponentInstance
+    from feedtwin.pid.segments import read_segments
+
+    def run(first_bore: float | None) -> Any:
+        first: dict[str, Any] = {"id": "s1", "length": P(300, "mm")}
+        if first_bore is not None:
+            first["bore"] = P(first_bore, "mm")
+        return read_segments(
+            [first, {"id": "s2", "bore": P(7.7, "mm"), "length": P(400, "mm")}],
+            "L1",
+        )
+
+    def dp(loss: Any) -> float:
+        line = build_component(
+            ComponentInstance.build(
+                "L1", "pipe", {}, model="segmented", segments=loss.segments
+            )
+        )
+        flow = FlowConditions(rho=789.0, mu=1.2e-3, p_upstream=4e6, temperature=293.15)
+        return float(line.pressure_drop(0.2, flow))
+
+    for bare in (None, 0.0):
+        loss = run(bare)
+        assert dp(loss) == pytest.approx(dp(run(7.7))), "priced at 7.7 mm"
+        (said,) = [w for w in loss.warnings if "s1" in w]
+        assert "narrowest stated bore, 7.70 mm" in said, said
+        assert "contributes nothing" not in said, said
+
+    # With no bore anywhere on the run, nothing is the honest answer, and said.
+    alone = read_segments([{"id": "s1", "length": P(300, "mm")}], "L1")
+    assert dp(alone) == 0.0
+    assert any("contributes nothing" in w for w in alone.warnings), alone.warnings
+
+
+def test_a_K_with_no_bore_to_refer_it_to_is_said() -> None:
+    """A K multiplies a dynamic head, which needs a bore. With none on the run
+    the segment priced nothing and the reader said nothing."""
+    from feedtwin.pid.segments import read_segments
+
+    k = {"id": "k1", "method": "measured_K", "K": P(2.0, "-")}
+    alone = read_segments([k], "L1")
+    assert any(
+        "k1" in w and "contributes nothing" in w for w in alone.warnings
+    ), alone.warnings
+    borrowed = read_segments(
+        [k, {"id": "s2", "bore": P(6.0, "mm"), "length": P(0.4, "m")}], "L1"
+    )
+    assert any(
+        "k1" in w and "narrowest stated bore, 6.00 mm" in w for w in borrowed.warnings
+    ), borrowed.warnings
+    own = read_segments([{**k, "bore": P(6.0, "mm")}], "L1")
+    assert not any("k1" in w and "bore" in w for w in own.warnings), own.warnings
+
+
 def test_two_tanks_on_one_direct_press_manifold_conserve_pressurant() -> None:
     """Press valves joined straight onto their tanks: the two ullages trade gas
     through the manifold, and what one sent and the other refused was handed

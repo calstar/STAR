@@ -25,6 +25,27 @@ describe('the checks, grouped', () => {
     expect(groups.find((g) => g.title.startsWith('Hand valves'))?.items).toEqual(['OF-MAN-Vent', 'OF-MAN-Fill', 'FV-MAN']);
   });
 
+  it('says "no loss" only of a segment with no bore anywhere on its run', () => {
+    // feedtwin.pid.segments, word for word. A bare stretch of a bored run is
+    // sized at the run's narrowest bore -- priced, on an assumption.
+    const groups = groupChecks([
+      'LE4 (3):node_15-node_38 segment seg_1: itemised but states no bore, so neither its friction nor its '
+        + 'fittings can be sized; it contributes nothing',
+      'LE4 (3):ox-main segment seg_1: itemised but states no bore; its friction and fittings are sized at the '
+        + "run's narrowest stated bore, 7.70 mm, which the drawing does not say",
+      'LE4 (3):ox-main segment k1: states a K but no bore; the K is referred to the run\'s narrowest stated '
+        + 'bore, 7.70 mm, which the drawing does not say',
+      'LE4 (3):vent segment k2: states a K but no bore to refer it to, here or anywhere on the run; it '
+        + 'contributes nothing',
+    ]);
+    const none = groups.find((g) => g.title.endsWith('they add no loss'));
+    expect(none?.kind).toBe('fix');
+    expect(none?.items).toEqual(['node_15-node_38 seg_1', 'vent k2']);
+    const borrowed = groups.find((g) => g.title.includes('narrowest bore'));
+    expect(borrowed?.kind).toBe('assumed');
+    expect(borrowed?.items).toEqual(['ox-main seg_1', 'ox-main k1']);
+  });
+
   it('never drops a sentence it does not know, and puts it where it will be read', () => {
     const groups = groupChecks(LE4);
     const unknown = groups.find((g) => g.title === 'A sentence no rule knows.');

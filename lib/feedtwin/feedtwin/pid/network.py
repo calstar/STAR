@@ -773,6 +773,19 @@ def build_network(
         line_params: Mapping[str, Param] = edge.params
         line_options: Mapping[str, str] = edge.options
         segments = edge.segments.segments
+        stated_bore = line_params.get("bore")
+        if not segments and stated_bore is not None and stated_bore.si <= 0.0:
+            # A bore of 0 is a line no flow can pass, and it built without a
+            # word: a steady solve through it stalls on its first step. Said,
+            # not replaced -- Layer X reads the drawn 0 as "not a line" and
+            # leaves it out of the inertance (`diag.stability.drawing_feed`),
+            # which a fallback bore here would quietly contradict.
+            warnings.append(
+                f"{edge.id} ({source.label or source.id} -> "
+                f"{target.label or target.id}): states a bore of "
+                f"{stated_bore.value:g} {stated_bore.unit}, which no flow can "
+                "pass; give the line its bore"
+            )
         if segments:
             # The drawing itemised this run, so the itemised model is the one
             # in force and the geometry comes from the segments.
