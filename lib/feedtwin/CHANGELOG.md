@@ -177,6 +177,18 @@ be able to find why they differ.
   (`_mate_disconnects`). HP-QD-A/HP-QD-B on the LE4 cart are paired and joined by
   their own line; pid-designer reads that as coupled and says nothing, the twin
   warned of a fault that is not there. The pair is now left as drawn.
+- **The partial pressures decide evaporation or condensation; the heat only pays
+  for it** (`SaturatedVapour.exchange`). The latent share was `q x clip(driving)`,
+  so a subsaturated surface losing heat condensed vapour that was not there (LE4
+  (3)'s vented ethanol tank made 3.3 mg/s of liquid from a vapour mass of zero),
+  a supersaturated one gaining heat condensed, and one losing heat evaporated. Now
+  only heat in under a subsaturated ullage evaporates and heat out under a
+  supersaturated one condenses; the other two are sensible.
+- **A stratified tank counts the wall's heat once** (`Tank.rates`). The exchange
+  priced as latent at the surface the wall heat that goes to the bulk, and the layer
+  was debited for it again; a wall colder than the liquid warmed the layer above the
+  bulk, the gas and the wall. The exchange now sees only what reaches the surface.
+  `docs/PHYSICS-BENCHMARK.md` 1.5b.
 
 ### Changed results
 - LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
@@ -186,6 +198,16 @@ be able to find why they differ.
   are itemised in `tests/fixtures/le4_rocket_and_gse.json` and the feed-twin sample
   stand. No benchmark drawing itemises a line: `scripts/physics_benchmark.py` passes
   unchanged, and the Layer X golden (`copv_study_he`) does not move.
+- Vapour quadrants and the layer's wall heat: the LE4 (3) T-0 burn is bit-identical
+  while it fires; after burnout the drained fuel tank's dregs hold 293.0 K (were
+  drifting to 291.3 K). On the pad the vented fuel tank's mass holds at 4.40379 kg
+  (grew to 4.40393 kg in 65 s) and its surface cools towards the 290 K gas (292.69 K)
+  instead of warming above everything. A shut LOX tank at 40 % fill (feed-twin
+  `test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one`) climbs 37.3 psig
+  in three minutes insulated (was 37.8) and 39.6 bare (was 44.8): the wrap is worth
+  2.3 psi there, not 7.0, and that test's margin is now 1.5 psi (was 3). The bare
+  figure came from bulk-bound wall heat evaporating the surface. Benchmark:
+  50/50, figures identical.
 
 ### Tests
 - `tests/test_line_walls.py`: one segment builds the darcy line's wall, the metal is
@@ -198,6 +220,9 @@ be able to find why they differ.
   `test_rocket_and_gse.py::test_a_pair_drawn_joined_is_not_called_unmated`,
   `test_pages_and_mates.py::test_halves_joined_by_their_own_line_are_coupled_and_nothing_is_said`:
   each fails on the old build.
+- `test_vapour.py`: the four quadrants and a vented ethanol tank losing heat;
+  `test_stratification.py::test_the_wall_heat_that_goes_to_the_bulk_boils_nothing_at_the_surface`.
+  Five fail on the old model; the evaporating quadrant passes both ways.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

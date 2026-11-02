@@ -812,7 +812,11 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     bulk that does not pressurise anything. Since the ullage stopped trading
     heat with the whole tank's wall (Setup.ullage_wall_by_level, 2026-10-06)
     an 85 % full tank shows the wrap as 1.3 psi in ten minutes -- true, and
-    too small to test -- and this load shows it as 5 psi in three."""
+    too small to test -- and this load shows it as 2.3 psi in three (37.3 psig
+    against 39.6). It read 7 until the surface layer stopped evaporating with
+    the wall heat that goes to the bulk (2026-11-02, docs/PHYSICS-BENCHMARK.md
+    1.5b): the bare tank's extra leak lands on a wetted wall colder than the
+    layer, so it warms the subcooled bulk, which presses nothing."""
     from dataclasses import replace
 
     def shut(bare: bool) -> float:
@@ -832,7 +836,7 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     insulated, bare = shut(False), shut(True)
     # Three minutes at tens of psi a minute.
     assert 20.0 < insulated < 150.0, insulated
-    assert bare > insulated + 3.0, (bare, insulated)
+    assert bare > insulated + 1.5, (bare, insulated)
 
 
 def test_a_small_ullage_press_lands_on_lockup_not_past_it() -> None:

@@ -132,6 +132,54 @@ LOX at 90 K, 612.9 W of interfacial heat.
 Expected: **2.874 g/s**, and `evaporation == latent_power / h_fg` to `rel=1e-12`.
 This is a definition, not a correlation. It must be exact.
 
+### 1.5b The partial pressures decide the direction, the heat only pays (2026-11-02)
+
+`SaturatedVapour` used to take the latent share as `q x clip(driving)`, with
+`driving = (p_sat - p_v) / p_sat`: the *product* of the two signs chose the phase
+change. Two of the four quadrants came out backwards:
+
+| heat at the surface | ullage | before | now |
+|---|---|---|---|
+| in | subsaturated | evaporates | evaporates (1.5, unchanged) |
+| out | supersaturated | **evaporates** | condenses |
+| out | subsaturated | **condenses** | no phase change: the surface cools |
+| in | supersaturated | **condenses** | no phase change: the surface warms to p_v |
+
+The third row made liquid out of nothing. LE4 (3)'s vented ethanol tank in Ox Fill
+(ullage gas 3 K under the liquid, wall 0.1 K under it, no vapour) condensed
+3.3 mg/s that `Tank.step` then clipped out of a vapour mass of zero; the liquid grew
+4.4038 -> 4.4039 kg over 65 s with nothing filling it.
+
+The layered branch had a second count of the same heat: the exchange priced the
+wall's convective heat as latent at the surface *including* the share that goes to
+the bulk (`to_bulk`), and the layer was then debited for that share again. With the
+wall colder than the liquid the debit was negative, so the layer warmed above the
+bulk, the gas and the wall (293.00 -> 293.04 K in the 65 s above, against a
+292.999 K bulk, 290.0 K gas and 292.94 K wall; 293.86 K, above the 293.15 K room,
+over the whole pad sequence) -- a second-law violation. The exchange now sees only what reaches the surface.
+
+Expected (`tests/test_vapour.py`, `tests/test_stratification.py`): no phase change
+in rows three and four; a vented ethanol tank losing heat has
+`d(liquid_mass)/dt <= 0` and `d(T_surface)/dt <= 0`; a LOX layer at 91 K between a
+90 K bulk and a 92 K wall evaporates exactly `q_gas + 0.5 q_wall` and the bulk takes
+the other `0.5 q_wall`.
+
+What moved: the LE4 (3) T-0 burn is bit-identical while it fires (row one is the
+burn's quadrant: warm pressurant over a saturated surface). After burnout the
+drained fuel tank's dregs stay at 293.0 K instead of drifting to 291.3 K. On the pad
+the vented fuel tank's mass holds (4.40379 kg through Fuel Fill, Armed and 40 s of Ox
+Fill) and its surface cools towards the colder gas (292.69 K at 65 s) instead of
+warming above everything. The Tier 1 and Tier 3 figures checked by
+`scripts/physics_benchmark.py` do not move.
+
+The layer's single count does move one pinned figure, and only through the
+second fix (the quadrant fix alone leaves it bit for bit): a shut LOX tank at 40 %
+fill climbs 37.3 psig in three minutes under the fiberglass (was 37.8) and 39.6 psig
+bare (was 44.8), so the wrap is worth 2.3 psi there, not 7.0 (3.11). The old bare
+figure came from wall heat bound for the bulk evaporating the surface: with the
+wetted wall colder than the layer, `reach` is 0, all of that heat went to the bulk,
+and the exchange still priced it as latent at the surface and cooled the layer to pay.
+
 ### 1.6 Vapour partial pressure is linear and never negative
 
 Oxygen vapour in a 0.531 L ullage at 200 K, swept 1 µg → 5 g.
@@ -1093,7 +1141,11 @@ DAQ trace to fit against.
 The same change shrinks the wrap's effect on a shut tank at 85 % full to ~1 psi in ten
 minutes: the leak reaches the ullage only through the dry wall. So
 `test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one` now runs at the vehicle's
-~40 % fill, where it is 5 psi in three minutes. Burns do not move: LE4 GN2 6,255 N
+~40 % fill, where it is 2.3 psi in three minutes (37.3 psig insulated, 39.6 bare). It read
+7.0 (37.8 against 44.8) until 2026-11-02, when the layer stopped evaporating with the
+wall heat that goes to the bulk (1.5b): the bare tank's extra leak lands on a wetted wall
+colder than the layer, warms the subcooled bulk, and presses nothing. The insulated
+climb, the one the operator's ~20 psi/min calibrates, moved 0.5 psi. Burns do not move: LE4 GN2 6,255 N
 (-2 N), helium unchanged, Tier 2.1 identical.
 
 **The benchmark study keeps the old closures** (`backend/benchmark_study.py` sets `stratification=False`,
