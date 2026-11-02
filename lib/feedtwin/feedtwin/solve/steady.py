@@ -634,37 +634,62 @@ def _branch_row(
     p_dn: float,
     signals: Mapping[str, float] | None = None,
 ) -> _BranchRow:
-    """Assemble one branch's equation, in whichever form applies."""
+    """Assemble one branch's equation, in whichever form applies.
+
+    A symmetric component (``component.symmetric``) is priced at the node the
+    fluid actually comes from: when the drawn downstream is the higher
+    pressure, the conditions are the downstream node's and the choke test reads
+    the drop the other way. It used to be priced at the drawn upstream whatever
+    the gradient, and a reverse drop never choked: a valve drawn against its
+    flow passed 3-8x less than the same valve drawn with it, both converged.
+    One-way laws (check valve, regulator, relief, injector) keep the drawing's
+    direction.
+    """
     branch = network.branches[branch_id]
     component = branch.component
-    conditions = network.conditions(branch.upstream, p_up, dict(signals or {}))
-
     available = p_up - p_dn
+    reverse = available < 0.0 and component.symmetric
+    if reverse:
+        conditions = network.conditions(branch.downstream, p_dn, dict(signals or {}))
+    else:
+        conditions = network.conditions(branch.upstream, p_up, dict(signals or {}))
+    # The drop from the inlet the component is priced at, and that inlet.
+    drive, p_in = (-available, p_dn) if reverse else (available, p_up)
     ceiling = component.flow_ceiling(conditions)
 
     def choked_row(limit: float | None = None) -> _BranchRow:
         # Choked: the flow is pinned and downstream pressure is decoupled. The
-        # ceiling is proportional to upstream pressure, which is the only
-        # pressure this row depends on at all.
+        # ceiling is proportional to the inlet pressure, which is the only
+        # pressure this row depends on at all. Reverse, the pin is negative and
+        # the inlet is the drawn downstream.
         pinned = ceiling if limit is None else limit
         assert pinned is not None
+        slope = _CHOKE_STIFFNESS * (pinned / p_in if p_in > 0.0 else 0.0)
+        if reverse:
+            return _BranchRow(
+                residual=_CHOKE_STIFFNESS * (-pinned - mdot),
+                d_mdot=-_CHOKE_STIFFNESS,
+                d_p_up=0.0,
+                d_p_dn=-slope,
+                choked=True,
+            )
         return _BranchRow(
             residual=_CHOKE_STIFFNESS * (pinned - mdot),
             d_mdot=-_CHOKE_STIFFNESS,
-            d_p_up=_CHOKE_STIFFNESS * (pinned / p_up if p_up > 0.0 else 0.0),
+            d_p_up=slope,
             d_p_dn=0.0,
             choked=True,
         )
 
     # A component that pins its own flow at this drop (the opt-in compressible
     # regulator seat, choked wide open). None for everything else.
-    pinned = component.pinned_flow(available, conditions)
+    pinned = component.pinned_flow(drive, conditions)
     if pinned is not None:
         return choked_row(pinned)
 
     # The component reads the pressures and says the drop has carried it past
     # its critical ratio (or, for a regulator, that it has shut -- ceiling 0).
-    if ceiling is not None and component.is_choked(available, conditions):
+    if ceiling is not None and component.is_choked(drive, conditions):
         return choked_row()
 
     h = max(abs(mdot) * _FD_REL, _FD_ABS)
@@ -688,7 +713,7 @@ def _branch_row(
         # row does not know what downstream is doing -- and two such
         # sub-steps put 26 psi into a three-gram ullage. Repeated, the tank
         # ratcheted to 745 psig against a 550 psig regulator.
-        if ceiling is not None and ceiling > 0.0 and available > 0.0:
+        if ceiling is not None and ceiling > 0.0 and drive > 0.0:
             return choked_row()
         if ceiling is None or ceiling <= 0.0:
             raise

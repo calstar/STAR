@@ -145,6 +145,8 @@ class Pipe(HydraulicComponent):
     it defaults to zero and is worth avoiding where the fittings are known.
     """
 
+    symmetric = True
+
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
         friction, _ = self._friction(mdot, flow)
         return friction
@@ -198,6 +200,8 @@ class Fitting(HydraulicComponent):
     drawing with a Crane citation behind it. :class:`Pipe`'s ``K_minor`` is the
     shortcut for when that is more bookkeeping than a run is worth.
     """
+
+    symmetric = True
 
     def _K(self, mdot: float, flow: FlowConditions) -> float:
         bore = self.p["bore"]
@@ -259,6 +263,8 @@ class Bend(HydraulicComponent):
 
     Minimum bend radius is checked but never enforced. See :meth:`check`.
     """
+
+    symmetric = True
 
     def _K(self, mdot: float, flow: FlowConditions) -> float:
         bore = self.p["bore"]
@@ -344,6 +350,8 @@ class FlexHose(HydraulicComponent):
     quoted twice: a static limit, and a larger dynamic one for anything that
     gimbals, grows thermally or vibrates.
     """
+
+    symmetric = True
 
     def _friction_factor(self, mdot: float, flow: FlowConditions) -> float:
         bore = self.p["bore"]
@@ -448,6 +456,8 @@ class OrificeCd(HydraulicComponent):
     element it usually has.
     """
 
+    symmetric = True
+
     def _area(self) -> float:
         d = self.p["bore"]
         return math.pi * d * d / 4.0
@@ -476,6 +486,8 @@ class OrificeISO5167(HydraulicComponent):
     this needs no measured coefficient -- which is the point of using a standard
     geometry in the first place.
     """
+
+    symmetric = True
 
     METER = "ISO 5167 orifice"
 
@@ -546,6 +558,8 @@ class Valve(HydraulicComponent):
     small ``leak_closed`` capacity: real seats leak, and a capacity of exactly
     zero makes the network singular rather than shut.
     """
+
+    symmetric = True
 
     def effective_cv(self, position: float) -> float:
         """Cv at a fractional travel between 0 and 1."""
@@ -809,6 +823,8 @@ class MeasuredElement(HydraulicComponent):
     measured (``extrapolated``), so the excursion is visible, not silent.
     """
 
+    symmetric = True
+
     def __init__(self, instance: ComponentInstance) -> None:
         super().__init__(instance)
         curve = instance.curves.get("dp_mdot")
@@ -870,6 +886,8 @@ class SegmentedPipe(HydraulicComponent):
     one place and estimated in another gets the measurement where the
     measurement exists. See :mod:`feedtwin.model.segments` for the ladder.
     """
+
+    symmetric = True
 
     def __init__(self, instance: ComponentInstance) -> None:
         super().__init__(instance)
