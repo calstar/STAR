@@ -70,7 +70,7 @@ const ENDED: Record<string, { text: string; tone: string }> = {
   abort: { text: 'abort', tone: 'text-[var(--warn)]' },
   operator: { text: 'cut short', tone: 'text-[var(--warn)]' },
   trip: { text: 'trip', tone: 'text-[var(--bad)]' },
-  closed: { text: 'reset mid-burn', tone: 'text-[var(--warn)]' },
+  closed: { text: 'closed mid-burn', tone: 'text-[var(--warn)]' },
   out: { text: 'flame-out', tone: 'text-[var(--warn)]' },
 };
 
