@@ -4002,6 +4002,35 @@ def _recorded_card(inputs: Mapping[str, Any]) -> str | None:
     return str(dict(inputs.get("card") or {}).get("sha256") or "")
 
 
+def _built_setup(opened: _Opened) -> dict[str, Any]:
+    """The settings the session's stand was built from, as the client keys
+    them: what it was opened with (the Configuration rows that apply on
+    Reset are built into the vessels then, and a change to one on the
+    running stand waits for the next)."""
+    return wire_setup(_setup(opened.body))
+
+
+def _setup_inputs(session: Session, opened: _Opened) -> dict[str, Any]:
+    """The settings a burn ran on: every live row as set, every row that
+    applies on Reset as the stand was built. Recording the setup as set put
+    a change no vessel had taken in the record, and its replay rebuilt a
+    stand that never burned -- and tripped it (H019, H033)."""
+    built = _built_setup(opened)
+    waits = {t.key for t in TUNABLES if t.applies == "reset"}
+    return {
+        k: built[k] if k in waits and k in built else v
+        for k, v in wire_setup(session.setup).items()
+    }
+
+
+def _pending_setup(session: Session, opened: _Opened) -> dict[str, Any]:
+    """Rows that apply on Reset, changed since the stand was built: set, and
+    not what it burns on until it is reset."""
+    built, ran = _built_setup(opened), _setup_inputs(session, opened)
+    live = wire_setup(session.setup)
+    return {k: v for k, v in live.items() if k in built and v != ran[k]}
+
+
 def _knob_inputs(session: Session) -> dict[str, float]:
     """The knobs as set [psig]. The dome and the COPV charge are settings
     (``setup.dome``, ``setup.copv_target``): a turn of either sets those, and
@@ -4020,7 +4049,7 @@ def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[st
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
-        "setup": wire_setup(session.setup),
+        "setup": _setup_inputs(session, opened),
         **_hookup_inputs(session),
         "knobs": _knob_inputs(session),
         "t0": _t0(session, before),
@@ -4386,6 +4415,16 @@ def _record_burns(
                     [_after_abort(session, history, burn), _assumed_droop(session)],
                 ),
                 *_override_notes(session.model),
+                *(
+                    [
+                        "Set but waiting for a Reset, so not what this burn ran "
+                        "on: "
+                        + ", ".join(f"{k} = {v}" for k, v in pending.items())
+                        + "."
+                    ]
+                    if (pending := _pending_setup(session, opened))
+                    else []
+                ),
                 *list(dict.fromkeys(session.assumptions))[-40:],
             ],
         }

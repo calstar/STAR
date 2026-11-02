@@ -205,6 +205,43 @@ def test_a_record_never_contradicts_itself_about_the_dome(
     assert inputs["knobs"]["dome"] == 480.0
 
 
+# ------------------------------------------------------------------ settings
+
+
+def test_a_setting_that_waits_for_reset_is_recorded_as_built(
+    le4: tuple[str, str, str],
+) -> None:
+    """A Configuration row that applies on Reset, changed on a running stand,
+    is not what the stand burns on -- its vessels were built from the old
+    value. The record said the new one, so a replay of the run rebuilt a
+    stand that never burned, and tripped it (H019, H033). It records what
+    was built, and the change it is waiting to make."""
+    from backend.tunables import TUNABLES
+
+    diagram, engine, _ = le4
+    waits = {t.key for t in TUNABLES if t.applies == "reset"}
+    assert "burst_safety_factor" in waits and "ullage_vapour" not in waits
+    sid = _open(diagram, engine)
+    built = _recorded(sid)["setup"]
+    changed = client.post(
+        f"/api/session/{sid}/command",
+        json={
+            "setup": {
+                "burst_safety_factor": 3.0,
+                "ullage_vapour": not built["ullage_vapour"],
+            }
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    inputs = _recorded(sid)
+    assert inputs["setup"]["burst_safety_factor"] == built["burst_safety_factor"]
+    assert inputs["setup"]["ullage_vapour"] is (
+        not built["ullage_vapour"]
+    ), "live is live"
+    pending = main._pending_setup(main._SESSIONS[sid], main._OPENED[sid])
+    assert pending == {"burst_safety_factor": 3.0}
+
+
 # ---------------------------------------------------------------- the traces
 
 
