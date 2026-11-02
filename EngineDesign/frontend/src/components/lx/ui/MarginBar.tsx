@@ -51,8 +51,9 @@ export function MarginBar({ label, value, status, scale, worstText, limitText, o
         <span aria-hidden className="w-3 shrink-0 text-center text-[12px] font-semibold leading-none" style={{ color: STATUS_VAR[status] }}>
           {STATUS_GLYPH[status]}
         </span>
-        {/* A long label is cut with an ellipsis; its whole text is in the tooltip and the name. */}
-        <span title={label} className={`min-w-0 truncate text-[13px] text-[var(--lx-text)] ${entry ? 'underline decoration-[var(--lx-text-3)] decoration-dotted decoration-1 underline-offset-[3px]' : ''}`}>
+        {/* A long label wraps to a second line before it is cut: at 1366 px two rows both read 'Saturation
+            margin, O...' (OF-QD-B and Ox-Dump-R). Its whole text is in the tooltip and the name. */}
+        <span title={label} className={`min-w-0 line-clamp-2 break-words text-[13px] leading-[1.25] text-[var(--lx-text)] ${entry ? 'underline decoration-[var(--lx-text-3)] decoration-dotted decoration-1 underline-offset-[3px]' : ''}`}>
           {label}
         </span>
       </span>
