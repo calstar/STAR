@@ -3458,10 +3458,40 @@ async def check_state_machine(table: dict[str, Any] = Body(...)) -> dict[str, An
     """What is wrong with a state table being edited: the warnings the twin
     would give it once saved, or why it cannot be read at all."""
     try:
+        wrong = _table_shape(table)
+        if wrong:
+            raise ValueError(wrong)
         machine = machine_from_dict(table)
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return {"ok": False, "error": str(exc), "warnings": []}
     return {"ok": True, "error": "", "warnings": list(machine.warnings)}
+
+
+def _table_shape(table: Mapping[str, Any]) -> str:
+    """What is the wrong shape in an edited state table, said by its part, or
+    ``""``. Read as it was, a string where a list goes came back as Python's
+    own complaint ("'str' object has no attribute 'get'")."""
+    states = table.get("states")
+    if states is not None and not (
+        isinstance(states, list) and all(isinstance(s, Mapping) for s in states)
+    ):
+        return "states is a list of states, each {name: ...}"
+    actuators = table.get("actuators")
+    if actuators is not None and not (
+        isinstance(actuators, list) and all(isinstance(a, str) for a in actuators)
+    ):
+        return "actuators is a list of row names"
+    for part, says in (
+        ("open", "the rows it opens"),
+        ("allowed", "the states it may go to"),
+    ):
+        value = table.get(part)
+        if value is not None and not (
+            isinstance(value, Mapping)
+            and all(isinstance(v, list) for v in value.values())
+        ):
+            return f"{part} is a table of state -> {says}"
+    return ""
 
 
 @app.get("/api/session/{session_id}/burns")
