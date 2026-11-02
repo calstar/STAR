@@ -29,6 +29,14 @@ be able to find why they differ.
   bottle; a lockup under atmosphere is a shut regulator. A T-0 note says which.
   `T0.lockup_psi` is still each regulator's own lockup; `T0.tank_psi` is where the
   tanks went. `regulator_lockup` is unchanged (the GSE tab's range reads the law).
+- **An abort in the LOX-chill window runs at real time** (`_press_path_timescale`).
+  With the fuel loaded and the LOX tank empty, Engine Abort drains the fuel by
+  gravity through its open main while its press path, the manifold, is vented
+  through the empty LOX tank. That "supply" sat at atmosphere with the tank, the
+  band was met, and the guard asked for 0.27 ms couplings: 79 per 20 ms step, 10 s
+  of CPU per 0.25 s tick, ~35 min of wall clock for the 52 s drain. A supply within
+  its band of atmosphere is a vent and asks for nothing (now 1 coupling, 0.15 s CPU
+  per tick).
 
 ### Changed results
 - A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in
@@ -45,6 +53,9 @@ be able to find why they differ.
   14.7 psia (was 9.6). The Study's low-charge cases start from the bottle. At the
   stand's 3,750 psig charge and every benchmark case nothing moves
   (`scripts/physics_benchmark.py` passes).
+- The abort drain above on its coupling step: the fuel left after 0.22 s of Engine
+  Abort differs by 0.3 g of 4.09 kg between 33 couplings per step and 1. No burn
+  moves: a burning tank's supply is the regulated manifold.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
@@ -52,6 +63,8 @@ be able to find why they differ.
 - `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`.
 - `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
   `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`.
+- `test_press_path_coupling.py`:
+  `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

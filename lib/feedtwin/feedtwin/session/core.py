@@ -3708,6 +3708,13 @@ class Session:
         band = self.setup.supply_band * supply
         if supply <= 0.0 or supply - sim.pressure > band:
             return float("inf")
+        # Nor a "supply" at atmosphere: a manifold vented through another tank
+        # is a vent one node further on, and nothing there can carry the tank
+        # across a regulated supply. A fuel tank draining by gravity at an
+        # Engine Abort with the LOX tank empty (its vent open on the manifold)
+        # read 0.27 ms and ran the panel 40x slower than real time.
+        if supply - AMBIENT <= band:
+            return float("inf")
         if drained < PRESS_PATH_DRAIN_FRACTION * band:
             return float("inf")
         rho_gas = sim.state.ullage.mass / volume

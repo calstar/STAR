@@ -132,3 +132,34 @@ def test_two_helium_tanks_on_one_manifold_do_not_ring(
     monkeypatch.setattr(C.Session, "_ullage_storage", lambda *a: {})
     ringing = _roughness(_burn(_helium_stand()))
     assert ringing > 1.0
+
+
+def test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing() -> None:
+    """Engine Abort with the fuel loaded and the LOX tank empty (the whole LOX
+    chill window): the fuel drains by gravity through its open main, and its
+    press path is the manifold, vented through the empty LOX tank. That
+    "supply" sits at atmosphere with the tank, so the band was met and the
+    drain over a step beat a tenth of it: 0.27 ms couplings, 33-79 per 20 ms
+    step, the panel 40x slower than real time. A vent one node further on
+    carries nothing across a regulated supply."""
+    from test_ignore_gse import TABLES, _ids, _session
+
+    if not TABLES.is_dir():
+        pytest.skip("no state machine tables")
+    ids = _ids()
+    session = _session(True)
+    session.state = "Fuel Fill"
+    for _ in range(40):
+        session.step(0.5)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    assert fuel.state.liquid_mass > 4.0
+    assert session.tanks[ids["LOX-Tank"]].state.liquid_mass == 0.0
+    session.command_state("Engine Abort")
+    start = fuel.state.liquid_mass
+    most = 0
+    for _ in range(10):
+        session.step(0.02)
+        most = max(most, session.solver_log[-1].couplings)
+    assert start - fuel.state.liquid_mass > 0.01, "the fuel drains"
+    assert abs(psig(fuel.pressure)) < 0.1, "at atmosphere"
+    assert most <= 2, f"{most} coupling steps in one 20 ms step"

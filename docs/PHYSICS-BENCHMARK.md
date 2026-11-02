@@ -569,7 +569,11 @@ costing where it buys nothing: liquid must be leaving; the tank must ride its su
 within `supply_band` of it (the shipped GN2 stand burns 6-8 psi under its manifold and
 traced identically either way, at twice the cost); and the tick's drain must cover a
 tenth of that band (without it a nearly empty tank at Engine Abort read 0.3 ms and the
-API random-walk test crawled for an hour). LE4 helium drawn: 6,579 → 6,726 N mean, LOX
+API random-walk test crawled for an hour). A fourth (2026-11-02): the supply must stand
+clear of atmosphere by that band. A manifold vented through another tank is a vent one
+node further on; LE4 (3)'s fuel tank draining by gravity at an Engine Abort with the LOX
+tank empty read 0.27 ms against it, 79 couplings per 20 ms step, 10 s of CPU per 0.25 s
+tick, and now takes one (`test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`). LE4 helium drawn: 6,579 → 6,726 N mean, LOX
 min 519 → 552 psia, identical to a forced 2 ms step (6,954 vs 6,953 N on the proposed
 holes). GN2 +5 N. This tier: unchanged within tolerance (He dip −12.9, recovery 0.37 →
 0.38 s) but 160 s instead of 96 s for both gases at dt = 10 ms -- the study's helium
