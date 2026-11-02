@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { CHARGE_KNOB, DOME_KNOB, getTunables, type StandSetup, type Tunable } from '../api';
-import { PRESSURE_UNIT, isGaugeTunable, psiaEntry, snapPsia } from '../lib/pressure';
+import { PRESSURE_UNIT, isGaugeTunable, psiaEntry, typedPsia } from '../lib/pressure';
 import { useStand } from '../stand';
 
 /** Whether a setting is off its default: a number past rounding, anything
@@ -73,6 +73,20 @@ function fmt(v: number, step: number): string {
  *  not the library's. */
 type Row = Tunable & { drawn?: boolean };
 
+/** What a number row commits when its box holds `raw` and the stand runs on
+ *  `value`: the new value (gauge for a gauge row, snapped to its detent in
+ *  psia), or null for nothing -- an emptied box, half a number, or the shown
+ *  value typed back. `Number('')` is 0: backspacing the dome to retype it
+ *  and pausing committed 0 psig to the running stand, and the box jumped to
+ *  14.7 under the cursor. */
+export function rowCommit(raw: string, t: Pick<Tunable, 'step' | 'low' | 'high' | 'unit' | 'gauge_wire'>, value: number): number | null {
+  if (isGaugeTunable(t)) return typedPsia(raw, value, t.step, t.low, t.high);
+  const n = Number(raw);
+  if (raw.trim() === '' || !Number.isFinite(n)) return null;
+  const next = Math.min(t.high, Math.max(t.low, n));
+  return Math.abs(next - value) > 0 ? next : null;
+}
+
 /** The Setup fields a drawn regulator sets, by knob. */
 const DRAWN: Record<string, string> = { dome: DOME_KNOB, copv_target: CHARGE_KNOB };
 
@@ -94,23 +108,36 @@ function Row({
   const show = useCallback((v: number) => (gauge ? psiaEntry(v) : fmt(v, t.step)), [gauge, t.step]);
   const [draft, setDraft] = useState<string>(typeof value === 'number' ? show(value) : '');
   const timer = useRef<number | null>(null);
+  // While the box has focus it holds what is typed: the stand's value
+  // arriving under the cursor ate the digits after a pause.
+  const editing = useRef(false);
   useEffect(() => {
-    if (typeof value === 'number' && timer.current === null) setDraft(show(value));
+    if (typeof value === 'number' && timer.current === null && !editing.current) setDraft(show(value));
   }, [value, show]);
+  /** Commit what is typed now, if it is a number that changes the row. */
+  const flush = useCallback(
+    (raw: string) => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = null;
+      if (typeof value !== 'number') return;
+      const next = rowCommit(raw, t, value);
+      if (next !== null) onChange(next);
+    },
+    [onChange, t, value],
+  );
   const commit = useCallback(
     (raw: string) => {
       setDraft(raw);
       if (timer.current !== null) window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => {
-        timer.current = null;
-        const n = Number(raw);
-        if (!Number.isFinite(n)) return;
-        // The row's own value is a detent: its shown entry typed back keeps it.
-        const held = typeof value === 'number' ? value : undefined;
-        onChange(gauge ? snapPsia(n, t.step, t.low, t.high, held) : Math.min(t.high, Math.max(t.low, n)));
-      }, COMMIT_MS);
+      timer.current = window.setTimeout(() => flush(raw), COMMIT_MS);
     },
-    [onChange, gauge, t.step, t.high, t.low, value],
+    [flush],
+  );
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
   );
   const unit = gauge ? PRESSURE_UNIT : t.unit;
   const changed = differs(value, t.default);
@@ -184,7 +211,19 @@ function Row({
               min={gauge ? undefined : t.low}
               max={gauge ? undefined : t.high}
               disabled={disabled}
+              onFocus={() => {
+                editing.current = true;
+              }}
               onChange={(e) => commit(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') flush(draft);
+              }}
+              onBlur={() => {
+                editing.current = false;
+                flush(draft);
+                // What the stand runs on, once the hand is off the box.
+                if (typeof value === 'number') setDraft(show(value));
+              }}
               className="w-full rounded-md border border-gray-700 bg-black/60 px-2 py-1 font-mono text-[12px] tabular-nums text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
             />
           )}
