@@ -2,6 +2,33 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 One impulse per run, pressures at a tenth of a psi, words that say what they mean
+
+Display only; no burn moves.
+
+- The `.eng` header quoted the trapezoid of the hand-off curve (23743.9 N-s on LE4 (3)), a third
+  impulse beside the twin's (23729.9) and the delivered (23737.9). It now quotes the run's own,
+  step-held (each sample after Fire carries the step that ends there), and its mean; the file's own
+  integral stays beside it. Its T-0 line read `tanks 544.5709487755134 psia, bottle 3750.0 psig`: now
+  `tanks 544.6 psia, bottle 3764.7 psia at T-0`, the run's own T-0 (what was asked, if none recorded).
+- The runs list swapped in the delivered impulse but kept the twin's mean thrust; it takes the
+  delivered mean too.
+- The chug limit's basis read `after the first 0.0556569 s`; it is printed to the millisecond.
+- The set point's `dome_per_1000psi_fill` read 14.699999999999818; rounded to 0.001.
+- T-0 read −6.9e-17 s in the events and the CSV: a sample within 1e-12 s of a whole nanosecond is
+  that nanosecond (a step cut to land on depletion or a trip keeps its time).
+- `POST /engine-card` with `center_psia: -5` said "the config states no tank pressure" though the
+  config stated 578 psia; it now names the caller's number.
+- Preflight's "Engine boundary" quoted EngineDesign's drop with the line exit at the lockup (153.1 /
+  153.1 psi, equal by construction) as the drop "at T-0"; the burn's are ~114 / 108 psi once the
+  drawing's lines have taken theirs. It now says it is the drop with the lines taken as lossless.
+
+Guarded by `test_layerx_eng.py::test_the_header_quotes_the_runs_impulse_and_t0_in_psia`,
+`test_layerx_router.py::test_the_listing_quotes_one_burn_the_delivered_one` and
+`::test_a_card_centre_that_is_not_a_pressure_names_the_callers_number`, the start-window assertion in
+`test_layerx_limits.py`, `test_layerx.py::test_the_engine_boundary_says_its_drop_is_at_lossless_lines`
+and the T-0 assertions in `test_layerx_ratings.py` (all red on the old code).
+
 ## 2026-11-02 The eroding-nozzle card prices thrust on the flow that burns
 
 `card._ExpansionScaling` (AUDIT D4-B, on in every pass that applies a throat schedule) recomputed

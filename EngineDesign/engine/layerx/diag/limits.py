@@ -306,7 +306,7 @@ def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset(),
             # reported 34.6 Hz was not the gating ~22 Hz).
             freq = _num(_dig(st, "settled_min.frequency_hz"))
             window = _num(st.get("start_window_s"))
-            scope = (f"from the first full-flow step (after the first {window:g} s)" if window is not None
+            scope = (f"from the first full-flow step (after the first {window:.3f} s)" if window is not None
                      else "from the first full-flow step")
         else:
             value, t, scope = worst, _num(_dig(st, "worst.t")), "over the whole burn, start included"

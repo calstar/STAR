@@ -325,7 +325,8 @@ def _dome_per_1000psi_fill(prep: Any, lockup_psia: float, fill_psig: float) -> O
         span = (fill_psig + 250.0) - max(fill_psig - 250.0, lockup_psia)
         if hi is None or lo is None or span <= 0:
             return None
-        return (hi - lo) / span * 1000.0
+        # A readout to a thousandth of a psi per 1000 psi: two solved dials subtracted read 14.699999999999818.
+        return round((hi - lo) / span * 1000.0, 3)
     except Exception:  # noqa: BLE001 - a readout
         return None
 

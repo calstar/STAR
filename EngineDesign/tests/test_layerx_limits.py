@@ -238,6 +238,10 @@ def test_chug_from_the_stability_diagnostics_grades_the_settled_minimum_and_repo
     assert g["chug_margin"]["frequency_hz"] == 22.0 and g["chug_margin_start"]["frequency_hz"] == 34.6
     assert g["chug_margin"]["series_ref"] == "diagnostics.stability.margin"
     assert g["chug_margin"]["grade"] == "ok" and "drawing feed basis" in g["chug_margin"]["basis"]
+    assert "after the first 0.100 s" in g["chug_margin"]["basis"]
+    # The start window is a solved time: printed to the millisecond, not as '0.0556569 s'.
+    r["diagnostics"]["stability"]["start_window_s"] = 0.0556569
+    assert "after the first 0.056 s" in _by_key(grade(r))["chug_margin"]["basis"]
     assert g["chug_margin_start"]["grade"] == "info" and g["chug_margin_start"]["value"] == 1.15
     assert g["chug_margin_start"]["index_worst"] == 2
     assert g["chug_margin_other_basis"]["grade"] == "info"

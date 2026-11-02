@@ -112,3 +112,21 @@ def test_a_restated_measurement_is_bounded():
     with pytest.raises(ValueError, match="longer than"):
         Override.from_dict({**base, "source": "x" * 400})
 
+
+def test_the_listing_quotes_one_burn_the_delivered_one():
+    """The list swapped in the replay's delivered impulse but kept the twin's mean thrust, so impulse
+    over burn time was not the mean it printed (LE4 (3): 23737.9 N s delivered beside 6183.8 N)."""
+    result = {"summary": {"total_impulse_Ns": 23729.9, "mean_thrust_N": 6183.8, "burn_time_s": 3.8364},
+              "delivered": {"summary": {"total_impulse_Ns": 23737.9, "mean_thrust_N": 6187.4}}}
+    s = lx._listing_summary(result)
+    assert (s["total_impulse_Ns"], s["mean_thrust_N"]) == (23737.9, 6187.4)
+    assert lx._listing_summary({"summary": {"total_impulse_Ns": 1.0, "mean_thrust_N": 2.0}})["mean_thrust_N"] == 2.0
+
+
+def test_a_card_centre_that_is_not_a_pressure_names_the_callers_number():
+    """POST /engine-card with center_psia -5 said "the config states no tank pressure" though it stated 578."""
+    from engine.layerx.card import card_for_config_text
+
+    with pytest.raises(ValueError, match=r"center_psia -5\.0 is not an absolute pressure"):
+        card_for_config_text("lox_tank: {initial_pressure_psi: 578.0}\n", center_psia=-5.0)
+

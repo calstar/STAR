@@ -56,6 +56,22 @@ def test_the_file_reads_back_as_the_burn():
     assert eng["name"].startswith("STAR-") and " " not in eng["name"]
 
 
+def test_the_header_quotes_the_runs_impulse_and_t0_in_psia():
+    """One impulse, the run's: each sample after Fire carries the step that ends there, so the run
+    totals a step-held curve (sum of thrust x step, by hand); the header quoted the trapezoid, a third
+    figure (LE4 (3): 23743.9 against the run's 23737.9 N-s). T-0 in psia at a tenth (ADR 0007): it read
+    'tanks 544.5709487755134 psia, bottle 3750.0 psig'."""
+    r, impulse = _result()
+    head = [line for line in to_eng(r).splitlines() if line.startswith(";")]
+    assert f"total impulse {impulse:.1f} N-s" in head[2]
+    assert f"mean thrust {impulse / (N * DT):.1f} N" in head[2]
+    assert "tanks 578.0 psia, bottle - psia (as set)" in head[1]
+    r["summary"] = {"ox": {"t0_psia": 544.5709487755134}, "fuel": {"t0_psia": 544.5709487755134},
+                    "copv_t0_psia": 3764.6959487755134}
+    head = [line for line in to_eng(r).splitlines() if line.startswith(";")]
+    assert "tanks 544.6 psia, bottle 3764.7 psia at T-0" in head[1] and "psig" not in head[1]
+
+
 def test_given_dimensions_override_the_run():
     r, _ = _result()
     eng = check(to_eng(r, diameter_mm=152.4, length_mm=500.0, dry_kg=0.0))

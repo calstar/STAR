@@ -1165,7 +1165,10 @@ def _listing_summary(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     summary = result.get("summary")
     delivered = ((result.get("delivered") or {}).get("summary") or {}) if isinstance(result, dict) else {}
     if isinstance(summary, dict) and delivered.get("total_impulse_Ns") is not None:
-        summary = {**summary, "total_impulse_Ns": delivered["total_impulse_Ns"]}
+        # The delivered mean too: the list showed the replay's impulse beside the twin's mean thrust,
+        # so impulse / burn time was not the mean it printed.
+        summary = {**summary, "total_impulse_Ns": delivered["total_impulse_Ns"],
+                   **({"mean_thrust_N": delivered["mean_thrust_N"]} if delivered.get("mean_thrust_N") is not None else {})}
     flight = result.get("flight") if isinstance(result, dict) else None
     if isinstance(summary, dict) and isinstance(flight, dict) and flight.get("ok"):
         summary = {**summary, "apogee_agl_m": flight.get("apogee_agl_m")}

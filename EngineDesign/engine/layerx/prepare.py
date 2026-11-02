@@ -1162,11 +1162,16 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
             f"{fit['tolerance'] * 100:.1f} %; whole scan Pc {fit['box_closed_pc'] * 100:.1f} %). That is agreement "
             "with the model, not accuracy: the model's own unknowns (Cd, mixing, nozzle efficiency) are the "
             "uncertainty sweep's.")
+        # The reference is EngineDesign solved with the line exit at the lockup itself (link_engine is
+        # given the tank pressure on both sides), so it is the drop with the drawing's lines lossless,
+        # not the burn's: LE4 (3) read 153.1 / 153.1 psi here against ~114 / 108 psi once the lines
+        # have taken their ~50 psi.
         add("engine_boundary", "Engine boundary at the line exit", "info",
-            f"Line exit to chamber at T-0: LOX {link.reference['dp_line_O'] / PSI:.1f} psi, fuel "
-            f"{link.reference['dp_line_F'] / PSI:.1f} psi, EngineDesign's exit dump into the manifold "
-            "included. The drawing's lines carry everything upstream; EngineDesign's own feed_system K "
-            "is not used.")
+            f"EngineDesign at the {target_psia:.1f} psia lockup with the drawing's lines taken as lossless "
+            f"(line exit = tank): line exit to chamber LOX {link.reference['dp_line_O'] / PSI:.1f} psi, fuel "
+            f"{link.reference['dp_line_F'] / PSI:.1f} psi, its exit dump into the manifold included. The burn's "
+            "own drops are lower by what the drawing's lines lose (the run's injector ΔP). The drawing's lines "
+            "carry everything upstream; EngineDesign's own feed_system K is not used.")
     elif link.mode == "calibrated":
         add("engine_link", "Engine fitted to EngineDesign at T-0", "warn",
             f"Cd {cal['cd_O']:.3f} / {cal['cd_F']:.3f} (twin's own law: {cal['native_cd_O']:.3f} / "

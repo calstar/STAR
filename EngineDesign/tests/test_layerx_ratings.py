@@ -148,6 +148,9 @@ def test_a_burn_that_starts_off_its_datum_is_not_a_settled_answer(config, drawin
     event = next(e for e in result["events"] if e["label"] == "T-0 did not settle")
     assert "Asked for a 600.0 psia lockup from a 4500 psia bottle; T-0 is LOX" in event["detail"]
     assert result["summary"]["copv_t0_psia"] < 4100.0
+    # The clock's float noise is not a time: T-0 is at Fire exactly (it read -6.9e-17 s in the events and the CSV).
+    assert next(e for e in result["events"] if e["kind"] == "t0")["t"] == 0.0
+    assert 0.0 in result["series"]["t"]
 
 
 def _burn(peak_ox: float, peak_fuel: float):

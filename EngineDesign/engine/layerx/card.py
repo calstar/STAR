@@ -543,6 +543,11 @@ def card_for_config_text(text: str, *, center_psia: Optional[float] = None) -> D
     from engine.core.runner import compute_ambient_pressure_from_elevation
     from engine.pipeline.io import load_config
 
+    if center_psia is not None and not center_psia > 0.0:
+        # The caller's own number, said as theirs: it read as "the config states no tank pressure" though
+        # the config stated 578 psia and the caller had sent -5.
+        raise ValueError(f"center_psia {center_psia!r} is not an absolute pressure: give one above 0 psia, or "
+                         "leave it out to centre the card on the config's tank pressure")
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "engine.yaml"
         path.write_text(text, encoding="utf-8")
