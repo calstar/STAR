@@ -13,7 +13,7 @@ import math
 import yaml
 
 from backend.checkout import DesignCheckout
-from backend.session import UserSession, get_session, JOB_SEMAPHORE
+from backend.session import UserSession, get_session, JOB_SEMAPHORE, replace_config
 from backend.routers.config import config_to_dict
 
 
@@ -821,8 +821,17 @@ async def run_layer2(
 from fastapi import UploadFile, File as FastAPIFile
 
 @router.post("/layer2/upload-config")
-async def upload_layer2_config(file: UploadFile = FastAPIFile(...), session: UserSession = Depends(get_session)):
-    """Upload a config to use for Layer 2."""
+async def upload_layer2_config(
+    file: UploadFile = FastAPIFile(...),
+    session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
+):
+    """Upload a config to use for Layer 2.
+
+    A wholesale replacement like /api/config/upload: behind the checkout, off the event loop,
+    with a new load_token (``replace_config``). Without the token a second tab of this user
+    kept autosaving -- the uploaded engine into its own design.
+    """
     try:
         content = await file.read()
         config_dict = yaml.safe_load(content)
@@ -830,14 +839,14 @@ async def upload_layer2_config(file: UploadFile = FastAPIFile(...), session: Use
         # Validate and update app state
         from engine.pipeline.config_schemas import PintleEngineConfig
         config = PintleEngineConfig(**config_dict)
-        # Config and runner as one pair (AppState.set_config): a solve in the thread pool may
-        # be reading them.
-        session.app_state.set_config(config)
+        load_token = await replace_config(session, config)
 
         return {
             "status": "success",
             "message": "Config uploaded successfully for Layer 2",
-            "config": config_to_dict(config)
+            "config": config_to_dict(config),
+            "session_epoch": session.epoch,
+            "load_token": load_token,
         }
     except Exception as e:
         raise HTTPException(
@@ -904,8 +913,15 @@ async def stop_layer3(session: UserSession = Depends(get_session)):
 
 
 @router.post("/layer3/upload-config")
-async def upload_layer3_config(file: UploadFile = FastAPIFile(...), session: UserSession = Depends(get_session)):
-    """Upload a config to use for Layer 3 (should have pressure_curves from Layer 2)."""
+async def upload_layer3_config(
+    file: UploadFile = FastAPIFile(...),
+    session: UserSession = Depends(get_session),
+    _: None = DesignCheckout,
+):
+    """Upload a config to use for Layer 3 (should have pressure_curves from Layer 2).
+
+    A wholesale replacement: see upload_layer2_config.
+    """
     try:
         content = await file.read()
         config_dict = yaml.safe_load(content)
@@ -921,14 +937,14 @@ async def upload_layer3_config(file: UploadFile = FastAPIFile(...), session: Use
                 detail="Config must have pressure_curves section from Layer 2 optimization."
             )
         
-        # Config and runner as one pair (AppState.set_config): a solve in the thread pool may
-        # be reading them.
-        session.app_state.set_config(config)
+        load_token = await replace_config(session, config)
 
         return {
             "status": "success",
             "message": "Config uploaded successfully for Layer 3",
-            "config": config_to_dict(config)
+            "config": config_to_dict(config),
+            "session_epoch": session.epoch,
+            "load_token": load_token,
         }
     except HTTPException:
         raise

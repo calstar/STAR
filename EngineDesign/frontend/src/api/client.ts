@@ -547,6 +547,8 @@ export interface GenerateProfileResponse {
   status: string;
   data: TimeSeriesData;
   summary: TimeSeriesSummary;
+  /** Set when a YAML upload replaced the session config. */
+  load_token?: string | null;
 }
 
 // Response for segments endpoint
@@ -607,6 +609,8 @@ export async function uploadTimeseriesFromCSV(
   try {
     const response = await fetch(`${API_BASE}/timeseries/from-csv`, {
       method: 'POST',
+      // A YAML here replaces the session config, as /config/upload does: same checkout headers.
+      headers: designHeaders(),
       body: formData,
     });
 
@@ -616,6 +620,7 @@ export async function uploadTimeseriesFromCSV(
     }
 
     const data = await response.json();
+    if (data?.load_token) ownLoadToken = data.load_token;
     return { data };
   } catch (err) {
     return { error: thrownText(err, 'The CSV upload failed.') };
@@ -1507,6 +1512,7 @@ export async function uploadLayer2Config(file: File): Promise<ApiResponse<Upload
   try {
     const response = await fetch(`${API_BASE}/optimizer/layer2/upload-config`, {
       method: 'POST',
+      headers: designHeaders(),
       body: formData,
     });
 
@@ -1915,6 +1921,7 @@ export async function uploadLayer3Config(file: File): Promise<ApiResponse<Upload
   try {
     const response = await fetch(`${API_BASE}/optimizer/layer3/upload-config`, {
       method: 'POST',
+      headers: designHeaders(),
       body: formData,
     });
 
