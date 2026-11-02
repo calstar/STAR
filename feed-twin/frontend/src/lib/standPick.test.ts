@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, SessionState } from '../api';
-import { defaultPicks, listIsBehind, pastIdle } from './standPick';
+import { defaultPicks, listIsBehind, openingKnobs, pastIdle } from './standPick';
 
 const art = (id: string, kind: 'diagram' | 'engine', name: string, featured = false): Artifact => ({
   id,
@@ -59,6 +59,29 @@ describe('a stand opened from elsewhere re-reads the library', () => {
   it('not when it has both, nor for a stand with no engine', () => {
     expect(listIsBehind(library, ['le4', 'e1'])).toBe(false);
     expect(listIsBehind(library, ['le4', ''])).toBe(false);
+  });
+});
+
+describe('where the knobs are on a fresh stand', () => {
+  const saved = { dome: 535 };
+  const turned = { diagram: 'le4', knobs: { dome: 600 } };
+  it('Reset keeps a dome the operator turned, over the stand it was saved with', () => {
+    expect(openingKnobs({ diagram: 'le4', saved, left: turned, standOpened: false, closed: null })).toEqual({ dome: 600 });
+  });
+  it('a stand opened just now puts its own knobs back', () => {
+    expect(openingKnobs({ diagram: 'le4', saved, left: turned, standOpened: true, closed: null })).toEqual(saved);
+  });
+  it('after Close stand, Reset keeps the knobs turned since, not the closed stand\'s', () => {
+    const closed = { diagram: 'le4', knobs: { dome: 535 } };
+    expect(openingKnobs({ diagram: 'le4', saved: null, left: turned, standOpened: false, closed })).toEqual({ dome: 600 });
+  });
+  it('on another drawing, the last one\'s knobs are not this one\'s', () => {
+    expect(openingKnobs({ diagram: 'eth', saved: null, left: turned, standOpened: false, closed: null })).toEqual({});
+  });
+  it('a reload has no session to keep: the stand\'s, or the closed stand\'s', () => {
+    expect(openingKnobs({ diagram: 'le4', saved, left: null, standOpened: false, closed: null })).toEqual(saved);
+    const closed = { diagram: 'le4', knobs: { dome: 520 } };
+    expect(openingKnobs({ diagram: 'le4', saved: null, left: null, standOpened: false, closed })).toEqual({ dome: 520 });
   });
 });
 

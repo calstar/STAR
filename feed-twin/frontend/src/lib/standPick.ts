@@ -40,6 +40,36 @@ export function listIsBehind(list: readonly Artifact[], ids: readonly string[]):
   return ids.some((id) => id !== '' && !list.some((a) => a.id === id));
 }
 
+/** Knob positions [psig] by knob id, and the drawing they belong to. */
+export interface KnobsOn {
+  diagram: string;
+  knobs: Record<string, number>;
+}
+
+/** Where the knobs go on a stand that opens fresh on `diagram`.
+ *
+ *  A stand document just opened puts its saved knobs back. Otherwise --
+ *  Reset, a switch of gas, a saved hookup, a server that forgot the session --
+ *  the regulators stay where the session it replaces left them, as the trip
+ *  screen promises: Reset used to apply the stand's saved knobs every time,
+ *  and a dome turned to 600 came back at 535. A stand closed on this drawing
+ *  hands its knobs on, once, when nothing nearer says where they are. */
+export function openingKnobs(o: {
+  diagram: string;
+  /** The stand document's knobs, when it is open on this drawing. */
+  saved: Record<string, number> | null;
+  /** Where the session being replaced left them. */
+  left: KnobsOn | null;
+  /** The stand document was opened just now. */
+  standOpened: boolean;
+  /** What a closed stand left this cockpit. */
+  closed: KnobsOn | null;
+}): Record<string, number> {
+  if (!o.standOpened && o.left?.diagram === o.diagram && Object.keys(o.left.knobs).length) return o.left.knobs;
+  if (o.saved) return o.saved;
+  return o.closed?.diagram === o.diagram ? o.closed.knobs : {};
+}
+
 /** What switching away from this stand would throw away, or '' when it is
  *  still a cold, empty stand in Idle that nothing is lost by replacing. */
 export function pastIdle(live: SessionState | null, burns: Burns | null): string {

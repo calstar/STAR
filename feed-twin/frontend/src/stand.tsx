@@ -26,7 +26,7 @@ import { NO_ERROR, errorLine, errorText } from './lib/errorLine';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
-import { defaultPicks, listIsBehind, pastIdle } from './lib/standPick';
+import { defaultPicks, listIsBehind, openingKnobs, pastIdle, type KnobsOn } from './lib/standPick';
 import {
   commandSession,
   getConsoleHidden,
@@ -333,8 +333,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const checkout = useCheckout({ api: standApi, ref: standDoc?.ref ?? null, reload: () => undefined });
   const locked = Boolean(standDoc) && !checkout.held;
   /** Knob positions a closed stand left the cockpit, for its next fresh
-   *  stand on the same drawing. */
-  const carried = useRef<{ diagram: string; knobs: Record<string, number> } | null>(null);
+   *  stand on the same drawing (once; `openingKnobs`). */
+  const carried = useRef<KnobsOn | null>(null);
+  /** A stand document was just opened: its saved knobs go on its first
+   *  session. Every later fresh session keeps the knobs where they were. */
+  const standOpened = useRef(false);
+  /** The drawing the session on screen was opened on. */
+  const liveOn = useRef('');
   /** The stand this browser held when the page went away. Closing the tab
    *  hands the checkout back (useCheckout's unload beacon), so a reload -- or
    *  a stand somebody had just made -- came back read only, with a Take
@@ -436,6 +441,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (doc.diagram) setDiagram(doc.diagram);
       if (doc.engine !== undefined) setEngine(doc.engine);
       wantFresh.current = true;
+      standOpened.current = true;
       setGeneration((g) => g + 1);
     },
     [setChanged],
@@ -572,6 +578,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setNoStand(null);
     const fresh = wantFresh.current;
     wantFresh.current = false;
+    const opening = standOpened.current;
+    standOpened.current = false;
+    // Where the session being replaced left its knobs (Reset, a gas switch, a
+    // saved hookup): the new one starts there.
+    const left: KnobsOn | null =
+      live && liveOn.current ? { diagram: liveOn.current, knobs: Object.fromEntries((live.knobs ?? []).map((k) => [k.id, k.psig])) } : null;
     const remembered = (): string => {
       if (fresh) return '';
       try {
@@ -656,8 +668,15 @@ export function StandProvider({ children }: { children: ReactNode }) {
         ...(onStand ? { stand: { id: onStand.ref.id, owner: onStand.ref.owner ?? '' } } : {}),
         ...(doc && Object.keys(doc.hookup).length ? { hookup: doc.hookup } : {}),
       });
-      const knobs = (doc?.operating_point?.knobs ??
-        (carried.current?.diagram === diagram ? carried.current.knobs : {})) as Record<string, number>;
+      const knobs = openingKnobs({
+        diagram,
+        saved: (doc?.operating_point?.knobs as Record<string, number> | undefined) ?? null,
+        left,
+        standOpened: opening,
+        closed: carried.current,
+      });
+      // A closed stand's knobs are handed on once.
+      if (carried.current && knobs === carried.current.knobs) carried.current = null;
       let state = opened;
       for (const [id, value] of Object.entries(knobs)) {
         if (opened.knobs?.some((k) => k.id === id)) {
@@ -685,6 +704,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         setConsoleOrderState(orderOf(view.console_order));
         setMachine(sm);
         session.current = first.id;
+        liveOn.current = diagram;
         try {
           window.localStorage.setItem(
             'feedtwin.session',
