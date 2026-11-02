@@ -328,13 +328,56 @@ def _seed(revive: bool = False) -> None:
 SAMPLE = Path(__file__).parent / "sample"
 
 
+#: React Flow's view state on a node: what the canvas works out, or flips,
+#: while somebody looks at a drawing, not what was drawn. pid-designer's
+#: ``toStored`` (frontend/src/api/diagrams.ts) drops ``selected``, ``dragging``
+#: and ``measured`` on every save and its Export JSON keeps them, so the one
+#: drawing exported and pulled was two artifacts, and a save that changed no
+#: symbol made a pulled stand "changed since pulled" (R004). ``hidden`` is
+#: which page was on screen (pid-designer pages.ts), ``resizing`` is a drag
+#: in progress, ``positionAbsolute`` React Flow 11's computed position, and
+#: ``width``/``height`` a region box's size: none is anything the twin builds.
+VIEW_STATE_NODE = frozenset(
+    {
+        "selected",
+        "dragging",
+        "measured",
+        "resizing",
+        "width",
+        "height",
+        "hidden",
+        "positionAbsolute",
+    }
+)
+#: The same on a line: ``toStored`` drops ``selected`` and ``reconnectable``.
+VIEW_STATE_EDGE = frozenset({"selected", "reconnectable", "hidden"})
+
+
+def _drawn(items: Any, view: frozenset[str]) -> list[Any]:
+    """Nodes or edges without their view state."""
+    if not isinstance(items, list):
+        return []
+    return [
+        (
+            {k: v for k, v in item.items() if k not in view}
+            if isinstance(item, Mapping)
+            else item
+        )
+        for item in items
+    ]
+
+
 def drawing_digest(payload: Mapping[str, Any]) -> str:
     """A drawing's identity, whatever its formatting: the sha256 of its nodes
-    and edges (all a stand is built from) with sorted keys and no whitespace.
-    A pull re-serialises the drawing (``designtools._diagram_bytes``), so the
-    same drawing pulled and uploaded used to be two artifacts (D-52)."""
+    and edges (all a stand is built from) with sorted keys and no whitespace,
+    less the canvas's view state (:data:`VIEW_STATE_NODE`). A pull
+    re-serialises the drawing (``designtools._diagram_bytes``), so the same
+    drawing pulled and uploaded used to be two artifacts (D-52)."""
     canonical = json.dumps(
-        {"nodes": payload.get("nodes") or [], "edges": payload.get("edges") or []},
+        {
+            "nodes": _drawn(payload.get("nodes"), VIEW_STATE_NODE),
+            "edges": _drawn(payload.get("edges"), VIEW_STATE_EDGE),
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
