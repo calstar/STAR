@@ -279,3 +279,42 @@ def test_the_model_view_says_which_symbols_are_the_cart() -> None:
     assert "FV-MAN" in ground
     assert {labels.get(i, i) for i in rocket["ground"]} == {"FV-MAN"}
     assert rocket["ground_bottles"] == []
+
+
+def test_a_valve_that_rests_open_onto_a_vehicle_tank_is_said() -> None:
+    """LE4 (3) with the drawn GSE: the cart's FD-ROT is drawn fail-open and no
+    state-table row drives it, so nothing shuts it, and through the mated fuel
+    fill disconnect it drained Eth-Tank in 0.9 s of a 3.9 s burn with nothing
+    said. Whether the drawing should bind it or draw a check valve is the
+    team's (ADR 0006); the stand says so from the moment it opens. Here the
+    LE4 (6) cart's fuel fill valve is redrawn that way."""
+    raw = json.loads(DRAWING.read_text())
+    for node in raw["nodes"]:
+        if node["data"]["label"] == "FF-MAN-Output":
+            node["data"]["componentType"] = "ROT"
+            node["data"]["label"] = "FD-ROT"
+            node["data"].setdefault("options", {})["failState"] = "open"
+    response = client.post(
+        "/api/library/diagrams",
+        files={
+            "file": ("fd-rot LE4.json", json.dumps(raw).encode(), "application/json")
+        },
+    )
+    assert response.status_code == 200, response.text
+    diagram = response.json()["artifact"]["id"]
+    UPLOADED.append(diagram)
+
+    def notes(**setup: object) -> list[str]:
+        opened = client.post("/api/session", params={"diagram": diagram}, json=setup)
+        assert opened.status_code == 200, opened.text
+        said: list[str] = opened.json()["notes"]
+        return said
+
+    said = [n for n in notes(ignore_gse=False) if "FD-ROT" in n]
+    assert len(said) == 1, said
+    assert "Eth-Tank" in said[0] and "LOX-Tank" not in said[0], said
+    # Gated on there being one: the rocket alone has no FD-ROT, and the
+    # drawing as shipped no valve that rests open onto a flight tank.
+    assert not [n for n in notes(ignore_gse=True) if "rests open" in n]
+    plain = client.post("/api/session", params={"diagram": _upload()}, json={})
+    assert not [n for n in plain.json()["notes"] if "rests open" in n]

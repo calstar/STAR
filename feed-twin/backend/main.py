@@ -2459,6 +2459,7 @@ async def open_session(
         *(stand.notes if hookup is stand.hookup else ()),
         *hookup_notes,
         *session.short_loads(),
+        *_rests_open_onto_vehicle(session),
     ]
     session.assumptions.extend(notices)
     # The first frame before the session is kept: a stand whose first step
@@ -2481,6 +2482,67 @@ async def open_session(
     )
     _UNBUILDABLE.pop(diagram, None)
     return _session_out(session, first)
+
+
+#: Symbols a walk along the drawing stops at: something that shuts, holds a
+#: pressure, or only lets flow one way.
+_WALK_STOPS = frozenset({"PR", "RV", "CV"})
+
+
+def _rests_open_onto_vehicle(session: Session) -> list[str]:
+    """A sentence for each actuated valve that rests open (its drawing's
+    ``failState``) with no state-table row to drive it, and opens a vehicle
+    tank through nothing that shuts -- across a mated disconnect included.
+
+    Nothing on the stand ever closes one. LE4 (3) with its cart drawn: FD-ROT
+    rests open on the fuel fill line, and through the mated fill disconnect
+    it drained the fuel tank in 0.9 s of a 3.9 s burn with nothing said.
+    Whether the drawing binds it or draws a check valve is the team's (ADR
+    0006); the stand says so. Empty when there is none."""
+    built = session.model.built
+    diagram = session.model.diagram
+    types = {n.id: n.type for n in diagram.nodes}
+    labels = {n.id: n.label or n.id for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for a, b in [*((e.source, e.target) for e in diagram.edges), *built.mated]:
+        adjacent.setdefault(a, set()).add(b)
+        adjacent.setdefault(b, set()).add(a)
+    vehicle = set(session.vehicle_tanks)
+    shuts = set(built.actuators) | set(built.hand_valves)
+    out: list[str] = []
+    for valve in session.binding.uncommanded:
+        signal = built.actuators.get(valve, "")
+        if (
+            not signal
+            or signal.endswith(".dome")
+            or valve in built.hand_valves
+            or built.rest.get(valve, 0.0) < 0.5
+        ):
+            continue
+        reached: set[str] = set()
+        seen, frontier = {valve}, [valve]
+        while frontier:
+            for nxt in adjacent.get(frontier.pop(), ()):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                if nxt in vehicle:
+                    reached.add(nxt)
+                elif not (
+                    nxt in shuts
+                    or nxt in session.tanks
+                    or types.get(nxt) in _WALK_STOPS | SOURCE_TYPES
+                ):
+                    frontier.append(nxt)
+        if reached:
+            out.append(
+                f"{labels.get(valve, valve)} rests open (its drawing's failState) "
+                "and no state-table row drives it, so nothing on the stand shuts "
+                f"it; it opens {', '.join(sorted(labels[t] for t in reached))} "
+                "with nothing between. Shut it by hand, pin it to a row on the "
+                "Hookup tab, or draw what closes it."
+            )
+    return out
 
 
 def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
