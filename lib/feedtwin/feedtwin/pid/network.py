@@ -69,7 +69,9 @@ BRANCH_KINDS: dict[str, tuple[str, str]] = {
 LINE_KINDS: dict[str, tuple[str, str]] = {
     "pipe": ("pipe", "darcy"),
     "flex_hose": ("flex_hose", "darcy"),
-    "bend": ("bend", "darcy"),
+    # The geometry-aware hardline bend; "rounded" is its correlation model
+    # (there is no darcy bend, and asking for one could not be built).
+    "bend": ("bend", "rounded"),
     "fitting": ("fitting", "K"),
 }
 
