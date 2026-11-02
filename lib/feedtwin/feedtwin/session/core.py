@@ -5946,16 +5946,18 @@ class Session:
                 except Exception:  # noqa: BLE001 - no saturation line to read
                     near = False
             if near:
-                # "No relief valve" only of a drawing with none on it.
+                # "No relief valve" only of a tank with none drawn on it: a
+                # relief on the COPV, or on the other tank, does not lift for
+                # this one (:meth:`_reliefs_on`).
                 out.append(
                     f"{sim.label}'s propellant is near its critical point "
                     f"({say(p_crit)}, {t_crit:.1f} K), where the model's liquid "
                     "properties end. "
                     + (
                         ""
-                        if self._reliefs
-                        else "The drawing has no relief valve; a real tank "
-                        "would have lifted one long ago. "
+                        if self._reliefs_on(sim.id)
+                        else f"No relief valve is drawn on {sim.label}; a real "
+                        "tank would have lifted one long ago. "
                     )
                     + "Vent it."
                 )

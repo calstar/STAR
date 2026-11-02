@@ -130,8 +130,18 @@ def test_subcooled_lox_over_its_critical_pressure_is_not_critical() -> None:
     (near,) = [n for n in session._notes() if "critical" in n]
     assert near.startswith("LOX-Tank") and "Vent it." in near
     assert "can go no higher" not in near
-    if session._reliefs:
-        assert "no relief valve" not in near
+    assert session._reliefs_on(lox.id), "LE4 draws a relief on the LOX tank"
+    assert "relief" not in near
+    # Without the LOX tank's own relief the note says so, though the COPV and
+    # the fuel tank keep theirs: neither lifts for this tank.
+    session._reliefs = [
+        (b, branch)
+        for b, branch in session._reliefs
+        if b not in dict(session._reliefs_on(lox.id))
+    ]
+    assert session._reliefs, "the other reliefs are still drawn"
+    (bare,) = [n for n in session._notes() if "critical" in n]
+    assert "No relief valve is drawn on LOX-Tank" in bare, bare
 
 
 def test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere() -> None:
