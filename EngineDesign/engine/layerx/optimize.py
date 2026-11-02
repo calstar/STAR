@@ -107,9 +107,12 @@ def default_variables(prep: Any, config: Any) -> List[Variable]:
         cap = getattr(req, key, None) if req is not None else None
         if cap:
             caps.append((float(cap), f"design_requirements.{key} ({side})"))
-    for tank_id, mawp in (d.get("tank_mawp_psi") or {}).items():
-        # MAWP is across the wall: absolute cap is the MAWP over the site's atmosphere.
-        caps.append((mawp + d["ambient_pa"] / PSI, f"{tank_id} MAWP on the drawing, over the site's atmosphere"))
+    ratings = d.get("vessel_ratings") or {}
+    for tank_id, trip in (d.get("tank_mawp_psi") or {}).items():
+        # The absolute pressure the twin trips the stand at (prepare.vessel_trip): the cap as it is.
+        # It used to add the site's atmosphere on top, one atmosphere and more over the trip.
+        why = (ratings.get(tank_id) or {}).get("words") or f"{trip:.1f} psia"
+        caps.append((float(trip), f"{(ratings.get(tank_id) or {}).get('label') or tank_id} trips the stand at {why}"))
     hi, hi_why = min(caps, key=lambda c: c[0])
     hi = round(hi, 1)
     lo = round(min(lockup * 0.85, hi * 0.95))
@@ -125,7 +128,8 @@ def default_variables(prep: Any, config: Any) -> List[Variable]:
     out.append(Variable("copv_psig", "Bottle fill", "psig", c_lo, c_hi, min(max(copv, c_lo), c_hi),
                         basis=f"{c_lo:.0f} psig (an assumed floor, 60 % of the top) to {c_hi:.0f} psig, the bottle pressure "
                               "the drawing states: a fill above what the bottle is drawn for is not searched"
-                              + (f" (its MAWP of {mawp:.0f} psi is a proof margin, not a fill)" if mawp else "") + "."))
+                              + (f" (the {mawp:.0f} psia it trips the stand at is a proof margin, not a fill)"
+                                 if mawp else "") + "."))
 
     vol = d.get("copv_volume_L")
     if vol:

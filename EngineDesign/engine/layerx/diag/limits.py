@@ -410,8 +410,12 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
     out: List[Dict[str, Any]] = []
     roles = derived.get("roles") or {}
     mawps = derived.get("tank_mawp_psi") or {}
+    ratings = derived.get("vessel_ratings") or {}
+    ratings = ratings if isinstance(ratings, Mapping) else {}
     ambient_pa = _num(derived.get("ambient_pa"))
     ambient_psia = ambient_pa / PSI if ambient_pa is not None else 14.6959
+    gauge_pa = _num(derived.get("gauge_zero_pa"))
+    gauge_zero_psia = gauge_pa / PSI if gauge_pa is not None else 101325.0 / PSI
     meops = dict(derived.get("tank_meop_psi") or {})
     use = THRESHOLDS["rating_use"]["value"]
     for side, short, name, cap_key in (("oxidiser", "ox", "LOX", "max_lox_tank_pressure_psi"),
@@ -425,18 +429,28 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
         t, i = run.at(i)
         across = peak - ambient_psia
         tank_id = roles.get(side)
-        mawp = _num(mawps.get(tank_id)) if tank_id else None
-        if mawp is not None:
+        trip = _num(mawps.get(tank_id)) if tank_id else None
+        if trip is not None and trip > gauge_zero_psia:
+            # ``tank_mawp_psi`` is the absolute pressure the twin trips the stand at (prepare.vessel_trip;
+            # MAWP.si on runs before burst ratings were read, absolute too). Graded on the gauge the
+            # drawing states its rating on, so the red line is exactly the trip and the percentage is
+            # of the drawn psig. It used to subtract the site's atmosphere from the peak and hold that
+            # against the absolute figure: one atmosphere and more lenient, the % reading low.
+            rating = ratings.get(tank_id) if isinstance(ratings.get(tank_id), Mapping) else {}
+            words = rating.get("words") or f"{trip:.1f} psia (the drawing's MAWP)"
+            peak_g, rating_g = peak - gauge_zero_psia, trip - gauge_zero_psia
             out.append(_entry(
-                f"tank_mawp_{short}", f"{name} tank peak vs MAWP", "tanks", across, "psi", mawp, use * mawp, "max",
+                f"tank_mawp_{short}", f"{name} tank peak vs rating", "tanks", peak_g, "psig", rating_g, use * rating_g,
+                "max",
                 # Information for now (the team, 2026-10-03: "don't worry about tank limits for now"); a
-                # vessel over its MAWP still trips the stand (vessel_trip, the twin's own physics).
+                # vessel over its rating still trips the stand (vessel_trip, the twin's own physics).
                 "info", t, i, f"series.{short}.tank_psia",
-                f"Ullage pressure, highest over the recorded lead-in and the burn, less the site's atmosphere "
-                f"({ambient_psia:.2f} psia), against the drawing's MAWP for {tank_id}",
-                f"Highest pressure across the wall: {across / mawp * 100:.0f} % of the drawing's MAWP (amber above "
-                f"{use * 100:.0f} %, a judgement). The recorded lead-in is the last 0.5 s before Fire, not the "
-                "pad hold.", rating_source="drawing"))
+                f"Ullage pressure, highest over the recorded lead-in and the burn, less the gauge zero "
+                f"({gauge_zero_psia:.2f} psia) the drawing's rating is stated on, against the {words} {tank_id} trips "
+                "the stand at",
+                f"Highest pressure across the wall: {peak_g / rating_g * 100:.0f} % of the rating the twin trips at "
+                f"(amber above {use * 100:.0f} %, a judgement). The recorded lead-in is the last 0.5 s before Fire, "
+                "not the pad hold.", rating_source=str(rating.get("basis") or "drawing")))
         meop = None
         for src in (meop_psi or {}, meops):
             meop = _num(src.get(side)) if src.get(side) is not None else _num(src.get(tank_id)) if tank_id else None

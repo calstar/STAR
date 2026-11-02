@@ -141,7 +141,8 @@ def test_the_reference_run_matches_the_audits_hand_worked_worst_times():
     assert g["stiffness_fuel_ignition"]["grade"] == "info"
     for short in ("ox", "fuel"):
         assert g[f"tank_mawp_{short}"]["t_worst"] == pytest.approx(3.4663, abs=1e-4)
-    assert g["tank_mawp_ox"]["value"] == pytest.approx(580.28 - 94069.72225 / PSI, abs=0.01)
+    # Across the wall on the gauge zero the drawing rates the tank on (the trip is absolute), not the site.
+    assert g["tank_mawp_ox"]["value"] == pytest.approx(580.28 - 101325.0 / PSI, abs=0.01)
     assert g["bottle_margin"]["value"] == pytest.approx(1405.71 - 578.05, abs=0.01)
     assert g["tank_sag"]["value"] == pytest.approx(578.0486 - 552.0311, abs=1e-3)
     assert g["tank_sag"]["t_worst"] == pytest.approx(0.40, abs=1e-9)
@@ -164,7 +165,7 @@ SERIES_BACKED = {"stiffness_ox": "ox.stiffness", "stiffness_fuel": "fuel.stiffne
 def test_the_worst_index_points_at_the_graded_value(name, result):
     series = result["series"]
     d = result["provenance"].get("derived") or {}
-    ambient = d.get("ambient_pa", 101325.0) / PSI
+    zero = d.get("gauge_zero_pa", 101325.0) / PSI   # the tank rating is graded across the wall on the gauge zero
     t = series["t"]
     for e in grade(result):
         i = e["index_worst"]
@@ -182,7 +183,7 @@ def test_the_worst_index_points_at_the_graded_value(name, result):
             continue
         side, col = path.split(".")
         v = series[side][col][i]
-        expect = v - ambient if e["key"].startswith("tank_mawp") else v
+        expect = v - zero if e["key"].startswith("tank_mawp") else v
         assert expect == pytest.approx(e["value"], rel=1e-12), f"{name}: {e['key']} at index {i}"
 
 

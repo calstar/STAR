@@ -2,6 +2,36 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 Vessels held to the pressure the twin trips them at; no burn figure moves
+
+Layer X read the drawing's MAWP as a pressure *across* the wall, but feedtwin reads a drawn bare psi
+as gauge (ADR 0004), so `MAWP.si` is already absolute and `Session._check_limits` trips the stand at
+it. And it never read `burst_pressure`, which is how LE4 (3) rates every vessel (the twin trips at
+burst over `Setup.burst_safety_factor`, across the wall). One function now mirrors the twin
+(`prepare.vessel_trip`, which calls feedtwin's `_trip_limit`), and every reader holds the absolute
+trip as it is:
+
+| where | was | now (LE4 (3); copv_study_gn2 MAWP 1000 psi) |
+|---|---|---|
+| preflight lockup / fill check | `target - site ambient > MAWP.si`: passed up to 28 psi over the trip, which then died in the settle (`StandTripped`) | `target > trip`: 1022 psia fails against 1014.7; LE4 (3) tanks 764.7 psia, COPV 7514.7 psia |
+| preflight "ratings" | LE4 (3): "No MAWP … nothing checks those vessels" | "LOX-Tank trips at 764.7 psia (burst 1500 psig over a safety factor of 2, estimated)" |
+| `derived.tank_mawp_psi` / `copv_mawp_psi` | MAWP.si only; `{}` on LE4 (3) | the trip, absolute (same name, same meaning on MAWP drawings); `vessel_ratings` says the basis |
+| optimiser lockup ceiling, set-point cap, set-point fallback grade | trip + site ambient (1028.3 psia) | the trip (1014.7 psia) |
+| water-hammer rating | trip + 14.696 psi | the trip |
+| limits `tank_mawp_*` | peak less site ambient against the absolute trip (% read ~2 % low) | peak less the gauge zero against the trip less the gauge zero: red exactly where the twin trips, % of the drawn psig |
+| test card, legacy UI verdict | "MAWP 750 psi on the drawing" for a burst rating; legacy verdict one atmosphere lenient | names the burst basis; the legacy verdict reads the trip on the gauge zero |
+
+New preflight warning `relief`: a lockup or fill over the set pressure of a relief valve on the vessel
+(drawn onto it, or behind manifolds and junctions: COPV-RV on COPV-MFLD) lifts it during the settle.
+The tank-rise estimate names a relief or trip it would cross. A burn whose T-0 did not settle now has
+`converged: false`, and its "T-0 did not settle" event states what was asked and what T-0 was (an
+8000 psia fill on LE4 (3) settled at 4740 psia and read as a normal "done" burn; it now fails
+preflight on the COPV's 7514.7 psia trip, and a 6000 psia fill warns of the 5000 psi relief).
+
+No burn moves: the twin's trip, the plan and the scheme are untouched. Guarded by
+`tests/test_layerx_ratings.py` (red on the old code: all six) and the slow
+`test_layerx_transients.py` water-hammer rating assertion.
+
 ## 2026-10-07 (later) The feed-diagnostics LE4 test re-baselined; no physics changed
 
 `tests/test_layerx_feeddiag.py::test_feed_diagnostics_on_the_le4_helium_burn` (`LAYERX_GOLDEN=1`,

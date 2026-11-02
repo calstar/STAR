@@ -318,6 +318,69 @@ def _stated_requirement(config: Any, key: str) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def vessel_trip(node: Any, safety_factor: float) -> Optional[Dict[str, Any]]:
+    """The pressure the feed twin trips the stand at for this vessel, as the twin computes it
+    (``feedtwin.session.core._trip_limit``, which ``Session._check_limits`` compares the vessel's
+    absolute pressure with): the drawing's ``burst_pressure`` over ``Setup.burst_safety_factor``
+    across the wall when it gives one, else its ``MAWP``. Both are read as the drawing reads them
+    (ADR 0004: a bare psi is gauge, so ``.si`` is already absolute).
+
+    ``{trip_psia, basis, rating_psig, safety_factor, source, words}``: ``trip_psia`` is absolute,
+    ``basis`` ``burst`` or ``MAWP``, ``rating_psig`` the drawn number. ``None`` when the drawing
+    rates the vessel by neither: the twin then checks nothing."""
+    from feedtwin.session.core import _trip_limit
+    from feedtwin.session.gauge import ATMOSPHERE
+
+    limit = float(_trip_limit(node, safety_factor, []))
+    if limit <= 0.0:
+        return None
+    params = getattr(node, "params", {}) or {}
+    burst = params.get("burst_pressure")
+    if burst is not None and burst.si > ATMOSPHERE:
+        sf = max(float(safety_factor), 1.0)
+        param, basis = burst, "burst"
+        rating = (float(burst.si) - ATMOSPHERE) / PSI
+        how = f"burst {rating:.0f} psig over a safety factor of {sf:g}"
+    else:
+        sf = None
+        param, basis = params["MAWP"], "MAWP"
+        rating = (float(param.si) - ATMOSPHERE) / PSI
+        how = f"MAWP {rating:.0f} psig"
+    source = str(getattr(param.source, "value", param.source) or "unstated")
+    return {"trip_psia": limit / PSI, "basis": basis, "rating_psig": rating, "safety_factor": sf, "source": source,
+            "words": f"{limit / PSI:.1f} psia ({how}, {source})"}
+
+
+#: Drawing symbols a relief valve can sit behind and still see the vessel's own pressure: a manifold
+#: or a junction is a fitting, not a restriction (the drawn lines between them are walked too).
+_PASSIVE_SYMBOLS = frozenset({"MANIFOLD", "JUNCTION", "TEE", "CROSS"})
+
+
+def vessel_reliefs(diagram: Any, vessel_id: str) -> List[Tuple[str, float]]:
+    """``(label, set pressure [Pa, across the valve])`` for every relief valve with a drawn
+    ``set_pressure`` that sees ``vessel_id``'s pressure: drawn onto it, or behind manifolds and
+    junctions only (LE4 (3)'s COPV-RV sits on COPV-MFLD). Not one behind a valve or a regulator."""
+    nodes = {n.id: n for n in diagram.nodes}
+    neighbours: Dict[str, List[str]] = {}
+    for e in diagram.edges:
+        neighbours.setdefault(e.source, []).append(e.target)
+        neighbours.setdefault(e.target, []).append(e.source)
+    out: List[Tuple[str, float]] = []
+    seen, todo = {vessel_id}, [vessel_id]
+    while todo:
+        here = todo.pop()
+        for other in neighbours.get(here, ()):
+            node = nodes.get(other)
+            if node is None or other in seen:
+                continue
+            seen.add(other)
+            if node.type == "RV" and "set_pressure" in node.params:
+                out.append((node.label or node.id, float(node.params["set_pressure"].si)))
+            elif node.type in _PASSIVE_SYMBOLS:
+                todo.append(other)
+    return out
+
+
 def expected_tank_rise(model: Any, *, dome_psig: float, gas: str, bottle_pa: float, bottle_K: float,
                        bottle_m3: float, lockup_pa: float, ullage_m3: float, expelled_m3: float,
                        iterations: int = 12) -> Dict[str, Any]:
@@ -369,11 +432,14 @@ _COOLPROP_GAS = {"nitrogen": "Nitrogen", "helium": "Helium"}
 def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, lockup_pa: float,
                         roles: Dict[str, str], tanks: List[Any], volumes: Dict[str, Optional[float]],
                         loads: Optional[Dict[str, float]], rho: Dict[str, float], settings: LayerXSettings,
-                        ambient: float, config: Any) -> Optional[Dict[str, Any]]:
-    """Preflight's ``tank_rise`` check: :func:`expected_tank_rise` against each tank's MAWP (across
-    the wall, at the site's atmosphere) and the design's stated tank cap (read as psia, as
-    ``diag.limits`` reads it until AUDIT D11 is decided). ``warn`` over either, ``info`` otherwise."""
-    from feedtwin.session.gauge import from_psig
+                        ambient: float, config: Any, trips: Optional[Dict[str, Dict[str, Any]]] = None,
+                        reliefs: Optional[Dict[str, List[Tuple[str, float]]]] = None) -> Optional[Dict[str, Any]]:
+    """Preflight's ``tank_rise`` check: :func:`expected_tank_rise` against the pressure each tank
+    trips the stand at (:func:`vessel_trip`, absolute, as the twin compares it), the relief valves
+    on it (:func:`vessel_reliefs`, set across the valve to the gauge zero) and the design's stated
+    tank cap (read as psia, as ``diag.limits`` reads it until AUDIT D11 is decided). ``warn`` over
+    any, ``info`` otherwise."""
+    from feedtwin.session.gauge import ATMOSPHERE, from_psig
 
     gas = _COOLPROP_GAS.get((bottle.fluid or "").lower())
     t_param, v_param = bottle.params.get("temperature"), bottle.params.get("volume")
@@ -403,9 +469,13 @@ def _burnout_tank_check(model: Any, dome: float, bottle: Any, copv_psig: float, 
     for t in tanks:
         if t.id not in roles.values():
             continue
-        mawp = t.params.get("MAWP")
-        if mawp is not None and end - ambient > mawp.si:
-            over.append(f"{t.label or t.id}'s MAWP ({mawp.si / PSI:.0f} psi; {(end - ambient) / PSI:.0f} psi across the wall)")
+        trip = (trips or {}).get(t.id)
+        if trip is not None and end / PSI > trip["trip_psia"]:
+            over.append(f"the {trip['words']} {t.label or t.id} trips the stand at")
+        for label, set_pa in (reliefs or {}).get(t.id, ()):
+            if end > set_pa + ATMOSPHERE:
+                over.append(f"{label}'s {set_pa / PSI:.0f} psi set pressure on {t.label or t.id} "
+                            f"({(set_pa + ATMOSPHERE) / PSI:.1f} psia): it lifts")
     for key, name in (("max_lox_tank_pressure_psi", "LOX"), ("max_fuel_tank_pressure_psi", "fuel")):
         cap = _stated_requirement(config, key)
         if cap is not None and end / PSI > cap:
@@ -909,33 +979,50 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
             f"{dome + atm_psia:.1f} psia {where} ({source}) gives {target_psia:.1f} psia tank lockup "
             f"with the bottle at {copv_psig + atm_psia:.0f} psia.")
 
-    # MAWP of the tanks and the bottle against what they will hold. MAWP is a difference across the
-    # wall, so it is held against the site's atmosphere, not the DAQ's 101.325 kPa gauge zero
-    # (~1 psi tighter at 627 m; the vehicle climbing during the burn adds a little more).
+    # Each vessel against the pressure the twin trips the stand at (vessel_trip): the same absolute
+    # limit Session._check_limits holds it to, burst over the safety factor or the MAWP, so a lockup
+    # or fill that passes here cannot trip the stand at T-0. (The MAWP used to be read as a pressure
+    # across the wall and held against the site's atmosphere, but feedtwin's MAWP is already absolute:
+    # that passed lockups up to ~28 psi over the trip, which then died in the settle; and the burst
+    # pressure LE4 (3) rates its vessels by was not read at all.)
+    safety_factor = float(feed_twin_setup().burst_safety_factor)
+    trips = {v.id: r for v in list(tanks) + list(bottles) if (r := vessel_trip(v, safety_factor)) is not None}
+    reliefs = {v.id: r for v in list(tanks) + list(bottles) if (r := vessel_reliefs(diagram, v.id))}
+    rated_tanks = {t.id: trips[t.id] for t in tanks if t.id in trips}
     for t in tanks:
-        mawp = t.params.get("MAWP")
-        if mawp is not None and target_pa - ambient > mawp.si:
-            add(f"mawp_{t.id}", f"{t.label or t.id} MAWP", "fail",
-                f"Lockup {target_psia:.1f} psia is {(target_pa - ambient) / PSI:.1f} psi above the site's atmosphere; "
-                f"the drawing's MAWP is {mawp.si / PSI:.0f} psi.")
+        trip = trips.get(t.id)
+        if trip is not None and target_psia > trip["trip_psia"]:
+            add(f"mawp_{t.id}", f"{t.label or t.id} rating", "fail",
+                f"Lockup {target_psia:.1f} psia is over the {trip['words']} {t.label or t.id} trips the stand at.")
+    fill_psia = from_psig(copv_psig) / PSI
     for b in bottles:
-        mawp = b.params.get("MAWP")
-        if mawp is not None and from_psig(copv_psig) - ambient > mawp.si:
-            add(f"mawp_{b.id}", f"{b.label or b.id} MAWP", "fail",
-                f"Bottle fill {from_psig(copv_psig) / PSI:.0f} psia is {(from_psig(copv_psig) - ambient) / PSI:.0f} psi above the site's "
-                f"atmosphere; its MAWP is {mawp.si / PSI:.0f} psi.")
+        trip = trips.get(b.id)
+        if trip is not None and fill_psia > trip["trip_psia"]:
+            add(f"mawp_{b.id}", f"{b.label or b.id} rating", "fail",
+                f"Bottle fill {fill_psia:.0f} psia is over the {trip['words']} {b.label or b.id} trips the stand at.")
+    # A relief valve on a vessel lifts when the pressure across it reaches its set pressure: a lockup
+    # or fill above it vents during the settle, and the burn starts from a different T-0 than asked.
+    bottle_ids = {b.id for b in bottles}
+    lifts = [f"{'bottle fill' if v.id in bottle_ids else 'lockup'} {p:.0f} psia is over {label}'s "
+             f"{set_pa / PSI:.0f} psi set pressure on {v.label or v.id} ({(set_pa + ATMOSPHERE) / PSI:.1f} psia)"
+             for v, p in [(b, fill_psia) for b in bottles] + [(t, target_psia) for t in tanks if t.id in roles.values()]
+             for label, set_pa in reliefs.get(v.id, ()) if p * PSI > set_pa + ATMOSPHERE]
+    if lifts:
+        said = "; ".join(lifts)
+        add("relief", "Relief valves at T-0", "warn",
+            said[:1].upper() + said[1:] + ": it lifts during the settle to lockup, so the burn starts from what "
+            "the relief leaves, not from the pressure asked (the run's T-0 event says what it was).")
 
     # The ratings themselves: a pass against a rating nobody measured is only as good as the guess,
     # and a vessel with no rating on the drawing is checked against nothing at all.
-    unrated = [v.label or v.id for v in list(tanks) + list(bottles) if v.params.get("MAWP") is None]
-    guessed = [f"{v.label or v.id} {v.params['MAWP'].si / PSI:.0f} psi"
-               for v in list(tanks) + list(bottles)
-               if v.params.get("MAWP") is not None
-               and str(getattr(v.params["MAWP"].source, "value", v.params["MAWP"].source)).lower() in ("estimated", "default")]
+    unrated = [v.label or v.id for v in list(tanks) + list(bottles) if v.id not in trips]
+    guessed = [f"{v.label or v.id} trips at {trips[v.id]['words']}" for v in list(tanks) + list(bottles)
+               if v.id in trips and trips[v.id]["source"].lower() in ("estimated", "default")]
     if unrated or guessed:
         add("ratings", "Vessel ratings", "warn",
-            (f"No MAWP on the drawing for {', '.join(unrated)}: nothing checks those vessels. " if unrated else "")
-            + (f"Estimated, not measured or from a datasheet: {', '.join(guessed)}. The MAWP checks and the "
+            (f"No MAWP or burst pressure on the drawing for {', '.join(unrated)}: nothing checks those vessels. "
+             if unrated else "")
+            + (f"Estimated, not measured or from a datasheet: {'; '.join(guessed)}. The rating checks and the "
                "optimiser's tank-pressure ceiling stand on these." if guessed else ""))
 
     gn2 = gn2_on_lox(bottles[0].fluid if bottles else None,
@@ -991,7 +1078,7 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
     # crosses a rating or the design's cap. A warning: the burn itself prices it exactly.
     try:
         rise = _burnout_tank_check(probe_model, dome, bottles[0], copv_psig, target_pa, roles, tanks, tank_volumes,
-                                   loads, rho_tank, settings, ambient, config)
+                                   loads, rho_tank, settings, ambient, config, trips=trips, reliefs=reliefs)
     except Exception as exc:  # noqa: BLE001 - an estimate that cannot be made is said, not raised
         rise = {"status": "info", "detail": f"Could not estimate the tanks' rise over the burn ({type(exc).__name__}: {exc})."}
     rise_estimate = None
@@ -1176,7 +1263,10 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         # the flight and the pressurant diagnostics must fly the bottle the burn emptied.
         "copv_volume_L": (None if not bottles else bottles[0].params["volume"].si * 1e3 if "volume" in bottles[0].params
                           else getattr(prep.setup, "bottle_volume_L", None)),
-        "copv_mawp_psi": (bottles[0].params["MAWP"].si / PSI if bottles and "MAWP" in bottles[0].params else None),
+        # The pressure each vessel trips the stand at [psia, absolute], as the twin holds it
+        # (vessel_trip: burst / safety factor, else the MAWP). Named for the MAWP it held when only
+        # an MAWP was read; it was always MAWP.si, absolute, and stays absolute.
+        "copv_mawp_psi": (trips[bottles[0].id]["trip_psia"] if bottles and bottles[0].id in trips else None),
         "copv_drawn_psig": drawn_copv,
         # The rail's absolute pressures (2026-10-07): the dial, where it came from, which regulator it
         # sets, what the drawing says it is, every regulator it could be on, and the drawn bottle.
@@ -1187,7 +1277,11 @@ def prepare(config: Any, runner: Any, drawing: Drawing, settings: LayerXSettings
         "dome_drawn_psia": None if drawn_dome is None else drawn_dome + atm_psia,
         "dome_candidates": knobs,
         "copv_drawn_psia": None if drawn_copv is None else drawn_copv + atm_psia,
-        "tank_mawp_psi": {t.id: t.params["MAWP"].si / PSI for t in tanks if "MAWP" in t.params},
+        "tank_mawp_psi": {tank_id: r["trip_psia"] for tank_id, r in rated_tanks.items()},
+        # What each rated vessel trips at and why, for the words around those numbers.
+        "vessel_ratings": {v.id: {"label": v.label or v.id, "kind": "bottle" if v.id in bottle_ids else "tank",
+                                  **trips[v.id]}
+                           for v in list(tanks) + list(bottles) if v.id in trips},
         "loads_kg": loads,
         "fill_fraction": None if loads else settings.fill_fraction,
         "tank_volumes_L": {k: (v * 1e3 if v else None) for k, v in tank_volumes.items()},

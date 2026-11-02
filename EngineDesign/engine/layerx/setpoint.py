@@ -114,7 +114,7 @@ class SetpointRequest:
     """With ``replay`` off: burn the answer again with the replay (and correct once)."""
     lockup_bounds_psia: Optional[Tuple[float, float]] = None
     """Hard window for the lockup. ``None``: 50 %-150 % of the starting lockup, and never above the
-    lowest tank MAWP on the drawing."""
+    lowest pressure a tank trips the stand at (the drawing's MAWP, or burst over the safety factor)."""
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "SetpointRequest":
@@ -243,19 +243,21 @@ def _fallback_limits(res: Dict[str, Any], prep: Any, config: Any, grading: Dict[
         else:
             rows.append({**_row(c["key"], c["label"], groups.get(c["key"], "model"), None, None, "min", "",
                                 "optimize.grade (fallback)", c.get("detail", "")), "grade": "bad"})
-    ambient_psia = float(d.get("ambient_pa") or 101325.0) / PSI
     s = res.get("summary") or {}
     roles = getattr(prep, "roles", {}) or {}
     mawp = d.get("tank_mawp_psi") or {}
+    ratings = d.get("vessel_ratings") or {}
     dr = getattr(config, "design_requirements", None)
     for side, block, cap_key in (("oxidiser", "ox", "max_lox_tank_pressure_psi"), ("fuel", "fuel", "max_fuel_tank_pressure_psi")):
         peak = (s.get(block) or {}).get("peak_psia")
         tank = roles.get(side)
         word = "LOX" if side == "oxidiser" else "Fuel"
         if tank in mawp:
-            rows.append(_row(f"tank_peak_mawp.{side}", f"{word} tank peak vs MAWP", "tanks", peak,
-                             mawp[tank] + ambient_psia, "max", "psia", f"drawing {tank} MAWP over the site's atmosphere",
-                             "MAWP is across the wall: held against the site's atmosphere"))
+            rows.append(_row(f"tank_peak_mawp.{side}", f"{word} tank peak vs rating", "tanks", peak,
+                             float(mawp[tank]), "max", "psia",
+                             f"the {(ratings.get(tank) or {}).get('words') or f'{float(mawp[tank]):.1f} psia'} {tank} "
+                             "trips the stand at (prepare.vessel_trip)",
+                             "the twin trips the stand above it (Session._check_limits), absolute"))
         cap = getattr(dr, cap_key, None) if dr is not None else None
         if cap:
             rows.append(_row(f"tank_peak_cap.{side}", f"{word} tank peak vs the design's cap", "tanks", peak, float(cap),
@@ -722,6 +724,13 @@ def _changes(before: Dict[str, Any], final: Dict[str, Any], start: Dict[str, Any
     return rows
 
 
+def lockup_ceiling_psia(derived: Dict[str, Any]) -> float:
+    """The highest lockup the set point searches [psia]: the lowest pressure a tank trips the stand
+    at, as it is (``derived.tank_mawp_psi`` is absolute: ``prepare.vessel_trip``); ``inf`` when the
+    drawing rates no tank. It used to add the site's atmosphere on top, searching past the trip."""
+    return min((float(v) for v in (derived.get("tank_mawp_psi") or {}).values()), default=math.inf)
+
+
 def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any], request: SetpointRequest, *,
                  progress: Optional[Progress] = None, cancelled: Callable[[], bool] = lambda: False,
                  workers: Optional[int] = None, evaluate: Optional[Evaluate] = None,
@@ -762,9 +771,7 @@ def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any],
         start["fill_psig"] = float(d["copv_psig"])
         max_fill = float(d.get("copv_drawn_psig") or d["copv_psig"])
         reference_F = float((nominal.link.reference or {}).get("F") or 0.0) if nominal.link else None
-        amb = float(d.get("ambient_pa") or 101325.0) / PSI
-        for v in (d.get("tank_mawp_psi") or {}).values():
-            mawp_cap = min(mawp_cap, float(v) + amb)
+        mawp_cap = lockup_ceiling_psia(d)
     elif stand:
         start["lockup_psia"] = float(stand.get("lockup_psia") or start["lockup_psia"])
         if stand.get("fill_psig") is not None:

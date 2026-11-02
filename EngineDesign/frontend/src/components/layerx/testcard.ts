@@ -20,6 +20,7 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
   const lockup = d.target_lockup_psia as number | undefined;
   const roles = (d.roles ?? {}) as Record<string, string>;
   const mawp = (d.tank_mawp_psi ?? {}) as Record<string, number>;
+  const ratings = (d.vessel_ratings ?? {}) as Record<string, { basis?: string; rating_psig?: number; safety_factor?: number | null; source?: string }>;
   const loads = (d.loads_kg ?? {}) as Record<string, number>;
   const band = (b: number[] | null | undefined) => b?.[0] ?? VERDICT.stiffnessFloor;
   const stiff = (d.stiffness_band ?? {}) as Record<string, number[] | null>;
@@ -67,7 +68,13 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
     // bare "MAWP 750 psi" reads as psig and arrives here as 764.7 psia. That IS the redline -- the
     // twin trips the stand there (Session._check_limits). It used to be printed with a psig label
     // and no conversion, 14.7 psi above the vessel's limit.
-    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating, 1)} psia</td><td>MAWP ${fmt(rating - gauge, 0)} psi on the drawing (a drawn psi is gauge: ${fmt(rating, 1)} psia), where the twin trips the stand${peak ? `; expected peak ${fmt(peak, 0)} psia` : ''}</td></tr>`);
+    // Since burst ratings are read (prepare.vessel_trip) the trip may be burst over the safety factor, not
+    // an MAWP: `vessel_ratings` says which, with the drawn number and its provenance.
+    const basis = ratings[roles[side]];
+    const why = basis?.basis === 'burst'
+      ? `burst ${fmt(basis.rating_psig ?? NaN, 0)} psi on the drawing over a safety factor of ${fmt(basis.safety_factor ?? NaN, 1)} (${esc(basis.source ?? '')})`
+      : `MAWP ${fmt(rating - gauge, 0)} psi on the drawing (a drawn psi is gauge: ${fmt(rating, 1)} psia)`;
+    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating, 1)} psia</td><td>${why}, where the twin trips the stand${peak ? `; expected peak ${fmt(peak, 0)} psia` : ''}</td></tr>`);
   }
   if (lockup) redlines.push(`<tr><td>Bottle</td><td class="n">≥ ${fmt(lockup + VERDICT.copvHeadroomPsi, 0)} psia</td><td>${VERDICT.copvHeadroomPsi} psi above lockup, or the regulator stops holding tank pressure; expected at burnout ${fmt(sum.copv_end_psia ?? NaN, 0)} psia</td></tr>`);
   for (const [side, label, key] of [['oxidiser', 'LOX injector inlet', 'ox'], ['fuel', 'Fuel injector inlet', 'fuel']] as const) {

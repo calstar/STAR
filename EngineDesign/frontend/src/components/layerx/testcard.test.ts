@@ -45,6 +45,18 @@ describe('the test card', () => {
     expect(html).not.toContain('765 psig');
   });
 
+  it('says when the trip is a burst rating over the safety factor, not an MAWP', () => {
+    // LE4 (3) rates its tanks by burst pressure (1500 psi, estimated); the twin trips them at 1500/2
+    // across the wall, 764.7 psia (prepare.vessel_trip). Calling that "MAWP 750 psi on the drawing" misread the drawing.
+    const r = result();
+    (r.provenance.derived as Record<string, unknown>).vessel_ratings = {
+      OXT: { basis: 'burst', rating_psig: 1500, safety_factor: 2, source: 'estimated', trip_psia: 764.696 },
+    };
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('<td class="n">764.7 psia</td><td>burst 1,500 psi on the drawing over a safety factor of 2.0 (estimated)');
+    expect(card).toContain('<td class="n">1,000.0 psia</td><td>MAWP 985 psi on the drawing');   // the fuel tank: an MAWP
+  });
+
   it('draws the other lines in psia, and escapes what people typed', () => {
     expect(html).toContain('≥ 678 psia');                   // bottle: lockup + 100 psi
     expect(html).toContain('≥ 458 psia');                   // injector: 382 psia chamber x 1.2
