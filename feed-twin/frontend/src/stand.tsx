@@ -17,10 +17,12 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useReducer,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
+import { NO_ERROR, errorLine, errorText } from './lib/errorLine';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
@@ -104,7 +106,10 @@ interface StandValue {
   burns: Burns | null;
   running: boolean;
   busy: boolean;
+  /** The console's error line (lib/errorLine.ts): what was refused or said
+   *  stays until the next action that works; a failed tick until one lands. */
   error: string;
+  dismissError: () => void;
   /** Stand seconds per wall second, ~1 when the solver keeps up. */
   speed: number;
   where: Where;
@@ -271,7 +276,23 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [burns, setBurns] = useState<Burns | null>(null);
   const [running, setRunning] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  // The error line (lib/errorLine.ts): what was said stays until the next
+  // action that works; the tick's own failure goes when a tick lands.
+  const [errorState, dispatchError] = useReducer(errorLine, NO_ERROR);
+  const setError = useCallback(
+    (text: string) => dispatchError(text ? { kind: 'said', text } : { kind: 'acted' }),
+    [],
+  );
+  /** Said by whatever replaced the stand, for the line once the next one has
+   *  opened: opening clears the line, and "This is a fresh stand" went with it. */
+  const carriedNotice = useRef('');
+  const sayAcrossOpen = useCallback(
+    (text: string) => {
+      carriedNotice.current = text;
+      setError(text);
+    },
+    [setError],
+  );
   const [noStand, setNoStand] = useState<NoStand | null>({ kind: 'library' });
   const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
   const [setup, setSetupState] = useState<StandSetup>(() => ({
@@ -440,7 +461,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
         (d) => d.id === want.id && (!want.owner || d.owner === want.owner || Boolean(d.mine)),
       );
       if (!meta) {
-        if (asked) setError(`No stand "${asked}" on this server.`);
+        if (asked) sayAcrossOpen(`No stand "${asked}" on this server.`);
         return false;
       }
       const open = readStand();
@@ -448,7 +469,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
       await openStand(refOf(meta), meta.name);
       return true;
     },
-    [openStand],
+    [openStand, sayAcrossOpen],
   );
 
   /** Open on the stand `defaultPicks` chooses, or say why there is none. */
@@ -487,13 +508,14 @@ export function StandProvider({ children }: { children: ReactNode }) {
       const remembers = Boolean(readStand() || stored('diagram') || asked.diagram);
       if (await landOnStand(standAsked, remembers)) return;
     } catch (e) {
-      setError(`The stand could not be opened (${e instanceof Error ? e.message : String(e)}).`);
+      sayAcrossOpen(`The stand could not be opened (${e instanceof Error ? e.message : String(e)}).`);
     }
     const picks = defaultPicks(list, { diagram: stored('diagram'), engine: stored('engine') }, asked);
     if (picks.diagram) setDiagram(picks.diagram);
+    else carriedNotice.current = '';
     if (picks.engine) setEngine(picks.engine);
     setNoStand(picks.diagram ? null : { kind: 'empty' });
-  }, [landOnStand]);
+  }, [landOnStand, sayAcrossOpen]);
 
   useEffect(() => {
     refresh()
@@ -545,7 +567,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     replacing.current = session.current || replacing.current;
     session.current = '';
     setBusy(true);
-    setError('');
+    dispatchError({ kind: 'opened', carried: carriedNotice.current });
+    carriedNotice.current = '';
     setNoStand(null);
     const fresh = wantFresh.current;
     wantFresh.current = false;
@@ -738,11 +761,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
         }
         setLive(next);
         liveState.current = next.state;
-        setError('');
+        dispatchError({ kind: 'tick-ok' });
       } catch (e) {
         if (!alive.current || session.current !== asked) return;
         const message = e instanceof Error ? e.message : String(e);
-        setError(message);
+        dispatchError({ kind: 'tick-failed', text: message });
         // The backend restarted and forgot the stand. Sessions live in
         // memory, so this is what a dev reload, a deploy or a crash looks
         // like from here: every tick 404s and the panel freezes on its last
@@ -752,7 +775,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
           replacing.current = session.current;
           session.current = '';
           wantFresh.current = true;
-          setError('This is a fresh stand. ' + message);
+          dispatchError({ kind: 'tick-ok' });
+          sayAcrossOpen('This is a fresh stand. ' + message);
           setGeneration((g) => g + 1);
           return;
         }
@@ -882,7 +906,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     burns,
     running,
     busy,
-    error,
+    error: errorText(errorState),
+    dismissError: () => dispatchError({ kind: 'dismissed' }),
     speed,
     where,
     setup,

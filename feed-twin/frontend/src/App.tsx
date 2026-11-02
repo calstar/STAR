@@ -83,8 +83,17 @@ function Shell() {
 
       <PendingPickBar />
       {error && (
-        <p className="flex-shrink-0 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-danger)]">
-          {error}
+        <p className="flex flex-shrink-0 items-baseline gap-4 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-danger)]">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            onClick={stand.dismissError}
+            aria-label="Dismiss"
+            title="Dismiss. It also goes on the next action that goes through."
+            className="flex-shrink-0 text-[var(--ink-3)] hover:text-[var(--ink)]"
+          >
+            ×
+          </button>
         </p>
       )}
 
