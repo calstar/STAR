@@ -69,7 +69,8 @@ export interface ForwardReport {
   sections: Section[];
   calibration: Record<string, Calibration>;
   stability: unknown;
-  handcheck: { rows: HandcheckRow[]; flags: string[]; error?: string } | null;
+  /** ``note``: the check ran partly (no rocketcea in this deployment) and why; ``error``: it could not run. */
+  handcheck: { rows: HandcheckRow[]; flags: string[]; error?: string; note?: string } | null;
 }
 
 /** A number at its declared precision; '—' when there is none. */

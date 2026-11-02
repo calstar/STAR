@@ -364,16 +364,21 @@ export function ForwardView({ report, burn, burnWhen, extras = {}, measurements 
               <span className="w-40 shrink-0 text-sm font-medium text-[var(--color-text-primary)]">Independent check</span>
               <span className="flex-1 text-[13px] text-[var(--color-text-muted)]">
                 {hc.error
-                  ? 'unavailable'
+                  ? <>unavailable: {hc.error}</>
                   : hcBad
                     ? <span style={{ color: STATUS_COLOR.bad }}>{hcBad} row{hcBad > 1 ? 's' : ''} off</span>
-                    : <>CEA and textbook relations agree within {worstDiff.toFixed(2)} %</>}
+                    : <>{hc.note ? 'Textbook relations and the CEA c* table' : 'CEA and textbook relations'} agree within {worstDiff.toFixed(2)} %{hc.note ? ' (partial check)' : ''}</>}
               </span>
               <svg className={`h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open.handcheck ? 'rotate-90' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
                 <path d="M6 4l4 4-4 4" />
               </svg>
             </button>
-            {open.handcheck && !hc.error && <div className="pb-5"><IndependentCheck hc={hc} /></div>}
+            {open.handcheck && !hc.error && (
+              <div className="pb-5">
+                {hc.note && <p className="mb-2 text-[12px] text-[var(--color-text-muted)]">{hc.note}.</p>}
+                <IndependentCheck hc={hc} />
+              </div>
+            )}
           </div>
         )}
         <div className="border-t border-[var(--color-border)]">
