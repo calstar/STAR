@@ -2025,6 +2025,9 @@ class BottleSim:
     """Whether this bottle has ever been filled. A note saying a bottle is
     "down to" fifteen psi is wrong before anybody has put gas in it -- it is
     not down to anything, it is where it started."""
+    peak: float = 0.0
+    """The highest pressure it has held [Pa abs]: what a "down to" note is
+    down from. A bottle climbing through its charge is not down to anything."""
     #: Ledger for the solver tab, cumulative [kg]: what the built-in charge
     #: put in, what the built-in dump took out beyond the network's draw, and
     #: what the floor at atmosphere added back.
@@ -2057,6 +2060,7 @@ class BottleSim:
         GSE is not drawn, which is charged by ``filling`` instead."""
         if self.pressure > 2.0 * AMBIENT:
             self.charged = True
+        self.peak = max(self.peak, self.pressure)
         # The GSE cart doing the filling is not on the drawing yet, so the fill
         # is commanded by the state at a rate the operator sets rather than
         # solved. Everything after the bottle -- the regulator, the tanks, the
@@ -2093,8 +2097,16 @@ class BottleSim:
                 return
 
         drawn = max(mdot_out, 0.0)
+        # The built-in dump empties the bottle to the air and no further: a
+        # bottle at atmosphere has nothing to push out of an open valve, and
+        # the last step takes only what stands above it. Taken at a ninth of
+        # the gas a second whatever the bottle held, it carried a dumped COPV
+        # under the air every step for the floor to put back.
         if self.venting:
-            mdot_out = max(mdot_out, self.state.mass / max(self.fill_seconds, 1e-3))
+            excess = self.state.mass - self._air(self.state).mass
+            if excess > 0.0 and dt > 0.0:
+                dump = min(self.state.mass / max(self.fill_seconds, 1e-3), excess / dt)
+                mdot_out = max(mdot_out, dump)
 
         if self.state.mass <= 1e-6 and mdot_in <= 0.0:
             return
@@ -2110,11 +2122,38 @@ class BottleSim:
         else:
             rates = self.volume.rates(self.state, mdot_out=max(mdot_out, 0.0))
         stepped = self.volume.step(self.state, rates, dt)
-        floor = self.volume.fluid.get("rho", p=AMBIENT, T=stepped.wall_temperature)
-        self.fixed_kg += max(floor * self.volume.volume - stepped.mass, 0.0)
-        self.state = VesselState(
-            mass=max(stepped.mass, floor * self.volume.volume),
-            energy=stepped.energy,
+        floored = self._at_atmosphere(stepped)
+        self.fixed_kg += floored.mass - stepped.mass
+        self.state = floored
+
+    def _air(self, state: VesselState) -> VesselState:
+        """The bottle holding an atmosphere at the gas's own temperature (the
+        wall's, for a state with no gas to read one from)."""
+        try:
+            gas_T = (
+                self.volume.temperature(state)
+                if state.mass > 1e-9
+                else state.wall_temperature
+            )
+        except (ValueError, PropertyError):
+            gas_T = state.wall_temperature
+        return self.volume.initial_state(pressure=AMBIENT, temperature=gas_T)
+
+    def _at_atmosphere(self, stepped: VesselState) -> VesselState:
+        """``stepped``, or an atmosphere at the gas's own temperature if it went
+        below one: a bottle open to the air does not go under it.
+
+        The energy is restated with the mass, as :meth:`TankSim._settled`
+        does. Floored at the wall's density with the energy left as it was,
+        every floored step put gas back with none of its heat, the gas cooled,
+        and a COPV dumped at an abort read 14.4 psia.
+        """
+        air = self._air(stepped)
+        if stepped.mass >= air.mass:
+            return stepped
+        return VesselState(
+            mass=air.mass,
+            energy=air.energy,
             wall_temperature=stepped.wall_temperature,
         )
 
@@ -5823,9 +5862,17 @@ class Session:
                     "fill; it will sag as it cools -- that is the fill, not a leak. "
                     "Top up before Ready."
                 )
-            elif bottle.pressure < LOW_BOTTLE * bottle.target:
+            elif (
+                bottle.pressure < LOW_BOTTLE * bottle.target
+                and not bottle.filling
+                and bottle.pressure < bottle.peak
+            ):
+                # Down from what it held, and not while it charges: the note
+                # read "down to 107 psia, 3% of what it was filled to" through
+                # the first quarter of every charge from empty.
                 out.append(
                     f"{bottle.label} is down to {say(bottle.pressure)}, "
-                    f"{bottle.fraction * 100:.0f}% of what it was filled to."
+                    f"{bottle.pressure / bottle.peak * 100:.0f}% of the "
+                    f"{say(bottle.peak)} it was filled to."
                 )
         return out

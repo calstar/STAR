@@ -196,6 +196,53 @@ def test_a_bottle_being_charged_gives_what_the_network_draws() -> None:
 
 
 @needs_tables
+def test_a_bottle_charging_is_not_down_to_anything() -> None:
+    """GN2 High Press from empty: the COPV climbs, and the console said it was
+    "down to 107 psia, 3% of what it was filled to" on every tick of the first
+    quarter of the charge. A bottle is down only from what it has held."""
+    ids = _ids()
+    session = _session(True)
+    session.setup = replace(session.setup, copv_target_psi=4000.0)
+    copv = session.bottles[ids["COPV"]]
+    session.state = "GN2 High Press"
+    for _ in range(12):  # 3 s: past 2 atm, short of a quarter of the target
+        notes = session.step(0.25).notes
+        assert not [n for n in notes if "down to" in n], notes
+    assert copv.charged and psig(copv.pressure) < 0.25 * 4000.0 + 200.0
+    for _ in range(40):  # to the target
+        session.step(0.5)
+    assert psig(copv.pressure) == pytest.approx(4000.0, abs=40.0)
+    # Blown down to a tenth of it, it is down to something, and says from what.
+    session.state = "Press Standby"
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(400.0), temperature=copv.state.wall_temperature
+    )
+    (low,) = [n for n in session.step(0.02).notes if "down to" in n]
+    assert low.startswith("COPV is down to 415 psia, 10% of the 4,01"), low
+
+
+@needs_tables
+def test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere() -> None:
+    """Emergency Abort opens the built-in COPV dump. On a bottle already at the
+    air it read 14.4 psia: the dump kept taking a ninth of the gas a second, the
+    floor put it back at the wall's density with none of its energy, and every
+    step the gas cooled and the bottle sank under atmosphere. A bottle open to
+    the air reads the air, and nothing flows out of it."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    session.state = "Emergency Abort"
+    session.step(0.02)
+    assert copv.venting, "the abort row opens the built-in dump"
+    held = copv.state.mass
+    for _ in range(40):  # 2 s
+        session.step(0.05)
+    assert psig(copv.pressure) == pytest.approx(0.0, abs=0.02)
+    assert copv.volume.temperature(copv.state) == pytest.approx(293.0, abs=1.0)
+    assert copv.state.mass == pytest.approx(held, rel=1e-3)
+
+
+@needs_tables
 def test_the_cart_actuators_drive_nothing() -> None:
     bound = _session(True).binding.to_symbol
     assert "GSE High Press Control" not in bound, "the built-in charge's command"

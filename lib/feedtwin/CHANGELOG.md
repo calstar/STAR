@@ -43,6 +43,19 @@ be able to find why they differ.
   with neither. `feed-twin/tests/test_tunables.py` now holds every Setup field to a
   row, less `tick_budget` (numerics, off) and `ullage_wall_T0_K` (a per-tank map,
   dialled as `cryogen_ullage_wall_T0_K`).
+- **A COPV charging is not "down to" anything** (`BottleSim.peak`, `_notes`). The
+  note read "COPV is down to 107 psia, 3% of what it was filled to" on every tick of
+  the first quarter of a charge from empty. It now says how far a bottle is down
+  from the most it has held ("down to 415 psia, 10% of the 4,018 psia it was filled
+  to"), and nothing while it charges.
+- **A bottle dumped at atmosphere stays at atmosphere** (`BottleSim._at_atmosphere`,
+  the built-in dump). The dump took a ninth of the gas a second whatever the bottle
+  held, and the floor put it back at the wall's density with none of its energy:
+  every step the gas cooled, a COPV vented at Emergency or GSE Abort read 14.4
+  psia, and the floor booked ~0.55 g/s of clamp mass for as long as the abort
+  lasted. The dump now takes only what stands above an atmosphere at the gas's
+  temperature, and the floor restates the energy with the mass, as
+  `TankSim._settled` does.
 - **The tick split is documented as the code does it**: round(tick / live_step)
   equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
   ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
@@ -68,11 +81,17 @@ be able to find why they differ.
 - The abort drain above on its coupling step: the fuel left after 0.22 s of Engine
   Abort differs by 0.3 g of 4.09 kg between 33 couplings per step and 1. No burn
   moves: a burning tank's supply is the regulated manifold.
+- A COPV dumped to the air: 14.70 psia at the gas's own ~302 K (was 14.39 psia,
+  cooling 0.03 K/s); the bottle's clamp ledger grows 5 ug/s at rest (was 0.55 g/s).
+  The blowdown down to atmosphere is unchanged. No burn reaches the floor; the
+  benchmark passes.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
   `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`.
-- `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`.
+- `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`,
+  `test_a_bottle_charging_is_not_down_to_anything`,
+  `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`.
 - `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
   `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`.
 - `test_press_path_coupling.py`:
