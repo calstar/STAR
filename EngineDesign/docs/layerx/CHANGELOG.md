@@ -2,6 +2,17 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 Dead legs are not graded for saturation
+
+`diagnostics.saturation` graded every liquid node of the recorded network over the firing steps,
+dead legs included. LE4 (3)'s capped LOX fill QD (OF-QD-B outlet) and its dump valve's outlet
+(Ox-Dump-R) carry no flow and the twin holds them at 101.325 kPa, where LOX at 90.19 K sits on its own
+saturation line: −0.003 psi, amber on every LOX burn. A liquid node whose branches carry less than
+`saturation.DEAD_LEG_KG_S` (1 g/s, 0.05 % of the LOX feed; the twin's dead legs carry exactly zero)
+on every firing step is now listed under `skipped` and not graded. The feed's own nodes grade as
+before; no burn figure moves. Guarded by
+`test_layerx_feeddiag.py::test_a_dead_leg_held_at_atmosphere_is_not_graded` (red on the old code).
+
 ## 2026-11-02 One chug margin: the graded one, on the drawing's lines
 
 Since 2026-10-03 the chug margin is graded on the drawing's feed (`diagnostics.stability`, "physics,

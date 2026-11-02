@@ -466,6 +466,31 @@ def test_saturation_margin_total_and_static_by_hand():
     assert {r["id"]: r for r in sat["nodes"]}["MVF.in"]["flagged"]
 
 
+def test_a_dead_leg_held_at_atmosphere_is_not_graded():
+    """LE4 (3)'s capped LOX fill QD and its dump valve's outlet sit at 14.696 psia with no flow, LOX at
+    90.19 K on its own saturation line: -0.003 psi, amber on every LOX burn. A node no branch carries
+    flow through while firing is skipped and listed; the feed's own nodes are graded as before."""
+    import CoolProp.CoolProp as CP
+    res = _synthetic()
+    T = 90.0
+    psat = CP.PropsSI("P", "T", T, "Q", 0, "Oxygen") / PSI
+    res["network"]["nodes"]["DUMP.out"] = {"label": "Ox-Dump outlet", "kind": "port", "side": "ox", "phase": "liquid",
+                                           "p_psia": [psat - 0.003] * N, "T_K": [T] * N}
+    res["network"]["branches"]["DUMP"] = {"label": "Ox-Dump", "kind": "valve", "from": "OXT.out", "to": "DUMP.out",
+                                          "side": "ox", "mdot": [0.0] * N, "dp_psi": [0.0] * N, "cv": 2.0, "state": None}
+    prep = _fake_prep(res)
+    sat = S.build_saturation(res, prep)
+    rows = {r["id"]: r for r in sat["nodes"]}
+    assert "DUMP.out" not in rows
+    assert any(s.startswith("Ox-Dump outlet (no flow") for s in sat["skipped"])
+    assert sat["worst"]["id"] != "DUMP.out" and sat["worst"]["min_psi"] > 25.0
+    assert {"OXT.out", "MVO.in", "MVO.out", "ENG.oxidiser"} <= set(rows)
+    # The same node with propellant moving through it is graded (and flagged, at -0.003 psi).
+    res["network"]["branches"]["DUMP"]["mdot"] = [0.0, 0.0, 0.5, 0.5]
+    rows = {r["id"]: r for r in S.build_saturation(res, _fake_prep(res))["nodes"]}
+    assert rows["DUMP.out"]["min_psi"] == pytest.approx(-0.003, abs=1e-9) and rows["DUMP.out"]["flagged"]
+
+
 def test_cavitation_number_by_hand_and_flip_risk():
     import CoolProp.CoolProp as CP
     res = _synthetic()
