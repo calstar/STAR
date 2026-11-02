@@ -3095,9 +3095,13 @@ async def start_study(
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
-        "setup": wire_setup(session.setup),
+        # The stand as it burns: a row that applies on Reset at the value it
+        # was built with, not a change still waiting for one (H019) -- each
+        # case is a fresh stand, which would take it -- and the dome and
+        # charge knobs as set, not as opened (H009).
+        "setup": _setup_inputs(session, opened),
         **_hookup_inputs(session),
-        "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
+        "knobs": _knob_inputs(session),
     }
     engine_name = opened.engine
     try:

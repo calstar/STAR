@@ -242,6 +242,46 @@ def test_a_setting_that_waits_for_reset_is_recorded_as_built(
     assert pending == {"burst_safety_factor": 3.0}
 
 
+def test_a_study_burns_the_stand_as_built_and_its_knobs_as_set(
+    le4: tuple[str, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Study's base is the open stand: each case a fresh stand built from
+    it. Read from ``session.setup``, a reset-only row changed live went into
+    every case -- burst_safety_factor 3 put the LOX tank's MAWP under T-0 in a
+    study of a stand whose console burns (H019) -- and ``knobs.dome`` said
+    the value the stand opened with (H009)."""
+    from backend.study import StudyRunner
+
+    diagram, engine, _ = le4
+    sid = _open(diagram, engine)
+    built = _recorded(sid)["setup"]
+    changed = client.post(
+        f"/api/session/{sid}/command",
+        json={
+            "setup": {"burst_safety_factor": 3.0},
+            "knob": {"id": "dome", "value": 480.0},
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    started: list[Any] = []
+
+    def start(self: StudyRunner, request: Any, build: Any, outcome: Any) -> bool:
+        started.append(request)
+        return True
+
+    monkeypatch.setattr(StudyRunner, "start", start)
+    study = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "as set"}]}
+    )
+    assert study.status_code == 200, study.text
+    (request,) = started
+    assert request.base["setup"]["burst_safety_factor"] == (
+        built["burst_safety_factor"]
+    )
+    assert request.base["setup"]["dome"] == 480.0
+    assert request.base["knobs"]["dome"] == 480.0
+
+
 # ---------------------------------------------------------------- the traces
 
 
