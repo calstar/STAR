@@ -53,7 +53,7 @@ bash scripts/setup-test/run-macos.sh pid-designer
 bash scripts/setup-test/run-macos.sh all
 ```
 
-Projects: `pid-designer` | `star-openrocket` | `engine-design` | `firmware` | `daq-server` | `all`
+Projects: `pid-designer` | `star-openrocket` | `feed-twin` | `engine-design` | `firmware` | `daq-server` | `all`
 
 Without installing anything, `bash scripts/setup-test/passthru.sh` checks that
 `setup.sh` hands each project only the flags its own `setup.sh` takes (every
