@@ -170,24 +170,42 @@ _port_pids() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
 }
 
+# The pid a demo pane recorded for the service on this port: each pane writes
+# it just before it execs the service (_write_pane_script), so it is the
+# service's own. Nothing when no pane of this demo has run one there.
+_recorded_pid() {
+  local port="$1" i
+  for i in "${!SVC_PORTS[@]}"; do
+    if [ "${SVC_PORTS[$i]}" = "$port" ]; then
+      cat "$DEMO_LOGS/panes/${SVC_NAMES[$i]}.pid" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 # Did this demo start the process holding a port? Only then may it be killed.
-# A uvicorn API is ours when its command line names the port; under --reload the
-# socket is shared with a multiprocessing worker, which is ours when its parent
-# is. A UI is ours when it is our vite-serve helper on that port.
+# It is ours when it is the pid a demo pane recorded for that port, and still
+# the service it was (a pid is reused once its process exits); under --reload
+# the socket is shared with uvicorn's worker, a child of the recorded reloader.
+# A command line naming the port is not enough: it is any uvicorn anybody
+# starts with --port 8103, and --stop and start killed them (kill -9 after 3 s).
 _owned_pid() {
-  local pid="$1" port="$2" cmd ppid pcmd
+  local pid="$1" port="$2" mine cmd ppid
+  mine="$(_recorded_pid "$port")"
+  [ -n "$mine" ] || return 1
   cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
   [ -n "$cmd" ] || return 1
-  case "$cmd" in
-    *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;;
-    *demo-vite-serve.mjs*" $port "*) return 0 ;;
-    *multiprocessing*)
-      ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
-      [ -n "$ppid" ] || return 1
-      pcmd="$(ps -o command= -p "$ppid" 2>/dev/null || true)"
-      case "$pcmd" in *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;; esac
-      ;;
-  esac
+  if [ "$pid" = "$mine" ]; then
+    case "$cmd" in
+      *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;;
+      *demo-vite-serve.mjs*" $port "*) return 0 ;;
+    esac
+    return 1
+  fi
+  ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  if [ "$ppid" = "$mine" ]; then
+    case "$cmd" in *multiprocessing*|*uvicorn*) return 0 ;; esac
+  fi
   return 1
 }
 
@@ -376,6 +394,11 @@ _write_pane_script() {
     printf 'export PATH=%q\n' "$(dirname "$NODE_BIN"):$(dirname "$ENGINE_PYTHON"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     printf "printf '\\\\n  == %%s ==\\\\n\\\\n' %q\n" "$name"
     printf '{\n'
+    # This group's pid, which the service's `exec` keeps: what --stop and a
+    # start may kill on this port (_owned_pid), and nothing else. sh's parent
+    # is the group; $$ would be the pane's shell, and BASHPID is not in the
+    # bash 3.2 a Mac runs this with.
+    printf "sh -c 'echo \$PPID' > %q\n" "$DEMO_LOGS/panes/$name.pid"
     _service_command "$name" "$reload"
     printf '} 2>&1 | tee %q\n' "$log"
   } > "$path"
