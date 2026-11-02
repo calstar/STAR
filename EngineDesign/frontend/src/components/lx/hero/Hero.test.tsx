@@ -95,7 +95,7 @@ describe('Hero (story)', () => {
     const off = html(r);
     expect(off).not.toMatch(/not firing/i);
     expect(off).toMatch(/>396(\.0)? psia</);                 // the twin's chamber
-    expect(off).toContain('not computed: nozzle erosion off');   // the exit, said why
+    expect(off).toMatch(/>not computed:<\/tspan>.*>nozzle erosion off</);   // the exit, said why
     expect(off).toMatch(/>6,970</);                              // thrust from series.chamber
   });
 

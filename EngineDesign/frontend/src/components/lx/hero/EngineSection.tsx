@@ -114,7 +114,7 @@ interface Moment {
 
 /** Firing, but no replay to draw the nozzle from: say so, never "not firing". */
 function nozzleWhyOf(result: LayerXResult): string {
-  return result.provenance?.settings?.replay === false ? 'not computed: nozzle erosion off' : 'not computed for this run';
+  return result.provenance?.settings?.replay === false ? 'nozzle erosion off' : 'no replay at this step';
 }
 
 /** Room right of a vertical engine for its stations' figures [px]. */
@@ -388,7 +388,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
             { y: sx(xe) - 4, name: 'Exit', lines: m.nozzle ? [
               `${u.fmt(u.p(m.nozzle.pe_psia))}${art ? ` · M ${numText(u.ratio(art.p.machExit))}` : ''}`,
               m.nozzle.te_K ? `${u.fmt(u.temp(m.nozzle.te_K))}` : null,
-              regimeWord] : m.nozzleWhy ? [m.nozzleWhy] : [] },
+              regimeWord] : m.nozzleWhy ? ['not computed:', m.nozzleWhy] : [] },
             ...(sepIdx !== null ? [{ y: sx(s.x[sepIdx]), name: '! separates', lines: [], warn: true }] : []),
           ]} />
         )}
@@ -398,7 +398,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
         <Figure size="sm" label="Throat" value={numText(u.len(dNow / 1000))} unit={u.len(1).unit}
                 delta={delta} deltaTitle="Against the as-built throat" />
         <Figure size="sm" label="Exit / air" value={art ? numText(u.ratio(art.p.ratio)) : '—'}
-                sub={m.nozzle ? `${u.fmt(u.p(m.nozzle.pe_psia))} / ${u.fmt(u.p(m.nozzle.pa_psia))}` : m.nozzleWhy ?? 'not firing'} />
+                sub={m.nozzle ? `${u.fmt(u.p(m.nozzle.pe_psia))} / ${u.fmt(u.p(m.nozzle.pa_psia))}` : m.nozzleWhy ? `not computed: ${m.nozzleWhy}` : 'not firing'} />
         <Figure size="sm" label="Exit Mach" value={art ? numText(u.ratio(art.p.machExit)) : '—'} />
         {linerLeft !== null
           ? <Figure size="sm" label={linerWord} value={numText(u.len(linerLeft / 1000))} unit={u.len(1).unit} />
