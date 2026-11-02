@@ -204,6 +204,12 @@ class Fitting(HydraulicComponent):
             for name in ("angle", "bore2", "bend_diameters")
             if name in self.p
         }
+        if "angle" in extra:
+            # An *angle* parameter arrives in SI, radians; the context carries
+            # degrees, which is what fluids' bend_rounded takes (and what a
+            # segment's drawn ``angleDeg`` already is). Passed straight through,
+            # a 90-degree bend priced as a 1.57-degree one.
+            extra["angle"] = math.degrees(extra["angle"])
         ctx = FittingContext(
             bore=bore, Re=Re, roughness=self.p["roughness"], fd=fd, params=extra
         )

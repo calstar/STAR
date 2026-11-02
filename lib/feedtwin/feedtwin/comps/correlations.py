@@ -117,7 +117,8 @@ class FittingContext:
     scale with."""
 
     params: Mapping[str, float] = field(default_factory=dict)
-    """Fitting-specific geometry: ``angle``, ``bore2``, ``bend_diameters``."""
+    """Fitting-specific geometry: ``angle`` [deg, as ``fluids`` takes it],
+    ``bore2`` [m], ``bend_diameters`` [-]."""
 
     def get(self, name: str, default: float) -> float:
         return float(self.params.get(name, default))
