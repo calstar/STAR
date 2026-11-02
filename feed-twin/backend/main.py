@@ -42,6 +42,7 @@ from backend.assembly import (
     Model,
     assemble,
     card_summary,
+    card_version,
     diagram_summary,
     engine_from_bytes,
     engine_summary,
@@ -551,8 +552,20 @@ async def _build_card(artifact_id: str, data: bytes, headers: Mapping[str, str])
         answer = await designtools.engine_card(data, headers)
     except DesignToolError as exc:
         return str(exc)
-    library.attach(artifact_id, "card", json.dumps(answer).encode("utf-8"))
+    _keep_card(artifact_id, json.dumps(answer).encode("utf-8"))
     return ""
+
+
+def _keep_card(artifact_id: str, data: bytes) -> None:
+    """Store ``data`` as the engine's card, keeping the one it replaces.
+
+    A card is rebuilt in place, under the same engine id, so the runs that
+    fired the old one name it by hash (``inputs.card``) and replay on the
+    copy kept here (``backend.assembly.card_version``)."""
+    old = library.attachment(artifact_id, "card")
+    if old is not None and old != data:
+        library.attach(artifact_id, card_version(hashlib.sha256(old).hexdigest()), old)
+    library.attach(artifact_id, "card", data)
 
 
 def _cea_for(engine: EngineDesign) -> str:
@@ -577,7 +590,13 @@ def _assemble(
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
     gas: Mapping[str, str] | None = None,
+    entry: Mapping[str, Any] | None = None,
+    card: str | None = None,
 ) -> Model:
+    """The model, with the drawing's overrides as the store holds them now --
+    or ``entry``, a run's own (:func:`_recorded_overrides`) -- and the engine's
+    card stored now, or the one whose SHA-256 is ``card`` (a run's own;
+    ``""`` for none, ``backend.assembly.assemble``)."""
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
             status_code=404,
@@ -597,8 +616,9 @@ def _assemble(
             gas_swap=gas,
             cea_resolver=_cea_for,
             multiphase=multiphase,
-            overrides=_overrides_for(diagram_id),
+            overrides=_overrides_for(diagram_id) if entry is None else entry,
             vehicle_only=vehicle_only,
+            card_sha256=card,
         )
     except (AssemblyError, LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1766,18 +1786,32 @@ def _stand(
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
     gas: Mapping[str, str] | None = None,
+    entry: Mapping[str, Any] | None = None,
+    card: str | None = None,
 ) -> "Stand":
     """A model with the stand's state machine bound to its valves.
 
     ``vehicle_only`` (``Setup.ignore_gse``) builds the rocket alone: the
     drawing's hookup keeps its vehicle pins, and its knobs are the cut
-    drawing's (:func:`feedtwin.session.hookup.on_vehicle`)."""
-    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas)
+    drawing's (:func:`feedtwin.session.hookup.on_vehicle`). ``entry`` and
+    ``card`` build a run's own overrides and card (:func:`_assemble`)."""
+    model = _assemble(
+        diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas, entry, card
+    )
     shipped = _shipped_machine(machine)
     hookup, _, problem = _hookup_for(diagram, model)
     drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
     whole = (
-        _assemble(diagram, engine, fluid_set, multiphase, swap, gas=gas)
+        _assemble(
+            diagram,
+            engine,
+            fluid_set,
+            multiphase,
+            swap,
+            gas=gas,
+            entry=entry,
+            card=card,
+        )
         if vehicle_only
         else model
     )
@@ -2622,6 +2656,9 @@ async def session_repro(session_id: str) -> dict[str, Any]:
             "body": opened.body,
         },
         "drawing": drawing,
+        # The Drawing tab's overrides the stand was built with, as the store
+        # keeps them: the other machine's store has none of them.
+        "overrides": _override_inputs(session.model, provenance=True),
         "engine": engine,
         "hookup": session.hookup.to_dict() if session.hookup is not None else None,
         "events": list(opened.events),
@@ -3789,10 +3826,77 @@ def _hookup_inputs(session: Session) -> dict[str, Any]:
     return {"hookup": raw, **({"machine_table": table} if table else {})}
 
 
+def _override_inputs(
+    model: Model, *, provenance: bool = False
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """The Drawing tab's overrides that took effect on this stand, as a run
+    records them: what builds it -- value, unit, provenance -- keyed like the
+    store, so a replay applies them as recorded (:func:`_recorded_overrides`).
+    Who typed each and why go in the record's notes (:func:`_override_notes`):
+    the same number re-entered by somebody else builds the same stand
+    (``backend.overrides.fingerprint``). Empty when none: a record of a stand
+    with none diffs clean against one written before overrides were kept.
+
+    ``provenance`` adds the reference, who and when: the store's own entry,
+    for a repro to put in another machine's store."""
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for a in _applied(model):
+        row: dict[str, Any] = {"value": a.value, "unit": a.unit, "source": a.source}
+        if provenance:
+            row.update(reference=a.reference, by=a.by, at=a.at)
+        out.setdefault(a.element, {})[a.parameter] = row
+    return out
+
+
+def _override_notes(model: Model) -> list[str]:
+    return [
+        f"Override in force: {a.element} {a.parameter} = {a.value:g} {a.unit} "
+        f"({a.source}{', by ' + a.by if a.by else ''}"
+        f"{', ' + a.at if a.at else ''}: {a.reference})"
+        for a in _applied(model)
+    ]
+
+
+def _recorded_overrides(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A run's overrides as an override-store entry, for its replay; ``None``
+    for a record written before they were kept (the store's, as then)."""
+    if "overrides" not in inputs:
+        return None
+    return {
+        "params": {
+            str(element): {
+                str(name): {**dict(o), "reference": "as recorded with the run"}
+                for name, o in dict(by_param).items()
+            }
+            for element, by_param in dict(inputs.get("overrides") or {}).items()
+        }
+    }
+
+
+def _card_inputs(model: Model) -> dict[str, Any]:
+    """The engine card the stand fires, by the SHA-256 of its bytes, and when
+    it was built; empty when it fires the simplified engine."""
+    meta = model.meta
+    if meta.get("engine_model") != "card" or not meta.get("card_sha256"):
+        return {}
+    return {"sha256": meta["card_sha256"], "built": meta.get("card_built")}
+
+
+def _recorded_card(inputs: Mapping[str, Any]) -> str | None:
+    """Which card a run's replay fires (``backend.assembly.assemble``'s
+    ``card``): the run's by hash, ``""`` for the simplified engine it fired,
+    ``None`` for a record written before cards were named."""
+    if "card" not in inputs:
+        return None
+    return str(dict(inputs.get("card") or {}).get("sha256") or "")
+
+
 def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[str, Any]:
     return {
         "diagram": opened.diagram,
+        "overrides": _override_inputs(session.model),
         "engine": opened.engine,
+        "card": _card_inputs(session.model),
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
@@ -4027,6 +4131,7 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
                     None,
                     [_after_abort(session, history, burn), _assumed_droop(session)],
                 ),
+                *_override_notes(session.model),
                 *list(dict.fromkeys(session.assumptions))[-40:],
             ],
         }
@@ -4129,7 +4234,10 @@ def _session_from_inputs(
 ) -> Session:
     """A fresh session on the stand a run record (or a study) describes: its
     drawing, engine, fluids, settings, hookup and knobs, in Idle, the
-    automatic vent at burnout off.
+    automatic vent at burnout off. The drawing's overrides and the engine's
+    card are the record's own where it names them (``overrides``, ``card``),
+    not whatever the store holds now; a record (or a study) that does not
+    name them builds on the store's.
 
     ``pressurant`` swaps the gas in the bottle and the press lines (helium or
     nitrogen, whichever the drawing has) for the other; without one, the
@@ -4147,6 +4255,8 @@ def _session_from_inputs(
         bool(inputs.get("multiphase")),
         vehicle_only=setup.ignore_gse,
         gas=_pressurant_swap(setup.pressurant),
+        entry=_recorded_overrides(inputs),
+        card=_recorded_card(inputs),
     )
     raw = inputs.get("hookup")
     if isinstance(raw, Mapping) and raw and inputs.get("machine_table"):
@@ -4214,7 +4324,13 @@ def _replay(
         for key, _, _ in run_records.OUTCOME_KEYS
         if isinstance(out.get(key), (int, float))
     }
-    return numbers, list(trace.notes)
+    # A run whose card is gone replays on today's: said first, on the rung.
+    lost = [
+        w
+        for w in session.model.report.warnings
+        if session.model.meta.get("card_missing") and w.startswith("The engine card")
+    ]
+    return numbers, [*lost, *trace.notes]
 
 
 _EXPLAIN = run_records.Explainer()

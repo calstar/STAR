@@ -28,6 +28,7 @@ out of this app's store and hands them over.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from typing import Any, Callable, Mapping
@@ -68,6 +69,7 @@ __all__ = [
     "load_engine_artifact",
     "load_engine_card",
     "card_summary",
+    "card_version",
     "SIMPLIFIED_ENGINE",
     "swap_fluids",
 ]
@@ -137,10 +139,16 @@ def assemble(
     multiphase: bool = False,
     overrides: Mapping[str, Any] | None = None,
     vehicle_only: bool = False,
+    card_sha256: str | None = None,
 ) -> Model:
     """Read, resolve, build, and audit. The whole import in one call.
 
     Args:
+        card_sha256: Which of the engine's cards to fire, by the SHA-256 of its
+            bytes (a run record's ``inputs.card``): the one stored now if it
+            is that one, else the superseded copy kept under
+            :func:`card_version`. ``""`` fires no card (the run fired the
+            simplified engine); ``None``, the card stored now.
         overrides: One drawing's entry from the override store
             (:mod:`backend.overrides`). Applied to the drawing before anything
             reads it; what took effect is ``meta["overrides"]``, part of the
@@ -178,7 +186,18 @@ def assemble(
     if reference:
         engine = load_engine_artifact(library, reference)
         resolved = cea_cache or (cea_resolver(engine) if cea_resolver else "")
-        card, card_meta = load_engine_card(library, reference)
+        card, card_meta = load_engine_card(library, reference, sha256=card_sha256)
+        if card_meta.get("card_missing"):
+            instead = (
+                f"the card stored now (built {card_meta.get('card_built') or 'unknown'})"
+                if card is not None
+                else "feedtwin's simplified engine"
+            )
+            notes.append(
+                "The engine card this run fired (sha256 "
+                f"{str(card_meta['card_missing'])[:12]}) is no longer stored with "
+                f"the engine; firing {instead} instead."
+            )
         if fluid_swap:
             # A card is the engine at its propellants' densities, burning. A
             # cold flow swaps the fluids and burns nothing.
@@ -204,6 +223,8 @@ def assemble(
         else:
             notes.append(SIMPLIFIED_ENGINE)
             engine_meta = {"engine_model": "simplified", "why": "no card"}
+        if card_meta.get("card_missing"):
+            engine_meta["card_missing"] = card_meta["card_missing"]
 
     model = assemble_model(
         diagram,
@@ -240,28 +261,54 @@ SIMPLIFIED_ENGINE = (
 )
 
 
+def card_version(sha256: str) -> str:
+    """The attachment a superseded card is kept under, by its bytes' SHA-256.
+
+    A card is rebuilt in place, under the same engine id; a run that fired the
+    old one names it by hash (``inputs.card``), and its replay fires it from
+    here rather than whatever is stored now."""
+    return f"card-{sha256[:16]}"
+
+
 def load_engine_card(
-    library: Library, engine_id: str
+    library: Library, engine_id: str, *, sha256: str | None = None
 ) -> tuple[EngineCard | None, dict[str, Any]]:
     """The EngineDesign card stored with an engine, and what it says about
     itself; ``(None, {})`` when there is none.
+
+    ``sha256`` asks for one card by its bytes (:func:`assemble`'s ``card``):
+    the stored one if it matches, else its kept copy (:func:`card_version`),
+    else the stored one with ``card_missing`` set to the hash asked for, so the
+    caller says it. ``""`` asks for none.
 
     A card that is stored but cannot be read is ``(None, {"unreadable":
     why})``. It used to be ``(None, {})`` too, and the report then said no
     card was stored -- sending whoever read it to build one that already
     exists, rather than to the attachment that is broken."""
+    if sha256 == "":
+        return None, {}
+    missing = ""
     try:
         raw = library.attachment(engine_id, "card")
+        if sha256 and (raw is None or hashlib.sha256(raw).hexdigest() != sha256):
+            kept = library.attachment(engine_id, card_version(sha256))
+            if kept is not None and hashlib.sha256(kept).hexdigest() == sha256:
+                raw = kept
+            else:
+                missing = sha256
     except LibraryError:
         return None, {}
     if raw is None:
-        return None, {}
+        return None, ({"card_missing": missing} if missing else {})
     try:
         stored = json.loads(raw.decode("utf-8"))
         card = EngineCard.from_dict(stored["card"])
     except (ValueError, KeyError, TypeError) as exc:
         return None, {"unreadable": f"{type(exc).__name__}: {exc}"}
-    return card, card_summary(stored)
+    meta = {**card_summary(stored), "card_sha256": hashlib.sha256(raw).hexdigest()}
+    if missing:
+        meta["card_missing"] = missing
+    return card, meta
 
 
 def card_summary(stored: Mapping[str, Any]) -> dict[str, Any]:

@@ -3,7 +3,9 @@
 A run record is what a burn was *and* everything it depended on:
 
 * **inputs** -- the drawing and engine (library artifact ids: content hashes,
-  so they name exact bytes), the fluid set, the state machine, every
+  so they name exact bytes), the Drawing tab's overrides in force, the engine
+  card fired (the SHA-256 of its bytes: a card is rebuilt under the same
+  engine id), the fluid set, the state machine, every
   Configuration-tab setting, the hookup and its knobs, and T-0 (each tank's
   pressure, load and temperature, each bottle's pressure, at the last sample
   before ignition);
@@ -279,7 +281,13 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # rows, so swapping one without the other runs the mains unbound. Named
     # for all of it: a rung that swaps only the table is not "the drawing".
     ("drawing & hookup", ("diagram", "hookup", "machine_table", "multiphase")),
-    ("engine", ("engine",)),
+    # The Drawing tab's operator overrides: numbers typed over the drawing's,
+    # applied at assembly. Not the drawing -- its bytes are the same -- so a
+    # rung of their own.
+    ("drawing overrides", ("overrides",)),
+    # The card rides with the engine: rebuilt in place, under the same id, it
+    # is a different engine.
+    ("engine", ("engine", "card")),
     ("fluids", ("fluid_set",)),
     ("state machine", ("machine",)),
     ("regulator knobs", ("knobs",)),
