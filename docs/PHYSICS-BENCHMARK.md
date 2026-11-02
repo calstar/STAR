@@ -99,20 +99,39 @@ have.
 
 ### 1.3 Gas choking against `fluids`' own IEC 60534
 
-`Valve.flow_ceiling()` vs `fluids.control_valve.size_control_valve_g` across helium
-and nitrogen, 200–4500 psi, Cv 1.6–60, 250–293 K.
+`Valve.flow_ceiling()`, and the flow at drops x = 0.01–0.9, vs
+`fluids.control_valve.size_control_valve_g` across helium and nitrogen, 200–4500 psi,
+Cv 1.6–60, 250–293 K. 30 points below and past the choke, 5 ceilings.
 
-Expected: **worst error 0.000000%** (test asserts `rel=1e-6`).
+Expected: **worst error 0.112 %, constant** (± 0.01). It is the scale alone: the
+library prices a Cv by its definition (`fluids.fittings.Cv_to_K`, one US gpm of water
+at one psi), `fluids` by IEC's tabulated N9. The same at every drop and every gas is
+the check that the *form* -- `W = N6 C Y sqrt(x p1 rho1)`, `Y = 1 - x/(3 F_gamma xT)`
+-- is IEC's. Re-baselined 2026-11-02 (R035): it read **0.000000%** while it checked
+only the ceiling, against a reference that read `fluids`' volumetric Q at **15 degC**
+where `fluids` states **0 degC** -- exactly as the valve's own calibration did, so the
+two agreed to 1e-6 while both were 5.4 % low. And below the choke the plain valve was
+not IEC at all: Y = 1 up to that ceiling, 1.52x IEC just short of it on 500 psia
+nitrogen, then 36 % *less* flow 10 psi further down. A gas valve is now
+`feedtwin.comps.iec_gas.GasCv` (the relief valve's and the compressible seat's).
 
 This one has a specific trap. The published `N6` depends on which unit set *and*
 which flow coefficient (Kv or Cv) the table is written for. Pairing `N6 = 27.3` with
 Cv and kPa over-predicts by **10.5×**; getting the Kv/Cv factor backwards leaves a
-clean **33.657%** (= 1/0.865²). Both look plausible. The coefficient is therefore
-*calibrated from the library at import*, not transcribed — if you "simplify" that to
-a literal, this check is what catches you.
+clean **33.657%** (= 1/0.865²). Both look plausible. The scale therefore comes from
+`Cv_to_K`, not a transcribed N6 -- if you "simplify" that to a literal, this check is
+what catches you. And the reference's standard state is `fluids`' own (0 degC); a
+check that shares an assumption with the code it checks cannot catch it.
 
 Also assert the negative: a **liquid** valve must still return `flow_ceiling() is
-None`. A LOX main valve must not acquire a sonic limit.
+None`. A LOX main valve must not acquire a sonic limit. **Known gap (R037,
+deferred):** that holds for hand-built liquid conditions only. The conditions a
+network builds carry the saturated liquid's cp/cv (LOX 1.83), and the plain valve
+still gives anything not priced as a gas the old ceiling at `x = gamma/1.4 . xT`
+(0.54–0.69x the IEC liquid law to atmosphere). Removing it waits on the session: a
+drawing with no engine model holds its chamber at ambient for the step the mains
+open, and that false ceiling is what keeps the step from emptying the LOX tank.
+`tests/test_gas_choking.py` carries the two checks as strict xfails.
 
 ### 1.4 Latent heats against the handbook
 

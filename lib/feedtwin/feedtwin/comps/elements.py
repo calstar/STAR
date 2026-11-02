@@ -31,7 +31,13 @@ from feedtwin.comps.base import (
     Violation,
     register_builder,
 )
-from feedtwin.comps.iec_gas import GAMMA_IDEAL_PRESSURE
+from feedtwin.comps.iec_gas import (
+    GAMMA_IDEAL_PRESSURE,
+    XT_TYPICAL,
+    GasCv,
+    iec_gamma,
+    is_gas,
+)
 from feedtwin.comps.correlations import (
     DEFAULT_FRICTION_METHOD,
     FittingContext,
@@ -49,20 +55,22 @@ from feedtwin.model.spec import SpecError
 GRAVITY = 9.80665
 """Standard gravity [m/s^2], by definition."""
 
-#: Choked-gas coefficient, calibrated against ``fluids`` rather than transcribed.
+#: The plain valve's old choked-gas coefficient, still applied to a *liquid*.
 #:
-#: IEC 60534-2-1 sizes a valve on gas as ``W = N6 . C . Y . sqrt(x . p1 . rho1)``.
-#: The published N6 depends on which unit set *and* which flow coefficient (Kv or
-#: Cv) the table is written for, and getting that pairing wrong is a silent
-#: order-of-magnitude error -- transcribing N6 = 27.3 against Cv and kPa
-#: over-predicts by 10.5x, which is how this constant was first written here.
-#:
-#: So it is not transcribed. ``_calibrate_choke()`` derives it once from
-#: ``fluids.control_valve.size_control_valve_g``, the same implementation of the
-#: same standard the rest of this module adapts. The value is invariant: across
-#: helium and nitrogen, 200-4500 psi, 250-293 K and Cv 1.6-60 the implied
-#: coefficient is constant to 5 significant figures, which is the check that the
-#: *form* above is right and only the scale was ever in question.
+#: Calibrated once from ``fluids.control_valve.size_control_valve_g`` with a
+#: standard density at 15 degC (fluids states 0 degC, so it is 5.4 % low). Gas
+#: no longer reads it -- a gas-priced node goes through
+#: :class:`~feedtwin.comps.iec_gas.GasCv` -- but a liquid still meets it, because
+#: a liquid's cp/cv is positive and the old gas test was ``gamma > 0``: every
+#: liquid valve carries a "sonic" ceiling at ``x = gamma/1.4 . xT`` (LOX 0.915,
+#: ethanol 0.596) and drains to atmosphere at 0.54-0.69x the IEC liquid law.
+#: Kept, exactly, because removing it is not a component fix: on a drawing with
+#: no engine model the session holds the chamber at ambient for the coupling
+#: step in which the mains open (``Session._chamber`` decides "lit" from the
+#: previous step's flows), and this false ceiling is what kept that step from
+#: emptying the LOX tank -- without it LE4 (6)'s 8.9 kg went in 0.5 s at
+#: 18 kg/s. Deferred (R037): close the no-engine chamber within the step,
+#: then drop :func:`_legacy_liquid_ceiling` and gate on ``is_gas`` alone.
 _CHOKE_COEFFICIENT: float | None = None
 
 
@@ -89,8 +97,6 @@ def _calibrate_choke() -> float:
             allow_choked=True,
             full_output=True,
         )
-        # `fluids` reports Kv; one Kv is 1.156 Cv. Q=1 m^3/s at standard
-        # conditions is rho_std kg/s, so this is "kg/s per unit Cv".
         per_cv = rho_std * KV_PER_CV / float(sized["Kv"])
         x = (gamma / 1.40) * XT_DEFAULT
         _CHOKE_COEFFICIENT = per_cv / (
@@ -103,7 +109,7 @@ KV_PER_CV = 1.0 / 1.1560992283536566
 """Kv per unit Cv. One Cv is one US gallon per minute of water at one psi; one Kv
 is one cubic metre per hour at one bar."""
 
-XT_DEFAULT = 0.7
+XT_DEFAULT = XT_TYPICAL
 """Default pressure-drop ratio factor at choked flow.
 
 IEC 60534-2-1's value for a globe or ball valve with a flow-to-open plug, used
@@ -581,52 +587,81 @@ class Valve(HydraulicComponent):
         return position <= SHUT_POSITION
 
     def pressure_drop(self, mdot: float, flow: FlowConditions) -> float:
+        gas = self._gas(flow)
+        if gas is not None:
+            return gas.drop(mdot, flow.p_upstream, flow.rho, iec_gamma(flow))
         position = self.signal(flow, "command", 1.0)
         Cv = self.effective_cv(position)
         bore = self.p["bore"]
         K = Cv_to_K(Cv, bore)
         return K * _dynamic_head(mdot, bore, flow.rho)
 
-    # ---------------------------------------------------------------- choking
+    # ------------------------------------------------------------------ gas
     #
     # A valve on a gas line is the common case on a stand -- every vent, every
-    # press solenoid -- and until this existed none of them could choke. The
-    # liquid model below returns None for a gas (correctly: it is a flashing
-    # model), the base class then reports no ceiling, and a tank at 550 psi
-    # vented to atmosphere through the incompressible Cv law at **2.5x to 5.5x
-    # the sonic mass flow**, measured across bores from 3/8 in. to 1 in. The
-    # solver machinery for ceilings was already here and correct; nothing
-    # reached it.
+    # press solenoid. It is priced by IEC 60534-2-1 for compressible flow,
+    # ``W = N6 . C . Y . sqrt(x . p1 . rho1)`` with the expansion factor
+    # ``Y = 1 - x/(3 . F_gamma . xT)``, through :class:`~feedtwin.comps.iec_gas.GasCv`
+    # -- the same adapter the relief valve and the compressible regulator seat
+    # use, and within 0.11 % of ``fluids.control_valve.size_control_valve_g``
+    # at every drop (the Cv_to_K scale against IEC's N9). Flow rises
+    # continuously to the choke (Y = 2/3) and stays there.
+    #
+    # It used to take the incompressible Cv law (Y = 1) below a separately
+    # calibrated choked ceiling. The two never met: a Cv 4 valve on 500 psia
+    # nitrogen passed 1.52x IEC just short of the choke and then *lost* 36 % of
+    # its flow when the downstream fell another 10 psi, so a vent sped up as its
+    # tank fell, and some networks had two converged answers. The ceiling also
+    # read fluids' volumetric flow at 15 degC where fluids states 0 degC (5 %
+    # low). Gated on ``is_gas`` -- a node priced as a gas. A liquid keeps the old
+    # law and its false ceiling for now (_CHOKE_COEFFICIENT; R037, deferred).
+
+    def _gas(self, flow: FlowConditions) -> GasCv | None:
+        """This valve as IEC 60534 sees a gas, or None on a liquid."""
+        if not is_gas(flow):
+            return None
+        Cv = self.effective_cv(self.signal(flow, "command", 1.0))
+        if Cv <= 0.0:
+            return None  # no capacity at all: the plain law, as before
+        return GasCv(Cv, self.p["bore"], self.p.get("xT", XT_DEFAULT))
 
     def _gas_choke(self, flow: FlowConditions) -> tuple[float, float] | None:
         """``(x_critical, F_gamma)`` for this fluid, or None if it is not a gas.
 
         ``x`` is IEC 60534's pressure-drop ratio ``dp/p1``; choking begins at
-        ``F_gamma * xT``. ``F_gamma = gamma / 1.40`` carries the specific-heat
-        ratio relative to air, which is what makes helium (1.667) choke at a
-        different ratio from nitrogen (1.40).
+        ``F_gamma * xT``. ``F_gamma = gamma / 1.40`` carries the ideal-gas
+        specific-heat ratio relative to air, which is what makes helium (1.667)
+        choke at a different ratio from nitrogen (1.40).
         """
-        if flow.gamma <= 0.0 or flow.p_upstream <= 0.0 or flow.rho <= 0.0:
-            return None
-        F_gamma = flow.gamma / 1.40
-        return F_gamma * self.p.get("xT", XT_DEFAULT), F_gamma
+        if not is_gas(flow):
+            # Not a gas: the old test, kept for liquids (see _CHOKE_COEFFICIENT).
+            if flow.gamma <= 0.0 or flow.p_upstream <= 0.0 or flow.rho <= 0.0:
+                return None
+            F_gamma = flow.gamma / 1.40
+            return F_gamma * self.p.get("xT", XT_DEFAULT), F_gamma
+        gamma = iec_gamma(flow)
+        x_crit = GasCv(1.0, 1.0, self.p.get("xT", XT_DEFAULT)).x_critical(gamma)
+        return x_crit, gamma / 1.40
 
     def flow_ceiling(self, flow: FlowConditions) -> float | None:
-        """Sonic mass flow through the valve [kg/s], or None for a liquid.
+        """Choked mass flow through the valve [kg/s], or None for a liquid.
 
-        IEC 60534-2-1 sizes a valve on gas as
-        ``W = N6 . C . Y . sqrt(x . p1 . rho1)`` with ``Y = 1 - x/(3.F_gamma.xT)``.
-        At the critical ratio ``x = F_gamma.xT`` the expansion factor is exactly
-        ``2/3`` and the flow stops responding to downstream pressure, which is
-        the ceiling. ``N6 = 27.3`` for W in kg/h, p in kPa and rho in kg/m^3.
-
-        This is the same standard the Cv itself is defined by, so a valve's
-        datasheet number and its choke point come from one model rather than two.
+        IEC 60534-2-1 at the critical ratio ``x = F_gamma . xT``, where the
+        expansion factor is exactly ``2/3`` and the flow stops responding to
+        downstream pressure. A liquid should have no such ceiling, and still
+        has the old one (:func:`_legacy_liquid_ceiling`; deferred, R037).
         """
+        gas = self._gas(flow)
+        if gas is None:
+            return self._legacy_liquid_ceiling(flow)
+        return gas.capacity(flow.p_upstream, flow.rho, iec_gamma(flow))
+
+    def _legacy_liquid_ceiling(self, flow: FlowConditions) -> float | None:
+        """The old calibrated "sonic" ceiling, on anything not priced as a gas.
+        Unchanged; see :data:`_CHOKE_COEFFICIENT` for why it stays for now."""
         choke = self._gas_choke(flow)
         if choke is None:
             return None
-        x_crit, _ = choke
         Cv_eff = self.effective_cv(self.signal(flow, "command", 1.0))
         if Cv_eff <= 0.0:
             return None
@@ -634,7 +669,7 @@ class Valve(HydraulicComponent):
             _calibrate_choke()
             * Cv_eff
             * (2.0 / 3.0)
-            * math.sqrt(x_crit * (flow.p_upstream / 1000.0) * flow.rho)
+            * math.sqrt(choke[0] * (flow.p_upstream / 1000.0) * flow.rho)
         )
 
     def is_choked(self, dp_available: float, flow: FlowConditions) -> bool:
