@@ -2,6 +2,19 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 The eroding-nozzle card prices thrust on the flow that burns
+
+`card._ExpansionScaling` (AUDIT D4-B, on in every pass that applies a throat schedule) recomputed
+thrust as `total x v_vac(O/F, total) - p_a A_e`, where the card's own `CardChamber` prices it on the
+flow that burns (`feedtwin.engine.chamber.burning`: outside the table's O/F range the excess passes the
+throat unburned). With the Cf_vac ratio forced to 1 the two must agree; at a 0.1 % larger throat they
+did not: O/F 20 gave 2489 N against the card's 0, O/F 4.8 4162 against 1768 N. It now uses the burned
+flow (Isp stays on the total, as the card's). Inside the card's O/F range the two flows are the same, so
+the nominal burns do not move (LE4 (3) runs O/F 1.508-1.515 against the table's 0.85-2.52); an
+off-ratio Hardware or trim candidate, or a dry-out inside a step, now gets the card's thrust. Guarded by
+`test_layerx_hardware.py::test_expansion_chamber_prices_thrust_on_the_flow_that_burns` (red on the old
+code).
+
 ## 2026-11-02 Dead legs are not graded for saturation
 
 `diagnostics.saturation` graded every liquid node of the recorded network over the firing steps,

@@ -450,11 +450,18 @@ class _ExpansionScaling:
             return res
         from dataclasses import replace
 
+        from feedtwin.engine.chamber import GRAVITY, burning
+
         total = res.mdot_total
+        # The flow that burns, as CardChamber prices it: outside the card's O/F range the excess of one
+        # propellant passes the throat unburned and carries no vacuum velocity. Pricing thrust on the
+        # total gave kN where the card says unlit or lean (O/F 20: 2489 N against 0) once a throat
+        # schedule was applied; in range the two are the same flow, and the nominal burn is unchanged.
+        table = self.card.chamber.cstar
+        burned = burning(res.mdot_oxidiser, res.mdot_fuel, (table.x0, table.x_max))
         scale = self.expansion_scale(res.mixture_ratio, res.pressure)
-        v_vac = self.card.chamber.vacuum_velocity(res.mixture_ratio, total) * scale
-        thrust = max(total * v_vac - self.ambient_pressure * self.card.exit_area, 0.0)
-        from feedtwin.engine.chamber import GRAVITY
+        v_vac = self.card.chamber.vacuum_velocity(res.mixture_ratio, burned) * scale
+        thrust = max(burned * v_vac - self.ambient_pressure * self.card.exit_area, 0.0)
 
         return replace(
             res,
