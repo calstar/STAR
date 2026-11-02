@@ -737,6 +737,39 @@ def test_ledger_rows_design_from_forward_delivered_from_the_burn():
     assert led["pc"]["design_value"] is None and "no Forward" in led["pc"]["design_source"]
 
 
+def test_ledger_with_the_erosion_replay_off_reads_the_twins_chamber():
+    """Nozzle erosion off (run 20261102-123645-807b98): no replay, no ``delivered``. The burn still
+    fired, on the twin's chamber; Pc, O/F, thrust, Isp and the flows read '—' in the Overview ledger.
+    They come from ``series.chamber`` and the sides' flows; what only the replay computes says why."""
+    res = _synthetic()
+    s = res["series"]
+    s["chamber"].update({"mr": [0.0, 0.0, 1.50, 1.52], "thrust_N": [0.0, 0.0, 6100.0, 6150.0],
+                         "isp_s": [0.0, 0.0, 221.0, 222.0]})
+    res["summary"] = {"burn_time_s": 3.86, "total_impulse_Ns": 23730.0}
+    res["provenance"] = {"settings": {"replay": False}}
+    cfg = _fake_config()
+    cfg.chamber_geometry = SimpleNamespace(A_throat=1.7947e-3, expansion_ratio=4.8276, Lstar=1.3586,
+                                           nozzle_efficiency=0.95)
+    cfg.thrust = SimpleNamespace(burn_time=3.994)
+    cfg.design_requirements = SimpleNamespace(lox_tank_capacity_kg=6.611, fuel_tank_capacity_kg=4.404)
+    rows = {r["key"]: r for r in LG.build_ledger(res, None, cfg)}
+    # firing steps only (2 and 3), equal weights without dt
+    assert rows["pc"]["delivered"]["min"] == pytest.approx(400.0)
+    assert rows["pc"]["delivered"]["max"] == pytest.approx(401.0)
+    assert rows["pc"]["series_ref"] == "series.chamber.pc_psia"
+    assert rows["of"]["delivered"]["mean"] == pytest.approx(1.51)
+    assert rows["thrust"]["delivered"]["end"] == pytest.approx(6150.0)
+    assert rows["isp"]["delivered"]["start"] == pytest.approx(221.0)
+    assert rows["mdot_ox"]["delivered"]["end"] == pytest.approx(1.9)
+    assert rows["impulse"]["delivered"]["mean"] == pytest.approx(23730.0)
+    # the eroding throat and eta_c* are the replay's alone: none, and the row says why
+    for key in ("throat_area", "eta_cstar"):
+        assert rows[key]["delivered"] is None
+        assert rows[key]["missing"] == "erosion off"
+        assert "nozzle erosion off" in rows[key]["note"]
+    assert "missing" not in rows["pc"]
+
+
 # ---- the recorder's own shape: the tank head as an element on the path -----------------------------
 
 def _recorder_style(res):

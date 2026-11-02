@@ -176,7 +176,8 @@ function serverRow(res: LayerXResult, e: LedgerEntry, u: Units): LedgerRow {
   };
   const lo = e.delivered?.min;
   const hi = e.delivered?.max;
-  const delivered = lo === null || lo === undefined || hi === null || hi === undefined ? f(e.delivered?.mean)
+  const delivered = !e.delivered && e.missing ? e.missing
+    : lo === null || lo === undefined || hi === null || hi === undefined ? f(e.delivered?.mean)
     : f(lo) === f(hi) ? f(lo) : `${f(lo, false)} – ${f(hi)}`;
   const ref = resolveRef(res, e.series_ref);
   const design = e.design_value === null || e.design_value === undefined ? null : plain ? e.design_value : toModel(e.design_value);

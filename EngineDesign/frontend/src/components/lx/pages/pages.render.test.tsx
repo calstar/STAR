@@ -111,6 +111,18 @@ describe('the Burn pages', () => {
     expect(html).toContain('LOX tank at 1,100');
   });
 
+  it('Overview: a ledger row only the erosion replay computes says why it is empty, not a bare dash', () => {
+    const r = withContract(result()) as unknown as { diagnostics: { ledger: Record<string, unknown>[] } };
+    r.diagnostics.ledger = [
+      { key: 'pc', label: 'Chamber pressure', design_value: 393, unit: 'psia', delivered: { min: 355, max: 362, mean: 359 }, series_ref: 'series.chamber.pc_psia' },
+      { key: 'throat_area', label: 'Throat area', design_value: 1794.7, unit: 'mm^2', delivered: null, series_ref: 'delivered.throat_area_ratio x A_t0', missing: 'erosion off' },
+      { key: 'eta_cstar', label: 'eta_c*', design_value: 0.91, unit: '-', delivered: null, series_ref: 'replay.eta_cstar', missing: 'erosion off' },
+    ];
+    const html = draw(PAGES[0][1], r as unknown as LayerXResult);
+    expect(html).toContain('>erosion off<');
+    expect(html).toMatch(/355 – 362/);
+  });
+
   it('Stand: names the run\'s own test and offers nothing it cannot do (D-24)', () => {
     const stand = PAGES[5][1];
     const plain = draw(stand, result());

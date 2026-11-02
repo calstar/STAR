@@ -87,6 +87,18 @@ describe('Hero (story)', () => {
     expect(h).toMatch(/>3,000(\.0)?\u00a0K</);
   });
 
+  it('a burn run with the erosion replay off still fires: the chamber and the performance are the twin’s', () => {
+    // Run 20261102-123645-807b98 (Nozzle erosion off): no replay, no delivered. The engine read
+    // "Chamber not firing ... Exit ... Not firing" at T+1.95 s while the schematic beside it read 359 psia.
+    const r = standResult();
+    (r.provenance as unknown as { settings: Record<string, unknown> }).settings = { ...r.provenance.settings, replay: false };
+    const off = html(r);
+    expect(off).not.toMatch(/not firing/i);
+    expect(off).toMatch(/>396(\.0)? psia</);                 // the twin's chamber
+    expect(off).toContain('not computed: nozzle erosion off');   // the exit, said why
+    expect(off).toMatch(/>6,970</);                              // thrust from series.chamber
+  });
+
   it('will not draw another engine than the run\'s', () => {
     const g = geometry();
     g.D_throat = 0.03;

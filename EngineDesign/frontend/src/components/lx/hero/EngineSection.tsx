@@ -103,6 +103,18 @@ interface Moment {
   gammaC: number | null;
   /** What the engine delivers at the cursor, when firing. */
   perf: { thrust?: number; isp?: number; of?: number; mdot?: number; cstar?: number } | null;
+  /** Firing at the cursor, whatever the replay carries. */
+  firing: boolean;
+  /** The twin's chamber pressure at the cursor, when firing [psia]: what the chamber reads when the run
+   *  has no nozzle replay to say more. */
+  pc: number | null;
+  /** Why the nozzle (exit, plume) is not drawn while firing: the run carries no replay at the cursor. */
+  nozzleWhy: string | null;
+}
+
+/** Firing, but no replay to draw the nozzle from: say so, never "not firing". */
+function nozzleWhyOf(result: LayerXResult): string {
+  return result.provenance?.settings?.replay === false ? 'not computed: nozzle erosion off' : 'not computed for this run';
 }
 
 /** Room right of a vertical engine for its stations' figures [px]. */
@@ -137,8 +149,22 @@ function useMoment(section: Section, result: LayerXResult, blocks: ReturnType<ty
                  mdot: mo !== undefined && mf !== undefined ? mo + mf : undefined };
       }
     }
-    return { t, wall, areaRatio, nozzle, gammaC, perf };
-  }, [section, result, blocks, t]);
+    // Firing is the twin's word, not the replay's: a burn run with the erosion replay off (or one
+    // whose replay misses this step) still fires, and its chamber is the twin's series.
+    const at = Math.max(0, Math.min(i, result.series.t.length - 1));
+    const firing = !!result.series.firing?.[at];
+    const ch = result.series.chamber;
+    const finiteOr = (v: number | undefined) => (v !== undefined && Number.isFinite(v) ? v : undefined);
+    if (!perf && firing && ch) {
+      const mo = finiteOr(result.series.ox?.mdot?.[at]);
+      const mf = finiteOr(result.series.fuel?.mdot?.[at]);
+      perf = { thrust: finiteOr(ch.thrust_N?.[at]), isp: finiteOr(ch.isp_s?.[at]), of: finiteOr(ch.mr?.[at]), cstar: finiteOr(ch.cstar?.[at]),
+               mdot: mo !== undefined && mf !== undefined ? mo + mf : undefined };
+    }
+    const pc = nozzle ? nozzle.pc_psia : firing ? finiteOr(ch?.pc_psia?.[at]) ?? null : null;
+    const nozzleWhy = firing && !nozzle ? nozzleWhyOf(result) : null;
+    return { t, wall, areaRatio, nozzle, gammaC, perf, firing, pc, nozzleWhy };
+  }, [section, result, blocks, t, i]);
 }
 
 function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false }: {
@@ -248,7 +274,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
       q('Throat', u.len(dNow / 1000), `as built ${u.fmt(u.len(d0 / 1000))}`),
       q('Throat area growth', u.pct(m.areaRatio - 1)),
       linerLeft !== null ? q(linerWord, u.len(linerLeft / 1000)) : null,
-      m.nozzle ? q('Chamber', u.p(m.nozzle.pc_psia)) : null,
+      m.pc !== null ? q('Chamber', u.p(m.pc)) : null,
       m.nozzle ? q('Exit', u.p(m.nozzle.pe_psia)) : null,
       m.nozzle ? q('Air', u.p(m.nozzle.pa_psia)) : null,
       art ? q('Exit / air', u.ratio(art.p.ratio)) : null,
@@ -256,7 +282,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
       art && art.p.regime !== 'ideal' ? q('Shock cell', u.len((art.p.cellOverDe * De) / 1000)) : null,
     ];
     return out.filter((r): r is Row => r !== null);
-  }, [u, dNow, d0, m.areaRatio, linerLeft, linerWord, m.nozzle, art, De]);
+  }, [u, dNow, d0, m.areaRatio, linerLeft, linerWord, m.nozzle, m.pc, art, De]);
 
   const regimeWord = art ? REGIME[art.p.regime] : null;
   const throatLabel = `Ø${NBSP}${numText(u.len(dNow / 1000))}${NBSP}${u.len(1).unit}`;
@@ -352,9 +378,9 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
         </g>
         {vertical && (
           <Stations x={H + 10} rows={[
-            { y: sx(x0) + 6, name: 'Chamber', lines: m.nozzle ? [
-              `${u.fmt(u.p(m.nozzle.pc_psia))}`,
-              m.nozzle.tc_K ? `${u.fmt(u.temp(m.nozzle.tc_K))}` : null] : ['not firing'] },
+            { y: sx(x0) + 6, name: 'Chamber', lines: m.pc !== null ? [
+              `${u.fmt(u.p(m.pc))}`,
+              m.nozzle?.tc_K ? `${u.fmt(u.temp(m.nozzle.tc_K))}` : null] : ['not firing'] },
             { y: xt, name: `Throat ${throatLabel}`, lines: [
               gas ? `${u.fmt(u.p(gas.p[it]))} · M 1` : null,
               gas ? `${u.fmt(u.temp(gas.T[it]))}` : null,
@@ -362,7 +388,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
             { y: sx(xe) - 4, name: 'Exit', lines: m.nozzle ? [
               `${u.fmt(u.p(m.nozzle.pe_psia))}${art ? ` · M ${numText(u.ratio(art.p.machExit))}` : ''}`,
               m.nozzle.te_K ? `${u.fmt(u.temp(m.nozzle.te_K))}` : null,
-              regimeWord] : [] },
+              regimeWord] : m.nozzleWhy ? [m.nozzleWhy] : [] },
             ...(sepIdx !== null ? [{ y: sx(s.x[sepIdx]), name: '! separates', lines: [], warn: true }] : []),
           ]} />
         )}
@@ -372,7 +398,7 @@ function Drawn({ section, result, width, maxHeight, blocks, u, vertical = false 
         <Figure size="sm" label="Throat" value={numText(u.len(dNow / 1000))} unit={u.len(1).unit}
                 delta={delta} deltaTitle="Against the as-built throat" />
         <Figure size="sm" label="Exit / air" value={art ? numText(u.ratio(art.p.ratio)) : '—'}
-                sub={m.nozzle ? `${u.fmt(u.p(m.nozzle.pe_psia))} / ${u.fmt(u.p(m.nozzle.pa_psia))}` : 'not firing'} />
+                sub={m.nozzle ? `${u.fmt(u.p(m.nozzle.pe_psia))} / ${u.fmt(u.p(m.nozzle.pa_psia))}` : m.nozzleWhy ?? 'not firing'} />
         <Figure size="sm" label="Exit Mach" value={art ? numText(u.ratio(art.p.machExit)) : '—'} />
         {linerLeft !== null
           ? <Figure size="sm" label={linerWord} value={numText(u.len(linerLeft / 1000))} unit={u.len(1).unit} />

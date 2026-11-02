@@ -263,6 +263,8 @@ export interface LedgerEntry {
   series_ref?: string | null;
   replaced?: 'yes' | 'partly' | 'no';
   note?: string;
+  /** Why the burn has no delivered value, in a word or two ("erosion off"): only the replay computes it. */
+  missing?: string;
 }
 
 /**
