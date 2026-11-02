@@ -83,7 +83,7 @@ export default function StateMachineDiagram({ machine, live, go, locked = false,
     // not exactly it: held to the panel (h-full), a grid taller than a
     // 1280 x 720 window spilled out of this box, past the end of the panel's
     // scroll, and READY could not be scrolled to whole.
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-shrink-0 flex-col pb-5">
       {/* Each label on one line; on a narrow column the aborts and the
           current state wrap under the heading rather than break "STATE /
           MACHINE" and "EMERGENCY / ABORT" over two lines each. */}
