@@ -149,7 +149,8 @@ def test_a_burn_that_starts_off_its_datum_is_not_a_settled_answer(config, drawin
     assert "Asked for a 600.0 psia lockup from a 4500 psia bottle; T-0 is LOX" in event["detail"]
     assert result["summary"]["copv_t0_psia"] < 4100.0
     # The clock's float noise is not a time: T-0 is at Fire exactly (it read -6.9e-17 s in the events and the CSV).
-    assert next(e for e in result["events"] if e["kind"] == "t0")["t"] == 0.0
+    t0 = next(e for e in result["events"] if e["kind"] == "t0")["t"]
+    assert t0 == 0.0 and repr(t0) == "0.0"          # not -0.0, which prints as "-0.0 s"
     assert 0.0 in result["series"]["t"]
 
 

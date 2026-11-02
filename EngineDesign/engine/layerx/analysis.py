@@ -1084,7 +1084,7 @@ def reduce_trace(prep: Prepared, trace: Any, initial: Dict[str, float]) -> Dict[
     # The clock sums its steps and carries their float noise (T-0 read -6.9e-17 s in the events and the
     # CSV): a sample within 1e-12 s of a whole nanosecond is that nanosecond. A step cut to land on
     # depletion or a trip is further off than that and keeps its own time.
-    trace.t[:] = [r if abs(x - (r := round(x, 9))) < 1e-12 else x for x in trace.t]
+    trace.t[:] = [r + 0.0 if abs(x - (r := round(x, 9))) < 1e-12 else x for x in trace.t]   # + 0.0: never -0.0
     n = len(trace.t)
     firing = trace.firing
     dt = prep.plan.dt
