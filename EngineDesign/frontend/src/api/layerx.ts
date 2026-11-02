@@ -620,6 +620,8 @@ export interface ParameterRow {
   unit: string;
   source: string;
   reference: string;
+  /** An absolute pressure, as the twin reads it, in psia (a bare drawn psi is gauge): what the table shows and takes. */
+  psia?: number;
 }
 
 export interface OverrideEntry {
@@ -631,6 +633,8 @@ export interface OverrideEntry {
   provenance: 'measured' | 'manufacturer' | 'estimated';
   uncertainty?: number | null;
   date?: string | null;
+  /** Read back only: an absolute-pressure restatement in psia, whatever unit it was saved in. */
+  psia?: number;
 }
 
 export type SweepMetric =

@@ -1051,13 +1051,11 @@ def export_config(body: ExportBody, session: UserSession = Depends(get_session))
 
 @router.get("/drawings/{drawing_id}/parameters")
 def drawing_parameters(drawing_id: str, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
-    from dataclasses import asdict
-
-    from engine.layerx.measurements import parameter_table
+    from engine.layerx.measurements import override_view, parameter_table
 
     drawing = _drawing(session, drawing_id)
-    return {"rows": parameter_table(drawing.payload),
-            "overrides": [asdict(o) for o in _measurements(session).get(drawing)]}
+    rows = parameter_table(drawing.payload)
+    return {"rows": rows, "overrides": [override_view(o, rows) for o in _measurements(session).get(drawing)]}
 
 
 @router.get("/drawings/{drawing_id}/document")
