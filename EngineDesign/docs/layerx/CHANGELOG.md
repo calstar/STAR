@@ -2,6 +2,20 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 Candidates burn at the lockup and fill they ask for
+
+The rail writes `dome_psia` and `copv_pressure_psia` as soon as a person turns the dome or bottle knob
+(2026-10-07), and `prepare` reads both first. The set point, the Hardware re-solve, the optimiser, the
+uncertainty sweep's "Tank pressure as set" / "Bottle fill as filled" cases and "Put the settings on
+the rail" all set only `tank_pressure_psia` / `copv_pressure_psig`: with either knob turned, every
+candidate burned the rail's point (LE4 (3) at dome 560 / fill 3600 psia: candidates at 600 and 500
+psia both burned 557.3 psia, 3585.3 psig). The set point stopped on "Mean thrust does not rise with
+lockup", the tornado showed no swing for the two operating factors, and the patch was ignored.
+`prepare.at_operating_point` clears the knob that governs what a candidate sets; the settings patch
+writes `dome_psia: null` / `copv_pressure_psia: null` as the rail itself does. A rail with neither
+knob turned burns exactly as before. Guarded by `tests/test_layerx_operating_point.py` (all five red
+on the old code).
+
 ## 2026-11-02 Vessels held to the pressure the twin trips them at; no burn figure moves
 
 Layer X read the drawing's MAWP as a pressure *across* the wall, but feedtwin reads a drawn bare psi

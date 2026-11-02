@@ -265,13 +265,19 @@ def factors(prep: Any, config: Any) -> Tuple[List[Factor], List[str]]:
     # ---- the stand on the day: how well the operator can set what the rail says ----
     lockup = float(prep.derived["target_lockup_psia"])
     fill = float(prep.derived["copv_psig"])
+    # Each case clears the rail's own knob for what it moves: the dome dial and the absolute fill win
+    # over a tank pressure and a gauge fill in prepare(), so with either set on the rail both sides of
+    # these factors burned the nominal and read as a zero swing (prepare.at_operating_point).
     out.append(Factor("op.lockup", "Tank pressure as set", "operation",
                       "±5 psi: the dome set by hand against a gauge (assumed)",
-                      [Case("op.lockup", "low", f"{lockup - 5:.0f} psia", settings={"tank_pressure_psia": lockup - 5}),
-                       Case("op.lockup", "high", f"{lockup + 5:.0f} psia", settings={"tank_pressure_psia": lockup + 5})], lockup, "psia"))
+                      [Case("op.lockup", "low", f"{lockup - 5:.0f} psia",
+                            settings={"tank_pressure_psia": lockup - 5, "dome_psia": None}),
+                       Case("op.lockup", "high", f"{lockup + 5:.0f} psia",
+                            settings={"tank_pressure_psia": lockup + 5, "dome_psia": None})], lockup, "psia"))
     out.append(Factor("op.fill", "Bottle fill as filled", "operation",
                       "−150 / +0 psig: a fill that stops short, or cools after filling (assumed)",
-                      [Case("op.fill", "low", f"{fill - 150:.0f} psig", settings={"copv_pressure_psig": fill - 150})], fill, "psig"))
+                      [Case("op.fill", "low", f"{fill - 150:.0f} psig",
+                            settings={"copv_pressure_psig": fill - 150, "copv_pressure_psia": None})], fill, "psig"))
     return out, notes
 
 

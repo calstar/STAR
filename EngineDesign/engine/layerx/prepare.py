@@ -160,6 +160,25 @@ class LayerXSettings:
         return cls(**{k: v for k, v in raw.items() if k in known and (v is not None or k == "drawing_id")})
 
 
+def at_operating_point(settings: LayerXSettings, *, lockup_psia: Optional[float] = None,
+                       fill_psig: Optional[float] = None) -> LayerXSettings:
+    """``settings`` burning at this tank lockup [psia] and bottle fill [psig], whatever the rail's
+    knobs were. The rail writes the dome dial (``dome_psia``) and the fill (``copv_pressure_psia``)
+    as soon as a person turns either, and both win in :func:`prepare` (over ``tank_pressure_psia``
+    and ``copv_pressure_psig``): a set-point, optimiser, uncertainty or Hardware candidate that set
+    only the lockup or the fill burned at the rail's knobs every time, the set point's secant saw a
+    zero slope, and "use these settings" changed nothing. So the knob that governs what the
+    candidate sets is cleared with it."""
+    from dataclasses import replace
+
+    changes: Dict[str, Any] = {}
+    if lockup_psia is not None:
+        changes.update(tank_pressure_psia=float(lockup_psia), dome_psia=None)
+    if fill_psig is not None:
+        changes.update(copv_pressure_psig=float(fill_psig), copv_pressure_psia=None)
+    return replace(settings, **changes)
+
+
 def _outlet_pair(value: Any) -> Tuple[Optional[float], Optional[float]]:
     """``outlet_d_mm`` as ``(LOX, fuel)``: one number is both tanks'."""
     if value is None:

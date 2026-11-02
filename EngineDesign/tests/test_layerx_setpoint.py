@@ -256,7 +256,8 @@ def test_the_card_change_list_and_model_block():
         assert set(c) >= {"component", "pid_node_id", "field", "before", "after", "unit", "provenance", "effect", "cad_impact"}
     assert by["op:lockup_psia"]["pid_node_id"] == "PR_D" and by["op:dome_psig"]["pid_node_id"] == "PR_C"
     assert by["op:lockup_psia"]["effect"]["mean_thrust_N"] == pytest.approx(187.0, abs=1e-6)
-    assert cl["exports"]["settings_patch"] == {"tank_pressure_psia": pytest.approx(596.51, abs=0.01)}
+    # The patch clears the rail's dome dial, which would otherwise win over the tank pressure it sets.
+    assert cl["exports"]["settings_patch"] == {"tank_pressure_psia": pytest.approx(596.51, abs=0.01), "dome_psia": None}
     m = out["model"]
     assert m["name"] and "Broyden" in m["source"] and m["assumptions"]
     for name, v in m["inputs"].items():

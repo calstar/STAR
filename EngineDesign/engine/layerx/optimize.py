@@ -158,18 +158,17 @@ def resolve_variables(prep: Any, config: Any, request: OptimizeRequest) -> List[
 def _candidate(settings: Any, variables: List[Variable], x: Dict[str, float], copv_id: Optional[str],
                objective: str, center_psia: float) -> Tuple[Any, List[Any]]:
     from engine.layerx.measurements import Override
+    from engine.layerx.prepare import at_operating_point
 
     changes: Dict[str, Any] = {"replay": False, "flight": objective == "apogee", "card_center_psia": center_psia}
-    if "lockup_psia" in x:
-        changes["tank_pressure_psia"] = x["lockup_psia"]
-    if "copv_psig" in x:
-        changes["copv_pressure_psig"] = x["copv_psig"]
     extra: List[Any] = []
     volume = next((v for v in variables if v.key == "copv_volume_L"), None)
     if volume is not None and volume.enabled and "copv_volume_L" in x and copv_id:
         extra.append(Override(target=f"node:{copv_id}", parameter="volume", value=float(x["copv_volume_L"]),
                               unit="L", source="Layer X optimiser candidate", provenance="estimated"))
-    return replace(settings, **changes), extra
+    # The candidate's lockup and fill whatever the rail's dome dial and bottle knob say (they win in prepare()).
+    return at_operating_point(replace(settings, **changes), lockup_psia=x.get("lockup_psia"),
+                              fill_psig=x.get("copv_psig")), extra
 
 
 def _figures(res: Dict[str, Any]) -> Dict[str, Any]:

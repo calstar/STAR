@@ -350,18 +350,16 @@ def burn_point(args: Dict[str, Any]) -> Dict[str, Any]:
     extra_overrides (drawing restatements for this point only), grading {margin_psi, meop_psi},
     index, tag. Never raises: a failure is ``ok: False`` with the error."""
     from engine.layerx.analysis import run_prepared
-    from engine.layerx.prepare import prepare
+    from engine.layerx.prepare import at_operating_point, prepare
 
     started = time.perf_counter()
     base = {"index": args.get("index"), "tag": args.get("tag"), "lockup_psia": args.get("lockup_psia"),
             "fill_psig": args.get("fill_psig"), "replay": bool(args.get("replay", True))}
     try:
-        changes: Dict[str, Any] = {"replay": base["replay"], "card_center_psia": None}
-        if args.get("lockup_psia") is not None:
-            changes["tank_pressure_psia"] = float(args["lockup_psia"])
-        if args.get("fill_psig") is not None:
-            changes["copv_pressure_psig"] = float(args["fill_psig"])
-        settings = replace(args["settings"], **changes)
+        # At this lockup and fill whatever the rail's dome dial and bottle knob say: they win over a
+        # tank pressure and a gauge fill in prepare(), and every point burned the rail's otherwise.
+        settings = at_operating_point(replace(args["settings"], replay=base["replay"], card_center_psia=None),
+                                      lockup_psia=args.get("lockup_psia"), fill_psig=args.get("fill_psig"))
         config = args["config"]
         prep = prepare(config, None, args["drawing"], settings,
                        list(args.get("overrides") or []) + list(args.get("extra_overrides") or []))
@@ -752,11 +750,13 @@ def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any],
     say("Preparing", 0.01)
     lockup0 = getattr(settings, "tank_pressure_psia", None)
     cfg_lockup = float(getattr(getattr(config, "lox_tank", None), "initial_pressure_psi", 0.0) or 0.0)
+    # The rail's bottle knob writes the absolute fill (2026-10-07), which prepare() reads first.
+    fill_psia0 = getattr(settings, "copv_pressure_psia", None)
+    fill_psig0 = fill_psia0 - 101325.0 / PSI if fill_psia0 is not None else getattr(settings, "copv_pressure_psig", None)
     start = {"lockup_psia": lockup0 or cfg_lockup,
              "source": "the rail's tank pressure" if lockup0 else "config lox_tank.initial_pressure_psi",
-             "fill_psig": getattr(settings, "copv_pressure_psig", None),
-             "fill_source": "the rail's bottle pressure" if getattr(settings, "copv_pressure_psig", None) is not None
-             else "the drawing's bottle pressure"}
+             "fill_psig": fill_psig0,
+             "fill_source": "the rail's bottle pressure" if fill_psig0 is not None else "the drawing's bottle pressure"}
     reference_F = None
     max_fill = None
     mawp_cap = math.inf
@@ -768,6 +768,12 @@ def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any],
             raise ValueError("Preflight failed: " + "; ".join(c.label for c in nominal.checks if c.status == "fail"))
         d = nominal.derived
         start["lockup_psia"] = float(d["target_lockup_psia"])
+        # Where the starting lockup came from, as prepare() decided it (the dome dial wins on the rail).
+        start["source"] = {"set on the rail": "the lockup the rail's dome dial gives",
+                           "solved for the rail's tank pressure": "the rail's tank pressure",
+                           "as drawn": "the lockup the drawing's dome dial gives",
+                           "solved for the design's tank pressure": "config lox_tank.initial_pressure_psi",
+                           }.get(str(d.get("dome_source")), start["source"])
         start["fill_psig"] = float(d["copv_psig"])
         max_fill = float(d.get("copv_drawn_psig") or d["copv_psig"])
         reference_F = float((nominal.link.reference or {}).get("F") or 0.0) if nominal.link else None

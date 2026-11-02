@@ -165,14 +165,20 @@ def build(tool: str, changes: List[Dict[str, Any]], *, before: Optional[Mapping[
 # ------------------------------------------------------------------ where each domain goes
 
 
-def settings_patch(diff: Mapping[str, Any]) -> Dict[str, float]:
-    """The operation-domain changes as a Layer X rail patch ("use these settings")."""
-    rail = {"op:lockup_psia": "tank_pressure_psia", "op:copv_psig": "copv_pressure_psig"}
-    out: Dict[str, float] = {}
+def settings_patch(diff: Mapping[str, Any]) -> Dict[str, Optional[float]]:
+    """The operation-domain changes as a Layer X rail patch ("use these settings").
+
+    Each clears the rail's own knob for what it sets, as the rail itself does when a person types
+    one or the other (``Rail.tsx``): the dome dial (``dome_psia``) wins over a tank pressure and the
+    absolute fill (``copv_pressure_psia``) over a gauge one in ``prepare``, so with either knob
+    turned the patch was merged in and silently ignored."""
+    rail = {"op:lockup_psia": ("tank_pressure_psia", "dome_psia"), "op:copv_psig": ("copv_pressure_psig", "copv_pressure_psia")}
+    out: Dict[str, Optional[float]] = {}
     for c in diff.get("changes") or []:
-        key = rail.get(c.get("target", ""))
-        if key and isinstance(c.get("after"), (int, float)):
-            out[key] = float(c["after"])
+        keys = rail.get(c.get("target", ""))
+        if keys and isinstance(c.get("after"), (int, float)):
+            out[keys[0]] = float(c["after"])
+            out[keys[1]] = None
     return out
 
 
