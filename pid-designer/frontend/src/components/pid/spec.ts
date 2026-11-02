@@ -269,7 +269,21 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ],
   },
 
-  MAN: { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] },
+  MAN: {
+    catalogued: true,
+    params: [CD, CV, P('bore', 'Bore', 'length')],
+    options: [
+      COEFFICIENT('Cd'),
+      // feed-twin rests every hand valve shut until somebody opens it, unless
+      // the drawing says it stands open (`normalPosition`, ADR 0006) -- and
+      // told the user to draw that, which there was no way to do here.
+      { key: 'normalPosition', label: 'Normal position', default: 'closed',
+        choices: [
+          { value: 'closed', label: 'Normally closed' },
+          { value: 'open',   label: 'Normally open' },
+        ] },
+    ],
+  },
   ROT: actuatedValveSpec(),
   SOL: actuatedValveSpec(),
   MOV: actuatedValveSpec(),

@@ -120,7 +120,14 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       if (stored.roughness && !stored.roughness_custom) stored.roughness_custom = stored.roughness;
     }
     setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)])));
-    const opts = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
+    const named = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
+    // A symbol keeps the options this dialog does not show. It writes back
+    // what it holds, wholesale (saveConfig), so holding only its own erased
+    // anything else a drawing said on the next save -- a key written by
+    // another tool or by hand, the way a hand valve's `normalPosition` had to
+    // be before the dialog offered it. A line's are all its own, one of them
+    // derived (`construction`), and are written back as before.
+    const opts = kind === 'node' ? { ...(data.options ?? {}), ...named } : named;
     if (kind === 'edge') {
       // A stored hose reopens with its flag set; a stored roughness that is
       // not one of the materials reopens as custom.

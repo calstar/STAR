@@ -64,3 +64,31 @@ describe('a sketched line with no inner diameter', () => {
     expect(out.params.bore).toMatchObject({ value: 10.92, unit: 'mm' });
   });
 });
+
+describe('options the dialog does not show', () => {
+  const man = (options: Record<string, string>) =>
+    ({ componentType: 'MAN', label: 'FV-MAN', options }) as unknown as Data;
+
+  it('keeps a hand valve standing open through a save', () => {
+    expect(dialog('node', man({ Cd: 'manual', normalPosition: 'open' })).save().options.normalPosition).toBe('open');
+  });
+
+  it('keeps a symbol\'s option it does not name, rather than erasing it on save', () => {
+    // Written by another tool or by hand. The dialog writes back what it
+    // holds, wholesale, and used to hold only the options its spec names.
+    const out = dialog('node', man({ Cd: 'manual', actuator: 'DAQ-7' })).save().options;
+    expect(out.actuator).toBe('DAQ-7');
+    expect(out.normalPosition).toBe('closed');
+  });
+
+  it('still drops a line\'s hose construction once the line is no longer a hose', () => {
+    // A line's options are all the dialog's own, one of them derived; kept
+    // wholesale, a hardline would carry its old hose construction forever.
+    const out = dialog('edge', {
+      componentType: 'pipe', label: '', params: {}, lineType: 'pipe',
+      options: { hose: 'no', construction: 'smooth_bore' },
+    } as unknown as Data).save();
+    expect(out.lineType).toBe('pipe');
+    expect(out.options.construction).toBeUndefined();
+  });
+});
