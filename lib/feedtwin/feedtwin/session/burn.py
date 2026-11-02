@@ -125,7 +125,8 @@ class BurnPlan:
     """Tank pressure at prime [psig] when no regulator feeds the tanks. Where one
     does, the tanks are primed and settled at the lockup it gives off the
     charged bottle (:func:`regulator_lockup`): dome + bias - S x bottle, which
-    a fixed number here would miss by the supply effect."""
+    a fixed number here would miss by the supply effect -- no higher than the
+    bottle and no lower than atmosphere (:func:`reachable_lockup`)."""
     copv_psi: float = 4500.0
     """Bottle at T-0 [psig]."""
     fill_fraction: float = 0.95
@@ -424,7 +425,9 @@ def jump_to_t0(
     stay as they are. The pad itself (fills, chilldown, presses) is skipped,
     which is the point; fly it from Idle for the transients it carries.
     Tanks fed by regulators that lock up at different pressures are primed at
-    the lowest of them and the note says so.
+    the lowest of them and the note says so. Never above the bottle nor below
+    atmosphere (:func:`reachable_lockup`): a bottle under the lockup leaves
+    the regulator wide open, and a lockup under the air is a shut regulator.
 
     The tanks hold what a fire is loaded with: ``loads`` [kg] per tank, or the
     engine's fire load (:meth:`Session.fire_loads`) -- never a fraction of the
