@@ -23,12 +23,14 @@ const SWATCHES = [
   '#f43f5e', '#8f8f8f', '#f5f5f5', '#0a0a0a',
 ];
 
-export function ColorMenu({ x, y, current, onPick, onClear, onClose }: {
+export function ColorMenu({ x, y, current, onPick, onClear, onClose, onReroute }: {
   x: number; y: number;
   current?: string;
   onPick: (hex: string) => void;
   onClear: () => void;
   onClose: () => void;
+  /** Given for a line on a pipe somebody routed by hand: back to the router. */
+  onReroute?: () => void;
 }) {
   const [hex, setHex] = useState(current ?? '');
   // Read from context rather than taken as a prop: this menu is reached from
@@ -91,6 +93,19 @@ export function ColorMenu({ x, y, current, onPick, onClear, onClose }: {
       >
         Back to fluid colour
       </button>
+
+      {onReroute && (
+        <>
+          <p className="mt-1.5 border-t border-[var(--color-border)] px-1 pb-1 pt-1.5 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Route</p>
+          <button
+            disabled={readOnly}
+            onClick={() => { onReroute(); onClose(); }}
+            className="w-full rounded px-1.5 py-1 text-left text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-primary)]"
+          >
+            Let it route itself
+          </button>
+        </>
+      )}
     </div>
   );
 }

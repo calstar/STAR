@@ -73,7 +73,7 @@ import { useHistory } from './history';
 import { matePair, translateSubgraph, turnSelected } from './graphOps';
 import { clearOfHost, clipAt, isInstrument } from './attach';
 import { drawnLines } from './lineHit';
-import { J_END, dragging, isJunction, junctionEnd } from './junctions';
+import { J_END, dragging, handRouted, isJunction, junctionEnd, thawPipe } from './junctions';
 import type { Dragging, EndLookup, Face } from './junctions';
 import { BranchDragProvider, BranchPreview } from './BranchDrag';
 import { ConnectionLine } from './ConnectionLine';
@@ -1794,6 +1794,12 @@ function PIDCanvas({
           onPick={hex => setColor(colorMenu, hex)}
           onClear={() => setColor(colorMenu, undefined)}
           onClose={() => setColorMenu(null)}
+          // A pipe somebody routed by hand, given back to the router. It was
+          // a double-click on a grip, which took the double-click that opens
+          // the line's dialog (BranchableEdge).
+          onReroute={colorMenu.kind === 'edge' && handRouted(nodes, edges, colorMenu.id)
+            ? () => setEdges(eds => thawPipe(nodes, eds, colorMenu.id))
+            : undefined}
         />
       )}
 
