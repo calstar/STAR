@@ -464,10 +464,30 @@ class Regulator(HydraulicComponent):
                 else 0.0
             ),
             "dp": dp,
+            "rated_multiple": self._rated_multiple(mdot),
         }
+
+    def _rated_multiple(self, mdot: float) -> float:
+        """``|mdot| / rated_flow``: how far along the datasheet's droop line
+        this flow is (0 when the regulator has no droop scale)."""
+        rated = self.p.get("rated_flow", 0.0)
+        return abs(mdot) / rated if rated > 0.0 else 0.0
 
     def check(self) -> list[Violation]:
         out: list[Violation] = []
+        rated_param = self.instance.params.get("rated_flow")
+        if rated_param is not None and rated_param.source.is_assumed:
+            out.append(
+                Violation(
+                    self.id,
+                    "rated_flow",
+                    f"rated_flow is {rated_param.source.value}, not measured. The "
+                    "droop is quoted at the rated flow and scales with it, so an "
+                    "assumed one moves every regulated pressure; a flow past it "
+                    "extrapolates the datasheet's line.",
+                    severity="warning",
+                )
+            )
         for name in ("supply_coefficient", "flow_droop"):
             param = self.instance.params.get(name)
             if param is not None and param.source.is_assumed:
@@ -557,6 +577,23 @@ class Regulator(HydraulicComponent):
                     f"only {dp / 6894.757:.1f} psi across the regulator, below "
                     f"the {minimum / 6894.757:.1f} psi it needs to control. The "
                     "outlet is not being regulated at this point.",
+                )
+            )
+        droop = self.p.get("flow_droop", 0.0)
+        multiple = self._rated_multiple(mdot)
+        if droop > 0.0 and multiple > 1.0:
+            # Flagged, never clamped: the physics stays the linear law, the run
+            # says it is past what the datasheet characterised.
+            out.append(
+                Violation(
+                    self.id,
+                    "rated_flow",
+                    f"running at {multiple:.2f}x its rated flow "
+                    f"({abs(mdot):.4g} kg/s against "
+                    f"{self.p['rated_flow']:.4g} kg/s): the droop there, "
+                    f"{droop * multiple / 6894.757:.1f} psi, is the datasheet's "
+                    "line extrapolated past where it was measured.",
+                    severity="warning",
                 )
             )
         if self.is_saturated(mdot, flow):
