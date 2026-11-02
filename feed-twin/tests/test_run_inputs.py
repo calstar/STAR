@@ -351,6 +351,31 @@ def test_a_replay_charges_the_vehicles_bottle_on_the_cockpits_grid() -> None:
         main.library.remove(diagram)
 
 
+@pytest.mark.skipif(not LE4.is_file(), reason="no LE4 drawing")
+def test_a_replay_refuses_a_disconnect_as_the_console_did() -> None:
+    """A run's sequence keeps every command as sent, the ones the console
+    refused too. A disconnect is refused there (409, "nobody opens or shuts
+    it"), but a session takes one by hand: the replay opened a QD the burn
+    never had open."""
+    up = client.post(
+        "/api/library/diagrams",
+        files={"file": ("replay QD LE4.json", LE4.read_bytes(), "application/json")},
+    )
+    diagram = str(up.json()["artifact"]["id"])
+    try:
+        session = main._session_from_inputs(
+            {"diagram": diagram, "setup": {"ignore_gse": True}}
+        )
+        (qd, *_) = sorted(main._not_operated(session.model))
+        main._replay_command(session, {"valve": qd, "open": True})
+        assert qd not in session.forced
+        valve = next(v for v in session.binding.to_symbol.values() if v not in {qd})
+        main._replay_command(session, {"valve": valve, "open": True})
+        assert session.forced.get(valve) == 1.0, "a valve is still taken by hand"
+    finally:
+        main.library.remove(diagram)
+
+
 # ----------------------------------------------------------------------- card
 
 

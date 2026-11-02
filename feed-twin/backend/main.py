@@ -4764,7 +4764,12 @@ def _replay_command(session: Session, command: Mapping[str, Any]) -> None:
                     session.setup = _setup({"copv_target": value}, session.setup)
                 else:
                     session.knobs[found.id] = value
-        if "valve" in command:
+        # A disconnect is refused by the route (409), but the run's commands
+        # are kept as sent, refusals too; a session takes one by hand, and a
+        # capped QD on a rocket-only stand is the vent row's stand-in.
+        if "valve" in command and str(command["valve"]) not in _not_operated(
+            session.model
+        ):
             session.set_valve(str(command["valve"]), bool(command.get("open")))
         if command.get("release") is not None:
             session.release(str(command.get("release") or ""))
