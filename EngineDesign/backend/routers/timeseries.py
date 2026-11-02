@@ -507,32 +507,45 @@ def compute_timeseries_results(
     summary["lox_propellant_kg"] = total_lox_kg
     summary["fuel_propellant_kg"] = total_fuel_kg
 
-    # If blowdown mode provided mass history, use it directly
-    if lox_mass_kg is not None and len(lox_mass_kg) == len(times):
-        result_data["lox_mass_remaining_kg"] = to_float_array(lox_mass_kg).tolist()
-    else:
-        # Calculate from integrating mass flow (mass remaining = total - cumulative consumed)
-        times_arr = np.asarray(times, dtype=float)
-        mdot_O_arr_clean = np.nan_to_num(mdot_O_arr, nan=0.0)
-        cumulative_O = np.zeros(len(times_arr))
+    # Tank fill levels. Blowdown mode hands in the mass history it integrated. Otherwise the levels
+    # start from the configured load (lox_tank.mass / fuel_tank.mass: the fire load, fixed by the
+    # competition) and fall by the integrated flow. They used to start from whatever the curve
+    # consumes, so every run ended at exactly 0 -- a burn needing 7.55 kg of LOX drew a full
+    # 7.55 kg tank where 6.61 kg is loaded, and nothing said it runs dry at 3.50 s.
+    # The curves themselves are left as run: this tab solves the pressure curve it is given; the
+    # Flight tab truncates the burn at the dry-out. The summary says where that is.
+    times_arr = np.asarray(times, dtype=float)
+    short_notes = []
+    for side, tank_attr, label, given, mdot, total in (
+        ("lox", "lox_tank", "LOX", lox_mass_kg, mdot_O_arr, total_lox_kg),
+        ("fuel", "fuel_tank", "Fuel", fuel_mass_kg, mdot_F_arr, total_fuel_kg),
+    ):
+        if given is not None and len(given) == len(times):
+            result_data[f"{side}_mass_remaining_kg"] = to_float_array(given).tolist()
+            continue
+        mdot_clean = np.nan_to_num(np.asarray(mdot, dtype=float), nan=0.0)
+        cumulative = np.zeros(len(times_arr))
         for i in range(1, len(times_arr)):
             dt = times_arr[i] - times_arr[i - 1]
-            cumulative_O[i] = cumulative_O[i - 1] + 0.5 * (mdot_O_arr_clean[i - 1] + mdot_O_arr_clean[i]) * dt
-        lox_remaining = total_lox_kg - cumulative_O
-        result_data["lox_mass_remaining_kg"] = lox_remaining.tolist()
+            cumulative[i] = cumulative[i - 1] + 0.5 * (mdot_clean[i - 1] + mdot_clean[i]) * dt
+        loaded = _loaded_mass(runner.config, tank_attr)
+        if loaded is None:
+            # No load in the config: the old view, the curve's own consumption.
+            result_data[f"{side}_mass_remaining_kg"] = (total - cumulative).tolist()
+            continue
+        result_data[f"{side}_mass_remaining_kg"] = np.maximum(loaded - cumulative, 0.0).tolist()
+        summary[f"{side}_loaded_kg"] = loaded
+        if cumulative[-1] > loaded:
+            t_dry = float(np.interp(loaded, cumulative, times_arr))
+            summary[f"{side}_short_kg"] = float(cumulative[-1] - loaded)
+            summary[f"{side}_depletion_time_s"] = t_dry
+            short_notes.append(
+                f"{label} runs dry at t = {t_dry:.2f} s: the curve needs {cumulative[-1]:.2f} kg, "
+                f"{loaded:.2f} kg is loaded"
+            )
+    if short_notes:
+        summary["propellant_short_note"] = "; ".join(short_notes)
 
-    if fuel_mass_kg is not None and len(fuel_mass_kg) == len(times):
-        result_data["fuel_mass_remaining_kg"] = to_float_array(fuel_mass_kg).tolist()
-    else:
-        times_arr = np.asarray(times, dtype=float)
-        mdot_F_arr_clean = np.nan_to_num(mdot_F_arr, nan=0.0)
-        cumulative_F = np.zeros(len(times_arr))
-        for i in range(1, len(times_arr)):
-            dt = times_arr[i] - times_arr[i - 1]
-            cumulative_F[i] = cumulative_F[i - 1] + 0.5 * (mdot_F_arr_clean[i - 1] + mdot_F_arr_clean[i]) * dt
-        fuel_remaining = total_fuel_kg - cumulative_F
-        result_data["fuel_mass_remaining_kg"] = fuel_remaining.tolist()
-    
     # =========================================================================
     # COPV Sizing Analysis - Always run if press_tank config is available
     # AND run_copv is enabled
@@ -570,6 +583,17 @@ def compute_timeseries_results(
 
 
 
+
+
+def _loaded_mass(config, tank_attr: str) -> Optional[float]:
+    """The configured propellant load of ``lox_tank`` / ``fuel_tank`` [kg], or None if unset."""
+    tank = getattr(config, tank_attr, None)
+    m = getattr(tank, "mass", None) if tank is not None else None
+    try:
+        m = float(m)
+    except (TypeError, ValueError):
+        return None
+    return m if math.isfinite(m) and m > 0 else None
 
 
 def _compute_correlation_matrix(result_data: dict) -> Optional[dict]:

@@ -540,6 +540,14 @@ export interface TimeSeriesSummary {
   copv_initial_mass_kg?: number;
   copv_min_margin_psi?: number;
   copv_volume_L?: number;
+  /** The configured load per tank, and how far short of the curve it falls (regulated runs). */
+  lox_loaded_kg?: number;
+  fuel_loaded_kg?: number;
+  lox_short_kg?: number;
+  fuel_short_kg?: number;
+  lox_depletion_time_s?: number;
+  fuel_depletion_time_s?: number;
+  propellant_short_note?: string;
   /** Points whose CEA lookup was clamped to the table edge, which axes, and a sentence. */
   cea_clamped_points?: number;
   cea_clamped_axes?: string[];
