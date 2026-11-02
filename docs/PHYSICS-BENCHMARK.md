@@ -394,6 +394,17 @@ peak 8.79 -> 7.77 kN. GN2 now climbs back to its T-0 lockup at 2.5 s, where it u
 to fall short: the same supply effect per psi of bottle, against a regulator drooping less
 at the lower flow. 0 failed ticks.
 
+**2026-11-02, a gas valve is IEC 60534-2-1** (R035; `Valve` prices a gas-priced node
+through `iec_gas.GasCv`, expansion factor and all, instead of Y = 1 under a separately
+calibrated ceiling). The study's press solenoids run far below their critical ratio,
+where the old law and IEC differ by Y ~ 1 - x/1.47; the vents are not in the burn.
+GN2: dip -25.8 -> -25.9, t = 1 s 459.11 -> 458.96, t = 4 s 483.08 -> 482.78, COPV
+576.9 -> 577.7, peak 7.238 -> 7.233 kN; helium within 0.01 psi, COPV 834.4 -> 834.5.
+0 failed ticks. Reverse-flow pricing (R036), the pressurant declared gas (R034), the
+check-valve / lockup-rise closures (R038, no rise on these drawings) and the wider
+near-critical guard (R045) move nothing further. Tier 2.3: Pc 399.92 -> 399.84 psia,
+thrust 6765.8 -> 6764.1 N. All inside tolerance; the table stands.
+
 Three properties matter more than the individual numbers, because they are the
 physics rather than the arithmetic:
 

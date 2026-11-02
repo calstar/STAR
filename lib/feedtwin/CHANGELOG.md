@@ -6,6 +6,80 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-11-02: component numerics (review round 2)
+
+### Changed results
+- **A gas valve is IEC 60534-2-1** (`Valve`, `ValveCd`; R035). Below the choke it
+  was the incompressible Cv law (Y = 1) under a separately calibrated ceiling, and the
+  two never met: a Cv 4 valve on 500 psia nitrogen passed 1.52x IEC at 140 psia
+  downstream and 36 % *less* at 130 -- a vent sped up as its tank fell, and some
+  networks had two converged answers. The ceiling also read fluids' Q at 15 degC where
+  fluids states 0 degC (5.4 % low); Tier 1.3 agreed to 1e-6 because its reference made
+  the same assumption. A gas-priced node now goes through `iec_gas.GasCv`, the relief
+  valve's and the seat's adapter: within 0.112 % of `size_control_valve_g` at every
+  drop (Cv_to_K against N9), monotone and continuous into the choke. Moved: Tier 2.1
+  GN2 t = 1 s 459.11 -> 458.96, t = 4 s 483.08 -> 482.78, COPV 576.9 -> 577.7 psig
+  (inside tolerance; helium < 0.1); Tier 2.3 Pc 399.92 -> 399.84 psia; LE4 (3) T-0
+  burn impulse 23158.1 -> 23157.5 N s, peak 6236 -> 6233 N, COPV at burnout 1212.7 ->
+  1212.1 psia; its post-burnout vent runs faster choked and slower subcritical (LOX
+  171.0 -> 165.6 psia at t = 5 s, 30.9 -> 36.5 at t = 8 s). Ox Fill on LE4 (3): chill
+  peak 17.5 -> 17.7 psia. Benchmark 1.3 now also checks 30 sub-choke points.
+- **The pressurant is gas wherever it is drawn** (`build_network` 4c; R034). Nodes on
+  the cart side of a mated vent QD were neither in the pressurant reach nor painted
+  with a tank's contents and fell to the temperature rule; GN2 vented off a chilling
+  LOX tank was priced as liquid nitrogen (414-730 kg/m^3 against ~2.7) once it passed
+  126.2 K. LE4 (3) Ox Fill at 221 s: LOX tank 14.9 -> 15.8 psia, 241 s 14.8 -> 15.7 (the
+  vent's back-pressure no longer vanishes). Six such nodes on LE4 (3), sixteen on the
+  rocket-and-GSE fixture.
+- **Reverse flow is priced at the node it comes from, and chokes** (`_branch_row`,
+  `HydraulicComponent.symmetric`; R036). A valve drawn against its flow passed 3-8x
+  less (0.47 against 3.81 kg/s at 3000 psia) and never choked. Symmetric components
+  (pipe, fitting, bend, hose, orifices, valve, segmented, measured) mirror; check valve,
+  regulator, relief and injector keep their drawn direction. Nothing moves on LE4's
+  burn or Tier 2.1.
+- **Crane f_T multiples are of `ft_Crane(D)`**, and a segment tee is Crane's unsplit
+  tee, 20 f_T run / 60 f_T branch (R042). A 30 f_T elbow in 9.5 mm read 0.55-1.09
+  against 0.885; the branch tee 0.41 against 1.77. No shipped drawing uses these kinds.
+- **The near-critical table guard reaches 2.5 p_c and T_c + 30 K** (R045), from a
+  measured table-vs-HEOS map: nitrogen just outside the old band read density 3.7 %,
+  cp/cv 14 %, viscosity 15 % off; the worst left outside is now 0.22 % / 0.97 % / 3.9 %.
+
+### Fixed
+- **A check valve short of cracking and a regulator inside its lockup rise are shut,
+  not rootless** (R038). Both stepped their branch at zero flow and every solve with
+  the far side inside the step failed. The check valve gets the regulator's closure
+  (ceiling 0 while 0 <= dp < crack); the lockup rise ramps out at the droop's own rate
+  and the shut band is taken from lockup. No rise, bit-identical (both study drawings
+  declare 0; LE4 none).
+- **A measured curve off its ends is continued (dp ~ mdot^2) and flagged, never
+  fatal** (`MeasuredElement`; R039); the stub back-fill's zero-flow call is guarded.
+- **A steady solve's report describes that solve** (R044): diagnostics carry the
+  solve's signals, and `choked_branches` is filled.
+- **A bend fitting hands fluids its angle in degrees** (R041; K 0.018 -> 0.229 at 90
+  deg), and **lineType `bend` builds** (R047).
+- **An injector card read off its hull counts as extrapolated** (R046; the step's
+  flag, as the chamber's already was).
+- **Out-of-range use is said**: a regulator past its rated flow (R040, a
+  `rated_flow` envelope warning naming the multiple and the droop; `check()` flags an
+  assumed rated_flow), and an unsized QD priced as an elbow (R043, one build warning
+  naming each; LE4 (3) has eight).
+
+### Deferred
+- **R037, a liquid valve's false gas ceiling.** A network-priced liquid carries its
+  cp/cv, and the plain valve still applies the old "sonic" ceiling to anything not
+  priced as a gas (LOX to atmosphere at 0.69x the IEC liquid law). Gating it on
+  `is_gas` is a one-line component change, but on a drawing with no engine model the
+  session holds the chamber at ambient for the coupling step the mains open
+  (`Session._chamber` reads "lit" from the previous step's flows); the false ceiling is
+  what keeps that step from emptying the LOX tank (LE4 (6): 8.9 kg gone in 0.5 s at
+  18 kg/s, liquid refused, the watcher's "Liquid from nowhere"). Needed first: close
+  the no-engine chamber within the step. Two strict xfails in `test_gas_choking.py`.
+- **`dewar_fill_cv` against the IEC vent.** The team's 0.019 was calibrated against
+  the old vent law; on `test_dewar_load`'s stand it now peaks at 44.75 psig, not ~30
+  (0.014: 33.7, 0.012: 28.6). LE4 (3) does not move. A strict xfail holds it until the
+  team recalibrates (and feed-twin's tunables text quotes the old peaks).
+- **A default coefficient for an unsized QD** (R043): said, not chosen.
+
 ## Unreleased — 2026-11-02: the session on LE4 (3) (production pass)
 
 ### Fixed
