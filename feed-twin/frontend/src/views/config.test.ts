@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fromPsia } from '../lib/pressure';
-import { fmt, rowCommit } from './Config';
+import { rowCommit } from '../lib/entry';
+import { fmt } from './Config';
 
 describe('a Configuration row shows the number the stand runs on', () => {
   it('network_tolerance down to its 1e-8 floor, not "0"', () => {

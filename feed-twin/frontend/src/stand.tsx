@@ -24,6 +24,7 @@ import {
 } from 'react';
 import { NO_ERROR, errorLine, errorText } from './lib/errorLine';
 import { paceTick, type PaceWindow } from './lib/pace';
+import { settled } from './lib/entry';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
@@ -914,23 +915,25 @@ export function StandProvider({ children }: { children: ReactNode }) {
   );
 
   const command = useCallback(
-    async (body: Parameters<typeof commandSession>[1]) => {
-      if (!session.current) return;
+    async (body: Parameters<typeof commandSession>[1]): Promise<SessionState | null> => {
+      if (!session.current) return null;
       const asked = session.current;
       // Wall clock is reset so the next tick does not charge the stand for the
       // time this round trip took.
       try {
         const next = await commandSession(asked, body);
-        if (session.current !== asked) return;
+        if (session.current !== asked) return null;
         setLive(next);
         liveState.current = next.state;
         last.current = performance.now();
         setError('');
+        return next;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return null;
       }
     },
-    [],
+    [setError],
   );
 
   const refuse = () =>
@@ -967,7 +970,12 @@ export function StandProvider({ children }: { children: ReactNode }) {
         setGeneration((g) => g + 1);
         return;
       }
-      void command({ setup: patch });
+      // What the stand runs on is what shows: a setting it clamped (a 0 s
+      // fill runs as 1 s) used to stay on the tab as typed.
+      void command({ setup: patch }).then((next) => {
+        const ran = settled<StandSetup>(patch, next?.setup as Partial<StandSetup> | undefined);
+        if (Object.keys(ran).length) setSetupState((s) => ({ ...s, ...ran }) as StandSetup);
+      });
     },
     setRunning,
     hidden,

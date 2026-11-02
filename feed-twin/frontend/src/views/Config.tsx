@@ -15,7 +15,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { CHARGE_KNOB, DOME_KNOB, getTunables, type StandSetup, type Tunable } from '../api';
-import { PRESSURE_UNIT, isGaugeTunable, psiaEntry, typedPsia } from '../lib/pressure';
+import { rowCommit } from '../lib/entry';
+import { PRESSURE_UNIT, isGaugeTunable, psiaEntry } from '../lib/pressure';
 import { useStand } from '../stand';
 
 /** Whether a setting is off its default: a number past rounding, anything
@@ -74,20 +75,6 @@ export function fmt(v: number, step: number): string {
 /** A row; ``drawn``: its default is the drawing's (a regulator's setting),
  *  not the library's. */
 type Row = Tunable & { drawn?: boolean };
-
-/** What a number row commits when its box holds `raw` and the stand runs on
- *  `value`: the new value (gauge for a gauge row, snapped to its detent in
- *  psia), or null for nothing -- an emptied box, half a number, or the shown
- *  value typed back. `Number('')` is 0: backspacing the dome to retype it
- *  and pausing committed 0 psig to the running stand, and the box jumped to
- *  14.7 under the cursor. */
-export function rowCommit(raw: string, t: Pick<Tunable, 'step' | 'low' | 'high' | 'unit' | 'gauge_wire'>, value: number): number | null {
-  if (isGaugeTunable(t)) return typedPsia(raw, value, t.step, t.low, t.high);
-  const n = Number(raw);
-  if (raw.trim() === '' || !Number.isFinite(n)) return null;
-  const next = Math.min(t.high, Math.max(t.low, n));
-  return Math.abs(next - value) > 0 ? next : null;
-}
 
 /** The Setup fields a drawn regulator sets, by knob. */
 const DRAWN: Record<string, string> = { dome: DOME_KNOB, copv_target: CHARGE_KNOB };
