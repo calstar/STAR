@@ -55,6 +55,11 @@ bash scripts/setup-test/run-macos.sh all
 
 Projects: `pid-designer` | `star-openrocket` | `engine-design` | `firmware` | `daq-server` | `all`
 
+Without installing anything, `bash scripts/setup-test/passthru.sh` checks that
+`setup.sh` hands each project only the flags its own `setup.sh` takes (every
+one stops on a flag it does not know: `setup.sh --all --no-hook` used to fail
+three of them).
+
 ### Useful flags
 
 `run-docker.sh`:

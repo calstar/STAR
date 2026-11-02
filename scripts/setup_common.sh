@@ -209,6 +209,23 @@ ensure_pinned_black() {
   fi
 }
 
+# ─── Flags a project's setup.sh takes ────────────────────────────────────────
+# Prints, one per line, those of the flags given after the script that the
+# script's own argument parser has a case arm for (`--no-hook)`, `--yes|-y)`).
+# The dispatcher passes a project only these: every setup.sh stops on a flag
+# it does not know, so `setup.sh --all --no-hook` (daq-server's flag) or
+# `--ci` (EngineDesign's and star-openrocket's) failed feed-twin, pid-designer
+# and firmware before they installed anything.
+flags_for() {
+  local script="$1" flag
+  shift
+  for flag in "$@"; do
+    if grep -qE -- "^[[:space:]]*([^)[:space:]]+\|)*${flag}(\|[^)[:space:]]+)*\)" "$script"; then
+      printf '%s\n' "$flag"
+    fi
+  done
+}
+
 # ─── Repo root discovery ─────────────────────────────────────────────────────
 # Locates the STAR repo root by walking up from a given directory looking for
 # setup.sh + daq-server + firmware. Callers pass their own script dir.
