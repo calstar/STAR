@@ -26,7 +26,15 @@ import { NO_ERROR, errorLine, errorText } from './lib/errorLine';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
-import { defaultPicks, listIsBehind, openingKnobs, pastIdle, type KnobsOn } from './lib/standPick';
+import {
+  NO_ENGINE,
+  defaultPicks,
+  listIsBehind,
+  openingKnobs,
+  pastIdle,
+  type KnobsOn,
+  type Pending,
+} from './lib/standPick';
 import {
   commandSession,
   getConsoleHidden,
@@ -78,14 +86,12 @@ export type NoStand =
   /** The library could not be read at all. */
   | { kind: 'unreachable'; reason: string };
 
-/** A switch of drawing or engine held for a yes, because the stand on screen
- *  is past Idle and switching throws it away. */
-export interface PendingPick {
-  kind: 'diagram' | 'engine';
-  id: string;
-  name: string;
-  /** What switching would throw away, in a few words. */
-  losing: string;
+/** A switch of drawing, engine or stand document held for a yes, because the
+ *  stand on screen is past Idle and switching throws it away (the words are
+ *  standPick `pendingWords`). */
+export interface PendingPick extends Pending {
+  /** What a stand switch does on yes. */
+  go?: () => void;
 }
 
 interface StandValue {
@@ -129,6 +135,11 @@ interface StandValue {
    *  pressed, burned -- it waits in `pendingPick` for a yes instead: an
    *  import used to switch the stand and throw a T-0'd one away unasked. */
   pick: (kind: 'diagram' | 'engine', id: string) => void;
+  /** Open, import or save-and-open a stand document: at once on a stand
+   *  still cold in Idle, after a yes on one past it (`question` asks it, `yes`
+   *  labels the button). The stand bar did these unasked, and a T-0'd or
+   *  burned stand went for a fresh, empty one. */
+  leaveFor: (question: string, yes: string, go: () => void) => void;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
   /** Stand seconds per wall second asked for (time warp); 1 at Fire. */
@@ -554,7 +565,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const rememberPicks = useCallback((d: string, e: string) => {
     try {
       if (d) window.localStorage.setItem('feedtwin.diagram', d);
-      if (e) window.localStorage.setItem('feedtwin.engine', e);
+      // No engine is remembered as none: skipped, the featured engine came
+      // back on the next reload after the operator took the engine off.
+      if (d) window.localStorage.setItem('feedtwin.engine', e || NO_ENGINE);
     } catch {
       // Storage can be unavailable; the picks still work for this tab.
     }
@@ -964,7 +977,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (losing) {
         // The ref, not this render's list: an import refreshes the library
         // and picks in one go, and the list here is the one from before.
-        const name = artifactsRef.current.find((a) => a.id === id)?.name ?? 'the import';
+        // An engine id '' takes the engine on screen off: name that one.
+        const named = id || (kind === 'engine' ? engine : '');
+        const name = artifactsRef.current.find((a) => a.id === named)?.name ?? (id ? 'the import' : '');
         setPendingPick({ kind, id, name, losing });
         return;
       }
@@ -972,11 +987,21 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (kind === 'diagram') setDiagram(id);
       else setEngine(id);
     },
+    leaveFor: (question, yes, go) => {
+      const losing = pastIdle(live, burns);
+      if (!losing) {
+        setPendingPick(null);
+        go();
+        return;
+      }
+      setPendingPick({ kind: 'stand', id: '', name: question, losing, yes, go });
+    },
     pendingPick,
     confirmPick: () => {
       if (!pendingPick) return;
       setPendingPick(null);
-      if (pendingPick.kind === 'diagram') setDiagram(pendingPick.id);
+      if (pendingPick.kind === 'stand') pendingPick.go?.();
+      else if (pendingPick.kind === 'diagram') setDiagram(pendingPick.id);
       else setEngine(pendingPick.id);
     },
     cancelPick: () => setPendingPick(null),

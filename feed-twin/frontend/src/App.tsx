@@ -11,6 +11,7 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { TopBar } from './components/TopBar';
 import { StandProvider, useStand } from './stand';
+import { pendingWords } from './lib/standPick';
 import { HookupProvider } from './lib/useHookup';
 import TripOverlay from './components/TripOverlay';
 import { NoStand } from './components/NoStand';
@@ -50,16 +51,14 @@ export const VIEWS = [
 function PendingPickBar() {
   const { pendingPick, confirmPick, cancelPick } = useStand();
   if (!pendingPick) return null;
+  const words = pendingWords(pendingPick);
   return (
     <div className="flex flex-shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--color-warning)] px-8 py-2.5 font-mono text-[12px]">
-      <span className="text-[var(--ink)]">
-        Put {pendingPick.kind === 'diagram' ? 'the drawing' : 'the engine'}{' '}
-        <span className="font-semibold">{pendingPick.name}</span> on the console?
-      </span>
-      <span className="text-[var(--ink-3)]">The stand is {pendingPick.losing}; switching starts a fresh, empty stand.</span>
+      <span className="text-[var(--ink)]">{words.ask}</span>
+      <span className="text-[var(--ink-3)]">{words.why}</span>
       <span className="ml-auto flex gap-2">
         <button type="button" onClick={confirmPick} className="ctl h-7 px-3 text-[10px]">
-          Switch
+          {words.yes}
         </button>
         <button type="button" onClick={cancelPick} className="ctl h-7 px-3 text-[10px]">
           Keep this stand

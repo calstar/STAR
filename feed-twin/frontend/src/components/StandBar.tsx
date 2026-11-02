@@ -29,7 +29,7 @@ import { exportStand, importStand, saveBundle, standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where, leaveFor } = useStand();
   // With no stand document open, the button names what is running: the
   // featured stand on a fresh browser read "Unsaved stand" on every tab,
   // which looks like work at risk. "Unsaved changes" once the operator has
@@ -154,7 +154,8 @@ export function StandBar() {
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = '';
-          if (file) void importBundle(file);
+          // Opening it starts a fresh stand: past Idle, that is asked first.
+          if (file) leaveFor(`Import ${file.name} and open it?`, 'Import and open', () => void importBundle(file));
         }}
       />
       <button
@@ -304,16 +305,22 @@ export function StandBar() {
           onSelect={(r) => {
             setPicking(false);
             const meta = documents.find((d) => keyOf(refOf(d)) === keyOf(r));
-            void act(() => openStand(r, meta?.name ?? r.id));
+            const name = meta?.name ?? r.id;
+            leaveFor(`Open the stand ${name}?`, 'Open', () => void act(() => openStand(r, name)));
           }}
-          onCreate={(name) =>
-            act(async () => {
-              const made = await standApi.create(name, await snapshot());
-              await list();
-              setPicking(false);
-              await openStand(refOf({ ...made, mine: true }), made.name, true);
-            })
-          }
+          // Saved as a stand, the cockpit opens it on a fresh session (the
+          // server has no way yet to put a stand on a running one): past
+          // Idle, asked first.
+          onCreate={async (name) => {
+            setPicking(false);
+            leaveFor(`Save this set-up as the stand ${name} and open it?`, 'Save and open', () =>
+              void act(async () => {
+                const made = await standApi.create(name, await snapshot());
+                await list();
+                await openStand(refOf({ ...made, mine: true }), made.name, true);
+              }),
+            );
+          }}
           onRename={(r, name) => act(async () => { await standApi.rename(r, name); await list(); })}
           onShare={(r, emails) => act(async () => { await standApi.share(r, emails); await list(); })}
           onLeave={(r) => act(async () => { await standApi.leave(r); await list(); })}

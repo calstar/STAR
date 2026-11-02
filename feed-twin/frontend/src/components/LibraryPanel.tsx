@@ -279,7 +279,7 @@ export function LibraryPanel({
                     onClick={() => onPick(kind, active && kind === 'engine' ? '' : a.id)}
                     disabled={busy}
                     aria-current={active ? 'true' : undefined}
-                    title={`${a.name}\n${a.id} · ${bytes(a.size)}\nfrom ${pulledFrom(a) ? a.source : a.source === 'upload' ? 'an uploaded file: nothing to compare it with' : a.source}\nimported ${a.imported_at}`}
+                    title={`${a.name}\n${a.id} · ${bytes(a.size)}\nfrom ${pulledFrom(a) ? a.source : a.source === 'upload' ? 'an uploaded file: nothing to compare it with' : a.source}\nimported ${a.imported_at}${active && kind === 'engine' ? '\nOn the stand: click to take it off (Fire then lights nothing).' : ''}`}
                     className={`flex min-w-0 flex-1 items-baseline gap-2 rounded border-l-2 px-2 py-1 text-left transition-colors disabled:cursor-wait ${
                       active
                         ? 'border-l-[var(--accent)] bg-[var(--lift)]'

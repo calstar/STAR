@@ -5,6 +5,10 @@
 
 import type { Artifact, Burns, SessionState } from '../api';
 
+/** What this browser remembers as its engine when the operator took the
+ *  engine off: the featured one used to come back on the next reload. */
+export const NO_ENGINE = '(no engine)';
+
 /** What a browser opens on, from what the library holds.
  *
  *  A link may name it (`?diagram=&engine=`, by id or by name: the runbook's
@@ -28,8 +32,38 @@ export function defaultPicks(
   const named = diagrams.find((a) => /stand/i.test(a.name)) ?? diagrams[0];
   return {
     diagram: find('diagram', asked.diagram) || find('diagram', remembered.diagram) || featured(diagrams) || named?.id || '',
-    engine: find('engine', asked.engine) || find('engine', remembered.engine) || featured(engines) || engines[0]?.id || '',
+    engine:
+      find('engine', asked.engine) ||
+      (remembered.engine === NO_ENGINE
+        ? ''
+        : find('engine', remembered.engine) || featured(engines) || engines[0]?.id || ''),
   };
+}
+
+/** A change held for the operator's yes because the stand on screen is past
+ *  Idle and the change throws it away (stand.tsx `PendingPick`). */
+export interface Pending {
+  /** A drawing or an engine put on the console (an engine id '' takes it
+   *  off), or a stand document opened, imported or saved. */
+  kind: 'diagram' | 'engine' | 'stand';
+  id: string;
+  /** The drawing or engine by name; for a stand, the question itself. */
+  name: string;
+  /** What switching would throw away (`pastIdle`). */
+  losing: string;
+  /** The yes button, for a stand. */
+  yes?: string;
+}
+
+/** The question the bar asks, why, and its yes. */
+export function pendingWords(p: Pending): { ask: string; why: string; yes: string } {
+  const why = `The stand is ${p.losing}; this starts a fresh, empty stand.`;
+  if (p.kind === 'stand') return { ask: p.name, why, yes: p.yes ?? 'Open' };
+  if (p.kind === 'engine' && p.id === '') {
+    const which = p.name ? `the engine ${p.name}` : 'the engine';
+    return { ask: `Take ${which} off the console? Fire will light nothing.`, why, yes: 'Take it off' };
+  }
+  return { ask: `Put ${p.kind === 'diagram' ? 'the drawing' : 'the engine'} ${p.name} on the console?`, why, yes: 'Switch' };
 }
 
 /** Whether the library list on screen is missing a drawing or engine the

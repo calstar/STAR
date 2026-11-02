@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, SessionState } from '../api';
-import { defaultPicks, listIsBehind, openingKnobs, pastIdle } from './standPick';
+import { NO_ENGINE, defaultPicks, listIsBehind, openingKnobs, pastIdle, pendingWords } from './standPick';
 
 const art = (id: string, kind: 'diagram' | 'engine', name: string, featured = false): Artifact => ({
   id,
@@ -82,6 +82,29 @@ describe('where the knobs are on a fresh stand', () => {
     expect(openingKnobs({ diagram: 'le4', saved, left: null, standOpened: false, closed: null })).toEqual(saved);
     const closed = { diagram: 'le4', knobs: { dome: 520 } };
     expect(openingKnobs({ diagram: 'le4', saved: null, left: null, standOpened: false, closed })).toEqual({ dome: 520 });
+  });
+});
+
+describe('a held switch says what it does', () => {
+  const losing = 'in Ready, LOX and Fuel loaded';
+  it('taking the engine off is not putting "the import" on', () => {
+    const w = pendingWords({ kind: 'engine', id: '', name: 'Ethalox 7200N Doublet', losing });
+    expect(w.ask).toBe('Take the engine Ethalox 7200N Doublet off the console? Fire will light nothing.');
+    expect(w.ask).not.toMatch(/import/);
+    expect(w.yes).toBe('Take it off');
+  });
+  it('a drawing or engine put on', () => {
+    expect(pendingWords({ kind: 'diagram', id: 'eth', name: 'Ethalox Stand', losing }).ask).toBe(
+      'Put the drawing Ethalox Stand on the console?',
+    );
+  });
+  it('a stand document opened or saved asks its own question', () => {
+    const w = pendingWords({ kind: 'stand', id: '', name: 'Open the stand LE4 (3)?', losing, yes: 'Open' });
+    expect(w).toEqual({ ask: 'Open the stand LE4 (3)?', why: `The stand is ${losing}; this starts a fresh, empty stand.`, yes: 'Open' });
+  });
+  it('an engine taken off is remembered as none, and a reload does not put the featured one back', () => {
+    expect(defaultPicks(library, { diagram: 'le4', engine: NO_ENGINE })).toEqual({ diagram: 'le4', engine: '' });
+    expect(defaultPicks(library, { diagram: 'le4', engine: NO_ENGINE }, { engine: 'e2' }).engine).toBe('e2');
   });
 });
 
