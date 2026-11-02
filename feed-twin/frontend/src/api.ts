@@ -1142,6 +1142,9 @@ export function channelPalette(tags: readonly string[]): Record<string, string> 
 }
 
 export const fixed = (value: number, places = 1) => {
+  // A value nobody has (a failed case's impulse, a field not yet sent) reads
+  // as the dash every other empty cell shows, never "NaN".
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '–';
   // A vented gauge reads 0, never "-0.0": the model's rounding noise around
   // atmosphere is not a reading.
   const shown = Math.abs(value) < 0.5 * 10 ** -places ? 0 : value;
