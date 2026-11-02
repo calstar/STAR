@@ -170,7 +170,13 @@ drained fuel tank's dregs stay at 293.0 K instead of drifting to 291.3 K. On the
 the vented fuel tank's mass holds (4.40379 kg through Fuel Fill, Armed and 40 s of Ox
 Fill) and its surface cools towards the colder gas (292.69 K at 65 s) instead of
 warming above everything. The Tier 1 and Tier 3 figures checked by
-`scripts/physics_benchmark.py` do not move.
+`scripts/physics_benchmark.py` do not move. Row four is a pad quadrant: a LOX tank
+filled from the dewar (`test_ox_fill_loads_the_flight_lox_tank_from_the_dewar`) passes
+through it some 1,400 times, fills to the same figure, and sealed in Armed afterwards
+keeps 117.5 g of oxygen vapour where it condensed down to 104.9 g (751.7 against
+751.0 psig). That row is a modelling choice, not a measurement: condensation there
+would need the liquid to carry the latent heat away faster than the gas brings heat
+in, and the lumped surface has no such term.
 
 The layer's single count does move one pinned figure, and only through the
 second fix (the quadrant fix alone leaves it bit for bit): a shut LOX tank at 40 %

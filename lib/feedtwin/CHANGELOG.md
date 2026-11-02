@@ -217,6 +217,13 @@ be able to find why they differ.
   are itemised in `tests/fixtures/le4_rocket_and_gse.json` and the feed-twin sample
   stand. No benchmark drawing itemises a line: `scripts/physics_benchmark.py` passes
   unchanged, and the Layer X golden (`copv_study_he`) does not move.
+- The shipped library's LE4 drawings (`feed-twin/backend/library`: LE4 (1), LE4 (3),
+  LE4 e2e) itemise three of those lines -- both press runs, and the fuel run off the
+  tank, which states no bore and stays bare -- and move the same way: library LE4
+  (3) with the Ethalox 7200N Doublet at the default setup, T-0 burn mean thrust
+  7153.6 -> 7194.4 N. On the same three drawings DPR_HP's dome solenoid DP-SOL-F is no
+  longer read as a vent, and its dome node (`junc_12`, where DP-PT-R reads) is no
+  longer pinned to atmosphere, full build and rocket-only alike.
 - Vapour quadrants and the layer's wall heat: the LE4 (3) T-0 burn is bit-identical
   while it fires; after burnout the drained fuel tank's dregs hold 293.0 K (were
   drifting to 291.3 K). On the pad the vented fuel tank's mass holds at 4.40379 kg
@@ -227,6 +234,11 @@ be able to find why they differ.
   2.3 psi there, not 7.0, and that test's margin is now 1.5 psi (was 3). The bare
   figure came from bulk-bound wall heat evaporating the surface. Benchmark:
   50/50, figures identical.
+- The fourth quadrant (heat in under a supersaturated ullage, which used to
+  condense) is hit on the pad, not in the burn: in
+  `test_ox_fill_loads_the_flight_lox_tank_from_the_dewar` the LE4 fixture's LOX
+  tank fills exactly as before, and sealed in Armed afterwards it holds 117.5 g of
+  oxygen vapour at 751.7 psig (was 104.9 g at 751.0 psig).
 
 ### Tests
 - `tests/test_line_walls.py`: one segment builds the darcy line's wall, the metal is
