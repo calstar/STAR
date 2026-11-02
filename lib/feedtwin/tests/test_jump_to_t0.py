@@ -81,6 +81,28 @@ def test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle() -> None:
     assert any("wide open" in n for n in t0.notes)
 
 
+def test_regulators_apart_over_a_low_bottle_say_where_the_tanks_went(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two regulators locking up 20 psi apart over a 200 psig bottle. The first
+    note said "every tank was primed at 574.7 psia" -- the lower lockup -- and
+    the next that they were primed at the bottle. They went to the bottle, and
+    both notes say so."""
+    import feedtwin.session.burn as burn
+
+    session = _helium_stand()
+    first, second = session.vehicle_tanks
+    apart = {first: from_psig(560.0), second: from_psig(580.0)}
+    monkeypatch.setattr(
+        burn, "regulator_lockup", lambda _s, tank_id, *_a, **_k: apart[tank_id]
+    )
+    t0 = jump_to_t0(session, copv_psi=200.0, fill_fraction=0.9)
+    assert t0.tank_psi == pytest.approx(200.0, abs=1.0)
+    (spread,) = [n for n in t0.notes if "lock up at" in n]
+    assert spread.endswith("every tank was primed at 214.7 psia."), spread
+    assert any("wide open" in n for n in t0.notes)
+
+
 def test_subcooled_lox_over_its_critical_pressure_is_not_critical() -> None:
     """Dome 735 on LE4: both tanks lock up at ~745 psia, over oxygen's 731 psia
     critical pressure, and Ready said "LOX-Tank is at its propellant's critical

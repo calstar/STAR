@@ -480,10 +480,13 @@ def jump_to_t0(
         primed, note = reachable_lockup(session, min(lockups.values()))
         tank_psi = psig(primed)
         if max(lockups.values()) - min(lockups.values()) > PSI:
+            # Where the tanks went, not the lowest lockup: under a bottle below
+            # it the next note says they were primed at the bottle, and this one
+            # said the lockup.
             notes.append(
                 f"The regulators lock up at {psia(min(lockups.values())):,.1f}-"
                 f"{say(max(lockups.values()), 1)}; every tank was primed at "
-                f"{say(min(lockups.values()), 1)}."
+                f"{say(primed, 1)}."
             )
         if note:
             notes.append(note)
