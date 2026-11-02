@@ -191,7 +191,19 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   };
 
   const save = () => {
-    let params: Record<string, ParamValue> = {};
+    // What the symbol holds that this dialog does not own -- a parameter
+    // feed-twin reads and the spec does not offer, written by hand or by
+    // another tool -- is kept: the dialog writes back wholesale (saveConfig),
+    // and rebuilt from its own fields alone, an untouched Save deleted a
+    // tank's measured diameter and a regulator's datasheet droop. A line made
+    // another kind (hose to hardline) is the dialog rewriting it, and keeps
+    // only its own, since feed-twin refuses a parameter its kind lacks.
+    const owned = new Set(spec.params.map(p => p.key));
+    const sameKind = kind === 'node'
+      || (data.lineType ?? 'pipe') === ((options.hose ?? 'no') === 'no' ? 'pipe' : 'flex_hose');
+    let params: Record<string, ParamValue> = sameKind
+      ? Object.fromEntries(Object.entries(data.params ?? {}).filter(([k]) => !owned.has(k)))
+      : {};
     for (const p of spec.params) {
       if (p.derived) continue;                     // computed below, never typed
       if (!showing(p)) continue;                   // a hidden field is not an answer

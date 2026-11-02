@@ -24,8 +24,21 @@ function dialog(kind: 'node' | 'edge', data: Data) {
     open: true, kind, data, readOnly: false, onClose: () => {},
     onSave: (patch: ConfigPatch) => { saved = patch; },
   }));
+  const rows = () => find(tree(), e => typeof (e.props?.spec as { key?: string } | undefined)?.key === 'string');
   return {
     text: () => find(tree(), () => true).map(textOf).join(' '),
+    /** The labels of the fields and choices the dialog shows. */
+    labels: () => rows().map(e => (e.props.spec as { label: string }).label),
+    /** Unfold the fields folded away under "N more". */
+    more() {
+      const button = find(tree(), e => e.type === 'button' && / more$/.test(textOf(e)))[0];
+      (button.props.onClick as () => void)();
+    },
+    /** Answer one of its choices, as picking from the dropdown does. */
+    pick(option: string, value: string) {
+      const row = rows().find(e => (e.props.spec as { key: string }).key === option && 'value' in e.props);
+      (row!.props.onChange as (v: string) => void)(value);
+    },
     save(): ConfigPatch {
       const footer = find(tree(), e => e.props?.footer !== undefined)[0].props.footer;
       const button = find(footer, e => e.type === 'button' && textOf(e) === 'Save')[0];
@@ -148,5 +161,90 @@ describe('options the dialog does not show', () => {
     } as unknown as Data).save();
     expect(out.lineType).toBe('pipe');
     expect(out.options.construction).toBeUndefined();
+  });
+});
+
+describe('parameters the dialog does not own', () => {
+  // A Save rebuilt a symbol's params from the fields its spec names, so
+  // anything else on the symbol -- a key feed-twin reads that the dialog never
+  // offered, written by hand or by another tool -- was deleted by pressing
+  // Save on a dialog nobody had touched. LE4 (3)'s LOX tank lost its measured
+  // diameter and its dome regulator its datasheet droop that way.
+  const xT = { value: 0.62, unit: '-', source: 'manufacturer', reference: 'IEC 60534 sheet' };
+
+  it('keeps one on a symbol through an untouched save', () => {
+    const out = dialog('node', {
+      componentType: 'PR', label: 'DR', options: { domeLoaded: 'yes', flowCoefficient: 'Cv' },
+      params: { dome_pressure: { value: 500, unit: 'psig', source: 'measured' }, xT },
+    } as unknown as Data).save();
+    expect(out.params.xT).toEqual(xT);
+    expect(out.params.dome_pressure).toBeDefined();
+  });
+
+  it('keeps one on a line whose kind the save does not change', () => {
+    const fm = { value: 0.12, unit: 'kg', source: 'measured' };
+    const out = dialog('edge', {
+      componentType: 'pipe', label: '', lineType: 'pipe', options: { hose: 'no' },
+      params: { length: { value: 1, unit: 'm', source: 'measured' }, fitting_mass: fm },
+    } as unknown as Data).save();
+    expect(out.params.fitting_mass).toEqual(fm);
+  });
+
+  it('keeps a hose\'s, and lets it go when the save makes the line a hardline', () => {
+    // A hose's convolution factor is not a hardline's, and feed-twin refuses
+    // a parameter its kind does not have: changing what the line is, is the
+    // dialog rewriting it.
+    const cf = { value: 2, unit: '-', source: 'manufacturer' };
+    const hose = () => dialog('edge', {
+      componentType: 'pipe', label: '', lineType: 'flex_hose',
+      options: { construction: 'convoluted' },
+      params: { length: { value: 1, unit: 'm', source: 'measured' }, convolution_factor: cf },
+    } as unknown as Data);
+    expect(hose().save().params.convolution_factor).toEqual(cf);
+    rt.reset();
+    const d = hose();
+    d.pick('hose', 'no');
+    const out = d.save();
+    expect(out.lineType).toBe('pipe');
+    expect(out.params.convolution_factor).toBeUndefined();
+  });
+
+  it('still drops a field it owns and is not showing', () => {
+    // A hidden field is not an answer: a regulator no longer dome loaded
+    // keeps no dome pressure.
+    const out = dialog('node', {
+      componentType: 'PR', label: 'PR', options: { domeLoaded: 'no', flowCoefficient: 'Cv' },
+      params: { setpoint: { value: 500, unit: 'psig', source: 'measured' },
+                dome_pressure: { value: 450, unit: 'psig', source: 'measured' } },
+    } as unknown as Data).save();
+    expect(out.params.dome_pressure).toBeUndefined();
+    expect(out.params.setpoint).toBeDefined();
+  });
+
+  it('asks for what feed-twin reads off a tank and a regulator, and keeps it', () => {
+    // The assembly report names each of these as assumed when the drawing
+    // does not say it; the dialog had no field for any of them.
+    const dia = { value: 5.5, unit: 'in', source: 'measured' };
+    const tank = dialog('node', {
+      componentType: 'TANK', label: 'LOX-Tank', options: {}, params: { diameter: dia },
+    } as unknown as Data);
+    expect(tank.labels()).toContain('Inside diameter');
+    expect(tank.save().params.diameter).toEqual(dia);
+    rt.reset();
+
+    const droop = { value: 35, unit: 'psi', source: 'manufacturer' };
+    const rated = { value: 0.2, unit: 'kg/s', source: 'manufacturer' };
+    const lockup = { value: 12, unit: 'psi', source: 'manufacturer' };
+    const dropout = { value: 75, unit: 'psi', source: 'manufacturer' };
+    const reg = dialog('node', {
+      componentType: 'PR', label: 'DR', options: { domeLoaded: 'yes', flowCoefficient: 'Cv' },
+      params: { flow_droop: droop, rated_flow: rated, lockup_rise: lockup, min_inlet_differential: dropout },
+    } as unknown as Data);
+    reg.more();
+    expect(reg.labels()).toEqual(expect.arrayContaining(['Flow droop', 'Rated flow', 'Lockup rise',
+      'Min inlet − outlet']));
+    const saved = reg.save().params;
+    expect(saved).toMatchObject({ flow_droop: droop, rated_flow: rated, lockup_rise: lockup,
+      min_inlet_differential: dropout });
   });
 });

@@ -169,6 +169,9 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('pressure', 'Operating pressure', 'pressure'),
       { key: 'temperature', label: 'Temperature', dimension: 'temperature', presets: TEMPERATURES },
       P('volume', 'Volume', 'volume'),
+      // The bore of the barrel. feed-twin builds the vessel from it and the
+      // volume -- liquid column, outlet head -- and assumes 152 mm without it.
+      P('diameter', 'Inside diameter', 'length'),
       // What the tank will take, which is what a team that built it knows.
       // The checks read it: a relief must lift below it, and a tank run past
       // half of it is a factor of safety under two.
@@ -236,6 +239,13 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       // measured from zero inlet (outlet = dome + bias - S x inlet), so there is
       // no reference inlet to give.
       { key: 'supply_coefficient', label: 'Supply effect', dimension: 'pressure_ratio', ratio: true },
+      // The datasheet's flow curve and seat, which feed-twin otherwise takes
+      // from its fallbacks (20 psi at 0.05 kg/s, perfect lockup, no dropout)
+      // and says so. Differences, so plain psi.
+      A('flow_droop', 'Flow droop', 'pressure'),
+      A('rated_flow', 'Rated flow', 'mass_flow'),
+      A('lockup_rise', 'Lockup rise', 'pressure'),
+      A('min_inlet_differential', 'Min inlet − outlet', 'pressure'),
     ],
     options: [
       COEFFICIENT('Cv'),
