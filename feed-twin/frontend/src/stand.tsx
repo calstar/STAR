@@ -27,7 +27,7 @@ import { paceTick, type PaceWindow } from './lib/pace';
 import { settled } from './lib/entry';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
-import { standApi, type StandPayload } from './stands';
+import { importStand, standApi, type StandPayload } from './stands';
 import {
   NO_ENGINE,
   defaultPicks,
@@ -98,6 +98,8 @@ export type NoStand =
 export interface PendingPick extends Pending {
   /** What a stand switch does on yes. */
   go?: () => void;
+  /** And on "Keep this stand". */
+  kept?: () => void;
 }
 
 interface StandValue {
@@ -144,8 +146,12 @@ interface StandValue {
   /** Open, import or save-and-open a stand document: at once on a stand
    *  still cold in Idle, after a yes on one past it (`question` asks it, `yes`
    *  labels the button). The stand bar did these unasked, and a T-0'd or
-   *  burned stand went for a fresh, empty one. */
-  leaveFor: (question: string, yes: string, go: () => void) => void;
+   *  burned stand went for a fresh, empty one. `kept` runs on a no. */
+  leaveFor: (question: string, yes: string, go: () => void, kept?: () => void) => void;
+  /** Import a stand file (*.hotbench.json) as a stand of this person's and
+   *  open it, taken. Resolves to what the import says they should know. Not
+   *  asked: callers on a stand past Idle go through `leaveFor`. */
+  importStandFile: (file: File) => Promise<string>;
   go: (state: string) => void;
   toggleValve: (id: string) => void;
   /** Stand seconds per wall second asked for (time warp); 1 at Fire. */
@@ -464,6 +470,25 @@ export function StandProvider({ children }: { children: ReactNode }) {
       setGeneration((g) => g + 1);
     },
     [setChanged],
+  );
+
+  /** A stand file brought in: the server unpacks its drawing, engine and the
+   *  rest into the library, and it becomes a stand document of this
+   *  person's, opened and taken. */
+  const importStandFile = useCallback(
+    async (file: File): Promise<string> => {
+      let bundle: unknown;
+      try {
+        bundle = JSON.parse(await file.text());
+      } catch {
+        throw new Error(`${file.name} is not a Hotbench stand (not JSON).`);
+      }
+      const got = await importStand(bundle);
+      const made = await standApi.create(got.name, got.stand);
+      await openStand(refOf({ ...made, mine: true }), made.name, true);
+      return got.notes.join(' ');
+    },
+    [openStand],
   );
 
   /** The stand document to land on: one the address names (`/?stand=<id>`),
@@ -941,6 +966,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const refuse = () =>
     setError('Read only: take the stand (top bar) to change its settings. Running it is not locked.');
 
+  /** The cart's drawing ids: its supply tanks arrive loaded on every fresh
+   *  stand, so they are not what switching away loses (`pastIdle`). */
+  const groundIds = new Set(model?.ground ?? []);
+
   const value: StandValue = {
     artifacts,
     model,
@@ -974,10 +1003,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
           wantFresh.current = true;
           setGeneration((g) => g + 1);
         };
-        const when = networkSwitch(live, burns);
+        const when = networkSwitch(live, burns, groundIds);
         if (when === 'refuse') return setError('Not during a burn: change the gas or the drawn GSE once it has burned out.');
         if (when === 'ask') {
-          setPendingPick({ kind: 'stand', id: '', name: network, losing: pastIdle(live, burns), yes: 'Switch', go: reopen });
+          setPendingPick({ kind: 'stand', id: '', name: network, losing: pastIdle(live, burns, groundIds), yes: 'Switch', go: reopen });
           return;
         }
         return reopen();
@@ -1000,7 +1029,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     pick: (kind, id) => {
       if (locked) return refuse();
       if ((kind === 'diagram' ? diagram : engine) === id) return;
-      const losing = pastIdle(live, burns);
+      const losing = pastIdle(live, burns, groundIds);
       if (losing) {
         // The ref, not this render's list: an import refreshes the library
         // and picks in one go, and the list here is the one from before.
@@ -1014,15 +1043,17 @@ export function StandProvider({ children }: { children: ReactNode }) {
       if (kind === 'diagram') setDiagram(id);
       else setEngine(id);
     },
-    leaveFor: (question, yes, go) => {
-      const losing = pastIdle(live, burns);
+    leaveFor: (question, yes, go, kept) => {
+      const losing = pastIdle(live, burns, groundIds);
       if (!losing) {
         setPendingPick(null);
         go();
         return;
       }
-      setPendingPick({ kind: 'stand', id: '', name: question, losing, yes, go });
+      pendingPick?.kept?.();
+      setPendingPick({ kind: 'stand', id: '', name: question, losing, yes, go, kept });
     },
+    importStandFile,
     pendingPick,
     confirmPick: () => {
       if (!pendingPick) return;
@@ -1031,7 +1062,10 @@ export function StandProvider({ children }: { children: ReactNode }) {
       else if (pendingPick.kind === 'diagram') setDiagram(pendingPick.id);
       else setEngine(pendingPick.id);
     },
-    cancelPick: () => setPendingPick(null),
+    cancelPick: () => {
+      pendingPick?.kept?.();
+      setPendingPick(null);
+    },
     noStand,
     loadSample,
     go: (state) => {

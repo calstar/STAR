@@ -25,11 +25,12 @@ import {
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
-import { exportStand, importStand, saveBundle, standApi } from '../stands';
+import { exportStand, saveBundle, standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where, leaveFor } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where, leaveFor, importStandFile } =
+    useStand();
   // With no stand document open, the button names what is running: the
   // featured stand on a fresh browser read "Unsaved stand" on every tab,
   // which looks like work at risk. "Unsaved changes" once the operator has
@@ -105,17 +106,9 @@ export function StandBar() {
   const importBundle = (file: File) =>
     act(async () => {
       setNotice('');
-      let bundle: unknown;
-      try {
-        bundle = JSON.parse(await file.text());
-      } catch {
-        throw new Error(`${file.name} is not a Hotbench stand (not JSON).`);
-      }
-      const got = await importStand(bundle);
-      const made = await standApi.create(got.name, got.stand);
+      const note = await importStandFile(file);
       await list();
-      await openStand(refOf({ ...made, mine: true }), made.name, true);
-      setNotice(got.notes.join(' '));
+      setNotice(note);
     });
 
   const item =

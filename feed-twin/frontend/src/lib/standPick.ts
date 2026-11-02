@@ -134,16 +134,22 @@ export function networkChange(
 /** When a change of the network may reopen the stand: at once on a cold
  *  stand, on a yes past Idle (as a drawing switch), and never mid-burn --
  *  the burn would never reach its run record. */
-export function networkSwitch(live: SessionState | null, burns: Burns | null): 'now' | 'ask' | 'refuse' {
+export function networkSwitch(
+  live: SessionState | null,
+  burns: Burns | null,
+  ground: ReadonlySet<string> = new Set(),
+): 'now' | 'ask' | 'refuse' {
   if (live && /^fire$/i.test(live.state)) return 'refuse';
-  return pastIdle(live, burns) ? 'ask' : 'now';
+  return pastIdle(live, burns, ground) ? 'ask' : 'now';
 }
 
 /** What switching away from this stand would throw away, or '' when it is
- *  still a cold, empty stand in Idle that nothing is lost by replacing. */
-export function pastIdle(live: SessionState | null, burns: Burns | null): string {
+ *  still a cold, empty stand in Idle that nothing is lost by replacing. The
+ *  cart's own tanks (`ground`: a dewar, a transfer tank) arrive loaded and
+ *  every fresh stand has them so: they are not what switching loses. */
+export function pastIdle(live: SessionState | null, burns: Burns | null, ground: ReadonlySet<string> = new Set()): string {
   if (!live) return '';
-  const loaded = live.tanks.filter((t) => t.liquid_mass_kg > 0.05).map((t) => t.label);
+  const loaded = live.tanks.filter((t) => !ground.has(t.id) && t.liquid_mass_kg > 0.05).map((t) => t.label);
   const fired = (burns?.burns.length ?? 0) > 0;
   if (live.state === 'Idle' && loaded.length === 0 && !fired) return '';
   const parts = [

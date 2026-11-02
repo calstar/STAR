@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, ImportResult } from '../api';
-import { pulledFrom, superseded } from './LibraryPanel';
+import { isStandBundle, pulledFrom, superseded } from './LibraryPanel';
+
+describe('a stand file dropped on the Library is a stand, not a drawing', () => {
+  it('by the format it says it is', () => {
+    expect(isStandBundle(JSON.stringify({ format: 'hotbench-stand', version: 1, name: 'LE4 (3)', stand: {} }))).toBe(true);
+  });
+  it('a P&ID, other JSON and not JSON at all are not', () => {
+    expect(isStandBundle(JSON.stringify({ nodes: [], edges: [] }))).toBe(false);
+    expect(isStandBundle('null')).toBe(false);
+    expect(isStandBundle('{"format": "something-else"}')).toBe(false);
+    expect(isStandBundle('not json')).toBe(false);
+  });
+});
 import { importedNote } from './SourcePanel';
 
 const art = (id: string, source: string, imported_at: string, name = 'Ethalox 7200N Doublet'): Artifact => ({

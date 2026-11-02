@@ -154,6 +154,13 @@ describe('what switching away would throw away', () => {
   it('a stand at Ready with its tanks loaded', () => {
     expect(pastIdle(stand('Ready', [tank('LOX', 6.7), tank('Fuel', 5.1)]), null)).toBe('in Ready, LOX and Fuel loaded');
   });
+  it("not the cart's own tanks, which every fresh stand has loaded", () => {
+    const fresh = stand('Idle', [tank('Eth-Tank', 0), tank('LOX-DW-350 PSI', 17.8), tank('Fuel Transfer Tank', 13.1)]);
+    expect(pastIdle(fresh, null, new Set(['LOX-DW-350 PSI', 'Fuel Transfer Tank']))).toBe('');
+    expect(networkSwitch(fresh, null, new Set(['LOX-DW-350 PSI', 'Fuel Transfer Tank']))).toBe('now');
+    const loaded = stand('Idle', [tank('Eth-Tank', 4.4), tank('LOX-DW-350 PSI', 17.8)]);
+    expect(pastIdle(loaded, null, new Set(['LOX-DW-350 PSI']))).toBe('Eth-Tank loaded');
+  });
   it('a burn on screen, even back in Idle', () => {
     expect(pastIdle(stand('Idle', [tank('LOX', 0)]), { burns: [{}] } as never)).toBe('1 burn on screen');
   });

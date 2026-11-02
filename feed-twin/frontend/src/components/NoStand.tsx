@@ -8,7 +8,7 @@
  * The Library itself never waits behind this: it is where most ways out go.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStand } from '../stand';
 
@@ -26,7 +26,50 @@ function Frame({ title, children }: { title: string; children: React.ReactNode }
 const linkCls =
   'font-mono text-[13px] text-[var(--ink-2)] underline decoration-[var(--line-strong)] underline-offset-4 hover:text-[var(--ink)]';
 
-/** The two imports, as links into the Library. */
+/** A stand file (*.hotbench.json) from another Hotbench: the whole stand in
+ *  one file, which a first run had no way to open but the stand bar's menu. */
+function StandFileImport() {
+  const { importStandFile } = useStand();
+  const picker = useRef<HTMLInputElement>(null);
+  const [state, setState] = useState<{ busy: boolean; said: string; failed: string }>({ busy: false, said: '', failed: '' });
+  const take = async (file: File) => {
+    setState({ busy: true, said: '', failed: '' });
+    try {
+      const said = await importStandFile(file);
+      setState({ busy: false, said, failed: '' });
+    } catch (e) {
+      setState({ busy: false, said: '', failed: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => picker.current?.click()}
+        disabled={state.busy}
+        className={`${linkCls} text-left disabled:opacity-50`}
+        title="Open a stand exported from any Hotbench (*.hotbench.json): its drawing, engine and the rest come into this library, and it becomes a stand of yours."
+      >
+        {state.busy ? 'Importing the stand…' : 'Import a stand file →'}
+      </button>
+      <input
+        ref={picker}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void take(file);
+        }}
+      />
+      {state.failed && <p className="w-full font-mono text-[12px] text-[var(--color-danger)]">{state.failed}</p>}
+      {state.said && <p className="w-full font-mono text-[12px] text-[var(--ink-3)]">{state.said}</p>}
+    </>
+  );
+}
+
+/** The imports, as links into the Library, and a stand file. */
 function Imports() {
   return (
     <div className="flex flex-wrap gap-x-6 gap-y-2">
@@ -44,6 +87,7 @@ function Imports() {
       >
         Import an engine →
       </Link>
+      <StandFileImport />
     </div>
   );
 }
