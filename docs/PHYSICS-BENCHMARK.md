@@ -848,8 +848,9 @@ forever. The operator knows a shut LOX tank climbs. Defaults are now: collapse o
 **vapour on, wall-to-liquid 100 W/(m²·K), an 8 W/(m²·K) air film on the tank skin in
 series with the insulation the drawing declares, wall boiling on** (the library's
 `Setup` carries these same on-values; only the vessel-level `Tank` constructor defaults
-them off, collapse aside, and the Study and Layer X turn them off through `burn_setup`
-and their own collapse/vapour/chilldown arguments). The shipped LOX tank declares **an
+them off, collapse aside, and the benchmark Study turns them off through `burn_setup`
+and its own collapse/vapour/chilldown arguments; Layer X runs the cockpit's `Setup`, closures
+on: `engine/layerx/prepare.py::feed_twin_setup`, 2026-10-03, AUDIT D1). The shipped LOX tank declares **an
 inch of fiberglass** (operator; `insulation_thickness` 25.4 mm, `insulation_conductivity`
 0.04 W/(m·K)), so its skin passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on
 0.47 m² of skin at 200 K —
