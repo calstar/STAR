@@ -5208,16 +5208,23 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     opened.burning = burning
     if not (ended or out):
         return
-    opened.lit_t = None
-    _record_safely(session, opened, sample.t)
+    saved = _record_safely(session, opened, sample.t)
+    # ``lit_t`` is the last *tick* that showed thrust, but the history holds
+    # the steps inside it: a flame that went out mid-tick is later there, and
+    # the burn reads as still going for a tick or two after ``out``. Keep the
+    # clock until the record lands, or the burn is never recorded while an
+    # abort's open main keeps the propellant flowing.
+    if ended or saved or sample.t - (opened.lit_t or sample.t) > 10.0 * COLD_FLOW_S:
+        opened.lit_t = None
 
 
 def _record_safely(
     session: Session, opened: _Opened, t: float, closing: str = ""
-) -> None:
-    """:func:`_record_burns`, never stopping the stand over a lost record."""
+) -> int:
+    """:func:`_record_burns`, never stopping the stand over a lost record.
+    How many runs it recorded."""
     try:
-        _record_burns(session, opened, closing=closing)
+        return len(_record_burns(session, opened, closing=closing))
     except Exception as exc:  # noqa: BLE001 - a lost record must not stop the stand
         _log.exception("run not recorded for session %s", session.id)
         # ...nor go unsaid: a burn with no record has no provenance, and only
@@ -5226,6 +5233,7 @@ def _record_safely(
             f"The burn that ended at t = {t:.1f} s was not recorded "
             f"({type(exc).__name__}: {exc}); it is not in Runs."
         )
+        return 0
 
 
 _DRAWN_FLUIDS: dict[str, dict[str, str]] = {}
