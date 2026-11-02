@@ -250,9 +250,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 22: vitest 5 requires Node ^22.12 (EBADENGINE on 20), and the
+      # frontend image builds on node:24.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'npm'
           cache-dependency-path: feed-twin/frontend/package-lock.json
 
@@ -302,9 +304,11 @@ jobs:
           pip install -e ../lib/feedtwin
           pip install -e ../lib/stardesign
 
+      # 22: vitest 5 requires Node ^22.12 (EBADENGINE on 20), and the
+      # frontend image builds on node:24.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '22.x'
           cache: 'npm'
           cache-dependency-path: feed-twin/frontend/package-lock.json
 
