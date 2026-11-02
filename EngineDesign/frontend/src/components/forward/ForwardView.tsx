@@ -12,7 +12,7 @@ import { Hint } from '../Hint';
  * and never computes or grades a number.
  *
  *   headline   six numbers; the burn's range beneath when a Time-Series run exists
- *   verdicts   the four checks the backend graded
+ *   verdicts   the checks the backend graded (chug, vaporized, cavitation, stiffness, CEA table)
  *   burn       the Time-Series run over time, one shared cursor
  *   sections   one line each, open for the rest; Stability opens onto the full panel
  *

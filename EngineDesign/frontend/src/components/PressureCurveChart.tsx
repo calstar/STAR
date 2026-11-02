@@ -271,6 +271,15 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
 
   return (
     <div className="space-y-6">
+      {/* Points solved off the CEA table's clamped edge (backend/routers/timeseries.py) */}
+      {summary.cea_clamped_note && (
+        <div role="alert" className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-sm flex items-start gap-2">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>{summary.cea_clamped_note}. Thrust, Isp and c* at those points rest on the edge's values, not their own.</span>
+        </div>
+      )}
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
         <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">

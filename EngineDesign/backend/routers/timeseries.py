@@ -469,6 +469,28 @@ def compute_timeseries_results(
         "burn_time_s": float(times[-1] - times[0]) if len(times) > 1 else 0.0,
     }
 
+    # CEA table: points solved on thermochemistry read off the table's clamped edge (a blowdown
+    # below the table's Pc floor, an O/F past its edge). The cache clamps without a word; the
+    # summary counts them and says where, and data["cea_clamped"] marks each one.
+    from engine.pipeline.forward_report import cea_off_table
+
+    cea_clamped = [bool(isinstance(dg, dict) and dg.get("cea_clamped")) for dg in diagnostics_list]
+    if len(cea_clamped) == n_points and mask is not None:
+        cea_clamped = [c and not bool(m) for c, m in zip(cea_clamped, mask)]
+    if any(cea_clamped):
+        first = cea_clamped.index(True)
+        dg = diagnostics_list[first]
+        at = {"Pc": np.asarray(results["Pc"], dtype=float)[first], "MR": np.asarray(results["MR"], dtype=float)[first]}
+        result_data["cea_clamped"] = cea_clamped
+        summary["cea_clamped_points"] = int(sum(cea_clamped))
+        summary["cea_clamped_axes"] = sorted(
+            {a for c, d in zip(cea_clamped, diagnostics_list) if c for a in (d.get("cea_clamped") or ())}
+        )
+        summary["cea_clamped_note"] = (
+            f"{sum(cea_clamped)} of {n_points} points read CEA off the table edge; "
+            f"first at t = {float(np.asarray(times)[first]):.2f} s: {cea_off_table(dg, at)}"
+        )
+
     # =========================================================================
     # Propellant Mass Remaining (Tank Fill Levels)
     # =========================================================================

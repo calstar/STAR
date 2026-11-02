@@ -54,6 +54,22 @@ PC_MIN_TOTAL_DROP_FRAC = 0.02
 PC_BRACKET_SCAN_POINTS = 32
 
 
+def _cea_table_range(cache) -> dict:
+    """The CEA table's extent per axis, {"Pc": [Pa, Pa], "MR": [..], "eps": [..]}; {} if unknown.
+
+    ``CEACache.eval`` clamps an off-table input to the edge and says so (``clamped``); a clamped
+    point is solved on the edge's thermochemistry, which can be far from its own (c* falls
+    ~116 m/s per unit O/F just inside the ethalox table's 2.5 edge and is flat past it).
+    """
+    out = {}
+    for axis in ("Pc", "MR", "eps"):
+        try:
+            out[axis] = [float(getattr(cache, f"{axis}_min")), float(getattr(cache, f"{axis}_max"))]
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return out
+
+
 class ChamberSolver:
     """Solves for chamber pressure by balancing supply and demand"""
     
@@ -642,6 +658,8 @@ class ChamberSolver:
             "stagnation_loss_kappa": kappa,
             "cea_extrapolated": bool(cea_props.get("extrapolated", False)),  # converged point off the table
             "cea_clamped": tuple(cea_props.get("clamped", ())),
+            # The table those were read against, so a report can say how far off it the point sits.
+            "cea_table_range": _cea_table_range(self.cea_cache),
             "eta_cstar": eta,
             "cooling_efficiency": cooling_eff,
             "Tc": effective_Tc,  # Use effective temperature after cooling (accounts for energy removal)

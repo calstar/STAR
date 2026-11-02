@@ -78,8 +78,36 @@ def Q(key: str, label: str, value: Any, unit: str = "", *, digits: int = 3, basi
 
 def V(key: str, label: str, value: Any, unit: str, status: str, threshold: str, basis: str,
       assumed: Sequence[str] = (), digits: int = 2) -> Dict[str, Any]:
-    return {"key": key, "label": label, "value": _f(value), "unit": unit, "digits": digits,
+    v = value if isinstance(value, str) else _f(value)
+    return {"key": key, "label": label, "value": v, "unit": unit, "digits": digits,
             "status": status, "threshold": threshold, "basis": basis, "assumed": list(assumed)}
+
+
+#: How each CEA table axis reads in a sentence, and the factor to its display unit.
+_CEA_AXES = {"Pc": ("Pc", 1.0 / PSI, "psia", 0), "MR": ("O/F", 1.0, "", 2), "eps": ("ε", 1.0, "", 2)}
+
+
+def cea_off_table(d: Mapping[str, Any], at: Optional[Mapping[str, Any]] = None) -> Optional[str]:
+    """None when the solve read its thermochemistry inside the CEA table; else a sentence.
+
+    ``d`` is a solve's diagnostics (chamber_solver: ``cea_clamped``, ``cea_table_range``); ``at``
+    the solved values by axis ({"Pc": Pa, "MR": .., "eps": ..}) when known. The cache clamps an
+    off-table input to the edge without a word, so a point past it is solved on the edge's c*, Tc
+    and γ: on the LE4 (3) stand at 578/300 psia the solve lands at O/F 3.52 on a 1.0–2.5 table.
+    """
+    axes = [a for a in (d.get("cea_clamped") or ()) if a in _CEA_AXES]
+    if not axes:
+        return None
+    rng = d.get("cea_table_range") or {}
+    parts = []
+    for a in axes:
+        name, k, unit, dg = _CEA_AXES[a]
+        u = f" {unit}" if unit else ""
+        lo_hi = rng.get(a)
+        val = _f((at or {}).get(a))
+        span = f"{lo_hi[0] * k:.{dg}f}–{lo_hi[1] * k:.{dg}f}{u}" if lo_hi else "the table"
+        parts.append(f"{name} {val * k:.{dg}f}{u} outside {span}" if val is not None else f"{name} outside {span}")
+    return "; ".join(parts) + ": thermochemistry clamped to the table edge"
 
 
 def _grade(value: Optional[float], ok: float, warn: Optional[float] = None, *, higher_is_better: bool = True) -> str:
@@ -143,6 +171,11 @@ def _verdicts(cfg: Any, r: Mapping[str, Any], sr: Mapping[str, Any]) -> List[Dic
     e = min(eta) if eta else None
     out.append(V("stiffness", "Injector ΔP/Pc", e and 100.0 * e, "%", _grade(e, 0.15, 0.10), "≥ 15 %",
                  "the softer injector's drop over Pc (Huzel & Huang 4.2)", assumed=_FLOW, digits=0))
+    # Thermochemistry: was the point inside the CEA table, or read off its clamped edge?
+    off = cea_off_table(d, {"Pc": r.get("Pc"), "MR": r.get("MR"), "eps": r.get("eps")})
+    out.append(V("cea_table", "CEA table", "outside" if off else "inside", "", "bad" if off else "ok",
+                 "Pc, O/F and ε inside the table",
+                 off or "c*, Tc and γ interpolated inside the CEA table at the solved Pc and O/F"))
     return out
 
 

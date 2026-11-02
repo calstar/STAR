@@ -540,6 +540,10 @@ export interface TimeSeriesSummary {
   copv_initial_mass_kg?: number;
   copv_min_margin_psi?: number;
   copv_volume_L?: number;
+  /** Points whose CEA lookup was clamped to the table edge, which axes, and a sentence. */
+  cea_clamped_points?: number;
+  cea_clamped_axes?: string[];
+  cea_clamped_note?: string;
 }
 
 // Response for generate endpoint
