@@ -1877,6 +1877,26 @@ class TankSim:
         )
         return float(self.tank.gas.get("rho", p=AMBIENT, T=wall)) * volume
 
+    def _specific_energy_at(self, mass: float, temperature: float) -> float:
+        """The pressurant's specific internal energy [J/kg] as ``mass`` of it
+        fills the ullage at ``temperature``: at its own partial density, which
+        is what :meth:`_gas_temperature_of` reads it back at.
+
+        Priced at a whole atmosphere instead, a floored ullage sharing the tank
+        with propellant vapour came back colder than it was restated at --
+        nitrogen near its dew line is far from ideal, ~1 K at 85 K between one
+        atmosphere and half of one -- and each floored step ratcheted it down:
+        a vented LOX load took its ullage to nitrogen's 77 K boiling point over
+        90 K liquid and a 92 K wall.
+        """
+        volume = max(self.tank.ullage_volume(self.state), 1e-9)
+        if mass > 0.0:
+            try:
+                return float(self.tank.gas.get("u", rho=mass / volume, T=temperature))
+            except (ValueError, PropertyError):
+                pass
+        return float(self.tank.gas.get("u", p=AMBIENT, T=temperature))
+
     def _gas_temperature_of(self, ullage: VesselState) -> float:
         """The pressurant's own temperature in ``ullage`` [K]; the wall's when
         it cannot be priced."""
@@ -2006,7 +2026,7 @@ class TankSim:
         # or the specific energy jumps. In a built-in chill, at the wall: the
         # ullage the floor stands in for is the wall's boil-off. Otherwise at
         # the gas's own temperature, where the floor was priced.
-        specific = self.tank.gas.get("u", p=AMBIENT, T=restate_at)
+        specific = self._specific_energy_at(mass, restate_at)
         if drawn_through_vent:
             grown = mass - ullage.mass
             self._drawn_piece = (grown, grown * float(specific))

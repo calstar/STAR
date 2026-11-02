@@ -81,6 +81,16 @@ be able to find why they differ.
   pays the flow work leaving): `Tank.rates` books exactly this as
   `expansion_power` for a draining tank, and `_collect` now books it with the sign
   turned.
+- **A vented LOX load keeps its ullage over the liquid** (`TankSim._settled`,
+  `TankSim._specific_energy_at`). Each time a venting tank dipped under the air, the
+  floor restated the ullage's energy at u(1 atm, T) while its nitrogen held only its
+  partial pressure beside the oxygen vapour; nitrogen near its dew line is far from
+  ideal, so the gas read back ~1 K colder than it was restated at, and the next dip
+  restated it colder still. On LE4 (3) the LOX load ran its ullage to 77.4 K over
+  90.2 K liquid and a 92.2 K wall, drew 0.70 kg of "air" in through a vent blowing
+  out, and booked -0.60 kg of clamps; the Solver tab failed Clamps, Mass balance and
+  Watch after every pad run. The floor now restates at the pressurant's own partial
+  density.
 - **The tick split is documented as the code does it**: round(tick / live_step)
   equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
   ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
@@ -114,6 +124,11 @@ be able to find why they differ.
   fuel ullage ends the pour at 293.0 K (was 284.65 K, then warming back and pressing
   the shut tank 0.13 psi). The LOX load takes the same term. T-0, the burns and the
   benchmark do not pour; `scripts/physics_benchmark.py` passes.
+- LE4 (3) Ox Fill (chill skipped), first 120 s: coldest ullage 91.3 K (was 77.3),
+  LOX clamps 0 (was -242 g), air drawn through the vent 0.6 g (was 282 g), Solver
+  guard 103 ppm (was -39,240); 1.466 kg loaded (was 1.482). The built-in chill
+  restates at the wall at a whole atmosphere, its own partial density, and is
+  unchanged. No burn floors its ullage; the benchmark passes.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
@@ -123,7 +138,8 @@ be able to find why they differ.
 - `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`,
   `test_a_bottle_charging_is_not_down_to_anything`,
   `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`,
-  `test_a_poured_load_displaces_the_ullage_without_cooling_it`.
+  `test_a_poured_load_displaces_the_ullage_without_cooling_it`,
+  `test_a_vented_lox_load_keeps_its_ullage_over_the_liquid` (slow).
 - `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
   `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`,
   `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.

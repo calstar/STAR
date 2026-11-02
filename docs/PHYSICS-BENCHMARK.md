@@ -977,6 +977,24 @@ written at runs Fuel Fill at the same 1.47x as the "before" column, so compare t
 columns, not the two tables. What a fill still costs is the active LOX tank's
 own thermal model (chilldown, vapour, the surface layer): about a third of a step.
 
+**The floor's restate ratcheted the ullage down (2026-11-02).** A vented, chilled LOX
+load on LE4 (3) ran its nitrogen ullage to 77.4 K -- nitrogen's boiling point at one
+atmosphere -- over 90.2 K liquid and a 92.2 K wall, drew 0.70 kg of "air" in through a
+vent that was blowing out, and booked -0.60 kg of clamps: the Solver tab failed Clamps,
+Mass balance and Watch after every pad run. No surface in the tank was colder than 90
+K, so the sink had to be a guard. It was `TankSim._settled`: each time the tank dipped
+a hundredth of a psi under the air, the floor restated the ullage at u(1 atm, T) while
+the nitrogen held only its partial pressure beside the oxygen vapour. Nitrogen near
+its dew line is far from ideal (u(0.5 atm, 85 K) - u(1 atm, 85 K) is 1.06 K of c_v,
+CoolProp), so the gas read back colder than it was restated at, the next dip restated
+it colder still, and the colder gas dipped the tank again. Restated at its own partial
+density (`TankSim._specific_energy_at`), the ullage sits between the liquid and the
+wall (91.3-92.3 K), 0.6 g is drawn in 120 s of load, and nothing is clamped
+(`test_a_vented_lox_load_keeps_its_ullage_over_the_liquid`, red on the old code at
+12.5 K under the coldest surface). The built-in chill restates at the wall at a whole
+atmosphere, which is its own partial density, and is unchanged; no burn floors its
+ullage, and Tiers 1 and 2.3 are unchanged.
+
 ### 3.11 A shut LOX tank climbs at tens of psi a minute, and why
 
 The operator: "lox boiloff pressure goes up wayyy too fast, it's usually only like 20

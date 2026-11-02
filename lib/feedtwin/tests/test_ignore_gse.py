@@ -264,6 +264,40 @@ def test_a_poured_load_displaces_the_ullage_without_cooling_it() -> None:
 
 
 @needs_tables
+def test_a_vented_lox_load_keeps_its_ullage_over_the_liquid() -> None:
+    """A LOX load on its vent, chilled: the nitrogen ullage sits between the
+    90 K liquid and the 92 K wall, gas leaves through the vent, and no guard
+    books anything. Each time the tank dipped a hundredth of a psi under the
+    air, the floor restated the ullage's energy at a whole atmosphere of
+    nitrogen while it shared the tank with oxygen vapour -- colder, by
+    nitrogen's departure from ideal near its dew line -- and the ratchet took
+    the ullage to 77 K, drew ~1 g/s of "air" in through a vent blowing out, and
+    booked hundreds of grams as clamps: the Solver tab failed three of five
+    checks after every pad run (LE4 (3): 77.4 K, 0.70 kg drawn, -0.60 kg)."""
+    ids = _ids()
+    session = _session(True)
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "Ox Fill"
+    session.step(0.25)
+    assert session.skip_chilldown() == ["LOX-Tank"]
+    coldest = float("inf")
+    for _ in range(200):  # 50 s of the load
+        session.step(0.25)
+        state = lox.state
+        surfaces = min(
+            state.ullage.wall_temperature,
+            state.surface_temperature or state.liquid_temperature,
+        )
+        coldest = min(coldest, lox.tank.gas_temperature(state) - surfaces)
+    assert lox.state.liquid_mass > 0.5, "loading"
+    assert coldest > -0.5, f"the ullage went {-coldest:.1f} K under its surfaces"
+    assert abs(lox.fixed_kg) < 1e-4, lox.fixed_kg
+    assert lox.vent_drawn_kg < 1e-3, "air drawn in through a vent blowing out"
+    last = session.solver_log[-1]
+    assert abs(last.guard_kg) < 1e-3
+
+
+@needs_tables
 def test_the_cart_actuators_drive_nothing() -> None:
     bound = _session(True).binding.to_symbol
     assert "GSE High Press Control" not in bound, "the built-in charge's command"
