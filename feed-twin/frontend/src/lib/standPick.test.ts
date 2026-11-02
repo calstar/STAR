@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, SessionState } from '../api';
-import { defaultPicks, pastIdle } from './standPick';
+import { defaultPicks, listIsBehind, pastIdle } from './standPick';
 
 const art = (id: string, kind: 'diagram' | 'engine', name: string, featured = false): Artifact => ({
   id,
@@ -50,6 +50,17 @@ describe('which stand a browser opens on', () => {
 const tank = (label: string, kg: number) =>
   ({ id: label, label, liquid_mass_kg: kg }) as unknown as SessionState['tanks'][number];
 const stand = (state: string, tanks: SessionState['tanks']) => ({ state, tanks }) as unknown as SessionState;
+
+describe('a stand opened from elsewhere re-reads the library', () => {
+  it('when the list on screen lacks its drawing or its engine', () => {
+    expect(listIsBehind(library, ['imported-drawing', 'e1'])).toBe(true);
+    expect(listIsBehind(library, ['le4', 'imported-engine'])).toBe(true);
+  });
+  it('not when it has both, nor for a stand with no engine', () => {
+    expect(listIsBehind(library, ['le4', 'e1'])).toBe(false);
+    expect(listIsBehind(library, ['le4', ''])).toBe(false);
+  });
+});
 
 describe('what switching away would throw away', () => {
   it('nothing, on a cold empty stand in Idle', () => {

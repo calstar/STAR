@@ -32,6 +32,14 @@ export function defaultPicks(
   };
 }
 
+/** Whether the library list on screen is missing a drawing or engine the
+ *  stand runs on. An imported stand brings both into the library on the
+ *  server; read once at page load, the list never had them, and the Engine
+ *  tab said "No engine on this stand" over a stand burning one. */
+export function listIsBehind(list: readonly Artifact[], ids: readonly string[]): boolean {
+  return ids.some((id) => id !== '' && !list.some((a) => a.id === id));
+}
+
 /** What switching away from this stand would throw away, or '' when it is
  *  still a cold, empty stand in Idle that nothing is lost by replacing. */
 export function pastIdle(live: SessionState | null, burns: Burns | null): string {

@@ -24,7 +24,7 @@ import {
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
-import { defaultPicks, pastIdle } from './lib/standPick';
+import { defaultPicks, listIsBehind, pastIdle } from './lib/standPick';
 import {
   commandSession,
   getConsoleHidden,
@@ -385,6 +385,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
   }, []);
   const artifactsRef = useRef<Artifact[]>([]);
   artifactsRef.current = artifacts;
+  // A stand opened, imported or saved brings its drawing and engine into the
+  // library on the server; the list read at page load lacked them, and every
+  // view that names them by the list (Engine, Study, the header, Runs) said
+  // there was no engine on a stand burning one. Read it again when it is behind.
+  useEffect(() => {
+    if (listIsBehind(artifactsRef.current, [diagram, engine])) void refresh().catch(() => undefined);
+  }, [diagram, engine, refresh]);
 
   const openStand = useCallback(
     async (ref: DocRef, name: string, take = false) => {
