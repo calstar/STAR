@@ -360,12 +360,30 @@ class Regulator(HydraulicComponent):
         # the outlet is whatever the line gives it.
         seat_dp = self._seat_dp(magnitude, flow)
 
-        target = self.outlet_setpoint(mdot, flow)
+        target = self.outlet_setpoint(mdot, flow) + self._creep(magnitude)
         required = p_in - target
 
         # A regulator cannot raise pressure and cannot drop less than its own
         # seat does. Whichever binds, wins.
         return max(required, seat_dp, 0.0)
+
+    def _creep(self, magnitude: float) -> float:
+        """The part of the lockup rise still on the outlet at this flow [Pa].
+
+        All of it at zero flow (lockup), none once the flow has paid it back at
+        the droop's own rate (``rise . rated / droop``). Without the ramp the
+        rise stepped the branch at zero flow -- lockup there, the droop line
+        just above -- and a tank sitting between the setpoint and lockup, which
+        is where one held at lockup rests, had no root. No rise, no creep: a
+        regulator that declares none is exactly what it was.
+        """
+        rise = self.p.get("lockup_rise", 0.0)
+        droop = self.p.get("flow_droop", 0.0)
+        rated = self.p.get("rated_flow", 0.0)
+        if rise <= 0.0 or droop <= 0.0 or rated <= 0.0:
+            return 0.0
+        paid = magnitude * droop / rated
+        return rise - paid if paid < rise else 0.0
 
     def total_dp(self, mdot: float, flow: FlowConditions) -> float:
         """Signed, and **not** the base class's mirror of the forward loss.
@@ -419,7 +437,9 @@ class Regulator(HydraulicComponent):
         reporting a shut valve.
         """
         setpoint = self.outlet_setpoint(0.0, flow)
-        required = flow.p_upstream - setpoint
+        # Shut above *lockup*, the outlet at zero flow, which carries the rise
+        # (the creep ramps it in; see _creep). No rise, the setpoint as before.
+        required = flow.p_upstream - setpoint - self._creep(0.0)
         # The band is a *fraction of the setpoint*, not a fixed pascal. With a
         # 1 Pa threshold a regulator whose downstream is sitting on its
         # setpoint -- which is exactly where a pressurised tank sits -- flips

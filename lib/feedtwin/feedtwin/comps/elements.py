@@ -779,6 +779,22 @@ class CheckValve(HydraulicComponent):
         head = Cv_to_K(max(Cv, 1e-12), bore) * _dynamic_head(mdot, bore, flow.rho)
         return head + (self.p["cracking_pressure"] if forward else 0.0)
 
+    # The cracking pressure steps the relation at zero flow: forward needs at
+    # least the crack, reverse (the seat leak) at most nothing. A drop between
+    # the two had no root, and every solve failed exactly where a tank pressed
+    # through a check valve comes to rest. Between them the valve is shut: the
+    # solver writes mdot = 0 (the ceiling) and leaves both pressures free --
+    # the closure the regulator already has for a downstream above lockup.
+
+    def flow_ceiling(self, flow: FlowConditions) -> float | None:
+        """Zero: what a check valve short of its cracking pressure passes.
+        Consulted only when :meth:`is_choked` says it has not cracked."""
+        return 0.0
+
+    def is_choked(self, dp_available: float, flow: FlowConditions) -> bool:
+        """Shut: a forward drop that has not reached the cracking pressure."""
+        return 0.0 <= dp_available < self.p["cracking_pressure"]
+
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
         return {
             "open": 1.0 if mdot > 0.0 else 0.0,
