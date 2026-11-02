@@ -51,6 +51,24 @@ export function StandBar() {
   // state table carried as the stand's own): said once, not an error.
   const [notice, setNotice] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  // The ⋯ menu closes as a menu does: on Escape, on a click anywhere else,
+  // and before the stand picker opens -- it stayed up over the picker.
+  const menuRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [menu]);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
 
@@ -153,7 +171,7 @@ export function StandBar() {
       />
       <button
         className={`${btn} max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
-        onClick={() => { void list(); setPicking(true); }}
+        onClick={() => { void list(); setMenu(false); setPicking(true); }}
         title={
           standDoc
             ? `Stand: ${standDoc.name}. A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Click to open, create, share or copy one.`
@@ -207,7 +225,7 @@ export function StandBar() {
               </button>
             </span>
           ) : (
-            <span className="relative">
+            <span className="relative" ref={menuRef}>
               <button
                 className={btn}
                 onClick={() => setMenu((m) => !m)}
@@ -256,7 +274,7 @@ export function StandBar() {
         </>
       )}
       {!standDoc && (
-        <span className="relative">
+        <span className="relative" ref={menuRef}>
           <button
             className={btn}
             onClick={() => setMenu((m) => !m)}
