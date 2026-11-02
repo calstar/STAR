@@ -119,7 +119,17 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       if (rise) stored.fall = { ...rise, value: -rise.value };
       if (stored.roughness && !stored.roughness_custom) stored.roughness_custom = stored.roughness;
     }
-    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)])));
+    const filled = Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)]));
+    setDrafts(filled);
+    // A dewar's temperature this dialog filled from its pressure, on an
+    // earlier opening, is still the dialog's to fill: it is refreshed below,
+    // not kept as though typed. Saved before ADR 0004 read a bare psi on a
+    // dewar as gauge, LE4 (3)'s LOX dewar sat at 103.79 K beside 50 psi --
+    // Tsat at 50 psia, 3.4 K under Tsat at 50 psig -- and stayed so.
+    const t = stored.temperature;
+    const satFilled = spec.params.some(p => p.key === 'temperature' && p.auto === 'saturation')
+      && t?.source === 'default' && !!t.reference?.startsWith(SAT_REFERENCE);
+    lastAutoTemp.current = satFilled ? filled.temperature.value : null;
     const named = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
     // A symbol keeps the options this dialog does not show. It writes back
     // what it holds, wholesale (saveConfig), so holding only its own erased

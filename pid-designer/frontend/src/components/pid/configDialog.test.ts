@@ -248,3 +248,29 @@ describe('parameters the dialog does not own', () => {
       min_inlet_differential: dropout });
   });
 });
+
+describe('a dewar\'s temperature, filled from its pressure', () => {
+  // LE4 (3)'s LOX dewar, as saved before ADR 0004 read a bare psi on it as
+  // gauge: 50 psi beside 103.79 K, which is Tsat at 50 psia. At 50 psig
+  // (64.696 psia) CoolProp gives 107.21 K. The dialog showed the two side by
+  // side and saved them so, because it refills only a box it filled itself
+  // since it opened.
+  const SAT = 'NIST WebBook saturation curve, interpolated in log p';
+  const dewar = (temperature: Record<string, unknown>) => dialog('node', {
+    componentType: 'DEWAR', label: 'LOX-DW', fluid: 'oxygen', options: {},
+    params: { pressure: { value: 50, unit: 'psi', source: 'estimated' }, temperature },
+  } as unknown as Data);
+
+  it('refreshes one it filled before, at the pressure read as ADR 0004 reads it', () => {
+    const t = dewar({ value: 103.79, unit: 'K', source: 'default', reference: `${SAT}, at 50 psi` })
+      .save().params.temperature!;
+    expect(t.value).toBeCloseTo(107.21, 1);
+    expect(t.source).toBe('default');
+    expect(t.reference).toMatch(/^NIST WebBook saturation curve/);
+  });
+
+  it('leaves one somebody typed', () => {
+    const typed = { value: 95, unit: 'K', source: 'measured', reference: 'dewar gauge' };
+    expect(dewar(typed).save().params.temperature).toEqual(typed);
+  });
+});
