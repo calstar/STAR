@@ -257,6 +257,25 @@ def test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere() -> None:
 
 
 @needs_tables
+def test_a_bottle_at_the_air_drawn_on_reads_the_air() -> None:
+    """The floor itself, apart from the dump: a bottle at atmosphere that a
+    step draws 5 % of its gas from is put back at an atmosphere, mass and
+    energy together. Floored at the wall's density with the energy left as it
+    was, it kept the mass and lost the heat that left with it, and read a psi
+    under the air after one step (the dump test above passes on the old floor
+    once the dump stops at the air: this is the floor's own check)."""
+    ids = _ids()
+    copv = _session(True).bottles[ids["COPV"]]
+    assert psig(copv.pressure) == pytest.approx(0.0, abs=1e-3), "starts at the air"
+    held = copv.state.mass
+    for _ in range(3):
+        copv.advance(0.02, mdot_out=0.05 * held / 0.02)
+        assert psig(copv.pressure) == pytest.approx(0.0, abs=1e-3)
+    # The floor books what it put back.
+    assert copv.fixed_kg == pytest.approx(copv.state.mass - held + 0.15 * held)
+
+
+@needs_tables
 def test_a_primed_bottle_is_down_from_its_prime() -> None:
     """T-0 sets the bottle; it does not reach it. A bottle charged to 4,000
     psig and then primed at 400 psig (a Study case, a second T-0 at a lower
