@@ -101,7 +101,8 @@ def test_optimize_refuses_a_target_above_the_ceiling():
     t, F, mO, mF = header_curve()
     req = FlightOptimizeRequest(time_array=t.tolist(), thrust_array=F.tolist(), mdot_O_array=mO.tolist(),
                                 mdot_F_array=mF.tolist(), target_apogee_m=3500.0, apogee_tolerance_m=15.0)
-    session = types.SimpleNamespace(app_state=types.SimpleNamespace(has_config=lambda: True, config=cfg))
+    session = types.SimpleNamespace(app_state=types.SimpleNamespace(has_config=lambda: True, config=cfg,
+                                                                    snapshot=lambda: (cfg, None)))
     out = asyncio.run(optimize_flight_altitude(req, session))
     assert out.success is False and "ceiling" in out.infeasible_reason and out.simulations_run == 0
 

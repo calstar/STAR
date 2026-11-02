@@ -203,3 +203,47 @@ def test_from_csv_runs_its_solve_and_its_swap_off_the_event_loop(monkeypatch):
     asyncio.run(main())
     assert seen["set_config"] != seen["loop"], "from-csv's YAML swap ran set_config on the loop"
     assert seen["compute"] != seen["loop"], "from-csv's YAML run went on the event-loop thread"
+
+
+def test_upload_config_and_simulate_never_swaps_the_session_config(client, monkeypatch):
+    """A controller run on an uploaded file is a simulation, not a load.
+
+    It used to set_config the uploaded engine for the length of the run (inline on the event loop)
+    and put the old one back after. Nothing in the run read it, but GET /api/config did: the design
+    bar's tick saw its own load token and autosaved the uploaded engine into the open design.
+    """
+    import engine.core.runner as runner_mod
+    from backend.routers import control as control_router
+
+    class FakeRunner:
+        def __init__(self, config):
+            pass
+
+        def evaluate(self, **_kwargs):
+            return {"F": 6800.0}
+
+    def no_controller(*_a, **_k):
+        raise RuntimeError("controller not under test")
+
+    swaps: list = []
+    real_set_config = state_mod.AppState.set_config
+
+    def spy(self, *a, **k):
+        swaps.append(a[0] if a else k.get("config"))
+        return real_set_config(self, *a, **k)
+
+    monkeypatch.setattr(runner_mod, "PintleEngineRunner", FakeRunner)
+    monkeypatch.setattr(control_router, "RobustDDPController", no_controller)
+    h = {"X-Auth-Email": "wholesale-ctrl-upload@berkeley.edu"}
+    before = _state(client, h)
+    session_mod.registry.get("wholesale-ctrl-upload@berkeley.edu").controller.controller = None
+    monkeypatch.setattr(state_mod.AppState, "set_config", spy)
+    r = client.post(
+        "/api/control/upload-config-and-simulate",
+        files={"file": ("engine.yaml", _with_curves(), "application/x-yaml")},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert "controller not under test" in r.text, "the run did not get as far as the controller"
+    assert swaps == [], f"the run put {len(swaps)} config(s) into the session"
+    assert _state(client, h) == before
