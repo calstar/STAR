@@ -169,6 +169,45 @@ def test_an_operator_cut_says_so_and_its_replay_repeats_it(
     assert replayed["impulse_Ns"] == pytest.approx(recorded["impulse_Ns"], rel=0.05)
 
 
+def test_a_knob_turned_mid_burn_is_recorded_where_it_stood_at_fire(
+    stand: tuple[TestClient, str, str],
+) -> None:
+    """A record's settings are read when the burn ends, and its sequence turns
+    the knob again at its T+: a dome turned mid-burn was recorded at its new
+    value as well, so the replay burned all of the burn at it and missed the
+    record it replays. The record says where the knob stood at Fire; the
+    sequence says when it moved."""
+    client, diagram, engine = stand
+    sid = _fire(client, diagram, engine, 0.5)
+    session = main._SESSIONS[sid]
+    at_fire = session.setup.dome_psi
+    turned = client.post(
+        f"/api/session/{sid}/command",
+        json={"knob": {"id": "dome", "value": at_fire + 150.0}},
+    )
+    assert turned.status_code == 200, turned.text
+    assert session.setup.dome_psi == at_fire + 150.0
+    _tick(client, sid, 1.0)
+    client.post(f"/api/session/{sid}/command", json={"state": "Vent"})
+    _tick(client, sid, 1.0)
+    (record,) = _records(client)
+    inputs = record["inputs"]
+    assert inputs["setup"]["dome"] == at_fire
+    assert inputs["knobs"]["dome"] == at_fire
+    assert [s["command"] for s in inputs["sequence"]] == [
+        {"knob": {"id": "dome", "value": at_fire + 150.0}},
+        {"state": "Vent"},
+    ]
+    # Within what Explain takes for a reproduction. This stand's replay lands
+    # ~2 % from the console's burn either way (it primes and settles its own
+    # T-0); recorded at the turned dome, it landed 15 % over.
+    replayed, _ = main._replay(inputs, lambda: False, horizon_s=3.0)
+    recorded = record["outcome"]
+    tolerance = run_records.REPRODUCTION_TOLERANCE
+    for key in ("impulse_Ns", "thrust_mean_N", "pc_mean_psi"):
+        assert replayed[key] == pytest.approx(recorded[key], rel=tolerance), key
+
+
 def test_a_burn_half_out_of_the_history_is_listed_once_as_recorded(
     stand: tuple[TestClient, str, str],
 ) -> None:

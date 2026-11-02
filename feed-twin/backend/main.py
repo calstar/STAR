@@ -2758,7 +2758,16 @@ def _remember(session_id: str, session: Session, event: dict[str, Any]) -> None:
         return
     stamped = {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
     if "command" in stamped:
-        opened.commands.append(stamped)
+        command = stamped["command"]
+        moves = isinstance(command, Mapping) and any(
+            key in command for key in ("setup", "dome", "knob")
+        )
+        # What the settings were before this command changed them: a run
+        # whose operator turned a knob mid-burn records them as they stood at
+        # Fire, and its sequence turns the knob at its T+ (:func:`_fired_on`).
+        opened.commands.append(
+            {**stamped, "was": _settings_now(session)} if moves else stamped
+        )
         del opened.commands[:-RECENT_COMMANDS]
     if len(opened.events) < REPRO_EVENTS:
         opened.events.append(stamped)
@@ -4101,17 +4110,20 @@ def _built_setup(opened: _Opened) -> dict[str, Any]:
     return wire_setup(_setup(opened.body))
 
 
-def _setup_inputs(session: Session, opened: _Opened) -> dict[str, Any]:
+def _setup_inputs(
+    session: Session, opened: _Opened, fired: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """The settings a burn ran on: every live row as set, every row that
     applies on Reset as the stand was built. Recording the setup as set put
     a change no vessel had taken in the record, and its replay rebuilt a
-    stand that never burned -- and tripped it (H019, H033)."""
+    stand that never burned -- and tripped it (H019, H033).
+
+    ``fired``: the settings as they stood at Fire (:func:`_fired_on`), when
+    the operator changed one mid-burn; else as they stand now."""
     built = _built_setup(opened)
     waits = {t.key for t in TUNABLES if t.applies == "reset"}
-    return {
-        k: built[k] if k in waits and k in built else v
-        for k, v in wire_setup(session.setup).items()
-    }
+    live = dict(fired["setup"]) if fired else wire_setup(session.setup)
+    return {k: built[k] if k in waits and k in built else v for k, v in live.items()}
 
 
 def _pending_setup(session: Session, opened: _Opened) -> dict[str, Any]:
@@ -4122,16 +4134,58 @@ def _pending_setup(session: Session, opened: _Opened) -> dict[str, Any]:
     return {k: v for k, v in live.items() if k in built and v != ran[k]}
 
 
-def _knob_inputs(session: Session) -> dict[str, float]:
-    """The knobs as set [psig]. The dome and the COPV charge are settings
-    (``setup.dome``, ``setup.copv_target``): a turn of either sets those, and
+def _knob_inputs(
+    session: Session, fired: Mapping[str, Any] | None = None
+) -> dict[str, float]:
+    """The knobs as set [psig] -- as they stood at Fire, given ``fired``. The
+    dome and the COPV charge are settings (``setup.dome``,
+    ``setup.copv_target``): a turn of either sets those, and
     ``Session.knobs`` keeps the value it opened with -- a burn at dome 500
     recorded ``knobs.dome = 535`` beside ``setup.dome = 500`` (H009)."""
-    live = {DOME: session.setup.dome_psi, CHARGE: session.setup.copv_target_psi}
-    return {k: round(float(live.get(k, v)), 3) for k, v in session.knobs.items()}
+    setup = dict(fired["setup"]) if fired else wire_setup(session.setup)
+    knobs: dict[str, Any] = dict(fired["knobs"]) if fired else dict(session.knobs)
+    live: dict[str, Any] = {DOME: setup.get("dome"), CHARGE: setup.get("copv_target")}
+    return {
+        k: round(float(v if live.get(k) is None else live[k]), 3)
+        for k, v in knobs.items()
+    }
 
 
-def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[str, Any]:
+def _settings_now(session: Session) -> dict[str, Any]:
+    """The settings and the knobs as they stand, as a command finds them."""
+    return {"setup": wire_setup(session.setup), "knobs": dict(session.knobs)}
+
+
+def _fired_on(opened: _Opened, fire_t: float, end_s: float) -> dict[str, Any] | None:
+    """The settings a burn was fired on, when the operator changed one between
+    Fire and its end: what the first such command found (``was``,
+    :func:`_remember`). ``None`` when nothing changed them -- they are as they
+    stand now.
+
+    A record's settings are read when the burn ends. A dome turned mid-burn
+    was recorded at its new value, and the replay -- which turns it again at
+    its T+ (``sequence``) -- burned the whole burn there: on the LE4 stand,
+    dome 535 turned to 435 at T+1.0 s replayed at 5,178 N mean thrust against
+    5,469 N recorded, 5.3 % short."""
+    return next(
+        (
+            dict(c["was"])
+            for c in opened.commands
+            if "was" in c and fire_t < float(c["t"]) <= end_s + 1e-9
+        ),
+        None,
+    )
+
+
+def _inputs(
+    session: Session,
+    opened: _Opened,
+    before: SessionSample,
+    fired: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """What a burn depended on (the run record's ``inputs``); ``fired``, the
+    settings as they stood at Fire when they changed mid-burn
+    (:func:`_fired_on`)."""
     return {
         "diagram": opened.diagram,
         "overrides": _override_inputs(session.model),
@@ -4140,9 +4194,9 @@ def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[st
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
-        "setup": _setup_inputs(session, opened),
+        "setup": _setup_inputs(session, opened, fired),
         **_hookup_inputs(session),
-        "knobs": _knob_inputs(session),
+        "knobs": _knob_inputs(session, fired),
         "t0": _t0(session, before),
     }
 
@@ -4493,7 +4547,9 @@ def _record_burns(
             # swap that chose it is `setup.pressurant`).
             "pressurant": _pressurant_of(session),
             "inputs": {
-                **_inputs(session, opened, before),
+                **_inputs(
+                    session, opened, before, _fired_on(opened, fire_t, burn.end_s)
+                ),
                 **({"sequence": sequence} if sequence else {}),
             },
             "outcome": outcome,
