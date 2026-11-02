@@ -533,6 +533,9 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     if (r.data) set('drawing_id', r.data.id);
   };
   const useDrawing = async (d: Drawing) => { await loadDrawings(); set('drawing_id', d.id); };
+  // An upload's refusal is about that file: once a drawing is picked (any way) it no longer applies. It stayed
+  // at the rail's foot across views with the valid LE4 (3) selected.
+  useEffect(() => { setUploadError(null); }, [settings.drawing_id, mainView]);
 
   const drawing = drawings.find((d) => d.id === settings.drawing_id) ?? null;
   const derived = pf?.derived;
@@ -616,9 +619,16 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     },
     deleteRun: async () => {
       if (!run) return null;
-      const r = await layerx.deleteRun(run.id);
+      const gone = run.id;
+      const r = await layerx.deleteRun(gone);
       if (r.error) return r.error;
-      setOpenRunId(''); setRun(null); loadRuns();
+      // Out of every slot at once: the open run, the comparison (nothing is open to compare it with), its
+      // sweep link, and the listing until it reloads -- the guided start's "last burn" was the deleted run
+      // until then, and the compare slot read 'vs Nov 2, 12:07 PM' over 'Open a burn'.
+      setOpenRunId(''); setRun(null); setCompare('');
+      setRuns((rs) => rs.filter((x) => x.id !== gone));
+      setSweepByRun((m) => { if (!(gone in m)) return m; const next = { ...m }; delete next[gone]; return next; });
+      loadRuns();
       return null;
     },
     compareId: reference ? compareId : '', compareWanted: compareId, setCompare, reference,
