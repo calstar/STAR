@@ -184,6 +184,27 @@ def test_an_override_between_two_runs_is_in_the_diff_and_on_the_ladder() -> None
     assert run_records.with_swapped(a, b, rungs["drawing overrides"]) == b
 
 
+# ---------------------------------------------------------------------- knobs
+
+
+def test_a_record_never_contradicts_itself_about_the_dome(
+    le4: tuple[str, str, str],
+) -> None:
+    """The dome knob is ``setup.dome`` (a turn of it sets that); the record's
+    ``knobs.dome`` was the value the session opened with, so a burn at dome
+    500 recorded dome 535 beside ``setup.dome = 500`` (H009)."""
+    diagram, engine, _ = le4
+    sid = _open(diagram, engine)
+    assert "dome" in main._SESSIONS[sid].knobs
+    turned = client.post(
+        f"/api/session/{sid}/command", json={"knob": {"id": "dome", "value": 480.0}}
+    )
+    assert turned.status_code == 200, turned.text
+    inputs = _recorded(sid)
+    assert inputs["setup"]["dome"] == 480.0
+    assert inputs["knobs"]["dome"] == 480.0
+
+
 # --------------------------------------------------------------- the replay
 
 LE4 = (

@@ -3984,6 +3984,15 @@ def _recorded_card(inputs: Mapping[str, Any]) -> str | None:
     return str(dict(inputs.get("card") or {}).get("sha256") or "")
 
 
+def _knob_inputs(session: Session) -> dict[str, float]:
+    """The knobs as set [psig]. The dome and the COPV charge are settings
+    (``setup.dome``, ``setup.copv_target``): a turn of either sets those, and
+    ``Session.knobs`` keeps the value it opened with -- a burn at dome 500
+    recorded ``knobs.dome = 535`` beside ``setup.dome = 500`` (H009)."""
+    live = {DOME: session.setup.dome_psi, CHARGE: session.setup.copv_target_psi}
+    return {k: round(float(live.get(k, v)), 3) for k, v in session.knobs.items()}
+
+
 def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[str, Any]:
     return {
         "diagram": opened.diagram,
@@ -3995,7 +4004,7 @@ def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[st
         "multiphase": opened.multiphase,
         "setup": wire_setup(session.setup),
         **_hookup_inputs(session),
-        "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
+        "knobs": _knob_inputs(session),
         "t0": _t0(session, before),
     }
 
