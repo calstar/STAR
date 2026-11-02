@@ -712,6 +712,19 @@ describe('lines with no size', () => {
     expect(unsized([le4, zero])).toEqual(['le4', 'zero']);
   });
 
+  it('counts a run known by a measured curve as sized, length and bore or not', () => {
+    // The top of the loss ladder: the bench's Δp against ṁ needs neither, and
+    // beats any size somebody could type. One with no points is not a curve.
+    const curve = (mdot: number[]) => ({
+      id: 'c1', method: 'curve', curve: { mdot, mdotUnit: 'kg/s', dp: mdot.map(m => 1e5 * m * m), dpUnit: 'Pa' },
+    });
+    expect(unsized([
+      line('flowed', { segments: [curve([0.1, 0.2])] }),
+      line('stale', { params: { length: m(1), bore: mm(9.5) }, segments: [curve([0.1, 0.2])] }),
+      line('blank', { segments: [curve([])] }),
+    ])).toEqual(['blank']);
+  });
+
   it('reads the segments, not the line-level numbers, when the run has segments', () => {
     // feed-twin does: the segments are the run, and a length and a bore left
     // on the line are superseded (`_SUPERSEDED_BY_SEGMENTS`).

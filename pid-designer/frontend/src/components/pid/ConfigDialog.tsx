@@ -15,7 +15,7 @@ import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
 import { toAbsolutePa } from './params';
 import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
-import { fittingCount } from './segments';
+import { boreGap, fittingCount } from './segments';
 import type { LineSegment } from './segments';
 import { SketchEditor } from './sketch/Sketch';
 import { emptySketch } from './sketch/model';
@@ -264,13 +264,12 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
   const sketched = kind === 'edge' && !!sketch && sketch.legs.length > 0;
   const superseded = kind === 'edge' && (segments.length > 0 || sketched);
-  // A run with a stretch of no stated bore: feed-twin can size neither its
-  // tube nor its fittings, and prices nothing for it. Said here, where it can
-  // be fixed, not only in the twin's assembly report.
-  const bored = (s: LineSegment) => !!s.bore && s.bore.value > 0;
-  const sketchSegments = sketched ? exportSketch(sketch!).segments : [];
-  const sketchUnbored = sketchSegments.some(s => !bored(s));
-  const listUnbored = !sketched && segments.some(s => !bored(s));
+  // A run with a stretch of no stated bore. feed-twin prices that stretch at
+  // the narrowest bore stated elsewhere on the run, and a run with none
+  // anywhere at nothing (`boreGap`). Said here, where it can be fixed, not only
+  // in the twin's assembly report -- and said as what the solver does.
+  const sketchGap = boreGap(sketched ? exportSketch(sketch!).segments : []);
+  const listGap = boreGap(sketched ? [] : segments);
 
   const title = kind === 'edge' ? 'Line' : (data.label || type);
 
@@ -332,11 +331,14 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
 
         {/* Above the line's numbers, which the sketch dims, so it is seen on
             opening -- the sketch and its diameter box are below the fold. */}
-        {sketchUnbored && (
+        {sketchGap.unbored.length > 0 && (
           <p className="text-[10px] text-amber-500/90">
-            {sketchSegments.some(bored) ? 'Part of the run has' : 'The run has'} no inner diameter, so the solver can
-            size neither its tube nor its bends there and prices nothing for it. Set the inner diameter on the
-            sketch below, or pick a size from its chart.
+            {sketchGap.borrowed
+              ? 'Part of the run has no inner diameter. The solver prices that stretch at the narrowest diameter '
+                + 'given on the rest of the run, which is an assumption, not the drawing\'s.'
+              : 'The run has no inner diameter, so the solver can size neither its tube nor its bends and prices '
+                + 'nothing for it.'}{' '}
+            Set the inner diameter on the sketch below, or pick a size from its chart.
           </p>
         )}
 
@@ -356,9 +358,12 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
               <p className="text-[10px] text-amber-500/90">
                 This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
                 the solver reads that instead of the numbers here.
-                {listUnbored && (segments.some(bored)
-                  ? ' Part of it states no bore, and the solver prices nothing for that part.'
-                  : ' It states no bore, and the solver prices nothing for it.')}{' '}
+                {listGap.unbored.length > 0 && (listGap.borrowed
+                  ? ' Part of it states no bore; the solver prices that part at the narrowest bore stated on the'
+                    + ' rest of the run, an assumption.'
+                  : listGap.unbored.length === segments.length
+                    ? ' It states no bore, and the solver prices nothing for it.'
+                    : ' Part of it states no bore, and the solver prices nothing for that part.')}{' '}
                 <button disabled={readOnly} onClick={() => setSegments([])}
                   className="underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   let it go

@@ -11,7 +11,7 @@ vi.mock('react', async (orig) => {
 import { find, rt, textOf } from './hookRuntime';
 import { ConfigDialog } from './ConfigDialog';
 import type { ConfigPatch } from './ConfigDialog';
-import { addLeg, emptySketch, setBend, setSectionBore } from './sketch/model';
+import { addLeg, emptySketch, setBend, setSectionBore, splitAt } from './sketch/model';
 import type { Sketch } from './sketch/model';
 
 beforeEach(() => rt.reset());
@@ -79,6 +79,47 @@ describe('a sketched line with no inner diameter', () => {
     } as unknown as Data).text();
     expect(line(0)).toMatch(/It states no bore, and the solver prices nothing for it/);
     expect(line(10.92)).not.toMatch(/no bore/);
+  });
+});
+
+describe('a run only part of which states a bore', () => {
+  // feed-twin refers a stretch with no bore of its own to the narrowest bore
+  // stated on the rest of the run (`SegmentedPipe._segment_dp`), so that
+  // stretch is priced, at a borrowed bore; only a run with no bore anywhere is
+  // priced at nothing. The dialog said "prices nothing" for both.
+  const seg = (id: string, more: Record<string, unknown>) => ({
+    id, method: 'itemised', length: { value: 300, unit: 'mm', source: 'measured' }, ...more,
+  });
+  const bore = (value: number) => ({ bore: { value, unit: 'mm', source: 'measured' } });
+  const listed = (segments: unknown[]) => dialog('edge', {
+    componentType: 'pipe', label: '', params: {}, segments,
+  } as unknown as Data).text();
+
+  it('says, of a sketch split before its diameter was given, that the stretch borrows the rest\'s', () => {
+    let s = splitAt(addLeg(addLeg(emptySketch('mm'), { x: 300, y: 0 }), { x: 300, y: 400 }), 300);
+    s = setSectionBore(s, s.sections[0].id, 7.7);
+    const text = dialog('edge', { componentType: 'pipe', label: '', params: {}, sketch: s } as unknown as Data).text();
+    expect(text).toMatch(/Part of the run has no inner diameter\. The solver prices that stretch at the narrowest diameter/);
+    expect(text).not.toMatch(/prices\s+nothing/);
+  });
+
+  it('says the same of a saved list, and "nothing" only where nothing on the run has a bore', () => {
+    expect(listed([seg('s1', {}), seg('s2', bore(7.7))]))
+      .toMatch(/Part of it states no bore; the solver prices that part at the narrowest bore stated/);
+    expect(listed([seg('s1', {}), seg('s2', bore(7.7))])).not.toMatch(/prices nothing/);
+    expect(listed([seg('s1', {}), seg('s2', {})])).toMatch(/It states no bore, and the solver prices nothing for it/);
+  });
+
+  it('asks a bore only of a segment the solver sizes by one', () => {
+    // A Δp-against-ṁ table off a flow bench is priced as measured, bore or no;
+    // an unstated segment prices nothing, bore or no. A K needs one to refer to.
+    const curve = { id: 'c1', method: 'curve', curve: { mdot: [0.1, 0.2], mdotUnit: 'kg/s', dp: [1e4, 4e4], dpUnit: 'Pa' } };
+    expect(listed([curve])).not.toMatch(/no bore/);
+    expect(listed([{ id: 'u1', method: 'unstated' }])).not.toMatch(/no bore/);
+    expect(listed([curve, seg('s1', {})]))
+      .toMatch(/Part of it states no bore, and the solver prices nothing for that part/);
+    expect(listed([{ id: 'k1', method: 'measured_K', K: { value: 2, unit: '-', source: 'measured' } }]))
+      .toMatch(/It states no bore, and the solver prices nothing for it/);
   });
 });
 
