@@ -285,14 +285,50 @@ def _json_safe(value: Any) -> Any:
 # ------------------------------------------------------------------ jobs
 
 
+def _named_design(request: Request, session: UserSession) -> Optional[str]:
+    """The name of the design the caller has open, when the request names one (the design bar's
+    ``X-Design-Id`` / ``X-Design-Owner``, as the config routes read them: backend/checkout.py) and the
+    caller may see it: their own, the main design, or one shared with them. Otherwise None."""
+    from backend.checkout import DESIGN_ID_HEADER, DESIGN_OWNER_HEADER
+
+    doc_id = request.headers.get(DESIGN_ID_HEADER)
+    if not doc_id:
+        return None
+    try:
+        from backend.routers.documents import store
+
+        named = request.headers.get(DESIGN_OWNER_HEADER)
+        owner = userdata.slug_user(named) if named else session.user
+        record = store.find_record(owner, doc_id)
+        if not isinstance(record, dict):
+            return None
+        shared = record.get("sharedWith") if isinstance(record.get("sharedWith"), list) else []
+        main = store.read_featured() or {}
+        if not (owner == session.user or any(userdata.slug_user(str(e)) == session.user for e in shared)
+                or (main.get("owner"), main.get("id")) == (owner, doc_id)):
+            return None
+        name = str(record.get("name") or "").strip()
+        return name[:120] or None
+    except Exception:  # noqa: BLE001 - a label; the run goes on under the session's
+        return None
+
+
+def _design_label(request: Request, session: UserSession = Depends(get_session)) -> str:
+    """What a job is filed under: the open design's name, else the file the session loaded."""
+    return _named_design(request, session) or _design_name(session)
+
+
 class Job:
-    def __init__(self, user: str, settings: Settings, design_name: str, kind: str = "run") -> None:
+    def __init__(self, user: str, settings: Settings, design_name: str, kind: str = "run",
+                 design_sha256: str = "") -> None:
         # UTC, so ids sort by time across a daylight-saving change (pruning keeps the newest by id).
         self.id = time.strftime("%Y%m%d-%H%M%S-", time.gmtime()) + uuid.uuid4().hex[:6]
         self.kind = kind
         self.user = user
         self.settings = settings
         self.design_name = design_name
+        #: The design's fingerprint when the job was claimed: two designs under one name are still two.
+        self.design_sha256 = design_sha256
         self.status = "queued"
         self.stage = "Queued"
         self.progress = 0.0
@@ -328,6 +364,7 @@ class Job:
             "started": self.started,
             "finished": self.finished,
             "design": self.design_name,
+            "design_sha256": self.design_sha256,
             "settings": self.settings.model_dump(),
         }
         if self.status in ("queued", "running") and self.live:
@@ -661,7 +698,8 @@ def engine_card_for_config(body: CardRequest) -> Dict[str, Any]:
 
 
 @router.post("/runs")
-def start_run(body: Settings, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_run(body: Settings, session: UserSession = Depends(get_session),
+              design: str = Depends(_design_label)) -> Dict[str, Any]:
     def build() -> Callable[..., Dict[str, Any]]:
         prep, runner, config = _prepare(session, body)
         if not prep.ok:
@@ -687,10 +725,10 @@ def start_run(body: Settings, session: UserSession = Depends(get_session)) -> Di
 
         return work
 
-    return _launch(session, body, "run", build)
+    return _launch(session, body, "run", build, design)
 
 
-def _code_version() -> str:
+def _describe() -> str:
     """``git describe`` of this checkout, with a mark when it has uncommitted changes."""
     import subprocess
 
@@ -701,6 +739,17 @@ def _code_version() -> str:
         return out.stdout.strip() or "unknown"
     except (OSError, subprocess.SubprocessError):
         return "unknown"
+
+
+#: The code this process loaded, read once at import. A run records what produced it: asked per run,
+#: a server started at 9ebd9fa0 and never restarted filed its second burn as '170af951-dirty' once
+#: other commits landed, though the modules it ran (lib/feedtwin, which uvicorn --reload does not
+#: watch, included) had not changed.
+_CODE_AT_START = _describe()
+
+
+def _code_version() -> str:
+    return _CODE_AT_START
 
 
 def _design_snapshot(config: Any) -> Dict[str, Any]:
@@ -720,17 +769,27 @@ def _design_name(session: UserSession) -> str:
     return (Path(path).stem if path else "") or "live design"
 
 
-def _reserve(session: UserSession, settings: Settings, kind: str) -> Job:
+def _reserve(session: UserSession, settings: Settings, kind: str, design: Optional[str] = None) -> Job:
     """One job per user, claimed atomically: the check and the claim under one lock, before the
     seconds of preparation, so two requests at once cannot both pass the check."""
     with _JOBS_LOCK:
         busy = [j for j in _JOBS.values() if j.user == session.user and j.status in ("queued", "running")]
         if busy:
             raise HTTPException(status_code=409, detail=f"A {busy[0].kind} ({busy[0].id}) is still going. Cancel it or wait.")
-        job = Job(session.user, settings, _design_name(session), kind=kind)
+        job = Job(session.user, settings, design or _design_name(session), kind=kind,
+                  design_sha256=_fingerprint(session))
         job.stage = "Preparing"
         _JOBS[job.id] = job
     return job
+
+
+def _fingerprint(session: UserSession) -> str:
+    try:
+        from engine.layerx.fingerprint import config_fingerprint
+
+        return config_fingerprint(session.app_state.config) if session.app_state.config is not None else ""
+    except Exception:  # noqa: BLE001 - the name still files it
+        return ""
 
 
 def _release(job: Job) -> None:
@@ -739,9 +798,9 @@ def _release(job: Job) -> None:
 
 
 def _launch(session: UserSession, settings: Settings, kind: str,
-            build: Callable[[], Callable[..., Dict[str, Any]]]) -> Dict[str, Any]:
+            build: Callable[[], Callable[..., Dict[str, Any]]], design: Optional[str] = None) -> Dict[str, Any]:
     """Claim the user's job slot, prepare (``build`` returns the work, or raises), and start."""
-    job = _reserve(session, settings, kind)
+    job = _reserve(session, settings, kind, design)
     try:
         runs_dir = _runs_dir(session)
         work = build()
@@ -753,7 +812,8 @@ def _launch(session: UserSession, settings: Settings, kind: str,
 
 
 @router.post("/uncertainty")
-def start_uncertainty(body: Settings, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_uncertainty(body: Settings, session: UserSession = Depends(get_session),
+                      design: str = Depends(_design_label)) -> Dict[str, Any]:
     """One-at-a-time sweep of the unmeasured inputs (engine/layerx/uncertainty.py): the tornado
     and the band. Parallel worker processes; ~30 s on the 6.8 kN stand."""
     def build() -> Callable[..., Dict[str, Any]]:
@@ -767,7 +827,7 @@ def start_uncertainty(body: Settings, session: UserSession = Depends(get_session
         return lambda progress, cancelled: run_sweep(
             config, drawing, settings, overrides, progress=progress, cancelled=cancelled)
 
-    return _launch(session, body, "uncertainty", build)
+    return _launch(session, body, "uncertainty", build, design)
 
 
 #: Hard limits on the optimiser's searched bounds, the same as Settings' (a candidate is built with
@@ -820,7 +880,8 @@ def optimize_variables(body: Settings, session: UserSession = Depends(get_sessio
 
 
 @router.post("/optimize")
-def start_optimize(body: OptimizeBody, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_optimize(body: OptimizeBody, session: UserSession = Depends(get_session),
+                   design: str = Depends(_design_label)) -> Dict[str, Any]:
     """Search the feed hardware (lockup, COPV fill, COPV volume) for the most impulse or apogee from
     the fixed load, every candidate a whole burn (engine/layerx/optimize.py). Minutes."""
     def build() -> Callable[..., Dict[str, Any]]:
@@ -835,7 +896,7 @@ def start_optimize(body: OptimizeBody, session: UserSession = Depends(get_sessio
         return lambda progress, cancelled: run_optimize(
             config, drawing, settings, overrides, request, progress=progress, cancelled=cancelled)
 
-    return _launch(session, body.settings, "optimize", build)
+    return _launch(session, body.settings, "optimize", build, design)
 
 
 #: Job kinds whose saved runs are listed (``legacy: true``) and readable through GET /runs/{id},
@@ -880,7 +941,8 @@ class SetpointBody(BaseModel):
 
 
 @router.post("/setpoint")
-def start_setpoint(body: SetpointBody, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_setpoint(body: SetpointBody, session: UserSession = Depends(get_session),
+                   design: str = Depends(_design_label)) -> Dict[str, Any]:
     """The dome dial, lockup and bottle fill that give a target mean thrust (engine/layerx/setpoint.py):
     a secant on lockup, then the fill for a bottle margin, every point a whole burn. Minutes."""
     def build() -> Callable[..., Dict[str, Any]]:
@@ -899,7 +961,7 @@ def start_setpoint(body: SetpointBody, session: UserSession = Depends(get_sessio
         return lambda progress, cancelled: run_setpoint(
             config, drawing, settings, overrides, request, progress=progress, cancelled=cancelled)
 
-    return _launch(session, body.settings, "setpoint", build)
+    return _launch(session, body.settings, "setpoint", build, design)
 
 
 class HardwareBody(BaseModel):
@@ -928,7 +990,8 @@ class HardwareBody(BaseModel):
 
 
 @router.post("/hardware")
-def start_hardware(body: HardwareBody, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_hardware(body: HardwareBody, session: UserSession = Depends(get_session),
+                   design: str = Depends(_design_label)) -> Dict[str, Any]:
     """Catalogue parts for the components marked free, each candidate a whole burn on an in-memory
     copy of the drawing, ranked by the objective (engine/layerx/optimize.py run_hardware)."""
     def build() -> Callable[..., Dict[str, Any]]:
@@ -949,7 +1012,7 @@ def start_hardware(body: HardwareBody, session: UserSession = Depends(get_sessio
         return lambda progress, cancelled: run_hardware(
             config, drawing, settings, overrides, request, catalogs=catalogs, progress=progress, cancelled=cancelled)
 
-    return _launch(session, body.settings, "hardware", build)
+    return _launch(session, body.settings, "hardware", build, design)
 
 
 @router.get("/catalog")
@@ -971,7 +1034,8 @@ class ReconcileBody(BaseModel):
 
 
 @router.post("/reconcile")
-def start_reconcile(body: ReconcileBody, session: UserSession = Depends(get_session)) -> Dict[str, Any]:
+def start_reconcile(body: ReconcileBody, session: UserSession = Depends(get_session),
+                    design: str = Depends(_design_label)) -> Dict[str, Any]:
     """Resize the injector's holes (and, if asked, its jet angles) so the design point holds under
     the drawing's feed, burning and refitting until they stop moving (engine/layerx/reconcile.py)."""
     def build() -> Callable[..., Dict[str, Any]]:
@@ -986,7 +1050,7 @@ def start_reconcile(body: ReconcileBody, session: UserSession = Depends(get_sess
         return lambda progress, cancelled: run_reconcile(
             config, drawing, settings, overrides, request, progress=progress, cancelled=cancelled)
 
-    return _launch(session, body.settings, "reconcile", build)
+    return _launch(session, body.settings, "reconcile", build, design)
 
 
 class ExportBody(BaseModel):

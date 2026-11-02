@@ -130,3 +130,61 @@ def test_a_card_centre_that_is_not_a_pressure_names_the_callers_number():
     with pytest.raises(ValueError, match=r"center_psia -5\.0 is not an absolute pressure"):
         card_for_config_text("lox_tank: {initial_pressure_psi: 578.0}\n", center_psia=-5.0)
 
+
+def test_a_job_is_filed_under_the_design_that_is_open(api, monkeypatch):
+    """Every Layer X run was recorded as design 'default' whatever design the bar had open: the design
+    bar loads a design with POST /config/load, which keeps the session's first config_path, and the
+    router filed jobs under that file's stem. sweepFor's 'never borrow another design's sweep' was then
+    defeated. A job started with the bar's X-Design-Id is filed under that design's name."""
+    from fastapi import HTTPException
+
+    from backend.routers import documents
+
+    client, session = api
+    me = session.user
+    records = {(me, "d1"): {"id": "d1", "name": "ethalox 6800N doublet 578psia"},
+               ("carol", "d2"): {"id": "d2", "name": "Carol's private design"},
+               ("dave", "d3"): {"id": "d3", "name": "Dave's, shared", "sharedWith": [me]}}
+    monkeypatch.setattr(documents.store, "find_record", lambda owner, doc_id: records.get((owner, doc_id)))
+    monkeypatch.setattr(documents.store, "read_featured", lambda: None)
+    filed = []
+
+    def reserve(session_, settings, kind, design=None):
+        filed.append(design)
+        raise HTTPException(status_code=409, detail="captured")
+
+    monkeypatch.setattr(lx, "_reserve", reserve)
+    body = {"drawing_id": "d"}
+    assert client.post("/api/layerx/runs", json=body, headers={"X-Design-Id": "d1"}).status_code == 409
+    assert client.post("/api/layerx/uncertainty", json=body, headers={"X-Design-Id": "d1"}).status_code == 409
+    assert filed == ["ethalox 6800N doublet 578psia"] * 2
+    # Someone else's design is named only when the caller may see it.
+    client.post("/api/layerx/runs", json=body, headers={"X-Design-Id": "d2", "X-Design-Owner": "carol"})
+    client.post("/api/layerx/runs", json=body, headers={"X-Design-Id": "d3", "X-Design-Owner": "dave"})
+    assert filed[2:] == [lx._design_name(session), "Dave's, shared"]
+    # No design named: the session's file, as before.
+    client.post("/api/layerx/runs", json=body)
+    assert filed[4] == lx._design_name(session)
+
+
+def test_a_job_records_the_design_fingerprint_beside_its_name(api):
+    client, session = api
+    job = lx.Job(session.user, lx.Settings(drawing_id="d"), "default", design_sha256="abc123")
+    assert job.view()["design"] == "default" and job.view()["design_sha256"] == "abc123"
+    assert job.view(with_result=False)["design_sha256"] == "abc123"
+
+
+def test_a_run_names_the_code_the_server_loaded_not_the_checkout_now(monkeypatch):
+    """A server started at 9ebd9fa0 and never restarted filed its second burn as '170af951-dirty' once
+    other commits landed: git describe was asked per run. The code a process runs is what it imported."""
+    import subprocess
+
+    loaded = lx._code_version()
+
+    class Moved:
+        stdout = "170af951-dirty\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Moved())
+    assert lx._code_version() == loaded
+    assert lx._design_snapshot(type("C", (), {"model_dump": lambda self, mode=None: {}})())["code"] == loaded
+

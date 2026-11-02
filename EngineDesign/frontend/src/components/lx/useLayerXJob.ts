@@ -157,7 +157,7 @@ export function settingsDiff(ran: LayerXSettings, now: LayerXSettings, drawingNa
 /** The sweep that belongs to a burn when this browser has no link for it (a fresh browser, cleared
  *  storage, another machine): the newest finished uncertainty job started from the burn's own
  *  settings, after it. Without this a design that HAS been swept read "Not swept yet". */
-export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'started' | 'settings'>, runs: readonly RunView[]): string {
+export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'design_sha256' | 'started' | 'settings'>, runs: readonly RunView[]): string {
   const want = (burn.settings ?? {}) as unknown as Record<string, unknown>;
   const same = (s: LayerXSettings | undefined) => {
     const got = (s ?? {}) as unknown as Record<string, unknown>;
@@ -166,7 +166,10 @@ export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'started' | 'sett
   let best: RunView | null = null;
   for (const r of runs) {
     if (r.kind !== 'uncertainty' || r.status !== 'done' || r.id === burn.id) continue;
-    if (r.design !== burn.design || r.started < burn.started || !same(r.settings)) continue;
+    // The design by its fingerprint when both jobs carry one; by name for older ones. Every run used to be
+    // filed as 'default' (the file the session first loaded), so the name alone could not tell two apart.
+    const sameDesign = r.design_sha256 && burn.design_sha256 ? r.design_sha256 === burn.design_sha256 : r.design === burn.design;
+    if (!sameDesign || r.started < burn.started || !same(r.settings)) continue;
     if (!best || r.started > best.started) best = r;
   }
   return best?.id ?? '';
