@@ -127,7 +127,7 @@ def _grade(value: Optional[float], ok: float, warn: Optional[float] = None, *, h
 
 def _headline(r: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return [
-        Q("F", "Thrust", _f(r.get("F")) and r["F"] / 1000.0, "kN", digits=2, basis="F = Cf · Pc · At",
+        Q("F", "Thrust", _f(r.get("F")) and r["F"] / 1000.0, "kN", digits=2, basis="F = Cf · Pc_ns · At (Pc_ns = Pc / κ, in Chamber)",
           assumed=_THRUST),
         Q("Isp", "Isp", r.get("Isp"), "s", digits=1, basis="F / (ṁ g0)", assumed=_THRUST),
         Q("Pc", "Chamber pressure", _f(r.get("Pc")) and r["Pc"] / PSI, "psia", digits=1,
@@ -181,19 +181,26 @@ def _verdicts(cfg: Any, r: Mapping[str, Any], sr: Mapping[str, Any]) -> List[Dic
 
 def _chamber(cfg: Any, r: Mapping[str, Any]) -> Dict[str, Any]:
     ci = r.get("chamber_intrinsics") or {}
+    d = r.get("diagnostics") or {}
     At = _f(r.get("A_throat"))
     cg = cfg.chamber_geometry
     Dc = _f(getattr(cg, "chamber_diameter", None))
     CR = (Dc / math.sqrt(4 * At / math.pi)) ** 2 if (Dc and At) else None
     qs = [
         Q("Pc", "Chamber pressure", _f(r.get("Pc")) and r["Pc"] / PSI, "psia", digits=1, assumed=_FLOW + _CSTAR),
+        # The pressure the nozzle relations use: the injector-end Pc less the Rayleigh loss of heat
+        # added to moving gas. Shown so F = Cf · Pc_ns · At and c* = Pc_ns · At / ṁ close from the page.
+        Q("Pc_ns", "Nozzle stagnation pressure", _f(d.get("Pc_ns")) and d["Pc_ns"] / PSI, "psia", digits=2,
+          basis="Pc / κ (Rayleigh loss)", assumed=_FLOW + _CSTAR),
+        Q("kappa", "Rayleigh loss κ", d.get("stagnation_loss_kappa"), "", digits=5, basis="Pc / Pc_ns, from the "
+          "contraction ratio and γ", detail=True),
         Q("Tc", "Chamber temperature", r.get("Tc"), "K", digits=0, basis="CEA at Pc and O/F"),
         Q("Lstar", "L*", _f(ci.get("Lstar")) and ci["Lstar"] * 1000.0, "mm", digits=0, basis="V_c / A_t"),
         Q("theta_c", "Gas residence", _f(ci.get("residence_time")) and ci["residence_time"] * 1000.0, "ms",
           digits=2, basis="ρ_c V_c / ṁ"),
         Q("CR", "Contraction ratio", CR, "", digits=2, basis="(D_c / D_t)²"),
         Q("M_c", "Chamber Mach", ci.get("mach_number_chamber"), "", digits=3, basis="mean gas speed / a"),
-        Q("cstar", "c*", r.get("cstar_actual"), "m/s", digits=0, basis="η c* · c*_CEA", assumed=_CSTAR),
+        Q("cstar", "c*", r.get("cstar_actual"), "m/s", digits=0, basis="η c* · c*_CEA = Pc_ns · At / ṁ", assumed=_CSTAR),
         Q("cstar_ideal", "c* ideal", r.get("cstar_ideal"), "m/s", digits=0, basis="CEA", detail=True),
         Q("gamma", "γ", r.get("gamma"), "", digits=4, basis="CEA, chamber", detail=True),
         Q("R", "R", r.get("R"), "J/(kg·K)", digits=1, basis="CEA, chamber", detail=True),
@@ -208,7 +215,7 @@ def _nozzle(cfg: Any, r: Mapping[str, Any]) -> Dict[str, Any]:
     pe = _f(r.get("P_exit"))
     sep = pe / Pa if (pe and Pa) else None
     qs = [
-        Q("Cf", "Cf", r.get("Cf_actual"), "", digits=4, basis="ζ_n · Cf_vac − pa ε / Pc", assumed=("nozzle",)),
+        Q("Cf", "Cf", r.get("Cf_actual"), "", digits=4, basis="F / (Pc_ns · At) = ζ_n · Cf_vac − pa ε / Pc_ns", assumed=("nozzle",)),
         Q("Cf_ideal", "Cf ideal", r.get("Cf_ideal"), "", digits=4, basis="CEA", detail=True),
         Q("eps", "Expansion ratio", r.get("eps"), "", digits=2, basis="A_e / A_t"),
         Q("P_exit", "Exit pressure", pe and pe / PSI, "psia", digits=2, basis="CEA Pc/Pe at ε"),
