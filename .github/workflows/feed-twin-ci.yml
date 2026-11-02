@@ -18,6 +18,9 @@ name: feed-twin CI
       # there has to prove this app still builds and draws it.
       - 'pid-designer/frontend/src/components/pid/**'
       - 'lib/stardesign-ui/**'
+      # The physics benchmark the backend job runs, and what it checks against.
+      - 'scripts/physics_benchmark.py'
+      - 'docs/PHYSICS-BENCHMARK.md'
       - '.github/workflows/feed-twin-ci.yml'
   pull_request:
     paths:
@@ -28,6 +31,8 @@ name: feed-twin CI
       - 'EngineDesign/requirements-base.txt'
       - 'pid-designer/frontend/src/components/pid/**'
       - 'lib/stardesign-ui/**'
+      - 'scripts/physics_benchmark.py'
+      - 'docs/PHYSICS-BENCHMARK.md'
       - '.github/workflows/feed-twin-ci.yml'
   workflow_dispatch:
 
@@ -168,6 +173,22 @@ jobs:
       - name: Timing tests (serial)
         working-directory: feed-twin
         run: python -m pytest tests -q -m timing
+
+      # The regression regimen CLAUDE.md opens with: closed-form results
+      # against hand calculation, fluids, CoolProp and the handbook, and the
+      # shipped stand's steady fire (docs/PHYSICS-BENCHMARK.md). It exits
+      # non-zero when one moves. From the repo root: the script puts
+      # lib/feedtwin and feed-twin on sys.path itself, and this job is the one
+      # with both the physics core and the backend it fires through. A tier it
+      # skips fails the step too -- a skipped check is one that did not run.
+      - name: Physics benchmark
+        shell: bash
+        run: |
+          python scripts/physics_benchmark.py | tee physics-benchmark.log
+          if grep -n '\[SKIP\]' physics-benchmark.log; then
+            echo "::error::a physics benchmark tier was skipped"
+            exit 1
+          fi
 
   # Phase 00's other exit criterion: the physics core has to be installable
   # alongside EngineDesign, because Layer X will import it in that process
