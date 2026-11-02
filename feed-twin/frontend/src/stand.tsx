@@ -23,6 +23,7 @@ import {
   type ReactNode,
 } from 'react';
 import { NO_ERROR, errorLine, errorText } from './lib/errorLine';
+import { paceTick, type PaceWindow } from './lib/pace';
 import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
@@ -415,7 +416,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const [warp, setWarpState] = useState(1);
   const warpRef = useRef(1);
   const liveState = useRef('');
-  const pace = useRef<{ wall: number; t: number } | null>(null);
+  const pace = useRef<PaceWindow | null>(null);
+  /** Runs of the tick so far: each is paced on its own (lib/pace.ts). */
+  const paceRuns = useRef(0);
 
   const refresh = useCallback(async () => {
     const list = await listArtifacts();
@@ -768,6 +771,9 @@ export function StandProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     alive.current = true;
     if (!running || !session.current) return undefined;
+    // This run of the tick: a pause ends one, and its pace is not this one's.
+    paceRuns.current += 1;
+    const run = paceRuns.current;
 
     let timer = 0;
     const pump = async () => {
@@ -785,15 +791,13 @@ export function StandProvider({ children }: { children: ReactNode }) {
         // A Reset or a new drawing replaced the stand while this was out: its
         // answer is about a stand nobody is looking at.
         if (!alive.current || session.current !== asked) return;
-        // Pace, smoothed over ~1 s of wall clock so it reads steadily.
-        const nowWall = performance.now();
-        if (pace.current && nowWall - pace.current.wall > 1000) {
-          const ratio = (next.t - pace.current.t) / ((nowWall - pace.current.wall) / 1000);
-          if (Number.isFinite(ratio) && ratio >= 0) setSpeed(ratio);
-          pace.current = { wall: nowWall, t: next.t };
-        } else if (!pace.current) {
-          pace.current = { wall: nowWall, t: next.t };
-        }
+        // Pace, smoothed over ~1 s of wall clock so it reads steadily, one
+        // window per run of the tick at one warp (lib/pace.ts): until one has
+        // run, the speed is the warp asked, not a claim.
+        const paced = paceTick(pace.current, performance.now(), next.t, `${run}@${w}`);
+        pace.current = paced.window;
+        if (paced.speed !== null) setSpeed(paced.speed);
+        else if (paced.fresh) setSpeed(w);
         setLive(next);
         liveState.current = next.state;
         dispatchError({ kind: 'tick-ok' });
@@ -1020,6 +1024,8 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setWarp: (w) => {
       warpRef.current = w;
       setWarpState(w);
+      // No claim at the new warp until a window has run at it (lib/pace.ts).
+      setSpeed(w);
     },
     toggleValve: (id) =>
       void command({ valve: id, open: !(live?.open[id] ?? false) }),
