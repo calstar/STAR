@@ -183,6 +183,13 @@ class StudyResult:
     notes: list[str] = field(default_factory=list)
 
 
+class CaseCancelled(Exception):
+    """A case whose burn a cancel cut short: not a burn to table or plot.
+
+    It was kept as if it had finished -- no error, no tank dry -- and the
+    table read it '>horizon', 'Reached the horizon with no tank dry'."""
+
+
 #: Builds the session a case burns on: the stand's inputs, the case's setup
 #: and knobs merged in, and a pressurant to swap the bottle's gas for.
 Build = Callable[[Mapping[str, Any], str | None], Session]
@@ -296,6 +303,11 @@ def run_case(
         dry_kg=DRY_MASS,
     )
     trace = run_burn(session, plan, cancelled=cancelled)
+    if trace.end is not None and trace.end.cancelled:
+        cut = trace.t[-1] if trace.t else 0.0
+        raise CaseCancelled(
+            f"{case.label} was cancelled {cut:.2f} s into its burn and is left out."
+        )
     keep = _thin(len(trace.t))
     labels = {sim.id: sim.label for sim in session.tanks.values()}
     bottle_labels = {b.id: b.label for b in session.bottles.values()}
@@ -390,6 +402,10 @@ def run_study(
             progress(index, total, f"{case.label} ({index + 1} of {total})")
         try:
             done = run_case(request, case, build, outcome, cancelled)
+        except CaseCancelled as cut:
+            # Only finished cases are kept; this one is said, not shown.
+            result.notes.append(str(cut))
+            break
         except Exception as exc:  # noqa: BLE001 - reported on the case
             # The case carries the type and message; the traceback stays in the
             # server log, or a crash in the physics has to be reproduced to be

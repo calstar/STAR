@@ -2797,8 +2797,9 @@ async def start_study(
 
 @app.post("/api/study/cancel")
 async def cancel_study(request: Request, session: str = "") -> StudyOut:
-    """Stop your study at the end of the case running now, keeping the ones
-    finished. Only your own: a study is cancelled by whoever started it."""
+    """Stop your study now, keeping the cases finished: the one burning is cut
+    short and left out, and the study's notes say where. Only your own: a
+    study is cancelled by whoever started it."""
     key = _study_key(request, session)
     runner = _STUDIES.get(key)
     if runner is not None:

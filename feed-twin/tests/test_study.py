@@ -251,6 +251,47 @@ def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     assert all(kg < 10.0 for kg in loads.values()), loads
 
 
+def test_a_case_cut_short_by_cancel_is_not_shown_as_a_burn(
+    stand: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel stops the burn running now, mid-case. That case was kept as if it
+    had finished -- no error, no tank dry -- and the table read it '>horizon',
+    'Reached the horizon with no tank dry', at half the impulse. It is left out
+    now, and the study's notes say where it was cut."""
+    from backend import study as study_mod
+
+    real = study_mod.run_burn
+
+    def cut_short(session: Any, plan: Any, cancelled: Any = lambda: False) -> Any:
+        asked = [0]
+
+        def soon() -> bool:
+            # Cancel as a person would, part way into the first burn: the
+            # runner's own event (``cancelled`` is its bound ``is_set``).
+            asked[0] += 1
+            if asked[0] > 40:
+                cancelled.__self__.set()
+            return bool(cancelled())
+
+        return real(session, plan, cancelled=soon)
+
+    monkeypatch.setattr(study_mod, "run_burn", cut_short)
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={
+            "session": sid,
+            "horizon_s": 5.0,
+            "cases": [{"label": "a"}, {"label": "b"}],
+        },
+    )
+    assert started.status_code == 200, started.text
+    body = _finish()
+    assert body["stage"] == "cancelled", body["stage"]
+    assert body["cases"] == [], [(c["label"], c["t"][-1:]) for c in body["cases"]]
+    assert any("cancelled" in n and "a" in n for n in body["notes"]), body["notes"]
+
+
 def test_a_tank_too_small_for_its_fire_load_is_said(stand: str) -> None:
     """The engine's fuel fire load (7.00 kg) does not fit the stand's 8.67 L
     fuel tank at a 95 % fill. A load stops at the full fraction, so every fire
