@@ -190,15 +190,20 @@ def compute_timeseries_results(
             recession_rate_graphite_oxidation_um_s.append(np.nan)
             continue
             
-        # Injector pressure drops (check both locations like Streamlit)
-        injector_pressure = diag.get("injector_pressure", {})
-        if injector_pressure and isinstance(injector_pressure, dict):
-            delta_P_O = injector_pressure.get("delta_P_injector_O")
-            delta_P_F = injector_pressure.get("delta_P_injector_F")
-        else:
-            # Fallback to direct access
-            delta_P_O = diag.get("delta_P_injector_O")
-            delta_P_F = diag.get("delta_P_injector_F")
+        # Injector pressure drops. The per-point diagnostics are the injector closure's, which
+        # spell it ``delta_p_injector_*`` (engine/core/injectors/impinging.py, pintle.py) -- the
+        # same keys forward mode reports. This read only the capital-P spelling, found nothing at
+        # any point, and the "Injector Pressure Drops vs Time" chart never appeared. Both
+        # spellings, and the runner's ``injector_pressure`` block if a caller passes that.
+        injector_pressure = diag.get("injector_pressure")
+        src = injector_pressure if isinstance(injector_pressure, dict) and injector_pressure else diag
+
+        def _dp(side: str):
+            v = src.get(f"delta_p_injector_{side}")
+            return v if v is not None else src.get(f"delta_P_injector_{side}")
+
+        delta_P_O = _dp("O")
+        delta_P_F = _dp("F")
         
         if delta_P_O is not None:
             delta_P_injector_O_psi.append(float(delta_P_O * PA_TO_PSI))
