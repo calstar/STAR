@@ -434,7 +434,8 @@ def switch_config(config: Dict[str, Any], *, injector_type: Optional[str] = None
 
 def design_staleness(config: Any) -> Optional[str]:
     """Return a human-readable warning if the live injector/propellant no longer match what the
-    chamber geometry was solved/seeded for (design_valid_for stamp), else None. Accepts a dict or a
+    chamber geometry was solved/seeded for (design_valid_for stamp), or if the fluid properties
+    differ from the propellant preset's (preset_fluid_drift), else None. Accepts a dict or a
     PintleEngineConfig. This powers the "Warn + flag for re-solve" forward-mode behaviour."""
     if config is None:
         return None
@@ -446,14 +447,72 @@ def design_staleness(config: Any) -> Optional[str]:
         dvf = getattr(config, "design_valid_for", None)
         cur_inj = getattr(getattr(config, "injector", None), "type", None)
         cur_prop = getattr(config, "propellant_preset", None)
-    if not dvf:
-        return None
+    notes = []
     mism = []
-    if dvf.get("injector") and dvf["injector"] != cur_inj:
-        mism.append(f"injector {dvf['injector']} -> {cur_inj}")
-    if dvf.get("propellant") and dvf["propellant"] != cur_prop:
-        mism.append(f"propellant {dvf['propellant']} -> {cur_prop}")
-    if not mism:
+    if dvf:
+        if dvf.get("injector") and dvf["injector"] != cur_inj:
+            mism.append(f"injector {dvf['injector']} -> {cur_inj}")
+        if dvf.get("propellant") and dvf["propellant"] != cur_prop:
+            mism.append(f"propellant {dvf['propellant']} -> {cur_prop}")
+    if mism:
+        notes.append("Chamber geometry was solved for " + ", ".join(mism) +
+                     ". It is being used as a seed only — re-run optimization for a valid design.")
+    drift = preset_fluid_drift(config)
+    if drift:
+        notes.append(drift)
+    return " ".join(notes) or None
+
+
+#: A fluid property further than this from its preset's value is reported. Wide enough that a
+#: rounding (LOX boiling point 90.19 vs 90.2) or a few kelvin of subcooling stays quiet; the stale
+#: LOX block the ethalox configs carry is 10 % (viscosity) to 60 % (bulk modulus) off.
+_FLUID_DRIFT_REL = 0.05
+
+
+def _preset_fluids(name: str) -> Dict[str, Any]:
+    path = _PROJECT_ROOT / "configs" / "propellants" / f"{name}.yaml"
+    try:
+        with open(path) as f:
+            return ((yaml.safe_load(f) or {}).get("fluids")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+
+def preset_fluid_drift(config: Any) -> Optional[str]:
+    """A sentence when the config's fluid properties differ from its propellant preset's, else None.
+
+    An explicit ``fluids`` block wins over the preset on load (io._deep_merge_preset), so a design
+    saved before the preset was corrected keeps the old numbers silently. The ethalox preset fixed
+    LOX cp 2300 -> 1700, bulk modulus 1.5e9 -> 0.94e9 and viscosity 1.8e-4 -> 2.0e-4 J/(kg K), Pa,
+    Pa s against CoolProp; every ethalox config here (and the LE4 (3) stand's engine) still carries
+    the old block. Forward performance hardly moves (6870.29 -> 6870.31 N on the stand at 578 psia)
+    but the stability numbers do: chug gate 1.445 -> 1.420, LOX water hammer 3182 -> 2561 psi,
+    line quarter-wave 2697 -> 2170 Hz. A measured value may well differ on purpose, so this only
+    says so; it changes nothing.
+    """
+    if isinstance(config, dict):
+        name = config.get("propellant_preset")
+        fluids = config.get("fluids") or {}
+    else:
+        name = getattr(config, "propellant_preset", None)
+        fluids = getattr(config, "fluids", None) or {}
+    if not name:
         return None
-    return ("Chamber geometry was solved for " + ", ".join(mism) +
-            ". It is being used as a seed only — re-run optimization for a valid design.")
+    preset = _preset_fluids(str(name))
+    diffs = []
+    for side in ("oxidizer", "fuel"):
+        live = fluids.get(side) if isinstance(fluids, dict) else None
+        if live is None:
+            continue
+        if not isinstance(live, dict):
+            live = live.model_dump() if hasattr(live, "model_dump") else vars(live)
+        for key, ref in (preset.get(side) or {}).items():
+            val = live.get(key)
+            if isinstance(ref, bool) or not isinstance(ref, (int, float)) or not isinstance(val, (int, float)):
+                continue
+            if ref and abs(val - ref) > _FLUID_DRIFT_REL * abs(ref):
+                diffs.append(f"{live.get('name') or side} {key} {val:g} (preset {ref:g})")
+    if not diffs:
+        return None
+    return (f"Fluid properties differ from the {name} preset (configs/propellants/{name}.yaml, "
+            f"sourced): " + ", ".join(diffs) + ". Refresh them from the preset unless they were measured.")
