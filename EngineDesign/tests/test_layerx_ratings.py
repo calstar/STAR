@@ -172,7 +172,8 @@ def _burn(peak_ox: float, peak_fuel: float):
         "provenance": {"derived": {"roles": {"oxidiser": "OXT", "fuel": "FUT"}, "ambient_pa": 94069.72,
                                    "gauge_zero_pa": 101325.0,
                                    "tank_mawp_psi": {"OXT": 750.0 + ATM_PSI, "FUT": 750.0 + ATM_PSI},
-                                   "vessel_ratings": {"OXT": {"basis": "burst", "words": "764.7 psia (burst 1500 psig "
+                                   "vessel_ratings": {"OXT": {"basis": "burst", "label": "TK-LOX",
+                                                              "words": "764.7 psia (burst 1500 psig "
                                                               "over a safety factor of 2, estimated)"}}}},
     }
 
@@ -188,6 +189,12 @@ def test_the_limits_grade_the_tank_peak_on_the_trip():
     assert fuel["value"] == pytest.approx(700.0 - ATM_PSI) and ox["warn"] < fuel["value"] < ox["limit"]
     assert ox["grade"] == "info"   # the team, 2026-10-03: tank limits are information; the trip itself is graded
     assert "burst 1500 psig" in ox["basis"] and ox["rating_source"] == "burst"
+    # Across the wall is a difference: "psi", which the page draws as a gap (contract.limitKindOf). It was
+    # "psig", which the page has no kind for: a bare number with the suffix glued on, outside the units.
+    assert ox["unit"] == fuel["unit"] == "psi"
+    # The vessel by its name on the drawing, not its node id.
+    assert ox["basis"].endswith("TK-LOX trips the stand at")
+    assert fuel["basis"].endswith("FUT trips the stand at")      # no rating words: the id is all there is
 
 
 def test_the_set_point_and_optimiser_caps_are_the_trip():

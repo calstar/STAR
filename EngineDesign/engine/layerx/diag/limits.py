@@ -457,15 +457,18 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
             # against the absolute figure: one atmosphere and more lenient, the % reading low.
             rating = ratings.get(tank_id) if isinstance(ratings.get(tank_id), Mapping) else {}
             words = rating.get("words") or f"{trip:.1f} psia (the drawing's MAWP)"
+            vessel = rating.get("label") or tank_id
             peak_g, rating_g = peak - gauge_zero_psia, trip - gauge_zero_psia
             out.append(_entry(
-                f"tank_mawp_{short}", f"{name} tank peak vs rating", "tanks", peak_g, "psig", rating_g, use * rating_g,
+                # "psi": a pressure across the wall is a difference (ADR 0007: psia to people, a difference
+                # plain psi); the page draws "psi" as a gap and has no "psig" kind (contract.limitKindOf).
+                f"tank_mawp_{short}", f"{name} tank peak vs rating", "tanks", peak_g, "psi", rating_g, use * rating_g,
                 "max",
                 # Information for now (the team, 2026-10-03: "don't worry about tank limits for now"); a
                 # vessel over its rating still trips the stand (vessel_trip, the twin's own physics).
                 "info", t, i, f"series.{short}.tank_psia",
                 f"Ullage pressure, highest over the recorded lead-in and the burn, less the gauge zero "
-                f"({gauge_zero_psia:.2f} psia) the drawing's rating is stated on, against the {words} {tank_id} trips "
+                f"({gauge_zero_psia:.2f} psia) the drawing's rating is stated on, against the {words} {vessel} trips "
                 "the stand at",
                 f"Highest pressure across the wall: {peak_g / rating_g * 100:.0f} % of the rating the twin trips at "
                 f"(amber above {use * 100:.0f} %, a judgement). The recorded lead-in is the last 0.5 s before Fire, "
@@ -479,8 +482,8 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
             out.append(_entry(
                 f"tank_meop_{short}", f"{name} tank peak vs MEOP", "tanks", across, "psi", meop, None, "max",
                 "info", t, i, f"series.{short}.tank_psia",
-                "Ullage pressure across the wall (as for the MAWP), against the stated maximum expected operating "
-                "pressure",
+                f"Ullage pressure less the site's atmosphere ({ambient_psia:.2f} psia), against the stated maximum "
+                "expected operating pressure",
                 "MEOP is the most the vessel is meant to see in operation: above it the burn has left the envelope "
                 "the vessel was qualified for.", rating_source="restated MEOP"))
         cap = _num(req.get(cap_key))
