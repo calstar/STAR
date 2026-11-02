@@ -61,8 +61,10 @@ function Explain({ text, children }: { text: ReactNode; children: ReactNode }) {
 
 /** The value as it is, to the step's places at least: a step of 5 printed
  *  the COPV charge time of 9.7 s as "10", and the row lied about the number
- *  the stand ran on. */
-function fmt(v: number, step: number): string {
+ *  the stand ran on. A value too small for that -- network_tolerance's 1e-8
+ *  floor read "0" -- is printed as JavaScript writes it. */
+export function fmt(v: number, step: number): string {
+  if (v !== 0 && Math.abs(v) < 1e-4) return String(Number(v.toPrecision(6)));
   const stepPlaces = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step)));
   const own = (String(Number(v)).split('.')[1] ?? '').length;
   const places = Math.min(Math.max(stepPlaces, own), 6);

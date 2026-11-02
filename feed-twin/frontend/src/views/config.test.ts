@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { fromPsia } from '../lib/pressure';
-import { rowCommit } from './Config';
+import { fmt, rowCommit } from './Config';
+
+describe('a Configuration row shows the number the stand runs on', () => {
+  it('network_tolerance down to its 1e-8 floor, not "0"', () => {
+    expect(fmt(1e-8, 1e-6)).toBe('1e-8');
+    expect(fmt(1e-7, 1e-6)).toBe('1e-7');
+    expect(fmt(5e-7, 1e-6)).toBe('5e-7');
+    expect(fmt(1e-6, 1e-6)).toBe('0.000001');
+    expect(Number(fmt(2.5e-7, 1e-6))).toBe(2.5e-7);
+  });
+  it('the rest as before: to the step\'s places at least', () => {
+    expect(fmt(9.7, 5)).toBe('9.7');
+    expect(fmt(0.001, 1e-6)).toBe('0.0010');
+    expect(fmt(0, 1e-6)).toBe('0');
+    expect(fmt(120, 5)).toBe('120');
+  });
+});
 
 // Rows as /api/tunables gives them (backend/tunables.py).
 const dome = { unit: 'psi', gauge_wire: true, low: 0, high: 1000, step: 5 };
