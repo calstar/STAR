@@ -1414,11 +1414,27 @@ class TankSim:
 
     def _collect(self, added: float) -> None:
         """Put ``added`` kg of the load into the liquid."""
+        # The rising liquid does p dV work on the ullage it displaces: the term
+        # `Tank.rates` books as `expansion_power` for a draining tank, with the
+        # sign turned. Without it the vent took the displaced gas at its
+        # enthalpy and what stayed lost p v per kilogram vented -- a fuel
+        # ullage poured onto at atmosphere cooled 293 -> 285 K, where by hand
+        # an adiabatic displacement at constant pressure leaves it as it was.
+        work = 0.0
+        if added > 0.0:
+            try:
+                rho_l = self.tank.liquid_density(self.state)
+                if rho_l > 0.0:
+                    work = self.tank.pressure(self.state) * added / rho_l
+            except (ValueError, PropertyError):
+                work = 0.0
+        ullage = self.state.ullage
         # `replace`, not a fresh TankState: rebuilding field by field silently
         # drops anything added to the dataclass later, which is exactly how
         # `vapour_mass` came to reset to zero every step.
         self.state = replace(
             self.state,
+            ullage=replace(ullage, energy=ullage.energy + work),
             liquid_mass=self.state.liquid_mass + added,
             # A load stirs the liquid; the layer forms once it is still.
             surface_temperature=(

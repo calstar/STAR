@@ -243,6 +243,27 @@ def test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere() -> None:
 
 
 @needs_tables
+def test_a_poured_load_displaces_the_ullage_without_cooling_it() -> None:
+    """The built-in load raised the liquid and shrank the ullage with no p dV
+    work on the gas; the vent then took the displaced gas at its enthalpy, and
+    what stayed behind lost p v per kilogram vented: the fuel ullage cooled
+    293 -> 285 K during a 15 s pour onto a 293 K tank at atmosphere. By hand,
+    an adiabatic displacement at constant pressure leaves the gas where it
+    was -- the liquid's work on the gas pays the flow work leaving."""
+    ids = _ids()
+    session = _session(True)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    session.state = "Fuel Fill"
+    coldest = 293.15
+    for _ in range(36):  # 18 s: the whole pour
+        session.step(0.5)
+        coldest = min(coldest, fuel.tank.gas_temperature(fuel.state))
+    assert fuel.state.liquid_mass > 3.0, "poured"
+    assert psig(fuel.pressure) == pytest.approx(0.0, abs=0.1), "on its vent"
+    assert coldest > 292.0, f"the displaced ullage cooled to {coldest:.2f} K"
+
+
+@needs_tables
 def test_the_cart_actuators_drive_nothing() -> None:
     bound = _session(True).binding.to_symbol
     assert "GSE High Press Control" not in bound, "the built-in charge's command"

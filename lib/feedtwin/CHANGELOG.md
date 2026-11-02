@@ -73,6 +73,14 @@ be able to find why they differ.
   that limit and cannot lift before it." A relief counts when it is drawn on the
   vessel's gas side (reached without crossing a regulator, another vessel or another
   relief). The trip limit itself is unchanged.
+- **A poured load does p dV work on the ullage it displaces** (`TankSim._collect`,
+  the built-in fuel load and the dewar load). The liquid rose and the ullage shrank
+  with its energy untouched; the vent then took the displaced gas at its enthalpy
+  and what stayed lost p v per kilogram vented. By hand, an adiabatic displacement
+  at constant pressure leaves the gas where it was (the liquid's work on the gas
+  pays the flow work leaving): `Tank.rates` books exactly this as
+  `expansion_power` for a draining tank, and `_collect` now books it with the sign
+  turned.
 - **The tick split is documented as the code does it**: round(tick / live_step)
   equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
   ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
@@ -102,6 +110,10 @@ be able to find why they differ.
   cooling 0.03 K/s); the bottle's clamp ledger grows 5 ug/s at rest (was 0.55 g/s).
   The blowdown down to atmosphere is unchanged. No burn reaches the floor; the
   benchmark passes.
+- LE4 (3) Fuel Fill (the built-in 15 s pour onto a 293 K tank at atmosphere): the
+  fuel ullage ends the pour at 293.0 K (was 284.65 K, then warming back and pressing
+  the shut tank 0.13 psi). The LOX load takes the same term. T-0, the burns and the
+  benchmark do not pour; `scripts/physics_benchmark.py` passes.
 
 ### Tests
 - `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
@@ -110,7 +122,8 @@ be able to find why they differ.
   `test_psia_display.py` follows the trip's new wording.
 - `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`,
   `test_a_bottle_charging_is_not_down_to_anything`,
-  `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`.
+  `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`,
+  `test_a_poured_load_displaces_the_ullage_without_cooling_it`.
 - `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
   `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`,
   `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.
