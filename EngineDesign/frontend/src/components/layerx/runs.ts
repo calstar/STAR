@@ -51,6 +51,14 @@ export function runFigures(r: RunView, altitude?: (m: number) => string): string
   return `${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s${apogee ? ` · ${altitude ? altitude(apogee) : `${fmt(apogee * FT, 0)} ft`}` : ''}`;
 }
 
+/** How long a sweep takes, said before it starts: as long as the last one did (its wall clock), else 'a few
+ * minutes'. The page said 'about a minute' for a sweep that took 5.9 minutes (19 burns on 3 workers). */
+export function sweepDuration(lastWallS?: number | null): string {
+  if (lastWallS === null || lastWallS === undefined || !Number.isFinite(lastWallS) || lastWallS <= 0) return 'a few minutes';
+  const min = lastWallS / 60;
+  return min < 1.5 ? 'about a minute, as the last sweep' : `about ${Math.round(min)} minutes, as the last sweep`;
+}
+
 /** What each kind of job is called on the page. */
 export const KIND_WORD: Record<string, string> = {
   run: 'burn', uncertainty: 'sweep', optimize: 'search', reconcile: 'injector solve', trade: 'trade study',

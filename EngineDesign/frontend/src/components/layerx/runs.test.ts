@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { RunView } from '../../api/layerx';
 import { DEFAULT_SYSTEM, makeUnits } from '../lx/units';
-import { runFigures } from './runs';
+import { runFigures, sweepDuration } from './runs';
+
+describe('sweepDuration', () => {
+  it('says as long as the last sweep took, not a fixed minute', () => {
+    // s10_unc.mjs: 19 burns on 3 workers took 353 s while the page said 'about a minute'.
+    expect(sweepDuration(353)).toBe('about 6 minutes, as the last sweep');
+    expect(sweepDuration(60)).toBe('about a minute, as the last sweep');
+    expect(sweepDuration(undefined)).toBe('a few minutes');
+  });
+});
 
 describe('runFigures', () => {
   const flown = { status: 'done', summary: { total_impulse_Ns: 23810, apogee_agl_m: 3090 } } as unknown as RunView;
