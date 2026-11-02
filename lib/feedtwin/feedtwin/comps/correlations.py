@@ -202,12 +202,15 @@ def _crane(constant: float) -> FittingK:
     """A Crane coefficient expressed as a multiple of the pipe friction factor.
 
     Crane TP-410 gives many fittings as ``K = n . f_T``, where f_T is the
-    fully-turbulent friction factor of the attached pipe -- which is why
-    :class:`FittingContext` carries one.
+    fully-turbulent friction factor *of the pipe size* -- ``fluids.fittings.
+    ft_Crane(D)``, a constant of the bore, not the line's friction factor at its
+    own Reynolds number. Scaling ``ctx.fd`` instead put a 30 f_T elbow anywhere
+    from 0.55 to 1.09 against Crane's 0.885 in 9.5 mm tube, and laminar flow
+    (64/Re) made it larger still.
     """
 
     def K(ctx: FittingContext) -> float:
-        return constant * ctx.fd
+        return constant * float(ft.ft_Crane(ctx.bore))
 
     return K
 
@@ -219,14 +222,15 @@ register_fitting("contraction", _contraction)
 register_fitting("expansion", _expansion)
 register_fitting("entrance_sharp", lambda ctx: float(ft.entrance_sharp()))
 register_fitting("exit", lambda ctx: float(ft.exit_normal()))
-register_fitting(
-    "tee_run",
-    lambda ctx: float(ft.K_run_converging_Crane(ctx.bore, ctx.bore, 0.5, 0.5)),
-)
-register_fitting(
-    "tee_branch",
-    lambda ctx: float(ft.K_branch_converging_Crane(ctx.bore, ctx.bore, 0.5, 0.5)),
-)
+# A segment's tee carries one flow and knows nothing of the other leg's, so it
+# is Crane's *unsplit* tee: flow straight through the run 20 f_T, flow turning
+# through the branch 60 f_T (TP-410's standard-tee multiples). The split-flow
+# correlations (K_{run,branch}_{converging,diverging}_Crane) need the other
+# leg's flow and direction; these used to read the converging pair at a split
+# of 0.5/0.5 -- a ratio of one, all of the flow from the branch -- which gave
+# the branch 0.41 (Crane 1.77) and a run carrying nothing 0.525.
+register_fitting("tee_run", _crane(20.0))
+register_fitting("tee_branch", _crane(60.0))
 register_fitting(
     "ball_valve_full",
     lambda ctx: float(ft.K_ball_valve_Crane(ctx.bore, ctx.bore, 0.0)),

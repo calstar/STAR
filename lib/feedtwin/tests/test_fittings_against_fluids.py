@@ -61,6 +61,34 @@ def test_a_bend_fitting_reads_its_angle_in_degrees(degrees: float) -> None:
     assert _K(bend, mdot, flow) == pytest.approx(expected, rel=1e-9)
 
 
+@pytest.mark.parametrize("mdot", [0.05, 0.3, 1.0])
+@pytest.mark.parametrize("kind,n", [("elbow_90_crane", 30.0), ("elbow_45_crane", 16.0)])
+def test_a_crane_multiple_is_of_the_fully_turbulent_f_T(
+    kind: str, n: float, mdot: float
+) -> None:
+    """Crane TP-410 gives these as ``K = n . f_T``, f_T the fully turbulent
+    friction factor of the pipe size (fluids' ``ft_Crane``) -- not the line's
+    friction factor at its own Reynolds number, which put a 30 f_T elbow
+    anywhere from 0.55 to 1.09 against Crane's 0.885 in 9.5 mm."""
+    flow = _ethanol()
+    assert _K(_fitting(kind), mdot, flow) == pytest.approx(
+        n * ft.ft_Crane(BORE), rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("kind,n", [("tee_run", 20.0), ("tee_branch", 60.0)])
+def test_an_unsplit_tee_is_cranes_f_T_multiple(kind: str, n: float) -> None:
+    """A segment's tee carries one flow and does not know the other leg's, so
+    it is Crane's unsplit tee: through the run 20 f_T, turning through the
+    branch 60 f_T. It used to read fluids' converging-tee correlations at a
+    split of 0.5/0.5 -- which is *all* the flow from the branch -- giving
+    0.41 for the branch (Crane 1.77) and 0.525 for a run carrying nothing."""
+    flow = _ethanol()
+    assert _K(_fitting(kind), 0.3, flow) == pytest.approx(
+        n * ft.ft_Crane(BORE), rel=1e-12
+    )
+
+
 def test_a_bend_fitting_equals_the_bend_component() -> None:
     """Same geometry, two components, one correlation: one K."""
     flow = _ethanol()
