@@ -505,7 +505,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
               {data.copv_pressure_psi ? "COPV & Tank Pressures vs Time" : "Tank Pressures vs Time"}
             </h4>
-            {summary.copv_initial_pressure_psi && summary.copv_mode === 'configured' && (
+            {!!summary.copv_initial_pressure_psi && summary.copv_mode === 'configured' && (
               // The charge the config loads (press_tank.initial_gas_mass), checked against the curve.
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs justify-end">
                 <span className="text-[var(--color-text-primary)]">
@@ -522,7 +522,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 </span>
               </div>
             )}
-            {summary.copv_initial_pressure_psi && summary.copv_mode !== 'configured' && (
+            {!!summary.copv_initial_pressure_psi && summary.copv_mode !== 'configured' && (
               // No charge in the config: the numbers are what the curve needs, margin zero by construction.
               <div className="flex gap-4 text-xs">
                 <span className="text-[var(--color-text-primary)]">
