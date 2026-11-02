@@ -4626,14 +4626,60 @@ def _replay(
     return numbers, [*lost, *trace.notes]
 
 
-_EXPLAIN = run_records.Explainer()
+#: Explanations by whose: one each, as studies are (D-51). One for the whole
+#: server let anyone watch -- and cancel -- someone else's, and refused a
+#: second person's with a 409 (H006).
+_EXPLAIN: dict[str, run_records.Explainer] = {}
+#: Explanations burning at once on this server: each rung is a headless
+#: burn, so a few keep the consoles live where one per person might not.
+EXPLAIN_LIMIT = 3
+
+
+def _explainer(request: Request) -> run_records.Explainer:
+    return _EXPLAIN.setdefault(
+        userdata.store.current_user(request), run_records.Explainer()
+    )
+
+
+def _sees_stand(viewer: str, owner: str, doc_id: str) -> bool:
+    """Whether ``viewer`` may look at the stand ``owner``/``doc_id``, as the
+    stands router lets them open it: its owner, its share list, or anyone
+    when it is the featured stand."""
+    if viewer == owner:
+        return True
+    record = stands.store.find_record(owner, doc_id)
+    if record is None:
+        return False
+    if getattr(stands.store, "open_to_all", False):
+        return True
+    if any(slug_user(str(e)) == viewer for e in record.get("sharedWith") or []):
+        return True
+    featured = stands.store.read_featured()
+    return featured is not None and (
+        slug_user(str(featured["owner"])),
+        str(featured["id"]),
+    ) == (owner, doc_id)
+
+
+def _sees_run(viewer: str, owner: str, record: Mapping[str, Any]) -> bool:
+    """A run is seen by whoever sees its stand; one not on a stand, by the
+    folder's owner alone (runs.py: "everyone the stand is shared with")."""
+    if viewer == owner:
+        return True
+    ref = record.get("stand") or {}
+    return bool(ref.get("id")) and _sees_stand(viewer, owner, str(ref["id"]))
 
 
 def _run_for(request: Request, run_id: str, owner: str | None) -> dict[str, Any]:
-    who = slug_user(owner) if owner else userdata.store.current_user(request)
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
     record = run_records.store.get(who, run_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
+    if not _sees_run(viewer, who, record):
+        raise HTTPException(
+            status_code=403, detail="This run is on a stand not shared with you"
+        )
     return record
 
 
@@ -4700,17 +4746,34 @@ async def session_t0(session_id: str) -> SessionOut:
 
 
 @app.get("/api/twin/runs")
-async def list_runs(
+def list_runs(
     request: Request, stand: str | None = None, owner: str | None = None
 ) -> list[dict[str, Any]]:
     """Run summaries, newest first: a stand's (in its owner's folder, so the
-    people it is shared with see the same list), or your own."""
-    who = slug_user(owner) if owner else userdata.store.current_user(request)
-    return run_records.store.list([who], stand=stand)
+    people it is shared with see the same list), or your own -- and of
+    someone else's folder, only the runs on stands you may see.
+
+    A plain ``def``: it reads the disk, so it runs in the threadpool rather
+    than on the loop that ticks every console."""
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
+    listed = run_records.store.list([who], stand=stand)
+    if who == viewer:
+        return listed
+    seen: dict[str, bool] = {}
+    out = []
+    for row in listed:
+        ref = row.get("stand") or {}
+        doc_id = str(ref.get("id") or "")
+        if doc_id and doc_id not in seen:
+            seen[doc_id] = _sees_stand(viewer, who, doc_id)
+        if doc_id and seen[doc_id]:
+            out.append(row)
+    return out
 
 
 @app.get("/api/twin/runs/diff")
-async def diff_runs(
+def diff_runs(
     request: Request,
     a: str,
     b: str,
@@ -4725,8 +4788,9 @@ async def diff_runs(
 
 
 @app.get("/api/twin/runs/explain")
-async def explain_status() -> dict[str, Any]:
-    return dict(_EXPLAIN.state)
+async def explain_status(request: Request) -> dict[str, Any]:
+    """Your explanation: running, or the last one's answer."""
+    return dict(_explainer(request).state)
 
 
 @app.post("/api/twin/runs/explain")
@@ -4749,22 +4813,57 @@ async def explain_runs(
     ) -> tuple[dict[str, float], list[str]]:
         return _replay(inputs, cancelled, horizon_s=horizon)
 
-    if not _EXPLAIN.start(first, second, replay):
-        raise HTTPException(status_code=409, detail="An explanation is already running")
-    return dict(_EXPLAIN.state)
+    mine = _explainer(request)
+    if mine.running:
+        raise HTTPException(
+            status_code=409,
+            detail="Your explanation is still running; cancel it or wait for it.",
+        )
+    if sum(1 for job in _EXPLAIN.values() if job.running) >= EXPLAIN_LIMIT:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{EXPLAIN_LIMIT} explanations are running on this server; "
+            "try again when one finishes.",
+        )
+    if not mine.start(first, second, replay):
+        raise HTTPException(
+            status_code=409,
+            detail="Your explanation is still running; cancel it or wait for it.",
+        )
+    return dict(mine.state)
 
 
 @app.post("/api/twin/runs/explain/cancel")
-async def explain_cancel() -> dict[str, Any]:
-    _EXPLAIN.cancel()
-    return dict(_EXPLAIN.state)
+async def explain_cancel(request: Request) -> dict[str, Any]:
+    """Cancel your explanation; nobody else's."""
+    mine = _explainer(request)
+    mine.cancel()
+    return dict(mine.state)
 
 
 @app.get("/api/twin/runs/{run_id}")
-async def get_run(
-    request: Request, run_id: str, owner: str | None = None
-) -> dict[str, Any]:
+def get_run(request: Request, run_id: str, owner: str | None = None) -> dict[str, Any]:
     return _run_for(request, run_id, owner)
+
+
+@app.delete("/api/twin/runs/{run_id}")
+def delete_run(
+    request: Request, run_id: str, owner: str | None = None
+) -> dict[str, str]:
+    """Delete a run record: the folder's owner only -- the stand's owner for
+    a run on a stand, the runner for one that was not. Evidence is never
+    edited; a practice burn need not be kept for ever."""
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
+    if who != viewer:
+        _run_for(request, run_id, owner)  # 404 or 403 before the refusal
+        raise HTTPException(
+            status_code=403,
+            detail="Only the stand's owner may delete its runs.",
+        )
+    if not run_records.store.delete(who, run_id):
+        raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
+    return {"deleted": run_id}
 
 
 @app.get("/api/tunables")

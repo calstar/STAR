@@ -27,8 +27,9 @@ reported as such rather than spread across the groups.
 
 Records live in the stardesign user-data volume, ``<root>/<user>/runs``: on a
 stand, in the stand owner's folder, so everyone the stand is shared with sees
-its runs; otherwise in the runner's own. They are evidence, so they are never
-edited; an owner may delete one.
+its runs; otherwise in the runner's own -- and only those people see them. They
+are evidence, so they are never edited; the folder's owner may delete one.
+Each has a small summary beside it (``<id>.summary.json``) that the list reads.
 """
 
 from __future__ import annotations
@@ -78,6 +79,13 @@ GAUGE_KEYS = frozenset(key for key, _, unit in OUTCOME_KEYS if unit == "psig")
 
 _ID = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$")
 
+#: A record's summary is kept beside it as ``<id>.summary.json``; the list
+#: reads those. Bump the version when :func:`summary` changes what it says,
+#: and every summary is written again from its record the next time it is
+#: listed.
+SUMMARY_SUFFIX = ".summary.json"
+SUMMARY_VERSION = 2
+
 
 def new_id(now: float | None = None) -> str:
     """Sortable by time, unique by suffix: ``20261006T171502-3fa9c1``."""
@@ -110,7 +118,33 @@ class RunStore:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, indent=1, default=_jsonable))
         tmp.replace(path)
+        self._summarise(path, record)
         return record
+
+    def _summarise(self, path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Write the record's summary beside it, for :meth:`list`: a record is
+        ~20 kB with its traces, and the Runs tab lists every one every 5 s."""
+        out = {"summary_version": SUMMARY_VERSION, **summary(record)}
+        side = path.with_name(f"{path.stem}{SUMMARY_SUFFIX}")
+        tmp = side.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(out, default=_jsonable))
+            tmp.replace(side)
+        except OSError:
+            pass  # the list reads the record instead
+        return out
+
+    def delete(self, user: str, run_id: str) -> bool:
+        """Remove one record and its summary; whether there was one."""
+        if not _ID.match(run_id):
+            return False
+        folder = self.folder(user, create=False)
+        path = folder / f"{run_id}.json"
+        if not path.is_file():
+            return False
+        path.unlink()
+        (folder / f"{run_id}{SUMMARY_SUFFIX}").unlink(missing_ok=True)
+        return True
 
     def get(self, user: str, run_id: str) -> dict[str, Any] | None:
         if not _ID.match(run_id):
@@ -131,16 +165,36 @@ class RunStore:
             if not folder.is_dir():
                 continue
             for path in folder.glob("*.json"):
-                try:
-                    record = json.loads(path.read_text())
-                except (OSError, ValueError):
+                if not _ID.match(path.stem):
+                    continue  # a summary, or not a record
+                found = self._summary_of(path)
+                if found is None:
                     continue
-                ref = record.get("stand") or {}
+                ref = found.get("stand") or {}
                 if stand is not None and ref.get("id") != stand:
                     continue
-                out.append(summary(record))
+                out.append(found)
         out.sort(key=lambda r: str(r["id"]), reverse=True)
         return out
+
+    def _summary_of(self, path: Path) -> dict[str, Any] | None:
+        """A record's summary: its file beside it, else (an older record, or
+        one summarised by older code) read from the record and written."""
+        side = path.with_name(f"{path.stem}{SUMMARY_SUFFIX}")
+        try:
+            kept = json.loads(side.read_text())
+            if kept.get("summary_version") == SUMMARY_VERSION:
+                kept.pop("summary_version", None)
+                return dict(kept)
+        except (OSError, ValueError, AttributeError):
+            pass
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        written = self._summarise(path, record)
+        written.pop("summary_version", None)
+        return written
 
 
 def summary(record: Mapping[str, Any]) -> dict[str, Any]:
