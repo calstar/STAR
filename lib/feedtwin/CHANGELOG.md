@@ -164,6 +164,19 @@ be able to find why they differ.
   its inlet, and says so when the lines ran the other way. Symmetric valves read as
   before. No drawing in the repo, nor LE4 (3), builds a different network (36
   builds compared; the only conflict, DR-REG-G, is a dome loader and not plumbed).
+- **A dome valve is no vent when the cart is cut** (`_unloaded_dome_valves`).
+  Rocket only, the loader of DPR_HP's dome went with the cart, so the dome line was
+  not found and DR-CTRL-R -- the rocket's dome isolation solenoid, between the
+  dome port and the capped DR-QD-B -- was reported as "venting to atmosphere" with
+  its dome-side node (where DR-PT-R reads) pinned there. A dome-loaded regulator's
+  dome line is now walked without its loader, as the session walks a cut dome
+  line; a walk that reaches a vessel, a boundary or another regulator (a dome
+  tapped off plumbing) is left as before. Valve roles and every other vent are
+  unchanged on the LE4 fixture and LE4 (3).
+- **Paired disconnects a drawn line already joins are not "left unmated"**
+  (`_mate_disconnects`). HP-QD-A/HP-QD-B on the LE4 cart are paired and joined by
+  their own line; pid-designer reads that as coupled and says nothing, the twin
+  warned of a fault that is not there. The pair is now left as drawn.
 
 ### Changed results
 - LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
@@ -181,6 +194,10 @@ be able to find why they differ.
 - `tests/test_pid_drawn_freely.py`: a CV and a PR dragged against the flow flow,
   in flow order read as before, and a CV drawn backwards checks the flow and says
   why. Three fail with the old reading.
+- `test_ignore_gse.py::test_the_rockets_dome_valve_is_no_vent_with_the_cart_cut`,
+  `test_rocket_and_gse.py::test_a_pair_drawn_joined_is_not_called_unmated`,
+  `test_pages_and_mates.py::test_halves_joined_by_their_own_line_are_coupled_and_nothing_is_said`:
+  each fails on the old build.
 
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 

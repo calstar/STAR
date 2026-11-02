@@ -41,7 +41,15 @@ from feedtwin.model.component import ComponentInstance
 from feedtwin.model.param import Param, Provenance
 from feedtwin.model.pressure import say
 from feedtwin.model.segments import LineSegment
-from feedtwin.pid.document import Diagram, DiagramError, PidEdge, PidNode
+from feedtwin.pid.document import (
+    BOUNDARY_TYPES,
+    INLINE_TYPES,
+    SOURCE_TYPES,
+    Diagram,
+    DiagramError,
+    PidEdge,
+    PidNode,
+)
 from feedtwin.pid.roles import ground_ids, vehicle_ids
 from feedtwin.solve.network import Network
 from feedtwin.vessels.geometry import cylindrical_from_volume, level_of_volume
@@ -813,6 +821,7 @@ def build_network(
     # Their symbols are loading gas, read off the drawing, not vents of feed.
     dome_lines = _dome_lines(diagram, dome_loaders)
     on_dome_lines = {sid for line in dome_lines.values() for sid in line.adjacent}
+    on_dome_lines |= _unloaded_dome_valves(diagram, dome_loaders)
 
     # 4b. A valve with one side unplumbed is a vent to atmosphere.
     #
@@ -1024,7 +1033,8 @@ def _mate_disconnects(
     Pairing need not be written on both halves (pid-designer saves only the
     half that was edited); two halves naming different partners are a drawing
     error and are left unmated, said so. A half that has lines on both of its
-    sides, or none, has no free side to mate and is left as it is.
+    sides, or none, has no free side to mate and is left as it is. Two halves a
+    drawn line already joins are coupled by it, and are left as drawn.
 
     Returns ``("mate:<a>:<b>", free side of a, free side of b)`` per pair, in
     the shape of the direct connections ``_join_direct`` takes.
@@ -1061,8 +1071,15 @@ def _mate_disconnects(
         a, b = sorted((node.id, mate.id))
         pairs.add((a, b))
 
+    # Two halves joined by a line of their own are coupled on the page already,
+    # whatever the pair says -- pid-designer reads them so (its checks.ts) and
+    # raises nothing. Mating them as well found no free side on either half
+    # and warned of an uncoupled pair that the drawing had in fact coupled.
+    joined = {frozenset((e.source, e.target)) for e in diagram.edges}
     out: list[tuple[str, str, str]] = []
     for a, b in sorted(pairs):
+        if frozenset((a, b)) in joined:
+            continue
         free: dict[str, list[str]] = {}
         for qd in (a, b):
             ends = (f"{qd}.in", f"{qd}.out")
@@ -1770,6 +1787,65 @@ def _dome_lines(
             vents=frozenset(v for v in valves if lines_on[v] == 1),
         )
     return out
+
+
+def _unloaded_dome_valves(
+    diagram: Diagram, loaders: Mapping[str, str]
+) -> frozenset[str]:
+    """Valves on the dome line of a dome-loaded regulator nothing drawn loads.
+
+    :func:`_dome_lines` finds a dome line by its loader. With none on the
+    drawing -- the loader was on the cart and the cart was cut
+    (``ignore_gse``), or the dome is filled off the drawing -- the line is still
+    drawn up to the coupling its gas comes in through, and the valves on it
+    fell through to step 4b: the rocket's dome isolation solenoid was reported
+    as a vent to atmosphere, its dome-side node (and the dome transducer on it)
+    pinned there. Walked as the session walks a cut dome line
+    (``Session._find_cut_dome_lines``): from the ``dome`` handle through
+    junctions, instruments and on/off valves, stopping at a disconnect or any
+    other inline symbol. A walk that reaches a vessel, a boundary or another
+    regulator is no dome line of its own -- the dome is tapped off plumbing --
+    and is left to step 4b as before.
+    """
+    loaded = set(loaders.values())
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    tapped_types = SOURCE_TYPES | BOUNDARY_TYPES | {"PR"}
+    stop = INLINE_TYPES - VENTING_VALVE_TYPES | {"RV"}
+    out: set[str] = set()
+    for node in diagram.nodes:
+        if (
+            node.type != "PR"
+            or node.options.get("domeLoaded") != "yes"
+            or node.id in loaded
+        ):
+            continue
+        frontier = [
+            edge.target if edge.source == node.id else edge.source
+            for edge in diagram.edges
+            if (edge.source == node.id and edge.source_handle == DOME_HANDLE)
+            or (edge.target == node.id and edge.target_handle == DOME_HANDLE)
+        ]
+        seen: set[str] = set()
+        tapped = False
+        while frontier and not tapped:
+            here = frontier.pop()
+            if here in seen or here not in by_id or here == node.id:
+                continue
+            seen.add(here)
+            kind = by_id[here].type
+            if kind in tapped_types:
+                tapped = True
+            elif kind not in stop:
+                frontier.extend(adjacent.get(here, ()))
+        if not tapped:
+            out |= {
+                sid for sid in seen if by_id[sid].type in VENTING_VALVE_TYPES - {"RV"}
+            }
+    return frozenset(out)
 
 
 def _dome_valve_roles(

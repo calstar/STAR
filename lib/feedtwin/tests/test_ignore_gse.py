@@ -424,6 +424,21 @@ def _dome_press_machine() -> Any:
     return machine_from_dict(table)
 
 
+def test_the_rockets_dome_valve_is_no_vent_with_the_cart_cut() -> None:
+    """Rocket only, DR-CTRL-R sits on DPR_HP's dome line between the dome port
+    and the capped DR-QD-B. The loader went with the cart, so the dome line was
+    not found, and the solenoid was reported as a vent to atmosphere with its
+    dome side -- where DR-PT-R reads -- pinned there. The cart's vent line
+    stays a vent."""
+    ids = _ids()
+    cut = _model(True).built
+    assert not [w for w in cut.warnings if "venting" in w and "DR-CTRL-R" in w]
+    branch = cut.network.branches[ids["DR-CTRL-R"]]
+    for end in (branch.upstream, branch.downstream):
+        assert cut.network.nodes[end].pressure is None, end
+    assert [w for w in cut.warnings if "venting" in w and "FV-SOL" in w]
+
+
 def _dome(session: Any) -> float:
     """The dome the rocket's regulator reads now [psig]."""
     signal = session.model.built.actuators[_ids()["DPR_HP"]]
