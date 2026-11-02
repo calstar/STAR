@@ -570,6 +570,12 @@ def compute_timeseries_results(
         summary["copv_initial_mass_kg"] = copv_results["copv_initial_mass_kg"]
         summary["copv_min_margin_psi"] = copv_results["copv_min_margin_psi"]
         summary["copv_volume_L"] = copv_results["copv_volume_L"]
+        summary["copv_mode"] = copv_results["copv_mode"]
+        summary["copv_required_pressure_psi"] = copv_results["copv_required_pressure_psi"]
+        summary["copv_required_mass_kg"] = copv_results["copv_required_mass_kg"]
+        # What the margin is graded against: the regulator's minimum differential, when stated.
+        need = getattr(getattr(runner.config, "design_requirements", None), "regulator_min_differential_psi", None)
+        summary["copv_margin_needed_psi"] = float(need) if need is not None else None
     
     # =========================================================================
     # Correlation Matrix - Compute correlations between key variables
@@ -683,24 +689,35 @@ def _run_copv_analysis(
         "P_tank_F (psi)": np.asarray(P_tank_F_psi),
     })
     
+    # The charge actually loaded, when the config says (press_tank.initial_gas_mass, or the legacy
+    # press_tank.mass). With one, the panel checks THAT charge -- its P0, its trace, its margin --
+    # and shows the sized requirement beside it. Without, it can only size: the P0 that just meets
+    # the curve, i.e. a margin of zero by construction, which used to be shown as "P0" with a green
+    # 0.1 psi margin on the LE4 (3) stand whose 1.312 kg charge is ~3,800 psia.
+    m0_cfg = getattr(press_tank, "initial_gas_mass", None) or getattr(press_tank, "mass", None)
+    solver_args = dict(
+        df=df,
+        config=config,
+        n=1.2,  # polytropic exponent
+        T0_K=300.0,  # initial COPV temperature
+        Tp_K=293.0,  # default propellant gas temp (overridden by branch temps)
+        use_real_gas=True,  # use Z lookup table
+        n2_Z_csv=N2_Z_LOOKUP_CSV,
+        pressurant_R=296.8,  # gas constant for N2
+        branch_temperatures_K={
+            "oxidizer": 250.0,  # oxidizer gas temp
+            "fuel": 293.0,      # fuel gas temp
+        },
+        copv_volume_m3=copv_volume_m3,
+    )
+
     try:
-        # Run COPV solver with hardcoded parameters
-        copv_result = size_or_check_copv_for_polytropic_N2(
-            df=df,
-            config=config,
-            n=1.2,  # polytropic exponent
-            T0_K=300.0,  # initial COPV temperature
-            Tp_K=293.0,  # default propellant gas temp (overridden by branch temps)
-            use_real_gas=True,  # use Z lookup table
-            n2_Z_csv=N2_Z_LOOKUP_CSV,
-            pressurant_R=296.8,  # gas constant for N2
-            branch_temperatures_K={
-                "oxidizer": 250.0,  # oxidizer gas temp
-                "fuel": 293.0,      # fuel gas temp
-            },
-            copv_volume_m3=copv_volume_m3,
-        )
-        
+        # The requirement: the P0 (and charge) that just meets the curve in this volume.
+        sized = size_or_check_copv_for_polytropic_N2(**solver_args)
+        copv_result = sized
+        if m0_cfg:
+            copv_result = size_or_check_copv_for_polytropic_N2(**solver_args, copv_m0_kg=float(m0_cfg))
+
         # Extract COPV pressure trace (Pa -> psi)
         PH_trace_Pa = np.asarray(copv_result.get("PH_trace_Pa", []))
         if len(PH_trace_Pa) == 0:
@@ -710,9 +727,14 @@ def _run_copv_analysis(
         
         return {
             "copv_pressure_psi": copv_pressure_psi,
+            # "configured": the loaded charge, checked; "sized": no charge configured, so the
+            # numbers are the requirement and the margin is zero by construction.
+            "copv_mode": "configured" if m0_cfg else "sized",
             "copv_initial_pressure_psi": float(copv_result.get("P0_Pa", 0) * PA_TO_PSI),
             "copv_initial_mass_kg": float(copv_result.get("m0_kg", 0)),
             "copv_min_margin_psi": float(copv_result.get("min_margin_Pa", 0) * PA_TO_PSI),
+            "copv_required_pressure_psi": float(sized.get("P0_Pa", 0) * PA_TO_PSI),
+            "copv_required_mass_kg": float(sized.get("m0_kg", 0)),
             "copv_volume_L": free_volume_L,
         }
         

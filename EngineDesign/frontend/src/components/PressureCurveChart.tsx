@@ -172,6 +172,8 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
       </div>
     );
   }
+  // The COPV must stay this far above the tank to regulate (design_requirements.regulator_min_differential_psi).
+  const copvMarginNeeded = summary.copv_margin_needed_psi ?? null;
 
   // Transform data for recharts - keep it simple like before
   const chartData: ChartDataPoint[] = data.time.map((t, i) => ({
@@ -503,16 +505,34 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
               {data.copv_pressure_psi ? "COPV & Tank Pressures vs Time" : "Tank Pressures vs Time"}
             </h4>
-            {summary.copv_initial_pressure_psi && (
-              <div className="flex gap-4 text-xs">
-                <span className="text-green-400">
-                  P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
+            {summary.copv_initial_pressure_psi && summary.copv_mode === 'configured' && (
+              // The charge the config loads (press_tank.initial_gas_mass), checked against the curve.
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs justify-end">
+                <span className="text-[var(--color-text-primary)]">
+                  Charge P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
                 </span>
                 <span className="text-[var(--color-text-secondary)]">
                   m₀: {formatValue(summary.copv_initial_mass_kg || 0, 3)} kg
                 </span>
-                <span className={`${(summary.copv_min_margin_psi || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  Min Margin: {formatValue(summary.copv_min_margin_psi || 0, 1)} psi
+                <span className={`${(summary.copv_min_margin_psi ?? 0) > (copvMarginNeeded ?? 0) ? 'text-green-400' : 'text-red-400'}`}>
+                  Min margin: {formatValue(summary.copv_min_margin_psi ?? 0, 0)} psi{copvMarginNeeded != null ? ` (needs ${formatValue(copvMarginNeeded, 0)})` : ''}
+                </span>
+                <span className="text-[var(--color-text-muted)]">
+                  required: {formatValue(summary.copv_required_pressure_psi ?? 0, 0)} psia / {formatValue(summary.copv_required_mass_kg ?? 0, 3)} kg
+                </span>
+              </div>
+            )}
+            {summary.copv_initial_pressure_psi && summary.copv_mode !== 'configured' && (
+              // No charge in the config: the numbers are what the curve needs, margin zero by construction.
+              <div className="flex gap-4 text-xs">
+                <span className="text-[var(--color-text-primary)]">
+                  Required P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
+                </span>
+                <span className="text-[var(--color-text-secondary)]">
+                  m₀: {formatValue(summary.copv_initial_mass_kg || 0, 3)} kg
+                </span>
+                <span className="text-[var(--color-text-muted)]">
+                  sized for zero margin; set press_tank.initial_gas_mass to check a charge
                 </span>
               </div>
             )}

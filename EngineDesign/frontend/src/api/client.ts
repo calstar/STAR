@@ -540,6 +540,13 @@ export interface TimeSeriesSummary {
   copv_initial_mass_kg?: number;
   copv_min_margin_psi?: number;
   copv_volume_L?: number;
+  /** 'configured': the charge press_tank.initial_gas_mass loads, checked; 'sized': none set, so the
+   *  P0/m0 above are what the curve needs (zero margin by construction). */
+  copv_mode?: 'configured' | 'sized';
+  copv_required_pressure_psi?: number;
+  copv_required_mass_kg?: number;
+  /** design_requirements.regulator_min_differential_psi, when set. */
+  copv_margin_needed_psi?: number | null;
   /** The configured load per tank, and how far short of the curve it falls (regulated runs). */
   lox_loaded_kg?: number;
   fuel_loaded_kg?: number;
