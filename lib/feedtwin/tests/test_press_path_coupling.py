@@ -157,9 +157,15 @@ def test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing() -> None:
     session.command_state("Engine Abort")
     start = fuel.state.liquid_mass
     most = 0
+    worst = 0.0
     for _ in range(10):
         session.step(0.02)
         most = max(most, session.solver_log[-1].couplings)
+        worst = max(worst, abs(psig(fuel.pressure)))
     assert start - fuel.state.liquid_mass > 0.01, "the fuel drains"
     assert abs(psig(fuel.pressure)) < 0.1, "at atmosphere"
     assert most <= 2, f"{most} coupling steps in one 20 ms step"
+    # One coupling a step leaves a two-step ring of one step's drain over the
+    # ullage, -0.001/+0.013 psig on LE4: bounded, and under the panel's tenth of
+    # a psi. It must not grow.
+    assert worst < 0.05, f"the fuel ullage rang {worst:.3f} psi off the air"
