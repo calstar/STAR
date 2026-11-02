@@ -4045,16 +4045,22 @@ def _burn_series(
     keep = run_records.stride_indices(len(window))
     picked = [window[i] for i in keep]
 
-    def engine(read: Any) -> list[float]:
+    def engine(read: Any, idle: bool = False) -> list[float]:
         return [
-            round(read(s.chamber), 4) if is_burning(s) and s.chamber else 0.0
+            (
+                round(read(s.chamber), 4)
+                if s.chamber is not None and (idle or is_burning(s))
+                else 0.0
+            )
             for s in picked
         ]
 
     return {
         "t": [round(s.t - start, 4) for s in picked],
         "thrust_N": engine(lambda c: c.thrust),
-        "pc_psig": engine(lambda c: psig(c.pressure)),
+        # The chamber with the engine out too, as the live channel reads it
+        # (IDLE_READS): the site's air, not a literal 0 psig (H013).
+        "pc_psig": engine(lambda c: psig(c.pressure), idle=True),
         "of": engine(lambda c: c.mixture_ratio),
         "tanks": {
             sim.id: [round(s.tanks[sim.id]["pressure_psi"], 2) for s in picked]

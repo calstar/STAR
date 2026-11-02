@@ -205,6 +205,34 @@ def test_a_record_never_contradicts_itself_about_the_dome(
     assert inputs["knobs"]["dome"] == 480.0
 
 
+# ---------------------------------------------------------------- the traces
+
+
+def test_a_recorded_chamber_reads_the_chamber_outside_the_burn(
+    le4: tuple[str, str, str],
+) -> None:
+    """The live Pc reads the chamber with the engine out (IDLE_READS: 13.6 psia
+    on a card with site ambient); the record's trace wrote a literal 0 psig
+    there, which the Runs and Engine tabs plot as 14.7 psia (H013). Thrust
+    and O/F stay 0 outside it."""
+    from feedtwin.session.gauge import psig
+
+    diagram, engine, _ = le4
+    sid = _open(diagram, engine)
+    for _ in range(5):
+        client.post(f"/api/session/{sid}/tick", json={"dt": 0.1})
+    session = main._SESSIONS[sid]
+    history = list(session.history)
+    idle = [s for s in history if s.chamber is not None]
+    assert idle, "the chamber is read at rest"
+    at_rest = psig(idle[-1].chamber.pressure)
+    assert abs(at_rest) > 0.5, "a site ambient, not standard: else this proves nothing"
+    t = history[-1].t
+    series = main._burn_series(session, history, t, t)
+    assert series["pc_psig"][-1] == pytest.approx(at_rest, abs=0.01)
+    assert set(series["thrust_N"]) == {0.0} and set(series["of"]) == {0.0}
+
+
 # --------------------------------------------------------------- the replay
 
 LE4 = (
