@@ -32,3 +32,52 @@ def test_the_feed_twins_library_is_listed_and_deduplicated(tmp_path, monkeypatch
     pulled = next(d for d in listed if d.name == "stand from pid-designer")
     assert pulled.source.startswith("feed-twin library")
     assert sources.DrawingStore(None).get(pulled.id) is not None
+
+
+def _image_env():
+    """The engine-design-api container's environment, as Dockerfile.api and docker-compose.yml set it, and
+    where its files come from: the image's COPY destinations and the compose volume mounts."""
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    docker = (root / "EngineDesign" / "Dockerfile.api").read_text()
+    env = {}
+    for block in re.findall(r"^ENV ((?:.*\\\n)*.*)$", docker, flags=re.M):
+        for k, v in re.findall(r"(\w+)=(\S+)", block.replace("\\\n", " ")):
+            env[k] = v
+    copies = [dest.rstrip("/") for _src, dest in re.findall(r"^COPY (?:--\S+ )*(\S+) (\S+)$", docker, flags=re.M)]
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]
+    api = compose["engine-design-api"]
+    env.update({k: str(v) for k, v in (api.get("environment") or {}).items()})
+    mounts = {m.split(":")[0]: m.split(":")[1] for m in api.get("volumes") or []}
+    return env, copies, mounts, compose
+
+
+def test_the_deployed_layer_x_reads_the_twins_library_and_its_featured_stand():
+    """In compose, Layer X resolved the twin's library and sample set to /feed-twin/backend/..., which the
+    image does not have: production Layer X listed none of the cockpit's drawings or pulls, and no featured
+    stand (R003). Every drawing source must be set to a place the container has."""
+    env, copies, mounts, compose = _image_env()
+    for key in ("LAYERX_DRAWINGS", "LAYERX_STATEMACHINES", "LAYERX_SAMPLE", "LAYERX_FEEDTWIN_LIBRARY"):
+        path = env.get(key)
+        assert path, f"{key} is not set for engine-design-api"
+        in_image = any(path == c or path.startswith(c + "/") for c in copies)
+        on_volume = any(path == m or path.startswith(m + "/") for m in mounts.values())
+        assert in_image or on_volume, f"{key}={path} is neither copied into the image nor on a mounted volume"
+    # The library is the twin's own: the same directory on the same volume as feed-twin-api's.
+    twin = compose["feed-twin-api"]
+    twin_mounts = {m.split(":")[0]: m.split(":")[1] for m in twin.get("volumes") or []}
+    lib = twin["environment"]["FEEDTWIN_LIBRARY"]
+    volume = next(v for v, m in twin_mounts.items() if lib.startswith(m + "/"))
+    assert mounts.get(volume) == twin_mounts[volume] and env["LAYERX_FEEDTWIN_LIBRARY"] == lib
+
+
+def test_a_missing_drawing_source_is_said_not_listed_as_nothing(tmp_path, monkeypatch):
+    monkeypatch.setenv("LAYERX_SAMPLE", str(tmp_path / "nowhere"))
+    monkeypatch.setenv("LAYERX_FEEDTWIN_LIBRARY", str(tmp_path))
+    problems = sources.source_problems()
+    assert any("LAYERX_SAMPLE" in p and "nowhere" in p for p in problems)
+    assert not any("LAYERX_FEEDTWIN_LIBRARY" in p for p in problems)

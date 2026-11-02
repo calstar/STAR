@@ -59,6 +59,21 @@ def machines_dir() -> Path:
     return Path(os.environ.get("LAYERX_STATEMACHINES") or (feedtwin_root() / "backend" / "statemachines"))
 
 
+def source_problems() -> List[str]:
+    """Each place Layer X reads drawings from that is not there, in words, for the server log and
+    ``GET /api/layerx/status``. A missing one lists nothing and says nothing: the deployed image
+    resolved the twin's library and sample set to ``/feed-twin/backend/...`` (no checkout beside it),
+    so production Layer X never saw what the cockpit holds, nor the featured stand."""
+    out: List[str] = []
+    for what, path, env in (("the shipped drawings", shipped_drawings_dir(), "LAYERX_DRAWINGS"),
+                            ("the feed twin's library", feedtwin_library_dir(), "LAYERX_FEEDTWIN_LIBRARY"),
+                            ("feed-twin's sample set (the featured stand)", sample_dir(), "LAYERX_SAMPLE"),
+                            ("the DAQ state-machine tables", machines_dir(), "LAYERX_STATEMACHINES")):
+        if not path.is_dir():
+            out.append(f"{what}: {path} is not a directory (set {env})")
+    return out
+
+
 def cea_table_path(config: Any) -> Optional[Path]:
     """The engine's own CEA cache, resolved the way EngineDesign's CEACache resolves it."""
     try:

@@ -57,6 +57,20 @@ from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/layerx", tags=["layerx"])
 
+
+def _warn_missing_sources() -> None:
+    """Say at startup when a place Layer X reads drawings from is missing: it lists nothing from there,
+    silently, which is how production Layer X came to see neither the twin's library nor the featured stand."""
+    import logging
+
+    from engine.layerx.sources import source_problems
+
+    for problem in source_problems():
+        logging.getLogger("layerx").warning("Layer X reads no drawings from %s", problem)
+
+
+_warn_missing_sources()
+
 MAX_JOBS = int(os.environ.get("LAYERX_MAX_JOBS", "2"))
 _JOB_SLOTS = threading.BoundedSemaphore(MAX_JOBS)
 #: Finished jobs that could not be saved, kept in memory per process (newest).
@@ -531,7 +545,7 @@ def _execute(job: Job, work: Callable[[Callable[[str, float], None], Callable[[]
 
 @router.get("/status")
 async def status() -> Dict[str, Any]:
-    from engine.layerx.sources import machines_dir, shipped_drawings_dir
+    from engine.layerx.sources import machines_dir, shipped_drawings_dir, source_problems
 
     try:
         import feedtwin  # noqa: F401
@@ -545,6 +559,8 @@ async def status() -> Dict[str, Any]:
         "feedtwin": {"available": available, "version": version, "error": error},
         "shipped_drawings": str(shipped_drawings_dir()) if shipped_drawings_dir().is_dir() else None,
         "state_machines": str(machines) if machines.is_dir() else None,
+        # Each drawing source that is not there: it lists nothing, so say so (the deployed image did).
+        "source_problems": source_problems(),
         "pid_designer_url": PID_DESIGNER_URL,
         "max_jobs": MAX_JOBS,
     }
