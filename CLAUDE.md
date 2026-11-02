@@ -38,7 +38,7 @@ scripts/check.sh full     # plus tests marked slow and the Layer X parity test
 cd lib/feedtwin   && python3 -m pytest -q && python3 -m mypy feedtwin && python3 -m black --check feedtwin tests
 cd feed-twin      && python3 -m pytest -q -m "not slow"     # drop -m for all 200+
 cd pid-designer   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q
-cd EngineDesign   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q   # 4 known failures
+cd EngineDesign   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q   # green; tests/conftest.py lists what is quarantined
 ```
 
 feed-twin installs `lib/stardesign` (`pip install -e ../lib/stardesign`; dev.sh
