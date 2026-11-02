@@ -412,7 +412,10 @@ function CaseTable({
               Bottle (L)
             </th>
             {fill !== null && (
-              <th className={th} title="Liquid over tank volume at T-0, for a tank the engine's fire load does not name">
+              <th
+                className={th}
+                title="Liquid over tank volume at T-0 for a tank the engine's fire load does not name; for one it names, the most it may hold, which cuts a fire load that does not fit. 50 to 99 %."
+              >
                 Fill (%)
               </th>
             )}

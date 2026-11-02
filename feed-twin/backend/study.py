@@ -31,9 +31,12 @@ from feedtwin.session.hookup import CHARGE, DOME
 
 from backend.session import LIVE_STEP, Session
 from feedtwin.session.core import DRY_MASS
-from backend.tunables import GAUGE_WIRE
+from backend.tunables import GAUGE_WIRE, TUNABLES
 
 _log = logging.getLogger("feed-twin.study")
+
+#: The Configuration row a case's fill sets: its bounds are the case's.
+FILL = next(t for t in TUNABLES if t.key == "full_fraction")
 
 #: What a case can swap the bottle's gas for, by the fluid name drawings use.
 PRESSURANTS = ("helium", "nitrogen")
@@ -104,8 +107,14 @@ class StudyCase:
         if litres is not None and not 0.0 < litres <= 500.0:
             raise ValueError(f"case {index + 1}: bottle {litres:g} L is out of range")
         fill = number("fill_fraction")
-        if fill is not None and not 0.0 < fill <= 1.0:
-            raise ValueError(f"case {index + 1}: fill {fill:g} is not in (0, 1]")
+        if fill is not None and not FILL.low <= fill <= FILL.high:
+            # The row's own bounds: (0, 1] was accepted here, then clamped to
+            # them, and a 30 % case burned at 50 % reading "fill 30 %".
+            raise ValueError(
+                f"case {index + 1}: fill {fill * 100:.0f} % is outside the "
+                f"{FILL.label.lower()}'s {FILL.low * 100:.0f} to "
+                f"{FILL.high * 100:.0f} %"
+            )
         knobs: dict[str, float] = {}
         for knob, setting in dict(raw.get("knobs") or {}).items():
             try:
@@ -252,6 +261,40 @@ def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
     return out or ["the stand as set"]
 
 
+def _fill_as_loaded(
+    changes: list[str],
+    case: StudyCase,
+    session: Session,
+    planned: Mapping[str, float],
+    loaded: Mapping[str, float],
+) -> list[str]:
+    """A case's fill said as what it loaded.
+
+    A fill is liquid over tank volume for a tank the engine's fire load does
+    not name; for one it names, T-0 loads the fire load and the fill is only
+    the most the tank may hold (:func:`~feedtwin.session.burn.jump_to_t0`):
+    it cuts a fire load that does not fit and otherwise changes nothing. The
+    change read "fill 80 %" while the fire loads burned unchanged."""
+    if case.fill_fraction is None:
+        return changes
+    fire = session.fire_loads()
+    named = [k for k in session.vehicle_tanks if k in fire]
+    if not named:
+        return changes
+    cut = [
+        f"{session.tanks[k].label} {loaded.get(k, planned[k]):.3f} kg"
+        for k in named
+        if k in planned and planned[k] < fire[k] - 1e-6
+    ]
+    asked = f"fill {case.fill_fraction * 100:.0f} %"
+    said = (
+        f"{asked}, cutting the fire load to {', '.join(cut)}"
+        if cut
+        else f"{asked}, which cuts no fire load"
+    )
+    return [said if change == asked else change for change in changes]
+
+
 def _thin(n: int) -> list[int]:
     if n <= MAX_POINTS:
         return list(range(n))
@@ -321,10 +364,18 @@ def run_case(
     except Exception as exc:  # noqa: BLE001 - the traces still stand
         totals = {}
         trace.notes.append(f"Not totalled: {exc}")
+    # What each tank held at ignition, off the trace: what was burned.
+    loaded = {
+        k: round(v["liquid_mass_kg"][0], 3)
+        for k, v in trace.tank.items()
+        if v.get("liquid_mass_kg") and k not in ground
+    }
     return CaseResult(
         label=case.label,
         x=case.x,
-        changes=describe(request.base, case),
+        changes=_fill_as_loaded(
+            describe(request.base, case), case, session, t0.loads, loaded
+        ),
         t0={
             "copv_psi": round(copv, 1),
             "tank_psi": t0.tank_psi,
@@ -334,12 +385,7 @@ def run_case(
             # The gas swapped in, or "" for the stand's own: what a sweep
             # crossed with the pressurant groups its series by.
             "pressurant": case.pressurant or "",
-            # What each tank held at ignition, off the trace: what was burned.
-            "loads_kg": {
-                labels.get(k, k): round(v["liquid_mass_kg"][0], 3)
-                for k, v in trace.tank.items()
-                if v.get("liquid_mass_kg") and k not in ground
-            },
+            "loads_kg": {labels.get(k, k): kg for k, kg in loaded.items()},
         },
         t=column(trace.t, 3),
         # The vehicle's tanks: a cart's transfer tank sits at atmosphere through

@@ -83,6 +83,10 @@ def test_a_case_changes_only_what_it_says() -> None:
         ({"copv_psi": -5}, "COPV"),
         ({"bottle_litres": 0}, "bottle"),
         ({"fill_fraction": 1.5}, "fill"),
+        # Outside the Configuration's full fraction (50-99 %) it was clamped
+        # and run there, the results still saying the fill asked.
+        ({"fill_fraction": 0.3}, "fill 30 %"),
+        ({"fill_fraction": 1.0}, "fill 100 %"),
         ({"copv_psi": "lots"}, "convert"),
         # A knob typed 10 psia went on the wire as -4.7 psig and into the run.
         ({"knobs": {"DOME": -4.7}}, "DOME"),
@@ -290,6 +294,39 @@ def test_a_case_cut_short_by_cancel_is_not_shown_as_a_burn(
     assert body["stage"] == "cancelled", body["stage"]
     assert body["cases"] == [], [(c["label"], c["t"][-1:]) for c in body["cases"]]
     assert any("cancelled" in n and "a" in n for n in body["notes"]), body["notes"]
+
+
+def test_a_case_fill_says_what_it_loaded(stand: str) -> None:
+    """A fill is liquid over tank volume for a tank the engine's fire load
+    does not name, and for one it names only the most it may hold. A case's
+    'fill 50 %' read as a fill while the stand loaded its fire loads; now its
+    change says which loads it cut, and one that cuts none says so."""
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={
+            "session": sid,
+            "horizon_s": 1.0,
+            "cases": [
+                {"label": "half", "fill_fraction": 0.5},
+                {"label": "ninety", "fill_fraction": 0.9},
+            ],
+        },
+    )
+    assert started.status_code == 200, started.text
+    half, ninety = _finish()["cases"]
+    assert half["error"] == "" and ninety["error"] == ""
+    loads = half["t0"]["loads_kg"]
+    # The 7.00 kg fuel fire load does not fit half the 8.67 L fuel tank; the
+    # 6.75 kg of LOX does fit half the 15 L LOX tank.
+    fuel = next(k for k in loads if "FU" in k.upper())
+    lox = next(k for k in loads if "LOX" in k.upper())
+    (said,) = [c for c in half["changes"] if c.startswith("fill")]
+    assert f"{fuel} {loads[fuel]:.3f} kg" in said, said
+    assert lox not in said, said
+    assert loads[lox] == pytest.approx(6.75, abs=0.02)
+    (said,) = [c for c in ninety["changes"] if c.startswith("fill")]
+    assert fuel in said and lox not in said, said
 
 
 def test_a_tank_too_small_for_its_fire_load_is_said(stand: str) -> None:
