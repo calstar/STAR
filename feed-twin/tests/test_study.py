@@ -217,6 +217,19 @@ def test_a_study_that_cannot_be_read_is_refused_before_it_runs(
     assert not client.get("/api/study", params={"session": sid}).json()["running"]
 
 
+def test_a_horizon_of_zero_is_the_shortest_not_the_default(stand: str) -> None:
+    """``horizon_s or 20`` read 0 as unsent and ran 20 s."""
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={"session": sid, "horizon_s": 0, "cases": [{"label": "a"}]},
+    )
+    client.post("/api/study/cancel", params={"session": sid})
+    assert started.status_code == 200, started.text
+    assert started.json()["horizon_s"] == 1.0
+    _finish()
+
+
 def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     """The stand at a 4,000 psig COPV target and a 450 psig dome: the blank
     case starts there, not at the old study's fixed 4,500 / 550. A case that
