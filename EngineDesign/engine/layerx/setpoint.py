@@ -198,7 +198,10 @@ def figures(res: Dict[str, Any], lockup_psia: Optional[float]) -> Dict[str, Any]
         and fu.get("residual_kg") is not None else None,
         "copv_end_psia": copv_end,
         "copv_spare_psi": (copv_end - spare_over) if copv_end is not None and spare_over else None,
+        # The replay's, on EngineDesign's feed_system (``chug_margin_basis``); these burns run no stability
+        # diagnostic, so the drawing-basis margin the Burn tab grades is not computed here.
         "chug_margin_min": dv.get("chug_margin_min"),
+        "chug_margin_basis": "config" if dv.get("chug_margin_min") is not None else None,
         "throat_area_growth": dv.get("throat_area_growth"),
         "depleted_side": s.get("depleted_side"),
         "failed_steps": s.get("failed_steps"),

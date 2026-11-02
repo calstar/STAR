@@ -1,4 +1,4 @@
-import type { LayerXResult, RunView, SweepResult } from '../../api/layerx';
+import type { LayerXResult, LimitRow, RunView, SweepResult } from '../../api/layerx';
 import { fmt, PSI, VERDICT } from './format';
 
 /**
@@ -82,7 +82,16 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
     const min = (key === 'ox' ? sum.ox : sum.fuel).dp_injector_min_psi;
     redlines.push(`<tr><td>${label}</td><td class="n">≥ ${fmt(pcMean * (1 + floor), 0)} psia</td><td>ΔP/Pc floor ${fmt(floor * 100, 0)} % at ${fmt(pcMean, 0)} psia chamber (chug); expected lowest ΔP ${fmt(min, 0)} psi</td></tr>`);
   }
-  if (dv?.chug_margin_min != null) redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(dv.chug_margin_min, 2)} at ${fmt(dv.chug_margin_min_t ?? NaN, 2)} s</td></tr>`);
+  // The chug margin the run is graded on (DATA-CONTRACT 1; the drawing's feed since 2026-10-03), not the replay's
+  // figure on EngineDesign's own feed_system: on LE4 (3) the card printed 1.21 where the graded margin is 1.004.
+  const gradedChug = ((result as unknown as { limits?: LimitRow[] }).limits ?? [])
+    .find((l) => l.key === 'chug_margin' && l.grade !== 'info' && l.value != null);
+  if (gradedChug) {
+    const basis = /drawing feed basis/.test(gradedChug.basis ?? '') ? 'on the drawing’s feed lines' : 'on EngineDesign’s feed_system';
+    redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(gradedChug.value as number, 2)}${gradedChug.t_worst != null ? ` at ${fmt(gradedChug.t_worst, 2)} s` : ''}, ${basis}</td></tr>`);
+  } else if (dv?.chug_margin_min != null) {
+    redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(dv.chug_margin_min, 2)} at ${fmt(dv.chug_margin_min_t ?? NaN, 2)} s, on EngineDesign’s feed_system (this run has no graded margin on the drawing’s lines)</td></tr>`);
+  }
 
   const settings = p.settings;
   const off = [!settings.ullage_collapse && 'ullage collapse', !settings.ullage_vapour && 'propellant vapour', !settings.line_walls && 'line-wall heat'].filter(Boolean);

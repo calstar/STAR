@@ -66,7 +66,8 @@ FIGURES: Dict[str, tuple] = {
     "fuel_stiffness_min": ("Fuel injector ΔP/Pc, lowest", ""),
     "copv_spare_psi": ("Bottle over lockup at burnout", "psi"),
     "copv_end_psia": ("Bottle at burnout", "psia"),
-    "chug_margin_min": ("Chug margin, lowest", ""),
+    # The replay's figure, on EngineDesign's feed_system: the graded one is on the drawing's lines.
+    "chug_margin_min": ("Chug margin, lowest (config feed basis)", ""),
     "dome_psig": ("Dome dial", "psig"),
     "lockup_psia": ("Tank lockup", "psia"),
 }

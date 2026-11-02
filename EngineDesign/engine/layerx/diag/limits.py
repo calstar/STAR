@@ -280,7 +280,8 @@ def _defaulted(config: Any) -> frozenset:
 # ---------------------------------------------------------------------- the graders
 
 
-def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset()) -> List[Dict[str, Any]]:
+def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset(),
+          derived: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
     msm = _num(req.get("min_stability_margin"))
     amber = THRESHOLDS["chug_margin_amber"]["value"]
     warn = max(amber, msm) if msm is not None else amber
@@ -350,13 +351,26 @@ def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset())
     col = [_num(v) for v in (dv.get("chug_margin") or [])]
     k = run.argext(col, range(len(col)), min) if col else None
     i = run.firing_to_series(k) if k is not None else run.index_of(t)
+    basis = ("EngineDesign double-time-lag chug model at the erosion replay's points (config feed basis, A_t and L* "
+             "at the design point), interpolated onto the twin's firing steps; lowest over every firing step, the "
+             "first included, which lies inside the valve ramp, so the minimum moves with the time step "
+             "(AUDIT 5.1, #12)")
+    if _dig(derived or {}, "options.chug_basis") == "drawing":
+        # The run is graded on the drawing's feed (decided 2026-10-03: "physics, not options"), and its
+        # stability block is absent (a set-point, Hardware, reconcile or sweep burn runs no diagnostics).
+        # The replay's figure is EngineDesign's own feed_system: it read 1.21 'ok' on LE4 (3) where the
+        # drawing basis grades 1.004 'warn'. Shown for what it is, never graded.
+        out.append(_entry(
+            "chug_margin", "Chug margin, config basis (not graded)", "stability", value, "", red, warn, "min", "info",
+            t, i, "delivered.chug_margin", basis,
+            "EngineDesign's own feed_system, not the drawing's lines the run is graded on: that margin is the "
+            "stability diagnostic's, which this burn did not run (a Burn-tab run does) or could not compute, so "
+            f"its chug is not graded. Feed-coupled gain margin, worst over the mixing-lag band. {why}",
+            feed_basis="config"))
+        return out
     out.append(_entry(
         "chug_margin", "Chug margin", "stability", value, "", red, warn, "min", _grade(value, red, warn, "min"),
-        t, i, "delivered.chug_margin",
-        "EngineDesign double-time-lag chug model at the erosion replay's points (config feed basis, A_t and L* "
-        "at the design point), interpolated onto the twin's firing steps; lowest over every firing step, the "
-        "first included, which lies inside the valve ramp, so the minimum moves with the time step "
-        "(AUDIT 5.1, #12)",
+        t, i, "delivered.chug_margin", basis,
         f"Feed-coupled gain margin, worst over the mixing-lag band. {why}"))
     return out
 
@@ -928,7 +942,7 @@ def grade(result: Mapping[str, Any], prep: Any = None, config: Any = None, *,
     defaulted = _defaulted(config)
     band = derived.get("stiffness_band") or {}
     sections = (
-        lambda: _chug(run, req, defaulted),
+        lambda: _chug(run, req, defaulted, derived),
         lambda: _stiffness(run, band),
         lambda: _tanks(run, derived, req, meop_psi, defaulted),
         lambda: _bottle(run),

@@ -57,6 +57,21 @@ describe('the test card', () => {
     expect(card).toContain('<td class="n">1,000.0 psia</td><td>MAWP 985 psi on the drawing');   // the fuel tank: an MAWP
   });
 
+  it('prints the graded chug margin, not the replay’s config-basis one', () => {
+    // LE4 (3): graded 1.004 on the drawing's lines (diagnostics.stability), 1.21 on EngineDesign's feed_system.
+    const r = result();
+    (r as unknown as Record<string, unknown>).delivered = { summary: { chug_margin_min: 1.2057, chug_margin_min_t: 0.45 } };
+    (r as unknown as Record<string, unknown>).limits = [{ key: 'chug_margin', label: 'Chug margin', value: 1.0043, t_worst: 0.3, grade: 'warn',
+      basis: 'EngineDesign double-time-lag chug model, drawing feed basis, from the first full-flow step' }];
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('predicted lowest 1.00 at 0.30 s, on the drawing’s feed lines');
+    expect(card).not.toContain('1.21');
+    // A run with no graded margin says the replay's figure is EngineDesign's feed, not the drawing's.
+    (r as unknown as Record<string, unknown>).limits = [];
+    const old = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(old).toContain('predicted lowest 1.21 at 0.45 s, on EngineDesign’s feed_system');
+  });
+
   it('draws the other lines in psia, and escapes what people typed', () => {
     expect(html).toContain('≥ 678 psia');                   // bottle: lockup + 100 psi
     expect(html).toContain('≥ 458 psia');                   // injector: 382 psia chamber x 1.2

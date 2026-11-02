@@ -269,6 +269,24 @@ def test_the_chug_amber_edge_follows_a_requirement_above_one_point_two_but_never
     assert "1.5" in g["hint"]
 
 
+def test_a_drawing_basis_run_without_its_stability_block_does_not_grade_the_config_margin():
+    """A run graded on the drawing's feed (``options.chug_basis``, decided 2026-10-03) that carries no
+    stability block -- every set-point, Hardware, reconcile and sweep burn -- has only the replay's
+    margin, on EngineDesign's feed_system. It was graded as "the" chug margin: 1.21 'ok' on LE4 (3),
+    where the drawing basis grades 1.004 'warn'. It is now information, labelled with its basis. A run
+    saved before the decision (no options, or ``config``) grades it as it always did."""
+    r = _result()
+    r["delivered"] = {"t": r["series"]["t"][2:], "chug_margin": [0.9] * 8,
+                      "summary": {"chug_margin_min": 0.9, "chug_margin_min_t": 0.05}}
+    assert _by_key(grade(r))["chug_margin"]["grade"] == "bad"
+    r["provenance"]["derived"]["options"] = {"chug_basis": "config"}
+    assert _by_key(grade(r))["chug_margin"]["grade"] == "bad"
+    r["provenance"]["derived"]["options"] = {"chug_basis": "drawing"}
+    g = _by_key(grade(r))["chug_margin"]
+    assert g["grade"] == "info" and g["value"] == 0.9 and g["feed_basis"] == "config"
+    assert "config basis" in g["label"] and "not graded" in g["label"]
+
+
 def test_the_delivered_chug_minimum_maps_onto_the_series_by_firing_step():
     r = _result()
     col = [1.4, 1.35, 1.3, 1.25, 1.21, 1.3, 1.4, 1.5]

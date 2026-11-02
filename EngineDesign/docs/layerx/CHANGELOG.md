@@ -2,6 +2,20 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 One chug margin: the graded one, on the drawing's lines
+
+Since 2026-10-03 the chug margin is graded on the drawing's feed (`diagnostics.stability`, "physics,
+not options"). The replay's `delivered.summary.chug_margin_min` is EngineDesign's own feed_system: on
+LE4 (3) it reads 1.21 where the graded margin is 1.004 (warn), straddling the 1.2 amber edge. The
+printed test card quoted it as "the" chug margin, and a burn with no stability block (every set-point,
+Hardware, reconcile and sweep burn) was graded on it. Now: the test card prints the graded limit and
+says which feed it is on; a drawing-basis run without its stability block reports the replay's figure
+as information ("Chug margin, config basis (not graded)"), so it no longer counts toward a set point's
+feasibility; `delivered.summary.chug_margin_basis` and the set point's `chug_margin_basis` say
+"config", and the change lists label the figure. Runs saved before the decision grade as they did.
+Guarded by `test_layerx_limits.py::test_a_drawing_basis_run_without_its_stability_block_does_not_grade_the_config_margin`
+and `testcard.test.ts` (both red on the old code).
+
 ## 2026-11-02 Candidates burn at the lockup and fill they ask for
 
 The rail writes `dome_psia` and `copv_pressure_psia` as soon as a person turns the dome or bottle knob
