@@ -1207,6 +1207,12 @@ export interface RunSummary {
   engine?: string;
   rocket_only?: boolean;
   outcome: Record<string, number | null>;
+  /** How the burn ended: `burnout` (a tank ran dry), `abort`, `operator`
+   *  (a state commanded mid-burn), `trip`, `closed` (reset or closed while it
+   *  burned), `out` (the engine went out with Fire held); `""` on a record
+   *  written before it was kept. `ended` says it in words. */
+  end_cause?: string;
+  ended?: string;
   converged: boolean;
   mass_error_ppm: number | null;
   code: CodeVersion | null;

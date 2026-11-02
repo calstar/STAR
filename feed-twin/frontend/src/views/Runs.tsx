@@ -61,6 +61,18 @@ const show = (v: unknown): string => {
 /** The gas that pressed a burn, as the stand says it. */
 const GAS: Record<string, string> = { helium: 'He', nitrogen: 'GN2' };
 
+/** A burn that did not end by running a tank dry says how it did end, beside
+ *  when it was fired: a burn cut short at T+1.5 s compared with one flown to
+ *  burnout read as a 111 % thrust change with nothing to say why (H062).
+ *  Burnout, the ordinary end, carries no mark; the words are on hover. */
+const ENDED: Record<string, { text: string; tone: string }> = {
+  abort: { text: 'abort', tone: 'text-[var(--warn)]' },
+  operator: { text: 'cut short', tone: 'text-[var(--warn)]' },
+  trip: { text: 'trip', tone: 'text-[var(--bad)]' },
+  closed: { text: 'reset mid-burn', tone: 'text-[var(--warn)]' },
+  out: { text: 'flame-out', tone: 'text-[var(--warn)]' },
+};
+
 /** A run as the list has it, with what the record keeps beside the outcome:
  *  the gas and the burned tanks at T-0 [psig on the wire]. */
 type Listed = RunSummary & { pressurant?: string; t0_tanks?: Record<string, number | null> };
@@ -326,6 +338,14 @@ export function Runs() {
                 </td>
                 <td className="py-1 pr-3" title={r.created}>
                   {when(r.created)} {r.label && <span className="text-gray-400">· {r.label}</span>}
+                  {r.end_cause && ENDED[r.end_cause] && (
+                    <span
+                      className={`ml-1.5 text-[10px] uppercase tracking-wider ${ENDED[r.end_cause].tone}`}
+                      title={r.ended || ENDED[r.end_cause].text}
+                    >
+                      {ENDED[r.end_cause].text}
+                    </span>
+                  )}
                 </td>
                 <td className="max-w-[22rem] truncate pr-3 text-gray-400" title={`${named(r.diagram)} · ${named(r.engine)}`}>
                   {r.diagram ? (
