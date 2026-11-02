@@ -261,8 +261,12 @@ export function PIDToolbar({
                   title="PNG image" hint="this sheet as on screen, with a title block" />
                 <ExportRow onClick={() => void exportImage('print')} busy={exporting === 'print'}
                   title="PNG for print" hint="white paper and dark ink, whatever the screen" />
+                {/* What it is: the page's HTML inside an <svg> foreignObject
+                    (html-to-image's toSvg), 8 MB for the GSE sheet, which a
+                    browser draws and Inkscape, Word, LibreOffice and PDF
+                    converters do not. For a document, the PNGs. */}
                 <ExportRow onClick={() => void exportImage('svg')} busy={exporting === 'svg'}
-                  title="SVG" hint="scalable, for a document" />
+                  title="SVG (browser only)" hint="scalable in a browser; for a document, use a PNG" />
                 <ExportRow onClick={exportJSON} title="JSON" hint="the whole diagram, for import" />
                 {exportError && <p className="px-2 py-1 text-[10px] text-[var(--color-danger)]">{exportError}</p>}
               </div>
