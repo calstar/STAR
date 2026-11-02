@@ -144,7 +144,7 @@ from feedtwin.session.report import (
     finite,
 )
 from backend.version import VALIDATION, code_version
-from backend.tunables import TUNABLES
+from backend.tunables import TUNABLES, Tunable
 from backend.tunables import SetupError, describe as describe_tunables, parse_setup
 from backend.tunables import wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
@@ -2956,6 +2956,14 @@ def _knob_ranges(session: Session) -> dict[str, tuple[float, float]]:
     return out
 
 
+def _on_row(row: Tunable, number: float) -> str:
+    """A Configuration row's number as a person reads it: a gauge pressure in
+    psia (ADR 0007), anything else in the row's own unit."""
+    if row.gauge_wire:
+        return say(from_psig(number), 1)
+    return f"{number:g} {row.unit}".rstrip()
+
+
 #: A study's horizon when none is sent, and the range it is held to [s].
 STUDY_HORIZON_S = (20.0, 1.0, 120.0)
 
@@ -3057,6 +3065,20 @@ async def start_study(
             parse_setup(case.setup, strict=True)
         except SetupError as exc:
             raise HTTPException(status_code=422, detail=f"case {i + 1}: {exc}") from exc
+        # And inside its row, as a knob is inside its arc: a row's number
+        # outside it was clamped and run there, the case still saying the
+        # number asked ("dome = 8,014.7 psia" burned at 6,014.7).
+        for row in TUNABLES:
+            setting = case.setup.get(row.key)
+            if row.kind != "number" or setting is None:
+                continue
+            if not row.low <= float(setting) <= row.high:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"case {i + 1}: {row.label} ({row.key}) "
+                    f"{_on_row(row, float(setting))} is outside its row's "
+                    f"{_on_row(row, row.low)} to {_on_row(row, row.high)}.",
+                )
     horizon = _horizon(settings.get("horizon_s"))
     base = {
         "diagram": opened.diagram,

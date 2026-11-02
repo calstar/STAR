@@ -332,6 +332,28 @@ def test_a_case_outside_a_knobs_range_is_refused_not_clamped(
     assert not client.get("/api/study", params={"session": sid}).json()["running"]
 
 
+@pytest.mark.parametrize(
+    "setup, words",
+    [
+        # The same 8,000 psig dome as a Configuration row: clamped to the
+        # row's 6,000 and run there, the case saying "dome = 8,014.7 psia".
+        ({"dome": 8000}, "8,014.7 psia is outside its row's 14.7 psia to 6,014.7"),
+        ({"ambient_leak": -5}, "-5"),
+        ({"live_step": 10}, "live_step"),
+    ],
+)
+def test_a_case_setting_outside_its_row_is_refused_not_clamped(
+    stand: str, setup: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a", "setup": setup}]}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
+
+
 def test_a_case_fill_says_what_it_loaded(stand: str) -> None:
     """A fill is liquid over tank volume for a tank the engine's fire load
     does not name, and for one it names only the most it may hold. A case's
