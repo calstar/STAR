@@ -21,7 +21,14 @@ from fastapi.testclient import TestClient
 from backend import bundle
 from backend.assembly import card_version
 from backend.library import LibraryError
-from backend.main import HOOKUPS, _hookup_lineage, app, library, overrides
+from backend.main import (
+    HOOKUPS,
+    _drawing_key,
+    _hookup_lineage,
+    app,
+    library,
+    overrides,
+)
 
 SAMPLE = Path(__file__).resolve().parents[1] / "backend" / "sample"
 client = TestClient(app)
@@ -62,7 +69,8 @@ def _stand() -> tuple[dict[str, Any], str]:
         SAMPLE / "ethalox-doublet.yaml", "/api/library/engines", "bundle engine.yaml"
     )
     library.attach(engine, "card", (SAMPLE / "ethalox-doublet.card.json").read_bytes())
-    name = library.get(drawing).name
+    # What its overrides are kept under: its lineage ("name:bundle LE4").
+    name = _drawing_key(drawing)
     NAMES.append(name)
     overrides.put_entry(
         name,

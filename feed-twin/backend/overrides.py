@@ -16,9 +16,13 @@ the time. The drawing's own value is kept beside it, so
   override records what the drawing said when it was made (``was``), and the
   drawing view flags it when the drawing now says something else.
 
-Overrides are keyed by the drawing's **name**, not its artifact id. A re-import
-of the same drawing is new bytes and a new id; tying overrides to the id would
-lose them every time somebody pulled the working copy, which is constantly.
+Overrides are keyed by the drawing's **lineage** (``main._lineage``: the
+pid-designer document, the shipped file, the upload's name), not its artifact
+id, as its hookup is. A re-import of the same drawing is new bytes and a new
+id; tying overrides to the id would lose them every time somebody pulled the
+working copy, which is constantly. They were keyed by the artifact's name,
+which a release pull changes ("LE4 (3) (0.4)") and an unrelated drawing can
+share (R006); a name's entry is still read until the lineage has its own.
 
 The same store keeps which symbols the console hides. That is shared too: the
 console is what the stand team looks at, and "who hid PT-FUEL-2" should have
@@ -54,6 +58,10 @@ OVERRIDE_SOURCES = ("measured", "manufacturer", "estimated")
 SUPERSEDED_BY_SEGMENTS = frozenset({"length", "bore", "K_minor"})
 
 
+#: Marks an entry copied from a drawing name's (:meth:`OverrideStore.adopt`).
+ADOPTED = "adopted_from"
+
+
 class OverrideError(ValueError):
     """The override could not be stored, naming why."""
 
@@ -81,7 +89,7 @@ class OverrideStore:
 
     Shape::
 
-        {"<drawing name>": {
+        {"<drawing lineage>": {
             "params": {"<element id>": {"<param>": {
                 "value", "unit", "source", "reference", "by", "at",
                 "was": {"value", "unit", "source"} | null}}},
@@ -137,14 +145,39 @@ class OverrideStore:
             for key in ("params", "console_hidden", "console_shown", "console_order")
         }
 
+    def has(self, drawing: str) -> bool:
+        """Whether anything is kept under ``drawing`` -- an emptied entry
+        that was adopted (:meth:`adopt`) included."""
+        return drawing in self._read()
+
+    def adopt(self, drawing: str, legacy: str) -> None:
+        """Start ``drawing``'s entry as a copy of ``legacy``'s, if it has none.
+
+        Entries were keyed by a drawing's name; they are keyed by its lineage
+        now (``main._drawing_key``, R006), and the name's entry is still read
+        until the lineage has one of its own. Copied, not moved: another
+        drawing of that name may still read it. The copy remembers where it
+        came from, so emptying it later does not bring the name's back."""
+        with self._lock:
+            data = self._read()
+            if drawing in data or not isinstance(data.get(legacy), Mapping):
+                return
+            data[drawing] = {**dict(data[legacy]), ADOPTED: legacy}
+            self._write(data)
+
     def _update(self, drawing: str, change: Any) -> dict[str, Any]:
         with self._lock:
             data = self._read()
+            kept = data.get(drawing)
+            adopted = kept.get(ADOPTED) if isinstance(kept, Mapping) else None
             entry = self.entry(drawing)
             change(entry)
             # An emptied entry is removed, so a drawing with nothing overridden
-            # reads exactly as one that never had anything.
+            # reads exactly as one that never had anything -- unless it was
+            # adopted from a name's, which would then be read again.
             entry = {k: v for k, v in entry.items() if v}
+            if adopted:
+                entry[ADOPTED] = adopted
             if entry:
                 data[drawing] = entry
             else:

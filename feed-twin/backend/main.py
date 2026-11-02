@@ -204,10 +204,38 @@ library = Library()
 overrides = OverrideStore(library.root / "overrides.json")
 
 
+def _override_keys(diagram_id: str) -> tuple[str, str]:
+    """Where a drawing's overrides are read from, and where a change goes.
+
+    Its lineage (:func:`_lineage`, or a pull of the same drawing's), as its
+    hookup is, so a re-import -- a pull of the working copy, a release named
+    "LE4 (3) (0.4)" -- keeps them and an unrelated drawing that shares the
+    name does not get them. They were kept under the artifact's name (R006):
+    a name's entry is read until the lineage has one, and a change starts
+    the lineage's as a copy of it (:meth:`OverrideStore.adopt`). Raises
+    LibraryError for an unknown id."""
+    artifact = library.get(diagram_id)
+    lineages = _lineages(artifact)
+    held = next((k for k in lineages if overrides.has(k)), None)
+    if held is not None:
+        return held, held
+    if overrides.has(artifact.name):
+        return artifact.name, lineages[0]
+    return lineages[0], lineages[0]
+
+
 def _drawing_key(diagram_id: str) -> str:
-    """What overrides are kept under: the drawing's name, so a re-import keeps
-    them. Raises LibraryError for an unknown id."""
-    return library.get(diagram_id).name
+    """What this drawing's overrides are read from (:func:`_override_keys`)."""
+    return _override_keys(diagram_id)[0]
+
+
+def _change_key(diagram_id: str) -> str:
+    """What a change to this drawing's overrides is written under: its
+    lineage, started from the name's entry if that is what it read."""
+    read, write = _override_keys(diagram_id)
+    if read != write:
+        overrides.adopt(write, read)
+    return write
 
 
 def _overrides_for(diagram_id: str) -> dict[str, Any]:
@@ -940,8 +968,7 @@ async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
     # kept beside this library under the drawing's lineage: carried, or the
     # importer would run a different wiring.
     if not stand.get("hookup"):
-        lineage, _ = _hookup_lineage(drawing_art)
-        record = library.record(HOOKUPS, lineage) or {}
+        record = library.record(HOOKUPS, _wired_lineage(drawing_art)) or {}
         saved = record.get("hookup")
         if isinstance(saved, Mapping):
             stand["hookup"] = dict(saved)
@@ -956,7 +983,7 @@ async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
         engine=engine,
         card=card,
         machine=machine,
-        overrides=overrides.entry(drawing_art.name),
+        overrides=overrides.entry(_drawing_key(drawing_art.id)),
         code=code_version(),
     )
 
@@ -1092,9 +1119,9 @@ async def import_stand_bundle(
     incoming = raw.get("overrides") or {}
     if any(incoming.values()):
         merged, more = stand_bundle.merge_overrides(
-            overrides.entry(drawing_art.name), incoming
+            overrides.entry(_drawing_key(drawing_art.id)), incoming
         )
-        overrides.put_entry(drawing_art.name, merged)
+        overrides.put_entry(_change_key(drawing_art.id), merged)
         notes.extend(more)
 
     stand["diagram"] = drawing_art.id
@@ -1823,7 +1850,7 @@ async def set_override(
     """Type a number over the drawing's. Takes effect on the next Reset."""
     try:
         drawing = load_diagram_artifact(library, diagram)
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
     except (AssemblyError, LibraryError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     node = drawing.node(element)
@@ -1880,7 +1907,7 @@ async def set_override(
 async def clear_override(diagram: str, element: str, parameter: str) -> dict[str, Any]:
     """Back to the drawing's number."""
     try:
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
         entry = overrides.clear_param(key, element, parameter)
     except (LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1911,7 +1938,7 @@ async def set_console_visibility(
     """Hide a symbol from the console, or show it again, for everyone. The
     ground support starts hidden, so for it this records a showing."""
     try:
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
         if element in _ground_of(diagram):
             overrides.set_console_shown(key, element, not hidden, by=_who(request))
         else:
@@ -1927,7 +1954,7 @@ async def set_console_order(
 ) -> dict[str, Any]:
     """The order the console draws transducers and tanks in, for everyone."""
     try:
-        overrides.set_console_order(_drawing_key(diagram), order)
+        overrides.set_console_order(_change_key(diagram), order)
     except (LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
@@ -1947,7 +1974,7 @@ async def set_console_view(
     in ``order``. Opening a stand puts its view back this way."""
     try:
         overrides.set_console_view(
-            _drawing_key(diagram),
+            _change_key(diagram),
             hidden=set(hidden),
             ground=set(_ground_of(diagram)),
             order=order,
@@ -2070,13 +2097,28 @@ def _source_lineage(source: str) -> str | None:
 
 def _lineage(artifact: Artifact) -> str:
     """Where a drawing comes from, whatever its bytes: the pid-designer
-    document, the shipped file, or the name it was uploaded under (a browser's
-    " (3)" on a re-download stripped). A hookup is kept per lineage, so saving
-    the drawing again -- a new artifact by content -- keeps what was linked."""
+    document, the shipped file, or the name it was uploaded under. A hookup
+    is kept per lineage, so saving the drawing again -- a new artifact by
+    content -- keeps what was linked.
+
+    The name as it is: a browser's " (3)" on a re-download used to be
+    stripped, which put 'LE4', 'LE4 (1)', 'LE4 (3)' and 'LE4 (6)' -- four
+    different drawings in the team's library -- on one hookup, and saving
+    one rewired the others (R005). What was saved under the stripped name
+    before is still read, where it fits (:func:`_inherited`)."""
     own = _source_lineage(artifact.source)
     if own is not None:
         return own
-    return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+    return "name:" + artifact.name.strip()
+
+
+def _legacy_lineage(artifact: Artifact) -> str | None:
+    """The lineage an upload's hookup was saved under before R005: its name
+    with a trailing " (n)" stripped. None where that is the lineage itself."""
+    if _source_lineage(artifact.source) is not None:
+        return None
+    legacy = "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+    return legacy if legacy != _lineage(artifact) else None
 
 
 def _lineages(artifact: Artifact) -> list[str]:
@@ -2092,13 +2134,88 @@ def _lineages(artifact: Artifact) -> list[str]:
     return out
 
 
+def _holds_hookup(lineage: str) -> bool:
+    """Whether a hookup is saved under ``lineage`` (not a reset's marker)."""
+    return "hookup" in (library.record(HOOKUPS, lineage) or {})
+
+
 def _hookup_lineage(artifact: Artifact) -> tuple[str, list[str]]:
     """The lineage whose saved hookup this drawing wires -- the first of
     :func:`_lineages` that has one, else its own, where a save goes -- and the
     other lineages that hold a hookup the stand does not wire."""
-    held = [lin for lin in _lineages(artifact) if library.record(HOOKUPS, lin)]
+    held = [lin for lin in _lineages(artifact) if _holds_hookup(lin)]
     used = held[0] if held else _lineage(artifact)
     return used, [lin for lin in held if lin != used]
+
+
+@functools.lru_cache(maxsize=64)
+def _symbols_of(artifact_id: str) -> frozenset[str]:
+    """The ids drawn on a drawing in the library (content-addressed, so an
+    id's answer never changes); empty if it cannot be read."""
+    try:
+        payload = json.loads(library.read(artifact_id).decode("utf-8"))
+    except (LibraryError, UnicodeDecodeError, json.JSONDecodeError):
+        return frozenset()
+    items = [
+        *(payload.get("nodes") or [] if isinstance(payload, Mapping) else []),
+        *(payload.get("edges") or [] if isinstance(payload, Mapping) else []),
+    ]
+    return frozenset(str(i.get("id")) for i in items if isinstance(i, Mapping))
+
+
+def _bound_symbols(raw: Mapping[str, Any]) -> set[str]:
+    """The drawing ids a stored hookup binds: pinned valves, knob regulators
+    and cabled symbols. Not the engine's channels (``engine.pc``), which no
+    drawing draws."""
+    engine = {channel for channel, *_ in ENGINE_CHANNELS}
+    bound: set[str] = set()
+    valves = raw.get("valves")
+    if isinstance(valves, Mapping):
+        bound |= {str(s) for s in valves.values() if s}
+    for knob in raw.get("knobs") or ():
+        if isinstance(knob, Mapping):
+            bound |= {str(r) for r in knob.get("regulators") or ()}
+    for channel in raw.get("channels") or ():
+        if isinstance(channel, Mapping) and channel.get("symbol"):
+            bound.add(str(channel["symbol"]))
+    return bound - engine
+
+
+def _inherited(artifact: Artifact) -> tuple[str | None, str]:
+    """The pre-R005 hookup this upload still wires, and why one is not.
+
+    Saved under the name less its " (n)" (:func:`_legacy_lineage`), which
+    every upload of that name shared. It is this drawing's when none of its
+    own lineages holds a hookup (or was reset) and every symbol the hookup
+    binds is on this drawing; one that names symbols this drawing does not
+    have is another drawing's, and is said and left alone. Returns the
+    lineage it is under (None if none applies) and a note, or ""."""
+    legacy = _legacy_lineage(artifact)
+    if legacy is None or any(
+        library.record(HOOKUPS, lin) is not None for lin in _lineages(artifact)
+    ):
+        return None, ""
+    raw = (library.record(HOOKUPS, legacy) or {}).get("hookup")
+    if not isinstance(raw, Mapping):
+        return None, ""
+    absent = sorted(_bound_symbols(raw) - _symbols_of(artifact.id))
+    if absent:
+        return None, (
+            f'A hookup saved for {legacy} (the name without its " (n)") is '
+            f"another drawing's: it wires {', '.join(absent[:6])}"
+            f"{', ...' if len(absent) > 6 else ''}, which this drawing does not "
+            "have. The suggested hookup is wired; save one on the Hookup tab to "
+            "keep it for this drawing."
+        )
+    return legacy, ""
+
+
+def _wired_lineage(artifact: Artifact) -> str:
+    """The lineage whose saved hookup the stand runs: its own (or a pull's of
+    the same drawing), else the one it inherits (:func:`_inherited`), else
+    its own, where a save goes."""
+    inherited, _ = _inherited(artifact)
+    return inherited or _hookup_lineage(artifact)[0]
 
 
 def _drawn_knobs(
@@ -2128,13 +2245,16 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     never saved, and used to be indistinguishable from it: the stand ran on a
     different wiring and nothing said so."""
     try:
-        lineage, shadowed = _hookup_lineage(library.get(diagram_id))
+        artifact = library.get(diagram_id)
     except LibraryError:
         suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
         return suggested, False, ""
+    lineage, shadowed = _hookup_lineage(artifact)
+    inherited, problem = _inherited(artifact)
+    if inherited is not None:
+        lineage = inherited
     stored = library.record(HOOKUPS, lineage)
-    problem = ""
-    if stored is not None:
+    if stored is not None and "hookup" in stored:
         try:
             raw = stored.get("hookup")
             unused = (
@@ -2144,7 +2264,9 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
                 if shadowed
                 else ""
             )
-            hookup = Hookup.from_dict(raw if isinstance(raw, Mapping) else {})
+            if not isinstance(raw, Mapping):
+                raise ValueError("it is not a table of pins and knobs")
+            hookup = Hookup.from_dict(raw)
             return hookup, True, unused
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
@@ -3603,7 +3725,7 @@ def _hookup_out(
         runs = cut
     suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
-        lineage=_hookup_lineage(library.get(diagram))[0],
+        lineage=_wired_lineage(library.get(diagram)),
         saved=saved,
         hookup=_hookup_body(daqbox.wiring(hookup, model, table)),
         suggested=_hookup_body(daqbox.wiring(suggested, model, shipped)),
@@ -3711,7 +3833,11 @@ async def save_hookup(
     machine: str = "diablo",
     ignore_gse: bool = False,
 ) -> HookupOut:
-    """Keep a hookup for this drawing's lineage. New stands open with it."""
+    """Keep a hookup for this drawing's lineage. New stands open with it.
+
+    Under its own lineage, never the one it inherits (:func:`_inherited`):
+    that is every same-named upload's, and a save on 'LE4 (1)' rewired
+    'LE4 (3)' (R005)."""
     hookup = _hookup_from_body(body)
     _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
@@ -3736,7 +3862,13 @@ async def reset_hookup(
     except LibraryError as exc:
         # It escaped as a 500.
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    library.drop_record(HOOKUPS, _hookup_lineage(artifact)[0])
+    own = _hookup_lineage(artifact)[0]
+    library.drop_record(HOOKUPS, own)
+    # One it would inherit is other drawings' too, so it is left where it is
+    # and this drawing marked as reset: it runs the suggestion.
+    legacy = _legacy_lineage(artifact)
+    if legacy is not None and _holds_hookup(legacy):
+        library.put_record(HOOKUPS, own, {"reset": True, "diagram": diagram})
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 

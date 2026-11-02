@@ -138,32 +138,37 @@ def test_an_override_needs_a_source_and_a_reference() -> None:
     assert put("NOPE", "volume", 9.0, "L").status_code == 404
 
 
-def test_overrides_follow_the_drawing_across_a_reimport() -> None:
-    sid = stand_id()
-    name = library.get(sid).name
-    assert put("KB1", "volume", 9.0, "L").status_code == 200
+def _upload(filename: str, raw: dict) -> dict:
+    files = {"file": (filename, json.dumps(raw).encode(), "application/json")}
+    answer = client.post("/api/library/diagrams", files=files)
+    assert answer.status_code == 200, answer.text
+    artifact: dict = answer.json()["artifact"]
+    return artifact
 
-    raw = json.loads(library.read(sid))
+
+def test_overrides_follow_the_drawing_across_a_reimport() -> None:
+    """The same file uploaded again, edited: new bytes and a new id in the
+    drawing's lineage (its upload name), and the override is still there --
+    flagged, because the drawing moved underneath it."""
+    raw = json.loads(library.read(stand_id()))
     kb = next(n for n in raw["nodes"] if n["id"] == "KB1")
+    kb["data"]["params"]["volume"]["value"] = 5.0
+    first = _upload("Reimport_Stand.json", raw)
+    assert put("KB1", "volume", 9.0, "L", diagram=first["id"]).status_code == 200
+
     kb["data"]["params"]["volume"]["value"] = 6.0
-    files = {
-        "file": (
-            name.replace(" ", "_") + ".json",
-            json.dumps(raw).encode(),
-            "application/json",
-        )
-    }
-    new = client.post("/api/library/diagrams", files=files).json()["artifact"]
+    new = _upload("Reimport_Stand.json", raw)
     try:
-        assert new["id"] != sid and new["name"] == name
+        assert new["id"] != first["id"] and new["name"] == first["name"]
         volume = bottle_volume(
             client.get("/api/drawing", params={"diagram": new["id"]}).json()
         )
-        assert volume["override"]["value"] == 9.0, "kept under the drawing's name"
+        assert volume["override"]["value"] == 9.0, "kept under the drawing's lineage"
         assert volume["drawing"]["value"] == 6.0
         assert volume["stale"], "the drawing moved underneath the override"
     finally:
         library.remove(new["id"])
+        library.remove(first["id"])
 
 
 # ---------------------------------------------------------------- console
