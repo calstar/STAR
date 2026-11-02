@@ -181,6 +181,10 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(t0_tanks.get(k), Mapping)
         },
         "outcome": {k: outcome.get(k) for k, _, _ in OUTCOME_KEYS},
+        # How the burn ended: burnout, abort, operator, trip, closed, out
+        # ("" on a record written before it was kept), and in words.
+        "end_cause": str(outcome.get("end_cause") or ""),
+        "ended": str(outcome.get("ended") or ""),
         "converged": not solver.get("unconverged"),
         # Unexplained mass where the record has it (error less the guards'
         # booked corrections); older records carry only the mass error.
@@ -291,6 +295,11 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("fluids", ("fluid_set",)),
     ("state machine", ("machine",)),
     ("regulator knobs", ("knobs",)),
+    # What the operator commanded between Fire and the end of the burn (an
+    # abort, a vent, a knob turned): it changes the burn as surely as a
+    # setting, and a replay repeats it at its T+. A burn flown to burnout has
+    # none, and no key.
+    ("operator sequence", ("sequence",)),
     ("T-0", ("t0",)),
     ("settings", ("setup",)),
 )
@@ -492,10 +501,17 @@ class Explainer:
             if base.error or full.error:
                 state["error"] = base.error or full.error
             else:
-                state["attribution"] = attribute(
-                    base.outcome, full.outcome, [r for r in rungs if not r.error]
-                )
                 state["reproduction"] = _reproduction(a, b, base, full)
+                missed = _unreproduced(a, b, base, full)
+                if missed:
+                    # The bars would explain the replays, not the burns: a
+                    # zero ladder beside a 111 % thrust change read as the
+                    # answer (H062). Said instead of shown.
+                    state["error"] = missed
+                else:
+                    state["attribution"] = attribute(
+                        base.outcome, full.outcome, [r for r in rungs if not r.error]
+                    )
             state["stage"] = "done"
         except _Cancelled:
             state["stage"] = "cancelled"
@@ -508,6 +524,39 @@ class Explainer:
 
 class _Cancelled(Exception):
     pass
+
+
+#: How far a replay may land from the burn it replays, as a fraction of the
+#: recorded mean thrust or impulse, before the ladder is not shown. A replay
+#: of a burn flown to burnout lands within a few hundredths of a percent (the
+#: cockpit and the replay share a grid); one that misses by more replays a
+#: different burn -- something the record does not hold made the difference.
+REPRODUCTION_TOLERANCE = 0.05
+
+
+def _unreproduced(
+    a: Mapping[str, Any], b: Mapping[str, Any], base: Rung, full: Rung
+) -> str:
+    """Why the ladder is not shown, or "": a run its replay does not reproduce."""
+    for name, record, rung in (("first", a, base), ("second", b, full)):
+        recorded = record.get("outcome") or {}
+        for key, label, unit in OUTCOME_KEYS:
+            if key not in ("thrust_mean_N", "impulse_Ns"):
+                continue
+            was, now = recorded.get(key), rung.outcome.get(key)
+            if not isinstance(was, (int, float)) or not isinstance(now, (int, float)):
+                continue
+            if abs(now - was) <= REPRODUCTION_TOLERANCE * max(abs(was), 1e-9):
+                continue
+            ended = str(recorded.get("ended") or "")
+            return (
+                f"The {name} run's replay does not reproduce it: {label.lower()} "
+                f"{now:,.0f} {unit} replayed against {was:,.0f} {unit} recorded"
+                + (f" (it ended: {ended})" if ended else "")
+                + ". Something that run depended on is not among its inputs, so "
+                "which input moved the answer cannot be said from these replays."
+            )
+    return ""
 
 
 def _reproduction(

@@ -2059,6 +2059,12 @@ class _Opened:
     events: list[dict[str, Any]] = field(default_factory=list)
     """Every command and T-0, stamped with stand time, for the repro
     (``/api/session/{id}/repro``). Capped at :data:`REPRO_EVENTS`."""
+    commands: list[dict[str, Any]] = field(default_factory=list)
+    """The latest commands, stamped with stand time, newest last: a run record
+    takes the ones between Fire and the end of its burn (its ``sequence``).
+    Kept apart from ``events``, which keeps the first ones once full."""
+    tripped: bool = False
+    """The stand's trip has been seen, and the burn it ended recorded."""
 
 
 def _notices(session_id: str) -> list[str]:
@@ -2149,7 +2155,24 @@ def _session(session_id: str) -> Session:
 
 
 def _close_session(session_id: str, why: str) -> None:
-    """Forget a session, remembering why for whoever asks after it."""
+    """Forget a session, remembering why for whoever asks after it.
+
+    A burn still going is recorded first, as cut short: a Reset, a drawing or
+    engine switch or an eviction mid-burn took the burn with it, and every
+    burn that lit leaves a run record (H034)."""
+    session, opened = _SESSIONS.get(session_id), _OPENED.get(session_id)
+    if (
+        session is not None
+        and opened is not None
+        and not opened.tripped
+        and (opened.burning or opened.lit_t is not None)
+    ):
+        how = (
+            "reset"
+            if "replaced" in why
+            else "closed to make room" if "make room" in why else "closed"
+        )
+        _record_safely(session, opened, session.t, closing=how)
     _SESSIONS.pop(session_id, None)
     _OPENED.pop(session_id, None)
     _TOUCHED.pop(session_id, None)
@@ -2598,16 +2621,22 @@ def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
 #: Events a session keeps for its repro; a stand driven for hours keeps the
 #: first ones, which are the ones that set it up.
 REPRO_EVENTS = 5000
+#: Commands a session keeps for its run records' sequences: the latest ones,
+#: however long the stand has been driven.
+RECENT_COMMANDS = 200
 
 
 def _remember(session_id: str, session: Session, event: dict[str, Any]) -> None:
     """Note an operator's action for the repro, at the stand time it lands."""
     opened = _OPENED.get(session_id)
-    if opened is None or len(opened.events) >= REPRO_EVENTS:
+    if opened is None:
         return
-    opened.events.append(
-        {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
-    )
+    stamped = {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
+    if "command" in stamped:
+        opened.commands.append(stamped)
+        del opened.commands[:-RECENT_COMMANDS]
+    if len(opened.events) < REPRO_EVENTS:
+        opened.events.append(stamped)
 
 
 @app.get("/api/session/{session_id}/repro")
@@ -3556,9 +3585,17 @@ async def session_burns(session_id: str) -> BurnsOut:
     for out in live:
         found = kept.pop(round(out.start_s, 3), None)
         if found is not None:
+            # A recorded burn is over -- a trip records one the frozen frame
+            # still shows burning.
             out = out.model_copy(
-                update={"run_id": found["run_id"], "series": found["series"]}
+                update={
+                    "run_id": found["run_id"],
+                    "series": found["series"],
+                    "burning": False,
+                }
             )
+        elif session.tripped:
+            out = out.model_copy(update={"burning": False})
         burns.append(out)
     burns.extend(
         BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
@@ -4089,23 +4126,148 @@ def _assumed_droop(session: Session) -> str:
     )
 
 
-def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
-    """Record every finished burn in the history not yet recorded."""
+#: What a run record keeps of a command between Fire and the end of its burn:
+#: what moves the stand. Names, chilldown skips and the like do not.
+SEQUENCE_KEYS = ("state", "valve", "open", "release", "knob", "setup", "dome")
+
+
+def _fire_time(opened: _Opened, history: list[SessionSample], burn: Any) -> float:
+    """Stand time of the Fire command that lit ``burn``: the last one sent
+    before it, else where the history's run of Fire before it began."""
+    fired = [
+        float(c["t"])
+        for c in opened.commands
+        if (c.get("command") or {}).get("state") == "Fire"
+        and float(c["t"]) <= burn.start_s + 1e-9
+    ]
+    if fired:
+        return fired[-1]
+    start = float(burn.start_s)
+    for sample in reversed(history):
+        if sample.t > burn.start_s + 1e-9:
+            continue
+        if sample.state != "Fire":
+            break
+        start = sample.t
+    return start
+
+
+def _burn_sequence(
+    opened: _Opened, fire_t: float, end_s: float
+) -> list[dict[str, Any]]:
+    """What the operator commanded between Fire and the end of a burn, at its
+    T+ [s]: a run record's ``sequence``, which its replay repeats."""
+    out = []
+    for c in opened.commands:
+        t = float(c["t"])
+        if not fire_t < t <= end_s + 1e-9:
+            continue
+        moved = {
+            k: v for k, v in dict(c.get("command") or {}).items() if k in SEQUENCE_KEYS
+        }
+        if moved:
+            out.append({"t": round(t - fire_t, 3), "command": moved})
+    return out
+
+
+def _end_cause(
+    session: Session,
+    history: list[SessionSample],
+    burn: Any,
+    fire_t: float,
+    sequence: list[dict[str, Any]],
+    closing: str = "",
+) -> tuple[str, str]:
+    """How ``burn`` ended, as a code and in words: ``trip`` (a vessel over its
+    MAWP), ``abort`` or ``operator`` (a state commanded mid-burn), ``burnout``
+    (a tank ran dry), ``closed`` (the stand was reset or closed while it
+    burned), ``out`` (the engine went out with Fire held)."""
+    trip = session.trip
+    if trip is not None and burn.start_s < trip.t <= burn.end_s + 1e-6:
+        return "trip", str(session.tripped or trip.label)
+    # The burn's samples and the one that ended it: the step a tank runs dry
+    # on is the first past the burn's last thrust, and Vent with it.
+    after = next((s for s in history if s.t > burn.end_s + 1e-9), None)
+    inside = [s for s in history if burn.start_s < s.t <= burn.end_s + 1e-9] + (
+        [after] if after is not None else []
+    )
+    left = next((s for s in inside if s.state != "Fire"), None)
+    commanded = {
+        str(step["command"]["state"]) for step in sequence if "state" in step["command"]
+    }
+    dry = [
+        sim.label
+        for sim in session.tanks.values()
+        if sim.id not in session.ground
+        and any(
+            sim.id in s.tanks and s.tanks[sim.id]["liquid_mass_kg"] <= DRY_MASS * 1.01
+            for s in inside
+        )
+    ]
+    if left is not None and (
+        session.machine.is_abort(left.state) or left.state in commanded or not dry
+    ):
+        # Commanded: an abort, or a state the operator chose. (Burnout's own
+        # Vent comes with a tank dry, and nobody sent it.)
+        kind = "abort" if session.machine.is_abort(left.state) else "operator"
+        when = next(
+            (
+                float(step["t"])
+                for step in sequence
+                if step["command"].get("state") == left.state
+            ),
+            left.t - fire_t,
+        )
+        return kind, f"{left.state} commanded at T+{when:.2f} s"
+    if dry:
+        return (
+            "burnout",
+            f"{', '.join(dry)} ran dry at T+{burn.end_s - fire_t:.2f} s",
+        )
+    if closing:
+        return (
+            "closed",
+            f"The stand was {closing} at T+{burn.end_s - fire_t:.2f} s with the "
+            "engine still burning.",
+        )
+    return (
+        "out",
+        f"The engine went out at T+{burn.end_s - fire_t:.2f} s with Fire held.",
+    )
+
+
+def _record_burns(
+    session: Session, opened: _Opened, *, closing: str = ""
+) -> list[dict[str, Any]]:
+    """Record every finished burn in the history not yet recorded.
+
+    A trip, or ``closing`` (the stand reset or closed: how), finishes the burn
+    still going: a tripped stand holds its last frame, burning, for good."""
     if session.model.engine is None:
         return []
     history = list(session.history)
     inlets = find_probes(session).injector_inlet
     model_kind = str(session.model.meta.get("engine_model", ""))
+    finishing = bool(closing or session.tripped)
     saved: list[dict[str, Any]] = []
     for burn in _lit_burns(history, inlets):
         key = round(burn.start_s, 3)
-        if burn.burning or key in opened.recorded:
+        if (burn.burning and not finishing) or key in opened.recorded:
             continue
+        burn = replace(burn, burning=False)
         before = next(
             (s for s in reversed(history) if s.t <= burn.start_s + 1e-9), None
         )
         if before is None:
             continue
+        fire_t = _fire_time(opened, history, burn)
+        sequence = _burn_sequence(opened, fire_t, burn.end_s)
+        cause, ended = _end_cause(session, history, burn, fire_t, sequence, closing)
+        outcome = {
+            **_burn_out(session, history, burn, model_kind).model_dump(),
+            "end_cause": cause,
+            "ended": ended,
+        }
         record = {
             "schema": run_records.SCHEMA,
             "id": run_records.new_id(),
@@ -4121,8 +4283,11 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
             # the inputs, so a diff and the ladder never see it twice (the
             # swap that chose it is `setup.pressurant`).
             "pressurant": _pressurant_of(session),
-            "inputs": _inputs(session, opened, before),
-            "outcome": _burn_out(session, history, burn, model_kind).model_dump(),
+            "inputs": {
+                **_inputs(session, opened, before),
+                **({"sequence": sequence} if sequence else {}),
+            },
+            "outcome": outcome,
             "solver": _burn_solver(session, burn.start_s, burn.end_s),
             "series": _burn_series(session, history, burn.start_s, burn.end_s),
             "clock": {"start_s": burn.start_s, "end_s": burn.end_s},
@@ -4167,6 +4332,14 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     opened = _OPENED.get(session.id)
     if opened is None:
         return
+    if session.tripped:
+        # A trip ends the burn. The stand holds the frame it tripped on --
+        # still burning -- for good, so burnout never comes (H003).
+        if not opened.tripped:
+            opened.tripped = True
+            opened.burning, opened.lit_t = False, None
+            _record_safely(session, opened, sample.t)
+        return
     burning = is_burning(sample)
     if burning and sample.chamber is not None and sample.chamber.thrust > 0.0:
         opened.lit_t = sample.t
@@ -4177,14 +4350,21 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     if not (ended or out):
         return
     opened.lit_t = None
+    _record_safely(session, opened, sample.t)
+
+
+def _record_safely(
+    session: Session, opened: _Opened, t: float, closing: str = ""
+) -> None:
+    """:func:`_record_burns`, never stopping the stand over a lost record."""
     try:
-        _record_burns(session, opened)
+        _record_burns(session, opened, closing=closing)
     except Exception as exc:  # noqa: BLE001 - a lost record must not stop the stand
         _log.exception("run not recorded for session %s", session.id)
         # ...nor go unsaid: a burn with no record has no provenance, and only
         # the server log knew.
         opened.unrecorded = (
-            f"The burn that ended at t = {sample.t:.1f} s was not recorded "
+            f"The burn that ended at t = {t:.1f} s was not recorded "
             f"({type(exc).__name__}: {exc}); it is not in Runs."
         )
 
@@ -4285,6 +4465,50 @@ def _session_from_inputs(
     return session
 
 
+def _replay_command(session: Session, command: Mapping[str, Any]) -> None:
+    """One step of a run's ``sequence``, as the console's command route takes
+    it (:func:`command_session`): a state, a valve taken or released, a knob,
+    a setting. One the stand refused is refused here too."""
+    try:
+        if "state" in command:
+            session.command_state(str(command["state"]))
+        knob = command.get("knob")
+        if isinstance(knob, Mapping) and session.hookup is not None:
+            found = next(
+                (k for k in session.hookup.knobs if k.id == knob.get("id")), None
+            )
+            if found is not None:
+                value = min(max(float(knob.get("value", "")), found.low), found.high)
+                if found.id == DOME:
+                    session.setup = _setup({"dome": value}, session.setup)
+                elif found.id == CHARGE:
+                    session.setup = _setup({"copv_target": value}, session.setup)
+                else:
+                    session.knobs[found.id] = value
+        if "valve" in command:
+            session.set_valve(str(command["valve"]), bool(command.get("open")))
+        if command.get("release") is not None:
+            session.release(str(command.get("release") or ""))
+        if "setup" in command or "dome" in command:
+            built = session.setup
+            session.setup = _setup(
+                {
+                    **dict(command.get("setup") or {}),
+                    **({"dome": command["dome"]} if "dome" in command else {}),
+                },
+                built,
+            )
+            session.apply_thermal()
+            session.setup = replace(
+                session.setup,
+                ignore_gse=built.ignore_gse,
+                pressurant=built.pressurant,
+                auto_vent=built.auto_vent,
+            )
+    except (PermissionError, ValueError, KeyError, TypeError):
+        pass
+
+
 def _replay(
     inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
 ) -> tuple[dict[str, float], list[str]]:
@@ -4292,9 +4516,10 @@ def _replay(
 
     The record's settings, hookup and knobs, its tanks loaded to their T-0
     mass, primed at their mean T-0 pressure and settled by the regulators, the
-    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion. The
-    cockpit's automatic vent at burnout is off: it would act after the window
-    being compared.
+    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion,
+    with whatever the operator commanded mid-burn (``sequence``) at its T+.
+    The cockpit's automatic vent at burnout is off: it would act after the
+    window being compared.
     """
     session = _session_from_inputs(inputs)
     t0 = dict(inputs.get("t0") or {})
@@ -4312,7 +4537,19 @@ def _replay(
         # early read 0.6 % short of the burn it was replaying (D-80).
         dry_kg=DRY_MASS,
     )
-    trace = run_burn(session, plan, cancelled=cancelled)
+    # What the operator commanded mid-burn, at its T+ from Fire: an abort, a
+    # vent, a knob. Applied after the step that reaches it, as the console's
+    # next tick would.
+    pending = sorted(
+        (dict(step) for step in inputs.get("sequence") or ()),
+        key=lambda step: float(step.get("t") or 0.0),
+    )
+
+    def commanded(clock: float, sample: SessionSample, firing: bool) -> None:
+        while firing and pending and clock >= float(pending[0].get("t") or 0.0) - 1e-9:
+            _replay_command(session, dict(pending.pop(0).get("command") or {}))
+
+    trace = run_burn(session, plan, cancelled=cancelled, also=commanded)
     history = list(session.history)
     found = _lit_burns(history, find_probes(session).injector_inlet)
     if not found:
