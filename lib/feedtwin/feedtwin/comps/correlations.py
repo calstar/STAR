@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Mapping
 
 import fluids.fittings as ft
-from fluids.friction import friction_factor, friction_factor_methods
+from fluids.friction import ft_Crane, friction_factor, friction_factor_methods
 
 #: Explicit friction-factor correlations, by the name used in a config.
 #:
@@ -210,7 +210,7 @@ def _crane(constant: float) -> FittingK:
     """
 
     def K(ctx: FittingContext) -> float:
-        return constant * float(ft.ft_Crane(ctx.bore))
+        return constant * float(ft_Crane(ctx.bore))
 
     return K
 
