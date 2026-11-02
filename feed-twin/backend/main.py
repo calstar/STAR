@@ -1325,22 +1325,70 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
     )
 
 
+def _references(artifact_id: str) -> list[str]:
+    """What still names an artifact: an open stand, a saved one (its working
+    copy), a run record. Each names it by content, to be opened -- or
+    replayed -- on the bytes it named."""
+    found: list[str] = []
+    if any(artifact_id in (o.diagram, o.engine) for o in list(_OPENED.values())):
+        found.append("a stand open now")
+    for owner in userdata.store.all_users():
+        folder = userdata.store.user_dir(owner, create=False)
+        for record in stands.store.load_index(owner):
+            try:
+                data = json.loads(
+                    (folder / str(record.get("id")) / "current.json").read_text("utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, Mapping) and artifact_id in (
+                data.get("diagram"),
+                data.get("engine"),
+            ):
+                name = record.get("name") or record.get("id")
+                found.append(f"stand {name!r} ({owner})")
+    runs = sum(
+        1
+        for row in run_records.store.list(userdata.store.all_users(run_records.APP))
+        if artifact_id in (row.get("diagram"), row.get("engine"))
+    )
+    if runs:
+        found.append(f"{runs} run record{'' if runs == 1 else 's'}")
+    return found
+
+
 @app.delete("/api/library/{artifact_id}")
-async def remove_artifact(artifact_id: str) -> dict[str, str]:
+def remove_artifact(artifact_id: str) -> dict[str, str]:
     """Remove an artifact. Removed means removed: a shipped drawing or the
-    sample is not put back on the next restart (D-78)."""
+    sample is not put back on the next restart (D-78).
+
+    One a stand or a run still names leaves the lists and keeps its bytes:
+    removing those failed the run's replay with "no artifact" and the stand
+    would not reopen (H039). Importing the same bytes shows it again. A plain
+    ``def``: it reads every stand and run summary off the disk."""
     try:
         artifact = library.get(artifact_id)
         identity = _identity(artifact)
-        library.remove(artifact_id)
+        named = _references(artifact_id)
+        if named:
+            library.hide(artifact_id)
+        else:
+            library.remove(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     marks = [f"sha256:{identity}"]
     if artifact.source.startswith(("shipped:", "sample:")):
         marks.append(artifact.source)
     library.forget(*marks)
-    library.drop_record(ALIASES, artifact_id)
     _UNBUILDABLE.pop(artifact_id, None)
+    if named:
+        return {
+            "removed": artifact_id,
+            "kept": f"{artifact.name} is out of the library's lists, its bytes "
+            f"kept: {', '.join(named)} still name it, and a run replays on what "
+            "it ran on.",
+        }
+    library.drop_record(ALIASES, artifact_id)
     return {"removed": artifact_id}
 
 
