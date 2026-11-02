@@ -2,6 +2,22 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 RocketPy's drag read linearly across burnout: the inline check passes, max acceleration −3.4 %
+
+`test_layerx_integration_le4.py::test_the_flight_settles_on_the_pad_first_then_flies_inline` failed:
+inline against RocketPy 0.0338, tolerance 0.005. Not the RocketPy version: rocketpy 1.11.0 (what AUDIT
+9.3 validated against) and 1.13.0 give the same 0.033833. Every firing sample agreed within 0.21 % but
+one, 36 ms before the motor's cutoff on he_flight: inline 94.50 m/s², RocketPy 97.81. There RocketPy's
+`Flight.R3` read −423 N between −646 N (50 ms earlier) and −747 N (at cutoff) while the speed rose:
+`R3` is a cubic spline over RocketPy's solution nodes, and the drag steps at burnout (power-on to
+power-off Cd), so the spline rings across the step. `flight.axial_acceleration` now reads `R3` linearly
+between those nodes (`flight._axial_drag`), bounded by them; elsewhere the two agree to ~0.1 N. he_flight:
+`vs_rocketpy` 0.0338 → 0.0021; the RocketPy schedule's max acceleration 9.97 → 9.63 g (−3.4 %, the
+spike had set it). Apogee, the burn and every pad figure are untouched (the burn flies the inline
+ascent; RocketPy's own trajectory is unchanged). Guarded by
+`test_layerx_flight_inline.py::test_rocketpys_drag_is_read_linearly_across_the_burnout_step` (red on the
+old code).
+
 ## 2026-11-02 Gaps in the drawn feed lines are said up front (W14, still open)
 
 The graded chug margin (drawing basis, 2026-10-03) and the line losses stand on the drawing's own
