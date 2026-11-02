@@ -2971,7 +2971,7 @@ def _on_row(row: Tunable, number: float) -> str:
     """A Configuration row's number as a person reads it: a gauge pressure in
     psia (ADR 0007), anything else in the row's own unit."""
     if row.gauge_wire:
-        return say(from_psig(number), 1)
+        return str(say(from_psig(number), 1))
     return f"{number:g} {row.unit}".rstrip()
 
 
