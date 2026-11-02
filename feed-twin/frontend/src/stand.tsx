@@ -33,6 +33,8 @@ import {
   defaultPicks,
   listIsBehind,
   openingKnobs,
+  networkChange,
+  networkSwitch,
   pastIdle,
   whyNotOpened,
   type KnobsOn,
@@ -955,21 +957,32 @@ export function StandProvider({ children }: { children: ReactNode }) {
     setup,
     setSetup: (patch) => {
       if (locked) return refuse();
-      const next = { ...setup, ...patch } as StandSetup;
-      if ((Object.keys(patch) as (keyof StandSetup)[]).some((k) => patch[k] !== setup[k])) setChanged(true);
-      setSetupState(next);
-      for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
-      keepTurned();
+      const keep = () => {
+        if ((Object.keys(patch) as (keyof StandSetup)[]).some((k) => patch[k] !== setup[k])) setChanged(true);
+        setSetupState((s) => ({ ...s, ...patch }) as StandSetup);
+        for (const key of DRAWN_KNOBS) if (key in patch) turned.current.keys.add(key);
+        keepTurned();
+      };
       // Ignoring the GSE, or another pressurant, is a different network: a
-      // fresh stand, built with it.
-      if (
-        ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) ||
-        ('pressurant' in patch && (patch.pressurant ?? '') !== (setup.pressurant ?? ''))
-      ) {
-        wantFresh.current = true;
-        setGeneration((g) => g + 1);
-        return;
+      // fresh stand, built with it. Not mid-burn, and past Idle only on a yes
+      // (`networkSwitch`): the GSE tab swapped the stand out during Fire, and
+      // the burn was never recorded.
+      const network = networkChange(patch, setup);
+      if (network) {
+        const reopen = () => {
+          keep();
+          wantFresh.current = true;
+          setGeneration((g) => g + 1);
+        };
+        const when = networkSwitch(live, burns);
+        if (when === 'refuse') return setError('Not during a burn: change the gas or the drawn GSE once it has burned out.');
+        if (when === 'ask') {
+          setPendingPick({ kind: 'stand', id: '', name: network, losing: pastIdle(live, burns), yes: 'Switch', go: reopen });
+          return;
+        }
+        return reopen();
       }
+      keep();
       // What the stand runs on is what shows: a setting it clamped (a 0 s
       // fill runs as 1 s) used to stay on the tab as typed.
       void command({ setup: patch }).then((next) => {

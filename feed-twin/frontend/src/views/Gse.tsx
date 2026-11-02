@@ -163,6 +163,10 @@ export function Gse() {
   // Tripped, or a stand you have not taken: where the knobs sit is saved with
   // the stand, so turning them is changing it.
   const locked = Boolean(live?.tripped) || readOnly;
+  // Mid-burn the stand is not swapped out from under the operator, as on the
+  // top bar's gas switch: either switch here reopened it during Fire.
+  const burning = /^fire$/i.test(live?.state ?? '');
+  const notMidBurn = burning ? ' Not during a burn: it changes once the burn is over.' : '';
   const chargeKnob = live?.knobs?.find((k) => k.id === CHARGE_KNOB);
   // Each setting's bounds are the backend's (/api/tunables): the COPV fill
   // knob went down to 14.7 psia while the stand charged to its 100 psig floor.
@@ -228,12 +232,12 @@ export function Gse() {
     <div className="flex flex-col gap-4 p-4">
       <label
         className="flex items-center gap-2 text-[12px] text-text"
-        title="On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
+        title={`On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand.${notMidBurn}`}
       >
         <input
           type="checkbox"
           checked={Boolean(setup.ignore_gse)}
-          disabled={locked}
+          disabled={locked || burning}
           onChange={(e) => set({ ignore_gse: e.target.checked })}
           className="accent-blue-500"
         />
@@ -244,7 +248,7 @@ export function Gse() {
       </label>
       <div
         className="flex items-center gap-2 text-[12px] text-text"
-        title="The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand."
+        title={`The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand.${notMidBurn}`}
       >
         <span>Pressurant</span>
         <div className="flex overflow-hidden rounded border border-[var(--line-strong)]">
@@ -260,7 +264,7 @@ export function Gse() {
               <button
                 key={value}
                 type="button"
-                disabled={locked}
+                disabled={locked || (burning && !on)}
                 aria-pressed={on}
                 onClick={() => !on && set({ pressurant: value })}
                 className={`px-2 py-0.5 text-[11px] disabled:opacity-50 ${

@@ -114,6 +114,31 @@ export function openingKnobs(o: {
   return o.closed?.diagram === o.diagram ? o.closed.knobs : {};
 }
 
+/** A setting that changes the network -- ignoring the drawn GSE, another
+ *  pressurant -- as the question to ask before it reopens the stand, or ''
+ *  for one the running stand takes as it is. */
+export function networkChange(
+  patch: { ignore_gse?: boolean; pressurant?: string },
+  setup: { ignore_gse?: boolean; pressurant?: string },
+): string {
+  if ('ignore_gse' in patch && Boolean(patch.ignore_gse) !== Boolean(setup.ignore_gse)) {
+    return patch.ignore_gse ? 'Ignore the drawn GSE and run the rocket alone?' : 'Simulate the drawn GSE again?';
+  }
+  if ('pressurant' in patch && (patch.pressurant ?? '') !== (setup.pressurant ?? '')) {
+    const gas = patch.pressurant === 'helium' ? 'helium' : patch.pressurant === 'nitrogen' ? 'GN2' : "the drawing's gas";
+    return `Switch the pressurant to ${gas}?`;
+  }
+  return '';
+}
+
+/** When a change of the network may reopen the stand: at once on a cold
+ *  stand, on a yes past Idle (as a drawing switch), and never mid-burn --
+ *  the burn would never reach its run record. */
+export function networkSwitch(live: SessionState | null, burns: Burns | null): 'now' | 'ask' | 'refuse' {
+  if (live && /^fire$/i.test(live.state)) return 'refuse';
+  return pastIdle(live, burns) ? 'ask' : 'now';
+}
+
 /** What switching away from this stand would throw away, or '' when it is
  *  still a cold, empty stand in Idle that nothing is lost by replacing. */
 export function pastIdle(live: SessionState | null, burns: Burns | null): string {

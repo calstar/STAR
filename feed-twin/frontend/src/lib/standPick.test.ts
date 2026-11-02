@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, SessionState } from '../api';
 import { RequestError } from '../api';
-import { NO_ENGINE, defaultPicks, listIsBehind, openingKnobs, pastIdle, pendingWords, whyNotOpened } from './standPick';
+import {
+  NO_ENGINE,
+  defaultPicks,
+  listIsBehind,
+  networkChange,
+  networkSwitch,
+  openingKnobs,
+  pastIdle,
+  pendingWords,
+  whyNotOpened,
+} from './standPick';
 
 const art = (id: string, kind: 'diagram' | 'engine', name: string, featured = false): Artifact => ({
   id,
@@ -119,6 +129,21 @@ describe('a stand that did not open says whose fault it is', () => {
   it('a full server or a dropped connection is not, and is worth another go', () => {
     expect(whyNotOpened(new RequestError('The server is full: 8 stands are open and every one is being watched.', 503)).drawing).toBe(false);
     expect(whyNotOpened(new TypeError('Failed to fetch')).drawing).toBe(false);
+  });
+});
+
+describe('the gas and the drawn GSE are a different network', () => {
+  const setup = { ignore_gse: false, pressurant: '' };
+  it('so changing one asks what it asks; anything else is not a network change', () => {
+    expect(networkChange({ ignore_gse: true }, setup)).toBe('Ignore the drawn GSE and run the rocket alone?');
+    expect(networkChange({ pressurant: 'helium' }, setup)).toBe('Switch the pressurant to helium?');
+    expect(networkChange({ pressurant: '' }, setup)).toBe('');
+    expect(networkChange({ ignore_gse: false }, setup)).toBe('');
+  });
+  it('never mid-burn; on a yes past Idle; at once on a cold stand', () => {
+    expect(networkSwitch(stand('Fire', [tank('LOX', 3.1)]), null)).toBe('refuse');
+    expect(networkSwitch(stand('Ready', [tank('LOX', 6.7)]), null)).toBe('ask');
+    expect(networkSwitch(stand('Idle', [tank('LOX', 0)]), null)).toBe('now');
   });
 });
 
