@@ -87,25 +87,32 @@ READY_TIMEOUT="${DEMO_READY_TIMEOUT:-180}"
 # What the demo shows, by id. Edit these and run --reset to change it.
 #
 # feed-twin library artifacts (first 12 hex of the sha256 of their bytes):
-#   a22f706b60be  LE4 (6)            the stand drawing (Rocket + GSE pages)
+#   32fd54aa4fd9  LE4 (3)            the stand drawing (Rocket + GSE pages)
 #   727858dd44db  Copv Study Gn2     shipped study drawing
 #   41c9a39ac34b  Copv Study He      shipped study drawing
 #   b82571fb933d  Ethalox Stand      shipped stand drawing
 #   d8d0f8b3073b  ethalox 6800N doublet 578psia 2026-10-05 drilled  (the engine, with its card;
-#                 shown in the demo as its design, "Ethalox 7200N Doublet")
-# Left out: the other LE4 imports (LE4, LE4 (1), LE4 DAQ test) and the
-# card-less "ethalox doublet 7000N". Stands, runs and hookups follow the
-# artifacts: a stand or a run is kept only when its drawing and engine are.
-# a22f706b60be and d8d0f8b3073b (with its card) are the twin's bundled sample
-# (feed-twin/backend/sample): their bytes are copied from there, and if the
-# team's library ever loses them the twin's own sample route puts them back
-# after start (_curate). Runs are the team's lit burns only: a rehearsal's runs
-# live in the demo copy alone, so a --reset clears them.
-FEEDTWIN_KEEP="a22f706b60be 727858dd44db 41c9a39ac34b b82571fb933d d8d0f8b3073b"
+#                 shown in the demo as its design, "Ethalox 6800N Doublet (drilled)")
+# Left out: the other LE4 imports (LE4, LE4 (1), LE4 (6), LE4 DAQ test) and
+# the card-less "ethalox doublet 7000N". LE4 (6) is the twin's bundled sample
+# and was the demo's stand until 2026-11-01; the demo now shows the team's
+# test stand, and a demo that still listed LE4 (6) read as the wrong stand.
+# Stands, runs and hookups follow the artifacts: a stand or a run is kept only
+# when its drawing and engine are (and a stand only when FEEDTWIN_STANDS names
+# it). d8d0f8b3073b (with its card) is in the twin's bundled sample
+# (feed-twin/backend/sample): its bytes are copied from there. Runs are the
+# team's lit burns only: a rehearsal's runs live in the demo copy alone, so a
+# --reset clears them.
+FEEDTWIN_KEEP="32fd54aa4fd9 727858dd44db 41c9a39ac34b b82571fb933d d8d0f8b3073b"
 # The engine goes by its Hotbench Engine design's name in the demo copy
 # (artifact=design id), not the upload's "ethalox 6800N doublet 578psia
 # 2026-10-05 drilled". The team's own library keeps its name.
 FEEDTWIN_ENGINE_NAMED="d8d0f8b3073b=ethalox-7200n-doublet"
+# The stand documents the demo carries, <owner>/<id>; the first is the
+# featured stand, the one a fresh browser opens on
+# (.site/stand/featured.json). "LE4 (3) rocket GN2": rocket only, nitrogen,
+# COPV 3,765 psia, the DAQ's connectors, and a Dome Press state of its own.
+FEEDTWIN_STANDS="local/le4-3-rocket-gn2"
 # The demo stand's own state table (_curate): the DAQ's table with the rows of
 # these states changed to close these valves. The DAQ's file
 # (feed-twin/backend/statemachines/diablo_actuators.csv) is not touched; see
@@ -128,9 +135,9 @@ PID_KEEP_DOCS="le4 ethalox-stand-7200n-helium"
 # drawing's hookup is kept under the name it was uploaded as (feed-twin
 # backend/main.py _lineage, "name:LE4"), so renaming the twin's copy drops the
 # demo stand's saved hookup and state table.
-PID_STAND_FROM="a22f706b60be"
-PID_STAND_ID="le4-stand"
-PID_STAND_NAME="LE4 (6)"
+PID_STAND_FROM="32fd54aa4fd9"
+PID_STAND_ID="le4-3"
+PID_STAND_NAME="LE4 (3)"
 
 # EngineDesign: the team's design. "Design 1" (the default-named first draft,
 # untouched since 2026-09-08) is left out. Layer X keeps the stand measurements
@@ -258,6 +265,10 @@ export PID_DESIGNER_URL=http://127.0.0.1:$PID_API_PORT
 # Layer X reads the feed twin's library from disk (engine/layerx/sources.py),
 # not over HTTP: point it at the demo copy, or it lists the team's real one.
 export LAYERX_FEEDTWIN_LIBRARY=$(printf '%q' "$DEMO_DATA/feed-twin/library")
+# Layer X's "team's stand" is whatever drawing sits in its sample set; unset,
+# that is feed-twin's bundled sample, LE4 (6). The demo's is its own stand's
+# drawing (the seed's layerx-sample, a byte copy of the library's).
+export LAYERX_SAMPLE=$(printf '%q' "$DEMO_DATA/layerx-sample")
 # Every Evaluate runs the engine with its debug log on: written to
 # output/logs under the working directory -- the repo -- and echoed a block per
 # call to the console. Keep the file with the demo's logs and the console to
@@ -352,7 +363,7 @@ _write_pane_script() {
     # A clean slate for what decides where data goes: a variable left in the
     # tmux server's environment must not point the demo at real data or a
     # bucket. AUTH_USERS_URL off: the sharing roster comes from the demo data.
-    printf 'unset USERDATA_DIR FEEDTWIN_LIBRARY LAYERX_FEEDTWIN_LIBRARY LAYERX_DRAWINGS LAYERX_STATEMACHINES FEEDTWIN_ROOT\n'
+    printf 'unset USERDATA_DIR FEEDTWIN_LIBRARY LAYERX_FEEDTWIN_LIBRARY LAYERX_DRAWINGS LAYERX_STATEMACHINES LAYERX_SAMPLE FEEDTWIN_ROOT\n'
     printf 'unset ENGINE_S3_BUCKET PID_S3_BUCKET FEEDTWIN_S3_BUCKET OPENROCKET_S3_BUCKET AUTH_USERS_URL STAR_ADMINS VIRTUAL_ENV\n'
     printf 'unset PYTHONPATH\n'
     # Unbuffered, so a log line lands in the log when it happens, not when a
@@ -390,7 +401,7 @@ _seed() {
   local building="$DEMO_DATA.seeding-$$"
   mkdir -p "$building"
   STAR_ROOT="$STAR_ROOT" DEMO_DATA="$building" \
-  FEEDTWIN_KEEP="$FEEDTWIN_KEEP" FEEDTWIN_ENGINE_NAMED="$FEEDTWIN_ENGINE_NAMED" \
+  FEEDTWIN_KEEP="$FEEDTWIN_KEEP" FEEDTWIN_ENGINE_NAMED="$FEEDTWIN_ENGINE_NAMED" FEEDTWIN_STANDS="$FEEDTWIN_STANDS" \
   PID_KEEP_USERS="$PID_KEEP_USERS" PID_KEEP_DOCS="$PID_KEEP_DOCS" \
   PID_STAND_FROM="$PID_STAND_FROM" PID_STAND_ID="$PID_STAND_ID" PID_STAND_NAME="$PID_STAND_NAME" \
   ENGINE_KEEP_USERS="$ENGINE_KEEP_USERS" ENGINE_KEEP_DOCS="$ENGINE_KEEP_DOCS" \
@@ -540,12 +551,14 @@ src_ud = star / "feed-twin" / ".userdata"
 dst_ud = out / "feed-twin" / "userdata"
 dst_ud.mkdir(parents=True, exist_ok=True)
 stands_kept, stands_left, runs_kept, runs_left = [], [], [], []
+stands_wanted = words("FEEDTWIN_STANDS")
 for user in sorted(p for p in src_ud.iterdir() if p.is_dir() and not p.name.startswith(".")) if src_ud.is_dir() else []:
     index = load(user / "stand" / "index.json", [])
     mine = []
     for rec in index:
         body = load(user / "stand" / rec["id"] / "current.json", {}) or {}
-        if body.get("diagram") in keep and body.get("engine") in keep:
+        named = not stands_wanted or f"{user.name}/{rec['id']}" in stands_wanted
+        if named and body.get("diagram") in keep and body.get("engine") in keep:
             copy(user / "stand" / rec["id"], dst_ud / user.name / "stand" / rec["id"])
             mine.append(strip_lock(rec))
             stands_kept.append(f"{user.name}/{rec['id']}  {rec.get('name')}")
@@ -564,8 +577,19 @@ for user in sorted(p for p in src_ud.iterdir() if p.is_dir() and not p.name.star
             runs_kept.append(f"{user.name}/{run.stem}")
         else:
             runs_left.append(f"{user.name}/{run.stem}")
+missing_stands = [s for s in stands_wanted if not any(k.split()[0] == s for k in stands_kept)]
+if missing_stands:
+    sys.exit(f"feed-twin has no stand {', '.join(missing_stands)} on kept artifacts: nothing seeded")
+# The featured stand: what a fresh browser on the twin opens
+# (backend/routers/stands.py, featured=True).
+featured_stand = None
+if stands_wanted:
+    owner, _, sid = stands_wanted[0].partition("/")
+    featured_stand = {"owner": owner, "id": sid, "setBy": owner, "setAt": now}
+    dump(dst_ud / ".site" / "stand" / "featured.json", featured_stand)
 report["feed_twin_userdata"] = {
     "stands_kept": stands_kept, "stands_left_out": stands_left,
+    "featured_stand": stands_wanted[0] if stands_wanted else None,
     "runs_kept": runs_kept, "runs_left_out": len(runs_left),
 }
 
@@ -640,6 +664,14 @@ if stand_from and stand_id:
     report["pid_designer"]["main_diagram"] = f"{owner}/{stand_id}  {stand_name}  (from feed-twin {stand_from} {entry['name']})"
     report["pid_designer"]["star_set"] = [f"{e['owner']}/{e['id']}" for e in star_set]
 
+    # Layer X's featured drawing: its sample set (LAYERX_SAMPLE, engine-api)
+    # holds the stand drawing's library bytes, so Layer X lists it as the
+    # team's stand under the library's name, and not the bundled LE4 (6).
+    stand_entry = next((e for e in kept if e["id"] == stand_from), None)
+    if stand_entry is not None:
+        copy(dst_lib / "blobs" / stand_entry["filename"], out / "layerx-sample" / f"{stand_entry['name']}.json")
+        report["layerx_sample"] = f"{stand_entry['id']}  {stand_entry['name']}"
+
 # ── EngineDesign ─────────────────────────────────────────────────────────
 ed_src = star / "EngineDesign" / ".userdata"
 ed_dst = out / "engine-design" / "userdata"
@@ -658,7 +690,7 @@ def show(title, items):
 
 show("feed-twin library", report["feed_twin_library"]["kept"]
      + [f"(renamed) {r}" for r in renamed] + [f"(after start, from the sample) {i}" for i in via_sample])
-show("feed-twin stands", stands_kept or ["(none)"])
+show("feed-twin stands", [k + ("  (featured)" if stands_wanted and k.split()[0] == stands_wanted[0] else "") for k in stands_kept] or ["(none)"])
 print(f"      runs kept: {len(runs_kept)}")
 show("pid-designer diagrams", ([report['pid_designer'].get('main_diagram', '')] if stand_id else []) + report["pid_designer"]["kept"])
 show("EngineDesign designs", report["engine_design"]["kept"])
@@ -683,14 +715,16 @@ _reset_data() {
 # What a copy cannot do, done once after a fresh seed through the running
 # twin's own routes, so its own checks pass on it -- a hookup it would refuse
 # is refused here too:
-#   1. the sample route (POST /api/library/sample): the featured stand is in
-#      the library, put back if the seed could not copy it;
+#   1. the featured stand (the seed's .site/stand/featured.json) answers, and
+#      its drawing and engine are in the library;
 #   2. a pull of pid-designer's copy of the stand drawing: the same drawing, so
 #      the twin keeps it as an alias and reports the stand current (D-48);
-#   3. the stand's own state table (DEMO_ABORT_STATES close DEMO_ABORT_CLOSES),
-#      saved as the stand drawing's hookup -- the suggested wiring unchanged,
-#      checked -- and put on every stand document on that drawing that carries
-#      a hookup of its own (one without a table would run the DAQ's).
+#   3. the demo's abort rows (DEMO_ABORT_STATES close DEMO_ABORT_CLOSES): on
+#      the stand drawing's hookup -- the DAQ's table, the suggested wiring
+#      unchanged, checked -- and on the state table of every stand document on
+#      that drawing that carries a hookup of its own. A stand's own table is
+#      edited, not replaced: LE4 (3) rocket GN2's has a Dome Press state the
+#      DAQ's does not.
 # A marker records it was done; --reset (a fresh seed) does it again.
 
 _curated_marker() { printf '%s' "$DEMO_DATA/.hotbench-demo-curated"; }
@@ -735,13 +769,18 @@ def call(method, path, body=None):
 
 
 try:
-    # 1. The featured stand (C2).
-    library = call("POST", "/api/library/sample")
-    diagram = next((a for a in library if a["kind"] == "diagram" and a.get("featured")), None)
-    engine = next((a for a in library if a["kind"] == "engine" and a.get("featured")), None)
+    # 1. The featured stand, and what it runs on.
+    main = call("GET", "/api/twin/stands/featured").get("featured")
+    if not main:
+        raise Refused("the twin has no featured stand (the seed writes .site/stand/featured.json)")
+    stand_q = "?" + urllib.parse.urlencode({"owner": main["owner"]})
+    stand = call("GET", f"/api/twin/stands/{urllib.parse.quote(main['id'])}/load" + stand_q)
+    library = call("GET", "/api/library")
+    diagram = next((a for a in library if a["kind"] == "diagram" and a["id"] == stand.get("diagram")), None)
+    engine = next((a for a in library if a["kind"] == "engine" and a["id"] == stand.get("engine")), None)
     if diagram is None or engine is None:
-        raise Refused("the twin offers no featured drawing and engine after its sample route")
-    done["featured"] = {"diagram": f"{diagram['id']}  {diagram['name']}", "engine": f"{engine['id']}  {engine['name']}"}
+        raise Refused(f"the featured stand's drawing {stand.get('diagram')} or engine {stand.get('engine')} is not in the library")
+    done["featured"] = {"stand": f"{main['owner']}/{main['id']}", "diagram": f"{diagram['id']}  {diagram['name']}", "engine": f"{engine['id']}  {engine['name']}"}
 
     # 2. The same drawing pulled from Hotbench P&ID (not fatal: freshness only).
     if os.environ.get("PID_STAND_ID"):
@@ -759,18 +798,25 @@ try:
     table = json.loads(json.dumps(before["machine_shipped"]))
     states = [s for s in os.environ["ABORT_STATES"].split("|") if s]
     closes = [a for a in os.environ["ABORT_CLOSES"].split("|") if a]
-    names = [s["name"] for s in table["states"]]
-    unknown = [s for s in states if s not in names] + [a for a in closes if a not in table["actuators"]]
-    if unknown:
-        raise Refused(f"the DAQ's table has no {', '.join(unknown)}; nothing saved")
-    changed = {}
-    for state in states:
-        was = list(table["open"].get(state) or [])
-        table["open"][state] = [a for a in was if a not in closes]
-        changed[state] = [a for a in was if a in closes]
-    check = call("POST", "/api/statemachine/check", table)
-    if not check.get("ok"):
-        raise Refused(f"the twin cannot read the edited table: {check.get('error')}")
+
+    def closed_aborts(table, whose):
+        """The table with the abort rows closing the mains and presses, checked."""
+        table = json.loads(json.dumps(table))
+        names = [s["name"] for s in table["states"]]
+        unknown = [s for s in states if s not in names] + [a for a in closes if a not in table["actuators"]]
+        if unknown:
+            raise Refused(f"{whose} has no {', '.join(unknown)}; nothing saved")
+        changed = {}
+        for state in states:
+            was = list(table["open"].get(state) or [])
+            table["open"][state] = [a for a in was if a not in closes]
+            changed[state] = [a for a in was if a in closes]
+        check = call("POST", "/api/statemachine/check", table)
+        if not check.get("ok"):
+            raise Refused(f"the twin cannot read {whose}, edited: {check.get('error')}")
+        return table, changed
+
+    table, changed = closed_aborts(table, "the DAQ's table")
     current = before["hookup"]
     body = {
         "valves": current.get("valves") or {},
@@ -803,24 +849,31 @@ try:
         base = f"/api/twin/stands/{urllib.parse.quote(rec['id'])}"
         doc = call("GET", base + "/load" + q)
         own = doc.get("hookup") or {}
-        if doc.get("diagram") != diagram["id"] or not own or own.get("machine") == table:
+        if doc.get("diagram") != diagram["id"] or not own:
+            continue
+        # Its own table, edited; the DAQ's where it has none (one without a
+        # table would run the DAQ's as shipped, aborts and all).
+        theirs, _ = closed_aborts(own.get("machine") or before["machine_shipped"], f"stand {rec['id']}'s table")
+        if own.get("machine") == theirs:
             continue
         if rec.get("lockedBy"):
             stands_done.append(f"{rec['id']}  {rec.get('name')}: held by {rec['lockedBy']}, NOT changed")
             continue
         call("POST", base + "/checkout" + q)
         try:
-            call("POST", base + "/flush" + q, {**doc, "hookup": {**own, "machine": table}})
+            call("POST", base + "/flush" + q, {**doc, "hookup": {**own, "machine": theirs}})
         finally:
             call("DELETE", base + "/checkout" + q)
-        stands_done.append(f"{rec['id']}  {rec.get('name')}: its own hookup now carries the table")
+        kept_states = sorted({s["name"] for s in theirs["states"]} - {s["name"] for s in table["states"]})
+        stands_done.append(f"{rec['id']}  {rec.get('name')}: its own table, aborts closed"
+                           + (f" (keeps {', '.join(kept_states)})" if kept_states else ""))
     done["stands"] = stands_done
 except (Refused, OSError, KeyError, ValueError) as exc:
     sys.exit(f"  error: {exc}")
 
 marker = Path(os.environ["DEMO_DATA"]) / ".hotbench-demo-curated"
 marker.write_text(json.dumps(done, indent=2) + "\n", "utf-8")
-print(f"    featured      {done['featured']['diagram']}  +  {done['featured']['engine']}")
+print(f"    featured      {done['featured']['stand']}: {done['featured']['diagram']}  +  {done['featured']['engine']}")
 print(f"    pulled        {done.get('pulled', '-')}")
 for state, gone in done["hookup"]["closed"].items():
     print(f"    {state:13s} now closes {', '.join(gone) or '(already closed)'}")
@@ -866,7 +919,7 @@ _print_urls() {
   echo ""
   printf '    %-16s %s\n' "EngineDesign"  "http://localhost:$ENGINE_UI_PORT"
   printf '    %-16s %s\n' "P&ID Designer" "http://localhost:$PID_UI_PORT"
-  printf '    %-16s %s\n' "Feed Twin"     "http://localhost:$FEEDTWIN_UI_PORT"
+  printf '    %-16s %s\n' "Feed Twin"     "http://localhost:$FEEDTWIN_UI_PORT   (opens on the featured stand: ${FEEDTWIN_STANDS%% *})"
   echo ""
   printf '    %-16s %s\n' "APIs" "http://127.0.0.1:$ENGINE_API_PORT/docs  :$PID_API_PORT/docs  :$FEEDTWIN_API_PORT/docs"
   printf '    %-16s %s\n' "data" "$DEMO_DATA"
