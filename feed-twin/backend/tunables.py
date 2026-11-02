@@ -192,14 +192,14 @@ TUNABLES: tuple[Tunable, ...] = (
     Tunable(
         "supply_press_s",
         "supply_press_s",
-        "Transfer tank press time",
+        "Cart supply press time",
         "s",
         GROUPS[1],
-        "Seconds the cart's press line takes to bring a ground supply tank (the fuel "
-        "transfer tank) to its drawn pressure while its press actuator is open. "
-        "Assumed: a first-order rate standing in for a regulator and a line nobody "
-        "has drawn; the console's note names it whenever it acts. Draw the press "
-        "line and it is solved instead, and this is not used.",
+        "Seconds the cart's press line takes to bring a ground supply tank (a fuel "
+        'transfer tank) to its drawn pressure while its press valve ("Fuel Fill '
+        'Press") is open, when that line is not on the drawing. Assumed: a '
+        "first-order rate standing in for a regulator and a line nobody has drawn; "
+        "the tank's notes say when it is used. Draw the press line and this is not.",
         low=0.1,
         high=600.0,
         step=0.5,
@@ -214,7 +214,8 @@ TUNABLES: tuple[Tunable, ...] = (
         "liquid stays in it. What is poured flashes on the warm wall and vents; on "
         "the stand that is about ten minutes of pouring (operator), compressed here "
         "so it can be watched. 0: liquid collects from the start and the wall chills "
-        "as it goes. Only with the dewar pressure at 0; a dewar chills in real time.",
+        "as it goes. Only with the dewar vented (14.7 psia, the bottom of its "
+        "range); a pressed dewar chills in real time.",
         low=0.0,
         high=3600.0,
         step=5.0,
@@ -227,8 +228,9 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Seconds for the dewar transfer to reach the full fraction once the tank is "
         "chilled. The wall is near saturation by then; what heat it still has boils "
-        "LOX, which the vent has to carry. Only with the dewar pressure at 0; with a "
-        "dewar, the load takes as long as its line delivers.",
+        "LOX, which the vent has to carry. Only with the dewar vented (14.7 psia, "
+        "the bottom of its range); with a pressed dewar, the load takes as long as "
+        "its line delivers.",
         low=1.0,
         high=3600.0,
         step=10.0,
@@ -483,13 +485,13 @@ TUNABLES: tuple[Tunable, ...] = (
         "takes heat from the warm pressurant, the tank sags ~13 psi in the "
         "lead-in and the helium burn draws ~225 psi more bottle (estimated, "
         "EngineDesign/docs/layerx/AUDIT.md D1). Unmeasured: an RTD on the upper "
-        "shell would settle it. This console loads and presses through the "
-        "sequence, so its walls follow what it did and this changes nothing here; "
-        "the Study tab burns at its benchmark settings and does not read it.",
+        "shell would settle it. Read at the next Jump to T-0, no Reset needed: "
+        "the console's Jump to T-0 and every Study case prime the LOX tank's "
+        "upper wall at it. A stand loaded and pressed through the sequence "
+        "instead keeps the wall its own history gave it.",
         low=0.0,
         high=330.0,
         step=1.0,
-        applies="reset",
     ),
     Tunable(
         "line_walls",
@@ -725,9 +727,10 @@ TUNABLES: tuple[Tunable, ...] = (
         "Bottle wall mass per litre",
         "kg/L",
         GROUPS[5],
-        "Wall mass of a bottle that declares none: 60 kg at 44 L for a steel K-bottle. "
-        "The shipped COPV declares its own 3.5 kg, so this only matters for a drawing "
-        "that does not.",
+        "Wall mass of a bottle whose drawing declares no wall_mass: 60 kg at 44 L "
+        "for a steel K-bottle. The shipped stands' COPV declares its own 3.5 kg and "
+        "keeps it; every bottle drawn without one takes this -- LE4 (3)'s COPV "
+        "among them, which each Study case's notes list as estimated.",
         low=0.05,
         high=5.0,
         step=0.05,
