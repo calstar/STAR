@@ -11,6 +11,13 @@
 # rewrites or deletes the originals, and nothing here touches the dev servers,
 # their ports or their tmux sessions.
 #
+# One exception, which this script cannot redirect: a YAML config uploaded to
+# EngineDesign (Configuration -> upload) is written to the checkout's
+# EngineDesign/output/user_configs/local/<file>, the folder the dev stack uses
+# too (backend/routers/config.py; gitignored, so git never sees it), and an
+# upload of a same-named file replaces the developer's. Do not upload configs
+# in a demo until that folder follows USERDATA_DIR.
+#
 #   scripts/demo.sh               start detached (tmux session star-demo), wait, print URLs
 #   scripts/demo.sh --reload      same, with uvicorn --reload (for a night of code edits)
 #   scripts/demo.sh --reset       re-seed the demo data (old copy is moved aside), start, curate
