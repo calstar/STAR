@@ -424,12 +424,47 @@ def _digest_of(artifact_id: str, sha256: str) -> str:
     return drawing_digest(payload) if isinstance(payload, Mapping) else sha256
 
 
+def _fingerprint(card: bytes | None) -> str:
+    """EngineDesign's fingerprint of the config a stored card was built
+    from (``config_sha256``: the sha256 of the validated config, defaults
+    filled in); "" without one."""
+    if not card:
+        return ""
+    try:
+        stored = json.loads(card.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    found = stored.get("config_sha256") if isinstance(stored, Mapping) else None
+    return str(found) if isinstance(found, str) else ""
+
+
 def _identity(artifact: Artifact) -> str:
     """What two artifacts must share to be the same thing: a drawing's
-    :func:`drawing_digest`, an engine's bytes."""
+    :func:`drawing_digest`; an engine's config as EngineDesign fingerprints
+    it, where it has a card, else its bytes.
+
+    EngineDesign stores a design as its validated config, defaults written
+    out, so the bundled YAML and the same engine pulled from EngineDesign
+    are different bytes -- two "Ethalox 7200N Doublet"s, freshness and the
+    featured mark on one -- although the cards built from them carry the
+    same ``config_sha256`` (R008)."""
     if artifact.kind == "diagram":
         return _digest_of(artifact.id, artifact.sha256)
-    return artifact.sha256
+    try:
+        card = library.attachment(artifact.id, "card")
+    except LibraryError:
+        card = None
+    return _fingerprint(card) or artifact.sha256
+
+
+def _same_engine(fingerprint: str) -> Artifact | None:
+    """The engine already in the library that EngineDesign fingerprints as
+    ``fingerprint`` (:func:`_identity`), if any."""
+    if not fingerprint:
+        return None
+    return next(
+        (a for a in library.list("engine") if _identity(a) == fingerprint), None
+    )
 
 
 def _same_drawing(payload: Mapping[str, Any]) -> Artifact | None:
@@ -454,7 +489,14 @@ def _sample_entries() -> tuple[dict[str, Any], ...]:
         if entry.get("kind") == "diagram":
             identity = drawing_digest(json.loads(data))
         else:
-            identity = hashlib.sha256(data).hexdigest()
+            # As :func:`_identity` names an engine: its card's fingerprint.
+            try:
+                card = (
+                    (SAMPLE / entry["card"]).read_bytes() if entry.get("card") else None
+                )
+            except OSError:
+                card = None
+            identity = _fingerprint(card) or hashlib.sha256(data).hexdigest()
         out.append({**entry, "data": data, "identity": identity})
     return tuple(out)
 
@@ -505,14 +547,21 @@ def _seed_sample(revive: bool = False) -> list[Artifact]:
                     "the sample engine %s does not import", entry["file"]
                 )
                 continue
-            artifact, _ = library.add(
-                data,
-                kind="engine",
-                name=entry["name"],
-                source=source,
-                suffix=".yaml",
-                summary=summary,
-                notes=entry.get("provenance", ""),
+            # The same engine pulled from EngineDesign is the sample's, as a
+            # drawing is (R008): left as it is, and featured all the same.
+            same = _same_engine(entry["identity"])
+            artifact = (
+                same
+                if same is not None and same.sha256 != hashlib.sha256(data).hexdigest()
+                else library.add(
+                    data,
+                    kind="engine",
+                    name=entry["name"],
+                    source=source,
+                    suffix=".yaml",
+                    summary=summary,
+                    notes=entry.get("provenance", ""),
+                )[0]
             )
             card = entry.get("card")
             if card and library.attachment(artifact.id, "card") is None:
@@ -600,25 +649,54 @@ def _compared(artifact: Artifact) -> tuple[str, str, str, str] | None:
     a drawing first pulled as a release said "a release never changes"
     forever, after the working copy it was later pulled as had moved on
     (R011). Only when every pull was a release is the newest release it."""
+    found = _compared_source(artifact)
+    return found[1] if found is not None else None
+
+
+def _compared_source(
+    artifact: Artifact,
+) -> tuple[str, tuple[str, str, str, str]] | None:
+    """:func:`_compared`, with the provenance it was parsed from."""
     pulls = [
-        found
-        for found in map(
-            designtools.parse_source, [*_aliases(artifact.id), artifact.source]
-        )
-        if found is not None
+        (source, found)
+        for source in [*_aliases(artifact.id), artifact.source]
+        if (found := designtools.parse_source(source)) is not None
     ]
-    return next((p for p in pulls if not p[3]), pulls[0] if pulls else None)
+    return next((p for p in pulls if not p[1][3]), pulls[0] if pulls else None)
 
 
-def _alias(artifact: Artifact, provenance: str) -> None:
-    """Remember that ``provenance`` was this artifact too."""
+def _alias(artifact: Artifact, provenance: str, pulled: str = "") -> None:
+    """Remember that ``provenance`` was this artifact too, and the sha256 of
+    the bytes it gave (``pulled``): an engine EngineDesign pulled is the same
+    engine in other bytes (R008), and freshness compares the next pull with
+    those."""
     if provenance == artifact.source:
         return
+    found = library.record(ALIASES, artifact.id) or {}
     known = _aliases(artifact.id)
     # The newest first: freshness asks the latest pull.
     sources = [provenance, *(s for s in known if s != provenance)][:20]
-    if sources != known:
-        library.put_record(ALIASES, artifact.id, {"sources": sources})
+    shas = found.get("pulled")
+    shas = {
+        k: v
+        for k, v in (shas if isinstance(shas, Mapping) else {}).items()
+        if k in sources
+    }
+    if pulled:
+        shas[provenance] = pulled
+    if sources != known or shas != found.get("pulled", {}):
+        record: dict[str, object] = {"sources": sources}
+        if shas:
+            record["pulled"] = shas
+        library.put_record(ALIASES, artifact.id, record)
+
+
+def _pulled_sha(artifact_id: str, provenance: str) -> str:
+    """The sha256 of the bytes ``provenance`` gave when it was aliased onto
+    this artifact (:func:`_alias`); "" if not recorded."""
+    shas = (library.record(ALIASES, artifact_id) or {}).get("pulled")
+    found = shas.get(provenance) if isinstance(shas, Mapping) else None
+    return str(found) if isinstance(found, str) else ""
 
 
 def _card_info(artifact: Artifact) -> dict[str, object]:
@@ -644,6 +722,48 @@ async def _build_card(artifact_id: str, data: bytes, headers: Mapping[str, str])
         return str(exc)
     _keep_card(artifact_id, json.dumps(answer).encode("utf-8"))
     return ""
+
+
+async def _engine_here(
+    data: bytes, headers: Mapping[str, str]
+) -> tuple[Artifact | None, bytes | None, str]:
+    """For a pulled engine whose bytes are new here: the engine already in
+    the library that it is (EngineDesign fingerprints both configs the same,
+    :func:`_identity`), the card built for it, and why no card, or "".
+
+    The card is what says which engine this is, and a new engine needs one
+    anyway, so it is built first: an engine already here is aliased rather
+    than stored again (R008). Bytes already here are left to
+    ``Library.add``, as before."""
+    try:
+        library.get(hashlib.sha256(data).hexdigest()[:12])
+        return None, None, ""
+    except LibraryError:
+        pass
+    try:
+        answer = await designtools.engine_card(data, headers)
+    except DesignToolError as exc:
+        return None, None, str(exc)
+    card = json.dumps(answer).encode("utf-8")
+    return _same_engine(_fingerprint(card)), card, ""
+
+
+async def _card_for(
+    artifact: Artifact,
+    data: bytes,
+    card: bytes | None,
+    problem: str,
+    headers: Mapping[str, str],
+) -> str:
+    """Give a just-stored engine its card: the one built already
+    (:func:`_engine_here`), else one built now if it has none and nothing
+    has failed yet. Returns why it has none, or ""."""
+    if card is not None and not _card_info(artifact):
+        _keep_card(artifact.id, card)
+        return ""
+    if problem or _card_info(artifact):
+        return problem
+    return await _build_card(artifact.id, data, headers)
 
 
 def _card_built(raw: bytes) -> str:
@@ -1257,11 +1377,17 @@ async def import_from_source(
             _alias(same, provenance)
             return ImportResult(artifact=_out(same), already_present=True)
         summary = diagram_summary(payload)
-    else:
+    card: bytes | None = None
+    problem = ""
+    if tool.kind == "engine":
         try:
             summary = engine_summary(engine_from_bytes(data, name=name or doc_id))
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        same, card, problem = await _engine_here(data, request.headers)
+        if same is not None:
+            _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            return ImportResult(artifact=_out(same), already_present=True)
 
     label = name or doc_id
     artifact, existed = library.add(
@@ -1272,9 +1398,8 @@ async def import_from_source(
         suffix=tool.suffix,
         summary=summary,
     )
-    problem = ""
-    if tool.kind == "engine" and not _card_info(artifact):
-        problem = await _build_card(artifact.id, data, request.headers)
+    if tool.kind == "engine":
+        problem = await _card_for(artifact, data, card, problem, request.headers)
     return ImportResult(
         artifact=_out(artifact), already_present=existed, card_error=problem
     )
@@ -1308,8 +1433,8 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    parsed = _compared(artifact)
-    if parsed is None:
+    compared = _compared_source(artifact)
+    if compared is None:
         return FreshnessOut(
             artifact_id=artifact_id,
             tracked=False,
@@ -1321,7 +1446,7 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
                 "with."
             ),
         )
-    key, owner, doc_id, release = parsed
+    provenance, (key, owner, doc_id, release) = compared
     if release:
         return FreshnessOut(
             artifact_id=artifact_id,
@@ -1345,7 +1470,10 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             current = False
     else:
-        current = hashlib.sha256(data).hexdigest() == artifact.sha256
+        # An engine pulled onto one already here is the same engine in other
+        # bytes (R008): unchanged if the working copy still gives those.
+        fetched = hashlib.sha256(data).hexdigest()
+        current = fetched in (artifact.sha256, _pulled_sha(artifact_id, provenance))
     where = f"{owner}/{doc_id}" if owner else doc_id
     return FreshnessOut(
         artifact_id=artifact_id,
@@ -1383,11 +1511,17 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         )
     except DesignToolError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    card: bytes | None = None
+    problem = ""
     if tool.kind == "engine":
         try:
             summary = engine_summary(engine_from_bytes(data, name=artifact.name))
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        same, card, problem = await _engine_here(data, request.headers)
+        if same is not None:
+            _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            return ImportResult(artifact=_out(same), already_present=True)
     else:
         payload = json.loads(data.decode("utf-8"))
         same = _same_drawing(payload)
@@ -1403,9 +1537,8 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         suffix=tool.suffix,
         summary=summary,
     )
-    problem = ""
-    if tool.kind == "engine" and not _card_info(fresh):
-        problem = await _build_card(fresh.id, data, request.headers)
+    if tool.kind == "engine":
+        problem = await _card_for(fresh, data, card, problem, request.headers)
     return ImportResult(
         artifact=_out(fresh), already_present=existed, card_error=problem
     )
