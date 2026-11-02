@@ -330,6 +330,16 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           />
         ))}
 
+        {/* Above the line's numbers, which the sketch dims, so it is seen on
+            opening -- the sketch and its diameter box are below the fold. */}
+        {sketchUnbored && (
+          <p className="text-[10px] text-amber-500/90">
+            {sketchSegments.some(bored) ? 'Part of the run has' : 'The run has'} no inner diameter, so the solver can
+            size neither its tube nor its bends there and prices nothing for it. Set the inner diameter on the
+            sketch below, or pick a size from its chart.
+          </p>
+        )}
+
         {spec.params.length > 0 && (
           <div className={`space-y-2 border-t border-[var(--color-border)] pt-2.5${
             superseded ? ' opacity-45' : ''}`}>
@@ -346,7 +356,9 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
               <p className="text-[10px] text-amber-500/90">
                 This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
                 the solver reads that instead of the numbers here.
-                {listUnbored && ' Part of it states no bore, and the solver prices nothing for that part.'}{' '}
+                {listUnbored && (segments.some(bored)
+                  ? ' Part of it states no bore, and the solver prices nothing for that part.'
+                  : ' It states no bore, and the solver prices nothing for it.')}{' '}
                 <button disabled={readOnly} onClick={() => setSegments([])}
                   className="underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   let it go
@@ -431,13 +443,6 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
               )}
             </div>
             {sketch && <SketchEditor sketch={sketch} onChange={setSketch} readOnly={readOnly} />}
-            {sketchUnbored && (
-              <p className="text-[10px] text-amber-500/90">
-                {sketchSegments.some(bored) ? 'Part of the run has' : 'The run has'} no inner diameter, so the solver can
-                size neither its tube nor its bends there and prices nothing for it. Set the inner diameter
-                above the sketch, or pick a size from the chart.
-              </p>
-            )}
           </div>
         )}
 

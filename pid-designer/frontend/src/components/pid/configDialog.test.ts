@@ -63,6 +63,23 @@ describe('a sketched line with no inner diameter', () => {
     const out = run(setSectionBore(noBore(), null, 10.92)).save();
     expect(out.params.bore).toMatchObject({ value: 10.92, unit: 'mm' });
   });
+
+  it('is said on a run already saved that way, whose sketch is gone', () => {
+    // LE4 (3)'s fuel tank-to-main run as it is in the drawing: the sketch's
+    // segments, bore 0, and no sketch left to give a diameter to.
+    const seg = (bore: number) => ({
+      id: 'seg_1', method: 'itemised', standard: 'tube',
+      bore: { value: bore, unit: 'mm', source: 'estimated', reference: 'from the centerline sketch' },
+      length: { value: 429.54, unit: 'mm', source: 'measured', reference: 'from the centerline sketch' },
+      fittings: [{ id: 'fit_1', kind: 'bend', count: 1, boreMm: bore, angleDeg: 45 }],
+    });
+    const line = (bore: number) => dialog('edge', {
+      componentType: 'pipe', label: '', params: { length: { value: 0.519, unit: 'm', source: 'measured' } },
+      segments: [seg(bore)],
+    } as unknown as Data).text();
+    expect(line(0)).toMatch(/It states no bore, and the solver prices nothing for it/);
+    expect(line(10.92)).not.toMatch(/no bore/);
+  });
 });
 
 describe('options the dialog does not show', () => {
@@ -70,13 +87,13 @@ describe('options the dialog does not show', () => {
     ({ componentType: 'MAN', label: 'FV-MAN', options }) as unknown as Data;
 
   it('keeps a hand valve standing open through a save', () => {
-    expect(dialog('node', man({ Cd: 'manual', normalPosition: 'open' })).save().options.normalPosition).toBe('open');
+    expect(dialog('node', man({ flowCoefficient: 'Cd', normalPosition: 'open' })).save().options.normalPosition).toBe('open');
   });
 
   it('keeps a symbol\'s option it does not name, rather than erasing it on save', () => {
     // Written by another tool or by hand. The dialog writes back what it
     // holds, wholesale, and used to hold only the options its spec names.
-    const out = dialog('node', man({ Cd: 'manual', actuator: 'DAQ-7' })).save().options;
+    const out = dialog('node', man({ flowCoefficient: 'Cd', actuator: 'DAQ-7' })).save().options;
     expect(out.actuator).toBe('DAQ-7');
     expect(out.normalPosition).toBe('closed');
   });
