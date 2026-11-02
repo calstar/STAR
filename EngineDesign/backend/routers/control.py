@@ -7,6 +7,9 @@ from typing import Optional, List, Dict, Any, Literal
 import numpy as np
 import json
 import asyncio
+import logging
+from pathlib import Path
+
 import yaml
 
 from starlette.concurrency import run_in_threadpool
@@ -26,6 +29,34 @@ from engine.control.robust_ddp.config_loader import load_config as load_controll
 from engine.pipeline.io import load_config as load_engine_config
 
 router = APIRouter(prefix="/api/control", tags=["control"])
+_log = logging.getLogger(__name__)
+
+
+# A request names a YAML to read by path (an engine config for the controller runs, a controller
+# config). Read as given, that was any file the server could open -- another user's upload under
+# output/user_configs/<them>/ run through the controller past design sharing, and the 500 echoed a
+# traceback with server paths. A path must now resolve to a .yaml under configs/ (or, for an engine
+# config, the caller's own uploads).
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_CONFIGS_DIR = _PROJECT_ROOT / "configs"
+
+
+def _engine_config_roots(session: UserSession) -> tuple:
+    return (_CONFIGS_DIR, _PROJECT_ROOT / "output" / "user_configs" / session.user)
+
+
+def _confined_yaml(path: str, *roots: Path, base: Path = _PROJECT_ROOT) -> Path:
+    """``path`` (relative to ``base``) resolved, if it is a .yaml file under one of ``roots``; else 400/404."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    candidate = candidate.resolve()
+    allowed = [r.resolve() for r in roots]
+    if candidate.suffix.lower() not in (".yaml", ".yml") or not any(candidate.is_relative_to(r) for r in allowed):
+        raise HTTPException(status_code=400, detail="The path must name a .yaml file under configs/ (or your own uploads).")
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail=f"No such config: {path}")
+    return candidate
 
 # Off the loop: the solve endpoints below are thin ``async def`` shells around a plain ``def``.
 # The controller's DDP solve and the engine evaluations it drives are seconds of CPU; inline in
@@ -238,8 +269,7 @@ def _init_controller(request: ControllerInitRequest, session: UserSession):
     try:
         # Load controller config
         if request.controller_config_path:
-            config_path = f"configs/{request.controller_config_path}"
-            cfg = load_controller_config(config_path)
+            cfg = load_controller_config(str(_confined_yaml(request.controller_config_path, _CONFIGS_DIR, base=_CONFIGS_DIR)))
         else:
             cfg = get_default_config()
         
@@ -261,6 +291,8 @@ def _init_controller(request: ControllerInitRequest, session: UserSession):
             "status": "initialized",
             "config": convert_numpy(cfg.to_dict()),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -633,10 +665,11 @@ def _simulate_controller(request: ControllerSimulateRequest, session: UserSessio
         
         return convert_numpy(results)
         
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        raise HTTPException(status_code=500, detail=error_detail)
+        _log.exception("controller simulation failed")
+        raise HTTPException(status_code=500, detail=f"Controller simulation failed: {e}")
 
 
 @router.post("/reset")
@@ -890,10 +923,11 @@ def _simulate_layer2_controller(request: Layer2ControllerSimulateRequest, sessio
         
         return convert_numpy(results)
         
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        error_detail = f"Controller simulation failed: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        raise HTTPException(status_code=500, detail=error_detail)
+        _log.exception("controller simulation failed")
+        raise HTTPException(status_code=500, detail=f"Controller simulation failed: {e}")
 
 
 @router.post("/simulate-layer2-stream")
@@ -1103,8 +1137,8 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
             yield f"data: {safe_json_dumps({'type': 'complete', 'progress': 1.0, 'stage': 'Complete', 'message': 'Simulation complete'})}\n\n"
             
         except Exception as e:
-            import traceback
-            error_detail = f"Controller simulation failed: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            _log.exception("controller simulation failed")
+            error_detail = f"Controller simulation failed: {e}"
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
@@ -1128,7 +1162,7 @@ def _simulate_from_layer2_config(request: Layer2ConfigSimulateRequest, session: 
     try:
         # Load config
         if request.config_path:
-            config = load_engine_config(request.config_path)
+            config = load_engine_config(str(_confined_yaml(request.config_path, *_engine_config_roots(session))))
         else:
             # Use currently loaded config
             if not session.app_state.has_config():
@@ -1215,10 +1249,11 @@ def _simulate_from_layer2_config(request: Layer2ConfigSimulateRequest, session: 
         # Already under this session's compute lock: the sync body, not the endpoint again.
         return _simulate_layer2_controller(layer2_request, session)
         
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        error_detail = f"Failed to simulate from config: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        raise HTTPException(status_code=500, detail=error_detail)
+        _log.exception("simulate from config failed")
+        raise HTTPException(status_code=500, detail=f"Failed to simulate from config: {e}")
 
 
 @router.post("/simulate-from-config-stream")
@@ -1234,7 +1269,12 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
         try:
             # Load config
             if request.config_path:
-                config = load_engine_config(request.config_path)
+                try:
+                    path = _confined_yaml(request.config_path, *_engine_config_roots(session))
+                except HTTPException as e:
+                    yield f"data: {safe_json_dumps({'type': 'error', 'error': e.detail})}\n\n"
+                    return
+                config = load_engine_config(str(path))
             else:
                 # Use currently loaded config
                 if not session.app_state.has_config():
@@ -1486,8 +1526,8 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
             yield f"data: {safe_json_dumps({'type': 'complete', 'progress': 1.0, 'stage': 'Complete', 'message': 'Simulation complete'})}\n\n"
             
         except Exception as e:
-            import traceback
-            error_detail = f"Failed to simulate from config: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            _log.exception("simulate from config failed")
+            error_detail = f"Failed to simulate from config: {e}"
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
@@ -1724,8 +1764,8 @@ async def upload_config_and_simulate(
             
             
         except Exception as e:
-            import traceback
-            error_detail = f"Failed to upload and simulate: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+            _log.exception("upload and simulate failed")
+            error_detail = f"Failed to upload and simulate: {e}"
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
