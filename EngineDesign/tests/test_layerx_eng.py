@@ -72,6 +72,23 @@ def test_the_header_quotes_the_runs_impulse_and_t0_in_psia():
     assert "tanks 544.6 psia, bottle 3764.7 psia at T-0" in head[1] and "psig" not in head[1]
 
 
+def test_the_download_is_named_for_the_motor_inside_it():
+    """The file's name and the motor's name in it carry the same mean thrust, the run's (step-held).
+    The header moved to the run's mean on 2026-11-02 while the download kept the trapezoid's: this
+    falling curve (6800 N less 20 N a step) read STAR-5070N on the file and STAR-5060N inside it.
+    By hand: 0.02 s x (175 x 6800 - 20 x 15225) N = 17710 N s over 3.5 s = 5060 N."""
+    from engine.layerx.eng import filename
+
+    r, impulse = _result(thrust=lambda k: 6800.0 - 20.0 * k)
+    mean = impulse / (N * DT)
+    t, f = [0.0] + [DT * (k + 1) for k in range(N)], [6800.0] + [6800.0 - 20.0 * k for k in range(N)]
+    trapezoid = sum(0.5 * (f[i] + f[i + 1]) * (t[i + 1] - t[i]) for i in range(N)) / (N * DT)
+    assert round(trapezoid) != round(mean)      # the case tells the two apart
+    motor = check(to_eng(r))["name"]
+    assert motor == f"STAR-{round(mean)}N"
+    assert filename(r, "abc") == f"{motor}-abc.eng"
+
+
 def test_given_dimensions_override_the_run():
     r, _ = _result()
     eng = check(to_eng(r, diameter_mm=152.4, length_mm=500.0, dry_kg=0.0))

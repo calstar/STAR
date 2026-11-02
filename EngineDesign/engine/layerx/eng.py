@@ -113,6 +113,14 @@ def _trapz(t: List[float], f: List[float]) -> float:
     return sum(0.5 * (f[i] + f[i + 1]) * (t[i + 1] - t[i]) for i in range(len(t) - 1))
 
 
+def _run_mean(t: List[float], f: List[float]) -> Tuple[float, float]:
+    """``(impulse [N s], mean thrust [N])`` as the run totals them (``delivered.summary``): each sample
+    after Fire carries the step that ends there, so the curve is step-held. The trapezoid of the same
+    samples is neither the run's figure nor the file's (LE4 (3): 23743.9 against the run's 23737.9 N-s)."""
+    impulse = sum(f[i + 1] * (t[i + 1] - t[i]) for i in range(len(t) - 1))
+    return impulse, (impulse / t[-1] if t[-1] > 0 else 0.0)
+
+
 def to_eng(
     result: Dict[str, Any],
     *,
@@ -139,11 +147,7 @@ def to_eng(
     if not prop > 0.0:
         raise ValueError("the run reports no propellant consumed")
     total = prop + float(dry or 0.0)
-    # The run's impulse as the run totals it (delivered.summary): each sample after Fire carries the
-    # step that ends there, so the curve is step-held. The trapezoid of the same samples is neither
-    # the run's figure nor the file's (LE4 (3): 23743.9 against the run's 23737.9 N-s).
-    run_impulse = sum(f[i + 1] * (t[i + 1] - t[i]) for i in range(len(t) - 1))
-    mean = run_impulse / t[-1] if t[-1] > 0 else 0.0
+    run_impulse, mean = _run_mean(t, f)
     name = _token(name or f"STAR-{round(mean)}N")
 
     # Only the first point moves: the ramp in loses half an edge of the first step's thrust and
@@ -181,7 +185,9 @@ def to_eng(
 
 def filename(result: Dict[str, Any], run_id: str = "") -> str:
     t, f = curve(result)
-    mean = _trapz(t, f) / t[-1] if t[-1] > 0 else 0.0
+    # The motor's own name inside the file (to_eng): the run's mean, not the trapezoid's, or the
+    # download is STAR-6189N and the motor in it STAR-6188N.
+    mean = _run_mean(t, f)[1]
     stamp = run_id or time.strftime("%Y%m%d-%H%M%S")
     return f"STAR-{round(mean)}N-{stamp}.eng"
 
