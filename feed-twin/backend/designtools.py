@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -361,14 +362,23 @@ async def engine_card(
     return dict(answer)
 
 
+#: ``<owner>/<doc id>@<stamp>`` as :func:`fetch` writes it. The owner (an
+#: email) and the id are store slugs, which never hold a space, so the first
+#: ``@`` followed by a stamp ends them; a release label may hold an ``@`` of
+#: its own -- the store keeps one ("hotfire@pad-2") -- and splitting on the
+#: last ``@`` cut the label in two (R010).
+_PROVENANCE = re.compile(r"(?P<where>\S*?)@(?:working copy|release (?P<release>.+))")
+
+
 def parse_source(source: str) -> tuple[str, str, str, str] | None:
     """``(tool key, owner, doc id, release)`` from an artifact's ``source``,
     as :func:`fetch` wrote it; ``None`` for anything else (an upload, a
     shipped file). ``release`` is empty for a working copy."""
     key, sep, rest = source.partition(":")
-    if not sep or key not in tools() or "@" not in rest:
+    if not sep or key not in tools():
         return None
-    where, _, stamp = rest.rpartition("@")
-    owner, _, doc_id = where.rpartition("/")
-    release = stamp[len("release ") :] if stamp.startswith("release ") else ""
-    return key, owner, doc_id, release
+    found = _PROVENANCE.fullmatch(rest)
+    if found is None:
+        return None
+    owner, _, doc_id = found["where"].rpartition("/")
+    return key, owner, doc_id, found["release"] or ""
