@@ -11,8 +11,11 @@ using namespace radio_link;
 
 static FakeChip chip;
 
-void setUp(void) { chip.reset(); }
-void tearDown(void) {}
+void setUp(void) {
+    chip.reset();
+}
+void tearDown(void) {
+}
 
 // The UN_ARM frame from the message-format examples.
 static const uint8_t kFrame[7] = {0x01, 0x11, 0x05, 0x00, 0x00, 0xBE, 0x3D};

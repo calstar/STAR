@@ -8,8 +8,10 @@
 
 using namespace radio_link;
 
-void setUp(void) {}
-void tearDown(void) {}
+void setUp(void) {
+}
+void tearDown(void) {
+}
 
 // Golden frames computed by an independent Python implementation of the layout
 // in frame.h, so these catch a mistake shared by encode and decode.

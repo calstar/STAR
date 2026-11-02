@@ -11,11 +11,13 @@ namespace radio_link {
 // register in memory, answers the four commands the receive path uses, and
 // writes down every command it is given.
 class FakeChip : public SpiBus {
-   public:
+public:
     static constexpr unsigned kLogSize = 16;
     static constexpr uint8_t kStatus = 0x2A;  // the status byte it replies with
 
-    FakeChip() { reset(); }
+    FakeChip() {
+        reset();
+    }
 
     void reset() {
         memset(buffer_, 0, sizeof buffer_);
@@ -40,16 +42,30 @@ class FakeChip : public SpiBus {
     }
 
     // Pretend the chip raised only these flags (no packet stored).
-    void set_irq(uint16_t flags) { irq_ = flags; }
+    void set_irq(uint16_t flags) {
+        irq_ = flags;
+    }
 
     // Pretend the BUSY pin never goes low.
-    void set_never_ready() { never_ready_ = true; }
+    void set_never_ready() {
+        never_ready_ = true;
+    }
 
-    uint16_t irq() const { return irq_; }
-    unsigned waits() const { return waits_; }
-    unsigned transfers() const { return transfers_; }
-    unsigned commands_logged() const { return log_len_; }
-    uint8_t command_at(unsigned i) const { return log_[i]; }
+    uint16_t irq() const {
+        return irq_;
+    }
+    unsigned waits() const {
+        return waits_;
+    }
+    unsigned transfers() const {
+        return transfers_;
+    }
+    unsigned commands_logged() const {
+        return log_len_;
+    }
+    uint8_t command_at(unsigned i) const {
+        return log_[i];
+    }
 
     bool wait_busy() override {
         waits_++;
@@ -89,7 +105,7 @@ class FakeChip : public SpiBus {
         }
     }
 
-   private:
+private:
     uint8_t buffer_[256];
     uint16_t irq_;
     uint8_t packet_len_;

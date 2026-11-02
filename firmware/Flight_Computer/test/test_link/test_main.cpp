@@ -20,7 +20,8 @@ void setUp(void) {
     fake::reset(true);
     lk = Link(kMe);
 }
-void tearDown(void) {}
+void tearDown(void) {
+}
 
 static void inject_arm(uint16_t seq, bool corrupt) {
     uint8_t payload[9];

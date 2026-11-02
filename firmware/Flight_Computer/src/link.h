@@ -14,8 +14,9 @@
 namespace radio_link {
 
 class Link {
-   public:
-    explicit Link(uint8_t target_id) : gate_(target_id) {}
+public:
+    explicit Link(uint8_t target_id) : gate_(target_id) {
+    }
 
     /**
      * Drain at most one waiting packet. Returns the gate's action for it:
@@ -24,10 +25,14 @@ class Link {
      */
     ArmAction poll(uint32_t now_ms);
 
-    uint32_t frames_ok() const { return frames_ok_; }            // valid frames
-    uint32_t frames_dropped() const { return frames_dropped_; }  // bad CRC etc.
+    uint32_t frames_ok() const {
+        return frames_ok_;
+    }  // valid frames
+    uint32_t frames_dropped() const {
+        return frames_dropped_;
+    }  // bad CRC etc.
 
-   private:
+private:
     ArmGate gate_;
     uint32_t frames_ok_ = 0;
     uint32_t frames_dropped_ = 0;

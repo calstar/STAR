@@ -14,8 +14,11 @@ static const uint8_t kMe = 7;  // this rocket's target id
 
 static ArmGate g(kMe);
 
-void setUp(void) { g = ArmGate(kMe); }
-void tearDown(void) {}
+void setUp(void) {
+    g = ArmGate(kMe);
+}
+void tearDown(void) {
+}
 
 static Frame arm_frame(uint16_t seq, uint32_t key, uint32_t inv,
                        uint8_t target) {
@@ -42,7 +45,9 @@ static Frame simple(FrameType type, uint16_t seq) {
     return f;
 }
 
-static ArmAction feed(const Frame& f, uint32_t t) { return g.on_frame(f, t); }
+static ArmAction feed(const Frame& f, uint32_t t) {
+    return g.on_frame(f, t);
+}
 
 static void test_single_arm_does_not_arm(void) {
     TEST_ASSERT_EQUAL(ArmAction::Pending, feed(good_arm(1), 0));

@@ -42,8 +42,9 @@ enum class ArmAction : uint8_t {
 };
 
 class ArmGate {
-   public:
-    explicit ArmGate(uint8_t target_id) : target_id_(target_id) {}
+public:
+    explicit ArmGate(uint8_t target_id) : target_id_(target_id) {
+    }
 
     /** Feed one already-validated frame (decode_frame returned Ok). */
     ArmAction on_frame(const Frame& f, uint32_t now_ms);
@@ -51,9 +52,11 @@ class ArmGate {
     /** Call periodically so an unconfirmed ARM expires. */
     void tick(uint32_t now_ms);
 
-    bool pending() const { return pending_; }
+    bool pending() const {
+        return pending_;
+    }
 
-   private:
+private:
     void note_seq(uint16_t seq);
 
     uint8_t target_id_;
