@@ -24,6 +24,12 @@ BASE_URL = "https://www.thrustcurve.org/api/v1"
 DEFAULT_TIMEOUT = 30.0
 #: Polite delay between calls; the catalog is a few thousand motors fetched once.
 THROTTLE_S = 0.25
+#: A 429 (rate limited) waits this long, doubling each time, unless the server's
+#: Retry-After says otherwise; capped. The throttle-sized backoff used for other errors
+#: gave up within a second, so a full mirror died a few batches in.
+RATE_LIMIT_WAIT_S = 30.0
+RATE_LIMIT_MAX_WAIT_S = 300.0
+RATE_LIMIT_RETRIES = 6
 
 
 @dataclass
@@ -54,15 +60,25 @@ class ThrustCurveClient:
 
     def _post(self, path: str, payload: dict, retries: int = 3) -> dict:
         last: Exception | None = None
-        for attempt in range(retries):
+        attempt = limited = 0
+        while attempt < retries:
             try:
                 r = self._client.post(path, json=payload)
                 r.raise_for_status()
                 _time.sleep(self._throttle)
                 return r.json()
-            except httpx.HTTPError as exc:  # transient network / 5xx
+            except httpx.HTTPStatusError as exc:
                 last = exc
-                _time.sleep(self._throttle * (attempt + 2))
+                if exc.response.status_code == 429 and limited < RATE_LIMIT_RETRIES:
+                    _time.sleep(_rate_limit_wait(exc.response, limited))
+                    limited += 1
+                    continue  # a rate limit is not a failed attempt
+                attempt += 1
+                _time.sleep(self._throttle * (attempt + 1))
+            except httpx.HTTPError as exc:  # transient network
+                last = exc
+                attempt += 1
+                _time.sleep(self._throttle * (attempt + 1))
         raise RuntimeError(f"thrustcurve.org POST {path} failed: {last}")
 
     def list_manufacturers(self) -> list[str]:
@@ -109,3 +125,13 @@ class ThrustCurveClient:
                 )
             )
         return files
+
+
+def _rate_limit_wait(response: httpx.Response, n: int) -> float:
+    """Seconds to wait after the ``n``-th 429 in a row: Retry-After when it is a number, else
+    RATE_LIMIT_WAIT_S doubling; never more than RATE_LIMIT_MAX_WAIT_S."""
+    try:
+        wait = float(response.headers.get("retry-after", ""))
+    except ValueError:
+        wait = RATE_LIMIT_WAIT_S * 2**n
+    return min(max(wait, 0.0), RATE_LIMIT_MAX_WAIT_S)
