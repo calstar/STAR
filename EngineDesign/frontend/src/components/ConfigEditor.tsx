@@ -3,6 +3,7 @@ import { useReadOnly } from '@stardesign-ui';
 import { updateConfig } from '../api/client';
 import type { EngineConfig } from '../api/client';
 import { useViewState } from '../lib/viewState';
+import { sectionIsOff } from '../lib/parameters';
 
 interface ConfigEditorProps {
   config: EngineConfig | null;
@@ -669,6 +670,10 @@ export function ConfigEditor({ config, onConfigUpdated }: ConfigEditorProps) {
     Object.keys(config).forEach(key => {
       if (!sections.includes(key)) sections.push(key);
     });
+    // A section the design switches off (regenerative or film cooling on an ablative engine) goes
+    // last, not among the parts this engine has. Still there, so it can be turned on.
+    const cfg = config as unknown as Record<string, unknown>;
+    sections.sort((a, b) => Number(sectionIsOff(a, cfg)) - Number(sectionIsOff(b, cfg)));
 
     if (!searchQuery) return sections;
 

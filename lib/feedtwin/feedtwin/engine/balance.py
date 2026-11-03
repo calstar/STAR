@@ -183,7 +183,10 @@ class MixtureBalance:
         fuel leg is the more restrictive one upstream, because then the fuel
         arrives at a lower pressure and spends less of it at the face.
         """
-        if self.fuel.injector_dp <= 0.0:
+        # Either face backwards (an abort's trickle, the chamber pushing up a
+        # leg) and there is no split to decompose: the square root of a
+        # negative ratio took the cockpit's /history down with it.
+        if self.fuel.injector_dp <= 0.0 or self.oxidiser.injector_dp <= 0.0:
             return 0.0
         return math.sqrt(self.oxidiser.injector_dp / self.fuel.injector_dp)
 

@@ -30,8 +30,11 @@ import { useDesignSlice } from '../lib/designState';
 import { useViewState } from '../lib/viewState';
 import {
   loadTimeSeriesResults,
+  requestTimeSeriesRun,
+  TIMESERIES_RUN_FAILED_EVENT,
   TIMESERIES_UPDATED_EVENT,
 } from '../utils/timeseriesSession';
+import type { Tab } from '../lib/tabs';
 
 // What the flight router returns beyond client.ts's FlightSimResponse: the flight report
 // (launch, stability, drag and its inputs, requirement checks) and the apogee-ceiling check.
@@ -115,6 +118,8 @@ interface FlightSimulationProps {
   onConfigUpdated?: (config: EngineConfig) => void;
   /** Design-state slice this mount persists under (the Layer 4 mount uses its own). */
   sliceKey?: string;
+  /** Switch the app to another tab (the Flight tab only; Layer 4 leaves it out). */
+  onOpenTab?: (tab: Tab) => void;
 }
 
 // Session storage handled via timeseriesSession utility (shared with TimeSeriesMode)
@@ -174,6 +179,7 @@ function InputField({
   max,
   step,
   disabled,
+  places,
 }: {
   label: string;
   value: string;
@@ -184,17 +190,26 @@ function InputField({
   max?: number;
   step?: number;
   disabled?: boolean;
+  /** Show this many decimals while the field is not being edited. The value itself is kept
+   *  whole: the propellant loads are the competition's fire load to the gram, and rounding
+   *  the stored string would round what Save Configuration writes back. */
+  places?: number;
 }) {
   // Every numeric field on this tab renders through here, and they all feed
   // Save Configuration, which writes the config.
   const readOnly = useReadOnly();
+  const [editing, setEditing] = useState(false);
+  const n = Number(value);
+  const shown = places !== undefined && !editing && value.trim() !== '' && Number.isFinite(n) ? n.toFixed(places) : value;
   return (
     <div>
       <label className="block text-sm text-[var(--color-text-secondary)] mb-1">{label}</label>
       <div className="relative">
         <input
           type="number"
-          value={value}
+          value={shown}
+          onFocus={() => setEditing(true)}
+          onBlur={() => setEditing(false)}
           onChange={(e) => onChange(e.target.value)}
           min={min}
           max={max}
@@ -245,7 +260,7 @@ function MetricCard({
   );
 }
 
-export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sliceKey = 'flight' }: FlightSimulationProps) {
+export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sliceKey = 'flight', onOpenTab }: FlightSimulationProps) {
   // RocketPy availability
   const [rocketPyAvailable, setRocketPyAvailable] = useState<boolean | null>(null);
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
@@ -319,6 +334,11 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
   const readOnly = useReadOnly();
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set while the shown flight is the full Time-Series burn, flown because the optimizer found
+  // no shorter burn that reaches the target.
+  const [fullBurnShown, setFullBurnShown] = useState(false);
+  // The burn asked of the Time-Series tab from here: running, or why it did not.
+  const [burnRequest, setBurnRequest] = useState<{ running: boolean; error: string | null }>({ running: false, error: null });
   const lastPropellantConfigKey = useRef<string | null>(null);
 
   // Time-series data from session (refreshed on tab focus + timeseries-updated event)
@@ -334,10 +354,24 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
 
   useEffect(() => {
     reloadTimeSeries();
-    const onUpdate = () => reloadTimeSeries();
+    const onUpdate = () => {
+      reloadTimeSeries();
+      setBurnRequest({ running: false, error: null });
+    };
+    const onFailed = (e: Event) => setBurnRequest({ running: false, error: String((e as CustomEvent<string>).detail ?? 'The burn did not run.') });
     window.addEventListener(TIMESERIES_UPDATED_EVENT, onUpdate);
-    return () => window.removeEventListener(TIMESERIES_UPDATED_EVENT, onUpdate);
+    window.addEventListener(TIMESERIES_RUN_FAILED_EVENT, onFailed);
+    return () => {
+      window.removeEventListener(TIMESERIES_UPDATED_EVENT, onUpdate);
+      window.removeEventListener(TIMESERIES_RUN_FAILED_EVENT, onFailed);
+    };
   }, [reloadTimeSeries]);
+
+  // No burn to fly: run the one the Time-Series tab is set up for, from here.
+  const runBurn = useCallback(() => {
+    setBurnRequest({ running: true, error: null });
+    requestTimeSeriesRun();
+  }, []);
 
   useEffect(() => {
     if (isVisible) {
@@ -549,6 +583,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
     setIsLoading(true);
     setError(null);
     setOptimizeResults(null);
+    setFullBurnShown(false);
 
     try {
       const freshBundle = readTimeSeriesFromSession();
@@ -589,6 +624,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
     setIsLoading(true);
     setError(null);
     setResults(null);
+    setFullBurnShown(false);
 
     try {
       const freshBundle = readTimeSeriesFromSession();
@@ -620,9 +656,19 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
           setResults(result.data.flight);
           setLoxMass(result.data.optimal_lox_kg.toFixed(2));
           setFuelMass(result.data.optimal_fuel_kg.toFixed(2));
-        }
-        if (!result.data.success && result.data.infeasible_reason) {
-          setError(result.data.infeasible_reason);
+        } else if (!result.data.success) {
+          // The amber summary already says why; it used to be repeated in a red error box, with no
+          // trajectory drawn. Fly the whole burn instead, so the shortfall is on the chart: the
+          // propellant is what the curve burns end to end (the same integral the optimizer used).
+          const lox = freshBundle.summary?.lox_propellant_kg;
+          const fuel = freshBundle.summary?.fuel_propellant_kg;
+          if (lox != null && fuel != null && lox > 0 && fuel > 0) {
+            const full = await runFlightSimulation(buildFlightRequest(freshBundle.data, lox, fuel));
+            if (full.data && full.data.status === 'success') {
+              setResults(full.data);
+              setFullBurnShown(true);
+            }
+          }
         }
       }
     } catch (err) {
@@ -867,11 +913,14 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
             />
           </svg>
           <div>
-            <h3 className="text-lg font-semibold text-red-400">RocketPy Not Available</h3>
-            <p className="text-[var(--color-text-secondary)] mt-1">{rocketPyMessage}</p>
-            <code className="block mt-3 px-3 py-2 bg-[var(--color-bg-primary)] rounded text-sm text-[var(--color-text-muted)]">
-              pip install rocketpy
-            </code>
+            <h3 className="text-lg font-semibold text-red-400">Flight simulation is not installed on this server</h3>
+            <p className="text-[var(--color-text-secondary)] mt-1">
+              The flight is flown with RocketPy, which the server running this design cannot load.
+            </p>
+            <details className="mt-2 text-xs text-[var(--color-text-muted)]">
+              <summary className="cursor-pointer">Details</summary>
+              <p className="mt-1 font-mono">{rocketPyMessage}</p>
+            </details>
           </div>
         </div>
       </div>
@@ -896,7 +945,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
           <div>
             <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Flight Simulation</h2>
             <p className="text-sm text-[var(--color-text-secondary)]">
-              RocketPy-based trajectory simulation
+              The vehicle flown on the Time-Series burn
             </p>
           </div>
         </div>
@@ -951,18 +1000,47 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
             </div>
           </div>
         ) : (
-          <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 mb-4">
-            <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
+          <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-yellow-400">No time-series data available</p>
+                <p className="text-sm font-medium text-[var(--color-text-primary)]">No burn to fly yet</p>
                 <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                  Run a time-series analysis first to generate thrust and mass flow data for flight simulation.
+                  The flight is flown on a Time-Series burn: thrust and propellant flow over time.
+                  Run it here on the tank-pressure profile set on the Time-Series tab, or open that tab to change it.
                 </p>
+                {burnRequest.error && (
+                  <p className="text-xs text-amber-400 mt-1">The burn did not run: {burnRequest.error}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={runBurn}
+                  disabled={burnRequest.running}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-sm disabled:opacity-60"
+                >
+                  {burnRequest.running ? 'Running the burn…' : 'Run the burn'}
+                </button>
+                {onOpenTab && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenTab('timeseries')}
+                    className="px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  >
+                    Open Time-Series
+                  </button>
+                )}
               </div>
             </div>
+            {onOpenTab && (
+              <p className="text-xs text-[var(--color-text-muted)] mt-3">
+                To fly the burn the stand drawing delivers, with the feed system in the loop, use{' '}
+                <button type="button" onClick={() => onOpenTab('layerx')} className="underline hover:text-[var(--color-text-primary)]">
+                  Layer X
+                </button>{' '}
+                (its Flight page).
+              </p>
+            )}
           </div>
         )}
 
@@ -970,9 +1048,11 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
         <div className="mb-4">
           <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Flight sim mode</label>
           <div className="flex flex-wrap gap-2">
+            {/* A view of the tab, so live while read only: running a flight reads the design and
+                never writes it. Only Save Configuration does. */}
             <button
-              disabled={readOnly}
               type="button"
+              aria-pressed={flightMode === 'manual'}
               onClick={() => setFlightMode('manual')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 flightMode === 'manual'
@@ -983,8 +1063,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
               Manual iteration
             </button>
             <button
-              disabled={readOnly}
               type="button"
+              aria-pressed={flightMode === 'optimize'}
               onClick={() => setFlightMode('optimize')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 flightMode === 'optimize'
@@ -1028,12 +1108,13 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
         {/* Propellant configuration */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <InputField
-            label="Initial LOX Mass"
+            label="LOX load"
             value={loxMass}
             onChange={setLoxMass}
             unit="kg"
             min={0.1}
             step={0.1}
+            places={2}
             disabled={flightMode === 'optimize'}
             help={
               flightMode === 'optimize'
@@ -1044,12 +1125,13 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
             }
           />
           <InputField
-            label="Initial Fuel Mass"
+            label="Fuel load"
             value={fuelMass}
             onChange={setFuelMass}
             unit="kg"
             min={0.1}
             step={0.1}
+            places={2}
             disabled={flightMode === 'optimize'}
             help={
               flightMode === 'optimize'
@@ -1474,7 +1556,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
           }`}
         >
           <p className="font-medium text-[var(--color-text-primary)] mb-3">
-            {optimizeResults.success ? 'Minimum-fuel solution' : 'Optimization infeasible'}
+            {optimizeResults.success ? 'Minimum-fuel solution' : 'The target apogee is out of reach'}
           </p>
           {optimizeResults.success ? (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -1508,8 +1590,11 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
             <p className="text-sm text-yellow-400">{optimizeResults.infeasible_reason}</p>
           )}
           <p className="text-xs text-[var(--color-text-muted)] mt-3">
-            Ran {optimizeResults.simulations_run} flight simulations. Switch to manual mode to tweak propellant or
-            re-run time-series with a different burn profile, then optimize again.
+            {optimizeResults.success
+              ? `Found in ${optimizeResults.simulations_run} flight simulation${optimizeResults.simulations_run === 1 ? '' : 's'}.`
+              : fullBurnShown
+                ? 'Below: the whole burn, flown. A higher thrust or a longer burn on the Time-Series tab reaches further.'
+                : 'A higher thrust or a longer burn on the Time-Series tab reaches further.'}
           </p>
         </div>
       )}
@@ -1527,7 +1612,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
               />
             </svg>
             <div>
-              <p className="font-medium">Simulation Error</p>
+              <p className="font-medium">The flight did not run</p>
               <p className="text-sm mt-1">{error}</p>
             </div>
           </div>
@@ -1537,6 +1622,11 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
       {/* Results */}
       {results && results.status === 'success' && (
         <div className="space-y-6">
+          {fullBurnShown && (
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              The whole Time-Series burn, flown on the propellant it burns end to end.
+            </p>
+          )}
           {/* Key metrics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <MetricCard
@@ -1638,7 +1728,14 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                   {cdAt(results.report.drag.mach, results.report.drag.cd_power_off, 0.8).toFixed(3)} /{' '}
                   {cdAt(results.report.drag.mach, results.report.drag.cd_power_on, 0.8).toFixed(3)}.
                   {results.report.drag.model !== 'table' &&
-                    ` Finish ${(Number(results.report.drag.inputs.surface_roughness_m) * 1e6).toFixed(0)} um, fins ${String(results.report.drag.inputs.fin_profile)} ${(Number(results.report.drag.inputs.fin_thickness_m) * 1e3).toFixed(1)} mm (rocket.surface_roughness_m, fin_profile, fin_thickness_m; defaults are OpenRocket's, not the drawing).`}
+                    ` Finish ${(Number(results.report.drag.inputs.surface_roughness_m) * 1e6).toFixed(0)} µm, fins ${String(results.report.drag.inputs.fin_profile)} ${(Number(results.report.drag.inputs.fin_thickness_m) * 1e3).toFixed(1)} mm`}
+                  {results.report.drag.model !== 'table' && (
+                    <span className="underline decoration-dotted cursor-help"
+                          title="Set in Configuration, Vehicle: rocket.surface_roughness_m, fin_profile, fin_thickness_m. Left blank, they are OpenRocket's defaults, not the vehicle's drawing.">
+                      {' '}(OpenRocket defaults unless set)
+                    </span>
+                  )}
+                  {results.report.drag.model !== 'table' && '.'}
                 </p>
               )}
             </div>
@@ -1695,10 +1792,11 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                     <span> ({(results.propellant.propellant_tank_fill_factor * 100).toFixed(0)}% fill from config)</span>
                   )}
                   : LOX max {results.propellant.lox_tank_max_kg?.toFixed(2) ?? '—'} kg, fuel max{' '}
-                  {results.propellant.fuel_tank_max_kg?.toFixed(2) ?? '—'} kg. Override via{' '}
-                  <code className="text-[var(--color-text-secondary)]">design_requirements.propellant_tank_fill_factor</code>,{' '}
-                  <code className="text-[var(--color-text-secondary)]">fuel_tank_capacity_kg</code>, or tank geometry /
-                  <code className="text-[var(--color-text-secondary)]"> tank_volume_m3</code>.
+                  {results.propellant.fuel_tank_max_kg?.toFixed(2) ?? '—'} kg.{' '}
+                  <span className="underline decoration-dotted cursor-help"
+                        title="In Configuration: design_requirements.propellant_tank_fill_factor, fuel_tank_capacity_kg, or the tank geometry (tank_volume_m3).">
+                    Set in Configuration
+                  </span>.
                 </p>
               )}
               {results.propellant.target_apogee_m != null && (
@@ -1773,7 +1871,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                           tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
                           tickFormatter={(value) => Math.round(value).toString()}
                           label={{
-                            value: 'Altitude (m)',
+                            value: 'm',
                             angle: -90,
                             position: 'insideLeft',
                             fill: 'var(--color-text-secondary)',
@@ -1822,7 +1920,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                           tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
                           tickFormatter={(value) => Math.round(value).toString()}
                           label={{
-                            value: 'Velocity (m/s)',
+                            value: 'm/s',
                             angle: -90,
                             position: 'insideLeft',
                             fill: 'var(--color-text-secondary)',
@@ -1891,7 +1989,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                             tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
                             tickFormatter={(value) => value.toFixed(1)}
                             label={{
-                              value: 'Thrust (kN)',
+                              value: 'kN',
                               angle: -90,
                               position: 'insideLeft',
                               fill: 'var(--color-text-secondary)',
@@ -1943,7 +2041,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                             tick={{ fill: 'var(--color-text-secondary)', fontSize: 12 }}
                             tickFormatter={(value) => Math.round(value).toString()}
                             label={{
-                              value: 'Pressure (psi)',
+                              value: 'psia',
                               angle: -90,
                               position: 'insideLeft',
                               fill: 'var(--color-text-secondary)',
@@ -2012,7 +2110,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated, sl
                             domain={[0, 100]}
                             tickFormatter={(value) => `${value}%`}
                             label={{
-                              value: 'Fill Level (%)',
+                              value: '%',
                               angle: -90,
                               position: 'insideLeft',
                               fill: 'var(--color-text-secondary)',

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import type { Report } from '../api';
 import { groupChecks, type CheckGroup, type CheckKind } from '../lib/checks';
+import { asShown } from '../lib/pressure';
 
 const SECTION: Record<CheckKind, { title: string; hint: string; tone: string }> = {
   fix: {
@@ -54,7 +55,7 @@ function Checks({ warnings, labels = {} }: { warnings: readonly string[]; labels
         of(kind).length ? (
           <section key={kind}>
             <h3 className="caps mb-1 text-[11px]" style={{ color: SECTION[kind].tone }} title={SECTION[kind].hint}>
-              {SECTION[kind].title}
+              {SECTION[kind].title} · {of(kind).length}
             </h3>
             <ul className="m-0 list-none p-0">{of(kind).map(line)}</ul>
           </section>
@@ -140,7 +141,11 @@ export function ReportPanel({ report, labels }: { report: Report; labels?: Recor
 
       {open && (
         <ul className="m-0 grid max-h-[280px] list-none grid-cols-[max-content_1fr_max-content_max-content_max-content] gap-x-3 overflow-y-auto p-0">
-          {sorted.map((a) => (
+          {sorted.map((raw) => {
+            // A value the library assumed in gauge reads absolute, as every
+            // pressure on the screen does.
+            const a = { ...raw, ...asShown(raw) };
+            return (
             <li
               key={`${a.component}.${a.parameter}`}
               className="col-span-full grid grid-cols-subgrid items-baseline border-b border-[var(--edge)] px-1 py-1 last:border-b-0"
@@ -164,7 +169,8 @@ export function ReportPanel({ report, labels }: { report: Report; labels?: Recor
                 {LABEL[a.source] ?? a.source}
               </span>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

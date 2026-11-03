@@ -139,17 +139,20 @@ export function InjectorHardware({ onSaved, reloadKey }: { onSaved?: (c: EngineC
             {g.fields.filter((f) => !f.show || f.show(draft)).map((f) => (
               <label key={f.key} className="flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-secondary)]"
                      title={f.hint}>
-                <span className="truncate">{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
+                <span className="truncate min-w-0">{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
                 {f.kind === 'select' ? (
+                  // Wide enough for the longest option ("contoured (square exits)"), which a
+                  // w-28 cut to "contoured (s".
                   <select value={draft[f.key]} disabled={readOnly}
+                          title={f.options!.find((o) => o.value === draft[f.key])?.label}
                           onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-                          className="w-28 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded px-1 py-0.5 text-[var(--color-text-primary)]">
+                          className="w-44 shrink-0 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded px-1 py-0.5 text-[var(--color-text-primary)]">
                     {f.options!.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 ) : (
                   <input value={draft[f.key]} disabled={readOnly} inputMode={f.kind === 'text' ? 'text' : 'decimal'} placeholder={f.hint ? '—' : ''}
                          onChange={(e) => setDraft({ ...draft, [f.key]: f.kind === 'text' ? e.target.value : e.target.value.replace(/[^0-9.eE-]/g, '') })}
-                         className={`w-28 ${INPUT}`} />
+                         className={`w-28 shrink-0 ${INPUT}`} />
                 )}
               </label>
             ))}

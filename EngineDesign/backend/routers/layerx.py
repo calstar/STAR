@@ -303,6 +303,19 @@ class Job:
         self.cancel = threading.Event()
         #: Large side data of the result (DATA-CONTRACT 4 sidecars), written beside the run file.
         self.sidecars: Dict[str, Any] = {}
+        #: The first pass as it burns (run_prepared's ``live``): thrust and chamber pressure on the
+        #: burn's clock, for the run page to draw while the passes run. Shown only while it runs.
+        self.live: Optional[Dict[str, List[float]]] = None
+
+    def feed(self, t: float, thrust_n: float, pc_psia: float) -> None:
+        live = self.live if self.live is not None else {"t": [], "thrust_N": [], "pc_psia": []}
+        # One point per 50 ms of burn at most: a poll every half second carries a few kB.
+        if live["t"] and t - live["t"][-1] < 0.049:
+            return
+        live["t"].append(round(t, 3))
+        live["thrust_N"].append(round(thrust_n, 1))
+        live["pc_psia"].append(round(pc_psia, 2))
+        self.live = live
 
     def view(self, *, with_result: bool = True) -> Dict[str, Any]:
         out = {
@@ -317,6 +330,8 @@ class Job:
             "design": self.design_name,
             "settings": self.settings.model_dump(),
         }
+        if self.status in ("queued", "running") and self.live:
+            out["live"] = self.live
         if with_result:
             out["result"] = self.result
         elif self.result:
@@ -427,6 +442,8 @@ def _execute(job: Job, work: Callable[[Callable[[str, float], None], Callable[[]
         def progress(stage: str, fraction: float) -> None:
             job.stage = stage
             job.progress = float(fraction)
+
+        progress.live = job.feed  # type: ignore[attr-defined]  # a burn that streams its first pass reads it
 
         out = work(progress, job.cancel.is_set)
         if isinstance(out, dict) and isinstance(out.get("_sidecars"), dict):
@@ -660,7 +677,8 @@ def start_run(body: Settings, session: UserSession = Depends(get_session)) -> Di
             # and change nothing in it. The axial heat-flux grids go beside the run file.
             sidecars: Dict[str, Any] = {}
             result = run_prepared(prep, runner=runner, progress=progress, cancelled=cancelled,
-                                  replay=prep.settings.replay, config=config, diagnostics=True, sidecars=sidecars)
+                                  replay=prep.settings.replay, config=config, diagnostics=True, sidecars=sidecars,
+                                  live=getattr(progress, "live", None))
             result.setdefault("provenance", {})["reproduce"] = snapshot
             if sidecars:
                 result["sidecars"] = sorted(sidecars)

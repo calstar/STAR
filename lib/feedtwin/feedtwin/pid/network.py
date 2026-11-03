@@ -39,6 +39,7 @@ from typing import Callable, Iterable, Mapping
 from feedtwin.comps import HydraulicComponent, build_component
 from feedtwin.model.component import ComponentInstance
 from feedtwin.model.param import Param, Provenance
+from feedtwin.model.pressure import say
 from feedtwin.model.segments import LineSegment
 from feedtwin.pid.document import Diagram, DiagramError, PidEdge, PidNode
 from feedtwin.pid.roles import ground_ids, vehicle_ids
@@ -80,7 +81,9 @@ FALLBACKS: dict[str, dict[str, tuple[float, str]]] = {
     # feedtwin.comps.regulator. A drawing that omits them would otherwise
     # produce a singular Jacobian rather than an answer.
     "regulator": {
-        "setpoint": (500.0, "psi"),
+        # Absolute, and spelled so: bare "psi" is absolute in the unit table, but
+        # the assumptions table shows the unit, and a person reads psia.
+        "setpoint": (500.0, "psia"),
         "Cv": (0.8, "Cv"),
         "bore": (7.75, "mm"),
         "flow_droop": (20.0, "psi"),
@@ -529,7 +532,7 @@ def build_network(
                 pressure = default * 6894.757293168361
                 warnings.append(
                     f"{node.label} has no pressure on the drawing; assumed "
-                    f"{default:.0f} psi."
+                    f"{say(pressure)}."
                 )
             net.add_node(node.id, fluid, temperature, pressure=pressure)
         else:
@@ -2068,7 +2071,7 @@ def _tank_warnings(
 
     out.append(
         f"{label} holds {fluid} at the assumed {temperature:.0f} K, where it is "
-        f"a gas, not a liquid. At {pressure / 6894.757293168361:.0f} psi it "
+        f"a gas, not a liquid. At {say(pressure)} it "
         f"condenses at about {saturation:.0f} K. If this is a propellant tank "
         "the drawing is missing its temperature, and every density and flow on "
         "that leg is wrong by the ratio of gas to liquid."

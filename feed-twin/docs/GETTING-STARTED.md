@@ -70,7 +70,10 @@ Without a stand the cockpit still works. Its runs then go in your own list.
 
 Pressures on a drawing are gauge unless they say `psia` (chamber pressure on
 the ENGINE symbol is absolute). Differences such as bias, droop and crack take
-plain `psi`. See [ADR 0004](../../docs/adr/0004-pressure-references.md).
+plain `psi`. See [ADR 0004](../../docs/adr/0004-pressure-references.md). The
+twin shows and takes every pressure in psia, whatever the drawing wrote; the
+hover on a gauge gives the psig the stand's DAQ would show. See
+[ADR 0007](../../docs/adr/0007-people-read-psia.md).
 
 ## 3. Run the stand
 

@@ -1,4 +1,6 @@
-# P&ID Designer
+# Hotbench P&ID (pid-designer)
+
+*Hotbench, a STAR project: Hotbench P&ID draws the stand, [Hotbench Engine](../EngineDesign/README.md) designs the engine, and [Hotbench Twin](../feed-twin/README.md) runs the two together.*
 
 An interactive web tool for drawing the propulsion **P&ID** (Piping &
 Instrumentation Diagram) — tanks, valves, sensors, and the lines between them.
@@ -55,10 +57,14 @@ you can defend in a design review and one you cannot. What each component has
 is declared in [`spec.ts`](frontend/src/components/pid/spec.ts) — adding a
 setting is a row in that table.
 
-**There is no psig.** Gauge is a reference, not a unit, and a psig value stored
-as psi is one atmosphere low everywhere downstream. The units offered are
-exactly the ones `feedtwin.model.units` registers, and every pressure field
-says so beside it.
+**A pressure at a place says its reference.** A tank, bottle, setpoint or
+MAWP is typed in psia or psig (psia offered first); a bare `psi` saved by an
+older drawing is still read the way `feedtwin.model.pressure.drawn_unit` reads
+it -- gauge, but absolute on the ENGINE symbol -- and reopens labelled psig (or
+psia on the engine), the same number. Every readout on the sheet and in the
+checks is printed in psia, so a COPV at "4000 psi" reads 4014.7 psia beside an
+engine at 385 psia. A difference (dome bias, droop, relief set and reseat,
+cracking) has no reference and stays plain psi.
 
 **Prefer a part number to typed numbers.** The catalogue already holds a part's
 datasheet and whatever the bench measured. Name the part and leave the fields

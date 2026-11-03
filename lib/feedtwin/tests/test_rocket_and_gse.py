@@ -110,8 +110,45 @@ def test_every_hand_loaded_regulator_gets_a_knob() -> None:
     assert knobs[DOME].regulators == (ids["DR-REG-G"],)
     assert knobs[CHARGE].regulators == (ids["PR-1"],)
     assert knobs[CHARGE].label == "COPV fill (PR-1)"
-    assert knobs[CHARGE].psig == 4500.0
+    # DR-REG-G and PR-1 are blank; the dome they load and the bottle they fill
+    # are not (test_blank_loader_and_fill_start_at_what_they_feed).
+    assert knobs[DOME].psig == pytest.approx(535.0)
+    assert knobs[CHARGE].psig == pytest.approx(4000.0)
     assert knobs[ids["LP-PR"]].regulators == (ids["LP-PR"],)
+
+
+def test_blank_loader_and_fill_start_at_what_they_feed() -> None:
+    """LE4 (6) draws DPR_HP's dome at 535 and the COPV at 4000, and leaves its
+    dome loader (DR-REG-G) and COPV fill (PR-1) blank. The knobs start at those:
+    a loader's job is the dome it loads, a fill's the charge it fills to. They
+    started at the session's 500 and 4,500, so the cockpit primed 35 psi under
+    Layer X on the same drawing and read its COPV amber at its own charge.
+    Blank all the way down, they still start at the session's numbers."""
+    from feedtwin.session import assemble_model
+    from feedtwin.session.hookup import CHARGE, DOME, knob_starts, regulators, suggest
+
+    ids = _ids()
+    model = _model()
+    hookup = suggest(model, 500.0, 4500.0)
+    assert knob_starts(hookup, model) == {
+        DOME: pytest.approx(535.0),
+        CHARGE: pytest.approx(4000.0),
+    }
+    loader = next(r for r in regulators(model) if r.id == ids["DR-REG-G"])
+    assert loader.drawn_psig == pytest.approx(535.0)
+
+    payload = _payload()
+    for node in payload["nodes"]:
+        params = node["data"].get("params") or {}
+        if node["data"].get("label") == "DPR_HP":
+            params.pop("dome_pressure")
+        if node["data"].get("label") == "COPV":
+            params.pop("pressure")
+    blank = assemble_model(read_diagram(payload, name="LE4"), diagram_id="le4")
+    knobs = {k.id: k for k in suggest(blank, 500.0, 4500.0).knobs}
+    assert knobs[DOME].psig == 500.0
+    assert knobs[CHARGE].psig == 4500.0
+    assert knob_starts(suggest(blank, 500.0, 4500.0), blank) == {}
 
 
 @pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
@@ -548,3 +585,27 @@ def test_the_crews_transfer_valve_is_not_the_operators_hold() -> None:
     # Turned the other way by hand, it is the operator's.
     session.set_valve(valve, True)
     assert session.operator_held == [valve]
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_trip_names_the_vessel_furthest_over() -> None:
+    """Both run tanks primed over MAWP trip the stand at once. It named the
+    first tank it looked at (Eth-Tank, 935.7 psia) while the LOX tank stood
+    at 963.5 psia (D-33); it names the one furthest over its MAWP."""
+    from feedtwin.session.gauge import from_psig
+
+    ids = _ids()
+    session = _session()
+    fuel, lox = session.tanks[ids["Eth-Tank"]], session.tanks[ids["LOX-Tank"]]
+    assert fuel.mawp == pytest.approx(lox.mawp)
+    session.prime(fill_fraction=0.5, tank_psi=900.0, copv_psi=4000.0, state="Ready")
+    lox.state = lox.tank.initial_state(
+        pressure=from_psig(950.0),
+        liquid_mass=lox.state.liquid_mass,
+        liquid_temperature=lox.state.liquid_temperature,
+        gas_temperature=293.15,
+    )
+    assert fuel.pressure > fuel.mawp and lox.pressure > fuel.pressure
+    session._check_limits()
+    assert session.trip is not None and session.trip.vessel == ids["LOX-Tank"]
+    assert session.tripped and session.tripped.startswith("LOX-Tank reached")

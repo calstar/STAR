@@ -62,7 +62,7 @@ describe('when the hold has gone', () => {
   it('says so, and offers the design back', () => {
     render(<CheckoutLostDialog checkout={lost()} noun="design" />);
     expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /take it back/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^edit again$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /stay read only/i })).toBeInTheDocument();
   });
 
@@ -108,7 +108,7 @@ describe('the buttons', () => {
     const acknowledgeLost = vi.fn();
     render(<CheckoutLostDialog checkout={lost({ take, acknowledgeLost })} noun="design" />);
 
-    await userEvent.click(screen.getByRole('button', { name: /take it back/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^edit again$/i }));
 
     expect(take).toHaveBeenCalledOnce();
     expect(acknowledgeLost).toHaveBeenCalledOnce();
@@ -127,7 +127,22 @@ describe('the buttons', () => {
 
   it('does not offer to take it back twice while one is in flight', () => {
     render(<CheckoutLostDialog checkout={lost({ busy: true })} noun="design" />);
-    expect(screen.getByRole('button', { name: /taking/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /opening/i })).toBeDisabled();
+  });
+
+  it('takes keyboard focus, keeps Tab inside, and Escape stays read only', async () => {
+    // It says aria-modal, so a screen reader confines itself to it; focus has to
+    // go there too. On the dialog, not on "Edit again": Enter must not take it.
+    const acknowledgeLost = vi.fn();
+    render(<CheckoutLostDialog checkout={lost({ acknowledgeLost })} noun="design" />);
+    const dlg = screen.getByRole('alertdialog');
+    expect(document.activeElement).toBe(dlg);
+    for (let i = 0; i < 4; i++) {
+      await userEvent.tab();
+      expect(dlg.contains(document.activeElement)).toBe(true);
+    }
+    await userEvent.keyboard('{Escape}');
+    expect(acknowledgeLost).toHaveBeenCalled();
   });
 });
 

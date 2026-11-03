@@ -7,7 +7,7 @@ import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
 import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
-import { fmtParam } from '../fmt';
+import { fmtParam, fmtPressure } from '../fmt';
 import { GRID } from '../route';
 
 /** The tank's box: what its end ports are placed from before they are measured. */
@@ -83,7 +83,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
   // What is drawn on the face: the nominal pressure, and the temperature when
   // one is stated. Two short lines under the species, inside the barrel, so
   // they never meet the ports on the heads or the tag underneath.
-  const readout = [fmtParam(params?.pressure), fmtParam(params?.temperature)].filter(Boolean);
+  const readout = [fmtPressure('pressure', params?.pressure), fmtParam(params?.temperature)].filter(Boolean);
   const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   // Declared here, or inherited from whatever feeds it. Naming the species on
   // the symbol is the point of picking a real one: "ETH" and "LOX" are what a

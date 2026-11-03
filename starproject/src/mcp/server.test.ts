@@ -27,6 +27,37 @@ const ADMIN_ONLY = [
   "run_digest",
   "list_email_queue",
   "list_notification_log",
+  "get_outreach_dashboard",
+  "list_sponsors",
+  "get_sponsor",
+  "save_sponsor",
+  "save_outreach_org",
+  "delete_outreach_touch",
+  "delete_outreach_contacts",
+  "log_outreach_touch",
+  "schedule_sponsor_follow_up",
+  "add_sponsor_task",
+  "list_outreach_contacts",
+  "get_outreach_contact",
+  "save_outreach_contact",
+  "tag_outreach_contacts",
+  "list_outreach_lists",
+  "get_outreach_list_emails",
+  "save_outreach_list",
+  "list_outreach_templates",
+  "get_outreach_merge",
+  "list_outreach_campaigns",
+  "get_outreach_campaign",
+  "save_outreach_campaign",
+  "import_outreach_sheet",
+  "log_outreach_touches",
+  "delete_sponsor",
+  "delete_outreach_org",
+  "delete_outreach_campaign",
+  "delete_outreach_list",
+  "save_outreach_template",
+  "delete_outreach_template",
+  "set_outreach_perk_status",
 ];
 
 const DESTRUCTIVE = [
@@ -37,6 +68,13 @@ const DESTRUCTIVE = [
   "remove_admin",
   "revoke_api_token",
   "untrack_subteam",
+  "delete_outreach_touch",
+  "delete_outreach_contacts",
+  "delete_sponsor",
+  "delete_outreach_org",
+  "delete_outreach_campaign",
+  "delete_outreach_list",
+  "delete_outreach_template",
 ];
 
 type Listed = Awaited<ReturnType<Client["listTools"]>>["tools"];
@@ -87,6 +125,14 @@ describe("MCP server registry", () => {
       const t = tools.find((x) => x.name === n);
       if (t) expect(t.description, n).toMatch(/admin/i);
     }
+  });
+
+  it("lists every outreach tool as admin-only (the CRM holds donors' details)", () => {
+    const outreach = tools
+      .map((t) => t.name)
+      .filter((n) => /outreach|sponsor/.test(n));
+    expect(outreach.length).toBeGreaterThanOrEqual(30);
+    for (const n of outreach) expect(ADMIN_ONLY, n).toContain(n);
   });
 
   it("never lets a token mint another token", () => {

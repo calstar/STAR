@@ -327,6 +327,7 @@ async function receiptContent(number: number, item: number | undefined) {
     }
     items.push({ ...it, receipts });
   }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- dropped from the summary
   const { createdById: _c, payeeEmail: _p, submitterEmail: _s, items: _i, ...head } = r;
   const summary = { ...head, items, filesAttached: files.length, ...(note ? { note } : {}) };
   return rawContent([{ type: "text", text: JSON.stringify(summary, null, 2) }, ...files]);

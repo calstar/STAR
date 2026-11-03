@@ -1,0 +1,86 @@
+# CodeRabbit config for the STAR monorepo.
+# CodeRabbit does the code review. The author quiz is a separate GitHub Action
+# (.github/workflows/pr-quiz.yml), so CodeRabbit is told not to quiz anyone.
+language: en-US
+tone_instructions: "Be direct and specific. Explain why something is a problem, not just that it is. Skip praise."
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "^main$"
+
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/.pio/**"
+    - "!**/*.min.js"
+    - "!**/package-lock.json"
+    - "!**/pnpm-lock.yaml"
+    - "!**/yarn.lock"
+    - "!**/*.npz"
+    - "!EngineDesign/output/**"
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Do not write quiz or comprehension questions for the author; a separate
+        GitHub Action handles that.
+    - path: "firmware/**"
+      instructions: |
+        Embedded C++ on microcontrollers (PlatformIO). Look for: shared state
+        touched from an ISR without volatile or a critical section, blocking calls
+        or heap allocation inside ISRs, integer overflow in timing math (millis()
+        wraparound), unchecked buffer indexes, and units that are not stated in
+        variable names. A mistake here can open a valve at the wrong time, so flag
+        anything that changes actuation, sequencing or abort behaviour.
+    - path: "{feed-twin,lib/feedtwin,EngineDesign}/**"
+      instructions: |
+        Physics models. Follow the repo CLAUDE.md: every hardware number carries a
+        provenance (Param with value, unit, source); pressures are absolute inside
+        the model and gauge only on drawings; new physics is opt-in and must default
+        to the previous behaviour. Flag bare magic numbers, unit mix-ups and
+        silent behaviour changes.
+    - path: "{daq-server,lib/daq-protocol}/**"
+      instructions: |
+        Ground DAQ server and wire protocol. Flag protocol changes that are not
+        backward compatible with deployed boards, and missing timeouts or error
+        handling on socket I/O.
+    - path: "{auth,starproject,callink-worker}/**"
+      instructions: |
+        Web services that handle logins and member data. Flag missing auth checks,
+        SQL built from strings, secrets in code, and user data written to logs.
+    - path: ".github/**"
+      instructions: |
+        CI workflows. Flag pull_request_target jobs that check out or run code from
+        the PR head, overly broad permissions, and unpinned third-party actions.
+
+  tools:
+    ruff:
+      enabled: true
+    eslint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+  allow_author_approval: false
+
+chat:
+  auto_reply: false
+  allow_non_org_members: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+  learnings:
+    scope: local

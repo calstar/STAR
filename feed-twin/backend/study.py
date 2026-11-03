@@ -26,10 +26,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
 from feedtwin.session.burn import BurnPlan, jump_to_t0, run_burn
-from feedtwin.session.gauge import psig
+from feedtwin.session.gauge import from_psig, psig, say
 from feedtwin.session.hookup import CHARGE, DOME
 
 from backend.session import LIVE_STEP, Session
+from feedtwin.session.core import DRY_MASS
+from backend.tunables import GAUGE_WIRE
 
 _log = logging.getLogger("feed-twin.study")
 
@@ -81,7 +83,9 @@ class StudyCase:
             )
         copv = number("copv_psi")
         if copv is not None and not 0.0 < copv <= 10000.0:
-            raise ValueError(f"case {index + 1}: COPV {copv:g} psig is out of range")
+            raise ValueError(
+                f"case {index + 1}: COPV {say(from_psig(copv), 1)} is out of range"
+            )
         litres = number("bottle_litres")
         if litres is not None and not 0.0 < litres <= 500.0:
             raise ValueError(f"case {index + 1}: bottle {litres:g} L is out of range")
@@ -89,6 +93,14 @@ class StudyCase:
         if fill is not None and not 0.0 < fill <= 1.0:
             raise ValueError(f"case {index + 1}: fill {fill:g} is not in (0, 1]")
         knobs = {str(k): float(v) for k, v in dict(raw.get("knobs") or {}).items()}
+        for knob, value in knobs.items():
+            # Gauge on the wire: below zero is a regulator set under the air
+            # around it, which no knob reaches (a typed 10 psia was -4.7).
+            if value != value or not 0.0 <= value <= 10000.0:
+                raise ValueError(
+                    f"case {index + 1}: {knob} {say(from_psig(value), 1)} "
+                    "is out of range"
+                )
         return StudyCase(
             label=str(raw.get("label") or f"Case {index + 1}"),
             copv_psi=copv,
@@ -126,7 +138,8 @@ class CaseResult:
     """What this case changed from the stand, in words."""
     t0: dict[str, Any]
     """Where it started: ``copv_psi``, ``tank_psi``, ``lockup_psi`` per tank,
-    ``fill_fraction``, ``bottle_litres``."""
+    ``fill_fraction``, ``bottle_litres``, ``loads_kg`` and ``pressurant`` (the
+    gas swapped in; ``""`` is the stand's own)."""
     t: list[float]
     tanks: dict[str, list[float]]
     """Tank label -> pressure [psig]."""
@@ -179,10 +192,13 @@ def case_inputs(base: Mapping[str, Any], case: StudyCase) -> dict[str, Any]:
 
 
 def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
-    """What the case changes, in a sentence each, for the results table."""
+    """What the case changes, in a sentence each, for the results table.
+
+    Pressures in psia (ADR 0007): the case carries them gauge, as the wire does.
+    """
     out: list[str] = []
     if case.copv_psi is not None:
-        out.append(f"COPV {case.copv_psi:.0f} psig")
+        out.append(f"COPV {say(from_psig(case.copv_psi), 1)}")
     stand_knobs = dict(base.get("knobs") or {})
     stand_knobs[DOME] = dict(base.get("setup") or {}).get("dome")
     stand_knobs[CHARGE] = dict(base.get("setup") or {}).get("copv_target")
@@ -191,7 +207,7 @@ def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
             stand_knobs.get(knob) is None
             or abs(float(stand_knobs[knob]) - value) > 1e-9
         ):
-            out.append(f"{knob} {value:.0f} psig")
+            out.append(f"{knob} {say(from_psig(value), 1)}")
     if case.bottle_litres is not None:
         out.append(f"bottle {case.bottle_litres:g} L")
     if case.fill_fraction is not None:
@@ -201,7 +217,10 @@ def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
     stand_setup = dict(base.get("setup") or {})
     for key, value in case.setup.items():
         if stand_setup.get(key) != value:
-            out.append(f"{key} = {value}")
+            if key in GAUGE_WIRE and isinstance(value, (int, float)):
+                out.append(f"{key} = {say(from_psig(float(value)), 1)}")
+            else:
+                out.append(f"{key} = {value}")
     return out or ["the stand as set"]
 
 
@@ -224,13 +243,19 @@ def run_case(
 ) -> CaseResult:
     """Build the case's stand, put it at T-0, and fire it."""
     session = build(case_inputs(request.base, case), case.pressurant)
+    # The cart's vessels are not what a case is about: its K-bottles keep
+    # their size, and its tanks are not the burn's (D-19).
+    ground = session.ground
     if case.bottle_litres is not None:
-        for bottle in session.bottles.values():
-            bottle.volume.volume = case.bottle_litres / 1e3
+        for key, bottle in session.bottles.items():
+            if key not in ground:
+                bottle.volume.volume = case.bottle_litres / 1e3
     copv = session.setup.copv_target_psi
     fill = session.setup.full_fraction
     t0 = jump_to_t0(session, copv_psi=copv, fill_fraction=fill)
-    litres = [b.volume.volume * 1e3 for b in session.bottles.values()]
+    litres = [
+        b.volume.volume * 1e3 for k, b in session.bottles.items() if k not in ground
+    ]
     plan = BurnPlan(
         tank_psi=t0.tank_psi,
         copv_psi=copv,
@@ -244,6 +269,10 @@ def run_case(
         dt=LIVE_STEP,
         horizon_s=request.horizon_s,
         end_on_depletion=True,
+        # The cockpit's end of burn, a tank empty (DRY_MASS): with BurnPlan's
+        # 60 g design residual the same stand read 0.7 % less impulse here
+        # than on the console (D-80).
+        dry_kg=DRY_MASS,
     )
     trace = run_burn(session, plan, cancelled=cancelled)
     keep = _thin(len(trace.t))
@@ -269,21 +298,29 @@ def run_case(
             "lockup_psi": {labels.get(k, k): v for k, v in t0.lockup_psi.items()},
             "fill_fraction": round(fill, 4),
             "bottle_litres": round(litres[0], 3) if litres else None,
+            # The gas swapped in, or "" for the stand's own: what a sweep
+            # crossed with the pressurant groups its series by.
+            "pressurant": case.pressurant or "",
             # What each tank held at ignition, off the trace: what was burned.
             "loads_kg": {
                 labels.get(k, k): round(v["liquid_mass_kg"][0], 3)
                 for k, v in trace.tank.items()
-                if v.get("liquid_mass_kg")
+                if v.get("liquid_mass_kg") and k not in ground
             },
         },
         t=column(trace.t, 3),
+        # The vehicle's tanks: a cart's transfer tank sits at atmosphere through
+        # the burn, made every case's "Tank low" a flat zero, and doubled the
+        # legend (D-19).
         tanks={
             labels.get(k, k): column([psig(p) for p in v["pressure_Pa"]])
             for k, v in trace.tank.items()
+            if k not in ground
         },
         bottles={
             bottle_labels.get(k, k): column([psig(p) for p in v["pressure_Pa"]], 1)
             for k, v in trace.bottle.items()
+            if k not in ground
         },
         chamber_psi=column(
             [
@@ -369,6 +406,14 @@ def run_study(
     return result
 
 
+#: Studies that burn at once across the whole server. Each is a run of whole
+#: burns sharing the interpreter with every live console, which drop into
+#: slow motion when they cannot keep up; one study per user and stand (D-51)
+#: put no bound on how many. The rest wait their turn, queued.
+STUDIES_AT_ONCE = 1
+_BURNING = threading.BoundedSemaphore(STUDIES_AT_ONCE)
+
+
 class StudyRunner:
     """One study at a time, on a worker thread, with progress and cancel.
 
@@ -404,7 +449,14 @@ class StudyRunner:
             self._cancel.clear()
 
         def work() -> None:
+            turn = False
             try:
+                self.stage = "queued behind another study"
+                while not (turn := _BURNING.acquire(timeout=0.1)):
+                    if self._cancel.is_set():
+                        self.stage = "cancelled"
+                        return
+                self.stage = "starting"
 
                 def on_progress(done: int, total: int, stage: str) -> None:
                     self.progress = done / max(total, 1)
@@ -424,6 +476,8 @@ class StudyRunner:
                 self.error = f"{type(exc).__name__}: {exc}"
                 self.stage = "failed"
             finally:
+                if turn:
+                    _BURNING.release()
                 self.running = False
                 self.progress = 1.0
 

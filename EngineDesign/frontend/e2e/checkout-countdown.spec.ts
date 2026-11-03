@@ -21,13 +21,14 @@ import { test, expect, type Page } from '@playwright/test';
 /** The countdown span the chip renders beside "Editing" — e.g. "· 14:37". */
 const COUNTDOWN = /^·\s*\d+:\d{2}$/;
 
+/** The checkout's "Stop editing" (the designs bar's Release publishes a version). */
 const releaseButton = (page: Page) =>
-  page.locator('button:not([title])').filter({ hasText: /^Release/ });
+  page.getByRole('button', { name: 'Stop editing', exact: true });
 
 const designPicker = (page: Page) => page.locator('header select').last();
 
 /**
- * The design bar has to be live before Take does anything: `CheckoutControl` renders in
+ * The design bar has to be live before Edit does anything: `CheckoutControl` renders in
  * every state, and `useCheckout.take()` no-ops while `ref` is null.
  */
 async function waitForDesignBar(page: Page) {
@@ -44,7 +45,7 @@ async function ensureCheckedOut(page: Page) {
   await expect
     .poll(
       async () => {
-        const take = page.getByRole('button', { name: 'Take', exact: true });
+        const take = page.getByRole('button', { name: 'Edit', exact: true });
         if (await take.isVisible().catch(() => false)) {
           await take.click({ timeout: 5_000 }).catch(() => {});
         }
@@ -122,7 +123,7 @@ test('interacting with the page does refresh the hold', async ({ page }) => {
   await waitForDesignBar(page);
   await ensureCheckedOut(page);
 
-  await page.clock.fastForward('16:00'); // age out the Take
+  await page.clock.fastForward('16:00'); // age out the checkout
   await page.waitForTimeout(1_000);
   const idle = beats;
 

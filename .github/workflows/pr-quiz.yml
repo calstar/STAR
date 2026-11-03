@@ -1,0 +1,57 @@
+name: PR Quiz
+
+# Multiple-choice quiz for a PR's author before the PR merges into main.
+# Claude writes the questions (.github/scripts/pr_quiz.py); grading compares
+# fingerprints and uses no model. The result is a commit status named "PR quiz",
+# which branch protection on main requires.
+#
+# pull_request_target and issue_comment both run this file as it is on main, so a
+# PR cannot edit the quiz to pass itself. Neither job checks out or runs PR code;
+# the script only reads the diff through the API. The "quiz" environment is
+# limited to main, so QUIZ_SECRET is only handed to runs from main.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+    branches: [main]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  statuses: write
+
+concurrency:
+  group: pr-quiz-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  quiz:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (startsWith(github.event.comment.body, '/answer') || startsWith(github.event.comment.body, '/quiz new')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: quiz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the Anthropic SDK
+        run: pip install "anthropic>=1,<2"
+
+      - name: Run quiz step
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          QUIZ_SECRET: ${{ secrets.QUIZ_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 -I .github/scripts/pr_quiz.py

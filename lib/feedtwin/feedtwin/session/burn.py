@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping
 
 from feedtwin.session.core import PAD_HOLD_S, Sample, Session, Setup
-from feedtwin.session.gauge import PSI, from_psig, psig
+from feedtwin.session.gauge import PSI, from_psig, psia, psig, say
 from feedtwin.session.model import Model
 from feedtwin.session.network_trace import NetworkTrace
 from feedtwin.session.hookup import Hookup
@@ -439,9 +439,9 @@ def jump_to_t0(
         tank_psi = psig(min(lockups.values()))
         if max(lockups.values()) - min(lockups.values()) > PSI:
             notes.append(
-                f"The regulators lock up at {psig(min(lockups.values())):.0f}-"
-                f"{psig(max(lockups.values())):.0f} psig; every tank was primed at "
-                f"{tank_psi:.0f}."
+                f"The regulators lock up at {psia(min(lockups.values())):,.1f}-"
+                f"{say(max(lockups.values()), 1)}; every tank was primed at "
+                f"{say(min(lockups.values()), 1)}."
             )
         session.prime(
             fill_fraction=fill_fraction,
@@ -453,7 +453,8 @@ def jump_to_t0(
         )
     else:
         notes.append(
-            f"No regulator feeds the tanks; primed at {fallback_psi:.0f} psig."
+            f"No regulator feeds the tanks; primed at "
+            f"{say(from_psig(fallback_psi), 1)}."
         )
     for tank_id in session.vehicle_tanks:
         if lockups and tank_id not in lockups:

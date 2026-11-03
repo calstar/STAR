@@ -6,6 +6,7 @@
  */
 
 import { designHeaders, designParams } from '../lib/activeDesign';
+import { errorText, thrownText } from '../lib/errors';
 
 export const API_BASE = '/api';
 
@@ -32,13 +33,13 @@ async function request<T>(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}: ${response.statusText}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error' };
+    return { error: thrownText(err) };
   }
 }
 
@@ -57,12 +58,30 @@ export interface ConfigResponse {
   config: EngineConfig;
   /** Changes whenever the backend session is recreated (restart, idle eviction). */
   session_epoch?: string;
+  /** Changes on every wholesale load (POST /config/load, an upload); null while the session
+   *  still holds the default it was created with. */
+  load_token?: string | null;
 }
 
 export interface UploadResponse {
   status: string;
   message: string;
   config: EngineConfig;
+  session_epoch?: string;
+  load_token?: string | null;
+}
+
+// The token of the last wholesale load THIS tab made. The backend session is one per user and
+// every tab shares it, so a session token that is not this one means another tab loaded its
+// design over ours (lib/sessionGuard.ts).
+let ownLoadToken: string | null = null;
+export function lastOwnLoadToken(): string | null {
+  return ownLoadToken;
+}
+/** Adopt the session's current token as this tab's own -- for a tab that shows the config it
+ *  found in the session rather than one it loaded. */
+export function adoptLoadToken(token: string | null | undefined): void {
+  ownLoadToken = token ?? null;
 }
 
 // Evaluation types - matches runner.evaluate() output from engine/core/runner.py
@@ -269,13 +288,14 @@ export async function uploadConfig(file: File): Promise<ApiResponse<UploadRespon
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
+    if (data?.load_token) ownLoadToken = data.load_token;
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 
@@ -300,10 +320,12 @@ export async function updateConfig(updates: Partial<EngineConfig>, expectSha256?
 
 // Replace the whole config (not a merge) -- used when loading a saved config.
 export async function loadConfigJson(config: EngineConfig): Promise<ApiResponse<ConfigResponse>> {
-  return request<ConfigResponse>('/config/load', {
+  const res = await request<ConfigResponse>('/config/load', {
     method: 'POST',
     body: JSON.stringify(config),
   });
+  if (res.data?.load_token) ownLoadToken = res.data.load_token;
+  return res;
 }
 
 // --- Per-user saved config library (/api/configs) -------------------------
@@ -590,13 +612,13 @@ export async function uploadTimeseriesFromCSV(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'CSV upload failed' };
+    return { error: thrownText(err, 'The CSV upload failed.') };
   }
 }
 
@@ -1490,13 +1512,14 @@ export async function uploadLayer2Config(file: File): Promise<ApiResponse<Upload
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
+    if (data?.load_token) ownLoadToken = data.load_token;
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 
@@ -1758,7 +1781,7 @@ export function simulateLayer2ControllerStream(
     .then(async (response) => {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP ${response.status}`);
+        throw new Error(errorText(errorData.detail, response.status));
       }
 
       const reader = response.body?.getReader();
@@ -1897,13 +1920,14 @@ export async function uploadLayer3Config(file: File): Promise<ApiResponse<Upload
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { error: errorData.detail || `HTTP ${response.status}` };
+      return { error: errorText(errorData.detail, response.status) };
     }
 
     const data = await response.json();
+    if (data?.load_token) ownLoadToken = data.load_token;
     return { data };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Upload failed' };
+    return { error: thrownText(err, 'The upload failed.') };
   }
 }
 

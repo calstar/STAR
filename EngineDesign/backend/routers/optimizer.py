@@ -830,12 +830,10 @@ async def upload_layer2_config(file: UploadFile = FastAPIFile(...), session: Use
         # Validate and update app state
         from engine.pipeline.config_schemas import PintleEngineConfig
         config = PintleEngineConfig(**config_dict)
-        session.app_state.config = config
-        
-        # Re-initialize runner if needed
-        from engine.core.runner import PintleEngineRunner
-        session.app_state.runner = PintleEngineRunner(config)
-        
+        # Config and runner as one pair (AppState.set_config): a solve in the thread pool may
+        # be reading them.
+        session.app_state.set_config(config)
+
         return {
             "status": "success",
             "message": "Config uploaded successfully for Layer 2",
@@ -923,12 +921,10 @@ async def upload_layer3_config(file: UploadFile = FastAPIFile(...), session: Use
                 detail="Config must have pressure_curves section from Layer 2 optimization."
             )
         
-        session.app_state.config = config
-        
-        # Re-initialize runner
-        from engine.core.runner import PintleEngineRunner
-        session.app_state.runner = PintleEngineRunner(config)
-        
+        # Config and runner as one pair (AppState.set_config): a solve in the thread pool may
+        # be reading them.
+        session.app_state.set_config(config)
+
         return {
             "status": "success",
             "message": "Config uploaded successfully for Layer 3",

@@ -2,6 +2,14 @@ import type { TimeSeriesData, TimeSeriesSummary } from '../api/client';
 
 export const TIMESERIES_RESULTS_KEY = 'timeseries_results';
 export const TIMESERIES_UPDATED_EVENT = 'star:timeseries-updated';
+/** Ask the Time-Series tab to run the burn it is set up for (Flight, when it has none to fly). */
+export const TIMESERIES_RUN_EVENT = 'star:timeseries-run';
+/** The Time-Series tab's answer when that run failed; `detail` is the message. */
+export const TIMESERIES_RUN_FAILED_EVENT = 'star:timeseries-run-failed';
+
+export function requestTimeSeriesRun(): void {
+  window.dispatchEvent(new CustomEvent(TIMESERIES_RUN_EVENT));
+}
 
 export interface StoredTimeSeriesResults {
   data: TimeSeriesData;

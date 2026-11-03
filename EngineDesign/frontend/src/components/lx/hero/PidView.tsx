@@ -6,7 +6,8 @@ import { BranchableEdge } from '@pid/BranchableEdge';
 import { FluidProvider } from '@pid/FluidContext';
 import { migrate } from '@pid/migrate';
 import { nodeTypes } from '@pid/nodes';
-import { applyPage, DEFAULT_PAGE, pageOf } from '@pid/pages';
+import { applyPage, pageOf } from '@pid/pages';
+import { vehiclePage } from './vehiclePage';
 import { VentLayer } from '@pid/VentLayer';
 import { useEffect, useMemo, type CSSProperties } from 'react';
 import type { LayerXResult } from '../../../api/layerx';
@@ -43,18 +44,6 @@ const THEME = {
   '--color-danger': 'var(--lx-bad)',
 } as CSSProperties;
 
-/** The page holding most of the drawing: a multi-page drawing's feed system is on one of them. */
-function mainPage(nodes: Node[]): string {
-  const count = new Map<string, number>();
-  for (const n of nodes) {
-    const p = pageOf(n.data as { page?: string });
-    count.set(p, (count.get(p) ?? 0) + 1);
-  }
-  let best = DEFAULT_PAGE;
-  for (const [p, c] of count) if (c > (count.get(best) ?? 0)) best = p;
-  return best;
-}
-
 /** Choosing a symbol on the drawing: the candidates lit, everything else dimmed, a click picks. */
 export interface PidPick {
   ids: string[];
@@ -79,7 +68,7 @@ export function PidView({ result, drawingId, doc, height = 460, pick }: {
     const candidatePage = pick?.ids.length
       ? pageOf((flow.nodes.find((n) => n.id === pick.ids[0])?.data ?? {}) as { page?: string })
       : null;
-    const paged = applyPage(flow.nodes, flow.edges, candidatePage ?? mainPage(flow.nodes));
+    const paged = applyPage(flow.nodes, flow.edges, candidatePage ?? vehiclePage(flow.nodes));
     if (!pick) return paged;
     const lit = new Set(pick.ids);
     return {
@@ -121,7 +110,8 @@ export function PidView({ result, drawingId, doc, height = 460, pick }: {
               fitView
               fitViewOptions={{ padding: 0.06 }}
               minZoom={0.2}
-              proOptions={{ hideAttribution: true }}
+              // React Flow's attribution stays, as in the Feed Twin and pid-designer canvases: hiding it is
+              // a Pro-licence option this suite does not hold (the library warned on every load).
               style={{ background: 'transparent' }}
               onNodeClick={pick ? (_e, n) => { if (pick.ids.includes(n.id)) pick.onPick(n.id); } : undefined}
             >
