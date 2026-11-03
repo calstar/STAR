@@ -458,6 +458,9 @@ services:
       OPENROCKET_URL: http://star-openrocket-api:8002
       FEED_TWIN_URL: http://feed-twin-api:8003
       DAQ_VIEWER_URL: http://daq-viewer:8420
+      # For a person's browser, not this network: pid_image_link hands out a link
+      # that opens a diagram there (the P&ID image is drawn by the app itself).
+      PID_DESIGNER_PUBLIC_URL: https://pid-designer.${BASE_DOMAIN:-starberkeley.org}
     volumes:
       # Exports, tables and download blobs. A pure cache with a size cap: safe
       # to wipe, the next call rebuilds what it needs.

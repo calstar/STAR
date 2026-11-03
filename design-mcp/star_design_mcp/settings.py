@@ -55,6 +55,10 @@ class Settings:
     #: well under Cloudflare's ~100 s origin timeout.
     job_inline_wait_s: float
     app_urls: dict[str, str] = field(default_factory=dict)
+    #: pid-designer's address for a person's browser (not the compose network): the
+    #: P&ID image is drawn by the app in a browser, so pid_image_link hands out a link
+    #: here. Unset: that tool says so.
+    pid_designer_public_url: str | None = None
 
     @property
     def public_host(self) -> str:
@@ -117,4 +121,5 @@ def load(env: dict[str, str] | None = None) -> Settings:
         job_concurrency=int(number("DESIGN_MCP_JOB_CONCURRENCY", 2, minimum=1)),
         job_inline_wait_s=number("DESIGN_MCP_JOB_INLINE_WAIT_S", 25, minimum=0),
         app_urls=app_urls,
+        pid_designer_public_url=env.get("PID_DESIGNER_PUBLIC_URL", "").strip().rstrip("/") or None,
     )

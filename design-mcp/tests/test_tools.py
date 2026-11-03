@@ -167,3 +167,94 @@ async def test_flight_dynamics_summary_and_table(harness):
     sigs = {s[0]: s for s in out["table"]["signals"]}
     assert sigs["bendingMoment"][1] == "N·m"
     assert sigs["altitude"][1] == "m AGL"
+
+
+async def test_run_design_loads_through_the_store_and_runs_the_backends_bodies(harness):
+    config = {"cad": {"modelId": "m1"}, "recovery": {}}
+    reqs = {
+        "modelId": "m1",
+        "flightDynamics": {"motor": {"motorId": "x"}, "overrides": {"occ:a": 1.0}},
+        "stability": {},
+        "ork": {},
+        "recovery": {"vehicle": {}},
+        "airframeBound": "axial",
+    }
+    posted = {}
+
+    def flight(req):
+        posted["flight"] = json.loads(req.content)
+        return httpx.Response(200, json={"apogee": 1234.0, "maxBendingMoment": 9.0, "samples": []})
+
+    def conv(req):
+        posted["conv"] = json.loads(req.content)
+        return httpx.Response(200, json=reqs)
+
+    harness.fake.on(
+        "openrocket", "GET", "/api/documents/d1/load", lambda req: httpx.Response(200, json={"config": config})
+    )
+    harness.fake.on("openrocket", "POST", "/api/design/requests", conv)
+    harness.fake.on("openrocket", "POST", "/api/models/m1/flight-dynamics", flight)
+
+    out = await harness.call_json("openrocket_run_design", {"design_id": "d1", "run": "flight", "owner": "bob"})
+    assert out["summary"]["apogee"] == 1234.0
+    assert posted["conv"] == {"config": config}, "the saved design goes to the backend unchanged"
+    assert posted["flight"] == reqs["flightDynamics"], "and the backend's body is what runs"
+    load = next(r for r in harness.fake.seen if r.url.path == "/api/documents/d1/load")
+    assert load.url.params["owner"] == "bob"
+
+
+async def test_optimizer_results_link_the_apps_csv_and_yaml(harness):
+    results = {"time_array": [0, 1], "lox_pressure": [1, 2], "fuel_pressure": [3, 4], "config_yaml": "a: 1\n"}
+    harness.fake.on(
+        "engine-design",
+        "GET",
+        "/api/optimizer/layer2/results",
+        lambda req: httpx.Response(200, json={"results": results}),
+    )
+    harness.fake.on(
+        "engine-design",
+        "GET",
+        "/api/optimizer/layer2/results.csv",
+        lambda req: httpx.Response(
+            200,
+            text="Time (s),LOX Pressure (Pa),Fuel Pressure (Pa)\n0,1,3\n1,2,4\n",
+            headers={"content-disposition": 'attachment; filename="pressure_curves.csv"'},
+        ),
+    )
+    out = await harness.call_json("engine_optimizer_results", {"layer": 2})
+    assert out["pressure_curves_csv"]["filename"] == "pressure_curves.csv"
+    assert out["config_yaml"]["filename"] == "layer2-config.yaml"
+    assert "config_yaml" not in out["results"]
+
+
+async def test_feedtwin_session_csv_is_the_apps_file(harness):
+    csv = "t_s,state,LOX tank [psia]\n0.000,Ready,14.696"
+    harness.fake.on(
+        "feed-twin",
+        "GET",
+        "/api/session/s1/history.csv",
+        lambda req: httpx.Response(
+            200, text=csv, headers={"content-disposition": 'attachment; filename="feed-twin-s1-3s.csv"'}
+        ),
+    )
+    link = await harness.call_json("feedtwin_session_csv", {"session_id": "s1"})
+    assert link["filename"] == "feed-twin-s1-3s.csv"
+    got = await harness.client.get("/" + link["url"].split("/", 3)[3])
+    assert got.text == csv
+
+
+async def test_pid_image_link_checks_access_then_links_the_diagram(harness):
+    harness.app.state.ctx.settings = harness.app.state.ctx.settings.__class__(
+        **{**harness.app.state.ctx.settings.__dict__, "pid_designer_public_url": "https://pid.example.org"}
+    )
+    harness.fake.on("pid-designer", "GET", "/api/pid/diagrams/d1/load", lambda req: httpx.Response(200, json={}))
+    out = await harness.call_json("pid_image_link", {"design_id": "d1", "owner": "bob@berkeley.edu"})
+    assert out["url"] == "https://pid.example.org/?diagram=d1&owner=bob%40berkeley.edu"
+    harness.fake.on(
+        "pid-designer",
+        "GET",
+        "/api/pid/diagrams/d2/load",
+        lambda req: httpx.Response(403, json={"detail": "not shared"}),
+    )
+    denied = await harness.call("pid_image_link", {"design_id": "d2"})
+    assert denied["isError"], "no link to a diagram you cannot see"

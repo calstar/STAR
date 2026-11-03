@@ -10,8 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
+import re
+
+from mcp.server.mcpserver.exceptions import ToolError
+
 from ..data import compact
-from . import READ, Ctx
+from ..files import safe_filename
+from . import COMPUTE, READ, Ctx
+
+SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 
 def register(server, ctx: Ctx) -> None:
@@ -38,3 +45,18 @@ def register(server, ctx: Ctx) -> None:
             await ctx.apps.get_json("feed-twin", "/api/twin/runs/diff", a=a, b=b, owner_a=owner_a, owner_b=owner_b),
             max_list=60,
         )
+
+    @server.tool(annotations=COMPUTE, structured_output=False)
+    async def feedtwin_session_csv(session_id: str, seconds: float = 3600.0) -> dict[str, Any]:
+        """A live cockpit session's trace at full rate as the Plots tab's CSV (t_s, state, every
+        channel by its stand name, pressures in psia), as a download link. The session id is the
+        open cockpit's; sessions are not listed, so ask the person for it."""
+        if not SESSION_ID.match(session_id):
+            raise ToolError(f"Not a session id: {session_id!r}.")
+        r = await ctx.apps.request(
+            "feed-twin", "GET", f"/api/session/{session_id}/history.csv", params={"seconds": seconds}
+        )
+        disposition = r.headers.get("content-disposition") or ""
+        m = re.search(r'filename="?([^";]+)"?', disposition)
+        name = m.group(1) if m else f"feed-twin-{session_id}.csv"
+        return ctx.link(ctx.files.put_bytes(r.content, safe_filename(name), "text/csv"))

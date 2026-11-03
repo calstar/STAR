@@ -79,42 +79,56 @@ agent ──HTTPS──▶ Cloudflare ──▶ caddy (mcp.*: no cookie gate, X-
 | `list_designs(app)` | designs you can open in `engine-design` / `pid-designer` / `openrocket` |
 | `get_design`, `design_history`, `design_releases` | the design file (inline if small, link if not); microversions; releases |
 | `download_design` | the design file as a JSON link (the same file pid-designer's Export saves) |
+| `pid_image_link` | a link that opens a P&ID in pid-designer, and the clicks to export its PNG/SVG (see below) |
 | `table_signals`, `table_series`, `table_plot`, `table_export` | question a table: signal list, a window of a few signals, a PNG, the whole thing as CSV/parquet |
 | `layerx_list_runs`, `layerx_get_run` | your Layer X runs; one run without its per-step series |
 | `layerx_run_table` | a finished burn as a table |
 | `layerx_export(fmt)` | csv · parquet · fea (zip: pc, thrust, axial heat flux, peak loads) · eng (RASP thrust curve) |
-| `engine_optimizer_results(layer)` | your latest Layer 1/2/3 results; the optimized config as a YAML link |
+| `engine_optimizer_results(layer)` | your latest Layer 1/2/3 results; for 2/3 the optimized config (YAML) and the tank-pressure curves (the app's `results.csv`) as links |
 | `daq_list_runs`, `daq_run_summary`, `daq_run_config` | test-stand runs; size/duration; the config that ran |
 | `daq_index_run`, `daq_components` | index a run once (a job), then list its channels |
 | `daq_series`, `daq_plot` | a window of channels, downsampled by the viewer; or a PNG |
 | `daq_export_csv` | a run (or a selection) as a CSV link (a job, capped to half the cache) |
 | `openrocket_list_models`, `openrocket_model`, `openrocket_model_glb` | CAD models; manifest; mesh link |
 | `openrocket_search_motors`, `openrocket_motor`, `openrocket_motor_file` | the motor catalog; one motor; its .eng/.rse |
-| `openrocket_stability` | CP, CG, static margin |
-| `openrocket_flight_dynamics` | 6-DOF ascent: apogee, max speed/Mach/accel/q, **max bending moment**, rail exit, min margin, drift + a table |
-| `openrocket_recovery` | the descent, every failure case per chute, peak loads; axial/broadside bounds |
-| `openrocket_export_ork` | the .ork as a link |
+| `openrocket_run_design(design_id, run)` | **a saved design, run as the app runs it**: `flight` (apogee, max speed/Mach/accel/q, **max bending moment**, rail exit, margins, drift + a table), `stability`, `recovery` (peak loads per chute, every failure case, both airframe bounds), `ork` (link) |
+| `openrocket_design_requests(design_id)` | the exact request bodies that design runs with (per-part masses, faces, motor, site, wind, devices) |
+| `openrocket_flight_dynamics`, `openrocket_stability`, `openrocket_recovery`, `openrocket_export_ork` | the same runs from an explicit body: take one from `openrocket_design_requests`, change a number, run the what-if |
 | `openrocket_recovery_devices` | the parachute catalog |
 | `feedtwin_list_runs`, `feedtwin_get_run`, `feedtwin_diff_runs` | cockpit run records and what differs between two |
+| `feedtwin_session_csv(session_id)` | a live cockpit session's whole trace as the Plots tab's CSV (the app's `history.csv`), as a link |
 
 Units come from the apps: Layer X's CSV headers (`name [unit]`), and for the 6-DOF samples the
 field comments on `FlightDynamicsResult` (`star-openrocket/backend/onshape/aero/rocketpy_flight.py`).
 
-## Not here yet, on purpose
+## How the browser-only files got a backend
 
-- **star-openrocket simulations from a design id.** The flight, `.ork` and recovery tools take
-  the same request bodies the app's UI posts. Turning a saved design into those bodies (per-part
-  masses from the manifest, overrides and hidden parts; the recovery slice through
-  `toWireConfig`) happens in the browser today. A second copy here would drift from the UI and
-  give different answers. Moving that conversion into star-openrocket's backend is the follow-up,
-  and then these tools can take just a design id.
-- **Exports that only exist in a browser.** pid-designer's PNG/SVG image export, EngineDesign's
-  Layer 2/3 results CSV, and feed-twin's plot CSV are all built client-side. They need backend
-  endpoints first. (A P&ID's JSON is `download_design`; Layer 2/3's config YAML is
-  `engine_optimizer_results`.)
-- **parts-hub** (Node, its own auth) and **writes** of any kind.
-- **claude.ai connectors.** Those need OAuth rather than a header token; tokens cover Claude
-  Code and Desktop.
+Four things used to exist only in a browser tab. Each is now made by its app's
+backend, the tab fetches the same thing, and these tools read it:
+
+- **star-openrocket simulations from a design.** `POST /api/design/requests`
+  (`star-openrocket/backend/design_requests.py`) turns a saved design into the bodies
+  the simulations take: per-part masses (typed mass, else catalog material x volume,
+  else Onshape's; hidden parts included), faces, motor, rail, site, wind, devices, and
+  the recovery `Config`. The browser does the same through `frontend/src/lib/designRequests.ts`,
+  and both are held to the hand-written cases in `tests/fixtures/design_requests/`
+  (pytest one side, vitest the other), so they cannot drift.
+- **EngineDesign Layer 2/3 CSV.** `GET /api/optimizer/layer{2,3}/results.csv`
+  (`backend/results_csv.py`); the CSV button downloads it. Numbers print as JavaScript
+  prints them (`lib/stardesign/stardesign/jsformat.py`), so the file is unchanged, except
+  Layer 3's, which the browser wrote with a literal `\n` for every line break and is now
+  a real CSV.
+- **feed-twin Plots CSV.** `GET /api/session/{id}/history.csv` (`backend/history_csv.py`):
+  stand names, psia to 3 places, the state column. Same file as the button saved.
+- **The P&ID image, drawn on the agent's side.** pid-designer draws its PNG/SVG from the live
+  React canvas on purpose, so the screen and the export cannot disagree. A server copy
+  would need a headless browser on the box; instead, `pid_image_link` returns a link
+  (`?diagram=<id>&owner=<owner>`, new, honoured only for a diagram in your own list) and the
+  Export clicks. It works for an agent that has a browser signed in to STAR, e.g. Claude
+  in Chrome on the person's own browser. Without one, `get_design` gives the drawing as JSON.
+
+Still not here: **parts-hub** (Node, its own auth), **writes** of any kind, and
+**claude.ai connectors** (those need OAuth rather than a header token).
 
 ## Running it
 
@@ -145,6 +159,7 @@ neither a token check nor a dev email, or with both.
 | `DESIGN_MCP_LINK_TTL_S`, `DESIGN_MCP_TOKEN_CACHE_S` | link lifetime (900), token-answer lifetime (60) |
 | `DESIGN_MCP_JOB_CONCURRENCY`, `DESIGN_MCP_JOB_INLINE_WAIT_S` | jobs at once (2), wait before handing back a job id (25) |
 | `ENGINE_DESIGN_URL`, `PID_DESIGNER_URL`, `OPENROCKET_URL`, `FEED_TWIN_URL`, `DAQ_VIEWER_URL` | each app's API on the compose network |
+| `PID_DESIGNER_PUBLIC_URL` | pid-designer for a person's browser, for `pid_image_link` |
 
 ## Deploying (once)
 

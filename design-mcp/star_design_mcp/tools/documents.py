@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -121,3 +122,27 @@ def register(server, ctx: Ctx) -> None:
         name = safe_filename(f"{app}-{design_id}-{version or release or 'working'}.json")
         stored = ctx.files.put_bytes(json.dumps(data, indent=1).encode(), name, "application/json")
         return ctx.link(stored)
+
+    @server.tool(annotations=READ, structured_output=False)
+    async def pid_image_link(design_id: str, owner: str | None = None) -> dict[str, Any]:
+        """How to get a P&ID as a PNG or SVG. The image is drawn by pid-designer itself in a
+        browser (the symbols are its React components, so nothing else draws them the same), so
+        this returns a link that opens the diagram and the clicks to export it. Needs a browser
+        signed in to STAR (e.g. Claude in Chrome on the person's own browser). For the drawing's
+        contents without a browser, use get_design / download_design."""
+        base = ctx.settings.pid_designer_public_url
+        if not base:
+            raise ToolError("pid-designer's public address is not configured on this server (PID_DESIGNER_PUBLIC_URL).")
+        # Make sure the caller can see it before handing out a link that would open nothing.
+        await ctx.apps.get_json("pid-designer", f"{ROUTES['pid-designer']}/{design_id}/load", owner=owner)
+        query = {"diagram": design_id, **({"owner": owner} if owner else {})}
+        return {
+            "url": f"{base}/?{urlencode(query)}",
+            "steps": [
+                "Open the url in a browser signed in to STAR (the link opens that diagram).",
+                "Pick the page (sheet) to export in the page bar, if the drawing has several.",
+                "Click Export in the toolbar, then 'PNG image', 'PNG for print' (white paper) or 'SVG'.",
+                "The file downloads named '<diagram> - <page>.png' / '.svg'.",
+            ],
+            "without_a_browser": "get_design / download_design give the drawing as JSON (every component, line and setting).",
+        }

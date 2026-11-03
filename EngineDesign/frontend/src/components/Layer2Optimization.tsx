@@ -375,21 +375,16 @@ export function Layer2Optimization({
         URL.revokeObjectURL(url);
     };
 
+    // The backend writes this file (GET /api/optimizer/layer2/results.csv,
+    // backend/results_csv.py) so the same CSV is there for anyone who asks, not only
+    // an open tab; the button just fetches it.
     const downloadCSV = () => {
         if (!results?.time_array) return;
-        let csv = 'Time (s),LOX Pressure (Pa),Fuel Pressure (Pa)\n';
-        results.time_array.forEach((t: number, i: number) => {
-            csv += `${t},${results.lox_pressure[i]},${results.fuel_pressure[i]}\n`;
-        });
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = 'pressure_curves.csv';
+        a.href = `${API_BASE}/optimizer/layer2/results.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
     };
 
     const handleRunController = () => {

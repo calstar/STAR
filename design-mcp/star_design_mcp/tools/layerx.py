@@ -129,7 +129,8 @@ def register(server, ctx: Ctx) -> None:
     @server.tool(annotations=READ, structured_output=False)
     async def engine_optimizer_results(layer: Literal[1, 2, 3]) -> dict[str, Any]:
         """The latest Layer 1/2/3 optimizer results in your EngineDesign session (whatever you last ran
-        in the app). Layers 2 and 3 carry the optimized config, returned as a YAML download link."""
+        in the app). Layers 2 and 3 carry the optimized config as a YAML link and the tank-pressure
+        curves as a CSV link (the app's own results.csv)."""
         body = await ctx.apps.get_json("engine-design", f"/api/optimizer/layer{layer}/results")
         results = body.get("results") if isinstance(body, dict) else body
         out: dict[str, Any] = {"layer": layer}
@@ -137,6 +138,10 @@ def register(server, ctx: Ctx) -> None:
             stored = ctx.files.put_bytes(results["config_yaml"].encode(), f"layer{layer}-config.yaml", "text/yaml")
             out["config_yaml"] = ctx.link(stored)
             results = {k: v for k, v in results.items() if k != "config_yaml"}
+        if layer in (2, 3) and isinstance(results, dict) and results.get("time_array"):
+            r = await ctx.apps.request("engine-design", "GET", f"/api/optimizer/layer{layer}/results.csv")
+            name = _disposition_name(r.headers.get("content-disposition")) or f"layer{layer}_results.csv"
+            out["pressure_curves_csv"] = ctx.link(ctx.files.put_bytes(r.content, safe_filename(name), "text/csv"))
         out["results"] = compact(results, max_list=40)
         return out
 
