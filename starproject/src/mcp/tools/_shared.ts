@@ -48,6 +48,22 @@ export function ok(data: unknown): CallToolResult {
   return { content: [{ type: "text", text: serialise(data) }] };
 }
 
+const RAW = Symbol("raw tool content");
+
+/**
+ * A handler result sent as these content blocks as they are, instead of as
+ * JSON text: for a tool that hands back files (a PDF as an embedded resource,
+ * an image as an image block).
+ */
+export function rawContent(content: CallToolResult["content"]): { [RAW]: CallToolResult["content"] } {
+  return { [RAW]: content };
+}
+
+function toResult(data: unknown): CallToolResult {
+  if (data && typeof data === "object" && RAW in data) return { content: (data as { [RAW]: CallToolResult["content"] })[RAW] };
+  return ok(data);
+}
+
 export function fail(message: string): CallToolResult {
   return { isError: true, content: [{ type: "text", text: message }] };
 }
@@ -92,7 +108,7 @@ export function defineTool<Shape extends z.ZodRawShape>(
   const cb = (async (args: z.objectOutputType<Shape, z.ZodTypeAny>, extra: { authInfo?: { extra?: Identity } }) => {
     const run = async () => {
       try {
-        return ok(await handler(args));
+        return toResult(await handler(args));
       } catch (err) {
         const redirected = redirectTarget(err);
         // A server action that redirects after it succeeds (the web form's
@@ -107,6 +123,22 @@ export function defineTool<Shape extends z.ZodRawShape>(
     return identity ? runAsIdentity(identity, run) : run();
   }) as unknown as ToolCallback<Shape>;
   server.registerTool(name, config, cb);
+}
+
+/**
+ * `defineTool` for a module whose every tool is gated: `guard` runs first on
+ * each call (as the caller) and throws to refuse, e.g. `requirePvp`.
+ */
+export function guardedDefine(server: McpServer, guard: () => Promise<unknown>) {
+  return <Shape extends z.ZodRawShape>(
+    name: string,
+    config: { description: string; inputSchema: Shape; annotations?: ToolAnnotations },
+    handler: (args: z.objectOutputType<Shape, z.ZodTypeAny>) => Promise<unknown>,
+  ) =>
+    defineTool(server, name, config, async (args) => {
+      await guard();
+      return handler(args);
+    });
 }
 
 export const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };

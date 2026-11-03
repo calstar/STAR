@@ -5,6 +5,7 @@ import { blockerTools } from "./blockers";
 import { bomTools } from "./bom";
 import { purchaseRequestTools } from "./purchase-requests";
 import { financeTools } from "./finance";
+import { financeTabTools } from "./finance-tab";
 import { metaTools } from "./meta";
 import { tasksReadTools } from "./tasks-read";
 import { tasksWriteTools } from "./tasks-write";
@@ -34,6 +35,7 @@ export const TOOL_MODULES: ToolModule[] = [
   activityTools,
   statsTools,
   financeTools,
+  financeTabTools,
   bomTools,
   purchaseRequestTools,
   outreachTools,

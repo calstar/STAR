@@ -55,7 +55,7 @@ export function PurchaseRequestsWorkspace({
     (r) =>
       (filter === "all" || r.status === filter) &&
       (!needle ||
-        [`pr-${r.number}`, r.project.name, r.createdBy.name, r.note ?? "", ...r.items.map((i) => i.name)].some((v) =>
+        [`pr-${r.number}`, r.project.name, r.subteam?.name ?? "", r.budgetLine?.name ?? "", r.createdBy.name, r.note ?? "", ...r.items.map((i) => i.name)].some((v) =>
           v.toLowerCase().includes(needle),
         )),
   );
@@ -176,9 +176,18 @@ function RequestCard({
             <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${PILL[r.status]}`}>{PR_STATUS_LABEL[r.status]}</span>
           )}
         </span>
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: r.project.color ?? "#a3a3a3" }} />
-          <span className="truncate">{r.project.name}</span>
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: r.project.color ?? "#a3a3a3" }} />
+            <span className="truncate">{r.project.name}</span>
+          </span>
+          {/* Whose budget it spends; requests from before budgets have none. */}
+          {r.subteam && (
+            <span className="block truncate text-xs text-neutral-500 dark:text-neutral-400" title="Subteam · budget line">
+              {r.subteam.name}
+              {r.budgetLine ? ` · ${r.budgetLine.name}` : ""}
+            </span>
+          )}
         </span>
         <span className="truncate font-medium">{r.createdBy.name}</span>
         <span className="text-neutral-500 dark:text-neutral-400">{formatWhen(r.createdAt)}</span>

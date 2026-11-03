@@ -7,6 +7,8 @@ import { BOM_INCLUDE, toBomLine } from "@/lib/bom-data";
 import { prisma } from "@/lib/db";
 import { centsToPlain } from "@/lib/finance/money";
 import { getProfileDefaults } from "@/lib/finance/queries";
+import { getProjectOptions } from "@/lib/projects";
+import { getSubteams } from "@/lib/subteams";
 import { MAX_ITEMS } from "@/lib/finance/schema";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -49,17 +51,19 @@ export default async function NewReimbursementPage({
 }) {
   const user = await getCurrentDbUser();
   const { bom } = await searchParams;
-  const [profile, prefill] = await Promise.all([
+  const [profile, prefill, projects, subteams] = await Promise.all([
     getProfileDefaults(user),
     prefillFromBom((bom ?? "").split(",").filter(Boolean)),
+    getProjectOptions(),
+    getSubteams(),
   ]);
 
   return (
     <main className={PAGE_CONTAINER}>
       <div className="mx-auto max-w-3xl">
       <p className="text-sm text-neutral-500 dark:text-neutral-400">
-        <Link href="/finance" className="hover:underline">
-          Finance
+        <Link href="/reimbursements" className="hover:underline">
+          Reimbursements
         </Link>{" "}
         / New reimbursement
       </p>
@@ -71,6 +75,8 @@ export default async function NewReimbursementPage({
         defaults={profile.values}
         seededFrom={profile.seededFrom}
         accountEmail={user.email}
+        projects={projects}
+        subteams={subteams.map((s) => ({ id: s.id, name: s.name }))}
         prefill={prefill}
       />
       </div>
