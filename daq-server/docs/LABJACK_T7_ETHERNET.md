@@ -65,8 +65,19 @@ Registers [MAP]; the write sequence is in `C_CPP_LJM/more/ethernet/write_etherne
 | `ETHERNET_MAC` | 60020 | UINT64 R | |
 | `POWER_ETHERNET_DEFAULT` | 48053 | UINT16 RW | make sure this stays on |
 
-Set the IP once over USB (Kipling or a small LJM script) and record the IP, serial number
-and MAC in the board config, the same way the ESP32 boards are recorded.
+**On the stand, use DHCP rather than a static IP.** The DAQ host runs `star-dhcp`
+(dnsmasq, `deploy/dhcp/`). It hands out MAC-keyed static reservations generated from
+every `[boards.*]` entry that has `ip` + `mac`. `generate_dhcp_config.py` ignores the
+board's `type`, so a T7 entry gets a reservation like any ESP32. To onboard:
+1. Leave `ETHERNET_DHCP_ENABLE_DEFAULT` = 1. The shipping default is believed to be
+   DHCP-on [unverified]; check it in Kipling over USB if the unit isn't fresh.
+2. Plug it into the board LAN. It takes a pool lease (`.200`–`.250`), and the MAC appears
+   in `/var/lib/misc/star-dhcp.leases`. The MAC is also on the T7's label and in
+   the `ETHERNET_MAC` register.
+3. Add `mac` to its `[boards.*]` entry, then `sudo deploy/dhcp/reload_dhcp.sh`, then
+   power-cycle the T7. It comes back at its reserved IP.
+
+Static registers (above) are the fallback for a bench with no DAQ host.
 
 Since IP addresses are stored as UINT32, LJM provides `LJM_IPToNumber` / `LJM_NumberToIP` [H].
 
@@ -223,7 +234,7 @@ LJM_eStreamStop(h); LJM_Close(h)
 - Max stream rate vs `STREAM_RESOLUTION_INDEX`, range and channel count over Ethernet
   (datasheet appendix A-1), plus typical command-response latency.
 - Connection limits per port and max packet sizes (marked [WEB?] above).
-- Default IP/DHCP fallback behaviour out of the box.
+- T7 shipping default for DHCP, and what it falls back to if no server answers.
 - Whether an **aarch64 (Jetson)** LJM installer is current and its exact name, plus
   LJM's redistribution licence (whether `libLabJackM.so` can go in our deploy image).
 - Low-level port-702 frame layout (only needed if we skip LJM).
