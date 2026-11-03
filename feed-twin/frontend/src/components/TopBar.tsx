@@ -313,10 +313,12 @@ export function TopBar({ views }: { views: readonly View[] }) {
             role="group"
             aria-label="Pressurant"
             className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-[10px] tracking-[0.14em]"
+            // Some browsers show no title on a disabled button, so the group says why too.
             title={
-              effective === 'nitrogen' && hasLox
+              (stand.locked ? 'Read only: take the stand (Edit, top bar) to change its gas. ' : '') +
+              (effective === 'nitrogen' && hasLox
                 ? 'GN2 over LOX: nitrogen condenses into the LOX and on the cold wall above about 52 psia, which the twin does not model, so tank pressure and gas use read optimistic. Switching opens a fresh stand.'
-                : "The gas in the bottles and press lines. The dot marks the drawing's own. Switching opens a fresh stand."
+                : "The gas in the bottles and press lines. The dot marks the drawing's own. Switching opens a fresh stand.")
             }
           >
             <div className="flex overflow-hidden border border-[var(--line-strong)]">
@@ -329,6 +331,17 @@ export function TopBar({ views }: { views: readonly View[] }) {
                     type="button"
                     aria-pressed={on}
                     disabled={stand.locked || (!on && running)}
+                    // Greyed out with no word why on a fresh browser: the
+                    // featured stand opens read only.
+                    title={
+                      on
+                        ? undefined
+                        : stand.locked
+                          ? 'Take the stand (Edit, top bar) to change its gas'
+                          : running
+                            ? 'Not during a burn'
+                            : undefined
+                    }
                     onClick={() => !on && stand.setSetup({ pressurant: drawn ? '' : g })}
                     className={`px-2 py-0.5 disabled:opacity-50 ${
                       on ? 'bg-white/10 text-[var(--ink)]' : 'text-[var(--ink-3)] hover:text-[var(--ink)]'

@@ -21,7 +21,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { keyOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
+import { keyOf, refOf, useCheckout, type Checkout, type DocRef } from '@stardesign-ui';
 import { NO_ORDER, type ConsoleView, type Order } from './lib/shown';
 import { standApi, type StandPayload } from './stands';
 import { defaultPicks, pastIdle } from './lib/standPick';
@@ -386,8 +386,66 @@ export function StandProvider({ children }: { children: ReactNode }) {
   const artifactsRef = useRef<Artifact[]>([]);
   artifactsRef.current = artifacts;
 
+  const openStand = useCallback(
+    async (ref: DocRef, name: string, take = false) => {
+      const doc = await standApi.load(ref);
+      // A stand somebody has just made is theirs to change: taken as it opens.
+      if (take) {
+        heldKey.current = keyOf(ref);
+        retook.current = '';
+      }
+      standPayload.current = doc;
+      await putStandView(doc.diagram, doc.console);
+      const opened = { ref, name };
+      setStandDoc(opened);
+      setChanged(false);
+      try {
+        window.localStorage.setItem('feedtwin.stand', JSON.stringify(opened));
+      } catch {
+        // Storage can be unavailable; the stand is still open in this tab.
+      }
+      if (Object.keys(doc.setup).length) setSetupState((s) => ({ ...s, ...doc.setup }) as StandSetup);
+      if (doc.diagram) setDiagram(doc.diagram);
+      if (doc.engine !== undefined) setEngine(doc.engine);
+      wantFresh.current = true;
+      setGeneration((g) => g + 1);
+    },
+    [setChanged],
+  );
+
+  /** The stand document to land on: one the address names (`/?stand=<id>`),
+   *  or -- on a browser that remembers no stand and no drawing -- the
+   *  featured one. Opened before any drawing is picked: the featured
+   *  stand's drawing used to come up first, under the library's featured
+   *  drawing, and a fresh browser showed somebody else's stand. */
+  const landOnStand = useCallback(
+    async (asked: string | null, remembers: boolean): Promise<boolean> => {
+      let want: { id: string; owner?: string | null } | null = asked ? { id: asked } : null;
+      if (!want && !remembers) {
+        try {
+          want = (await standApi.getFeatured()).featured;
+        } catch {
+          // No featured stand on this server: the library's featured drawing.
+        }
+      }
+      if (!want) return false;
+      const meta = (await standApi.list()).find(
+        (d) => d.id === want.id && (!want.owner || d.owner === want.owner || Boolean(d.mine)),
+      );
+      if (!meta) {
+        if (asked) setError(`No stand "${asked}" on this server.`);
+        return false;
+      }
+      const open = readStand();
+      if (open && keyOf(open.ref) === keyOf(refOf(meta))) return false;
+      await openStand(refOf(meta), meta.name);
+      return true;
+    },
+    [openStand],
+  );
+
   /** Open on the stand `defaultPicks` chooses, or say why there is none. */
-  const land = useCallback((list: Artifact[]) => {
+  const land = useCallback(async (list: Artifact[]) => {
     // The engine used to be picked only when the library held exactly one.
     // With two it picked none, silently: the console opened with no engine,
     // no chamber and nothing that could light.
@@ -399,9 +457,11 @@ export function StandProvider({ children }: { children: ReactNode }) {
       }
     };
     let asked: { diagram?: string | null; engine?: string | null } = {};
+    let standAsked: string | null = null;
     try {
       const q = new URLSearchParams(window.location.search);
       asked = { diagram: q.get('diagram'), engine: q.get('engine') };
+      standAsked = q.get('stand');
       const gas = q.get('pressurant');
       if (gas === 'helium' || gas === 'nitrogen' || gas === 'drawing') {
         setSetupState((s) => ({ ...s, pressurant: gas === 'drawing' ? '' : gas }));
@@ -410,11 +470,23 @@ export function StandProvider({ children }: { children: ReactNode }) {
     } catch {
       // No query to read.
     }
+    if (standAsked) {
+      // Read once: a reload must not reopen it over what was changed since.
+      const url = new URL(window.location.href);
+      url.searchParams.delete('stand');
+      window.history.replaceState(null, '', url);
+    }
+    try {
+      const remembers = Boolean(readStand() || stored('diagram') || asked.diagram);
+      if (await landOnStand(standAsked, remembers)) return;
+    } catch (e) {
+      setError(`The stand could not be opened (${e instanceof Error ? e.message : String(e)}).`);
+    }
     const picks = defaultPicks(list, { diagram: stored('diagram'), engine: stored('engine') }, asked);
     if (picks.diagram) setDiagram(picks.diagram);
     if (picks.engine) setEngine(picks.engine);
     setNoStand(picks.diagram ? null : { kind: 'empty' });
-  }, []);
+  }, [landOnStand]);
 
   useEffect(() => {
     refresh()
@@ -910,29 +982,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
     refresh,
     standDoc,
     changed,
-    openStand: async (ref, name, take = false) => {
-      const doc = await standApi.load(ref);
-      // A stand somebody has just made is theirs to change: taken as it opens.
-      if (take) {
-        heldKey.current = keyOf(ref);
-        retook.current = '';
-      }
-      standPayload.current = doc;
-      await putStandView(doc.diagram, doc.console);
-      const opened = { ref, name };
-      setStandDoc(opened);
-      setChanged(false);
-      try {
-        window.localStorage.setItem('feedtwin.stand', JSON.stringify(opened));
-      } catch {
-        // Storage can be unavailable; the stand is still open in this tab.
-      }
-      if (Object.keys(doc.setup).length) setSetupState((s) => ({ ...s, ...doc.setup }) as StandSetup);
-      if (doc.diagram) setDiagram(doc.diagram);
-      if (doc.engine !== undefined) setEngine(doc.engine);
-      wantFresh.current = true;
-      setGeneration((g) => g + 1);
-    },
+    openStand,
     closeStand: () => {
       // The cockpit keeps what the stand gave it -- drawing, engine, settings,
       // and where the knobs sit. The settings stayed and the knobs went back

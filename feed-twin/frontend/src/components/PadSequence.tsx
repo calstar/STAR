@@ -145,16 +145,18 @@ const oxTank = (live: SessionState) => live.tanks.find(isOx) ?? live.tanks[0];
 const fuelTank = (live: SessionState) => live.tanks.find((t) => !isOx(t)) ?? live.tanks[1];
 const bottle = (live: SessionState) => live.bottles[0];
 
+/** The COPV is charged, or a tank has been pressed off it since. Pressing the
+ *  LOX tank to lockup draws a rocket-only COPV down by a sixth (3,767 to
+ *  3,168 psia on LE4 (3)), and the guide went back from "Press fuel" to
+ *  "Charge COPV". Topping it up is the later phase's job. */
+export const chargeDone = (live: SessionState, copvTarget: number, dome: number) =>
+  (bottle(live)?.pressure_psi ?? Infinity) >= CHARGED * copvTarget ||
+  [oxTank(live), fuelTank(live)].some((t) => t !== undefined && t.lockup_psi != null && pressed(t, dome));
+
 const PHASES: Phase[] = [
   {
-    key: 'ox',
-    label: 'Load LOX',
-    target: 'Ox Fill',
-    waiting: 'LOX loading; the wall chills first, so keep venting',
-    done: (l) => (oxTank(l) ? loaded(oxTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(oxTank(l)),
-    progress: (l) => loadProgress(oxTank(l)),
-  },
-  {
+    // The fuel loads first (the team, 2026-11-01). Loaded LOX boils off and
+    // builds pressure for as long as it sits, so it goes in as late as it can.
     key: 'fuel',
     label: 'Load fuel',
     target: 'Fuel Fill',
@@ -163,22 +165,31 @@ const PHASES: Phase[] = [
     progress: (l) => loadProgress(fuelTank(l)),
   },
   {
+    key: 'ox',
+    label: 'Load LOX',
+    target: 'Ox Fill',
+    // Shown once the wall is cold (the chill has its own line): the LOX is
+    // collecting, and the vent stays open for the boil-off.
+    waiting: 'LOX collecting; the vent stays open for the boil-off',
+    done: (l) => (oxTank(l) ? loaded(oxTank(l) as TankState) : 1) >= LOADED_OF_TARGET && chilled(oxTank(l)),
+    progress: (l) => loadProgress(oxTank(l)),
+  },
+  {
     key: 'charge',
     label: 'Charge COPV',
     target: 'GN2 High Press',
     waiting: 'COPV charging',
-    done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
+    done: (l, s) => chargeDone(l, s.copv_target, s.dome),
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
   },
   {
-    key: 'oxpress',
-    label: 'Press LOX',
-    target: 'Ox Press',
-    waiting: 'LOX tank pressing up to lockup',
-    done: (l, s) => pressed(oxTank(l), s.dome),
-    blocked: (l) => unloaded(oxTank(l)),
-    progress: (l, s) =>
-      (oxTank(l)?.pressure_psi ?? 0) / pressTarget(oxTank(l), s.dome),
+    // Only on a table with a Dome Press state: a stand whose own dome valve
+    // the table drives, so nothing presses until the dome is loaded.
+    key: 'dome',
+    label: 'Load dome',
+    target: 'Dome Press',
+    waiting: 'dome loading',
+    done: (l) => !domeUnloaded(oxTank(l)) && !domeUnloaded(fuelTank(l)),
   },
   {
     key: 'fuelpress',
@@ -197,6 +208,21 @@ const PHASES: Phase[] = [
     waiting: 'COPV back up to its charge',
     done: (l, s) => (bottle(l)?.pressure_psi ?? Infinity) >= CHARGED * s.copv_target,
     progress: (l, s) => (bottle(l)?.pressure_psi ?? 0) / s.copv_target,
+  },
+  {
+    // The LOX is pressed last, straight before Ready and Fire. On GN2 its
+    // ullage cools onto the chilled wall and the LOX the moment the solenoid
+    // shuts: LE4 (3) fell from 554 to 340 psia in 35 s of stand time and to
+    // 245 in 70, while the fuel was pressed. Fire opens the press valves again,
+    // but it lights on whatever the LOX tank has left.
+    key: 'oxpress',
+    label: 'Press LOX',
+    target: 'Ox Press',
+    waiting: 'LOX tank pressing up to lockup',
+    done: (l, s) => pressed(oxTank(l), s.dome),
+    blocked: (l) => unloaded(oxTank(l)),
+    progress: (l, s) =>
+      (oxTank(l)?.pressure_psi ?? 0) / pressTarget(oxTank(l), s.dome),
   },
   {
     key: 'ready',
@@ -230,10 +256,42 @@ function slipped(p: Phase, live: SessionState, setup: StandSetup): boolean {
     case 'charge':
     case 'topup':
       return under(bottle(live)?.pressure_psi ?? Infinity, setup.copv_target);
+    case 'dome':
+      return domeUnloaded(oxTank(live)) || domeUnloaded(fuelTank(live));
     default:
       return (p.progress?.(live, setup) ?? 1) < 1 - SLIP;
   }
 }
+
+/** Phases that stay done once reached, until they slip past SLIP: the loads,
+ *  the charge, the dome, the presses and the top-up. A pressed tank sags as
+ *  its ullage gas cools with its solenoid shut (LE4 (3): fuel 565.7 to
+ *  559.7 psia while the LOX was pressed), and read against PRESSED_PSI every time the
+ *  guide sent the operator from Ox Press to Fuel Press and back while the
+ *  COPV ran down. Fire opens both press valves and takes the sag back. Not
+ *  Ready or Fire: those are where the stand is, not what it holds. */
+const HELD = new Set(['ox', 'fuel', 'charge', 'dome', 'fuelpress', 'topup', 'oxpress']);
+
+/** Phase `key` is done now, or was (it is in `reached`) and has not slipped
+ *  since, or a later phase has been reached. One done now is added to
+ *  `reached`. The guide does not walk back past a phase it has moved on from:
+ *  the LOX press draws a rocket-only COPV to 81 % of its charge, and sending
+ *  the operator to top it up again let the pressed LOX collapse while the
+ *  bottle filled. What has sagged by Ready is reported there (`sagged`). */
+export function phaseDone(key: string, live: SessionState, setup: StandSetup, reached: Set<string>): boolean {
+  const i = PHASES.findIndex((q) => q.key === key);
+  if (i < 0) return true;
+  const p = PHASES[i];
+  if (p.done(live, setup)) {
+    if (HELD.has(key)) reached.add(key);
+    return true;
+  }
+  if (PHASES.slice(i + 1).some((q) => reached.has(q.key))) return true;
+  return reached.has(key) && !slipped(p, live, setup);
+}
+
+/** The pad sequence's phases in the order the guide walks them. */
+export const PAD_ORDER = PHASES.map((p) => p.key);
 
 /** A wait in stand time, as a person says it: "40 s", "6 min", "1 h 5 min". */
 export function waitText(seconds: number): string {
@@ -257,13 +315,14 @@ const ABORT = (s: string) => /abort/i.test(s);
 const COMMITTED = (s: string) => /^(calibrate|ready|fire)$/i.test(s);
 
 /**
- * First hop of the shortest legal path from `from` to `to`, or '' if there is
- * none that avoids Fire, Vent and the aborts. The target itself may be Fire —
- * that is the last step — but nothing is routed *through* it. From inside an
- * abort the path may step to another abort, which is how the table leaves one.
+ * The shortest legal path from `from` to `to`, the states to press in order
+ * (`from` left out, `to` last), or [] if there is none that avoids Fire, Vent
+ * and the aborts. The target itself may be Fire — that is the last step — but
+ * nothing is routed *through* it. From inside an abort the path may step to
+ * another abort, which is how the table leaves one.
  */
-function firstHop(machine: StateMachine, from: string, to: string): string {
-  if (from === to) return '';
+function route(machine: StateMachine, from: string, to: string): string[] {
+  if (from === to) return [];
   const prev = new Map<string, string>([[from, '']]);
   const queue = [from];
   while (queue.length) {
@@ -273,14 +332,14 @@ function firstHop(machine: StateMachine, from: string, to: string): string {
       if (next !== to && NEVER_VIA(next) && !(ABORT(here) && ABORT(next))) continue;
       prev.set(next, here);
       if (next === to) {
-        let hop = to;
-        while (prev.get(hop) !== from) hop = prev.get(hop) as string;
-        return hop;
+        const path = [to];
+        while (prev.get(path[0]) !== from) path.unshift(prev.get(path[0]) as string);
+        return path;
       }
       queue.push(next);
     }
   }
-  return '';
+  return [];
 }
 
 /** Where the stand is on the pad, read off its physical state. */
@@ -293,6 +352,10 @@ export interface PadGuide {
   inTarget: boolean;
   /** The state to press next, '' when none (waiting, done or no route). */
   hop: string;
+  /** Every state to press from here to the current phase's, `hop` first.
+   *  The hint used to name the hop and the target only ("Armed → GN2 High
+   *  Press"), and a state between them read as a click that did nothing. */
+  path: string[];
   legal: boolean;
   /** 0..1 through the current wait, when it has a size. */
   progress: number | undefined;
@@ -324,6 +387,8 @@ export function usePadGuide(
 ): PadGuide | null {
   const [auto, setAuto] = useState(false);
   const commanded = useRef('');
+  /** The held phases this session has reached (HELD); a new session, a new set. */
+  const reached = useRef<{ id: string; keys: Set<string> }>({ id: '', keys: new Set() });
   const live = stand && {
     ...stand,
     tanks: stand.tanks.filter((t) => !ground.has(t.id)),
@@ -333,8 +398,10 @@ export function usePadGuide(
     if (!live || !machine) return null;
     const phases = PHASES.filter((p) => machine.states.includes(p.target));
     const committed = COMMITTED(live.state);
+    if (reached.current.id !== live.id) reached.current = { id: live.id, keys: new Set() };
+    const held = reached.current.keys;
     const current = phases.find(
-      (p) => !p.done(live, setup) && !(committed && p.key !== 'ready' && p.key !== 'fire'),
+      (p) => !phaseDone(p.key, live, setup, held) && !(committed && p.key !== 'ready' && p.key !== 'fire'),
     );
     const index = current ? phases.indexOf(current) : phases.length;
     // What has sagged since the stand was committed. Hot pressurant collapsing
@@ -348,11 +415,12 @@ export function usePadGuide(
         ? phases.filter((p) => p.key !== 'ready' && p.key !== 'fire' && slipped(p, live, setup))
         : [];
     const inTarget = current !== undefined && live.state === current.target;
-    const hop = current && !inTarget ? firstHop(machine, live.state, current.target) : '';
+    const path = current && !inTarget ? route(machine, live.state, current.target) : [];
+    const hop = path[0] ?? '';
     const legal = hop !== '' && live.reachable.includes(hop);
     const progress = current?.progress?.(live, setup);
     const blocked = current?.blocked?.(live) ?? '';
-    return { phases, index, current, inTarget, hop, legal, progress, blocked, sagged };
+    return { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged };
   })();
 
   // The chilldown, read off the LOX tank's wall: how far, and how long to go
@@ -456,7 +524,7 @@ export function PadGuideLine({
   /** The stand's note that this abort's table row leaves a main open. */
   abortNote?: string;
 }) {
-  const { phases, index, current, inTarget, hop, legal, progress, blocked, sagged, chill, auto, setAuto } = guide;
+  const { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged, chill, auto, setAuto } = guide;
   // While the LOX wall chills nothing collects: the bar is the chill, by the
   // wall's temperature, and the line says how long to go.
   const chilling = inTarget && current?.key === 'ox' && chill !== null;
@@ -603,7 +671,7 @@ export function PadGuideLine({
           <span className="min-w-0 flex-1 truncate text-[var(--ink-2)]">
             Next, {current.label.toLowerCase()}: press{' '}
             <span className={legal ? 'font-semibold text-[var(--ink)]' : 'text-[var(--ink-3)]'}>{hop}</span>
-            {hop !== current.target && <span className="text-[var(--ink-3)]"> → {current.target}</span>}
+            {path.length > 1 && <span className="text-[var(--ink-3)]"> → {path.slice(1).join(' → ')}</span>}
           </span>
         ) : (
           <span className="min-w-0 flex-1 truncate text-[var(--color-warning)]">
