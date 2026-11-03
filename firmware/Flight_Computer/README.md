@@ -16,7 +16,8 @@ It only uses the three functions listed in `src/radio.h`:
 Because everything goes through these three functions, we can later swap in a
 pretend radio and test the code on a laptop with no hardware.
 
-What exists now: `src/radio.h`, a pretend radio, and 7 tests for it.
+What exists now: `src/radio.h`, a pretend radio, and 14 tests for it.
+CI runs the tests on every PR that touches `firmware/` (`.github/workflows/firmware-ci.yml`).
 The real radio driver and the message format come in later PRs.
 
 ## Architecture
@@ -42,7 +43,7 @@ Flight_Computer/
 │   └── radio.h               # the three radio functions and their answers
 └── test/
     └── test_radio_seam/
-        ├── test_main.cpp     # 7 tests for what radio.h promises
+        ├── test_main.cpp     # 14 tests for what radio.h promises
         ├── radio_fake.h      # the pretend radio
         └── radio_fake.cpp    # test only, never built into the rocket
 ```
@@ -56,7 +57,7 @@ cd firmware/Flight_Computer
 pio test -e native
 ```
 
-You should see 7 tests pass. If `pio` is missing, install PlatformIO with
+You should see 14 tests pass. If `pio` is missing, install PlatformIO with
 `pipx install platformio`.
 
 ## Documentation
@@ -64,4 +65,5 @@ You should see 7 tests pass. If `pio` is missing, install PlatformIO with
 - [`src/radio.h`](src/radio.h): the radio functions. The comment above each
   one says what it promises.
 - [`test/test_radio_seam/test_main.cpp`](test/test_radio_seam/test_main.cpp):
-  the tests. They show what any radio driver has to do.
+  the tests. They run against the pretend radio, and the promises they check
+  are the ones the real radio driver must also keep.
