@@ -3,7 +3,9 @@
 A Layer X run is a full twin burn, saved per user (EngineDesign/backend/routers/
 layerx.py). Its result is large -- every signal on every step -- so:
 
-- ``layerx_get_run`` returns the run with its series replaced by a signal count;
+- ``layerx_get_run`` returns an outline: the run, every small result section
+  inline, the big ones (diagnostics, provenance, replay -- ~500 KB together) by
+  name and size, fetched one at a time with ``section``; the whole run is a link;
 - ``layerx_run_table`` turns the burn into a table (the app's own CSV export,
   ``name [unit]`` headers, engine/layerx/export.py) for table_series / table_plot;
 - ``layerx_export`` hands back the app's files: csv, parquet, the FEA zip (chamber
@@ -12,16 +14,22 @@ layerx.py). Its result is large -- every signal on every step -- so:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .. import identity
-from ..data import compact
+from ..data import compact, json_safe
 from ..files import FileStore, safe_filename
 from ..tables import from_unit_csv
 from . import COMPUTE, READ, Ctx
+from .documents import INLINE_BYTES
+
+#: A result section up to this size is inline in the outline; a bigger one is named
+#: with its size and fetched with layerx_get_run(section=...).
+SECTION_INLINE_BYTES = 4_000
 
 RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -61,11 +69,35 @@ def register(server, ctx: Ctx) -> None:
         return {"total": len(rows), "runs": compact(rows[:limit], max_list=200)}
 
     @server.tool(annotations=READ, structured_output=False)
-    async def layerx_get_run(run_id: str) -> Any:
-        """One Layer X run: status, inputs, provenance, summary, flight, trips -- everything except the
-        per-step series (layerx_run_table has those). Long arrays inside are summarized."""
+    async def layerx_get_run(run_id: str, section: str | None = None) -> Any:
+        """One Layer X run. Without `section`: status, settings, and every small result section
+        (summary, checks, delivered, events, motor, ...) inline; the big ones (diagnostics,
+        provenance, replay, limits, network, ...) listed with their sizes; the whole run as a JSON
+        link. With `section` (a dotted path into the result, e.g. 'diagnostics.stability'): that
+        one part. The per-step series are layerx_run_table's."""
         run = await ctx.apps.get_json("engine-design", f"/api/layerx/runs/{_run(run_id)}")
-        return compact(_strip_series(run), max_list=40)
+        result = run.get("result") if isinstance(run, dict) else None
+        if section:
+            return _section(run_id, result, section, ctx)
+        if not isinstance(result, dict):
+            return compact(run, max_list=40)
+        inline, more = {}, {}
+        for k, v in _strip_series(run)["result"].items():
+            n = len(json.dumps(v, default=str))
+            if n <= SECTION_INLINE_BYTES:
+                inline[k] = v
+            else:
+                more[k] = {"bytes": n, "parts": sorted(v) if isinstance(v, dict) else None}
+        stored = ctx.files.put_bytes(
+            json.dumps(run, default=str).encode(), safe_filename(f"layerx-{run_id}.json"), "application/json"
+        )
+        return {
+            **{k: v for k, v in run.items() if k != "result"},
+            "result": compact(inline, max_list=40),
+            "sections": compact(more, max_list=80),
+            "full_run": ctx.link(stored),
+            "use": "layerx_get_run(run_id, section='<name>' or '<name>.<part>') for one section.",
+        }
 
     @server.tool(annotations=COMPUTE, structured_output=False)
     async def layerx_run_table(run_id: str) -> dict[str, Any]:
@@ -144,6 +176,25 @@ def register(server, ctx: Ctx) -> None:
             out["pressure_curves_csv"] = ctx.link(ctx.files.put_bytes(r.content, safe_filename(name), "text/csv"))
         out["results"] = compact(results, max_list=40)
         return out
+
+
+def _section(run_id: str, result: Any, section: str, ctx: Ctx) -> Any:
+    node: Any = result
+    for i, part in enumerate(section.split(".")):
+        if not isinstance(node, dict) or part not in node:
+            where = ".".join(section.split(".")[:i]) or "result"
+            have = ", ".join(sorted(node)) if isinstance(node, dict) else "nothing below it"
+            raise ToolError(f"Run {run_id} has no {section!r}: {where} has {have}.")
+        node = node[part]
+    text = json.dumps(node, default=str)
+    if len(text) <= INLINE_BYTES:
+        return {"run_id": run_id, "section": section, "value": json_safe(node)}
+    stored = ctx.files.put_bytes(text.encode(), safe_filename(f"layerx-{run_id}-{section}.json"), "application/json")
+    out: dict[str, Any] = {"run_id": run_id, "section": section, "bytes": len(text), "link": ctx.link(stored)}
+    if isinstance(node, dict):
+        out["parts"] = {k: len(json.dumps(v, default=str)) for k, v in node.items()}
+        out["use"] = "Ask for a part: section='" + section + ".<part>'."
+    return out
 
 
 def _disposition_name(header: str | None) -> str | None:

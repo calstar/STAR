@@ -81,22 +81,29 @@ agent ──HTTPS──▶ Cloudflare ──▶ caddy (mcp.*: no cookie gate, X-
 | `download_design` | the design file as a JSON link (the same file pid-designer's Export saves) |
 | `pid_image_link` | a link that opens a P&ID in pid-designer, and the clicks to export its PNG/SVG (see below) |
 | `table_signals`, `table_series`, `table_plot`, `table_export` | question a table: signal list, a window of a few signals, a PNG, the whole thing as CSV/parquet |
-| `layerx_list_runs`, `layerx_get_run` | your Layer X runs; one run without its per-step series |
+| `layerx_list_runs`, `layerx_get_run(section=)` | your Layer X runs; one run as an outline (small sections inline, big ones named with sizes, the whole run as a link), or one section by dotted path (`diagnostics.stability`) |
 | `layerx_run_table` | a finished burn as a table |
 | `layerx_export(fmt)` | csv · parquet · fea (zip: pc, thrust, axial heat flux, peak loads) · eng (RASP thrust curve) |
 | `engine_optimizer_results(layer)` | your latest Layer 1/2/3 results; for 2/3 the optimized config (YAML) and the tank-pressure curves (the app's `results.csv`) as links |
 | `daq_list_runs`, `daq_run_summary`, `daq_run_config` | test-stand runs; size/duration; the config that ran |
-| `daq_index_run`, `daq_components` | index a run once (a job), then list its channels |
-| `daq_series`, `daq_plot` | a window of channels, downsampled by the viewer; or a PNG |
+| `daq_index_run`, `daq_components` | index a run once (a job), then list its channels: grouped by sensor (label, fields, units), or every detail once `match` (name or label) narrows to 60 |
+| `daq_series`, `daq_plot` | a window of channels, downsampled by the viewer, with label and unit; or a PNG. Time is seconds from the run's start (`t0_epoch` given) |
 | `daq_export_csv` | a run (or a selection) as a CSV link (a job, capped to half the cache) |
 | `openrocket_list_models`, `openrocket_model`, `openrocket_model_glb` | CAD models; manifest; mesh link |
 | `openrocket_search_motors`, `openrocket_motor`, `openrocket_motor_file` | the motor catalog; one motor; its .eng/.rse |
-| `openrocket_run_design(design_id, run)` | **a saved design, run as the app runs it**: `flight` (apogee, max speed/Mach/accel/q, **max bending moment**, rail exit, margins, drift + a table), `stability`, `recovery` (peak loads per chute, every failure case, both airframe bounds), `ork` (link) |
-| `openrocket_design_requests(design_id)` | the exact request bodies that design runs with (per-part masses, faces, motor, site, wind, devices) |
-| `openrocket_flight_dynamics`, `openrocket_stability`, `openrocket_recovery`, `openrocket_export_ork` | the same runs from an explicit body: take one from `openrocket_design_requests`, change a number, run the what-if |
+| `openrocket_run_design(design_id, run, changes)` | **a saved design, run as the app runs it**, optionally with `changes` merged into the body (a what-if: another motor, a longer rail): `flight` (apogee, max speed/Mach/accel/q, **max bending moment**, rail exit, margins, drift + a table), `stability`, `recovery` (peak loads per chute, every failure case, both airframe bounds), `ork` (link) |
+| `openrocket_design_requests(design_id)` | the exact request bodies that design runs with (per-part masses, faces, motor, site, wind, devices); a big model's as a link plus a summary |
+| `openrocket_flight_dynamics`, `openrocket_stability`, `openrocket_recovery`, `openrocket_export_ork` | the same runs from a body built from scratch (for a saved design, `openrocket_run_design(changes=)` is the what-if) |
 | `openrocket_recovery_devices` | the parachute catalog |
 | `feedtwin_list_runs`, `feedtwin_get_run`, `feedtwin_diff_runs` | cockpit run records and what differs between two |
 | `feedtwin_session_csv(session_id)` | a live cockpit session's whole trace as the Plots tab's CSV (the app's `history.csv`), as a link |
+
+The flight summary's peaks (max acceleration, max q, max bending moment) are full resolution;
+the table is the app's own 300-point resample and can sit below them.
+
+Two app images gained what their own buttons needed, found by running this server against the
+real apps: star-openrocket installs `requirements-flight.txt` (rocketpy; the Flight Dynamics tab
+answered 501 without it) and EngineDesign installs `pyarrow` (Layer X's Parquet export, likewise).
 
 Units come from the apps: Layer X's CSV headers (`name [unit]`), and for the 6-DOF samples the
 field comments on `FlightDynamicsResult` (`star-openrocket/backend/onshape/aero/rocketpy_flight.py`).

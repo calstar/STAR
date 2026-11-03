@@ -52,6 +52,17 @@ def compact(obj: Any, *, max_list: int = MAX_LIST, depth: int = 0) -> Any:
     return obj
 
 
+def json_safe(obj: Any) -> Any:
+    """``obj`` whole -- nothing cut -- with non-finite floats as null, for data asked for by name."""
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, float) and not math.isfinite(obj):
+        return None
+    return obj
+
+
 def downsample(t: np.ndarray, y: np.ndarray, max_points: int) -> tuple[np.ndarray, np.ndarray]:
     """At most ~``max_points`` samples of (t, y), keeping each bucket's min and max."""
     n = len(t)

@@ -6,6 +6,10 @@ series request with min/max buckets -- so these tools ask it questions rather
 than pull data: summary, component list, a windowed series, a plot. A CSV export
 is a job that streams into the file store and comes back as a link.
 
+Time: the viewer keeps epoch seconds. These tools take and give **seconds from the
+run's start** (the index's ``t_min``) and say what that start is (``t0_epoch``), so
+"the first minute" is start=0, end=60 rather than an eleven-digit sum.
+
 The viewer has no login (it is a team-wide, read-only tool), so every run is
 visible to everyone; the token still says who asked, for the download log.
 """
@@ -109,15 +113,23 @@ def register(server, ctx: Ctx) -> None:
         max_points: int = 400,
         time_source: TimeSource = "sensor",
     ) -> dict[str, Any]:
-        """Chosen components between start and end (seconds), downsampled by the viewer to about
-        max_points each (continuous: min/max buckets; discrete: transitions kept), with min/max."""
-        body = await _series(ctx, run_id, components, start, end, max(16, min(max_points, 2000)), time_source)
+        """Chosen components between start and end (seconds from the run's start), downsampled by the
+        viewer to about max_points each (continuous: min/max buckets; discrete: transitions kept),
+        each with its label, unit, min and max. `t` is seconds from the run's start (t0_epoch)."""
+        index = await _index(ctx, run_id)
+        t0 = _t0(index)
+        body = await _series(
+            ctx, run_id, components, _abs(t0, start), _abs(t0, end), max(16, min(max_points, 2000)), time_source
+        )
+        meta = _meta(index)
         for s in body.get("series", []):
+            s.update(meta.get(s.get("name"), {}))
+            s["t"] = [round(x - t0, 6) for x in s.get("t", [])]
             v = np.asarray([np.nan if x is None else x for x in s.get("v", [])], dtype=float)
             finite = v[np.isfinite(v)]
             if finite.size:
                 s["min"], s["max"] = float(finite.min()), float(finite.max())
-        return body
+        return {**body, "t0_epoch": t0, "window_s": [start, end]}
 
     @server.tool(annotations=READ, structured_output=False)
     async def daq_plot(
@@ -128,16 +140,25 @@ def register(server, ctx: Ctx) -> None:
         time_source: TimeSource = "sensor",
         title: str = "",
     ) -> list[Any]:
-        """Draw chosen components of a run against time as a PNG."""
-        body = await _series(ctx, run_id, components, start, end, 4000, time_source)
-        lines = [
-            (s["name"], "", np.asarray(s["t"], float), np.asarray([np.nan if x is None else x for x in s["v"]], float))
-            for s in body.get("series", [])
-        ]
+        """Draw chosen components of a run against time as a PNG: one panel per unit, each line
+        named by its label. start/end are seconds from the run's start."""
+        index = await _index(ctx, run_id)
+        t0 = _t0(index)
+        body = await _series(ctx, run_id, components, _abs(t0, start), _abs(t0, end), 4000, time_source)
+        meta = _meta(index)
+        lines = []
+        for s in body.get("series", []):
+            m = meta.get(s["name"], {})
+            name = f"{m['label']} ({s['name']})" if m.get("label") else s["name"]
+            t = np.asarray(s["t"], float) - t0
+            lines.append((name, m.get("unit", ""), t, np.asarray([np.nan if x is None else x for x in s["v"]], float)))
         if not lines:
             raise ToolError("No data for those components in that window.")
-        png = render(lines, title=title or f"DAQ {run_id}")
-        return [Image(data=png, format="png"), {"run_id": run_id, "components": components, "window_s": [start, end]}]
+        png = render(lines, title=title or f"DAQ {run_id}", xlabel="t [s] from run start")
+        return [
+            Image(data=png, format="png"),
+            {"run_id": run_id, "components": components, "window_s": [start, end], "t0_epoch": t0},
+        ]
 
     @server.tool(annotations=COMPUTE, structured_output=False)
     async def daq_export_csv(
@@ -147,10 +168,15 @@ def register(server, ctx: Ctx) -> None:
         end: float | None = None,
         time_source: TimeSource = "sensor",
     ) -> dict[str, Any]:
-        """A run as a CSV download link. With components: a wide CSV (one column each on a shared time
-        grid). Without: every primary channel, long format (time,component,value) -- this can be GB;
-        prefer naming components and a window. Runs as a job; the viewer paces the stream."""
+        """A run as a CSV download link (the viewer's own export). With components: a wide CSV (one
+        column each on a shared time grid). Without: every primary channel, long format
+        (time,component,value) -- this can be GB; prefer naming components and a window. start/end are
+        seconds from the run's start; the file's time column is the viewer's epoch seconds. Runs as a
+        job; the viewer paces the stream."""
         _run(run_id)
+        if start is not None or end is not None:
+            t0 = _t0(await _index(ctx, run_id))
+            start, end = _abs(t0, start), _abs(t0, end)
         who = identity.current().email
         key = FileStore.memo_key(who, "daq-csv", run_id, sorted(components or []), start, end, time_source)
 
@@ -183,6 +209,30 @@ def register(server, ctx: Ctx) -> None:
         return await ctx.jobs.run(f"daq csv {run_id}", work)
 
 
+async def _index(ctx: Ctx, run_id: str) -> dict[str, Any]:
+    r = await ctx.apps.request("daq-viewer", "GET", f"/api/runs/{_run(run_id)}/components")
+    return r.json()
+
+
+def _t0(index: dict[str, Any]) -> float:
+    t0 = index.get("t_min")
+    if not isinstance(t0, (int, float)):
+        raise ToolError("The viewer's index for this run has no start time; run daq_index_run.")
+    return float(t0)
+
+
+def _abs(t0: float, rel: float | None) -> float | None:
+    return None if rel is None else t0 + rel
+
+
+def _meta(index: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        c["name"]: {"label": c.get("label") or None, "unit": c.get("unit") or ""}
+        for c in index.get("components") or []
+        if c.get("name")
+    }
+
+
 async def _series(ctx: Ctx, run_id, components, start, end, max_points, time_source) -> dict[str, Any]:
     if not components:
         raise ToolError("Name at least one component (from daq_components).")
@@ -197,10 +247,33 @@ async def _series(ctx: Ctx, run_id, components, start, end, max_points, time_sou
     )
 
 
+#: Up to this many matched components come back one by one with every field; more come
+#: back grouped by sensor (label, family, each field's unit), which is a few KB for a
+#: 400-channel run instead of ~130 KB.
+DETAIL_MAX = 60
+
+
 def _index_view(index: dict[str, Any], match: str | None) -> dict[str, Any]:
     comps = index.get("components") or []
     if match:
         needle = match.lower()
-        comps = [c for c in comps if needle in str(c.get("name", "")).lower()]
+        comps = [
+            c for c in comps if needle in str(c.get("name", "")).lower() or needle in str(c.get("label") or "").lower()
+        ]
     head = {k: v for k, v in index.items() if k != "components"}
-    return {**head, "matched": len(comps), "components": compact(comps[:500], max_list=500)}
+    if len(comps) <= DETAIL_MAX:
+        return {**head, "matched": len(comps), "components": compact(comps, max_list=DETAIL_MAX)}
+    sensors: dict[str, dict[str, Any]] = {}
+    for c in comps:
+        entity = str(c.get("entity") or c.get("name"))
+        row = sensors.setdefault(
+            entity, {"entity": entity, "label": c.get("label"), "family": c.get("family"), "fields": {}}
+        )
+        row["fields"][c.get("field") or c.get("name")] = c.get("unit") or ""
+    return {
+        **head,
+        "matched": len(comps),
+        "sensors": list(sensors.values()),
+        "use": f"A component is '<entity>.<field>'. Pass match= (name or label) to narrow to {DETAIL_MAX} or "
+        "fewer for every detail (time source, discrete, primary, time range).",
+    }
