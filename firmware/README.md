@@ -34,10 +34,11 @@ firmware/
 │   ├── LC_Hotfire/            #   load cell board
 │   ├── Actuator_Hotfire/      #   actuator/valve driver board
 │   ├── ProtoEncoder/          #   encoder board prototype
+│   ├── ValveEncoder/          #   ball valve encoder (AS5600 -> RS-485)
 │   ├── common/                #   shared flight headers (hotfire_config.h,
 │   │                          #     SensorHotfireCore.h, firmware_hash.h, OTA)
 │   └── Hotfire_Tests/         #   Unity unit tests (run on host, `-e native`)
-├── common/                    # board pin maps + ADC mappings (sense/actuator)
+├── common/                    # board pin maps + ADC mappings (sense/actuator/valve encoder)
 ├── libraries/                 # Arduino libraries (see "Libraries" below)
 │   └── DAQv2-Comms -> ../../lib/DAQv2-Comms   # symlink to the wire protocol
 ├── platformio-common.ini      # shared PlatformIO env bases (esp32s3_base, ...)
