@@ -123,17 +123,51 @@ struct PwmSlot {
 };
 static PwmSlot pwm_slots[NUM_PWM_SLOTS];
 
+// Arduino-ESP32 3.x replaced the channel-based LEDC calls with pin-based
+// ones; which core a build gets depends on the installed espressif32
+// platform, so support both. The 3.x core maps channel -> timer the same way.
+/** Put `pin` on `channel` at `hz` with `bits` resolution; 0 if impossible,
+ *  else the frequency the hardware actually runs at. */
+static uint32_t pwmAttach(int pin, uint8_t channel, uint32_t hz, uint8_t bits) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    if (!ledcAttachChannel(pin, hz, bits, channel))
+        return 0;
+    return ledcReadFreq(pin);
+#else
+    const uint32_t actual_hz = ledcSetup(channel, hz, bits);
+    if (actual_hz != 0)
+        ledcAttachPin(pin, channel);
+    return actual_hz;
+#endif
+}
+
+static void pwmWrite(int pin, uint8_t channel, uint32_t duty) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    (void)channel;
+    ledcWrite(pin, duty);
+#else
+    (void)pin;
+    ledcWrite(channel, duty);
+#endif
+}
+
+static void pwmDetach(int pin, uint8_t channel) {
+    pwmWrite(pin, channel, 0);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcDetach(pin);
+#else
+    ledcDetachPin(pin);
+#endif
+}
+
 /** End any PWM on this actuator and leave its pin driven LOW. */
 static void stopPwm(uint8_t actuator_id) {
     for (auto& slot : pwm_slots) {
         if (!slot.active || slot.actuator_id != actuator_id)
             continue;
         const int pin = getActuatorPin(actuator_id);
-        if (slot.channel != NO_CHANNEL) {
-            ledcWrite(slot.channel, 0);
-            if (pin >= 0)
-                ledcDetachPin(pin);
-        }
+        if (slot.channel != NO_CHANNEL && pin >= 0)
+            pwmDetach(pin, slot.channel);
         if (pin >= 0) {
             pinMode(pin, OUTPUT);
             digitalWrite(pin, LOW);
@@ -263,12 +297,15 @@ public:
             if (freq_hz >= 1) {
                 // Highest resolution first: low frequencies need it.
                 for (bits = PWM_MAX_RESOLUTION_BITS; bits >= 1; bits--) {
-                    actual_hz = ledcSetup(slot->channel, freq_hz, bits);
+                    actual_hz = pwmAttach(pin, slot->channel, freq_hz, bits);
                     if (actual_hz != 0)
                         break;
                 }
             }
             if (actual_hz == 0) {
+                // A failed 3.x attach can leave the pin off the GPIO matrix.
+                pinMode(pin, OUTPUT);
+                digitalWrite(pin, LOW);
                 HF_LOG("[PWM] rejected: frequency ");
                 HF_LOG(cmd.frequency);
                 HF_LOGLN(" Hz is outside what the LEDC hardware can make");
@@ -287,8 +324,7 @@ public:
                 HF_LOG(actual_hz);
                 HF_LOGLN(" Hz");
             }
-            ledcAttachPin(pin, slot->channel);
-            ledcWrite(slot->channel, duty);
+            pwmWrite(pin, slot->channel, duty);
         } else {
             digitalWrite(pin, HIGH);
         }
