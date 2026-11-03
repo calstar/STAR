@@ -44,23 +44,23 @@ export default function COPVGraphsPage() {
   const reg = useSensorValue(regSensor?.calEntity ?? '', 'pressure_psi');
 
   return (
-    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
 
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-1 h-5 bg-green-500 rounded-full mr-3" />
-          <h1 className="text-base font-bold text-green-400 tracking-wider">COPV / GN2 SYSTEM</h1>
+          <div className="h-2 w-2 flex-shrink-0 bg-green-500 mr-3" />
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">COPV / GN2 SYSTEM</h1>
         </div>
-        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
+        <div className="flex items-baseline gap-1">
           <button
             onClick={() => setActiveTab('PT')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'PT' ? 'bg-green-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+            className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${activeTab === 'PT' ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2'}`}
           >
             PTs (Pressures)
           </button>
           <button
             onClick={() => setActiveTab('RTD')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'RTD' ? 'bg-teal-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+            className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${activeTab === 'RTD' ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2'}`}
           >
             RTD (COPV Temp)
           </button>

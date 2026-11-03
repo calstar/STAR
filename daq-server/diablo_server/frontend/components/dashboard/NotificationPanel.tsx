@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSensorStore, type NotificationEntry } from '@/lib/store';
 
 const MIN_FONT_PX = 10;
-const MAX_FONT_PX = 18;
+const MAX_FONT_PX = 14;
 
 function ScaledMessage({ message }: { message: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -37,7 +37,7 @@ function ScaledMessage({ message }: { message: string }) {
   return (
     <div
       ref={wrapRef}
-      className="overflow-hidden whitespace-nowrap text-gray-200 leading-tight"
+      className="overflow-hidden whitespace-nowrap font-mono leading-tight text-ink"
       style={{ fontSize: fontSizePx }}
     >
       {message}
@@ -45,15 +45,16 @@ function ScaledMessage({ message }: { message: string }) {
   );
 }
 
-function categoryStyle(category: NotificationEntry['category']): { emoji: string; color: string } {
+/** A notification's mark: a square in the colour its category means. */
+function categoryStyle(category: NotificationEntry['category']): { label: string; color: string } {
   switch (category) {
     case 'error':
-      return { emoji: '❌', color: 'text-red-400' };
+      return { label: 'Error', color: 'bg-red-400' };
     case 'warning':
-      return { emoji: '⚠️', color: 'text-amber-300' };
+      return { label: 'Warning', color: 'bg-amber-300' };
     case 'info':
     default:
-      return { emoji: 'ℹ️', color: 'text-blue-300' };
+      return { label: 'Info', color: 'bg-ink-3' };
   }
 }
 
@@ -69,48 +70,43 @@ export default function NotificationPanel() {
   const items = notifications;
 
   return (
-    <div className="h-full flex flex-col w-full min-w-[150px] flex-shrink-0">
-      <div className="flex items-center justify-between gap-2 mb-1.5 px-1">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Notifications</div>
+    <div className="flex h-full w-full min-w-[150px] flex-shrink-0 flex-col">
+      <div className="mb-2 flex flex-shrink-0 items-baseline justify-between gap-2">
+        <h2 className="caps text-[11px]">Notifications</h2>
         <button
           type="button"
           onClick={clearNotifications}
-          className="px-2 py-0.5 rounded border border-gray-700 text-xs font-semibold text-gray-300 hover:bg-gray-800 active:bg-gray-700"
+          disabled={items.length === 0}
+          className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3 hover:text-ink disabled:opacity-40"
         >
           Clear
         </button>
       </div>
-      <div className="flex-1 min-h-0 rounded border border-gray-800 bg-black/40 overflow-hidden flex flex-col">
-        <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-gray-800/70 flex flex-col">
-          {items.length === 0 ? (
-            <div className="px-3 py-2 text-lg text-gray-600">No board notifications.</div>
-          ) : (
-            items.map((n, idx) => {
-              const { emoji, color } = categoryStyle(n.category);
-              return (
-                <div
-                  key={n.key ?? idx}
-                  className={`px-2 py-1.5 flex items-start gap-2 ${
-                    n.isCurrent ? 'bg-gray-900/70' : 'bg-transparent'
-                  }`}
-                >
-                  <span className={`${color} text-lg leading-none mt-0.5 flex-shrink-0`}>{emoji}</span>
-                  <div className="flex-1 min-w-0 overflow-hidden">
-                    <ScaledMessage message={n.message} />
-                    <div className="text-base text-gray-500 flex items-center gap-2">
-                      <span className="tabular-nums">{formatTime(n.timestampMs)}</span>
-                      {n.isCurrent && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-sm text-emerald-300 font-semibold">
-                          current
-                        </span>
-                      )}
-                    </div>
+      <div className="flex min-h-0 flex-1 flex-col divide-y divide-line overflow-y-auto">
+        {items.length === 0 ? (
+          <p className="font-mono text-[12px] text-ink-3">No board notifications.</p>
+        ) : (
+          items.map((n, idx) => {
+            const { label, color } = categoryStyle(n.category);
+            return (
+              <div
+                key={n.key ?? idx}
+                className={`flex items-start gap-2 py-1.5 ${n.isCurrent ? 'bg-white/[0.04]' : ''}`}
+              >
+                <span className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 ${color}`} title={label} aria-label={label} />
+                <div className="min-w-0 flex-1 overflow-hidden">
+                  <ScaledMessage message={n.message} />
+                  <div className="flex items-center gap-2 font-mono text-[11px] text-ink-3">
+                    <span className="tabular-nums">{formatTime(n.timestampMs)}</span>
+                    {n.isCurrent && (
+                      <span className="uppercase tracking-[0.12em] text-emerald-400">current</span>
+                    )}
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

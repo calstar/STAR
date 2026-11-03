@@ -24,8 +24,8 @@ const STATE_COLORS: Record<number, string> = {
   17: 'text-red-500',
   13: 'text-yellow-400',
   15: 'text-green-400',
-  2: 'text-blue-400',
-  0: 'text-gray-500',
+  2: 'text-ink',
+  0: 'text-ink-3',
 };
 
 const SHORT_LABELS: Record<string, string> = {
@@ -62,8 +62,8 @@ function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
       type="button"
       title={traceHidden ? 'Show this sensor on Pressure History (click)' : 'Hide this sensor from Pressure History (click)'}
       onClick={() => togglePressureHistoryPlotVisibility(plotKeys)}
-      className={`min-w-0 h-full overflow-visible flex-1 text-left rounded-lg transition-opacity hover:opacity-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/80 ${traceHidden ? 'opacity-45' : 'opacity-100'}`}
-      style={{ minWidth: '6%', maxWidth: '14%' }}
+      className={`min-w-0 h-full overflow-visible flex-1 text-left transition-opacity hover:opacity-95 ${traceHidden ? 'opacity-35' : 'opacity-100'}`}
+      style={{ minWidth: '5%', maxWidth: '12%' }}
     >
       <PressureBar
         label={label}
@@ -289,231 +289,163 @@ export default function TopBar() {
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };
 
-  return (
-    <div
-      className="relative z-30 bg-card border-b border-gray-800 select-none flex-shrink-0"
-      style={{ height: '18vh' }}
-    >
-      <div className="flex items-stretch h-full px-4 gap-2 py-2">
+  const countdownControls = (
+    <div className="absolute left-0 top-full z-50 mt-2 w-[min(22rem,85vw)] border border-line-strong bg-black p-4 normal-case tracking-normal">
+      <div className="caps mb-3 text-[11px]">Countdown</div>
 
-        {/* Left: brand + connection + clock + countdown */}
-        <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-2 border-r border-gray-800/60">
-          <div className="flex items-center gap-2">
-            <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
-              DIABLO DAQ
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
-            <span className="text-sm text-gray-300 font-semibold" title={badge.title}>
-              {badge.label}
-            </span>
-          </div>
-          {session?.enabled && (
-            <button
-              type="button"
-              onClick={() => navigate('/session')}
-              title="Open session control"
-              className={`self-start rounded-md border px-2 py-0.5 text-xs font-bold uppercase tracking-wider tabular-nums transition ${
-                session.active
-                  ? 'border-green-600 bg-green-900/40 text-green-300 hover:bg-green-800/60'
-                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
-              }`}
-            >
-              {session.active
-                ? `RUN ${formatCountdown((session.deadlineMs ?? 0) - Date.now()).value}`
-                : 'SESSION — stopped'}
-            </button>
-          )}
-          <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
-          <div ref={countdownRef} className="relative flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setCountdownMenuOpen((open) => !open);
-                if (!timeOfDayInput) {
-                  const now = new Date();
-                  setTimeOfDayInput(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
-                }
-              }}
-              className={`text-xl font-mono tabular-nums font-bold leading-tight transition ${
-                countdownExpired ? 'text-red-400' : 'text-white'
-              } ${controlEnabled ? 'cursor-pointer hover:text-blue-300' : 'cursor-default'}`}
-              title={controlEnabled ? 'Click to adjust countdown' : 'Viewer mode: countdown controls locked'}
-            >
-              {countdown}
-            </button>
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={handleAdd30Min} disabled={!controlEnabled} className="ctl h-8 text-[11px]">
+          +30 min
+        </button>
+        <button type="button" onClick={handleSet10Min} disabled={!controlEnabled} className="ctl h-8 text-[11px]">
+          Set 10:00
+        </button>
+      </div>
 
-            {countdownMenuOpen && (
-              <div className="absolute top-full left-0 z-50 mt-2 w-[min(22rem,85vw)] rounded-xl border border-gray-700 bg-black/90 p-3 shadow-xl">
-                <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                  Countdown controls
-                </div>
+      <div className="mt-4 border-t border-line pt-3">
+        <div className="caps text-[11px]">Hit zero at</div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAdd30Min}
-                    disabled={!controlEnabled}
-                    className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    +30 minutes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSet10Min}
-                    disabled={!controlEnabled}
-                    className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Set to 10:00
-                  </button>
-                </div>
-
-                <div className="mt-3 border-t border-gray-800 pt-3">
-                  <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                    Hit zero at
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <div className="flex items-center rounded-lg border border-gray-700 bg-gray-900 p-0.5">
-                      <button
-                        type="button"
-                        disabled={!controlEnabled}
-                        onClick={() => {
-                          setHitZeroMode('time');
-                          setDateTimeInput('');
-                        }}
-                        className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                          hitZeroMode === 'time'
-                            ? 'bg-white text-black'
-                            : 'text-gray-200 hover:bg-white/10'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
-                      >
-                        Time
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!controlEnabled}
-                        onClick={() => {
-                          setHitZeroMode('datetime');
-                          setTimeOfDayInput('');
-                        }}
-                        className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
-                          hitZeroMode === 'datetime'
-                            ? 'bg-white text-black'
-                            : 'text-gray-200 hover:bg-white/10'
-                        } disabled:opacity-40 disabled:cursor-not-allowed`}
-                      >
-                        Date/Time
-                      </button>
-                    </div>
-
-                    {hitZeroMode === 'time' ? (
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="HH:MM"
-                        value={timeOfDayInput}
-                        onChange={(e) => setTimeOfDayInput(e.target.value)}
-                        className="w-24 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-white placeholder:text-gray-500"
-                        disabled={!controlEnabled}
-                      />
-                    ) : (
-                      <input
-                        type="datetime-local"
-                        value={dateTimeInput}
-                        onChange={(e) => setDateTimeInput(e.target.value)}
-                        className="min-w-[12.5rem] flex-1 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[11px] text-white"
-                        disabled={!controlEnabled}
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handleSetHitZeroAt}
-                      disabled={!controlEnabled}
-                      className="ml-auto rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={hitZeroMode === 'datetime' ? 'Set to selected date/time' : 'Set to HH:MM (today or tomorrow)'}
-                    >
-                      Set
-                    </button>
-                  </div>
-
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        sendCountdownTarget(null);
-                        setCountdownMenuOpen(false);
-                      }}
-                      disabled={!controlEnabled}
-                      className="text-[11px] font-semibold text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Middle: notifications */}
-        <div className="flex flex-col justify-center pr-1 flex-shrink-0 w-[15vw]">
-          <NotificationPanel />
-        </div>
-
-        {/* Center: pressure bars — dynamic spacing, scales with viewport */}
-        <div className="flex-[2] flex items-stretch justify-end gap-4 sm:gap-6 lg:gap-8 min-w-0 overflow-visible" style={{ maxWidth: '60vw' }}>
-          {effectivePressureBars.map(({ label, entity, nop, meop, color, avgEntities }) => (
-            <ReactivePressureBar
-              key={entity}
-              label={label}
-              entity={entity}
-              nop={nop}
-              meop={meop}
-              color={color}
-              avgEntities={avgEntities}
-            />
-          ))}
-        </div>
-
-        {/* Right: state + mode + abort — top-right aligned; min width so buttons don't clip */}
-        <div className="w-full max-w-[320px] min-w-[260px] flex items-stretch justify-between gap-2 flex-shrink-0 pl-3 border-l border-gray-800/60 ml-auto">
-          <div className="flex flex-col justify-center items-center gap-2 flex-1 min-w-0">
-            <span className="text-[10px] xl:text-sm text-gray-400 uppercase tracking-widest font-bold text-center">STATE</span>
-            <span className={`text-lg xl:text-2xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
-              {currentStateName}
-            </span>
-          </div>
-
-          {/* Control lock + debug mode stacked */}
-          <div className="flex flex-col items-stretch justify-center gap-2 flex-1 min-w-0 relative border-l border-gray-800/60 pl-2">
-            <button
-              onClick={() => {
-                if (!controlEnabled) return;
-                const newDebugMode = !debugMode;
-                startTransition(() => setDebugMode(newDebugMode));
-                const cmd: CommandPayload = {
-                  commandType: 'debug_mode',
-                  data: { debugMode: newDebugMode }
-                };
-                requestAnimationFrame(() => ws.sendCommand(cmd));
-              }}
-              disabled={!controlEnabled}
-              className={`w-full py-2 xl:py-4 rounded-xl text-[10px] xl:text-sm font-bold uppercase tracking-wider border transition-all text-center ${debugMode
-                  ? controlEnabled
-                    ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
-                    : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
-                  : controlEnabled
-                    ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
-                    : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="flex items-center border border-line-strong">
+            {(['time', 'datetime'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={!controlEnabled}
+                onClick={() => {
+                  setHitZeroMode(mode);
+                  if (mode === 'time') setDateTimeInput('');
+                  else setTimeOfDayInput('');
+                }}
+                className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                  hitZeroMode === mode ? 'bg-ink text-black' : 'text-ink-2 hover:bg-white/10'
                 }`}
-              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
-            >
-              {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
-            </button>
+              >
+                {mode === 'time' ? 'Time' : 'Date/Time'}
+              </button>
+            ))}
+          </div>
 
+          {hitZeroMode === 'time' ? (
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="HH:MM"
+              value={timeOfDayInput}
+              onChange={(e) => setTimeOfDayInput(e.target.value)}
+              className="w-24 border border-line-strong bg-black px-2 py-1 font-mono text-xs text-ink placeholder:text-ink-4"
+              disabled={!controlEnabled}
+            />
+          ) : (
+            <input
+              type="datetime-local"
+              value={dateTimeInput}
+              onChange={(e) => setDateTimeInput(e.target.value)}
+              className="min-w-[12.5rem] flex-1 border border-line-strong bg-black px-2 py-1 font-mono text-[11px] text-ink"
+              disabled={!controlEnabled}
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={handleSetHitZeroAt}
+            disabled={!controlEnabled}
+            className="ctl ml-auto h-7 px-3 text-[11px]"
+            title={hitZeroMode === 'datetime' ? 'Set to selected date/time' : 'Set to HH:MM (today or tomorrow)'}
+          >
+            Set
+          </button>
+        </div>
+
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => {
+              sendCountdownTarget(null);
+              setCountdownMenuOpen(false);
+            }}
+            disabled={!controlEnabled}
+            className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const lockedTitle = 'Viewer mode: controls locked';
+
+  return (
+    <div className="relative select-none">
+      {/* ── The status line: connection, session, clocks; the two mode switches at the right.
+            One row, never wrapped (as Hotbench's is): the wall clock gives way below 1600 px. */}
+      <div className="flex min-h-[44px] flex-nowrap items-center gap-x-7 px-8 py-2 font-mono text-[13px] uppercase tracking-[0.08em] max-[1400px]:gap-x-5 max-[1400px]:px-5">
+        <span className="flex flex-shrink-0 items-center gap-2 text-ink-2" title={badge.title}>
+          <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${badge.dotClass}`} />
+          {badge.label}
+        </span>
+
+        {session?.enabled && (
+          <button
+            type="button"
+            onClick={() => navigate('/session')}
+            title="Open session control"
+            className={`flex-shrink-0 whitespace-nowrap border px-2.5 py-0.5 text-[11px] tracking-[0.16em] tabular-nums transition-colors ${
+              session.active
+                ? 'border-green-500 text-green-400 hover:bg-green-900/40'
+                : 'border-line-strong text-ink-3 hover:text-ink-2'
+            }`}
+          >
+            {session.active
+              ? `Run ${formatCountdown((session.deadlineMs ?? 0) - Date.now()).value}`
+              : 'Session stopped'}
+          </button>
+        )}
+
+        <span className="hidden flex-shrink-0 tabular-nums text-ink-3 min-[1600px]:inline" title="Wall clock">{clock}</span>
+
+        <div ref={countdownRef} className="relative flex flex-shrink-0 items-center gap-2">
+          <span className="caps text-[11px]">T−</span>
+          <button
+            type="button"
+            onClick={() => {
+              setCountdownMenuOpen((open) => !open);
+              if (!timeOfDayInput) {
+                const now = new Date();
+                setTimeOfDayInput(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+              }
+            }}
+            className={`font-semibold tabular-nums transition-colors ${
+              countdownExpired ? 'text-red-400' : 'text-ink'
+            } ${controlEnabled ? 'cursor-pointer hover:text-ink-2' : 'cursor-default'}`}
+            title={controlEnabled ? 'Click to adjust countdown' : 'Viewer mode: countdown controls locked'}
+          >
+            {countdown}
+          </button>
+          {countdownMenuOpen && countdownControls}
+        </div>
+
+        <div className="ml-auto flex flex-shrink-0 items-center gap-3">
+          <button
+            onClick={() => {
+              if (!controlEnabled) return;
+              const newDebugMode = !debugMode;
+              startTransition(() => setDebugMode(newDebugMode));
+              const cmd: CommandPayload = {
+                commandType: 'debug_mode',
+                data: { debugMode: newDebugMode }
+              };
+              requestAnimationFrame(() => ws.sendCommand(cmd));
+            }}
+            disabled={!controlEnabled}
+            className={`ctl h-7 px-3 text-[11px] ${debugMode ? '!border-yellow-500 !text-yellow-400' : ''}`}
+            title={controlEnabled ? (debugMode ? 'Debug mode: click to return to safe' : 'Safe mode: click for debug') : lockedTitle}
+          >
+            {debugMode ? 'Debug' : 'Safe'}
+          </button>
+
+          <div className="relative">
             <button
               onClick={() => {
                 if (controlEnabled) {
@@ -525,10 +457,7 @@ export default function TopBar() {
                   setShowUnlockForm((v) => !v);
                 }
               }}
-              className={`justify-center w-full py-2 xl:py-4 rounded-xl text-[10px] xl:text-sm font-semibold uppercase tracking-wider border flex ${controlEnabled
-                  ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
-                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
-                }`}
+              className={`ctl h-7 px-3 text-[11px] ${controlEnabled ? '!border-green-500 !text-green-400' : ''}`}
               title={
                 controlEnabled
                   ? 'Controller mode: click to return to viewer'
@@ -537,82 +466,109 @@ export default function TopBar() {
                     : 'Viewer mode: you are not an approved operator'
               }
             >
-              {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
+              {controlEnabled ? 'Controller' : 'Viewer'}
             </button>
 
             {!controlEnabled && !isOperator && showUnlockForm && (
-              <div className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48">
-                <span className="text-[10px] text-yellow-400">
+              <div className="absolute right-0 top-full z-50 mt-2 flex w-56 flex-col gap-1 border border-line-strong bg-black px-3 py-2 normal-case tracking-normal">
+                <span className="text-[11px] text-yellow-400">
                   You&apos;re not an approved operator — control is view-only.
                 </span>
-                {error && (
-                  <span className="text-[10px] text-red-400">
-                    {error}
-                  </span>
-                )}
+                {error && <span className="text-[11px] text-red-400">{error}</span>}
               </div>
             )}
           </div>
+        </div>
+      </div>
 
-          {/* Extend Fire + Abort buttons — min width so label isn't clipped */}
-          <div className="flex flex-col justify-center gap-2 flex-1 min-w-[7.25rem] border-l border-gray-800/60 pl-2">
+      {/* ── The strip: the transducers as bars, the board notes, and the command stack. */}
+      <div
+        className="grid border-t border-line px-8 max-[1400px]:px-5"
+        style={{ height: 'max(15vh, 150px)', gridTemplateColumns: 'minmax(0,1fr) minmax(200px,15vw) minmax(280px,330px)' }}
+      >
+        <section className="flex min-h-0 min-w-0 flex-col py-3 pr-6">
+          <h2 className="caps mb-2 flex-shrink-0 text-[11px]" title="Gauge: the stand's transducers and its log files read psig. Hotbench shows psia; add 14.7 to compare.">Pressure · psig</h2>
+          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-visible">
+            {effectivePressureBars.map(({ label, entity, nop, meop, color, avgEntities }) => (
+              <ReactivePressureBar
+                key={entity}
+                label={label}
+                entity={entity}
+                nop={nop}
+                meop={meop}
+                color={color}
+                avgEntities={avgEntities}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="flex min-h-0 min-w-0 flex-col border-l border-line px-5 py-3">
+          <NotificationPanel />
+        </section>
+
+        <section className="flex min-h-0 min-w-0 flex-col gap-2 border-l border-line py-3 pl-5">
+          <div className="flex flex-shrink-0 items-baseline justify-between gap-3">
+            <span className="caps text-[11px]">State</span>
+            <span className={`truncate font-mono text-[clamp(14px,1.7vh,22px)] font-bold uppercase tracking-[0.12em] ${stateColor}`}>
+              {currentStateName}
+            </span>
+          </div>
+
+          <button
+            onClick={handleEngineAbort}
+            disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
+            className="ctl min-h-0 flex-[1.3] border-[var(--color-danger)] text-[14px] tracking-[0.34em] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white"
+            title={
+              !controlEnabled
+                ? lockedTitle
+                : !hasState('Vent') || !hasState('Engine Abort')
+                  ? 'Config declares no Vent / Engine Abort state'
+                  : 'Vent, then Engine Abort five seconds later'
+            }
+          >
+            Eng Abort
+          </button>
+
+          <div className="grid min-h-0 flex-1 grid-cols-3 gap-2">
             <button
               onClick={handleExtendFire}
               disabled={!controlEnabled || !isFireState(currentState)}
-              className="w-full min-w-0 py-2 xl:py-3 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 border border-emerald-600
-                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-gray-800 disabled:border-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+              className="ctl text-[10px] tracking-[0.1em] hover:!border-emerald-500 hover:!text-emerald-400"
               title={isFireState(currentState) ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
             >
-              EXTEND FIRE
-            </button>
-            <button
-              onClick={handleEngineAbort}
-              disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
-              className="w-full py-2 xl:py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
-              title={
-                !controlEnabled
-                  ? 'Viewer mode: controls locked'
-                  : !hasState('Vent') || !hasState('Engine Abort')
-                    ? 'Config declares no Vent / Engine Abort state'
-                    : undefined
-              }
-            >
-              ENG ABORT
+              Extend Fire
             </button>
             <button
               onClick={handleGseAbort}
               disabled={!controlEnabled || !hasState('GSE Abort')}
-              className="w-full py-2 xl:py-3 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
-                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
+              className="ctl border-orange-500/70 text-[10px] tracking-[0.1em] text-orange-400 hover:!border-orange-500 hover:!bg-orange-700 hover:!text-white"
               title={
                 !controlEnabled
-                  ? 'Viewer mode: controls locked'
+                  ? lockedTitle
                   : !hasState('GSE Abort')
                     ? 'Config declares no GSE Abort state'
                     : undefined
               }
             >
-              GSE ABORT
+              GSE Abort
             </button>
             <button
               onClick={handleEmergencyAbort}
               disabled={!controlEnabled || !hasState('Emergency Abort')}
-              className="w-full py-2 xl:py-3 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors
-                         shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
+              className="ctl border-[var(--color-danger)] text-[10px] tracking-[0.1em] text-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white"
               title={
                 !controlEnabled
-                  ? 'Viewer mode: controls locked'
+                  ? lockedTitle
                   : !hasState('Emergency Abort')
                     ? 'Config declares no Emergency Abort state'
-                    : undefined
+                    : 'Asks to confirm, then vents GN2 and aborts everything'
               }
             >
-              E-ABORT
+              E-Abort
             </button>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

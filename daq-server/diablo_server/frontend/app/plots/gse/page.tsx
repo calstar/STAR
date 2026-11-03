@@ -20,7 +20,6 @@ const TAB_CONFIG: Record<GSETab, {
   label: string;
   color: string;
   accentClass: string;
-  activeClass: string;
   entities: string[];
   entityLabels: string[];
   yLabel: string;
@@ -32,7 +31,6 @@ const TAB_CONFIG: Record<GSETab, {
     label: 'Pressurant Fill',
     color: '#16A085',
     accentClass: 'bg-teal-500',
-    activeClass: 'bg-teal-500 text-black',
     entities: ['PT_Cal.GSE_High', 'PT_Cal.GSE_Mid', 'PT_Cal.GN2_High'],
     entityLabels: ['GSE High (LOX Pressurant)', 'GSE Mid (HP Source)', 'GN2 High (Vehicle)'],
     yLabel: 'Pressure (PSI)',
@@ -49,7 +47,6 @@ const TAB_CONFIG: Record<GSETab, {
     label: 'Fuel Fill',
     color: '#F39C12',
     accentClass: 'bg-orange-500',
-    activeClass: 'bg-orange-500 text-black',
     entities: ['PT_Cal.GSE_Low'],
     entityLabels: ['GSE Low (Fuel Fill)'],
     yLabel: 'Pressure (PSI)',
@@ -65,7 +62,6 @@ const TAB_CONFIG: Record<GSETab, {
     label: 'LOX Fill',
     color: '#8E44AD',
     accentClass: 'bg-purple-500',
-    activeClass: 'bg-purple-500 text-black',
     entities: ['PT_Cal.GSE_High'],
     entityLabels: ['GSE High (LOX Pressurant)'],
     yLabel: 'Pressure (PSI)',
@@ -110,23 +106,21 @@ export default function GSEGraphsPage() {
   });
 
   return (
-    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
 
       {/* Header + tab row */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className={`w-1 h-5 rounded-full ${tab.accentClass}`} />
-          <h1 className="text-base font-bold tracking-wider" style={{ color: tab.color }}>GSE — {tab.label.toUpperCase()}</h1>
+          <div className={`h-2 w-2 flex-shrink-0 ${tab.accentClass}`} />
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">GSE — {tab.label.toUpperCase()}</h1>
         </div>
-        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
+        <div className="flex items-baseline gap-1">
           {(Object.keys(TAB_CONFIG) as GSETab[]).map((key) => (
             <button
               key={key}
               onClick={() => setActiveTab(key)}
-              className={`px-3 py-1.5 text-sm font-bold rounded-md transition-colors ${
-                activeTab === key
-                  ? TAB_CONFIG[key].activeClass
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${
+                activeTab === key ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2'
               }`}
             >
               {TAB_CONFIG[key].label}

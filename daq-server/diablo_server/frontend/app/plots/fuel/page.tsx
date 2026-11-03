@@ -34,13 +34,13 @@ export default function FuelGraphsPage() {
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
   return (
-    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
 
       {/* Header */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-1 h-5 bg-blue-500 rounded-full" />
-          <h1 className="text-base font-bold text-blue-400 tracking-wider">FUEL SYSTEM</h1>
+          <div className="h-2 w-2 flex-shrink-0 bg-blue-500" />
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">FUEL SYSTEM</h1>
         </div>
       </div>
 

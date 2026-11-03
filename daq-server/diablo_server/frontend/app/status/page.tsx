@@ -104,7 +104,7 @@ export default function StatusPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-4">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold text-text mb-1">System Status</h1>
+        <h1 className="mb-1 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">System Status</h1>
         <div className="text-lg font-mono">
           State: <span className="font-bold">{currentState != null ? stateNameUpper(currentState) ?? 'UNKNOWN' : '---'}</span>
         </div>

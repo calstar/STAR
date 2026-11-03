@@ -177,7 +177,7 @@ function FlashPageContent() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-8 md:p-10">
       <div className="max-w-2xl">
-        <h1 className="text-4xl font-bold text-text mb-2 tracking-tight">Ethernet OTA Flash</h1>
+        <h1 className="mb-2 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Ethernet OTA Flash</h1>
         <p className="text-lg text-text-muted mb-8">
           Flash firmware to ESP32-S3 boards over Ethernet (W5500). Build from DiabloAvionics projects or upload a .bin file.
         </p>
@@ -349,7 +349,7 @@ function FlashPageContent() {
             type="button"
             onClick={handleFlash}
             disabled={flashing || !canFlash || !ip.trim()}
-            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="ctl min-h-[48px] px-8 text-[13px]"
           >
             {buttonLabel}
           </button>

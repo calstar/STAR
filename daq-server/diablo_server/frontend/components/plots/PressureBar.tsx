@@ -105,96 +105,126 @@ export function pressureBarVisual(
   return { noData, sane, valuePct, nopPct, meopPct, displayHeight, barColor };
 }
 
+/** Width kept to the right of the capsule for the limit numbers [px] -- as in
+ *  feed-twin's copy: laid over a narrow capsule the number vanished into the
+ *  fill, so the capsule shares its column with a gutter and they live there. */
+const GUTTER = 30;
+
+/**
+ * The drawing is feed-twin's console capsule: an outlined tube in the app's
+ * monochrome, the limit rules across the tube with their numbers off its right
+ * edge, and the reading under it. Everything that decides what an operator sees
+ * -- the scale, the rule positions, the fill colour and the no-data hatch -- is
+ * pressureBarVisual's, unchanged. What the capsule adds is the edge and the
+ * readout turning amber past NOP and red past MEOP, whatever the trace colour.
+ */
 function PressureBar({
   label,
   value,
   nop = 500,
   meop = 700,
   color,
-  unit = 'PSI',
+  unit = 'psig',
   showLabels = true,
   compact = false,
 }: PressureBarProps) {
-  const { noData, sane, valuePct, nopPct, meopPct, displayHeight, barColor } =
+  const { noData, sane, nopPct, meopPct, displayHeight, barColor } =
     useMemo(() => pressureBarVisual(value, nop, meop, color), [value, nop, meop, color]);
 
+  const v = value as number;
+  const level = !sane ? 'none' : v > meop ? 'meop' : v > nop ? 'nop' : 'ok';
+  const edge = level === 'meop' ? '#ef4444' : level === 'nop' ? '#e5b53a' : 'var(--line-strong)';
+  const readout = noData
+    ? NO_DATA_COLOR
+    : level === 'meop' ? '#f87171' : level === 'nop' ? '#e5b53a' : 'var(--ink)';
+  const gutter = showLabels ? GUTTER : 0;
+
+  // A rule across the capsule, and its number just outside the capsule's right
+  // edge, centred on the rule.
+  const limit = (pct: number, lim: number, tone: string) => (
+    <div className="pointer-events-none absolute inset-x-0" style={{ bottom: `${pct.toFixed(2)}%` }}>
+      <div className="border-t border-dashed" style={{ borderColor: tone, opacity: 0.75 }} />
+      {showLabels && (
+        <span
+          className="absolute left-full -translate-y-1/2 whitespace-nowrap pl-1 font-mono leading-none tabular-nums"
+          style={{ color: tone, top: 0, fontSize: compact ? 'clamp(8px, 0.95vh, 11px)' : '11px' }}
+        >
+          {isFinite(lim) && Math.abs(lim) < 1e21 ? lim.toFixed(0) : lim}
+        </span>
+      )}
+    </div>
+  );
+
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
-      {/* Label — viewport-relative so it scales with screen */}
+    <div className="flex h-full min-h-0 w-full select-none flex-col overflow-visible">
+      {/* The tag and the reading centre on the capsule, not on the column. */}
       <div
-        className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'clamp(8px, 1.1vh, 22px)' } : { fontSize: 'clamp(12px, 1.8vh, 28px)' }}
+        className="flex-shrink-0 truncate text-center font-mono uppercase leading-none tracking-[0.08em] text-ink-2"
+        style={{
+          paddingRight: gutter,
+          paddingBottom: compact ? 'clamp(4px, 0.8vh, 12px)' : 12,
+          fontSize: compact ? 'clamp(9px, 1.1vh, 13px)' : 'clamp(12px, 1.5vh, 18px)',
+        }}
+        title={label}
       >
         {label}
       </div>
 
-      {/* Bar — takes all remaining space; min height as % of viewport */}
-      <div
-        className="relative w-full flex-1 rounded-xl border border-white/10 overflow-hidden min-h-0 bg-black/40 shadow-inner"
-        style={{ maxHeight: '100%', minHeight: compact ? '6vh' : undefined }}
-      >
-        {sane && !noData && (
-          <div
-            className="absolute bottom-0 w-full rounded-sm"
-            style={{
-              height: `${displayHeight}%`,
-              background: barColor,
-              boxShadow: `0 0 15px ${barColor}80`,
-              minHeight: value !== 0 ? '2px' : '0px',
-              transition: 'height 0.05s ease-out',
-              opacity: value !== 0 ? 0.8 : 0.3,
-            }}
-          />
-        )}
+      <div className="relative min-h-0 w-full flex-1">
+        <div className="absolute inset-y-0 left-0 flex justify-center" style={{ right: gutter }}>
+          <div className="relative h-full w-[72%] max-w-[52px]">
+            <div
+              className="absolute inset-0 overflow-hidden border"
+              style={{
+                borderRadius: 9,
+                borderColor: edge,
+                // A faint wash of the channel's colour, so an empty bar still
+                // says which trace it is.
+                background: !noData && color ? `${color}14` : 'transparent',
+              }}
+            >
+              {sane && !noData && (
+                <div
+                  className="absolute bottom-0 w-full"
+                  style={{
+                    height: `${displayHeight}%`,
+                    background: barColor,
+                    minHeight: value !== 0 ? '2px' : '0px',
+                    transition: 'height 0.05s ease-out',
+                    opacity: value !== 0 ? 0.85 : 0.3,
+                  }}
+                />
+              )}
 
-        {/* No data: hatch the whole track. An empty bar and a zero bar are the same
-            picture, so the absence of a reading has to be drawn, not implied. */}
-        {noData && (
-          <div
-            className="absolute inset-0 pointer-events-none"
-            style={{
-              background:
-                'repeating-linear-gradient(45deg, rgba(156,163,175,0.20) 0 6px, transparent 6px 12px)',
-            }}
-          />
-        )}
-
-        {/* MEOP threshold line with centered value label */}
-        <div
-          className="absolute w-full pointer-events-none flex flex-col items-center"
-          style={{ bottom: `${meopPct.toFixed(2)}%` }}
-        >
-          <span
-            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
-          >
-            {typeof meop === 'number' && isFinite(meop) && Math.abs(meop) < 1e21 ? meop.toFixed(0) : meop}
-          </span>
-          <div className="w-full border-t-2 border-dashed border-red-500/85" />
-        </div>
-
-        {/* NOP threshold line with centered value label */}
-        <div
-          className="absolute w-full pointer-events-none flex flex-col items-center"
-          style={{ bottom: `${nopPct.toFixed(2)}%` }}
-        >
-          <span
-            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
-          >
-            {typeof nop === 'number' && isFinite(nop) && Math.abs(nop) < 1e21 ? nop.toFixed(0) : nop}
-          </span>
-          <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
+              {/* No data: hatch the whole track. An empty bar and a zero bar are the same
+                  picture, so the absence of a reading has to be drawn, not implied. */}
+              {noData && (
+                <div
+                  className="pointer-events-none absolute inset-0"
+                  style={{
+                    background:
+                      'repeating-linear-gradient(45deg, rgba(163,163,163,0.20) 0 6px, transparent 6px 12px)',
+                  }}
+                />
+              )}
+            </div>
+            {limit(meopPct, meop, '#ef4444')}
+            {limit(nopPct, nop, '#e5b53a')}
+          </div>
         </div>
       </div>
 
-      <div className="flex-shrink-0 text-center leading-none mt-1">
-        <div
-          className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'clamp(10px, 1.3vh, 28px)' } : { color: barColor, fontSize: 'clamp(14px, 1.8vh, 28px)' }}
-        >
-          {value !== null ? fmtPressure(value) : '---'}
-        </div>
+      <div
+        className="flex-shrink-0 whitespace-nowrap text-center font-mono leading-none tabular-nums"
+        style={{
+          color: readout,
+          paddingRight: gutter,
+          paddingTop: compact ? 'clamp(4px, 0.8vh, 12px)' : 12,
+          fontSize: compact ? 'clamp(12px, 1.7vh, 22px)' : 'clamp(16px, 1.9vh, 28px)',
+        }}
+        title={unit}
+      >
+        {value !== null ? fmtPressure(value) : '---'}
       </div>
     </div>
   );
