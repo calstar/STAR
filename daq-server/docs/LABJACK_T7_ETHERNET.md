@@ -14,7 +14,7 @@ the pipeline yet.
 
 The datasheet pages on support.labjack.com (Ethernet, stream mode, low-level stream,
 data rates) still need reading by someone with normal web access, and so does the
-installer page for an aarch64 LJM build. Those pages are the open items listed at the end.
+LJM Linux installer page. Those pages are the open items listed at the end.
 
 ---
 
@@ -29,8 +29,8 @@ installer page for an aarch64 LJM build. Those pages are the open items listed a
    then we would have to parse the stream frames, apply calibration constants and
    handle auto-recovery ourselves.
 
-**Recommendation:** use LJM unless the Jetson/aarch64 build turns out to be
-unavailable. Every fact below is in LJM terms first.
+**Recommendation:** use LJM. The DAQ host is a regular Linux PC, which LJM supports.
+Every fact below is in LJM terms first.
 
 ## 2. Network facts
 
@@ -125,7 +125,7 @@ int LJM_WriteLibraryConfigS(const char *Parameter, double Value);
 | `LJM_STREAM_SCANS_RETURN` | `ALL` (1): eStreamRead blocks until ScansPerRead | `ALL_OR_NONE` (2) never blocks and returns `LJME_NO_SCANS_RETURNED` (1309) instead, which fits a poll loop |
 | `LJM_STREAM_RECEIVE_TIMEOUT_MODE` / `_MS` | calculated from scan rate | with a manual value we decide when a dead link is declared |
 | `LJM_STREAM_AIN_BINARY` | 0 = calibrated volts (float) | 1 = raw uncalibrated binary, which matches our raw→cal split but means applying LabJack cal constants ourselves. **Keep 0.** |
-| `LJM_STREAM_TCP_RECEIVE_BUFFER_SIZE` | OS default | raise it if the Jetson drops data under load |
+| `LJM_STREAM_TCP_RECEIVE_BUFFER_SIZE` | OS default | raise it if the DAQ host drops data under load |
 | `LJM_STREAM_THREADS_PRIORITY_MODE` | auto-elevated: collector thread SCHED_FIFO 90, callbacks SCHED_RR 50 | needs CAP_SYS_NICE / rtprio under systemd, otherwise only a debug log line |
 | `LJM_AUTO_RECONNECT_STICKY_CONNECTION` / `_SERIAL` | 1 / 1 | reconnect stays on Ethernet and on the same serial number |
 | `LJM_AUTO_RECONNECT_WAIT_MS` | 500 | |
@@ -235,7 +235,7 @@ LJM_eStreamStop(h); LJM_Close(h)
   (datasheet appendix A-1), plus typical command-response latency.
 - Connection limits per port and max packet sizes (marked [WEB?] above).
 - T7 shipping default for DHCP, and what it falls back to if no server answers.
-- Whether an **aarch64 (Jetson)** LJM installer is current and its exact name, plus
+- The current LJM Linux installer name and version, plus
   LJM's redistribution licence (whether `libLabJackM.so` can go in our deploy image).
 - Low-level port-702 frame layout (only needed if we skip LJM).
 - Whether any AIN_EF (thermocouple) result can be streamed.
