@@ -41,14 +41,17 @@ def _quote(v: str) -> str:
     return '"' + v.replace('"', '""') + '"' if any(ch in v for ch in '",\n') else v
 
 
-def history_csv(history: Mapping[str, Any], aliases: Mapping[str, str], state_now: str) -> str:
+def history_csv(
+    history: Mapping[str, Any], aliases: Mapping[str, str], state_now: str
+) -> str:
     """``history`` is the /history response (RunOut as a dict) at full rate."""
     channels = history.get("channels") or []
     events = history.get("events") or []
     at = 0
     state = "" if events else state_now
     header = ["t_s", "state"] + [
-        f"{aliases.get(c['id']) or c['tag']} [{shown_unit(c.get('unit'))}]" for c in channels
+        f"{aliases.get(c['id']) or c['tag']} [{shown_unit(c.get('unit'))}]"
+        for c in channels
     ]
     lines = [",".join(_quote(h) for h in header)]
     for i, t in enumerate(history.get("times_s") or []):

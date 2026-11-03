@@ -31,6 +31,7 @@ from typing import Any, AsyncIterator, Mapping, Sequence, cast
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
@@ -2867,16 +2868,18 @@ async def session_history(
 
 
 @app.get("/api/session/{session_id}/history.csv")
-async def session_history_csv(session_id: str, seconds: float = 3600.0):
+async def session_history_csv(
+    session_id: str, seconds: float = 3600.0
+) -> PlainTextResponse:
     """The trace at full rate as the Plots tab's CSV (backend/history_csv.py): t_s, state,
     then every channel by its stand name, pressures in psia. What the tab's button saves,
     written here so anyone can fetch it."""
-    from fastapi.responses import PlainTextResponse
-
     from backend.history_csv import history_csv
 
     session = _session(session_id)
-    full = (await session_history(session_id, seconds=seconds, max_points=0)).model_dump()
+    full = (
+        await session_history(session_id, seconds=seconds, max_points=0)
+    ).model_dump()
     aliases = session.hookup.names() if session.hookup is not None else {}
     # Math.round, as the browser named it: a half rounds up, not to even.
     name = f"feed-twin-{session_id}-{math.floor(session.t + 0.5)}s.csv"
