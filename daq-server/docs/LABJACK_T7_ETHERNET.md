@@ -1,7 +1,7 @@
 # LabJack T7 over Ethernet — reference for the DAQ integration
 
-Status: research notes for the `daq-labjack-t7` branch. Nothing here is wired into
-the pipeline yet.
+Status: `t7_bridge` (section 7) streams T7 inputs into Elodin; it has not yet run against
+a real T7. Sections 1-6 are the device reference it was built from.
 
 ## Where these facts come from
 
@@ -215,24 +215,87 @@ loop: LJM_eStreamRead(h, aData, &devBacklog, &ljmBacklog)
 LJM_eStreamStop(h); LJM_Close(h)
 ```
 
-## 7. How this maps onto daq-server (from reading the code, Nov 2026)
+## 7. What is built: `t7_bridge`
 
-- **No data-source abstraction exists.** `daq_bridge_main.cpp` is a single UDP
-  `SensorFramePipeline` that infers the board from the source IP, and board kinds are a
-  closed enum (`ActiveBoardKind`, `lib/include/config/LoadActiveBoards.hpp`).
-- **Elodin tables** are `[type_hi, (slot-1)*0x20 + ch]` (raw) / `+0x10` (calibrated),
-  holding the 21-byte `RawPTMessage` with a `u32 raw_adc_counts`. T7 data arrives
-  as float volts, so it needs either fixed-point scaling into u32 or a new message/vtable.
-- **Calibration** (`services/calibration/calibration_main.cpp`) filters on `type_hi`
-  0x20–0x24/0x30, so a new T7 `type_hi` has to be added there.
-- **Suggested shape:** a separate `t7_bridge` executable (the bridge is single-threaded
-  and polls UDP every 500 µs). It runs the LJM stream thread, reuses `ElodinClient`,
-  `BoardClockSync` and the table-id scheme, and is configured from a
-  `[boards.<name>] type = "T7"` entry plus a channel table. Build it behind a CMake
-  `option(WITH_LABJACK_LJM ...)` with `find_library(LabJackM)`, so CI and dev boxes
-  without LJM still build. Use `LJM_DEMO_MODE` for tests.
-- **Actuation (later):** `ActuatorCommander` only sends UDP today. For T7 DIO it
-  would need a transport seam, plus the T7 watchdog as the fail-safe.
+**Inputs only.** The only things written to a T7 are the stream setup registers in
+`fsw::t7::plan_stream()`: `STREAM_TRIGGER_INDEX`, `STREAM_CLOCK_SOURCE`,
+`STREAM_RESOLUTION_INDEX`, `STREAM_SETTLING_US`, and per channel `AIN#_RANGE`,
+`AIN#_NEGATIVE_CH`, `AIN#_EF_INDEX = 0`. No DIO, FIO/EIO/CIO/MIO or DAC is ever written, and
+`test_t7` checks that. Nothing is sent to the ESP32 boards or the sequencer.
+
+| Piece | Where |
+|---|---|
+| Config parse + validation | `lib/include/config/T7Config.hpp`, `lib/src/config/T7Config.cpp` → `Config::t7_boards`, `Config::t7_errors` |
+| Stream logic (device seam, setup plan, block decode, timestamps, `FakeT7Device`) | `lib/include/t7/T7Stream.hpp`, `lib/src/t7/T7Stream.cpp` |
+| LJM device | `services/t7_bridge/LjmT7Device.{hpp,cpp}` (built only when LJM is found) |
+| Executable | `services/t7_bridge/t7_bridge_main.cpp` → `build/bin/t7_bridge` |
+| Elodin tables | `DatabaseConfig::register_t7_tables`, message `T7RawMessage` |
+| Tests | `lib/test/test_t7.cpp` (ctest `t7`), `backend/src/__tests__/board-channels.test.ts` |
+
+### Config
+A T7 is a `[boards.<name>]` with `type = "T7"`, plus one `[[boards.<name>.channels]]` per
+input. The default profile has `boards.labjack_1` at `192.168.2.81`, disabled, with placeholder
+channels.
+
+| Board key | Default | |
+|---|---|---|
+| `ip`, `board_id`, `mac`, `enabled` | — | same meaning as for the ESP32 boards; `mac` drives the DHCP reservation |
+| `serial` | 0 (no check) | when set, t7_bridge refuses a T7 whose serial differs |
+| `scan_rate_hz` | 100 | scans/s; each channel is sampled once per scan |
+| `resolution_index` | 0 | `STREAM_RESOLUTION_INDEX`, 0-8 |
+| `settling_us` | 0 (auto) | `STREAM_SETTLING_US` |
+| `scans_per_read` | rate/20 | scans per `LJM_eStreamRead` (a 50 ms block) |
+
+| Channel key | Default | |
+|---|---|---|
+| `ain` | required | 0-13, as printed on the T7 |
+| `kind` | required | `PT` \| `TC` \| `LC` \| `VOLTAGE` |
+| `role` | "" | operator name, metadata only |
+| `range` | 10 (TC: 0.1) | ±V: 10, 1, 0.1, 0.01. The 0.01 V range clips a type K above ~245 °C |
+| `differential` | false | AIN(n) − AIN(n+1); n must be even, and n+1 is then taken |
+| `tc_type` | — | required for `TC`: B E J K N R S T |
+
+Any mistake (a duplicate or paired AIN, a range the T7 lacks, a TC with no type, two T7s on
+one Elodin slot, ...) makes t7_bridge exit 2 and list every problem. Every other service
+skips type `"T7"`.
+
+### Elodin
+Table `{0x26, (slot-1)*0x20 + ain}`, entity `T7<slot>.AIN<ain>` (board 81 → slot 1, so AIN3 is
+`T71.AIN3` at `{0x26, 0x03}`). Fields: `timestamp_ns`, `channel_id` (the AIN), `volts` (f32),
+`sample_ts_ms` (ms since stream start), `status` (0).
+
+**Timestamps.** The T7 scans on its own crystal, so scan *k* is at *k*/rate after the start.
+That device time goes through the same `BoardClockSync` as the ESP32 boards (keyed by the
+board section, `[time_sync]` applies). The newest scan of each block is anchored that way,
+the rest are spaced back from it at the exact period, and nothing is stamped after it arrived.
+
+**Lost data.** Scans lost to stream auto-recovery (`-9999`) are counted and logged and **not
+published**, so a gap in the plot is a real gap.
+
+### Running it
+```bash
+build/bin/t7_bridge                       # every enabled T7 in config/config.toml
+build/bin/t7_bridge --board boards.labjack_1
+build/bin/t7_bridge --fake                # stand-in T7s, no hardware or LJM needed
+```
+Exit codes: 0 = no enabled T7, 2 = config problems, 3 = built without LJM and no `--fake`.
+On a lost link or stream error it retries with backoff (1 s up to 10 s). If Elodin is down it
+keeps streaming, so the T7 buffer never backs up, and retries the connection every 2 s.
+
+**LJM is needed on the DAQ host.** CMake looks for `LabJackM.h` and `libLabJackM`. Without them
+t7_bridge still builds (and CI's ctest runs `test_t7`), but it only runs with `--fake`. Install
+LJM from LabJack's Linux installer, then re-run cmake: it prints
+`t7_bridge: LabJack LJM found`.
+
+### Not done yet
+- **GUI.** The backend does not decode table type `0x26` yet, so T7 data is in Elodin and not
+  on the dashboards.
+- **Calibration.** Volts are published raw. A PT needs its volts→psi, and a TC its
+  cold-junction compensation plus the type-K curve. Put them in the calibration service as a
+  `+0x10` calibrated table.
+- **Deployment.** There is no systemd unit or tmux pane for t7_bridge yet.
+- **Hardware.** The LJM path (`LjmT7Device`) compiles against LabJack's real `LabJackM.h`
+  but has not run against a T7.
 
 ## Still to verify (needs support.labjack.com / labjack.com, blocked here)
 

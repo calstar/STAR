@@ -105,6 +105,15 @@ public:
     static bool register_self_test_tables(ElodinClient& client,
                                           const std::vector<uint8_t>& board_ids);
 
+    /**
+     * @brief Register one LabJack T7's analog-input VTables (published by t7_bridge).
+     *
+     * Table id {0x26, (slot-1)*0x20 + ain}; entity T7<slot>.AIN<ain>; fields timestamp_ns,
+     * channel_id, volts (f32), sample_ts_ms, status — the T7RawMessage layout.
+     */
+    static bool register_t7_tables(ElodinClient& client, uint8_t slot,
+                                   const std::vector<uint8_t>& ains);
+
     /** @brief Register sequencer/controller and ACT_CMD tables */
     static bool register_non_sensor_tables(ElodinClient& client,
                                            const std::vector<BoardChannels>& act_boards = {});
