@@ -116,15 +116,15 @@ export default function ChamberGraphsPage() {
     const lcColors = lcData.map((d) => getEntityColor(d.entity));
 
     return (
-        <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+        <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
 
             <div className="flex items-center flex-shrink-0 justify-between">
                 <div className="flex items-center">
-                    <div className="w-1 h-5 bg-orange-500 rounded-full mr-3" />
-                    <h1 className="text-base font-bold text-orange-400 tracking-wider">CHAMBER SYSTEM</h1>
+                    <div className="h-2 w-2 flex-shrink-0 bg-orange-500 mr-3" />
+                    <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">CHAMBER SYSTEM</h1>
                 </div>
-                <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
-                    <div className="px-4 py-1.5 text-sm font-bold rounded-md bg-gray-800 text-gray-300">
+                <div className="flex items-baseline gap-1">
+                    <div className="border-b px-3 pb-1.5 font-mono text-[13px] transition-colors border-ink text-ink">
                         Unified View
                     </div>
                 </div>

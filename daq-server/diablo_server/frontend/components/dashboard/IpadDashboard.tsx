@@ -8,6 +8,7 @@ import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useActuatorsFromConfig, usePressureSensors } from '@/lib/dashboard-hooks';
 import { isFireState } from '@/lib/states';
+import WindowPicker from '@/components/ui/WindowPicker';
 
 // Time window options for history plotting
 const TIME_WINDOWS = [
@@ -29,31 +30,13 @@ export default function IpadDashboard() {
     return (
         <main className="min-h-full w-full bg-background text-text flex flex-col overflow-y-auto">
             {/* ── Main content: Stacked scrollable view for iPad ──────────────────────── */}
-            <div className="flex flex-col gap-4 p-4">
+            <div className="flex flex-col px-6">
 
                 {/* ── Pressure graphs ────────────────────────────────────────────── */}
-                <div className="bg-card rounded-xl border border-gray-800 p-4 h-[400px] flex flex-col flex-shrink-0">
+                <section className="flex h-[400px] flex-shrink-0 flex-col border-b border-line py-5">
                     <div className="flex items-center justify-between mb-3 flex-shrink-0">
-                        <h2 className="text-base font-bold tracking-widest text-text-muted uppercase">Pressure History</h2>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-text-muted font-medium">Window:</span>
-                            {TIME_WINDOWS.map((w) => (
-                                <button
-                                    key={w.label}
-                                    onClick={() => {
-                                        const newWindow = w.seconds;
-                                        setTimeWindow(newWindow);
-                                        console.log(`[IpadDashboard] Time window changed to ${newWindow}s`);
-                                    }}
-                                    className={`px-2 py-0.5 text-xs font-semibold rounded transition-all ${timeWindow === w.seconds
-                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
-                                        }`}
-                                >
-                                    {w.label}
-                                </button>
-                            ))}
-                        </div>
+                        <h2 className="caps">Pressure History</h2>
+                        <WindowPicker windows={TIME_WINDOWS} value={timeWindow} onChange={setTimeWindow} />
                     </div>
                     <div className="flex-1 min-h-0">
                         <TimeSeriesPlot
@@ -66,41 +49,36 @@ export default function IpadDashboard() {
                             windowSeconds={timeWindow}
                         />
                     </div>
-                </div>
+                </section>
 
                 {/* ── Actuators: 4x4 grid, dynamically sized to fit allotment ─────── */}
-                <div className="bg-card rounded-xl border border-gray-800 p-2 flex flex-col min-h-0 flex-1 max-h-[38vh]">
-                    <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase mb-1 leading-none flex-shrink-0">
-                        Actuator Controls
-                    </h2>
-                    <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
+                <section className="flex max-h-[38vh] min-h-[220px] flex-1 flex-col border-b border-line py-5">
+                    <h2 className="caps mb-3 flex-shrink-0">Actuators</h2>
+                    <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-2 overflow-hidden">
                         {Array.from({ length: 16 }, (_, i) => {
                             const a = actuatorsFromConfig[i];
-                            if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded-md border border-gray-800/50" />;
+                            if (!a) return <div key={`empty-${i}`} className="min-h-0 border border-line/60" />;
                             return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />;
                         })}
                     </div>
-                </div>
+                </section>
 
                 {/* ── State machine diagram ──────────────────────────────────────── */}
-                <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 flex flex-col items-center justify-center min-h-[400px]">
-                    <h2 className="text-base font-bold tracking-widest text-text-muted uppercase mb-4 leading-none w-full text-left">
-                        State Machine
-                    </h2>
-                    <div className="w-full max-w-4xl">
+                <section className="flex min-h-[400px] flex-shrink-0 flex-col py-5">
+                    <div className="w-full">
                         <StateMachineDiagram />
                     </div>
-                </div>
+                </section>
 
             </div>
 
             {/* ── Bottom Section: Controller Status (when in FIRE state) ─────── */}
             {isFire && (
-                <div className="flex-shrink-0 border-t border-gray-800 p-3 bg-card mt-auto sticky bottom-0 z-10 w-full shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
+                <div className="sticky bottom-0 z-10 mt-auto w-full flex-shrink-0 border-t border-line bg-black px-6 py-3">
                     <div className="flex items-center gap-6">
                         <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                            <span className="text-xs font-bold tracking-wider text-text-muted uppercase">Controller Active (FIRE)</span>
+                            <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                            <span className="caps text-[11px] text-red-400">Controller active · Fire</span>
                         </div>
                         <ControllerStatusDisplay />
                     </div>
@@ -126,19 +104,19 @@ function ControllerStatusDisplay() {
     return (
         <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
-                <span className="text-xs text-text-muted">Fuel:</span>
-                <span className="text-sm font-mono font-bold text-blue-400">{fuelDuty !== null ? `${fuelDuty.toFixed(1)}%` : '--'}</span>
-                <span className={`text-xs px-2 py-0.5 rounded ${fuelOn === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : fuelOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
-                    'bg-gray-900/50 text-gray-500 border border-gray-800'
+                <span className="caps text-[11px]">Fuel</span>
+                <span className="font-mono text-sm font-bold text-fuel">{fuelDuty !== null ? `${fuelDuty.toFixed(1)}%` : '--'}</span>
+                <span className={`border px-2 py-0.5 font-mono text-[11px] tracking-[0.12em] ${fuelOn === null ? 'border-line text-ink-4' : fuelOn ? 'border-green-500 text-green-400' :
+                    'border-line-strong text-ink-3'
                     }`}>
                     {fuelOn === null ? '--' : fuelOn ? 'ON' : 'OFF'}
                 </span>
             </div>
             <div className="flex items-center gap-3">
-                <span className="text-xs text-text-muted">Ox:</span>
+                <span className="caps text-[11px]">Ox</span>
                 <span className="text-sm font-mono font-bold text-red-400">{oxDuty !== null ? `${oxDuty.toFixed(1)}%` : '--'}</span>
-                <span className={`text-xs px-2 py-0.5 rounded ${oxOn === null ? 'bg-gray-900/50 text-gray-600 border border-gray-800 italic' : oxOn ? 'bg-green-900/50 text-green-400 border border-green-800' :
-                    'bg-gray-900/50 text-gray-500 border border-gray-800'
+                <span className={`border px-2 py-0.5 font-mono text-[11px] tracking-[0.12em] ${oxOn === null ? 'border-line text-ink-4' : oxOn ? 'border-green-500 text-green-400' :
+                    'border-line-strong text-ink-3'
                     }`}>
                     {oxOn === null ? '--' : oxOn ? 'ON' : 'OFF'}
                 </span>

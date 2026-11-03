@@ -42,7 +42,7 @@ export default function EnvironmentalPage() {
 
   return (
     <main className="flex-1 overflow-auto bg-background p-6 text-text md:p-10">
-      <h1 className="mb-2 text-3xl font-bold">Environmental</h1>
+      <h1 className="mb-2 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Environmental</h1>
       <p className="mb-6 text-text-muted">BME280 readings from the last 60 seconds. Pressure is absolute.</p>
       {environmentalBoards.length === 0 && (
         <p className="rounded-lg border border-gray-700 bg-card p-6">

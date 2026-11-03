@@ -68,8 +68,8 @@ export default function EncodersPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-1 h-5 bg-violet-500 rounded-full" />
-          <h1 className="text-base font-bold text-violet-400 tracking-wider">ENCODERS</h1>
+          <div className="h-2 w-2 flex-shrink-0 bg-violet-500" />
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">ENCODERS</h1>
         </div>
       </div>
 
@@ -93,16 +93,16 @@ export default function EncodersPage() {
         )}
 
         {/* Time window selector */}
-        <div className="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1">
-          <span className="text-xs text-gray-500 mr-1">Window:</span>
+        <div className="flex items-center border border-line-strong">
+          <span className="caps px-2 text-[10px]">Window</span>
           {TIME_WINDOWS.map((w) => (
             <button
               key={w.label}
               onClick={() => setWindowSeconds(w.seconds)}
-              className={`rounded px-2 py-1 text-xs font-bold transition-colors ${
+              className={`px-2 py-1 font-mono text-[11px] tabular-nums transition-colors ${
                 windowSeconds === w.seconds
-                  ? 'bg-violet-600 text-white'
-                  : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                  ? 'bg-ink text-black'
+                  : 'text-ink-3 hover:text-ink'
               }`}
             >
               {w.label}
@@ -111,12 +111,12 @@ export default function EncodersPage() {
         </div>
 
         {/* Play / Pause / Reset zoom */}
-        <div className="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1">
+        <div className="flex items-center border border-line-strong">
           <button
             type="button"
             onClick={() => setIsPaused(false)}
-            className={`rounded px-3 py-1 text-xs font-bold uppercase tracking-wider transition-colors ${
-              !isPaused ? 'bg-violet-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+            className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
+              !isPaused ? 'bg-ink text-black' : 'text-ink-3 hover:text-ink'
             }`}
             title="Resume live updates"
           >
@@ -125,8 +125,8 @@ export default function EncodersPage() {
           <button
             type="button"
             onClick={() => setIsPaused(true)}
-            className={`rounded px-3 py-1 text-xs font-bold uppercase tracking-wider transition-colors ${
-              isPaused ? 'bg-amber-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+            className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
+              isPaused ? 'bg-ink text-black' : 'text-ink-3 hover:text-ink'
             }`}
             title="Pause to zoom"
           >
@@ -136,7 +136,7 @@ export default function EncodersPage() {
             <button
               type="button"
               onClick={() => plotRef.current?.resetZoom()}
-              className="rounded px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
+              className="px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors text-ink-3 hover:text-ink"
               title="Reset zoom to full range"
             >
               Reset zoom
