@@ -60,6 +60,12 @@ model User {
 // the token is stored; the plaintext is shown once at creation. `prefix` is the
 // first few characters so a user can tell their tokens apart in Settings. A
 // revoked token keeps its row (revokedAt set) so the list shows what happened.
+//
+// `scopes` says which MCP servers the token opens: "starproject" (this app's
+// /api/mcp) and "design" (the design-tools MCP on the apps box, which checks
+// tokens through /api/mcp/verify). Chosen at mint time and never widened; a
+// token minted before scopes existed is "starproject" only, as it always was.
+// The valid values are TOKEN_SCOPES in src/lib/apiTokens.ts.
 model ApiToken {
   id         String    @id @default(cuid())
   userId     String
@@ -67,6 +73,7 @@ model ApiToken {
   name       String
   tokenHash  String    @unique
   prefix     String
+  scopes     String[]  @default(["starproject"])
   createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
   revokedAt  DateTime?

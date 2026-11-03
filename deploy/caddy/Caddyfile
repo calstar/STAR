@@ -190,6 +190,23 @@
 	reverse_proxy daq-viewer:8420
 }
 
+# ── Design-tools MCP server ─────────────────────────────────────────────────
+# For agents, not browsers: an MCP client has no STAR cookie, so this host skips
+# the cookie gate and the server authenticates every /mcp request itself with a
+# STARProject bearer token ("Design tools" scope), checked with STARProject on
+# EC2. /files/* are signed, short-lived download links -- the link is the
+# credential, so an agent's sandbox can curl it. X-Auth-* are stripped so a token
+# is the only identity this host can carry; check_gate_order.py lists it in
+# PUBLIC_HOSTS. Long exports run as jobs inside the server, so no request here
+# outlives Cloudflare's ~100 s origin timeout. See design-mcp/README.md.
+{$SCHEME:https}://mcp.{$BASE_DOMAIN:starberkeley.org} {
+	route {
+		request_header -X-Auth-Email
+		request_header -X-Auth-User
+		reverse_proxy design-mcp:8010
+	}
+}
+
 # STARProject (the team task tracker) moved to the EC2 box — see
 # deploy/ec2/Caddyfile and deploy/ec2/docker-compose.yml. It is served at
 # project.starberkeley.org from there, not this apps machine.

@@ -1,0 +1,9 @@
+# design-mcp runtime. Pinned: mcp 2.x moved its server API once already
+# (FastMCP -> MCPServer); bump deliberately and rerun the tests.
+mcp==2.3.0
+httpx==0.28.1
+uvicorn==0.54.0
+starlette==1.10.0
+matplotlib==3.11.2
+numpy==2.5.4
+pyarrow==26.0.0

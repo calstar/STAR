@@ -429,6 +429,40 @@ services:
       # Writable parquet export cache (immutable past runs -> never invalidated).
       - daq_viewer_cache:/cache
 
+  # ── Design-tools MCP server (mcp.starberkeley.org) ───────────────────────
+  # Lets an agent read every app above as the person whose token it holds:
+  # designs, exports, runs, plots. Tokens are STARProject's ("Design tools"
+  # ticked); this server checks each one with STARProject on EC2 and holds none.
+  # It calls the apps on this network with X-Auth-Email set from the token --
+  # safe only because no app publishes a port (Caddy is the one way in, and it
+  # strips client-sent X-Auth-*). See design-mcp/README.md.
+  design-mcp:
+    image: ghcr.io/calstar/star-design-mcp:${STAR_IMAGE_TAG:-latest}
+    build:
+      context: ./design-mcp
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g   # == mem_limit -> no swap; OOM this container alone
+    environment:
+      DESIGN_MCP_PUBLIC_URL: ${DESIGN_MCP_PUBLIC_URL:-https://mcp.starberkeley.org}
+      DESIGN_MCP_VERIFY_URL: ${DESIGN_MCP_VERIFY_URL:-https://project.starberkeley.org/api/mcp/verify}
+      # Must equal DESIGN_MCP_VERIFY_SECRET on EC2. Unset: the server refuses to start.
+      DESIGN_MCP_VERIFY_SECRET: ${DESIGN_MCP_VERIFY_SECRET:-}
+      # Signs download links. Unset: the server refuses to start.
+      DESIGN_MCP_FILE_KEY: ${DESIGN_MCP_FILE_KEY:-}
+      DESIGN_MCP_CACHE_DIR: /cache
+      DESIGN_MCP_CACHE_MAX_BYTES: ${DESIGN_MCP_CACHE_MAX_BYTES:-5000000000}
+      ENGINE_DESIGN_URL: http://engine-design-api:8000
+      PID_DESIGNER_URL: http://pid-designer-api:8001
+      OPENROCKET_URL: http://star-openrocket-api:8002
+      FEED_TWIN_URL: http://feed-twin-api:8003
+      DAQ_VIEWER_URL: http://daq-viewer:8420
+    volumes:
+      # Exports, tables and download blobs. A pure cache with a size cap: safe
+      # to wipe, the next call rebuilds what it needs.
+      - design_mcp_cache:/cache
+
   # ── DAQ Server ───────────────────────────────────────────────────────────
   # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
   # the test-stand hardware, so they run natively under systemd -- see
@@ -452,6 +486,8 @@ volumes:
   # Parquet export cache for the DAQ Run Viewer. Immutable past runs, so this is
   # a pure cache -- safe to wipe; it just re-exports on next view.
   daq_viewer_cache:
+  # design-mcp's file cache (exports, tables, download blobs). Safe to wipe.
+  design_mcp_cache:
   # Per-user data (engine-design + star-openrocket + pid-designer): named
   # configs, recovery unit prefs, and P&ID working copies. One shared volume,
   # which is what makes cross-user "browse + copy" and sharing a directory walk
