@@ -1,0 +1,693 @@
+{
+  "calibration_adc_norm_min": {},
+  "calibration_adc_norm_scale": {},
+  "calibration_poly_coeffs": {},
+  "calibration_polynomials": {},
+  "cubic_state": {
+    "2101": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 1,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Fuel Upstream",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504797
+    },
+    "2102": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 2,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 2,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "GSE Low",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504802
+    },
+    "2103": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 3,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 3,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Fuel Downstream",
+      "status": "PENDING",
+      "updatedAt": 1790457954.180979
+    },
+    "2104": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 4,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 4,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Chamber Mid PT 1",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504808
+    },
+    "2105": {
+      "active_model": "robust",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 5,
+      "degree": 0,
+      "fitCurve": [
+        {
+          "adc": 1463500000.0,
+          "psi": 50.95674446115324
+        },
+        {
+          "adc": 1463500000.025,
+          "psi": 50.959968186424454
+        },
+        {
+          "adc": 1463500000.05,
+          "psi": 50.96318864692198
+        },
+        {
+          "adc": 1463500000.075,
+          "psi": 50.96640584590938
+        },
+        {
+          "adc": 1463500000.1,
+          "psi": 50.969619786646966
+        },
+        {
+          "adc": 1463500000.125,
+          "psi": 50.97283047239178
+        },
+        {
+          "adc": 1463500000.15,
+          "psi": 50.976037906397615
+        },
+        {
+          "adc": 1463500000.175,
+          "psi": 50.97924209191502
+        },
+        {
+          "adc": 1463500000.2,
+          "psi": 50.98244303219128
+        },
+        {
+          "adc": 1463500000.225,
+          "psi": 50.98564073047044
+        },
+        {
+          "adc": 1463500000.25,
+          "psi": 50.98883518999331
+        },
+        {
+          "adc": 1463500000.275,
+          "psi": 50.99202641399744
+        },
+        {
+          "adc": 1463500000.3,
+          "psi": 50.99521440571717
+        },
+        {
+          "adc": 1463500000.325,
+          "psi": 50.9983991683836
+        },
+        {
+          "adc": 1463500000.35,
+          "psi": 51.00158070522458
+        },
+        {
+          "adc": 1463500000.375,
+          "psi": 51.004759019464764
+        },
+        {
+          "adc": 1463500000.4,
+          "psi": 51.00793411432556
+        },
+        {
+          "adc": 1463500000.425,
+          "psi": 51.01110599302516
+        },
+        {
+          "adc": 1463500000.45,
+          "psi": 51.01427465877856
+        },
+        {
+          "adc": 1463500000.475,
+          "psi": 51.01744011479752
+        },
+        {
+          "adc": 1463500000.5,
+          "psi": 51.02060239845571
+        },
+        {
+          "adc": 1463500000.525,
+          "psi": 51.02376144462824
+        },
+        {
+          "adc": 1463500000.55,
+          "psi": 51.02691729068239
+        },
+        {
+          "adc": 1463500000.575,
+          "psi": 51.0300699398171
+        },
+        {
+          "adc": 1463500000.6,
+          "psi": 51.03321939522811
+        },
+        {
+          "adc": 1463500000.625,
+          "psi": 51.03636566010798
+        },
+        {
+          "adc": 1463500000.65,
+          "psi": 51.039508737646074
+        },
+        {
+          "adc": 1463500000.675,
+          "psi": 51.04264863102856
+        },
+        {
+          "adc": 1463500000.7,
+          "psi": 51.04578534343844
+        },
+        {
+          "adc": 1463500000.725,
+          "psi": 51.04891887805551
+        },
+        {
+          "adc": 1463500000.75,
+          "psi": 51.05204923805641
+        },
+        {
+          "adc": 1463500000.775,
+          "psi": 51.0551764266146
+        },
+        {
+          "adc": 1463500000.8,
+          "psi": 51.058300446900354
+        },
+        {
+          "adc": 1463500000.825,
+          "psi": 51.06142130208079
+        },
+        {
+          "adc": 1463500000.85,
+          "psi": 51.06453899531986
+        },
+        {
+          "adc": 1463500000.875,
+          "psi": 51.06765352977835
+        },
+        {
+          "adc": 1463500000.9,
+          "psi": 51.07076490861389
+        },
+        {
+          "adc": 1463500000.925,
+          "psi": 51.07387313498095
+        },
+        {
+          "adc": 1463500000.95,
+          "psi": 51.076978212030845
+        },
+        {
+          "adc": 1463500000.975,
+          "psi": 51.08008014291176
+        },
+        {
+          "adc": 1463500001.0,
+          "psi": 51.0831789307687
+        }
+      ],
+      "last_error": "",
+      "logicalCh": 5,
+      "numPoints": 20,
+      "points": [
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.253073
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.259213
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.373393
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.378638
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.494717
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.501157
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.615741
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.622199
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.736032
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.742379
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.856755
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.863284
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.977202
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457944.983414
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.10099
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.107228
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.219391
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.225658
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.340328
+        },
+        {
+          "adc": 1463500000.0,
+          "psi": 50.0,
+          "t": 1790457945.346553
+        }
+      ],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Ox Upstream",
+      "status": "OK",
+      "updatedAt": 1790457945.346553
+    },
+    "2106": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 6,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 6,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "GN2 Regulated",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504813
+    },
+    "2107": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 7,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 7,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Ox Downstream",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504816
+    },
+    "2108": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 8,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 8,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Chamber Mid PT 2",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504819
+    },
+    "2109": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 9,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 9,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Chamber Throat PT 1",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504822
+    },
+    "2110": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 10,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 10,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Chamber Throat PT 2",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504825
+    },
+    "2201": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 11,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "GSE High",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504828
+    },
+    "2202": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 2,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 12,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "Excitation V",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504831
+    },
+    "2203": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 3,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 13,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "GSE Mid",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504834
+    },
+    "2204": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 4,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 14,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "GN2 High",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504836
+    },
+    "4201": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 42,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 11,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "",
+      "status": "PENDING",
+      "updatedAt": 0.0
+    },
+    "4202": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 42,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 2,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 12,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "",
+      "status": "PENDING",
+      "updatedAt": 1790457958.388213
+    },
+    "4206": {
+      "active_model": "physics",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 42,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 6,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 16,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "",
+      "status": "PENDING",
+      "updatedAt": 0.0
+    },
+    "6001": {
+      "active_model": "cubic",
+      "adcNormMin": 0.0,
+      "adcNormScale": 1.0,
+      "boardId": 60,
+      "coeffs": {
+        "A": 0.0,
+        "B": 0.0,
+        "C": 0.0,
+        "D": 0.0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": "",
+      "logicalCh": 91,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0.0,
+      "role": "",
+      "status": "PENDING",
+      "updatedAt": 1790457843.504839
+    }
+  },
+  "framework": "cubic",
+  "generated_unix": 1790457962.996442,
+  "sensor_type": "PT",
+  "unit": "PSI"
+}

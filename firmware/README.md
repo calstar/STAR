@@ -1,5 +1,7 @@
 # Firmware
 
+The STM32 flight-computer scaffold lives in `Core/` on the flight-computer branch. Its portable self-test interface and host tests are documented in [`Core/README.md`](Core/README.md). The ESP32 build instructions below do not build or validate that target.
+
 ESP32 firmware for every avionics board in the Diablo rocket — the code that
 reads the sensors, talks to the ground DAQ server over Ethernet, and runs the
 on-board abort logic during a hotfire. This directory is a subtree of
