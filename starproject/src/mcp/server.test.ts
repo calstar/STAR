@@ -58,6 +58,14 @@ const ADMIN_ONLY = [
   "save_outreach_template",
   "delete_outreach_template",
   "set_outreach_perk_status",
+  "get_finance_overview",
+  "create_finance_account",
+  "update_finance_account",
+  "delete_finance_account",
+  "create_planned_income",
+  "update_planned_income",
+  "set_income_received",
+  "delete_planned_income",
 ];
 
 const DESTRUCTIVE = [
@@ -75,6 +83,9 @@ const DESTRUCTIVE = [
   "delete_outreach_campaign",
   "delete_outreach_list",
   "delete_outreach_template",
+  "delete_finance_account",
+  "delete_planned_income",
+  "delete_budget_line",
 ];
 
 type Listed = Awaited<ReturnType<Client["listTools"]>>["tools"];
@@ -133,6 +144,27 @@ describe("MCP server registry", () => {
       .filter((n) => /outreach|sponsor/.test(n));
     expect(outreach.length).toBeGreaterThanOrEqual(30);
     for (const n of outreach) expect(ADMIN_ONLY, n).toContain(n);
+  });
+
+  it("covers the Finance tab and subteam budgets", () => {
+    const names = tools.map((t) => t.name);
+    for (const n of [
+      "get_finance_overview",
+      "create_finance_account",
+      "update_finance_account",
+      "delete_finance_account",
+      "create_planned_income",
+      "update_planned_income",
+      "set_income_received",
+      "delete_planned_income",
+      "get_subteam_budget",
+      "create_budget_line",
+      "update_budget_line",
+      "delete_budget_line",
+      "tag_reimbursement",
+    ]) {
+      expect(names, n).toContain(n);
+    }
   });
 
   it("never lets a token mint another token", () => {

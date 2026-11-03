@@ -228,6 +228,9 @@ defineTool(server, "archive_task", {
 who is not a PVP (`src/lib/pvp.ts`), admins included, before they run
 (`guardedDefine` in `src/mcp/tools/_shared.ts`). The web pages are unchanged. The
 "admins only" notes below still apply on top.
+The Finance tab's tools (`get_finance_overview`, accounts, planned income) are
+admins only, as the tab is; the budget-line tools are open to every member, as
+Subteams → Budget is.
 
 | Tool | Does | Notes |
 |---|---|---|
@@ -322,7 +325,16 @@ who is not a PVP (`src/lib/pvp.ts`), admins included, before they run
 | `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`) | admins only; write |
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
-
+| `tag_reimbursement` | Set the project and subteam a reimbursement counts under in the Finance tab's spending breakdown (left out stays, null clears) | write; admins or its filer |
+| `get_finance_overview` | The Finance tab for a school year: CalLink SUMMARY and other accounts, hand-kept accounts, spending (paid/pending by month, subteam, project), planned income, every subteam's budget; cents | admins only; read |
+| `create_finance_account` / `update_finance_account` | Add an account CalLink doesn't report (balance in dollars, may be negative); change one (left out stays; a CalLink account takes only its note) | admins only; write |
+| `delete_finance_account` | Remove a hand-kept account; CalLink's can't be | admins only; destructive |
+| `create_planned_income` / `update_planned_income` | Add expected income to a school year (source, dollars, optional `expectedOn`, `received`); change one (left out stays) | admins only; write |
+| `set_income_received` | Tick or untick an income entry's received box | admins only; write |
+| `delete_planned_income` | Remove an income entry | admins only; destructive |
+| `get_subteam_budget` | A subteam's budget for a school year as Subteams → Budget shows it: lines with planned, approved and waiting; `years` to pick from | read |
+| `create_budget_line` / `update_budget_line` | Add a line to a subteam's year (name, dollars, optional project); change one (left out stays, empty clears project or note) | write; any member |
+| `delete_budget_line` | Remove a line | destructive; refused while a purchase request spends it |
 | `get_outreach_dashboard` | The /outreach Today page: deals needing attention by urgency, season pipeline and committed dollars, campaign deadlines, recent touches | admins only; read |
 | `list_sponsors` / `get_sponsor` | Sponsor deals (season, stage, needs-attention filters); one deal with its touch history and other seasons | admins only; read |
 | `save_sponsor` | Create a deal (org by name or id, created if new) or change its fields; stage changes are noted | admins only; write |

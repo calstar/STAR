@@ -7,6 +7,7 @@ import {
   requestCallinkLogin,
   resolveNeedsCheck,
   retryReimbursement,
+  tagReimbursement,
 } from "@/lib/actions/finance";
 import { requireAdmin } from "@/lib/admins";
 import { canSeePii } from "@/lib/finance/access";
@@ -612,6 +613,22 @@ export const financeTools: ToolModule = (server) => {
       annotations: WRITE,
     },
     async ({ number, filed }) => act(number, (id) => resolveNeedsCheck(id, filed)),
+  );
+
+  define(
+    "tag_reimbursement",
+    {
+      description:
+        "PVPs only (MCP). Say what a reimbursement was for, the project and subteam the Finance tab's spending " +
+        "breakdown files it under. Admins or whoever filed it. A field left out stays; null or empty clears it.",
+      inputSchema: {
+        number: numberSchema,
+        projectId: z.string().nullable().optional(),
+        subteamId: z.string().nullable().optional(),
+      },
+      annotations: WRITE,
+    },
+    async ({ number, projectId, subteamId }) => act(number, (id) => tagReimbursement(id, { projectId, subteamId })),
   );
 
   define(
