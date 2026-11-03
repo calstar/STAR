@@ -78,6 +78,10 @@ target_link_libraries(ota_service fsw_daq_lib Threads::Threads pthread ${RT_LIBR
 
 # ── Data Logger Service ───────────────────────────────────────────────────────
 
+# ── T7 Bridge ─────────────────────────────────────────────────────────────────
+# LabJack T7 analog inputs over Ethernet -> Elodin (inputs only). See t7_bridge/CMakeLists.txt.
+add_subdirectory(t7_bridge)
+
 # ── uWebSockets (optional, for future fsw_web_bridge) ────────────────────────
 set(USOCKETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external/uWebSockets")
 if(EXISTS "${USOCKETS_DIR}/uSockets/src")

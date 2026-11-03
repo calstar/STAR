@@ -342,6 +342,32 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# LabJack T7: extra analog inputs over Ethernet, streamed by t7_bridge (inputs only; nothing here
+# drives an output). Every other service ignores type "T7". Disabled until it is on the bench:
+# plug it in, read its MAC from the star-dhcp lease table, fill in `mac`, reload_dhcp.sh, then set
+# the channels below to what is actually wired and enable it. The two channels are placeholders.
+# Table ids {0x26, (slot-1)*0x20 + ain}, entities T7<slot>.AIN<n>; see docs/LABJACK_T7_ETHERNET.md.
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+mac = ""
+board_id = 81
+enabled = false
+scan_rate_hz = 100.0           # scans/s; every channel below is sampled once per scan
+
+[[boards.labjack_1.channels]]
+ain = 1                        # AIN number as printed on the T7 (0-13)
+kind = "PT"                    # PT | TC | LC | VOLTAGE
+role = "Placeholder PT"
+range = 10.0                   # +/- volts: 10, 1, 0.1, 0.01
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+tc_type = "K"
+role = "Placeholder TC"
+range = 0.1                    # a thermocouple is millivolts; 0.1 V covers type K to 1372 C
+
 # Stacklight board: add to the board registry once it has a real IP / MAC.
 # (Kept out for now: it has no simulator, so the GUI would list it as DISCONNECTED,
 # and the config tests need an active_connectors list on every registered board.)
