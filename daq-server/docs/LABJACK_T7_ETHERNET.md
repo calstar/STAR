@@ -79,6 +79,11 @@ board's `type`, so a T7 entry gets a reservation like any ESP32. To onboard:
 
 Static registers (above) are the fallback for a bench with no DAQ host.
 
+**Assigned address:** the first T7 is `192.168.2.81`, `board_id = 81`, following the
+convention that the IP's last octet equals `board_id`. `.81` lies outside the pool
+(`.200`–`.250`) and the discovery range (`.100`–`.150`). `board_number = board_id % 10`
+gives slot 1, which does not collide with anything because the T7 is a new board type with its own slots.
+
 Since IP addresses are stored as UINT32, LJM provides `LJM_IPToNumber` / `LJM_NumberToIP` [H].
 
 ### Device watchdog
@@ -92,7 +97,7 @@ DIO/DAC for actuation: on loss of the server it can force outputs to a safe stat
 ```c
 int LJM_OpenS(const char *DeviceType,      // "T7"
               const char *ConnectionType,  // "ETHERNET" (LJM_ctETHERNET = 3); "TCP" = 2 also allows WiFi
-              const char *Identifier,      // "192.168.2.xx" — open by IP, never "ANY" on the stand
+              const char *Identifier,      // "192.168.2.81" — open by IP, never "ANY" on the stand
               int *Handle);
 int LJM_Close(int Handle);
 
@@ -200,7 +205,7 @@ Treat any `-9999` as missing data. Never calibrate it into a pressure.
 ## 6. Reference sequence (from `stream_basic.c` [EX])
 
 ```
-LJM_OpenS("T7", "ETHERNET", "192.168.2.xx", &h)
+LJM_OpenS("T7", "ETHERNET", "192.168.2.81", &h)
 eWriteNames: AIN_ALL_NEGATIVE_CH=199, AINn_RANGE=..., STREAM_TRIGGER_INDEX=0,
              STREAM_CLOCK_SOURCE=0, STREAM_RESOLUTION_INDEX=0, STREAM_SETTLING_US=0
 LJM_NamesToAddresses(scan names) -> aScanList
