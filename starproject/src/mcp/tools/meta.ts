@@ -57,7 +57,7 @@ export const metaTools: ToolModule = (server) => {
     server,
     "list_api_tokens",
     {
-      description: "Your own MCP API tokens (prefix, name, created, last used, revoked). Never returns the token itself.",
+      description: "Your own MCP API tokens (prefix, name, scopes -- which MCP servers each opens: starproject, design -- created, last used, revoked). Never returns the token itself.",
       inputSchema: {},
       annotations: READ,
     },

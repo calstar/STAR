@@ -8,7 +8,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { channelColor, channelPalette, fixed, sessionHistory } from '../api';
+import { channelColor, channelPalette, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
 import { PRESSURE_UNIT, isPressureChannel, toPsia, unitLabel } from '../lib/pressure';
 import { ordered } from '../lib/shown';
@@ -56,38 +56,14 @@ export function Plots() {
   const offConsole = channels.filter((c) => PLOTTED.includes(shownUnit(c)) && consoleHidden[c.id]);
 
   // The whole trace at full rate, not the plot's thinned copy: what someone
-  // takes into a spreadsheet or a notebook.
-  const downloadCsv = async () => {
+  // takes into a spreadsheet or a notebook. The backend writes it
+  // (GET /api/session/{id}/history.csv, backend/history_csv.py) so an agent can
+  // fetch the same file; the button just downloads it.
+  const downloadCsv = () => {
     if (!live?.id) return;
-    const full = await sessionHistory(live.id, 3600, 0);
-    const cols = full.channels;
-    const states = full.events ?? [];
-    let at = 0;
-    let state = states.length ? '' : live.state;
-    const quote = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-    const lines = [
-      ['t_s', 'state', ...cols.map((c) => `${nameOf(c.id, c.tag)} [${shownUnit(c)}]`)].map(quote).join(','),
-      ...full.times_s.map((t, i) => {
-        while (at < states.length && states[at].t <= t) state = states[at++].label;
-        // Pressures in psia, as the column says: 3 places keeps the wire's
-        // hundredths of a psi.
-        return [
-          t.toFixed(3),
-          quote(state),
-          ...cols.map((c) => {
-            const v = c.values[i];
-            if (v === undefined || v === null) return '';
-            return isPressureChannel(c) ? toPsia(v).toFixed(3) : String(v);
-          }),
-        ].join(',');
-      }),
-    ];
-    const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `feed-twin-${live.id}-${Math.round(live.t)}s.csv`;
+    a.href = `/api/session/${encodeURIComponent(live.id)}/history.csv`;
     a.click();
-    URL.revokeObjectURL(url);
   };
 
   if (!result) return <p className="p-6 text-sm text-text-muted">Nothing solved yet.</p>;

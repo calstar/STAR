@@ -16,7 +16,7 @@ CADDYFILE="$(cd "$(dirname "${1:-$HERE/../Caddyfile}")" && pwd)/$(basename "${1:
 NET="caddyauthtest$$"; PORT="${TEST_PORT:-9080}"; FAIL=0
 VHOST=openrocket.starberkeley.org
 
-cleanup(){ docker rm -f ct-caddy ct-auth ct-api ct-fe ct-parts >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
+cleanup(){ docker rm -f ct-caddy ct-auth ct-api ct-fe ct-parts ct-mcp >/dev/null 2>&1; docker network rm "$NET" >/dev/null 2>&1; }
 trap cleanup EXIT
 cleanup; docker network create "$NET" >/dev/null
 
@@ -27,6 +27,7 @@ stub ct-auth auth 5000 auth
 stub ct-api  star-openrocket-api 8002 app
 stub ct-fe   star-openrocket-frontend 4177 app
 stub ct-parts parts-hub 8080 app
+stub ct-mcp  design-mcp 8010 app
 
 docker run -d --rm --name ct-caddy --network "$NET" -p "$PORT":80 \
   -e SCHEME=http -e BASE_DOMAIN=starberkeley.org \
@@ -66,6 +67,12 @@ CODE=$(req /panel/);            check "parts GET /panel/,  no cookie"  200 "part
 CODE=$(req /panel/api/catalog -H 'X-Auth-Email: forged@evil.com'); check "panel never sees a client identity" 200 "x-auth-email=<none>"
 CODE=$(req /panel/api/catalog -H 'Cookie: session=good'); check "panel never sees a STAR identity either" 200 "x-auth-email=<none>"
 CODE=$(req /panelx);            check "only the /panel/ prefix is open" 401
+
+echo "--- mcp: the server checks tokens itself; no identity header ever reaches it ---"
+VHOST=mcp.starberkeley.org
+CODE=$(req /mcp -X POST);       check "mcp reaches the server with no cookie" 200 "design-mcp"
+CODE=$(req /mcp -X POST -H 'X-Auth-Email: forged@evil.com'); check "mcp never sees a client identity" 200 "x-auth-email=<none>"
+CODE=$(req /mcp -X POST -H 'Cookie: session=good'); check "mcp never sees a STAR identity either" 200 "x-auth-email=<none>"
 
 rm -f "$BODY"
 [ "$FAIL" = 0 ] && echo "all assertions passed" || echo "FAILURES -- the site is not gated the way it looks"

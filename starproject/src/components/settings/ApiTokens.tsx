@@ -10,20 +10,40 @@ import type { ApiTokenView } from "@/lib/apiTokens";
 // same string or React reports a hydration mismatch.
 const when = (d: Date | string | null) => (d ? new Date(d).toISOString().slice(0, 10) : "never");
 
+// The MCP servers a token can open (TOKEN_SCOPES in src/lib/apiTokens.ts).
+const SCOPE_LABELS: Record<string, string> = {
+  starproject: "STAR Project",
+  design: "Design tools",
+};
+const SCOPE_HINTS: Record<string, string> = {
+  starproject: "tasks, projects, finance (this app's /api/mcp)",
+  design: "designs, exports and results from the design apps (mcp.starberkeley.org)",
+};
+const scopeText = (scopes: string[]) => scopes.map((s) => SCOPE_LABELS[s] ?? s).join(" + ") || "none";
+
 export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
   const [name, setName] = useState("");
   const [fresh, setFresh] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scopes, setScopes] = useState<string[]>(["starproject"]);
   const router = useRouter();
+
+  const toggleScope = (scope: string) =>
+    setScopes((cur) => (cur.includes(scope) ? cur.filter((s) => s !== scope) : [...cur, scope]));
 
   const create = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { token } = await createApiToken(name || "token");
+      const made = await createApiToken(name || "token", scopes);
+      if ("error" in made) {
+        setError(made.error);
+        return;
+      }
+      const { token } = made;
       setFresh(token);
       setCopied(false);
       setName("");
@@ -90,7 +110,7 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
                   <code className="text-xs text-neutral-500">{t.prefix}…</code>
                 </div>
                 <div className="text-xs text-neutral-500 dark:text-neutral-400">
-                  created {when(t.createdAt)} · last used {when(t.lastUsedAt)}
+                  {scopeText(t.scopes)} · created {when(t.createdAt)} · last used {when(t.lastUsedAt)}
                 </div>
               </div>
               <button
@@ -124,12 +144,29 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
         />
         <button
           onClick={create}
-          disabled={busy}
+          disabled={busy || scopes.length === 0}
           className="min-h-11 sm:min-h-0 w-full sm:w-auto rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           New token
         </button>
       </div>
+      <fieldset className="mt-2 flex flex-col sm:flex-row sm:flex-wrap gap-x-4 gap-y-1 text-sm">
+        <legend className="sr-only">What the new token opens</legend>
+        {Object.keys(SCOPE_LABELS).map((scope) => (
+          <label key={scope} className="flex items-start gap-2 min-h-11 sm:min-h-0">
+            <input
+              type="checkbox"
+              checked={scopes.includes(scope)}
+              onChange={() => toggleScope(scope)}
+              className="mt-1"
+            />
+            <span>
+              {SCOPE_LABELS[scope]}{" "}
+              <span className="text-xs text-neutral-500 dark:text-neutral-400">— {SCOPE_HINTS[scope]}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
 
       {revoked.length > 0 && (
@@ -138,7 +175,7 @@ export function ApiTokens({ tokens }: { tokens: ApiTokenView[] }) {
           <ul className="mt-1 space-y-0.5">
             {revoked.map((t) => (
               <li key={t.id}>
-                {t.name} <code>{t.prefix}…</code> · revoked {when(t.revokedAt)}
+                {t.name} <code>{t.prefix}…</code> · {scopeText(t.scopes)} · revoked {when(t.revokedAt)}
               </li>
             ))}
           </ul>

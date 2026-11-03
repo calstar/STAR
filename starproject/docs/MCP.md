@@ -8,22 +8,31 @@ finance **as you**, with your permissions and the same audit trail the UI leaves
 - **Endpoint:** `https://project.starberkeley.org/api/mcp` (dev: `http://localhost:3000/api/mcp`)
 - **Transport:** Streamable HTTP, stateless, JSON responses. `POST` carries JSON-RPC; `GET`/`DELETE`
   are accepted and answered per the spec (no sessions, so nothing to resume or delete).
-- **Auth:** `Authorization: Bearer sp_…` — a personal access token. No cookie, no OAuth.
+- **Auth:** `Authorization: Bearer sp_…` — a personal access token with the `starproject` scope.
+  No cookie, no OAuth.
+
+STARProject issues the tokens for **both** of STAR's MCP servers: this one, and the design-tools
+server on the apps box (`https://mcp.starberkeley.org/mcp`, `design-mcp/README.md`). A token's
+**scopes** say which it opens -- `starproject`, `design`, or both -- and are fixed when it is minted.
+A token minted before scopes existed opens this server only, as it always did.
 
 ## Getting a token
 
-In the app: **Settings → API tokens → New token**. The token is shown once; copy it. Revoke it from
-the same list whenever you like (a revoked token gets `401` immediately).
+In the app: **Settings → API tokens**, tick what the token is for (STAR Project, Design tools),
+then **New token**. The token is shown once; copy it. Revoke it from the same list whenever you
+like (a revoked token gets `401` immediately here, and within a minute on the design server,
+which caches each answer for that long).
 
 Locally, without a browser:
 
 ```bash
 export DATABASE_URL="postgresql://starproject:starproject@localhost:5432/starproject?schema=public"
-node scripts/mcp-token.mjs you@berkeley.edu "laptop"      # prints sp_…
+node scripts/mcp-token.mjs you@berkeley.edu "laptop"                     # prints sp_…, starproject scope
+node scripts/mcp-token.mjs you@berkeley.edu "laptop" starproject,design  # both servers
 ```
 
-Tokens are stored hashed (SHA-256); the row keeps a short prefix, a name, created / last-used /
-revoked timestamps. Deleting a user deletes their tokens. Minting is only possible from the
+Tokens are stored hashed (SHA-256); the row keeps a short prefix, a name, its scopes, created /
+last-used / revoked timestamps. Deleting a user deletes their tokens. Minting is only possible from the
 browser session, never through MCP, so a leaked token cannot create a successor for itself;
 revoking (`revoke_api_token`) is available either way.
 
@@ -86,7 +95,24 @@ Swap the body for `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name
 to call a tool, or `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"starproject://me"}}`
 to read a resource.
 
-Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`.
+Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`;
+a live token without the `starproject` scope answers `401` with reason `scope`.
+
+## Token checks for the design server (`/api/mcp/verify`)
+
+The design-tools MCP holds no tokens. For each token it has not seen in the last minute it asks
+this app, over the public internet (the apps box is not on the EC2 compose network):
+
+```
+POST /api/mcp/verify          X-Internal-Secret: $DESIGN_MCP_VERIFY_SECRET
+{"token": "sp_…", "scope": "design"}
+→ 200 {"email", "name", "tokenId"}    401 {"error": "unauthorized", "reason"}    403 bad secret
+```
+
+It lives under `/api/mcp` because that prefix already bypasses the cookie gate and has `X-Auth-*`
+stripped; the shared secret is what admits the caller, and an unset secret refuses everyone. A
+successful check counts as a use of the token (`lastUsedAt`). `reason` is one of `malformed`,
+`unknown`, `revoked`, `scope`.
 
 ## Running locally
 
@@ -105,7 +131,7 @@ node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" resources
 node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" read starproject://projects
 ```
 
-- `scripts/mcp-token.mjs <email> [name]` upserts the user and mints a token in the same format
+- `scripts/mcp-token.mjs <email> [name] [scopes]` upserts the user and mints a token in the same format
   `src/lib/apiTokens.ts` uses (`sp_` + 32 random bytes, stored as SHA-256), printing it once.
 - `scripts/mcp-smoke.mjs <url> <token> list | call <tool> [json] | resources | read <uri>` is a
   real MCP client; its exit code is 1 when a tool call returns `isError`, so it works in
@@ -236,7 +262,7 @@ Subteams → Budget is.
 |---|---|---|
 | `whoami` | The token's user and admin flag | read |
 | `health` | DB round-trip and counts | read |
-| `list_api_tokens` | Your tokens (never the secret) | read |
+| `list_api_tokens` | Your tokens with their scopes (never the secret) | read |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
 | `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done | read |
 | `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log | read |
