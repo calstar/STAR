@@ -452,8 +452,9 @@ ljtr_ohms = 1000.0   # LJTick-Resistance-1k
   ohm on a Pt1000. Keep leads short or use a Pt1000.
 - **Self-heating.** 2.5 V across 2 kΩ puts 1.25 mA (1.6 mW) through a Pt1000 at 0 °C. In a liquid that
   barely matters; in still gas it reads slightly warm. That's the tick's design, not ours.
-- **Not done:** no per-sensor calibration (offset or cubic) for a T7 RTD, and the ESP32 RTD path
-  still uses the quadratic-only inverse, which reads 1.76 °C cold at −183 °C.
+- **Not done:** no per-sensor calibration (offset or cubic) for a T7 RTD. The ESP32 RTD boards use
+  the same full curve (`rtd_board_adc_to_temp_c`); they used to drop the C term and read 1.76 °C
+  cold at −183 °C.
 
 ### Measuring `cjc_offset_k`
 
