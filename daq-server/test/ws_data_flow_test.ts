@@ -18,7 +18,7 @@
  * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation, config_validate, environmental — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate, environmental, t7 — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -99,7 +99,7 @@ function parseOnlyTests(): Set<string> | null {
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
-    'config_validate', 'environmental',
+    'config_validate', 'environmental', 't7',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -2315,6 +2315,14 @@ async function testLcTare(ws: WebSocket): Promise<void> {
   let gone = false;
   for (let i = 0; i < 12; i++) { if (!readTareRecord(ENTITY)) { gone = true; break; } await sleep(400); }
   assert(gone, 'cal_lc_tare: clearing removes the tare from the store');
+  // The store file drops the record before the cleared trace reaches the WebSocket; let it
+  // land before averaging, or the window straddles the step (seen as 208 vs 250 under load).
+  // A tare that never clears still fails below.
+  for (let i = 0; i < 10; i++) {
+    const t = await meanOf(ws, ENTITY, 'force_kg_tared', 300);
+    const g = await meanOf(ws, ENTITY, 'force_kg', 300);
+    if (t !== null && g !== null && Math.abs(t - g) < 0.5) break;
+  }
   const taredCleared = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
   const grossCleared = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
   assert(taredCleared !== null && grossCleared !== null && Math.abs(taredCleared - grossCleared) < 0.5,
@@ -2397,6 +2405,108 @@ async function testLcCapture(ws: WebSocket): Promise<void> {
   let cleared: Record<string, unknown> | null = null;
   for (let i = 0; i < 8; i++) { cleared = readCalRecord(UID); if (cleared && (cleared.numPoints as number ?? -1) === 0) break; await sleep(400); }
   assert(!!cleared && (cleared.numPoints as number) === 0, `cal_lc_capture: LC clear wiped points (numPoints ${cleared?.numPoints})`);
+}
+
+// ── Test: a LabJack T7 is one more board, end to end ──────────────────────────────────────────
+//
+// config_base.toml's labjack_1 (board_id 81 → slot 1) streams from `t7_bridge --fake`, which
+// test_integration.sh starts beside daq_bridge. Its inputs must reach the GUI exactly like an ESP32
+// sensor's, calibrated by the same calibration_service: listed by role in /api/sensor-config, live
+// psi / °C / kg over the WebSocket, the µV calibration code alongside, the Boards pane counting the
+// T7 as connected (its data is its heartbeat), and the capture / tare commands working on a T7
+// uid (board_id*100 + AIN). The fake signals: PT 30 % of 1000 psi ±3 %, TC ~60 °C ±10, LC 20 %
+// of 500 kg ±2 %. "T7 Thrust LC" is put in cubic mode by test_integration.sh so a capture is
+// observable (physics is every load cell's default and a capture cannot move it).
+async function getJson(path: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}${path}`, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+async function testLabJackT7(ws: WebSocket): Promise<void> {
+  console.log('\n🧪 Test 24: LabJack T7 — t7_bridge → calibration_service → GUI');
+  const BOARD = 81, PT = 1, TC = 2, LC = 4;
+  let sensors: any[] = [];
+  try { sensors = (await getJson('/api/sensor-config')).sensors ?? []; } catch (e: any) {
+    assert(false, `t7: /api/sensor-config failed: ${e.message}`); return;
+  }
+  const t7 = sensors.filter((x) => x.source === 'T7');
+  const byRole = (r: string) => t7.find((x) => x.role === r);
+  const pt = byRole('T7 Tank PT'), tc = byRole('T7 Nozzle TC'), lc = byRole('T7 Thrust LC');
+  const rtd = byRole('T7 LOX RTD');
+  assert(!!pt && pt.type === 'PT' && pt.calEntity === 'T71_Cal.AIN1' && pt.inCalibrationSequence === true,
+    `t7: "T7 Tank PT" listed as a PT on T71_Cal.AIN1, in the calibration sequence (${JSON.stringify(pt)})`);
+  assert(!!tc && tc.type === 'TC' && tc.calEntity === 'T71_Cal.AIN2',
+    `t7: "T7 Nozzle TC" listed as a TC on T71_Cal.AIN2`);
+  assert(!!lc && lc.type === 'LC' && lc.calEntity === 'T71_Cal.AIN4' && lc.inCalibrationSequence === true,
+    `t7: "T7 Thrust LC" listed as an LC on T71_Cal.AIN4, in the calibration sequence`);
+  assert(!!rtd && rtd.type === 'RTD' && rtd.calEntity === 'T71_Cal.AIN3' && rtd.inCalibrationSequence === false,
+    `t7: "T7 LOX RTD" listed as an RTD on T71_Cal.AIN3`);
+
+  const psi = await meanOf(ws, 'T71_Cal.AIN1', 'pressure_psi', 3000);
+  assert(psi !== null && psi >= 260 && psi <= 340, `t7: PT reads psi from the 4-20 mA fake (${psi?.toFixed(1)} psi)`);
+  const code = await meanOf(ws, 'T71_Cal.AIN1', 'raw_adc_counts', 3000);
+  assert(code !== null && code > 2.0e6 && code < 2.4e6,
+    `t7: the PT's calibration code is its µV reading (${code?.toFixed(0)} µV ≈ 2.2 V across the shunt)`);
+  const volts = await meanOf(ws, 'T71.AIN1', 'volts', 3000);
+  assert(volts !== null && volts > 2.0 && volts < 2.4, `t7: raw volts reach the GUI (${volts?.toFixed(3)} V)`);
+  const temp = await meanOf(ws, 'T71_Cal.AIN2', 'temperature_c', 3000);
+  assert(temp !== null && temp >= 45 && temp <= 75,
+    `t7: TC reads °C through the bridge's cold junction (${temp?.toFixed(1)} °C)`);
+  const rtdC = await meanOf(ws, 'T71_Cal.AIN3', 'temperature_c', 3000);
+  assert(rtdC !== null && rtdC >= -171 && rtdC <= -129,
+    `t7: RTD reads °C through the LJTick-Resistance divider and IEC 60751 (${rtdC?.toFixed(1)} °C)`);
+
+  try {
+    const dbg = await getJson('/api/debug');
+    const hz = dbg?.boardScanRateHz?.t71;
+    assert(typeof hz === 'number' && hz > 0, `t7: /api/debug boardScanRateHz.t71 > 0 (${hz})`);
+  } catch (e: any) { assert(false, `t7: /api/debug failed: ${e.message}`); }
+
+  // LC in cubic mode: uncalibrated it reads 0; one capture is a constant fit at the reference.
+  const lcBefore = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg', 2000);
+  assert(lcBefore !== null && Math.abs(lcBefore) < 1e-6,
+    `t7: an uncalibrated cubic T7 load cell reads 0, as an ESP32 one does (${lcBefore})`);
+  for (let i = 0; i < 10; i++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: LC, boardId: BOARD, referencePressure: 100 } });
+    await sleep(120);
+  }
+  await sleep(2000);
+  const rec = readCalRecord(BOARD * 100 + LC);
+  assert(!!rec && (rec.numPoints as number) >= 1 && rec.rawUnit === 'uV' && rec.logicalCh === 132,
+    `t7: the capture is stored for uid 8104 as a µV channel on logical 132 (${JSON.stringify(rec && { n: rec.numPoints, unit: rec.rawUnit, lch: rec.logicalCh })})`);
+  const lcAfter = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg', 2500);
+  assert(lcAfter !== null && Math.abs(lcAfter - 100) < 1,
+    `t7: after the capture the load cell reads the reference (${lcAfter?.toFixed(2)} kg)`);
+
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'tare_lc', sensorId: LC, boardId: BOARD } });
+  let tare: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) { tare = readTareRecord('T71_Cal.AIN4'); if (tare) break; await sleep(400); }
+  assert(!!tare && Math.abs((tare.offset_kg as number) - 100) < 1,
+    `t7: a tare is filed under T71_Cal.AIN4 at the load it held (${tare?.offset_kg})`);
+  // The backend picks the tare file up on an mtime poll: wait for the trace to drop before
+  // averaging, or the window straddles the step (100 kg × 1/7 samples = 14.3 kg).
+  for (let i = 0; i < 10; i++) {
+    const t = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 300);
+    if (t !== null && Math.abs(t) < 1) break;
+  }
+  const tared = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 2500);
+  assert(tared !== null && Math.abs(tared) < 1, `t7: the tared trace reads ~0 (${tared?.toFixed(3)} kg)`);
+
+  // Leave the stores as we found them.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'clear_tare_lc', sensorId: LC, boardId: BOARD } });
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: LC, boardId: BOARD } });
+  await sleep(1500);
 }
 
 // ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
@@ -2846,9 +2956,17 @@ async function testSensorConfigEntityFormat(): Promise<void> {
   const badCalEntities: string[] = [];
   const typesSeen = new Set<string>();
 
+  const t7Entity = /^T7\d+\.AIN\d+$/, t7CalEntity = /^T7\d+_Cal\.AIN\d+$/;
   for (const s of sensors) {
     const entity = s.entity as string;
     const calEntity = s.calEntity as string;
+
+    // A LabJack T7 input is named by its AIN (T7<slot>.AIN<n>), not a connector.
+    if (s.source === 'T7') {
+      if (!t7Entity.test(entity)) badEntities.push(entity);
+      if (!t7CalEntity.test(calEntity)) badCalEntities.push(calEntity);
+      continue;
+    }
 
     // Extract sensor type (strip board number: "PT1" → "PT")
     const dotIdx = entity.indexOf('.');
@@ -3126,11 +3244,21 @@ async function testSampleConservation(): Promise<void> {
   if (sent <= 0) return;
 
   const backendStats = await fetchBackendStats();
-  const ingested = Number((backendStats as any)?.rawPrimarySamplesIngested);
-  if (!Number.isFinite(ingested)) {
+  const ingestedAll = Number((backendStats as any)?.rawPrimarySamplesIngested);
+  if (!Number.isFinite(ingestedAll)) {
     assert(false, 'Backend /stats has no rawPrimarySamplesIngested — stale backend build?');
     return;
   }
+  // The board simulator is the ground truth for ESP32 boards only. A LabJack T7 (t7_bridge --fake)
+  // is ingested too, under its own group (t7<slot>), and must come out of both sides of the
+  // comparison: left in, its ~100 scans/s inflate "ingested" past "sent", and they would also pad
+  // the loss floor below enough to hide genuinely lost ESP32 packets.
+  const byGroupAll: Record<string, number> = (backendStats as any)?.rawPrimarySamplesByGroup ?? {};
+  const t7Ingested = Object.entries(byGroupAll)
+    .filter(([g]) => /^t7\d+$/.test(g))
+    .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
+  const ingested = ingestedAll - t7Ingested;
+  if (t7Ingested > 0) console.log(`  (excluding ${t7Ingested.toLocaleString()} LabJack T7 samples, which the board simulator does not send)`);
 
   // Per-group breakdown (always printed): pinpoints WHICH stream loses samples.
   // Sim board names → backend board-scan groups.
@@ -3461,6 +3589,7 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    if (IS_THIN && canRunCommandTests && runTest('t7')) await testLabJackT7(ws);
     // Injected packets are not in the simulator's counters. Keep this after
     // conservation and the other read-only checks against simulator ground truth.
     if (IS_THIN && runTest('environmental')) await testEnvironmentalDataFlow(ws);

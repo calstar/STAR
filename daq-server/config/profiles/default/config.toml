@@ -342,6 +342,37 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# LabJack T7: extra analog inputs over Ethernet, streamed by t7_bridge (inputs only; nothing here
+# drives an output). Every other service ignores type "T7". Disabled until it is on the bench:
+# plug it in, read its MAC from the star-dhcp lease table, fill in `mac`, reload_dhcp.sh, then set
+# the channels below to what is actually wired and enable it. The two channels are placeholders.
+# PT/TC/LC channels show in the GUI under their role, in psi / C / kg, like the ESP32 boards'.
+# A load cell needs full_scale (kg), sensitivity_mv_per_v and excitation_v. Thermocouples are
+# compensated with the T7's internal sensor + cjc_offset_k (default -4.9 K; measure and set it).
+# Table ids {0x26, (slot-1)*0x20 + ain}, entities T7<slot>.AIN<n>; see docs/LABJACK_T7_ETHERNET.md.
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+mac = ""
+board_id = 81
+enabled = false
+scan_rate_hz = 100.0           # scans/s; every channel below is sampled once per scan
+
+[[boards.labjack_1.channels]]
+ain = 1                        # AIN number as printed on the T7 (0-13)
+kind = "PT"                    # PT | TC | LC | VOLTAGE
+role = "Placeholder PT"        # the name the GUI shows; unique across all sensors
+range = 10.0                   # +/- volts: 10, 1, 0.1, 0.01
+signal = "0-5V"                # PT output: 0-5V | 0.5-4.5V | 1-5V | 0-10V | 4-20mA (+ shunt_ohms)
+full_scale = 1000.0            # psi at full output (PLACEHOLDER: from the transducer's datasheet)
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+tc_type = "K"
+role = "Placeholder TC"
+range = 0.1                    # a thermocouple is millivolts; 0.1 V covers type K to 1372 C
+
 # Stacklight board: add to the board registry once it has a real IP / MAC.
 # (Kept out for now: it has no simulator, so the GUI would list it as DISCONNECTED,
 # and the config tests need an active_connectors list on every registered board.)
@@ -397,6 +428,9 @@ active_connectors = [ 1, 2 ]
 "Chamber Throat PT 1" = "cubic"
 "Chamber Throat PT 2" = "cubic"
 
+# UNUSED today: these reach the actuator board in its config packet, but the firmware only reads
+# them in its PTAbort state, which is unreachable while ENABLE_ALL_STATE_TRANSITIONS = false
+# (firmware/Hotfire_Code/common/hotfire_config.h). No board aborts on them. Hidden in the GUI.
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400

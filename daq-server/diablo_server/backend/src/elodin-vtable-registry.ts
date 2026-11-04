@@ -8,6 +8,7 @@
 
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { readDeployedConfig } from './routes/config.js';
+import { t7Channels } from '../../shared/config-validation.js';
 
 // ── FNV-1a hash (matching db.hpp msg_id) ────────────────────────────────────
 
@@ -184,6 +185,9 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
     const configBoardIds: number[] = [];
     /** Config actuator boards, for the commanded-state tables below. */
     const actuatorBoards: Array<{ boardNumber: number; channels: number[] }> = [];
+    /** Enabled T7 channels subscribed — a config whose only sensors are on a T7 still said
+     *  something, so it must not fall into the dev fallbacks below. */
+    let t7Subscribed = 0;
     const addUnique = (high: number, low: number): void => {
         const key = `${high},${low}`;
         if (!seen.has(key)) {
@@ -215,10 +219,20 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
         // reconnect storm. Invalidated at deploy.
         const cfg = (cfgIn ?? readDeployedConfig()) as { boards?: unknown };
         const boards = (cfg.boards || {}) as Record<string, unknown>;
+        // LabJack T7s (t7_bridge): channels come from [[boards.<name>.channels]], not
+        // active_connectors, and there is no heartbeat or self-test table for one, so they are
+        // handled here and never reach the loop below.
+        for (const ch of t7Channels(boards as Record<string, any>)) {
+            if (!ch.enabled) continue;
+            addUnique(0x26, ch.rawLow);
+            t7Subscribed++;
+            if (ch.calLow !== null) addUnique(0x26, ch.calLow);
+        }
         for (const [, raw] of Object.entries(boards)) {
             const b = raw as Record<string, unknown>;
             if (b.enabled === false) continue;
             const t = String(b.type ?? '').toUpperCase();
+            if (t === 'T7') continue;
             const id = Number(b.board_id ?? b.id ?? 0);
             if (!Number.isInteger(id) || id <= 0 || id > 255) continue;
             const mod = id % 10;
@@ -267,7 +281,7 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
     // — addBoard(0x23, 2, [1, 2, 6]) subscribes LC2 CH2 and CH6 where the config declares
     // active_connectors = [1]. Every such pair is refused forever and, before the windowing
     // below, each refusal corrupted the attribution of a real one.
-    if (configBoardIds.length === 0) {
+    if (configBoardIds.length === 0 && t7Subscribed === 0) {
         addBoard(0x20, 1, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         addBoard(0x20, 2, [1, 2, 3, 4]);
         addActuatorBoard(2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);

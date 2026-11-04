@@ -33,7 +33,8 @@ export default function SolenoidCharacterizationPage() {
 
   const ptSensors = allSensors.filter(
     (s) =>
-      ((s.calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(s.calEntity)) ||
+      // type === 'PT' includes a LabJack T7 PT (T7<slot>_Cal.AIN<n>).
+      ((s.type === 'PT' || s.calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(s.calEntity)) ||
         s.calEntity.startsWith('PT.')) &&
       !s.calEntity.includes('RTD')
   );

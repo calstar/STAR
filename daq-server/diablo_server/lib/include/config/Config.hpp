@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "config/LoadActiveBoards.hpp"  // ActiveBoardKind, PtInterface, PtBoardConfig, BoardChannels
+#include "config/T7Config.hpp"          // T7Board
 #include "time/BoardClockSync.hpp"      // fsw::time::TimeSyncConfig
 
 namespace fsw {
@@ -268,6 +269,11 @@ struct Config {
     fsw::time::TimeSyncConfig time_sync;
     uint32_t config_broadcast_interval_ms = 1000;  // [config_broadcast_service].interval_ms
     std::vector<BoardConfig> boards;               // parse order preserved
+    // [boards.*] with type = "T7" (LabJack, read by t7_bridge only). They also appear in `boards`
+    // with type "T7", which every other reader skips as an unknown type. A board named in any
+    // t7_errors entry must not be streamed; t7_bridge refuses to start while the list is non-empty.
+    std::vector<T7Board> t7_boards;
+    std::vector<std::string> t7_errors;
     std::map<std::string, ActuatorRole> actuator_roles;
     FireConfig fire;
     FlowConfig flow;
