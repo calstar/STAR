@@ -13,7 +13,9 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
+#include "calibration/SensorCalibration.hpp"
 #include "calibration/TypeK.hpp"
 #include "config/Config.hpp"
 #include "t7/T7Calibration.hpp"
@@ -707,6 +709,80 @@ int main() {
         });
         s.start();
         check(s.read().cold_junction.empty(), "a board with no TC publishes no cold junction");
+    }
+
+    std::cout << "=== RTD (LJTick-Resistance) ===" << std::endl;
+    {
+        using fsw::calibration::rtd::CVDCoeffs;
+        using fsw::calibration::rtd::resistance_to_temp_cvd;
+        using fsw::calibration::rtd::resistance_to_temp_cvd_full;
+        using fsw::calibration::rtd::temp_to_resistance_cvd;
+        // IEC 60751 Pt100 table values (ohms), independent of the formula under test.
+        const CVDCoeffs pt100;
+        bool table_ok = true;
+        for (auto [t, r] : std::vector<std::pair<double, double>>{
+                 {-200, 18.52}, {-100, 60.26}, {0, 100.00}, {100, 138.51}, {200, 175.86}})
+            table_ok = table_ok && near(temp_to_resistance_cvd(t, pt100), r, 0.01) &&
+                       near(resistance_to_temp_cvd_full(r, pt100), t, 0.03);
+        check(table_ok, "the full CVD curve and its inverse match the IEC 60751 Pt100 table");
+        CVDCoeffs pt1000;
+        pt1000.R0 = 1000.0;
+        bool round_ok = true;
+        for (double t : {-196.0, -183.0, -50.0, -0.5, 0.0, 25.0, 300.0})
+            round_ok = round_ok &&
+                       near(resistance_to_temp_cvd_full(temp_to_resistance_cvd(t, pt1000), pt1000),
+                            t, 1e-6);
+        check(round_ok, "the inverse round-trips from -196 C to 300 C (Pt1000)");
+        const double r_lox = temp_to_resistance_cvd(-183.0, pt1000);
+        check(
+            std::fabs(resistance_to_temp_cvd(r_lox, pt1000) - -183.0) > 1.0,
+            "the quadratic-only inverse is off by over 1 C at LOX temperature (why _full exists)");
+        check(std::isnan(resistance_to_temp_cvd_full(0.0, pt1000)) &&
+                  std::isnan(resistance_to_temp_cvd_full(-5.0, pt1000)),
+              "no temperature for a non-positive resistance");
+
+        // A Pt1000 on an LJTick-Resistance-1k: Vout = 2.5 * 1000 / (1000 + R).
+        const Config c = fsw::config::load_from_string(
+            t7(ch(3, "RTD", "role = \"LOX RTD\"\nr0_ohms = 1000.0\nljtr_ohms = 1000.0")));
+        print_errors(c);
+        check(c.t7_errors.empty(), "an RTD channel with r0_ohms and ljtr_ohms is valid");
+        const auto& rtd = c.t7_boards.at(0).channels.at(0);
+        check(rtd.range_v == 10.0 && rtd.vref_v == 2.5,
+              "it defaults to the 10 V range and the tick's 2.5 V reference");
+        check(near(fsw::t7::rtd_ohms(1.25, rtd), 1000.0, 1e-9) &&
+                  near(fsw::t7::rtd_c(1.25, rtd), 0.0, 1e-9),
+              "half of Vref is R = R_fixed: 1000 ohm, 0 C");
+        const double v_lox = 2.5 * 1000.0 / (1000.0 + r_lox);
+        check(near(fsw::t7::rtd_c(v_lox, rtd), -183.0, 1e-6),
+              "the divider's output at LOX temperature reads -183 C");
+        check(std::isnan(fsw::t7::rtd_c(0.0, rtd)) && std::isnan(fsw::t7::rtd_c(2.5, rtd)) &&
+                  std::isnan(fsw::t7::rtd_c(-0.1, rtd)),
+              "an open (0 V) or shorted (Vref) RTD reads nothing, not a temperature");
+        check(std::string(fsw::t7::calibrated_field("RTD")) == "temperature_c",
+              "it publishes temperature_c, as an ESP32 RTD");
+        const fsw::t7::T7CalibrationMap m(c);
+        check(m.all().size() == 1 && m.all().at(0).channel.kind == "RTD",
+              "calibration_service calibrates it");
+
+        check(has_error(fsw::config::load_from_string(
+                            t7(ch(3, "RTD", "role = \"R\"\nljtr_ohms = 1000.0"))),
+                        "needs r0_ohms"),
+              "an RTD without r0_ohms is refused");
+        check(has_error(
+                  fsw::config::load_from_string(t7(ch(3, "RTD", "role = \"R\"\nr0_ohms = 100.0"))),
+                  "needs ljtr_ohms"),
+              "an RTD without ljtr_ohms is refused");
+        check(has_error(
+                  fsw::config::load_from_string(t7(ch(
+                      3, "RTD", "role = \"R\"\nr0_ohms = 100.0\nljtr_ohms = 1000.0\nrange = 1.0"))),
+                  "must cover vref_v"),
+              "a range below the reference is refused");
+        check(
+            has_error(fsw::config::load_from_string(t7(ch(
+                          1, "PT",
+                          "role = \"P\"\nsignal = \"0-5V\"\nfull_scale = 100.0\nr0_ohms = 100.0"))),
+                      "only meaningful on an RTD"),
+            "RTD settings on another kind are refused");
     }
 
     std::cout << "=== calibration map ===" << std::endl;

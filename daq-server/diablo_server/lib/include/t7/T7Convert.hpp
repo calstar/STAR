@@ -36,6 +36,13 @@ double lc_kg(double volts, const config::T7Channel& ch);
 /** Type K thermocouple: the measured EMF plus the EMF the cold junction subtracts. */
 double tc_c(double volts, double cold_junction_c);
 
+/** RTD on an LJTick-Resistance: the divider's output volts -> the RTD's ohms. NaN outside
+ *  (0, vref_v), where the divider cannot be inverted (open or shorted RTD). */
+double rtd_ohms(double volts, const config::T7Channel& ch);
+
+/** RTD: ohms -> C on the IEC 60751 curve (full Callendar-Van Dusen, C term below 0 C). */
+double rtd_c(double volts, const config::T7Channel& ch);
+
 /** The Elodin field a calibrated channel of this kind publishes ("pressure_psi", ...), or ""
  *  for a kind with no calibrated table (VOLTAGE). Same names as the ESP32 boards' tables. */
 const char* calibrated_field(const std::string& kind);

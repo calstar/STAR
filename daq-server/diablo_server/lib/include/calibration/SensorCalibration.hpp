@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -143,6 +144,40 @@ struct CVDCoeffs {
     double B = -5.775e-7;
     double C = -4.183e-12;  // only for T < 0 °C
 };
+
+/// Resistance (Ω) at temperature (°C), IEC 60751 Callendar-Van Dusen, the C term below 0 °C.
+inline double temp_to_resistance_cvd(double t_c, const CVDCoeffs& cvd = CVDCoeffs{}) {
+    double r = 1.0 + cvd.A * t_c + cvd.B * t_c * t_c;
+    if (t_c < 0.0)
+        r += cvd.C * (t_c - 100.0) * t_c * t_c * t_c;
+    return cvd.R0 * r;
+}
+
+/// The full CVD inverse: exact above 0 °C (the quadratic), Newton on the C term below it.
+/// resistance_to_temp_cvd() drops the C term and reads cold below 0 °C: 0.2 °C at -100 °C,
+/// 1.76 °C at -183 °C (LOX), 2.25 °C at -196 °C. NaN when the resistance is off the curve.
+inline double resistance_to_temp_cvd_full(double resistance_ohms,
+                                          const CVDCoeffs& cvd = CVDCoeffs{}) {
+    if (!(resistance_ohms > 0.0) || !(cvd.R0 > 0.0))
+        return std::numeric_limits<double>::quiet_NaN();
+    const double ratio = resistance_ohms / cvd.R0;
+    const double disc = cvd.A * cvd.A - 4.0 * cvd.B * (1.0 - ratio);
+    if (disc < 0.0)
+        return std::numeric_limits<double>::quiet_NaN();
+    double t = (-cvd.A + std::sqrt(disc)) / (2.0 * cvd.B);
+    if (resistance_ohms >= cvd.R0)
+        return t;
+    for (int i = 0; i < 20; ++i) {
+        const double f = temp_to_resistance_cvd(t, cvd) - resistance_ohms;
+        const double df =
+            cvd.R0 * (cvd.A + 2.0 * cvd.B * t + cvd.C * (4.0 * t * t * t - 300.0 * t * t));
+        const double step = f / df;
+        t -= step;
+        if (std::fabs(step) < 1e-9)
+            break;
+    }
+    return t;
+}
 
 /// Convert resistance (Ω) to temperature (°C) using iterative CVD inverse
 inline double resistance_to_temp_cvd(double resistance_ohms, const CVDCoeffs& cvd = CVDCoeffs{}) {

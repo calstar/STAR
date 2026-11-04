@@ -162,15 +162,15 @@ export const boardSlotIssue = (boards: Record<string, any>, boardKey: string): s
 //   calibrated  {0x26, (slot-1)*0x20 + 0x10 + ain}   entity T7<slot>_Cal.AIN<n>  pressure_psi |
 //                                                                               temperature_c |
 //                                                                               force_kg
-// PT, TC and LC channels are named by their `role`, like an ESP32 sensor, and carry the same units
+// PT, TC, LC and RTD channels are named by their `role`, like an ESP32 sensor, and carry the same units
 // and field names, which is what lets every GUI page treat them as one more PT / TC / LC.
 // The rules below mirror lib/src/config/T7Config.cpp, which t7_bridge refuses to start without.
 
-export type T7Kind = 'PT' | 'TC' | 'LC' | 'VOLTAGE';
+export type T7Kind = 'PT' | 'TC' | 'LC' | 'RTD' | 'VOLTAGE';
 
 /** The field a calibrated T7 channel publishes, by kind; VOLTAGE has no calibrated table. */
 export const T7_CAL_FIELD: Record<string, string | undefined> = {
-  PT: 'pressure_psi', TC: 'temperature_c', LC: 'force_kg',
+  PT: 'pressure_psi', TC: 'temperature_c', LC: 'force_kg', RTD: 'temperature_c',
 };
 
 export const T7_PT_SIGNALS = ['0-5V', '0.5-4.5V', '1-5V', '0-10V', '4-20mA'] as const;
@@ -297,7 +297,7 @@ export function t7BoardIssues(boards: Record<string, any>, boardKey: string): st
         else claim(ain + 1);
       }
     }
-    if (!['PT', 'TC', 'LC', 'VOLTAGE'].includes(kind)) out.push(`${p}kind "${kind}" must be one of PT, TC, LC, VOLTAGE.`);
+    if (!['PT', 'TC', 'LC', 'RTD', 'VOLTAGE'].includes(kind)) out.push(`${p}kind "${kind}" must be one of PT, TC, LC, RTD, VOLTAGE.`);
     const range = num(c?.range, kind === 'TC' ? 0.1 : 10);
     if (!T7_RANGES.some((r) => Math.abs(r - range) < 1e-9)) out.push(`${p}range must be one of 10, 1, 0.1, 0.01 (volts).`);
     if (kind === 'TC' && c?.tc_type !== 'K') out.push(`${p}tc_type "${c?.tc_type ?? ''}": only type K thermocouples are converted so far.`);
@@ -320,6 +320,18 @@ export function t7BoardIssues(boards: Record<string, any>, boardKey: string): st
       if (!(fs > 0)) out.push(`${p}an LC needs full_scale (kg at rated output).`);
       if (!(sens > 0)) out.push(`${p}an LC needs sensitivity_mv_per_v.`);
       if (!(exc > 0)) out.push(`${p}an LC needs excitation_v.`);
+    }
+    // RTD through an LJTick-Resistance: Vout = vref_v * ljtr_ohms / (ljtr_ohms + R_rtd).
+    const r0 = num(c?.r0_ohms, 0), ljtr = num(c?.ljtr_ohms, 0);
+    const vrefSet = c?.vref_v !== undefined && c?.vref_v !== null && c?.vref_v !== '';
+    const vref = num(c?.vref_v, 2.5);
+    if (kind === 'RTD') {
+      if (!(r0 > 0)) out.push(`${p}an RTD needs r0_ohms (100 for a Pt100, 1000 for a Pt1000).`);
+      if (!(ljtr > 0)) out.push(`${p}an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor).`);
+      if (!(vref > 0 && vref <= 10)) out.push(`${p}vref_v must be within (0, 10] V.`);
+      if (!(range >= vref)) out.push(`${p}an RTD's range must cover vref_v (use 10).`);
+    } else if (r0 !== 0 || ljtr !== 0 || vrefSet) {
+      out.push(`${p}r0_ohms, ljtr_ohms and vref_v are only meaningful on an RTD.`);
     }
     if (kind !== 'PT' && (signal !== '' || shunt !== 0)) out.push(`${p}signal and shunt_ohms are only meaningful on a PT.`);
     if (kind !== 'LC' && (sens !== 0 || exc !== 0)) out.push(`${p}sensitivity_mv_per_v and excitation_v are only meaningful on an LC.`);

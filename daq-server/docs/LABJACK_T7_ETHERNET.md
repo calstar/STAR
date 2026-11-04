@@ -419,6 +419,42 @@ units still bounces a live run. Do it between runs, with the operator.
 7. **Calibrate** PTs and LCs on the Calibration page as for any ESP32 sensor, if `physics`
    is not good enough.
 
+### RTDs through an LJTick-Resistance
+
+`kind = "RTD"` reads a platinum RTD through a LabJack LJTick-Resistance (LJTR) plugged into the
+T7's AIN screw terminals. The tick is a divider from its own 2.5 V reference through the RTD and a
+fixed precision resistor, read across the fixed one:
+
+    Vout = Vref * R_fixed / (R_fixed + R_rtd)        R_rtd = R_fixed * (Vref - Vout) / Vout
+
+(LabJack, LJTick-Resistance datasheet and "Measuring Resistance" app note: Vref 2.5 V ±0.04 %,
+10 mA max; R_fixed is 1k, 10k, 100k or 1M by model.)
+
+```toml
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "LOX RTD"
+r0_ohms = 1000.0     # Pt1000 (100.0 for a Pt100)
+ljtr_ohms = 1000.0   # LJTick-Resistance-1k
+# vref_v = 2.5       # optional: the tick's reference as measured, if you have measured it
+```
+
+- **Conversion** (calibration_service, physics only, like a T7 TC): volts → ohms by the formula
+  above → °C on the IEC 60751 Callendar–Van Dusen curve, **including the C term below 0 °C**
+  (`resistance_to_temp_cvd_full`). Published as `T7<n>_Cal.AIN<a>.temperature_c`, so the GUI shows
+  it beside the ESP32 RTDs. An open (0 V) or shorted (≥ Vref) element publishes nothing.
+- **Range** must be 10 V: the divider swings up to Vref.
+- **Pairing.** Use the LJTR whose fixed resistor is near the element's resistance over the range
+  you care about. A Pt1000 on an LJTR-1k swings about 6.7 mV/°C near −183 °C (2.4 mV/°C at 0 °C); a
+  Pt100 on an LJTR-1k only about 1.0 mV/°C there.
+- **Two-wire.** Lead resistance adds straight to R_rtd: about 2.6 °C per ohm on a Pt100, 0.26 °C per
+  ohm on a Pt1000. Keep leads short or use a Pt1000.
+- **Self-heating.** 2.5 V across 2 kΩ puts 1.25 mA (1.6 mW) through a Pt1000 at 0 °C. In a liquid that
+  barely matters; in still gas it reads slightly warm. That's the tick's design, not ours.
+- **Not done:** no per-sensor calibration (offset or cubic) for a T7 RTD, and the ESP32 RTD path
+  still uses the quadratic-only inverse, which reads 1.76 °C cold at −183 °C.
+
 ### Measuring `cjc_offset_k`
 
 The bridge estimates the screw-terminal temperature from the T7's internal sensor plus
@@ -441,7 +477,7 @@ Re-measure if the T7 moves to a different enclosure or the terminal block is cha
   real `LabJackM.h` only. The rest is covered without one: `ctest -R t7` (unit and end to end,
   including a mixed ESP32 + T7 rig on the real `elodin-db`), `test/test_integration.sh`, the
   Playwright spec `e2e/labjack-t7.spec.ts`, and `test/test_session.sh`. The simulated config
-  `config_base.toml` carries a T7 (PT on AIN1, TC on AIN2, LC on AIN4) that `--fake` streams.
+  `config_base.toml` carries a T7 (PT on AIN1, TC on AIN2, RTD on AIN3, LC on AIN4) that `--fake` streams.
 - **Aborts.** A T7 has no on-board logic, so nothing aborts on its own when a T7 input crosses
   a limit; only the server (state scripts) can act on one.
 - **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.

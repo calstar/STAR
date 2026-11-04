@@ -37,6 +37,7 @@
 #include <thread>
 #include <vector>
 
+#include "calibration/SensorCalibration.hpp"
 #include "calibration/TypeK.hpp"
 #include "comms/messages/sensor/T7Messages.hpp"
 #include "config/Config.hpp"
@@ -123,6 +124,13 @@ std::function<double(int, double)> fake_signal(const fsw::config::T7Board& board
         }
         if (c.kind == "LC")  // 20 % of rated load
             return (0.20 + 0.02 * wobble) * c.sensitivity_mv_per_v / 1000.0 * c.excitation_v;
+        if (c.kind == "RTD") {  // -150 C +/- 20 (a cryogenic line): the divider's output
+            fsw::calibration::rtd::CVDCoeffs cvd;
+            cvd.R0 = c.r0_ohms;
+            const double r =
+                fsw::calibration::rtd::temp_to_resistance_cvd(-150.0 + 20.0 * wobble, cvd);
+            return c.vref_v * c.ljtr_ohms / (c.ljtr_ohms + r);
+        }
         if (c.kind == "TC") {  // 60 C +/- 10 against a ~20 C junction (fake device at 25 C)
             using fsw::calibration::type_k_mv_from_c;
             return (type_k_mv_from_c(60.0 + 10.0 * wobble) - type_k_mv_from_c(20.1)) / 1000.0;

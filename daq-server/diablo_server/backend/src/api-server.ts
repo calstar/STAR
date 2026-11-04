@@ -268,12 +268,12 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
     }
   }
 
-  // LabJack T7 channels: one more PT / TC / LC each, named by their role, in the same units, and
+  // LabJack T7 channels: one more PT / TC / LC / RTD each, named by their role, in the same units, and
   // calibrated by calibration_service exactly like an ESP32 PT / LC (uid board_id*100 + AIN), so
   // PT and LC inputs take part in the calibration sequence as the ESP32 ones do.
   for (const ch of t7Channels(boards)) {
     if (!ch.enabled || ch.calEntity === null) continue;
-    if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC') continue;
+    if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC' && ch.kind !== 'RTD') continue;
     sensors.push({
       type: ch.kind,
       id: ch.ain,

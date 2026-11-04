@@ -1514,9 +1514,11 @@ export default function ConfigPage() {
     PT: ['signal', 'full_scale', 'shunt_ohms'],
     TC: ['tc_type'],
     LC: ['full_scale', 'sensitivity_mv_per_v', 'excitation_v'],
+    RTD: ['r0_ohms', 'ljtr_ohms', 'vref_v'],
     VOLTAGE: [],
   };
-  const T7_KIND_SPECIFIC = ['signal', 'full_scale', 'shunt_ohms', 'tc_type', 'sensitivity_mv_per_v', 'excitation_v'];
+  const T7_KIND_SPECIFIC = ['signal', 'full_scale', 'shunt_ohms', 'tc_type', 'sensitivity_mv_per_v', 'excitation_v',
+    'r0_ohms', 'ljtr_ohms', 'vref_v'];
   const t7ChannelsOf = (boardKey: string): any[] =>
     Array.isArray((config.boards as any)?.[boardKey]?.channels) ? (config.boards as any)[boardKey].channels : [];
   const setT7Channels = (boardKey: string, chs: any[]) => updateBoard(boardKey, 'channels', chs);
@@ -1549,6 +1551,9 @@ export default function ConfigPage() {
       if (value === 'TC') { c.tc_type = 'K'; c.range = 0.1; }
       if (value === 'PT') { c.signal = c.signal ?? '0-5V'; c.range = 10; }
       if (value === 'LC') c.range = 0.1;
+      // A Pt1000 on an LJTick-Resistance-1k is the usual pairing; the divider tops out at the
+      // tick's 2.5 V reference, so only the 10 V range covers it.
+      if (value === 'RTD') { c.r0_ohms = c.r0_ohms ?? 1000; c.ljtr_ohms = c.ljtr_ohms ?? 1000; c.range = 10; }
     }
     if (field === 'signal' && value !== '4-20mA') delete c.shunt_ohms;
     setT7Channels(boardKey, chs);
@@ -2244,7 +2249,7 @@ export default function ConfigPage() {
             Channels
           </h4>
           <p className="text-xs text-text-muted">
-            Each PT, TC and LC channel is calibrated and shown like an ESP32 sensor of that kind,
+            Each PT, TC, LC and RTD channel is calibrated and shown like an ESP32 sensor of that kind,
             under its role, in psi, °C or kg — captures, zeroes and tares on the Calibration
             pages included. The physics numbers are the sensor&apos;s datasheet values, which the
             Physics model (the default) streams; a Cubic or Robust sensor reads 0 until it has
@@ -2279,7 +2284,7 @@ export default function ConfigPage() {
                     <td className="px-2 py-1">
                       <select value={c?.kind ?? ''} disabled={!canEdit} className={cell}
                         onChange={(e) => setT7ChannelField(boardKey, i, 'kind', e.target.value)}>
-                        {['PT', 'TC', 'LC', 'VOLTAGE'].map((k) => <option key={k} value={k}>{k}</option>)}
+                        {['PT', 'TC', 'LC', 'RTD', 'VOLTAGE'].map((k) => <option key={k} value={k}>{k}</option>)}
                       </select>
                     </td>
                     <td className="px-2 py-1">
@@ -2309,7 +2314,7 @@ export default function ConfigPage() {
                         </select>
                       ) : (
                         <span className="text-xs text-text-muted pt-1.5 inline-block">
-                          {c?.kind === 'TC' ? 'physics' : c?.kind === 'VOLTAGE' ? '—' : 'needs a role'}
+                          {c?.kind === 'TC' || c?.kind === 'RTD' ? 'physics' : c?.kind === 'VOLTAGE' ? '—' : 'needs a role'}
                         </span>
                       )}
                     </td>
@@ -2334,6 +2339,25 @@ export default function ConfigPage() {
                           </>
                         )}
                         {c?.kind === 'TC' && <span className="text-xs text-text-muted pt-1.5">type K, CJC from the T7&apos;s internal sensor</span>}
+                        {c?.kind === 'RTD' && (
+                          <>
+                            <select value={String(c?.r0_ohms ?? '')} disabled={!canEdit} className={cell} title="RTD element (R at 0 °C)"
+                              onChange={(e) => setT7ChannelField(boardKey, i, 'r0_ohms', e.target.value === '' ? undefined : Number(e.target.value))}>
+                              <option value="">element…</option>
+                              <option value="100">Pt100</option>
+                              <option value="1000">Pt1000</option>
+                            </select>
+                            <select value={String(c?.ljtr_ohms ?? '')} disabled={!canEdit} className={cell} title="LJTick-Resistance model (its fixed resistor)"
+                              onChange={(e) => setT7ChannelField(boardKey, i, 'ljtr_ohms', e.target.value === '' ? undefined : Number(e.target.value))}>
+                              <option value="">LJTick-Resistance…</option>
+                              <option value="1000">LJTR-1k</option>
+                              <option value="10000">LJTR-10k</option>
+                              <option value="100000">LJTR-100k</option>
+                              <option value="1000000">LJTR-1M</option>
+                            </select>
+                            {num(i, 'vref_v', 'Vref (2.5)', 'w-24')}
+                          </>
+                        )}
                         {c?.kind === 'VOLTAGE' && <span className="text-xs text-text-muted pt-1.5">volts only (no GUI sensor)</span>}
                       </div>
                     </td>

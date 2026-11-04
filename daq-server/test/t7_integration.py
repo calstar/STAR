@@ -7,7 +7,7 @@ publishes back. Everything happens in a temporary directory with its own config 
 store, on OS-assigned ports: nothing here touches hardware, the live calibration store, or a
 running stack (unlike test_integration.sh — see daq-server/CLAUDE.md).
 
-  1. chain   t7_bridge --fake streams a PT (4-20 mA), a TC and an LC. calibration_service must
+  1. chain   t7_bridge --fake streams a PT (4-20 mA), a TC, an RTD (LJTick-Resistance) and an LC. calibration_service must
              publish psi / °C / kg in the ranges the fake signals sit in, take Zero All and a
              tare on the T7 inputs, and file them as microvolt channels / under T7<n>_Cal.AIN<a>.
   2. cubic   Packets injected directly, at exact voltages: two capture points per input put
@@ -68,6 +68,13 @@ ain = 2
 kind = "TC"
 tc_type = "K"
 role = "T7 TC"
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "T7 RTD"
+r0_ohms = 1000.0
+ljtr_ohms = 1000.0
 
 [[boards.labjack_1.channels]]
 ain = 4
@@ -240,8 +247,8 @@ def scenario_chain(bridge: str, cal: str, root: Path) -> None:
         check(db.wait_clients(2), "t7_bridge connects")
         time.sleep(4.0)
         base = (SLOT - 1) * 0x20
-        check({base + 1, base + 2, base + 4, base + 14, base + CJC_OFFSET} <= db.raw_seen,
-              "bridge publishes AIN1/2/4, AIN14 and the cold junction (0x0F) raw")
+        check({base + 1, base + 2, base + 3, base + 4, base + 14, base + CJC_OFFSET} <= db.raw_seen,
+              "bridge publishes AIN1/2/3/4, AIN14 and the cold junction (0x0F) raw")
         check(not any(lo & 0x1F >= 0x10 for lo in db.raw_seen),
               "bridge publishes no calibrated table (that is calibration_service's)")
 
@@ -253,6 +260,10 @@ def scenario_chain(bridge: str, cal: str, root: Path) -> None:
               f"TC volts + cold junction -> °C: {values(tc)[-1:] if tc else 'none'}")
         check(len(lc) > 0 and all(85 <= v <= 115 for v in values(lc)),
               f"LC volts -> kg: {values(lc)[-1:] if lc else 'none'}")
+        # RTD: a Pt1000 on an LJTick-Resistance-1k, faked at -150 ±20 °C through the divider.
+        rtd = db.latest(3)
+        check(len(rtd) > 0 and all(-171 <= v <= -129 for v in values(rtd)) and all(r[3] == 1 for r in rtd),
+              f"RTD divider volts -> ohms -> °C (IEC 60751): {values(rtd)[-1:] if rtd else 'none'}")
         # 4-20 mA across 250 ohm: psi = (V - 1) / 4 * 1000. The PT output is smoothed (EMA), so
         # the code and the value agree to within the fake signal's few psi of wobble.
         check(len(pt) > 0 and abs((pt[-1][2] / 1e6 - 1.0) / 4.0 * 1000.0 - pt[-1][1]) < 15.0,

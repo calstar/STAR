@@ -876,7 +876,7 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     for (const auto& t : t7_map.all()) {
         if (t.channel.kind != "PT" && t.channel.kind != "LC")
-            continue;  // TC: physics (type K + cold junction) only, as on the ESP32 TC boards
+            continue;  // TC / RTD: physics only (no model to choose)
         g_uid_role[t.uid] = t.channel.role;
         std::optional<std::string> model;
         if (const auto* models =
@@ -1815,6 +1815,11 @@ int main(int argc, char* argv[]) {
                 const double temp_c = cj != g_t7_cold_junction_c.end()
                                           ? fsw::t7::tc_c(volts, cj->second)
                                           : std::numeric_limits<double>::quiet_NaN();
+                if (std::isfinite(temp_c))
+                    publish(clamp_tc_rtd_temp_publish_c(temp_c), 1);
+            } else if (t->channel.kind == "RTD") {
+                // Physics only, as a T7 TC: the LJTick-Resistance divider and the IEC 60751 curve.
+                const double temp_c = fsw::t7::rtd_c(volts, t->channel);
                 if (std::isfinite(temp_c))
                     publish(clamp_tc_rtd_temp_publish_c(temp_c), 1);
             }

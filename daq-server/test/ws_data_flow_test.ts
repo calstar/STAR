@@ -2439,12 +2439,15 @@ async function testLabJackT7(ws: WebSocket): Promise<void> {
   const t7 = sensors.filter((x) => x.source === 'T7');
   const byRole = (r: string) => t7.find((x) => x.role === r);
   const pt = byRole('T7 Tank PT'), tc = byRole('T7 Nozzle TC'), lc = byRole('T7 Thrust LC');
+  const rtd = byRole('T7 LOX RTD');
   assert(!!pt && pt.type === 'PT' && pt.calEntity === 'T71_Cal.AIN1' && pt.inCalibrationSequence === true,
     `t7: "T7 Tank PT" listed as a PT on T71_Cal.AIN1, in the calibration sequence (${JSON.stringify(pt)})`);
   assert(!!tc && tc.type === 'TC' && tc.calEntity === 'T71_Cal.AIN2',
     `t7: "T7 Nozzle TC" listed as a TC on T71_Cal.AIN2`);
   assert(!!lc && lc.type === 'LC' && lc.calEntity === 'T71_Cal.AIN4' && lc.inCalibrationSequence === true,
     `t7: "T7 Thrust LC" listed as an LC on T71_Cal.AIN4, in the calibration sequence`);
+  assert(!!rtd && rtd.type === 'RTD' && rtd.calEntity === 'T71_Cal.AIN3' && rtd.inCalibrationSequence === false,
+    `t7: "T7 LOX RTD" listed as an RTD on T71_Cal.AIN3`);
 
   const psi = await meanOf(ws, 'T71_Cal.AIN1', 'pressure_psi', 3000);
   assert(psi !== null && psi >= 260 && psi <= 340, `t7: PT reads psi from the 4-20 mA fake (${psi?.toFixed(1)} psi)`);
@@ -2456,6 +2459,9 @@ async function testLabJackT7(ws: WebSocket): Promise<void> {
   const temp = await meanOf(ws, 'T71_Cal.AIN2', 'temperature_c', 3000);
   assert(temp !== null && temp >= 45 && temp <= 75,
     `t7: TC reads °C through the bridge's cold junction (${temp?.toFixed(1)} °C)`);
+  const rtdC = await meanOf(ws, 'T71_Cal.AIN3', 'temperature_c', 3000);
+  assert(rtdC !== null && rtdC >= -171 && rtdC <= -129,
+    `t7: RTD reads °C through the LJTick-Resistance divider and IEC 60751 (${rtdC?.toFixed(1)} °C)`);
 
   try {
     const dbg = await getJson('/api/debug');

@@ -43,7 +43,7 @@ T7CalibrationMap::T7CalibrationMap(const config::Config& cfg) {
         const std::string key =
             b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
         for (const auto& c : b.channels) {
-            if (c.kind != "PT" && c.kind != "LC" && c.kind != "TC")
+            if (c.kind != "PT" && c.kind != "LC" && c.kind != "TC" && c.kind != "RTD")
                 continue;
             T7CalChannel t;
             t.board_key = key;
