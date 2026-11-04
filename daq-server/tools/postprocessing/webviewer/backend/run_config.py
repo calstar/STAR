@@ -10,7 +10,8 @@ rebuilds the mapping, so a past run reads as "Ox Upstream" and "Fire" instead of
 Everything here mirrors conventions that already exist elsewhere and must not drift:
 
 * entity spelling — DatabaseConfig.cpp (`PT<n>.CH<c>`, `PT<n>_Cal.CH<c>`,
-  `ACT_CMD.B<n>.CH<c>`, `BOARD.HB_<board_id>`, `SELF_TEST.BOARD_<board_id>`)
+  `ACT_CMD.B<n>.CH<c>`, `BOARD.HB_<board_id>`, `SELF_TEST.BOARD_<board_id>`, and for a
+  LabJack T7 `T7<n>.AIN<a>`, `T7<n>_Cal.AIN<a>`, `T7<n>.CJC` — register_t7_*_tables)
 * Elodin slot `<n>` = `board_id % 10`, 0 → 10 — LoadActiveBoards.hpp / sensor-config.ts
 * board display names — the config editor's `boardDisplayName` (app/config/page.tsx)
 
@@ -79,7 +80,11 @@ _BOARD_TYPE_LABEL = {
     "TC": "TC",
     "RTD": "RTD",
     "ENCODER": "Encoder",
+    "T7": "LabJack T7",
 }
+
+#: AIN14 is the T7's internal temperature sensor, streamed raw beside any thermocouple.
+T7_CJC_AIN = 14
 
 
 def snapshot_path(run_id: str) -> Path:
@@ -147,6 +152,31 @@ def entity_labels(cfg: dict) -> dict[str, str]:
                 continue
             labels[f"{prefix}{n}.CH{ch}"] = role
             labels[f"{prefix}{n}_Cal.CH{ch}"] = role
+
+    # LabJack T7s: each [[boards.<key>.channels]] row names its own AIN (no sensor_roles_ map).
+    # The raw table carries volts and the calibrated one psi / °C / kg; both are that sensor.
+    display = _board_display_names(boards)
+    for key, board in boards.items():
+        if not isinstance(board, dict) or board.get("type") != "T7":
+            continue
+        board_id = board.get("board_id")
+        channels = board.get("channels")
+        if not isinstance(board_id, int) or not isinstance(channels, list):
+            continue
+        n = _slot(board_id)
+        has_tc = False
+        for ch in channels:
+            if not isinstance(ch, dict) or not isinstance(ch.get("ain"), int):
+                continue
+            has_tc = has_tc or ch.get("kind") == "TC"
+            role = ch.get("role")
+            if isinstance(role, str) and role:
+                labels[f"T7{n}.AIN{ch['ain']}"] = role
+                labels[f"T7{n}_Cal.AIN{ch['ain']}"] = role
+        if has_tc:
+            name = display.get(board_id, f"T7 {board_id}")
+            labels[f"T7{n}.AIN{T7_CJC_AIN}"] = f"{name} internal sensor"
+            labels[f"T7{n}.CJC"] = f"{name} cold junction"
 
     # Actuators: [actuator_roles] is role = [NO|NC, channel, board_id]. It wins over any
     # sensor role on the same channel — on an actuator board the valve IS the channel.

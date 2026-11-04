@@ -40,6 +40,7 @@ _SECONDARY_FIELDS = {
     "packet_ts_ms",
     "reason",
     "raw_adc",
+    "raw_uv",
 }
 
 # Explicit, hand-maintained unit per field. The axis grouping keys on unit
@@ -64,6 +65,8 @@ _UNIT_BY_FIELD = {
     "current_a": "A",
     # raw ADC counts
     "raw_adc": "counts", "raw_adc_counts": "counts",
+    # LabJack T7: raw input volts, and the µV code calibration works in (T7<n>_Cal.*.raw_uv)
+    "volts": "V", "raw_uv": "µV",
     # encoder
     "raw_angle": "deg",
     # controller duty cycles
@@ -85,6 +88,10 @@ def _family(entity: str) -> str:
     head = entity.split(".", 1)[0]
     if _HASH_RE.match(head):
         return "Other"
+    # LabJack T7: T71 / T71_Cal. The generic rule below would read "T71" as "T" + slot 71.
+    t7 = re.match(r"^T7\d+(_Cal)?$", head)
+    if t7:
+        return "T7" + (t7.group(1) or "")
     # Strip a trailing board/index number: PT1 -> PT, PT_Cal -> PT_Cal, ACT4 -> ACT.
     m = re.match(r"^([A-Za-z_]+?)\d*$", head)
     base = m.group(1).rstrip("_") if m else head
