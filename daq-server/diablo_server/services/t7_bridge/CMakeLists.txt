@@ -26,3 +26,18 @@ else()
 endif()
 
 install(TARGETS t7_bridge RUNTIME DESTINATION bin)
+
+# End to end: t7_bridge -> calibration_service -> calibrated tables, against a stand-in Elodin in
+# a temp dir (no hardware, no live calibration store). With elodin-db installed it also runs the
+# mixed-rig case on the real database (ESP32 board + T7); without it that case is skipped.
+# RUN_SERIAL: wall-clock captures and timing, like the other end-to-end tests here.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME t7_integration
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/test/t7_integration.py
+                     --bridge $<TARGET_FILE:t7_bridge>
+                     --cal $<TARGET_FILE:calibration_service>
+                     --daq-bridge $<TARGET_FILE:daq_bridge>
+                     --simulator ${CMAKE_SOURCE_DIR}/sim/board_simulator.py)
+    set_tests_properties(t7_integration PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+endif()
