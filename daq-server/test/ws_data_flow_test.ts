@@ -2486,6 +2486,12 @@ async function testLabJackT7(ws: WebSocket): Promise<void> {
   for (let i = 0; i < 12; i++) { tare = readTareRecord('T71_Cal.AIN4'); if (tare) break; await sleep(400); }
   assert(!!tare && Math.abs((tare.offset_kg as number) - 100) < 1,
     `t7: a tare is filed under T71_Cal.AIN4 at the load it held (${tare?.offset_kg})`);
+  // The backend picks the tare file up on an mtime poll: wait for the trace to drop before
+  // averaging, or the window straddles the step (100 kg × 1/7 samples = 14.3 kg).
+  for (let i = 0; i < 10; i++) {
+    const t = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 300);
+    if (t !== null && Math.abs(t) < 1) break;
+  }
   const tared = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 2500);
   assert(tared !== null && Math.abs(tared) < 1, `t7: the tared trace reads ~0 (${tared?.toFixed(3)} kg)`);
 
