@@ -80,7 +80,7 @@ struct FakeDb {
             int srv = socket(AF_INET, SOCK_STREAM, 0);
             int opt = 1;
             setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-            struct sockaddr_in a {};
+            struct sockaddr_in a{};
             a.sin_family = AF_INET;
             a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             a.sin_port = 0;  // OS-assigned, so parallel runs cannot collide
@@ -137,7 +137,7 @@ struct FakeDbRefuseFirst {
             int srv = socket(AF_INET, SOCK_STREAM, 0);
             int opt = 1;
             setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-            struct sockaddr_in a {};
+            struct sockaddr_in a{};
             a.sin_family = AF_INET;
             a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             a.sin_port = 0;
