@@ -41,6 +41,9 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | [0x22, 0x11..] | Calibrated RTD (°C) | calibration_server |
 | [0x23, 0x01..0x14] | Raw LC ADC counts | daq_bridge |
 | [0x23, 0x11..] | Calibrated LC (force) | calibration_server |
+| [0x26, (slot-1)·0x20 + ain] | LabJack T7 raw input, `T7<slot>.AIN<n>.volts` (ain 0–13; 14 = internal temperature sensor) | t7_bridge |
+| [0x26, (slot-1)·0x20 + 0x0F] | T7 thermocouple cold junction, `T7<slot>.CJC.temperature_c` (TC boards only) | t7_bridge |
+| [0x26, (slot-1)·0x20 + 0x10 + ain] | T7 calibrated, `T7<slot>_Cal.AIN<n>.pressure_psi` / `temperature_c` / `force_kg` (+ `raw_uv`, the µV code calibration works in) | calibration_service |
 | [0x30, 0x01..0x0A] | Actuator status (current sense) | daq_bridge |
 | [0x31, 0x01..0x14] | Actuator state (open/closed) | not in `[daq_bridge] publish` allowlist |
 | [0x40, 0x00] | Controller actuation | ControllerService |
@@ -49,6 +52,15 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | [0x43, 0x00] | PSM state transition | ControllerService |
 | [0x44, 0x00] | Fire state | ControllerService |
 | [0x45, 0x00] | Navigation state | Autopilot |
+
+### Decoding a T7 run afterwards
+
+A T7's channels are named, and their kind (PT / TC / LC) and datasheet numbers recorded, only in
+config. A T7 `slot` is its `board_id % 10` (0 → 10), the same rule as every other board. The
+session copies the run's config beside the run dir as `<run_id>.toml`. Read the
+`[[boards.<name>.channels]]` rows there to know what `T7<slot>.AIN<n>` was. The webviewer does
+this (`webviewer/backend/run_config.py`), and `replay_past_db.sh` runs the GUI on that file
+rather than on today's config.
 
 ## DAQ Bridge Publish Allowlist
 
