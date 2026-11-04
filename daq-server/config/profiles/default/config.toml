@@ -348,7 +348,7 @@ active_connectors = [ 1, 2 ]
 # the channels below to what is actually wired and enable it. The two channels are placeholders.
 # PT/TC/LC channels show in the GUI under their role, in psi / C / kg, like the ESP32 boards'.
 # A load cell needs full_scale (kg), sensitivity_mv_per_v and excitation_v. Thermocouples are
-# compensated with the T7's internal sensor + cjc_offset_k (default -4.9 K; measure and set it).
+# compensated with the T7's internal sensor + cjc_offset_k (default -3.0 K for the screw terminals; measure and set it).
 # Table ids {0x26, (slot-1)*0x20 + ain}, entities T7<slot>.AIN<n>; see docs/LABJACK_T7_ETHERNET.md.
 [boards.labjack_1]
 type = "T7"

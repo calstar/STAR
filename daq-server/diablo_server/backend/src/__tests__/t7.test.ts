@@ -212,6 +212,11 @@ describe('session gate', () => {
         ['an RTD with no LJTick-Resistance', { channels: [{ ain: 3, kind: 'RTD', role: 'R', r0_ohms: 1000 }] }, 'needs ljtr_ohms'],
         ['an RTD on a range below the tick\'s 2.5 V', { channels: [{ ain: 3, kind: 'RTD', role: 'R', r0_ohms: 1000, ljtr_ohms: 1000, range: 1 }] }, 'must cover vref_v'],
         ['RTD settings on a PT', { channels: [{ ...T7_BOARD.channels[0], r0_ohms: 100 }] }, 'only meaningful on an RTD'],
+        // Stream limits, datasheet A-1-1 (mirrors stream_limit_issues in T7Config.cpp).
+        ['0.01 V in a multi-channel stream', { channels: [{ ...T7_BOARD.channels[2], range: 0.01 }, T7_BOARD.channels[0]] }, '0.01 V is not supported'],
+        ['0.1 V in a multi-channel stream above res 2', { resolution_index: 3 }, '0.1 V is not supported'],
+        ['two 1 V channels faster than 2 x 210 us', { scan_rate_hz: 3000, channels: [{ ...T7_BOARD.channels[0], range: 1 }, { ...T7_BOARD.channels[3], range: 1 }] }, 'beyond what this scan list'],
+        ['one channel at res 8 past 600 scans/s', { resolution_index: 8, scan_rate_hz: 1000, channels: [T7_BOARD.channels[0]] }, 'at most 600'],
     ];
     for (const [what, patch, needle] of cases) {
         it(`refuses ${what}`, () => {
@@ -219,6 +224,11 @@ describe('session gate', () => {
             expect(msgs.some((m) => m.includes(needle)), msgs.join('\n')).toBe(true);
         });
     }
+
+    it('passes a lone 0.01 V channel, and a TC board at 400 Hz (the 250 Hz sensor limit is the T8\'s)', () => {
+        expect(issuesFor({ ...T7_BOARD, channels: [{ ...T7_BOARD.channels[2], range: 0.01 }] })).toEqual([]);
+        expect(issuesFor({ ...T7_BOARD, scan_rate_hz: 400 })).toEqual([]);
+    });
 
     it('passes an RTD on an LJTick-Resistance', () => {
         const rtd = { ain: 3, kind: 'RTD', role: 'LOX RTD', r0_ohms: 1000, ljtr_ohms: 1000 };

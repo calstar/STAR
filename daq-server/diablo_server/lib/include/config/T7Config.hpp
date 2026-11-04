@@ -77,9 +77,12 @@ struct T7Board {
     double settling_us = 0.0;  ///< STREAM_SETTLING_US; 0 = automatic.
     int scans_per_read = 0;    ///< Scans per LJM_eStreamRead; 0 = scan_rate/20 (a 50 ms block).
     /** Thermocouple cold junction = T7 internal sensor + this (K). The default is LabJack's
-     *  TEMPERATURE_AIR_K estimate for a T7 with Ethernet on (device - 4.3 - 0.6); measure it on
-     *  the stand (a TC beside a reference thermometer) and set it. */
-    double cjc_offset_k = -4.9;
+     *  figure for the built-in screw terminals AIN0-AIN3: "expect the returned value
+     *  [TEMPERATURE_DEVICE_K] minus 3 C to reflect the temperature of the built-in
+     *  screw-terminals with an accuracy of +/-2.5 C" (datasheet 18.0). A TC on a CB37 (AIN4-13
+     *  are DB37 only) is at air temperature instead: TEMPERATURE_AIR_K, device - 4.3 K on USB,
+     *  - 4.9 K on USB + Ethernet. Measure it on the stand either way and set it. */
+    double cjc_offset_k = -3.0;
     std::vector<T7Channel> channels;
 
     /** Elodin slot, same rule as BoardConfig::slot(): board_id % 10, 0 -> 10. */

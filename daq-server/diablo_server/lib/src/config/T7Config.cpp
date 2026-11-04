@@ -36,8 +36,34 @@ const std::set<std::string> kPtSignals = {"0-5V", "0.5-4.5V", "1-5V", "0-10V", "
 // it cannot keep up with below this; this check only catches an obvious typo.
 constexpr double kMaxAggregateSamplesPerS = 100000.0;
 
-// Stream accepts resolution indices 0-8; the T7-Pro's 9-12 are command-response only.
+// Stream accepts resolution indices 0-8; the T7-Pro's 9-12 are command-response only (datasheet
+// 3.2: "Resolution indices 9-12 are not supported in stream"). 0 means 1 in stream (A-1-1).
 constexpr int kMaxStreamResolutionIndex = 8;
+
+// Datasheet A-1-1, Table A.1.7, first column: a single-address stream's max scan rate by
+// resolution index 1-8, at any range (one channel needs no settling).
+constexpr double kSingleAddressMaxHz[8] = {100000, 48000, 22000, 11000, 5500, 2500, 1200, 600};
+
+// Datasheet A-1-1, Table A.1.8: interchannel delay (us) of a multi-address stream, by range and
+// resolution index 1-8; 0 = "N.S." (not supported in multi-channel stream). Summed over a scan it
+// estimates the shortest scan period. The estimate errs fast (Table A.1.7's measured maxima are
+// lower still at high resolution), so it only refuses what the T7 certainly cannot do; anything
+// else it cannot keep up with, the device reports as STREAM_SCAN_OVERLAP (2942).
+double interchannel_delay_us(double range_v, int res) {
+    static constexpr double k10[8] = {15, 25, 45, 90, 170, 335, 670, 1335};
+    static constexpr double k1[8] = {210, 220, 545, 585, 1200, 2415, 2750, 3415};
+    static constexpr double k01[8] = {1040, 2105, 0, 0, 0, 0, 0, 0};
+    const int i = std::clamp(res, 1, 8) - 1;
+    if (std::fabs(range_v - 10.0) < 1e-9)
+        return k10[i];
+    if (std::fabs(range_v - 1.0) < 1e-9)
+        return k1[i];
+    if (std::fabs(range_v - 0.1) < 1e-9)
+        return k01[i];
+    if (std::fabs(range_v - 0.01) < 1e-9)
+        return 0;  // N.S. at every resolution in multi-channel stream
+    return -1;     // not a T7 range; reported elsewhere
+}
 
 bool is_ipv4(const std::string& s) {
     in_addr a{};
@@ -46,6 +72,65 @@ bool is_ipv4(const std::string& s) {
 
 std::string at(const std::string& section, int idx) {
     return "[" + section + "] channel " + std::to_string(idx + 1) + ": ";
+}
+
+// What the T7's stream cannot do with this board's scan list (its channels, plus AIN14 at +/-10 V
+// on a thermocouple board), per datasheet A-1-1. Mirrored in shared/config-validation.ts.
+std::vector<std::string> stream_limit_issues(const T7Board& b) {
+    std::vector<std::string> out;
+    if (b.channels.empty() || !(b.scan_rate_hz > 0))
+        return out;
+    const bool has_tc = std::any_of(b.channels.begin(), b.channels.end(), [](const T7Channel& c) {
+        return c.kind == "TC";
+    });
+    std::vector<double> ranges;
+    for (const auto& c : b.channels)
+        ranges.push_back(c.range_v);
+    if (has_tc)
+        ranges.push_back(10.0);  // AIN14
+    const int res = std::clamp(b.resolution_index, 0, kMaxStreamResolutionIndex);
+    const int eff = res == 0 ? 1 : res;
+    auto rate_str = [](double hz) {
+        return std::to_string(static_cast<int>(std::floor(hz)));
+    };
+
+    if (ranges.size() == 1) {
+        const double max_hz = kSingleAddressMaxHz[eff - 1];
+        if (b.scan_rate_hz > max_hz)
+            out.push_back("one channel at resolution_index " + std::to_string(res) +
+                          " streams at most " + rate_str(max_hz) + " scans/s (datasheet A-1-1)");
+        return out;
+    }
+    double scan_us = 0;
+    bool unsupported = false;
+    for (const auto& c : b.channels) {
+        const double d = interchannel_delay_us(c.range_v, eff);
+        if (d == 0) {
+            unsupported = true;
+            out.push_back(
+                "AIN" + std::to_string(c.ain) + ": range " +
+                (std::fabs(c.range_v - 0.01) < 1e-9 ? std::string("0.01") : std::string("0.1")) +
+                " V is not supported in a multi-channel stream" +
+                (std::fabs(c.range_v - 0.1) < 1e-9 ? std::string(" above resolution_index 2")
+                                                   : std::string(" at any resolution")) +
+                " (datasheet A-1-1, Table A.1.7)");
+        }
+    }
+    if (unsupported)
+        return out;
+    for (double r : ranges)
+        if (interchannel_delay_us(r, eff) < 0)
+            return out;
+    for (double r : ranges)
+        scan_us += std::max(interchannel_delay_us(r, eff), b.settling_us);
+    const double max_hz = 1e6 / scan_us;
+    if (b.scan_rate_hz > max_hz)
+        out.push_back("scan_rate_hz " + rate_str(b.scan_rate_hz) +
+                      " is beyond what this scan list "
+                      "can do at resolution_index " +
+                      std::to_string(res) + ": about " + rate_str(max_hz) + " scans/s at most (" +
+                      std::to_string(ranges.size()) + " addresses, datasheet A-1-1 Table A.1.8)");
+    return out;
 }
 
 }  // namespace
@@ -227,6 +312,8 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
             if (aggregate > kMaxAggregateSamplesPerS)
                 err("scan_rate_hz x channels = " + std::to_string(static_cast<int>(aggregate)) +
                     " samples/s, beyond the T7's 100000");
+            for (const auto& m : stream_limit_issues(b))
+                err(m);
             if (b.board_id >= 1 && b.board_id <= 255) {
                 auto [it, inserted] = slot_owner.emplace(b.slot(), sec);
                 if (!inserted)

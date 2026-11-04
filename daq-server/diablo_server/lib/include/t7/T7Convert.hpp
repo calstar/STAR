@@ -13,13 +13,18 @@ namespace fsw {
 namespace t7 {
 
 /**
- * The T7's internal temperature sensor reads on AIN14 at about -92.379 K/V, nominal (LabJack's
- * T7 calibration defaults, labjack/labjack_kipling t7_calibration_operations.js "Temp Slope";
- * each unit varies by up to ~1%). The offset is taken per unit at stream start instead of from the
- * nominal 465.129 K: t7_bridge reads the device's own calibrated TEMPERATURE_DEVICE_K beside AIN14
- * and solves for it, so the nominal slope only has to hold over the few kelvin the box drifts.
+ * The T7's internal temperature sensor (an LM94021 on AIN14) reads "Device temperature K =
+ * volts * -92.6 + 467.6" (T-series datasheet 18.0 Internal Temp Sensor; the same values are the
+ * nominal Temp_Slope / Temp_Offset in 20.0.1 T7 Calibration Constants). Each unit's own slope and
+ * offset are in flash. The offset is taken per unit at stream start instead of from the nominal
+ * 467.6 K: t7_bridge reads the device's own calibrated TEMPERATURE_DEVICE_K beside AIN14 (before
+ * the stream, which blocks command-response reads of the sensor) and solves for it, so the nominal
+ * slope only has to hold over the few kelvin the box drifts. (-92.379 / 465.129, used here before,
+ * are the U6's nominal constants, not the T7's.)
  */
-constexpr double kAin14SlopeKPerV = -92.379;
+constexpr double kAin14SlopeKPerV = -92.6;
+/** Nominal AIN14 offset (K), datasheet 18.0. Only the fake T7 uses it; a real one is solved. */
+constexpr double kAin14NominalOffsetK = 467.6;
 
 /** AIN14 offset (K) that makes slope*ain14_v land on the device's own temperature reading. */
 double cjc_device_offset_k(double device_temp_k, double ain14_v);

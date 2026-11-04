@@ -2241,7 +2241,7 @@ export default function ConfigPage() {
           {renderField('Scans per read', b.scans_per_read, (val) => updateBoard(boardKey, 'scans_per_read', val), 'number',
             undefined, 'per LJM read; empty = a 50 ms block')}
           {hasTc && renderField('CJC offset (K)', b.cjc_offset_k, (val) => updateBoard(boardKey, 'cjc_offset_k', val), 'number',
-            undefined, 'terminals vs internal sensor; default −4.9')}
+            undefined, 'terminals vs internal sensor; default −3.0 (screw terminals; ~−4.9 on a CB37)')}
         </FieldSection>
 
         <section className="space-y-3">
