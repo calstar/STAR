@@ -76,6 +76,37 @@ void test_fallback_is_the_known_static_address(void) {
     TEST_ASSERT_TRUE(Ethernet.static_subnet == kStaticSubnet);
 }
 
+// A send to a dead address must give up long before the 5 s task watchdog.
+void test_send_retries_are_limited_after_dhcp(void) {
+    BoardNet::State s = makeState();
+    Ethernet.dhcp_should_succeed = true;
+    Ethernet.dhcp_assigned = kLeasedIP;
+
+    BoardNet::begin(s, kDns, kGateway);
+
+    TEST_ASSERT_EQUAL_UINT16(BoardNet::SEND_RETRY_TIMEOUT_MS,
+                             Ethernet.retry_timeout_ms);
+    TEST_ASSERT_EQUAL_UINT8(BoardNet::SEND_RETRY_COUNT, Ethernet.retry_count);
+}
+
+void test_send_retries_are_limited_after_fallback(void) {
+    BoardNet::State s = makeState();
+    Ethernet.dhcp_should_succeed = false;
+
+    BoardNet::begin(s, kDns, kGateway);
+
+    TEST_ASSERT_EQUAL_UINT16(BoardNet::SEND_RETRY_TIMEOUT_MS,
+                             Ethernet.retry_timeout_ms);
+    TEST_ASSERT_EQUAL_UINT8(BoardNet::SEND_RETRY_COUNT, Ethernet.retry_count);
+}
+
+void test_worst_case_send_is_far_below_the_watchdog(void) {
+    const uint32_t worst_ms = static_cast<uint32_t>(
+        BoardNet::SEND_RETRY_TIMEOUT_MS) * (BoardNet::SEND_RETRY_COUNT + 1u);
+    // 16 queued packets to dead boards in one pass still fit inside 5 s.
+    TEST_ASSERT_LESS_THAN_UINT32(5000u, 16u * worst_ms);
+}
+
 void test_source_is_reported_honestly(void) {
     BoardNet::State s = makeState();
     TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::None, (int)s.source);
@@ -206,6 +237,9 @@ int main(int, char**) {
     RUN_TEST(test_board_never_invents_a_link_local_address);
     RUN_TEST(test_fallback_is_the_known_static_address);
     RUN_TEST(test_source_is_reported_honestly);
+    RUN_TEST(test_send_retries_are_limited_after_dhcp);
+    RUN_TEST(test_send_retries_are_limited_after_fallback);
+    RUN_TEST(test_worst_case_send_is_far_below_the_watchdog);
 
     // lease renewal
     RUN_TEST(test_lease_is_renewed_only_on_a_lease);

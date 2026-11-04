@@ -391,6 +391,7 @@ inline void setup(CoreState& s, const Config& cfg) {
 #else
     // Boards that have not opted in keep their compiled-in static address.
     Ethernet.begin(s.mac, s.staticIP, s.dns, s.gateway, s.subnet);
+    BoardNet::limitSendRetries();
 #endif
     delay(ETHERNET_BEGIN_DELAY_MS);
 
