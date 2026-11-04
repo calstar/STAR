@@ -13,6 +13,7 @@ import { parseElodinPacket } from '../elodin-protocol.js';
 import { t7CalFields } from '../sensor-config.js';
 import { buildSensorConfig } from '../api-server.js';
 import { mapEntityToGroup, isPrimaryPhysicalStream } from '../board-scan-rate.js';
+import { pipelineUnits, setT7UnitInstalledForTests, T7_UNIT } from '../service-controller.js';
 import { t7Channels, t7BoardIssues, validateConfigForRun } from '../../../shared/config-validation.js';
 
 const T7_BOARD = {
@@ -206,5 +207,22 @@ describe('session gate', () => {
         const back = parse(text) as any;
         expect(back.boards.labjack_1.channels).toHaveLength(4);
         expect(t7BoardIssues(back.boards, 'labjack_1')).toEqual([]);
+    });
+});
+
+describe('session pipeline', () => {
+    it('runs sensor-t7 with the pipeline where its unit is installed', () => {
+        setT7UnitInstalledForTests(() => true);
+        expect(pipelineUnits(false)).toContain(T7_UNIT);
+        expect(pipelineUnits(true)).toContain(T7_UNIT);
+    });
+
+    it('leaves it out where it is not, so systemctl is never asked about an unknown unit', () => {
+        // systemctl --user start/stop fails outright on a unit it does not know, which would
+        // fail every session start on a box whose install_services.sh predates sensor-t7.
+        setT7UnitInstalledForTests(() => false);
+        expect(pipelineUnits(true)).not.toContain(T7_UNIT);
+        expect(pipelineUnits(false)).toEqual(
+            ['sensor-elodin', 'sensor-daq', 'sensor-calibration', 'sensor-controller', 'sensor-actuator']);
     });
 });
