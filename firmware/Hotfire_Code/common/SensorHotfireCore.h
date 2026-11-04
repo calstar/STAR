@@ -86,8 +86,10 @@ struct Config {
      * `out`'s timestamp and sensor IDs (in config order); the board writes
      * `out.values[i]` for each. Return false to discard the chunk.
      *
-     * Wait for data with waitDrdy(), and write 0 for a channel when it
-     * returns false (the ADC did not answer in time).
+     * Wait for data with waitDrdy() and read with readChecked(). When either
+     * fails, return false: a chunk with a missing reading is dropped, never
+     * sent with a made-up value. A 0 reads as "below threshold" to the
+     * actuator's PT abort and would end a vent early.
      */
     bool (*read_chunk)(void* user_data, const StoredSensorConfig& config,
                        Chunk& out);
@@ -509,6 +511,32 @@ inline bool waitDrdy(int drdy_pin) {
 }
 
 /**
+ * Read the conversion that waitDrdy() just announced. On a bad checksum, wait
+ * for the next conversion on the same channel and try once more. Returns
+ * false if neither read is good; the caller then drops the chunk.
+ *
+ * `read_delay_us` is the pause some boards need between DRDY and the read.
+ *
+ * ADC task only.
+ */
+template <typename Adc>
+inline bool readChecked(Adc& adc, int drdy_pin, uint32_t& value_out,
+                        uint32_t read_delay_us = 0) {
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0 && !waitDrdy(drdy_pin))
+            return false;
+        if (read_delay_us)
+            delayMicroseconds(read_delay_us);
+        const auto reading = adc.readADC1();
+        if (reading.checksumValid) {
+            value_out = static_cast<uint32_t>(reading.value);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Subscribe the calling task to the task watchdog. If either sensor task
  * stops calling watchdogCheckIn() for TASK_WATCHDOG_TIMEOUT_S, the board
  * reboots and comes back in WaitingForServer.
@@ -593,6 +621,15 @@ inline void runSelfTestOnAdc(CoreState& s, const Config& cfg,
     xQueueSend(s.adc_results, &out, portMAX_DELAY);
 }
 
+/** Replay the board's whole ADC setup, then the configured reference. */
+inline void reinitAdc(const Config& cfg, bool have_reference,
+                      uint8_t reference) {
+    if (cfg.init_adc)
+        cfg.init_adc(cfg.user_data);
+    if (cfg.on_reference_voltage_config && have_reference)
+        cfg.on_reference_voltage_config(cfg.user_data, reference);
+}
+
 inline void adcTask(void* arg) {
     CoreState& s = *static_cast<TaskArgs*>(arg)->s;
     const Config& cfg = *static_cast<TaskArgs*>(arg)->cfg;
@@ -640,8 +677,14 @@ inline void adcTask(void* arg) {
                     sampling = cmd.sampling;
                     break;
                 case AdcCommand::Type::RunSelfTest:
-                    if (cfg.run_self_test)
+                    if (cfg.run_self_test) {
                         runSelfTestOnAdc(s, cfg, config);
+                        // The self-test leaves the ADC on the internal
+                        // reference with the PGA bypassed (LC gain 1), and
+                        // the server's config resend no longer re-applies an
+                        // unchanged reference. Put the board's setup back.
+                        reinitAdc(cfg, have_reference, reference);
+                    }
                     break;
             }
         }
@@ -657,9 +700,11 @@ inline void adcTask(void* arg) {
         chunk.num_sensors = config.num_sensors;
         memcpy(chunk.sensor_ids, config.sensor_ids, config.num_sensors);
         g_chunk_timed_out = false;
-        const bool keep = cfg.read_chunk(cfg.user_data, config, chunk);
+        // A chunk that timed out is dropped whatever the board returned, so
+        // the server and the actuator see a gap rather than a 0.
+        const bool keep = cfg.read_chunk(cfg.user_data, config, chunk) &&
+                          !g_chunk_timed_out;
         if (g_chunk_timed_out) {
-            // The board wrote 0 for every channel from the timeout on.
             timeouts_total++;
             timeouts_in_a_row++;
         } else {
@@ -676,16 +721,13 @@ inline void adcTask(void* arg) {
             HF_LOG(static_cast<unsigned>(timeouts_in_a_row));
             HF_LOG(" chunk(s) in a row, ");
             HF_LOG(timeouts_total);
-            HF_LOGLN(" total); sending 0 for missed channels");
+            HF_LOGLN(" total); dropping those chunks");
         }
         if (timeouts_in_a_row >= ADC_REINIT_AFTER_TIMEOUTS) {
             HF_LOG("[ADC] ");
             HF_LOG(static_cast<unsigned>(ADC_REINIT_AFTER_TIMEOUTS));
             HF_LOGLN(" timeouts in a row -- re-initialising the ADC");
-            if (cfg.init_adc)
-                cfg.init_adc(cfg.user_data);
-            if (cfg.on_reference_voltage_config && have_reference)
-                cfg.on_reference_voltage_config(cfg.user_data, reference);
+            reinitAdc(cfg, have_reference, reference);
             timeouts_in_a_row = 0;
         }
         // Same cadence as the old single loop: one chunk, then a short rest.

@@ -91,13 +91,9 @@ static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
         const int drdy_pin = drdy_for_connector(conn);
         ADS126X& adc = adc_for_connector(conn);
         delayMicroseconds(10);
-        if (!SensorHotfire::waitDrdy(drdy_pin)) {
-            out.values[i] = 0;
-            continue;
-        }
-        const auto reading = adc.readADC1();
-        out.values[i] =
-            reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;
+        if (!SensorHotfire::waitDrdy(drdy_pin) ||
+            !SensorHotfire::readChecked(adc, drdy_pin, out.values[i]))
+            return false;
     }
     return true;
 }
