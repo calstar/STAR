@@ -199,6 +199,60 @@ std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
     return t;
 }
 
+namespace {
+// One T7 VTable: 21 bytes, u64 @0 | u8 @8 | pad | 4-byte value @12 | 4 bytes @16 | u8 @20.
+bool register_t7_vtable(ElodinClient& client, uint8_t lo, const std::string& entity,
+                        const char* value_field, const char* u32_field, PrimType u32_type,
+                        const char* status_field) {
+    const std::string prefix = entity + ".";
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "channel_id"))),
+        raw_field(12, 4, schema(PrimType::F32(), {}, component(prefix + value_field))),
+        raw_field(16, 4, schema(u32_type, {}, component(prefix + u32_field))),
+        raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + status_field))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x26, lo}, .vtable = vt})) {
+        std::cerr << "[DatabaseConfig] T7 VTable failed: " << entity << std::endl;
+        return false;
+    }
+    bool ok = true;
+    for (const char* field : {"timestamp_ns", "channel_id", value_field, u32_field, status_field})
+        ok = send_msg(client, set_component_name(prefix + field)) && ok;
+    return send_msg(client, set_entity_name((static_cast<uint64_t>(0x26) << 8) | lo, entity)) && ok;
+}
+}  // namespace
+
+bool DatabaseConfig::register_t7_raw_tables(ElodinClient& client, uint8_t slot,
+                                            const std::vector<uint8_t>& ains, bool cjc) {
+    bool ok = true;
+    const uint8_t base = static_cast<uint8_t>((slot - 1) * 0x20);
+    const std::string n = std::to_string(slot);
+    for (uint8_t ain : ains)
+        ok = register_t7_vtable(client, static_cast<uint8_t>(base + ain),
+                                "T7" + n + ".AIN" + std::to_string(ain), "volts", "sample_ts_ms",
+                                PrimType::U32(), "status") &&
+             ok;
+    if (cjc)
+        ok = register_t7_vtable(client, static_cast<uint8_t>(base + 0x0F), "T7" + n + ".CJC",
+                                "temperature_c", "sample_ts_ms", PrimType::U32(), "status") &&
+             ok;
+    return ok;
+}
+
+bool DatabaseConfig::register_t7_calibrated_tables(ElodinClient& client, uint8_t slot,
+                                                   const std::vector<T7Table>& tables) {
+    bool ok = true;
+    const uint8_t base = static_cast<uint8_t>((slot - 1) * 0x20 + 0x10);
+    const std::string n = std::to_string(slot);
+    for (const auto& t : tables)
+        ok = register_t7_vtable(client, static_cast<uint8_t>(base + t.ain),
+                                "T7" + n + "_Cal.AIN" + std::to_string(t.ain), t.cal_field.c_str(),
+                                "raw_uv", PrimType::I32(), "cal_status") &&
+             ok;
+    return ok;
+}
+
 bool DatabaseConfig::register_tables(ElodinClient& client,
                                      const std::vector<BoardChannels>& pt_boards,
                                      const std::vector<BoardChannels>& act_boards,

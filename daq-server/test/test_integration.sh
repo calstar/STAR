@@ -655,6 +655,11 @@ sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONF
 sedi 's/^"Ox Upstream" = "cubic"$/"Ox Upstream" = "robust"/' "$TEST_CONFIG"
 sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
 
+# LabJack T7 (config_base's labjack_1, streamed by `t7_bridge --fake` below): put its load cell in
+# cubic mode so the t7 check can see a capture move it — on physics, every load cell's default, a
+# captured point is stored but cannot change the reading.
+printf '\n[calibration_model_labjack_1]\n"T7 Thrust LC" = "cubic"\n' >> "$TEST_CONFIG"
+
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
@@ -698,7 +703,7 @@ kill_stale_integration_processes "Pre-flight"
 
 echo "📊 Starting Elodin DB..."
 tmp_rm "$TEST_DB_PATH"
-RUST_LOG=debug "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
+RUST_LOG=debug "$ELODIN_DB_BIN" run "127.0.0.1:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
 PIDS+=($!)
 
 wait_for_port "$TEST_ELODIN_PORT" "Elodin DB" 10 || {
@@ -869,6 +874,26 @@ if [ -n "$CALIB_SVC" ]; then
   fi
 else
   echo "  ⚠️  calibration_service not found — calibrated data tests will show 0 entities"
+fi
+
+# ── Start the LabJack T7 bridge (stand-in device) ────────────────────────────
+# config_base.toml's labjack_1, streamed by FakeT7Device. After calibration_service on purpose:
+# its tables then register after the service subscribed, which is the order that needs the T7
+# re-subscribe (a mixed rig whose ESP32 traffic never goes quiet) — the t7 check proves it works.
+T7_BRIDGE="$REPO_ROOT/build/bin/t7_bridge"
+if [ -x "$T7_BRIDGE" ]; then
+  echo "🧪 Starting t7_bridge --fake..."
+  ("$T7_BRIDGE" --config "$TEST_CONFIG" --fake > "$REPO_ROOT/.tmp/integration_t7_$$.log" 2>&1) &
+  PIDS+=($!)
+  sleep 1
+  if kill -0 "${PIDS[-1]}" 2>/dev/null; then
+    echo "  ✅ t7_bridge started (PID ${PIDS[-1]})"
+  else
+    echo "  ⚠️  t7_bridge failed to start. Log:"
+    tail -10 "$REPO_ROOT/.tmp/integration_t7_$$.log"
+  fi
+else
+  fail "build/bin/t7_bridge not found — the t7 check needs it"
 fi
 
 # ── Controller refuses a dangling PWM actuator, and drives nothing ───────────

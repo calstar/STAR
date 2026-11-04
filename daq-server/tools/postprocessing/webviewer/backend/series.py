@@ -317,7 +317,7 @@ def wide_csv_rows(run_id: str, components: list[str], start, end, time_source: s
 
     Two header rows: the component name, then the role it played in this run
     (from the run's config snapshot; blank where config names nothing). The
-    component name stays the column KEY — analysis scripts and analyze_run.py
+    component name stays the column KEY — analysis scripts
     key on it — and the role rides underneath as the legend, so a spreadsheet
     says "Ox Upstream" without the file losing its stable identifiers."""
     frames = []

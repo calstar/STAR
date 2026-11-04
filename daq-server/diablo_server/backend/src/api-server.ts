@@ -37,6 +37,7 @@ import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
+import { t7Channels } from '../../shared/config-validation.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -59,6 +60,9 @@ export interface SensorConfigEntry {
   entity: string;
   /** Calibrated entity string, e.g. "PT1_Cal.CH1" */
   calEntity: string;
+  /** 'T7' for a LabJack T7 channel (t7_bridge): `id` is then its AIN number and the entities are
+   *  T7<slot>.AIN<n> / T7<slot>_Cal.AIN<n>. Absent for the ESP32 boards. */
+  source?: 'T7';
 }
 
 /**
@@ -90,8 +94,8 @@ function elodinSlotFromBoardId(boardId: number): number {
   return m === 0 ? 10 : m;
 }
 
-function buildSensorConfig(): SensorConfigEntry[] {
-  const config = readConfig();
+/** `/api/sensor-config`. Exported, with an injectable config, for the tests. */
+export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry[] {
   const boards = (config.boards || {}) as Record<string, any>;
   const sensors: SensorConfigEntry[] = [];
 
@@ -262,6 +266,26 @@ function buildSensorConfig(): SensorConfigEntry[] {
         });
       }
     }
+  }
+
+  // LabJack T7 channels: one more PT / TC / LC / RTD each, named by their role, in the same units, and
+  // calibrated by calibration_service exactly like an ESP32 PT / LC (uid board_id*100 + AIN), so
+  // PT and LC inputs take part in the calibration sequence as the ESP32 ones do.
+  for (const ch of t7Channels(boards)) {
+    if (!ch.enabled || ch.calEntity === null) continue;
+    if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC' && ch.kind !== 'RTD') continue;
+    sensors.push({
+      type: ch.kind,
+      id: ch.ain,
+      role: ch.role,
+      boardId: ch.boardId,
+      boardIp: ch.boardIp,
+      isHpPt: false,
+      inCalibrationSequence: ch.kind === 'PT' || ch.kind === 'LC',
+      entity: ch.entity,
+      calEntity: ch.calEntity,
+      source: 'T7',
+    });
   }
 
   // Sort: board order first, then channel id within board

@@ -4,6 +4,7 @@
  */
 
 import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'fs';
+import { t7Channels } from '../../../shared/config-validation.js';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
@@ -105,6 +106,17 @@ export function applyCalibrationModelDefaults(config: any): void {
     for (const role of Object.keys(roles)) {
       if (models[role] == null) models[role] = isLoop ? 'physics' : 'cubic';
     }
+    config[modelKey] = models;
+  }
+  // LabJack T7 PT / LC inputs: the same per-role map, keyed by the T7 board. They default to
+  // 'physics' — the datasheet conversion from the channel row, which calibration_service applies
+  // to a T7 input with no model given (calibration_main.cpp, "LabJack T7 inputs").
+  for (const ch of t7Channels(boards)) {
+    if ((ch.kind !== 'PT' && ch.kind !== 'LC') || !ch.role) continue;
+    const modelKey = `calibration_model_${ch.boardKey}`;
+    const models =
+      config[modelKey] && typeof config[modelKey] === 'object' ? config[modelKey] : {};
+    if (models[ch.role] == null) models[ch.role] = 'physics';
     config[modelKey] = models;
   }
 }

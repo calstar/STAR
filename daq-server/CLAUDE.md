@@ -1,7 +1,28 @@
 # ⛔ HARDWARE SAFETY — READ THIS FIRST, IT OVERRIDES EVERYTHING BELOW
 
-**This machine (`star-rfs`) IS the test stand.** The actuator boards sit on `192.168.2.0/24` and
-are reachable. Anything that emits an actuator command moves a **real valve** on **real plumbing**
+## Where this applies: the stand's DAQ server only
+
+Everything in this section applies **on the actual DAQ server** — the box wired to the stand —
+and nowhere else. Decide which one you are on before anything else:
+
+```bash
+hostname                              # star-rfs → the stand
+ip -4 -o addr | grep ' 192\.168\.2\.' # an address on the board LAN → the stand
+```
+
+If **either** says stand, every rule below is in force, in full. If you are not sure, treat it as
+the stand.
+
+**During development it does not apply** — a laptop, a dev box, a cloud/CI container: no board LAN,
+no actuator boards, nothing a UDP packet can move. There, run the whole stack, `sequencer_service`,
+`test/test_integration.sh` and `test/e2e_guitest_playwright.sh` as freely as `ctest`; they are the
+best evidence a change works. Two cautions still hold off the stand: `test_integration.sh` moves
+the checkout's `scripts/calibration/calibrations/cubic_calibration.json` and `lc_tare.json` aside
+and puts them back on exit — a hard kill can leave them parked in `.tmp/` — and none of it is ever
+pointed at the stand's config or IPs.
+
+**On the stand (`star-rfs`), this machine IS the test stand.** The actuator boards sit on
+`192.168.2.0/24` and are reachable. Anything that emits an actuator command moves a **real valve** on **real plumbing**
 that may be pressurised, with people standing near it. There is no simulator in the way. There is
 no dry-run mode. A command you send arrives.
 
@@ -87,9 +108,11 @@ cd diablo_server/frontend && npm test && npm run lint       # TS
 ```
 
 **`test/test_integration.sh` and `test/e2e_guitest_playwright.sh` launch the full stack and touch
-persistent state — see the rule above. Ask first, every time.** When the user does authorise the
-integration test, be aware it deletes `scripts/calibration/calibrations/cubic_calibration.json`;
-back it up first and say that you have.
+persistent state.** On the stand that falls under the rule above: ask first, every time. Off the
+stand (a dev box, a cloud/CI container — see "Where this applies") run them whenever a change
+touches the pipeline. Either way they move `scripts/calibration/calibrations/cubic_calibration.json`
+(and `lc_tare.json`) aside for the run and restore them on exit; a killed run can leave them in
+`.tmp/`, so back them up first if that copy matters, and say that you have.
 
 Do not run `npx playwright test` alone unless a stack is already up and you intend to hit only the
 browser tests.

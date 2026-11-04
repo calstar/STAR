@@ -48,6 +48,10 @@ struct CubicFit {
  */
 enum class SensorKind { PT, LC };
 
+/** CubicChannel::raw_unit values. */
+inline constexpr const char* kRawUnitAdc = "adc";
+inline constexpr const char* kRawUnitMicrovolts = "uV";
+
 /**
  * How trustworthy the most recent capture on this channel was.
  *
@@ -85,6 +89,13 @@ struct CubicChannel {
     // Which logical-channel namespace this channel's fit is serialized into. PT by default so
     // a legacy file, and any caller that does not say, keeps its historical meaning.
     SensorKind kind = SensorKind::PT;
+    /**
+     * What a point's `adc` means: kRawUnitAdc for an ESP32 board's ADC code, kRawUnitMicrovolts for
+     * a LabJack T7 channel's reading in µV. Calibration is filed by role, so a role that moves from
+     * an ESP32 board to a T7 (or back) would otherwise carry a curve fitted in one unit onto a
+     * channel that reads in the other — a confident, wrong pressure. load() refuses that re-attach.
+     */
+    std::string raw_unit = "adc";
     std::vector<CubicPoint> points;
     CubicFit fit;
     // Robust display overlay: (adc, psi) samples of the live robust model (predict_pressure_psi),
@@ -115,7 +126,7 @@ public:
      *  restored from disk by load(). */
     void register_channel(uint16_t uid, uint8_t board_id, uint8_t connector, uint8_t logical_ch,
                           const std::string& role, const std::string& active_model = "cubic",
-                          SensorKind kind = SensorKind::PT);
+                          SensorKind kind = SensorKind::PT, const std::string& raw_unit = "adc");
 
     /** Append a capture point (raw ADC, reference PSI), cap history, and re-fit. Returns the fit.
      *  For a robust uid the point is recorded for display only and an invalid fit is returned
