@@ -300,6 +300,49 @@ export function t7BoardIssues(boards, boardKey) {
     }
     return out;
 }
+/**
+ * Enabled T7 inputs whose role an ESP32 sensor ([sensor_roles_<board>]) already has. The GUI finds
+ * a sensor by its role (sensorByRole, [gui.groups], pressure bars) and calibration files it by
+ * role, so a shared name would make one of the two unreachable.
+ */
+export function t7RoleClashes(config) {
+    const boards = config?.boards ?? {};
+    const esp32Roles = new Map();
+    for (const key of Object.keys(boards)) {
+        if (boards[key]?.enabled === false)
+            continue;
+        for (const role of Object.keys((config?.[`sensor_roles_${key}`] ?? {})))
+            if (!esp32Roles.has(role))
+                esp32Roles.set(role, key);
+    }
+    const out = [];
+    for (const ch of t7Channels(boards)) {
+        if (!ch.enabled || !ch.role || ch.calEntity === null)
+            continue;
+        const other = esp32Roles.get(ch.role);
+        if (other)
+            out.push({
+                boardKey: ch.boardKey, ain: ch.ain,
+                message: `AIN${ch.ain} role "${ch.role}" is also a sensor on ` +
+                    `${boardDisplayName(boards, other)} (${other}); the GUI shows sensors by role, so one of ` +
+                    'them would be hidden.',
+            });
+    }
+    return out;
+}
+/**
+ * Why an [abort_pts] entry cannot be honoured, or null. Abort thresholds are ADC codes an ESP32 PT
+ * board compares against its own reading while it vents on its own, so a LabJack T7 input — not on
+ * any such board — cannot gate one; calibration_service refuses it and the abort would silently not
+ * exist (calibration_main.cpp write_abort_thresholds).
+ */
+export function abortPtIssue(config, role) {
+    const t7 = t7Channels(config?.boards).find((c) => c.role === role && c.enabled);
+    return t7
+        ? `"${role}" is a LabJack T7 input (${t7.boardKey} AIN${t7.ain}); board abort thresholds can ` +
+            'only use a PT on an ESP32 PT board, so this threshold would never be applied.'
+        : null;
+}
 // ── The rule set ─────────────────────────────────────────────────────────────
 /**
  * Every reason this config is unfit to run, in the order an operator would work through them.
@@ -324,26 +367,13 @@ export function validateConfigForRun(config, csv) {
             add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${m}`);
     }
     // ── T7 roles vs every other sensor's ──────────────────────────────────────
-    // The GUI finds a sensor by its role (sensorByRole, [gui.groups], pressure bars), so a T7 channel
-    // sharing a name with an ESP32 sensor would make one of them unreachable.
-    {
-        const esp32Roles = new Map();
-        for (const key of Object.keys(boards)) {
-            if (boards[key]?.enabled === false)
-                continue;
-            for (const role of Object.keys((config?.[`sensor_roles_${key}`] ?? {})))
-                if (!esp32Roles.has(role))
-                    esp32Roles.set(role, key);
-        }
-        for (const ch of t7Channels(boards)) {
-            if (!ch.enabled || !ch.role || ch.calEntity === null)
-                continue;
-            const other = esp32Roles.get(ch.role);
-            if (other)
-                add('boards', 'error', `${boardDisplayName(boards, ch.boardKey)} (${ch.boardKey}): AIN${ch.ain} role ` +
-                    `"${ch.role}" is also a sensor on ${boardDisplayName(boards, other)} (${other}); ` +
-                    'the GUI shows sensors by role, so one of them would be hidden.');
-        }
+    for (const { boardKey, message } of t7RoleClashes(config))
+        add('boards', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
+    // ── Abort thresholds on a T7 input ────────────────────────────────────────
+    for (const role of Object.keys((config?.abort_pts ?? {}))) {
+        const msg = abortPtIssue(config, role);
+        if (msg)
+            add('state', 'error', `[abort_pts] ${msg}`);
     }
     // ── Roles vs active_connectors ────────────────────────────────────────────
     // active_connectors is wire-level: config_broadcast packs it into the packet sent to the

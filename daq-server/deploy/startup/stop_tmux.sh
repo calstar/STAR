@@ -13,6 +13,7 @@ done
 # ── C++ FSW services ──────────────────────────────────────────────────────────
 pkill -f "daq_bridge"                  2>/dev/null || true
 pkill -f "calibration_service"         2>/dev/null || true
+pkill -f "t7_bridge"                   2>/dev/null || true
 pkill -f "sequencer_service"           2>/dev/null || true
 pkill -f "actuator_service"            2>/dev/null || true
 pkill -f "heartbeat_service"           2>/dev/null || true

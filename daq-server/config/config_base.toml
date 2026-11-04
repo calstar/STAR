@@ -334,6 +334,41 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# LabJack T7 (t7_bridge). A simulated run streams it as a stand-in device (t7_bridge --fake), and
+# test_integration.sh asserts on these exact channels — change them together.
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+mac = ""
+board_id = 81
+enabled = true
+scan_rate_hz = 100.0
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "T7 Tank PT"
+signal = "4-20mA"
+shunt_ohms = 250.0
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+role = "T7 Nozzle TC"
+tc_type = "K"
+range = 0.1
+
+[[boards.labjack_1.channels]]
+ain = 4
+kind = "LC"
+role = "T7 Thrust LC"
+differential = true
+range = 0.1
+full_scale = 500.0
+sensitivity_mv_per_v = 2.0
+excitation_v = 10.0
+
 [sim_pt_targets]
 1 = 500
 2 = 450
