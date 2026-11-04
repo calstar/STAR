@@ -111,7 +111,7 @@ def test_wide_csv_union_and_ffill(monkeypatch):
 
 def test_wide_csv_role_row_aligns_with_the_columns(monkeypatch, tmp_path):
     """The second header row names what each column IS. The component name stays the
-    column key (analyze_run.py and every analysis script key on it); the role rides
+    column key (every analysis script keys on it); the role rides
     underneath, blank where the run's config names nothing."""
     monkeypatch.setattr(config, "ELODIN_DIR", tmp_path)
     (tmp_path / "daq_20260902_120000.toml").write_text(

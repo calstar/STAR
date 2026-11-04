@@ -5,8 +5,7 @@ pick arbitrary sensors, plot them interactively (zoom/pan), and export CSV or a
 plot image — without copying the multi-GB DB off the box or setting up a Python
 toolchain per person.
 
-This complements the static-PNG `analyze_run.py` pipeline: same data, but
-interactive and self-serve.
+It replaces the old static-PNG `analyze_run.py` pipeline (removed).
 
 ## Quick start (local)
 
