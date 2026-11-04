@@ -22,7 +22,3 @@ typedef struct {
 
 // Starts a task; returns once the camera and encoder are streaming.
 esp_err_t video_src_start(const video_src_config_t *cfg);
-// The next frame is encoded as a key frame (after a channel hop, so the
-// ground's decoder has a clean picture as soon as its receiver relocks).
-// Any task; takes effect on the encoder's own task.
-void video_src_request_key(void);

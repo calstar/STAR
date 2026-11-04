@@ -5,21 +5,19 @@
 //     $<BODY>*<HH>\r\n        HH: XOR of every byte of BODY, two hex digits
 //
 // Flight computer -> P4:
-//   $HOP,<seq>,<kHz>       hop to kHz. seq (0-65535) names this hop: a
-//                          resend with the same seq and kHz is a retry and
-//                          gets the same answer, never a second hop.
-//   $CH?                   which channel, and any hop pending
+//   $HOP,<seq>,<kHz>       switch the carrier to kHz now. seq (0-65535)
+//                          names this command: a resend with the same seq
+//                          and kHz is a retry and gets the same answer,
+//                          never a second switch.
+//   $CH?                   which channel
 // P4 -> flight computer:
-//   $ACK,<seq>,<kHz>,<ms>,<pcr>    scheduled: on air at kHz in <ms>, at the
-//                          stream time <pcr> (27 MHz, the PCR timeline the
-//                          ground receives; the in-band table carries it too)
-//   $NAK,<seq>,<why>       refused, nothing changes. why: RANGE (outside the
-//                          band), NOPLAN (no PLL plan), BUSY (another hop is
-//                          pending), SEQ (seq reused for a different kHz)
 //   $DONE,<seq>,<kHz>,OK   on air at kHz
-//   $DONE,<seq>,<kHz>,FAIL the PLL did not lock there: still on the old
-//                          channel (the table says which)
-//   $CH,<kHz>,IDLE  |  $CH,<kHz>,PENDING,<seq>,<next kHz>
+//   $DONE,<seq>,<kHz>,FAIL the PLL did not lock there: back on the old
+//                          channel
+//   $NAK,<seq>,<why>       refused, nothing changes. why: RANGE (outside the
+//                          band), NOPLAN (no PLL plan), SEQ (seq reused for a
+//                          different kHz)
+//   $CH,<kHz>
 //   $ERR,CSUM | $ERR,SYNTAX   a line the P4 could not use (no seq to name)
 #pragma once
 #include <stdbool.h>

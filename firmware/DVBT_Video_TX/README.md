@@ -65,8 +65,7 @@ for. The interface between them is just TS bytes over SPI.
 
 ```
 esp32p4/             ESP32-P4 firmware (ESP-IDF v5.5): bring-up, TS mux, health watchdog, SD recording,
-                     channel hops on the flight computer's command (UART; see its README)
-ground/              the ground station's side of a hop: reads the channel table from the received stream
+                     channel switching on the flight computer's command (UART; see its README)
 test/e2e/            end-to-end: the firmware against the Verilated RTL and chip models,
                      then a gr-dtv DVB-T receiver and ffmpeg (see its README)
 gateware/rtl/        Verilog-2005, one file per EN 300 744 stage
@@ -95,8 +94,8 @@ On top of the per-block tests, `test/e2e` runs the firmware that flies
 against the whole FPGA top level and datasheet models of the Si5351A,
 ECP5, AD9116 and ADRF6755, demodulates the DAC output with gr-dtv's
 receiver and decodes the 1080p video with ffmpeg, in twenty scenarios from a
-clean boot to the FPGA losing its configuration mid-flight, a channel hop
-the flight computer orders mid-flight and the ground follows, and a full
+clean boot to the FPGA losing its configuration mid-flight, a channel switch
+the flight computer orders mid-flight, and a full
 15 km flight profile with every realistic impairment (`test/e2e/IMPAIRMENTS.md`
 says what breaks the link and what was fixed); its own
 `mutation_check.py` plants integration bugs (firmware and RTL) and

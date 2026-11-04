@@ -98,13 +98,10 @@ menu "DVB-T transmitter"
             reference at its fastest. A 40 MHz TCXO with any tolerance is
             therefore divided by 2 (20 MHz PFD). 0 runs the PFD at REFIN.
     config DVBT_LO_KHZ
-        int "Carrier (LO) frequency at first boot (kHz)"
+        int "Carrier (LO) frequency at boot (kHz)"
         default 1279000
         help
-            The channel until the flight computer moves it ($HOP on its
-            UART). The last channel it moved to is kept in NVS and used at
-            every boot after, so a reset in flight comes back where the
-            ground station is listening.
+            The channel until the flight computer moves it ($HOP on its UART).
     config DVBT_LO_MIN_KHZ
         int "Lowest carrier allowed (kHz)"
         default 1243500
@@ -113,12 +110,6 @@ menu "DVB-T transmitter"
     config DVBT_LO_MAX_KHZ
         int "Highest carrier allowed (kHz)"
         default 1296500
-    config DVBT_HOP_LEAD_MS
-        int "Hop lead time (ms): from the flight computer's command to the hop"
-        default 500
-        help
-            The in-band channel table announces the hop for this long (it
-            repeats every 100 ms), so the ground sees it several times.
     config DVBT_FC_UART
         int "Flight computer UART port"
         default 1

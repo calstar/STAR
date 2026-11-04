@@ -12,8 +12,6 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/uart.h"
-#include "nvs_flash.h"
-#include "nvs.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
@@ -58,42 +56,15 @@ static void delay_us(void *ctx, uint32_t us)
 // TS task blocked for more than the FPGA FIFO's depth makes the FPGA insert
 // null packets. So the callback only queues the line; a low-priority task
 // prints it, and lines are dropped (counted) when the queue is full.
-// The same task stores a new channel in NVS: a flash write stalls the caches
-// (both cores) for a moment, so it happens rarely -- once per hop -- and
-// never from inside the TS task's own call chain.
 typedef struct { char lvl; char m[120]; } log_line_t;
 static QueueHandle_t s_logq;
 static volatile uint32_t s_log_dropped;
-static volatile uint32_t s_store_khz;
-
-static void store_channel(uint32_t khz)
-{
-    nvs_handle_t h;
-    if (nvs_open("dvbt", NVS_READWRITE, &h) != ESP_OK) return;
-    if (nvs_set_u32(h, "lo_khz", khz) == ESP_OK) nvs_commit(h);
-    nvs_close(h);
-}
-
-static uint32_t stored_channel(void)
-{
-    nvs_handle_t h;
-    uint32_t khz = 0;
-    if (nvs_open("dvbt", NVS_READONLY, &h) == ESP_OK) {
-        if (nvs_get_u32(h, "lo_khz", &khz) != ESP_OK) khz = 0;
-        nvs_close(h);
-    }
-    return khz >= CONFIG_DVBT_LO_MIN_KHZ && khz <= CONFIG_DVBT_LO_MAX_KHZ ? khz : CONFIG_DVBT_LO_KHZ;
-}
 
 static void log_task(void *arg)
 {
     log_line_t l;
     for (;;) {
-        if (xQueueReceive(s_logq, &l, pdMS_TO_TICKS(100)) != pdTRUE) {
-            uint32_t k = s_store_khz;
-            if (k) { s_store_khz = 0; store_channel(k); }
-            continue;
-        }
+        if (xQueueReceive(s_logq, &l, portMAX_DELAY) != pdTRUE) continue;
         if (l.lvl == 'E') ESP_LOGE(TAG, "%s", l.m);
         else if (l.lvl == 'W') ESP_LOGW(TAG, "%s", l.m);
         else ESP_LOGI(TAG, "%s", l.m);
@@ -116,13 +87,6 @@ static size_t fc_read(void *ctx, uint8_t *buf, size_t max)
 }
 
 static void fc_write(void *ctx, const char *line) { uart_write_bytes(CONFIG_DVBT_FC_UART, line, strlen(line)); }
-static void on_channel(void *ctx, uint32_t khz) { s_store_khz = khz; }
-
-#if CONFIG_DVBT_VIDEO && DVBT_HAVE_VIDEO
-static void keyframe(void *ctx) { video_src_request_key(); }
-#else
-#define keyframe NULL
-#endif
 
 static void mux_lock(void *ctx, bool take)
 {
@@ -192,12 +156,6 @@ void app_main(void)
     gpio_config_t in = { .pin_bit_mask = 1ULL << CONFIG_DVBT_ADRF_LDET, .mode = GPIO_MODE_INPUT };
     ESP_ERROR_CHECK(gpio_config(&in));
 
-    esp_err_t ne = nvs_flash_init();
-    if (ne == ESP_ERR_NVS_NO_FREE_PAGES || ne == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        nvs_flash_erase();
-        ne = nvs_flash_init();
-    }
-    if (ne != ESP_OK) ESP_LOGW(TAG, "NVS: 0x%x (channel not kept across resets)", ne);
     uart_config_t uc = { .baud_rate = CONFIG_DVBT_FC_BAUD, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE,
                          .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .source_clk = UART_SCLK_DEFAULT };
     ESP_ERROR_CHECK(uart_driver_install(CONFIG_DVBT_FC_UART, 512, 1024, 0, NULL, 0));
@@ -223,14 +181,12 @@ void app_main(void)
         .i2c = &i2c, .ecp5 = &s_ecp5, .fpga_part_size = part, .fpga_port = fpga_port,
         .link = &s_link, .setup = &setup, .gpio_set = gpio_set, .gpio_get = gpio_get,
         .now_us = now_us, .delay_us = delay_us, .log = log_cb, .mux_lock = mux_lock,
-        .on_sent = on_sent, .fc_read = fc_read, .fc_write = fc_write, .on_channel = on_channel,
-        .keyframe = keyframe,
+        .on_sent = on_sent, .fc_read = fc_read, .fc_write = fc_write,
     };
     tx_config_t cfg = {
         .xtal_hz = CONFIG_DVBT_SI5351_XTAL_HZ, .xtal_load_pf = CONFIG_DVBT_SI5351_LOAD_PF,
-        .refin_hz = CONFIG_DVBT_ADRF_REFIN_HZ, .refin_tol_ppm = CONFIG_DVBT_ADRF_REFIN_TOL_PPM, .lo_hz = (uint64_t)stored_channel() * 1000,
+        .refin_hz = CONFIG_DVBT_ADRF_REFIN_HZ, .refin_tol_ppm = CONFIG_DVBT_ADRF_REFIN_TOL_PPM, .lo_hz = (uint64_t)CONFIG_DVBT_LO_KHZ * 1000,
         .lo_min_hz = (uint64_t)CONFIG_DVBT_LO_MIN_KHZ * 1000, .lo_max_hz = (uint64_t)CONFIG_DVBT_LO_MAX_KHZ * 1000,
-        .hop_lead_ms = CONFIG_DVBT_HOP_LEAD_MS,
         .atten_db = CONFIG_DVBT_ADRF_ATTEN_DB,
         .bw_mhz = 6, .mod = 0, .rate = 0, .guard = 2,        // QPSK 1/2, guard 1/8
         .provider = "STAR", .service = CONFIG_DVBT_CALLSIGN,

@@ -61,7 +61,7 @@ struct Opts {
     int cal_dc_i = 0, cal_dc_q = 0, cal_gain_i = 0, cal_gain_q = 0, cal_phase = 0;
     unsigned seed = 1;
     uint32_t good_crc = 0;
-    uint32_t lo_khz = 1279000, hop_lead_ms = 0, pll_bad_lo_khz = 0;
+    uint32_t lo_khz = 1279000, pll_bad_lo_khz = 0;
     std::vector<std::pair<double, std::string>> fc;     // (ms after bring-up, line)
 };
 static Opts O;
@@ -526,13 +526,6 @@ static void fc_write(void *, const char *line)
     g_fc_tx.push_back({g_now, s});
     R.event("P4 -> flight computer: " + s);
 }
-// The firmware asks the encoder for a key frame (after a hop). The clip is
-// pre-encoded, so the next frame comes from the clip's next key frame on
-// (back to its first if there is none left) -- what the camera's encoder
-// does when forced -- keeping the 30 fps timing.
-static int g_keyframes = 0;
-static bool g_want_key = false;
-static void keyframe(void *) { g_keyframes++; g_want_key = true; }
 
 static uint64_t g_sent_pkts = 0;
 static void on_sent(void *, const uint8_t *pkts, size_t n)
@@ -567,7 +560,7 @@ static std::vector<Au> load_aus(const std::string &path)
 static void usage()
 {
     fprintf(stderr, "e2e --out DIR [--image FILE] [--good-crc HEX] [--aus FILE] [--video-start-ms N] [--air-ms N]\n"
-                    "    [--health-ms N] [--lo-khz N] [--hop-lead-ms N] [--pll-bad-lo-khz N] [--fc MS:LINE]...\n"
+                    "    [--health-ms N] [--lo-khz N] [--pll-bad-lo-khz N] [--fc MS:LINE]...\n"
                     "    [--no-flash] [--inject-ldet MS[,DUR]] [--inject-fpga MS] [--inject-stall MS[,DUR]] [--seed N]\n"
                     "    [--impair si_ppm=..,tcxo_ppm=..,clk_jitter_ps=..,pll_phase_ps=..,pll_jitter_ps=..,io_skew_ps=..,\n"
                     "              dclk_delay_ps=..,p4_gap_us=..,isr_us=..,stall_prob=..,stall_ms=..,sck_ppm=..,\n"
@@ -606,7 +599,6 @@ int main(int argc, char **argv)
         else if (a == "--seed") O.seed = atoi(val().c_str());
         else if (a == "--video-start-ms") O.video_start_ms = atof(val().c_str());
         else if (a == "--lo-khz") O.lo_khz = strtoul(val().c_str(), nullptr, 10);
-        else if (a == "--hop-lead-ms") O.hop_lead_ms = strtoul(val().c_str(), nullptr, 10);
         else if (a == "--pll-bad-lo-khz") O.pll_bad_lo_khz = strtoul(val().c_str(), nullptr, 10);
         else if (a == "--fc") { std::string v = val(); size_t k = v.find(':'); if (k == std::string::npos) usage();
             O.fc.push_back({atof(v.substr(0, k).c_str()), v.substr(k + 1)}); }
@@ -672,7 +664,6 @@ int main(int argc, char **argv)
     board.on_sent = on_sent;
     board.fc_read = fc_read;
     board.fc_write = fc_write;
-    board.keyframe = keyframe;
     static uint8_t muxbuf[256 * 1024];
     tx_config_t cfg = {};
     cfg.xtal_hz = 25000000;
@@ -680,7 +671,6 @@ int main(int argc, char **argv)
     cfg.refin_hz = 40000000;
     cfg.refin_tol_ppm = 5;
     cfg.lo_hz = (uint64_t)O.lo_khz * 1000;
-    cfg.hop_lead_ms = O.hop_lead_ms;
     cfg.atten_db = 0;
     cfg.bw_mhz = 6;
     cfg.mod = 0;
@@ -714,7 +704,7 @@ int main(int argc, char **argv)
         fs_t start = std::max(t, g_fc_rx.empty() ? t : g_fc_rx.back().first);
         for (size_t k = 0; k < s.size(); k++) g_fc_rx.push_back({start + (fs_t)((k + 1) * 1e16 / 115200), (uint8_t)s[k]});
     }
-    size_t next_au = 0, di = 0;                 // frame next_au carries the clip's frame di
+    size_t next_au = 0;
     const fs_t frame_fs = (fs_t)(1e15 / 30 / (1 + IM.cam_ppm * 1e-6)), enc_latency = 40 * 1000 * FS_PER_US;
     std::vector<fs_t> enc_extra(aus.size());
     for (auto &x : enc_extra) x = (fs_t)(urand() * IM.enc_jitter_ms * 1e12);
@@ -725,19 +715,9 @@ int main(int argc, char **argv)
     uint64_t frames_put = 0, frames_dropped = 0;
     while (e == ESP_OK && g_now < t_end) {
         // Encoded frames: frame k captured at video_t0 + k/30 s, ready 40 ms later.
-        // (A forced key frame can wrap the clip: frames past its length reuse
-        // its jitter draws, so the random sequence the other scenarios see is
-        // unchanged.)
-        while (di < aus.size() && next_au < 2 * aus.size() &&
-               g_now >= video_t0 + (fs_t)next_au * frame_fs + enc_latency + enc_extra[next_au % aus.size()]) {
+        while (next_au < aus.size() && g_now >= video_t0 + (fs_t)next_au * frame_fs + enc_latency + enc_extra[next_au]) {
             fs_t cap = video_t0 + (fs_t)next_au * frame_fs;
-            if (g_want_key) {
-                g_want_key = false;
-                while (di < aus.size() && !aus[di].key) di++;
-                if (di == aus.size()) di = 0;
-            }
-            const Au &au = aus[di++];
-            if (!tx_put_frame(&app, au.d.data(), au.d.size(), au.key, cap / FS_PER_US))
+            if (!tx_put_frame(&app, aus[next_au].d.data(), aus[next_au].d.size(), aus[next_au].key, cap / FS_PER_US))
                 frames_dropped++;
             frames_put++;
             next_au++;
@@ -798,8 +778,8 @@ int main(int argc, char **argv)
             g_setup_min_ps < 1e17 ? g_setup_min_ps : 0.0, g_hold_min_ps < 1e17 ? g_hold_min_ps : 0.0, g_dac_timing_errors);
     fprintf(j, " \"p4_stalls\": %" PRIu64 ",\n \"p4_stall_max_s\": %.6f,\n", stalls, stall_max / 1e15);
     fprintf(j, " \"tx_status\": %u,\n", app.last_status);
-    fprintf(j, " \"cur_khz\": %u,\n \"hops\": %u,\n \"hops_failed\": %u,\n \"fc_lines\": %u,\n \"fc_bad\": %u,\n"
-               " \"keyframes\": %d,\n", app.cur_khz, app.hops, app.hops_failed, app.fc_lines, app.fc_bad, g_keyframes);
+    fprintf(j, " \"cur_khz\": %u,\n \"hops\": %u,\n \"hops_failed\": %u,\n \"fc_lines\": %u,\n \"fc_bad\": %u,\n",
+            app.cur_khz, app.hops, app.hops_failed, app.fc_lines, app.fc_bad);
     fprintf(j, " \"rf_segments\": [");
     for (size_t i = 0; i < g_segs.size(); i++)
         fprintf(j, "%s[%" PRIu64 ", %.9f, %d, %.3f]", i ? ", " : "", g_segs[i].sample, g_segs[i].t / 1e15, (int)g_segs[i].rf,

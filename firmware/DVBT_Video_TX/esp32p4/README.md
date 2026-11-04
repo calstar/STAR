@@ -25,7 +25,7 @@ python3 -m pytest -q test/host                  # host tests, no hardware
 | `fpga_link` | the SPI link to the FPGA: register read/write, ID check, TS packets paced by DREQ, over a frame callback + DREQ (`fpga_link.c`, pure); `fpga_link_esp.c` binds it to SPI2 with DMA and a DREQ interrupt. `dvbt_regs.h` mirrors `gateware/rtl/dvbt_host.v` |
 | `spi_bus_esp` | the bus interfaces on the P4: SPI3 as the setup bus (AD9116 3-wire, ADRF6755 4-wire, shared SCLK/data, GPIO chip selects) and the I²C master for the Si5351A. `spi_bus_pack.c` is the bit packing, pure C |
 | `ecp5_cfg` | loads the FPGA over its slave-SPI configuration port from the `fpga` partition (`tools/make_fpga_image.py` wraps the `.bit` with a CRC-checked header); if the image is missing, corrupt, for the wrong part, rejected (status FAIL) or DONE never rises, it releases the CFG pins to the board straps and pulses PROGRAMN so the FPGA boots from its own W25Q32. `ecp5_esp_open/close` lend it SPI2 |
-| `ts_mux` | MPEG-TS multiplexer at exactly the DVB-T channel rate: PAT/PMT every 100 ms, an SDT naming the service after the callsign, PCR every 20 ms from the packet count, H.264 access units as PES with PTS (access-unit delimiters added if missing), nulls in the gaps, and the channel table (PID 0x1FF0, every 100 ms: this channel, and any hop coming). Pure C, no allocation |
+| `ts_mux` | MPEG-TS multiplexer at exactly the DVB-T channel rate: PAT/PMT every 100 ms, an SDT naming the service after the callsign, PCR every 20 ms from the packet count, H.264 access units as PES with PTS (access-unit delimiters added if missing), nulls in the gaps. Pure C, no allocation |
 | `fc_link` | the flight computer's command link: NMEA-style lines (`$HOP,<seq>,<kHz>*HH`, `$CH?*HH`) parsed byte by byte, checksums, reply formatting. Pure C |
 | `video_src` | OV5647 (MIPI CSI → ISP) or an HDMI source through a TC358743 bridge → YUV420 → the P4's hardware H.264 encoder (Espressif `esp_video`, V4L2), each access unit to a callback with its capture time. Without `third_party/` the firmware builds without video |
 | `recorder` | records the transmitted TS to a microSD card (SDMMC slot 1, 1-bit, FAT, `/sdcard/TXnnnn.TS`), through a lock-free ring (`rec_ring.c`, pure) and a low-priority task: a lost link still leaves the flight's video |
@@ -35,40 +35,30 @@ python3 -m pytest -q test/host                  # host tests, no hardware
 | `adrf6755` | ADRF6755 modulator + PLL over any `spi_bus_if`: SPI-mode lock (3 CS pulses), LO planning (Equations 1-5, Table 6), the datasheet's power-up sequence (Rev. B p. 35), modulator power |
 | `main` | the P4 bindings (pins from `menuconfig` → *DVB-T transmitter*), then the camera, recorder and updater around `tx_app` |
 
-## Channels and hops (the flight computer's UART)
+## Channel switching (the flight computer's UART)
 
 UART1, 115200 8N1, GPIO11 (P4 TX) and GPIO12 (P4 RX) by default. The
 carrier can be anywhere from 1243.5 to 1296.5 MHz (the 5.7 MHz signal
 inside the 1240-1300 MHz band; every 125 kHz step has a PLL plan, tested).
-The flight computer decides; the P4 checks, announces and hops:
+The flight computer decides and tells the ground; the P4 checks and switches:
 
 ```
-FC  -> P4   $HOP,7,1255000*4C          hop #7 to 1255.000 MHz
-P4  -> FC   $ACK,7,1255000,500,<pcr>*HH   accepted: in 500 ms, at stream time <pcr>
-            (the channel table in the video now says "hop #7 to 1255000 at <pcr>",
-             every 100 ms: the ground station retunes on that, not on the uplink)
+FC  -> P4   $HOP,7,1255000*4C          switch to 1255.000 MHz (command #7)
 P4  -> FC   $DONE,7,1255000,OK*HH      on air at 1255 MHz (RF dark ~0.3 ms)
 ```
 
-Refusals change nothing: `$NAK,<seq>,RANGE|NOPLAN|BUSY|SEQ`, `$ERR,CSUM|SYNTAX`.
+Refusals change nothing: `$NAK,<seq>,RANGE|NOPLAN|SEQ`, `$ERR,CSUM|SYNTAX`.
 A resend with the same seq is a retry and gets the same answer -- never a
-second hop -- so the flight computer can repeat a command until it hears
+second switch -- so the flight computer can repeat a command until it hears
 back. A channel this board's PLL will not lock gives `$DONE,...,FAIL` with
-the transmitter back on the old channel. `$CH?` answers which channel and
-whether a hop is pending. Protocol: `components/fc_link/include/fc_link.h`;
-sequence: `components/tx_app/include/tx_app.h`.
+the transmitter back on the old channel. `$CH?` answers `$CH,<kHz>`.
+Protocol: `components/fc_link/include/fc_link.h`; sequence:
+`components/tx_app/include/tx_app.h`. The P4 boots on `CONFIG_DVBT_LO_KHZ`.
 
-- **Pad agility** is the same command before launch.
-- **After a reset** the P4 comes back on the last channel it hopped to
-  (kept in NVS), not the menuconfig default, so a brownout in flight
-  returns to where the ground is listening.
-- **The ground** reads the table with `../ground/dvbt_hop.py` (see there).
-- **Key frame** 250 ms after each hop, once the ground's receiver has
-  acquired, so its decoder has a picture without waiting a GOP.
-- **Per-channel calibration is not done yet:** the LO-feedthrough and I/Q
-  trims are one set, measured at one frequency. Check the carrier null on
-  the analyser at each channel you plan to use; if it moves, the trims
-  become a table per channel.
+**Per-channel calibration is not done yet:** the LO-feedthrough and I/Q
+trims are one set, measured at one frequency. Check the carrier null on the
+analyser at each channel you plan to use; if it moves, the trims become a
+table per channel.
 
 Pins: GPIO24/25 (USB Serial/JTAG: flashing, console, FPGA updates) and
 GPIO26/27 (USB OTG) are left free, and nothing sits on the strapping pins
@@ -110,10 +100,8 @@ corrupt or wrong-device image, bitstream rejected, no wake-up, INITN
 stuck), including that it never trusts a status read after the wake-up;
 the muxer with real x264 1080p30 through ffprobe and ffmpeg; the flight
 computer protocol (`test_hop.py`: bad and missing checksums, malformed and
-oversize lines, noise, a line cut off by a reset), the channel table in a
-real stream (every 100 ms, at once on a change, CRC, decoders unaffected)
-and the ground's reader of it, and a PLL plan for every 125 kHz of the
-band; the
+oversize lines, noise, a line cut off by a reset) and a PLL plan for every
+125 kHz of the band; the
 recorder's ring across wrap-around and drops; the updater's parser
 (noise before the header, corrupt and cut-short transfers, wrong FPGA,
 oversize).

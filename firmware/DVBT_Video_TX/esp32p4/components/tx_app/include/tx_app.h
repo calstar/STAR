@@ -27,19 +27,15 @@
 // configuration, e.g. a brownout on its rail): RF off, reload the FPGA,
 // re-prime, RF on. AD9116 retimer lost: re-initialise it with the RF off.
 //
-// Channel and hops (the flight computer's UART, protocol in fc_link.h): the
+// Channel switching (the flight computer's UART, protocol in fc_link.h): the
 // carrier is anywhere in lo_min_hz..lo_max_hz (the 6 MHz signal inside the
 // 1240-1300 MHz amateur band). The flight computer sends $HOP with a
-// channel; tx_pump validates it and plans the PLL, then answers $ACK with
-// when (hop_lead_ms from now, on the stream's 27 MHz clock) and puts the hop
-// in the channel table every packet stream carries (ts_mux.h), so the
-// ground station sees it coming in the video itself and retunes only on
-// that. At the hop -- when the packet stamped with that time reaches the
-// air, the FPGA's FIFO later than the mux -- RF off, the PLL to the new
-// channel, LDET, modulator on, RF on (the LO-unlock recovery's path), $DONE,
-// and hop_key_delay_ms later a key frame. A channel that will not lock goes back to the old
-// one ($DONE ... FAIL). The FPGA, the FIFO and the SD recording never stop;
-// the air is dark for the relock, a fraction of a millisecond.
+// channel; tx_pump checks it (band, PLL plan) and switches at once: RF off,
+// the PLL to the new channel, LDET, modulator on, RF on (the LO-unlock
+// recovery's path), $DONE. A channel that will not lock goes back to the old
+// one ($DONE ... FAIL). The FPGA, its FIFO and the SD recording never stop;
+// the air is dark for the relock, a fraction of a millisecond. Telling the
+// ground station is the flight computer's job (telemetry).
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
@@ -79,10 +75,6 @@ typedef struct {
     // write one reply line (queues; never blocks). May be NULL.
     size_t (*fc_read)(void *ctx, uint8_t *buf, size_t max);
     void (*fc_write)(void *ctx, const char *line);
-    // On air on a new channel (store it: a reboot comes back there). May be NULL.
-    void (*on_channel)(void *ctx, uint32_t khz);
-    // Ask the encoder for a key frame (after a hop). May be NULL.
-    void (*keyframe)(void *ctx);
 } tx_board_t;
 
 typedef struct {
@@ -113,12 +105,6 @@ typedef struct {
     // Channels: the carrier must lie in lo_min_hz..lo_max_hz (0: 1243.5 and
     // 1296.5 MHz, so the 5.7 MHz signal stays inside 1240-1300 MHz).
     uint64_t lo_min_hz, lo_max_hz;
-    uint32_t hop_lead_ms;               // $HOP to the hop (0: 500): the table repeats 5x first
-    uint32_t hop_latency_us;            // mux to air (0: the FPGA's TS FIFO at the channel rate)
-    // A key frame this long after a hop (0: 250): once the ground's receiver
-    // has acquired the new channel, so its decoder has a picture at once
-    // rather than at the next GOP. One at the hop itself would be wasted.
-    uint32_t hop_key_delay_ms;
 } tx_config_t;
 
 // Faults (tx_app_t.faults is sticky; tx_health returns this check's).
@@ -131,18 +117,7 @@ typedef struct {
 #define TX_F_LO_UNLOCK    (1u << 6)     // LDET low
 #define TX_F_DAC_UNLOCK   (1u << 7)     // AD9116 retimer searching
 #define TX_F_RECOVER_FAIL (1u << 8)     // a recovery did not bring RF back
-#define TX_F_HOP_FAIL     (1u << 9)     // a hop's channel did not lock (back on the old one)
-
-#define TX_FPGA_FIFO_BYTES 16384        // gateware TS_FIFO_AW = 14
-#define TX_HOP_PID 0x1FF0               // the channel table's PID
-
-typedef struct {
-    bool pending;
-    uint16_t seq;
-    uint32_t khz;
-    uint64_t t27;                       // stream time of the hop
-    adrf6755_plan_t plan;
-} tx_hop_t;
+#define TX_F_HOP_FAIL     (1u << 9)     // a commanded channel did not lock (back on the old one)
 
 typedef struct {
     const tx_board_t *b;
@@ -162,15 +137,12 @@ typedef struct {
     uint64_t nulls, frames, frames_dropped, pumped;
     uint32_t recoveries;
     uint32_t cur_khz;
-    tx_hop_t hop;
-    bool done_valid;                    // the last hop finished: answer its retries
+    bool done_valid;                    // the last $HOP's answer, for its retries
     uint16_t done_seq;
     uint32_t done_khz;
     bool done_ok;
     uint32_t hops, hops_failed, fc_lines, fc_bad;
     fc_rx_t fc;
-    uint64_t latency27;
-    int64_t key_at_us;                  // ask for a key frame then (0: none due)
 } tx_app_t;
 
 esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c);

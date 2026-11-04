@@ -125,20 +125,27 @@ static void fc_reply(tx_app_t *a, const char *fmt, ...)
     if (fc_format(line, sizeof line, body)) a->b->fc_write(a->b->ctx, line);
 }
 
-static void announce(tx_app_t *a)
+// Switch the carrier to khz (plan p): RF off, relock, RF on. Back to the
+// old channel if the new one will not lock.
+static bool switch_to(tx_app_t *a, uint32_t khz, const adrf6755_plan_t *p)
 {
-    ts_mux_chan_t ch = { .cur_khz = a->cur_khz, .next_khz = a->hop.pending ? a->hop.khz : a->cur_khz,
-                         .seq = a->hop.pending ? a->hop.seq : a->done_seq, .pending = a->hop.pending,
-                         .hop_t27 = a->hop.t27 };
-    lock(a, true);
-    ts_mux_set_chan(&a->mux, &ch);
-    lock(a, false);
-}
-
-static uint32_t ms_until(const tx_app_t *a, uint64_t t27)
-{
-    uint64_t now = ts_mux_now_27(&a->mux);
-    return t27 > now ? (uint32_t)((t27 - now) / 27000) : 0;
+    adrf6755_plan_t old = a->lo;
+    tx_rf_off(a);
+    a->lo = *p;
+    esp_err_t e = lo_lock(a);
+    bool ok = e == ESP_OK;
+    if (!ok) {
+        a->lo = old;
+        e = lo_lock(a);
+        a->faults |= TX_F_HOP_FAIL;
+        a->hops_failed++;
+    } else a->cur_khz = khz;
+    if (e == ESP_OK) e = rf_on(a);
+    if (e != ESP_OK) a->faults |= TX_F_RECOVER_FAIL;    // RF stays off; the health check keeps trying
+    a->hops++;
+    logf_(a, ok ? 'I' : 'E', "channel %lu kHz: %s", (unsigned long)khz,
+          ok ? "on air" : e == ESP_OK ? "no lock, back on the old channel" : "no lock, RF off");
+    return ok;
 }
 
 void tx_fc_command(tx_app_t *a, const fc_cmd_t *cmd)
@@ -150,71 +157,22 @@ void tx_fc_command(tx_app_t *a, const fc_cmd_t *cmd)
         return;
     }
     if (cmd->kind == FC_QUERY) {
-        if (a->hop.pending) fc_reply(a, "CH,%lu,PENDING,%u,%lu", (unsigned long)a->cur_khz, a->hop.seq,
-                                     (unsigned long)a->hop.khz);
-        else fc_reply(a, "CH,%lu,IDLE", (unsigned long)a->cur_khz);
+        fc_reply(a, "CH,%lu", (unsigned long)a->cur_khz);
         return;
     }
-    // $HOP. A retry (same seq) gets the same answer and never a second hop.
-    tx_hop_t *h = &a->hop;
-    if (h->pending) {
-        if (cmd->seq == h->seq && cmd->khz == h->khz)
-            fc_reply(a, "ACK,%u,%lu,%lu,%llu", h->seq, (unsigned long)h->khz, (unsigned long)ms_until(a, h->t27),
-                     (unsigned long long)(h->t27 % (300ull << 33)));
-        else fc_reply(a, "NAK,%u,%s", cmd->seq, cmd->seq == h->seq ? "SEQ" : "BUSY");
-        return;
-    }
+    // $HOP. A retry (same seq) gets the same answer and never a second switch.
     if (a->done_valid && cmd->seq == a->done_seq) {
-        if (cmd->khz != a->done_khz) { fc_reply(a, "NAK,%u,SEQ", cmd->seq); return; }
-        fc_reply(a, "DONE,%u,%lu,%s", cmd->seq, (unsigned long)cmd->khz, a->done_ok ? "OK" : "FAIL");
+        if (cmd->khz != a->done_khz) fc_reply(a, "NAK,%u,SEQ", cmd->seq);
+        else fc_reply(a, "DONE,%u,%lu,%s", cmd->seq, (unsigned long)cmd->khz, a->done_ok ? "OK" : "FAIL");
         return;
     }
     uint64_t hz = (uint64_t)cmd->khz * 1000;
     if (!in_band(a, hz)) { fc_reply(a, "NAK,%u,RANGE", cmd->seq); return; }
     adrf6755_plan_t p;
     if (!adrf6755_plan_tol(a->c.refin_hz, a->c.refin_tol_ppm, hz, &p)) { fc_reply(a, "NAK,%u,NOPLAN", cmd->seq); return; }
-    if (cmd->khz == a->cur_khz) {                 // already there: nothing to do
-        a->done_valid = true; a->done_seq = cmd->seq; a->done_khz = cmd->khz; a->done_ok = true;
-        fc_reply(a, "ACK,%u,%lu,0,0", cmd->seq, (unsigned long)cmd->khz);
-        fc_reply(a, "DONE,%u,%lu,OK", cmd->seq, (unsigned long)cmd->khz);
-        return;
-    }
-    h->pending = true;
-    h->seq = cmd->seq;
-    h->khz = cmd->khz;
-    h->plan = p;
-    h->t27 = ts_mux_now_27(&a->mux) + (uint64_t)a->c.hop_lead_ms * 27000;
-    announce(a);
-    logf_(a, 'I', "hop %u: to %lu kHz in %lu ms", h->seq, (unsigned long)h->khz, (unsigned long)a->c.hop_lead_ms);
-    fc_reply(a, "ACK,%u,%lu,%lu,%llu", h->seq, (unsigned long)h->khz, (unsigned long)a->c.hop_lead_ms,
-             (unsigned long long)(h->t27 % (300ull << 33)));
-}
-
-static void hop_now(tx_app_t *a)
-{
-    tx_hop_t *h = &a->hop;
-    adrf6755_plan_t old = a->lo;
-    tx_rf_off(a);
-    a->lo = h->plan;
-    esp_err_t e = lo_lock(a);
-    bool ok = e == ESP_OK;
-    if (!ok) {                                    // will not lock there: back to the channel we had
-        a->lo = old;
-        e = lo_lock(a);
-        a->faults |= TX_F_HOP_FAIL;
-        a->hops_failed++;
-    } else a->cur_khz = h->khz;
-    if (e == ESP_OK) e = rf_on(a);
-    if (e != ESP_OK) a->faults |= TX_F_RECOVER_FAIL;    // RF stays off; the health check keeps trying
-    a->hops++;
-    h->pending = false;
-    a->done_valid = true; a->done_seq = h->seq; a->done_khz = h->khz; a->done_ok = ok;
-    announce(a);
-    if (ok && a->b->on_channel) a->b->on_channel(a->b->ctx, a->cur_khz);
-    if (ok) a->key_at_us = a->b->now_us(a->b->ctx) + 1000ll * a->c.hop_key_delay_ms;
-    logf_(a, ok ? 'I' : 'E', "hop %u: %s %lu kHz (%s)", h->seq, ok ? "on air at" : "no lock at",
-          (unsigned long)h->khz, e == ESP_OK ? (ok ? "LO locked" : "back on the old channel") : "RF off");
-    fc_reply(a, "DONE,%u,%lu,%s", h->seq, (unsigned long)h->khz, ok ? "OK" : "FAIL");
+    bool ok = cmd->khz == a->cur_khz || switch_to(a, cmd->khz, &p);   // already there: nothing to do
+    a->done_valid = true; a->done_seq = cmd->seq; a->done_khz = cmd->khz; a->done_ok = ok;
+    fc_reply(a, "DONE,%u,%lu,%s", cmd->seq, (unsigned long)cmd->khz, ok ? "OK" : "FAIL");
 }
 
 static void fc_poll(tx_app_t *a)
@@ -236,8 +194,6 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
     if (!a->c.health_ms) a->c.health_ms = 100;
     if (!a->c.lo_min_hz) a->c.lo_min_hz = 1243500000ull;
     if (!a->c.lo_max_hz) a->c.lo_max_hz = 1296500000ull;
-    if (!a->c.hop_lead_ms) a->c.hop_lead_ms = 500;
-    if (!a->c.hop_key_delay_ms) a->c.hop_key_delay_ms = 250;
     a->dac = (ad9116_t){ .bus = b->setup, .dev = 0, .set_reset = dac_reset, .reset_ctx = a };
     a->mod = (adrf6755_t){ .bus = b->setup, .dev = 1 };
     // RF off and DAC in SPI mode (RESET/PINMD low) before anything is clocked.
@@ -278,16 +234,12 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
     a->ctrl = DVBT_CTRL_MOD(c->mod) | DVBT_CTRL_RATE(c->rate) | DVBT_CTRL_GUARD(c->guard);  // two's complement
     ts_mux_config_t mc = {
         .tsid = 1, .onid = 1, .program = 1, .pmt_pid = 0x1000, .video_pid = 0x100,
-        .provider = c->provider, .service = c->service, .hop_pid = TX_HOP_PID,
+        .provider = c->provider, .service = c->service,
         .buf = c->mux_buf, .buf_size = c->mux_buf_size,
     };
     ts_dvbt_rate(c->bw_mhz, c->mod, c->rate, c->guard, &mc.rate_num, &mc.rate_den);
     ts_mux_init(&a->mux, &mc);
     a->cur_khz = (uint32_t)(c->lo_hz / 1000);
-    announce(a);
-    // A packet stamped t reaches the air once the FIFO ahead of it has drained.
-    a->latency27 = a->c.hop_latency_us ? (uint64_t)a->c.hop_latency_us * 27
-                 : (uint64_t)TX_FPGA_FIFO_BYTES * 8 * 27000000ull * mc.rate_den / mc.rate_num;
     ts_mux_next(&a->mux, a->pkts);
     TRY(stream_start(a));
     TRY(rf_on(a));
@@ -318,11 +270,6 @@ esp_err_t tx_pump(tx_app_t *a)
     lock(a, false);
     a->pumped += 2;
     fc_poll(a);
-    if (a->hop.pending && ts_mux_now_27(&a->mux) >= a->hop.t27 + a->latency27) hop_now(a);
-    if (a->key_at_us && a->b->now_us(a->b->ctx) >= a->key_at_us) {
-        a->key_at_us = 0;
-        if (a->b->keyframe) a->b->keyframe(a->b->ctx);
-    }
     if (a->b->now_us(a->b->ctx) >= a->next_health_us) {
         tx_health(a);
         a->next_health_us = a->b->now_us(a->b->ctx) + 1000ll * a->c.health_ms;
