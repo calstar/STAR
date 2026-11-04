@@ -1462,6 +1462,13 @@ int main(int argc, char* argv[]) {
     auto last_save = std::chrono::steady_clock::now();
     auto last_packet_time = std::chrono::steady_clock::now();
     auto last_resubscribe = std::chrono::steady_clock::now();
+    // LabJack T7 tables are re-subscribed on their own clock. t7_bridge registers them whenever it
+    // connects, which can be after this service subscribed, and Elodin does not deliver a table
+    // that did not exist at subscribe time. On a rig with ESP32 boards streaming, their packets
+    // keep last_packet_time fresh, so a T7 gap would otherwise never trigger a re-subscribe — and
+    // T7 packets must not mask a missing ESP32 subscription either.
+    auto last_t7_packet_time = std::chrono::steady_clock::now();
+    auto last_t7_resubscribe = std::chrono::steady_clock::now();
     std::map<uint16_t, int32_t> last_adc_map;
 
     while (running) {
@@ -1479,6 +1486,8 @@ int main(int argc, char* argv[]) {
                 elodin_client.set_recv_timeout_ms(3000);
                 last_resubscribe = std::chrono::steady_clock::now();
                 last_packet_time = std::chrono::steady_clock::now();
+                last_t7_resubscribe = last_resubscribe;
+                last_t7_packet_time = last_packet_time;
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1502,8 +1511,21 @@ int main(int argc, char* argv[]) {
                 elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
                     pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
-                register_and_subscribe_t7();
                 last_resubscribe = now_s;
+            }
+            if (!t7_map.empty()) {
+                const auto since_t7_pkt =
+                    std::chrono::duration_cast<std::chrono::seconds>(now_s - last_t7_packet_time)
+                        .count();
+                const auto since_t7_sub =
+                    std::chrono::duration_cast<std::chrono::seconds>(now_s - last_t7_resubscribe)
+                        .count();
+                if (since_t7_pkt >= 5 && since_t7_sub >= 5) {
+                    std::cout << "[Cal] No LabJack T7 packets for " << since_t7_pkt
+                              << "s — re-subscribing to the T7 raw tables" << std::endl;
+                    register_and_subscribe_t7();
+                    last_t7_resubscribe = now_s;
+                }
             }
         }
 
@@ -1738,7 +1760,7 @@ int main(int argc, char* argv[]) {
             std::memcpy(&volts_f, p + 12, sizeof(volts_f));
             const uint64_t rx_ns = mono_ns();
             const uint8_t slot = static_cast<uint8_t>((type_lo >> 5) + 1);
-            last_packet_time = std::chrono::steady_clock::now();
+            last_t7_packet_time = std::chrono::steady_clock::now();
             if (!std::isfinite(volts_f))
                 continue;
             if (offset == fsw::t7::kCjcTableOffset) {
