@@ -58,9 +58,14 @@ public:
     int static_begin_calls = 0;
     IPAddress static_ip;
     IPAddress static_subnet;
+    // --- W5500 send retries. Like the real chip, every begin() puts them
+    //     back to the defaults (200 ms x 8). ---
+    uint16_t retry_timeout_ms = 200;
+    uint8_t retry_count = 8;
 
     /** DHCP form: returns 1 on success, 0 on failure, like Ethernet 2.x. */
     int begin(uint8_t*, unsigned long, unsigned long) {
+        resetRetries();
         if (!dhcp_should_succeed)
             return 0;
         local_ip = dhcp_assigned;
@@ -68,6 +73,7 @@ public:
     }
     /** Static form. */
     void begin(uint8_t*, IPAddress ip, IPAddress, IPAddress, IPAddress mask) {
+        resetRetries();
         static_begin_calls++;
         static_ip = ip;
         static_subnet = mask;
@@ -89,6 +95,16 @@ public:
     IPAddress subnetMask() const {
         return subnet_mask;
     }
+    void setRetransmissionTimeout(uint16_t ms) {
+        retry_timeout_ms = ms;
+    }
+    void setRetransmissionCount(uint8_t n) {
+        retry_count = n;
+    }
+    void resetRetries() {
+        retry_timeout_ms = 200;
+        retry_count = 8;
+    }
     int maintain() {
         maintain_calls++;
         return 0;
@@ -104,6 +120,7 @@ public:
         static_begin_calls = 0;
         static_ip = IPAddress();
         static_subnet = IPAddress();
+        resetRetries();
     }
 };
 

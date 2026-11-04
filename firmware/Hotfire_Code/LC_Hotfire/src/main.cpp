@@ -94,24 +94,24 @@ static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
         // output rate when a single connector is active.
         const bool settled =
             !mux_changed || flush_cycles(settlePulses(FILTER, DATA_RATE));
-        if (!settled || !SensorHotfire::waitDrdy(Pins.ADC_DRDY_1)) {
-            out.values[i] = 0;
-            // Force a re-flush next time: the filter state is unknown.
-            last_mux_p = last_mux_n = -1;
-            continue;
-        }
         // DRDY asserts as the conversion register is being updated; reading
         // immediately catches it mid-update and yields corrupted samples.
-        // LC_Calibration/PT_BOARD_Multi both pause here before reading.
-        delayMicroseconds(25);
-        const auto reading = ads126x.readADC1();
-        out.values[i] =
-            reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;
+        // LC_Calibration/PT_BOARD_Multi both pause 25 us before reading.
+        if (!settled || !SensorHotfire::waitDrdy(Pins.ADC_DRDY_1) ||
+            !SensorHotfire::readChecked(ads126x, Pins.ADC_DRDY_1,
+                                        out.values[i], 25)) {
+            // Force a re-flush next time: the filter state is unknown.
+            last_mux_p = last_mux_n = -1;
+            return false;
+        }
     }
     return true;
 }
 
 static void init_adc_cb(void*) {
+    // Init (and the self-test before a re-init) moves the mux, so the next
+    // chunk must flush rather than trust where it thinks the mux is.
+    last_mux_p = last_mux_n = -1;
     ADC_SPI.begin(Pins.ADC_SCLK, Pins.ADC_MISO, Pins.ADC_MOSI, Pins.ADC_CS_1);
     ADC_SPI.setDataMode(SPI_MODE1);
     pinMode(Pins.ADC_DRDY_1, INPUT);
