@@ -132,6 +132,11 @@ if [ "${USE_SIM:-0}" = "1" ]; then
   sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$CONFIG_FILE"
   echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x (from config_base.toml)"
   echo "     $CONFIG_FILE"
+  # The config editor edits the ACTIVE PROFILE beside the config file (/tmp/gui_logs/profiles/),
+  # which the backend seeds from that file only when none exists. Left over from an earlier start,
+  # it would show the config_base.toml of that day, not this one. The sim config is regenerated on
+  # every start, so its profile is too.
+  rm -rf /tmp/gui_logs/profiles /tmp/gui_logs/.active_profile
 fi
 
 OTA_BIN="$PROJECT/build/bin/ota_service"
