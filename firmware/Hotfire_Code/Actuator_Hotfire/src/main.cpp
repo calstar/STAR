@@ -39,7 +39,10 @@
 #include <SPI.h>
 #include <STAR_EthernetOTA.h>
 #include <daq-protocol.h>
+#include <driver/gpio.h>
+#include <esp_attr.h>
 #include <esp_mac.h>
+#include <esp_system.h>
 
 #include <atomic>
 #include <cstring>
@@ -123,6 +126,50 @@ struct PwmSlot {
 };
 static PwmSlot pwm_slots[NUM_PWM_SLOTS];
 
+// A watchdog or crash reboot keeps every ON/OFF valve where it was, as a hang
+// on main did (main never rebooted itself). Two things survive any reset but
+// power-on: a pad latched with gpio_hold_en, so the pin does not move while
+// the chip restarts, and RTC_NOINIT memory, which records each level so boot
+// can drive the same one before letting go of the latch. Power-on, brownout
+// and software restarts (OTA) still start every output LOW, as on main. A
+// valve running PWM is not latched and comes back LOW.
+struct HeldValves {
+    uint32_t magic;
+    uint8_t level[NUM_ACTUATORS];
+    uint32_t check;
+};
+RTC_NOINIT_ATTR static HeldValves g_held;
+constexpr uint32_t HELD_VALVES_MAGIC = 0x56414C56;  // "VALV"
+
+static uint32_t heldValvesCheck(const HeldValves& h) {
+    uint32_t c = h.magic;
+    for (uint8_t level : h.level)
+        c = c * 31u + level;
+    return c;
+}
+
+static void rememberLevel(uint8_t actuator_id, bool high) {
+    g_held.level[actuator_id - 1] = high ? 1 : 0;
+    g_held.magic = HELD_VALVES_MAGIC;
+    g_held.check = heldValvesCheck(g_held);
+}
+
+/** Drive an ON/OFF output and latch it, so a reboot leaves it there. The
+ *  level is written before the latch opens, so the pad never glitches. */
+static void driveHeld(uint8_t actuator_id, int pin, bool high) {
+    digitalWrite(pin, high ? HIGH : LOW);
+    gpio_hold_dis(static_cast<gpio_num_t>(pin));
+    gpio_hold_en(static_cast<gpio_num_t>(pin));
+    actuator_states[actuator_id - 1] = high ? 1 : 0;
+    rememberLevel(actuator_id, high);
+}
+
+/** Hand a pin to PWM: unlatch it, and record LOW for a reboot. */
+static void releaseForPwm(uint8_t actuator_id, int pin) {
+    gpio_hold_dis(static_cast<gpio_num_t>(pin));
+    rememberLevel(actuator_id, false);
+}
+
 // Arduino-ESP32 3.x replaced the channel-based LEDC calls with pin-based
 // ones; which core a build gets depends on the installed espressif32
 // platform, so support both. The 3.x core maps channel -> timer the same way.
@@ -170,7 +217,7 @@ static void stopPwm(uint8_t actuator_id) {
             pwmDetach(pin, slot.channel);
         if (pin >= 0) {
             pinMode(pin, OUTPUT);
-            digitalWrite(pin, LOW);
+            driveHeld(actuator_id, pin, false);
         }
         actuator_states[actuator_id - 1] = 0;
         slot.active = false;
@@ -250,10 +297,8 @@ public:
         HF_VERBOSE("Actuator ");
         HF_VERBOSE(static_cast<unsigned>(actuator_id));
         HF_VERBOSELN(on ? " -> ON" : " -> OFF");
-        if (actuator_states[idx] != new_state) {
-            digitalWrite(pin, on ? HIGH : LOW);
-            actuator_states[idx] = new_state;
-        }
+        if (actuator_states[idx] != new_state)
+            driveHeld(actuator_id, pin, on);
     }
 
     void startPwm(const daq::PWMActuatorCommand& cmd) override {
@@ -274,8 +319,7 @@ public:
 
         // Duty 0 (or no duration) is just OFF.
         if (cmd.duty_cycle <= 0.0f || cmd.duration == 0) {
-            digitalWrite(pin, LOW);
-            actuator_states[idx] = 0;
+            driveHeld(cmd.actuator_id, pin, false);
             return;
         }
 
@@ -288,6 +332,7 @@ public:
             return;
         }
 
+        releaseForPwm(cmd.actuator_id, pin);
         if (!constant_high) {
             // LEDC takes whole hertz.
             const uint32_t freq_hz =
@@ -305,7 +350,7 @@ public:
             if (actual_hz == 0) {
                 // A failed 3.x attach can leave the pin off the GPIO matrix.
                 pinMode(pin, OUTPUT);
-                digitalWrite(pin, LOW);
+                driveHeld(cmd.actuator_id, pin, false);
                 HF_LOG("[PWM] rejected: frequency ");
                 HF_LOG(cmd.frequency);
                 HF_LOGLN(" Hz is outside what the LEDC hardware can make");
@@ -510,17 +555,67 @@ static void streamSensorDataIfDue() {
 //-----------------------------------------------------------------------------
 // Pin setup
 //-----------------------------------------------------------------------------
+static const char* resetReasonName(esp_reset_reason_t why) {
+    switch (why) {
+        case ESP_RST_POWERON:
+            return "power-on";
+        case ESP_RST_SW:
+            return "software restart";
+        case ESP_RST_PANIC:
+            return "crash";
+        case ESP_RST_INT_WDT:
+            return "interrupt watchdog";
+        case ESP_RST_TASK_WDT:
+            return "task watchdog";
+        case ESP_RST_WDT:
+            return "other watchdog";
+        case ESP_RST_BROWNOUT:
+            return "brownout";
+        default:
+            return "other";
+    }
+}
+
+/** Resets after which the valves stay where they were (see HeldValves). */
+static bool rebootKeepsValves(esp_reset_reason_t why) {
+    switch (why) {
+        case ESP_RST_PANIC:
+        case ESP_RST_INT_WDT:
+        case ESP_RST_TASK_WDT:
+        case ESP_RST_WDT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/** First thing at boot: put every output back where a watchdog or crash
+ *  reboot found it, or LOW after any other reset. */
 static void initializeActuators() {
-    HF_VERBOSELN("Initializing actuators...");
+    const esp_reset_reason_t why = esp_reset_reason();
+    const bool keep = rebootKeepsValves(why) &&
+                      g_held.magic == HELD_VALVES_MAGIC &&
+                      g_held.check == heldValvesCheck(g_held);
+    const HeldValves before = g_held;
     for (int i = 1; i <= NUM_ACTUATORS; i++) {
-        int pin = getActuatorPin(i);
+        const int pin = getActuatorPin(i);
         if (pin < 0)
             continue;
         pinMode(pin, OUTPUT);
-        digitalWrite(pin, LOW);
-        actuator_states[i - 1] = 0;
+        driveHeld(i, pin, keep && before.level[i - 1]);
     }
-    HF_VERBOSELN("All actuators initialized to OFF state");
+    Serial.print("[BOOT] reset reason: ");
+    Serial.println(resetReasonName(why));
+    if (keep) {
+        Serial.print("[BOOT] kept valve levels from before the reboot:");
+        for (int i = 1; i <= NUM_ACTUATORS; i++) {
+            Serial.print(' ');
+            Serial.print(before.level[i - 1] ? '1' : '0');
+        }
+        Serial.println();
+    } else {
+        Serial.println("[BOOT] all actuators LOW");
+    }
 }
 
 static void initializeCurrentSensePins() {
@@ -566,6 +661,8 @@ static void startTasks();
 
 void setup() {
     Serial.begin(115200);
+    // Before the serial delay: the latched pins must be taken over at once.
+    initializeActuators();
     delay(SERIAL_MONITOR_READY_DELAY_MS);
     FirmwareHash::print();
     Serial.println("Actuator Hotfire state machine starting...");
@@ -577,7 +674,6 @@ void setup() {
     Serial.print(" / 192.168.2.");
     Serial.println(static_cast<unsigned>(board_id));
 
-    initializeActuators();
     initializeCurrentSensePins();
     initializePWMStates();
 
@@ -599,6 +695,7 @@ void setup() {
     BoardNet::begin(net, dns, gateway);
 #else
     Ethernet.begin(mac, staticIP, dns, gateway, subnet);
+    BoardNet::limitSendRetries();
 #endif
     delay(ETHERNET_BEGIN_DELAY_MS);
 
@@ -744,13 +841,21 @@ static bool receiveOnePacket() {
 }
 
 /** Send everything the control task queued. */
+// At most this many per pass, checking in with the watchdog after each: even
+// sends to dead boards (150 ms each, see BoardNet::limitSendRetries) keep a
+// pass well inside the 5 s watchdog. The rest wait for the next pass.
+constexpr int MAX_SENDS_PER_PASS = 8;
+
 static void sendQueuedPackets() {
     PacketMsg msg;
-    while (xQueueReceive(g_outgoing, &msg, 0) == pdTRUE) {
+    for (int sent = 0; sent < MAX_SENDS_PER_PASS &&
+                       xQueueReceive(g_outgoing, &msg, 0) == pdTRUE;
+         sent++) {
         const IPAddress dest = uint32ToIPAddress(msg.ip);
         udp.beginPacket(dest, msg.port);
         udp.write(msg.data, msg.len);
         udp.endPacket();
+        watchdogCheckIn();
         HF_VERBOSE("Sent: type ");
         HF_VERBOSE(static_cast<unsigned>(msg.data[0]));
         HF_VERBOSE(" to ");
