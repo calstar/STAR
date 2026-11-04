@@ -7,6 +7,7 @@
 
 #include <LabJackM.h>
 
+#include <iostream>
 #include <vector>
 
 namespace fsw {
@@ -25,10 +26,32 @@ bool is_warning(int err) {
     return err >= LJME_WARNINGS_BEGIN && err <= LJME_WARNINGS_END;
 }
 
+// A warning is still worth seeing: 203 LJME_USING_DEFAULT_CALIBRATION means LJM could not read
+// the unit's own calibration and every volt is on nominal constants.
+void warn(int err, const std::string& what) {
+    std::cerr << ("t7_bridge: LJM warning from " + what + ": " + ljm_message(err) + "\n");
+}
+
 void check(int err, const std::string& what) {
-    if (err == LJME_NOERROR || is_warning(err))
+    if (err == LJME_NOERROR)
         return;
+    if (is_warning(err))
+        return warn(err, what);
     throw T7Error(what + ": " + ljm_message(err), err);
+}
+
+// LJM library settings, once per process. LJM_AUTO_IPS (default on) caches discovered IPs in
+// /usr/local/share/LabJack/LJM/ljm_auto_ips.json for "ANY" opens; we always open by explicit IP,
+// and LabJack suggests turning it off in a sandboxed or read-only deployment ("What permissions
+// does LJM need?"). Failing to set it is logged, not fatal.
+void configure_library_once() {
+    static const bool done = [] {
+        const int err = LJM_WriteLibraryConfigS(LJM_AUTO_IPS, 0);
+        if (err != LJME_NOERROR)
+            warn(err, "LJM_WriteLibraryConfigS(LJM_AUTO_IPS, 0)");
+        return true;
+    }();
+    (void)done;
 }
 
 }  // namespace
@@ -39,6 +62,7 @@ LjmT7Device::~LjmT7Device() {
 
 void LjmT7Device::open(const std::string& ip) {
     close();
+    configure_library_once();
     // Open by explicit IP over wired Ethernet only: "ANY" would happily open some other T7 on the
     // network (or one on USB), and "TCP" would also accept WiFi.
     check(LJM_OpenS("T7", "ETHERNET", ip.c_str(), &handle_), "LJM_OpenS(" + ip + ")");
@@ -60,6 +84,8 @@ void LjmT7Device::write_names(const std::vector<std::string>& names,
     int error_address = -1;
     const int err = LJM_eWriteNames(handle_, static_cast<int>(cnames.size()), cnames.data(),
                                     values.data(), &error_address);
+    if (is_warning(err))
+        warn(err, "LJM_eWriteNames");
     if (err != LJME_NOERROR && !is_warning(err)) {
         // ErrorAddress is the Modbus address of the frame that failed; name it if we can.
         std::string which = "address " + std::to_string(error_address);

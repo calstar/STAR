@@ -206,7 +206,7 @@ export function t7BoardIssues(boards, boardKey) {
         out.push('settling_us cannot be negative.');
     if (num(b.scans_per_read, 0) < 0)
         out.push('scans_per_read cannot be negative.');
-    const cjc = num(b.cjc_offset_k, -4.9);
+    const cjc = num(b.cjc_offset_k, -3.0);
     if (!Number.isFinite(cjc) || Math.abs(cjc) > 20)
         out.push('cjc_offset_k must be within ±20 K.');
     const channels = Array.isArray(b.channels) ? b.channels : [];
@@ -314,7 +314,56 @@ export function t7BoardIssues(boards, boardKey) {
             out.push('an enabled T7 needs at least one channel.');
         if (rate * channels.length > 100000)
             out.push(`scan_rate_hz × channels = ${Math.round(rate * channels.length)} samples/s, beyond the T7's 100000.`);
+        out.push(...t7StreamLimitIssues(channels, rate, res, num(b.settling_us, 0)));
     }
+    return out;
+}
+// Datasheet A-1-1 (support.labjack.com/docs/a-1-1-stream-data-rates-t-series-datasheet). Mirrors
+// stream_limit_issues() in lib/src/config/T7Config.cpp.
+/** Table A.1.7, first column: a single-address stream's max scan rate at resolution 1-8. */
+const T7_SINGLE_ADDRESS_MAX_HZ = [100000, 48000, 22000, 11000, 5500, 2500, 1200, 600];
+/** Table A.1.8: interchannel delay (µs) by range, resolution 1-8; 0 = not supported in a
+ *  multi-channel stream. Summed over a scan it estimates (fast-side) the shortest scan period. */
+const T7_INTERCHANNEL_US = {
+    '10': [15, 25, 45, 90, 170, 335, 670, 1335],
+    '1': [210, 220, 545, 585, 1200, 2415, 2750, 3415],
+    '0.1': [1040, 2105, 0, 0, 0, 0, 0, 0],
+    '0.01': [0, 0, 0, 0, 0, 0, 0, 0],
+};
+function t7StreamLimitIssues(channels, rate, res, settlingUs) {
+    const out = [];
+    if (channels.length === 0 || !(rate > 0) || !Number.isInteger(res) || res < 0 || res > 8)
+        return out;
+    const eff = res === 0 ? 1 : res;
+    const rangeOf = (c) => (typeof c?.range === 'number' ? c.range : String(c?.kind) === 'TC' ? 0.1 : 10);
+    const key = (r) => (['10', '1', '0.1', '0.01'].find((k) => Math.abs(Number(k) - r) < 1e-9));
+    const delay = (r) => { const k = key(r); return k === undefined ? undefined : T7_INTERCHANNEL_US[k][eff - 1]; };
+    const hasTc = channels.some((c) => String(c?.kind) === 'TC');
+    const ranges = channels.map(rangeOf);
+    if (hasTc)
+        ranges.push(10);
+    if (ranges.length === 1) {
+        const max = T7_SINGLE_ADDRESS_MAX_HZ[eff - 1];
+        if (rate > max)
+            out.push(`one channel at resolution_index ${res} streams at most ${max} scans/s (datasheet A-1-1).`);
+        return out;
+    }
+    let unsupported = false;
+    for (const c of channels) {
+        const r = rangeOf(c);
+        if (delay(r) === 0) {
+            unsupported = true;
+            out.push(`AIN${c?.ain}: range ${Math.abs(r - 0.01) < 1e-9 ? '0.01' : '0.1'} V is not supported in a multi-channel stream` +
+                `${Math.abs(r - 0.1) < 1e-9 ? ' above resolution_index 2' : ' at any resolution'} (datasheet A-1-1, Table A.1.7).`);
+        }
+    }
+    if (unsupported || ranges.some((r) => delay(r) === undefined))
+        return out;
+    const scanUs = ranges.reduce((t, r) => t + Math.max(delay(r), settlingUs), 0);
+    const max = 1e6 / scanUs;
+    if (rate > max)
+        out.push(`scan_rate_hz ${Math.floor(rate)} is beyond what this scan list can do at resolution_index ${res}: ` +
+            `about ${Math.floor(max)} scans/s at most (${ranges.length} addresses, datasheet A-1-1 Table A.1.8).`);
     return out;
 }
 /**

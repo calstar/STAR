@@ -377,7 +377,7 @@ std::vector<double> FakeT7Device::read_names(const std::vector<std::string>& nam
 
 double FakeT7Device::volts(int ain, double t) const {
     if (ain == kCjcAin)  // the internal sensor at device_temp_k, on LabJack's nominal line
-        return (opt_.device_temp_k - 465.129215) / kAin14SlopeKPerV;
+        return (opt_.device_temp_k - kAin14NominalOffsetK) / kAin14SlopeKPerV;
     if (opt_.signal)
         return opt_.signal(ain, t);
     return 0.1 * ain + 0.05 * std::sin(2.0 * M_PI * 0.2 * t);

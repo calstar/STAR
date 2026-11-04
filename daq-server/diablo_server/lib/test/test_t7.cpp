@@ -212,6 +212,15 @@ int main() {
         {t7(ch(1, "PT") + ch(2, "PT"), "scan_rate_hz = 60000.0"), "beyond the T7",
          "an aggregate rate past 100 kS/s"},
         {t7(ch(1, "PT"), "scan_rate_hz = 0.0"), "must be positive", "a zero scan rate"},
+        // Stream limits, datasheet A-1-1 (support.labjack.com/docs/a-1-1-stream-data-rates-...).
+        {t7(ch(0, "LC", "range = 0.01") + ch(2, "PT")), "0.01 V is not supported",
+         "the 0.01 V range in a multi-channel stream"},
+        {t7(ch(1, "TC", "tc_type = \"K\"\nrole = \"A\""), "resolution_index = 3"),
+         "0.1 V is not supported", "the 0.1 V range in a multi-channel stream above res 2"},
+        {t7(ch(1, "PT", "range = 1.0") + ch(2, "PT", "range = 1.0"), "scan_rate_hz = 3000.0"),
+         "beyond what this scan list", "two 1 V channels faster than 2 x 210 us allows"},
+        {t7(ch(1, "PT"), "resolution_index = 8\nscan_rate_hz = 1000.0"), "at most 600",
+         "one channel at res 8 past Table A.1.7's 600 scans/s"},
         {t7(ch(1, "PT"), "", "lj", 81) + t7(ch(1, "PT", "", "lj2"), "", "lj2", 91),
          "shares Elodin slot 1", "two T7s on the same slot"},
         {t7(ch(1, "PT"), "", "lj", 89), "only slots 1-8", "a slot past 8"},
@@ -222,6 +231,35 @@ int main() {
         check(ok, "rejects " + b.what);
         if (!ok)
             print_errors(c);
+    }
+
+    {
+        // What the stand will run stays inside the stream limits: a TC at 0.1 V beside a 10 V PT
+        // and a 0.1 V differential LC at 100 Hz, res 0 (= 1), and one 0.01 V channel on its own.
+        auto limit_errors = [](const Config& c) {
+            int n = 0;
+            for (const auto& e : c.t7_errors)
+                n += e.find("not supported") != std::string::npos ||
+                     e.find("beyond what") != std::string::npos ||
+                     e.find("at most") != std::string::npos;
+            return n;
+        };
+        const Config mixed =
+            fsw::config::load_from_string(t7(ch(1, "PT") + ch(2, "TC", "tc_type = \"K\"") +
+                                             ch(4, "LC", "differential = true\nrange = 0.1")));
+        const Config single = fsw::config::load_from_string(t7(ch(1, "LC", "range = 0.01")));
+        // LJM's 2631 (the temperature sensor above 250 Hz) is the T8's limit (datasheet 18.0:
+        // "the maximum sampling rate of the T8 temperature sensors is 250 Hz"), not the T7's.
+        const Config at250 = fsw::config::load_from_string(
+            t7(ch(1, "PT") + ch(2, "TC", "tc_type = \"K\""), "scan_rate_hz = 400.0"));
+        check(limit_errors(mixed) == 0 && limit_errors(single) == 0 && limit_errors(at250) == 0,
+              "stream limits accept the stand's mix at 100 Hz, a lone 0.01 V channel, a TC at 400 "
+              "Hz");
+        if (limit_errors(mixed) + limit_errors(single) + limit_errors(at250)) {
+            print_errors(mixed);
+            print_errors(single);
+            print_errors(at250);
+        }
     }
 
     {
@@ -292,10 +330,10 @@ int main() {
         const double off = fsw::t7::cjc_device_offset_k(300.0, 1.8);
         check(near(fsw::t7::cjc_temp_c(1.8, off, 0.0), 300.0 - 273.15, 1e-9),
               "CJC: AIN14 at the reference reading gives the device's own temperature");
-        check(near(fsw::t7::cjc_temp_c(1.81, off, 0.0) - fsw::t7::cjc_temp_c(1.8, off, 0.0),
-                   -0.92379, 1e-9) &&
-                  near(fsw::t7::cjc_temp_c(1.8, off, -4.9), 300.0 - 273.15 - 4.9, 1e-9),
-              "CJC: -92.379 K per AIN14 volt, plus cjc_offset_k");
+        check(near(fsw::t7::cjc_temp_c(1.81, off, 0.0) - fsw::t7::cjc_temp_c(1.8, off, 0.0), -0.926,
+                   1e-9) &&
+                  near(fsw::t7::cjc_temp_c(1.8, off, -3.0), 300.0 - 273.15 - 3.0, 1e-9),
+              "CJC: -92.6 K per AIN14 volt (datasheet 18.0), plus cjc_offset_k");
 
         // A thermocouple at 200 C, terminals at 25 C, reads EMF(200) - EMF(25).
         const double v =
@@ -674,7 +712,7 @@ int main() {
         // The bridge publishes raw volts only; what it alone can add is each scan's cold
         // junction, which calibration_service needs to turn TC volts into temperature.
         FakeT7Device::Options o;
-        o.device_temp_k = 300.0;  // board cjc_offset_k -4.9 -> junction at 21.95 C
+        o.device_temp_k = 300.0;  // board cjc_offset_k -3.0 -> junction at 23.85 C
         o.signal = [](int ain, double) {
             return ain == 1 ? 1.25 : 0.001;
         };
@@ -687,7 +725,7 @@ int main() {
         s.start();
         check(d->reads == std::vector<std::string>({"TEMPERATURE_DEVICE_K", "AIN14"}),
               "a TC board reads TEMPERATURE_DEVICE_K beside AIN14 before streaming");
-        check(near(s.cjc_device_offset_k(), 465.129215, 1e-6),
+        check(near(s.cjc_device_offset_k(), 467.6, 1e-6),
               "and solves AIN14's offset from them (the fake sits on LabJack's nominal line)");
         now += 50'000'000ULL;
         const auto b = s.read();
@@ -695,7 +733,7 @@ int main() {
         check(b.cold_junction.size() == 5, "one cold-junction reading per scan");
         bool cj_ok = true;
         for (size_t k = 0; k < b.cold_junction.size(); ++k)
-            cj_ok = cj_ok && near(b.cold_junction[k].temp_c, 300.0 - 273.15 - 4.9, 1e-4) &&
+            cj_ok = cj_ok && near(b.cold_junction[k].temp_c, 300.0 - 273.15 - 3.0, 1e-4) &&
                     b.cold_junction[k].timestamp_ns == b.samples[k * 4].timestamp_ns &&
                     b.cold_junction[k].sample_ms == b.samples[k * 4].sample_ms;
         check(cj_ok,

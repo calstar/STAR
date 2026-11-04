@@ -10,11 +10,11 @@ a real T7. Sections 1-6 are the device reference it was built from.
 | **[MAP]** | `labjack/ljm_constants` → `LabJack/LJM/ljm_constants.json` (LabJack's machine-readable Modbus map + error table) | 2026.05.11.A (commit 482d58d) |
 | **[H]** | `labjack/ljm_constants` → `LabJackM.h` (the LJM C API header) | `LJM_VERSION 1.2200` |
 | **[EX]** | `labjack/C_CPP_LJM` → `more/stream/stream_basic.c`, `more/ethernet/*.c`, `more/watchdog/*.c` | commit 7a0f270 (2026-10-20) |
-| **[WEB?]** | Search-result snippets of support.labjack.com. The pages themselves could not be opened from the build environment, so **verify these before relying on them** | — |
+| **[DS]** | support.labjack.com: the T-series datasheet, the LJM User's Guide and app notes. Section numbers are the datasheet's (e.g. [DS 18.0] = "18.0 Internal Temp Sensor", [DS A-1-1] = "A-1-1 Stream Data Rates") | read 2026-11-03 |
 
-The datasheet pages on support.labjack.com (Ethernet, stream mode, low-level stream,
-data rates) still need reading by someone with normal web access, and so does the
-LJM Linux installer page. Those pages are the open items listed at the end.
+Everything first written as [WEB?] (search snippets, when support.labjack.com was blocked)
+has since been checked against [DS]. The few things the documentation does not settle are
+in "Still to verify on the bench" at the end; they need the real unit, not more reading.
 
 ---
 
@@ -39,17 +39,26 @@ Every fact below is in LJM terms first.
 | Modbus TCP port | 502 (`TCP_PORT`) | [H]/Python constants |
 | UDP discovery port | 52362 (`ETHERNET_UDP_PORT`) | [H] |
 | Spontaneous stream port | 702 (`STREAM_AUTO_TARGET` bit 0 = "Send to Ethernet 702 sockets") | [MAP] |
-| Simultaneous TCP connections | 502: 2, 702: 1 | [WEB?] |
-| Max packet | TCP 1040 B, UDP 64 B | [WEB?] |
-| Concurrent streams | 1 per device. Command-response still works mid-stream, except AIN reads | [WEB?] |
+| Simultaneous TCP connections | 502 (Modbus): 2, 702 (stream): 1, UDP 52362: unlimited | [DS 6.0] |
+| Max packet | TCP 1040 B, UDP 64 B | [DS 6.0] |
+| Concurrent streams | 1 per device: "A LabJack device cannot run more than one stream session at any given time" | [DS 3.2] |
+| Command-response latency | ~1.1 ms per LJM call over Ethernet with no I/O, plus each AIN's conversion time | [DS A-1] |
 | LJM Ethernet open timeout | 1000 ms default (`LJM_ETHERNET_OPEN_TIMEOUT_MS`) | [H] |
-| LJM Ethernet send/receive timeout | 2600 ms default (`LJM_ETHERNET_SEND_RECEIVE_TIMEOUT_MS`) | [H] |
+| LJM Ethernet send/receive timeout | 2600 ms default (`LJM_ETHERNET_SEND_RECEIVE_TIMEOUT_MS`); since LJM 1.2100 it also bounds `eStreamRead` over Ethernet | [H], [DS LJM] |
 
 Two consequences:
 - **Only one stream client at a time.** A Kipling session left open on the stand
   laptop will break our stream (or ours breaks theirs). Close Kipling before a test.
-- **Command-response AIN reads fail while streaming.** Every AIN we want must be in
-  the scan list.
+- **No command-response AIN reads while streaming.** "Streaming needs exclusive control of
+  the analog input system, so analog inputs (including the internal temperature sensor) cannot
+  be read via command-response while a stream is active" [DS 3.2]. Every AIN we want must be
+  in the scan list, and `TEMPERATURE_DEVICE_K` has to be read before the stream starts (the
+  bridge does). Other registers still answer, more slowly.
+
+**Stale connections.** The datasheet does not say whether or when a T7 drops a dead TCP
+socket (a `kill -9`'d client), and there is no keepalive or idle-timeout register. With one
+702 slot that matters: LJM normally stops the stream and closes cleanly (including on
+SIGTERM/SIGINT, below), but after a SIGKILL see "Still to verify on the bench".
 
 ### Static IP (our 192.168.2.0/24 convention)
 Registers [MAP]; the write sequence is in `C_CPP_LJM/more/ethernet/write_ethernet_config.c` [EX]:
@@ -69,8 +78,14 @@ Registers [MAP]; the write sequence is in `C_CPP_LJM/more/ethernet/write_etherne
 (dnsmasq, `deploy/dhcp/`). It hands out MAC-keyed static reservations generated from
 every `[boards.*]` entry that has `ip` + `mac`. `generate_dhcp_config.py` ignores the
 board's `type`, so a T7 entry gets a reservation like any ESP32. To onboard:
-1. Leave `ETHERNET_DHCP_ENABLE_DEFAULT` = 1. The shipping default is believed to be
-   DHCP-on [unverified]; check it in Kipling over USB if the unit isn't fresh.
+1. Leave `ETHERNET_DHCP_ENABLE_DEFAULT` = 1. "The default is DHCP enabled" [DS 6.0]; check
+   it in Kipling over USB if the unit isn't fresh. **There is no fallback address:** "If DHCP
+   is enabled on a device and you connect it to a network that does not have a DHCP server,
+   that device will not get assigned a valid IP address" (Ethernet Troubleshooting app note).
+   So a T7 on the board LAN with `star-dhcp` down is unreachable until DHCP is back. The
+   recovery paths are USB, or the SPC-to-AIN3 jumper, which forces a temporary static
+   192.168.1.x / 255.255.255.0 without touching the `_DEFAULT` settings (LabJack's pages
+   disagree on .207 vs .217; [DS 11.0] says .217 for firmware 1.0291+).
 2. Plug it into the board LAN. It takes a pool lease (`.200`–`.250`), and the MAC appears
    in `/var/lib/misc/star-dhcp.leases`. The MAC is also on the T7's label and in
    the `ETHERNET_MAC` register.
@@ -88,9 +103,14 @@ Since IP addresses are stored as UINT32, LJM provides `LJM_IPToNumber` / `LJM_Nu
 
 ### Device watchdog
 `WATCHDOG_ENABLE_DEFAULT` (61600) and `WATCHDOG_TIMEOUT_S_DEFAULT` (61604) [MAP].
-Any USB/Ethernet traffic clears the timer. The watchdog matters if the T7 ever drives
-DIO/DAC for actuation: on loss of the server it can force outputs to a safe state.
-`more/watchdog/write_watchdog_config.c` [EX] has the setup.
+A successful command-response exchange clears the timer, but **"normal spontaneous stream data
+does not reset the Watchdog timeout"** [DS 23.0], so a stream-only client would see the T7
+reboot mid-stream if the watchdog's reset action were on. The bridge does not enable it, and
+for inputs only it should stay off. It matters if the T7 ever drives DIO/DAC for actuation:
+on loss of the server it can force outputs to a safe state. Then the server has to send
+periodic command-response traffic during the stream. LabJack recommends timeouts no shorter
+than 2-3 s, and the watchdog registers are all `_DEFAULT` (flash), so write them only when
+they differ, never on every start. `more/watchdog/write_watchdog_config.c` [EX] has the setup.
 
 ## 3. LJM C API we would use  [H]
 
@@ -127,14 +147,26 @@ int LJM_WriteLibraryConfigS(const char *Parameter, double Value);
 
 | Config | Default | Why we care |
 |---|---|---|
-| `LJM_STREAM_SCANS_RETURN` | `ALL` (1): eStreamRead blocks until ScansPerRead | `ALL_OR_NONE` (2) never blocks and returns `LJME_NO_SCANS_RETURNED` (1309) instead, which fits a poll loop |
-| `LJM_STREAM_RECEIVE_TIMEOUT_MODE` / `_MS` | calculated from scan rate | with a manual value we decide when a dead link is declared |
+| `LJM_STREAM_SCANS_RETURN` | `ALL` (1): eStreamRead blocks until ScansPerRead | `ALL_OR_NONE` (2) never blocks and returns `LJME_NO_SCANS_RETURNED` (1309) instead, which fits a poll loop. The bridge keeps the default |
+| `LJM_STREAM_RECEIVE_TIMEOUT_MODE` / `_MS` | 1 = calculated; `_MS` 20000 | LabJack: calculated "is almost always better". Since 1.2100 the Ethernet read timeout follows `LJM_ETHERNET_SEND_RECEIVE_TIMEOUT_MS` (2600 ms); the exact formula is not published |
 | `LJM_STREAM_AIN_BINARY` | 0 = calibrated volts (float) | 1 = raw uncalibrated binary, which matches our raw→cal split but means applying LabJack cal constants ourselves. **Keep 0.** |
-| `LJM_STREAM_TCP_RECEIVE_BUFFER_SIZE` | OS default | raise it if the DAQ host drops data under load |
-| `LJM_STREAM_THREADS_PRIORITY_MODE` | auto-elevated: collector thread SCHED_FIFO 90, callbacks SCHED_RR 50 | needs CAP_SYS_NICE / rtprio under systemd, otherwise only a debug log line |
-| `LJM_AUTO_RECONNECT_STICKY_CONNECTION` / `_SERIAL` | 1 / 1 | reconnect stays on Ethernet and on the same serial number |
+| `LJM_STREAM_TCP_RECEIVE_BUFFER_SIZE` | 0 = OS default, auto-tuned | "appropriate for most use cases"; Linux may silently cap a larger value. Watch `LJM_GetStreamTCPReceiveBufferStatus` instead: a backlog/size ratio that keeps rising predicts auto-recovery |
+| `LJM_STREAM_THREADS_PRIORITY_MODE` | auto-elevated: collector thread SCHED_FIFO 90, others SCHED_RR 50 | Linux needs CAP_SYS_NICE or an RLIMIT_RTPRIO for this, which LabJack does not mention. Without it the threads run at normal priority, and the only sign is a line in LJM's debug log, which is off by default. `sensor-t7` is a `systemctl --user` unit and cannot raise its own hard rtprio limit; if the stand ever shows auto-recovery under load, grant it via `/etc/security/limits.d` (`rtprio`) |
+| `LJM_AUTO_RECONNECT_STICKY_CONNECTION` / `_SERIAL` | 1 / 1 | reconnect stays on Ethernet and on the same serial number. Reconnect is always on, but nothing documents a *stream* resuming after one: assume the bridge restarts it |
 | `LJM_AUTO_RECONNECT_WAIT_MS` | 500 | |
-| `LJM_AUTO_IPS` | 1 (caches IPs in a file) | turn off: we always open by explicit IP |
+| `LJM_AUTO_IPS` | 1: caches discovered IPs in `/usr/local/share/LabJack/LJM/ljm_auto_ips.json` | only consulted for "ANY" opens; LabJack suggests turning it off in a sandboxed deployment. **`LjmT7Device` writes 0** once per process |
+
+**Signals.** LJM installs handlers for the terminal signals (SIGHUP, SIGINT, SIGQUIT, SIGTERM,
+SIGPIPE, SIGSEGV, ...). Each handler stops every stream, closes every device and re-raises
+the signal. It skips a signal that already has a handler when LJM initialises ("Does LJM
+handle signals?"). `t7_bridge` sets its own SIGINT/SIGTERM handlers (a clean stop, then
+`LJM_Close`, which stops the stream) and ignores SIGPIPE, so a dropped Elodin socket cannot
+take the bridge down through LJM's handler. SIGKILL and a power cut are the cases nobody
+cleans up, and the startup takeover (section 7) exists for them.
+
+**Warnings.** LJM's warning range is 200-399. Of its warnings, 203 `LJME_USING_DEFAULT_CALIBRATION`
+is the one that matters: every volt is on nominal constants. `LjmT7Device` logs each warning
+instead of dropping it.
 
 ## 4. Stream configuration registers  [MAP]
 
@@ -143,9 +175,9 @@ int LJM_WriteLibraryConfigS(const char *Parameter, double Value);
 | `STREAM_SCANRATE_HZ` | 4002 | F32 | scans/s; sample rate = NumChannels × ScanRate |
 | `STREAM_NUM_ADDRESSES` | 4004 | U32 | scan-list length |
 | `STREAM_SAMPLES_PER_PACKET` | 4006 | U32 | spontaneous mode only |
-| `STREAM_SETTLING_US` | 4008 | F32 | 0 = auto |
-| `STREAM_RESOLUTION_INDEX` | 4010 | U32 | 0 = default; higher = quieter but slower (caps max rate) |
-| `STREAM_BUFFER_SIZE_BYTES` | 4012 | U32 | power of 2; 0 = default; scans = bytes/2/NumAddresses |
+| `STREAM_SETTLING_US` | 4008 | F32 | µs; < 1 = auto ("based on resolution and gain"; ~5 µs above 60 kHz); max 4400. Not applied to the first scan entry, whose settling is the scan period |
+| `STREAM_RESOLUTION_INDEX` | 4010 | U32 | 0-8 (9-12 are command-response only, error 2606); **0 = index 1 in stream**, on the T7 and T7-Pro alike [DS A-3-2-2]. Higher = quieter but slower |
+| `STREAM_BUFFER_SIZE_BYTES` | 4012 | U32 | power of 2; 0 = default 4096; T7 max 32768; scans = bytes/2/NumAddresses |
 | `STREAM_CLOCK_SOURCE` | 4014 | U32 | 0 internal, 2 external, 4/8 ESS |
 | `STREAM_AUTO_TARGET` | 4016 | U32 | bit0 Ethernet 702, bit1 USB, bit4 command-response (LJM sets this) |
 | `STREAM_NUM_SCANS` | 4020 | U32 | 0 = continuous |
@@ -163,6 +195,56 @@ The per-channel analog setup is written before `eStreamStart` [MAP]:
 and the global `AIN_ALL_RANGE` (43900) / `AIN_ALL_NEGATIVE_CH` (43902, 199 SE / 1 diff).
 **Stream ignores `AIN#_RESOLUTION_INDEX` and `AIN_ALL_SETTLING_US`** (those are for
 command-response and AIN_EF); stream uses `STREAM_RESOLUTION_INDEX`/`STREAM_SETTLING_US`.
+`LJM_eStreamStart` writes `STREAM_SCANRATE_HZ`, `_NUM_ADDRESSES`, `_SAMPLES_PER_PACKET`,
+`_AUTO_TARGET`, the scan list and `STREAM_ENABLE` itself. It leaves the resolution and settling
+we wrote alone, and hands back the actual rate (above 152.588 Hz the scan interval is a
+multiple of 100 ns). LabJack suggests ScansPerRead = ScanRate/2. The bridge's 50 ms block is
+lower latency, which LJM allows.
+
+**Analog input facts** [DS 14.3.0, A-3-2-1]: AIN0-13. AIN0-3 are on the screw terminals *and*
+the DB37 (wire one or the other, not both), AIN4-13 on the DB37 only. AIN14 is the internal
+temperature sensor and AIN15 is GND. Input impedance is 1 GΩ, bias current 20 nA, and the max
+source impedance is **1 kΩ** at auto settling (more needs extra settling). Every line has a 2.2 kΩ
+series resistor. A differential pair is an even AIN and the odd one above it, and the negative
+channel's own settings are ignored. Absolute accuracy is ±2000 µV at ±10 V, ±200 µV at ±1 V
+and ±20 µV at ±0.1 / ±0.01 V.
+
+### Stream rate limits, and what the config refuses  [DS A-1-1]
+
+The T7 does 100 kS/s only at ±10 V and resolution index 0/1. Any other multi-channel stream
+is limited by each channel's settle-and-convert time (Table A.1.8, µs per channel):
+
+| Range | res 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| ±10 V | 15 (8 above 60 kS/s) | 25 | 45 | 90 | 170 | 335 | 670 | 1335 |
+| ±1 V | 210 | 220 | 545 | 585 | 1200 | 2415 | 2750 | 3415 |
+| ±0.1 V | 1040 | 2105 | N.S. | N.S. | N.S. | N.S. | N.S. | N.S. |
+| ±0.01 V | N.S. | N.S. | N.S. | N.S. | N.S. | N.S. | N.S. | N.S. |
+
+N.S. = not supported in a multi-channel stream. A single-address stream reaches 100k / 48k /
+22k / 11k / 5500 / 2500 / 1200 / 600 scans/s at res 1-8 on any range (Table A.1.7).
+
+`T7Config.cpp` (and `shared/config-validation.ts`, so the editor agrees) therefore refuses:
+- **±0.01 V in any multi-channel stream**, and **±0.1 V above resolution index 2**. A
+  thermocouple board always streams AIN14 too, so a TC is never single-address;
+- a scan rate above 1 / Σ(each address's delay, or `settling_us` if larger), AIN14 at ±10 V
+  included. This errs fast: at high resolution Table A.1.7's measured maxima are lower still.
+  It only refuses what the T7 certainly cannot do, and anything past the real limit
+  stops the stream with `STREAM_SCAN_OVERLAP` (2942), which the bridge logs and retries;
+- one address faster than Table A.1.7 allows.
+
+The stand's mix (PT ±10 V, TC ±0.1 V, LC ±0.1 V diff, RTD ±10 V, AIN14) at res 0 allows about
+470 scans/s against the configured 100. LJM's error 2631, "temperature sensor ... above 250Hz",
+is a **T8** limit ([DS 18.0]; T8 sub-stream) and is not applied to a T7.
+
+**Noise** [DS A-3-2-2], RMS, which stream sees at res 1 unless set higher: ±0.1 V 21 µV (res 2:
+11 µV), ±0.01 V 11 µV. A type K at ±0.1 V, res 1 is therefore about ±0.5 °C RMS. A 2 mV/V load
+cell on 10 V excitation (20 mV full scale) does not fit ±0.01 V (span about ±10.1 mV), so it
+goes on ±0.1 V at about 0.1 % of full scale RMS. Average or raise the resolution index if that
+is too coarse.
+
+**Clock** [DS A-5]: the T7's crystal is good to ±20 ppm at 25 °C, ±50 ppm over −10…60 °C and ±100 ppm
+over −40…85 °C. At 50 ppm that is 3 ms per minute, which `BoardClockSync` corrects for (section 7).
 
 ### Thermocouples and other AIN_EF values
 `AIN#_EF_INDEX` (9000+) / `AIN#_EF_READ_A` (7000+) give thermocouple and other
@@ -170,14 +252,29 @@ extended-feature values computed on the device. The register map marks them
 `streamable: false` [MAP], and `TEMPERATURE_DEVICE_K` (60052) is not streamable either.
 So a stream carries raw volts only, and t7_bridge does the thermocouple math itself
 (section 7):
-- **Cold junction:** AIN14 (the internal sensor) is appended to the scan of any board
-  with a TC. Its slope is LabJack's nominal **−92.379 K/V**, from the T7 calibration defaults
-  in `labjack/labjack_kipling` `t7_calibration_operations.js` ("Temp Slope", ±1 %). The
-  per-unit offset is **not** the nominal 465.129 K: before each stream, t7_bridge reads
-  the device's own `TEMPERATURE_DEVICE_K` beside AIN14 and solves for the offset.
-  `TEMPERATURE_AIR_K` is documented as device − 4.3 K, and − 0.6 K more per active network
-  interface [MAP]. That gives the default `cjc_offset_k = −4.9` from device to terminals;
-  measure it on the stand.
+- **Cold junction:** AIN14 (the internal sensor, an LM94021 under the PCB between the AIN0/1 and
+  AIN2/3 terminals) is appended to the scan of any board with a TC. LabJack's recipe for TCs in
+  stream is exactly this: AIN14 in the scan list, converted by "Device temperature K = volts *
+  -92.6 + 467.6" [DS 18.0]. The bridge uses that slope, **−92.6 K/V**. Each unit's own slope and
+  offset are factory constants in flash [DS 20.0.1]. The offset is not taken as the nominal
+  467.6 K: before each stream (it cannot be read during one), t7_bridge reads the device's own
+  `TEMPERATURE_DEVICE_K` beside AIN14 and solves for it. (The −92.379 / 465.129 used before were
+  the U6's nominal constants, which Kipling reuses only as a sanity range.) The sensor itself is
+  ±1.5 °C over 20-40 °C and ±2.0 °C over −20-50 °C.
+- **Terminal offset, `cjc_offset_k`, default −3.0 K.** LabJack: "The value from TEMPERATURE_DEVICE_K
+  best reflects the temperature of the built-in screw-terminals AIN0-AIN3 ... expect the returned
+  value minus 3 °C to reflect the temperature of the built-in screw-terminals with an accuracy of
+  ±2.5 °C" [DS 18.0]. A TC wired through a **CB37** (any of AIN4-13) is at air temperature instead:
+  `TEMPERATURE_AIR_K` = device − 4.3 K on USB, − 4.9 K on USB + Ethernet (the old default). For
+  better than ±2 °C, LabJack suggests a dedicated sensor (LM34CAZ, ±0.5 °C). Measure the offset on
+  the stand (below) either way. Note that LabJack's own AIN_EF thermocouple mode applies no
+  terminal offset at all (CJC slope 1, offset 0 on `TEMPERATURE_DEVICE_K`).
+- **Range.** LabJack's tutorial suggests ±0.01 V "when possible" (type K to 249 °C), but
+  ±0.01 V is not supported in a multi-channel stream, and a TC board's stream always has AIN14
+  in it. So it is **±0.1 V** (the default), at resolution index 0-2 (section 4, rate limits).
+- **Differential wiring** needs a bias path: "Thermocouple+ to AIN0. Thermocouple- to AIN1.
+  Wire a ≈100 kΩ resistor between AIN1 and GND." Differential "should always be used" on a
+  CB37; on the screw terminals single-ended is fine.
 - **Curve:** type K only. It is the NIST ITS-90 inverse the calibration service already
   used, moved unchanged to `lib/calibration/TypeK`. C→mV, needed for the junction, is that
   same inverse solved numerically, so no second set of coefficients exists.
@@ -203,11 +300,23 @@ So a stream carries raw volts only, and t7_bridge does the thermocouple math its
 | 1309 | `LJME_NO_SCANS_RETURNED` | not an error in `ALL_OR_NONE` mode |
 | 1225 | `LJME_STREAM_NOT_INITIALIZED` | |
 
-Auto-recovery marks a gap by writing 0xFFFF into the **first** channel of the scan, so
-**the first scan-list entry must be an AIN or `FIO_STATE`/`EIO_STATE`/`CIO_STATE`/...**.
-Any other digital channel first gives `LJME_DIGITAL_AUTO_RECOVERY_ERROR_DETECTED`
-unless `LJM_STREAM_DIGITAL_AUTO_RECOVERY_ERROR_DETECTION_DISABLED=1` [H].
+Auto-recovery marks a gap with a border scan of all 0xFFFF, and LJM finds it by watching the
+**first** channel only. So **the first scan-list entry must be an AIN or a `*_STATE`
+register** (not `FIO_EIO_STATE`). Anything that can itself read 0xFFFF (counters, `CORE_TIMER`,
+DIO_EF) makes LJM stop the stream with 1320 `LJME_DIGITAL_AUTO_RECOVERY_ERROR_DETECTED`
+unless `LJM_STREAM_DIGITAL_AUTO_RECOVERY_ERROR_DETECTION_DISABLED=1`.
 **Never put `CORE_TIMER` first.**
+
+**What `eStreamRead` returns** [DS LJM eStreamStart/eStreamRead, 3.2.1]:
+- *Recoverable* auto-recovery (2940/2941) is **not** returned. LJM absorbs it and "inserts the
+  proper number of dummy scans, filled with all -9999". Counting `-9999` is the only signal.
+- 2942 (scan overlap), 2943 (recover overflow), 1301 (LJM buffer full), 1306 (no data before the
+  timeout) and 1320 come back as errors. **The stream is already stopped** by then: "If
+  LJM_eStreamRead returns an error, LJM nearly always attempts to command the device to stop
+  streaming." So the bridge's rule (any non-warning error → stop, close, back off, restart) is
+  the right one.
+- On Ethernet link loss, expect 1306, or 1239 `LJME_RECONNECT_FAILED`. Which one, and after how
+  long, is a bench check.
 
 Treat any `-9999` as missing data. Never calibrate it into a pressure.
 
@@ -254,18 +363,20 @@ channels.
 | `resolution_index` | 0 | `STREAM_RESOLUTION_INDEX`, 0-8 |
 | `settling_us` | 0 (auto) | `STREAM_SETTLING_US` |
 | `scans_per_read` | rate/20 | scans per `LJM_eStreamRead` (a 50 ms block) |
+| `cjc_offset_k` | −3.0 | TC boards: terminals vs the internal sensor (section 4, Thermocouples) |
 
 | Channel key | Default | |
 |---|---|---|
 | `ain` | required | 0-13, as printed on the T7 |
 | `kind` | required | `PT` \| `TC` \| `LC` \| `VOLTAGE` |
 | `role` | "" | operator name, metadata only |
-| `range` | 10 (TC: 0.1) | ±V: 10, 1, 0.1, 0.01. The 0.01 V range clips a type K above ~245 °C |
+| `range` | 10 (TC: 0.1) | ±V: 10, 1, 0.1, 0.01. ±0.01 V only on a single-channel board, ±0.1 V only at `resolution_index` 0-2 (section 4) |
 | `differential` | false | AIN(n) − AIN(n+1); n must be even, and n+1 is then taken |
 | `tc_type` | — | required for `TC`: B E J K N R S T |
 
-Any mistake (a duplicate or paired AIN, a range the T7 lacks, a TC with no type, two T7s on
-one Elodin slot, ...) makes t7_bridge exit 2 and list every problem. Every other service
+Any mistake (a duplicate or paired AIN, a range the T7 lacks, a range or rate the stream
+cannot do, a TC with no type, two T7s on one Elodin slot, ...) makes t7_bridge exit 2 and list
+every problem. Every other service
 skips type `"T7"`.
 
 ### Elodin
@@ -314,12 +425,21 @@ Each start, for each T7, `T7Session::start()`:
 5. starts the stream.
 
 Step 2 exists because **a T7 keeps streaming after the process that started the stream dies**: a
-bridge killed with `-9`, a server torn down or power-cut mid-run, or Kipling left open. Until that
-stream stops, the T7 rejects configuration writes and stream starts with `STREAM_IS_ACTIVE`
-(2605). synnaxlabs/synnax#4142 hit exactly this on a T7 (firmware 1.0292, LJM 1.23.2) and found
-that `eStreamStop` from a new handle clears it, and that a device with no stream answers "not
-running". So:
-- "not running" in any of its forms (LJM 1225 or 1303, device 2620) is the normal answer;
+bridge killed with `-9`, a server torn down or power-cut mid-run, or Kipling left open. LabJack
+says so: "LJM automatically commands the LabJack to stop streaming when it closes the device ...
+However, sometimes the process crashes before LJM is able to send the command to stop stream ...
+you can power-cycle the device. Alternately, eStreamStop stops stream" (LJM eStreamStart). And
+the device side: it streams "until STREAM_ENABLE is written with the value 0" [DS 3.2.4]. Until
+that stream stops, the T7 rejects stream and AIN setup writes with `STREAM_IS_ACTIVE` (2605: "The
+requested operation can not be performed while stream is running"; the eStreamStart page lists
+the AIN registers among them). LJM 1.1803's changelog: eStreamStop "now works when the stream had
+not been started by the current LJM instance". synnaxlabs/synnax#4142 hit exactly this on a T7
+(firmware 1.0292, LJM 1.23.2) and found that `eStreamStop` from a new handle clears it, and that a
+device with no stream answers "not running". LabJack's own `DisableStreamIfEnabled()`
+(`C_CPP_LJM/LJM_StreamUtilities.h`) does the same: it reads `STREAM_ENABLE`, stops if it reads 1,
+and tolerates 2620. So:
+- "not running" in any of its forms (LJM 1225 `LJME_STREAM_NOT_INITIALIZED`, 1303
+  `LJME_STREAM_NOT_RUNNING`, device 2620 `STREAM_NOT_RUNNING`) is the normal answer;
 - a stop that fails for another reason (the link dropped, say) stops the start and goes into the
   retry loop instead of being ignored;
 - if the setup write still hits `STREAM_IS_ACTIVE`, for example because an LJM version answers a
@@ -354,6 +474,19 @@ with no `retrying` line before it.
 t7_bridge still builds (and CI's ctest runs `test_t7`), but it only runs with `--fake`. Install
 LJM from LabJack's Linux installer, then re-run cmake: it prints
 `t7_bridge: LabJack LJM found`.
+
+- **Installer** (support.labjack.com "LJM Software Installer: Linux x64", read 2026-11-03): stable
+  is LJM 1.2304 (constants 2025.05.06.A), `files.labjack.com/installers/LJM/Linux/x64/release/LabJack-LJM_2025-05-07.zip`.
+  The release candidate, LJM 1.2308, ships constants 2026.05.11.A, the [MAP] version above. Unzip, then `sudo ./labjack_ljm_installer.run -- --without-kipling`. In a container,
+  add `--no-restart-device-rules`. Ethernet needs no udev rule (it is for USB).
+- **Paths:** `/usr/local/lib/libLabJackM*`, `/usr/local/include/LabJackM.h` (where CMake looks),
+  `/usr/local/share/LabJack/LJM/` (the constants file and, with auto IPs on, the IP cache).
+- **Licence:** "All closed and open source software ... provided by LabJack are licensed under the
+  permissive MIT, unless otherwise stated in the download package, and can be redistributed
+  freely". LJM's licence also includes Boost, gRPC and libusb (LGPL 2.1 on Linux). So
+  `libLabJackM.so` can go in a deploy image, as long as those notices ship with it. Whether
+  libusb is linked statically, which would bring in the LGPL relinking terms, is not stated:
+  read the licence file in the installer zip before shipping an image.
 
 ### Calibration: the same as an ESP32 sensor
 Where the data comes from is the only difference. t7_bridge publishes raw volts per AIN.
@@ -427,8 +560,20 @@ fixed precision resistor, read across the fixed one:
 
     Vout = Vref * R_fixed / (R_fixed + R_rtd)        R_rtd = R_fixed * (Vref - Vout) / Vout
 
-(LabJack, LJTick-Resistance datasheet and "Measuring Resistance" app note: Vref 2.5 V ±0.04 %,
-10 mA max; R_fixed is 1k, 10k, 100k or 1M by model.)
+(LabJack, LJTick-Resistance datasheet and "Measuring Resistance" app note: Vref 2.500 V ±0.04 %,
+1.5 ppm/°C typical, 10 mA typical output current; R_fixed is 1k, 10k, 100k or 1M ±0.05 % by model.
+LabJack: "best to simply assume a constant of 2.500 V".)
+
+**Wiring.** The tick plugs into a screw-terminal AIN block and uses both inputs, so it measures two
+resistances: VINA on the even AIN and VINB on the odd one (AIN0/1 or AIN2/3; only those four are on
+screw terminals). That is two ticks and four RTDs per T7 without a CB37. Single-ended only. VS must
+be above 4.0 V for a 2.5 V output.
+
+**Settling.** The divider is buffered (an OPA2335), so the T7 sees an op-amp output, not 1 kΩ-1 MΩ.
+The 1 kΩ source-impedance limit and the high-impedance rows of the settling app note do not apply,
+and no extra `settling_us` is needed for any model. The only filter is the tick's 100 pF input cap
+with R_unknown: −3 dB at about 1.6 kHz for 1 MΩ, far above any scan rate here. (LabJack documents
+the buffer and the cap; that this makes extra settling unnecessary is our inference.)
 
 ```toml
 [[boards.labjack_1.channels]]
@@ -444,10 +589,13 @@ ljtr_ohms = 1000.0   # LJTick-Resistance-1k
   above → °C on the IEC 60751 Callendar–Van Dusen curve, **including the C term below 0 °C**
   (`resistance_to_temp_cvd_full`). Published as `T7<n>_Cal.AIN<a>.temperature_c`, so the GUI shows
   it beside the ESP32 RTDs. An open (0 V) or shorted (≥ Vref) element publishes nothing.
-- **Range** must be 10 V: the divider swings up to Vref.
-- **Pairing.** Use the LJTR whose fixed resistor is near the element's resistance over the range
-  you care about. A Pt1000 on an LJTR-1k swings about 6.7 mV/°C near −183 °C (2.4 mV/°C at 0 °C); a
-  Pt100 on an LJTR-1k only about 1.0 mV/°C there.
+- **Range** must be 10 V: the divider swings up to Vref. At 22 °C a Pt100 on an LJTR-1k reads
+  2.255 V and a Pt1000 reads 1.199 V, both above the ±1 V range's 1.01 V.
+- **Pairing.** LabJack: "choose the version that most closely matches your typical resistance
+  value", and for RTDs "We typically recommend using our LJTick-Resistance-1k". The RTD app note
+  puts the Vref-limited error at about ±1.1 °C for a Pt100 and ±0.21 °C for a Pt1000 on the 1k
+  tick. So use a **Pt1000 + LJTR-1k**. It swings about 6.7 mV/°C near −183 °C (2.4 mV/°C at
+  0 °C); a Pt100 on an LJTR-1k only about 1.0 mV/°C there.
 - **Two-wire.** Lead resistance adds straight to R_rtd: about 2.6 °C per ohm on a Pt100, 0.26 °C per
   ohm on a Pt1000. Keep leads short or use a Pt1000.
 - **Self-heating.** 2.5 V across 2 kΩ puts 1.25 mA (1.6 mW) through a Pt1000 at 0 °C. In a liquid that
@@ -459,10 +607,12 @@ ljtr_ohms = 1000.0   # LJTick-Resistance-1k
 ### Measuring `cjc_offset_k`
 
 The bridge estimates the screw-terminal temperature from the T7's internal sensor plus
-`cjc_offset_k` (default −4.9 K). Any error in that estimate goes nearly 1:1 into every TC
-reading on that T7, so measure it once per unit:
+`cjc_offset_k` (default −3.0 K, LabJack's figure for AIN0-3; LabJack quotes it as ±2.5 °C). Any
+error in that estimate goes nearly 1:1 into every TC reading on that T7, so measure it once per
+unit, on the terminals the TCs actually use:
 
-1. Let the T7 sit powered in its enclosure for 30 minutes to reach thermal steady state.
+1. Let the T7 sit powered in its enclosure for 30 minutes to reach thermal steady state
+   (LabJack measured a ~12 minute time constant for the box).
 2. Put a type K probe on an input in an ice bath (crushed ice and water, stirred), or beside
    a reference thermometer at a known temperature.
 3. Average `T71_Cal.AIN<n>.temperature_c` over a minute; call it `reading`.
@@ -483,17 +633,41 @@ Re-measure if the T7 moves to a different enclosure or the terminal block is cha
   a limit; only the server (state scripts) can act on one.
 - **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.
 
-## Still to verify (needs support.labjack.com / labjack.com, blocked here)
+## Answered from LabJack's documentation (2026-11-03)
 
-- Max stream rate vs `STREAM_RESOLUTION_INDEX`, range and channel count over Ethernet
-  (datasheet appendix A-1), plus typical command-response latency.
-- Connection limits per port and max packet sizes (marked [WEB?] above).
-- T7 shipping default for DHCP, and what it falls back to if no server answers.
-- The current LJM Linux installer name and version, plus
-  LJM's redistribution licence (whether `libLabJackM.so` can go in our deploy image).
-- Low-level port-702 frame layout (only needed if we skip LJM).
-- What `LJM_Close` does to a stream its handle started, and whether a T7 stops a stream on its
-  own when the streaming client's TCP connection closes. The bridge assumes neither, which is
-  the safe direction.
-- The T7 AIN14 temperature formula as the datasheet states it (the nominal slope is from
-  LabJack's Kipling source).
+What used to be open here, and where the answer now lives in this doc:
+
+| Question | Answer | Where |
+|---|---|---|
+| Stream rate vs resolution, range, channels; command-response latency | Tables A.1.7/A.1.8; ~1.1 ms. Now enforced by config validation | §4 rate limits, §2 |
+| Connection limits, packet sizes | 502: 2, 702: 1; TCP 1040 B, UDP 64 B | §2 |
+| DHCP default and fallback | DHCP on; **no** fallback address | §2 Static IP |
+| LJM installer, paths, licence | 1.2304 stable; `/usr/local/...`; MIT + Boost/gRPC/LGPL notices | §7 LJM |
+| `LJM_Close` on a running stream | LJM stops it on close, best effort; a crash leaves it running | §7 Startup |
+| AIN14 formula | −92.6 K/V + 467.6 K (the old −92.379 was the U6's) | §4 Thermocouples |
+| Terminal CJC offset | −3 K for AIN0-3 (default changed from −4.9) | §4, `cjc_offset_k` |
+| Which LJTR for an RTD; settling behind one | LJTR-1k; buffered, no extra settling | RTDs |
+| T7 clock accuracy | ±20 ppm at 25 °C, ±50 ppm over −10…60 °C | §4 |
+| 250 Hz temperature-sensor limit (LJM 2631) | T8 only; not applied | §4 rate limits |
+| Watchdog | stream traffic does not feed it; leave it off for inputs | §2 watchdog |
+| Port-702 frame layout | 16-byte header (status at 12-13, skipped scans at 14-15), then u16 samples MSB-first; [DS 3.2.4]. Only needed without LJM | — |
+
+## Still to verify on the bench
+
+These the documentation does not settle; each is a few minutes with the real unit.
+
+- **Takeover after `kill -9`** (§7): expect the `stopped a stream already running` line and no
+  `retrying` before it. This also tells us whether a SIGKILL'd client's stream socket (the one
+  port-702 slot) is released at once or blocks the next stream until it times out. The datasheet
+  has no timeout for stale sockets. If it blocks, power-cycle the T7, or write
+  `ETHERNET_APPLY_SETTINGS = 1`, which power-cycles its Ethernet.
+- **`STREAM_ENABLE = 0` from a second connection** stops another client's stream (the fallback
+  path in §7). It is one register map, so it almost certainly does, but this is undocumented.
+- **AIN setup writes mid-stream return 2605.** The LJM docs list the AIN registers under
+  `STREAM_IS_ACTIVE` but never show the read/write case explicitly; the fake assumes 2605.
+- **Pull the Ethernet cable mid-stream:** record the code (1306 or 1239) and how long it takes,
+  and check that the bridge comes back on its own when the cable goes back in.
+- **Warning 203** (`LJME_USING_DEFAULT_CALIBRATION`) should never appear in the bridge log on
+  a real unit.
+- **`cjc_offset_k`**, measured as above.
+- **Licence file** in the installer zip, before LJM goes into a deploy image.
