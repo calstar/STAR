@@ -3244,11 +3244,21 @@ async function testSampleConservation(): Promise<void> {
   if (sent <= 0) return;
 
   const backendStats = await fetchBackendStats();
-  const ingested = Number((backendStats as any)?.rawPrimarySamplesIngested);
-  if (!Number.isFinite(ingested)) {
+  const ingestedAll = Number((backendStats as any)?.rawPrimarySamplesIngested);
+  if (!Number.isFinite(ingestedAll)) {
     assert(false, 'Backend /stats has no rawPrimarySamplesIngested — stale backend build?');
     return;
   }
+  // The board simulator is the ground truth for ESP32 boards only. A LabJack T7 (t7_bridge --fake)
+  // is ingested too, under its own group (t7<slot>), and must come out of both sides of the
+  // comparison: left in, its ~100 scans/s inflate "ingested" past "sent", and they would also pad
+  // the loss floor below enough to hide genuinely lost ESP32 packets.
+  const byGroupAll: Record<string, number> = (backendStats as any)?.rawPrimarySamplesByGroup ?? {};
+  const t7Ingested = Object.entries(byGroupAll)
+    .filter(([g]) => /^t7\d+$/.test(g))
+    .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
+  const ingested = ingestedAll - t7Ingested;
+  if (t7Ingested > 0) console.log(`  (excluding ${t7Ingested.toLocaleString()} LabJack T7 samples, which the board simulator does not send)`);
 
   // Per-group breakdown (always printed): pinpoints WHICH stream loses samples.
   // Sim board names → backend board-scan groups.
