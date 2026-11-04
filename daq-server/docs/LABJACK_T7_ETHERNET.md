@@ -370,8 +370,8 @@ code paths as an ESP32 PT / LC / TC:
   has no unit tag, so T7 inputs are filed there by uid, not role.
 - **Thermocouples.** Type K against the latest cold junction for that T7. A TC sample that
   arrives before any cold-junction reading is not published.
-- **Abort thresholds.** `abort_pts` naming a T7 role is refused with a log line: those
-  thresholds are ADC codes an ESP32 board compares on its own.
+- **Abort thresholds.** `[abort_pts]` is unused by the firmware today and hidden in the config
+  editor (see `docs/CONFIGURATION_GUIDE.md`); a T7 role there resolves to no board, as before.
 
 The GUI shows each PT / TC / LC input under its role on every role-driven page, and the
 Calibration page includes T7 PT / LC inputs. Capture, zero and tare work as for ESP32

@@ -15,7 +15,7 @@ import { buildSensorConfig } from '../api-server.js';
 import { applyCalibrationModelDefaults } from '../routes/config.js';
 import { mapEntityToGroup, isPrimaryPhysicalStream } from '../board-scan-rate.js';
 import { pipelineUnits, setT7UnitInstalledForTests, T7_UNIT } from '../service-controller.js';
-import { t7Channels, t7BoardIssues, t7RoleClashes, abortPtIssue, validateConfigForRun } from '../../../shared/config-validation.js';
+import { t7Channels, t7BoardIssues, t7RoleClashes, validateConfigForRun } from '../../../shared/config-validation.js';
 
 const T7_BOARD = {
     type: 'T7', ip: '192.168.2.82', board_id: 82, enabled: true, scan_rate_hz: 100,
@@ -244,15 +244,7 @@ describe('calibration models', () => {
     });
 });
 
-describe('abort thresholds and role clashes', () => {
-    it('refuses an abort threshold on a T7 input (only an ESP32 PT board can gate one)', () => {
-        expect(abortPtIssue(CONFIG, 'LOX Tank')).toMatch(/LabJack T7 input/);
-        expect(abortPtIssue(CONFIG, 'Fuel Upstream')).toBeNull();
-        const msgs = validateConfigForRun({ ...CONFIG, abort_pts: { 'LOX Tank': 500 } })
-            .filter((i) => i.level === 'error' && i.page === 'state').map((i) => i.message);
-        expect(msgs.some((m) => m.includes('[abort_pts]') && m.includes('LOX Tank'))).toBe(true);
-    });
-
+describe('role clashes', () => {
     it('names each T7 input whose role an ESP32 sensor already has, for the T7 card', () => {
         const clashes = t7RoleClashes({ ...CONFIG, sensor_roles_pt_board: { 'LOX Tank': 1 } });
         expect(clashes.map((c) => [c.boardKey, c.ain])).toEqual([['labjack_1', 1]]);

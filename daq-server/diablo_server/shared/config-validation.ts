@@ -360,20 +360,6 @@ export function t7RoleClashes(config: any): Array<{ boardKey: string; ain: numbe
   return out;
 }
 
-/**
- * Why an [abort_pts] entry cannot be honoured, or null. Abort thresholds are ADC codes an ESP32 PT
- * board compares against its own reading while it vents on its own, so a LabJack T7 input — not on
- * any such board — cannot gate one; calibration_service refuses it and the abort would silently not
- * exist (calibration_main.cpp write_abort_thresholds).
- */
-export function abortPtIssue(config: any, role: string): string | null {
-  const t7 = t7Channels(config?.boards).find((c) => c.role === role && c.enabled);
-  return t7
-    ? `"${role}" is a LabJack T7 input (${t7.boardKey} AIN${t7.ain}); board abort thresholds can ` +
-      'only use a PT on an ESP32 PT board, so this threshold would never be applied.'
-    : null;
-}
-
 // ── The rule set ─────────────────────────────────────────────────────────────
 
 /**
@@ -403,12 +389,6 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
   // ── T7 roles vs every other sensor's ──────────────────────────────────────
   for (const { boardKey, message } of t7RoleClashes(config))
     add('boards', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
-
-  // ── Abort thresholds on a T7 input ────────────────────────────────────────
-  for (const role of Object.keys((config?.abort_pts ?? {}) as Record<string, unknown>)) {
-    const msg = abortPtIssue(config, role);
-    if (msg) add('state', 'error', `[abort_pts] ${msg}`);
-  }
 
   // ── Roles vs active_connectors ────────────────────────────────────────────
   // active_connectors is wire-level: config_broadcast packs it into the packet sent to the

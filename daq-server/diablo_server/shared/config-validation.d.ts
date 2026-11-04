@@ -118,13 +118,6 @@ export declare function t7RoleClashes(config: any): Array<{
     message: string;
 }>;
 /**
- * Why an [abort_pts] entry cannot be honoured, or null. Abort thresholds are ADC codes an ESP32 PT
- * board compares against its own reading while it vents on its own, so a LabJack T7 input — not on
- * any such board — cannot gate one; calibration_service refuses it and the abort would silently not
- * exist (calibration_main.cpp write_abort_thresholds).
- */
-export declare function abortPtIssue(config: any, role: string): string | null;
-/**
  * Every reason this config is unfit to run, in the order an operator would work through them.
  *
  * `csv` is optional: on a box whose profile predates the state tables, the CSV rules simply do not
