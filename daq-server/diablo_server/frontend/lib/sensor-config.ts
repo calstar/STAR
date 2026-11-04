@@ -32,6 +32,9 @@ export interface SensorConfig {
     entity: string;
     /** Calibrated PSI entity string, e.g. "PT_Cal.Fuel_Upstream" */
     calEntity: string;
+    /** 'T7' for a LabJack T7 channel: `id` is its AIN, entities are T7<slot>.AIN<n> and
+     *  T7<slot>_Cal.AIN<n>, and the raw stream is `volts` rather than ADC counts. */
+    source?: 'T7';
 }
 
 // ── Module-level cache so all components share one fetch ───────────────────────

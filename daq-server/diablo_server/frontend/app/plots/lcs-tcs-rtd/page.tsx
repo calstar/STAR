@@ -231,7 +231,9 @@ export default function LCS_TCS_RTDPage() {
   // entity string: the number in "LC2_Cal.CH1" is the Elodin slot (board_id % 10), not the board
   // id, so two boards sharing a slot would resolve to the same uid — the collision that once put
   // a load cell's curve on a 5000 psi transducer.
-  const [lcUids, setLcUids] = useState<number[]>([]);
+  const [lcUids, setLcUids] = useState<Array<number | null>>([]);
+  /** Why a load cell cannot be tared, beyond "no session": '' when it can. */
+  const [lcNoTare, setLcNoTare] = useState<string[]>([]);
   /** entity -> offset kg, polled from the backend. The source of truth for what is tared. */
   const [lcTares, setLcTares] = useState<Record<string, number>>({});
   const [sessionActive, setSessionActive] = useState(false);
@@ -282,7 +284,11 @@ export default function LCS_TCS_RTDPage() {
           const role = sensorConfig?.find((s) => s.calEntity === r.calEntity)?.role;
           return role ?? r.label;
         }));
-        setLcUids(lc.map((r) => r.boardId * 100 + r.channel));
+        // Tares are held by calibration_service, which does not see LabJack T7 channels
+        // (t7_bridge converts those itself), so a T7 load cell has no tare to take.
+        setLcUids(lc.map((r) => (r.source === 'T7' ? null : r.boardId * 100 + r.channel)));
+        setLcNoTare(lc.map((r) => (r.source === 'T7'
+          ? 'Tare is not available on LabJack T7 channels yet.' : '')));
       }
     }).catch(() => {});
   }, []);
@@ -505,10 +511,10 @@ export default function LCS_TCS_RTDPage() {
                   {lcEntities.map((entity, i) => (
                     <LCForceReadout
                       offsetKg={lcTares[lcCalEntities[i]] ?? null}
-                      onTare={() => sendTareCmd('tare_lc', lcUids[i])}
-                      onClearTare={() => sendTareCmd('clear_tare_lc', lcUids[i])}
+                      onTare={() => { const uid = lcUids[i]; if (uid != null) sendTareCmd('tare_lc', uid); }}
+                      onClearTare={() => { const uid = lcUids[i]; if (uid != null) sendTareCmd('clear_tare_lc', uid); }}
                       disabled={!sessionActive || lcUids[i] == null}
-                      disabledReason={sessionActive ? 'No uid for this channel in config.' : 'Start a session to tare \u2014 a tare needs a live stream.'}
+                      disabledReason={!sessionActive ? 'Start a session to tare \u2014 a tare needs a live stream.' : (lcNoTare[i] || 'No uid for this channel in config.')}
                       key={entity}
                       entity={entity}
                       calEntity={lcCalEntities[i]}

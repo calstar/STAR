@@ -8,7 +8,9 @@ import { useSensorConfig } from '@/lib/sensor-config';
 
 
 export default function RawReadoutsPage() {
-  const allSensors = useSensorConfig();
+  // ADC counts are an ESP32-board quantity; a LabJack T7 channel's raw stream is volts
+  // (T7<slot>.AIN<n>.volts) and has no counts to plot here.
+  const allSensors = useSensorConfig().filter((s) => s.source !== 'T7');
 
   const labels = allSensors.map((s) => s.role);
   const calEntities = allSensors.map((s) => s.calEntity);
