@@ -52,6 +52,7 @@
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
+#include "calibration/TypeK.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "config/Config.hpp"
@@ -368,32 +369,10 @@ static double convert_tc_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage) 
     constexpr double ADC_MAX = 2147483648.0;  // 2^31
     double voltage_v = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
     double v_mv = voltage_v * 1000.0;
-
-    // ITS-90 Type K inverse: (v_min_mV, v_max_mV, T0, V0, p1, p2, p3, p4, q1, q2, q3)
-    static const double ranges[5][11] = {
-        {-6.404, -3.554, -121.47164, -4.1790858, 36.069513, 30.722076, 7.791386, 0.52593997,
-         0.93939547, 0.2779128, 0.02516334},
-        {-3.554, 4.096, -8.7935962, -0.34489914, 25.678719, -0.49887904, -0.44705222, -0.044869202,
-         0.00023893439, -0.02039775, -0.0018424107},
-        {4.096, 16.397, 310.18976, 12.631386, 24.061949, 4.0158622, 0.26853917, -0.0097188544,
-         0.16995872, 0.011413069, -0.00039275155},
-        {16.397, 33.275, 605.72562, 25.148718, 23.539401, 0.046547228, 0.0134444, 0.0005923685,
-         0.00083445513, 0.0004612144, 0.00002548812},
-        {33.275, 69.553, 1018.4705, 41.99385, 25.783239, -1.8363403, 0.05617666, 0.000185324,
-         -0.074803355, 0.002384186, 0.0},
-    };
-
-    for (const auto& r : ranges) {
-        if (v_mv >= r[0] && v_mv <= r[1]) {
-            double x = v_mv - r[3];  // x = V_mV - V0
-            double num = r[4] + x * (r[5] + x * (r[6] + x * r[7]));
-            double den = 1.0 + x * (r[8] + x * (r[9] + x * r[10]));
-            if (std::abs(den) < 1e-20)
-                return 0.0;
-            return r[2] + (x * num) / den;  // T0 + (x * num) / den
-        }
-    }
-    return 0.0;  // out of range
+    // The curve lives in lib (calibration/TypeK.hpp) so t7_bridge uses the same numbers. It
+    // returns NaN out of range; this path has always published 0.0 there.
+    const double t = fsw::calibration::type_k_c_from_mv(v_mv);
+    return std::isfinite(t) ? t : 0.0;
 }
 
 /**

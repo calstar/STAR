@@ -27,6 +27,15 @@ using T7RawMessage = CommsMessage<uint64_t,                // (0) timestamp_ns â
                                   uint8_t    // (5) status â€” 0 = ok
                                   >;
 
+/**
+ * @brief One T7 channel in engineering units, published by t7_bridge beside T7RawMessage.
+ *
+ * The ESP32 calibrated layout (CalibratedPTMessage et al.): u64 timestamp_ns | u8 ain | u8[3] pad
+ * | f32 value (psi / C / kg) | i32 raw_uv (the volts, in microvolts) | u8 cal_status (1).
+ */
+using T7CalibratedMessage =
+    CommsMessage<uint64_t, uint8_t, std::array<uint8_t, 3>, float, int32_t, uint8_t>;
+
 }  // namespace sensor
 }  // namespace messages
 }  // namespace comms

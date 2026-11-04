@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <thread>
+
+#include "t7/T7Convert.hpp"
 
 namespace fsw {
 namespace t7 {
@@ -14,6 +17,14 @@ std::array<uint8_t, 2> table_id(uint8_t slot, uint8_t ain) {
 
 std::string entity_name(uint8_t slot, uint8_t ain) {
     return "T7" + std::to_string(slot) + ".AIN" + std::to_string(ain);
+}
+
+std::array<uint8_t, 2> calibrated_table_id(uint8_t slot, uint8_t ain) {
+    return {kTypeHi, static_cast<uint8_t>((slot - 1) * 0x20 + 0x10 + ain)};
+}
+
+std::string calibrated_entity_name(uint8_t slot, uint8_t ain) {
+    return "T7" + std::to_string(slot) + "_Cal.AIN" + std::to_string(ain);
 }
 
 StreamPlan plan_stream(const config::T7Board& board) {
@@ -38,6 +49,24 @@ StreamPlan plan_stream(const config::T7Board& board) {
         set(ain + "_EF_INDEX", 0);
         p.scan_names.push_back(ain);
         p.ains.push_back(static_cast<uint8_t>(c.ain));
+        p.channels.emplace_back(c);
+    }
+    // A thermocouple reads the difference between its hot end and the terminals, so the terminal
+    // temperature rides along in every scan: AIN14, the internal sensor. Last, so the first scan
+    // entry stays a configured AIN (auto-recovery marks gaps in the first channel).
+    const bool has_tc =
+        std::any_of(board.channels.begin(), board.channels.end(), [](const config::T7Channel& c) {
+            return c.kind == "TC";
+        });
+    if (has_tc) {
+        const std::string ain = "AIN" + std::to_string(kCjcAin);
+        set(ain + "_RANGE", 10.0);
+        set(ain + "_NEGATIVE_CH", 199);
+        set(ain + "_EF_INDEX", 0);
+        p.cjc_index = static_cast<int>(p.scan_names.size());
+        p.scan_names.push_back(ain);
+        p.ains.push_back(kCjcAin);
+        p.channels.emplace_back(std::nullopt);
     }
     return p;
 }
@@ -48,7 +77,8 @@ T7Session::T7Session(config::T7Board board, std::unique_ptr<T7Device> device,
       device_(std::move(device)),
       clock_sync_(time_sync),
       clock_(std::move(clock)),
-      plan_(plan_stream(board_)) {
+      plan_(plan_stream(board_)),
+      cjc_device_offset_k_(std::numeric_limits<double>::quiet_NaN()) {
 }
 
 double T7Session::start() {
@@ -67,6 +97,16 @@ double T7Session::start() {
         // "stream not running" is the normal case.
     }
     device_->write_names(plan_.setup_names, plan_.setup_values);
+    if (plan_.cjc_index >= 0) {
+        // The device's own calibrated temperature beside the raw AIN14 it comes from pins this
+        // unit's offset; only the nominal slope is then trusted, over the few K it drifts.
+        // Command-response, so it has to happen before the stream takes the analog inputs.
+        const auto v = device_->read_names({"TEMPERATURE_DEVICE_K", "AIN14"});
+        if (v.size() != 2 || !(v[0] > 200.0 && v[0] < 400.0))
+            throw T7Error("[" + board_.section + "] implausible TEMPERATURE_DEVICE_K " +
+                          (v.empty() ? std::string("(none)") : std::to_string(v[0])));
+        cjc_device_offset_k_ = t7::cjc_device_offset_k(v[0], v[1]);
+    }
     const int spr = board_.effective_scans_per_read();
     actual_rate_hz_ = device_->stream_start(plan_.scan_names, spr, board_.scan_rate_hz);
     if (!(actual_rate_hz_ > 0.0))
@@ -111,13 +151,38 @@ Block T7Session::read() {
         const uint64_t k = first + s;
         const uint64_t back = last_ns - device_ns(k);
         const uint64_t ts = anchor > back ? anchor - back : 0;
+        // This scan's cold junction, if the board has thermocouples.
+        double cj_c = std::numeric_limits<double>::quiet_NaN();
+        if (plan_.cjc_index >= 0) {
+            const double v14 = buffer_[s * n + static_cast<size_t>(plan_.cjc_index)];
+            if (v14 != kDummyValue)
+                cj_c = cjc_temp_c(v14, cjc_device_offset_k_, board_.cjc_offset_k);
+        }
         for (size_t c = 0; c < n; ++c) {
             const double v = buffer_[s * n + c];
             if (v == kDummyValue) {
                 ++b.skipped_samples;
                 continue;
             }
-            b.samples.push_back(Sample{plan_.ains[c], static_cast<float>(v), ts, device_ms(k)});
+            Sample smp{plan_.ains[c], static_cast<float>(v), ts, device_ms(k)};
+            if (const auto& ch = plan_.channels[c]) {
+                double eng = std::numeric_limits<double>::quiet_NaN();
+                if (ch->kind == "PT")
+                    eng = pt_psi(v, *ch);
+                else if (ch->kind == "LC")
+                    eng = lc_kg(v, *ch);
+                else if (ch->kind == "TC")
+                    eng = tc_c(v, cj_c);
+                if (ch->kind != "VOLTAGE") {
+                    if (std::isfinite(eng)) {
+                        smp.value = static_cast<float>(eng);
+                        smp.has_value = true;
+                    } else {
+                        ++b.unconverted;
+                    }
+                }
+            }
+            b.samples.push_back(smp);
         }
     }
     next_scan_ = last + 1;
@@ -157,6 +222,30 @@ void FakeT7Device::write_names(const std::vector<std::string>& names,
         writes.emplace_back(names[i], values.at(i));
 }
 
+std::vector<double> FakeT7Device::read_names(const std::vector<std::string>& names) {
+    if (streaming)
+        throw T7Error("fake T7: command-response AIN read while streaming", 2605);
+    std::vector<double> out;
+    for (const auto& n : names) {
+        reads.push_back(n);
+        if (n == "TEMPERATURE_DEVICE_K")
+            out.push_back(opt_.device_temp_k);
+        else if (n.rfind("AIN", 0) == 0)
+            out.push_back(volts(std::stoi(n.substr(3)), 0.0));
+        else
+            throw T7Error("fake T7: no register " + n, 1294);
+    }
+    return out;
+}
+
+double FakeT7Device::volts(int ain, double t) const {
+    if (ain == kCjcAin)  // the internal sensor at device_temp_k, on LabJack's nominal line
+        return (opt_.device_temp_k - 465.129215) / kAin14SlopeKPerV;
+    if (opt_.signal)
+        return opt_.signal(ain, t);
+    return 0.1 * ain + 0.05 * std::sin(2.0 * M_PI * 0.2 * t);
+}
+
 double FakeT7Device::stream_start(const std::vector<std::string>& names, int scans_per_read,
                                   double scan_rate_hz) {
     if (streaming)
@@ -183,9 +272,8 @@ T7Device::Backlog FakeT7Device::stream_read(std::vector<double>& data) {
         const bool lost = opt_.dummy_scan_every > 0 && (scan_ + 1) % opt_.dummy_scan_every == 0;
         const double t = static_cast<double>(scan_) / rate_;
         for (size_t c = 0; c < n; ++c) {
-            const double ain = std::stod(scan_names[c].substr(3));
-            data[s * n + c] =
-                lost ? kDummyValue : 0.1 * ain + 0.05 * std::sin(2.0 * M_PI * 0.2 * t);
+            const int ain = std::stoi(scan_names[c].substr(3));
+            data[s * n + c] = lost ? kDummyValue : volts(ain, t);
         }
     }
     return {};

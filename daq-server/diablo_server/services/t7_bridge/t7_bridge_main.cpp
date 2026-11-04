@@ -19,8 +19,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -28,10 +31,12 @@
 #include <thread>
 #include <vector>
 
+#include "calibration/TypeK.hpp"
 #include "comms/messages/sensor/T7Messages.hpp"
 #include "config/Config.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
 
 #ifdef T7_HAVE_LJM
@@ -92,10 +97,37 @@ struct Options {
     bool fake = false;
 };
 
-std::unique_ptr<fsw::t7::T7Device> make_device(bool fake) {
+// For --fake: each channel reads something plausible for what the config says is wired to it,
+// so a simulated run shows pressures, temperatures and loads in the GUI rather than volts.
+std::function<double(int, double)> fake_signal(const fsw::config::T7Board& board) {
+    std::map<int, fsw::config::T7Channel> by_ain;
+    for (const auto& c : board.channels)
+        by_ain[c.ain] = c;
+    return [by_ain](int ain, double t) {
+        const auto it = by_ain.find(ain);
+        const double wobble = std::sin(2.0 * M_PI * 0.1 * t + ain);
+        if (it == by_ain.end())
+            return 0.0;
+        const auto& c = it->second;
+        if (c.kind == "PT") {  // 30 % of full scale, +/- 3 %. pt_psi is linear: invert it.
+            const double psi0 = fsw::t7::pt_psi(0.0, c), psi_per_v = fsw::t7::pt_psi(1.0, c) - psi0;
+            return ((0.30 + 0.03 * wobble) * c.full_scale - psi0) / psi_per_v;
+        }
+        if (c.kind == "LC")  // 20 % of rated load
+            return (0.20 + 0.02 * wobble) * c.sensitivity_mv_per_v / 1000.0 * c.excitation_v;
+        if (c.kind == "TC") {  // 60 C +/- 10 against a ~20 C junction (fake device at 25 C)
+            using fsw::calibration::type_k_mv_from_c;
+            return (type_k_mv_from_c(60.0 + 10.0 * wobble) - type_k_mv_from_c(20.1)) / 1000.0;
+        }
+        return 2.5 + 0.5 * wobble;
+    };
+}
+
+std::unique_ptr<fsw::t7::T7Device> make_device(bool fake, const fsw::config::T7Board& board) {
     if (fake) {
         fsw::t7::FakeT7Device::Options o;
         o.realtime = true;
+        o.signal = fake_signal(board);
         return std::make_unique<fsw::t7::FakeT7Device>(o);
     }
 #ifdef T7_HAVE_LJM
@@ -113,15 +145,22 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
     auto backoff = std::chrono::milliseconds(1000);
 
     while (g_running) {
-        fsw::t7::T7Session session(board, make_device(fake), time_sync, epoch_ns);
+        fsw::t7::T7Session session(board, make_device(fake, board), time_sync, epoch_ns);
         try {
             const double rate = session.start();
+            // What to register: every streamed AIN raw, plus a calibrated table for each PT/TC/LC.
+            std::vector<fsw::elodin::DatabaseConfig::T7Table> tables;
+            for (size_t i = 0; i < session.plan().ains.size(); ++i) {
+                const auto& ch = session.plan().channels[i];
+                tables.push_back({session.plan().ains[i],
+                                  ch ? fsw::t7::calibrated_field(ch->kind) : std::string()});
+            }
             Line(std::cout) << tag << "streaming " << session.plan().ains.size() << " AIN from "
                             << board.ip << " at " << rate << " scans/s (asked "
                             << board.scan_rate_hz << ")" << std::endl;
             backoff = std::chrono::milliseconds(1000);
 
-            uint64_t published = 0, skipped = 0, dropped = 0;
+            uint64_t published = 0, skipped = 0, dropped = 0, unconverted = 0;
             auto next_log = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
             while (g_running) {
@@ -131,7 +170,7 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                     next_db_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                     if (db.connect(db_host, db_port)) {
                         if (fsw::elodin::DatabaseConfig::register_t7_tables(db, board.slot(),
-                                                                            session.plan().ains))
+                                                                            tables))
                             Line(std::cout)
                                 << tag << "Elodin connected, tables registered" << std::endl;
                         else
@@ -142,6 +181,7 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
 
                 const fsw::t7::Block block = session.read();
                 skipped += block.skipped_samples;
+                unconverted += block.unconverted;
                 if (block.skipped_samples > 0)
                     Line(std::cerr) << tag << "stream auto-recovery: " << block.skipped_samples
                                     << " samples lost (device buffer overflowed)" << std::endl;
@@ -157,6 +197,17 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                         msg.setField<4>(s.sample_ms);
                         msg.setField<5>(uint8_t{0});
                         db.publish(fsw::t7::table_id(board.slot(), s.ain), msg);
+                        if (s.has_value) {
+                            // Same 21-byte layout as the ESP32 calibrated tables.
+                            comms::messages::sensor::T7CalibratedMessage cal;
+                            cal.setField<0>(s.timestamp_ns);
+                            cal.setField<1>(s.ain);
+                            cal.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+                            cal.setField<3>(s.value);
+                            cal.setField<4>(static_cast<int32_t>(std::lround(s.volts * 1e6)));
+                            cal.setField<5>(uint8_t{1});
+                            db.publish(fsw::t7::calibrated_table_id(board.slot(), s.ain), cal);
+                        }
                     }
                     if (db.flush_batch()) {
                         published += block.samples.size();
@@ -178,9 +229,9 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                     next_log += std::chrono::seconds(10);
                     Line(std::cout)
                         << tag << "published " << published << ", dropped (no Elodin) " << dropped
-                        << ", lost to auto-recovery " << skipped << " | backlog device "
-                        << block.backlog.device_scans << " / LJM " << block.backlog.ljm_scans
-                        << " scans" << std::endl;
+                        << ", lost to auto-recovery " << skipped << ", unconvertible "
+                        << unconverted << " | backlog device " << block.backlog.device_scans
+                        << " / LJM " << block.backlog.ljm_scans << " scans" << std::endl;
                 }
             }
         } catch (const fsw::t7::T7Error& e) {

@@ -73,6 +73,18 @@ void LjmT7Device::write_names(const std::vector<std::string>& names,
     }
 }
 
+std::vector<double> LjmT7Device::read_names(const std::vector<std::string>& names) {
+    std::vector<const char*> cnames;
+    for (const auto& n : names)
+        cnames.push_back(n.c_str());
+    std::vector<double> values(names.size(), 0.0);
+    int error_address = -1;
+    check(LJM_eReadNames(handle_, static_cast<int>(cnames.size()), cnames.data(), values.data(),
+                         &error_address),
+          "reading " + (names.empty() ? std::string() : names.front()) + "...");
+    return values;
+}
+
 double LjmT7Device::stream_start(const std::vector<std::string>& scan_names, int scans_per_read,
                                  double scan_rate_hz) {
     std::vector<const char*> cnames;

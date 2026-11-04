@@ -200,29 +200,39 @@ std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
 }
 
 bool DatabaseConfig::register_t7_tables(ElodinClient& client, uint8_t slot,
-                                        const std::vector<uint8_t>& ains) {
+                                        const std::vector<T7Table>& tables) {
     bool ok = true;
-    for (uint8_t ain : ains) {
-        const uint8_t lo = static_cast<uint8_t>((slot - 1) * 0x20 + ain);
-        const std::string entity = "T7" + std::to_string(slot) + ".AIN" + std::to_string(ain);
+    auto one = [&](uint8_t lo, const std::string& entity, const char* value_field,
+                   PrimType value_type, const char* u32_field, PrimType u32_type,
+                   const char* status_field) {
         const std::string prefix = entity + ".";
-        // Same 21-byte shape as the calibrated messages: f32 value at 12, u32 at 16.
+        // 21 bytes: u64 @0 | u8 @8 | pad | 4-byte value @12 | 4 bytes @16 | u8 @20.
         auto vt = builder::vtable({
             raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
             raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "channel_id"))),
-            raw_field(12, 4, schema(PrimType::F32(), {}, component(prefix + "volts"))),
-            raw_field(16, 4, schema(PrimType::U32(), {}, component(prefix + "sample_ts_ms"))),
-            raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "status"))),
+            raw_field(12, 4, schema(value_type, {}, component(prefix + value_field))),
+            raw_field(16, 4, schema(u32_type, {}, component(prefix + u32_field))),
+            raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + status_field))),
         });
         if (!send_msg(client, VTableMsg{.id = {0x26, lo}, .vtable = vt})) {
             std::cerr << "[DatabaseConfig] T7 VTable failed: " << entity << std::endl;
             ok = false;
-            continue;
+            return;
         }
-        for (const char* field : {"timestamp_ns", "channel_id", "volts", "sample_ts_ms", "status"})
+        for (const char* field :
+             {"timestamp_ns", "channel_id", value_field, u32_field, status_field})
             ok = send_msg(client, set_component_name(prefix + field)) && ok;
         ok = send_msg(client, set_entity_name((static_cast<uint64_t>(0x26) << 8) | lo, entity)) &&
              ok;
+    };
+    for (const auto& t : tables) {
+        const uint8_t lo = static_cast<uint8_t>((slot - 1) * 0x20 + t.ain);
+        const std::string n = std::to_string(slot), a = std::to_string(t.ain);
+        one(lo, "T7" + n + ".AIN" + a, "volts", PrimType::F32(), "sample_ts_ms", PrimType::U32(),
+            "status");
+        if (!t.cal_field.empty())
+            one(static_cast<uint8_t>(lo + 0x10), "T7" + n + "_Cal.AIN" + a, t.cal_field.c_str(),
+                PrimType::F32(), "raw_uv", PrimType::I32(), "cal_status");
     }
     return ok;
 }

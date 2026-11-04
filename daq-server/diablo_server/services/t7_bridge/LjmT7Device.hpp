@@ -17,6 +17,7 @@ public:
     int64_t serial_number() override;
     void write_names(const std::vector<std::string>& names,
                      const std::vector<double>& values) override;
+    std::vector<double> read_names(const std::vector<std::string>& names) override;
     double stream_start(const std::vector<std::string>& scan_names, int scans_per_read,
                         double scan_rate_hz) override;
     Backlog stream_read(std::vector<double>& data) override;
