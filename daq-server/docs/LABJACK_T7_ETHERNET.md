@@ -286,10 +286,58 @@ published**, so a gap in the plot is a real gap.
 build/bin/t7_bridge                       # every enabled T7 in config/config.toml
 build/bin/t7_bridge --board boards.labjack_1
 build/bin/t7_bridge --fake                # stand-in T7s, no hardware or LJM needed
+build/bin/t7_bridge --fake --fake-state /tmp/t7   # ... that remember a stream across restarts
 ```
 Exit codes: 0 = no enabled T7, 2 = config problems, 3 = built without LJM and no `--fake`.
 On a lost link or stream error it retries with backoff (1 s up to 10 s). If Elodin is down it
 keeps streaming, so the T7 buffer never backs up, and retries the connection every 2 s.
+
+### Startup, and a stream left running
+
+Each start, for each T7, `T7Session::start()`:
+1. opens it by IP and reads `SERIAL_NUMBER`, checking it against `serial` when the config sets one;
+2. **stops any stream already running** (`LJM_eStreamStop` on the new handle);
+3. writes every stream and AIN setup register (section 4), so nothing is inherited from the last
+   run, an edited config, or Kipling;
+4. reads `TEMPERATURE_DEVICE_K` beside AIN14 on a TC board (command-response, so before the stream);
+5. starts the stream.
+
+Step 2 exists because **a T7 keeps streaming after the process that started the stream dies**: a
+bridge killed with `-9`, a server torn down or power-cut mid-run, or Kipling left open. Until that
+stream stops, the T7 rejects configuration writes and stream starts with `STREAM_IS_ACTIVE`
+(2605). synnaxlabs/synnax#4142 hit exactly this on a T7 (firmware 1.0292, LJM 1.23.2) and found
+that `eStreamStop` from a new handle clears it, and that a device with no stream answers "not
+running". So:
+- "not running" in any of its forms (LJM 1225 or 1303, device 2620) is the normal answer;
+- a stop that fails for another reason (the link dropped, say) stops the start and goes into the
+  retry loop instead of being ignored;
+- if the setup write still hits `STREAM_IS_ACTIVE`, for example because an LJM version answers a
+  new handle's stop without telling the device, the bridge writes `STREAM_ENABLE = 0` and
+  configures again;
+- a successful takeover is logged: `stopped a stream already running on 192.168.2.81 ...`.
+
+Even without step 2 the bridge would recover, because the retry loop's own `stop()` clears the
+leftover stream. It would take one failed start first, though, plus about a second with no data.
+
+**Two bridges on one T7** (an old server still running beside a new one) take the stream from
+each other on every retry, since a stop from any connection stops the device. Each side then logs
+a takeover or a 1306 timeout. Shut one down.
+
+Simulated, this is all real behaviour. `FakeT7Unit` is the device, separate from any connection
+to it. It keeps its stream and registers when a handle goes away without a stop, and it answers
+with the codes above. With `--fake-state DIR` it is a file, so separate bridge processes share
+one stand-in T7. `start_tmux_dev.sh` (`/tmp/gui_logs/t7_fake`) and `sensor-t7` under
+`USE_SIM=1` (`/tmp/star-t7-fake`) both use it, so the dev stack's `pkill -9` before every start
+leaves the stand-in streaming, and the next start has to take it over. A reboot clears `/tmp`,
+which is the power cycle. Tests:
+- `ctest -R ^t7$`, "restart": kill, take over with an edited config, the `STREAM_ENABLE`
+  fallback, two bridges, and a stop that genuinely fails;
+- `ctest -R t7_integration`, "restart": `kill -9` the real binary and start another on the same
+  state file.
+
+**On the stand,** check this once against the real unit. With no run active, start
+`t7_bridge --board boards.labjack_1`, `kill -9` it, start it again, and expect the takeover line
+with no `retrying` line before it.
 
 **LJM is needed on the DAQ host.** CMake looks for `LabJackM.h` and `libLabJackM`. Without them
 t7_bridge still builds (and CI's ctest runs `test_t7`), but it only runs with `--fake`. Install
@@ -395,5 +443,8 @@ Re-measure if the T7 moves to a different enclosure or the terminal block is cha
 - The current LJM Linux installer name and version, plus
   LJM's redistribution licence (whether `libLabJackM.so` can go in our deploy image).
 - Low-level port-702 frame layout (only needed if we skip LJM).
+- What `LJM_Close` does to a stream its handle started, and whether a T7 stops a stream on its
+  own when the streaming client's TCP connection closes. The bridge assumes neither, which is
+  the safe direction.
 - The T7 AIN14 temperature formula as the datasheet states it (the nominal slope is from
   LabJack's Kipling source).

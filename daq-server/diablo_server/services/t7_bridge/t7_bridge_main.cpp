@@ -15,6 +15,9 @@
 // Usage: t7_bridge [--config config/config.toml] [--fake] [--board <section>]
 //          [--elodin-host H] [--elodin-port P]
 //   --fake   stand-in T7s (FakeT7Device) instead of LJM: for a dev box with no hardware or LJM.
+//   --fake-state DIR   keep each stand-in T7's stream and registers in DIR/<section>.state, so
+//            the next bridge finds what this one left, as on a real T7: kill -9 a bridge and the
+//            next one must stop the stream it left running before it can configure the device.
 
 #include <signal.h>
 
@@ -99,6 +102,7 @@ struct Options {
     std::string elodin_host;
     int elodin_port = 0;
     bool fake = false;
+    std::string fake_state;  // --fake-state DIR: one file per stand-in T7, shared across runs
 };
 
 // For --fake: each channel reads something plausible for what the config says is wired to it,
@@ -127,11 +131,13 @@ std::function<double(int, double)> fake_signal(const fsw::config::T7Board& board
     };
 }
 
-std::unique_ptr<fsw::t7::T7Device> make_device(bool fake, const fsw::config::T7Board& board) {
+std::unique_ptr<fsw::t7::T7Device> make_device(bool fake, const fsw::config::T7Board& board,
+                                               const std::shared_ptr<fsw::t7::FakeT7Unit>& unit) {
     if (fake) {
         fsw::t7::FakeT7Device::Options o;
         o.realtime = true;
         o.signal = fake_signal(board);
+        o.unit = unit;
         return std::make_unique<fsw::t7::FakeT7Device>(o);
     }
 #ifdef T7_HAVE_LJM
@@ -142,16 +148,28 @@ std::unique_ptr<fsw::t7::T7Device> make_device(bool fake, const fsw::config::T7B
 }
 
 void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfig& time_sync,
-               const std::string& db_host, uint16_t db_port, bool fake) {
+               const std::string& db_host, uint16_t db_port, bool fake,
+               const std::string& fake_state) {
     const std::string tag = "[t7_bridge " + board.section + "] ";
+    // The stand-in device outlives each connection to it, as a T7 does: across this loop's
+    // reconnects always, and across bridge processes when it is a --fake-state file.
+    std::shared_ptr<fsw::t7::FakeT7Unit> unit;
+    if (fake)
+        unit = std::make_shared<fsw::t7::FakeT7Unit>(
+            fake_state.empty() ? std::string() : fake_state + "/" + board.section + ".state");
     fsw::elodin::ElodinClient db;
     auto next_db_attempt = std::chrono::steady_clock::now();
     auto backoff = std::chrono::milliseconds(1000);
 
     while (g_running) {
-        fsw::t7::T7Session session(board, make_device(fake, board), time_sync, epoch_ns);
+        fsw::t7::T7Session session(board, make_device(fake, board, unit), time_sync, epoch_ns);
         try {
             const double rate = session.start();
+            if (session.stopped_leftover_stream())
+                Line(std::cout) << tag << "stopped a stream already running on " << board.ip
+                                << " (left by a bridge or server that did not shut down "
+                                   "cleanly?) and reconfigured it"
+                                << std::endl;
             // Raw tables only, plus the cold junction on a TC board: turning volts into psi / °C /
             // kg is calibration_service's job, exactly as for the ESP32 boards.
             const bool has_cjc = session.plan().cjc_index >= 0;
@@ -270,9 +288,12 @@ int main(int argc, char* argv[]) {
             opt.elodin_port = std::atoi(next().c_str());
         else if (a == "--fake")
             opt.fake = true;
+        else if (a == "--fake-state")
+            opt.fake_state = next();
         else {
             std::cout << "Usage: " << argv[0]
-                      << " [--config path] [--fake] [--board boards.<name>] [--elodin-host H]"
+                      << " [--config path] [--fake [--fake-state DIR]] [--board boards.<name>] "
+                         "[--elodin-host H]"
                          " [--elodin-port P]"
                       << std::endl;
             return a == "--help" || a == "-h" ? 0 : 2;
@@ -319,7 +340,8 @@ int main(int argc, char* argv[]) {
               << (opt.fake ? ", FAKE devices" : "") << std::endl;
     std::vector<std::thread> threads;
     for (const auto& b : boards)
-        threads.emplace_back(run_board, b, cfg.time_sync, db_host, db_port, opt.fake);
+        threads.emplace_back(run_board, b, cfg.time_sync, db_host, db_port, opt.fake,
+                             opt.fake_state);
     for (auto& t : threads)
         t.join();
     return 0;

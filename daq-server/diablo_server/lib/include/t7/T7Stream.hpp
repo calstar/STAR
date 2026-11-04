@@ -46,6 +46,18 @@ std::string calibrated_entity_name(uint8_t slot, uint8_t ain);
  *  whenever a board has a TC channel. Published raw like any AIN (no calibrated table). */
 constexpr uint8_t kCjcAin = 14;
 
+/** LJM and device error codes the session acts on (labjack/ljm_constants, LJM errorcodes). */
+namespace ljm_code {
+constexpr int kStreamNotInitialized = 1225;    ///< LJME_STREAM_NOT_INITIALIZED (LJM, this handle)
+constexpr int kStreamNotRunning = 1303;        ///< LJME_STREAM_NOT_RUNNING
+constexpr int kSynchronizationTimeout = 1306;  ///< LJME_SYNCHRONIZATION_TIMEOUT (no stream data)
+constexpr int kStreamIsActive = 2605;  ///< device: "can not be performed while stream is running"
+constexpr int kDeviceStreamNotRunning = 2620;  ///< device: "Stream was already disabled"
+}  // namespace ljm_code
+
+/** True for every way a stop can answer "there was no stream to stop". */
+bool is_stream_not_running(int code);
+
 /** A device failure. `code` is the LJM error code where there is one, else 0. */
 class T7Error : public std::runtime_error {
 public:
@@ -156,6 +168,11 @@ public:
     double actual_rate_hz() const {
         return actual_rate_hz_;
     }
+    /** start() found a stream already running on the device (left by a bridge that was killed,
+     *  a server torn down mid-run, or Kipling) and stopped it before configuring. */
+    bool stopped_leftover_stream() const {
+        return stopped_leftover_;
+    }
     /** The device's serial number, read by start(); 0 before then. */
     int64_t serial() const {
         return serial_;
@@ -173,6 +190,7 @@ private:
     StreamPlan plan_;
     double actual_rate_hz_ = 0.0;
     int64_t serial_ = 0;
+    bool stopped_leftover_ = false;
     uint64_t next_scan_ = 0;
     std::vector<double> buffer_;
     bool open_ = false;
@@ -180,12 +198,53 @@ private:
 };
 
 /**
- * A stand-in T7 for tests and for running the bridge with no hardware (`t7_bridge --fake`).
+ * The stand-in T7 itself, as distinct from a connection to it.
+ *
+ * A real T7 keeps streaming after the process that started the stream dies, and keeps every
+ * register it was written; the next process to open it finds both (synnaxlabs/synnax#4142 saw
+ * every stream start fail with STREAM_IS_ACTIVE until the leftover stream was stopped). So the
+ * stream and the registers live here, not in a FakeT7Device handle: a handle destroyed without a
+ * stop — a killed bridge — leaves the unit streaming.
+ *
+ * With a state_path the unit is a file, re-read before and written after every operation, so
+ * separate t7_bridge processes (`--fake-state`) see one device: `kill -9` the bridge and the next
+ * one finds the stream still running. Without one it lives as long as the object.
+ */
+class FakeT7Unit {
+public:
+    explicit FakeT7Unit(std::string state_path = "");
+
+    bool streaming = false;
+    uint64_t stream_id = 0;  ///< bumped by every stream start; a handle reads only its own stream
+    std::vector<std::string> scan_names;  ///< the running (or last) stream's scan list
+    std::vector<std::pair<std::string, double>> registers;  ///< last value written per name
+    uint64_t starts = 0, stops = 0;
+
+    double reg(const std::string& name, double fallback = 0.0) const;
+    void set_reg(const std::string& name, double value);
+    /** Power off and on: no stream, registers back to defaults. */
+    void power_cycle();
+
+    void load();  ///< from state_path; no-op without one or when the file is absent
+    void save() const;
+
+private:
+    std::string path_;
+};
+
+/**
+ * A connection to a stand-in T7, for tests and for running the bridge with no hardware
+ * (`t7_bridge --fake`).
  *
  * By default each AIN reads a slow sine offset by its AIN number, so the GUI shows distinct
  * lines; Options::signal replaces that. AIN14 (the internal temperature sensor) reads 25 C and
  * TEMPERATURE_DEVICE_K agrees with it. Every call is recorded so a test can check what the
- * session asked of the device.
+ * session asked of the device. Device state (stream, registers) is the shared FakeT7Unit's.
+ *
+ * Modelled on LJM and the T7 firmware: a stream start, a configuration write or a
+ * command-response read while the unit streams fails with STREAM_IS_ACTIVE (2605); a stop with
+ * no stream answers STREAM_NOT_RUNNING (1303); writing STREAM_ENABLE = 0 stops the stream from
+ * any handle; reading a stream another handle stopped times out (1306).
  */
 class FakeT7Device : public T7Device {
 public:
@@ -199,10 +258,18 @@ public:
          *  consulted for AIN14, which always follows device_temp_k. */
         std::function<double(int ain, double t)> signal;
         double device_temp_k = 298.15;  ///< what TEMPERATURE_DEVICE_K (and AIN14) report
+        /** The device this handle talks to; null = a fresh unit of its own. */
+        std::shared_ptr<FakeT7Unit> unit;
+        /** LJM answers eStreamStop locally (1225) on a handle that did not start the stream,
+         *  without telling the device. Synnax found a new handle's stop does reach a T7; this
+         *  models the LJM where it would not, so the session's fallback is exercised. */
+        bool stop_only_own_stream = false;
+        /** !=0: every stream stop fails with this code (e.g. the link dropped). */
+        int fail_stop_code = 0;
     };
-    FakeT7Device() = default;
-    explicit FakeT7Device(Options o) : opt_(o) {
+    FakeT7Device() : FakeT7Device(Options{}) {
     }
+    explicit FakeT7Device(Options o);
 
     void open(const std::string& ip) override;
     int64_t serial_number() override;
@@ -220,8 +287,13 @@ public:
     std::vector<std::pair<std::string, double>> writes;
     std::vector<std::string> scan_names;
     std::vector<std::string> reads;  ///< every name read_names() was asked for
-    bool streaming = false;
+    bool streaming = false;          ///< this handle's own stream is running
     bool closed = false;
+    int stop_calls = 0;
+
+    FakeT7Unit& unit() {
+        return *opt_.unit;
+    }
 
     /** Volts on `ain` at `t`: Options::signal, else the default described above. */
     double volts(int ain, double t) const;
@@ -232,6 +304,10 @@ private:
     double rate_ = 0.0;
     uint64_t scan_ = 0;
     int reads_ = 0;
+    uint64_t my_stream_ = 0;  ///< unit stream_id this handle started; 0 = none
+    bool owns_stream() const {
+        return my_stream_ != 0 && opt_.unit->streaming && opt_.unit->stream_id == my_stream_;
+    }
 };
 
 }  // namespace t7
