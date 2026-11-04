@@ -103,7 +103,7 @@ MUTATIONS = [
      "host and 1]", "packet cut short by CS is not discarded"),
     ("dvbt_host.v", "if ((pc == 8'd0 && rx_byte != 8'h47) || !f_sready || bad) f_abort <= 1'b1;",
      "if (1'b0) f_abort <= 1'b1;", "host and 1]", "bad packets committed anyway"),
-    ("dvbt_host.v", "dreq     <= (f_free >= 12'd376);", "dreq     <= (f_free >= 12'd188);",
+    ("dvbt_host.v", "dreq     <= (f_free >= 376);", "dreq     <= (f_free >= 188);",
      "host and 1]", "DREQ threshold one packet, not two"),
     ("dvbt_ts_source.v", "8'd3:    null_byte = 8'h10;", "8'd3:    null_byte = 8'h00;",
      "host and 1]", "null packet without payload flag"),
