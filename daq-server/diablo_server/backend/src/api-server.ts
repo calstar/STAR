@@ -268,9 +268,9 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
     }
   }
 
-  // LabJack T7 channels: one more PT / TC / LC each, named by their role, in the same units. The
-  // conversion is t7_bridge's datasheet physics (full_scale, signal, sensitivity, ...); there is no
-  // capture-point fit for a T7 channel, so none is offered to the calibration sequence.
+  // LabJack T7 channels: one more PT / TC / LC each, named by their role, in the same units, and
+  // calibrated by calibration_service exactly like an ESP32 PT / LC (uid board_id*100 + AIN), so
+  // PT and LC inputs take part in the calibration sequence as the ESP32 ones do.
   for (const ch of t7Channels(boards)) {
     if (!ch.enabled || ch.calEntity === null) continue;
     if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC') continue;
@@ -281,7 +281,7 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
       boardId: ch.boardId,
       boardIp: ch.boardIp,
       isHpPt: false,
-      inCalibrationSequence: false,
+      inCalibrationSequence: ch.kind === 'PT' || ch.kind === 'LC',
       entity: ch.entity,
       calEntity: ch.calEntity,
       source: 'T7',

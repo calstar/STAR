@@ -295,7 +295,7 @@ import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdow
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
-import { countByLevel } from '../../shared/config-validation.js';
+import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -342,8 +342,22 @@ function _ensurePtSlotCache(): void {
   } catch { /* fine — fallback below */ }
 }
 
-/** Map PT{n}.CH{m} entity to uniqueId = board_id*100+local_ch (matches calibration_service). */
+/** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
+const _t7SlotToBoardId = new Map<number, number>();
+
+/** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
+ *  (matches calibration_service, where a T7 input's channel is its AIN). */
 function uniqueIdFromPtEntity(entity: string): number | null {
+  const t7 = entity.match(/^T7(\d+)_Cal\.AIN(\d+)$/);
+  if (t7) {
+    if (_t7SlotToBoardId.size === 0) {
+      try {
+        for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+      } catch { /* no config: no T7 uid */ }
+    }
+    const bid = _t7SlotToBoardId.get(parseInt(t7[1], 10));
+    return bid !== undefined ? bid * 100 + parseInt(t7[2], 10) : null;
+  }
   const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
   if (!m) return null;
   const slot = parseInt(m[1], 10);
@@ -795,6 +809,7 @@ export function applyDeployedConfigChange(): void {
   calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
   calibrationHost.channelToEntityMap = calChannelToEntityMap;
   _ptSlotToBoardId.clear();
+  _t7SlotToBoardId.clear();
   _hpBoardNumbers = hpBoardNumbers();
   _t7CalFields = t7CalFields();
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too

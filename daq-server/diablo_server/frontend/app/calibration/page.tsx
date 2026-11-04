@@ -100,10 +100,10 @@ export default function CalibrationPage() {
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
-  // LabJack T7 channels are converted by t7_bridge from their datasheet numbers, not by
-  // calibration_service, so there is nothing to capture, zero or fit for them here.
-  const ptChannels = useMemo(() => allSensors.filter((c) => c.type === 'PT' && c.source !== 'T7'), [allSensors]);
-  const lcChannels = useMemo(() => allSensors.filter((c) => c.type === 'LC' && c.source !== 'T7'), [allSensors]);
+  // LabJack T7 inputs are here too: calibration_service calibrates them exactly like an ESP32
+  // PT / LC (uid board_id*100 + AIN). Their "ADC" column is the reading in microvolts.
+  const ptChannels = useMemo(() => allSensors.filter((c) => c.type === 'PT'), [allSensors]);
+  const lcChannels = useMemo(() => allSensors.filter((c) => c.type === 'LC'), [allSensors]);
 
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
