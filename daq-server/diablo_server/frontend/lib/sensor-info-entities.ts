@@ -8,8 +8,6 @@
  * replaces (e.g. LC2.CH1.replace('LC.', 'LC_Cal.') does nothing).
  */
 
-import { t7Channels } from './config-validation';
-
 /** Same as api-server elodinSlotFromBoardId: (board_id % 10), with 0 → 10. */
 export function elodinSlotFromBoardId(boardId: number): number {
   const m = boardId % 10;
@@ -36,9 +34,6 @@ export interface SenseRowConfig extends TcRowConfig {
   /** Elodin slot (board_id % 10, 0 → 10) — the number inside the entity name. */
   boardNumber: number;
   channel: number;
-  /** 'T7' for a LabJack T7 channel: entity T7<slot>.AIN<n>, channel = its AIN, label = its role.
-   *  Absent for an ESP32 board's connector. */
-  source?: 'T7';
 }
 
 const DEFAULT_BOARD_ID: Record<SenseType, number> = { TC: 51, RTD: 31, LC: 41 };
@@ -85,21 +80,6 @@ export function buildSenseRowsFromBoards(
         channel: ch,
       });
     }
-  }
-  // LabJack T7 channels of this kind (t7_bridge publishes them in the same units). A T7 channel
-  // always has a role, and the role is what tells it apart, so it is the label.
-  for (const ch of t7Channels(boards as Record<string, any>)) {
-    if (!ch.enabled || ch.kind !== type || ch.calEntity === null) continue;
-    out.push({
-      entity: ch.entity,
-      calEntity: ch.calEntity,
-      label: ch.role,
-      voltageReference: 0,
-      boardId: ch.boardId,
-      boardNumber: ch.slot,
-      channel: ch.ain,
-      source: 'T7',
-    });
   }
   return out;
 }

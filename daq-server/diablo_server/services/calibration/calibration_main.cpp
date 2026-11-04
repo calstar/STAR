@@ -36,7 +36,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -51,21 +50,14 @@
 #include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
-#include "calibration/PtSmoothing.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
-#include "calibration/TypeK.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
-#include "comms/messages/sensor/T7Messages.hpp"
 #include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "elodin/ResubscribeBackoff.hpp"
-#include "t7/T7Calibration.hpp"
-#include "t7/T7Convert.hpp"
-#include "t7/T7Stream.hpp"
 
 namespace {
 
@@ -76,8 +68,9 @@ namespace {
  */
 std::map<uint8_t, std::array<uint8_t, 11>> g_hp_ma_live;
 
-/** Per-sensor PT output smoothing (ESP32 and T7), seeded with each sensor's first reading. */
-fsw::calibration::PtSmoother g_pt_smoother;
+/** Per-sensor EMA state for LP PT output smoothing (initialized to NaN = not yet set). */
+std::unordered_map<uint16_t, double> g_lp_ema;
+constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
 
 /**
  * Which model a PT streams: operator/factory cubic, the robust learner, the 75/25 blend, or the
@@ -134,11 +127,6 @@ std::unordered_map<uint16_t, double> g_lc_pga_gain;
 std::set<uint16_t> g_lc_uids;
 /** Board ids of every LC board, so a connector outside active_connectors still routes as LC. */
 std::set<uint8_t> g_lc_board_ids;
-
-/** Latest thermocouple cold-junction temperature (°C) per T7 slot, from t7_bridge's CJC table
- *  {0x26, (slot-1)*0x20 + 0x0F}. Absent until the first one arrives; a T7 TC sample with no
- *  junction yet is not published rather than converted against a guess. */
-std::map<uint8_t, double> g_t7_cold_junction_c;
 
 }  // namespace
 
@@ -380,10 +368,32 @@ static double convert_tc_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage) 
     constexpr double ADC_MAX = 2147483648.0;  // 2^31
     double voltage_v = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
     double v_mv = voltage_v * 1000.0;
-    // The curve lives in lib (calibration/TypeK.hpp) so t7_bridge uses the same numbers. It
-    // returns NaN out of range; this path has always published 0.0 there.
-    const double t = fsw::calibration::type_k_c_from_mv(v_mv);
-    return std::isfinite(t) ? t : 0.0;
+
+    // ITS-90 Type K inverse: (v_min_mV, v_max_mV, T0, V0, p1, p2, p3, p4, q1, q2, q3)
+    static const double ranges[5][11] = {
+        {-6.404, -3.554, -121.47164, -4.1790858, 36.069513, 30.722076, 7.791386, 0.52593997,
+         0.93939547, 0.2779128, 0.02516334},
+        {-3.554, 4.096, -8.7935962, -0.34489914, 25.678719, -0.49887904, -0.44705222, -0.044869202,
+         0.00023893439, -0.02039775, -0.0018424107},
+        {4.096, 16.397, 310.18976, 12.631386, 24.061949, 4.0158622, 0.26853917, -0.0097188544,
+         0.16995872, 0.011413069, -0.00039275155},
+        {16.397, 33.275, 605.72562, 25.148718, 23.539401, 0.046547228, 0.0134444, 0.0005923685,
+         0.00083445513, 0.0004612144, 0.00002548812},
+        {33.275, 69.553, 1018.4705, 41.99385, 25.783239, -1.8363403, 0.05617666, 0.000185324,
+         -0.074803355, 0.002384186, 0.0},
+    };
+
+    for (const auto& r : ranges) {
+        if (v_mv >= r[0] && v_mv <= r[1]) {
+            double x = v_mv - r[3];  // x = V_mV - V0
+            double num = r[4] + x * (r[5] + x * (r[6] + x * r[7]));
+            double den = 1.0 + x * (r[8] + x * (r[9] + x * r[10]));
+            if (std::abs(den) < 1e-20)
+                return 0.0;
+            return r[2] + (x * num) / den;  // T0 + (x * num) / den
+        }
+    }
+    return 0.0;  // out of range
 }
 
 /**
@@ -397,13 +407,21 @@ static double clamp_tc_rtd_temp_publish_c(double t_c) {
 }
 
 /**
- * Pt1000 RTD: raw ADC → voltage → resistance → temperature (°C), on the full IEC 60751 curve
- * (rtd::rtd_board_adc_to_temp_c). NaN for an open or shorted element: publish nothing.
+ * Pt1000 RTD: raw ADC → voltage → resistance → temperature (°C).
+ * Uses Callendar-Van Dusen (IEC 60751) inverse via existing rtd::resistance_to_temp_cvd().
  */
 static double convert_rtd_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage,
                                         double excitation_ua, double r0_ohm) {
-    return fsw::calibration::rtd::rtd_board_adc_to_temp_c(adc_raw, adc_ref_voltage, excitation_ua,
-                                                          r0_ohm);
+    constexpr double ADC_MAX = 2147483648.0;
+    if (excitation_ua <= 0.0)
+        return 0.0;
+
+    double voltage_v = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
+    double resistance_ohm = (std::abs(voltage_v) * 1e6) / excitation_ua;
+
+    fsw::calibration::rtd::CVDCoeffs cvd;
+    cvd.R0 = r0_ohm;  // Pt1000: 1000.0 (not the header default of 100)
+    return fsw::calibration::rtd::resistance_to_temp_cvd(resistance_ohm, cvd);
 }
 
 /**
@@ -853,47 +871,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ---- LabJack T7 inputs (t7_bridge) — the same PT / LC machinery, fed from a different place.
-    // A T7 input is a uid (board_id*100 + AIN) with a role, a model and a store entry like any
-    // ESP32 sensor; its "ADC code" is its reading in microvolts (t7::t7_counts), its logical
-    // channel sits above the ESP32 range (t7::t7_logical_channel), and its physics conversion is
-    // its channel row's datasheet numbers (t7/T7Convert.hpp). The model comes from
-    // [calibration_model_<t7 board>] by role, as for an ESP32 board; with none given a T7 input
-    // defaults to physics — it measures volts against the T7's own calibration, so the datasheet
-    // conversion is already a real reading, exactly as for a 4-20 mA board.
-    const fsw::t7::T7CalibrationMap t7_map(cal_cfg);
-    if (!cal_cfg.t7_errors.empty())
-        std::cerr << "[Calibration] T7: config has " << cal_cfg.t7_errors.size()
-                  << " problem(s); t7_bridge will not stream, so no T7 input is calibrated"
-                  << std::endl;
-    for (const auto& t : t7_map.all()) {
-        if (t.channel.kind != "PT" && t.channel.kind != "LC")
-            continue;  // TC / RTD: physics only (no model to choose)
-        g_uid_role[t.uid] = t.channel.role;
-        std::optional<std::string> model;
-        if (const auto* models =
-                cal_cfg.calibration_model_for("calibration_model_" + t.board_key)) {
-            auto it = models->find(t.channel.role);
-            if (it != models->end())
-                model = it->second;
-        }
-        if (t.channel.kind == "PT")
-            g_pt_model[t.uid] = model ? parse_pt_model(*model) : PtModel::Physics;
-        else if (model)
-            g_lc_model[t.uid] = parse_lc_model(*model);  // absent = physics (lc_model_for)
-    }
-    std::cout << "[Calibration] T7: " << t7_map.all().size() << " input(s) on "
-              << cal_cfg.t7_boards.size() << " board(s)" << std::endl;
-
     // Ordered uid->role for RobustCalibrationManager save/load, so the robust learned state is
     // filed by role and re-attaches to the role's current connector (mirrors the cubic store).
-    // T7 inputs are left out: the robust file has no unit tag, and a role moving between an ESP32
-    // board (ADC codes) and a T7 (µV) must not carry its learned state across. They are filed by
-    // uid instead, which is stable for a given T7 and AIN.
-    std::map<uint16_t, std::string> uid_role;
-    for (const auto& [u, r] : g_uid_role)
-        if (t7_map.by_uid(u) == nullptr)
-            uid_role.emplace(u, r);
+    const std::map<uint16_t, std::string> uid_role(g_uid_role.begin(), g_uid_role.end());
 
     // Robust is NOT factory-seeded here anymore. Its per-sensor baseline is the operator's shared
     // cubic fit, so it's initialized AFTER the cubic store loads (see below). A sensor with no
@@ -948,22 +928,6 @@ int main(int argc, char* argv[]) {
                                          lc_model_name(lc_model_for(uid)),
                                          fsw::calibration::SensorKind::LC);
         }
-    }
-
-    // T7 PT / LC inputs: the same store, tagged as microvolt channels so a fit never crosses
-    // between them and the ESP32 boards' ADC codes (CubicCalibrationStore::load).
-    for (const auto& t : t7_map.all()) {
-        const bool is_lc = t.channel.kind == "LC";
-        if (t.channel.kind != "PT" && !is_lc)
-            continue;
-        if (is_lc)
-            g_lc_uids.insert(t.uid);
-        cubic_store.register_channel(
-            t.uid, static_cast<uint8_t>(t.board_id), static_cast<uint8_t>(t.channel.ain),
-            t.logical_ch, t.channel.role,
-            is_lc ? lc_model_name(lc_model_for(t.uid)) : pt_model_name(pt_model_for(t.uid)),
-            is_lc ? fsw::calibration::SensorKind::LC : fsw::calibration::SensorKind::PT,
-            fsw::calibration::kRawUnitMicrovolts);
     }
 
     // ---- Unified capture/clear routing (see the [calibration_model_*] plan)
@@ -1024,15 +988,6 @@ int main(int argc, char* argv[]) {
             if (!found) {
                 std::cerr << "[Calibration] abort_pts \"" << role
                           << "\": no PT sensor_role declares this name — no threshold emitted"
-                          << std::endl;
-                continue;
-            }
-            if (t7_map.by_uid(uid) != nullptr) {
-                // The threshold is an ADC code an ESP32 board compares its own reading against
-                // while it vents autonomously; a T7 is not on that board, so it cannot gate it.
-                std::cerr << "[Calibration] abort_pts \"" << role
-                          << "\" is a LabJack T7 input — board abort thresholds can only use an "
-                             "ESP32 PT; no threshold emitted"
                           << std::endl;
                 continue;
             }
@@ -1104,16 +1059,6 @@ int main(int argc, char* argv[]) {
     // cubic and physics carries its tare correctly instead of being a fourth special case.
     auto lc_eval_for = [&](uint16_t uid) -> fsw::calibration::LcTareStore::Evaluator {
         return [&, uid](double adc) -> double {
-            if (const fsw::t7::T7CalChannel* t = t7_map.by_uid(uid)) {
-                // A T7 load cell: the code is µV; physics is its own channel's bridge numbers.
-                const int32_t code = static_cast<int32_t>(adc);
-                const bool cubic_ok = lc_calibration.is_calibrated(t->logical_ch);
-                const double kg_cubic =
-                    cubic_ok ? lc_calibration.calculate(t->logical_ch, code) : 0.0;
-                const double kg_phys = fsw::t7::lc_kg(fsw::t7::t7_volts(adc), t->channel);
-                return select_lc_kg(uid, kg_cubic, std::isfinite(kg_phys) ? kg_phys : 0.0,
-                                    cubic_ok);
-            }
             uint8_t board_number = static_cast<uint8_t>((uid / 100) % 10);
             if (board_number == 0)
                 board_number = 10;
@@ -1394,20 +1339,6 @@ int main(int argc, char* argv[]) {
     // Single ElodinClient for both subscribe (read) and publish (write)
     fsw::elodin::ElodinClient elodin_client;
 
-    // T7: register the calibrated tables this service publishes and subscribe to t7_bridge's raw
-    // ones (inputs + each TC board's cold junction). Called wherever the ESP32 tables are.
-    auto register_and_subscribe_t7 = [&]() -> bool {
-        if (t7_map.empty())
-            return true;
-        std::map<uint8_t, std::vector<fsw::elodin::DatabaseConfig::T7Table>> by_slot;
-        for (const auto& t : t7_map.all())
-            by_slot[t.slot].push_back(
-                {static_cast<uint8_t>(t.channel.ain), fsw::t7::calibrated_field(t.channel.kind)});
-        for (const auto& [slot, tables] : by_slot)
-            fsw::elodin::DatabaseConfig::register_t7_calibrated_tables(elodin_client, slot, tables);
-        return elodin_client.subscribe_tables(t7_map.raw_tables());
-    };
-
     auto connect_and_register = [&]() -> bool {
         if (!elodin_client.connect(elodin_host, elodin_port)) {
             std::cerr << "[Cal] Failed to connect to Elodin at " << elodin_host << ":"
@@ -1428,10 +1359,6 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Failed to subscribe to CalibrationCommand [0x46,0x00]" << std::endl;
             return false;
         }
-        if (!register_and_subscribe_t7()) {
-            std::cerr << "[Cal] Failed to subscribe to LabJack T7 raw tables" << std::endl;
-            return false;
-        }
         std::cout << "[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
                   << std::endl;
         return true;
@@ -1439,9 +1366,9 @@ int main(int argc, char* argv[]) {
 
     if (!connect_and_register())
         return 1;
-    // Allow read_packet() to yield every 1 s so the re-subscribe check can fire on its 1 s first
-    // step when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
-    elodin_client.set_recv_timeout_ms(1000);
+    // Allow read_packet() to yield every 3 s so the re-subscribe check can fire
+    // when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
+    elodin_client.set_recv_timeout_ms(3000);
 
     // Generous, but not for the reason the previous comment claimed ("handles large Elodin
     // subscription-ACK bursts"). ACKs are 19-23 bytes and arrive one per read_packet() call, so
@@ -1453,16 +1380,8 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    // Raw tables registered after we subscribed (a publisher that started after this service —
-    // every session start) are picked up by re-subscribing once they have been quiet: after 1 s,
-    // then 2, 4, and every 5 s while they stay quiet.
-    fsw::elodin::ResubscribeBackoff raw_resub(std::chrono::steady_clock::now());
-    // LabJack T7 tables are re-subscribed on their own clock. t7_bridge registers them whenever it
-    // connects, which can be after this service subscribed, and Elodin does not deliver a table
-    // that did not exist at subscribe time. On a rig with ESP32 boards streaming, their packets
-    // keep the raw clock fresh, so a T7 gap would otherwise never trigger a re-subscribe — and
-    // T7 packets must not mask a missing ESP32 subscription either.
-    fsw::elodin::ResubscribeBackoff t7_resub(std::chrono::steady_clock::now());
+    auto last_packet_time = std::chrono::steady_clock::now();
+    auto last_resubscribe = std::chrono::steady_clock::now();
     std::map<uint16_t, int32_t> last_adc_map;
 
     while (running) {
@@ -1476,10 +1395,9 @@ int main(int argc, char* argv[]) {
                 elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
                     pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
-                register_and_subscribe_t7();
-                elodin_client.set_recv_timeout_ms(1000);
-                raw_resub.restart(std::chrono::steady_clock::now());
-                t7_resub.restart(std::chrono::steady_clock::now());
+                elodin_client.set_recv_timeout_ms(3000);
+                last_resubscribe = std::chrono::steady_clock::now();
+                last_packet_time = std::chrono::steady_clock::now();
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1489,26 +1407,21 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Quiet raw tables: daq_bridge / t7_bridge may have registered their VTables AFTER we
-        // subscribed — re-subscribe to pick them up (see ResubscribeBackoff for the schedule).
+        // If no raw sensor packets received for 5 s, daq_bridge may have registered
+        // its VTables AFTER we subscribed — re-subscribe to pick them up.
         {
-            const auto now_s = std::chrono::steady_clock::now();
-            const auto secs = [](auto d) {
-                return std::chrono::duration_cast<std::chrono::milliseconds>(d).count() / 1000.0;
-            };
-            if (raw_resub.due(now_s)) {
-                std::cout << "[Cal] No packets for " << secs(raw_resub.silence(now_s))
+            auto now_s = std::chrono::steady_clock::now();
+            auto since_pkt =
+                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
+            auto since_sub =
+                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
+            if (since_pkt >= 5 && since_sub >= 5) {
+                std::cout << "[Cal] No packets for " << since_pkt
                           << "s — re-subscribing to raw streams" << std::endl;
                 elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
                     pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
-                raw_resub.subscribed(now_s);
-            }
-            if (!t7_map.empty() && t7_resub.due(now_s)) {
-                std::cout << "[Cal] No LabJack T7 packets for " << secs(t7_resub.silence(now_s))
-                          << "s — re-subscribing to the T7 raw tables" << std::endl;
-                register_and_subscribe_t7();
-                t7_resub.subscribed(now_s);
+                last_resubscribe = now_s;
             }
         }
 
@@ -1705,14 +1618,9 @@ int main(int argc, char* argv[]) {
                             continue;
                         const uint8_t board_id = static_cast<uint8_t>(id / 100);
                         const uint8_t connector = static_cast<uint8_t>(id % 100);
-                        // Keyed by the calibrated entity this service publishes, which the backend
-                        // subtracts the offset from: LC<slot>_Cal.CH<n>, or T7<slot>_Cal.AIN<n>.
-                        const fsw::t7::T7CalChannel* t7 = t7_map.by_uid(id);
-                        const std::string entity =
-                            t7 != nullptr ? fsw::t7::calibrated_entity_name(
-                                                t7->slot, static_cast<uint8_t>(t7->channel.ain))
-                                          : fsw::calibration::lc_tare_entity(board_id, connector);
-                        if (lc_tare_store.set(id, entity, r.adc_avg, lc_eval_for(id))) {
+                        if (lc_tare_store.set(id,
+                                              fsw::calibration::lc_tare_entity(board_id, connector),
+                                              r.adc_avg, lc_eval_for(id))) {
                             ++done;
                             const fsw::calibration::LcTare* t = lc_tare_store.tare_for(id);
                             std::cout << "[Cal] Tare uid=" << static_cast<int>(id) << " "
@@ -1726,97 +1634,6 @@ int main(int argc, char* argv[]) {
                               << " load cell(s)" << std::endl;
                 }
             }
-            continue;
-        }
-
-        // ── LabJack T7 raw (t7_bridge) ─────────────────────────────────────────────────────────
-        // The same model selection, capture window and outputs as the ESP32 PT / LC / TC branches
-        // below; what differs is only the input: a float in volts, turned into a µV code.
-        if (type_hi == fsw::t7::kTypeHi) {
-            const uint8_t offset = type_lo & 0x1F;
-            if (offset >= 0x10 || pkt_len - 8 < 21)
-                continue;  // >= 0x10 is our own calibrated output
-            const uint8_t* p = pkt_buf + 8;
-            uint64_t ts_ns = 0;
-            float volts_f = 0.0f;
-            std::memcpy(&ts_ns, p, sizeof(ts_ns));
-            std::memcpy(&volts_f, p + 12, sizeof(volts_f));
-            const uint64_t rx_ns = mono_ns();
-            const uint8_t slot = static_cast<uint8_t>((type_lo >> 5) + 1);
-            t7_resub.packet(std::chrono::steady_clock::now());
-            if (!std::isfinite(volts_f))
-                continue;
-            if (offset == fsw::t7::kCjcTableOffset) {
-                g_t7_cold_junction_c[slot] = volts_f;  // this table's float is °C
-                continue;
-            }
-            const fsw::t7::T7CalChannel* t = t7_map.by_table(slot, offset);
-            if (t == nullptr)
-                continue;
-            const double volts = volts_f;
-            const int32_t code = fsw::t7::t7_counts(volts);
-            const uint16_t uid = t->uid;
-            const uint8_t ain = static_cast<uint8_t>(t->channel.ain);
-            const auto out_id = fsw::t7::calibrated_table_id(slot, ain);
-            auto publish = [&](double value, uint8_t cal_status) {
-                comms::messages::sensor::T7CalibratedMessage msg(
-                    ts_ns, ain, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(value), code,
-                    cal_status);
-                elodin_client.publish(out_id, msg);
-            };
-
-            elodin_client.begin_batch();
-            if (t->channel.kind == "PT") {
-                last_adc_map[uid] = code;
-                capture_window.push(uid, code, ts_ns, rx_ns);
-                const bool fac_ok = pt_calibration.is_calibrated(t->logical_ch);
-                const double psi_fac =
-                    fac_ok ? pt_calibration.calculate_pressure(t->logical_ch, code) : 0.0;
-                const double psi_rob = robust_manager.predict_pressure_psi(uid, code);
-                double psi_phys = fsw::t7::pt_psi(volts, t->channel);
-                if (!std::isfinite(psi_phys))
-                    psi_phys = 0.0;
-                const bool has_rob = robust_manager.has_sensor(uid);
-                double psi = select_pt_psi(uid, psi_fac, psi_rob, psi_phys, fac_ok, has_rob);
-                const PtModel eff_model = g_env_override ? *g_env_override : pt_model_for(uid);
-                uint8_t cal_status = 1;
-                if (eff_model == PtModel::Cubic)
-                    cal_status = fac_ok ? 1u : 0u;
-                else if (eff_model == PtModel::Robust)
-                    cal_status = has_rob ? 1u : 0u;
-                else if (eff_model == PtModel::Blend)
-                    cal_status = (fac_ok && has_rob) ? 1u : 0u;
-                psi = g_pt_smoother.step(uid, psi);
-                psi = std::isfinite(psi) ? std::clamp(psi, -3000.0, 20000.0) : 0.0;
-                publish(psi, cal_status);
-            } else if (t->channel.kind == "LC") {
-                last_adc_map[uid] = code;
-                capture_window.push(uid, code, ts_ns, rx_ns);
-                const bool cubic_ok = lc_calibration.is_calibrated(t->logical_ch);
-                const double kg_cubic =
-                    cubic_ok ? lc_calibration.calculate(t->logical_ch, code) : 0.0;
-                double kg_phys = fsw::t7::lc_kg(volts, t->channel);
-                if (!std::isfinite(kg_phys))
-                    kg_phys = 0.0;
-                double kg = select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
-                const uint8_t cal_status =
-                    lc_model_for(uid) == LcModel::Physics ? 1u : (cubic_ok ? 1u : 0u);
-                publish(std::isfinite(kg) ? kg : 0.0, cal_status);
-            } else if (t->channel.kind == "TC") {
-                const auto cj = g_t7_cold_junction_c.find(slot);
-                const double temp_c = cj != g_t7_cold_junction_c.end()
-                                          ? fsw::t7::tc_c(volts, cj->second)
-                                          : std::numeric_limits<double>::quiet_NaN();
-                if (std::isfinite(temp_c))
-                    publish(clamp_tc_rtd_temp_publish_c(temp_c), 1);
-            } else if (t->channel.kind == "RTD") {
-                // Physics only, as a T7 TC: the LJTick-Resistance divider and the IEC 60751 curve.
-                const double temp_c = fsw::t7::rtd_c(volts, t->channel);
-                if (std::isfinite(temp_c))
-                    publish(clamp_tc_rtd_temp_publish_c(temp_c), 1);
-            }
-            elodin_client.flush_batch();
-            packet_count++;
             continue;
         }
 
@@ -1921,7 +1738,14 @@ int main(int argc, char* argv[]) {
 
             // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit
             // above, not a post-hoc offset).
-            psi = g_pt_smoother.step(uid, psi);
+            {
+                auto& ema = g_lp_ema[uid];
+                if (!std::isfinite(ema))
+                    ema = psi;
+                else
+                    ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
+                psi = ema;
+            }
             if (verbose() && packet_count % 100 == 0)
                 std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
                           << static_cast<int>(ch_eff) << (is_loop ? " (4-20mA)" : "")
@@ -1966,16 +1790,11 @@ int main(int argc, char* argv[]) {
                                                    rtd_r0_ohm);
                 cal_status = 0;
             }
-            // An open or shorted element has no temperature. It used to publish one anyway: about
-            // +395 C (open, ADC at the rail) or -242 C (short). Now the channel goes quiet and the
-            // GUI shows it stale.
-            if (std::isfinite(temp_c)) {
-                temp_c = clamp_tc_rtd_temp_publish_c(temp_c);
-                comms::messages::sensor::CalibratedRTDMessage cal_msg(
-                    ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
-                    static_cast<uint32_t>(adc_i32), cal_status);
-                elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
-            }
+            temp_c = clamp_tc_rtd_temp_publish_c(temp_c);
+            comms::messages::sensor::CalibratedRTDMessage cal_msg(
+                ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
+                static_cast<uint32_t>(adc_i32), cal_status);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x23) {  // LC raw — unified: every LC runs through model selection
                                        // (cubic operator fit, or the datasheet physics formula).
@@ -2015,7 +1834,7 @@ int main(int argc, char* argv[]) {
 
         elodin_client.flush_batch();
 
-        raw_resub.packet(std::chrono::steady_clock::now());
+        last_packet_time = std::chrono::steady_clock::now();
         packet_count++;
         if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex

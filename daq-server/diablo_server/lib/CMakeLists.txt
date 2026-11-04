@@ -9,10 +9,6 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
-    src/config/T7Config.cpp
-    src/t7/T7Stream.cpp
-    src/t7/T7Convert.cpp
-    src/t7/T7Calibration.cpp
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp
@@ -32,7 +28,6 @@ set(FSW_SOURCES
     src/calibration/LcTareStore.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
-    src/calibration/TypeK.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp
     src/calibration/RobustCalibrationManager.cpp
@@ -295,24 +290,6 @@ target_link_libraries(test_script_runtime
 add_test(NAME script_runtime COMMAND test_script_runtime)
 set_tests_properties(script_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 180 RUN_SERIAL TRUE)
-
-# LabJack T7: config parsing, stream setup and block decoding, against FakeT7Device. Hermetic —
-# no LJM, no sockets, no files.
-add_executable(test_t7 test/test_t7.cpp)
-target_link_libraries(test_t7 fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
-add_test(NAME t7 COMMAND test_t7)
-
-add_executable(test_pt_smoothing test/test_pt_smoothing.cpp)
-target_link_libraries(test_pt_smoothing fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
-add_test(NAME pt_smoothing COMMAND test_pt_smoothing)
-
-add_executable(test_rtd_board test/test_rtd_board.cpp)
-target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
-add_test(NAME rtd_board COMMAND test_rtd_board)
-
-add_executable(test_resubscribe_backoff test/test_resubscribe_backoff.cpp)
-target_link_libraries(test_resubscribe_backoff fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
-add_test(NAME resubscribe_backoff COMMAND test_resubscribe_backoff)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.

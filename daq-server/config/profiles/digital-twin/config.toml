@@ -331,9 +331,6 @@ active_connectors = [ 1, 2 ]
 "Dome CTRL" = 1000
 "Low Press" = 1000
 
-# UNUSED today: these reach the actuator board in its config packet, but the firmware only reads
-# them in its PTAbort state, which is unreachable while ENABLE_ALL_STATE_TRANSITIONS = false
-# (firmware/Hotfire_Code/common/hotfire_config.h). No board aborts on them. Hidden in the GUI.
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400

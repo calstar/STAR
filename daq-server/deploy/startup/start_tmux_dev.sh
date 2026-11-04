@@ -99,7 +99,6 @@ pkill -9 -f "build/bin/sequencer_service\|build/bin/sequencer_service" 2>/dev/nu
 pkill -9 -f "build/bin/heartbeat_service\|build/bin/heartbeat_service" 2>/dev/null || true
 pkill -9 -f "build/bin/config_broadcast_service\|build/bin/config_broadcast_service" 2>/dev/null || true
 pkill -9 -f "build/bin/calibration_service\|build/bin/calibration_service" 2>/dev/null || true
-pkill -9 -f "build/bin/t7_bridge" 2>/dev/null || true
 pkill -9 -f "build/bin/controller_service\|build/bin/controller_service" 2>/dev/null || true
 pkill -9 -f "board_simulator" 2>/dev/null || true
 pkill -9 -f "next dev" 2>/dev/null || true   # legacy (pre-Vite) frontend
@@ -132,11 +131,6 @@ if [ "${USE_SIM:-0}" = "1" ]; then
   sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$CONFIG_FILE"
   echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x (from config_base.toml)"
   echo "     $CONFIG_FILE"
-  # The config editor edits the ACTIVE PROFILE beside the config file (/tmp/gui_logs/profiles/),
-  # which the backend seeds from that file only when none exists. Left over from an earlier start,
-  # it would show the config_base.toml of that day, not this one. The sim config is regenerated on
-  # every start, so its profile is too.
-  rm -rf /tmp/gui_logs/profiles /tmp/gui_logs/.active_profile
 fi
 
 OTA_BIN="$PROJECT/build/bin/ota_service"
@@ -190,10 +184,7 @@ else
 fi
 
 CMD_LOG_DB="/tmp/gui_logs/db.log"
-# Dual-stack [::] where the host has IPv6; a host (or container) without it cannot bind [::] at all.
-ELODIN_BIND="[::]:2240"
-[ -e /proc/net/if_inet6 ] || [ "$(uname)" = "Darwin" ] || ELODIN_BIND="0.0.0.0:2240"
-CMD_DB='printf "\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n" && mkdir -p '"$HOME"'/.local/share/elodin && RUST_LOG=debug exec '"$ELODIN_DB_BIN"' run "'"$ELODIN_BIND"'" "'"$ELODIN_DB_DIR"'" 2>&1 | tee '"$CMD_LOG_DB"
+CMD_DB='printf "\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n" && mkdir -p '"$HOME"'/.local/share/elodin && RUST_LOG=debug exec '"$ELODIN_DB_BIN"' run "[::]:2240" "'"$ELODIN_DB_DIR"'" 2>&1 | tee '"$CMD_LOG_DB"
 
 # Thin backend connects directly to Elodin DB (no relay needed)
 THIN_WS_PORT="${THIN_WS_PORT:-8081}"
@@ -210,14 +201,9 @@ THIN_STATS_LOG="${THIN_STATS_LOG:-0}"
 WAIT_FOR_BACKEND='echo "  ⏳ Waiting for backend WS (port '"$THIN_WS_PORT"')..." && for i in $(seq 1 40); do (echo >/dev/tcp/127.0.0.1/'"$THIN_WS_PORT"') 2>/dev/null && break; sleep 1; done && echo "  ✅ Backend ready"'
 
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
-# The backend must read the same config as every service above. Under USE_SIM=1 that is the sim
-# config; left to itself the backend falls back to the gitignored runtime config/config.toml,
-# which can list different boards (e.g. a T7 that t7_bridge streams but the GUI never shows).
-BACKEND_CONFIG_ENV=""
-[ "${USE_SIM:-0}" = "1" ] && BACKEND_CONFIG_ENV="CONFIG_PATH=$CONFIG_FILE "
 # Backend also serves the built SPA on :3000 (GUI_PORT) and handles OTA flash
 # requests (OTA_SERVICE_PORT — previously set on the frontend's Next routes).
-CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && '"$BACKEND_CONFIG_ENV"'WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
+CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 # The frontend is a static Vite build served by the backend (GUI_PORT=3000).
@@ -275,23 +261,6 @@ CALIB_BIN="$PROJECT/build/bin/calibration_service"
 CMD_LOG_CALIBRATION="/tmp/gui_logs/calibration.log"
 CMD_CALIBRATION='printf "\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibrated ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"' && exec '"$CALIB_BIN"' --config '"$CONFIG_FILE"' 2>&1 | tee '"$CMD_LOG_CALIBRATION"
 
-# LabJack T7s (t7_bridge): every enabled [boards.*] type = "T7" in the config. With USE_SIM=1 they
-# are stand-in devices (--fake), so a simulated stack shows T7 channels without hardware. With no
-# enabled T7 the bridge says so and exits, and the pane stays (remain-on-exit).
-T7_BIN="$PROJECT/build/bin/t7_bridge"
-CMD_LOG_T7="/tmp/gui_logs/t7.log"
-T7_FAKE=""
-# The stand-in T7s keep their stream and registers in files, as a real T7 keeps them across
-# bridge restarts: the pkill -9 above leaves them streaming, and this start must take them over.
-# /tmp clearing on reboot is the power cycle.
-T7_FAKE_STATE="/tmp/gui_logs/t7_fake"
-if [ "${USE_SIM:-0}" = "1" ]; then
-  mkdir -p "$T7_FAKE_STATE"
-  T7_FAKE="--fake --fake-state $T7_FAKE_STATE"
-fi
-CMD_T7='printf "\n  ══ T7 BRIDGE — LabJack T7 inputs → Elodin ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"' && exec '"$T7_BIN"' --config '"$CONFIG_FILE"' '"$T7_FAKE"' 2>&1 | tee '"$CMD_LOG_T7"
-[ -x "$T7_BIN" ] || CMD_T7='printf "\n  ══ T7 BRIDGE — not built (build/bin/t7_bridge) ══\n\n" && sleep infinity'
-
 # Split the rightmost (max index) pane each time so pane creation order is 0..11 as listed above.
 # Re-tile after each split so widths stay usable. IMPORTANT: pass one shell string to tmux (like
 # legacy scripts). Separate argv (bash --norc -c $q) does not run the command — panes exit → "dead".
@@ -321,7 +290,7 @@ launch_background() {
   echo ""
 
   # Elodin DB first
-  nohup bash -c "mkdir -p '$HOME/.local/share/elodin' && exec $ELODIN_DB_BIN run '$ELODIN_BIND' '$ELODIN_DB_DIR'" >> "$LOGDIR/db.log" 2>&1 &
+  nohup bash -c "mkdir -p '$HOME/.local/share/elodin' && exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'" >> "$LOGDIR/db.log" 2>&1 &
   echo "    DB:           PID $! → $LOGDIR/db.log"
 
   # Wait for DB
@@ -340,12 +309,6 @@ launch_background() {
   # Calibration service
   nohup bash -c "cd '$PROJECT' && exec '$CALIB_BIN' --config '$CONFIG_FILE'" >> "$LOGDIR/calibration.log" 2>&1 &
   echo "    Calibration:  PID $! → $LOGDIR/calibration.log"
-
-  # LabJack T7 bridge (--fake under USE_SIM=1; exits 0 when no T7 is enabled)
-  if [ -x "$T7_BIN" ]; then
-    nohup bash -c "cd '$PROJECT' && exec '$T7_BIN' --config '$CONFIG_FILE' $T7_FAKE" >> "$LOGDIR/t7.log" 2>&1 &
-    echo "    T7 bridge:    PID $! → $LOGDIR/t7.log"
-  fi
 
   # Sequencer
   if [ -x "$SEQ_BIN" ]; then
@@ -391,7 +354,7 @@ launch_background() {
     echo -n "."
   done
   echo " ready"
-  nohup bash -c "cd '$PROJECT/diablo_server/backend' && ${BACKEND_CONFIG_ENV}WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
+  nohup bash -c "cd '$PROJECT/diablo_server/backend' && WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
   echo "    Backend:      PID $! → $LOGDIR/backend.log (serves GUI on :3000)"
 
   # Frontend: static build served by the backend — just ensure dist/ is current.
@@ -442,7 +405,6 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   tmux_split_right "$CMD_SEQUENCER"
   tmux_split_right "$CMD_OTA"
   tmux_split_right "$CMD_CTRL"
-  tmux_split_right "$CMD_T7"
 
   tmux select-layout -t "$SESSION:main" tiled
   tmux select-pane -t "$SESSION:main.4"
@@ -452,7 +414,7 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
   echo "│  3: Calibration  4: Backend :${THIN_WS_PORT}  5: Frontend :3000 │"
   echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
-  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller  11: T7 bridge  │"
+  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller                │"
   echo "│  USE_SIM=1 enables simulator                                  │"
   echo "│  Override: THIN_WS_PORT THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
   echo "│  Ctrl+B arrows=switch  D=detach                              │"

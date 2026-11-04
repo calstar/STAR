@@ -87,9 +87,7 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         failures.push('Heartbeat --- (expected numeric Hz)');
       }
 
-      // No self-test on an environmental board or a LabJack T7 (not ESP32 firmware).
-      const boardType = card.getAttribute('data-board-type');
-      const expectedSelfTest = boardType === 'ENVIRONMENTAL' || boardType === 'T7' ? 'N/A' : 'ALL PASSED';
+      const expectedSelfTest = card.getAttribute('data-board-type') === 'ENVIRONMENTAL' ? 'N/A' : 'ALL PASSED';
       if (selfTest !== expectedSelfTest) {
         failures.push(
           `Self Test ${selfTest || '(missing)'} (expected ${expectedSelfTest})`,

@@ -41,9 +41,6 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | [0x22, 0x11..] | Calibrated RTD (°C) | calibration_server |
 | [0x23, 0x01..0x14] | Raw LC ADC counts | daq_bridge |
 | [0x23, 0x11..] | Calibrated LC (force) | calibration_server |
-| [0x26, (slot-1)·0x20 + ain] | LabJack T7 raw input, `T7<slot>.AIN<n>.volts` (ain 0–13; 14 = internal temperature sensor) | t7_bridge |
-| [0x26, (slot-1)·0x20 + 0x0F] | T7 thermocouple cold junction, `T7<slot>.CJC.temperature_c` (TC boards only) | t7_bridge |
-| [0x26, (slot-1)·0x20 + 0x10 + ain] | T7 calibrated, `T7<slot>_Cal.AIN<n>.pressure_psi` / `temperature_c` / `force_kg` (+ `raw_uv`, the µV code calibration works in) | calibration_service |
 | [0x30, 0x01..0x0A] | Actuator status (current sense) | daq_bridge |
 | [0x31, 0x01..0x14] | Actuator state (open/closed) | not in `[daq_bridge] publish` allowlist |
 | [0x40, 0x00] | Controller actuation | ControllerService |
@@ -52,15 +49,6 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | [0x43, 0x00] | PSM state transition | ControllerService |
 | [0x44, 0x00] | Fire state | ControllerService |
 | [0x45, 0x00] | Navigation state | Autopilot |
-
-### Decoding a T7 run afterwards
-
-A T7's channels are named, and their kind (PT / TC / LC) and datasheet numbers recorded, only in
-config. A T7 `slot` is its `board_id % 10` (0 → 10), the same rule as every other board. The
-session copies the run's config beside the run dir as `<run_id>.toml`. Read the
-`[[boards.<name>.channels]]` rows there to know what `T7<slot>.AIN<n>` was. The webviewer does
-this (`webviewer/backend/run_config.py`), and `replay_past_db.sh` runs the GUI on that file
-rather than on today's config.
 
 ## DAQ Bridge Publish Allowlist
 
@@ -116,10 +104,17 @@ elodin editor ~/.local/share/elodin/daq_20260307_174529
 
 ## Analysis & Plots
 
-Browse a run interactively in the webviewer (`webviewer/`, see its README); it reads the run's own
-config sidecar, so roles and LabJack T7 channels are labelled. The old static-PNG pipeline
-(`analyze_run.py`, `plot_latest_db.sh`) and the Cd scripts (`calc_cd.py`, `characterize_cd.py`)
-were removed: they expected entity and column names nothing produces any more.
+### Quick: plot latest DB run
+
+```bash
+./tools/postprocessing/plot_latest_db.sh
+```
+
+Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots. **By default** the analysis uses **`--full-run`** (entire capture) so pressure and actuator timelines match the whole session. Set `FULL_RUN=0` to anchor at first PRESS_STANDBY instead. Optional: pass a DB name or path to plot a specific run.
+
+```bash
+./tools/postprocessing/plot_latest_db.sh daq_20260307_174529
+```
 
 ### Validate export (quick DB write check)
 
@@ -131,6 +126,42 @@ python3 tools/postprocessing/validate_export.py ./export_csv
 python3 tools/postprocessing/validate_export.py ./export_csv --strict
 ```
 
+`plot_latest_db.sh` runs `validate_export.py` automatically before `analyze_run.py`.
+
+### Full pipeline (export CSV → validate → analyze → plots)
+
+```bash
+# 1. Export last run to CSV
+FORMAT=csv ./tools/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_YYYYMMDD_HHMMSS ./export_csv
+
+# 2. Validate (optional; included in plot_latest_db.sh)
+python3 tools/postprocessing/validate_export.py ./export_csv
+
+# 3. Run analysis and generate plots
+python3 tools/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
+# Full timeline (no PRESS_STANDBY anchor):
+python3 tools/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest --full-run
+```
+
+Plots are written to `./output/postprocessing/latest/`:
+- `pressures.png` — PT pressure time series by domain (LOX, Fuel, GN2/GSE, Chamber)
+- `pressures_full_run.png` — **Every** calibrated PT channel on its own subplot (full timeline)
+- `temperatures.png` — TC/RTD temperature time series
+- `load_cells.png` — Load cell force (N)
+- `actuators.png` — **All** actuator commanded states (OPEN/CLOSED; step-hold over full timeline)
+- `states.png` — System state (PSM / engine_state; forward-fill, no interpolation)
+- `controller.png` — Controller outputs (duty_F/O, F_ref, F_estimated, P_ch, MR, …)
+- `pressure_summary.png` — Summary statistics table
+- `overview.png` — Multi-panel overview (state, pressures, temps, actuators, controller)
+- `run_data_combined.csv` — All channels, aligned to common time grid
+
+**Discrete data (states, actuators):** Uses forward-fill resampling (no interpolation) so step changes are preserved. Previously, linear interpolation produced bogus intermediate values (e.g. 0.5 between 0 and 1).
+
+**Time anchor:** Default is **first** PRESS_STANDBY in state data (not last — last can sit near shutdown and leave ~0–0.05 s of data). Use `--full-run` for the full export; `--anchor-last-press-standby` for old “last transition” behavior.
+
+**Actuator CSVs (`ACT_CMD.*.actuator_state_commanded`):** Elodin logs **commanded** state **on change** only (sparse rows). Postprocessing step-holds those samples across the full plot window (flat lines = “no change”). If a channel never received a command in the run, its export may be empty or single-sample — that is a logging limitation, not necessarily a bad DB write.
+
+**State source:** Prefers `CONTROLLER.state.to_state` (authoritative from PSM) when available; falls back to `BOARD.HB_*.engine_state` from heartbeat.
 
 ### Data semantics
 

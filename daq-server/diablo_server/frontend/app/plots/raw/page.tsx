@@ -8,7 +8,6 @@ import { useSensorConfig } from '@/lib/sensor-config';
 
 
 export default function RawReadoutsPage() {
-  // A LabJack T7 input's raw_adc_counts is its calibration code, the reading in microvolts.
   const allSensors = useSensorConfig();
 
   const labels = allSensors.map((s) => s.role);

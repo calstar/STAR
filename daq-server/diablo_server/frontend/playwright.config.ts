@@ -20,11 +20,6 @@ export default defineConfig({
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000',
     trace: 'on-first-retry',
-    // PW_CHROMIUM_PATH: use a Chrome already on the machine (e.g. a container image whose
-    // browser build differs from this @playwright/test's) instead of `playwright install`.
-    ...(process.env.PW_CHROMIUM_PATH
-      ? { launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH } }
-      : {}),
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
 });

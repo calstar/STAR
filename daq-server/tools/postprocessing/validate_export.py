@@ -154,6 +154,11 @@ def main() -> int:
             )
             return 1
 
+    print(
+        "\n   Next: python scripts/postprocessing/analyze_run.py",
+        d,
+        "-o ./output/postprocessing/latest",
+    )
     return 0
 
 

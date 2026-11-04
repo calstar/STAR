@@ -8,7 +8,7 @@ PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
 ALL_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator \
-sensor-simulator sensor-frontend sensor-backend sensor-config-broadcast sensor-heartbeat sensor-t7"
+sensor-simulator sensor-frontend sensor-backend sensor-config-broadcast sensor-heartbeat"
 
 echo "▶ Stopping DAQ units…"
 systemctl --user stop $ALL_UNITS 2>/dev/null || true

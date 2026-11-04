@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
-#include <limits>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -144,62 +143,6 @@ struct CVDCoeffs {
     double B = -5.775e-7;
     double C = -4.183e-12;  // only for T < 0 °C
 };
-
-/// Resistance (Ω) at temperature (°C), IEC 60751 Callendar-Van Dusen, the C term below 0 °C.
-inline double temp_to_resistance_cvd(double t_c, const CVDCoeffs& cvd = CVDCoeffs{}) {
-    double r = 1.0 + cvd.A * t_c + cvd.B * t_c * t_c;
-    if (t_c < 0.0)
-        r += cvd.C * (t_c - 100.0) * t_c * t_c * t_c;
-    return cvd.R0 * r;
-}
-
-/// The full CVD inverse: exact above 0 °C (the quadratic), Newton on the C term below it.
-/// resistance_to_temp_cvd() drops the C term and reads cold below 0 °C: 0.2 °C at -100 °C,
-/// 1.76 °C at -183 °C (LOX), 2.25 °C at -196 °C. NaN when the resistance is off the curve or the
-/// temperature is outside the standard's -200..850 °C (5 °C of slack each side): an open element
-/// reads a huge resistance and a shorted one about -242 °C, and neither is a temperature.
-inline double resistance_to_temp_cvd_full(double resistance_ohms,
-                                          const CVDCoeffs& cvd = CVDCoeffs{}) {
-    if (!(resistance_ohms > 0.0) || !(cvd.R0 > 0.0))
-        return std::numeric_limits<double>::quiet_NaN();
-    const double ratio = resistance_ohms / cvd.R0;
-    const double disc = cvd.A * cvd.A - 4.0 * cvd.B * (1.0 - ratio);
-    if (disc < 0.0)
-        return std::numeric_limits<double>::quiet_NaN();
-    constexpr double kMinC = -205.0, kMaxC = 855.0;
-    double t = (-cvd.A + std::sqrt(disc)) / (2.0 * cvd.B);
-    if (resistance_ohms >= cvd.R0)
-        return t <= kMaxC ? t : std::numeric_limits<double>::quiet_NaN();
-    for (int i = 0; i < 20; ++i) {
-        const double f = temp_to_resistance_cvd(t, cvd) - resistance_ohms;
-        const double df =
-            cvd.R0 * (cvd.A + 2.0 * cvd.B * t + cvd.C * (4.0 * t * t * t - 300.0 * t * t));
-        const double step = f / df;
-        t -= step;
-        if (std::fabs(step) < 1e-9)
-            break;
-    }
-    return t >= kMinC ? t : std::numeric_limits<double>::quiet_NaN();
-}
-
-/// An ESP32 RTD board's reading -> °C: the ADC code (2^31 = adc_ref_voltage) is the voltage across
-/// the element carrying excitation_ua, so R = V / I, then the full CVD inverse. NaN when there is
-/// no temperature to report, so the caller publishes nothing rather than a plausible one:
-///  - open element: the current source drives the input to the rail and the ADC saturates. That
-///    is still on the curve (2.5 V / 1 mA = 2500 ohm, ~395 C on a Pt1000), so a code within 0.1 %
-///    of full scale is refused outright;
-///  - shorted element: ~0 ohm, about -242 C, outside -200..850 C (resistance_to_temp_cvd_full).
-inline double rtd_board_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage, double excitation_ua,
-                                      double r0_ohms) {
-    constexpr double kAdcMax = 2147483648.0;  // 2^31
-    if (!(excitation_ua > 0.0) || std::fabs(static_cast<double>(adc_raw)) >= 0.999 * kAdcMax)
-        return std::numeric_limits<double>::quiet_NaN();
-    const double voltage_v = (static_cast<double>(adc_raw) / kAdcMax) * adc_ref_voltage;
-    const double resistance_ohms = (std::abs(voltage_v) * 1e6) / excitation_ua;
-    CVDCoeffs cvd;
-    cvd.R0 = r0_ohms;
-    return resistance_to_temp_cvd_full(resistance_ohms, cvd);
-}
 
 /// Convert resistance (Ω) to temperature (°C) using iterative CVD inverse
 inline double resistance_to_temp_cvd(double resistance_ohms, const CVDCoeffs& cvd = CVDCoeffs{}) {

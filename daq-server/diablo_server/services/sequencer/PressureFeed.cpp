@@ -42,26 +42,23 @@ void PressureFeed::start(const fsw::config::Config& cfg, const std::vector<std::
 
     {
         std::lock_guard<std::mutex> lk(mtx_);
-        role_by_table_.clear();
+        role_by_table_lo_.clear();
         readings_.clear();
         for (const auto& role : roles) {
             const auto ref = fsw::config::find_pt_role(cfg, role);
             if (!ref) {
                 // A script naming this was already refused at load, so this is belt and braces.
-                std::cerr
-                    << "[PressureFeed] \"" << role
-                    << "\" is not declared by any enabled PT board or T7 PT input — not subscribed"
-                    << std::endl;
+                std::cerr << "[PressureFeed] \"" << role
+                          << "\" is not declared by any enabled PT board — not subscribed"
+                          << std::endl;
                 continue;
             }
-            role_by_table_[ref->table()] = role;
-            std::cout << "[PressureFeed] \"" << role << "\" -> "
-                      << (ref->t7 ? "LabJack T7 " : "board ") << int(ref->board_number)
-                      << (ref->t7 ? " AIN " : " ch ") << ref->channel << " (table 0x" << std::hex
-                      << int(ref->table_hi) << ",0x" << int(ref->table_lo) << std::dec << ")"
-                      << std::endl;
+            role_by_table_lo_[ref->table_lo] = role;
+            std::cout << "[PressureFeed] \"" << role << "\" -> board " << int(ref->board_number)
+                      << " ch " << ref->channel << " (table 0x20,0x" << std::hex
+                      << int(ref->table_lo) << std::dec << ")" << std::endl;
         }
-        if (role_by_table_.empty())
+        if (role_by_table_lo_.empty())
             return;
     }
 
@@ -93,8 +90,8 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
             std::vector<std::pair<uint8_t, uint8_t>> tables;
             {
                 std::lock_guard<std::mutex> lk(mtx_);
-                for (const auto& [id, role] : role_by_table_)
-                    tables.push_back(id);
+                for (const auto& [lo, role] : role_by_table_lo_)
+                    tables.push_back({0x20, lo});
             }
             // Re-subscribed on EVERY reconnect. The VTables live in the db process, so a
             // reconnection that skips this comes back permanently silent — connected, reading
@@ -126,9 +123,9 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
                 std::vector<std::pair<uint8_t, uint8_t>> missing;
                 {
                     std::lock_guard<std::mutex> lk(mtx_);
-                    for (const auto& [id, role] : role_by_table_)
+                    for (const auto& [lo, role] : role_by_table_lo_)
                         if (readings_.find(role) == readings_.end())
-                            missing.push_back(id);
+                            missing.push_back({0x20, lo});
                 }
                 if (!missing.empty()) {
                     if (!silent_logged) {
@@ -160,12 +157,14 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
         // PressureStateMachine uses twelve and reads a float four bytes past the one it wants.
         const uint8_t type_hi = buf[5];
         const uint8_t type_lo = buf[6];
+        if (type_hi != 0x20)
+            continue;
 
         std::string role;
         {
             std::lock_guard<std::mutex> lk(mtx_);
-            auto it = role_by_table_.find({type_hi, type_lo});
-            if (it == role_by_table_.end())
+            auto it = role_by_table_lo_.find(type_lo);
+            if (it == role_by_table_lo_.end())
                 continue;  // a table we did not ask for
             role = it->second;
         }
@@ -196,7 +195,7 @@ PressureFeed::Status PressureFeed::read(const std::string& role, double& psi) co
     std::lock_guard<std::mutex> lk(mtx_);
 
     bool subscribed = false;
-    for (const auto& [id, r] : role_by_table_) {
+    for (const auto& [lo, r] : role_by_table_lo_) {
         if (r == role) {
             subscribed = true;
             break;
@@ -242,7 +241,7 @@ std::string PressureFeed::explain(const std::string& role, Status s) {
 std::vector<std::string> PressureFeed::subscribedRoles() const {
     std::lock_guard<std::mutex> lk(mtx_);
     std::vector<std::string> out;
-    for (const auto& [id, role] : role_by_table_)
+    for (const auto& [lo, role] : role_by_table_lo_)
         out.push_back(role);
     return out;
 }

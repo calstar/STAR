@@ -54,3 +54,5 @@ for DB_NAME in "$@"; do
 done
 
 echo "🎉 All exports completed successfully!"
+echo "You can now run the Cd script on any of these directories, for example:"
+echo "  ./scripts/postprocessing/characterize_cd.py data/runs/$(echo "$1" | tr ' ' '_')/export"

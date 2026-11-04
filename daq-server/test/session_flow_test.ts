@@ -16,18 +16,13 @@
  *      Discard dir is removed.
  *   5. A second run with Save + session_extend pushes the deadline out and, on
  *      stop, keeps its DB dir.
- *   6. The LabJack T7 in config_base.toml streams through the session: sensor-t7 runs
- *      t7_bridge --fake on a simulated run, calibration_service calibrates it, and its
- *      calibrated values reach the GUI in BOTH runs (run 2 restarts Elodin under the
- *      same backend, which is where a T7 subscription that is not renewed goes quiet).
- *      The saved run's sidecar config carries the T7 so the run can be decoded later.
  *
  * Requires the backend running in SESSION_SERVICE_MODE=systemd (or dev sim) with
  * SESSION_WARN_LEADS_MS set short (e.g. "20000,10000"). Started for CI/local by
  * test/test_session.sh. Exit 0 = pass, 1 = fail.
  */
 import WebSocket from 'ws';
-import { existsSync, readFileSync, rmSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -61,25 +56,7 @@ const state = {
   // lifecycle ran (i.e. config_broadcast reached the sim boards). A wrong-config
   // service unit leaves this empty even though plain sensor data still flows.
   selfTestBoards: new Set<string>(),
-  // Calibrated T7 values (T7<slot>_Cal.AIN<n>, psi / °C / kg), counted and kept by key.
-  t7Updates: 0,
-  t7Last: new Map<string, number>(),
 };
-
-/** The T7 config_base.toml declares, with the range its --fake signal should calibrate into. */
-const T7_EXPECT = [
-  { key: 'T71_Cal.AIN1.pressure_psi', min: 250, max: 350 },  // PT 30 % of 1000 psi
-  { key: 'T71_Cal.AIN2.temperature_c', min: 45, max: 75 },   // TC ~60 °C
-  { key: 'T71_Cal.AIN3.temperature_c', min: -171, max: -129 }, // RTD -150 ±20 °C (Pt1000, LJTR-1k)
-  { key: 'T71_Cal.AIN4.force_kg', min: 85, max: 115 },       // LC 20 % of 500 kg
-];
-
-function checkT7(run: string): void {
-  for (const { key, min, max } of T7_EXPECT) {
-    const v = state.t7Last.get(key);
-    assert(v !== undefined && v >= min && v <= max, `${run}: T7 ${key} streams calibrated, in [${min}, ${max}] (${v?.toFixed?.(1) ?? 'none'})`);
-  }
-}
 
 function connect(): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -113,13 +90,6 @@ function attachObserver(ws: WebSocket): void {
       state.sensorUpdates++;
       const ent = m.payload?.entity;
       if (typeof ent === 'string' && ent.startsWith('SELF_TEST.')) state.selfTestBoards.add(ent.split('.')[1] ?? ent);
-      for (const row of Array.isArray(m.payload) ? m.payload : [m.payload]) {
-        if (typeof row?.entity === 'string' && /^T7\d+_Cal\./.test(row.entity) && Number.isFinite(row.value)
-            && ['pressure_psi', 'temperature_c', 'force_kg'].includes(row.component)) {
-          state.t7Updates++;
-          state.t7Last.set(`${row.entity}.${row.component}`, row.value);
-        }
-      }
     }
     else if (m.type === 'connection_status' && m.payload?.elodinConnected) state.elodinConnected = true;
     else if (m.type === 'session_update') state.lastSession = m.payload;
@@ -195,11 +165,6 @@ async function main(): Promise<void> {
   // service unit wired to the hardware config instead of the sim overlay).
   assert(state.selfTestBoards.size > 0,
     `boards ran self-test (${state.selfTestBoards.size} boards: ${[...state.selfTestBoards].join(',') || 'none'})`);
-  // The T7 came up with the session (sensor-t7 → t7_bridge --fake) and is calibrated.
-  const t7Before = state.t7Updates;
-  state.t7Last.clear();
-  await waitUntil(() => state.t7Updates - t7Before > 10 && T7_EXPECT.every((e) => state.t7Last.has(e.key)), PIPELINE_DATA_TIMEOUT_MS);
-  checkT7('run 1');
 
   // Auto-stop at the deadline; warnings should have fired before it.
   const remaining = Math.max(0, DURATION_MS - (Date.now() - startedAt));
@@ -229,16 +194,6 @@ async function main(): Promise<void> {
   await waitUntil(() => state.sensorUpdates - before2 > 50, PIPELINE_DATA_TIMEOUT_MS);
   const flowed2 = state.sensorUpdates - before2;
   assert(flowed2 > 50, `sensor data flowing after session restart (${flowed2} SENSOR_UPDATE within ${PIPELINE_DATA_TIMEOUT_MS / 1000}s, same WS connection)`);
-  // The T7 again, on the restarted Elodin: its tables are created after the backend's and
-  // calibration_service's subscriptions, so this fails if either stops renewing them.
-  const t7Before2 = state.t7Updates;
-  state.t7Last.clear();
-  await waitUntil(() => state.t7Updates - t7Before2 > 10 && T7_EXPECT.every((e) => state.t7Last.has(e.key)), PIPELINE_DATA_TIMEOUT_MS);
-  checkT7('run 2');
-  // The run's sidecar config names the T7 and its channels, so the saved run decodes later.
-  const sidecar = existsSync(`${dbDir2}.toml`) ? readFileSync(`${dbDir2}.toml`, 'utf-8') : '';
-  assert(/\[boards\.labjack_1\][^[]*type\s*=\s*"T7"/.test(sidecar) && sidecar.includes('T7 Thrust LC'),
-    `run sidecar ${dbDir2}.toml carries the T7 board and its channels`);
 
   const extendedPromise = waitFor(ws, 'session_update', 8000, (p) => p.active && p.deadlineMs > deadline1);
   send(ws, 'send_command', { commandType: 'session_extend', data: { addMs: 120000 } });
@@ -251,7 +206,7 @@ async function main(): Promise<void> {
   await sleep(500);
   assert(existsSync(dbDir2), 'Save kept the run DB dir after stop');
   // Test hygiene: remove the saved dir we created.
-  try { rmSync(dbDir2, { recursive: true, force: true }); rmSync(`${dbDir2}_metadata`, { recursive: true, force: true }); rmSync(`${dbDir2}.toml`, { force: true }); } catch { /* ignore */ }
+  try { rmSync(dbDir2, { recursive: true, force: true }); rmSync(`${dbDir2}_metadata`, { recursive: true, force: true }); } catch { /* ignore */ }
 
   ws.close();
   console.log(`\n${failed.length === 0 ? '✅ PASS' : '❌ FAIL'} — ${passed.length} passed, ${failed.length} failed`);

@@ -7,7 +7,7 @@
 import { EventEmitter } from 'events';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { hpBoardNumbers, t7CalFields } from './sensor-config.js';
+import { hpBoardNumbers } from './sensor-config.js';
 import type { SensorUpdate } from './shared-types.js';
 
 export interface QueryOptions {
@@ -32,8 +32,6 @@ export class ElodinQueryClient extends EventEmitter {
   private isPolling: boolean = false;
   /** Which Elodin slots are 4-20 mA PT boards; decides unsigned-vs-signed raw ADC. */
   private hpSlots: Set<number> = hpBoardNumbers();
-  /** Which T7 calibrated tables carry psi, °C or kg. */
-  private t7Fields: Map<number, string> = t7CalFields();
 
   constructor(elodin: ElodinClient) {
     super();
@@ -48,7 +46,7 @@ export class ElodinQueryClient extends EventEmitter {
         const packetIdKey = `${high},${low}`;
 
         if (this.subscribedPacketIds.has(packetIdKey)) {
-          const parsedList = parseElodinPacket(header.packetId, payload, this.hpSlots, this.t7Fields);
+          const parsedList = parseElodinPacket(header.packetId, payload, this.hpSlots);
           for (const parsed of parsedList) {
             const update: SensorUpdate = {
               entity: parsed.entity,
