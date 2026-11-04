@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "config/Config.hpp"
@@ -95,8 +96,9 @@ private:
 
     mutable std::mutex mtx_;
     std::map<std::string, Reading> readings_;
-    /** Elodin table low byte -> canonical role name, built once from config. */
-    std::map<uint8_t, std::string> role_by_table_lo_;
+    /** Elodin table id -> canonical role name, built once from config. Keyed by the whole id: an
+     * ESP32 PT ({0x20, lo}) and a LabJack T7 PT ({0x26, lo}) can share a low byte. */
+    std::map<std::pair<uint8_t, uint8_t>, std::string> role_by_table_;
 };
 
 }  // namespace sequencer

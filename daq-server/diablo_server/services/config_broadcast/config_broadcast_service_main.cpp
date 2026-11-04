@@ -270,6 +270,10 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             abort_warnings.insert(tag + "no PT sensor_role declares this name — NO board trip");
             continue;
         }
+        if (ref->t7 != nullptr) {
+            abort_warnings.insert(tag + "is a LabJack T7 input — no board can trip on it");
+            continue;
+        }
         const auto& b = *ref->board;
         const std::string& board_key = ref->board_key;
         const int channel = ref->channel;
