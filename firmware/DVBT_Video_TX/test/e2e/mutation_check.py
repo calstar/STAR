@@ -66,6 +66,28 @@ MUTANTS = [
      "uint64_t ref_max = refin_hz;", "tcxo", "PFD sized for the nominal TCXO: a fast one never locks"),
     ("fw", "tx_app/tx_app.c", "TRY(fpga_reg_write(l, DVBT_REG_DCOFF,", "if (0) TRY(fpga_reg_write(l, DVBT_REG_DCOFF,",
      "lo_feedthrough", "the bench calibration never reaches the FPGA"),
+    # Channels and hops (the flight computer's UART).
+    ("fw", "tx_app/tx_app.c", "    esp_err_t e = lo_lock(a);\n    bool ok = e == ESP_OK;",
+     "    esp_err_t e = adrf6755_init(&a->mod, &a->lo, a->c.atten_db);\n    bool ok = e == ESP_OK;",
+     "hop_commands", "hop turns the modulator on without waiting for the new channel's lock"),
+    ("fw", "tx_app/tx_app.c", "    announce(a);\n    logf_(a, 'I', \"hop %u: to", "    logf_(a, 'I', \"hop %u: to",
+     "hop_commands", "hop never announced in the stream: the ground cannot follow"),
+    ("fw", "ts_mux/ts_mux.c", "uint32_t nx = c->pending ? c->next_khz : c->cur_khz;", "uint32_t nx = c->cur_khz;",
+     "hop_commands", "the table announces the current channel as the next one"),
+    ("fw", "tx_app/tx_app.c", "a->hop.t27 + a->latency27", "a->hop.t27",
+     "hop_commands", "hop when the mux reaches the time, not the air: 30 ms early"),
+    ("fw", "tx_app/tx_app.c", "    if (!in_band(a, hz)) { fc_reply(a, \"NAK,%u,RANGE\", cmd->seq); return; }\n", "",
+     "hop_commands", "a channel outside the band accepted"),
+    ("fw", "tx_app/tx_app.c", "    if (a->done_valid && cmd->seq == a->done_seq) {", "    if (0) {",
+     "hop_commands", "a retry of a finished hop treated as a new command"),
+    ("fw", "fc_link/fc_link.c", "if (h < 0 || l < 0 || (uint8_t)(h << 4 | l) != fc_csum(line, (size_t)(star - line))) {",
+     "if (h < 0 || l < 0) {", "hop_commands", "flight computer line checksum ignored"),
+    ("fw", "tx_app/tx_app.c", "        if (a->b->keyframe) a->b->keyframe(a->b->ctx);\n", "",
+     "hop_commands", "no key frame after a hop: the ground waits up to a GOP for a picture"),
+    ("fw", "tx_app/tx_app.c", "        a->lo = old;\n        e = lo_lock(a);", "        e = ESP_FAIL;",
+     "will_not_lock", "a channel that will not lock leaves the RF off instead of going back"),
+    ("fw", "tx_app/tx_app.c", "    if (!in_band(a, c->lo_hz)) {", "    if (0) {",
+     "out_of_band_boot", "an out-of-band boot channel transmitted"),
 ]
 EXPECT_SURVIVE = {"(control: removing a delay changes nothing)"}
 

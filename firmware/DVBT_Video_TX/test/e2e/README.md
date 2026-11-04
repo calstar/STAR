@@ -65,6 +65,11 @@ Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
 | `tcxo_tolerance_still_locks` | the ADRF6755 locks with its TCXO 2.5 ppm fast or slow (20 MHz PFD) |
 | `lo_feedthrough_calibration` | through the RF chain: the -43 dBc LO feedthrough corrupts every 4th symbol until the DC-offset calibration removes it |
 | `flight_profile_15km` | every typical impairment at once, through the RF chain and the air at 15 km: every packet, clean video |
+| `boots_at_either_end_of_the_band` | first-boot channel at 1243.5 and 1296.5 MHz: locks, LO exact, the table says so |
+| `out_of_band_boot_channel_keeps_rf_off` | 1300 MHz (half the signal outside the band): no bring-up, RF never on |
+| `hop_commands_retries_and_refusals` | the flight computer's UART at 115200 baud against the flight code: bad checksum, out of band, busy, reused seq refused with nothing changed; retries answered identically and never hopping twice; exactly one LO change, RF dark < 1 ms and never on unlocked; `DONE` exactly lead + FIFO depth after `ACK`; the hop announced in the stream; one key frame 250 ms later |
+| `hop_to_a_channel_that_will_not_lock_falls_back` | this board's PLL will not lock at 1260 MHz: `FAIL`, back on air on the old channel within the LDET timeout, the table never claims the new one |
+| `hop_followed_by_the_ground` | in flight with video: a receiver on 1279 MHz reads the announcement, `ground/dvbt_hop.py`'s Follower retunes, a receiver on 1255 MHz gets every packet as sent from then on, the table confirms the channel, video decodes. Stream lost across the hop ~150 ms (receiver pipeline + acquisition); RF dark ~0.3 ms |
 
 ## Real-world imperfections
 
@@ -76,7 +81,7 @@ where the link breaks: see [IMPAIRMENTS.md](IMPAIRMENTS.md).
 
 ## Can it fail? (`mutation_check.py`)
 
-Eighteen planted integration bugs, each of the kind that only shows when
+Twenty-eight planted integration bugs, each of the kind that only shows when
 the pieces meet, must each turn a scenario red: stale-status FIFO priming,
 a 1 s DREQ wait with the FPGA gone, FPGA offset binary against a two's
 complement DAC, RF on without waiting for lock, a health check blind to
@@ -85,8 +90,13 @@ I/Q swapped by the DAC's latch edge, the modulator on in the init
 sequence, RFDIV off by one, a 3-wire read one bit long, DCLKIO inverted,
 DCLKIO in phase with the data, and DREQ promising one packet of room
 where the firmware sends two, the 2 KB FIFO back, the mux clock not
-caught up after FPGA nulls, the PFD sized for a nominal TCXO, and the
-bench calibration never written. A control mutant (an erase delay removed)
+caught up after FPGA nulls, the PFD sized for a nominal TCXO, the
+bench calibration never written; and for channel hops: the modulator on
+before the new channel locks, the hop never announced in the stream, the
+table naming the wrong next channel, the hop 30 ms early (the mux's time,
+not the air's), an out-of-band channel accepted at boot or by command, a
+retry hopping twice, the flight computer's checksum ignored, no key frame
+after a hop, and a channel that will not lock leaving the RF off. A control mutant (an erase delay removed)
 is expected to survive: the ECP5 model does not time the erase.
 
 ## What it found while being written

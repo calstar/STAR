@@ -402,6 +402,7 @@ struct Adrf6755 {
     fs_t lock_at = -1, forced_unlock_until = -1;
     bool locked_flag = false;
     bool broken = false;                // injected: the PLL never locks (e.g. a dead loop filter)
+    double bad_lo_hz = 0;               // injected: it never locks at this LO (a VCO band edge on this board)
     double lo_hz = 0, vco_hz = 0, pfd_hz = 0;
     Adrf6755(Report &r, double refin) : rep(r), refin_hz(refin) { reg[33] = act[33] = 0x13; }
 
@@ -546,7 +547,8 @@ struct Adrf6755 {
         rep.event(b);
         // Datasheet: autocal (Eq. 3), then frequency acquisition (~0.17 ms total
         // in its example), LDET after the count.
-        lock_at = ok && !broken ? t + (fs_t)((autocal + 30e-6 + ld_s) * 1e15) : -1;
+        bool bad_here = bad_lo_hz > 0 && std::fabs(lo_hz - bad_lo_hz) < 1e3;
+        lock_at = ok && !broken && !bad_here ? t + (fs_t)((autocal + 30e-6 + ld_s) * 1e15) : -1;
     }
     bool locked(fs_t t)
     {

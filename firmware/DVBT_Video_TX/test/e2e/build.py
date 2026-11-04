@@ -23,9 +23,9 @@ RTL = Path(os.environ.get("DVBT_E2E_RTL_DIR", GW / "rtl"))
 
 FW_SRCS = ["fpga_link/fpga_proto.c", "fpga_link/fpga_link.c", "si5351/si5351_plan.c", "si5351/si5351.c",
            "ad9116/ad9116.c", "adrf6755/adrf6755_plan.c", "adrf6755/adrf6755.c",
-           "spi_bus_esp/spi_bus_pack.c", "ecp5_cfg/ecp5_cfg_core.c", "ts_mux/ts_mux.c", "tx_app/tx_app.c"]
+           "spi_bus_esp/spi_bus_pack.c", "ecp5_cfg/ecp5_cfg_core.c", "ts_mux/ts_mux.c", "fc_link/fc_link.c", "tx_app/tx_app.c"]
 FW_INCS = [HERE / "shim", FW / "test/host/shim"] + [COMP / c / "include" for c in (
-    "spi_bus_if", "fpga_link", "si5351", "ad9116", "adrf6755", "spi_bus_esp", "ecp5_cfg", "ts_mux", "tx_app")]
+    "spi_bus_if", "fpga_link", "si5351", "ad9116", "adrf6755", "spi_bus_esp", "ecp5_cfg", "ts_mux", "fc_link", "tx_app")]
 
 
 def sources() -> list[Path]:

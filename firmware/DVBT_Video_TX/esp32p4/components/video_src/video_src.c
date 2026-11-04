@@ -23,6 +23,9 @@ typedef struct {
     uint8_t *enc_buf;
 } vs_t;
 static vs_t s;
+static volatile bool s_want_key;
+
+void video_src_request_key(void) { s_want_key = true; }
 
 static esp_err_t ctrl(int fd, uint32_t id, int32_t v)
 {
@@ -111,6 +114,13 @@ static void task(void *arg)
         struct v4l2_buffer in = { .type = V4L2_BUF_TYPE_VIDEO_OUTPUT, .memory = V4L2_MEMORY_USERPTR,
                                   .index = 0, .length = cb.bytesused };
         in.m.userptr = (unsigned long)s.cap_buf[cb.index];
+        if (s_want_key) {
+            s_want_key = false;
+#ifdef V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME
+            if (ctrl(s.enc_fd, V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 1) != ESP_OK)
+#endif
+                ESP_LOGW(TAG, "encoder will not force a key frame: next one in at most %d frames", s.c.gop);
+        }
         struct v4l2_buffer out = { .type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .memory = V4L2_MEMORY_MMAP };
         if (ioctl(s.enc_fd, VIDIOC_QBUF, &in) == 0 && ioctl(s.enc_fd, VIDIOC_DQBUF, &out) == 0) {
             s.c.cb(s.enc_buf, out.bytesused, h264_au_is_idr(s.enc_buf, out.bytesused), t_us, s.c.arg);

@@ -47,6 +47,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "model"))
 sys.path.insert(0, str(ROOT / "esp32p4/tools"))
 sys.path.insert(0, str(ROOT / "esp32p4/test/host"))
+sys.path.insert(0, str(ROOT / "ground"))
 
 import build  # noqa: E402
 import make_fpga_image  # noqa: E402
@@ -125,17 +126,30 @@ def run(harness, out: Path, *args, timeout=3600) -> dict:
     return rep
 
 
-def demodulate(out: Path) -> bytes:
+def demodulate(out: Path, rep: dict | None = None, khz: int | None = None, start_s: float = 0.0,
+               name: str = "rx.ts") -> bytes:
     """What a receiver tuned to 1279 MHz gets: the DAC's I/Q at 27.43 MS/s,
-    filtered and decimated to the DVB-T sample rate, through gr-dtv."""
+    filtered and decimated to the DVB-T sample rate, through gr-dtv.
+    With khz: a receiver tuned to that channel, so only the samples the
+    transmitter sent on it (report's rf_segments), from start_s on (when the
+    ground retuned to it)."""
     from scipy import signal
     import dvbt_rx
     iq = np.fromfile(out / "rf.iq", np.int16).reshape(-1, 2).astype(np.float32)
     x = iq[:, 0] + 1j * iq[:, 1]
+    if khz is not None:
+        keep = np.zeros(len(x), bool)
+        segs = rep["rf_segments"] + [[len(x), 0, 0, 0]]
+        for (a, t, on, lo), (b, *_rest) in zip(segs, segs[1:]):
+            if on and abs(lo - khz * 1e3) < 1:
+                keep[a:b] = True
+        x = np.where(keep, x, 0)
+        t0 = rep["rf_segments"][0][1]
+        x = x[max(0, int((start_s - t0) * rep["dac_rate_hz"])):]
     taps = signal.firwin(801, 3.2, window=("kaiser", 10), fs=4 * 48 / 7) * 4
     y = signal.resample_poly(x, 1, 4, window=taps)
     ts = dvbt_rx.receive(y)
-    (out / "rx.ts").write_bytes(ts)
+    (out / name).write_bytes(ts)
     return ts
 
 
@@ -460,3 +474,186 @@ def test_flight_profile_15km(harness, bitstream, video, tmp_path):
     (tmp_path / "rx_complete.ts").write_bytes(complete_frames(rx))
     st = viewer(tmp_path / "rx_complete.ts", sdt=False)
     assert int(st["nb_read_frames"]) >= 20
+
+
+# ------------------------------------------------------------ channels, hops --
+def fc(body: str) -> str:
+    """A flight-computer line ($BODY*HH), as fc_link.h defines it."""
+    cs = 0
+    for c in body.encode():
+        cs ^= c
+    return f"${body}*{cs:02X}"
+
+
+def fc_tx(rep) -> list[str]:
+    """What the firmware said to the flight computer, checksums checked and stripped."""
+    out = []
+    for _, line in rep["fc_tx"]:
+        body, cs = line[1:].split("*")
+        assert fc(body) == line, f"bad checksum from the P4: {line}"
+        out.append(body)
+    return out
+
+
+def lo_changes(rep) -> list[float]:
+    """The LO of every stretch with the RF on, consecutive repeats merged."""
+    los = [round(lo / 1e3) * 1e3 for _, _, on, lo in rep["rf_segments"] if on]   # the plan is within 1 Hz
+    return [lo for i, lo in enumerate(los) if i == 0 or lo != los[i - 1]]
+
+
+def rf_gaps(rep) -> list[float]:
+    """How long each RF-off stretch after the first RF lasted (s)."""
+    segs = rep["rf_segments"]
+    return [b[1] - a[1] for a, b in zip(segs, segs[1:]) if not a[2]]
+
+
+@pytest.mark.parametrize("khz", [1243500, 1296500])
+def test_boots_at_either_end_of_the_band(harness, bitstream, tmp_path, khz):
+    """Pad agility: the first-boot channel anywhere in the band locks, the
+    LO from the registers is that channel, and the table says so."""
+    import dvbt_hop
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 150,
+              "--lo-khz", khz)
+    assert rep["violations"] == [] and rep["bringup_err"] == 0, rep["violations"]
+    assert abs(rep["lo_hz"] - khz * 1e3) < 1.0 and 2310e6 <= rep["vco_hz"] <= 4800e6
+    tabs = dvbt_hop.tables((tmp_path / "sent.ts").read_bytes())
+    assert len(tabs) >= 1 and all(t.current_khz == t.next_khz == khz and not t.pending for _, t in tabs)
+
+
+def test_out_of_band_boot_channel_keeps_rf_off(harness, bitstream, tmp_path):
+    """1300 MHz would put half the signal outside the band: no bring-up, no RF."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 10,
+              "--lo-khz", 1300000)
+    assert rep["bringup_err"] != 0 and rep["rf_samples"] == 0 and not events(rep, "TXDIS low")
+
+
+def test_hop_commands_retries_and_refusals(harness, bitstream, tmp_path):
+    """The protocol against the flight code, no receiver: a bad checksum, an
+    out-of-band channel, another hop while one is pending and a seq reused
+    for a different channel are refused with nothing changed; retries of an
+    accepted hop get the same answer and never hop twice; a hop to the
+    channel already on air is done at once. Exactly one LO change, to the
+    commanded channel, with the RF never on while the PLL is unlocked, and
+    the hop announced in the stream (sent.ts) before it happens."""
+    import dvbt_hop
+    d, crc = bitstream
+    hop = fc("HOP,2,1296500")
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 560,
+              "--hop-lead-ms", 150,
+              "--fc", "40:$HOP,1,1255000*00",            # bad checksum
+              "--fc", "50:" + fc("HOP,1,1230000"),       # below the band
+              "--fc", "60:" + hop,
+              "--fc", "75:" + hop,                       # retry while pending
+              "--fc", "90:" + fc("HOP,3,1250000"),       # another while pending
+              "--fc", "100:" + fc("CH?"),
+              "--fc", "330:" + hop,                      # retry after it is done
+              "--fc", "340:" + fc("HOP,2,1250000"),      # seq 2 again, other channel
+              "--fc", "350:" + fc("HOP,4,1296500"),      # already there
+              "--fc", "360:" + fc("CH?"))
+    assert rep["violations"] == [], "\n".join(rep["violations"])
+    said = fc_tx(rep)
+    ack = [x for x in said if x.startswith("ACK,2,")]
+    # A retry names the same hop (seq, channel, stream time) with the time left.
+    f0, f1 = (a.split(",") for a in ack) if len(ack) == 2 else ([], [])
+    assert len(ack) == 2 and f0[:3] == f1[:3] and f0[4] == f1[4], said
+    lead_ms, pcr = f0[3], f0[4]
+    assert lead_ms == "150" and 0 < 150 - int(f1[3]) <= 20, ack
+    assert said == ["ERR,CSUM", "NAK,1,RANGE", ack[0], ack[1], "NAK,3,BUSY", "CH,1279000,PENDING,2,1296500",
+                    "DONE,2,1296500,OK", "DONE,2,1296500,OK", "NAK,2,SEQ", "ACK,4,1296500,0,0",
+                    "DONE,4,1296500,OK", "CH,1296500,IDLE"], said
+    assert (rep["hops"], rep["hops_failed"], rep["cur_khz"], rep["fc_bad"]) == (1, 0, 1296500, 1)
+    assert lo_changes(rep) == [1279e6, 1296.5e6], lo_changes(rep)
+    assert abs(rep["lo_hz"] - 1296.5e6) < 1.0
+    assert rep["rf_unlocked_max_s"] == 0, "RF on with the PLL unlocked"
+    gaps = rf_gaps(rep)
+    assert len(gaps) == 1 and gaps[0] < 0.001, f"hop dark for {gaps}"
+    assert rep["keyframes"] == 1, "one key frame, 250 ms after the hop (for the ground's decoder)"
+    # When: DONE comes the FIFO's depth after the stream time it announced.
+    t_ack = next(t for t, x in rep["fc_tx"] if x.startswith("$ACK,2,"))
+    t_done = next(t for t, x in rep["fc_tx"] if x.startswith("$DONE,2,"))
+    fifo_s = 16384 * 8 / float(RATE)
+    assert abs((t_done - t_ack) - (0.150 + fifo_s)) < 0.003, (t_done - t_ack, fifo_s)
+    # The stream announced it: pending tables from the ACK on, then the new channel.
+    tabs = dvbt_hop.tables((tmp_path / "sent.ts").read_bytes())
+    pend = [t for _, t in tabs if t.pending]
+    assert len(pend) >= 2 and all((t.seq, t.current_khz, t.next_khz, t.hop_pcr) == (2, 1279000, 1296500, int(pcr))
+                                  for t in pend), pend
+    assert not tabs[-1][1].pending and tabs[-1][1].current_khz == 1296500
+
+
+def test_hop_to_a_channel_that_will_not_lock_falls_back(harness, bitstream, tmp_path):
+    """This board's VCO will not lock at 1260 MHz: the hop gives up after the
+    LDET timeout, goes back on air on the old channel, says FAIL, and the
+    table never claims the new channel."""
+    import dvbt_hop
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 300,
+              "--hop-lead-ms", 100, "--pll-bad-lo-khz", 1260000, "--fc", "50:" + fc("HOP,5,1260000"))
+    assert rep["violations"] == [], "\n".join(rep["violations"])
+    said = fc_tx(rep)
+    assert len(said) == 2 and said[0].startswith("ACK,5,1260000,100,") and said[1] == "DONE,5,1260000,FAIL", said
+    assert (rep["hops"], rep["hops_failed"], rep["cur_khz"]) == (1, 1, 1279000)
+    assert lo_changes(rep) == [1279e6] and abs(rep["lo_hz"] - 1279e6) < 1.0
+    assert rep["rf_unlocked_max_s"] == 0
+    gaps = rf_gaps(rep)
+    assert len(gaps) == 1 and gaps[0] < 0.012, gaps          # 10 ms LDET timeout + the relock
+    tabs = [t for _, t in dvbt_hop.tables((tmp_path / "sent.ts").read_bytes())]
+    assert all(t.current_khz == 1279000 for t in tabs) and not tabs[-1].pending
+
+
+@pytest.mark.slow
+def test_hop_followed_by_the_ground(harness, bitstream, video, tmp_path):
+    """In flight, video on: the flight computer asks for 1255 MHz. A ground
+    receiver on 1279 MHz sees the hop announced in the stream, its Follower
+    retunes when the stream reaches the announced time, and a receiver on
+    1255 MHz from then on gets the stream back: every packet as sent, the
+    new channel confirmed in its table, the video decoding."""
+    import dvbt_hop
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--aus", video,
+              "--air-ms", 1500, "--video-start-ms", 100, "--hop-lead-ms", 300,
+              "--fc", "300:" + fc("HOP,7,1255000"))
+    common_checks_except_lo = dict(rep, lo_hz=1279e6)
+    common_checks(common_checks_except_lo)
+    said = fc_tx(rep)
+    assert len(said) == 2 and said[0].startswith("ACK,7,1255000,300,") and said[1] == "DONE,7,1255000,OK", said
+    hop_pcr = int(said[0].split(",")[4])
+    assert lo_changes(rep) == [1279e6, 1255e6] and rep["rf_unlocked_max_s"] == 0
+    t_hop = next(t for _, t, on, lo in rep["rf_segments"] if on and abs(lo - 1255e6) < 1)
+    sent = (tmp_path / "sent.ts").read_bytes()
+
+    # On 1279 MHz: the announcement, and the stream up to the hop.
+    rx_a = demodulate(tmp_path, rep, 1279000, name="rx_1279.ts")
+    ok, bad, where_a = match(rx_a, sent)
+    assert bad == 0 and ok > 700, (ok, bad)
+    assert all(b == a + 1 for a, b in zip(where_a, where_a[1:])), "packets lost before the hop"
+    pend = [t for _, t in dvbt_hop.tables(rx_a) if t.pending]
+    assert len(pend) >= 2 and all((t.seq, t.next_khz, t.hop_pcr) == (7, 1255000, hop_pcr) for t in pend), pend
+    f = dvbt_hop.Follower(1279000, [1279000, 1255000])
+    retune = [i for i, p in enumerate(packets(rx_a)) if f.feed(p)]
+    assert len(retune) == 1 and f.tuned == 1255000, retune
+    # The transmitter left when the packet stamped hop_pcr was on air (the
+    # fast test times DONE to the millisecond). The receiver delivers up to
+    # its pipeline's depth before that (gr-dtv ~45 ms) and PCRs come every
+    # 20 ms, so the last PCR it hands over is 45-70 ms short of the hop --
+    # which is why the Follower retunes 100 ms early, not at hop_pcr.
+    pcrs = [v for v in map(dvbt_hop.pcr_of, packets(rx_a)) if v is not None]
+    assert -0.080 <= (pcrs[-1] - hop_pcr) / 27e6 <= 0.002, (pcrs[-1] - hop_pcr) / 27e6
+
+    # On 1255 MHz from the hop on (the ground retuned on the table, which it
+    # had 300 ms ahead).
+    rx_b = demodulate(tmp_path, rep, 1255000, start_s=t_hop, name="rx_1255.ts")
+    ok_b, bad_b, where_b = match(rx_b, sent)
+    assert bad_b == 0 and ok_b > 500, (ok_b, bad_b)
+    assert all(b == a + 1 for a, b in zip(where_b, where_b[1:])), "packets lost on the new channel"
+    tabs_b = [t for _, t in dvbt_hop.tables(rx_b)]
+    assert tabs_b and all(t.current_khz == 1255000 and not t.pending for t in tabs_b)
+    sent_t = 188 * 8 / float(RATE)
+    outage = (where_b.full[0] - where_a.full[-1]) * sent_t
+    # ~45 ms in the old receiver's pipeline + its acquisition on the new channel
+    assert outage < 0.25, f"{outage * 1e3:.0f} ms of stream lost across the hop"
+    (tmp_path / "rx_1255_complete.ts").write_bytes(complete_frames(rx_b))
+    st = viewer(tmp_path / "rx_1255_complete.ts", sdt=False)
+    assert st.get("codec_name") == "h264" and int(st["nb_read_frames"]) >= 8, st

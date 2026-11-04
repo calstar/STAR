@@ -9,6 +9,18 @@
 //   PAT + PMT (every pat_ms), SDT (every sdt_ms), a video packet carrying
 //   the PCR when one is due (every pcr_ms; adaptation-field only if there
 //   is no video), video payload, else a null packet.
+// Channel table (when hop_pid is set): one private section every chan_ms
+// on its own PID, saying which channel this is and whether a hop is coming
+// (ts_mux_set_chan; sent at once when it changes). Section, after the usual
+// 8-byte long header (table_id 0xF0, table_id_extension 0x4850 "HP",
+// version = a counter bumped on every change):
+//   u8 format (1), u8 flags (bit 0: hop pending), u16 seq,
+//   u32 current kHz, u32 next kHz (= current when none pending),
+//   u48 hop PCR: 33-bit base + 6 reserved + 9-bit extension, coded as an
+//       adaptation field's PCR: on the old channel, no packet after it
+//   CRC-32/MPEG-2.
+// Decoders ignore it (the PMT does not list it); the ground station's
+// software reads it to follow a hop (see ../../../ground/dvbt_hop.py).
 // Video: access units go in with ts_mux_put(), PTS in 90 kHz on the mux's
 // own clock (ts_mux_now_90k() at capture + the decoder delay); each AU
 // becomes one PES (stream 0xE0, PTS only: no B-frames), an access-unit
@@ -29,6 +41,8 @@ typedef struct {
     uint32_t pat_ms, sdt_ms, pcr_ms; // 0: defaults 100, 1000, 20
     uint8_t *buf;                    // video byte ring, caller's memory (PSRAM)
     size_t buf_size;
+    uint16_t hop_pid;                // channel table PID; 0: no table
+    uint32_t chan_ms;                // 0: 100
 } ts_mux_config_t;
 
 typedef struct {
@@ -40,11 +54,20 @@ typedef struct {
 #define TS_MUX_MAX_AU 64
 
 typedef struct {
+    uint32_t cur_khz, next_khz;
+    uint16_t seq;
+    bool pending;
+    uint64_t hop_t27;                // stream time of the hop (27 MHz, the mux's clock)
+} ts_mux_chan_t;
+
+typedef struct {
     ts_mux_config_t c;
     uint64_t pkt;                    // packets produced
     uint64_t pcr_k_num, pcr_k_den;   // 27 MHz ticks per byte = num/den (reduced)
-    uint8_t cc_pat, cc_pmt, cc_sdt, cc_vid;
-    uint64_t next_pat, next_sdt, next_pcr;   // in 27 MHz ticks
+    uint8_t cc_pat, cc_pmt, cc_sdt, cc_vid, cc_chan;
+    uint64_t next_pat, next_sdt, next_pcr, next_chan;   // in 27 MHz ticks
+    ts_mux_chan_t chan;
+    uint8_t chan_ver;
     ts_mux_au_t q[TS_MUX_MAX_AU];
     unsigned qh, qn;                 // queue head, count
     size_t ring_w, ring_used;
@@ -66,6 +89,9 @@ void ts_mux_init(ts_mux_t *m, const ts_mux_config_t *c);
 bool ts_mux_put(ts_mux_t *m, const uint8_t *au, size_t n, uint64_t pts_90k, bool key);
 void ts_mux_next(ts_mux_t *m, uint8_t out[TS_PKT]);
 uint64_t ts_mux_now_90k(const ts_mux_t *m);      // time of the next packet
+uint64_t ts_mux_now_27(const ts_mux_t *m);       // the same, in 27 MHz ticks
+// Set the channel table's contents; the next packet slot carries it.
+void ts_mux_set_chan(ts_mux_t *m, const ts_mux_chan_t *c);
 // The FPGA inserted n null packets of its own (the P4 fell behind): the
 // channel is n packets further on than the mux's count, so move the mux's
 // clock (PCR, PTS stamping, table timers) forward to match.

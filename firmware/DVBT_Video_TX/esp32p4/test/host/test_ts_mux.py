@@ -27,7 +27,8 @@ class Cfg(ctypes.Structure):
                 ("pmt_pid", ctypes.c_uint16), ("video_pid", ctypes.c_uint16),
                 ("provider", ctypes.c_char_p), ("service", ctypes.c_char_p),
                 ("pat_ms", ctypes.c_uint32), ("sdt_ms", ctypes.c_uint32), ("pcr_ms", ctypes.c_uint32),
-                ("buf", ctypes.POINTER(ctypes.c_uint8)), ("buf_size", ctypes.c_size_t)]
+                ("buf", ctypes.POINTER(ctypes.c_uint8)), ("buf_size", ctypes.c_size_t),
+                ("hop_pid", ctypes.c_uint16), ("chan_ms", ctypes.c_uint32)]
 
 
 MUX_BYTES = 16384      # comfortably larger than ts_mux_t

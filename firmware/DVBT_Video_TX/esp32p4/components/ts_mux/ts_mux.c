@@ -46,6 +46,7 @@ void ts_mux_init(ts_mux_t *m, const ts_mux_config_t *c)
     if (!m->c.pat_ms) m->c.pat_ms = 100;
     if (!m->c.sdt_ms) m->c.sdt_ms = 1000;
     if (!m->c.pcr_ms) m->c.pcr_ms = 20;
+    if (!m->c.chan_ms) m->c.chan_ms = 100;
     uint64_t kn = 8 * T27 * c->rate_den, kd = c->rate_num;
     uint64_t g = gcd64(kn, kd);
     m->pcr_k_num = kn / g;
@@ -53,6 +54,14 @@ void ts_mux_init(ts_mux_t *m, const ts_mux_config_t *c)
 }
 
 uint64_t ts_mux_now_90k(const ts_mux_t *m) { return t27_of_byte(m, m->pkt * TS_PKT) / 300; }
+uint64_t ts_mux_now_27(const ts_mux_t *m) { return t27_of_byte(m, m->pkt * TS_PKT); }
+
+void ts_mux_set_chan(ts_mux_t *m, const ts_mux_chan_t *c)
+{
+    m->chan = *c;
+    m->chan_ver = (m->chan_ver + 1) & 0x1F;
+    m->next_chan = 0;                                 // the next slot
+}
 
 void ts_mux_skip(ts_mux_t *m, uint64_t n) { m->pkt += n; }
 size_t ts_mux_backlog(const ts_mux_t *m) { return m->ring_used; }
@@ -152,6 +161,28 @@ static void sdt(ts_mux_t *m, uint8_t *out)
     psi_packet(out, PID_SDT, &m->cc_sdt, s, finish_section(s, n));
 }
 
+static void put_pcr(uint8_t *p, uint64_t t27);
+
+static void chan_table(ts_mux_t *m, uint8_t *out)
+{
+    uint8_t s[40];
+    size_t n = 0;
+    const ts_mux_chan_t *c = &m->chan;
+    s[n++] = 0xF0; s[n++] = 0xB0; s[n++] = 0;
+    s[n++] = 0x48; s[n++] = 0x50;                     // "HP"
+    s[n++] = (uint8_t)(0xC1 | (m->chan_ver << 1));    // version, current
+    s[n++] = 0; s[n++] = 0;
+    s[n++] = 1;                                       // format
+    s[n++] = c->pending ? 1 : 0;
+    s[n++] = c->seq >> 8; s[n++] = (uint8_t)c->seq;
+    uint32_t nx = c->pending ? c->next_khz : c->cur_khz;
+    for (int k = 3; k >= 0; k--) s[n++] = (uint8_t)(c->cur_khz >> (8 * k));
+    for (int k = 3; k >= 0; k--) s[n++] = (uint8_t)(nx >> (8 * k));
+    put_pcr(s + n, c->pending ? c->hop_t27 : 0);
+    n += 6;
+    psi_packet(out, m->c.hop_pid, &m->cc_chan, s, finish_section(s, n));
+}
+
 static void null_pkt(uint8_t *out)
 {
     memset(out, 0xFF, TS_PKT);
@@ -247,6 +278,9 @@ void ts_mux_next(ts_mux_t *m, uint8_t out[TS_PKT])
             pat(m, out);
             m->next_pat |= 1;
         }
+    } else if (m->c.hop_pid && t >= m->next_chan) {
+        chan_table(m, out);
+        m->next_chan = t + (uint64_t)m->c.chan_ms * (T27 / 1000);
     } else if (t >= m->next_sdt) {
         sdt(m, out);
         m->next_sdt += (uint64_t)m->c.sdt_ms * (T27 / 1000);
