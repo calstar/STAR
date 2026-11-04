@@ -296,33 +296,38 @@ t7_bridge still builds (and CI's ctest runs `test_t7`), but it only runs with `-
 LJM from LabJack's Linux installer, then re-run cmake: it prints
 `t7_bridge: LabJack LJM found`.
 
-### Engineering units and the GUI
-t7_bridge publishes every PT / TC / LC channel twice: raw volts, and converted to the
-ESP32 boards' units in their calibrated layout:
+### Calibration: the same as an ESP32 sensor
+Where the data comes from is the only difference. t7_bridge publishes raw volts per AIN.
+A TC board also gets the cold junction, which only the bridge can compute (it reads the
+device at stream start). **calibration_service** does everything else, through the same
+code paths as an ESP32 PT / LC / TC:
 
-| | table | entity | field |
+| | table | entity | written by |
 |---|---|---|---|
-| raw | `{0x26, (slot-1)*0x20 + ain}` | `T7<slot>.AIN<n>` | `volts` (f32) |
-| calibrated | `{0x26, (slot-1)*0x20 + 0x10 + ain}` | `T7<slot>_Cal.AIN<n>` | `pressure_psi` / `temperature_c` / `force_kg` (f32), `raw_uv` (i32), `cal_status` |
+| raw | `{0x26, (slot-1)*0x20 + ain}` | `T7<slot>.AIN<n>.volts` | t7_bridge |
+| cold junction | `{0x26, (slot-1)*0x20 + 0x0F}` | `T7<slot>.CJC.temperature_c` | t7_bridge (TC boards) |
+| calibrated | `{0x26, (slot-1)*0x20 + 0x10 + ain}` | `T7<slot>_Cal.AIN<n>.pressure_psi` / `temperature_c` / `force_kg`, + `raw_uv` | calibration_service |
 
-The conversions (`lib/t7/T7Convert`) use the channel's datasheet numbers. Each is required
-and has no default:
-- **PT:** `signal` (`0-5V`, `0.5-4.5V`, `1-5V`, `0-10V`, `4-20mA` + `shunt_ohms`) and
-  `full_scale` psi. Linear.
-- **LC:** `full_scale` kg, `sensitivity_mv_per_v` and `excitation_v`:
-  kg = V / (mV/V/1000 × Vexc) × FS.
-- **TC:** `tc_type = "K"`, compensated as above.
-- **VOLTAGE:** raw only.
+- **Identity.** uid is `board_id*100 + AIN` and the role is the channel's `role`. The model comes
+  from `[calibration_model_<t7 board>]` by role, exactly as for an ESP32 board:
+  cubic / robust / blend / physics for a PT, cubic / physics for an LC. With no model set, a
+  T7 input defaults to **physics**, the datasheet conversion from its channel row.
+- **Calibration code.** The "ADC code" is the reading in **microvolts** (`t7::t7_counts`).
+  Captures, Zero / Zero-All, clear, profile reload, the robust learner and LC tare all work
+  on it unchanged. The GUI reads it as `raw_adc_counts`.
+- **Logical channels.** T7 inputs use 128 + (slot-1)·16 + ain, clear of the ESP32 boards' 1–80.
+- **Units never cross.** The cubic store tags each channel `adc` or `uV`. A role that moves
+  between an ESP32 board and a T7 does not take its fit along: its points stay, as an orphan
+  at the old uid, and the new channel starts uncalibrated. The robust adjustments file
+  has no unit tag, so T7 inputs are filed there by uid, not role.
+- **Thermocouples.** Type K against the latest cold junction for that T7. A TC sample that
+  arrives before any cold-junction reading is not published.
+- **Abort thresholds.** `abort_pts` naming a T7 role is refused with a log line: those
+  thresholds are ADC codes an ESP32 board compares on its own.
 
-A reading the conversion cannot produce (e.g. a TC off the curve) publishes volts only and
-is counted.
-
-In the GUI, `/api/sensor-config` lists each channel as a sensor of its kind, named by its
-`role`, with `source: 'T7'`. Every role-driven page (pressure plots, top-bar gauges, the
-TC/LC pages, Sensor Info) shows it like an ESP32 sensor, and `PT_Cal.<Role>` etc. resolve to
-it. The config editor has a **LabJack T7** board type with a channel table. Its problems
-come from `t7BoardIssues()` (`shared/config-validation.ts`), which mirrors `T7Config.cpp`
-and also gates session start, together with a T7 role that collides with an ESP32 sensor's.
+The GUI shows each PT / TC / LC input under its role on every role-driven page, and the
+Calibration page includes T7 PT / LC inputs. Capture, zero and tare work as for ESP32
+sensors, and the "ADC" column is µV. The config editor's T7 channel table has a Model column.
 
 The session pipeline runs t7_bridge as `sensor-t7` (`deploy/systemd/sensor-t7.service`;
 re-run `install_services.sh` once to add it). A simulated run uses `--fake`. With no enabled
@@ -330,14 +335,10 @@ T7 it exits 0 and stays down.
 
 ### Not done yet
 - **Hardware.** Nothing has run against a real T7. The LJM path compiles against LabJack's
-  real `LabJackM.h` only.
-- **Capture-point calibration and tare.** T7 channels use datasheet physics only. The
-  calibration page leaves them out, and LC tare is disabled for them, because both live in
-  calibration_service, which does not see T7 channels.
-- **Sequencer / aborts.** `abort_pts`, the pressure feed and state scripts read the ESP32 PT
-  tables only, so a T7 PT cannot trigger an abort.
-- **Simulated runs** build their config from `config_base.toml`, which has no T7, so a sim
-  session shows none until one is added there.
+  real `LabJackM.h` only. calibration_service's T7 path was run against a fake Elodin
+  (physics, Zero-All, tare, cubic captures).
+- **Sequencer / aborts.** The pressure feed and state scripts read the ESP32 PT tables only.
+- **Simulated runs** build their config from `config_base.toml`, which has no T7.
 - **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.
 
 ## Still to verify (needs support.labjack.com / labjack.com, blocked here)
