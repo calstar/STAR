@@ -10,6 +10,14 @@ on:
       - 'firmware/DVBT_Video_TX/**'
       - '.github/workflows/dvbt-video-tx-ci.yml'
 
+concurrency:
+  group: dvbt-video-tx-${{ github.ref }}
+  cancel-in-progress: true
+
+# A test whose tool is missing fails here instead of skipping green.
+env:
+  DVBT_REQUIRE_TOOLS: '1'
+
 defaults:
   run:
     working-directory: firmware/DVBT_Video_TX
@@ -24,6 +32,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg && pip install pytest
       - name: Host tests
         run: cd esp32p4/test/host && python3 -m pytest -q
+
+  model:
+    name: RF chain link budget (rx coax, noise figure, range, provenance)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-scipy python3-numpy python3-pip
+          /usr/bin/python3.12 -m pip install --break-system-packages pytest
+      - name: Link budget
+        run: cd model/tests && /usr/bin/python3.12 -m pytest -q
 
   rtl:
     name: RTL regression + mutation check (Icarus, gr-dtv golden model)
@@ -61,7 +82,22 @@ jobs:
           sudo apt-get install -y verilator ffmpeg gnuradio python3-scipy python3-numpy python3-pip
           /usr/bin/python3.12 -m pip install --break-system-packages pytest pytest-xdist
       - name: End-to-end scenarios
-        run: cd test/e2e && /usr/bin/python3.12 -m pytest -q -n auto test_e2e.py
+        run: cd test/e2e && /usr/bin/python3.12 -m pytest -q -n auto -rs test_e2e.py
+
+  e2e-mutation:
+    name: End-to-end mutation check (every planted integration bug must be caught)
+    needs: e2e            # mutants against a red baseline prove nothing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator ffmpeg gnuradio python3-scipy python3-numpy python3-pip
+          /usr/bin/python3.12 -m pip install --break-system-packages pytest pytest-xdist
+      - name: Mutation check
+        run: /usr/bin/python3.12 test/e2e/mutation_check.py
 
   idf:
     name: ESP-IDF build (ESP32-P4)

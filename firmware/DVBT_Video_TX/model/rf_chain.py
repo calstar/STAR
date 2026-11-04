@@ -67,7 +67,7 @@ class Chain:
     lo_leak_dbc: Param = P(-200.0, "dBc of nominal output", DS_MOD, "LO carrier feedthrough -43 dBc")
     lo_leak_deg: Param = P(30.0, "deg", "assumption", "phase of the feedthrough relative to I (any; calibration nulls it)")
     phase_noise: Param = P(0.0, "on/off", DS_MOD, "PN: -85/-96/-100/-107/-132/-152 dBc/Hz at 100 Hz..10 MHz; 0.25 deg rms")
-    pn_scale_db: Param = P(0.0, "dB", "", "added to the datasheet phase-noise curve")
+    pn_scale_db: Param = P(0.0, "dB", "assumption", "added to the datasheet phase-noise curve")
     mod_floor_dbm_hz: Param = P(-250.0, "dBm/Hz", DS_MOD, "noise floor -160.5 dBm/Hz at 0 dB attenuation")
     atten_db: Param = P(0.0, "dB", "firmware CONFIG_DVBT_ADRF_ATTEN_DB", "default 0")
     # ---- driver, PA, filter -------------------------------------------------------
@@ -79,25 +79,25 @@ class Chain:
     rapp_p: Param = P(2.0, "", "assumption", "Rapp smoothness for solid-state amplifiers, 2-3")
     filt_loss_db: Param = P(1.0, "dB", DOC, "LFCN-1400+ insertion loss ~1 dB")
     # ---- air -----------------------------------------------------------------------
-    range_m: Param = P(0.0, "m", "", "0: no channel (cable to the receiver)")
+    range_m: Param = P(0.0, "m", "scenario knob", "0: no channel (cable to the receiver)")
     tx_ant_dbi: Param = P(0.0, "dBi", "assumption", "rocket antenna toward the ground station")
     roll_hz: Param = P(0.0, "rev/s", "assumption", "airframe roll rate")
     roll_ripple_db: Param = P(0.0, "dB pk-pk", "assumption", "antenna gain ripple around the roll axis")
     roll_lobes: Param = P(2.0, "per rev", "assumption", "lobes of the roll pattern")
-    pol_loss_db: Param = P(0.0, "dB", "", "polarisation mismatch (0 for RHCP to RHCP)")
+    pol_loss_db: Param = P(0.0, "dB", "assumption", "polarisation mismatch (0 for RHCP to RHCP)")
     ground_rho: Param = P(0.0, "", "assumption", "ground-reflection magnitude reaching the helix")
     ground_fade_hz: Param = P(1.0, "Hz", "two-ray geometry", "rate the reflected path's phase turns")
-    v_radial: Param = P(0.0, "m/s", "", "range rate (positive: moving away)")
-    a_radial: Param = P(0.0, "m/s^2", "", "range acceleration")
+    v_radial: Param = P(0.0, "m/s", "scenario knob", "range rate (positive: moving away)")
+    a_radial: Param = P(0.0, "m/s^2", "scenario knob", "range acceleration")
     rx_ant_dbi: Param = P(12.0, "dBi", DOC, "RHCP helix 12-15 dBi")
     rx_point_loss_db: Param = P(1.0, "dB", "assumption", "hand-aimed helix")
-    rx_cable_loss_db: Param = P(0.0, "dB", "", "coax from the helix to the UT-130B; no LNA (operator 2026-11-01), so every dB is a dB of SNR")
+    rx_cable_loss_db: Param = P(0.0, "dB", "operator (2026-11-01)", "coax from the helix to the UT-130B; no LNA, so every dB is a dB of SNR; RG316 is about 1.2 dB/m at 1.28 GHz")
     rx_nf_db: Param = P(6.0, "dB", "assumption", "USB DVB-T receiver without LNA (typ 5-8 dB)")
     # ---- receiver ---------------------------------------------------------------------
     rx_lo_ppm: Param = P(0.0, "ppm", "assumption", "receiver tuner crystal")
     rx_clk_ppm: Param = P(0.0, "ppm", "assumption", "receiver ADC/demod crystal")
     rx_adc_bits: Param = P(16, "bits", "assumption", "demodulator ADC")
-    seed: Param = P(1, "", "", "")
+    seed: Param = P(1, "", "scenario knob", "noise and fading RNG seed; not hardware")
 
     def with_(self, **kw) -> "Chain":
         """Copy with values replaced (sources kept)."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -15,7 +16,9 @@ import pytest
 
 import fwlib
 
-pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg/ffprobe")
+# CI sets DVBT_REQUIRE_TOOLS so a missing ffmpeg fails the job instead of skipping it green.
+pytestmark = pytest.mark.skipif(not shutil.which("ffmpeg") and not os.environ.get("DVBT_REQUIRE_TOOLS"),
+                                reason="needs ffmpeg/ffprobe")
 
 
 class Cfg(ctypes.Structure):

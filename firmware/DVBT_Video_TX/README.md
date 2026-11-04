@@ -129,7 +129,16 @@ verilator --lint-only -Wall -Wno-DECLFILENAME --top-module dvbt_fec_chain rtl/*.
 cd ../test/e2e
 /usr/bin/python3.12 -m pytest -q -n 4 test_e2e.py         # end to end, ~2 min on 4 cores
 /usr/bin/python3.12 mutation_check.py                     # every planted integration bug must be caught
+cd ../../model/tests
+/usr/bin/python3.12 -m pytest -q                          # RF link budget: 15 km margin, rx coax and NF dB for dB (~3 s)
 ```
+
+CI (`.github/workflows/dvbt-video-tx-ci.yml`, on any change under this folder)
+runs all of these: host firmware tests, the link budget, the RTL regression and
+its mutation check, synthesis, the end-to-end scenarios and their mutation
+check (after the scenarios pass), and the ESP-IDF build. It sets
+`DVBT_REQUIRE_TOOLS=1`, so a test whose tool is missing fails instead of
+skipping green; set it locally to get the same behaviour.
 
 ## Status
 

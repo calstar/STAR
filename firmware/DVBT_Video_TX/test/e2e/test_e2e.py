@@ -28,6 +28,7 @@ fallback or recovery end to end.
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import shutil
@@ -50,7 +51,9 @@ sys.path.insert(0, str(ROOT / "esp32p4/test/host"))
 import build  # noqa: E402
 import make_fpga_image  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not shutil.which("verilator") or not shutil.which("ffmpeg"),
+# CI sets DVBT_REQUIRE_TOOLS so a missing tool fails the job instead of skipping it green.
+pytestmark = pytest.mark.skipif((not shutil.which("verilator") or not shutil.which("ffmpeg"))
+                                and not os.environ.get("DVBT_REQUIRE_TOOLS"),
                                 reason="needs verilator and ffmpeg")
 
 RATE = Fraction(1512 * 188 * 8, 204 * 8) / Fraction(336, 1_000_000)      # QPSK 1/2, 1/8, 6 MHz
