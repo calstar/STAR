@@ -1520,9 +1520,28 @@ export default function ConfigPage() {
   const t7ChannelsOf = (boardKey: string): any[] =>
     Array.isArray((config.boards as any)?.[boardKey]?.channels) ? (config.boards as any)[boardKey].channels : [];
   const setT7Channels = (boardKey: string, chs: any[]) => updateBoard(boardKey, 'channels', chs);
+  /** A T7 PT / LC input's calibration model lives where an ESP32 sensor's does:
+   *  [calibration_model_<board>] by role. Absent reads as physics (calibration_service's default). */
+  const t7ModelOf = (boardKey: string, role: string): string =>
+    ((config as any)[`calibration_model_${boardKey}`]?.[role] as string) ?? 'physics';
+  const setT7Model = (boardKey: string, role: string, model: string | undefined, renameTo?: string) =>
+    setConfig((prev) => {
+      const key = `calibration_model_${boardKey}`;
+      const models: Record<string, string> = { ...(((prev as any)[key] as Record<string, string>) || {}) };
+      const current = models[role];
+      delete models[role];
+      if (renameTo !== undefined) {
+        if (current !== undefined && renameTo) models[renameTo] = current;
+      } else if (model !== undefined) {
+        models[role] = model;
+      }
+      return { ...prev, [key]: models } as ConfigData;
+    });
   const setT7ChannelField = (boardKey: string, i: number, field: string, value: any) => {
     const chs = t7ChannelsOf(boardKey).map((c) => ({ ...c }));
     const c = chs[i];
+    // The model is filed by role, so a rename carries it along rather than orphaning it.
+    if (field === 'role' && c.role && c.role !== value) setT7Model(boardKey, c.role, undefined, value ?? '');
     if (value === undefined || value === '') delete c[field];
     else c[field] = value;
     if (field === 'kind') {
@@ -2216,9 +2235,11 @@ export default function ConfigPage() {
             Channels
           </h4>
           <p className="text-xs text-text-muted">
-            Each PT, TC and LC channel shows across the GUI under its role, in psi, °C or kg, like
-            an ESP32 sensor. The numbers here are the sensor&apos;s datasheet values — t7_bridge
-            converts with them; there is no capture-point calibration for a T7 channel.
+            Each PT, TC and LC channel is calibrated and shown like an ESP32 sensor of that kind,
+            under its role, in psi, °C or kg — captures, zeroes and tares on the Calibration
+            pages included. The physics numbers are the sensor&apos;s datasheet values, which the
+            Physics model (the default) streams; a Cubic or Robust sensor reads 0 until it has
+            captured points, exactly as on an ESP32 board.
           </p>
           <div className="overflow-x-auto">
             <table className="text-sm">
@@ -2229,7 +2250,8 @@ export default function ConfigPage() {
                   <th className="px-2 py-1">Role</th>
                   <th className="px-2 py-1">Range ±V</th>
                   <th className="px-2 py-1" title="AIN(n) − AIN(n+1); n must be even">Diff.</th>
-                  <th className="px-2 py-1">Conversion</th>
+                  <th className="px-2 py-1" title="Calibration model, as for an ESP32 sensor">Model</th>
+                  <th className="px-2 py-1">Physics (datasheet)</th>
                   <th className="px-2 py-1" />
                 </tr>
               </thead>
@@ -2266,6 +2288,21 @@ export default function ConfigPage() {
                       <input type="checkbox" checked={c?.differential === true} disabled={!canEdit}
                         className="w-4 h-4 mt-2"
                         onChange={(e) => setT7ChannelField(boardKey, i, 'differential', e.target.checked ? true : undefined)} />
+                    </td>
+                    <td className="px-2 py-1">
+                      {(c?.kind === 'PT' || c?.kind === 'LC') && c?.role ? (
+                        <select value={t7ModelOf(boardKey, c.role)} disabled={!canEdit} className={cell}
+                          title="Streaming calibration model for this sensor"
+                          onChange={(e) => setT7Model(boardKey, c.role, e.target.value)}>
+                          <option value="cubic">Cubic</option>
+                          {c.kind === 'PT' && <option value="robust">Robust</option>}
+                          <option value="physics">Physics</option>
+                        </select>
+                      ) : (
+                        <span className="text-xs text-text-muted pt-1.5 inline-block">
+                          {c?.kind === 'TC' ? 'physics' : c?.kind === 'VOLTAGE' ? '—' : 'needs a role'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-1">
                       <div className="flex flex-wrap gap-2 items-center">

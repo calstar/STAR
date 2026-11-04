@@ -245,7 +245,11 @@ export function parseElodinPacket(
   // Same 32-slot blocks, but the channel is the T7's AIN number, so 0 and 11-14 are valid too.
   //   raw  offset 0x00-0x0E: T7<slot>.AIN<n>.volts (f32 @12)
   //   cal  offset 0x10-0x1D: T7<slot>_Cal.AIN<n>.<pressure_psi|temperature_c|force_kg>
-  //                          (f32 @12) + raw_uv (i32 @16) — the ESP32 calibrated layout.
+  //                          (f32 @12) + the calibration code (i32 @16) — the ESP32 calibrated
+  //                          layout. For a T7 input that code is the reading in microvolts; it is
+  //                          emitted as raw_adc_counts / raw_adc because it is exactly what the
+  //                          ESP32 boards' ADC code is to calibration_service (what captures,
+  //                          fits and tares are taken in), so every calibration view reads it.
   if (high === 0x26) {
     const offset = low & 0x1F;
     const slot = (low >> 5) + 1;
@@ -259,7 +263,8 @@ export function parseElodinPacket(
     const field = t7CalFields?.get(low);
     if (!field) return [];
     const ain = offset - 0x10;
-    return parseCalibratedSensorPayload(payload, ain, `T7${slot}_Cal.AIN${ain}`, field, ['raw_uv']);
+    return parseCalibratedSensorPayload(payload, ain, `T7${slot}_Cal.AIN${ain}`, field,
+      ['raw_adc_counts', 'raw_adc']);
   }
 
   // ── Encoder: [0x24, ...] ──────────────────────────────────────────────────

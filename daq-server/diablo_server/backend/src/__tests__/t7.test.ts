@@ -12,6 +12,7 @@ import { buildVTableStreamSubscriptionList } from '../elodin-vtable-registry.js'
 import { parseElodinPacket } from '../elodin-protocol.js';
 import { t7CalFields } from '../sensor-config.js';
 import { buildSensorConfig } from '../api-server.js';
+import { applyCalibrationModelDefaults } from '../routes/config.js';
 import { mapEntityToGroup, isPrimaryPhysicalStream } from '../board-scan-rate.js';
 import { pipelineUnits, setT7UnitInstalledForTests, T7_UNIT } from '../service-controller.js';
 import { t7Channels, t7BoardIssues, validateConfigForRun } from '../../../shared/config-validation.js';
@@ -113,7 +114,10 @@ describe('decoding', () => {
             parseElodinPacket([0x26, low], payload((b) => b.writeFloatLE(v, 12), 2_500_000), undefined, fields);
         expect(at(0x31, 500)).toEqual([
             { entity: 'T72_Cal.AIN1', component: 'pressure_psi', value: 500, timestamp: 1_700_000_000_123 },
-            { entity: 'T72_Cal.AIN1', component: 'raw_uv', value: 2_500_000, timestamp: 1_700_000_000_123 },
+            // The calibration code (µV for a T7) under the ESP32 boards' raw field names, so the
+            // calibration views read it the same way.
+            { entity: 'T72_Cal.AIN1', component: 'raw_adc_counts', value: 2_500_000, timestamp: 1_700_000_000_123 },
+            { entity: 'T72_Cal.AIN1', component: 'raw_adc', value: 2_500_000, timestamp: 1_700_000_000_123 },
         ]);
         expect(at(0x32, 150)[0]).toMatchObject({ entity: 'T72_Cal.AIN2', component: 'temperature_c', value: 150 });
         expect(at(0x34, 125)[0]).toMatchObject({ entity: 'T72_Cal.AIN4', component: 'force_kg', value: 125 });
@@ -159,8 +163,10 @@ describe('/api/sensor-config', () => {
         expect(t7.some((s) => s.id === 6 || s.id === 14 || s.role === 'Off PT')).toBe(false);
     });
 
-    it('offers no T7 channel to the capture-point calibration (its conversion is datasheet physics)', () => {
-        expect(t7.every((s) => s.inCalibrationSequence === false)).toBe(true);
+    it('puts T7 PT and LC inputs in the calibration sequence, like the ESP32 ones', () => {
+        expect(t7.map((s) => [s.type, s.inCalibrationSequence])).toEqual([
+            ['PT', true], ['TC', false], ['LC', true],
+        ]);
     });
 });
 
@@ -224,5 +230,16 @@ describe('session pipeline', () => {
         expect(pipelineUnits(true)).not.toContain(T7_UNIT);
         expect(pipelineUnits(false)).toEqual(
             ['sensor-elodin', 'sensor-daq', 'sensor-calibration', 'sensor-controller', 'sensor-actuator']);
+    });
+});
+
+describe('calibration models', () => {
+    it('defaults each T7 PT / LC role to physics, in calibration_model_<t7 board>', () => {
+        const cfg: any = JSON.parse(JSON.stringify(CONFIG));
+        cfg.calibration_model_labjack_1 = { 'LOX Tank': 'cubic' };
+        applyCalibrationModelDefaults(cfg);
+        expect(cfg.calibration_model_labjack_1).toEqual({ 'LOX Tank': 'cubic', Thrust: 'physics' });
+        // No entry for the TC or the VOLTAGE input: they have no model to choose.
+        expect(Object.keys(cfg.calibration_model_labjack_1)).not.toContain('Nozzle TC');
     });
 });
