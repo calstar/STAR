@@ -197,9 +197,7 @@ export default function LivestreamStatsPane() {
     const configBacked = sensors
       .filter((sensor) => {
         const calEntity = sensor.calEntity;
-        // type === 'PT' covers a LabJack T7 PT too (T7<slot>_Cal.AIN<n>), which the entity
-        // patterns below — written for the ESP32 boards — do not.
-        return sensor.type === 'PT' || calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity);
+        return calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity);
       })
       .map((sensor) => {
         const known = PRESSURE_SENSORS.find((entry) => entry.entity === sensor.calEntity);

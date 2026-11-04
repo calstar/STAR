@@ -12,9 +12,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-# The GUI lives in diablo_server/, two levels up from tools/postprocessing.
-BACKEND_DIR="$SCRIPT_DIR/../../diablo_server/backend"
-FRONTEND_DIR="$SCRIPT_DIR/../../diablo_server/frontend"
 
 if [[ -z "${1:-}" ]]; then
   echo "Usage: $0 <DB_NAME>"
@@ -63,22 +60,6 @@ if lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then
 fi
 
 echo "📂 Replay DB: $DB_PATH"
-
-# Decode with the config the run was RECORDED with, not today's. The session copied it beside the
-# run dir as <run>.toml (service-controller.ts snapshotRunConfig). It decides what every table
-# means — sensor roles, and for a LabJack T7 which calibrated table is psi, °C or kg — so replaying
-# an old run against a since-edited config mislabels channels or drops T7 data outright.
-# Copied into a scratch dir rather than pointed at in place: the backend seeds a profiles/ folder
-# beside whatever CONFIG_PATH names, and that must not land in the Elodin data directory.
-RUN_CONFIG="$DB_PATH.toml"
-if [[ -f "$RUN_CONFIG" ]]; then
-  REPLAY_CONFIG_DIR="$(mktemp -d -t replay_config.XXXXXX)"
-  cp "$RUN_CONFIG" "$REPLAY_CONFIG_DIR/config.toml"
-  export CONFIG_PATH="$REPLAY_CONFIG_DIR/config.toml"
-  echo "🧾 Decoding with the run's own config: $RUN_CONFIG"
-else
-  echo "⚠️  No $RUN_CONFIG (run predates config snapshots) — decoding with the deployed config"
-fi
 echo "📊 Starting Elodin DB on port $ELODIN_PORT (--replay = stream stored data as live telemetry)..."
 RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$ELODIN_PORT" "$DB_PATH" --replay > /tmp/elodin_db_replay.log 2>&1 &
 ELODIN_PID=$!
@@ -91,7 +72,7 @@ fi
 echo "   ✅ Elodin DB ready"
 
 echo "📡 Starting Elodin relay..."
-cd "$BACKEND_DIR"
+cd backend
 if [[ ! -d "node_modules" ]]; then
   echo "📦 Installing backend dependencies..."
   npm install
@@ -102,14 +83,14 @@ cd ..
 sleep 3
 
 echo "📡 Starting WebSocket server (REPLAY_MODE=1, sidecar disabled)..."
-cd "$BACKEND_DIR"
+cd backend
 REPLAY_MODE=1 ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev &
 BACKEND_PID=$!
 cd ..
 sleep 2
 
-echo "🌐 Starting frontend (Vite)..."
-cd "$FRONTEND_DIR"
+echo "🌐 Starting Next.js frontend..."
+cd frontend
 if [[ ! -d "node_modules" ]]; then
   echo "📦 Installing frontend dependencies..."
   npm install
@@ -126,5 +107,5 @@ echo "   🌐 Frontend: http://localhost:3000"
 echo ""
 echo "Press Ctrl+C to stop all services."
 
-trap 'echo "Stopping..."; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $ELODIN_PID 2>/dev/null; [[ -n "${REPLAY_CONFIG_DIR:-}" ]] && rm -r -- "$REPLAY_CONFIG_DIR"; exit' INT TERM
+trap 'echo "Stopping..."; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $ELODIN_PID 2>/dev/null; exit' INT TERM
 wait

@@ -282,7 +282,6 @@ export default function LCS_TCS_RTDPage() {
           const role = sensorConfig?.find((s) => s.calEntity === r.calEntity)?.role;
           return role ?? r.label;
         }));
-        // calibration_service's uid: board_id*100 + connector, or + AIN for a LabJack T7.
         setLcUids(lc.map((r) => r.boardId * 100 + r.channel));
       }
     }).catch(() => {});

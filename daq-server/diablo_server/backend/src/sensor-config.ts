@@ -4,7 +4,6 @@
  */
 
 import { readConfig } from './routes/config.js';
-import { t7Channels } from '../../shared/config-validation.js';
 
 let warnedLegacyPtType = false;
 
@@ -33,22 +32,6 @@ export function isCurrentLoopBoard(board: any): boolean {
  * interpretation and by the GUI to label HP boards. `config` is optional so callers on the hot
  * path can pass a cached config.
  */
-/**
- * LabJack T7 calibrated tables (low byte of {0x26, low}) -> the field each carries, for the
- * decoder (parseElodinPacket's t7CalFields). Enabled boards only, from the deployed config.
- */
-export function t7CalFields(config?: any): Map<number, string> {
-    const out = new Map<number, string>();
-    try {
-        const cfg = config ?? readConfig();
-        for (const ch of t7Channels(cfg.boards))
-            if (ch.enabled && ch.calLow !== null && ch.calField) out.set(ch.calLow, ch.calField);
-    } catch {
-        // No config: no T7 tables are decoded, the same as no T7.
-    }
-    return out;
-}
-
 export function hpBoardNumbers(config?: any): Set<number> {
     const out = new Set<number>();
     try {

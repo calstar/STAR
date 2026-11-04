@@ -254,75 +254,6 @@ void unreadable_file_is_not_overwritten() {
 
 }  // namespace
 
-// ── 8. A role that moves between an ESP32 board and a LabJack T7 ─────────────────────
-// Calibration is filed by role, so "LOX Tank" moving from PT board 21 to T7 board 81 would carry
-// a fit in ADC codes (hundreds of millions per volt-ish) onto a channel that reads microvolts.
-void role_moved_to_t7_keeps_its_unit() {
-    const std::string path = scratch("t7move");
-    {
-        CubicCalibrationStore s(path);
-        s.register_channel(2101, 21, 1, 1, "LOX Tank", "cubic", SensorKind::PT);
-        add_pt_points(s, 2101);
-        CHECK(s.save(), "save should succeed");
-        CHECK(read_json(path)["cubic_state"]["2101"]["rawUnit"] == "adc",
-              "an ESP32 channel is saved with rawUnit adc");
-    }
-    {
-        // Now the role lives on a T7: uid 8101, logical channel 129, readings in uV.
-        CubicCalibrationStore s(path);
-        s.register_channel(8101, 81, 1, 129, "LOX Tank", "cubic", SensorKind::PT, "uV");
-        s.load();
-        const auto* t7 = s.channel(8101);
-        CHECK(t7 != nullptr && t7->points.empty() && !t7->fit.valid,
-              "the ADC-code fit must NOT attach to the T7 channel");
-        const auto* old = s.channel(2101);
-        CHECK(old != nullptr && old->points.size() == 4 && old->raw_unit == "adc",
-              "the ESP32 points stay, as an orphan at their own uid");
-        CHECK(s.save(), "save should succeed");
-        const json j = read_json(path);
-        CHECK(j["cubic_state"].contains("2101") && j["cubic_state"]["2101"]["numPoints"] == 4,
-              "and survive the next save instead of being dropped");
-        CHECK(j["cubic_state"]["8101"]["rawUnit"] == "uV", "the T7 channel is saved as uV");
-    }
-}
-
-// ── 9. Same unit still follows the role, and a T7 orphan keeps its logical channel ────
-void t7_role_follows_within_t7() {
-    const std::string path = scratch("t7follow");
-    {
-        CubicCalibrationStore s(path);
-        s.register_channel(8101, 81, 1, 129, "LOX Tank", "cubic", SensorKind::PT, "uV");
-        s.add_point(8101, 0.0, 0.0);
-        s.add_point(8101, 2500000.0, 500.0);
-        s.add_point(8101, 5000000.0, 1000.0);
-        CHECK(s.save(), "save should succeed");
-    }
-    {
-        // Rewired from AIN1 to AIN3 on the same T7.
-        CubicCalibrationStore s(path);
-        s.register_channel(8103, 81, 3, 131, "LOX Tank", "cubic", SensorKind::PT, "uV");
-        s.load();
-        const auto* moved = s.channel(8103);
-        CHECK(moved != nullptr && moved->points.size() == 3 && moved->fit.valid,
-              "a uV fit follows its role to another T7 input");
-        CHECK(s.save(), "save should succeed");
-    }
-    {
-        // The T7 is gone from config: its entry is an orphan, and must keep logical channel 129
-        // rather than be re-derived as ESP32 slot 1 connector 1 (logical 1, a live PT's).
-        CubicCalibrationStore s(path);
-        s.register_channel(2101, 21, 1, 1, "Fuel Upstream", "cubic", SensorKind::PT);
-        s.load();
-        const auto* orphan = s.channel(8103);
-        CHECK(orphan != nullptr && orphan->logical_ch == 131 && orphan->raw_unit == "uV",
-              "a T7 orphan keeps its own logical channel and unit");
-        CHECK(s.save(), "save should succeed");
-        const json j = read_json(path);
-        CHECK(!j["calibration_polynomials"].contains("1"),
-              "nothing lands on ESP32 logical channel 1");
-    }
-}
-
 int main() {
     std::printf("CubicCalibrationStore PT/LC namespace tests\n");
     pt_lc_logical_collision();
@@ -332,8 +263,6 @@ int main() {
     add_point_rejects_unknown_uid();
     recovery_regenerates_overwritten_pt_curve();
     unreadable_file_is_not_overwritten();
-    role_moved_to_t7_keeps_its_unit();
-    t7_role_follows_within_t7();
 
     if (g_failures == 0)
         std::printf("  ✅ all passed\n");
