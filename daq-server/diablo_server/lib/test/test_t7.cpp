@@ -4,13 +4,16 @@
  *
  * The device is FakeT7Device, which records every call. Nothing here opens a socket.
  */
+#include <climits>
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "calibration/TypeK.hpp"
 #include "config/Config.hpp"
+#include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
 
@@ -492,17 +495,14 @@ int main() {
         check(d->closed, "and the session still closes the device");
     }
 
-    std::cout << "=== engineering units ===" << std::endl;
+    std::cout << "=== cold junction ===" << std::endl;
     {
-        // good_board: PT 0-5V 1000 psi on AIN1, type K on AIN2, LC 2 mV/V x 10 V 500 kg on AIN4.
+        // The bridge publishes raw volts only; what it alone can add is each scan's cold
+        // junction, which calibration_service needs to turn TC volts into temperature.
         FakeT7Device::Options o;
         o.device_temp_k = 300.0;  // board cjc_offset_k -4.9 -> junction at 21.95 C
-        const double cj = 300.0 - 273.15 - 4.9;
-        const double tc_v =
-            (fsw::calibration::type_k_mv_from_c(150.0) - fsw::calibration::type_k_mv_from_c(cj)) /
-            1000.0;
-        o.signal = [tc_v](int ain, double) {
-            return ain == 1 ? 1.25 : ain == 2 ? tc_v : ain == 4 ? 0.005 : 0.0;
+        o.signal = [](int ain, double) {
+            return ain == 1 ? 1.25 : 0.001;
         };
         auto dev = std::make_unique<FakeT7Device>(o);
         FakeT7Device* d = dev.get();
@@ -517,38 +517,59 @@ int main() {
               "and solves AIN14's offset from them (the fake sits on LabJack's nominal line)");
         now += 50'000'000ULL;
         const auto b = s.read();
-        check(b.samples.size() == 20, "5 scans x (3 AINs + AIN14)");
-        auto first = [&](uint8_t ain) {
-            for (const auto& x : b.samples)
-                if (x.ain == ain)
-                    return x;
-            return fsw::t7::Sample{};
-        };
-        check(first(1).has_value && near(first(1).value, 250.0, 1e-3), "PT: 1.25 V -> 250 psi");
-        check(first(2).has_value && near(first(2).value, 150.0, 0.01),
-              "TC: 150 C with the junction at ~22 C");
-        check(first(4).has_value && near(first(4).value, 125.0, 1e-3), "LC: 5 mV -> 125 kg");
-        check(!first(14).has_value && first(14).ain == 14,
-              "AIN14 is published raw only, with no calibrated value");
-        check(b.unconverted == 0, "nothing failed to convert");
+        check(b.samples.size() == 20, "5 scans x (3 AINs + AIN14), all raw volts");
+        check(b.cold_junction.size() == 5, "one cold-junction reading per scan");
+        bool cj_ok = true;
+        for (size_t k = 0; k < b.cold_junction.size(); ++k)
+            cj_ok = cj_ok && near(b.cold_junction[k].temp_c, 300.0 - 273.15 - 4.9, 1e-4) &&
+                    b.cold_junction[k].timestamp_ns == b.samples[k * 4].timestamp_ns &&
+                    b.cold_junction[k].sample_ms == b.samples[k * 4].sample_ms;
+        check(cj_ok,
+              "at the terminals' temperature (device + cjc_offset_k), stamped like its scan");
+        check(near(b.samples[0].volts, 1.25, 1e-6),
+              "the PT is published as its volts, unconverted");
     }
     {
-        FakeT7Device::Options o;
-        o.signal = [](int ain, double) {
-            return ain == 2 ? 0.5 : 1.0;
-        };  // 500 mV: off the K curve
-        uint64_t now = 1'700'000'000'000'000'000ULL;
-        T7Session s(good_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
-            return now;
+        T7Session s(stream_board(), std::make_unique<FakeT7Device>(), board_clock, [] {
+            return 1'700'000'000'000'000'000ULL;
         });
         s.start();
-        now += 50'000'000ULL;
-        const auto b = s.read();
-        bool tc_published = false;
-        for (const auto& x : b.samples)
-            tc_published = tc_published || (x.ain == 2 && x.has_value);
-        check(!tc_published && b.unconverted == 5,
-              "an off-curve TC publishes volts but no temperature, and is counted");
+        check(s.read().cold_junction.empty(), "a board with no TC publishes no cold junction");
+    }
+
+    std::cout << "=== calibration map ===" << std::endl;
+    {
+        const Config c = fsw::config::load_from_string(kGood);
+        const fsw::t7::T7CalibrationMap m(c);
+        check(m.all().size() == 3, "every PT / TC / LC input on an enabled T7");
+        const auto* pt = m.by_uid(8101);
+        check(pt != nullptr && pt->channel.kind == "PT" && pt->board_key == "labjack_1" &&
+                  pt->slot == 1 && pt->logical_ch == 129,
+              "uid board_id*100+ain; logical channel 128 + (slot-1)*16 + ain");
+        check(m.by_table(1, 4) == m.by_uid(8104) && m.by_table(1, 4)->channel.kind == "LC",
+              "lookup by raw table (slot, ain) finds the same input");
+        check(m.by_table(1, 14) == nullptr, "AIN14 (CJC) is not a calibrated input");
+        const auto raw_list = m.raw_tables();
+        std::set<std::pair<uint8_t, uint8_t>> raw(raw_list.begin(), raw_list.end());
+        check(raw == std::set<std::pair<uint8_t, uint8_t>>(
+                         {{0x26, 0x01}, {0x26, 0x02}, {0x26, 0x04}, {0x26, 0x0F}}),
+              "subscribes each input's raw table, plus the TC board's cold junction (0x0F)");
+        check(fsw::t7::t7_logical_channel(8, 15) == 255 && fsw::t7::t7_logical_channel(1, 0) == 128,
+              "T7 logical channels span 128-255, clear of the ESP32 boards' 1-80");
+        check(fsw::t7::t7_counts(1.25) == 1250000 && fsw::t7::t7_counts(-0.0000014) == -1 &&
+                  fsw::t7::t7_counts(1e9) == INT32_MAX,
+              "the calibration code is microvolts, rounded and clamped");
+    }
+    {
+        Config c = fsw::config::load_from_string(kGood);
+        c.t7_errors.push_back("[boards.labjack_1] something");
+        check(fsw::t7::T7CalibrationMap(c).empty(),
+              "a T7 config the bridge refuses calibrates nothing (it is not streaming)");
+        T7Board off = good_board();
+        Config c2;
+        off.enabled = false;
+        c2.t7_boards.push_back(off);
+        check(fsw::t7::T7CalibrationMap(c2).empty(), "nor does a disabled T7");
     }
     {
         FakeT7Device::Options o;

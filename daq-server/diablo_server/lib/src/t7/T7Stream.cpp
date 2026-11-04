@@ -151,12 +151,15 @@ Block T7Session::read() {
         const uint64_t k = first + s;
         const uint64_t back = last_ns - device_ns(k);
         const uint64_t ts = anchor > back ? anchor - back : 0;
-        // This scan's cold junction, if the board has thermocouples.
-        double cj_c = std::numeric_limits<double>::quiet_NaN();
+        // This scan's cold junction, if the board has thermocouples. Only the bridge can work it
+        // out (the offset is taken from the device at stream start), so it is published as its
+        // own table for calibration_service, which turns TC volts into temperature.
         if (plan_.cjc_index >= 0) {
             const double v14 = buffer_[s * n + static_cast<size_t>(plan_.cjc_index)];
             if (v14 != kDummyValue)
-                cj_c = cjc_temp_c(v14, cjc_device_offset_k_, board_.cjc_offset_k);
+                b.cold_junction.push_back(
+                    {static_cast<float>(cjc_temp_c(v14, cjc_device_offset_k_, board_.cjc_offset_k)),
+                     ts, device_ms(k)});
         }
         for (size_t c = 0; c < n; ++c) {
             const double v = buffer_[s * n + c];
@@ -164,25 +167,7 @@ Block T7Session::read() {
                 ++b.skipped_samples;
                 continue;
             }
-            Sample smp{plan_.ains[c], static_cast<float>(v), ts, device_ms(k)};
-            if (const auto& ch = plan_.channels[c]) {
-                double eng = std::numeric_limits<double>::quiet_NaN();
-                if (ch->kind == "PT")
-                    eng = pt_psi(v, *ch);
-                else if (ch->kind == "LC")
-                    eng = lc_kg(v, *ch);
-                else if (ch->kind == "TC")
-                    eng = tc_c(v, cj_c);
-                if (ch->kind != "VOLTAGE") {
-                    if (std::isfinite(eng)) {
-                        smp.value = static_cast<float>(eng);
-                        smp.has_value = true;
-                    } else {
-                        ++b.unconverted;
-                    }
-                }
-            }
-            b.samples.push_back(smp);
+            b.samples.push_back(Sample{plan_.ains[c], static_cast<float>(v), ts, device_ms(k)});
         }
     }
     next_scan_ = last + 1;
