@@ -99,6 +99,7 @@ pkill -9 -f "build/bin/sequencer_service\|build/bin/sequencer_service" 2>/dev/nu
 pkill -9 -f "build/bin/heartbeat_service\|build/bin/heartbeat_service" 2>/dev/null || true
 pkill -9 -f "build/bin/config_broadcast_service\|build/bin/config_broadcast_service" 2>/dev/null || true
 pkill -9 -f "build/bin/calibration_service\|build/bin/calibration_service" 2>/dev/null || true
+pkill -9 -f "build/bin/t7_bridge" 2>/dev/null || true
 pkill -9 -f "build/bin/controller_service\|build/bin/controller_service" 2>/dev/null || true
 pkill -9 -f "board_simulator" 2>/dev/null || true
 pkill -9 -f "next dev" 2>/dev/null || true   # legacy (pre-Vite) frontend
@@ -184,7 +185,10 @@ else
 fi
 
 CMD_LOG_DB="/tmp/gui_logs/db.log"
-CMD_DB='printf "\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n" && mkdir -p '"$HOME"'/.local/share/elodin && RUST_LOG=debug exec '"$ELODIN_DB_BIN"' run "[::]:2240" "'"$ELODIN_DB_DIR"'" 2>&1 | tee '"$CMD_LOG_DB"
+# Dual-stack [::] where the host has IPv6; a host (or container) without it cannot bind [::] at all.
+ELODIN_BIND="[::]:2240"
+[ -e /proc/net/if_inet6 ] || [ "$(uname)" = "Darwin" ] || ELODIN_BIND="0.0.0.0:2240"
+CMD_DB='printf "\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n" && mkdir -p '"$HOME"'/.local/share/elodin && RUST_LOG=debug exec '"$ELODIN_DB_BIN"' run "'"$ELODIN_BIND"'" "'"$ELODIN_DB_DIR"'" 2>&1 | tee '"$CMD_LOG_DB"
 
 # Thin backend connects directly to Elodin DB (no relay needed)
 THIN_WS_PORT="${THIN_WS_PORT:-8081}"
@@ -261,6 +265,16 @@ CALIB_BIN="$PROJECT/build/bin/calibration_service"
 CMD_LOG_CALIBRATION="/tmp/gui_logs/calibration.log"
 CMD_CALIBRATION='printf "\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibrated ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"' && exec '"$CALIB_BIN"' --config '"$CONFIG_FILE"' 2>&1 | tee '"$CMD_LOG_CALIBRATION"
 
+# LabJack T7s (t7_bridge): every enabled [boards.*] type = "T7" in the config. With USE_SIM=1 they
+# are stand-in devices (--fake), so a simulated stack shows T7 channels without hardware. With no
+# enabled T7 the bridge says so and exits, and the pane stays (remain-on-exit).
+T7_BIN="$PROJECT/build/bin/t7_bridge"
+CMD_LOG_T7="/tmp/gui_logs/t7.log"
+T7_FAKE=""
+[ "${USE_SIM:-0}" = "1" ] && T7_FAKE="--fake"
+CMD_T7='printf "\n  ══ T7 BRIDGE — LabJack T7 inputs → Elodin ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"' && exec '"$T7_BIN"' --config '"$CONFIG_FILE"' '"$T7_FAKE"' 2>&1 | tee '"$CMD_LOG_T7"
+[ -x "$T7_BIN" ] || CMD_T7='printf "\n  ══ T7 BRIDGE — not built (build/bin/t7_bridge) ══\n\n" && sleep infinity'
+
 # Split the rightmost (max index) pane each time so pane creation order is 0..11 as listed above.
 # Re-tile after each split so widths stay usable. IMPORTANT: pass one shell string to tmux (like
 # legacy scripts). Separate argv (bash --norc -c $q) does not run the command — panes exit → "dead".
@@ -290,7 +304,7 @@ launch_background() {
   echo ""
 
   # Elodin DB first
-  nohup bash -c "mkdir -p '$HOME/.local/share/elodin' && exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'" >> "$LOGDIR/db.log" 2>&1 &
+  nohup bash -c "mkdir -p '$HOME/.local/share/elodin' && exec $ELODIN_DB_BIN run '$ELODIN_BIND' '$ELODIN_DB_DIR'" >> "$LOGDIR/db.log" 2>&1 &
   echo "    DB:           PID $! → $LOGDIR/db.log"
 
   # Wait for DB
@@ -309,6 +323,12 @@ launch_background() {
   # Calibration service
   nohup bash -c "cd '$PROJECT' && exec '$CALIB_BIN' --config '$CONFIG_FILE'" >> "$LOGDIR/calibration.log" 2>&1 &
   echo "    Calibration:  PID $! → $LOGDIR/calibration.log"
+
+  # LabJack T7 bridge (--fake under USE_SIM=1; exits 0 when no T7 is enabled)
+  if [ -x "$T7_BIN" ]; then
+    nohup bash -c "cd '$PROJECT' && exec '$T7_BIN' --config '$CONFIG_FILE' $T7_FAKE" >> "$LOGDIR/t7.log" 2>&1 &
+    echo "    T7 bridge:    PID $! → $LOGDIR/t7.log"
+  fi
 
   # Sequencer
   if [ -x "$SEQ_BIN" ]; then
@@ -405,6 +425,7 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   tmux_split_right "$CMD_SEQUENCER"
   tmux_split_right "$CMD_OTA"
   tmux_split_right "$CMD_CTRL"
+  tmux_split_right "$CMD_T7"
 
   tmux select-layout -t "$SESSION:main" tiled
   tmux select-pane -t "$SESSION:main.4"
@@ -414,7 +435,7 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
   echo "│  3: Calibration  4: Backend :${THIN_WS_PORT}  5: Frontend :3000 │"
   echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
-  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller                │"
+  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller  11: T7 bridge  │"
   echo "│  USE_SIM=1 enables simulator                                  │"
   echo "│  Override: THIN_WS_PORT THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
   echo "│  Ctrl+B arrows=switch  D=detach                              │"

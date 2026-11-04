@@ -14,7 +14,7 @@ import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
 import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
-  t7Channels, t7BoardIssues, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
+  t7Channels, t7BoardIssues, t7RoleClashes, abortPtIssue, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
 } from '@/lib/config-validation';
 import {
   slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
@@ -2185,7 +2185,10 @@ export default function ConfigPage() {
    */
   const renderT7Board = (boardKey: string, b: any, slotIssue: string | null) => {
     const chs = t7ChannelsOf(boardKey);
-    const issues = t7BoardIssues((config.boards || {}) as Record<string, any>, boardKey);
+    const issues = [
+      ...t7BoardIssues((config.boards || {}) as Record<string, any>, boardKey),
+      ...t7RoleClashes(config).filter((c) => c.boardKey === boardKey).map((c) => c.message),
+    ];
     const hasTc = chs.some((c) => c?.kind === 'TC');
     const cell = 'px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed';
     const num = (i: number, field: string, title: string, width = 'w-24') => (
@@ -2226,6 +2229,8 @@ export default function ConfigPage() {
             undefined, '0-8; 0 = default')}
           {renderField('Settling (µs)', b.settling_us, (val) => updateBoard(boardKey, 'settling_us', val), 'number',
             undefined, '0 = automatic')}
+          {renderField('Scans per read', b.scans_per_read, (val) => updateBoard(boardKey, 'scans_per_read', val), 'number',
+            undefined, 'per LJM read; empty = a 50 ms block')}
           {hasTc && renderField('CJC offset (K)', b.cjc_offset_k, (val) => updateBoard(boardKey, 'cjc_offset_k', val), 'number',
             undefined, 'terminals vs internal sensor; default −4.9')}
         </FieldSection>
@@ -2846,8 +2851,22 @@ export default function ConfigPage() {
                 </button>
                 <button
                   onClick={() => {
-                    const newKey = `labjack_${Object.keys(config.boards || {}).filter((k) => (config.boards as any)[k]?.type === 'T7').length + 1}`;
+                    const boards = (config.boards || {}) as Record<string, any>;
+                    let n = Object.keys(boards).filter((k) => boards[k]?.type === 'T7').length + 1;
+                    while (boards[`labjack_${n}`]) n++;
+                    const newKey = `labjack_${n}`;
+                    // First board_id in 81-88 whose slot no other T7 and no board_id holds; the IP
+                    // follows the board_id like every board on the LAN (192.168.2.<board_id>).
+                    const ids = new Set(Object.values(boards).map((b: any) => b?.board_id));
+                    const t7Slots = new Set(Object.values(boards).filter((b: any) => b?.type === 'T7')
+                      .map((b: any) => (b.board_id % 10) || 10));
+                    const id = [81, 82, 83, 84, 85, 86, 87, 88].find((x) => !ids.has(x) && !t7Slots.has(x % 10));
                     updateBoard(newKey, 'type', 'T7');
+                    if (id !== undefined) {
+                      updateBoard(newKey, 'board_id', id);
+                      updateBoard(newKey, 'ip', `192.168.2.${id}`);
+                    }
+                    updateBoard(newKey, 'mac', '');
                     updateBoard(newKey, 'enabled', false);
                     updateBoard(newKey, 'scan_rate_hz', 100);
                     updateBoard(newKey, 'channels', []);
@@ -4266,7 +4285,8 @@ export default function ConfigPage() {
                 </p>
                 <div className="space-y-2">
                   {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
-                    <div key={`abort:${i}`} className="flex items-center gap-3">
+                    <div key={`abort:${i}`} className="space-y-1">
+                    <div className="flex items-center gap-3">
                       <CommitOnBlurName
                         value={role}
                         siblings={Object.keys(config.abort_pts || {})}
@@ -4297,6 +4317,10 @@ export default function ConfigPage() {
                       >
                         Remove
                       </button>
+                    </div>
+                    {abortPtIssue(config, role) && (
+                      <InlineIssue level="error">{abortPtIssue(config, role)}</InlineIssue>
+                    )}
                     </div>
                   ))}
                   {Object.keys(config.abort_pts || {}).length === 0 && (

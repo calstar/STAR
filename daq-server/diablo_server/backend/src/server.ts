@@ -556,6 +556,36 @@ function updateBoard(low: number, payload: Buffer): void {
   }
 }
 
+/**
+ * A LabJack T7 sends no BOARD_HEARTBEAT — it is not an ESP32 board — so its liveness on the Boards
+ * pane is its data: each raw sample t7_bridge publishes stands in for a heartbeat, at most every
+ * T7_ALIVE_MARK_MS so the pane's heartbeat-rate reads as a steady ~2 Hz rather than the scan rate.
+ * The same BOARD_HEARTBEAT_STALE_MS sweep then marks it disconnected when its data stops.
+ */
+const T7_ALIVE_MARK_MS = 500;
+const t7LastMark = new Map<number, number>();
+function noteT7Alive(slot: number): void {
+  if (_t7SlotToBoardId.size === 0) {
+    try {
+      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+    } catch { return; }
+  }
+  const boardId = _t7SlotToBoardId.get(slot);
+  if (boardId === undefined) return;
+  const now = Date.now();
+  if (now - (t7LastMark.get(boardId) ?? 0) < T7_ALIVE_MARK_MS) return;
+  t7LastMark.set(boardId, now);
+  const status = boardsStatus.get(boardId);
+  if (!status) return;  // only boards config declares (loadBoardsFromConfig)
+  const wasDisconnected = status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > BOARD_HEARTBEAT_STALE_MS;
+  status.connected = true;
+  status.lastHeartbeatMs = now;
+  status.heartbeatTimes = status.heartbeatTimes ?? [];
+  status.heartbeatTimes.push(now);
+  if (status.heartbeatTimes.length > 20) status.heartbeatTimes.shift();
+  if (wasDisconnected) broadcastBoardStatus();
+}
+
 // Periodic heartbeat rate diagnostic — log actual arrival rates so we can
 // see if Elodin is delivering duplicates vs boards sending too fast.
 let hbDiagCount = new Map<number, number>();
@@ -1683,6 +1713,12 @@ elodin.on('packet', (header: any, payload: Buffer) => {
         if (prev !== parsed.value && activeNotificationKeys.has('actuator_mismatch')) {
           scheduleActuatorMismatchCheck(currentState);
         }
+      }
+
+      // A T7's raw data is its heartbeat (noteT7Alive).
+      if (parsed.component === 'volts' || parsed.component === 'temperature_c') {
+        const t7 = /^T7(\d+)\.(?:AIN\d+|CJC)$/.exec(parsed.entity);
+        if (t7) noteT7Alive(parseInt(t7[1], 10));
       }
 
       // Track raw ADC for calibration (uniqueId = board_id*100+channel, same as calibration_service)
