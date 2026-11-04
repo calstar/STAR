@@ -3,13 +3,21 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <limits>
+#include <sstream>
 #include <thread>
 
 #include "t7/T7Convert.hpp"
 
 namespace fsw {
 namespace t7 {
+
+bool is_stream_not_running(int code) {
+    return code == ljm_code::kStreamNotInitialized || code == ljm_code::kStreamNotRunning ||
+           code == ljm_code::kDeviceStreamNotRunning;
+}
 
 std::array<uint8_t, 2> table_id(uint8_t slot, uint8_t ain) {
     return {kTypeHi, static_cast<uint8_t>((slot - 1) * 0x20 + ain)};
@@ -89,13 +97,33 @@ double T7Session::start() {
     if (board_.serial != 0 && serial_ != board_.serial)
         throw T7Error("[" + board_.section + "] the T7 at " + board_.ip + " has serial " +
                       std::to_string(serial_) + ", config says " + std::to_string(board_.serial));
-    // A stream left running by a crashed bridge (or Kipling) rejects the setup writes.
+    // A T7 keeps streaming after the process that started the stream dies (a bridge killed
+    // mid-run, a server torn down, Kipling), and refuses configuration while it does
+    // (STREAM_IS_ACTIVE). So whoever opens it stops whatever is running first. eStreamStop from a
+    // new handle reaches the device (synnaxlabs/synnax#4142, T7 firmware 1.0292, LJM 1.23.2);
+    // "not running" is the normal answer. Anything else is a real failure and is not swallowed.
+    stopped_leftover_ = false;
+    const std::string tag = "[" + board_.section + "] ";
     try {
         device_->stream_stop();
-    } catch (const T7Error&) {
-        // "stream not running" is the normal case.
+        stopped_leftover_ = true;
+    } catch (const T7Error& e) {
+        if (!is_stream_not_running(e.code()))
+            throw T7Error(tag + "could not stop the stream already running on the T7 at " +
+                              board_.ip + ": " + e.what(),
+                          e.code());
     }
-    device_->write_names(plan_.setup_names, plan_.setup_values);
+    try {
+        device_->write_names(plan_.setup_names, plan_.setup_values);
+    } catch (const T7Error& e) {
+        if (e.code() != ljm_code::kStreamIsActive)
+            throw;
+        // Still streaming although the stop found nothing to stop: an LJM that answered for this
+        // handle alone. Stop it at the device (STREAM_ENABLE = 0) and configure again.
+        device_->write_names({"STREAM_ENABLE"}, {0.0});
+        stopped_leftover_ = true;
+        device_->write_names(plan_.setup_names, plan_.setup_values);
+    }
     if (plan_.cjc_index >= 0) {
         // The device's own calibrated temperature beside the raw AIN14 it comes from pins this
         // unit's offset; only the nominal slope is then trusted, over the few K it drifts.
@@ -107,7 +135,18 @@ double T7Session::start() {
         cjc_device_offset_k_ = t7::cjc_device_offset_k(v[0], v[1]);
     }
     const int spr = board_.effective_scans_per_read();
-    actual_rate_hz_ = device_->stream_start(plan_.scan_names, spr, board_.scan_rate_hz);
+    try {
+        actual_rate_hz_ = device_->stream_start(plan_.scan_names, spr, board_.scan_rate_hz);
+    } catch (const T7Error& e) {
+        if (e.code() != ljm_code::kStreamIsActive)
+            throw;
+        // It was stopped a moment ago: something else is streaming this T7 right now.
+        throw T7Error(tag + "another client started a stream on the T7 at " + board_.ip +
+                          " while this one configured it (a second t7_bridge or server? "
+                          "Kipling?): " +
+                          e.what(),
+                      e.code());
+    }
     if (!(actual_rate_hz_ > 0.0))
         throw T7Error("[" + board_.section + "] device reported a scan rate of " +
                       std::to_string(actual_rate_hz_));
@@ -187,11 +226,104 @@ void T7Session::stop() noexcept {
     open_ = false;
 }
 
+// ── FakeT7Unit ───────────────────────────────────────────────────────────────────────────────
+
+FakeT7Unit::FakeT7Unit(std::string state_path) : path_(std::move(state_path)) {
+    load();
+}
+
+double FakeT7Unit::reg(const std::string& name, double fallback) const {
+    for (const auto& r : registers)
+        if (r.first == name)
+            return r.second;
+    return fallback;
+}
+
+void FakeT7Unit::set_reg(const std::string& name, double value) {
+    for (auto& r : registers)
+        if (r.first == name) {
+            r.second = value;
+            return;
+        }
+    registers.emplace_back(name, value);
+}
+
+void FakeT7Unit::power_cycle() {
+    streaming = false;
+    scan_names.clear();
+    registers.clear();
+    save();
+}
+
+// One line per fact: "streaming 1", "stream_id 3", "starts 2", "stops 1", "scan AIN1 AIN2",
+// "reg AIN1_RANGE 10".
+void FakeT7Unit::load() {
+    if (path_.empty())
+        return;
+    std::ifstream in(path_);
+    if (!in)
+        return;
+    streaming = false;
+    stream_id = starts = stops = 0;
+    scan_names.clear();
+    registers.clear();
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream ls(line);
+        std::string key;
+        ls >> key;
+        if (key == "streaming")
+            ls >> streaming;
+        else if (key == "stream_id")
+            ls >> stream_id;
+        else if (key == "starts")
+            ls >> starts;
+        else if (key == "stops")
+            ls >> stops;
+        else if (key == "scan")
+            for (std::string n; ls >> n;)
+                scan_names.push_back(n);
+        else if (key == "reg") {
+            std::string name;
+            double v = 0;
+            if (ls >> name >> v)
+                registers.emplace_back(name, v);
+        }
+    }
+}
+
+void FakeT7Unit::save() const {
+    if (path_.empty())
+        return;
+    const std::string tmp = path_ + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << "streaming " << (streaming ? 1 : 0) << "\n"
+            << "stream_id " << stream_id << "\n"
+            << "starts " << starts << "\n"
+            << "stops " << stops << "\n"
+            << "scan";
+        for (const auto& n : scan_names)
+            out << " " << n;
+        out << "\n";
+        out.precision(17);
+        for (const auto& r : registers)
+            out << "reg " << r.first << " " << r.second << "\n";
+    }
+    std::rename(tmp.c_str(), path_.c_str());  // atomic: another bridge never reads half a file
+}
+
 // ── FakeT7Device ─────────────────────────────────────────────────────────────────────────────
+
+FakeT7Device::FakeT7Device(Options o) : opt_(std::move(o)) {
+    if (!opt_.unit)
+        opt_.unit = std::make_shared<FakeT7Unit>();
+}
 
 void FakeT7Device::open(const std::string& ip) {
     opened_ip = ip;
     closed = false;
+    opt_.unit->load();
 }
 
 int64_t FakeT7Device::serial_number() {
@@ -200,15 +332,36 @@ int64_t FakeT7Device::serial_number() {
 
 void FakeT7Device::write_names(const std::vector<std::string>& names,
                                const std::vector<double>& values) {
-    if (streaming)
-        throw T7Error("fake T7: configuration written while streaming", 2605);
-    for (size_t i = 0; i < names.size(); ++i)
+    FakeT7Unit& u = *opt_.unit;
+    u.load();
+    for (size_t i = 0; i < names.size(); ++i) {
+        // STREAM_ENABLE is the one register a running stream accepts: 0 stops it, whoever
+        // started it.
+        if (names[i] == "STREAM_ENABLE" && values.at(i) == 0.0) {
+            writes.emplace_back(names[i], 0.0);
+            if (u.streaming) {
+                u.streaming = false;
+                ++u.stops;
+            }
+            continue;
+        }
+        if (u.streaming) {
+            u.save();
+            throw T7Error("fake T7: STREAM_IS_ACTIVE writing " + names[i],
+                          ljm_code::kStreamIsActive);
+        }
         writes.emplace_back(names[i], values.at(i));
+        u.set_reg(names[i], values.at(i));
+    }
+    streaming = owns_stream();
+    u.save();
 }
 
 std::vector<double> FakeT7Device::read_names(const std::vector<std::string>& names) {
-    if (streaming)
-        throw T7Error("fake T7: command-response AIN read while streaming", 2605);
+    opt_.unit->load();
+    if (opt_.unit->streaming)
+        throw T7Error("fake T7: STREAM_IS_ACTIVE (command-response AIN read while streaming)",
+                      ljm_code::kStreamIsActive);
     std::vector<double> out;
     for (const auto& n : names) {
         reads.push_back(n);
@@ -232,21 +385,38 @@ double FakeT7Device::volts(int ain, double t) const {
 
 double FakeT7Device::stream_start(const std::vector<std::string>& names, int scans_per_read,
                                   double scan_rate_hz) {
-    if (streaming)
-        throw T7Error("fake T7: stream already running", 2605);
+    FakeT7Unit& u = *opt_.unit;
+    u.load();
+    if (u.streaming)
+        throw T7Error("fake T7: STREAM_IS_ACTIVE (stream already running)",
+                      ljm_code::kStreamIsActive);
     scan_names = names;
     scans_per_read_ = scans_per_read;
     rate_ = opt_.rate_cap_hz > 0.0 ? std::min(scan_rate_hz, opt_.rate_cap_hz) : scan_rate_hz;
     scan_ = 0;
+    u.streaming = true;
+    u.stream_id += 1;
+    u.starts += 1;
+    u.scan_names = names;
+    my_stream_ = u.stream_id;
     streaming = true;
+    u.save();
     return rate_;
 }
 
 T7Device::Backlog FakeT7Device::stream_read(std::vector<double>& data) {
-    if (!streaming)
-        throw T7Error("fake T7: read with no stream running", 1225);
+    if (my_stream_ == 0)
+        throw T7Error("fake T7: read with no stream running", ljm_code::kStreamNotInitialized);
+    opt_.unit->load();
+    if (!owns_stream()) {
+        // The device stopped this stream (another client took it over): LJM just stops
+        // receiving data.
+        streaming = false;
+        throw T7Error("fake T7: no stream data (the stream was stopped by another client)",
+                      ljm_code::kSynchronizationTimeout);
+    }
     if (opt_.fail_read_after >= 0 && reads_ >= opt_.fail_read_after)
-        throw T7Error("fake T7: link lost", 1306);
+        throw T7Error("fake T7: link lost", ljm_code::kSynchronizationTimeout);
     ++reads_;
     if (opt_.realtime)
         std::this_thread::sleep_for(std::chrono::duration<double>(scans_per_read_ / rate_));
@@ -264,13 +434,29 @@ T7Device::Backlog FakeT7Device::stream_read(std::vector<double>& data) {
 }
 
 void FakeT7Device::stream_stop() {
-    if (!streaming)
-        throw T7Error("fake T7: stream not running", 1225);
+    FakeT7Unit& u = *opt_.unit;
+    u.load();
+    ++stop_calls;
+    if (opt_.fail_stop_code != 0)
+        throw T7Error("fake T7: stop failed", opt_.fail_stop_code);
+    const bool mine = owns_stream();
+    my_stream_ = 0;
     streaming = false;
+    if (opt_.stop_only_own_stream && !mine)
+        throw T7Error("fake T7: LJME_STREAM_NOT_INITIALIZED (this handle started no stream)",
+                      ljm_code::kStreamNotInitialized);
+    if (!u.streaming)
+        throw T7Error("fake T7: STREAM_NOT_RUNNING", ljm_code::kStreamNotRunning);
+    u.streaming = false;
+    ++u.stops;
+    u.save();
 }
 
 void FakeT7Device::close() {
+    // Closing a connection does not stop the device's stream: only a stop does. A bridge that
+    // dies without one leaves the T7 streaming to nobody.
     streaming = false;
+    my_stream_ = 0;
     closed = true;
 }
 

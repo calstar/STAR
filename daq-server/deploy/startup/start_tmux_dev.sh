@@ -276,7 +276,14 @@ CMD_CALIBRATION='printf "\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibr
 T7_BIN="$PROJECT/build/bin/t7_bridge"
 CMD_LOG_T7="/tmp/gui_logs/t7.log"
 T7_FAKE=""
-[ "${USE_SIM:-0}" = "1" ] && T7_FAKE="--fake"
+# The stand-in T7s keep their stream and registers in files, as a real T7 keeps them across
+# bridge restarts: the pkill -9 above leaves them streaming, and this start must take them over.
+# /tmp clearing on reboot is the power cycle.
+T7_FAKE_STATE="/tmp/gui_logs/t7_fake"
+if [ "${USE_SIM:-0}" = "1" ]; then
+  mkdir -p "$T7_FAKE_STATE"
+  T7_FAKE="--fake --fake-state $T7_FAKE_STATE"
+fi
 CMD_T7='printf "\n  ══ T7 BRIDGE — LabJack T7 inputs → Elodin ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"' && exec '"$T7_BIN"' --config '"$CONFIG_FILE"' '"$T7_FAKE"' 2>&1 | tee '"$CMD_LOG_T7"
 [ -x "$T7_BIN" ] || CMD_T7='printf "\n  ══ T7 BRIDGE — not built (build/bin/t7_bridge) ══\n\n" && sleep infinity'
 

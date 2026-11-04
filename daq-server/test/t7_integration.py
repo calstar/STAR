@@ -12,7 +12,10 @@ running stack (unlike test_integration.sh — see daq-server/CLAUDE.md).
              tare on the T7 inputs, and file them as microvolt channels / under T7<n>_Cal.AIN<a>.
   2. cubic   Packets injected directly, at exact voltages: two capture points per input put
              2.5 V at 500 psi and 10 mV at 250 kg, and the fit survives a service restart.
-  3. mixed   (needs elodin-db; skipped without it) The real database, an ESP32 PT board
+  3. restart t7_bridge --fake-state: kill -9 one bridge (its stand-in T7 keeps streaming, as a
+             real one does), start another; it must stop the leftover stream, reconfigure and
+             stream. A clean SIGTERM must leave the device idle.
+  4. mixed   (needs elodin-db; skipped without it) The real database, an ESP32 PT board
              (board_simulator -> daq_bridge) streaming, calibration_service subscribed, and only
              THEN t7_bridge registering its tables. Elodin does not deliver a table that did not
              exist at subscribe time, so the T7 tables must be re-subscribed — while ESP32 packets
@@ -110,6 +113,7 @@ class FakeElodin:
         self.lock = threading.Lock()
         self.calibrated: list[tuple[int, float, int, int]] = []  # (lo, value, code, status)
         self.raw_seen: set[int] = set()
+        self.raw_count = 0
         threading.Thread(target=self._accept, daemon=True).start()
 
     def _accept(self) -> None:
@@ -147,6 +151,7 @@ class FakeElodin:
                 else:
                     with self.lock:
                         self.raw_seen.add(lo)
+                        self.raw_count += 1
                         others = [o for o in self.clients if o is not c]
                     for o in others:
                         try:
@@ -436,6 +441,90 @@ def scenario_mixed(bridge: str, cal: str, daq_bridge: str, simulator: str, elodi
           f"T7 calibrated rows recorded though the T7 registered after the subscribe: {t7_cal}")
 
 
+def state(path: Path) -> dict[str, str]:
+    """The stand-in T7's state file: 'streaming 1', 'stops 0', ... as a dict."""
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            k, _, v = line.partition(" ")
+            if k != "reg":
+                out[k] = v
+    except OSError:
+        pass
+    return out
+
+
+def scenario_restart(bridge: str, root: Path) -> None:
+    """A T7 keeps streaming after the bridge that started it dies, and refuses configuration
+    until that stream is stopped. --fake-state makes the stand-in T7 a file that outlives the
+    process, so kill -9 leaves it streaming exactly as a server torn down mid-run leaves a real
+    one, and the next bridge has to take it over."""
+    print("=== restart: kill -9 the bridge, start another on the same T7 ===", flush=True)
+    db = FakeElodin()
+    work = setup(root / "restart", db.port)
+    devdir = work / "t7state"
+    devdir.mkdir()
+    unit = devdir / "boards.labjack_1.state"
+    cfg = str(work / "config/config.toml")
+
+    def spawn(log: str) -> subprocess.Popen:
+        return subprocess.Popen([bridge, "--config", cfg, "--fake", "--fake-state", str(devdir)],
+                                stdout=open(work / log, "w"), stderr=subprocess.STDOUT)
+
+    def flowing(after: int, timeout: float = 8.0) -> bool:
+        end = time.time() + timeout
+        while time.time() < end:
+            with db.lock:
+                if db.raw_count > after + 50:
+                    return True
+            time.sleep(0.1)
+        return False
+
+    def count() -> int:
+        with db.lock:
+            return db.raw_count
+
+    procs: list[subprocess.Popen] = []
+    try:
+        a = spawn("bridge_a.log")
+        procs.append(a)
+        check(flowing(0), "first bridge streams")
+        a.kill()  # SIGKILL: no stop reaches the device
+        a.wait()
+        st = state(unit)
+        check(st.get("streaming") == "1" and st.get("stops") == "0",
+              f"killed with -9, the T7 is left streaming to nobody ({st})")
+
+        n = count()
+        b = spawn("bridge_b.log")
+        procs.append(b)
+        check(flowing(n), "the next bridge streams from the same T7")
+        log_b = (work / "bridge_b.log").read_text(errors="replace")
+        check("stopped a stream already running" in log_b,
+              "and says it stopped the stream the killed one left")
+        check("retrying" not in log_b, "without a failed start first")
+        st = state(unit)
+        check(st.get("starts") == "2" and st.get("stops") == "1" and st.get("streaming") == "1",
+              f"one stop, a second start ({st})")
+
+        b.terminate()  # SIGTERM: a clean shutdown stops the stream
+        b.wait(timeout=10)
+        check(state(unit).get("streaming") == "0", "a clean shutdown leaves the T7 idle")
+
+        n = count()
+        c = spawn("bridge_c.log")
+        procs.append(c)
+        check(flowing(n), "a bridge after a clean shutdown streams")
+        check("stopped a stream already running" not in
+              (work / "bridge_c.log").read_text(errors="replace"),
+              "and finds nothing to stop")
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                stop(p)
+        db.close()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--bridge", required=True)
@@ -449,6 +538,7 @@ def main() -> int:
         root = Path(d)
         scenario_chain(bridge, cal, root)
         scenario_cubic(cal, root)
+        scenario_restart(bridge, root)
         elodin = find_elodin_db(a.elodin_db)
         if elodin and a.daq_bridge and a.simulator:
             scenario_mixed(bridge, cal, os.path.abspath(a.daq_bridge), os.path.abspath(a.simulator),

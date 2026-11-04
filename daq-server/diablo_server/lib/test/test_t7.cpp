@@ -4,6 +4,9 @@
  *
  * The device is FakeT7Device, which records every call. Nothing here opens a socket.
  */
+#include <unistd.h>
+
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <iostream>
@@ -504,6 +507,164 @@ int main() {
         check(threw, "a lost link surfaces as T7Error with LJM's code");
         s.stop();
         check(d->closed, "and the session still closes the device");
+    }
+
+    std::cout << "=== restart: a stream left running ===" << std::endl;
+    {
+        // A T7 keeps streaming after the bridge that started it dies, and refuses configuration
+        // while it does. A killed bridge (or a server torn down mid-run) is modelled by dropping
+        // its session without stop(): the unit is the device, and it outlives the connection.
+        using fsw::t7::FakeT7Unit;
+        auto unit = std::make_shared<FakeT7Unit>();
+        auto handle = [&](FakeT7Device::Options o = {}) {
+            o.unit = unit;
+            return std::make_unique<FakeT7Device>(o);
+        };
+        const auto now = [] {
+            return 1'700'000'000'000'000'000ULL;
+        };
+        {
+            T7Session a(stream_board(), handle(), board_clock, now);
+            a.start();
+            a.read();
+            check(!a.stopped_leftover_stream(), "a fresh T7: nothing to stop");
+        }  // killed: no stop()
+        check(unit->streaming && unit->stops == 0,
+              "a bridge that dies without stopping leaves the T7 streaming");
+
+        // The next bridge comes up with an edited config: AIN1 moved to the 1 V range.
+        T7Board edited = stream_board();
+        edited.channels[0].range_v = 1.0;
+        auto dev = handle();
+        FakeT7Device* d = dev.get();
+        T7Session b(edited, std::move(dev), board_clock, now);
+        bool started = true;
+        try {
+            b.start();
+        } catch (const T7Error& e) {
+            started = false;
+            std::cout << "    start: " << e.what() << std::endl;
+        }
+        check(started && b.stopped_leftover_stream(),
+              "the next bridge stops the leftover stream and starts its own");
+        check(unit->stops == 1 && unit->starts == 2 && unit->streaming,
+              "one stop, then a second stream start");
+        check(d->stop_calls == 1 && std::none_of(d->writes.begin(), d->writes.end(),
+                                                 [](const auto& w) {
+                                                     return w.first == "STREAM_ENABLE";
+                                                 }),
+              "by eStreamStop on the new handle (what a real T7 answers), not the fallback");
+        check(unit->reg("AIN1_RANGE") == 1.0,
+              "the device is reconfigured to the new config, not left on the old one");
+        check(d->streaming && b.read().samples.size() == 15, "and the new stream delivers");
+
+        b.stop();
+        check(!unit->streaming, "a clean stop leaves the T7 idle");
+        T7Session c(stream_board(), handle(), board_clock, now);
+        c.start();
+        check(!c.stopped_leftover_stream(), "and the bridge after a clean stop finds nothing");
+        c.stop();
+    }
+    {
+        // If LJM answers a new handle's stop locally (1225) and never tells the device, the
+        // setup write hits STREAM_IS_ACTIVE: stop it at the device with STREAM_ENABLE = 0.
+        auto unit = std::make_shared<fsw::t7::FakeT7Unit>();
+        FakeT7Device::Options o;
+        o.unit = unit;
+        o.stop_only_own_stream = true;
+        const auto now = [] {
+            return 1'700'000'000'000'000'000ULL;
+        };
+        {
+            T7Session a(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, now);
+            a.start();
+        }
+        auto dev = std::make_unique<FakeT7Device>(o);
+        FakeT7Device* d = dev.get();
+        T7Session b(stream_board(), std::move(dev), board_clock, now);
+        bool started = true;
+        try {
+            b.start();
+        } catch (const T7Error& e) {
+            started = false;
+            std::cout << "    start: " << e.what() << std::endl;
+        }
+        const bool wrote_enable =
+            std::find(d->writes.begin(), d->writes.end(),
+                      std::pair<std::string, double>("STREAM_ENABLE", 0.0)) != d->writes.end();
+        check(started && wrote_enable && b.stopped_leftover_stream(),
+              "a stop LJM keeps to itself falls back to STREAM_ENABLE = 0, then configures");
+        b.stop();
+    }
+    {
+        // Two bridges on one T7 (an old server never shut down): the new one takes the stream
+        // and the old one's reads fail rather than silently stalling. They then keep taking it
+        // from each other on every retry (a stop from any connection stops the device), which is
+        // why the bridge logs each takeover: two live bridges on one T7 is a setup error.
+        auto unit = std::make_shared<fsw::t7::FakeT7Unit>();
+        FakeT7Device::Options o;
+        o.unit = unit;
+        const auto now = [] {
+            return 1'700'000'000'000'000'000ULL;
+        };
+        T7Session old_one(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, now);
+        old_one.start();
+        T7Session new_one(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, now);
+        new_one.start();
+        int code = 0;
+        try {
+            old_one.read();
+        } catch (const T7Error& e) {
+            code = e.code();
+        }
+        check(code == 1306, "the bridge whose stream was taken over gets no more data (1306)");
+        check(new_one.read().samples.size() == 15, "while the new one streams");
+        new_one.stop();
+        old_one.stop();
+    }
+    {
+        // A stop that fails for a real reason is not "nothing was running".
+        FakeT7Device::Options o;
+        o.fail_stop_code = 1239;  // LJME_RECONNECT_FAILED
+        auto dev = std::make_unique<FakeT7Device>(o);
+        FakeT7Device* d = dev.get();
+        T7Session s(stream_board(), std::move(dev), board_clock, [] {
+            return 1'700'000'000'000'000'000ULL;
+        });
+        int code = 0;
+        try {
+            s.start();
+        } catch (const T7Error& e) {
+            code = e.code();
+        }
+        check(code == 1239 && d->writes.empty(),
+              "a stop that fails for a real reason stops start(), before any write");
+        s.stop();
+    }
+    {
+        // Across processes: the unit is a file, and a new FakeT7Unit (a new bridge) reads it.
+        const std::string path = "/tmp/test_t7_unit_" + std::to_string(::getpid()) + ".state";
+        std::remove(path.c_str());
+        const auto now = [] {
+            return 1'700'000'000'000'000'000ULL;
+        };
+        {
+            FakeT7Device::Options o;
+            o.unit = std::make_shared<fsw::t7::FakeT7Unit>(path);
+            T7Session a(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, now);
+            a.start();
+        }  // process 1 killed
+        FakeT7Device::Options o;
+        o.unit = std::make_shared<fsw::t7::FakeT7Unit>(path);
+        check(o.unit->streaming && o.unit->scan_names.size() == 3,
+              "a state file carries the running stream to the next process");
+        T7Session b(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, now);
+        b.start();
+        check(b.stopped_leftover_stream() && b.read().samples.size() == 15,
+              "which stops it and streams");
+        b.stop();
+        check(!fsw::t7::FakeT7Unit(path).streaming, "and a clean stop is saved too");
+        std::remove(path.c_str());
     }
 
     std::cout << "=== cold junction ===" << std::endl;
