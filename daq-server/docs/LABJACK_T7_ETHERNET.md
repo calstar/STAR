@@ -333,12 +333,57 @@ The session pipeline runs t7_bridge as `sensor-t7` (`deploy/systemd/sensor-t7.se
 re-run `install_services.sh` once to add it). A simulated run uses `--fake`. With no enabled
 T7 it exits 0 and stays down.
 
+### Bringing up the first real T7 (on the stand)
+
+Everything below runs on `star-rfs`, so `daq-server/CLAUDE.md` applies. The T7 itself only
+streams inputs and t7_bridge writes only stream/AIN setup registers, but restarting pipeline
+units still bounces a live run. Do it between runs, with the operator.
+
+1. **LJM on the DAQ host.** Install LabJack's Linux LJM package, then `bash scripts/build.sh`.
+   The configure log must say `t7_bridge: LabJack LJM found`. If it says `--fake only`, the
+   binary exits 3 on real hardware.
+2. **Network.** Follow "Static IP" above: plug the T7 into the board LAN, read its MAC from the
+   lease file or label, put it in `[boards.labjack_1] mac`, `sudo deploy/dhcp/reload_dhcp.sh`,
+   then power-cycle it. `ping 192.168.2.81` must answer.
+3. **Config.** `[boards.labjack_1] enabled = true`, and one channel row per wired input with the
+   sensor's real datasheet numbers (`full_scale`, `signal`/`shunt_ohms`, `sensitivity_mv_per_v`,
+   `excitation_v`). The config editor's T7 card flags anything t7_bridge would refuse. Deploy it.
+4. **First stream, by hand, with no run active** (`systemctl --user is-active sensor-t7` is not
+   `active`; the T7 serves one stream at a time):
+   `build/bin/t7_bridge --board boards.labjack_1`. It logs the serial, the scan list and the rate.
+   Leave it streaming for a minute: there should be no auto-recovery or skipped-scan lines.
+   Then Ctrl-C it.
+5. **Start a run** from the Session screen. `sensor-t7` comes up with the pipeline, and each
+   input shows under its role. Check each one against a known state: a vented PT reads ~0 psi,
+   an unloaded LC ~0 kg (then tare it), and a TC reads room temperature.
+6. **Cold junction** (TC boards only), below.
+7. **Calibrate** PTs and LCs on the Calibration page as for any ESP32 sensor, if `physics`
+   is not good enough.
+
+### Measuring `cjc_offset_k`
+
+The bridge estimates the screw-terminal temperature from the T7's internal sensor plus
+`cjc_offset_k` (default −4.9 K). Any error in that estimate goes nearly 1:1 into every TC
+reading on that T7, so measure it once per unit:
+
+1. Let the T7 sit powered in its enclosure for 30 minutes to reach thermal steady state.
+2. Put a type K probe on an input in an ice bath (crushed ice and water, stirred), or beside
+   a reference thermometer at a known temperature.
+3. Average `T71_Cal.AIN<n>.temperature_c` over a minute; call it `reading`.
+4. New `cjc_offset_k` = old `cjc_offset_k` + (`reference` − `reading`). For an ice bath,
+   `reference` is 0.0 °C.
+5. Save it in the config editor (it shows once the T7 has a TC), start a new run, and check
+   the bath reads within ±1 °C.
+
+Re-measure if the T7 moves to a different enclosure or the terminal block is changed.
+
 ### Not done yet
 - **Hardware.** Nothing has run against a real T7. The LJM path compiles against LabJack's
-  real `LabJackM.h` only. calibration_service's T7 path was run against a fake Elodin
-  (physics, Zero-All, tare, cubic captures).
+  real `LabJackM.h` only. The rest is covered without one: `ctest -R t7` (unit and end to end,
+  including a mixed ESP32 + T7 rig on the real `elodin-db`), `test/test_integration.sh`, the
+  Playwright spec `e2e/labjack-t7.spec.ts`, and `test/test_session.sh`. The simulated config
+  `config_base.toml` carries a T7 (PT on AIN1, TC on AIN2, LC on AIN4) that `--fake` streams.
 - **Sequencer / aborts.** The pressure feed and state scripts read the ESP32 PT tables only.
-- **Simulated runs** build their config from `config_base.toml`, which has no T7.
 - **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.
 
 ## Still to verify (needs support.labjack.com / labjack.com, blocked here)

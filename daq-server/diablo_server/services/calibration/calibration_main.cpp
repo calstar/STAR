@@ -51,6 +51,7 @@
 #include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
+#include "calibration/PtSmoothing.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "calibration/TypeK.hpp"
@@ -61,6 +62,7 @@
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "elodin/ResubscribeBackoff.hpp"
 #include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
@@ -74,9 +76,8 @@ namespace {
  */
 std::map<uint8_t, std::array<uint8_t, 11>> g_hp_ma_live;
 
-/** Per-sensor EMA state for LP PT output smoothing (initialized to NaN = not yet set). */
-std::unordered_map<uint16_t, double> g_lp_ema;
-constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
+/** Per-sensor PT output smoothing (ESP32 and T7), seeded with each sensor's first reading. */
+fsw::calibration::PtSmoother g_pt_smoother;
 
 /**
  * Which model a PT streams: operator/factory cubic, the robust learner, the 75/25 blend, or the
@@ -1446,9 +1447,9 @@ int main(int argc, char* argv[]) {
 
     if (!connect_and_register())
         return 1;
-    // Allow read_packet() to yield every 3 s so the re-subscribe check can fire
-    // when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
-    elodin_client.set_recv_timeout_ms(3000);
+    // Allow read_packet() to yield every 1 s so the re-subscribe check can fire on its 1 s first
+    // step when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
+    elodin_client.set_recv_timeout_ms(1000);
 
     // Generous, but not for the reason the previous comment claimed ("handles large Elodin
     // subscription-ACK bursts"). ACKs are 19-23 bytes and arrive one per read_packet() call, so
@@ -1460,15 +1461,16 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    auto last_packet_time = std::chrono::steady_clock::now();
-    auto last_resubscribe = std::chrono::steady_clock::now();
+    // Raw tables registered after we subscribed (a publisher that started after this service —
+    // every session start) are picked up by re-subscribing once they have been quiet: after 1 s,
+    // then 2, 4, and every 5 s while they stay quiet.
+    fsw::elodin::ResubscribeBackoff raw_resub(std::chrono::steady_clock::now());
     // LabJack T7 tables are re-subscribed on their own clock. t7_bridge registers them whenever it
     // connects, which can be after this service subscribed, and Elodin does not deliver a table
     // that did not exist at subscribe time. On a rig with ESP32 boards streaming, their packets
-    // keep last_packet_time fresh, so a T7 gap would otherwise never trigger a re-subscribe — and
+    // keep the raw clock fresh, so a T7 gap would otherwise never trigger a re-subscribe — and
     // T7 packets must not mask a missing ESP32 subscription either.
-    auto last_t7_packet_time = std::chrono::steady_clock::now();
-    auto last_t7_resubscribe = std::chrono::steady_clock::now();
+    fsw::elodin::ResubscribeBackoff t7_resub(std::chrono::steady_clock::now());
     std::map<uint16_t, int32_t> last_adc_map;
 
     while (running) {
@@ -1483,11 +1485,9 @@ int main(int argc, char* argv[]) {
                     pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
                 register_and_subscribe_t7();
-                elodin_client.set_recv_timeout_ms(3000);
-                last_resubscribe = std::chrono::steady_clock::now();
-                last_packet_time = std::chrono::steady_clock::now();
-                last_t7_resubscribe = last_resubscribe;
-                last_t7_packet_time = last_packet_time;
+                elodin_client.set_recv_timeout_ms(1000);
+                raw_resub.restart(std::chrono::steady_clock::now());
+                t7_resub.restart(std::chrono::steady_clock::now());
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1497,35 +1497,26 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // If no raw sensor packets received for 5 s, daq_bridge may have registered
-        // its VTables AFTER we subscribed — re-subscribe to pick them up.
+        // Quiet raw tables: daq_bridge / t7_bridge may have registered their VTables AFTER we
+        // subscribed — re-subscribe to pick them up (see ResubscribeBackoff for the schedule).
         {
-            auto now_s = std::chrono::steady_clock::now();
-            auto since_pkt =
-                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
-            auto since_sub =
-                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
-            if (since_pkt >= 5 && since_sub >= 5) {
-                std::cout << "[Cal] No packets for " << since_pkt
+            const auto now_s = std::chrono::steady_clock::now();
+            const auto secs = [](auto d) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(d).count() / 1000.0;
+            };
+            if (raw_resub.due(now_s)) {
+                std::cout << "[Cal] No packets for " << secs(raw_resub.silence(now_s))
                           << "s — re-subscribing to raw streams" << std::endl;
                 elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
                     pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
                 elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
-                last_resubscribe = now_s;
+                raw_resub.subscribed(now_s);
             }
-            if (!t7_map.empty()) {
-                const auto since_t7_pkt =
-                    std::chrono::duration_cast<std::chrono::seconds>(now_s - last_t7_packet_time)
-                        .count();
-                const auto since_t7_sub =
-                    std::chrono::duration_cast<std::chrono::seconds>(now_s - last_t7_resubscribe)
-                        .count();
-                if (since_t7_pkt >= 5 && since_t7_sub >= 5) {
-                    std::cout << "[Cal] No LabJack T7 packets for " << since_t7_pkt
-                              << "s — re-subscribing to the T7 raw tables" << std::endl;
-                    register_and_subscribe_t7();
-                    last_t7_resubscribe = now_s;
-                }
+            if (!t7_map.empty() && t7_resub.due(now_s)) {
+                std::cout << "[Cal] No LabJack T7 packets for " << secs(t7_resub.silence(now_s))
+                          << "s — re-subscribing to the T7 raw tables" << std::endl;
+                register_and_subscribe_t7();
+                t7_resub.subscribed(now_s);
             }
         }
 
@@ -1760,7 +1751,7 @@ int main(int argc, char* argv[]) {
             std::memcpy(&volts_f, p + 12, sizeof(volts_f));
             const uint64_t rx_ns = mono_ns();
             const uint8_t slot = static_cast<uint8_t>((type_lo >> 5) + 1);
-            last_t7_packet_time = std::chrono::steady_clock::now();
+            t7_resub.packet(std::chrono::steady_clock::now());
             if (!std::isfinite(volts_f))
                 continue;
             if (offset == fsw::t7::kCjcTableOffset) {
@@ -1803,12 +1794,7 @@ int main(int argc, char* argv[]) {
                     cal_status = has_rob ? 1u : 0u;
                 else if (eff_model == PtModel::Blend)
                     cal_status = (fac_ok && has_rob) ? 1u : 0u;
-                {
-                    auto& ema = g_lp_ema[uid];
-                    ema =
-                        std::isfinite(ema) ? LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema : psi;
-                    psi = ema;
-                }
+                psi = g_pt_smoother.step(uid, psi);
                 psi = std::isfinite(psi) ? std::clamp(psi, -3000.0, 20000.0) : 0.0;
                 publish(psi, cal_status);
             } else if (t->channel.kind == "LC") {
@@ -1938,14 +1924,7 @@ int main(int argc, char* argv[]) {
 
             // EMA smoothing (zeroing is now a captured 0 psi point that flows through the fit
             // above, not a post-hoc offset).
-            {
-                auto& ema = g_lp_ema[uid];
-                if (!std::isfinite(ema))
-                    ema = psi;
-                else
-                    ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
-                psi = ema;
-            }
+            psi = g_pt_smoother.step(uid, psi);
             if (verbose() && packet_count % 100 == 0)
                 std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
                           << static_cast<int>(ch_eff) << (is_loop ? " (4-20mA)" : "")
@@ -2034,7 +2013,7 @@ int main(int argc, char* argv[]) {
 
         elodin_client.flush_batch();
 
-        last_packet_time = std::chrono::steady_clock::now();
+        raw_resub.packet(std::chrono::steady_clock::now());
         packet_count++;
         if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex

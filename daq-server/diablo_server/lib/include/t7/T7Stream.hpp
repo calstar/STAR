@@ -156,6 +156,10 @@ public:
     double actual_rate_hz() const {
         return actual_rate_hz_;
     }
+    /** The device's serial number, read by start(); 0 before then. */
+    int64_t serial() const {
+        return serial_;
+    }
     /** AIN14 offset taken at start (K); see t7::cjc_device_offset_k. NaN without a TC. */
     double cjc_device_offset_k() const {
         return cjc_device_offset_k_;
@@ -168,6 +172,7 @@ private:
     Clock clock_;
     StreamPlan plan_;
     double actual_rate_hz_ = 0.0;
+    int64_t serial_ = 0;
     uint64_t next_scan_ = 0;
     std::vector<double> buffer_;
     bool open_ = false;

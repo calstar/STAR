@@ -84,12 +84,11 @@ T7Session::T7Session(config::T7Board board, std::unique_ptr<T7Device> device,
 double T7Session::start() {
     device_->open(board_.ip);
     open_ = true;
-    if (board_.serial != 0) {
-        const int64_t got = device_->serial_number();
-        if (got != board_.serial)
-            throw T7Error("[" + board_.section + "] the T7 at " + board_.ip + " has serial " +
-                          std::to_string(got) + ", config says " + std::to_string(board_.serial));
-    }
+    // Always read it: the bridge logs it, so bring-up can tell which unit answered at that IP.
+    serial_ = device_->serial_number();
+    if (board_.serial != 0 && serial_ != board_.serial)
+        throw T7Error("[" + board_.section + "] the T7 at " + board_.ip + " has serial " +
+                      std::to_string(serial_) + ", config says " + std::to_string(board_.serial));
     // A stream left running by a crashed bridge (or Kipling) rejects the setup writes.
     try {
         device_->stream_stop();
