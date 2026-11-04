@@ -37,10 +37,19 @@ namespace config {
 struct T7Channel {
     int ain = -1;               ///< AIN number on the device, 0-13.
     std::string kind;           ///< "PT" | "TC" | "LC" | "VOLTAGE" — what is wired to it.
-    std::string role;           ///< Operator name, e.g. "LOX Tank". Metadata only.
+    std::string role;           ///< Sensor name, e.g. "LOX Tank" — what the GUI calls it.
     double range_v = 10;        ///< +/- input range in volts: 10, 1, 0.1 or 0.01.
     bool differential = false;  ///< true: AIN(ain) - AIN(ain+1); ain must be even.
-    std::string tc_type;        ///< Thermocouple type letter (kind == "TC" only), e.g. "K".
+    std::string tc_type;        ///< Thermocouple type letter (kind == "TC" only): "K".
+
+    // Volts -> engineering units (t7_bridge publishes both). Every number describing the sensor
+    // is stated in the channel; there are no defaults for them, so a missing one is a config
+    // error rather than a plausible-looking wrong reading.
+    double full_scale = 0;            ///< PT: psi at full output. LC: kg at rated output.
+    std::string signal;               ///< PT output: "0-5V" "0.5-4.5V" "1-5V" "0-10V" "4-20mA".
+    double shunt_ohms = 0;            ///< PT "4-20mA": the resistor the loop current crosses.
+    double sensitivity_mv_per_v = 0;  ///< LC: rated output, mV per V of excitation.
+    double excitation_v = 0;          ///< LC: bridge excitation voltage.
 
     /** AIN#_NEGATIVE_CH value: 199 = single-ended, else the paired odd input. */
     int negative_ch() const {
@@ -60,6 +69,10 @@ struct T7Board {
     int resolution_index = 0;  ///< STREAM_RESOLUTION_INDEX; 0 = device default.
     double settling_us = 0.0;  ///< STREAM_SETTLING_US; 0 = automatic.
     int scans_per_read = 0;    ///< Scans per LJM_eStreamRead; 0 = scan_rate/20 (a 50 ms block).
+    /** Thermocouple cold junction = T7 internal sensor + this (K). The default is LabJack's
+     *  TEMPERATURE_AIR_K estimate for a T7 with Ethernet on (device - 4.3 - 0.6); measure it on
+     *  the stand (a TC beside a reference thermometer) and set it. */
+    double cjc_offset_k = -4.9;
     std::vector<T7Channel> channels;
 
     /** Elodin slot, same rule as BoardConfig::slot(): board_id % 10, 0 -> 10. */

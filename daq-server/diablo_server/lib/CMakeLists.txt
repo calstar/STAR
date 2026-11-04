@@ -11,6 +11,7 @@ set(FSW_SOURCES
     src/config/Config.cpp
     src/config/T7Config.cpp
     src/t7/T7Stream.cpp
+    src/t7/T7Convert.cpp
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp
@@ -30,6 +31,7 @@ set(FSW_SOURCES
     src/calibration/LcTareStore.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
+    src/calibration/TypeK.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp
     src/calibration/RobustCalibrationManager.cpp

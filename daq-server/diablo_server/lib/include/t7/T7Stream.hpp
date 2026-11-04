@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -35,6 +36,16 @@ std::array<uint8_t, 2> table_id(uint8_t slot, uint8_t ain);
 /** Elodin entity name for one AIN, e.g. "T71.AIN3". */
 std::string entity_name(uint8_t slot, uint8_t ain);
 
+/** Calibrated table for one AIN: table_id + 0x10, e.g. {0x26, 0x13} for slot 1 AIN3. */
+std::array<uint8_t, 2> calibrated_table_id(uint8_t slot, uint8_t ain);
+
+/** Calibrated entity name, e.g. "T71_Cal.AIN3" (ESP32: "PT1_Cal.CH3"). */
+std::string calibrated_entity_name(uint8_t slot, uint8_t ain);
+
+/** The T7's internal temperature sensor, streamed for thermocouple cold-junction compensation
+ *  whenever a board has a TC channel. Published raw like any AIN (no calibrated table). */
+constexpr uint8_t kCjcAin = 14;
+
 /** A device failure. `code` is the LJM error code where there is one, else 0. */
 class T7Error : public std::runtime_error {
 public:
@@ -56,6 +67,8 @@ public:
     virtual int64_t serial_number() = 0;
     virtual void write_names(const std::vector<std::string>& names,
                              const std::vector<double>& values) = 0;
+    /** Command-response reads; only valid while no stream is running. */
+    virtual std::vector<double> read_names(const std::vector<std::string>& names) = 0;
     /** Starts the stream; returns the scan rate the device will actually run at. */
     virtual double stream_start(const std::vector<std::string>& scan_names, int scans_per_read,
                                 double scan_rate_hz) = 0;
@@ -73,8 +86,11 @@ public:
 struct StreamPlan {
     std::vector<std::string> setup_names;
     std::vector<double> setup_values;
-    std::vector<std::string> scan_names;  ///< "AIN1", ... in config order
+    std::vector<std::string> scan_names;  ///< "AIN1", ... in config order, then AIN14 for CJC
     std::vector<uint8_t> ains;            ///< same order as scan_names
+    /** The configured channel behind each scan entry; nullopt for AIN14 (CJC). */
+    std::vector<std::optional<config::T7Channel>> channels;
+    int cjc_index = -1;  ///< position of AIN14 in the scan, or -1 when there is no TC
 };
 StreamPlan plan_stream(const config::T7Board& board);
 
@@ -84,6 +100,10 @@ struct Sample {
     float volts = 0.0f;
     uint64_t timestamp_ns = 0;
     uint32_t sample_ms = 0;  ///< ms since stream start (wraps at 2^32)
+    /** psi / C / kg (t7/T7Convert.hpp). Only meaningful when has_value: a VOLTAGE channel, AIN14,
+     *  and anything the conversion could not produce (NaN) have no calibrated value. */
+    float value = 0.0f;
+    bool has_value = false;
 };
 
 /** A decoded LJM_eStreamRead block. */
@@ -91,6 +111,7 @@ struct Block {
     std::vector<Sample> samples;
     uint64_t scans = 0;            ///< scans in the block, including lost ones
     uint64_t skipped_samples = 0;  ///< values that were kDummyValue (auto-recovery), not published
+    uint64_t unconverted = 0;  ///< PT/TC/LC samples with no calibrated value (e.g. TC off-curve)
     T7Device::Backlog backlog;
 };
 
@@ -111,8 +132,9 @@ public:
     T7Session(config::T7Board board, std::unique_ptr<T7Device> device,
               const time::TimeSyncConfig& time_sync, Clock clock);
 
-    /** Opens the device, checks its serial number if the config gives one, writes the setup and
-     *  starts the stream. Returns the actual scan rate. */
+    /** Opens the device, checks its serial number if the config gives one, writes the setup,
+     *  takes the cold-junction reference (TC boards) and starts the stream. Returns the actual
+     *  scan rate. */
     double start();
 
     /** Reads and decodes one block. */
@@ -130,6 +152,10 @@ public:
     double actual_rate_hz() const {
         return actual_rate_hz_;
     }
+    /** AIN14 offset taken at start (K); see t7::cjc_device_offset_k. NaN without a TC. */
+    double cjc_device_offset_k() const {
+        return cjc_device_offset_k_;
+    }
 
 private:
     config::T7Board board_;
@@ -141,13 +167,16 @@ private:
     uint64_t next_scan_ = 0;
     std::vector<double> buffer_;
     bool open_ = false;
+    double cjc_device_offset_k_;
 };
 
 /**
  * A stand-in T7 for tests and for running the bridge with no hardware (`t7_bridge --fake`).
  *
- * Each AIN reads a slow sine offset by its AIN number, so the GUI shows distinct lines. Every
- * call is recorded so a test can check what the session asked of the device.
+ * By default each AIN reads a slow sine offset by its AIN number, so the GUI shows distinct
+ * lines; Options::signal replaces that. AIN14 (the internal temperature sensor) reads 25 C and
+ * TEMPERATURE_DEVICE_K agrees with it. Every call is recorded so a test can check what the
+ * session asked of the device.
  */
 class FakeT7Device : public T7Device {
 public:
@@ -157,6 +186,10 @@ public:
         double rate_cap_hz = 0.0;       ///< >0: the "device" rounds the scan rate down to this
         uint64_t dummy_scan_every = 0;  ///< >0: every Nth scan comes back as kDummyValue
         int fail_read_after = -1;       ///< >=0: throw on the read after this many succeed
+        /** Volts on `ain` at `t` seconds into the stream; empty = the default sine. Not
+         *  consulted for AIN14, which always follows device_temp_k. */
+        std::function<double(int ain, double t)> signal;
+        double device_temp_k = 298.15;  ///< what TEMPERATURE_DEVICE_K (and AIN14) report
     };
     FakeT7Device() = default;
     explicit FakeT7Device(Options o) : opt_(o) {
@@ -166,6 +199,7 @@ public:
     int64_t serial_number() override;
     void write_names(const std::vector<std::string>& names,
                      const std::vector<double>& values) override;
+    std::vector<double> read_names(const std::vector<std::string>& names) override;
     double stream_start(const std::vector<std::string>& scan_names, int scans_per_read,
                         double scan_rate_hz) override;
     Backlog stream_read(std::vector<double>& data) override;
@@ -176,8 +210,12 @@ public:
     std::string opened_ip;
     std::vector<std::pair<std::string, double>> writes;
     std::vector<std::string> scan_names;
+    std::vector<std::string> reads;  ///< every name read_names() was asked for
     bool streaming = false;
     bool closed = false;
+
+    /** Volts on `ain` at `t`: Options::signal, else the default described above. */
+    double volts(int ain, double t) const;
 
 private:
     Options opt_;

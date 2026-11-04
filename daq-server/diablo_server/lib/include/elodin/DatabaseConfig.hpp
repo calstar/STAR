@@ -106,13 +106,21 @@ public:
                                           const std::vector<uint8_t>& board_ids);
 
     /**
-     * @brief Register one LabJack T7's analog-input VTables (published by t7_bridge).
+     * @brief Register one LabJack T7's VTables (published by t7_bridge).
      *
-     * Table id {0x26, (slot-1)*0x20 + ain}; entity T7<slot>.AIN<ain>; fields timestamp_ns,
-     * channel_id, volts (f32), sample_ts_ms, status — the T7RawMessage layout.
+     * Raw, per AIN: table {0x26, (slot-1)*0x20 + ain}, entity T7<slot>.AIN<ain>, fields
+     * timestamp_ns, channel_id, volts (f32), sample_ts_ms, status — T7RawMessage.
+     *
+     * Calibrated, per AIN with a non-empty cal_field: table {0x26, (slot-1)*0x20 + 0x10 + ain},
+     * entity T7<slot>_Cal.AIN<ain>, fields timestamp_ns, channel_id, <cal_field> (f32: psi / C /
+     * kg), raw_uv (i32, the volts in microvolts), cal_status — the ESP32 calibrated layout.
      */
+    struct T7Table {
+        uint8_t ain;
+        std::string cal_field;  ///< "pressure_psi" | "temperature_c" | "force_kg" | "" (raw only)
+    };
     static bool register_t7_tables(ElodinClient& client, uint8_t slot,
-                                   const std::vector<uint8_t>& ains);
+                                   const std::vector<T7Table>& tables);
 
     /** @brief Register sequencer/controller and ACT_CMD tables */
     static bool register_non_sensor_tables(ElodinClient& client,

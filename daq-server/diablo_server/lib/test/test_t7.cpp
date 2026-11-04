@@ -9,7 +9,9 @@
 #include <memory>
 #include <string>
 
+#include "calibration/TypeK.hpp"
 #include "config/Config.hpp"
+#include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
 
 using fsw::config::Config;
@@ -59,6 +61,8 @@ ain = 1
 kind = "PT"
 role = "LOX Tank"
 range = 10.0
+signal = "0-5V"
+full_scale = 1000.0
 
 [[boards.labjack_1.channels]]
 ain = 2
@@ -69,8 +73,12 @@ role = "Nozzle"
 [[boards.labjack_1.channels]]
 ain = 4
 kind = "LC"
+role = "Thrust"
 differential = true
 range = 0.1
+full_scale = 500.0
+sensitivity_mv_per_v = 2.0
+excitation_v = 10.0
 )";
 
 // One T7 board section around a channel table, for the error cases.
@@ -87,6 +95,20 @@ static std::string ch(int ain, const std::string& kind, const std::string& extra
 
 static T7Board good_board() {
     return fsw::config::load_from_string(kGood).t7_boards.at(0);
+}
+
+// The same board with AIN2 as a plain voltage input: no thermocouple, so no AIN14 in the scan.
+// The stream-timing cases below use it so each scan is exactly the three configured inputs.
+static T7Board stream_board() {
+    T7Board b = good_board();
+    b.channels[1].kind = "VOLTAGE";
+    b.channels[1].tc_type.clear();
+    b.channels[1].range_v = 10.0;
+    return b;
+}
+
+static bool near(double a, double b, double tol) {
+    return std::fabs(a - b) <= tol;
 }
 
 int main() {
@@ -143,9 +165,32 @@ int main() {
         {t7(ch(3, "LC", "differential = true")), "must be an even AIN", "an odd differential AIN"},
         {t7(ch(14, "PT")), "ain must be 0-13", "AIN14 (a T7 has AIN0-13)"},
         {t7(ch(1, "PT", "range = 5.0")), "range must be one of", "a range the T7 does not have"},
-        {t7(ch(1, "TC")), "needs tc_type", "a thermocouple with no type"},
-        {t7(ch(1, "TC", "tc_type = \"Q\"")), "needs tc_type",
-         "a thermocouple type that is not one"},
+        {t7(ch(1, "TC")), "only type K", "a thermocouple with no type"},
+        {t7(ch(1, "TC", "tc_type = \"J\"")), "only type K",
+         "a thermocouple type with no curve yet (J)"},
+        {t7(ch(1, "PT", "signal = \"0-5V\"\nrole = \"A\"")), "needs full_scale",
+         "a PT with no full_scale"},
+        {t7(ch(1, "PT", "full_scale = 100.0\nrole = \"A\"")), "needs signal",
+         "a PT with no signal"},
+        {t7(ch(1, "PT", "full_scale = 100.0\nsignal = \"0-3V\"\nrole = \"A\"")), "needs signal",
+         "a PT signal that is not one"},
+        {t7(ch(1, "PT", "full_scale = 100.0\nsignal = \"4-20mA\"\nrole = \"A\"")),
+         "needs shunt_ohms", "a 4-20mA PT with no shunt"},
+        {t7(ch(1, "PT", "full_scale = 1.0\nsignal = \"0-5V\"\nshunt_ohms = 250.0\nrole = \"A\"")),
+         "only meaningful on a 4-20mA", "a shunt on a voltage PT"},
+        {t7(ch(1, "LC", "full_scale = 1.0\nexcitation_v = 5.0\nrole = \"A\"")),
+         "needs sensitivity_mv_per_v", "an LC with no sensitivity"},
+        {t7(ch(1, "LC", "full_scale = 1.0\nsensitivity_mv_per_v = 2.0\nrole = \"A\"")),
+         "needs excitation_v", "an LC with no excitation"},
+        {t7(ch(1, "TC", "tc_type = \"K\"\nsignal = \"0-5V\"\nrole = \"A\"")),
+         "only meaningful on a PT", "a PT signal on a TC"},
+        {t7(ch(1, "TC", "tc_type = \"K\"\nfull_scale = 5.0\nrole = \"A\"")),
+         "only meaningful on a PT or LC", "full_scale on a TC"},
+        {t7(ch(1, "TC", "tc_type = \"K\"")), "needs a role", "a TC with no role"},
+        {t7(ch(1, "TC", "tc_type = \"K\"\nrole = \"A\"") +
+            ch(2, "TC", "tc_type = \"K\"\nrole = \"A\"")),
+         "role \"A\" is already used", "the same role twice"},
+        {t7(ch(1, "PT"), "cjc_offset_k = 40.0"), "cjc_offset_k", "an absurd cjc_offset_k"},
         {t7(ch(1, "PT", "tc_type = \"K\"")), "only meaningful", "tc_type on a PT"},
         {t7(ch(1, "STRAIN")), "kind \"STRAIN\"", "an unknown kind"},
         {t7(""), "at least one", "an enabled T7 with no channels"},
@@ -171,11 +216,101 @@ int main() {
             print_errors(c);
     }
 
+    {
+        // The GUI's config editor writes through smol-toml, which turns 10.0 into 10.
+        const Config c = fsw::config::load_from_string(
+            t7(ch(1, "PT", "range = 10\nsignal = \"0-5V\"\nfull_scale = 5000\nrole = \"A\"")));
+        print_errors(c);
+        check(c.t7_errors.empty() && c.t7_boards.at(0).channels.at(0).range_v == 10.0 &&
+                  c.t7_boards.at(0).channels.at(0).full_scale == 5000.0,
+              "integer range / full_scale (as the GUI writes them) are read as numbers");
+    }
+
+    std::cout << "=== type K ===" << std::endl;
+    {
+        using fsw::calibration::type_k_c_from_mv;
+        using fsw::calibration::type_k_mv_from_c;
+        // NIST ITS-90 type K table points; these are also the sub-range boundaries of the inverse.
+        const double table[][2] = {
+            {-100, -3.554}, {0, 0.0}, {100, 4.096}, {400, 16.397}, {800, 33.275}};
+        bool inv = true, fwd = true;
+        for (const auto& [c, mv] : table) {
+            inv = inv && near(type_k_c_from_mv(mv), c, 0.1);
+            fwd = fwd && near(type_k_mv_from_c(c), mv, 0.005);
+        }
+        check(inv, "mV -> C matches the NIST table within 0.1 C");
+        check(fwd, "C -> mV matches the NIST table within 5 uV");
+        bool round = true;
+        for (double c = -200; c <= 1300; c += 7.3)
+            round = round && near(type_k_c_from_mv(type_k_mv_from_c(c)), c, 1e-6);
+        check(round, "C -> mV -> C round-trips across -200..1300 C");
+        check(std::isnan(type_k_c_from_mv(80.0)) && std::isnan(type_k_mv_from_c(2000.0)),
+              "off the curve is NaN, not a number");
+    }
+
+    std::cout << "=== conversions ===" << std::endl;
+    {
+        fsw::config::T7Channel pt;
+        pt.kind = "PT";
+        pt.full_scale = 1000;
+        pt.signal = "0-5V";
+        check(near(fsw::t7::pt_psi(2.5, pt), 500, 1e-9) && near(fsw::t7::pt_psi(0, pt), 0, 1e-9),
+              "0-5V PT: 2.5 V is half scale");
+        pt.signal = "0.5-4.5V";
+        check(near(fsw::t7::pt_psi(0.5, pt), 0, 1e-9) && near(fsw::t7::pt_psi(4.5, pt), 1000, 1e-9),
+              "0.5-4.5V PT: 0.5 V is zero, 4.5 V full scale");
+        pt.signal = "1-5V";
+        check(near(fsw::t7::pt_psi(3.0, pt), 500, 1e-9), "1-5V PT: 3 V is half scale");
+        pt.signal = "0-10V";
+        check(near(fsw::t7::pt_psi(10.0, pt), 1000, 1e-9), "0-10V PT: 10 V is full scale");
+        pt.signal = "4-20mA";
+        pt.shunt_ohms = 250;  // 4 mA -> 1 V, 20 mA -> 5 V
+        check(near(fsw::t7::pt_psi(1.0, pt), 0, 1e-9) &&
+                  near(fsw::t7::pt_psi(3.0, pt), 500, 1e-9) &&
+                  near(fsw::t7::pt_psi(5.0, pt), 1000, 1e-9),
+              "4-20mA PT across 250 ohm: 1 V zero, 3 V half, 5 V full");
+        pt.signal = "";
+        check(std::isnan(fsw::t7::pt_psi(2.5, pt)), "a PT with no signal converts to NaN");
+
+        fsw::config::T7Channel lc;
+        lc.kind = "LC";
+        lc.full_scale = 500;
+        lc.sensitivity_mv_per_v = 2.0;
+        lc.excitation_v = 10.0;  // rated output 20 mV
+        check(near(fsw::t7::lc_kg(0.010, lc), 250, 1e-9) &&
+                  near(fsw::t7::lc_kg(-0.020, lc), -500, 1e-9),
+              "LC: 10 mV of a 20 mV rated output is half load; sign follows the bridge");
+
+        const double off = fsw::t7::cjc_device_offset_k(300.0, 1.8);
+        check(near(fsw::t7::cjc_temp_c(1.8, off, 0.0), 300.0 - 273.15, 1e-9),
+              "CJC: AIN14 at the reference reading gives the device's own temperature");
+        check(near(fsw::t7::cjc_temp_c(1.81, off, 0.0) - fsw::t7::cjc_temp_c(1.8, off, 0.0),
+                   -0.92379, 1e-9) &&
+                  near(fsw::t7::cjc_temp_c(1.8, off, -4.9), 300.0 - 273.15 - 4.9, 1e-9),
+              "CJC: -92.379 K per AIN14 volt, plus cjc_offset_k");
+
+        // A thermocouple at 200 C, terminals at 25 C, reads EMF(200) - EMF(25).
+        const double v =
+            (fsw::calibration::type_k_mv_from_c(200.0) - fsw::calibration::type_k_mv_from_c(25.0)) /
+            1000.0;
+        check(near(fsw::t7::tc_c(v, 25.0), 200.0, 1e-6),
+              "TC: the cold junction's EMF is added back");
+        check(!near(fsw::t7::tc_c(v, 0.0), 200.0, 10.0),
+              "TC: without it the reading is ~25 C low (the junction matters)");
+        check(std::isnan(fsw::t7::tc_c(0.5, 25.0)), "TC: 500 mV is off the curve -> NaN");
+    }
+
     std::cout << "=== stream plan ===" << std::endl;
     {
         const auto p = fsw::t7::plan_stream(good_board());
-        check(p.scan_names == std::vector<std::string>({"AIN1", "AIN2", "AIN4"}),
-              "scan list is the configured AINs, in config order");
+        check(p.scan_names == std::vector<std::string>({"AIN1", "AIN2", "AIN4", "AIN14"}),
+              "scan list is the configured AINs in config order, then AIN14 for the TC");
+        check(p.cjc_index == 3 && !p.channels[3].has_value() && p.channels[1]->kind == "TC",
+              "AIN14 is marked as the cold junction and carries no channel");
+        const auto q = fsw::t7::plan_stream(stream_board());
+        check(q.scan_names == std::vector<std::string>({"AIN1", "AIN2", "AIN4"}) &&
+                  q.cjc_index == -1,
+              "no thermocouple, no AIN14");
         check(p.scan_names.front().rfind("AIN", 0) == 0,
               "first scan entry is an AIN (auto-recovery marks gaps in the first channel)");
         auto value = [&](const std::string& n) -> double {
@@ -185,7 +320,7 @@ int main() {
             return std::nan("");
         };
         check(value("AIN1_RANGE") == 10.0 && value("AIN2_RANGE") == 0.1 &&
-                  value("AIN4_RANGE") == 0.1,
+                  value("AIN4_RANGE") == 0.1 && value("AIN14_RANGE") == 10.0,
               "each AIN's range is written");
         check(value("AIN1_NEGATIVE_CH") == 199 && value("AIN4_NEGATIVE_CH") == 5,
               "single-ended and differential inputs are written");
@@ -203,6 +338,15 @@ int main() {
                   fsw::t7::table_id(2, 13) == std::array<uint8_t, 2>{0x26, 0x2D},
               "table id is {0x26, (slot-1)*0x20 + ain}");
         check(fsw::t7::entity_name(1, 3) == "T71.AIN3", "entity name T7<slot>.AIN<n>");
+        check(fsw::t7::calibrated_table_id(1, 3) == std::array<uint8_t, 2>{0x26, 0x13} &&
+                  fsw::t7::calibrated_table_id(2, 13) == std::array<uint8_t, 2>{0x26, 0x3D} &&
+                  fsw::t7::calibrated_entity_name(1, 3) == "T71_Cal.AIN3",
+              "calibrated table is the raw id + 0x10, entity T7<slot>_Cal.AIN<n>");
+        check(std::string(fsw::t7::calibrated_field("PT")) == "pressure_psi" &&
+                  std::string(fsw::t7::calibrated_field("TC")) == "temperature_c" &&
+                  std::string(fsw::t7::calibrated_field("LC")) == "force_kg" &&
+                  std::string(fsw::t7::calibrated_field("VOLTAGE")).empty(),
+              "calibrated fields have the ESP32 boards' names; VOLTAGE has none");
     }
 
     std::cout << "=== session ===" << std::endl;
@@ -211,7 +355,7 @@ int main() {
         auto dev = std::make_unique<FakeT7Device>();
         FakeT7Device* d = dev.get();
         uint64_t now = 1'700'000'000'000'000'000ULL;
-        T7Session s(good_board(), std::move(dev), board_clock, [&] {
+        T7Session s(stream_board(), std::move(dev), board_clock, [&] {
             return now;
         });
         const double rate = s.start();
@@ -250,7 +394,7 @@ int main() {
         FakeT7Device::Options o;
         o.rate_cap_hz = 50.0;
         uint64_t now = 1'700'000'000'000'000'000ULL;
-        T7Session s(good_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
+        T7Session s(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
             return now;
         });
         check(s.start() == 50.0, "start() returns the device's actual rate");
@@ -263,7 +407,7 @@ int main() {
     {
         // At 300 Hz scans fall between whole milliseconds. The clock sync works in whole ms and
         // the sub-ms part is added back, which must not push the newest scan past its arrival.
-        T7Board b = good_board();
+        T7Board b = stream_board();
         b.scan_rate_hz = 300.0;
         uint64_t now = 1'700'000'000'000'000'000ULL;
         T7Session s(b, std::make_unique<FakeT7Device>(), board_clock, [&] {
@@ -282,7 +426,7 @@ int main() {
         FakeT7Device::Options o;
         o.dummy_scan_every = 5;  // scan 4 of each 5-scan block is lost
         uint64_t now = 1'700'000'000'000'000'000ULL;
-        T7Session s(good_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
+        T7Session s(stream_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
             return now;
         });
         s.start();
@@ -299,7 +443,7 @@ int main() {
         fsw::time::TimeSyncConfig arrival;
         arrival.mode = fsw::time::TimeSyncConfig::Mode::Arrival;
         uint64_t now = 1'700'000'000'000'000'000ULL;
-        T7Session s(good_board(), std::make_unique<FakeT7Device>(), arrival, [&] {
+        T7Session s(stream_board(), std::make_unique<FakeT7Device>(), arrival, [&] {
             return now;
         });
         s.start();
@@ -310,7 +454,7 @@ int main() {
               "[time_sync] arrival: newest scan at arrival, the rest a period apart behind it");
     }
     {
-        T7Board b = good_board();
+        T7Board b = stream_board();
         b.serial = 470099999;
         auto dev = std::make_unique<FakeT7Device>();  // serial 470000000
         FakeT7Device* d = dev.get();
@@ -332,7 +476,7 @@ int main() {
         o.fail_read_after = 1;
         auto dev = std::make_unique<FakeT7Device>(o);
         FakeT7Device* d = dev.get();
-        T7Session s(good_board(), std::move(dev), board_clock, [] {
+        T7Session s(stream_board(), std::move(dev), board_clock, [] {
             return 1'700'000'000'000'000'000ULL;
         });
         s.start();
@@ -346,6 +490,80 @@ int main() {
         check(threw, "a lost link surfaces as T7Error with LJM's code");
         s.stop();
         check(d->closed, "and the session still closes the device");
+    }
+
+    std::cout << "=== engineering units ===" << std::endl;
+    {
+        // good_board: PT 0-5V 1000 psi on AIN1, type K on AIN2, LC 2 mV/V x 10 V 500 kg on AIN4.
+        FakeT7Device::Options o;
+        o.device_temp_k = 300.0;  // board cjc_offset_k -4.9 -> junction at 21.95 C
+        const double cj = 300.0 - 273.15 - 4.9;
+        const double tc_v =
+            (fsw::calibration::type_k_mv_from_c(150.0) - fsw::calibration::type_k_mv_from_c(cj)) /
+            1000.0;
+        o.signal = [tc_v](int ain, double) {
+            return ain == 1 ? 1.25 : ain == 2 ? tc_v : ain == 4 ? 0.005 : 0.0;
+        };
+        auto dev = std::make_unique<FakeT7Device>(o);
+        FakeT7Device* d = dev.get();
+        uint64_t now = 1'700'000'000'000'000'000ULL;
+        T7Session s(good_board(), std::move(dev), board_clock, [&] {
+            return now;
+        });
+        s.start();
+        check(d->reads == std::vector<std::string>({"TEMPERATURE_DEVICE_K", "AIN14"}),
+              "a TC board reads TEMPERATURE_DEVICE_K beside AIN14 before streaming");
+        check(near(s.cjc_device_offset_k(), 465.129215, 1e-6),
+              "and solves AIN14's offset from them (the fake sits on LabJack's nominal line)");
+        now += 50'000'000ULL;
+        const auto b = s.read();
+        check(b.samples.size() == 20, "5 scans x (3 AINs + AIN14)");
+        auto first = [&](uint8_t ain) {
+            for (const auto& x : b.samples)
+                if (x.ain == ain)
+                    return x;
+            return fsw::t7::Sample{};
+        };
+        check(first(1).has_value && near(first(1).value, 250.0, 1e-3), "PT: 1.25 V -> 250 psi");
+        check(first(2).has_value && near(first(2).value, 150.0, 0.01),
+              "TC: 150 C with the junction at ~22 C");
+        check(first(4).has_value && near(first(4).value, 125.0, 1e-3), "LC: 5 mV -> 125 kg");
+        check(!first(14).has_value && first(14).ain == 14,
+              "AIN14 is published raw only, with no calibrated value");
+        check(b.unconverted == 0, "nothing failed to convert");
+    }
+    {
+        FakeT7Device::Options o;
+        o.signal = [](int ain, double) {
+            return ain == 2 ? 0.5 : 1.0;
+        };  // 500 mV: off the K curve
+        uint64_t now = 1'700'000'000'000'000'000ULL;
+        T7Session s(good_board(), std::make_unique<FakeT7Device>(o), board_clock, [&] {
+            return now;
+        });
+        s.start();
+        now += 50'000'000ULL;
+        const auto b = s.read();
+        bool tc_published = false;
+        for (const auto& x : b.samples)
+            tc_published = tc_published || (x.ain == 2 && x.has_value);
+        check(!tc_published && b.unconverted == 5,
+              "an off-curve TC publishes volts but no temperature, and is counted");
+    }
+    {
+        FakeT7Device::Options o;
+        o.device_temp_k = 150.0;  // a broken internal sensor
+        T7Session s(good_board(), std::make_unique<FakeT7Device>(o), board_clock, [] {
+            return uint64_t{0};
+        });
+        bool threw = false;
+        try {
+            s.start();
+        } catch (const T7Error&) {
+            threw = true;
+        }
+        check(threw, "an implausible device temperature stops the start (no wrong CJC)");
+        s.stop();
     }
 
     std::cout << (g_failures ? "FAILED: " : "PASSED")

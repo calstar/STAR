@@ -26,7 +26,10 @@ namespace {
 // The T7's analog input ranges (AIN#_RANGE accepts exactly these spans).
 constexpr double kRanges[] = {10.0, 1.0, 0.1, 0.01};
 const std::set<std::string> kKinds = {"PT", "TC", "LC", "VOLTAGE"};
-const std::set<std::string> kTcTypes = {"B", "E", "J", "K", "N", "R", "S", "T"};
+// Thermocouple types t7_bridge can convert to temperature. Only K so far: its curve is the
+// NIST ITS-90 inverse the calibration service already uses (fsw::calibration::type_k_*).
+const std::set<std::string> kTcTypes = {"K"};
+const std::set<std::string> kPtSignals = {"0-5V", "0.5-4.5V", "1-5V", "0-10V", "4-20mA"};
 
 // Above this an aggregate rate is certainly beyond the T7 (its fastest stream is 100 kS/s at
 // resolution index 0 and the widest range). The device reports STREAM_SCAN_OVERLAP for anything
@@ -54,6 +57,7 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
         return out;
 
     std::map<uint8_t, std::string> slot_owner;
+    std::map<std::string, std::string> role_owner;  // across every T7: the GUI keys by role
     for (auto&& [key, node] : *boards) {
         const auto* bt = node.as_table();
         if (!bt || (*bt)["type"].value<std::string>().value_or("") != "T7")
@@ -76,6 +80,7 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
             static_cast<int>((*bt)["resolution_index"].value<int64_t>().value_or(0));
         b.settling_us = (*bt)["settling_us"].value<double>().value_or(0.0);
         b.scans_per_read = static_cast<int>((*bt)["scans_per_read"].value<int64_t>().value_or(0));
+        b.cjc_offset_k = (*bt)["cjc_offset_k"].value<double>().value_or(b.cjc_offset_k);
 
         // A disabled board is allowed to be half-filled in (that is how a new one gets added:
         // declared, then its MAC learnt from the lease table), so only its shape is checked.
@@ -97,6 +102,9 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
         if (b.scans_per_read < 0)
             err("scans_per_read cannot be negative");
 
+        if (!std::isfinite(b.cjc_offset_k) || std::fabs(b.cjc_offset_k) > 20.0)
+            err("cjc_offset_k must be within +/-20 K");
+
         if (const auto* arr = (*bt)["channels"].as_array()) {
             std::map<int, int> ain_owner;  // AIN -> channel index that uses it (incl. diff pair)
             for (size_t i = 0; i < arr->size(); ++i) {
@@ -116,6 +124,12 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
                 // A thermocouple is tens of millivolts: +/-0.1 V covers a type K to 1372 C,
                 // where the 0.01 V range would clip a K above ~245 C.
                 c.range_v = (*ct)["range"].value<double>().value_or(c.kind == "TC" ? 0.1 : 10.0);
+                c.full_scale = (*ct)["full_scale"].value<double>().value_or(0.0);
+                c.signal = (*ct)["signal"].value<std::string>().value_or("");
+                c.shunt_ohms = (*ct)["shunt_ohms"].value<double>().value_or(0.0);
+                c.sensitivity_mv_per_v =
+                    (*ct)["sensitivity_mv_per_v"].value<double>().value_or(0.0);
+                c.excitation_v = (*ct)["excitation_v"].value<double>().value_or(0.0);
 
                 const std::string p = at(sec, idx);
                 if (c.ain < 0 || c.ain > kT7MaxAin) {
@@ -146,9 +160,45 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
                     }))
                     errors.push_back(p + "range must be one of 10, 1, 0.1, 0.01 (volts)");
                 if (c.kind == "TC" && !kTcTypes.count(c.tc_type))
-                    errors.push_back(p + "a thermocouple needs tc_type, one of B E J K N R S T");
+                    errors.push_back(p + "tc_type \"" + c.tc_type +
+                                     "\": only type K thermocouples are converted so far");
                 if (c.kind != "TC" && !c.tc_type.empty())
                     errors.push_back(p + "tc_type is only meaningful on kind = \"TC\"");
+
+                // The GUI lists a T7 channel by its role, like any PT/TC/LC.
+                if (c.kind != "VOLTAGE") {
+                    if (c.role.empty())
+                        errors.push_back(p + "a " + c.kind + " channel needs a role (its name)");
+                    else if (!role_owner.emplace(c.role, sec).second)
+                        errors.push_back(p + "role \"" + c.role + "\" is already used by [" +
+                                         role_owner[c.role] + "]");
+                }
+                auto need = [&](bool ok, const std::string& what) {
+                    if (!ok)
+                        errors.push_back(p + what);
+                };
+                if (c.kind == "PT") {
+                    need(c.full_scale > 0, "a PT needs full_scale (psi at full output)");
+                    need(kPtSignals.count(c.signal) > 0,
+                         "a PT needs signal, one of 0-5V 0.5-4.5V 1-5V 0-10V 4-20mA");
+                    if (c.signal == "4-20mA")
+                        need(c.shunt_ohms > 0, "a 4-20mA PT needs shunt_ohms");
+                    else
+                        need(c.shunt_ohms == 0, "shunt_ohms is only meaningful on a 4-20mA PT");
+                }
+                if (c.kind == "LC") {
+                    need(c.full_scale > 0, "an LC needs full_scale (kg at rated output)");
+                    need(c.sensitivity_mv_per_v > 0, "an LC needs sensitivity_mv_per_v");
+                    need(c.excitation_v > 0, "an LC needs excitation_v");
+                }
+                if (c.kind != "PT")
+                    need(c.signal.empty() && c.shunt_ohms == 0,
+                         "signal and shunt_ohms are only meaningful on a PT");
+                if (c.kind != "LC")
+                    need(c.sensitivity_mv_per_v == 0 && c.excitation_v == 0,
+                         "sensitivity_mv_per_v and excitation_v are only meaningful on an LC");
+                if (c.kind != "PT" && c.kind != "LC")
+                    need(c.full_scale == 0, "full_scale is only meaningful on a PT or LC");
                 b.channels.push_back(std::move(c));
             }
         } else if ((*bt).contains("channels")) {
