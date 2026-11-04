@@ -73,7 +73,8 @@ test('the config editor shows the T7 and validates its channel table as it is ed
   // The three configured inputs, by role, each with its kind.
   const roleInputs = page.locator('input[placeholder="name, e.g. LOX Tank"]');
   await expect(roleInputs).toHaveCount(3);
-  await expect(roleInputs).toHaveValues([T7.pt.role, T7.tc.role, T7.lc.role]);
+  await expect.poll(() => roleInputs.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value)))
+    .toEqual([T7.pt.role, T7.tc.role, T7.lc.role]);
   // PT and LC take a calibration model like an ESP32 sensor; the default is physics.
   await expect(page.getByTitle('Streaming calibration model for this sensor').first()).toHaveValue('physics');
   // A clean T7 shows no problems.
