@@ -166,12 +166,21 @@ command-response and AIN_EF); stream uses `STREAM_RESOLUTION_INDEX`/`STREAM_SETT
 
 ### Thermocouples and other AIN_EF values
 `AIN#_EF_INDEX` (9000+) / `AIN#_EF_READ_A` (7000+) give thermocouple and other
-extended-feature values computed on the device. Stream returns raw volts per AIN, not
-EF results. So TCs either go in the scan list as volts, with CJC and the TC polynomial
-done in our calibration service, or are read by command-response, which **cannot** run
-while the stream holds the AINs. Plan TCs as streamed volts plus `TEMPERATURE_DEVICE_K`
-for the CJC, unless the datasheet says otherwise. (EF results being unstreamable is my
-reading of the register descriptions: **[unverified]**.)
+extended-feature values computed on the device. The register map marks them
+`streamable: false` [MAP], and `TEMPERATURE_DEVICE_K` (60052) is not streamable either.
+So a stream carries raw volts only, and t7_bridge does the thermocouple math itself
+(section 7):
+- **Cold junction:** AIN14 (the internal sensor) is appended to the scan of any board
+  with a TC. Its slope is LabJack's nominal **−92.379 K/V**, from the T7 calibration defaults
+  in `labjack/labjack_kipling` `t7_calibration_operations.js` ("Temp Slope", ±1 %). The
+  per-unit offset is **not** the nominal 465.129 K: before each stream, t7_bridge reads
+  the device's own `TEMPERATURE_DEVICE_K` beside AIN14 and solves for the offset.
+  `TEMPERATURE_AIR_K` is documented as device − 4.3 K, and − 0.6 K more per active network
+  interface [MAP]. That gives the default `cjc_offset_k = −4.9` from device to terminals;
+  measure it on the stand.
+- **Curve:** type K only. It is the NIST ITS-90 inverse the calibration service already
+  used, moved unchanged to `lib/calibration/TypeK`. C→mV, needed for the junction, is that
+  same inverse solved numerically, so no second set of coefficients exists.
 
 ### Timestamps
 - `CORE_TIMER` (61520) is a U32 at ½ core clock; `SYSTEM_TIMER_20HZ` is at 61522 [MAP].
@@ -287,15 +296,49 @@ t7_bridge still builds (and CI's ctest runs `test_t7`), but it only runs with `-
 LJM from LabJack's Linux installer, then re-run cmake: it prints
 `t7_bridge: LabJack LJM found`.
 
+### Engineering units and the GUI
+t7_bridge publishes every PT / TC / LC channel twice: raw volts, and converted to the
+ESP32 boards' units in their calibrated layout:
+
+| | table | entity | field |
+|---|---|---|---|
+| raw | `{0x26, (slot-1)*0x20 + ain}` | `T7<slot>.AIN<n>` | `volts` (f32) |
+| calibrated | `{0x26, (slot-1)*0x20 + 0x10 + ain}` | `T7<slot>_Cal.AIN<n>` | `pressure_psi` / `temperature_c` / `force_kg` (f32), `raw_uv` (i32), `cal_status` |
+
+The conversions (`lib/t7/T7Convert`) use the channel's datasheet numbers. Each is required
+and has no default:
+- **PT:** `signal` (`0-5V`, `0.5-4.5V`, `1-5V`, `0-10V`, `4-20mA` + `shunt_ohms`) and
+  `full_scale` psi. Linear.
+- **LC:** `full_scale` kg, `sensitivity_mv_per_v` and `excitation_v`:
+  kg = V / (mV/V/1000 × Vexc) × FS.
+- **TC:** `tc_type = "K"`, compensated as above.
+- **VOLTAGE:** raw only.
+
+A reading the conversion cannot produce (e.g. a TC off the curve) publishes volts only and
+is counted.
+
+In the GUI, `/api/sensor-config` lists each channel as a sensor of its kind, named by its
+`role`, with `source: 'T7'`. Every role-driven page (pressure plots, top-bar gauges, the
+TC/LC pages, Sensor Info) shows it like an ESP32 sensor, and `PT_Cal.<Role>` etc. resolve to
+it. The config editor has a **LabJack T7** board type with a channel table. Its problems
+come from `t7BoardIssues()` (`shared/config-validation.ts`), which mirrors `T7Config.cpp`
+and also gates session start, together with a T7 role that collides with an ESP32 sensor's.
+
+The session pipeline runs t7_bridge as `sensor-t7` (`deploy/systemd/sensor-t7.service`;
+re-run `install_services.sh` once to add it). A simulated run uses `--fake`. With no enabled
+T7 it exits 0 and stays down.
+
 ### Not done yet
-- **GUI.** The backend does not decode table type `0x26` yet, so T7 data is in Elodin and not
-  on the dashboards.
-- **Calibration.** Volts are published raw. A PT needs its volts→psi, and a TC its
-  cold-junction compensation plus the type-K curve. Put them in the calibration service as a
-  `+0x10` calibrated table.
-- **Deployment.** There is no systemd unit or tmux pane for t7_bridge yet.
-- **Hardware.** The LJM path (`LjmT7Device`) compiles against LabJack's real `LabJackM.h`
-  but has not run against a T7.
+- **Hardware.** Nothing has run against a real T7. The LJM path compiles against LabJack's
+  real `LabJackM.h` only.
+- **Capture-point calibration and tare.** T7 channels use datasheet physics only. The
+  calibration page leaves them out, and LC tare is disabled for them, because both live in
+  calibration_service, which does not see T7 channels.
+- **Sequencer / aborts.** `abort_pts`, the pressure feed and state scripts read the ESP32 PT
+  tables only, so a T7 PT cannot trigger an abort.
+- **Simulated runs** build their config from `config_base.toml`, which has no T7, so a sim
+  session shows none until one is added there.
+- **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.
 
 ## Still to verify (needs support.labjack.com / labjack.com, blocked here)
 
@@ -306,4 +349,5 @@ LJM from LabJack's Linux installer, then re-run cmake: it prints
 - The current LJM Linux installer name and version, plus
   LJM's redistribution licence (whether `libLabJackM.so` can go in our deploy image).
 - Low-level port-702 frame layout (only needed if we skip LJM).
-- Whether any AIN_EF (thermocouple) result can be streamed.
+- The T7 AIN14 temperature formula as the datasheet states it (the nominal slope is from
+  LabJack's Kipling source).
