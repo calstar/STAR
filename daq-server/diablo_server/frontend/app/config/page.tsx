@@ -14,7 +14,7 @@ import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
 import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
-  t7Channels, t7BoardIssues, t7RoleClashes, abortPtIssue, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
+  t7Channels, t7BoardIssues, t7RoleClashes, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
 } from '@/lib/config-validation';
 import {
   slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
@@ -2551,8 +2551,7 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">Boards</h2>
               <p className="text-sm text-text-muted mb-4">
-                Editable. Board config (roles, active connectors, voltage reference, abort thresholds,
-                enable flags) is re-broadcast to the boards live — the config-broadcast service re-reads
+                Editable. Board config (roles, active connectors, voltage reference, enable flags) is re-broadcast to the boards live — the config-broadcast service re-reads
                 on save, so changes apply without restarting the server or a session. Note: the DAQ
                 pipeline (daq_bridge/calibration/controller) picks up routing/identity changes on the
                 next session start.
@@ -3691,8 +3690,7 @@ export default function ConfigPage() {
                     <p>
                       No state is flagged <strong>Abort</strong>. Aborts are <em>not</em> disabled — the
                       controller falls back to its built-in aborts (Engine / GSE / Emergency), which may
-                      not match your states. Flag the intended abort state(s) explicitly. (Board over-pressure
-                      aborts via <code>[abort_pts]</code> are separate and still active.)
+                      not match your states. Flag the intended abort state(s) explicitly.
                     </p>
                   </InlineIssue>
                 )}
@@ -4275,68 +4273,9 @@ export default function ConfigPage() {
                 })()}
               </div>
 
-              {/* ── Abort thresholds ────────────────────────────────────────────────── */}
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Abort pressure thresholds</h3>
-                <p className="text-sm text-text-muted">
-                  PSI limits broadcast to the boards, which abort autonomously when a sensor exceeds
-                  them — they do not depend on the server being alive. The name must match a sensor
-                  role exactly.
-                </p>
-                <div className="space-y-2">
-                  {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
-                    <div key={`abort:${i}`} className="space-y-1">
-                    <div className="flex items-center gap-3">
-                      <CommitOnBlurName
-                        value={role}
-                        siblings={Object.keys(config.abort_pts || {})}
-                        rowKey={`abort:${role}`}
-                        onDupChange={onRoleDup}
-                        onRename={(next) => {
-                          const rebuilt: Record<string, any> = {};
-                          for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
-                          setConfig({ ...config, abort_pts: rebuilt } as ConfigData);
-                        }}
-                        onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
-                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <CommitOnBlurNumber
-                        value={psi as number}
-                        onCommit={(v) => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), [role]: v } } as ConfigData)}
-                        className="w-28 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <span className="text-sm text-text-muted w-10">PSI</span>
-                      <button
-                        onClick={() => {
-                          const next = { ...(config.abort_pts || {}) };
-                          delete next[role];
-                          setConfig({ ...config, abort_pts: next } as ConfigData);
-                        }}
-                        disabled={!canEdit}
-                        className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    {abortPtIssue(config, role) && (
-                      <InlineIssue level="error">{abortPtIssue(config, role)}</InlineIssue>
-                    )}
-                    </div>
-                  ))}
-                  {Object.keys(config.abort_pts || {}).length === 0 && (
-                    <p className="text-sm text-amber-300/90">
-                      No abort thresholds configured — the boards will not abort on over-pressure by themselves.
-                    </p>
-                  )}
-                  <button
-                    onClick={() => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), 'New Abort PT': 0 } } as ConfigData)}
-                    disabled={!canEdit}
-                    className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    + Add threshold
-                  </button>
-                </div>
-              </div>
+              {/* [abort_pts] is not edited here: the actuator firmware never acts on it today (its only
+                  consumer, the PTAbort state, sits behind ENABLE_ALL_STATE_TRANSITIONS = false in
+                  firmware/Hotfire_Code/common/hotfire_config.h). See docs/CONFIGURATION_GUIDE.md. */}
             </div>
           )}
 
