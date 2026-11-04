@@ -475,6 +475,17 @@ int main() {
         s.stop();
     }
     {
+        // No serial in config: start() still reads it, for the bridge's bring-up log line.
+        auto dev = std::make_unique<FakeT7Device>();  // serial 470000000
+        T7Session s(stream_board(), std::move(dev), board_clock, [] {
+            return uint64_t{0};
+        });
+        check(s.serial() == 0, "serial() is 0 before start()");
+        s.start();
+        check(s.serial() == 470000000, "start() reads the serial even when the config gives none");
+        s.stop();
+    }
+    {
         FakeT7Device::Options o;
         o.fail_read_after = 1;
         auto dev = std::make_unique<FakeT7Device>(o);

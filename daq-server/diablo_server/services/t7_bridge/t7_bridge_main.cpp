@@ -156,8 +156,8 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
             // kg is calibration_service's job, exactly as for the ESP32 boards.
             const bool has_cjc = session.plan().cjc_index >= 0;
             Line(std::cout) << tag << "streaming " << session.plan().ains.size() << " AIN from "
-                            << board.ip << " at " << rate << " scans/s (asked "
-                            << board.scan_rate_hz << ")" << std::endl;
+                            << board.ip << " (serial " << session.serial() << ") at " << rate
+                            << " scans/s (asked " << board.scan_rate_hz << ")" << std::endl;
             backoff = std::chrono::milliseconds(1000);
 
             uint64_t published = 0, skipped = 0, dropped = 0;
