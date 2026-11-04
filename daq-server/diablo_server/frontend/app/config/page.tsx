@@ -1691,6 +1691,10 @@ export default function ConfigPage() {
       if (!section.startsWith('sensor_roles_') || typeof roles !== 'object' || !roles) continue;
       for (const role of Object.keys(roles as Record<string, unknown>)) sensors.add(slugify(role));
     }
+    // A PT on a LabJack T7 is readable by pressure() too: the sequencer resolves it to the T7's
+    // calibrated table (fsw::config::pt_role_tables).
+    for (const ch of t7Channels(config.boards as Record<string, any> | undefined))
+      if (ch.enabled && ch.kind === 'PT' && ch.role) sensors.add(slugify(ch.role));
     const names = (config.states || []).map((s) => String(s.name ?? '')).filter(Boolean);
     const states = new Set(names.map(slugify));
 

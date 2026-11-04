@@ -19,6 +19,9 @@
 
 #include "config/Config.hpp"
 #include "config/SensorTables.hpp"
+#include "script/ScriptConfig.hpp"
+#include "script/StateScript.hpp"
+#include "t7/T7Stream.hpp"
 
 static int g_failures = 0;
 
@@ -175,6 +178,79 @@ int main() {
         }
         check(!saw_ghost, "pt_role_tables omits a disabled board");
         check(!saw_actuator_role, "pt_role_tables omits a non-PT board");
+    }
+
+    // ── LabJack T7 PT inputs resolve too, on the T7's calibrated table ───────────────────────
+    //
+    // The sequencer reads a pressure by role; a PT on a T7 is published by calibration_service on
+    // {0x26, (slot-1)*0x20 + 0x10 + ain} in the same CalibratedPTMessage layout. AIN6 on slot 1
+    // shares its low byte (0x16) with GN2 Regulated's ESP32 table: only the high byte differs.
+    {
+        const std::string t7 = std::string(kConfig) + R"TOML(
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+board_id = 81
+
+[[boards.labjack_1.channels]]
+ain = 6
+kind = "PT"
+role = "T7 Tank"
+signal = "0-5V"
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+role = "T7 Nozzle"
+tc_type = "K"
+
+[boards.labjack_2]
+type = "T7"
+ip = "192.168.2.82"
+board_id = 82
+enabled = false
+
+[[boards.labjack_2.channels]]
+ain = 1
+kind = "PT"
+role = "Disabled T7 PT"
+signal = "0-5V"
+full_scale = 1000.0
+)TOML";
+        const fsw::config::Config c = fsw::config::load_from_string(t7);
+        check(c.t7_errors.empty(), "T7 fixture parses without errors");
+        const auto r = fsw::config::find_pt_role(c, "T7 Tank");
+        check(r.has_value(), "a T7 PT input resolves by role");
+        if (r) {
+            check(r->t7 != nullptr && r->board == nullptr && r->board_key == "labjack_1",
+                  "it carries its T7, and no ESP32 board");
+            check(r->channel == 6 && r->board_number == 1, "AIN6 on slot 1");
+            const auto id = fsw::t7::calibrated_table_id(1, 6);
+            check(r->table() == std::make_pair(id[0], id[1]) &&
+                      r->table() == std::make_pair<uint8_t, uint8_t>(0x26, 0x16),
+                  "its table is the T7 calibrated table {0x26, 0x16}, not {0x20, 0x16}");
+        }
+        check(!fsw::config::find_pt_role(c, "T7 Nozzle").has_value(), "a T7 TC is not a pressure");
+        check(!fsw::config::find_pt_role(c, "Disabled T7 PT").has_value(),
+              "nor does a PT on a disabled T7");
+        check(fsw::config::find_pt_role(c, "GN2 Regulated")->table() ==
+                  std::make_pair<uint8_t, uint8_t>(0x20, 0x16),
+              "the ESP32 PT with the same low byte keeps its own table");
+        check(fsw::config::pt_role_tables(c).size() == 8, "pt_role_tables adds the one T7 PT");
+
+        const auto names = fsw::script::build_slug_tables(c);
+        check(names.tables.sensors.count(fsw::script::slugify("T7 Tank")) == 1,
+              "a state script may name it (slug T7_TANK)");
+
+        // t7_bridge refuses to stream while the T7 config has errors, so nothing it would carry
+        // may be named: a script reading it is refused at load instead of waiting on silence.
+        const fsw::config::Config broken =
+            fsw::config::load_from_string(t7 +
+                                          "\n[[boards.labjack_1.channels]]\nain = 99\n"
+                                          "kind = \"PT\"\nrole = \"Bad\"\n");
+        check(!broken.t7_errors.empty() && !fsw::config::find_pt_role(broken, "T7 Tank"),
+              "with T7 config errors no T7 input resolves");
     }
 
     // ── board_key_of strips the prefix, and tolerates a section without one ──────────────────

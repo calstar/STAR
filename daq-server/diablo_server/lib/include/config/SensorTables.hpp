@@ -23,22 +23,29 @@ namespace config {
  * 2 — "GN2 High" included. Resolving by role through config makes both unrepresentable.
  */
 struct PtRoleRef {
-    /** The board declaring this role. Points into the Config that was passed in, so it is valid
-     *  exactly as long as that Config is. Never null on a successful lookup. */
+    /** The ESP32 PT board declaring this role. Points into the Config that was passed in, so it is
+     *  valid exactly as long as that Config is. Null exactly when `t7` is set. */
     const BoardConfig* board = nullptr;
+    /** The LabJack T7 this PT input is on (a [[boards.<name>.channels]] row with kind = "PT"), or
+     *  null for an ESP32 PT. Its pressure arrives on the T7 calibrated table in the same message
+     *  layout, so a pressure reader needs only table(); anything that talks to the board itself
+     *  (abort thresholds in a config packet) must skip it. */
+    const T7Board* t7 = nullptr;
     /** The board's section name with the "boards." prefix stripped, e.g. "pt_board_2". This is the
      *  suffix every per-board section is keyed by: sensor_roles_<key>, calibration_model_<key>,
      *  calibration_full_scale_<key>. Resolved here so callers do not each re-derive it. */
     std::string board_key;
     /** Canonical role name as config spells it, e.g. "GN2 High" — not a slug. */
     std::string role;
-    /** Connector channel on that board, 1-based, straight from [sensor_roles_<key>]. */
+    /** Connector channel on that board, 1-based, straight from [sensor_roles_<key>]; the AIN
+     *  number for a T7 input. */
     int channel = 0;
     /** Elodin slot, BoardConfig::slot() — board_id % 10, with 0 meaning 10. */
     uint8_t board_number = 0;
 
     /**
-     * The calibrated-PT table this sensor publishes on: {0x20, (slot-1)*0x20 + 0x10 + channel}.
+     * The calibrated-PT table this sensor publishes on: {0x20, (slot-1)*0x20 + 0x10 + channel},
+     * or {0x26, (slot-1)*0x20 + 0x10 + ain} for a T7 input (t7::calibrated_table_id).
      *
      * The encoding is DatabaseConfig.cpp's, which is what actually registers the VTables — not
      * [routing.pt_calibrated]'s description string, which claims board 2 lives at 0x1B-0x1E, has
@@ -53,7 +60,9 @@ struct PtRoleRef {
 };
 
 /**
- * Every PT sensor role declared by an enabled PT board, in board-declaration order.
+ * Every PT sensor role declared by an enabled PT board, in board-declaration order, then every
+ * PT input on an enabled LabJack T7 (none while the T7 config has errors, as t7_bridge then
+ * refuses to stream).
  *
  * Boards that are disabled, not of type "PT", or carry no usable board_id are skipped, matching
  * what the config-broadcast abort-threshold path has always done. A role declared on more than one
@@ -65,7 +74,8 @@ std::vector<PtRoleRef> pt_role_tables(const Config& cfg);
  * Resolve one role by its canonical config name.
  *
  * First enabled PT board that declares the name wins, in config order — the same "not on this
- * board, keep looking" rule the inline walk used. Returns nullopt when no enabled PT board
+ * board, keep looking" rule the inline walk used — then the T7 PT inputs. (A role on both is
+ * refused by config validation.) Returns nullopt when no enabled PT board
  * declares it, which callers must treat as a refusal rather than a default: a sensor that cannot
  * be located has no safe stand-in value.
  */

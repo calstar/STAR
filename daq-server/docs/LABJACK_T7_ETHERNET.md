@@ -292,6 +292,17 @@ Exit codes: 0 = no enabled T7, 2 = config problems, 3 = built without LJM and no
 On a lost link or stream error it retries with backoff (1 s up to 10 s). If Elodin is down it
 keeps streaming, so the T7 buffer never backs up, and retries the connection every 2 s.
 
+### State scripts can read a T7 PT
+
+`pressure(<slug>)` in a state script resolves a PT on a T7 the same way it resolves one on an
+ESP32 board: `fsw::config::pt_role_tables` / `find_pt_role` list every PT channel of every enabled
+T7 (none while the T7 config has errors, since t7_bridge then streams nothing), and the
+sequencer's `PressureFeed` subscribes to its calibrated table `{0x26, (slot-1)*0x20 + 0x10 + ain}`.
+calibration_service publishes that table in the ESP32 `CalibratedPTMessage` layout, with the same
+calibrated/uncalibrated status, so staleness and "uncalibrated" refusals behave identically. The
+config editor offers the slug in the state-script name list. A T7 PT is still not an abort PT
+(`config_broadcast` skips it): no board can trip on it.
+
 ### Startup, and a stream left running
 
 Each start, for each T7, `T7Session::start()`:
@@ -431,7 +442,8 @@ Re-measure if the T7 moves to a different enclosure or the terminal block is cha
   including a mixed ESP32 + T7 rig on the real `elodin-db`), `test/test_integration.sh`, the
   Playwright spec `e2e/labjack-t7.spec.ts`, and `test/test_session.sh`. The simulated config
   `config_base.toml` carries a T7 (PT on AIN1, TC on AIN2, LC on AIN4) that `--fake` streams.
-- **Sequencer / aborts.** The pressure feed and state scripts read the ESP32 PT tables only.
+- **Aborts.** A T7 has no on-board logic, so nothing aborts on its own when a T7 input crosses
+  a limit; only the server (state scripts) can act on one.
 - **Thermocouple types other than K**, and the `cjc_offset_k` measurement on the stand.
 
 ## Still to verify (needs support.labjack.com / labjack.com, blocked here)
