@@ -306,6 +306,10 @@ add_executable(test_pt_smoothing test/test_pt_smoothing.cpp)
 target_link_libraries(test_pt_smoothing fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME pt_smoothing COMMAND test_pt_smoothing)
 
+add_executable(test_rtd_board test/test_rtd_board.cpp)
+target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME rtd_board COMMAND test_rtd_board)
+
 add_executable(test_resubscribe_backoff test/test_resubscribe_backoff.cpp)
 target_link_libraries(test_resubscribe_backoff fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME resubscribe_backoff COMMAND test_resubscribe_backoff)

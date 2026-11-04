@@ -397,21 +397,13 @@ static double clamp_tc_rtd_temp_publish_c(double t_c) {
 }
 
 /**
- * Pt1000 RTD: raw ADC → voltage → resistance → temperature (°C).
- * Uses Callendar-Van Dusen (IEC 60751) inverse via existing rtd::resistance_to_temp_cvd().
+ * Pt1000 RTD: raw ADC → voltage → resistance → temperature (°C), on the full IEC 60751 curve
+ * (rtd::rtd_board_adc_to_temp_c). NaN for an open or shorted element: publish nothing.
  */
 static double convert_rtd_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage,
                                         double excitation_ua, double r0_ohm) {
-    constexpr double ADC_MAX = 2147483648.0;
-    if (excitation_ua <= 0.0)
-        return 0.0;
-
-    double voltage_v = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
-    double resistance_ohm = (std::abs(voltage_v) * 1e6) / excitation_ua;
-
-    fsw::calibration::rtd::CVDCoeffs cvd;
-    cvd.R0 = r0_ohm;  // Pt1000: 1000.0 (not the header default of 100)
-    return fsw::calibration::rtd::resistance_to_temp_cvd(resistance_ohm, cvd);
+    return fsw::calibration::rtd::rtd_board_adc_to_temp_c(adc_raw, adc_ref_voltage, excitation_ua,
+                                                          r0_ohm);
 }
 
 /**
@@ -1974,11 +1966,16 @@ int main(int argc, char* argv[]) {
                                                    rtd_r0_ohm);
                 cal_status = 0;
             }
-            temp_c = clamp_tc_rtd_temp_publish_c(temp_c);
-            comms::messages::sensor::CalibratedRTDMessage cal_msg(
-                ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
-                static_cast<uint32_t>(adc_i32), cal_status);
-            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
+            // An open or shorted element has no temperature. It used to publish one anyway: about
+            // +395 C (open, ADC at the rail) or -242 C (short). Now the channel goes quiet and the
+            // GUI shows it stale.
+            if (std::isfinite(temp_c)) {
+                temp_c = clamp_tc_rtd_temp_publish_c(temp_c);
+                comms::messages::sensor::CalibratedRTDMessage cal_msg(
+                    ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
+                    static_cast<uint32_t>(adc_i32), cal_status);
+                elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
+            }
 
         } else if (type_hi == 0x23) {  // LC raw — unified: every LC runs through model selection
                                        // (cubic operator fit, or the datasheet physics formula).
