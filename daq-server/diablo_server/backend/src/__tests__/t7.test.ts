@@ -170,6 +170,22 @@ describe('/api/sensor-config', () => {
     });
 });
 
+describe('RTD on an LJTick-Resistance', () => {
+    const rtd = { ain: 3, kind: 'RTD', role: 'LOX RTD', r0_ohms: 1000, ljtr_ohms: 1000 };
+    const boards = { labjack_1: { ...T7_BOARD, channels: [...T7_BOARD.channels, rtd] } };
+
+    it('is listed as an RTD sensor under its role, publishing temperature_c', () => {
+        const ch = t7Channels(boards).find((c) => c.role === 'LOX RTD');
+        expect(ch).toMatchObject({ kind: 'RTD', calEntity: 'T72_Cal.AIN3', calField: 'temperature_c' });
+        const s = buildSensorConfig({ boards }).find((x) => x.role === 'LOX RTD');
+        expect(s).toMatchObject({ type: 'RTD', calEntity: 'T72_Cal.AIN3', source: 'T7', inCalibrationSequence: false });
+    });
+
+    it('decodes its calibrated table as temperature_c', () => {
+        expect(t7CalFields({ boards }).get(0x20 + 0x10 + 3)).toBe('temperature_c');
+    });
+});
+
 describe('session gate', () => {
     const issuesFor = (board: any, extra: Record<string, any> = {}) =>
         validateConfigForRun({ boards: { labjack_1: board }, ...extra })
@@ -192,6 +208,10 @@ describe('session gate', () => {
         ['a range the T7 lacks', { channels: [{ ...T7_BOARD.channels[0], range: 5 }] }, 'range must be one of'],
         ['AIN14', { channels: [{ ...T7_BOARD.channels[0], ain: 14 }] }, 'ain must be 0-13'],
         ['no channels', { channels: [] }, 'at least one channel'],
+        ['an RTD with no element', { channels: [{ ain: 3, kind: 'RTD', role: 'R', ljtr_ohms: 1000 }] }, 'needs r0_ohms'],
+        ['an RTD with no LJTick-Resistance', { channels: [{ ain: 3, kind: 'RTD', role: 'R', r0_ohms: 1000 }] }, 'needs ljtr_ohms'],
+        ['an RTD on a range below the tick\'s 2.5 V', { channels: [{ ain: 3, kind: 'RTD', role: 'R', r0_ohms: 1000, ljtr_ohms: 1000, range: 1 }] }, 'must cover vref_v'],
+        ['RTD settings on a PT', { channels: [{ ...T7_BOARD.channels[0], r0_ohms: 100 }] }, 'only meaningful on an RTD'],
     ];
     for (const [what, patch, needle] of cases) {
         it(`refuses ${what}`, () => {
@@ -199,6 +219,11 @@ describe('session gate', () => {
             expect(msgs.some((m) => m.includes(needle)), msgs.join('\n')).toBe(true);
         });
     }
+
+    it('passes an RTD on an LJTick-Resistance', () => {
+        const rtd = { ain: 3, kind: 'RTD', role: 'LOX RTD', r0_ohms: 1000, ljtr_ohms: 1000 };
+        expect(issuesFor({ ...T7_BOARD, channels: [...T7_BOARD.channels, rtd] })).toEqual([]);
+    });
 
     it('refuses a T7 role that an ESP32 sensor already has', () => {
         const msgs = issuesFor(T7_BOARD, {

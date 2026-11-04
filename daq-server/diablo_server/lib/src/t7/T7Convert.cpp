@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 
+#include "calibration/SensorCalibration.hpp"
 #include "calibration/TypeK.hpp"
 
 namespace fsw {
@@ -54,10 +55,22 @@ double tc_c(double volts, double cold_junction_c) {
     return calibration::type_k_c_from_mv(volts * 1000.0 + cj_mv);  // NaN propagates
 }
 
+double rtd_ohms(double volts, const config::T7Channel& ch) {
+    if (!(ch.ljtr_ohms > 0) || !(volts > 0) || !(volts < ch.vref_v))
+        return kNaN;
+    return ch.ljtr_ohms * (ch.vref_v - volts) / volts;
+}
+
+double rtd_c(double volts, const config::T7Channel& ch) {
+    calibration::rtd::CVDCoeffs cvd;
+    cvd.R0 = ch.r0_ohms;
+    return calibration::rtd::resistance_to_temp_cvd_full(rtd_ohms(volts, ch), cvd);
+}
+
 const char* calibrated_field(const std::string& kind) {
     if (kind == "PT")
         return "pressure_psi";
-    if (kind == "TC")
+    if (kind == "TC" || kind == "RTD")
         return "temperature_c";
     if (kind == "LC")
         return "force_kg";

@@ -36,7 +36,7 @@ namespace config {
 /** One streamed analog input. */
 struct T7Channel {
     int ain = -1;               ///< AIN number on the device, 0-13.
-    std::string kind;           ///< "PT" | "TC" | "LC" | "VOLTAGE" — what is wired to it.
+    std::string kind;           ///< "PT" | "TC" | "LC" | "RTD" | "VOLTAGE" — what is wired to it.
     std::string role;           ///< Sensor name, e.g. "LOX Tank" — what the GUI calls it.
     double range_v = 10;        ///< +/- input range in volts: 10, 1, 0.1 or 0.01.
     bool differential = false;  ///< true: AIN(ain) - AIN(ain+1); ain must be even.
@@ -50,6 +50,13 @@ struct T7Channel {
     double shunt_ohms = 0;            ///< PT "4-20mA": the resistor the loop current crosses.
     double sensitivity_mv_per_v = 0;  ///< LC: rated output, mV per V of excitation.
     double excitation_v = 0;          ///< LC: bridge excitation voltage.
+    // RTD through a LabJack LJTick-Resistance: a divider from the tick's 2.5 V reference through
+    // the RTD and a fixed precision resistor, read across the fixed one,
+    //   Vout = Vref * R_fixed / (R_fixed + R_rtd)   (LabJack, LJTick-Resistance datasheet).
+    double r0_ohms = 0;    ///< RTD: resistance at 0 C, 100 (Pt100) or 1000 (Pt1000).
+    double ljtr_ohms = 0;  ///< RTD: the tick's fixed resistor, 1k/10k/100k/1M by model.
+    /** RTD: the tick's reference. 2.5 V +/-0.04 % per its datasheet; set a measured value here. */
+    double vref_v = 2.5;
 
     /** AIN#_NEGATIVE_CH value: 199 = single-ended, else the paired odd input. */
     int negative_ch() const {

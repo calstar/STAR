@@ -70,6 +70,7 @@ const state = {
 const T7_EXPECT = [
   { key: 'T71_Cal.AIN1.pressure_psi', min: 250, max: 350 },  // PT 30 % of 1000 psi
   { key: 'T71_Cal.AIN2.temperature_c', min: 45, max: 75 },   // TC ~60 °C
+  { key: 'T71_Cal.AIN3.temperature_c', min: -171, max: -129 }, // RTD -150 ±20 °C (Pt1000, LJTR-1k)
   { key: 'T71_Cal.AIN4.force_kg', min: 85, max: 115 },       // LC 20 % of 500 kg
 ];
 

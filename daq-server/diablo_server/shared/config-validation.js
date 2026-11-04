@@ -121,7 +121,7 @@ export const boardSlotIssue = (boards, boardKey) => {
 };
 /** The field a calibrated T7 channel publishes, by kind; VOLTAGE has no calibrated table. */
 export const T7_CAL_FIELD = {
-    PT: 'pressure_psi', TC: 'temperature_c', LC: 'force_kg',
+    PT: 'pressure_psi', TC: 'temperature_c', LC: 'force_kg', RTD: 'temperature_c',
 };
 export const T7_PT_SIGNALS = ['0-5V', '0.5-4.5V', '1-5V', '0-10V', '4-20mA'];
 export const T7_RANGES = [10, 1, 0.1, 0.01];
@@ -245,8 +245,8 @@ export function t7BoardIssues(boards, boardKey) {
                     claim(ain + 1);
             }
         }
-        if (!['PT', 'TC', 'LC', 'VOLTAGE'].includes(kind))
-            out.push(`${p}kind "${kind}" must be one of PT, TC, LC, VOLTAGE.`);
+        if (!['PT', 'TC', 'LC', 'RTD', 'VOLTAGE'].includes(kind))
+            out.push(`${p}kind "${kind}" must be one of PT, TC, LC, RTD, VOLTAGE.`);
         const range = num(c?.range, kind === 'TC' ? 0.1 : 10);
         if (!T7_RANGES.some((r) => Math.abs(r - range) < 1e-9))
             out.push(`${p}range must be one of 10, 1, 0.1, 0.01 (volts).`);
@@ -284,6 +284,23 @@ export function t7BoardIssues(boards, boardKey) {
                 out.push(`${p}an LC needs sensitivity_mv_per_v.`);
             if (!(exc > 0))
                 out.push(`${p}an LC needs excitation_v.`);
+        }
+        // RTD through an LJTick-Resistance: Vout = vref_v * ljtr_ohms / (ljtr_ohms + R_rtd).
+        const r0 = num(c?.r0_ohms, 0), ljtr = num(c?.ljtr_ohms, 0);
+        const vrefSet = c?.vref_v !== undefined && c?.vref_v !== null && c?.vref_v !== '';
+        const vref = num(c?.vref_v, 2.5);
+        if (kind === 'RTD') {
+            if (!(r0 > 0))
+                out.push(`${p}an RTD needs r0_ohms (100 for a Pt100, 1000 for a Pt1000).`);
+            if (!(ljtr > 0))
+                out.push(`${p}an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor).`);
+            if (!(vref > 0 && vref <= 10))
+                out.push(`${p}vref_v must be within (0, 10] V.`);
+            if (!(range >= vref))
+                out.push(`${p}an RTD's range must cover vref_v (use 10).`);
+        }
+        else if (r0 !== 0 || ljtr !== 0 || vrefSet) {
+            out.push(`${p}r0_ohms, ljtr_ohms and vref_v are only meaningful on an RTD.`);
         }
         if (kind !== 'PT' && (signal !== '' || shunt !== 0))
             out.push(`${p}signal and shunt_ohms are only meaningful on a PT.`);

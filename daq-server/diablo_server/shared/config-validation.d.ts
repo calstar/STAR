@@ -69,7 +69,7 @@ export declare const boardDisplayName: (boards: Record<string, any>, boardKey: s
  * lib/src/config/LoadActiveBoards.cpp.
  */
 export declare const boardSlotIssue: (boards: Record<string, any>, boardKey: string) => string | null;
-export type T7Kind = 'PT' | 'TC' | 'LC' | 'VOLTAGE';
+export type T7Kind = 'PT' | 'TC' | 'LC' | 'RTD' | 'VOLTAGE';
 /** The field a calibrated T7 channel publishes, by kind; VOLTAGE has no calibrated table. */
 export declare const T7_CAL_FIELD: Record<string, string | undefined>;
 export declare const T7_PT_SIGNALS: readonly ["0-5V", "0.5-4.5V", "1-5V", "0-10V", "4-20mA"];

@@ -360,6 +360,13 @@ tc_type = "K"
 range = 0.1
 
 [[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "T7 LOX RTD"
+r0_ohms = 1000.0      # Pt1000
+ljtr_ohms = 1000.0    # on an LJTick-Resistance-1k
+
+[[boards.labjack_1.channels]]
 ain = 4
 kind = "LC"
 role = "T7 Thrust LC"

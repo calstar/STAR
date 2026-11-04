@@ -25,7 +25,7 @@ namespace {
 
 // The T7's analog input ranges (AIN#_RANGE accepts exactly these spans).
 constexpr double kRanges[] = {10.0, 1.0, 0.1, 0.01};
-const std::set<std::string> kKinds = {"PT", "TC", "LC", "VOLTAGE"};
+const std::set<std::string> kKinds = {"PT", "TC", "LC", "RTD", "VOLTAGE"};
 // Thermocouple types t7_bridge can convert to temperature. Only K so far: its curve is the
 // NIST ITS-90 inverse the calibration service already uses (fsw::calibration::type_k_*).
 const std::set<std::string> kTcTypes = {"K"};
@@ -130,6 +130,10 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
                 c.sensitivity_mv_per_v =
                     (*ct)["sensitivity_mv_per_v"].value<double>().value_or(0.0);
                 c.excitation_v = (*ct)["excitation_v"].value<double>().value_or(0.0);
+                c.r0_ohms = (*ct)["r0_ohms"].value<double>().value_or(0.0);
+                c.ljtr_ohms = (*ct)["ljtr_ohms"].value<double>().value_or(0.0);
+                const auto vref = (*ct)["vref_v"].value<double>();
+                c.vref_v = vref.value_or(2.5);
 
                 const std::string p = at(sec, idx);
                 if (c.ain < 0 || c.ain > kT7MaxAin) {
@@ -154,7 +158,7 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
                 }
                 if (!kKinds.count(c.kind))
                     errors.push_back(p + "kind \"" + c.kind +
-                                     "\" must be one of PT, TC, LC, VOLTAGE");
+                                     "\" must be one of PT, TC, LC, RTD, VOLTAGE");
                 if (std::none_of(std::begin(kRanges), std::end(kRanges), [&](double r) {
                         return std::fabs(r - c.range_v) < 1e-9;
                     }))
@@ -190,6 +194,17 @@ std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::s
                     need(c.full_scale > 0, "an LC needs full_scale (kg at rated output)");
                     need(c.sensitivity_mv_per_v > 0, "an LC needs sensitivity_mv_per_v");
                     need(c.excitation_v > 0, "an LC needs excitation_v");
+                }
+                if (c.kind == "RTD") {
+                    need(c.r0_ohms > 0,
+                         "an RTD needs r0_ohms (100 for a Pt100, 1000 for a Pt1000)");
+                    need(c.ljtr_ohms > 0,
+                         "an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor)");
+                    need(c.vref_v > 0 && c.vref_v <= 10.0, "vref_v must be within (0, 10] V");
+                    need(c.range_v >= c.vref_v, "an RTD's range must cover vref_v (use 10)");
+                } else {
+                    need(c.r0_ohms == 0 && c.ljtr_ohms == 0 && !vref,
+                         "r0_ohms, ljtr_ohms and vref_v are only meaningful on an RTD");
                 }
                 if (c.kind != "PT")
                     need(c.signal.empty() && c.shunt_ohms == 0,
