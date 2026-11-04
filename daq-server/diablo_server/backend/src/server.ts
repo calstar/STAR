@@ -27,7 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
-import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
+import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
 import { parseScriptStatus } from './script-status.js';
@@ -107,6 +107,7 @@ const BROADCAST_MIN_MS = 50;
 type StreamBudget = 'gui' | 'encoder' | null;
 function streamBudgetFor(high: number, _low: number): StreamBudget {
   if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
+  if (high === 0x26) return 'gui';  // LabJack T7 (t7_bridge), raw and calibrated
   if (high === 0x30 || high === 0x31) return 'gui';
   if (high === 0x24) return 'encoder';
   return null;
@@ -321,6 +322,8 @@ let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 /** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
  *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
 let _hpBoardNumbers = hpBoardNumbers();
+/** Cached T7 calibrated-table -> field map (which float is psi, °C or kg); rebuilt with it. */
+let _t7CalFields = t7CalFields();
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -793,6 +796,7 @@ export function applyDeployedConfigChange(): void {
   calibrationHost.channelToEntityMap = calChannelToEntityMap;
   _ptSlotToBoardId.clear();
   _hpBoardNumbers = hpBoardNumbers();
+  _t7CalFields = t7CalFields();
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too
   // rather than relying on onStateCsvUpdated, which the session path never fires.
   try {
@@ -1591,7 +1595,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // would apply today's offset to yesterday's samples) and rather than in the outbox drain
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
-    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
+    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers, _t7CalFields));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
