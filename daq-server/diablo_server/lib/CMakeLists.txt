@@ -12,6 +12,7 @@ set(FSW_SOURCES
     src/config/T7Config.cpp
     src/t7/T7Stream.cpp
     src/t7/T7Convert.cpp
+    src/t7/T7Calibration.cpp
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp

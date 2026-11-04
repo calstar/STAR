@@ -6,8 +6,11 @@
 //
 // One thread per enabled [boards.*] type = "T7". Each opens its T7 by IP over Ethernet, streams
 // the configured AINs, and publishes every sample to Elodin table {0x26, (slot-1)*0x20 + ain}
-// (entity T7<slot>.AIN<n>, value in volts). A lost link, a stream error or a missing Elodin is
-// retried with backoff; samples taken while Elodin is down are counted and dropped.
+// (entity T7<slot>.AIN<n>, value in volts). A board with a thermocouple also publishes its cold
+// junction (°C) at {0x26, (slot-1)*0x20 + 0x0F}. Calibration — volts to psi / °C / kg, captures,
+// models, tares — is calibration_service's, the same as for every ESP32 sensor
+// (t7/T7Calibration.hpp). A lost link, a stream error or a missing Elodin is retried with backoff;
+// samples taken while Elodin is down are counted and dropped.
 //
 // Usage: t7_bridge [--config config/config.toml] [--fake] [--board <section>]
 //          [--elodin-host H] [--elodin-port P]
@@ -36,6 +39,7 @@
 #include "config/Config.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
 
@@ -148,19 +152,15 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
         fsw::t7::T7Session session(board, make_device(fake, board), time_sync, epoch_ns);
         try {
             const double rate = session.start();
-            // What to register: every streamed AIN raw, plus a calibrated table for each PT/TC/LC.
-            std::vector<fsw::elodin::DatabaseConfig::T7Table> tables;
-            for (size_t i = 0; i < session.plan().ains.size(); ++i) {
-                const auto& ch = session.plan().channels[i];
-                tables.push_back({session.plan().ains[i],
-                                  ch ? fsw::t7::calibrated_field(ch->kind) : std::string()});
-            }
+            // Raw tables only, plus the cold junction on a TC board: turning volts into psi / °C /
+            // kg is calibration_service's job, exactly as for the ESP32 boards.
+            const bool has_cjc = session.plan().cjc_index >= 0;
             Line(std::cout) << tag << "streaming " << session.plan().ains.size() << " AIN from "
                             << board.ip << " at " << rate << " scans/s (asked "
                             << board.scan_rate_hz << ")" << std::endl;
             backoff = std::chrono::milliseconds(1000);
 
-            uint64_t published = 0, skipped = 0, dropped = 0, unconverted = 0;
+            uint64_t published = 0, skipped = 0, dropped = 0;
             auto next_log = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 
             while (g_running) {
@@ -169,8 +169,8 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                 if (!db.is_connected() && std::chrono::steady_clock::now() >= next_db_attempt) {
                     next_db_attempt = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                     if (db.connect(db_host, db_port)) {
-                        if (fsw::elodin::DatabaseConfig::register_t7_tables(db, board.slot(),
-                                                                            tables))
+                        if (fsw::elodin::DatabaseConfig::register_t7_raw_tables(
+                                db, board.slot(), session.plan().ains, has_cjc))
                             Line(std::cout)
                                 << tag << "Elodin connected, tables registered" << std::endl;
                         else
@@ -181,13 +181,24 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
 
                 const fsw::t7::Block block = session.read();
                 skipped += block.skipped_samples;
-                unconverted += block.unconverted;
                 if (block.skipped_samples > 0)
                     Line(std::cerr) << tag << "stream auto-recovery: " << block.skipped_samples
                                     << " samples lost (device buffer overflowed)" << std::endl;
 
                 if (db.is_connected()) {
                     db.begin_batch();
+                    // Cold junction first, so calibration_service has this block's before the
+                    // thermocouple samples it applies to.
+                    for (const auto& cj : block.cold_junction) {
+                        comms::messages::sensor::T7RawMessage msg;
+                        msg.setField<0>(cj.timestamp_ns);
+                        msg.setField<1>(fsw::t7::kCjcTableOffset);
+                        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+                        msg.setField<3>(cj.temp_c);
+                        msg.setField<4>(cj.sample_ms);
+                        msg.setField<5>(uint8_t{0});
+                        db.publish(fsw::t7::cjc_table_id(board.slot()), msg);
+                    }
                     for (const auto& s : block.samples) {
                         comms::messages::sensor::T7RawMessage msg;
                         msg.setField<0>(s.timestamp_ns);
@@ -197,17 +208,6 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                         msg.setField<4>(s.sample_ms);
                         msg.setField<5>(uint8_t{0});
                         db.publish(fsw::t7::table_id(board.slot(), s.ain), msg);
-                        if (s.has_value) {
-                            // Same 21-byte layout as the ESP32 calibrated tables.
-                            comms::messages::sensor::T7CalibratedMessage cal;
-                            cal.setField<0>(s.timestamp_ns);
-                            cal.setField<1>(s.ain);
-                            cal.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
-                            cal.setField<3>(s.value);
-                            cal.setField<4>(static_cast<int32_t>(std::lround(s.volts * 1e6)));
-                            cal.setField<5>(uint8_t{1});
-                            db.publish(fsw::t7::calibrated_table_id(board.slot(), s.ain), cal);
-                        }
                     }
                     if (db.flush_batch()) {
                         published += block.samples.size();
@@ -229,9 +229,9 @@ void run_board(const fsw::config::T7Board& board, const fsw::time::TimeSyncConfi
                     next_log += std::chrono::seconds(10);
                     Line(std::cout)
                         << tag << "published " << published << ", dropped (no Elodin) " << dropped
-                        << ", lost to auto-recovery " << skipped << ", unconvertible "
-                        << unconverted << " | backlog device " << block.backlog.device_scans
-                        << " / LJM " << block.backlog.ljm_scans << " scans" << std::endl;
+                        << ", lost to auto-recovery " << skipped << " | backlog device "
+                        << block.backlog.device_scans << " / LJM " << block.backlog.ljm_scans
+                        << " scans" << std::endl;
                 }
             }
         } catch (const fsw::t7::T7Error& e) {

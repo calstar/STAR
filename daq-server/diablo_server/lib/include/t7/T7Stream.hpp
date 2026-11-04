@@ -100,10 +100,13 @@ struct Sample {
     float volts = 0.0f;
     uint64_t timestamp_ns = 0;
     uint32_t sample_ms = 0;  ///< ms since stream start (wraps at 2^32)
-    /** psi / C / kg (t7/T7Convert.hpp). Only meaningful when has_value: a VOLTAGE channel, AIN14,
-     *  and anything the conversion could not produce (NaN) have no calibrated value. */
-    float value = 0.0f;
-    bool has_value = false;
+};
+
+/** One scan's thermocouple cold-junction temperature (the T7's terminals), in °C. */
+struct ColdJunction {
+    float temp_c = 0.0f;
+    uint64_t timestamp_ns = 0;
+    uint32_t sample_ms = 0;
 };
 
 /** A decoded LJM_eStreamRead block. */
@@ -111,7 +114,8 @@ struct Block {
     std::vector<Sample> samples;
     uint64_t scans = 0;            ///< scans in the block, including lost ones
     uint64_t skipped_samples = 0;  ///< values that were kDummyValue (auto-recovery), not published
-    uint64_t unconverted = 0;  ///< PT/TC/LC samples with no calibrated value (e.g. TC off-curve)
+    /** One per scan with a readable AIN14, on a board with a TC; empty otherwise. */
+    std::vector<ColdJunction> cold_junction;
     T7Device::Backlog backlog;
 };
 
