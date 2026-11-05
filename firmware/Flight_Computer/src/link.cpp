@@ -15,8 +15,12 @@ ArmAction Link::poll(uint32_t now_ms) {
     if (rs == RadioStatus::NoData) {
         return ArmAction::None;
     }
+    if (rs == RadioStatus::ErrTooLong) {
+        frames_dropped_++;  // a packet arrived but could not be used
+        return ArmAction::None;
+    }
     if (rs != RadioStatus::Ok) {
-        frames_dropped_++;
+        radio_errors_++;  // the radio itself did not answer
         return ArmAction::None;
     }
     if (decode_frame(buf, len, f) != FrameStatus::Ok) {

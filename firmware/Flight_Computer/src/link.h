@@ -30,12 +30,16 @@ public:
     }  // valid frames
     uint32_t frames_dropped() const {
         return frames_dropped_;
-    }  // bad CRC etc.
+    }  // a packet arrived but was unusable: bad CRC, too long, etc.
+    uint32_t radio_errors() const {
+        return radio_errors_;
+    }  // the radio did not answer (ErrNotFound, ErrTimeout, ...)
 
 private:
     ArmGate gate_;
     uint32_t frames_ok_ = 0;
     uint32_t frames_dropped_ = 0;
+    uint32_t radio_errors_ = 0;
 };
 
 }  // namespace radio_link

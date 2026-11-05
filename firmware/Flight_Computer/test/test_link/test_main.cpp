@@ -124,6 +124,18 @@ static void test_send_goes_through_the_seam(void) {
     TEST_ASSERT_EQUAL(FrameType::SelfTest, f.type);
 }
 
+// A radio that stops answering is not counted as a bad frame: the heartbeat
+// must be able to say "radio dead" rather than "noisy channel".
+static void test_radio_errors_are_counted_apart_from_bad_frames(void) {
+    fake::fail_next_receive(RadioStatus::ErrNotFound);
+    TEST_ASSERT_EQUAL(ArmAction::None, lk.poll(0));
+    fake::fail_next_receive(RadioStatus::ErrTimeout);
+    TEST_ASSERT_EQUAL(ArmAction::None, lk.poll(1));
+    TEST_ASSERT_EQUAL_UINT32(2, lk.radio_errors());
+    TEST_ASSERT_EQUAL_UINT32(0, lk.frames_dropped());
+    TEST_ASSERT_EQUAL_UINT32(0, lk.frames_ok());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_probe_reports_chip_presence);
@@ -134,5 +146,6 @@ int main(void) {
     RUN_TEST(test_pure_noise_never_arms);
     RUN_TEST(test_heartbeat_is_counted_but_not_acted_on);
     RUN_TEST(test_send_goes_through_the_seam);
+    RUN_TEST(test_radio_errors_are_counted_apart_from_bad_frames);
     return UNITY_END();
 }

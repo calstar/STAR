@@ -21,6 +21,7 @@ uint8_t g_tx[kMaxPacket];
 uint8_t g_tx_len = 0;
 unsigned g_tx_count = 0;
 RadioStatus g_send_result = RadioStatus::Ok;
+RadioStatus g_next_receive = RadioStatus::Ok;
 
 }  // namespace
 
@@ -33,6 +34,11 @@ void reset(bool chip_present) {
     g_tx_len = 0;
     g_tx_count = 0;
     g_send_result = RadioStatus::Ok;
+    g_next_receive = RadioStatus::Ok;
+}
+
+void fail_next_receive(RadioStatus result) {
+    g_next_receive = result;
 }
 
 void set_send_result(RadioStatus result) {
@@ -80,6 +86,11 @@ RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
 }
 
 RadioStatus radio_receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
+    if (g_next_receive != RadioStatus::Ok) {
+        const RadioStatus result = g_next_receive;
+        g_next_receive = RadioStatus::Ok;
+        return result;
+    }
     if (g_count == 0) {
         return RadioStatus::NoData;
     }
