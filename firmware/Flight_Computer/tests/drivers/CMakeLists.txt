@@ -8,12 +8,12 @@ option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" O
 
 set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../drivers)
 
-add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c)
+add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c)
 target_include_directories(star_drivers PUBLIC ${DRIVERS})
 add_library(fake_regs STATIC fake_regs.c)
 target_link_libraries(fake_regs PUBLIC star_drivers)
 
-set(TESTS test_ism330dhcx test_h3lis100dl)
+set(TESTS test_ism330dhcx test_h3lis100dl test_ms5611)
 foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} PRIVATE fake_regs)
