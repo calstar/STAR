@@ -69,6 +69,18 @@ board_spi_status_t board_spi_transfer(board_spi_device_t device,
                                       const uint8_t* tx, uint8_t* rx,
                                       uint16_t len, uint32_t deadline_ms);
 
+/*
+ * Manual chip-select, for sequences that must hold CS across a wait (MS5611
+ * reset: CSB low through the 2.8 ms PROM reload). Caller holds the lock and
+ * must deselect on every path. board_spi_shift() moves bytes without touching
+ * CS (tx == NULL sends 0xFF, rx == NULL discards).
+ */
+void board_spi_select(board_spi_device_t device);
+void board_spi_deselect(board_spi_device_t device);
+board_spi_status_t board_spi_shift(board_spi_device_t device, const uint8_t* tx,
+                                   uint8_t* rx, uint16_t len,
+                                   uint32_t deadline_ms);
+
 /* Clock out len bytes of 0xFF with chip-select HIGH (SD card wake-up).
  * Caller holds the lock. */
 board_spi_status_t board_spi_idle_clocks(board_spi_device_t device,

@@ -24,7 +24,7 @@ typedef struct {
 static const board_spi_route_t routes[BOARD_SPI_COUNT] = {
     [BOARD_SPI_IMU] = {&hspi3, IMU_CS_GPIO_Port, IMU_CS_Pin, NULL, 0},
     [BOARD_SPI_HIGH_G] = {&hspi3, ACCEL_CS_GPIO_Port, ACCEL_CS_Pin, NULL, 0},
-    [BOARD_SPI_BARO] = {0},
+    [BOARD_SPI_BARO] = {&hspi3, BARO_CS_GPIO_Port, BARO_CS_Pin, NULL, 0},
     [BOARD_SPI_ETH] = {0},
     [BOARD_SPI_RADIO] = {0},
     [BOARD_SPI_NAND] = {0},
@@ -183,6 +183,27 @@ board_spi_status_t board_spi_transfer(board_spi_device_t device,
     st = board_spi_frame(device, tx, rx, len, deadline_ms);
     board_spi_unlock(device);
     return st;
+}
+
+void board_spi_select(board_spi_device_t device) {
+    const board_spi_route_t* r = route(device);
+    if (r)
+        HAL_GPIO_WritePin(r->cs_port, r->cs_pin, GPIO_PIN_RESET);
+}
+
+void board_spi_deselect(board_spi_device_t device) {
+    const board_spi_route_t* r = route(device);
+    if (r)
+        HAL_GPIO_WritePin(r->cs_port, r->cs_pin, GPIO_PIN_SET);
+}
+
+board_spi_status_t board_spi_shift(board_spi_device_t device, const uint8_t* tx,
+                                   uint8_t* rx, uint16_t len,
+                                   uint32_t deadline_ms) {
+    const board_spi_route_t* r = route(device);
+    if (!r)
+        return BOARD_SPI_NOT_CONFIGURED;
+    return shift(r, tx, rx, len, deadline_ms);
 }
 
 board_spi_status_t board_spi_idle_clocks(board_spi_device_t device,
