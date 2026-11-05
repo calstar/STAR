@@ -24,6 +24,19 @@ jobs:
       - name: Run portable tests
         run: ctest --test-dir /tmp/star-self-test --output-on-failure
 
+  stm32-emmc-host:
+    name: STM32 flight state + eMMC log (host only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure with sanitizers
+        run: cmake -S firmware/Flight_Computer/tests/emmc -B /tmp/star-emmc -DSELF_TEST_SANITIZERS=ON
+      - name: Build
+        run: cmake --build /tmp/star-emmc
+      - name: Run
+        run: ctest --test-dir /tmp/star-emmc --output-on-failure
+
   build-firmware:
     name: Build ${{ matrix.project }}
     runs-on: ubuntu-latest
