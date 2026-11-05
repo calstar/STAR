@@ -28,6 +28,7 @@
 
 #include <string.h>
 
+#include "board.h"
 #include "cmsis_os2.h"
 #include "main.h"
 
@@ -38,13 +39,14 @@ extern MMC_HandleTypeDef hmmc1;
 #define AXI_SRAM_END 0x24050000UL /* 320 KB with the default TCM split */
 #define LOG_CHUNKS 4U             /* 64 KB: ~1 s of card stall at ~60 kB/s */
 
-/* DMA buffers. They must be in AXI SRAM, but CubeMX's GCC script puts .bss
- * in DTCM, so as declared here start() refuses with EMMC_ERR_PARAM. They
- * need the RAM_D1 NOLOAD section from the board linker script (not yet
- * added). NOLOAD is fine: none of the three is read before it is written. */
-static emmc_log_chunk_t chunks[LOG_CHUNKS] __attribute__((aligned(32)));
-static uint8_t scratch[EMMC_BLOCK_SIZE] __attribute__((aligned(32)));
-static uint32_t ext_csd[EMMC_BLOCK_SIZE / 4U] __attribute__((aligned(32)));
+/* DMA buffers. They must be in AXI SRAM: CubeMX's GCC script puts .bss in
+ * DTCM, which the SDMMC IDMA cannot reach. BOARD_DMA_BUFFER (board.h) puts
+ * them in the .dma_buffers NOLOAD section in RAM_D1; start() still checks
+ * the addresses. NOLOAD is fine: none of the three is read before it is
+ * written. */
+static emmc_log_chunk_t chunks[LOG_CHUNKS] BOARD_DMA_BUFFER;
+static uint8_t scratch[EMMC_BLOCK_SIZE] BOARD_DMA_BUFFER;
+static uint32_t ext_csd[EMMC_BLOCK_SIZE / 4U] BOARD_DMA_BUFFER;
 
 static emmc_log_t flight_log;
 static osMutexId_t queue_mutex;
