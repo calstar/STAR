@@ -32,6 +32,7 @@ typedef struct {
     self_test_status_t self_test;
     /* Raw counts of every ADC input, taken after the checks. */
     board_adc_snapshot_t analog;
+    bool app_started; /* app_start(): every application task created */
 } bringup_report_t;
 
 extern bringup_report_t g_bringup_report;

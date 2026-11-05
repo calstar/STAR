@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "app.h"
 #include "board.h"
 #include "board_bringup.h"
 #include "cmsis_os2.h"
@@ -82,6 +83,9 @@ static void bringup_task(void* argument) {
     board_adc_snapshot(&g_bringup_report.analog, 10);
     g_bringup_report.finished_at_ms = board_now_ms();
     g_bringup_report.finished = true;
+
+    /* Chips are out of reset and checked: start the application tasks. */
+    g_bringup_report.app_started = app_start();
 
     bool required_ok = status && status->probes_outcome == SELF_TEST_PASS;
     led(LED2_GPIO_Port, LED2_Pin, !required_ok);
