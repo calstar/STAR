@@ -5,10 +5,6 @@
 namespace radio_link {
 namespace {
 
-// Biggest SPI exchange we make: ReadBuffer = opcode + offset + NOP + up to
-// 255 packet bytes.
-constexpr unsigned kMaxExchange = 3 + 255;
-
 // Flags we clear once we have dealt with a packet (good or bad).
 constexpr uint16_t kPacketFlags = kIrqRxDone | kIrqHeaderErr | kIrqCrcErr;
 
@@ -89,13 +85,14 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     // 3. Read the packet. We send the opcode, the start position and one
     // NOP, then one dummy byte for each packet byte we want back. Reply
     // bytes: junk, status, status, then the packet.
-    uint8_t read_tx[kMaxExchange] = {kOpReadBuffer, start, 0};
-    uint8_t read_rx[kMaxExchange];
     const uint16_t total = static_cast<uint16_t>(3 + packet_len);
-    if (!command(read_tx, read_rx, total) || !status_ok(read_rx[1])) {
+    read_tx_[0] = kOpReadBuffer;
+    read_tx_[1] = start;
+    memset(read_tx_ + 2, 0, total - 2);  // NOP, then one dummy byte each
+    if (!command(read_tx_, read_rx_, total) || !status_ok(read_rx_[1])) {
         return RadioStatus::ErrNotFound;
     }
-    memcpy(buf, read_rx + 3, packet_len);
+    memcpy(buf, read_rx_ + 3, packet_len);
     len = packet_len;
 
     // 4. Tell the chip we have taken the packet (this turns DIO1 off).

@@ -40,6 +40,10 @@ private:
     uint32_t frames_ok_ = 0;
     uint32_t frames_dropped_ = 0;
     uint32_t radio_errors_ = 0;
+    // Packet and frame buffers live here, not on the caller's stack
+    // (~0.5 KB): one Link per radio task.
+    uint8_t buf_[kLoraMaxPacket];
+    Frame frame_;
 };
 
 }  // namespace radio_link

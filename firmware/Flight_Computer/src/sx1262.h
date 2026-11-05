@@ -71,8 +71,14 @@ private:
     // Reset the flags in `mask` in the chip's IRQ register.
     bool clear_irq(uint16_t mask);
 
+    // Biggest SPI exchange: ReadBuffer = opcode + offset + NOP + up to 255
+    // packet bytes. Kept here, not on the caller's stack (~0.5 KB).
+    static constexpr unsigned kMaxExchange = 3 + 255;
+
     SpiBus& bus_;
     uint32_t crc_errors_ = 0;
+    uint8_t read_tx_[kMaxExchange];
+    uint8_t read_rx_[kMaxExchange];
 };
 
 }  // namespace radio_link
