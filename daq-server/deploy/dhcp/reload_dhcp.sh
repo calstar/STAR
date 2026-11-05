@@ -1,7 +1,9 @@
 #!/bin/bash
 # Regenerate board-LAN DHCP reservations from the DAQ config and reload dnsmasq.
 #
-# Use this after you add or change a [boards.*].mac. It regenerates
+# Normally unnecessary: star-dhcp-sync.path (installed by install_dhcp.sh) does
+# this whenever the deployed config.toml changes. Use it by hand only to apply a
+# config other than the deployed one. It regenerates
 # /etc/star-dhcp/star-dhcp.hosts and sends SIGHUP (systemctl reload), which
 # re-reads the reservations WITHOUT bouncing the service or dropping the pool.
 #

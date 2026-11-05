@@ -10,6 +10,12 @@ Conflicts=dnsmasq.service
 
 [Service]
 Type=simple
+# The recovery address on the board NIC: a board no DHCP server answered sits on
+# 169.254.<x>.<y> from its MAC (firmware/Hotfire_Code/common/board_net.h), and
+# this is how the server reaches it to reflash (ota_upload.py --mac/--board).
+# .0.20 is outside the 169.254.1-254.x range boards use, so it never collides.
+# "-": a failure here must not stop DHCP.
+ExecStartPre=-/bin/sh -c 'ip addr replace 169.254.0.20/16 dev "$$(sed -n "s/^interface=//p" /etc/star-dhcp/star-dhcp.conf)"'
 # Fail fast on a bad generated config instead of crash-looping.
 ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/etc/star-dhcp/star-dhcp.conf
 # --conf-file=<ours> => the distro /etc/dnsmasq.conf and /etc/dnsmasq.d are NOT

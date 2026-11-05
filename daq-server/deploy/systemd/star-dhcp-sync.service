@@ -1,0 +1,22 @@
+[Unit]
+Description=STAR board-LAN DHCP: regenerate reservations from the DAQ config
+Documentation=file:%h/sensor_system/daq-server/deploy/dhcp/README.md
+# Started by star-dhcp-sync.path whenever the deployed config.toml changes, so a
+# board's `mac =` saved in the config editor is served with no shell step.
+# install_dhcp.sh fills in @GENERATOR@ (a root-owned copy of
+# generate_dhcp_config.py, so root never runs a script a user can edit) and
+# @CONFIG@ (the deployed config.toml, read as data only).
+After=star-dhcp.service
+
+[Service]
+Type=oneshot
+# Refuses a bad config (duplicate MAC, colliding recovery address, board_id that
+# disagrees with its ip) before writing anything: the served list stays as it
+# was, and the error is in `journalctl -u star-dhcp-sync`, which the Boards page
+# shows.
+ExecStart=/usr/bin/python3 @GENERATOR@ --config @CONFIG@ --out-dir /etc/star-dhcp --hosts-only
+# SIGHUP: re-read the reservations without dropping a lease. No-op when
+# star-dhcp is not running.
+ExecStartPost=/bin/systemctl try-reload-or-restart star-dhcp.service
+ProtectHome=read-only
+PrivateTmp=yes
