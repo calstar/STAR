@@ -78,6 +78,17 @@ int ism330_init(const dev_bus_t* bus) {
     return DEV_OK;
 }
 
+int ism330_power_down(const dev_bus_t* bus) {
+    if (!bus) {
+        return DEV_ERR_PARAM;
+    }
+    if (write_reg(bus, REG_CTRL1_XL, 0x00) != DEV_OK ||
+        write_reg(bus, REG_CTRL2_G, 0x00) != DEV_OK) {
+        return DEV_ERR_BUS;
+    }
+    return DEV_OK;
+}
+
 static int16_t le16(const uint8_t* p) {
     return (int16_t)(uint16_t)(p[0] | (uint16_t)p[1] << 8);
 }

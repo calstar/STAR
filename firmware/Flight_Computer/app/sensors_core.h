@@ -67,6 +67,11 @@ typedef struct {
 /* Buses and sink must be set before init. Initializes all three sensors. */
 void sensors_core_init(sensors_core_t* core, uint32_t now_us);
 
+/* Idle: power the IMU and high-g down (DRDY stops) and drop any barometer
+ * conversion; the MS5611 is in standby whenever it is not converting.
+ * sensors_core_init() starts everything again. */
+void sensors_core_stop(sensors_core_t* core);
+
 /* Handle events (SENSORS_EV_*) with their edge times, then any timeouts. */
 void sensors_core_step(sensors_core_t* core, uint32_t events,
                        uint32_t imu_edge_us, uint32_t highg_edge_us,

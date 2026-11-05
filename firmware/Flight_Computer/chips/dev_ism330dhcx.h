@@ -40,6 +40,11 @@ typedef struct {
 /* Identify, software-reset, configure and verify every register. */
 int ism330_init(const dev_bus_t* bus);
 
+/* Accelerometer and gyro to power-down (Idle): ODR_XL = ODR_G = 0000 in
+ * CTRL1_XL / CTRL2_G (Table 43 p.49, Table 46 p.50); 3 uA (p.13). DRDY
+ * stops. ism330_init() wakes it again. */
+int ism330_power_down(const dev_bus_t* bus);
+
 /* One 14-byte burst from OUT_TEMP_L (20h): temperature, gyro, accel. */
 int ism330_read(const dev_bus_t* bus, ism330_sample_t* out);
 

@@ -60,6 +60,13 @@ int h3lis_init(const dev_bus_t* bus) {
     return DEV_OK;
 }
 
+int h3lis_power_down(const dev_bus_t* bus) {
+    if (!bus) {
+        return DEV_ERR_PARAM;
+    }
+    return write_reg(bus, REG_CTRL_REG1, 0x07) == DEV_OK ? DEV_OK : DEV_ERR_BUS;
+}
+
 int h3lis_read(const dev_bus_t* bus, h3lis_sample_t* out) {
     if (!bus || !out) {
         return DEV_ERR_PARAM;
