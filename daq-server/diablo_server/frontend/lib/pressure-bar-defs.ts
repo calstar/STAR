@@ -12,6 +12,7 @@ import type { SensorConfig } from '@/lib/sensor-config';
 import type { PressureBarConfig } from '@/lib/gui-config';
 import type { PressureLimitsMap } from '@/lib/pressure-limits';
 import { getEntityColor } from '@/lib/sensor-colors';
+import { pressureLimitKeyForRole } from '@/lib/pressure-limit-rows';
 
 /** Fixed strip colors (must stay stable; entity strings change with wiring). */
 const STRIP_LABEL_COLORS: Record<string, string> = {
@@ -90,7 +91,11 @@ function configBarToSource(bar: PressureBarConfig): BarSource {
     label: bar.label,
     roles: bar.role ? [bar.role] : (bar.avg_roles ?? []),
     avgRoles: bar.avg_roles,
-    limitsKey: bar.limits,
+    // An empty `limits` ("generic") still reads the PT's own row: that is the row the config tab's
+    // Pressure Limits section shows for this sensor, and where its "Show in top bar" box writes.
+    // Without the fallback the box wrote [pressure_limits.DR-PT-G] and the DR-PT-G gauge, whose
+    // `limits = ""`, never looked there -- unticking it left the lines drawn.
+    limitsKey: bar.limits || (bar.role ? pressureLimitKeyForRole(bar.role) : undefined),
     color: bar.color,
   };
 }
