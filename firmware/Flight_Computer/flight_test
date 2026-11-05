@@ -93,9 +93,9 @@ check() {
 
 stage() { [ "$LIST" = 1 ] && echo "── $1" || printf '\n── %s\n' "$1"; }
 
-ctest_suite() { # name source_dir
+ctest_suite() { # name source_dir [sanitizer option, default SELF_TEST_SANITIZERS]
   local build="$OUT/build_$1"
-  cmake -S "$HERE/$2" -B "$build" -DSELF_TEST_SANITIZERS=ON >/dev/null &&
+  cmake -S "$HERE/$2" -B "$build" -D"${3:-SELF_TEST_SANITIZERS}"=ON >/dev/null &&
     cmake --build "$build" -j 4 &&
     ctest --test-dir "$build" --output-on-failure
 }
@@ -158,7 +158,7 @@ check dma_placement "every DMA buffer links into RAM_D1 (0x24000000-0x2404FFFF)"
 
 # ── stage 2: unit suites ───────────────────────────────────────────────────
 stage "2  unit suites (ASan/UBSan)"
-check radio "radio link: frames, ARM gate, SX1262, fake radio (PlatformIO native)" \
+check radio "radio: frames, ARM gate, SX1262 receive + start-up + TxDone (PlatformIO native)" \
   "$PIO" test -d "$HERE" -e native
 check self_test "self-test coordinator + device protocols, GNSS frames, SD SPI" \
   ctest_suite self_test tests/self_test
@@ -166,33 +166,43 @@ check emmc "eMMC log: chunks, mount, torn writes, card checks, flight state" \
   ctest_suite emmc tests/emmc
 check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
   ctest_suite chips tests/chips
-check app "task cores + boot report: sensors, GNSS, battery, self-test verdict" ctest_suite app tests/app
+check app "task cores: sensors, GNSS, boot report, sleep math, mode" ctest_suite app tests/app
+check idle "Idle logic (Aaron, PR #162): heartbeat schedule, battery, Arm" \
+  ctest_suite idle tests/idle IDLE_SANITIZERS
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
-stage "3  end to end: flight profile -> drivers -> cores -> eMMC -> read back"
+stage "3  end to end: flight (drivers -> cores -> eMMC) and Idle (heartbeats, Stop, Arm)"
 E2E_BUILD="$OUT/build_e2e"
 E2E_READY=0
 if [ "$LIST" = 1 ] || cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" -DSELF_TEST_SANITIZERS=ON >"$OUT/e2e_build.log" 2>&1 &&
    cmake --build "$E2E_BUILD" -j 4 >>"$OUT/e2e_build.log" 2>&1; then
   E2E_READY=1
 fi
+# flight_e2e: the flight (sensors, GPS, eMMC); idle_e2e: Idle (heartbeats,
+# Stop, Arm over LoRa). Same CHECK line protocol.
+E2E_BINS="flight_e2e idle_e2e"
 if [ "$LIST" = 1 ]; then
-  while IFS=$'\t' read -r id what; do
-    NUM=$((NUM + 1)); printf '%2d  %-18s %s\n' "$NUM" "$id" "$what"
-  done < <(cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" >/dev/null 2>&1 &&
-           cmake --build "$E2E_BUILD" >/dev/null 2>&1 && "$E2E_BUILD/flight_e2e" --list)
+  cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" >/dev/null 2>&1 &&
+    cmake --build "$E2E_BUILD" >/dev/null 2>&1
+  for bin in $E2E_BINS; do
+    while IFS=$'\t' read -r id what; do
+      NUM=$((NUM + 1)); printf '%2d  %-18s %s\n' "$NUM" "$id" "$what"
+    done < <("$E2E_BUILD/$bin" --list)
+  done
 elif [ "$E2E_READY" = 1 ]; then
-  while IFS=$'\t' read -r id what; do
-    NUM=$((NUM + 1))
-    selected "$id" "$NUM" || continue
-    t0=$(now)
-    line="$("$E2E_BUILD/flight_e2e" --only="$id" 2>"$OUT/$id.log" | grep '^CHECK ')"
-    t1=$(now)
-    status=$(echo "$line" | awk '{print $3}')
-    detail="${line#*| }"
-    echo "$line" >>"$OUT/$id.log"
-    record "$id" "$what" "${status:-FAIL}" "$detail" "$(echo "$t1 - $t0" | bc)"
-  done < <("$E2E_BUILD/flight_e2e" --list)
+  for bin in $E2E_BINS; do
+    while IFS=$'\t' read -r id what; do
+      NUM=$((NUM + 1))
+      selected "$id" "$NUM" || continue
+      t0=$(now)
+      line="$("$E2E_BUILD/$bin" --only="$id" 2>"$OUT/$id.log" | grep '^CHECK ')"
+      t1=$(now)
+      status=$(echo "$line" | awk '{print $3}')
+      detail="${line#*| }"
+      echo "$line" >>"$OUT/$id.log"
+      record "$id" "$what" "${status:-FAIL}" "$detail" "$(echo "$t1 - $t0" | bc)"
+    done < <("$E2E_BUILD/$bin" --list)
+  done
 else
   NUM=$((NUM + 1))
   record e2e_build "end-to-end harness builds" FAIL "see $OUT/e2e_build.log" 0
