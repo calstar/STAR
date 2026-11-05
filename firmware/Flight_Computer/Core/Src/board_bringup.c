@@ -248,15 +248,14 @@ done:
  * the full identification (CMD0/1/2/3, CSD, EXT_CSD) and switched to 4-bit
  * with CMD6, which writes the bus-width setting but no stored data. Then the
  * CID is read and the card must be in the transfer state.
- * The HAL's internal command timeouts bound init, not budget_ms.
+ *
+ * Exactly once per power-up: the datasheet warns that repeated CMD0/CMD1
+ * initialization causes read disturb (THGBMTG5D1LBAIL rev 1.0, p.28), so
+ * self-test retries report the first result instead of initializing again.
+ * hmmc1 is left READY for the eMMC log adapter (emmc_stm32.c), which owns
+ * every transfer after this. The HAL's command timeouts bound the init.
  */
-static self_test_reply_t emmc_probe(board_bringup_t* b) {
-    if (!b->emmc_reset_released) {
-        return reply(SELF_TEST_NOT_CONFIGURED, 0);
-    }
-    if (hmmc1.State != HAL_MMC_STATE_RESET) {
-        HAL_MMC_DeInit(&hmmc1); /* retry from a clean controller */
-    }
+static self_test_reply_t emmc_identify(void) {
     if (!board_soft_init(MX_SDMMC1_MMC_Init)) {
         return reply(SELF_TEST_FAIL, (int32_t)(hmmc1.ErrorCode & 0x7FFFFFFFU));
     }
@@ -272,12 +271,24 @@ static self_test_reply_t emmc_probe(board_bringup_t* b) {
     return reply(SELF_TEST_PASS, (int32_t)cid.ManufacturerID);
 }
 
+static self_test_reply_t emmc_probe(board_bringup_t* b) {
+    if (!b->emmc_reset_released) {
+        return reply(SELF_TEST_NOT_CONFIGURED, 0);
+    }
+    if (!b->emmc_init_attempted) {
+        b->emmc_init_attempted = true;
+        b->emmc_result = emmc_identify();
+    }
+    return b->emmc_result;
+}
+
 void board_bringup_power_up(board_bringup_t* b) {
     b->devices.exchange = board_spi_self_test_exchange;
     b->devices.io_context = NULL;
     b->devices.configured_mask = 0;
     b->gnss_powered = false;
     b->emmc_reset_released = false;
+    b->emmc_init_attempted = false;
     /* ADC1: offset + linearity calibration once, before any conversion. */
     b->adc_ready = board_adc_init();
     if (!board_spi_init()) {

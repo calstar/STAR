@@ -38,6 +38,8 @@ typedef struct {
     self_test_devices_t devices;
     bool gnss_powered;
     bool emmc_reset_released;
+    bool emmc_init_attempted; /* the card is initialized once per power-up */
+    self_test_reply_t emmc_result;
     bool adc_ready;
 } board_bringup_t;
 
