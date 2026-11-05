@@ -13,7 +13,9 @@ namespace radio_link {
 class FakeChip : public SpiBus {
 public:
     static constexpr unsigned kLogSize = 16;
-    static constexpr uint8_t kStatus = 0x2A;  // the status byte it replies with
+    // Status byte it replies with: chip mode RX (5), command status "data
+    // available" (2). Datasheet Rev 1.2, Table 13-76, page 95.
+    static constexpr uint8_t kStatus = 0x54;
 
     FakeChip() {
         reset();
@@ -25,6 +27,9 @@ public:
         packet_len_ = 0;
         packet_start_ = 0;
         never_ready_ = false;
+        status_ = kStatus;
+        stuck_ = false;
+        stuck_level_ = 0;
         waits_ = 0;
         transfers_ = 0;
         log_len_ = 0;
@@ -49,6 +54,17 @@ public:
     // Pretend the BUSY pin never goes low.
     void set_never_ready() {
         never_ready_ = true;
+    }
+
+    // Reply with this status byte instead of kStatus.
+    void set_status(uint8_t status) {
+        status_ = status;
+    }
+
+    // Pretend there is no chip: MISO reads `level` on every byte.
+    void set_stuck(uint8_t level) {
+        stuck_ = true;
+        stuck_level_ = level;
     }
 
     uint16_t irq() const {
@@ -77,21 +93,25 @@ public:
         if (log_len_ < kLogSize) {
             log_[log_len_++] = tx[0];
         }
+        if (stuck_) {
+            memset(rx, stuck_level_, len);
+            return;
+        }
         memset(rx, 0xEE, len);  // junk, so tests catch reads of the wrong byte
         switch (tx[0]) {
             case kOpGetIrqStatus:
-                rx[1] = kStatus;
+                rx[1] = status_;
                 rx[2] = static_cast<uint8_t>(irq_ >> 8);
                 rx[3] = static_cast<uint8_t>(irq_ & 0xFF);
                 break;
             case kOpGetRxBufferStatus:
-                rx[1] = kStatus;
+                rx[1] = status_;
                 rx[2] = packet_len_;
                 rx[3] = packet_start_;
                 break;
             case kOpReadBuffer:
-                rx[1] = kStatus;
-                rx[2] = kStatus;
+                rx[1] = status_;
+                rx[2] = status_;
                 for (unsigned i = 3; i < len; i++) {
                     rx[i] = buffer_[(tx[1] + (i - 3)) & 0xFF];
                 }
@@ -111,6 +131,9 @@ private:
     uint8_t packet_len_;
     uint8_t packet_start_;
     bool never_ready_;
+    uint8_t status_;
+    bool stuck_;
+    uint8_t stuck_level_;
     unsigned waits_;
     unsigned transfers_;
     uint8_t log_[kLogSize];

@@ -156,6 +156,51 @@ static void test_busy_is_checked_before_every_exchange(void) {
     TEST_ASSERT_EQUAL_UINT(chip.transfers(), chip.waits());
 }
 
+// No chip at all: MISO floats or is held at one level. Before the status
+// check, 0x00 read as "no flags" and 0xFF as "header + CRC error", so a dead
+// radio looked like a quiet one.
+static void test_missing_chip_reading_zeros_reports_not_found(void) {
+    Sx1262 radio(chip);
+    chip.set_stuck(0x00);
+    uint8_t buf[16];
+    uint8_t len = 0;
+    TEST_ASSERT_EQUAL(RadioStatus::ErrNotFound,
+                      radio.receive(buf, sizeof buf, len));
+}
+
+static void test_missing_chip_reading_ones_reports_not_found(void) {
+    Sx1262 radio(chip);
+    chip.set_stuck(0xFF);
+    uint8_t buf[16];
+    uint8_t len = 0;
+    TEST_ASSERT_EQUAL(RadioStatus::ErrNotFound,
+                      radio.receive(buf, sizeof buf, len));
+}
+
+// A live chip reporting a failed command (mode RX, status 5 "failure to
+// execute": 0x5A) is not treated as "no packet".
+static void test_command_failure_status_reports_not_found(void) {
+    Sx1262 radio(chip);
+    chip.set_status(0x5A);
+    uint8_t buf[16];
+    uint8_t len = 0;
+    TEST_ASSERT_EQUAL(RadioStatus::ErrNotFound,
+                      radio.receive(buf, sizeof buf, len));
+}
+
+// A bad status in a later reply (GetRxBufferStatus) is caught too, and no
+// packet is handed out.
+static void test_bad_status_while_reading_a_packet_reports_not_found(void) {
+    Sx1262 radio(chip);
+    chip.packet_arrives(kFrame, sizeof kFrame, 0);
+    chip.set_status(0x58);  // mode RX, status 4 "processing error"
+    uint8_t buf[16];
+    uint8_t len = 0xAB;
+    TEST_ASSERT_EQUAL(RadioStatus::ErrNotFound,
+                      radio.receive(buf, sizeof buf, len));
+    TEST_ASSERT_EQUAL_UINT8(0xAB, len);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_no_flags_returns_no_data);
@@ -170,5 +215,9 @@ int main(void) {
     RUN_TEST(test_zero_length_packet_is_dropped);
     RUN_TEST(test_chip_stuck_busy_reports_not_found);
     RUN_TEST(test_busy_is_checked_before_every_exchange);
+    RUN_TEST(test_missing_chip_reading_zeros_reports_not_found);
+    RUN_TEST(test_missing_chip_reading_ones_reports_not_found);
+    RUN_TEST(test_command_failure_status_reports_not_found);
+    RUN_TEST(test_bad_status_while_reading_a_packet_reports_not_found);
     return UNITY_END();
 }

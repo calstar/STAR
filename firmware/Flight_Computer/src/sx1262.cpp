@@ -12,6 +12,20 @@ constexpr unsigned kMaxExchange = 3 + 255;
 // Flags we clear once we have dealt with a packet (good or bad).
 constexpr uint16_t kPacketFlags = kIrqRxDone | kIrqHeaderErr | kIrqCrcErr;
 
+// The status byte the chip returns in byte 1 of every "get" reply
+// (datasheet Rev 1.2, Table 13-76, page 95): bits 6:4 are the chip mode
+// (2 STBY_RC .. 6 TX), bits 3:1 the command status (3 timeout, 4 processing
+// error, 5 failure to execute). A missing chip or a stuck MISO line reads
+// 0x00 or 0xFF, which decode as modes 0 and 7 and are rejected here.
+bool status_ok(uint8_t status) {
+    const uint8_t mode = (status >> 4) & 0x07;
+    const uint8_t result = (status >> 1) & 0x07;
+    if (mode < 0x2 || mode > 0x6) {
+        return false;
+    }
+    return result != 0x3 && result != 0x4 && result != 0x5;
+}
+
 }  // namespace
 
 bool Sx1262::command(const uint8_t* tx, uint8_t* rx, uint16_t n) {
@@ -33,7 +47,7 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     // 1. What happened? Reply bytes: junk, status, IRQ high, IRQ low.
     const uint8_t irq_tx[4] = {kOpGetIrqStatus, 0, 0, 0};
     uint8_t irq_rx[4];
-    if (!command(irq_tx, irq_rx, sizeof irq_tx)) {
+    if (!command(irq_tx, irq_rx, sizeof irq_tx) || !status_ok(irq_rx[1])) {
         return RadioStatus::ErrNotFound;
     }
     const uint16_t irq = static_cast<uint16_t>((irq_rx[2] << 8) | irq_rx[3]);
@@ -51,7 +65,7 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     // Reply bytes: junk, status, length, start position.
     const uint8_t buf_tx[4] = {kOpGetRxBufferStatus, 0, 0, 0};
     uint8_t buf_rx[4];
-    if (!command(buf_tx, buf_rx, sizeof buf_tx)) {
+    if (!command(buf_tx, buf_rx, sizeof buf_tx) || !status_ok(buf_rx[1])) {
         return RadioStatus::ErrNotFound;
     }
     const uint8_t packet_len = buf_rx[2];
@@ -71,7 +85,7 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     uint8_t read_tx[kMaxExchange] = {kOpReadBuffer, start, 0};
     uint8_t read_rx[kMaxExchange];
     const uint16_t total = static_cast<uint16_t>(3 + packet_len);
-    if (!command(read_tx, read_rx, total)) {
+    if (!command(read_tx, read_rx, total) || !status_ok(read_rx[1])) {
         return RadioStatus::ErrNotFound;
     }
     memcpy(buf, read_rx + 3, packet_len);

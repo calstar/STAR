@@ -41,8 +41,9 @@ public:
     explicit Sx1262(SpiBus& bus) : bus_(bus) {
     }
 
-    // Same promise as radio_receive() in radio.h. If the chip never leaves
-    // BUSY, the answer is ErrNotFound (the chip did not answer).
+    // Same promise as radio_receive() in radio.h. ErrNotFound means the chip
+    // did not answer: BUSY never went low, or a reply's status byte is not
+    // one a working chip can send (a missing chip reads 0x00 or 0xFF).
     RadioStatus receive(uint8_t* buf, uint8_t max_len, uint8_t& len);
 
 private:
