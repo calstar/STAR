@@ -26,6 +26,15 @@ extern "C" {
 bool board_soft_init(void (*init)(void));
 bool board_error_is_soft(void);
 
+/*
+ * Put a buffer where DMA can reach it: the .dma_buffers section in AXI SRAM
+ * (RAM_D1, see STM32H723xx_FLASH.ld). Default .bss is DTCM, which the SDMMC
+ * IDMA and DMA1/2 cannot access. 32-byte alignment = one D-cache line, so
+ * cache clean/invalidate never touches a neighbour. Not zeroed at boot.
+ *   static uint8_t buf[512] BOARD_DMA_BUFFER;
+ */
+#define BOARD_DMA_BUFFER __attribute__((section(".dma_buffers"), aligned(32)))
+
 /* Milliseconds since boot (HAL tick, TIM6). Wraps after ~49 days. */
 uint32_t board_now_ms(void);
 

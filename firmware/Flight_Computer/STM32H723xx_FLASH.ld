@@ -241,7 +241,20 @@ SECTIONS
     . = ALIGN(8);
   } >DTCMRAM
 
-
+  /* STAR: buffers a DMA engine must reach. Everything above lives in DTCM,
+   * which only the Cortex-M7 core and the MDMA can access (RM0468 Rev 3,
+   * Table 2 p.106, Section 2.1.2 p.108): not the SDMMC
+   * IDMA, DMA1/2 or BDMA. So DMA buffers go in AXI SRAM (RAM_D1). NOLOAD:
+   * not zeroed at boot; owners initialize them before use. Place a buffer
+   * here with BOARD_DMA_BUFFER (board.h). CubeMX does not overwrite this
+   * file on Generate Code. */
+  .dma_buffers (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.dma_buffers)
+    *(.dma_buffers*)
+    . = ALIGN(32);
+  } >RAM_D1
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

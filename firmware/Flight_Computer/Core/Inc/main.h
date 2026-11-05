@@ -111,6 +111,7 @@ void MX_USB_OTG_HS_HCD_Init(void);
 #define RADIO_RF_SW_GPIO_Port GPIOB
 #define RADIO_DIO1_Pin GPIO_PIN_2
 #define RADIO_DIO1_GPIO_Port GPIOB
+#define RADIO_DIO1_EXTI_IRQn EXTI2_IRQn
 #define SW_ST_Pin GPIO_PIN_10
 #define SW_ST_GPIO_Port GPIOE
 #define REG_3V6_EN_Pin GPIO_PIN_11
@@ -121,6 +122,7 @@ void MX_USB_OTG_HS_HCD_Init(void);
 #define ETH_CS_GPIO_Port GPIOE
 #define ETH_INT_Pin GPIO_PIN_15
 #define ETH_INT_GPIO_Port GPIOE
+#define ETH_INT_EXTI_IRQn EXTI15_10_IRQn
 #define ETH_CLK_Pin GPIO_PIN_10
 #define ETH_CLK_GPIO_Port GPIOB
 #define TIMEPULSE_Pin GPIO_PIN_11
@@ -163,12 +165,14 @@ void MX_USB_OTG_HS_HCD_Init(void);
 #define EMMC_CLK_GPIO_Port GPIOC
 #define IMU_INT1_Pin GPIO_PIN_0
 #define IMU_INT1_GPIO_Port GPIOD
+#define IMU_INT1_EXTI_IRQn EXTI0_IRQn
 #define IMU_INT2_Pin GPIO_PIN_1
 #define IMU_INT2_GPIO_Port GPIOD
 #define EMMC_CMD_Pin GPIO_PIN_2
 #define EMMC_CMD_GPIO_Port GPIOD
 #define ACCEL_INT_1_Pin GPIO_PIN_3
 #define ACCEL_INT_1_GPIO_Port GPIOD
+#define ACCEL_INT_1_EXTI_IRQn EXTI3_IRQn
 #define ACCEL_INT_2_Pin GPIO_PIN_4
 #define ACCEL_INT_2_GPIO_Port GPIOD
 #define BARO_CS_Pin GPIO_PIN_5
