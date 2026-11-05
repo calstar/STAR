@@ -301,11 +301,12 @@ active_connectors = [ 1, 2 ]
 # current sense. A role's channel must be one of active_connectors. The board opens its valves
 # itself 5 s after server heartbeats stop, and is left out of the abort lists sent to actuator
 # boards.
-# Disabled until the board is on the stand; fill `mac` from its serial log for a DHCP lease.
+# Disabled until the board is on the stand. `mac` is the prototype ESP32-WROOM-32 (Ethernet MAC =
+# base MAC + 3, as its serial log prints it); a replacement board needs its own.
 [boards.ball_valve_board]
 type = "BALL_VALVE"
 ip = "192.168.2.71"
-mac = ""
+mac = "fc:b4:67:73:cf:63"
 send_port = 5005
 listen_port = 5005
 board_id = 71

@@ -341,12 +341,13 @@ active_connectors = [ 1, 2 ]
 # itself 5 s after server heartbeats stop, and is left out of the abort lists sent to actuator
 # boards.
 # Enabled here, the sim/test config, so the simulator, test_integration.sh and the Playwright stack
-# all carry it; disabled in every deployed profile until the board is on the stand. Fill `mac`
-# from its serial log for a DHCP lease. No role here: test_integration.sh names one in its own copy.
+# all carry it; disabled in every deployed profile until the board is on the stand. `mac` is the
+# prototype ESP32-WROOM-32 (Ethernet MAC = base MAC + 3, as its serial log prints it). No role
+# here: test_integration.sh names one in its own copy.
 [boards.ball_valve_board]
 type = "BALL_VALVE"
 ip = "192.168.2.71"
-mac = ""
+mac = "fc:b4:67:73:cf:63"
 send_port = 5005
 listen_port = 5005
 board_id = 71
