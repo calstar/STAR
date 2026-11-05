@@ -1,6 +1,7 @@
 #include "board_bringup.h"
 
 #include "board.h"
+#include "board_adc.h"
 #include "board_spi.h"
 #include "cmsis_os2.h"
 #include "gnss_frame.h"
@@ -277,6 +278,8 @@ void board_bringup_power_up(board_bringup_t* b) {
     b->devices.configured_mask = 0;
     b->gnss_powered = false;
     b->emmc_reset_released = false;
+    /* ADC1: offset + linearity calibration once, before any conversion. */
+    b->adc_ready = board_adc_init();
     if (!board_spi_init()) {
         return; /* no bus locks: no SPI device is enabled */
     }
@@ -342,6 +345,26 @@ void board_bringup_power_up(board_bringup_t* b) {
     HAL_GPIO_WritePin(EMMC_RST_GPIO_Port, EMMC_RST_Pin, GPIO_PIN_SET);
     osDelay(2);
     b->emmc_reset_released = true;
+}
+
+self_test_battery_t board_bringup_read_battery(void* context, uint32_t now_ms,
+                                               uint32_t budget_ms) {
+    board_bringup_t* b = context;
+    self_test_battery_t battery = {0};
+    uint16_t counts = 0;
+    if (!b || !b->adc_ready) {
+        battery.reply = reply(SELF_TEST_NOT_CONFIGURED, 0);
+        return battery;
+    }
+    if (!board_adc_read(BOARD_ADC_VBAT, &counts, budget_ms)) {
+        battery.reply = reply(SELF_TEST_FAIL, 0);
+        return battery;
+    }
+    battery.reply = reply(SELF_TEST_PASS, 0);
+    battery.valid = true;
+    battery.raw_counts = counts;
+    battery.sampled_at_ms = now_ms;
+    return battery;
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,

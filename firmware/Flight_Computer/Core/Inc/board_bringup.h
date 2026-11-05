@@ -38,6 +38,7 @@ typedef struct {
     self_test_devices_t devices;
     bool gnss_powered;
     bool emmc_reset_released;
+    bool adc_ready;
 } board_bringup_t;
 
 /* eMMC probe diagnostics: PASS = CID manufacturer ID (Kioxia/Toshiba is
@@ -46,6 +47,11 @@ typedef struct {
 
 /* Release resets / power rails in order and enable each ready device. */
 void board_bringup_power_up(board_bringup_t* bringup);
+
+/* self_test_port_t.read_battery: raw PA0 counts (VDD after the ORing,
+ * x 0.3125). Conversion and thresholds are the battery adapter's (#137). */
+self_test_battery_t board_bringup_read_battery(void* context, uint32_t now_ms,
+                                               uint32_t budget_ms);
 
 /* self_test_port_t.probe with a board_bringup_t context. */
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
