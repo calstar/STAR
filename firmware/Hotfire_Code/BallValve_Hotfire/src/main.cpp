@@ -69,14 +69,16 @@ struct Valve {
     uint8_t state;        // last state written to the pin
 };
 
-// Enable pins: GPIO25 and GPIO26 have no boot strapping role and float at
-// reset, so the 10k gate pull-up to 3.3 V holds each valve at state 0 through
-// boot and uploads. Avoid the strapping pins (0, 2, 5, 12, 15), flash (6-11),
-// UART0 (1, 3), the W5500 (5, 18, 19, 23) and the input-only 34-39.
+// Enable pins: neither GPIO25 nor GPIO14 is a strapping pin, and the 10k gate
+// pull-up to 3.3 V holds each valve at state 0 through boot and uploads.
+// GPIO14 (MTMS) may toggle for a few ms in the boot ROM, far shorter than a
+// valve stroke; setup() drives it HIGH (state 0) first thing. Avoid the
+// strapping pins (0, 2, 5, 12, 15), flash (6-11), UART0 (1, 3), the W5500
+// (5, 18, 19, 23) and the input-only 34-39.
 // Position pins: ADC1 only (GPIO32-39); ADC2 is shared with the radio.
 static Valve valves[] = {
     {1, 1, 25, 32, 0},
-    {2, 2, 26, 33, 0},
+    {2, 2, 14, 35, 0},
 };
 static constexpr uint8_t NUM_VALVES = sizeof(valves) / sizeof(valves[0]);
 

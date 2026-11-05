@@ -173,11 +173,16 @@ export default function StateMachineDiagram() {
   // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
   // positions until a full page reload.
   useEffect(() => {
+    // A load can resolve after unmount (a test's teardown, a page change): bumping state then
+    // throws "window is not defined" under jsdom teardown, so a finished load checks first.
+    let mounted = true;
     const refreshStates = (force: boolean) =>
-      void loadStates(getApiBaseUrl(), force).then(() => setStatesVersion((v) => v + 1));
+      void loadStates(getApiBaseUrl(), force).then(() => {
+        if (mounted) setStatesVersion((v) => v + 1);
+      });
     refreshStates(false);
     const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
-    return () => { unsub(); };
+    return () => { mounted = false; unsub(); };
   }, [ws]);
 
   useEffect(() => {

@@ -18,8 +18,8 @@ All seven phases below are in. Where the build departs from the plan:
   stack that never delivers the broadcast heartbeat can still close it.
 
 Firmware: `firmware/Hotfire_Code/BallValve_Hotfire` (board 71). Two valves per
-board: actuator/sensor 1 (enable GPIO25, position GPIO32) and 2 (enable GPIO26,
-position GPIO33), `active_connectors = [ 1, 2 ]`.
+board: actuator/sensor 1 (enable GPIO25, position GPIO32) and 2 (enable GPIO14,
+position GPIO35), `active_connectors = [ 1, 2 ]`.
 
 | Direction | Packet | Meaning |
 |---|---|---|
