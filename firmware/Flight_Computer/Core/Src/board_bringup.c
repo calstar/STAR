@@ -30,6 +30,12 @@ void board_bringup_power_up(board_bringup_t* b) {
      * is driven high by MX_GPIO_Init and goes low only for a transfer. */
     wait_since_boot(20);
     enable(b, SELF_TEST_DEVICE_IMU);
+
+    /* H3LIS100DL (U3), high-g: same rail and bus as the IMU. At power-up it
+     * loads its trimming from internal flash (DocID027504 p.27); no separate
+     * boot time is specified, and the 20 ms above covers it. It starts in
+     * power-down (CTRL_REG1 = 0x07), which still answers WHO_AM_I. */
+    enable(b, SELF_TEST_DEVICE_HIGH_G);
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
