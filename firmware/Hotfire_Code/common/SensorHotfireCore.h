@@ -433,7 +433,8 @@ inline void setup(CoreState& s, const Config& cfg) {
     delay(ETHERNET_BEGIN_DELAY_MS);
     HF_LOG("Board ID: ");
     HF_LOG(static_cast<unsigned>(s.board_id));
-    HF_LOGLN(s.board_id == 0 ? " (none until the server assigns an address)" : "");
+    HF_LOGLN(s.board_id == 0 ? " (none until the server assigns an address)"
+                             : "");
 
     // W5500 / Ethernet status (same pattern as Stream_ADC_Data and other DAQ
     // sketches)

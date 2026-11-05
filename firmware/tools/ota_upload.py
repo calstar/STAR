@@ -120,7 +120,9 @@ def board_from_config(name: str, config: Path) -> tuple:
         )
     mac = str(b.get("mac") or "")
     if not mac:
-        raise OtaError(f"[boards.{name}] has no mac = line, so its recovery address is unknown")
+        raise OtaError(
+            f"[boards.{name}] has no mac = line, so its recovery address is unknown"
+        )
     return mac, (str(b["ip"]) if b.get("ip") else None)
 
 
@@ -222,7 +224,9 @@ def upload(
         sock.close()
 
 
-def upload_to_first(data: bytes, hosts: list, port: int = DEFAULT_PORT, **kwargs) -> str:
+def upload_to_first(
+    data: bytes, hosts: list, port: int = DEFAULT_PORT, **kwargs
+) -> str:
     """Upload to the first of `hosts` that accepts a connection. Moves on only
     when nothing answered; a board that answered and then failed is an error."""
     errors = []
@@ -536,7 +540,10 @@ def _self_test() -> None:
     srv, t = serve()
     port = srv.getsockname()[1]
     # 127.0.0.2 has nothing on `port`; 127.0.0.1 is the fake board.
-    assert upload_to_first(image, ["127.0.0.2", "127.0.0.1"], port, connect_timeout=1.0) == "127.0.0.1"
+    assert (
+        upload_to_first(image, ["127.0.0.2", "127.0.0.1"], port, connect_timeout=1.0)
+        == "127.0.0.1"
+    )
     t.join(timeout=5)
     srv.close()
     assert received["body"] == image

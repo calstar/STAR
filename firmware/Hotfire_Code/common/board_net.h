@@ -67,7 +67,8 @@ inline IPAddress recoverySubnet() {
 }
 
 /**
- * The board's recovery address, from its MAC: 169.254.<1 + mac[4] % 254>.<mac[5]>.
+ * The board's recovery address, from its MAC: 169.254.<1 + mac[4] %
+ * 254>.<mac[5]>.
  *
  * The third octet stays in 1..254, the range RFC 3927 lets a host use.
  * firmware/tools/ota_upload.py and daq-server's config validation compute the

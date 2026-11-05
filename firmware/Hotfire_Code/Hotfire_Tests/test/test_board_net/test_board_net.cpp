@@ -3,8 +3,8 @@
  *
  * Includes the REAL header (common/board_net.h) rather than a replica: the
  * point of this suite is that the board's working address and ID come only
- * from the server, and a replica could not prove that about the shipped code. The stubbed
- * EthernetClass records what gets written to the chip.
+ * from the server, and a replica could not prove that about the shipped code.
+ * The stubbed EthernetClass records what gets written to the chip.
  */
 
 // Match the LC / Actuator builds.
@@ -70,20 +70,25 @@ void test_recovery_address_formula(void) {
     // The vectors firmware/tools/ota_upload.py and daq-server's config
     // validation test too; change one, change all three.
     const byte rtd[6] = {0x4a, 0x27, 0xe2, 0x3a, 0xad, 0x71};
-    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(rtd) == IPAddress(169, 254, 174, 113));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(rtd) ==
+                     IPAddress(169, 254, 174, 113));
     // Third octet stays in 1..254 (RFC 3927): 0x00 -> 1, 0xFE -> 1, 0xFF -> 2.
     const byte lo[6] = {0, 0, 0, 0, 0x00, 0x00};
     const byte fe[6] = {0, 0, 0, 0, 0xFE, 0xFF};
     const byte ff[6] = {0, 0, 0, 0, 0xFF, 0x01};
-    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(lo) == IPAddress(169, 254, 1, 0));
-    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(fe) == IPAddress(169, 254, 1, 255));
-    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(ff) == IPAddress(169, 254, 2, 1));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(lo) ==
+                     IPAddress(169, 254, 1, 0));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(fe) ==
+                     IPAddress(169, 254, 1, 255));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(ff) ==
+                     IPAddress(169, 254, 2, 1));
 }
 
 void test_no_answer_puts_the_board_on_its_recovery_address(void) {
     BoardNet::State s = recoveringState();
 
-    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery, (int)s.source);
+    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery,
+                          (int)s.source);
     TEST_ASSERT_FALSE(BoardNet::usingDhcp(s));
     TEST_ASSERT_TRUE(Ethernet.static_ip == kRecoveryIP);
     TEST_ASSERT_TRUE(Ethernet.static_subnet == IPAddress(255, 255, 0, 0));
@@ -129,7 +134,8 @@ void test_failed_retry_stays_reflashable(void) {
     TEST_ASSERT_EQUAL_INT(asked + 1, Ethernet.dhcp_begin_calls);
     // The failed attempt zeroed the address; the recovery one is back.
     TEST_ASSERT_TRUE(Ethernet.localIP() == kRecoveryIP);
-    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery, (int)s.source);
+    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery,
+                          (int)s.source);
 }
 
 void test_retry_that_gets_a_lease_moves_the_board(void) {
