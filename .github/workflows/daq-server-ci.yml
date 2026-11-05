@@ -746,7 +746,10 @@ jobs:
   # Full guitest stack + Playwright (same as local: bash test/e2e_guitest_playwright.sh)
   playwright-guitest-e2e:
     name: Playwright E2E (guitest stack)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest became 26.04 on 2026-10-19 and Playwright 1.59 has no
+    # Chromium build for it ("does not support chromium on ubuntu26.04-x64").
+    # Move back to ubuntu-latest once @playwright/test supports 26.04.
+    runs-on: ubuntu-24.04
     needs: [build]
     timeout-minutes: 45
 

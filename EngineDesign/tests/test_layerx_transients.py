@@ -520,3 +520,23 @@ def test_le4_diagnostics_run_on_the_golden_burn_and_leave_it_alone(le4):
         assert {"name", "source", "assumptions", "inputs"} <= set(block["model"])
         json.dumps(block, allow_nan=False)      # the run record is strict JSON
     assert result == before
+
+
+def test_the_start_enters_the_manifold_through_the_valve_when_no_line_is_drawn():
+    """LE4's LOX side has no drawn line (tank outlet, OM-R, injector): the start took the manifold's
+    entry area from a line that is not there, indexed an empty list, and the whole start went
+    missing from the run ("Start not computed"). With no line it is the main valve's own bore; with
+    a line, the line's, exactly as before; with neither, it says so rather than guess."""
+    pipe = S.Element(id="L1", kind="pipe", R=0.0, length=0.3, bore=0.010922)
+    valve = S.Element(id="MV", kind="valve", R=0.0, bore=0.0095, travel_s=0.05)
+    bare = S.Element(id="MV", kind="valve", R=0.0, travel_s=0.05)
+
+    def feed(up, v, dn):
+        return S.FeedLine("oxidiser", "ox", "T", "oxygen", 1140.0, 2e-4, 900.0, 1e5, tuple(up), v, tuple(dn))
+
+    assert S.exit_area(feed([], valve, [pipe])) == (pipe.area, False)
+    assert S.exit_area(feed([pipe], valve, [])) == (pipe.area, False)      # as before: the line above it
+    area, through = S.exit_area(feed([], valve, []))
+    assert through and area == pytest.approx(math.pi * 0.0095 ** 2 / 4.0)
+    with pytest.raises(ValueError, match="no line and no main-valve bore"):
+        S.exit_area(feed([], bare, []))

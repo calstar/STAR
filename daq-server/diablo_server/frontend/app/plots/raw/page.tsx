@@ -16,10 +16,10 @@ export default function RawReadoutsPage() {
   const half = Math.ceil(allSensors.length / 2);
 
   return (
-    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
       <div className="flex items-center gap-3 flex-shrink-0">
-        <div className="w-1 h-5 bg-blue-500 rounded-full" />
-        <h1 className="text-lg font-bold">Raw Sensor Readouts</h1>
+        <div className="h-2 w-2 flex-shrink-0 bg-blue-500" />
+        <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Raw Sensor Readouts</h1>
         <span className="text-xs text-text-muted font-mono ml-2">
           30 s rolling window · 20 Hz render
         </span>

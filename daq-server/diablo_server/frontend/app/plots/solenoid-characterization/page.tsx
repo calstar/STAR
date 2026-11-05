@@ -80,8 +80,8 @@ export default function SolenoidCharacterizationPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">
       <div className="flex items-center gap-3 flex-shrink-0">
-        <div className="w-1 h-5 bg-amber-500 rounded-full" />
-        <h1 className="text-base font-bold text-amber-400 tracking-wider">Solenoid Characterization</h1>
+        <div className="h-2 w-2 flex-shrink-0 bg-amber-500" />
+        <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Solenoid Characterization</h1>
       </div>
 
       {!canSendPwm && (
@@ -92,7 +92,7 @@ export default function SolenoidCharacterizationPage() {
           <button
             type="button"
             onClick={enableDebugMode}
-            className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-black text-sm font-bold"
+            className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-8 px-3 text-[11px]"
           >
             Enable Debug Mode
           </button>

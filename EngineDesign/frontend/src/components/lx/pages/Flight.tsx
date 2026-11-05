@@ -9,7 +9,7 @@ import { formatT } from '../time/markers';
 import { followCursor } from '../time/follow';
 import { useTimeStore } from '../time/hooks';
 import { createTimeStore, type TimeStore } from '../time/store';
-import { Figure, NotComputed, Panel } from '../ui';
+import { Figure, NotComputed, Panel, STATUS_GLYPH, STATUS_VAR } from '../ui';
 import { NBSP, useUnits, type Quantity, type Units } from '../units';
 import { convert as conv, figureDelta, type GradedLimit } from '../useRunData';
 import { ChartPanel, FigureRow, Hint, Table } from './kit';
@@ -136,6 +136,7 @@ export function Flight({ data, vs }: PageProps) {
   const ceiling = flight.ceiling;
   const fst = flightStabilityOf(flight);
   const smLimit = data.limits.find((l) => /static_margin|stability_margin/.test(l.key));
+  const railLimit = data.limits.find((l) => l.key === 'rail_exit');
   const maxQ = fst?.max_q_pa ?? null;
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -144,7 +145,12 @@ export function Flight({ data, vs }: PageProps) {
           <Figure label="Apogee" termKey="apogee" size="lg" q={q.apogee} delta={figureDelta(q.apogee, rq ? u.alt(rq.apogee_agl_m) : null, 'pct')}
                   sub={`AGL · ${u.fmt(u.time(flight.apogee_time_s))}`} />
           <Figure label="Max velocity" q={q.vmax} delta={figureDelta(q.vmax, rq ? u.v(rq.max_velocity_m_s) : null)} sub={`Mach ${flight.max_mach.toFixed(2)}`} />
-          <Figure label="Rail exit" q={q.rail} sub={`at ${u.fmt(u.time(flight.rail_exit_time_s))}`} />
+          {/* Graded where the limits grade it (FAR-OUT's 85 ft/s unless the design states its own): a
+              rail exit under it was shown here unmarked (D-59). */}
+          <Figure label="Rail exit" q={q.rail}
+                  sub={railLimit && !railLimit.info && railLimit.status !== 'ok'
+                    ? <Hint text={railLimit.hint}><span style={{ color: STATUS_VAR[railLimit.status] }}>{STATUS_GLYPH[railLimit.status]} under {u.fmt(u.v(railLimit.spec.limit))}</span></Hint>
+                    : `at ${u.fmt(u.time(flight.rail_exit_time_s))}`} />
           <Figure label="Liftoff acceleration" termKey="specificForce" value={flight.liftoff_accel_g.toFixed(2)} unit="g" sub={`${u.fmt(u.m(flight.liftoff_mass_kg))} on the rail`} />
           <Figure label="Peak acceleration" termKey="specificForce" value={flight.max_accel_g.toFixed(2)} unit="g" sub={`at ${u.fmt(u.time(flight.max_accel_time_s))}`} />
           {maxQ !== null && <Figure label="Max-Q" termKey="maxQ" q={u.dp(maxQ / PSI)} sub={fst?.max_q_t !== null && fst?.max_q_t !== undefined ? `at ${formatT(fst.max_q_t)}` : undefined} />}

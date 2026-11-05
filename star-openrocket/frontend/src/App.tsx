@@ -19,7 +19,6 @@ import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
 import { defaultOrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
-import { toWireConfig } from './recovery/lib/serialise'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { ReadOnlyProvider } from '@stardesign-ui'
@@ -49,7 +48,7 @@ import type {
   PartOverride,
   StabilityResult,
 } from './types'
-import { MATERIALS_BY_KEY } from './lib/materials'
+import { applyOverrides, orkRequest } from './lib/designRequests'
 
 /** Survives reloads so a new build does not hijack which model is open. */
 const LAST_MODEL_KEY = 'star-openrocket:last-model'
@@ -200,22 +199,12 @@ export default function App() {
   // The manifest as edited: a user-assigned mass replaces Onshape's, and every
   // downstream number -- the centre of mass, the totals, the parts list -- is
   // computed from this rather than from the raw manifest.
+  // The rule (typed-in mass, then a catalog material, then Onshape's) lives in
+  // lib/designRequests, which the server's backend/design_requests.py mirrors.
   const parts = useMemo<Part[]>(() => {
     if (!manifest) return []
     if (overrides.size === 0) return manifest.parts
-    return manifest.parts.map((part) => {
-      const override = overrides.get(part.key)
-      if (!override) return part
-      // A typed-in mass wins over everything, including a chosen material.
-      if (override.massOverridden) return { ...part, mass: override.mass ?? 0 }
-      // Otherwise a catalog material sets the mass from its density and the
-      // part's exact volume. Onshape's own material is left untouched.
-      if (override.material) {
-        const material = MATERIALS_BY_KEY[override.material]
-        if (material) return { ...part, mass: part.volume * material.density }
-      }
-      return part
-    })
+    return applyOverrides(manifest.parts, Object.fromEntries(overrides))
   }, [manifest, overrides])
 
   // Which parts carry a user override at all -- a typed-in mass or a chosen
@@ -501,22 +490,11 @@ export default function App() {
     setExportBusy(true)
     setExportError(null)
     try {
-      const wire = toWireConfig(recovery)
-      await exportOrk(modelId, {
-        outerFaces,
-        // Nothing picked yet (no Compute run) means auto-detect, not "no fins" --
-        // an empty list is the backend's explicit "this rocket has no fins".
-        finFaces: finFaces.length ? finFaces : null,
-        nFins: finCount || null,
-        overrides: massOverrides,
-        motor: motorSel,
-        railLength,
-        inclination: flight.inclination,
-        heading: flight.heading,
-        site: wire.site,
-        wind: wire.wind,
-        devices: wire.devices,
-      })
+      // The same body the server builds from a saved design (lib/designRequests).
+      await exportOrk(
+        modelId,
+        orkRequest({ outerFaces, finFaces, finCount, motor: motorSel, railLength, flight }, recovery, massOverrides),
+      )
     } catch (exc) {
       setExportError(exc instanceof Error ? exc.message : String(exc))
     } finally {

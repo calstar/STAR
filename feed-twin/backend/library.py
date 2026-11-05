@@ -282,6 +282,47 @@ class Library:
         if path.exists():
             path.unlink()
 
+    # ------------------------------------------------------------ tombstones
+    #
+    # What a person removed that the app would otherwise put back: a shipped
+    # drawing (``shipped:<file>``), the bundled sample (``sample:<file>``), or
+    # any content (``sha256:<digest>``). Seeding skips a mark recorded here, so
+    # a removed shipped drawing stays removed across restarts; only asking for
+    # it again (the sample route) lifts the mark.
+
+    @property
+    def _removed_path(self) -> Path:
+        return self.root / "removed.json"
+
+    def forgotten(self) -> set[str]:
+        """Every mark recorded as removed on purpose."""
+        try:
+            raw = json.loads(self._removed_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return set()
+        marks = raw.get("marks") if isinstance(raw, dict) else None
+        return {str(m) for m in marks} if isinstance(marks, list) else set()
+
+    def _keep_forgotten(self, marks: set[str]) -> None:
+        temporary = self._removed_path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps({"marks": sorted(marks)}, indent=1), encoding="utf-8"
+        )
+        temporary.replace(self._removed_path)
+
+    def forget(self, *marks: str) -> None:
+        """Record ``marks`` as removed on purpose: seeding leaves them out."""
+        wanted = {m for m in marks if m}
+        known = self.forgotten()
+        if not wanted <= known:
+            self._keep_forgotten(known | wanted)
+
+    def unforget(self, *marks: str) -> None:
+        """Lift the marks, so seeding puts those back."""
+        known = self.forgotten()
+        if known & set(marks):
+            self._keep_forgotten(known - set(marks))
+
     def remove(self, artifact_id: str) -> None:
         artifacts = self._read()
         kept = [a for a in artifacts if a.id != artifact_id]

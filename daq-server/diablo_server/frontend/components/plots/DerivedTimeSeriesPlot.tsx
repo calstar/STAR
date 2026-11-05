@@ -6,6 +6,7 @@ import 'uplot/dist/uPlot.min.css';
 import { getDataCache } from '@/lib/data-cache';
 import { serverNowMs } from '@/lib/plot-time';
 import { xWindowMs, tPlusAxisValues, fmtAxisVal, smartYRange, YAxisHysteresis } from '@/lib/plot-shared';
+import { AXIS_FONT, AXIS_GRID, AXIS_STROKE, AXIS_TICKS } from '@/lib/plot-theme';
 
 const DEFAULT_WINDOW_SECONDS = 60;
 // Data refresh; backend delivers ≤ ~20 pts/s per stream.
@@ -166,10 +167,10 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       axes: [
         {
           label: 'T+ (s)',
-          stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace',
+          stroke: AXIS_STROKE,
+          grid: { ...AXIS_GRID },
+          ticks: { ...AXIS_TICKS },
+          font: AXIS_FONT,
           labelFont: '12px system-ui',
           gap: 8,
           space: 120,
@@ -177,10 +178,10 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
         },
         {
           label: yLabel,
-          stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace',
+          stroke: AXIS_STROKE,
+          grid: { ...AXIS_GRID },
+          ticks: { ...AXIS_TICKS },
+          font: AXIS_FONT,
           labelFont: '12px system-ui',
           size: 60,
           gap: 5,
@@ -316,12 +317,12 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
           {title && (
             <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider">{title}</h3>
           )}
-          <div className="flex items-center gap-1 rounded-md border border-gray-700 bg-gray-900 px-2 py-1">
+          <div className="flex items-center border border-line-strong">
             <button
               type="button"
               onClick={() => setIsPaused(false)}
-              className={`rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${
-                !isPaused ? 'bg-violet-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+              className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
+                !isPaused ? 'bg-ink text-black' : 'text-ink-3 hover:text-ink'
               }`}
               title="Resume live updates"
               disabled={!ready}
@@ -331,8 +332,8 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
             <button
               type="button"
               onClick={() => setIsPaused(true)}
-              className={`rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${
-                isPaused ? 'bg-amber-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+              className={`px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors ${
+                isPaused ? 'bg-ink text-black' : 'text-ink-3 hover:text-ink'
               }`}
               title="Pause to zoom"
               disabled={!ready}
@@ -343,7 +344,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
               <button
                 type="button"
                 onClick={() => zoomToFullRange(uplotRef.current)}
-                className="rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
+                className="px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors text-ink-3 hover:text-ink"
                 title="Reset zoom to full range"
               >
                 Reset zoom

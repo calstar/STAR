@@ -49,10 +49,16 @@ SECTIONS: List[Tuple[str, str]] = [
     ("pressure_curves", "Pressure curves"),
     ("solver", "Solver"),
     ("optimizer", "Optimizer"),
-    ("propellant_preset", "Propellants"),
+    ("propellant_preset", "Propellant preset"),
     ("design_valid_for", "Design state"),
 ]
 _SECTION_LABEL = dict(SECTIONS)
+#: Sections the workspace lists only while they hold a value: blocks superseded by
+#: ``chamber_geometry``, kept so an old file still loads.
+LEGACY_SECTIONS = frozenset({"chamber", "nozzle"})
+#: Sections the app writes for itself (the forward-mode staleness stamp), never a person; the
+#: workspace leaves them out of its list. Search still finds their rows.
+INTERNAL_SECTIONS = frozenset({"design_valid_for"})
 
 
 def _models_in(annotation: Any) -> List[Type[BaseModel]]:
@@ -202,7 +208,9 @@ def config_parameters(config: BaseModel) -> Dict[str, Any]:
     return {
         "sections": [{"key": s, "label": _SECTION_LABEL.get(s, s.replace("_", " ").capitalize()),
                       "count": sum(1 for r in rows if r["section"] == s),
-                      "modified": sum(1 for r in rows if r["section"] == s and r["modified"])}
+                      "modified": sum(1 for r in rows if r["section"] == s and r["modified"]),
+                      "legacy": s in LEGACY_SECTIONS,
+                      "internal": s in INTERNAL_SECTIONS}
                      for s in sections],
         "parameters": rows,
     }

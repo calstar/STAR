@@ -119,7 +119,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       if (rise) stored.fall = { ...rise, value: -rise.value };
       if (stored.roughness && !stored.roughness_custom) stored.roughness_custom = stored.roughness;
     }
-    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key])])));
+    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)])));
     const opts = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
     if (kind === 'edge') {
       // A stored hose reopens with its flag set; a stored roughness that is
@@ -339,6 +339,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
               <ParamRow
                 key={p.key}
                 spec={p}
+                symbol={type}
                 draft={drafts[p.key] ?? EMPTY}
                 readOnly={readOnly}
                 onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))}
@@ -362,6 +363,7 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                   <ParamRow
                     key={p.key}
                     spec={p}
+                    symbol={type}
                     draft={drafts[p.key] ?? EMPTY}
                     readOnly={readOnly}
                     onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))}
@@ -384,11 +386,11 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
                 readOnly={readOnly} onChange={v => setOptions(s => ({ ...s, [o.key]: v }))} />
             ))}
             {spec.params.filter(p => p.section === name && !p.derived && !p.advanced && showing(p)).map(p => (
-              <ParamRow key={p.key} spec={p} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
+              <ParamRow key={p.key} spec={p} symbol={type} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
                 onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))} />
             ))}
             {showAdvanced && spec.params.filter(p => p.section === name && p.advanced && showing(p)).map(p => (
-              <ParamRow key={p.key} spec={p} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
+              <ParamRow key={p.key} spec={p} symbol={type} draft={drafts[p.key] ?? EMPTY} readOnly={readOnly}
                 onChange={patch => setDrafts(d => ({ ...d, [p.key]: { ...d[p.key], ...patch } }))} />
             ))}
           </div>
@@ -493,8 +495,8 @@ function OptionRow({ spec, value, peers, readOnly, onChange }: {
  * there is nothing to qualify about an empty field, and hiding it halves the
  * dialog for a component nobody has filled in yet.
  */
-function ParamRow({ spec, draft, readOnly, onChange }: {
-  spec: ParamSpec; draft: Draft; readOnly: boolean; onChange: (p: Partial<Draft>) => void;
+function ParamRow({ spec, symbol = '', draft, readOnly, onChange }: {
+  spec: ParamSpec; symbol?: string; draft: Draft; readOnly: boolean; onChange: (p: Partial<Draft>) => void;
 }) {
   const units = unitsFor(spec);
   const filled = draft.value.trim() !== '';
@@ -555,12 +557,13 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
 
   return (
     <Row label={spec.label}>
-      <div className="grid grid-cols-[1fr_62px_84px] gap-1.5">
+      {/* The provenance select at 96: at 84 it read "Estimat". */}
+      <div className="grid grid-cols-[1fr_62px_96px] gap-1.5">
         <input
           inputMode="decimal"
           // The suggestion, said as one. It used to be typed into the field
           // for you, and Save then wrote it as a number you had stated.
-          placeholder={placeholderFor(spec)}
+          placeholder={placeholderFor(spec, symbol)}
           value={draft.value}
           readOnly={readOnly}
           onChange={e => onChange({ value: e.target.value })}
@@ -572,7 +575,7 @@ function ParamRow({ spec, draft, readOnly, onChange }: {
           disabled={readOnly}
           onChange={e => onChange({ unit: e.target.value })}
           className={`${field} min-w-0`}
-          title={spec.dimension === 'pressure' ? pressureNote(spec.key) : undefined}
+          title={spec.dimension === 'pressure' ? pressureNote(spec.key, symbol) : undefined}
         >
           {units.map(u => <option key={u} value={u}>{u}</option>)}
         </select>

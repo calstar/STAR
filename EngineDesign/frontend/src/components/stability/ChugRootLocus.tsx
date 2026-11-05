@@ -109,7 +109,11 @@ export function ChugRootLocus({ data }: Props) {
     const tTop = dirY > 0 ? yMax / dirY : Infinity;
     const t = Math.min(tLeft, tTop);
     const exitsTop = tTop <= tLeft;
-    return { z, x: dirX * t, y: dirY * t, exitsTop };
+    // With omega zoomed to the data the floor is above zero, and a ray that leaves through the
+    // left edge below the floor never crosses the plot at all. Its label used to land among the
+    // x-axis numbers ("-80" under "ζ=0.5").
+    const visible = dirY * t >= yMin;
+    return { z, x: dirX * t, y: dirY * t, exitsTop, visible };
   }).filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y));
 
   const arrowAt = locus.length > 3 ? locus[Math.floor(locus.length * 0.62)] : null;
@@ -190,7 +194,7 @@ export function ChugRootLocus({ data }: Props) {
         {/* Ray labels go INSIDE the frame. They used to be placed at pad.t - 3, which is
             above the plot entirely -- they floated in the gap under the subtitle, detached
             from the rays they name. */}
-        {rays.map((r) => (
+        {rays.filter((r) => r.visible).map((r) => (
           <text
             key={`zl${r.z}`}
             x={r.exitsTop ? toX(r.x) : pad.l + 4}

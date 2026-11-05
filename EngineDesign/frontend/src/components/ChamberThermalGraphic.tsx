@@ -24,6 +24,9 @@ interface ChamberThermalGraphicProps {
 
 const M_TO_MM = 1000;
 const MM_TO_INCH = 1 / 25.4;
+// Graphite: a dark slate that still reads against the dark card (it was #1a1a1a at 60 %, all but
+// invisible on #12121a).
+const GRAPHITE = '#475569';
 
 function formatTick(value: number, unit: 'mm' | 'inch'): string {
   if (Math.abs(value) < 1e-10) return '0';
@@ -208,7 +211,7 @@ export function ChamberThermalGraphic({
               onChange={(e) => setShowLowerHalf(e.target.checked)}
               className="w-3.5 h-3.5 rounded border-[var(--color-border)] text-rose-600 focus:ring-rose-500"
             />
-            Full View
+            Full section
           </label>
           {(geometry.t_abl_opt_mm || geometry.t_gra_opt_mm) && (
             <div className="flex gap-2">
@@ -228,7 +231,7 @@ export function ChamberThermalGraphic({
       </div>
 
       <div className="flex flex-wrap gap-4 mb-2 text-[11px] text-[var(--color-text-secondary)]">
-        {([['#6b7280', 'Stainless case'], ['#1a1a1a', 'Graphite insert'], ['#8b4513', 'Ablative liner'], ['#f97316', 'Gas boundary']] as const).map(([c, l]) => (
+        {([['#6b7280', 'Stainless case'], [GRAPHITE, 'Graphite insert'], ['#8b4513', 'Ablative liner'], ['#f97316', 'Gas boundary']] as const).map(([c, l]) => (
           <span key={l} className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c }} />{l}</span>
         ))}
       </div>
@@ -306,7 +309,7 @@ export function ChamberThermalGraphic({
           
           {/* Structural Layers - Upper */}
           <Area isAnimationActive={false} type="monotone" dataKey="rStainless_upper" stroke="none" fill="#6b7280" fillOpacity={0.2} name="Stainless Case" />
-          <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_upper" stroke="none" fill="#1a1a1a" fillOpacity={0.6} name="Graphite Insert" />
+          <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_upper" stroke="none" fill={GRAPHITE} fillOpacity={0.85} name="Graphite Insert" />
           <Area isAnimationActive={false} type="monotone" dataKey="rAblative_upper" stroke="none" fill="#8b4513" fillOpacity={0.4} name="Ablative Liner" />
           <Area isAnimationActive={false} type="monotone" dataKey="rGas_upper" stroke="none" fill="var(--color-bg-secondary)" fillOpacity={1} />
           
@@ -319,7 +322,7 @@ export function ChamberThermalGraphic({
             <Area isAnimationActive={false} type="monotone" dataKey="rStainless_lower" stroke="none" fill="#6b7280" fillOpacity={0.2} />
           )}
           {showLowerHalf && (
-            <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_lower" stroke="none" fill="#1a1a1a" fillOpacity={0.6} />
+            <Area isAnimationActive={false} type="monotone" dataKey="rGraphite_lower" stroke="none" fill={GRAPHITE} fillOpacity={0.85} />
           )}
           {showLowerHalf && (
             <Area isAnimationActive={false} type="monotone" dataKey="rAblative_lower" stroke="none" fill="#8b4513" fillOpacity={0.4} />

@@ -133,7 +133,7 @@ export default function BoardsPage() {
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-8 md:p-10">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold text-text mb-2 tracking-tight">Boards / Heartbeats</h1>
+          <h1 className="mb-2 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Boards / Heartbeats</h1>
           <p className="text-lg text-text-muted max-w-2xl">
             Boards enabled in config, grouped by type. Heartbeat and config status per board.
           </p>
@@ -142,7 +142,7 @@ export default function BoardsPage() {
           <button
             type="button"
             onClick={handleResendConfig}
-            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors shadow-lg"
+            className="ctl min-h-[48px] px-8 text-[13px]"
           >
             Resend config
           </button>

@@ -396,7 +396,7 @@ export default function CalibrationPage() {
       <aside style={{ width: sidebarWidth }} className="flex-shrink-0 border-r border-gray-800 bg-black/20 flex flex-col min-h-0">
         {/* Header */}
         <div className="flex-shrink-0 px-4 py-4 border-b border-gray-800">
-          <h1 className="text-2xl font-bold tracking-tight">Calibration</h1>
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Calibration</h1>
           <div className="text-xs font-bold text-text-muted uppercase tracking-wide mt-3">Pressure transducers</div>
           <div className="text-base text-text-muted font-mono mt-1 flex gap-3">
             <span className="text-sky-300">{counts.cubic} cubic</span>
@@ -496,7 +496,7 @@ export default function CalibrationPage() {
               title={sessionActive
                 ? "Capture a 0 reference point on every PT + LC sensor. Vent PTs to atmosphere and unload load cells first — this adds a real point to each sensor's shared fit. Physics sensors are included; their points are stored but do not change what they stream."
                 : 'Start a session to calibrate — with no live stream there is nothing to capture.'}
-              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg border bg-yellow-900/30 border-yellow-600/60 text-yellow-300 hover:bg-yellow-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-yellow-900/30">
+              className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-10 w-full px-4 text-[12px]">
               Zero all
             </button>
             {!sessionActive && (
@@ -543,7 +543,7 @@ export default function CalibrationPage() {
               </div>
               {(
                 <button onClick={handleNewCalibration} disabled={!sessionActive}
-                  className="px-5 py-2.5 text-sm font-bold rounded-lg border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-900/30"
+                  className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-10 px-5 text-[12px]"
                   title={sessionActive ? 'Drop captured points and reset both cubic and robust to nothing (0)' : 'Start a session to change calibration.'}>
                   Clear calibration
                 </button>
@@ -610,7 +610,7 @@ export default function CalibrationPage() {
                     onPointerDown={(e) => e.preventDefault()}
                     disabled={!refInput || !sessionActive}
                     title={sessionActive ? undefined : 'Start a session to calibrate — there is no live stream to capture.'}
-                    className="px-6 py-2.5 text-sm font-bold rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
+                    className="ctl h-10 px-6 text-[12px]"
                   >
                     Capture
                   </button>

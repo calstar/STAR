@@ -24,7 +24,9 @@ function unauthorized(reason: string) {
 }
 
 async function handle(req: Request): Promise<Response> {
-  const auth = await authenticateBearer(req.headers.get("authorization"));
+  // Only a token minted with the "starproject" scope opens this server; a
+  // design-tools-only token is refused here (src/lib/apiTokens.ts).
+  const auth = await authenticateBearer(req.headers.get("authorization"), "starproject");
   if (!auth.ok) return unauthorized(auth.reason);
 
   const server = createStarProjectServer();

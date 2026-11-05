@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import type { InjectorLayout } from '../api/client';
+import type { InjectorLayout, InjectorLayoutWarning } from '../api/client';
+import { sortInjectorChecks, splitConfigKeys } from '../lib/injectorChecks';
 import { drawingModel, OX, FU } from '../lib/injectorDrawing';
 import { primitivesToDxf, downloadText } from '../lib/drawingPrimitives';
 import type { InjectorDrawings, Primitive } from '../lib/drawingPrimitives';
@@ -241,14 +242,57 @@ export function InjectorPatternPlot({ layout }: Props) {
         </div>
       </div>
 
-      {warnings.length > 0 && (
-        <div className="text-[11px] leading-5 font-mono space-y-0.5">
-          {warnings.map((w, i) => (
-            <div key={i} style={{ color: w.level === 'bad' ? BAD : w.level === 'warn' ? WARN : WALL }}>
-              {w.level === 'info' ? 'note' : w.level === 'bad' ? 'fails' : 'check'}: {w.text}
-            </div>
-          ))}
-        </div>
+      {warnings.length > 0 && <InjectorChecksList warnings={warnings} drawing={layout.drawing} />}
+    </div>
+  );
+}
+
+/** One check line: its config keys go to the hover, the sentence stays plain. */
+function CheckLine({ w, color, word }: { w: InjectorLayoutWarning; color: string; word: string }) {
+  const { text, keys } = splitConfigKeys(w.text);
+  return (
+    <div style={{ color }} title={keys.length ? `In the design file: ${keys.join(', ')}` : undefined}>
+      {word}: {text}
+    </div>
+  );
+}
+
+/**
+ * The checks under the drawings: the hardware first (what fails, then what to look at), then the
+ * revolve drawing's differences from the model in one summarised fold -- a drawing to update, not
+ * a part that fails -- then the notes, folded.
+ */
+function InjectorChecksList({ warnings, drawing }: { warnings: InjectorLayoutWarning[]; drawing: InjectorLayout['drawing'] }) {
+  const { hardware, drawing: drift, notes } = sortInjectorChecks(warnings);
+  const file = drawing?.source.split('/').pop() ?? 'the drawing';
+  const differences = drift.filter((w) => w.level !== 'info');
+  const section = drawing?.deviation?.max;
+  return (
+    <div className="text-[11px] leading-5 font-mono space-y-1">
+      {hardware.map((w, i) => (
+        <CheckLine key={`h${i}`} w={w} color={w.level === 'bad' ? BAD : WARN} word={w.level === 'bad' ? 'fails' : 'check'} />
+      ))}
+      {drift.length > 0 && (
+        <details>
+          <summary className="cursor-pointer" style={{ color: differences.length ? WARN : WALL }}>
+            {differences.length
+              ? `drawing: ${file} differs from the model in ${differences.length} place${differences.length === 1 ? '' : 's'}`
+                + (section != null ? ` (section within ${fmt(section * MM, 3)} mm)` : '')
+                + ' — update the drawing to the current engine'
+              : `drawing: ${file} matches the model`}
+          </summary>
+          <div className="pl-4 pt-1 space-y-0.5">
+            {drift.map((w, i) => <CheckLine key={`d${i}`} w={w} color={WALL} word={w.level === 'info' ? 'note' : 'differs'} />)}
+          </div>
+        </details>
+      )}
+      {notes.length > 0 && (
+        <details>
+          <summary className="cursor-pointer" style={{ color: WALL }}>notes ({notes.length})</summary>
+          <div className="pl-4 pt-1 space-y-0.5">
+            {notes.map((w, i) => <CheckLine key={`n${i}`} w={w} color={WALL} word="note" />)}
+          </div>
+        </details>
       )}
     </div>
   );

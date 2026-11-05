@@ -28,6 +28,10 @@ A pressure parameter in neither list is read as absolute -- what nearly every
 pressure on a drawing is -- so a field pid-designer adds tomorrow still imports.
 ``tests/test_pressure_reference.py`` fails until it is listed here, which is what
 keeps the lists complete.
+
+How a drawing is *read* is not how a pressure is *shown*. Whatever reference a
+drawing wrote, a person is shown the absolute pressure in psia (ADR 0007):
+:func:`say` is the one formatter.
 """
 
 from __future__ import annotations
@@ -106,3 +110,35 @@ def _bare(unit: str) -> str:
         if unit in (gauge, bare + "a"):
             return bare
     return "psi"
+
+
+# ------------------------------------------------------------ what people read
+
+#: One psi [Pa].
+_PSI: float = get_unit("psi").factor
+
+
+def psia(pascal: float) -> float:
+    """Absolute pressure [Pa] in psia: the number a person is shown (ADR 0007).
+
+    A vented vessel reads 14.7.
+    """
+    return pascal / _PSI
+
+
+def say(pascal: float, places: int = 0) -> str:
+    """An absolute pressure [Pa] as a person reads it: ``"514.7 psia"``.
+
+    ``places`` decimals, thousands grouped (``"4,514.7 psia"``). The one place a
+    message, a note or a hover spells a pressure out, so each says psia and none
+    adds an atmosphere by hand. A gauge number off the wire goes in as
+    ``say(from_psig(value))`` (:mod:`feedtwin.session.gauge`). A difference --
+    a bias, a droop, a sag -- is not a pressure at a place: plain psi.
+
+    Here rather than in :mod:`feedtwin.session.gauge`, which re-exports it, so
+    the drawing reader and the engine importer can say a pressure without
+    importing the session.
+    """
+    places = max(int(places), 0)
+    value = round(pascal / _PSI, places) + 0.0  # never "-0 psia"
+    return f"{value:,.{places}f} psia"

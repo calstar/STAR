@@ -14,6 +14,13 @@ import type { Finding, Severity } from './checks';
  *
  * Clicking a finding selects what it is about, because "PT-4 has no range" is
  * only useful if you can then find PT-4.
+ *
+ * Three lists, in this order: what to fix, what the drawing still needs, and
+ * notes on how it was read. The middle one is the team's to fill in -- sizes,
+ * fluids, mates, values nobody has checked -- and it is listed plainly, with
+ * no colour and no alarm: a drawing still being filled in is not a drawing
+ * with something wrong in it, and the LE4 stand's ninety-nine unsized lines
+ * read as ninety-nine faults when they shared a list with the real ones.
  */
 
 const TONE: Record<Severity, { dot: string; text: string; label: string }> = {
@@ -56,6 +63,9 @@ export function ChecksPanel({ nodes, edges, onSelect }: {
   const still = useIdle(drawing);
   const findings = useMemo(() => runChecks(still.nodes, still.edges), [still]);
   const problems = countProblems(findings);
+  const toFix = findings.filter(f => f.severity !== 'info');
+  const needs = findings.filter(f => f.severity === 'info' && f.gap);
+  const notes = findings.filter(f => f.severity === 'info' && !f.gap);
   const worst: Severity | null =
     findings.some(f => f.severity === 'error') ? 'error'
     : findings.some(f => f.severity === 'warning') ? 'warning'
@@ -65,7 +75,9 @@ export function ChecksPanel({ nodes, edges, onSelect }: {
     <div className="absolute right-3 top-3 z-20 flex flex-col items-end gap-2">
       <button
         onClick={() => setOpen(o => !o)}
-        title={problems ? `${problems} thing${problems === 1 ? '' : 's'} to look at` : 'Feed system checks'}
+        title={problems ? `${problems} thing${problems === 1 ? '' : 's'} to fix`
+          : needs.length ? `Nothing to fix. The drawing needs ${needs.length} thing${needs.length === 1 ? '' : 's'} filled in.`
+          : 'Feed system checks'}
         className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs shadow-lg backdrop-blur transition-colors ${
           worst === 'error'
             ? 'border-red-500/50 bg-red-500/10 text-red-300 hover:bg-red-500/20'
@@ -98,9 +110,26 @@ export function ChecksPanel({ nodes, edges, onSelect }: {
               should not, and every tank has a pressure and a temperature.
             </p>
           ) : (
-            <ul className="space-y-0.5">
-              {findings.map(f => <Row key={f.id} finding={f} onSelect={onSelect} />)}
-            </ul>
+            <>
+              {toFix.length > 0 && (
+                <Section title="To fix">
+                  {toFix.map(f => <Row key={f.id} finding={f} onSelect={onSelect} />)}
+                </Section>
+              )}
+              {needs.length > 0 && (
+                <Section
+                  title="The drawing needs"
+                  hint="Not on the drawing yet. The team fills these in; until then the twin works without them and says which numbers it stood in."
+                >
+                  {needs.map(f => <Row key={f.id} finding={f} onSelect={onSelect} plain />)}
+                </Section>
+              )}
+              {notes.length > 0 && (
+                <Section title="Notes" hint="How the drawing was read, said so it can be checked.">
+                  {notes.map(f => <Row key={f.id} finding={f} onSelect={onSelect} plain />)}
+                </Section>
+              )}
+            </>
           )}
         </div>
       )}
@@ -108,9 +137,23 @@ export function ChecksPanel({ nodes, edges, onSelect }: {
   );
 }
 
-function Row({ finding, onSelect }: {
+/** A heading, a line saying what the list is, and the list. */
+function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className="border-t border-[var(--color-border)] pt-1.5 first:border-t-0 first:pt-0">
+      <p className="px-1 pt-1 text-[10px] uppercase tracking-wider text-[var(--color-text-secondary)]" title={hint}>
+        {title}
+      </p>
+      <ul className="mb-1.5 space-y-0.5">{children}</ul>
+    </section>
+  );
+}
+
+function Row({ finding, onSelect, plain = false }: {
   finding: Finding;
   onSelect: (nodeIds: string[], edgeIds: string[], focusIds?: string[]) => void;
+  /** No severity chip: the section heading already says what the row is. */
+  plain?: boolean;
 }) {
   const tone = TONE[finding.severity];
   const canSelect = !!(finding.nodeIds?.length || finding.edgeIds?.length || finding.focusIds?.length);
@@ -121,11 +164,13 @@ function Row({ finding, onSelect }: {
         onClick={() => onSelect(finding.nodeIds ?? [], finding.edgeIds ?? [], finding.focusIds)}
         className={`w-full rounded px-2 py-1.5 text-left ${canSelect ? 'hover:bg-[var(--color-bg-primary)]' : 'cursor-default'}`}
       >
-        <span className="flex items-center gap-1.5">
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} />
-          <span className={`text-[10px] uppercase tracking-wider ${tone.text}`}>{tone.label}</span>
-        </span>
-        <p className="mt-0.5 text-[11px] font-medium text-[var(--color-text-primary)]">{finding.title}</p>
+        {!plain && (
+          <span className="flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} />
+            <span className={`text-[10px] uppercase tracking-wider ${tone.text}`}>{tone.label}</span>
+          </span>
+        )}
+        <p className={`${plain ? '' : 'mt-0.5 '}text-[11px] font-medium text-[var(--color-text-primary)]`}>{finding.title}</p>
         <p className="mt-0.5 text-[10px] leading-relaxed text-[var(--color-text-muted)]">{finding.detail}</p>
       </button>
     </li>

@@ -49,6 +49,14 @@ interface Props {
   initialLog?: boolean;
   /** Trace width [px]. 3 is the DAQ's; a dense diagnostic trace wants less. */
   lineWidth?: number;
+  /** The axis never reaches under this: 0 on an absolute pressure, which
+   *  cannot be negative. A gauge axis padded down to -200 under an idle
+   *  chamber read as a vacuum nobody pulled. */
+  floor?: number;
+  /** On a log axis, the top is at least this: a residual monitor reaches a
+   *  decade over its criterion, so a line just under 1 is not drawn against
+   *  the frame as if it were clipped. */
+  logCeil?: number;
 }
 
 /** A stable empty default for `marks`.
@@ -183,6 +191,16 @@ export function niceRange(lo: number, hi: number): [number, number] {
   return [a, b];
 }
 
+/** The linear y axis: from zero (or under it, for a signed trace) to past
+ *  the data, at least `minSpan` tall, on whole ticks -- and never under
+ *  `floor`. An absolute pressure cannot be negative, so its axis stops at 0
+ *  whatever a padded tick would have done. */
+export function linearRange(min: number, max: number, minSpan: number, floor?: number): [number, number] {
+  const lo = Math.min(min, 0);
+  const [a, b] = niceRange(lo, Math.max(max, lo + minSpan));
+  return floor === undefined ? [a, b] : [Math.max(a, floor), Math.max(b, floor + minSpan)];
+}
+
 /** Log-axis ticks: whole decades only, thinned so labels never crowd.
  *
  *  uPlot's own log splits put a line at every 1..9 multiple of every decade;
@@ -218,6 +236,8 @@ export function DaqPlot({
   minSpan = 50,
   initialLog = false,
   lineWidth = 3,
+  floor,
+  logCeil,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
@@ -237,7 +257,10 @@ export function DaqPlot({
   );
   // Log only when there is something to put on it; otherwise the linear axis,
   // and the button says why.
-  const range = useMemo(() => (log ? logRange(shown.map((c) => c.values)) : null), [log, shown]);
+  const range = useMemo((): [number, number] | null => {
+    const r = log ? logRange(shown.map((c) => c.values)) : null;
+    return r && logCeil !== undefined && logCeil > r[1] ? [r[0], logCeil] : r;
+  }, [log, shown, logCeil]);
   const onLog = log && range !== null;
   // What the chart is built around: which series, in which colours. A new
   // poll of the same channels changes the data, not this, and the data goes
@@ -317,7 +340,7 @@ export function DaqPlot({
         y: onLog
           ? { distr: 3, range: () => rangeRef.current ?? [1, 10] }
           : {
-              range: (_u, min, max) => niceRange(Math.min(min, 0), Math.max(max, Math.min(min, 0) + minSpan)),
+              range: (_u, min, max) => linearRange(min, max, minSpan, floor),
             },
       },
       axes: [
@@ -398,7 +421,7 @@ export function DaqPlot({
     };
     // `shape` stands for `shown`'s identity: the series, not their values.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape, yLabel, xLabel, height, marks, onLog, fill, minSpan, lineWidth]);
+  }, [shape, yLabel, xLabel, height, marks, onLog, fill, minSpan, lineWidth, floor]);
 
   // New samples into the chart that is already there.
   useEffect(() => {

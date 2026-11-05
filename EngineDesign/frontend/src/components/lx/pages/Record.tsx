@@ -3,10 +3,11 @@ import type { Calibration, CrossCheck, EngineCheck, Provenance } from '../../../
 import type { EngineConfig } from '../../../api/client';
 import { FeedFitSummary, FeedFitView } from '../../layerx/FeedFit';
 import { PSI, sig } from '../../layerx/format';
-import { runWhen } from '../../layerx/runs';
+import { drawingWords, runWhen } from '../../layerx/runs';
+import { partName, type NetNames } from '../names';
 import { useTimeStore } from '../time/hooks';
 import { formatT } from '../time/markers';
-import { diag, diagFailed, diagMissing, rawDiag, type DiagKey, type ModelInfo, type VVDiag } from '../contract';
+import { diag, diagFailed, diagMissing, networkOf, rawDiag, type DiagKey, type ModelInfo, type VVDiag } from '../contract';
 import { Button, NotComputed, Panel, Segmented, STATUS_GLYPH, STATUS_VAR, STATUS_WORD } from '../ui';
 import { NBSP, useUnits } from '../units';
 import type { GradedLimit } from '../useRunData';
@@ -164,6 +165,9 @@ function CrossCheckBlock({ cc, className }: { cc?: CrossCheck; className: string
 
 const pctOf = (v: number | null | undefined, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${v >= 0 ? '' : '−'}${Math.abs(v).toFixed(d)}${NBSP}%`);
 
+const ENERGY_WHY = 'Not graded. The pressurant\'s energy books close only to the heat the tank walls, the liquid surface and the lines gave the gas, '
+  + 'which the burn does not record: a few percent of the expansion work is expected, and it is physics, not a fault in the solve.';
+
 function Glyph({ limit }: { limit: GradedLimit | undefined }) {
   if (!limit || limit.info) return null;
   return <span aria-label={STATUS_WORD[limit.status]} className="mr-1.5 font-semibold" style={{ color: STATUS_VAR[limit.status] }}>{STATUS_GLYPH[limit.status]}</span>;
@@ -192,7 +196,11 @@ function ChecksPanel({ vv, limits }: { vv: VVDiag; limits: readonly GradedLimit[
         <Pairs rows={[
           ...(vv.pressurant ? [[<span key="g" style={{ color: 'var(--lx-gas)' }}>Gas: bottle out → ullage in + vented</span>,
             `${u.fmt(u.m(vv.pressurant.bottle_out_kg ?? null))} → ${u.fmt(u.m(vv.pressurant.ullage_in_kg ?? null))} + ${u.fmt(u.m(vv.pressurant.vented_kg ?? null))} · ${pctOf(vv.pressurant.error_pct)}`] as [ReactNode, ReactNode]] : []),
-          ...(vv.energy ? [[vv.energy.basis ? <Hint key="e" text={vv.energy.basis}>Energy balance</Hint> : 'Energy balance', pctOf(vv.energy.error_pct)] as [ReactNode, ReactNode]] : []),
+          // Not a pass/fail figure (D-58): the residual is the heat the tank walls, the liquid surface and
+          // the lines gave the gas, which the series does not record, plus integration error. Said so on
+          // the page, the model's own basis in the hover.
+          ...(vv.energy ? [[<Hint key="e" text={`${ENERGY_WHY} ${vv.energy.basis ?? ''}`.trim()}>Gas energy unaccounted</Hint>,
+            <span key="v">{pctOf(vv.energy.error_pct)} <span className="text-[var(--lx-text-3)]">heat from the walls, not graded</span></span>] as [ReactNode, ReactNode]] : []),
           ...(vv.dt_check ? [[`Half the step (${vv.dt_check.half_dt_s ?? '—'} s)`, `impulse ${pctOf(vv.dt_check.impulse_delta_pct as number | null | undefined, 3)}`] as [ReactNode, ReactNode]] : []),
         ]} />
       </div>
@@ -267,7 +275,14 @@ function kv(obj: Record<string, unknown>): [string, string][] {
     .map(([k, v]) => [k, typeof v === 'number' ? (Number.isInteger(v) ? String(v) : sig(v)) : String(v)]);
 }
 
-function ProvenanceBlock({ p }: { p: Provenance }) {
+/** Where the drawing came from, in words (the raw source in the hover). */
+const sourceWords = (src: string) => (src.startsWith('shipped:') ? 'Benchmark, shipped with the code'
+  : src.startsWith('sample:') ? 'Hotbench sample stand'
+  : src.startsWith('feed-twin library') ? 'Feed Twin library'
+  : src.startsWith('pid-designer:') ? `pid-designer, ${src.endsWith('working copy') ? 'working copy' : 'release'}`
+  : src === 'upload' ? 'Uploaded to Layer X' : src);
+
+function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }) {
   const [all, setAll] = useState<'defaults' | 'all'>('defaults');
   const defaults = p.assembly.assumptions.filter((a) => a.source === 'default');
   const rows = all === 'all' ? p.assembly.assumptions : defaults;
@@ -276,7 +291,8 @@ function ProvenanceBlock({ p }: { p: Provenance }) {
     <>
       <Panel title="Run record" className="lg:col-span-4">
         <Pairs rows={[
-          ['Drawing', p.drawing.name], ['Drawing source', p.drawing.source], ['Drawing hash', short(p.drawing.sha256)],
+          ['Drawing', drawingWords(p.drawing.name)], ['Drawing source', <span key="src" title={p.drawing.source}>{sourceWords(p.drawing.source)}</span>],
+          ['Drawing hash', short(p.drawing.sha256)],
           ['Engine config hash', short(p.config_sha256)], ['Feed network', `${p.assembly.nodes} nodes, ${p.assembly.branches} branches`],
           ['Feed model', p.feedtwin_version ? `feedtwin ${p.feedtwin_version}` : 'feedtwin'],
           ['Solve time', p.wall_s !== undefined ? `${p.wall_s.toFixed(1)} s` : '—'], ['Run', new Date(p.created * 1000).toLocaleString()],
@@ -294,7 +310,7 @@ function ProvenanceBlock({ p }: { p: Provenance }) {
         {rows.length ? (
           <Table caption="Parameters the drawing does not state" head={['Component', 'Parameter', 'Value', 'Basis', 'Reference']} align={['l', 'l', 'r', 'l', 'l']} maxHeight={300}
                  rows={rows.map((a) => [
-                   a.component, <span key="p" className="font-sans text-[var(--lx-text-2)]">{a.parameter}</span>,
+                   <span key="c" title={a.component}>{partName(names, { label: a.component })}</span>, <span key="p" className="font-sans text-[var(--lx-text-2)]">{a.parameter}</span>,
                    <span key="v">{sig(a.value)}<span className="lx-unit">{'\u00a0'}{a.unit}</span></span>,
                    <span key="s" className="font-sans" style={{ color: a.source === 'default' ? 'var(--lx-warn)' : 'var(--lx-text-3)' }}>{SOURCE_LABEL[a.source] ?? a.source}</span>,
                    <span key="r" className="block max-w-[22rem] truncate font-sans text-[var(--lx-text-3)]" title={a.reference}>{a.reference}</span>,
@@ -355,7 +371,7 @@ export function Record({ data, job, theme, onConfigUpdated }: PageProps & { onCo
           </Legacy>
         </Panel>
       )}
-      <ProvenanceBlock p={r.provenance} />
+      <ProvenanceBlock p={r.provenance} names={networkOf(r)} />
       <NotYet items={[
         !d.vv && !diagFailed(r, 'vv') && 'conservation and convergence checks',
         !models.length && 'the models behind each diagnostic',

@@ -1,6 +1,6 @@
 # 0004 — Pressure references: absolute inside, gauge on the drawing, never ambiguous
 
-**Status:** Accepted · 2026-10-06
+**Status:** Accepted · 2026-10-06 · item 6 superseded by [ADR 0007](0007-people-read-psia.md) · 2026-10-17
 **Affects:** `lib/feedtwin`, `feed-twin`, `EngineDesign` (Layer X), `pid-designer`
 
 ## Context
@@ -47,6 +47,8 @@ the same drawn number meaning two things a few lines apart:
 6. **Everything a person sets or reads is psig, and says so.** That covers the
    console, GSE knobs, Hookup, Engine page and API fields named `*_psi`. Layer X and
    EngineDesign keep psia for engine quantities, labelled as such.
+   *Superseded by [ADR 0007](0007-people-read-psia.md): a person reads and types psia;
+   the API fields, saved files and run records stay gauge.*
 7. **pid-designer offers the references.**
    * Absolute fields offer `psi` (reads as gauge), `psig` and `psia`; differences
      offer only the bare units.

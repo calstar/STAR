@@ -3,6 +3,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import type { TimeSeriesData } from '../../api/client';
 import type { ForwardReport, Quantity, Section, Status, Verdict } from '../../lib/forwardReport';
 import { burnRange, fmt, sectionSummary, MEASURABLE } from '../../lib/forwardReport';
+import { friendlyPressureText } from '../../lib/pressure';
 import type { MeasuredValue } from '../../lib/forwardReport';
 import { Hint } from '../Hint';
 
@@ -94,7 +95,7 @@ function Verdicts({ verdicts, calibration }: { verdicts: Verdict[]; calibration:
 }
 
 const BURN_PLOTS: { key: keyof TimeSeriesData; label: string; unit: string; digits: number; also?: keyof TimeSeriesData }[] = [
-  { key: 'P_tank_O_psi', also: 'P_tank_F_psi', label: 'Tank pressure', unit: 'psi', digits: 0 },
+  { key: 'P_tank_O_psi', also: 'P_tank_F_psi', label: 'Tank pressure', unit: 'psia', digits: 0 },
   { key: 'Pc_psi', label: 'Chamber pressure', unit: 'psia', digits: 0 },
   { key: 'MR', label: 'O/F', unit: '', digits: 3 },
   { key: 'thrust_kN', label: 'Thrust', unit: 'kN', digits: 2 },
@@ -202,6 +203,18 @@ function SectionRow({ section, calibration, open, onToggle, children }: {
   );
 }
 
+// The check's rows are named by their textbook relation, which an engineer wants to see; only the
+// spelled-out Greek and the internal names are tidied.
+function checkLabel(q: string): string {
+  return q.replace(/\beta c\*/g, 'η c*').replace(/\bzeta_n\b/g, 'ζ_n').replace(/\bgamma\b/g, 'γ');
+}
+
+function checkHand(q: string, hand: string): string {
+  // "see design_audit": the spray angle is reported with the injector, on Chamber Geometry.
+  if (/design_audit/.test(hand)) return 'see Chamber Geometry';
+  return friendlyPressureText(q, hand);
+}
+
 function IndependentCheck({ hc }: { hc: NonNullable<ForwardReport['handcheck']> }) {
   return (
     <table className="w-full text-[12px] tabular-nums">
@@ -217,9 +230,9 @@ function IndependentCheck({ hc }: { hc: NonNullable<ForwardReport['handcheck']> 
       <tbody>
         {hc.rows.map((r) => (
           <tr key={r.quantity} className="border-t border-[var(--color-border)]/50">
-            <td className="py-1 text-[var(--color-text-secondary)]">{r.quantity}</td>
-            <td className="py-1 text-right text-[var(--color-text-primary)]">{r.model}</td>
-            <td className="py-1 text-right text-[var(--color-text-secondary)]">{r.hand}</td>
+            <td className="py-1 text-[var(--color-text-secondary)]">{checkLabel(r.quantity)}</td>
+            <td className="py-1 text-right text-[var(--color-text-primary)]">{friendlyPressureText(r.quantity, r.model)}</td>
+            <td className="py-1 text-right text-[var(--color-text-secondary)]">{checkHand(r.quantity, r.hand)}</td>
             <td className="py-1 text-right" style={{ color: r.ok ? 'var(--color-text-secondary)' : STATUS_COLOR.bad }}>{r.diff}</td>
             <td className="py-1 pl-6 text-[var(--color-text-muted)]">{r.source}</td>
           </tr>

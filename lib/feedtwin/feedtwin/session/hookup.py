@@ -67,7 +67,7 @@ DOME = "dome"
 CHARGE = "charge"
 
 #: Where a hand-loaded regulator's knob starts when the drawing gives it no
-#: setting [psig]: the regulator fallback the build fills in (500 psi absolute,
+#: setting [psig]: the regulator fallback the build fills in (500 psia,
 #: feedtwin.pid.network.FALLBACKS), so giving it a knob changes nothing.
 UNSET_PSIG = 500.0 - 14.695948775513449
 
@@ -314,6 +314,7 @@ def regulators(model: Model) -> list[RegulatorInfo]:
     """Every regulator on the drawing a knob could set."""
     built = model.built
     loaded = {loader.signal for loader in built.dome_loaders.values()}
+    implied = drawn_settings(model)
     out = []
     for node in model.diagram.nodes:
         if node.type != "PR":
@@ -337,7 +338,10 @@ def regulators(model: Model) -> list[RegulatorInfo]:
                 label=node.label or node.id,
                 kind=kind,
                 page=node.page or "Main",
-                drawn_psig=psig(param.si) if param is not None else None,
+                # A blank loader reads the dome it loads (drawn_settings).
+                drawn_psig=(
+                    psig(param.si) if param is not None else implied.get(node.id)
+                ),
                 signal=signal,
             )
         )
@@ -398,7 +402,10 @@ def suggest(
                     id=CHARGE,
                     label=f"COPV fill ({labels.get(regulator, regulator)})",
                     regulators=(regulator,),
-                    psig=drawn.get(regulator, charge_psig),
+                    psig=drawn.get(
+                        regulator,
+                        _or(bottle_charge(model, regulator), charge_psig),
+                    ),
                     low=0.0,
                     high=6000.0,
                 )
@@ -457,8 +464,16 @@ def on_vehicle(saved: Hookup, model: Model) -> Hookup:
 def drawn_settings(model: Model) -> dict[str, float]:
     """What the drawing sets each regulator to [psig], by drawing id: a
     loader's or plain regulator's ``setpoint``, a dome-loaded one's
-    ``dome_pressure``. A regulator the sheet says nothing about is absent."""
+    ``dome_pressure``. A regulator the sheet says nothing about is absent.
+
+    A dome loader drawn with no setpoint of its own is set to what the drawing
+    says the dome it loads holds: the loaded regulator's ``dome_pressure``.
+    That number is the loader's whole job, and LE4 (6) draws it there (DPR_HP
+    535, DR-REG-G blank); without it the dome knob started at the session's
+    500 and the cockpit primed 35 psi under the Layer X stand on the same
+    drawing."""
     out: dict[str, float] = {}
+    labels = {n.id: n.label or n.id for n in model.diagram.nodes}
     for node in model.diagram.nodes:
         if node.type != "PR":
             continue
@@ -471,7 +486,35 @@ def drawn_settings(model: Model) -> dict[str, float]:
         param = node.params.get(key)
         if param is not None:
             out[node.id] = psig(param.si)
+    for loader_id, loader in model.built.dome_loaders.items():
+        if loader_id in out:
+            continue
+        loaded = next(
+            (
+                n
+                for n in model.diagram.nodes
+                if n.type == "PR" and f"{labels[n.id]}.dome" == loader.signal
+            ),
+            None,
+        )
+        dome = None if loaded is None else loaded.params.get("dome_pressure")
+        if dome is not None:
+            out[loader_id] = psig(dome.si)
     return out
+
+
+def bottle_charge(model: Model, regulator: str) -> float | None:
+    """The drawn charge [psig] of the vehicle bottle ``regulator`` fills, or
+    None: where a COPV fill knob starts when the fill regulator itself carries
+    no setting. The drawing's bottle pressure is the charge it was drawn at
+    (LE4 (6): COPV 4000, PR-1 blank), and starting the knob at the session's
+    4,500 put the gauge amber at its own "normal" charge."""
+    bottle = _charged_bottle(model, regulator)
+    if bottle is None:
+        return None
+    node = next((n for n in model.diagram.nodes if n.id == bottle), None)
+    param = None if node is None else node.params.get("pressure")
+    return None if param is None else round(psig(param.si), 6)
 
 
 def knob_starts(hookup: Hookup, model: Model) -> dict[str, float]:
@@ -483,6 +526,15 @@ def knob_starts(hookup: Hookup, model: Model) -> dict[str, float]:
     out: dict[str, float] = {}
     for knob in hookup.knobs:
         found = _first_drawn(drawn, knob.regulators, float("nan"))
+        if found != found and knob.id == CHARGE:
+            found = next(
+                (
+                    c
+                    for c in (bottle_charge(model, r) for r in knob.regulators)
+                    if c is not None
+                ),
+                float("nan"),
+            )
         if found == found:
             out[knob.id] = found
     return out
@@ -521,14 +573,24 @@ def _hand_loaded_regulators(model: Model, taken: set[str]) -> list[str]:
 def _charges_vehicle_bottle(model: Model, regulator: str) -> bool:
     """Whether a regulator's outlet reaches the vehicle's pressurant bottle:
     through any valve, across mated disconnects, without passing a vessel."""
+    return _charged_bottle(model, regulator) is not None
+
+
+def _or(value: float | None, default: float) -> float:
+    return default if value is None else value
+
+
+def _charged_bottle(model: Model, regulator: str) -> str | None:
+    """The drawing id of the vehicle pressurant bottle a regulator's outlet
+    reaches (see :func:`_charges_vehicle_bottle`), or None."""
     built = model.built
     net = built.network
     branch = net.branches.get(regulator)
     if branch is None:
-        return False
+        return None
     types = {n.id: n.type for n in model.diagram.nodes}
     bottles = {
-        built.node_of.get(sid, sid)
+        built.node_of.get(sid, sid): sid
         for sid, kind in types.items()
         if kind == "KBOTTLE" and (built.vehicle is None or sid in built.vehicle)
     }
@@ -547,11 +609,11 @@ def _charges_vehicle_bottle(model: Model, regulator: str) -> bool:
                 continue
             seen.add(there)
             if there in bottles:
-                return True
+                return bottles[there]
             if net.nodes[there].pressure is not None:
                 continue
             frontier.append(there)
-    return False
+    return None
 
 
 def binding(model: Model, machine: StateMachine, hookup: Hookup | None) -> Binding:

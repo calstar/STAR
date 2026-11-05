@@ -18,6 +18,7 @@ type name**. This is that code, once.
 | `useCheckout.ts` | The client half of checkouts: current holder, Take/Release, the poll that runs only while you *don't* hold it, and the release-on-tab-close beacon. |
 | `CheckoutControl.tsx` | The status chip (*Editing* / *Alice is editing* / *Read only*) and its one button, plus `ReadOnlyNotice`. |
 | `readOnly.tsx` | `ReadOnlyProvider` / `useDisabled`, so a leaf input knows the design is not checked out without a prop threaded through every panel. |
+| `SuiteSwitcher.tsx`, `suite.ts` | The Hotbench header's left end, the same in every app: the wordmark, *a STAR project*, and Engine \| P&ID \| Twin with the current app marked. `suite.ts` says where each sibling lives: `VITE_HOTBENCH_ENGINE_URL` / `_PID_URL` / `_TWIN_URL` from the build, else the sibling port on localhost (dev 5173/5174/5177, demo 5273/5274/5277), else the sibling subdomain on `*.starberkeley.org`. |
 | `theme.ts` | Button classes and `relativeTime`. Separate from the components because react-refresh requires a component file to export nothing else. |
 
 ## What deliberately is not here

@@ -8,6 +8,10 @@ that was checked against something *other than this code*.
 If you are an agent picking this up cold: read "The rule" first. It is the part that
 matters. Everything after it is bookkeeping.
 
+**Units.** A figure marked psig is the gauge the checks read off the wire
+(`feedtwin.session.gauge.psig`). The screens show psia since ADR 0007: add 14.696 to
+compare the two. A difference (a dip, a droop, a band) is the same in either.
+
 ---
 
 ## The rule

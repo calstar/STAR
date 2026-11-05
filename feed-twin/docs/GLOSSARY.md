@@ -15,7 +15,7 @@ word, the twin uses it: **O/F**, not "mixture ratio" or MR.
 | **Lockup** | The pressure a regulator holds its outlet at with no flow. The tanks sit at lockup before Fire. |
 | **Droop** | How far a regulator's outlet falls below lockup as flow rises. |
 | **Dome** | The loading pressure on a dome-loaded regulator; the dome knob sets it. |
-| **psig / psia** | Gauge (vented reads 0) / absolute. Everything a person reads or sets is psig. A chamber pressure is psia. See ADR 0004. |
+| **psig / psia** | Gauge (vented reads 0) / absolute (vented reads 14.7). Everything a person reads or sets is psia; the API and saved files carry gauge, as the stand's DAQ logs it. A difference (bias, droop, sag) is plain psi. See ADR 0007. |
 | **MAWP / burst** | The pressure a vessel is rated to / fails at. The stand trips above MAWP, or above burst over the safety factor. |
 | **Tunable** | An assumed number with a row on the Configuration tab: what it accounts for, its default, its bounds. |
 | **Provenance** | Where a hardware number came from (manufacturer, measured, estimated). Every one carries it. |

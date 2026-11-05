@@ -20,8 +20,9 @@ import pytest
 from feedtwin.pid import read_diagram
 from feedtwin.pid.roles import ground_ids, unpaired_vents, vehicle_only, vent_branches
 from feedtwin.session import Setup, assemble_model, load_machine
+from feedtwin.session.statemachine import machine_from_dict
 from feedtwin.session.burn import open_session
-from feedtwin.session.gauge import psig
+from feedtwin.session.gauge import from_psig, psig
 from feedtwin.session.hookup import DOME, Hookup, on_vehicle, suggest
 
 HERE = Path(__file__).resolve().parent
@@ -277,3 +278,83 @@ def test_a_gas_swap_puts_helium_in_the_bottles_lines_and_ullages() -> None:
         for tank in ("Eth-Tank", "LOX-Tank"):
             assert nodes[ids[tank]].fluid == gas
             assert nodes[f"{ids[tank]}.out"].fluid in ("ethanol", "oxygen")
+
+
+def _dome_press_machine() -> Any:
+    """The shipped table with a "Dome Control" row open only in a "Dome Press"
+    state, reached from Press Standby -- a stand's own table (the operator,
+    2026-11-01)."""
+    table = load_machine(tables=TABLES).to_dict()
+    table["states"].append({"name": "Dome Press", "row": 2, "col": 5, "abort": False})
+    table["actuators"].append("Dome Control")
+    table["open"]["Dome Press"] = ["Dome Control"]
+    standby = table["allowed"]["Press Standby"]
+    standby.append("Dome Press")
+    aborts = [s["name"] for s in table["states"] if s["abort"]]
+    table["allowed"]["Dome Press"] = ["Press Standby", "Dome Press"] + [
+        a for a in aborts if a in standby
+    ]
+    return machine_from_dict(table)
+
+
+def _dome(session: Any) -> float:
+    """The dome the rocket's regulator reads now [psig]."""
+    signal = session.model.built.actuators[_ids()["DPR_HP"]]
+    return psig(session.peek_signals()[signal])
+
+
+@needs_tables
+def test_an_undriven_dome_valve_leaves_the_rocket_only_dome_as_it_was() -> None:
+    """Rocket only, the dome comes in through the capped DR-QD-B and the
+    rocket's DR-CTRL-R gates it -- but no row of the shipped table drives
+    DR-CTRL-R, so it passes and the stand runs bit for bit as it did with no
+    gate at all."""
+    gated = _session(True)
+    assert set(gated._cut_dome_lines) == {_ids()["DPR_HP"]}
+    plain = _session(True)
+    plain._cut_dome_lines = {}
+    for session in (gated, plain):
+        for state, steps in (("Idle", 4), ("GN2 High Press", 20), ("Fuel Press", 20)):
+            session.state = state
+            for _ in range(steps):
+                session.step(0.5)
+    fuel = _ids()["Eth-Tank"]
+    assert _dome(gated) == pytest.approx(500.0)
+    assert gated.tanks[fuel].pressure == plain.tanks[fuel].pressure
+    assert gated.tanks[fuel].pressure > from_psig(400.0)
+
+
+@needs_tables
+def test_a_dome_press_state_loads_the_dome_and_it_holds() -> None:
+    """With DR-CTRL-R on a "Dome Control" row open only in "Dome Press", the
+    rocket's dome sits at atmosphere until Dome Press opens the line to the
+    cart's dome supply (the knob), and holds what it took once the line shuts:
+    a tank pressed before it presses nothing, one pressed after reaches
+    lockup."""
+    ids = _ids()
+    whole = _model(False)
+    model = _model(True)
+    hookup = replace(
+        suggest(whole, 500.0, 4500.0), valves={"Dome Control": ids["DR-CTRL-R"]}
+    )
+    session = open_session(
+        model, _dome_press_machine(), hookup=on_vehicle(hookup, model)
+    )
+    assert session.binding.to_symbol["Dome Control"] == ids["DR-CTRL-R"]
+    fuel = session.tanks[ids["Eth-Tank"]]
+    for state, steps in (("Idle", 4), ("GN2 High Press", 20), ("Fuel Press", 20)):
+        session.state = state
+        for _ in range(steps):
+            session.step(0.5)
+    assert _dome(session) == pytest.approx(0.0, abs=1e-9)
+    assert psig(fuel.pressure) < 100.0, "an unloaded regulator is shut"
+    session.state = "Dome Press"
+    session.step(0.5)
+    assert _dome(session) == pytest.approx(500.0)
+    session.state = "Press Standby"
+    session.step(0.5)
+    assert _dome(session) == pytest.approx(500.0), "shut in, it holds"
+    session.state = "Fuel Press"
+    for _ in range(20):
+        session.step(0.5)
+    assert psig(fuel.pressure) > 400.0

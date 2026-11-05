@@ -6,7 +6,7 @@ import { useNodeFluid } from '../FluidContext';
 import { DraggableLabel } from './DraggableLabel';
 import { Frame, TurnedPort } from './Frame';
 import { Upright } from './Upright';
-import { fmtParam } from '../fmt';
+import { fmtPressure } from '../fmt';
 
 /**
  * Where the propellant and the pressurant come from: a K-bottle, or a dewar.
@@ -108,7 +108,9 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
               color: 'var(--color-text-secondary)', whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >
-            {fmtParam(p)}
+            {/* In psia: the bottle's "4000 psi" was 4014.7 psia, the engine's
+                "385 psi" 385 psia, and the sheet printed both the same way. */}
+            {fmtPressure('pressure', p)}
           </span>
         )}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={{ x: -4, y: bottleBoxH + 15 }} />

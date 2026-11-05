@@ -34,10 +34,10 @@ function ActuatorRow({ label, entity, color, ballValve }: ActuatorRowProps) {
   const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
 
   return (
-    <div className="flex items-center justify-between rounded-lg px-5 py-4 bg-gray-900/50">
+    <div className="flex items-center justify-between border border-line-strong bg-[#0b0b0b] px-4 py-3">
       <div className="flex items-center gap-3">
-        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
+        <div className="h-2 w-2 flex-shrink-0" style={{ backgroundColor: color }} />
+        <span className="text-[14px] font-semibold text-ink">{label}</span>
       </div>
       <div className="flex items-center gap-3">
         {ballValve && (
@@ -45,10 +45,10 @@ function ActuatorRow({ label, entity, color, ballValve }: ActuatorRowProps) {
             className="text-sm font-mono tabular-nums text-yellow-400" />
         )}
         <span
-          className={`text-base font-black font-mono px-4 py-2 rounded-lg ${
-            !hasState ? 'bg-gray-800 text-gray-600' :
-            isOpen   ? 'bg-green-900/60 text-green-400 border border-green-800' :
-                       'bg-red-900/60 text-red-400 border border-red-800'
+          className={`border px-3 py-1 font-mono text-[12px] font-semibold uppercase tracking-[0.16em] ${
+            !hasState ? 'border-line text-ink-4' :
+            isOpen   ? 'border-green-500 text-green-400' :
+                       'border-line-strong text-ink-3'
           }`}
         >
           {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
@@ -65,8 +65,8 @@ interface ActuatorStatePanelProps {
 
 export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePanelProps) {
   return (
-    <div className="bg-card rounded-lg p-4 flex flex-col gap-3">
-      <h3 className="text-base font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
+    <div className="flex flex-col gap-2 border-t border-line pt-4">
+      <h3 className="caps mb-1">{title}</h3>
       {actuators.map((a) => (
         <ActuatorRow key={a.entity} label={a.label} entity={a.entity} color={a.color} ballValve={a.ballValve} />
       ))}

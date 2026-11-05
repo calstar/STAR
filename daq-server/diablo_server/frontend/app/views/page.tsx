@@ -9,9 +9,9 @@ function ViewCard({ item, muted, pinned }: { item: NavItem; muted?: boolean; pin
   return (
     <NavLink
       to={item.path}
-      className={`relative overflow-hidden backdrop-blur-md rounded-xl border transition-all duration-300 text-left group
-                  hover:bg-white/[0.06] hover:shadow-xl hover:-translate-y-0.5
-                  ${muted ? 'bg-white/[0.01] border-white/5 opacity-70 hover:opacity-100' : 'bg-white/[0.02] border-white/5'}`}
+      className={`relative overflow-hidden border border-line text-left transition-colors group
+                  hover:border-line-strong hover:bg-white/[0.04]
+                  ${muted ? 'opacity-70 hover:opacity-100' : ''}`}
     >
       <div className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg" style={{ backgroundColor: item.accent }} />
       <div className="px-4 py-3 pl-5">
@@ -36,7 +36,7 @@ function ViewCard({ item, muted, pinned }: { item: NavItem; muted?: boolean; pin
 function SectionHeader({ color, children }: { color: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="w-1.5 h-5 rounded-full" style={{ backgroundColor: color }} />
+      <div className="h-2 w-2 flex-shrink-0" style={{ backgroundColor: color }} />
       <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase">{children}</h2>
     </div>
   );

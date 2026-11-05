@@ -46,7 +46,7 @@ function RtdReadoutBox({
   const value = useSensorValue(calEntity, 'temperature_c');
   const display = value !== null ? value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '---';
   return (
-    <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-xl px-5 py-3.5 flex items-center gap-4 min-w-0 hover:bg-white/[0.04] hover:shadow-lg transition-all duration-300 flex-1">
+    <div className="border border-line px-5 py-3.5 flex items-center gap-4 min-w-0 flex-1">
       <span className="text-[13px] text-gray-400 font-bold uppercase tracking-widest truncate">
         {label}
       </span>
@@ -97,24 +97,24 @@ export default function LOXGraphsPage() {
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
   return (
-    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden px-8 py-4 gap-3">
 
       {/* Header + tab toggle */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-1 h-5 bg-red-500 rounded-full" />
-          <h1 className="text-base font-bold text-red-400 tracking-wider">LOX SYSTEM</h1>
+          <div className="h-2 w-2 flex-shrink-0 bg-red-500" />
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">LOX SYSTEM</h1>
         </div>
-        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
+        <div className="flex items-baseline gap-1">
           <button
             onClick={() => setActiveTab('PT')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'PT' ? 'bg-red-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+            className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${activeTab === 'PT' ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2'}`}
           >
             PTs (Pressures)
           </button>
           <button
             onClick={() => setActiveTab('RTD')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'RTD' ? 'bg-orange-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+            className={`border-b px-3 pb-1.5 font-mono text-[13px] transition-colors ${activeTab === 'RTD' ? 'border-ink text-ink' : 'border-transparent text-ink-3 hover:text-ink-2'}`}
           >
             RTDs (Temperatures)
           </button>

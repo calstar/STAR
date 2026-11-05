@@ -18,10 +18,12 @@
  * making it un-writable is cheaper than reconstructing it later. The dialog
  * therefore always asks, and `estimated` is a real answer.
  *
- * One deliberate absence, inherited and worth restating: **there is no psig.**
- * Gauge is a reference, not a unit. A pressure typed as psig and stored as psi
- * is one atmosphere low, silently, everywhere downstream -- so the dialog says
- * "absolute" next to every pressure field rather than accepting the spelling.
+ * A pressure at a place is written with its reference: psia, or psig. A bare
+ * "psi" there is still read -- as gauge, the way `feedtwin.model.pressure`
+ * reads a drawing, or absolute on the engine -- but it is no longer offered,
+ * and a drawing shows every such pressure in psia (`toPsia`), so no reader
+ * has to know which symbol a bare number sat on. A difference (a bias, a
+ * relief's set pressure) has no reference and stays plain psi.
  */
 
 export type Provenance = 'measured' | 'manufacturer' | 'estimated' | 'default';
@@ -94,10 +96,18 @@ export const PRESSURE_DIFFERENCES: ReadonlySet<string> = new Set([
 ]);
 
 /** Symbols whose pressures are quoted absolute: the chamber. */
-const ABSOLUTE_SYMBOLS: ReadonlySet<string> = new Set(['ENGINE', 'INJECTOR']);
+export const ABSOLUTE_SYMBOLS: ReadonlySet<string> = new Set(['ENGINE', 'INJECTOR']);
 
-const ABSOLUTE_UNITS = ['psi', 'psig', 'psia', 'bar', 'barg', 'bara', 'kPa', 'MPa', 'Pa', 'atm'];
+/**
+ * What an absolute pressure is offered in: always with its reference, psia
+ * first. Bare `psi` and `bar` are left out on purpose -- on a tank they meant
+ * gauge, on the engine absolute, and the drawing printed both as "psi".
+ */
+const ABSOLUTE_UNITS = ['psia', 'psig', 'bara', 'barg', 'kPa', 'MPa', 'Pa', 'atm'];
 const DIFFERENCE_UNITS = ['psi', 'bar', 'kPa', 'MPa', 'Pa'];
+
+/** Whether a pressure parameter is a pressure at a place, not a difference. */
+export const isAbsoluteField = (key: string) => !PRESSURE_DIFFERENCES.has(key);
 
 /** The units a field offers: a difference cannot carry a gauge or absolute reference. */
 export function unitsFor(spec: { key: string; dimension: Dimension }): string[] {
@@ -105,11 +115,25 @@ export function unitsFor(spec: { key: string; dimension: Dimension }): string[] 
   return PRESSURE_DIFFERENCES.has(spec.key) ? DIFFERENCE_UNITS : ABSOLUTE_UNITS;
 }
 
+/**
+ * A stored unit said with its reference: a bare `psi` or `bar` on a pressure
+ * at a place reads as gauge -- absolute on the engine -- by the rule feed-twin
+ * reads a drawing by (`feedtwin.model.pressure.drawn_unit`). The same number,
+ * now saying what it is; anything else unchanged.
+ */
+export function explicitUnit(key: string, unit: string, symbol = ''): string {
+  if (PRESSURE_DIFFERENCES.has(key)) return unit;
+  const abs = ABSOLUTE_SYMBOLS.has(symbol);
+  if (unit === 'psi') return abs ? 'psia' : 'psig';
+  if (unit === 'bar') return abs ? 'bara' : 'barg';
+  return unit;
+}
+
 /** What a pressure field's unit means, said next to it. */
 export function pressureNote(key: string, symbol = ''): string {
   if (PRESSURE_DIFFERENCES.has(key)) return 'a difference: the same in psig and psia';
-  if (ABSOLUTE_SYMBOLS.has(symbol)) return 'absolute unless psig: a chamber pressure is quoted psia';
-  return 'gauge unless psia: a bare psi reads as psig, as the dial does';
+  if (ABSOLUTE_SYMBOLS.has(symbol)) return 'absolute: a chamber pressure is quoted psia';
+  return 'psia is absolute; psig is gauge, as the dial reads. The drawing shows it in psia.';
 }
 
 /** One standard atmosphere [Pa]: what a gauge reads zero at. */
@@ -144,4 +168,22 @@ export function toGaugePa(p: ParamValue | undefined): number | undefined {
 export function toAbsolutePa(p: ParamValue | undefined): number | undefined {
   const gauge = toGaugePa(p);
   return gauge === undefined ? undefined : gauge + ATM;
+}
+
+/** Pascals in one psi. */
+export const PSI_PA = 6894.757293168361;
+
+/**
+ * A pressure at a place in psia: what the drawing shows a person, whatever
+ * reference it was written in. A bare unit is read as `explicitUnit` reads it
+ * -- gauge, but absolute on the engine -- so the engine's "385 psi" is 385
+ * psia and a tank's "585 psi" is 599.7 psia, and the two can be read side by
+ * side. Nothing, for a unit this file does not know.
+ */
+export function toPsia(p: ParamValue | undefined, symbol = ''): number | undefined {
+  if (!p) return undefined;
+  const u = PA_PER[p.unit];
+  if (u === undefined) return undefined;
+  const absolute = u.ref === 'a' || (u.ref === '' && ABSOLUTE_SYMBOLS.has(symbol));
+  return (p.value * u.k + (absolute ? 0 : ATM)) / PSI_PA;
 }

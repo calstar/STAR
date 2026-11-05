@@ -8,6 +8,11 @@ import { isPopupWindow } from '@/lib/is-popup';
 // Routes that render their own compact header and no tab bar (full-bleed views).
 const SUPPRESS_TOPBAR_PATHS = ['/mobile', '/livestream'];
 
+/**
+ * The header, as feed-twin's: the brand and the views on one line, the stand's
+ * vital signs on the next, then the strip every view keeps -- the transducers
+ * as bars and the command stack, so the way out is one click from any page.
+ */
 export default function TopBarWrapper() {
   const { pathname } = useLocation();
   const suppress = SUPPRESS_TOPBAR_PATHS.some((p) => pathname === p || pathname?.startsWith(p + '/'));
@@ -17,7 +22,7 @@ export default function TopBarWrapper() {
 
   if (isIpad) {
     return (
-      <div className="w-full bg-card border-b border-gray-800 flex-shrink-0" style={{ height: '150px' }}>
+      <div className="w-full flex-shrink-0 border-b border-line" style={{ height: '150px' }}>
         <div className="w-[125%] h-full origin-top-left" style={{ transform: 'scale(0.8)' }}>
           <TopBar />
         </div>
@@ -25,13 +30,13 @@ export default function TopBarWrapper() {
     );
   }
 
-  // Popups are dedicated single-view windows — keep the TopBar, drop the tab bar.
+  // Popups are dedicated single-view windows — keep the brand, drop the views.
   const showTabs = !isPopupWindow();
 
   return (
-    <>
+    <header className="relative z-30 flex-shrink-0 select-none border-b border-line bg-black">
+      <TabBar nav={showTabs} />
       <TopBar />
-      {showTabs && <TabBar />}
-    </>
+    </header>
   );
 }

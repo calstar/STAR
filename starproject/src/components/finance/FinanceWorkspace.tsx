@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReimbursementActions } from "@/components/finance/ReimbursementActions";
 import { ReimbursementDetail } from "@/components/finance/ReimbursementDetail";
 import { ReimbursementTable } from "@/components/finance/ReimbursementTable";
+import type { TagOptions } from "@/components/finance/ReimbursementTags";
 import { Modal } from "@/components/Modal";
 import { loadReimbursement } from "@/lib/actions/finance";
 import type { FinanceDetail, FinanceRow } from "@/lib/finance/queries";
@@ -18,9 +19,9 @@ const chip = (active: boolean) =>
       : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
   }`;
 
-/** The Finance tab: filters, the reimbursement table, and the detail card
+/** The Reimbursements tab: filters, the reimbursement table, and the detail card
  * (opened in place, or from a `?r=<number>` share link). */
-export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: boolean }) {
+export function FinanceWorkspace({ rows, admin, tagOptions }: { rows: FinanceRow[]; admin: boolean; tagOptions: TagOptions }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -140,7 +141,9 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
         <Modal onClose={close}>
           {data ? (
             <ReimbursementDetail
+              key={data.id}
               data={data}
+              tagOptions={tagOptions}
               actions={
                 <ReimbursementActions
                   data={data}
@@ -165,7 +168,7 @@ export function FinanceWorkspace({ rows, admin }: { rows: FinanceRow[]; admin: b
 export function NewReimbursementButton() {
   return (
     <Link
-      href="/finance/new"
+      href="/reimbursements/new"
       className="inline-flex min-h-11 items-center rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:min-h-0"
     >
       New reimbursement

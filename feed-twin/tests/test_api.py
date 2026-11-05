@@ -211,7 +211,7 @@ def test_the_model_says_which_sheet_everything_is_on() -> None:
 def test_an_unknown_artifact_is_a_422_not_a_500() -> None:
     response = client.get("/api/model?diagram=deadbeef1234")
     assert response.status_code == 422
-    assert "no artifact" in response.json()["detail"]
+    assert "no artifact" in response.json()["detail"].lower()
 
 
 # ------------------------------------------------------- the state machine

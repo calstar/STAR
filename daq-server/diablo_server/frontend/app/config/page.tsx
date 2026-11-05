@@ -902,7 +902,7 @@ function ScriptEditor({
 
               {completion && (
                 <ul
-                  className="absolute z-30 max-h-56 w-72 overflow-auto rounded border border-gray-600 bg-gray-900 shadow-xl text-sm"
+                  className="absolute z-30 max-h-56 w-72 overflow-auto border border-line-strong bg-black text-sm"
                   style={{ left: completionPos.left, top: completionPos.top }}
                   // The textarea must keep focus, or the caret moves and the insert lands wrong.
                   onMouseDown={(e) => e.preventDefault()}
@@ -2110,7 +2110,7 @@ export default function ConfigPage() {
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold">Configuration Editor</h1>
+            <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Configuration Editor</h1>
             <p className="text-sm text-text-muted mt-1">
               Config auto-refreshes when saved (yours or another client). Reload to fetch latest from disk.
             </p>
@@ -2148,7 +2148,7 @@ export default function ConfigPage() {
             <button
               onClick={saveConfig}
               disabled={saving || loading || !canEdit}
-              className={`px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed ${dirty && canEdit ? 'bg-blue-600 hover:bg-blue-700 ring-2 ring-blue-400/60' : 'bg-blue-600 hover:bg-blue-700'}`}
+              className={`ctl h-9 px-4 text-[11px] ${dirty && canEdit ? '!border-[var(--color-warning)] !text-[var(--color-warning)]' : ''}`}
               title={canEdit ? (dirty ? 'You have unsaved changes' : undefined) : 'Operators only: config changes disabled'}
             >
               {saving ? 'Saving...' : canEdit ? (dirty ? 'Save Config •' : 'Save Config') : 'Save Disabled (Read-only)'}
@@ -2741,7 +2741,7 @@ export default function ConfigPage() {
                           <button
                             onClick={() => updateBoard(boardKey, 'active_connectors', roleChannels)}
                             title="Set active_connectors to exactly the channels these roles name"
-                            className="px-3 py-2 text-sm font-semibold rounded bg-yellow-900/40 border border-yellow-700 text-yellow-200 hover:bg-yellow-800/50"
+                            className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-9 px-3 text-[11px]"
                           >
                             Match to roles ({roleChannels.join(', ') || 'none'})
                           </button>
@@ -2976,7 +2976,7 @@ export default function ConfigPage() {
                                 }
                                 setConfig(patch);
                               }}
-                              className="w-24 shrink-0 px-3 py-2 bg-red-600 rounded hover:bg-red-700"
+                              className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 w-24 shrink-0 px-3 text-[11px]"
                             >
                               Remove
                             </button>
@@ -3127,7 +3127,7 @@ export default function ConfigPage() {
                         delete updated[name];
                         setConfig({ ...config, actuator_roles: updated });
                       }}
-                      className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
+                      className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
                     >
                       Remove
                     </button>
@@ -3195,7 +3195,7 @@ export default function ConfigPage() {
                       </span>
                       <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, -1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
                       <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, 1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
-                      <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="px-3 py-2 bg-red-600 rounded hover:bg-red-700">Remove</button>
+                      <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]">Remove</button>
                     </div>
                   ))}
                   {guiTabs.length === 0 && (
@@ -3269,7 +3269,7 @@ export default function ConfigPage() {
                         <div className="md:col-span-2 flex items-center justify-end gap-1">
                           <button onClick={() => setGuiBars(moveInArray(guiBars, i, -1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
                           <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
-                          <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="px-2 py-1.5 bg-red-600 rounded hover:bg-red-700" title="Remove">✕</button>
+                          <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-8 px-2 text-[11px]" title="Remove">✕</button>
                         </div>
                         <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="Optional — average multiple redundant sensors into this one gauge (comma-separated role names, e.g. two chamber PTs). Leave blank for a single sensor." className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
                       </div>
@@ -3530,7 +3530,7 @@ export default function ConfigPage() {
                             <button
                               onClick={() => removeState(i)}
                               disabled={!canEdit}
-                              className="px-2 py-1 bg-red-600 rounded hover:bg-red-700 text-xs disabled:opacity-50"
+                              className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-7 px-2 text-[10px]"
                             >
                               Remove
                             </button>
@@ -4035,7 +4035,7 @@ export default function ConfigPage() {
                           setConfig({ ...config, abort_pts: next } as ConfigData);
                         }}
                         disabled={!canEdit}
-                        className="px-3 py-2 bg-red-600 rounded hover:bg-red-700 disabled:opacity-50"
+                        className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
                       >
                         Remove
                       </button>

@@ -5,7 +5,7 @@ import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Frame } from './Frame';
 import { turn } from '../route';
-import { fmtParam } from '../fmt';
+import { fmtPressure } from '../fmt';
 
 /** The regulator's box: what its dome port is placed from before it is measured. */
 export const PR_W = 60, PR_H = 60;
@@ -74,7 +74,7 @@ export function PRNode({ id, data, selected }: NodeProps) {
             clicks nobody takes while scanning. */}
         {setpoint && (
           <span style={{ ...lettering, ...numberStyle, color: 'var(--color-text-primary)' }}>
-            {fmtParam(setpoint)}
+            {fmtPressure('setpoint', setpoint)}
           </span>
         )}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={tagOffset} />
