@@ -8,14 +8,14 @@ option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" O
 
 set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../chips)
 
-add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c)
-target_include_directories(star_drivers PUBLIC ${DRIVERS})
+add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c ${DRIVERS}/ubx.c ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/gnss_frame.c)
+target_include_directories(star_drivers PUBLIC ${DRIVERS} ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Inc)
 set(FAKES ${CMAKE_CURRENT_SOURCE_DIR}/../fakes)
 add_library(fakes STATIC ${FAKES}/fake_regs.c ${FAKES}/fake_baro.c)
 target_include_directories(fakes PUBLIC ${FAKES})
 target_link_libraries(fakes PUBLIC star_drivers)
 
-set(TESTS test_ism330dhcx test_h3lis100dl test_ms5611)
+set(TESTS test_ism330dhcx test_h3lis100dl test_ms5611 test_ubx)
 foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} PRIVATE fakes)

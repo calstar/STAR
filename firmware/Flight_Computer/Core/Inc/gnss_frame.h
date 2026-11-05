@@ -26,6 +26,7 @@ typedef enum {
 
 #define GNSS_FRAME_NMEA_MAX_BODY 96U /* NMEA 0183 says 82 incl. $ and CRLF */
 #define GNSS_FRAME_UBX_MAX_PAYLOAD 1024U
+#define GNSS_FRAME_UBX_CAPTURE 100U /* NAV-PVT is 92 */
 
 typedef struct {
     uint8_t state;
@@ -36,6 +37,12 @@ typedef struct {
     uint16_t count;
     uint16_t length;
     uint32_t rejected; /* frames that started but failed a check */
+    /* Last UBX frame: valid when gnss_frame_feed() returns GNSS_FRAME_UBX.
+     * Payloads longer than GNSS_FRAME_UBX_CAPTURE keep only the first bytes
+     * (ubx_len says the real length). */
+    uint8_t ubx_class, ubx_id;
+    uint16_t ubx_len;
+    uint8_t ubx_payload[GNSS_FRAME_UBX_CAPTURE];
 } gnss_frame_parser_t;
 
 void gnss_frame_init(gnss_frame_parser_t* parser);

@@ -106,11 +106,13 @@ gnss_frame_kind_t gnss_frame_feed(gnss_frame_parser_t* p, uint8_t byte) {
 
         case UBX_CLASS:
             fletcher(p, byte);
+            p->ubx_class = byte;
             p->state = UBX_ID;
             return GNSS_FRAME_NONE;
 
         case UBX_ID:
             fletcher(p, byte);
+            p->ubx_id = byte;
             p->state = UBX_LEN_LO;
             return GNSS_FRAME_NONE;
 
@@ -128,11 +130,14 @@ gnss_frame_kind_t gnss_frame_feed(gnss_frame_parser_t* p, uint8_t byte) {
                 return GNSS_FRAME_NONE;
             }
             p->count = 0;
+            p->ubx_len = p->length;
             p->state = p->length ? UBX_PAYLOAD : UBX_CK_A;
             return GNSS_FRAME_NONE;
 
         case UBX_PAYLOAD:
             fletcher(p, byte);
+            if (p->count < GNSS_FRAME_UBX_CAPTURE)
+                p->ubx_payload[p->count] = byte;
             if (++p->count == p->length)
                 p->state = UBX_CK_A;
             return GNSS_FRAME_NONE;
