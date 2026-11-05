@@ -3167,6 +3167,8 @@ export default function ConfigPage() {
                       {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
                       {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
                       {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
+                      {/* Absent reads as shown, so an untouched config draws every limit as before. */}
+                      {renderField('Show in top bar', (config.pressure_limits as any)?.[system]?.show_in_top_bar !== false, (val) => updateField('pressure_limits', 'show_in_top_bar', val, system), 'boolean')}
                     </div>
                   </div>
                 ))}

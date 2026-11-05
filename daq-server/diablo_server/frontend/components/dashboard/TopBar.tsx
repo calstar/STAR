@@ -38,11 +38,12 @@ const SHORT_LABELS: Record<string, string> = {
 // Separate component for each pressure bar to properly use hooks
 // Dynamic width: ~9% each with max so bars scale with viewport
 // When avgEntities is set, value = average of those entities' pressure_psi
-function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
+function ReactivePressureBar({ label, entity, nop, meop, showLimits = true, color, avgEntities }: {
   label: string;
   entity: string;
   nop?: number;
   meop?: number;
+  showLimits?: boolean;
   color: string;
   avgEntities?: string[];
 }) {
@@ -69,6 +70,7 @@ function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
         label={label}
         value={value}
         nop={nop} meop={meop} color={color}
+        showLimits={showLimits}
         compact
       />
     </button>
@@ -240,6 +242,7 @@ export default function TopBar() {
       entity: s.entity,
       nop: s.nop,
       meop: s.meop,
+      showLimits: true,
       color: s.color,
     })) as PressureBarDef[];
   }, [pressureBars]);
@@ -489,13 +492,14 @@ export default function TopBar() {
         <section className="flex min-h-0 min-w-0 flex-col py-3 pr-6">
           <h2 className="caps mb-2 flex-shrink-0 text-[11px]" title="Gauge: the stand's transducers and its log files read psig. Hotbench shows psia; add 14.7 to compare.">Pressure · psig</h2>
           <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-visible">
-            {effectivePressureBars.map(({ label, entity, nop, meop, color, avgEntities }) => (
+            {effectivePressureBars.map(({ label, entity, nop, meop, showLimits, color, avgEntities }) => (
               <ReactivePressureBar
                 key={entity}
                 label={label}
                 entity={entity}
                 nop={nop}
                 meop={meop}
+                showLimits={showLimits}
                 color={color}
                 avgEntities={avgEntities}
               />
