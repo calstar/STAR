@@ -20,6 +20,10 @@ void reset(bool chip_present = true);
 // the caller does when a send fails. A failed send is not recorded.
 void set_send_result(RadioStatus result);
 
+// Make the next radio_receive() give this answer instead of a packet, once
+// (e.g. ErrNotFound for a radio that stopped answering).
+void fail_next_receive(RadioStatus result);
+
 // Pretend a packet arrived. radio_receive() will hand it out.
 // Returns false if the queue is full or `len` is 0.
 bool inject(const uint8_t* bytes, uint8_t len);
