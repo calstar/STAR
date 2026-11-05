@@ -37,6 +37,10 @@ constexpr uint16_t kIrqRxDone = 1u << 1;     // a packet was received
 constexpr uint16_t kIrqHeaderErr = 1u << 5;  // LoRa header failed its check
 constexpr uint16_t kIrqCrcErr = 1u << 6;     // the radio's own CRC was wrong
 
+// True when a reply's status byte is one a working chip sends (Table 13-76,
+// p.95); 0x00/0xFF (no chip, stuck MISO) and error statuses are false.
+bool sx1262_status_ok(uint8_t status);
+
 // Receives packets from an SX1262 over a SpiBus.
 //
 // The chip must be listening in continuous RX for receive() to see packets:

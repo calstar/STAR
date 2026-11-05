@@ -24,6 +24,10 @@ bool status_ok(uint8_t status) {
 
 }  // namespace
 
+bool sx1262_status_ok(uint8_t status) {
+    return status_ok(status);
+}
+
 bool Sx1262::command(const uint8_t* tx, uint8_t* rx, uint16_t n) {
     if (!bus_.wait_busy()) {
         return false;
