@@ -28,7 +28,7 @@ static const board_spi_route_t routes[BOARD_SPI_COUNT] = {
     [BOARD_SPI_ETH] = {&hspi2, ETH_CS_GPIO_Port, ETH_CS_Pin, NULL, 0},
     [BOARD_SPI_RADIO] = {&hspi1, RADIO_CS_GPIO_Port, RADIO_CS_Pin,
                          RADIO_BUSY_GPIO_Port, RADIO_BUSY_Pin},
-    [BOARD_SPI_NAND] = {0},
+    [BOARD_SPI_NAND] = {&hspi4, NAND_CS_GPIO_Port, NAND_CS_Pin, NULL, 0},
 };
 
 /* One lock per SPI peripheral, indexed SPI1..SPI4. */

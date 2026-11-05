@@ -15,14 +15,16 @@ add_executable(test_self_test_devices test_self_test_devices.c)
 target_link_libraries(test_self_test_devices PRIVATE star_self_test)
 
 # Portable protocol helpers used by the board layer (no HAL).
-add_library(star_board_proto STATIC ../../Core/Src/gnss_frame.c)
+add_library(star_board_proto STATIC ../../Core/Src/gnss_frame.c ../../Core/Src/sd_spi.c)
 target_include_directories(star_board_proto PUBLIC ../../Core/Inc)
 target_compile_features(star_board_proto PUBLIC c_std_99)
 set_target_properties(star_board_proto PROPERTIES C_EXTENSIONS OFF)
 add_executable(test_gnss_frame test_gnss_frame.c)
 target_link_libraries(test_gnss_frame PRIVATE star_board_proto)
+add_executable(test_sd_spi test_sd_spi.c)
+target_link_libraries(test_sd_spi PRIVATE star_board_proto)
 
-foreach(target star_self_test test_self_test test_self_test_devices star_board_proto test_gnss_frame)
+foreach(target star_self_test test_self_test test_self_test_devices star_board_proto test_gnss_frame test_sd_spi)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /WX)
     else()
@@ -40,3 +42,4 @@ add_test(NAME self_test_contract COMMAND test_self_test)
 
 add_test(NAME self_test_device_protocols COMMAND test_self_test_devices)
 add_test(NAME gnss_frame COMMAND test_gnss_frame)
+add_test(NAME sd_spi COMMAND test_sd_spi)

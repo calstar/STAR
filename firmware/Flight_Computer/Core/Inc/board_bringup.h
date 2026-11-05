@@ -24,6 +24,15 @@ extern "C" {
 #define BOARD_GNSS_DIAG_ANTENNA_SHORT 1 /* PD10 low: antenna switch fault */
 #define BOARD_GNSS_LISTEN_MS 1500U      /* > one 1 Hz NMEA period */
 
+/* SD NAND probe diagnostics. FAIL/TIMEOUT: (stage << 8) | last R1 byte.
+ * PASS: CID manufacturer ID | 0x100 if the card is high capacity (CCS). */
+#define BOARD_SD_STAGE_CMD0 1
+#define BOARD_SD_STAGE_CMD8 2
+#define BOARD_SD_STAGE_ACMD41 3
+#define BOARD_SD_STAGE_CMD58 4
+#define BOARD_SD_STAGE_CMD10 5
+#define BOARD_SD_INIT_MS 1000U /* ACMD41 loop limit (SD spec: 1 s) */
+
 typedef struct {
     /* Pranay's SPI identity checks, wired to board_spi. */
     self_test_devices_t devices;

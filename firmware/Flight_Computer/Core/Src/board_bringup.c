@@ -5,6 +5,7 @@
 #include "cmsis_os2.h"
 #include "gnss_frame.h"
 #include "main.h"
+#include "sd_spi.h"
 
 extern UART_HandleTypeDef huart9;
 
@@ -99,6 +100,145 @@ static self_test_reply_t gnss_probe(board_bringup_t* b, uint8_t attempt,
                  antenna_short ? BOARD_GNSS_DIAG_ANTENNA_SHORT : 0);
 }
 
+/*
+ * One SD command in SPI mode, CS low for the whole exchange: the 6-byte
+ * frame, up to 8 bytes of 0xFF until R1 (bit 7 clear) appears, then
+ * extra_len more bytes (R7/OCR). CS high and 8 more clocks afterwards.
+ * Caller holds the SPI4 lock.
+ */
+static board_spi_status_t sd_command(uint8_t index, uint32_t arg, uint8_t* r1,
+                                     uint8_t* extra, uint8_t extra_len,
+                                     uint32_t deadline) {
+    uint8_t frame[6];
+    sd_command_frame(frame, index, arg);
+    *r1 = 0xFF;
+    board_spi_select(BOARD_SPI_NAND);
+    board_spi_status_t st =
+        board_spi_shift(BOARD_SPI_NAND, frame, NULL, 6, deadline);
+    for (uint8_t i = 0; st == BOARD_SPI_OK && i < 8 && !sd_is_r1(*r1); ++i) {
+        st = board_spi_shift(BOARD_SPI_NAND, NULL, r1, 1, deadline);
+    }
+    if (st == BOARD_SPI_OK && sd_is_r1(*r1) && extra_len) {
+        st = board_spi_shift(BOARD_SPI_NAND, NULL, extra, extra_len, deadline);
+    }
+    board_spi_deselect(BOARD_SPI_NAND);
+    if (st == BOARD_SPI_OK) {
+        st = board_spi_shift(BOARD_SPI_NAND, NULL, NULL, 1, deadline);
+    }
+    return st;
+}
+
+/* CMD10: R1, then wait for the 0xFE data token, then 16 CID bytes + CRC16. */
+static board_spi_status_t sd_read_cid(uint8_t* r1, uint8_t cid[16],
+                                      uint32_t deadline) {
+    uint8_t frame[6], token = 0xFF, crc16[2];
+    sd_command_frame(frame, SD_CMD10_SEND_CID, 0);
+    *r1 = 0xFF;
+    board_spi_select(BOARD_SPI_NAND);
+    board_spi_status_t st =
+        board_spi_shift(BOARD_SPI_NAND, frame, NULL, 6, deadline);
+    for (uint8_t i = 0; st == BOARD_SPI_OK && i < 8 && !sd_is_r1(*r1); ++i) {
+        st = board_spi_shift(BOARD_SPI_NAND, NULL, r1, 1, deadline);
+    }
+    if (st == BOARD_SPI_OK && *r1 == 0x00U) {
+        for (uint16_t i = 0;
+             st == BOARD_SPI_OK && i < 512 && token != SD_DATA_TOKEN; ++i) {
+            st = board_spi_shift(BOARD_SPI_NAND, NULL, &token, 1, deadline);
+        }
+        if (st == BOARD_SPI_OK && token == SD_DATA_TOKEN) {
+            st = board_spi_shift(BOARD_SPI_NAND, NULL, cid, 16, deadline);
+            if (st == BOARD_SPI_OK) {
+                st = board_spi_shift(BOARD_SPI_NAND, NULL, crc16, 2, deadline);
+            }
+        } else if (st == BOARD_SPI_OK) {
+            *r1 = 0xFF; /* no data token: treat as no answer */
+        }
+    }
+    board_spi_deselect(BOARD_SPI_NAND);
+    if (st == BOARD_SPI_OK) {
+        st = board_spi_shift(BOARD_SPI_NAND, NULL, NULL, 1, deadline);
+    }
+    return st;
+}
+
+static self_test_reply_t sd_fail(board_spi_status_t st, int stage, uint8_t r1) {
+    int32_t diag = (int32_t)((stage << 8) | r1);
+    if (st == BOARD_SPI_TIMEOUT) {
+        return reply(SELF_TEST_TIMEOUT, diag);
+    }
+    return reply(SELF_TEST_FAIL, diag);
+}
+
+/*
+ * ZDSD01GLGEAG SD NAND (U10) on SPI4, SD SPI mode, read-only: wake clocks,
+ * CMD0, CMD8, ACMD41 (initialize), CMD58 (OCR), CMD10 (CID). Nothing is
+ * written. SPI4 stays at 250 kHz, inside the 400 kHz init limit.
+ */
+static self_test_reply_t sd_nand_probe(uint32_t budget_ms) {
+    uint32_t deadline = board_now_ms() + budget_ms;
+    uint8_t r1 = 0xFF, r7[4], ocr[4], cid[16];
+    board_spi_status_t st = board_spi_lock(BOARD_SPI_NAND, deadline);
+    if (st != BOARD_SPI_OK) {
+        return sd_fail(st, 0, 0xFF);
+    }
+    self_test_reply_t result;
+    /* >= 74 clocks with CS high put the card in a known state. */
+    st = board_spi_idle_clocks(BOARD_SPI_NAND, 10, deadline);
+    if (st == BOARD_SPI_OK) {
+        st = sd_command(SD_CMD0_GO_IDLE, 0, &r1, NULL, 0, deadline);
+    }
+    if (st != BOARD_SPI_OK || r1 != SD_R1_IDLE) {
+        result = sd_fail(st, BOARD_SD_STAGE_CMD0, r1);
+        goto done;
+    }
+    st = sd_command(SD_CMD8_SEND_IF_COND, SD_CMD8_ARG, &r1, r7, 4, deadline);
+    if (st != BOARD_SPI_OK || r1 != SD_R1_IDLE || !sd_r7_ok(r7)) {
+        result = sd_fail(st, BOARD_SD_STAGE_CMD8, r1);
+        goto done;
+    }
+    uint32_t init_deadline = board_now_ms() + BOARD_SD_INIT_MS;
+    if ((int32_t)(init_deadline - deadline) > 0) {
+        init_deadline = deadline;
+    }
+    do {
+        st = sd_command(SD_CMD55_APP_CMD, 0, &r1, NULL, 0, deadline);
+        if (st == BOARD_SPI_OK && (r1 & ~SD_R1_IDLE) == 0U) {
+            st = sd_command(SD_ACMD41_SD_SEND_OP_COND, SD_ACMD41_HCS, &r1, NULL,
+                            0, deadline);
+        }
+        if (st != BOARD_SPI_OK || r1 == 0x00U) {
+            break;
+        }
+        osDelay(10);
+    } while (!board_deadline_passed(init_deadline));
+    if (st != BOARD_SPI_OK || r1 != 0x00U) {
+        result = sd_fail(st == BOARD_SPI_OK ? BOARD_SPI_TIMEOUT : st,
+                         BOARD_SD_STAGE_ACMD41, r1);
+        goto done;
+    }
+    st = sd_command(SD_CMD58_READ_OCR, 0, &r1, ocr, 4, deadline);
+    if (st != BOARD_SPI_OK || r1 != 0x00U) {
+        result = sd_fail(st, BOARD_SD_STAGE_CMD58, r1);
+        goto done;
+    }
+    st = sd_read_cid(&r1, cid, deadline);
+    if (st != BOARD_SPI_OK || r1 != 0x00U || !sd_cid_ok(cid)) {
+        result = sd_fail(st, BOARD_SD_STAGE_CMD10, r1);
+        goto done;
+    }
+    {
+        uint32_t ocr_word = ((uint32_t)ocr[0] << 24) |
+                            ((uint32_t)ocr[1] << 16) | ((uint32_t)ocr[2] << 8) |
+                            ocr[3];
+        result =
+            reply(SELF_TEST_PASS,
+                  (int32_t)(cid[0] | ((ocr_word & SD_OCR_CCS) ? 0x100U : 0U)));
+    }
+done:
+    board_spi_unlock(BOARD_SPI_NAND);
+    return result;
+}
+
 void board_bringup_power_up(board_bringup_t* b) {
     b->devices.exchange = board_spi_self_test_exchange;
     b->devices.io_context = NULL;
@@ -174,6 +314,10 @@ self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
     switch (device_id) {
         case SELF_TEST_DEVICE_GNSS:
             return gnss_probe(b, attempt, budget_ms);
+        case SELF_TEST_DEVICE_NAND:
+            /* 3V3 rail; CS has a 100k pull-up and is driven high since boot;
+             * the SD power-up wait (>= 1 ms) has long passed. */
+            return sd_nand_probe(budget_ms);
         default:
             /* SPI identity checks (IMU, high-g, baro, Ethernet, radio). */
             return self_test_devices_probe(&b->devices, device_id, attempt,
