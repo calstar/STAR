@@ -13,6 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  recoveryAddress,
   validateConfigForRun,
   groupIssuesByPage,
   countByLevel,
@@ -516,5 +517,48 @@ describe('validateConfigForRun — dynamic states', () => {
       'LOX Press,CLOSE,CLOSE,OPEN',
     ].join('\n');
     expect(messages(validateConfigForRun(cfg, csv))).toContain('no column in the Actuators table');
+  });
+});
+
+// A board takes its ID from its DHCP address and, if DHCP fails, sits on a recovery address
+// derived from its MAC. star-dhcp-sync refuses both mistakes; the editor names them first.
+describe('DHCP identity', () => {
+  const withMacs = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.dhcp_a = { type: 'PT', enabled: false, active_connectors: [1], ...a };
+    cfg.boards.dhcp_b = { type: 'PT', enabled: false, active_connectors: [1], ...b };
+    return cfg;
+  };
+
+  it('recovery address matches the firmware and the upload tool', () => {
+    expect(recoveryAddress('4a:27:e2:3a:ad:71')).toBe('169.254.174.113');
+    expect(recoveryAddress('00:00:00:00:fe:ff')).toBe('169.254.1.255');
+    expect(recoveryAddress('nope')).toBeNull();
+  });
+
+  it('two boards whose MACs share a recovery address are an error', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 91, mac: 'aa:aa:aa:aa:00:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:fe:10' });
+    const issue = validateConfigForRun(cfg, cleanCsv()).find((i) => i.message.includes('recovery address'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('boards');
+    expect(issue?.message).toMatch(/169\.254\.1\.16/);
+  });
+
+  it('board_id must match the address the board is given', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 93, mac: 'aa:aa:aa:aa:01:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:02:10' });
+    const msgs = validateConfigForRun(cfg, cleanCsv()).map((i) => i.message).join('\n');
+    expect(msgs).toMatch(/board_id 93 but ip 192\.0\.2\.91/);
+    expect(msgs).not.toMatch(/dhcp_b\).*board_id/);
+  });
+
+  it('distinct MACs with matching ids raise nothing', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 91, mac: 'aa:aa:aa:aa:01:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:02:10' });
+    expect(validateConfigForRun(cfg, cleanCsv()).filter((i) => /dhcp_/.test(i.message))).toEqual([]);
   });
 });

@@ -9,6 +9,8 @@ interface Props {
   boardId: number | null;
   /** Display title (e.g. "PT · Board 1"); falls back to the id. */
   title?: string;
+  /** The board's Logging mode byte (0..3), if known. Below 2 the board streams nothing here. */
+  logMode?: number;
   onClose: () => void;
 }
 
@@ -20,7 +22,7 @@ const MAX_LINES = 2000;
  * GET /api/board-logs on open, then live-appended from the BOARD_LOG WS feed.
  * Reuses the flash-page console look (mono, dark, autoscroll-to-bottom).
  */
-export default function BoardLogModal({ boardId, title, onClose }: Props) {
+export default function BoardLogModal({ boardId, title, logMode, onClose }: Props) {
   const [lines, setLines] = useState<BoardLogLine[]>([]);
   const [truncated, setTruncated] = useState(false);
   const preRef = useRef<HTMLPreElement>(null);
@@ -102,6 +104,12 @@ export default function BoardLogModal({ boardId, title, onClose }: Props) {
             ✕
           </button>
         </div>
+        {logMode != null && logMode < 2 && (
+          <div className="px-5 py-2 border-b border-gray-700 text-xs text-amber-300 font-mono">
+            Network logging is off for this board (Logging mode {logMode}). Only lines sent before it
+            received its config appear here. Set Logging to 2 or 3 on the board card to stream.
+          </div>
+        )}
         <pre
           ref={preRef}
           className="flex-1 overflow-auto p-3 m-0 bg-gray-900 text-xs text-gray-300 font-mono whitespace-pre-wrap break-words"
