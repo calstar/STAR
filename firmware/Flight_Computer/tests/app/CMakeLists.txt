@@ -11,12 +11,12 @@ set(FAKES ${ROOT}/tests/fakes)
 
 add_library(star_app STATIC
     ${ROOT}/app/sensors_core.c
-    ${ROOT}/drivers/dev_ism330dhcx.c
-    ${ROOT}/drivers/dev_h3lis100dl.c
-    ${ROOT}/drivers/dev_ms5611.c
+    ${ROOT}/chips/dev_ism330dhcx.c
+    ${ROOT}/chips/dev_h3lis100dl.c
+    ${ROOT}/chips/dev_ms5611.c
     ${FAKES}/fake_regs.c
     ${FAKES}/fake_baro.c)
-target_include_directories(star_app PUBLIC ${ROOT}/app ${ROOT}/drivers ${FAKES})
+target_include_directories(star_app PUBLIC ${ROOT}/app ${ROOT}/chips ${FAKES})
 
 set(TESTS test_sensors_core)
 foreach(t ${TESTS})

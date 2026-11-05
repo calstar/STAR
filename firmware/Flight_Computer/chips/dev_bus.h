@@ -2,9 +2,9 @@
 #define STAR_DEV_BUS_H
 
 /*
- * The only way a portable driver (drivers/) touches hardware. The board binds
- * it to board_spi (one chip, one deadline); host tests bind it to a scripted
- * fake. Drivers never include HAL or RTOS headers.
+ * The only way a portable chip driver (chips/) touches hardware. The board
+ * binds it to board_spi (one chip, one deadline); host tests bind it to a
+ * scripted fake. Drivers never include HAL or RTOS headers.
  */
 
 #include <stdint.h>

@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
-project(star_drivers LANGUAGES C)
+project(star_chips LANGUAGES C)
 
-# Host tests for the portable chip drivers in drivers/ (no HAL, no RTOS),
+# Host tests for the portable chip drivers in chips/ (no HAL, no RTOS),
 # run against scripted fake buses. CI runs this with sanitizers on.
 enable_testing()
 option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" OFF)
 
-set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../drivers)
+set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../chips)
 
 add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c)
 target_include_directories(star_drivers PUBLIC ${DRIVERS})
