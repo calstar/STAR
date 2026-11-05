@@ -8,6 +8,7 @@
 #include "sd_spi.h"
 
 extern UART_HandleTypeDef huart9;
+extern MMC_HandleTypeDef hmmc1;
 
 static void enable(board_bringup_t* b, uint16_t device_id) {
     b->devices.configured_mask |= SELF_TEST_DEVICE_ENABLED(device_id);
@@ -239,11 +240,43 @@ done:
     return result;
 }
 
+/*
+ * THGBMTG5D1LBAIL eMMC (U9) on SDMMC1, 4-bit. Runs CubeMX's own
+ * MX_SDMMC1_MMC_Init() (not called from main(), see board.h) with
+ * Error_Handler() made non-fatal. A successful HAL_MMC_Init() has completed
+ * the full identification (CMD0/1/2/3, CSD, EXT_CSD) and switched to 4-bit
+ * with CMD6, which writes the bus-width setting but no stored data. Then the
+ * CID is read and the card must be in the transfer state.
+ * The HAL's internal command timeouts bound init, not budget_ms.
+ */
+static self_test_reply_t emmc_probe(board_bringup_t* b) {
+    if (!b->emmc_reset_released) {
+        return reply(SELF_TEST_NOT_CONFIGURED, 0);
+    }
+    if (hmmc1.State != HAL_MMC_STATE_RESET) {
+        HAL_MMC_DeInit(&hmmc1); /* retry from a clean controller */
+    }
+    if (!board_soft_init(MX_SDMMC1_MMC_Init)) {
+        return reply(SELF_TEST_FAIL, (int32_t)(hmmc1.ErrorCode & 0x7FFFFFFFU));
+    }
+    HAL_MMC_CardCIDTypeDef cid;
+    if (HAL_MMC_GetCardCID(&hmmc1, &cid) != HAL_OK) {
+        return reply(SELF_TEST_FAIL, (int32_t)(hmmc1.ErrorCode & 0x7FFFFFFFU));
+    }
+    HAL_MMC_CardStateTypeDef state = HAL_MMC_GetCardState(&hmmc1);
+    if (state != HAL_MMC_CARD_TRANSFER) {
+        return reply(SELF_TEST_FAIL,
+                     (int32_t)(BOARD_EMMC_DIAG_STATE | (state & 0xFFU)));
+    }
+    return reply(SELF_TEST_PASS, (int32_t)cid.ManufacturerID);
+}
+
 void board_bringup_power_up(board_bringup_t* b) {
     b->devices.exchange = board_spi_self_test_exchange;
     b->devices.io_context = NULL;
     b->devices.configured_mask = 0;
     b->gnss_powered = false;
+    b->emmc_reset_released = false;
     if (!board_spi_init()) {
         return; /* no bus locks: no SPI device is enabled */
     }
@@ -301,6 +334,14 @@ void board_bringup_power_up(board_bringup_t* b) {
     HAL_GPIO_WritePin(REG_3V6_EN_GPIO_Port, REG_3V6_EN_Pin, GPIO_PIN_SET);
     osDelay(10);
     b->gnss_powered = true;
+
+    /* THGBMTG5D1LBAIL (U9), eMMC: EMMC_RST (PA8) is driven low by
+     * MX_GPIO_Init. Release it and allow 1 ms; HAL_MMC_Init then sends the
+     * >= 74 init clocks itself. The init runs in the probe, so a retry can
+     * start from scratch and a dead part is a reported FAIL, not a halt. */
+    HAL_GPIO_WritePin(EMMC_RST_GPIO_Port, EMMC_RST_Pin, GPIO_PIN_SET);
+    osDelay(2);
+    b->emmc_reset_released = true;
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
@@ -318,6 +359,8 @@ self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
             /* 3V3 rail; CS has a 100k pull-up and is driven high since boot;
              * the SD power-up wait (>= 1 ms) has long passed. */
             return sd_nand_probe(budget_ms);
+        case SELF_TEST_DEVICE_EMMC:
+            return emmc_probe(b);
         default:
             /* SPI identity checks (IMU, high-g, baro, Ethernet, radio). */
             return self_test_devices_probe(&b->devices, device_id, attempt,

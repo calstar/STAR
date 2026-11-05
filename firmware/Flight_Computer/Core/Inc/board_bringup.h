@@ -37,7 +37,12 @@ typedef struct {
     /* Pranay's SPI identity checks, wired to board_spi. */
     self_test_devices_t devices;
     bool gnss_powered;
+    bool emmc_reset_released;
 } board_bringup_t;
+
+/* eMMC probe diagnostics: PASS = CID manufacturer ID (Kioxia/Toshiba is
+ * 0x11). FAIL = HAL MMC error code, or BOARD_EMMC_DIAG_STATE | card state. */
+#define BOARD_EMMC_DIAG_STATE 0x10000
 
 /* Release resets / power rails in order and enable each ready device. */
 void board_bringup_power_up(board_bringup_t* bringup);

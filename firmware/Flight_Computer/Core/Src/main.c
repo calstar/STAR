@@ -390,7 +390,7 @@ void MX_SDMMC1_MMC_Init(void)
   hmmc1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hmmc1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hmmc1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hmmc1.Init.ClockDiv = 0;
+  hmmc1.Init.ClockDiv = 3;
   if (HAL_MMC_Init(&hmmc1) != HAL_OK)
   {
     Error_Handler();
