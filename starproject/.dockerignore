@@ -8,3 +8,7 @@ npm-debug.log*
 Dockerfile
 .dockerignore
 README.md
+
+# browser-test output (npm run e2e)
+test-results
+playwright-report

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
+    "e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
+    "@playwright/test": "^1.56.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",

@@ -15,6 +15,9 @@ npm run typecheck    # tsc --noEmit
 npm run lint         # eslint, --max-warnings=0 (warnings fail)
 npm run test         # vitest run (all tests)
 npx vitest run src/lib/tasks.test.ts   # single test file
+npm run e2e          # browser tests (Playwright, e2e/): throwaway Postgres + seed + next dev on :3100
+E2E_BUILT=1 npm run e2e                # same against the production build (`npm run build` first) — what CI runs
+npx playwright install chromium        # once, before the first e2e run
 npx prisma migrate dev                 # create/apply a migration locally
 ```
 
@@ -56,6 +59,8 @@ export DEV_AUTH_NAME="Your Name"
 **Email** (`src/lib/mail.ts`) sends via SES and no-ops when `SES_FROM` is unset, so dev/CI never send. Assignment emails are queued (`EmailQueueItem`) and flushed as one email per recipient by cron; `NotifLog` is the idempotency ledger so deadline emails never double-send. The cron endpoints under `src/app/api/cron/*` are POST routes hit by a sidecar container, gated by the `x-cron-secret` header (`CRON_SECRET`).
 
 **Tests** are colocated `*.test.ts` files in `src/lib/` covering pure logic (board ordering, gantt, name formatting, task helpers) — vitest, node environment, no DB or React. Keep testable logic in `src/lib` as pure functions.
+
+**Browser tests** (`e2e/*.spec.ts`, Playwright) pin the features people rely on — every page opens, the views and columns are there, a task can be created, opened and edited — so a merge that drops one fails CI instead of being noticed weeks later. `scripts/e2e-server.mjs` brings up a throwaway Postgres (embedded-postgres), applies the migrations and the demo seed (`scripts/seed-local.mjs`), and serves the app; the browser sends `X-Auth-Email` as Caddy does. The `test` from `e2e/fixtures.ts` fails on any console error the page logs. **A feature PR adds its check to `e2e/`**, and a PR that changes a check on purpose says why. Break the feature and watch the check go red before trusting it.
 
 **Shared view types** live in `src/lib/board.ts`: `BoardTask` → `WorkspaceTask` → `TaskRowData` form a widening chain consumed by Board, Gantt, and the list table — extend these rather than inventing parallel shapes.
 

@@ -19,3 +19,9 @@ next-env.d.ts
 
 # local database for npm run dev:local
 /.localdb
+
+# browser tests (npm run e2e)
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache

@@ -138,6 +138,49 @@ jobs:
         working-directory: starproject
         run: npx prisma migrate deploy
 
+  # Browser tests (Playwright, e2e/): the production build, a real Postgres and
+  # the demo seed, driven like a person drives it. Lint/typecheck/unit tests
+  # check the code still compiles and the pure logic still adds up; these check
+  # the features are still *there* -- a merge that drops a view, a column or a
+  # button goes red here instead of being noticed weeks later. Adding a feature?
+  # Add its check to e2e/ in the same PR.
+  e2e:
+    name: Browser tests (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: starproject/package-lock.json
+      - name: Install dependencies
+        working-directory: starproject
+        run: npm ci
+      - name: Install Chromium
+        working-directory: starproject
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        working-directory: starproject
+        run: npm run build
+      # scripts/e2e-server.mjs brings up its own throwaway Postgres
+      # (embedded-postgres), so no services: block is needed.
+      - name: Browser tests
+        working-directory: starproject
+        env:
+          E2E_BUILT: '1'
+        run: npm run e2e
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            starproject/playwright-report
+            starproject/test-results
+          retention-days: 14
+
   # Docker image build. This is the gate that was missing: publish-apps.yml (and
   # publish-auth.yml) only trigger on push to main, so a Dockerfile that no
   # longer matches the tree -- a COPY of a directory the branch deleted, say --
