@@ -22,8 +22,12 @@ typedef struct {
 /* Pin names come from the .ioc labels (main.h). A device with spi == NULL is
  * not routed yet and every call on it returns NOT_CONFIGURED. */
 static const board_spi_route_t routes[BOARD_SPI_COUNT] = {
-    [BOARD_SPI_IMU] = {0}, [BOARD_SPI_HIGH_G] = {0}, [BOARD_SPI_BARO] = {0},
-    [BOARD_SPI_ETH] = {0}, [BOARD_SPI_RADIO] = {0},  [BOARD_SPI_NAND] = {0},
+    [BOARD_SPI_IMU] = {&hspi3, IMU_CS_GPIO_Port, IMU_CS_Pin, NULL, 0},
+    [BOARD_SPI_HIGH_G] = {0},
+    [BOARD_SPI_BARO] = {0},
+    [BOARD_SPI_ETH] = {0},
+    [BOARD_SPI_RADIO] = {0},
+    [BOARD_SPI_NAND] = {0},
 };
 
 /* One lock per SPI peripheral, indexed SPI1..SPI4. */
