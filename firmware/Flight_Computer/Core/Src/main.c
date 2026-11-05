@@ -968,7 +968,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin : RADIO_DIO1_Pin */
   GPIO_InitStruct.Pin = RADIO_DIO1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(RADIO_DIO1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : SW_ST_Pin */
