@@ -73,6 +73,23 @@ void board_bringup_power_up(board_bringup_t* b) {
     HAL_GPIO_WritePin(ETH_RST_GPIO_Port, ETH_RST_Pin, GPIO_PIN_SET);
     osDelay(3);
     enable(b, SELF_TEST_DEVICE_ETHERNET);
+
+    /* Wio-SX1262 (U8), LoRa: held in reset by RADIO_NRST (PB0), driven low
+     * by MX_GPIO_Init. NRESET low typ. 100 us (SX1262 DS 8.1, p.50); after
+     * release BUSY (PC5) stays high through STARTUP and falls once the chip
+     * is in STDBY_RC and accepts commands (8.2.2, 9.1). Wait up to 50 ms.
+     * The check is enabled either way: board_spi waits on BUSY before every
+     * radio command, so a radio that never starts reports TIMEOUT instead of
+     * being hidden as "not configured". RF_SW (PB1) stays low; nothing here
+     * transmits. */
+    HAL_GPIO_WritePin(RADIO_NRST_GPIO_Port, RADIO_NRST_Pin, GPIO_PIN_SET);
+    uint32_t radio_deadline = board_now_ms() + 50U;
+    while (HAL_GPIO_ReadPin(RADIO_BUSY_GPIO_Port, RADIO_BUSY_Pin) ==
+               GPIO_PIN_SET &&
+           !board_deadline_passed(radio_deadline)) {
+        osDelay(1);
+    }
+    enable(b, SELF_TEST_DEVICE_RADIO);
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
