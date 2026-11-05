@@ -166,7 +166,7 @@ check emmc "eMMC log: chunks, mount, torn writes, card checks, flight state" \
   ctest_suite emmc tests/emmc
 check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
   ctest_suite chips tests/chips
-check app "task cores under a virtual clock: sensors, GNSS" ctest_suite app tests/app
+check app "task cores + boot report: sensors, GNSS, battery, self-test verdict" ctest_suite app tests/app
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
 stage "3  end to end: flight profile -> drivers -> cores -> eMMC -> read back"
@@ -253,6 +253,11 @@ while $i < 7
   printf "ADC %d %d %d\n", $i, g_bringup_report.analog.valid[$i], g_bringup_report.analog.counts[$i]
   set $i = $i + 1
 end
+printf "BATT %d %d %d\n", g_bringup_report.report.battery.state, g_bringup_report.report.battery.mv, g_bringup_report.report.battery.counts
+printf "VERDICT %d\n", g_bringup_report.report.verdict
+printf "REPORT_BEGIN\n"
+printf "%s", &g_bringup_report.report.text[0]
+printf "REPORT_END\n"
 monitor resume
 detach
 GDB
@@ -261,6 +266,31 @@ GDB
   kill "$ocd_pid" 2>/dev/null; wait "$ocd_pid" 2>/dev/null
   grep -q '^FINISHED 1' "$OUT/board_report.txt" || { cat "$OUT/board_report.txt"; return 1; }
   return $rc
+}
+
+board_battery() {
+  # battery_state_t (app/battery.h): 1 OK, 2 WARN, 3 FAIL, 4 USB, 5 INVALID
+  local state mv
+  read -r _ state mv _ < <(grep '^BATT ' "$OUT/board_report.txt")
+  local v; v=$(printf '%d.%02d V' $((mv / 1000)) $((mv % 1000 / 10)))
+  case "$state" in
+    1) echo "battery $v OK" ;;
+    4) echo "on USB ($v): battery not measured" ;;
+    2) echo "FAIL battery $v: below 7.0 V, charge it"; return 1 ;;
+    3) echo "FAIL battery $v: below 6.6 V or above 8.8 V"; return 1 ;;
+    *) echo "FAIL battery not read (state $state)"; return 1 ;;
+  esac
+}
+
+board_verdict() {
+  # boot_verdict_t (app/boot_report.h): 0 READY, 1 WARN, 2 FAIL
+  local v; v=$(awk '/^VERDICT /{print $2}' "$OUT/board_report.txt")
+  sed -n '/^REPORT_BEGIN/,/^REPORT_END/p' "$OUT/board_report.txt" | sed '1d;$d'
+  case "$v" in
+    0) echo "READY" ;;
+    1) echo "FAIL board says WARN"; return 1 ;;
+    *) echo "FAIL board says FAIL ($v)"; return 1 ;;
+  esac
 }
 
 board_device() { # device_id
@@ -281,8 +311,14 @@ if [ "$BOARD" = 1 ] || [ "$LIST" = 1 ]; then
   for i in 0 1 2 3 4 5 6 7; do
     check "board_${names[$i]}" "${whats[$i]}" board_device "$i"
   done
+  check board_battery "battery read through SW_ST + PA0: >= 7.0 V, or on USB" board_battery
+  check board_verdict "the board's own verdict is READY (LED2 off)" board_verdict
   check board_app "application tasks started after the self-test" \
     grep -q '^APP 1' "$OUT/board_report.txt"
+  if [ "$LIST" = 0 ] && [ -s "$OUT/board_report.txt" ]; then
+    printf '\n  The board reports:\n'
+    sed -n '/^REPORT_BEGIN/,/^REPORT_END/p' "$OUT/board_report.txt" | sed '1d;$d' | sed 's/^/    /'
+  fi
 fi
 
 [ "$LIST" = 1 ] && exit 0
