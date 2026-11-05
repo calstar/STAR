@@ -65,6 +65,21 @@ using CalibratedACTMessage = CommsMessage<uint64_t,                // (0) timest
                                           uint8_t    // (5) calibration_status — 0=uncal, 1=cal
                                           >;
 
+/**
+ * @brief Calibrated ball valve position message for Elodin
+ *
+ * 4-20 mA position across a 100 ohm shunt, 12-bit ADC (see calibration/ValvePosition.hpp).
+ * Same 21-byte layout as the other calibrated messages.
+ */
+using CalibratedValvePositionMessage =
+    CommsMessage<uint64_t,                // (0) timestamp_ns
+                 uint8_t,                 // (1) channel_id
+                 std::array<uint8_t, 3>,  // (2) padding
+                 float,                   // (3) position_pct — 0 closed, 100 open
+                 uint32_t,                // (4) raw_adc_counts — for reference
+                 uint8_t                  // (5) status — 1=ok, 2=no signal (< 3.5 mA)
+                 >;
+
 }  // namespace sensor
 }  // namespace messages
 }  // namespace comms

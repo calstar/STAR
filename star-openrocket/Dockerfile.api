@@ -19,8 +19,12 @@ ENV PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1
 
-COPY star-openrocket/requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+# requirements-flight.txt is requirements.txt plus rocketpy: the 6-DOF flight
+# (Flight Dynamics tab, and design-mcp's openrocket_run_design) 501s without it.
+# CI leaves it out on purpose (heavy, and its tests skip when absent); the
+# server must not.
+COPY star-openrocket/requirements.txt star-openrocket/requirements-flight.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-flight.txt
 
 # The shared design core: per-user storage, sharing, and version history. Copied
 # before the app so a change to the app alone reuses this layer.

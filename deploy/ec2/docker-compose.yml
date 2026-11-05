@@ -63,6 +63,11 @@ services:
       # Lets the analytics hub read the admin list (/api/internal/admins). Unset
       # means the route refuses everyone, and so analytics admits nobody.
       INTERNAL_API_SECRET: ${STARPROJECT_INTERNAL_SECRET:-}
+      # Lets the design-tools MCP on the apps box check a token's "design" scope
+      # (/api/mcp/verify). The same value goes in the apps box's .env as
+      # DESIGN_MCP_VERIFY_SECRET. Unset means every check is refused, so the
+      # design MCP admits nobody.
+      DESIGN_MCP_VERIFY_SECRET: ${DESIGN_MCP_VERIFY_SECRET:-}
       AWS_REGION: ${AWS_REGION:-us-east-2}
       # callink-worker's key to /api/worker/*. Unset or short, that API refuses
       # everything (fails closed), so leaving it blank just leaves Finance unfiled.

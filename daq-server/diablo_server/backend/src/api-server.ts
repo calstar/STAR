@@ -12,7 +12,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 // ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
 // does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { readConfig, readDeployedConfig, writeConfig, getConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
+import { readConfig, readDeployedConfig, writeConfig, getConfigPath, getRunningConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
@@ -360,6 +360,12 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const config = readActiveProfile();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ config, active: getActiveProfileName() }));
+      } else if (url.pathname === '/api/config/running' && req.method === 'GET') {
+        // The config the pipeline is reading right now (routes/config.ts getRunningConfigPath):
+        // what every page that DISPLAYS the stand reads. /api/config is the editor's draft (the
+        // active profile), which differs from it during a session and in every simulated run.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ config: readDeployedConfig(), path: getRunningConfigPath() }));
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
         // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
         // during a session config.toml is frozen — the write is a draft applied at the next start.

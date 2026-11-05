@@ -81,7 +81,7 @@ export default function BoardLogModal({ boardId, title, onClose }: Props) {
       aria-modal="true"
     >
       <div
-        className="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-xl border border-gray-700 bg-card shadow-2xl"
+        className="w-full max-w-4xl max-h-[85vh] flex flex-col border border-line-strong bg-black"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">

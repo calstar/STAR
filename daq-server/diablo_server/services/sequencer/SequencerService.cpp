@@ -582,6 +582,9 @@ bool SequencerService::init(const std::string& config_path) {
         const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
         actuator_boards_ = (it_act != boards_map.end()) ? it_act->second
                                                         : std::vector<fsw::elodin::BoardChannels>{};
+        const auto it_bv = boards_map.find(fsw::config::ActiveBoardKind::BALL_VALVE);
+        ball_valve_boards_ =
+            (it_bv != boards_map.end()) ? it_bv->second : std::vector<fsw::elodin::BoardChannels>{};
     }
 
     // Elodin — connection is best-effort; service runs without it
@@ -1261,6 +1264,8 @@ bool SequencerService::tryConnectElodin() {
     // whatever happened to be on disk at that moment. Config is applied once, at session start;
     // a process that has already booted keeps the config it booted with.
     fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, actuator_boards_);
+    if (!ball_valve_boards_.empty())
+        fsw::elodin::DatabaseConfig::register_ball_valve_cmd_tables(elodin_, ball_valve_boards_);
     actuator_commander_.setElodinClient(&elodin_);
     actuator_commander_.publishInitialState();
     return true;

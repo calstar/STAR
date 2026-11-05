@@ -32,6 +32,8 @@ export type PressureBarDef = {
   entity: string;
   nop?: number;
   meop?: number;
+  /** Draw the NOP/MEOP lines and their numbers ([pressure_limits.<key>].show_in_top_bar). */
+  showLimits: boolean;
   color: string;
   /** When set, displayed value = mean of pressure_psi over these entities (matches TopBar chamber). */
   avgEntities?: string[];
@@ -119,6 +121,7 @@ export function buildPressureBarDefsFromSensorConfig(
       entity,
       nop: lim?.NOP,
       meop: lim?.MEOP,
+      showLimits: lim?.show_in_top_bar !== false,
       color: src.color ?? STRIP_LABEL_COLORS[src.label] ?? getEntityColor(avgEntities?.[0] ?? entity),
       ...(avgEntities && avgEntities.length >= 2 ? { avgEntities } : {}),
     };

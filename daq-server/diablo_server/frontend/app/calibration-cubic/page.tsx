@@ -99,7 +99,7 @@ export default function CubicCalibrationPage() {
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-card">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold tracking-tight">Cubic Calibration</h1>
+          <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Cubic Calibration</h1>
           <span className="text-xs text-gray-400 font-semibold bg-gray-800 px-2 py-0.5 rounded uppercase tracking-wider">
             One PT at a time
           </span>
@@ -181,14 +181,13 @@ export default function CubicCalibrationPage() {
                 <button
                   onClick={handleCapture}
                   disabled={!refInput}
-                  className="px-3 py-1.5 text-xs font-bold rounded bg-blue-700 hover:bg-blue-600
-                             disabled:opacity-30 disabled:cursor-not-allowed text-white"
+                  className="ctl h-8 px-3 text-[11px]"
                 >
                   CAPTURE POINT
                 </button>
                 <button
                   onClick={handleNewCalibration}
-                  className="px-3 py-1.5 text-xs font-bold rounded border border-amber-700 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50 ml-auto"
+                  className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white ml-auto h-8 px-3 text-[11px]"
                   title="Clear this valve's captured points and start a fresh calibration"
                 >
                   NEW CALIBRATION

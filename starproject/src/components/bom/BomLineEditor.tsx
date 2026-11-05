@@ -141,7 +141,7 @@ export function BomLineEditor({
           label="Reimbursed"
         />
         {line.reimbursement && (
-          <Link href={`/finance?r=${line.reimbursement.number}`} className="text-sm text-blue-600 hover:underline dark:text-blue-400">
+          <Link href={`/reimbursements?r=${line.reimbursement.number}`} className="text-sm text-blue-600 hover:underline dark:text-blue-400">
             Filed on R-{line.reimbursement.number}
           </Link>
         )}

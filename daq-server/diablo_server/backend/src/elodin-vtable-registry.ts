@@ -209,6 +209,17 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
         }
     };
 
+    /** Ball valve: raw position [0x33, raw_lo], calibrated [0x34, raw_lo+0x10], commanded
+     *  [0x35, raw_lo]. Its own namespace (calibration_main.cpp, ActuatorCommander.cpp). */
+    const addBallValveBoard = (boardNumber: number, channels: number[]): void => {
+        for (const ch of channels) {
+            const rawLo = (boardNumber - 1) * 0x20 + ch;
+            addUnique(0x33, rawLo);
+            addUnique(0x34, rawLo + 0x10);
+            addUnique(0x35, rawLo);
+        }
+    };
+
     try {
         // Cached: this runs on every Elodin connect and on up to 24 resubscribe retries per
         // connection, so a plain readConfig() here was a repeated file read + TOML parse on a
@@ -253,6 +264,10 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
             if (t === 'ACTUATOR') {
                 addActuatorBoard(boardNumber, active);
                 actuatorBoards.push({ boardNumber, channels: active });
+                continue;
+            }
+            if (t === 'BALL_VALVE') {
+                addBallValveBoard(boardNumber, active);
                 continue;
             }
             if (typeHi < 0) continue;

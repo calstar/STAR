@@ -239,6 +239,31 @@ async def get_layer1_results(session: UserSession = Depends(get_session)):
     }
 
 
+#: Download names, as the UI has always saved them.
+_CSV_NAMES = {2: "pressure_curves.csv", 3: "layer3_results.csv"}
+
+
+@router.get("/layer{layer}/results.csv")
+async def get_layer_results_csv(layer: int, session: UserSession = Depends(get_session)):
+    """Layer 2 or 3's pressure curves as CSV (backend/results_csv.py): time, LOX and fuel tank
+    pressure. The file the UI's "CSV" button saves, written here so anyone can fetch it."""
+    from fastapi.responses import PlainTextResponse
+
+    from backend.results_csv import pressure_curves_csv
+
+    status = {2: session.optimizer.layer2_status, 3: session.optimizer.layer3_status}.get(layer)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Only Layers 2 and 3 have pressure curves.")
+    results = status["results"]
+    if not results or not results.get("time_array"):
+        raise HTTPException(status_code=404, detail=f"No Layer {layer} results with pressure curves. Run Layer {layer} first.")
+    return PlainTextResponse(
+        pressure_curves_csv(results),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{_CSV_NAMES[layer]}"'},
+    )
+
+
 @router.get("/layer2/status")
 async def get_layer2_status(session: UserSession = Depends(get_session)):
     """Get Layer 2 optimization status."""

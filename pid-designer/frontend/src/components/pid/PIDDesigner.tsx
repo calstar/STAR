@@ -137,6 +137,28 @@ function readTabActive(): DocRef | null {
   }
 }
 
+/** A link that names a diagram: `?diagram=<id>&owner=<owner>` (owner optional,
+ *  for one shared with you). Lets anyone -- a person pasting a link, an agent
+ *  driving a browser to export a PNG -- open a given diagram rather than whichever
+ *  one the tab remembers. Only honoured when it is in your list, so it opens
+ *  nothing your sharing would not. */
+export function readLinked(search: string): DocRef | null {
+  const params = new URLSearchParams(search);
+  const id = params.get('diagram');
+  if (!id) return null;
+  return { id, owner: params.get('owner') || null };
+}
+
+/** The listed diagram a link names. Owner is the row's owner (every row carries
+ *  one, your own included); no owner means one of your own. */
+export function linkedIn<T extends { id: string; owner?: string | null; mine?: boolean }>(
+  list: T[],
+  linked: DocRef | null,
+): T | undefined {
+  if (!linked) return undefined;
+  return list.find(d => d.id === linked.id && (linked.owner ? d.owner === linked.owner : !!d.mine));
+}
+
 function readActive(): DocRef | null {
   try {
     const raw = localStorage.getItem(ACTIVE_KEY);
@@ -1883,7 +1905,9 @@ export function PIDDesigner() {
       // This tab's diagram (a reload), then the team's main one (a new tab),
       // then whatever you had open last time. Prefer your own over list[0] in
       // the last resort: the list holds other people's diagrams too.
-      const pick = find(readTabActive())
+      const fromLink = linkedIn(list, readLinked(window.location.search));
+      const pick = fromLink
+        ?? find(readTabActive())
         ?? list.find(d => d.featured)
         ?? find(readActive())
         ?? list.find(d => d.mine)

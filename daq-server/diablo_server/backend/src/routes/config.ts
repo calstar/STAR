@@ -112,11 +112,39 @@ export function applyCalibrationModelDefaults(config: any): void {
 /** Re-exported from shared/types so the API and the config editor enforce one rule. */
 export { validateControllerPwmActuators as validateControllerActuators } from '../../../shared/types.js';
 
-/** Read + parse a config TOML. Defaults to the deployed config.toml (getConfigPath), but any
+/**
+ * The config the pipeline is reading right now, which is what everything that DESCRIBES the
+ * running stand (boards, roles, states, the GUI's display pages) must read.
+ *
+ * Usually that is the deployed config.toml. Not in a simulated run: the C++ services then read
+ * the loopback overlay generated from config_base.toml (sim_config.toml), deliberately bypassing
+ * the profile. Reading config.toml there showed the GUI a different stand from the one running —
+ * a board enabled only in the sim config (ball valve board 71) never appeared at all.
+ *
+ *  - a simulated session (systemd mode) sets it for the length of the run (setRunningConfigPath);
+ *  - a stack started on the sim config from outside (start_tmux_dev.sh with USE_SIM=1) says so
+ *    with RUNNING_CONFIG_PATH;
+ *  - otherwise it is getConfigPath().
+ *
+ * Writes and deploys never follow it: they target config.toml (getConfigPath) as before.
+ */
+let runningConfigOverride: string | null = null;
+
+export function getRunningConfigPath(): string {
+  return runningConfigOverride ?? (process.env.RUNNING_CONFIG_PATH || getConfigPath());
+}
+
+/** Point the running config at `path` (null: back to the default). The cache is keyed on the
+ *  path, so a move needs no invalidation. */
+export function setRunningConfigPath(path: string | null): void {
+  runningConfigOverride = path;
+}
+
+/** Read + parse a config TOML. Defaults to the running config (getRunningConfigPath), but any
  *  path can be given — the config-profiles editor reads the active profile file this way.
  *  smol-toml is a strict TOML 1.0 parser, so actuator_roles' mixed-type inline arrays
  *  (e.g. ["NC", 1, 12]) parse natively — no special-casing needed. */
-export function readConfig(path: string = getConfigPath()): any {
+export function readConfig(path: string = getRunningConfigPath()): any {
   try {
     const content = readFileSync(path, 'utf-8');
     const config = parseToml(content) as any;
@@ -141,12 +169,18 @@ export function readConfig(path: string = getConfigPath()): any {
 // config.toml on the normal path. So: cache freely, and invalidate there. Within a session no
 // deploy can occur, which is precisely why the cached value is safe for the length of a run.
 let deployedConfigCache: any = null;
+let deployedConfigCachePath: string | null = null;
 
-/** The deployed config.toml, parsed once and reused until the next deploy. Callers must not
+/** The running config (getRunningConfigPath), parsed once and reused until the next deploy or
+ *  until the running config moves. Callers must not
  *  mutate the returned object — it is shared. Use readConfig() for a private copy or for a
  *  path other than the deployed config. */
 export function readDeployedConfig(): any {
-  if (deployedConfigCache === null) deployedConfigCache = readConfig();
+  const path = getRunningConfigPath();
+  if (deployedConfigCache === null || deployedConfigCachePath !== path) {
+    deployedConfigCache = readConfig(path);
+    deployedConfigCachePath = path;
+  }
   return deployedConfigCache;
 }
 
@@ -232,7 +266,7 @@ function patchBoardFieldInFile(
   const raw = readFileSync(configPath, 'utf-8');
 
   // Map board_id → section key (e.g. "pt_board") via the parsed config.
-  const boards = (readConfig()?.boards ?? {}) as Record<string, { board_id?: unknown }>;
+  const boards = (readConfig(configPath)?.boards ?? {}) as Record<string, { board_id?: unknown }>;
   let boardKey: string | null = null;
   for (const [key, b] of Object.entries(boards)) {
     if (Number(b?.board_id) === boardId) { boardKey = key; break; }

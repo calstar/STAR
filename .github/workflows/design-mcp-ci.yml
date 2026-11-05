@@ -1,0 +1,60 @@
+name: Design MCP CI
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true (matches the repo's
+# other workflows).
+'on':
+  push:
+    branches: [main]
+    paths:
+      - 'design-mcp/**'
+      - '.github/workflows/design-mcp-ci.yml'
+  pull_request:
+    paths:
+      - 'design-mcp/**'
+      - '.github/workflows/design-mcp-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: design-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: design-mcp
+
+jobs:
+  test:
+    name: Tests, lint, image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+        cache-dependency-path: design-mcp/requirements-dev.txt
+
+    - name: Install
+      run: pip install -r requirements-dev.txt
+
+    # Auth, link signing, per-person tables and jobs, and every tool end to end
+    # against fake apps. No network, no app containers.
+    - name: Tests
+      run: python -m pytest -q
+
+    - name: Lint
+      run: |
+        python -m black --check star_design_mcp tests
+        python -m pyflakes star_design_mcp tests
+
+    # The image is what the box runs; build it so a broken Dockerfile fails here,
+    # not on the box. And start it with no secrets: it must refuse, not serve.
+    - name: Image builds and refuses to start unconfigured
+      run: |
+        docker build -t design-mcp-ci .
+        if docker run --rm design-mcp-ci; then
+          echo "design-mcp started with no configuration -- it must refuse" >&2
+          exit 1
+        fi

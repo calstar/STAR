@@ -30,7 +30,7 @@ import {
 import { computeFlightDynamics } from '../../api/client'
 import type { FlightParams } from '../../types/config'
 import type { FaceRef, FlightDynamicsResult, FlightDynamicsSample, MotorSelection } from '../../types'
-import { toWireConfig } from '../../recovery/lib/serialise'
+import { flightDynamicsRequest } from '../../lib/designRequests'
 import { useUnits } from '../../lib/units/unitsContext'
 import type { Kind } from '../../lib/units/quantities'
 import type { UiConfig } from '../../recovery/types/schema'
@@ -239,19 +239,15 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
     try {
       // Attach the shared environment: the same site atmosphere + wind the recovery
       // descent uses, so the ascent flies through identical air (set on Environment).
-      const wire = toWireConfig(recovery)
-      const res = await computeFlightDynamics(modelId, {
-        outerFaces,
-        finFaces: finFaces.length ? finFaces : null,
-        nFins: nFins || null,
-        overrides,
-        motor: motorSel,
-        railLength,
-        inclination,
-        heading,
-        site: wire.site,
-        wind: wire.wind,
-      })
+      // The same body the server builds from a saved design (lib/designRequests).
+      const res = await computeFlightDynamics(
+        modelId,
+        flightDynamicsRequest(
+          { outerFaces, finFaces, finCount: nFins, motor: motorSel, railLength, flight: { inclination, heading } },
+          recovery,
+          overrides,
+        ),
+      )
       onResult(res)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

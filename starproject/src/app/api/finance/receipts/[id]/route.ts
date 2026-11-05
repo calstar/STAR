@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { canSeePii } from "@/lib/finance/access";
 import { getViewer } from "@/lib/finance/queries";
+import { isInlineMime } from "@/lib/finance/receipt-fetch";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return new NextResponse(Buffer.from(receipt.blob.data), {
     headers: {
       "content-type": receipt.mimeType,
-      "content-disposition": `inline; filename="${receipt.fileName.replace(/"/g, "")}"`,
+      // Anything but a PDF or an image (a Word file CalLink took) downloads rather than renders.
+      "content-disposition": `${isInlineMime(receipt.mimeType) ? "inline" : "attachment"}; filename="${receipt.fileName.replace(/[^\x20-\x7e]|"/g, "")}"`,
       "x-content-type-options": "nosniff",
       "cache-control": "private, no-store",
     },

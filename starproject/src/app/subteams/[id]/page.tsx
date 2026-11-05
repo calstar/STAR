@@ -79,12 +79,20 @@ export default async function SubteamPage({
           {subteam.name}
         </h1>
       </div>
-      <Link
-        href="/subteams"
-        className="inline-flex min-h-11 shrink-0 items-center self-start text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
-      >
-        ← All subteams
-      </Link>
+      <div className="flex shrink-0 items-center gap-4 self-start">
+        <Link
+          href={`/subteams/${subteam.id}/budget`}
+          className="inline-flex min-h-11 items-center rounded border border-neutral-300 px-3 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800 sm:min-h-0 sm:py-1"
+        >
+          Budget
+        </Link>
+        <Link
+          href="/subteams"
+          className="inline-flex min-h-11 items-center text-sm text-neutral-500 dark:text-neutral-400 hover:underline sm:min-h-0"
+        >
+          ← All subteams
+        </Link>
+      </div>
     </div>
   );
 

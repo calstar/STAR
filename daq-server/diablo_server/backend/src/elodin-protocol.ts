@@ -289,6 +289,38 @@ export function parseElodinPacket(
     return [{ entity: `ACT_CMD.B${boardNumber}.CH${channel}`, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
   }
 
+  // ── Ball valve: [0x33] raw, [0x34] calibrated, [0x35] commanded ───────────
+  // Its own namespace, so board 71 (slot 1) never decodes as actuator board 11's ACT1.*.
+  // Raw: 4-20 mA position counts. Calibrated: position_pct (0 closed, 100 open), raw_adc, and
+  // cal_status (1 ok, 2 no signal: the loop is below 3.5 mA). Commanded: as [0x32].
+  if (high === 0x33 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (isRaw && channel >= 1 && channel <= 10) {
+      const r = parseRawSensorPayload(payload, channel, `BV${boardNumber}.CH${channel}`, 'raw_adc_counts');
+      return r ? [r] : [];
+    }
+  }
+  if (high === 0x34 && low >= 0x01 && payload.length >= RAW_SENSOR_PAYLOAD_SIZE) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (!isRaw && channel >= 1 && channel <= 10) {
+      const pct = payload.readFloatLE(12);
+      if (!Number.isFinite(pct)) return [];
+      const entity = `BV${boardNumber}_Cal.CH${channel}`;
+      const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+      return [
+        { entity, component: 'position_pct', value: pct, timestamp: tsMs },
+        { entity, component: 'raw_adc', value: payload.readUInt32LE(16), timestamp: tsMs },
+        { entity, component: 'cal_status', value: payload.readUInt8(20), timestamp: tsMs },
+      ];
+    }
+  }
+  if (high === 0x35 && low >= 0x01 && payload.length >= 10) {
+    const { boardNumber, channel } = decodeLow(low);
+    const state = payload.readUInt8(9);
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [{ entity: `BV_CMD.B${boardNumber}.CH${channel}`, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
+  }
+
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────
   // Layout: U64(0) timestamp_ns | F32(8) duty_F | F32(12) duty_O | U8(16) u_F_on | U8(17) u_O_on | U8(18) valid
   if (high === 0x40 && low === 0x00 && payload.length >= 19) {

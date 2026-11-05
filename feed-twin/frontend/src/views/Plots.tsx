@@ -8,9 +8,9 @@
  */
 
 import { useMemo, useState } from 'react';
-import { channelColor, channelPalette, fixed, sessionHistory } from '../api';
+import { channelColor, channelPalette, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
-import { historyCsv, shownUnit, unread } from '../lib/history';
+import { shownUnit, unread } from '../lib/history';
 import { PRESSURE_UNIT, isPressureChannel, toPsia } from '../lib/pressure';
 import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
@@ -47,17 +47,14 @@ export function Plots() {
   const offConsole = channels.filter((c) => PLOTTED.includes(shownUnit(c)) && consoleHidden[c.id]);
 
   // The whole trace at full rate, not the plot's thinned copy: what someone
-  // takes into a spreadsheet or a notebook.
-  const downloadCsv = async () => {
+  // takes into a spreadsheet or a notebook. The backend writes it
+  // (GET /api/session/{id}/history.csv, backend/history_csv.py) so an agent can
+  // fetch the same file; the button just downloads it.
+  const downloadCsv = () => {
     if (!live?.id) return;
-    const full = await sessionHistory(live.id, 3600, 0);
-    const csv = historyCsv(full, live.state, nameOf);
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `hotbench-${live.id}-${Math.round(live.t)}s.csv`;
+    a.href = `/api/session/${encodeURIComponent(live.id)}/history.csv`;
     a.click();
-    URL.revokeObjectURL(url);
   };
 
   if (!result) return <p className="p-6 text-sm text-text-muted">Nothing solved yet.</p>;
@@ -104,7 +101,7 @@ export function Plots() {
         <span className="text-[11.5px] text-gray-600">{result.message}</span>
         <button
           type="button"
-          onClick={() => void downloadCsv()}
+          onClick={downloadCsv}
           className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
           title="Every channel the stand records, at full rate, over the last hour of stand time: one column per channel (by its console name), time in the first, and the state."
         >

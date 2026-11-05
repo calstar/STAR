@@ -237,9 +237,13 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
 
     const std::map<std::string, double>& abort_pts = cfg.abort_pts;
 
+    // A ball valve is left out of the abort list. In a no-connection abort its own board has lost
+    // the server too, and it opens the valve itself 5 s after the last server heartbeat and
+    // ignores a command to close until heartbeats return (BallValve_Hotfire), so a survivor's
+    // vent/abort command could not hold it anywhere else. Its fail-open is its abort behaviour.
     std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
     for (const auto& [name, r] : cfg.actuator_roles)
-        if (r.channel >= 1 && r.channel <= 255)
+        if (r.channel >= 1 && r.channel <= 255 && !r.ball_valve)
             actuator_roles[name] = {r.channel, r.board_id > 0 ? r.board_id : 12, r.is_no};
 
     // Autonomous overpressure abort thresholds: invert each abort PSI to a raw ADC code through the
@@ -419,6 +423,12 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         if (b.type == "ACTUATOR") {
             int is_abort = (b.id == designated_id) ? 1 : 0;
             auto pkt = build_actuator_config(is_abort, b.enable_serial_printing);
+            if (!pkt.empty())
+                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
+        } else if (b.type == "BALL_VALVE") {
+            // The ball valve firmware reads only the log-mode byte; it is never the abort
+            // controller and ignores the abort lists.
+            auto pkt = build_actuator_config(0, b.enable_serial_printing);
             if (!pkt.empty())
                 packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
         } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||

@@ -17,13 +17,14 @@ import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
 import { stateNameUpper } from '@/lib/states';
 import { stateIdByName, bootStateId } from '@/lib/states';
+import WindowPicker from '@/components/ui/WindowPicker';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
 
 const STATE_COLORS: Record<number, string> = {
   16: 'text-red-400', 17: 'text-red-500', 13: 'text-yellow-400',
-  15: 'text-green-400', 2: 'text-blue-400', 0: 'text-gray-500',
+  15: 'text-green-400', 2: 'text-ink', 0: 'text-ink-3',
 };
 
 const TIME_WINDOWS = [
@@ -52,12 +53,12 @@ function PressurePill({
   const value =
     avgEntities && avgEntities.length >= 2 && v1 != null && v2 != null ? (v1 + v2) / 2 : v1;
   return (
-    <div className="flex-shrink-0 flex flex-col items-center bg-background rounded px-2 py-1 border border-gray-800 min-w-[64px]">
-      <span className="text-[9px] font-bold tracking-wider uppercase" style={{ color }}>{label}</span>
-      <span className="text-sm font-mono font-bold text-text tabular-nums">
+    <div className="flex min-w-[64px] flex-shrink-0 flex-col items-center border border-line px-2 py-1">
+      <span className="font-mono text-[9px] uppercase tracking-[0.08em]" style={{ color }}>{label}</span>
+      <span className="font-mono text-sm tabular-nums text-ink">
         {value != null ? value.toFixed(0) : '---'}
       </span>
-      <span className="text-[9px] text-text-muted">PSI</span>
+      <span className="font-mono text-[9px] text-ink-3">PSI</span>
     </div>
   );
 }
@@ -160,18 +161,18 @@ export default function MobileDashboard() {
     <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden bg-background text-text">
 
       {/* ── Sticky compact header ──────────────────────────────────────────── */}
-      <div className="sticky top-0 z-20 bg-card border-b border-gray-800 px-3 pt-2 pb-2 flex-shrink-0">
+      <div className="sticky top-0 z-20 flex-shrink-0 border-b border-line bg-black px-4 pb-3 pt-3">
 
         {/* Row 1: branding + connection + state + clock */}
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-base font-bold tracking-widest text-blue-400 uppercase">DIABLO DAQ</span>
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${badge.dotClass}`} title={badge.title} />
-            <span className="text-xs text-gray-400" title={badge.title}>{badge.label}</span>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-ink">Diablo DAQ</span>
+            <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${badge.dotClass}`} title={badge.title} />
+            <span className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2" title={badge.title}>{badge.label}</span>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-xs font-mono text-gray-400 tabular-nums">{clock}</span>
-            <span className={`text-sm font-bold font-mono tracking-wide ${stateColor}`}>{currentStateName}</span>
+            <span className="font-mono text-[11px] tabular-nums text-ink-3">{clock}</span>
+            <span className={`font-mono text-[13px] font-bold uppercase tracking-[0.12em] ${stateColor}`}>{currentStateName}</span>
           </div>
         </div>
 
@@ -185,22 +186,15 @@ export default function MobileDashboard() {
               ws.sendCommand({ commandType: 'debug_mode', data: { debugMode: next } });
             }}
             disabled={!controlEnabled}
-            className={`px-3 py-2 rounded text-xs font-bold uppercase tracking-wider border transition-all flex-shrink-0 ${
-              !controlEnabled
-                ? 'bg-gray-900 border-gray-800 text-gray-600 cursor-not-allowed'
-                : debugMode
-                  ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300'
-                  : 'bg-gray-800 border-gray-700 text-gray-500'
-            }`}
+            className={`ctl h-9 flex-shrink-0 px-3 text-[10px] ${debugMode ? '!border-yellow-500 !text-yellow-400' : ''}`}
             title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
           >
-            {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
+            {debugMode ? 'Debug' : 'Safe'}
           </button>
           <button
             onClick={handleEngineAbort}
             disabled={!controlEnabled || !hasState('Vent') || !hasState('Engine Abort')}
-            className="flex-1 py-2 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                       text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
+            className="ctl h-9 flex-1 border-[var(--color-danger)] text-[10px] tracking-[0.06em] text-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white"
             title={
               !controlEnabled
                 ? 'Viewer mode: controls locked'
@@ -214,8 +208,7 @@ export default function MobileDashboard() {
           <button
             onClick={handleGseAbort}
             disabled={!controlEnabled || !hasState('GSE Abort')}
-            className="flex-1 py-2 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
-                       text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
+            className="ctl h-9 flex-1 border-orange-500/70 text-[10px] tracking-[0.06em] text-orange-400 hover:!bg-orange-700 hover:!text-white"
             title={
               !controlEnabled
                 ? 'Viewer mode: controls locked'
@@ -229,9 +222,7 @@ export default function MobileDashboard() {
           <button
             onClick={handleEmergencyAbort}
             disabled={!controlEnabled || !hasState('Emergency Abort')}
-            className="flex-1 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                       text-white font-bold text-xs rounded tracking-wider transition-colors
-                       shadow-[0_0_6px_rgba(239,68,68,0.3)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
+            className="ctl h-9 flex-1 border-[var(--color-danger)] text-[10px] tracking-[0.06em] text-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white"
             title={
               !controlEnabled
                 ? 'Viewer mode: controls locked'
@@ -246,7 +237,7 @@ export default function MobileDashboard() {
       </div>
 
       {/* ── Pressure readout strip ─────────────────────────────────────────── */}
-      <div className="flex gap-2 px-3 py-2 overflow-x-auto flex-shrink-0 border-b border-gray-800/60">
+      <div className="flex flex-shrink-0 gap-2 overflow-x-auto border-b border-line px-4 py-3">
         {pressureBarDefs.map((d) => (
           <PressurePill
             key={`${d.label}:${d.entity}:${d.avgEntities?.join() ?? ''}`}
@@ -259,25 +250,11 @@ export default function MobileDashboard() {
       </div>
 
       {/* ── Pressure history plot ──────────────────────────────────────────── */}
-      <div className="px-3 pt-3 pb-2 flex-shrink-0" style={{ height: 300 }}>
-        <div className="bg-card rounded-xl border border-gray-800 p-3 h-full flex flex-col">
+      <div className="flex-shrink-0 border-b border-line px-4 py-4" style={{ height: 300 }}>
+        <div className="flex h-full flex-col">
           <div className="flex items-center justify-between mb-2 flex-shrink-0">
-            <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase">Pressure History</h2>
-            <div className="flex gap-1">
-              {TIME_WINDOWS.map((w) => (
-                <button
-                  key={w.label}
-                  onClick={() => setTimeWindow(w.seconds)}
-                  className={`px-2 py-1 text-xs font-semibold rounded transition-all ${
-                    timeWindow === w.seconds
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                  }`}
-                >
-                  {w.label}
-                </button>
-              ))}
-            </div>
+            <h2 className="caps text-[11px]">Pressure History</h2>
+            <WindowPicker windows={TIME_WINDOWS} value={timeWindow} onChange={setTimeWindow} />
           </div>
           <div className="flex-1 min-h-0">
             <TimeSeriesPlot
@@ -294,21 +271,20 @@ export default function MobileDashboard() {
       </div>
 
       {/* ── Actuator controls ──────────────────────────────────────────────── */}
-      <div className="px-3 pb-3">
-        <div className="bg-card rounded-xl border border-gray-800 p-3">
-          <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-3">Actuator Controls</h2>
+      <div className="border-b border-line px-4 py-4">
+        <div>
+          <h2 className="caps mb-3 text-[11px]">Actuators</h2>
           <div className="grid grid-cols-2 gap-2">
             {actuatorsFromConfig.map((a) => (
-              <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />
+              <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} ballValve={a.ballValve} />
             ))}
           </div>
         </div>
       </div>
 
       {/* ── State machine ──────────────────────────────────────────────────── */}
-      <div className="px-3 pb-6">
-        <div className="bg-card rounded-xl border border-gray-800 p-3">
-          <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-3">State Machine</h2>
+      <div className="px-4 pb-6 pt-4">
+        <div>
           <StateMachineDiagram />
         </div>
       </div>

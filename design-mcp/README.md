@@ -1,0 +1,178 @@
+# design-mcp — STAR's design-tools MCP server
+
+Lets an agent (Claude Code, Claude Desktop, anything that speaks MCP) read the team's design apps
+**as you**: saved designs in EngineDesign, pid-designer and star-openrocket; Layer X burns;
+feed-twin run records; DAQ test-stand runs; and star-openrocket's simulations and exports. Every
+app shows the agent exactly what it would show you, because each app still makes its own
+permission decision.
+
+- **Endpoint:** `https://mcp.starberkeley.org/mcp` (Streamable HTTP, stateless, JSON responses)
+- **Auth:** `Authorization: Bearer sp_…`: a **STARProject** token with **Design tools** ticked
+- **Runs on:** the apps box, next to the apps it reads (`docker-compose.yml`, service `design-mcp`)
+- **Read-only:** no tool saves, shares or deletes anything in an app. Some compute (an export, a
+  6-DOF flight) and cache the result; that is all.
+
+STARProject's own MCP (tasks, finance) is a separate server on EC2: `starproject/docs/MCP.md`.
+The two servers share one kind of token, minted and revoked in one place.
+
+## Connecting
+
+1. In STARProject: **Settings → API tokens**, tick **Design tools** (and STAR Project too if
+   you want one token for both), **New token**, copy it.
+2. Claude Code:
+
+   ```bash
+   claude mcp add --transport http star-design https://mcp.starberkeley.org/mcp \
+     --header "Authorization: Bearer sp_…"
+   ```
+
+   Claude Desktop, through `mcp-remote`, the same way as `starproject/docs/MCP.md` shows.
+
+A token without the Design tools scope gets `401` with `reason: "scope"`. If STARProject cannot
+be reached to check a token, the answer is `503`: never a pass.
+
+## How it is built
+
+```
+agent ──HTTPS──▶ Cloudflare ──▶ caddy (mcp.*: no cookie gate, X-Auth-* stripped)
+                                   │
+                                   ▼
+                             design-mcp:8010 ──POST /api/mcp/verify──▶ STARProject (EC2)
+                                   │   (token → email, cached 60 s)
+                                   ▼  X-Auth-Email: <the token's owner>
+            engine-design-api · pid-designer-api · star-openrocket-api · feed-twin-api · daq-viewer
+```
+
+- **Identity.** The server holds no tokens. For each one it has not seen in the last minute it
+  asks STARProject (`POST /api/mcp/verify` with `DESIGN_MCP_VERIFY_SECRET`), which answers with
+  the owner's email if the token is live and carries the `design` scope. A revoke reaches this
+  server within that minute. The server then calls the apps on the compose network with
+  `X-Auth-Email` set to that email, which is what Caddy's gate would have set for that person in a
+  browser. This is safe only because **no app container publishes a port**: Caddy is the one way
+  in, and it strips client-sent `X-Auth-*` (`deploy/caddy/tests/test_auth_gate.sh` checks the
+  mcp host too).
+- **Small results.** A tool result is read in full by the model, so nothing large goes into one.
+  Long arrays are summarized (`data.compact`), series are downsampled with min/max buckets so
+  peaks survive, and anything file-shaped comes back as a **link**.
+- **Links.** `GET /files/<token>`: the token is HMAC-signed with `DESIGN_MCP_FILE_KEY`, names
+  one file and the person it was issued to, and expires after 15 minutes. Anyone holding the link
+  can download it until then, so an agent's sandbox can `curl` it with no header. Range requests
+  work, so a large pull can resume. Every download is logged with who it was issued to.
+- **Jobs.** Cloudflare gives up on an origin that has not answered in ~100 s. A slow call
+  (indexing a DAQ run, a 6-DOF flight, an FEA export) runs as a job: the tool waits up to 25 s,
+  then returns `{"job_id"}` for `job_status`. At most `DESIGN_MCP_JOB_CONCURRENCY` (2) run at once
+  across everyone, so agents cannot starve the web UI on the same CPU. Jobs live in memory;
+  a restart loses them and the tool is simply called again.
+- **Tables.** A result with time series (a Layer X burn, a flight) becomes a *table*: parquet
+  in the cache, with each signal's unit, under an id bound to the person who asked. The generic
+  `table_*` tools question it without moving it.
+- **Cache.** `/cache` (volume `design_mcp_cache`) holds blobs by content hash, with a 5 GB cap
+  enforced oldest-first. Cached exports are keyed by *person* + source, so a cache hit is never a
+  way around an app's own permission check. It is safe to wipe.
+
+## Tools
+
+| Tool | What it gives back |
+|---|---|
+| `whoami`, `list_apps` | the token's owner; which apps are reachable |
+| `job_status`, `list_jobs` | a slow call's progress, then its result |
+| `list_designs(app)` | designs you can open in `engine-design` / `pid-designer` / `openrocket` |
+| `get_design`, `design_history`, `design_releases` | the design file (inline if small, link if not); microversions; releases |
+| `download_design` | the design file as a JSON link (the same file pid-designer's Export saves) |
+| `pid_image_link` | a link that opens a P&ID in pid-designer, and the clicks to export its PNG/SVG (see below) |
+| `table_signals`, `table_series`, `table_plot`, `table_export` | question a table: signal list, a window of a few signals, a PNG, the whole thing as CSV/parquet |
+| `layerx_list_runs`, `layerx_get_run(section=)` | your Layer X runs; one run as an outline (small sections inline, big ones named with sizes, the whole run as a link), or one section by dotted path (`diagnostics.stability`) |
+| `layerx_run_table` | a finished burn as a table |
+| `layerx_export(fmt)` | csv · parquet · fea (zip: pc, thrust, axial heat flux, peak loads) · eng (RASP thrust curve) |
+| `engine_optimizer_results(layer)` | your latest Layer 1/2/3 results; for 2/3 the optimized config (YAML) and the tank-pressure curves (the app's `results.csv`) as links |
+| `daq_list_runs`, `daq_run_summary`, `daq_run_config` | test-stand runs; size/duration; the config that ran |
+| `daq_index_run`, `daq_components` | index a run once (a job), then list its channels: grouped by sensor (label, fields, units), or every detail once `match` (name or label) narrows to 60 |
+| `daq_series`, `daq_plot` | a window of channels, downsampled by the viewer, with label and unit; or a PNG. Time is seconds from the run's start (`t0_epoch` given) |
+| `daq_export_csv` | a run (or a selection) as a CSV link (a job, capped to half the cache) |
+| `openrocket_list_models`, `openrocket_model`, `openrocket_model_glb` | CAD models; manifest; mesh link |
+| `openrocket_search_motors`, `openrocket_motor`, `openrocket_motor_file` | the motor catalog; one motor; its .eng/.rse |
+| `openrocket_run_design(design_id, run, changes)` | **a saved design, run as the app runs it**, optionally with `changes` merged into the body (a what-if: another motor, a longer rail): `flight` (apogee, max speed/Mach/accel/q, **max bending moment**, rail exit, margins, drift + a table), `stability`, `recovery` (peak loads per chute, every failure case, both airframe bounds), `ork` (link) |
+| `openrocket_design_requests(design_id)` | the exact request bodies that design runs with (per-part masses, faces, motor, site, wind, devices); a big model's as a link plus a summary |
+| `openrocket_flight_dynamics`, `openrocket_stability`, `openrocket_recovery`, `openrocket_export_ork` | the same runs from a body built from scratch (for a saved design, `openrocket_run_design(changes=)` is the what-if) |
+| `openrocket_recovery_devices` | the parachute catalog |
+| `feedtwin_list_runs`, `feedtwin_get_run`, `feedtwin_diff_runs` | cockpit run records and what differs between two |
+| `feedtwin_session_csv(session_id)` | a live cockpit session's whole trace as the Plots tab's CSV (the app's `history.csv`), as a link |
+
+The flight summary's peaks (max acceleration, max q, max bending moment) are full resolution;
+the table is the app's own 300-point resample and can sit below them.
+
+Two app images gained what their own buttons needed, found by running this server against the
+real apps: star-openrocket installs `requirements-flight.txt` (rocketpy; the Flight Dynamics tab
+answered 501 without it) and EngineDesign installs `pyarrow` (Layer X's Parquet export, likewise).
+
+Units come from the apps: Layer X's CSV headers (`name [unit]`), and for the 6-DOF samples the
+field comments on `FlightDynamicsResult` (`star-openrocket/backend/onshape/aero/rocketpy_flight.py`).
+
+## How the browser-only files got a backend
+
+Four things used to exist only in a browser tab. Each is now made by its app's
+backend, the tab fetches the same thing, and these tools read it:
+
+- **star-openrocket simulations from a design.** `POST /api/design/requests`
+  (`star-openrocket/backend/design_requests.py`) turns a saved design into the bodies
+  the simulations take: per-part masses (typed mass, else catalog material x volume,
+  else Onshape's; hidden parts included), faces, motor, rail, site, wind, devices, and
+  the recovery `Config`. The browser does the same through `frontend/src/lib/designRequests.ts`,
+  and both are held to the hand-written cases in `tests/fixtures/design_requests/`
+  (pytest one side, vitest the other), so they cannot drift.
+- **EngineDesign Layer 2/3 CSV.** `GET /api/optimizer/layer{2,3}/results.csv`
+  (`backend/results_csv.py`); the CSV button downloads it. Numbers print as JavaScript
+  prints them (`lib/stardesign/stardesign/jsformat.py`), so the file is unchanged, except
+  Layer 3's, which the browser wrote with a literal `\n` for every line break and is now
+  a real CSV.
+- **feed-twin Plots CSV.** `GET /api/session/{id}/history.csv` (`backend/history_csv.py`):
+  stand names, psia to 3 places, the state column. Same file as the button saved.
+- **The P&ID image, drawn on the agent's side.** pid-designer draws its PNG/SVG from the live
+  React canvas on purpose, so the screen and the export cannot disagree. A server copy
+  would need a headless browser on the box; instead, `pid_image_link` returns a link
+  (`?diagram=<id>&owner=<owner>`, new, honoured only for a diagram in your own list) and the
+  Export clicks. It works for an agent that has a browser signed in to STAR, e.g. Claude
+  in Chrome on the person's own browser. Without one, `get_design` gives the drawing as JSON.
+
+Still not here: **parts-hub** (Node, its own auth), **writes** of any kind, and
+**claude.ai connectors** (those need OAuth rather than a header token).
+
+## Running it
+
+```bash
+cd design-mcp
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q            # every tool end to end against fake apps
+.venv/bin/python -m black --check star_design_mcp tests && .venv/bin/python -m pyflakes star_design_mcp tests
+
+# A dev server: no token checks, every request is DESIGN_MCP_DEV_EMAIL.
+DESIGN_MCP_PUBLIC_URL=http://127.0.0.1:8010 DESIGN_MCP_DEV_EMAIL=you@berkeley.edu \
+DESIGN_MCP_FILE_KEY=$(openssl rand -hex 32) DESIGN_MCP_CACHE_DIR=/tmp/design-mcp \
+PID_DESIGNER_URL=http://127.0.0.1:8001 ENGINE_DESIGN_URL=http://127.0.0.1:8000 \
+  .venv/bin/python -m star_design_mcp
+claude mcp add --transport http star-design-dev http://127.0.0.1:8010/mcp
+```
+
+An app whose URL is unset is simply absent (its tools say so). The server refuses to start with
+neither a token check nor a dev email, or with both.
+
+| Env | |
+|---|---|
+| `DESIGN_MCP_PUBLIC_URL` | where clients reach it; links are built on it, and its host is the only one accepted |
+| `DESIGN_MCP_VERIFY_URL`, `DESIGN_MCP_VERIFY_SECRET` | STARProject's token check; the secret equals EC2's `DESIGN_MCP_VERIFY_SECRET` |
+| `DESIGN_MCP_DEV_EMAIL` | dev only, instead of the two above |
+| `DESIGN_MCP_FILE_KEY` | signs download links (≥ 32 chars; used for nothing else) |
+| `DESIGN_MCP_CACHE_DIR`, `DESIGN_MCP_CACHE_MAX_BYTES` | the cache and its cap (5 GB) |
+| `DESIGN_MCP_LINK_TTL_S`, `DESIGN_MCP_TOKEN_CACHE_S` | link lifetime (900), token-answer lifetime (60) |
+| `DESIGN_MCP_JOB_CONCURRENCY`, `DESIGN_MCP_JOB_INLINE_WAIT_S` | jobs at once (2), wait before handing back a job id (25) |
+| `ENGINE_DESIGN_URL`, `PID_DESIGNER_URL`, `OPENROCKET_URL`, `FEED_TWIN_URL`, `DAQ_VIEWER_URL` | each app's API on the compose network |
+| `PID_DESIGNER_PUBLIC_URL` | pid-designer for a person's browser, for `pid_image_link` |
+
+## Deploying (once)
+
+1. Generate two secrets: `openssl rand -hex 32` twice.
+2. EC2 `deploy/ec2/.env`: `DESIGN_MCP_VERIFY_SECRET=<first>`; recreate `starproject`.
+3. Apps box `.env`: `DESIGN_MCP_VERIFY_SECRET=<first>`, `DESIGN_MCP_FILE_KEY=<second>`.
+4. Cloudflare → the **apps box's** tunnel → add published application `mcp.starberkeley.org` →
+   `http://caddy:80` (`deploy/apps/FRESH-INSTALL.md` §5).
+5. `docker compose up -d design-mcp caddy` on the box. Check it with `list_apps` from a client.

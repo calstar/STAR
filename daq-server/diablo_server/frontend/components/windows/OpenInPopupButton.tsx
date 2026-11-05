@@ -27,9 +27,7 @@ export default function OpenInPopupButton() {
       type="button"
       onClick={() => openWindow(id, name, url)}
       title={`Open “${name}” in a popup window`}
-      className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full
-                 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-xs font-bold uppercase tracking-wider
-                 border border-blue-400/40 shadow-lg shadow-blue-900/40 transition-colors"
+      className="ctl fixed bottom-5 right-5 z-40 h-8 gap-2 bg-black px-3 text-[10px] text-ink-2"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
         strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -137,6 +137,12 @@ OTA_BIN="$PROJECT/build/bin/ota_service"
 if [ ! -x "$OTA_BIN" ]; then
   OTA_BIN="$PROJECT/build/bin/ota_service"
 fi
+# The backend must read the config the pipeline reads, or the GUI shows a different stand from
+# the one running (routes/config.ts getRunningConfigPath). Empty unless USE_SIM=1.
+BACKEND_RUNNING_CONFIG=""
+if [ "${USE_SIM:-0}" = "1" ]; then
+  BACKEND_RUNNING_CONFIG="RUNNING_CONFIG_PATH=$CONFIG_FILE "
+fi
 pkill -f "ota_service" 2>/dev/null || true
 
 # wait_for_elodin: poll until Elodin DB is accepting TCP connections on port 2240.
@@ -203,7 +209,7 @@ WAIT_FOR_BACKEND='echo "  ⏳ Waiting for backend WS (port '"$THIN_WS_PORT"')...
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
 # Backend also serves the built SPA on :3000 (GUI_PORT) and handles OTA flash
 # requests (OTA_SERVICE_PORT — previously set on the frontend's Next routes).
-CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
+CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && '"$BACKEND_RUNNING_CONFIG"'WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 # The frontend is a static Vite build served by the backend (GUI_PORT=3000).
@@ -354,7 +360,7 @@ launch_background() {
     echo -n "."
   done
   echo " ready"
-  nohup bash -c "cd '$PROJECT/diablo_server/backend' && WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
+  nohup bash -c "cd '$PROJECT/diablo_server/backend' && ${BACKEND_RUNNING_CONFIG}WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
   echo "    Backend:      PID $! → $LOGDIR/backend.log (serves GUI on :3000)"
 
   # Frontend: static build served by the backend — just ensure dist/ is current.
