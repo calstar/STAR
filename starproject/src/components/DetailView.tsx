@@ -26,6 +26,7 @@ export function DetailView({
   emptyText,
   showProject = false,
   showSubproject = false,
+  subteams,
   bom,
 }: {
   basePath: string;
@@ -38,6 +39,8 @@ export function DetailView({
   emptyText?: string;
   showProject?: boolean;
   showSubproject?: boolean;
+  /** Shows the list's Subteam column (project pages; a subteam's own page omits it). */
+  subteams?: { id: string; name: string }[];
   /** Project pages only: shows the BOM tab, and its body when view is "bom"
    * (null while another tab is showing, so the BOM isn't loaded for nothing). */
   bom?: { body: React.ReactNode | null };
@@ -106,6 +109,7 @@ export function DetailView({
             admin={admin}
             showProject={showProject}
             showSubproject={showSubproject}
+            subteams={subteams}
             emptyText={emptyText ?? "No tasks yet. Add one above."}
           />
         </div>

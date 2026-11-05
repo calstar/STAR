@@ -318,6 +318,7 @@ export function TasksWorkspace({
             users={users}
             admin={admin}
             showProject
+            subteams={subteams}
           />
         )}
         {view === "board" && <Board tasks={onTheBoard} sort={boardSort} />}
@@ -347,6 +348,7 @@ export function TasksWorkspace({
                 users={users}
                 admin={admin}
                 showProject
+                subteams={subteams}
               />
             </div>
           )}

@@ -18,6 +18,7 @@ import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { DueDateInput } from "@/components/fields/DueDateInput";
 import { PrioritySelect } from "@/components/fields/PrioritySelect";
 import { StatusSelect } from "@/components/fields/StatusSelect";
+import { SubteamSelect } from "@/components/fields/SubteamSelect";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { deleteTask } from "@/lib/actions/tasks";
 import { type TaskRowData, comparePriorityAsc } from "@/lib/board";
@@ -33,12 +34,15 @@ const col = createColumnHelper<TaskRowData>();
 const columnClasses: Record<string, string> = {
   subproject: "hidden lg:table-cell",
   projectName: "hidden lg:table-cell",
+  subteamName: "hidden lg:table-cell",
   priority: "hidden md:table-cell",
   assigneeName: "hidden md:table-cell",
 };
 
 // The single list/table view used everywhere (project, subteam, /tasks). Cells
-// are inline-editable; the Project/Subteam columns show only where relevant.
+// are inline-editable; the Project/Subteam columns show only where relevant:
+// passing `subteams` turns on the Subteam column (omit it on a subteam's own
+// page, where every row would say the same thing).
 // Clicking a row (outside an editor) opens the task modal in place.
 export function TaskTable({
   rows,
@@ -46,6 +50,7 @@ export function TaskTable({
   admin = false,
   showProject = false,
   showSubproject = false,
+  subteams,
   emptyText = "No tasks match.",
 }: {
   rows: TaskRowData[];
@@ -53,6 +58,8 @@ export function TaskTable({
   admin?: boolean;
   showProject?: boolean;
   showSubproject?: boolean;
+  /** Every subteam, for the Subteam column's picker. Omitted hides the column. */
+  subteams?: { id: string; name: string }[];
   emptyText?: string;
 }) {
   const { openTask } = useTaskModal();
@@ -98,6 +105,22 @@ export function TaskTable({
                   "—"
                 );
               },
+            }),
+          ]
+        : []),
+      ...(subteams
+        ? [
+            col.accessor("subteamName", {
+              header: "Subteam",
+              cell: (info) => (
+                <div onClick={stop}>
+                  <SubteamSelect
+                    taskId={info.row.original.id}
+                    value={info.row.original.subteamId || null}
+                    subteams={subteams}
+                  />
+                </div>
+              ),
             }),
           ]
         : []),
@@ -163,7 +186,7 @@ export function TaskTable({
           ]
         : []),
     ],
-    [showProject, showSubproject, users, admin],
+    [showProject, showSubproject, subteams, users, admin],
   );
 
   const table = useReactTable({

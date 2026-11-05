@@ -177,6 +177,7 @@ export async function ProjectView({
       admin={admin}
       header={header}
       showSubproject={below.length > 0}
+      subteams={subteams}
       bom={{ body: bomBody }}
       newTaskForm={
         <NewTaskForm projectId={project.id} users={users} subteams={subteams} admin={admin} />
