@@ -402,12 +402,10 @@ inline void setup(CoreState& s, const Config& cfg) {
     HF_LOG(cfg.board_name);
     HF_LOGLN(" Hotfire state machine starting...");
 
+#ifndef SENSOR_ETH_USE_DHCP
     s.board_id = (uint8_t)BOARD_ID;
     s.staticIP = IPAddress(192, 168, 2, (uint8_t)BOARD_ID);
-    HF_LOG("Board ID and IP: ");
-    HF_LOG(static_cast<unsigned>(s.board_id));
-    HF_LOG(" / 192.168.2.");
-    HF_LOGLN(static_cast<unsigned>(s.board_id));
+#endif
 
     const sense_board_pins::Layout& Pins = *cfg.pins;
     pinMode(Pins.LED, OUTPUT);
@@ -417,21 +415,25 @@ inline void setup(CoreState& s, const Config& cfg) {
         cfg.init_adc(cfg.user_data);
 
     ESP_ERROR_CHECK(esp_read_mac(s.mac, ESP_MAC_ETH));
-    BoardNet::configure(s.net, s.mac, s.staticIP, s.subnet);
+    BoardNet::configure(s.net, s.mac);
     BoardNet::printMac(s.net);
     SPI.begin(Pins.ETH_SCLK, Pins.ETH_MISO, Pins.ETH_MOSI, Pins.ETH_CS);
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(Pins.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
 #ifdef SENSOR_ETH_USE_DHCP
-    // The ground station decides our address; we only ask for one. See
-    // board_net.h for what happens when nothing answers.
+    // The ground station decides our address, and our ID with it; we only ask
+    // for one. See board_net.h for what happens when nothing answers.
     BoardNet::begin(s.net, s.dns, s.gateway);
+    s.board_id = BoardNet::boardId(s.net);
 #else
     // Boards that have not opted in keep their compiled-in static address.
     Ethernet.begin(s.mac, s.staticIP, s.dns, s.gateway, s.subnet);
 #endif
     delay(ETHERNET_BEGIN_DELAY_MS);
+    HF_LOG("Board ID: ");
+    HF_LOG(static_cast<unsigned>(s.board_id));
+    HF_LOGLN(s.board_id == 0 ? " (none until the server assigns an address)" : "");
 
     // W5500 / Ethernet status (same pattern as Stream_ADC_Data and other DAQ
     // sketches)
@@ -490,8 +492,8 @@ inline void setup(CoreState& s, const Config& cfg) {
 #endif
     Serial.println("State -> WaitingForServer");
     Serial.flush();
-    Serial.print("Config target: send SENSOR_CONFIG to 192.168.2.");
-    Serial.print(static_cast<unsigned>(s.board_id));
+    Serial.print("Config target: send SENSOR_CONFIG to ");
+    Serial.print(Ethernet.localIP());
     Serial.println(":5005");
     Serial.flush();
     HF_LOGLN("Setup complete. State: WaitingForServer");
@@ -511,6 +513,16 @@ inline void loop(CoreState& s, const Config& cfg) {
 #ifdef SENSOR_ETH_USE_DHCP
     // Renew the lease as it expires; no-op while an OTA is in flight.
     BoardNet::maintainLease(s.net);
+    // On the recovery address, keep asking; a lease brings our ID with it.
+    if (BoardNet::retryDhcp(s.net, s.dns, s.gateway)) {
+        s.board_id = BoardNet::boardId(s.net);
+        HF_LOG("ONLINE board=");
+        HF_LOG(static_cast<unsigned>(s.board_id));
+        HF_LOG(" ip=");
+        HF_LOG(Ethernet.localIP());
+        HF_LOGLN_();
+        flushLogs(s);
+    }
 #endif
     // Non-blocking OTA check — blocks only if a client actually connects,
     // and never returns on success (the board reboots into the new image).

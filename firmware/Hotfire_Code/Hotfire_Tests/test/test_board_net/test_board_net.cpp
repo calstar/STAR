@@ -2,8 +2,8 @@
  * Board networking unit tests
  *
  * Includes the REAL header (common/board_net.h) rather than a replica: the
- * point of this suite is that the board never assigns itself an address, and
- * a replica could not prove that about the shipped code. The stubbed
+ * point of this suite is that the board's working address and ID come only
+ * from the server, and a replica could not prove that about the shipped code. The stubbed
  * EthernetClass records what gets written to the chip.
  */
 
@@ -16,23 +16,30 @@
 
 static const byte kMac[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0x2A, 0x3C};
 
-static const IPAddress kStaticIP(192, 168, 2, 41);
-static const IPAddress kStaticSubnet(255, 255, 255, 0);
 static const IPAddress kGateway(0, 0, 0, 0);
 static const IPAddress kDns(192, 168, 2, 1);
 static const IPAddress kDefaultServer(192, 168, 2, 20);
 static const IPAddress kLeasedIP(192, 168, 2, 137);
+// 169.254.<1 + 0x2A % 254>.<0x3C>
+static const IPAddress kRecoveryIP(169, 254, 43, 60);
 
 static BoardNet::State makeState() {
     Ethernet.reset();
     stub_set_millis(1000);
     BoardNet::State s;
-    BoardNet::configure(s, kMac, kStaticIP, kStaticSubnet);
+    BoardNet::configure(s, kMac);
+    return s;
+}
+
+static BoardNet::State recoveringState() {
+    BoardNet::State s = makeState();
+    Ethernet.dhcp_should_succeed = false;
+    BoardNet::begin(s, kDns, kGateway);
     return s;
 }
 
 // ---------------------------------------------------------------------------
-// The board asks; it does not decide
+// The board asks; the server's answer is its address and its ID
 // ---------------------------------------------------------------------------
 void test_dhcp_lease_is_adopted(void) {
     BoardNet::State s = makeState();
@@ -48,32 +55,43 @@ void test_dhcp_lease_is_adopted(void) {
     TEST_ASSERT_EQUAL_INT(0, Ethernet.static_begin_calls);
 }
 
-void test_board_never_invents_a_link_local_address(void) {
+void test_board_id_is_the_assigned_address(void) {
     BoardNet::State s = makeState();
-    Ethernet.dhcp_should_succeed = false;
-
+    Ethernet.dhcp_should_succeed = true;
+    Ethernet.dhcp_assigned = IPAddress(192, 168, 2, 31);
     BoardNet::begin(s, kDns, kGateway);
-
-    // The old behaviour was to self-assign 169.254.x.y and hunt. Whatever we
-    // end up with, it must never be an address the board made up.
-    IPAddress ip = Ethernet.localIP();
-    TEST_ASSERT_FALSE(ip[0] == 169 && ip[1] == 254);
+    TEST_ASSERT_EQUAL_UINT8(31, BoardNet::boardId(s));
 }
 
-void test_fallback_is_the_known_static_address(void) {
-    BoardNet::State s = makeState();
-    Ethernet.dhcp_should_succeed = false;
+// ---------------------------------------------------------------------------
+// No DHCP answer: the MAC-derived recovery address, reflash only
+// ---------------------------------------------------------------------------
+void test_recovery_address_formula(void) {
+    // The vectors firmware/tools/ota_upload.py and daq-server's config
+    // validation test too; change one, change all three.
+    const byte rtd[6] = {0x4a, 0x27, 0xe2, 0x3a, 0xad, 0x71};
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(rtd) == IPAddress(169, 254, 174, 113));
+    // Third octet stays in 1..254 (RFC 3927): 0x00 -> 1, 0xFE -> 1, 0xFF -> 2.
+    const byte lo[6] = {0, 0, 0, 0, 0x00, 0x00};
+    const byte fe[6] = {0, 0, 0, 0, 0xFE, 0xFF};
+    const byte ff[6] = {0, 0, 0, 0, 0xFF, 0x01};
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(lo) == IPAddress(169, 254, 1, 0));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(fe) == IPAddress(169, 254, 1, 255));
+    TEST_ASSERT_TRUE(BoardNet::recoveryAddress(ff) == IPAddress(169, 254, 2, 1));
+}
 
-    BoardNet::AddressSource src = BoardNet::begin(s, kDns, kGateway);
+void test_no_answer_puts_the_board_on_its_recovery_address(void) {
+    BoardNet::State s = recoveringState();
 
-    // Not a DHCP-only build, so the last-resort static address is used —
-    // deliberately the one daq-server already has configured.
-    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Fallback, (int)src);
+    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery, (int)s.source);
     TEST_ASSERT_FALSE(BoardNet::usingDhcp(s));
-    TEST_ASSERT_TRUE(BoardNet::hasAddress(s));
-    TEST_ASSERT_EQUAL_INT(1, Ethernet.static_begin_calls);
-    TEST_ASSERT_TRUE(Ethernet.static_ip == kStaticIP);
-    TEST_ASSERT_TRUE(Ethernet.static_subnet == kStaticSubnet);
+    TEST_ASSERT_TRUE(Ethernet.static_ip == kRecoveryIP);
+    TEST_ASSERT_TRUE(Ethernet.static_subnet == IPAddress(255, 255, 0, 0));
+    TEST_ASSERT_TRUE(Ethernet.localIP() == kRecoveryIP);
+    // Never a working 192.168.2.x address the board made up for itself.
+    TEST_ASSERT_FALSE(Ethernet.localIP()[0] == 192);
+    // And no identity: only the server gives one.
+    TEST_ASSERT_EQUAL_UINT8(0, BoardNet::boardId(s));
 }
 
 void test_source_is_reported_honestly(void) {
@@ -84,9 +102,65 @@ void test_source_is_reported_honestly(void) {
     Ethernet.dhcp_should_succeed = true;
     Ethernet.dhcp_assigned = kLeasedIP;
     BoardNet::begin(s, kDns, kGateway);
-    // The operator has to be able to tell an assigned address from a fallback.
+    // The operator has to be able to tell an assigned address from recovery.
     TEST_ASSERT_EQUAL_STRING("DHCP (assigned by the server)",
                              BoardNet::sourceName(s.source));
+}
+
+// ---------------------------------------------------------------------------
+// On the recovery address the board keeps asking
+// ---------------------------------------------------------------------------
+void test_retry_waits_for_the_interval(void) {
+    BoardNet::State s = recoveringState();
+    const int asked = Ethernet.dhcp_begin_calls;
+
+    stub_set_millis(1000 + SENSOR_ETH_DHCP_RETRY_INTERVAL_MS - 1);
+    TEST_ASSERT_FALSE(BoardNet::retryDhcp(s, kDns, kGateway));
+    TEST_ASSERT_EQUAL_INT(asked, Ethernet.dhcp_begin_calls);
+}
+
+void test_failed_retry_stays_reflashable(void) {
+    BoardNet::State s = recoveringState();
+    const int asked = Ethernet.dhcp_begin_calls;
+
+    stub_set_millis(1000 + SENSOR_ETH_DHCP_RETRY_INTERVAL_MS);
+    TEST_ASSERT_FALSE(BoardNet::retryDhcp(s, kDns, kGateway));
+
+    TEST_ASSERT_EQUAL_INT(asked + 1, Ethernet.dhcp_begin_calls);
+    // The failed attempt zeroed the address; the recovery one is back.
+    TEST_ASSERT_TRUE(Ethernet.localIP() == kRecoveryIP);
+    TEST_ASSERT_EQUAL_INT((int)BoardNet::AddressSource::Recovery, (int)s.source);
+}
+
+void test_retry_that_gets_a_lease_moves_the_board(void) {
+    BoardNet::State s = recoveringState();
+    Ethernet.dhcp_should_succeed = true;
+    Ethernet.dhcp_assigned = IPAddress(192, 168, 2, 22);
+
+    stub_set_millis(1000 + SENSOR_ETH_DHCP_RETRY_INTERVAL_MS);
+    TEST_ASSERT_TRUE(BoardNet::retryDhcp(s, kDns, kGateway));
+
+    TEST_ASSERT_TRUE(BoardNet::usingDhcp(s));
+    TEST_ASSERT_TRUE(Ethernet.localIP() == IPAddress(192, 168, 2, 22));
+    TEST_ASSERT_EQUAL_UINT8(22, BoardNet::boardId(s));
+
+    // On a lease, no more asking.
+    const int asked = Ethernet.dhcp_begin_calls;
+    stub_set_millis(1000 + 10 * SENSOR_ETH_DHCP_RETRY_INTERVAL_MS);
+    TEST_ASSERT_FALSE(BoardNet::retryDhcp(s, kDns, kGateway));
+    TEST_ASSERT_EQUAL_INT(asked, Ethernet.dhcp_begin_calls);
+}
+
+void test_no_retry_during_an_ota(void) {
+    BoardNet::State s = recoveringState();
+    BoardNet::beginOtaHold(s);
+    const int asked = Ethernet.dhcp_begin_calls;
+
+    // Reflashing on the recovery address is the point of it: never move the
+    // address out from under the transfer.
+    stub_set_millis(1000 + 10 * SENSOR_ETH_DHCP_RETRY_INTERVAL_MS);
+    TEST_ASSERT_FALSE(BoardNet::retryDhcp(s, kDns, kGateway));
+    TEST_ASSERT_EQUAL_INT(asked, Ethernet.dhcp_begin_calls);
 }
 
 // ---------------------------------------------------------------------------
@@ -101,10 +175,8 @@ void test_lease_is_renewed_only_on_a_lease(void) {
     BoardNet::maintainLease(s);
     TEST_ASSERT_EQUAL_INT(1, Ethernet.maintain_calls);
 
-    // On the static fallback there is no lease to renew.
-    BoardNet::State f = makeState();
-    Ethernet.dhcp_should_succeed = false;
-    BoardNet::begin(f, kDns, kGateway);
+    // On the recovery address there is no lease to renew.
+    BoardNet::State f = recoveringState();
     Ethernet.maintain_calls = 0;
     BoardNet::maintainLease(f);
     TEST_ASSERT_EQUAL_INT(0, Ethernet.maintain_calls);
@@ -203,9 +275,16 @@ int main(int, char**) {
 
     // addressing
     RUN_TEST(test_dhcp_lease_is_adopted);
-    RUN_TEST(test_board_never_invents_a_link_local_address);
-    RUN_TEST(test_fallback_is_the_known_static_address);
+    RUN_TEST(test_board_id_is_the_assigned_address);
+    RUN_TEST(test_recovery_address_formula);
+    RUN_TEST(test_no_answer_puts_the_board_on_its_recovery_address);
     RUN_TEST(test_source_is_reported_honestly);
+
+    // retry on the recovery address
+    RUN_TEST(test_retry_waits_for_the_interval);
+    RUN_TEST(test_failed_retry_stays_reflashable);
+    RUN_TEST(test_retry_that_gets_a_lease_moves_the_board);
+    RUN_TEST(test_no_retry_during_an_ota);
 
     // lease renewal
     RUN_TEST(test_lease_is_renewed_only_on_a_lease);
