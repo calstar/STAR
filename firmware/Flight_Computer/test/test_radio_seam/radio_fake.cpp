@@ -1,5 +1,6 @@
 #include "radio_fake.h"
 
+#include <assert.h>
 #include <string.h>
 
 namespace radio_link {
@@ -21,6 +22,7 @@ uint8_t g_tx[kMaxPacket];
 uint8_t g_tx_len = 0;
 unsigned g_tx_count = 0;
 RadioStatus g_send_result = RadioStatus::Ok;
+RadioStatus g_next_receive = RadioStatus::Ok;
 
 }  // namespace
 
@@ -33,6 +35,11 @@ void reset(bool chip_present) {
     g_tx_len = 0;
     g_tx_count = 0;
     g_send_result = RadioStatus::Ok;
+    g_next_receive = RadioStatus::Ok;
+}
+
+void fail_next_receive(RadioStatus result) {
+    g_next_receive = result;
 }
 
 void set_send_result(RadioStatus result) {
@@ -67,6 +74,9 @@ RadioStatus radio_probe() {
 }
 
 RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
+    // radio.h: a packet is 1 to 255 bytes. Sending nothing (or from nullptr)
+    // is a caller bug, so stop the test run loudly instead of answering Ok.
+    assert(bytes != nullptr && len > 0);
     if (!g_chip_present) {
         return RadioStatus::ErrNotFound;
     }
@@ -80,6 +90,11 @@ RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
 }
 
 RadioStatus radio_receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
+    if (g_next_receive != RadioStatus::Ok) {
+        const RadioStatus result = g_next_receive;
+        g_next_receive = RadioStatus::Ok;
+        return result;
+    }
     if (g_count == 0) {
         return RadioStatus::NoData;
     }
