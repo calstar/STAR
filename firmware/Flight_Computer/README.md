@@ -92,6 +92,7 @@ Nothing here has run on a real radio or on the STM32.
 - The send path (`radio_send`) on the real chip.
 - Hardware bring-up: first packet over the air.
 - Decisions for the lead: frequency (915 MHz fits the Wio module; 137 MHz does not), the real ARM key, the confirm window, the target id, whether ARM needs a real secret.
+- Decision for the lead: what happens when the ground station reboots. Its sequence counter restarts, and every ARM is rejected as stale until the rocket reboots (pinned by `test_ground_reboot_rejects_arm_until_rocket_reboots`). Options: the ground saves its counter and keeps counting, or ARM carries a session number that resets the rocket's window.
 
 ### Known limits of the message format
 

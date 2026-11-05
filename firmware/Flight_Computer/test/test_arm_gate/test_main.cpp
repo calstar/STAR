@@ -182,6 +182,21 @@ static void test_other_frames_do_not_cancel_pending(void) {
     TEST_ASSERT_EQUAL(ArmAction::Arm, feed(good_arm(2), 10));
 }
 
+// Pins today's behaviour when the ground station reboots and its sequence
+// counter restarts (review A1): every ARM is RejectStale until the rocket
+// reboots. Fail-safe, but confusing on launch day. The fix (ground keeps its
+// counter, or ARM carries a session number) is a decision for the lead; this
+// test must change with it. UN_ARM still works, as disarming is always safe.
+static void test_ground_reboot_rejects_arm_until_rocket_reboots(void) {
+    TEST_ASSERT_EQUAL(ArmAction::Pending, feed(good_arm(100), 0));
+    TEST_ASSERT_EQUAL(ArmAction::Arm, feed(good_arm(101), 10));
+    // Ground station restarts at 1.
+    TEST_ASSERT_EQUAL(ArmAction::RejectStale, feed(good_arm(1), 5000));
+    TEST_ASSERT_EQUAL(ArmAction::RejectStale, feed(good_arm(2), 5010));
+    TEST_ASSERT_EQUAL(ArmAction::Disarm,
+                      feed(simple(FrameType::UnArm, 3), 5020));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_single_arm_does_not_arm);
@@ -205,5 +220,6 @@ int main(void) {
     RUN_TEST(test_un_arm_cancels_pending_arm);
     RUN_TEST(test_other_frame_types_ignored);
     RUN_TEST(test_other_frames_do_not_cancel_pending);
+    RUN_TEST(test_ground_reboot_rejects_arm_until_rocket_reboots);
     return UNITY_END();
 }

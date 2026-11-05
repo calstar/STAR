@@ -6,13 +6,19 @@
  * secret). Rules for ARM:
  *   1. key must equal kArmKey and the next field must equal ~kArmKey
  *   2. target_id must match this rocket
- *   3. sequence must be newer than the last ARM/UN_ARM seen (wrap-safe)
+ *   3. sequence must be newer than the last ARM/UN_ARM seen (wrap-safe). The
+ *      ground's counter must keep increasing across ground-station restarts;
+ *      otherwise ARM is rejected until the rocket reboots (open decision,
+ *      see README "Decisions for the lead").
  *   4. a SECOND valid ARM with seq == first.seq + 1 must arrive within
  *      kArmConfirmWindowMs of the first; only then does on_frame() return Arm
  *   Any rejected ARM cancels a pending first ARM.
  * UN_ARM is deliberately easy (disarming is the safe direction): always
  * honored, cancels a pending ARM, and is not subject to the stale-sequence
- * rule.
+ * rule or the target id (any rocket in range disarms).
+ *
+ * The gate only says whether a command is valid. Whether arming is allowed
+ * right now (on the pad, in Idle, not in flight) is the state machine's call.
  *
  * Time is passed in (now_ms) so tests need no clock. Unsigned subtraction makes
  * a wrapping 32-bit millisecond counter safe.
