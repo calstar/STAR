@@ -29,6 +29,7 @@ constexpr uint8_t kOpClearIrqStatus = 0x02;
 constexpr uint8_t kOpGetIrqStatus = 0x12;
 constexpr uint8_t kOpGetRxBufferStatus = 0x13;
 constexpr uint8_t kOpReadBuffer = 0x1E;
+constexpr uint8_t kOpSetRx = 0x82;
 
 // Event flags in the chip's IRQ register (datasheet table 13-29, page 80).
 constexpr uint16_t kIrqRxDone = 1u << 1;     // a packet was received
@@ -36,10 +37,20 @@ constexpr uint16_t kIrqHeaderErr = 1u << 5;  // LoRa header failed its check
 constexpr uint16_t kIrqCrcErr = 1u << 6;     // the radio's own CRC was wrong
 
 // Receives packets from an SX1262 over a SpiBus.
+//
+// The chip must be listening in continuous RX for receive() to see packets:
+// in single RX it returns to standby after the first packet and nothing here
+// would re-arm it. Call start_rx_continuous() once start-up is done and again
+// after every transmission (a send leaves the chip in standby).
 class Sx1262 {
 public:
     explicit Sx1262(SpiBus& bus) : bus_(bus) {
     }
+
+    // SetRx (opcode 0x82, datasheet Rev 1.2 page 62) with timeout 0xFFFFFF:
+    // continuous RX, the chip stays listening until told otherwise (page 70).
+    // Returns false if the chip never left BUSY.
+    bool start_rx_continuous();
 
     // Same promise as radio_receive() in radio.h. ErrNotFound means the chip
     // did not answer: BUSY never went low, or a reply's status byte is not

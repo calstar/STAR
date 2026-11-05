@@ -36,6 +36,12 @@ bool Sx1262::command(const uint8_t* tx, uint8_t* rx, uint16_t n) {
     return true;
 }
 
+bool Sx1262::start_rx_continuous() {
+    const uint8_t tx[4] = {kOpSetRx, 0xFF, 0xFF, 0xFF};
+    uint8_t rx[4];
+    return command(tx, rx, sizeof tx);
+}
+
 bool Sx1262::clear_irq(uint16_t mask) {
     const uint8_t tx[3] = {kOpClearIrqStatus, static_cast<uint8_t>(mask >> 8),
                            static_cast<uint8_t>(mask & 0xFF)};

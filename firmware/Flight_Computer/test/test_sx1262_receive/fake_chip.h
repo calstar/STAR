@@ -33,6 +33,7 @@ public:
         waits_ = 0;
         transfers_ = 0;
         log_len_ = 0;
+        last_len_ = 0;
     }
 
     // Pretend a packet arrived and was stored at `start`.
@@ -82,6 +83,14 @@ public:
     uint8_t command_at(unsigned i) const {
         return log_[i];
     }
+    // Bytes of the most recent command (up to kLastSize of them).
+    static constexpr unsigned kLastSize = 8;
+    unsigned last_len() const {
+        return last_len_;
+    }
+    uint8_t last_byte(unsigned i) const {
+        return last_[i];
+    }
 
     bool wait_busy() override {
         waits_++;
@@ -90,6 +99,8 @@ public:
 
     void transfer(const uint8_t* tx, uint8_t* rx, uint16_t len) override {
         transfers_++;
+        last_len_ = len < kLastSize ? len : kLastSize;
+        memcpy(last_, tx, last_len_);
         if (log_len_ < kLogSize) {
             log_[log_len_++] = tx[0];
         }
@@ -138,6 +149,8 @@ private:
     unsigned transfers_;
     uint8_t log_[kLogSize];
     unsigned log_len_;
+    uint8_t last_[kLastSize];
+    unsigned last_len_;
 };
 
 }  // namespace radio_link

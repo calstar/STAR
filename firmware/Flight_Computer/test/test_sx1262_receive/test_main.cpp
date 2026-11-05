@@ -201,6 +201,25 @@ static void test_bad_status_while_reading_a_packet_reports_not_found(void) {
     TEST_ASSERT_EQUAL_UINT8(0xAB, len);
 }
 
+// SetRx with timeout 0xFFFFFF = continuous RX (datasheet pages 62 and 70).
+static void test_start_rx_continuous_sends_setrx_ffffff(void) {
+    Sx1262 radio(chip);
+    TEST_ASSERT_TRUE(radio.start_rx_continuous());
+    const uint8_t expected[4] = {0x82, 0xFF, 0xFF, 0xFF};
+    TEST_ASSERT_EQUAL_UINT(4, chip.last_len());
+    for (unsigned i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_HEX8(expected[i], chip.last_byte(i));
+    }
+    TEST_ASSERT_EQUAL_UINT(1, chip.waits());  // BUSY checked first
+}
+
+static void test_start_rx_continuous_fails_when_busy_never_clears(void) {
+    Sx1262 radio(chip);
+    chip.set_never_ready();
+    TEST_ASSERT_FALSE(radio.start_rx_continuous());
+    TEST_ASSERT_EQUAL_UINT(0, chip.transfers());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_no_flags_returns_no_data);
@@ -219,5 +238,7 @@ int main(void) {
     RUN_TEST(test_missing_chip_reading_ones_reports_not_found);
     RUN_TEST(test_command_failure_status_reports_not_found);
     RUN_TEST(test_bad_status_while_reading_a_packet_reports_not_found);
+    RUN_TEST(test_start_rx_continuous_sends_setrx_ffffff);
+    RUN_TEST(test_start_rx_continuous_fails_when_busy_never_clears);
     return UNITY_END();
 }
