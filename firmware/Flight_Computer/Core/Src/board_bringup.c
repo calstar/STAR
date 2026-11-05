@@ -65,6 +65,14 @@ void board_bringup_power_up(board_bringup_t* b) {
     if (ms5611_reset()) {
         enable(b, SELF_TEST_DEVICE_BAROMETER);
     }
+
+    /* W5500 (U6), Ethernet: held in reset by ETH_RST (PE13), which
+     * MX_GPIO_Init drives low. RSTn low >= 500 us (TRC), then the internal
+     * PLL locks <= 1 ms after RSTn rises (TPL) (datasheet v1.0.2 p.61).
+     * It has been low since boot; osDelay(3) guarantees >= 2 ms. */
+    HAL_GPIO_WritePin(ETH_RST_GPIO_Port, ETH_RST_Pin, GPIO_PIN_SET);
+    osDelay(3);
+    enable(b, SELF_TEST_DEVICE_ETHERNET);
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
