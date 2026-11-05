@@ -164,9 +164,9 @@ check self_test "self-test coordinator + device protocols, GNSS frames, SD SPI" 
   ctest_suite self_test tests/self_test
 check emmc "eMMC log: chunks, mount, torn writes, card checks, flight state" \
   ctest_suite emmc tests/emmc
-check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611" \
+check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
   ctest_suite chips tests/chips
-check app "task cores under a virtual clock: sensors" ctest_suite app tests/app
+check app "task cores under a virtual clock: sensors, GNSS" ctest_suite app tests/app
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
 stage "3  end to end: flight profile -> drivers -> cores -> eMMC -> read back"

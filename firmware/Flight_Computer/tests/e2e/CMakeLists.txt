@@ -12,6 +12,10 @@ set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(SOURCES
     flight_e2e.c
     ${ROOT}/app/sensors_core.c
+    ${ROOT}/app/gnss_core.c
+    ${ROOT}/chips/ubx.c
+    ${ROOT}/Core/Src/gnss_frame.c
+    ${ROOT}/tests/fakes/fake_gnss.c
     ${ROOT}/chips/dev_ism330dhcx.c
     ${ROOT}/chips/dev_h3lis100dl.c
     ${ROOT}/chips/dev_ms5611.c

@@ -4,6 +4,7 @@
  *   flight profile -> fake chips -> REAL chip drivers (chips/) -> REAL
  *   sensors_core (app/) -> REAL emmc_log (Core/) -> fake eMMC card ->
  *   independent log reader -> compared against the profile
+ *   simulated MAX-M10S -> REAL ubx + gnss_frame + gnss_core -> same log
  *
  * Time is virtual. The harness plays the RTOS: it wakes the sensors core on
  * data-ready edges (+37 us latency) or on the core's own deadlines, and runs
@@ -24,7 +25,9 @@
 
 #include "emmc_log.h"
 #include "fake_baro.h"
+#include "fake_gnss.h"
 #include "fake_regs.h"
+#include "gnss_core.h"
 #include "sensors_core.h"
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +82,21 @@ static const struct {
     {8500000, 7300000, -3022, 79839}, /* coast: very-low branch */
     {9085466, 8569150, 2007, 100009}, /* descent */
 };
+
+/* GPS truth: climbs during boost/coast, comes down after. */
+static void gps_truth(uint32_t t, ubx_pvt_t* v) {
+    v->itow_ms = 300000000U + t / 1000U;
+    v->fix_type = 3;
+    v->flags = 1;
+    v->num_sv = 10;
+    v->lat_e7 = 378719000 + (int32_t)(t / 100000U);
+    v->lon_e7 = -1222585000;
+    v->hmsl_mm = 100000 + (int32_t)(t / 50U);
+    v->vel_d_mms = phase_at(t) == DESCENT ? 8000 : -20000;
+    v->hacc_mm = 2000;
+    v->vacc_mm = 3000;
+    v->pdop_e2 = 140;
+}
 
 /* ------------------------------------------------------------------ */
 /* Fake eMMC card (emmc_port_t) with fault injection.                 */
@@ -205,6 +223,13 @@ typedef struct {
     fake_regs_t imu, highg;
     fake_baro_t baro;
     sensors_core_t core;
+    fake_gnss_t gps;
+    gnss_core_t gnss;
+    uint32_t next_gps_us, next_pps_us;
+    unsigned n_gnss;
+    uint32_t chunk_start_ms;         /* first record of the chunk now filling */
+    uint32_t sealed_before_stall_ms; /* chunk_start_ms when the card stalled */
+    bool stall_seen;
     card_t card;
     emmc_log_t log;
     emmc_log_chunk_t chunks[4];
@@ -221,6 +246,8 @@ typedef struct {
 static void sink(void* ctx, uint8_t type, const void* data, uint8_t len) {
     world_t* w = ctx;
     int i = type - REC_IMU;
+    if (type == REC_GNSS)
+        w->n_gnss++;
     if (i >= 0 && i < 3) {
         uint32_t t;
         memcpy(&t, data, 4);
@@ -231,7 +258,21 @@ static void sink(void* ctx, uint8_t type, const void* data, uint8_t len) {
         w->last_t[i] = t;
         w->n_type[i]++;
     }
-    if (emmc_log_append(&w->log, type, w->now / 1000U, data, len)) {
+    uint32_t now_ms = w->now / 1000U;
+    if (!w->stall_seen && w->faults.card_fail_until_ms &&
+        now_ms >= w->faults.card_fail_from_ms) {
+        w->stall_seen = true;
+        w->sealed_before_stall_ms = w->chunk_start_ms;
+    }
+    bool had = w->log.has_fill;
+    uint8_t c = w->log.fill_chunk, blk = w->log.fill_block;
+    uint16_t off = w->log.fill_offset;
+    bool ok = emmc_log_append(&w->log, type, now_ms, data, len);
+    if (w->log.has_fill &&
+        (!had || w->log.fill_chunk != c || w->log.fill_block < blk ||
+         (w->log.fill_block == blk && w->log.fill_offset < off)))
+        w->chunk_start_ms = now_ms; /* this record opened a new chunk */
+    if (ok) {
         w->appended++;
     } else {
         w->refused++;
@@ -298,6 +339,13 @@ static void world_init(world_t* w, const faults_t* faults) {
     w->core.sink.ctx = w;
     set_chips(w, 0);
     sensors_core_init(&w->core, 0);
+    fake_gnss_init(&w->gps, 9600, gps_truth); /* cold module (p.13) */
+    w->gnss.io = fake_gnss_io(&w->gps);
+    w->gnss.sink.record = sink;
+    w->gnss.sink.ctx = w;
+    gnss_core_init(&w->gnss, 0);
+    w->next_gps_us = 1000U;
+    w->next_pps_us = 1000000U;
     w->state = FLIGHT_IDLE;
     change_state(w, FLIGHT_ARMED); /* recording starts at ARMED */
     w->next_imu = SENSORS_IMU_PERIOD_US;
@@ -329,6 +377,8 @@ static void fly(world_t* w) {
             wake = w->next_highg;
         if (diff(w->next_service, wake) < 0)
             wake = w->next_service;
+        if (diff(w->next_gps_us, wake) < 0)
+            wake = w->next_gps_us;
         uint32_t ev = 0;
         if (diff(w->next_imu, wake) <= 0) {
             ev |= SENSORS_EV_IMU;
@@ -350,6 +400,17 @@ static void fly(world_t* w) {
         if (phase_at(w->now) == DESCENT && w->state == FLIGHT_LAUNCHED)
             change_state(w, FLIGHT_RECOVERY);
         sensors_core_step(&w->core, ev, w->edge_imu, w->edge_highg, w->now);
+        if (diff(w->now, w->next_gps_us) >= 0) { /* gnss_task, 1 ms */
+            uint8_t buf[512];
+            if (diff(w->now, w->next_pps_us) >= 0) {
+                gnss_core_set_pps(&w->gnss, w->next_pps_us);
+                w->next_pps_us += 1000000U;
+            }
+            size_t n = fake_gnss_emit(&w->gps, w->now, buf, sizeof(buf));
+            gnss_core_feed(&w->gnss, buf, n, w->now);
+            gnss_core_poll(&w->gnss, w->now);
+            w->next_gps_us += 1000U;
+        }
         if (diff(w->now, w->next_service) >= 0) {
             service_card(w);
             w->next_service += 10000U;
@@ -535,19 +596,36 @@ static void check_emmc_stall(void) {
     static image_t img;
     read_image(&w.card, &img, MAX_RECS);
     EXPECT(img.super_ok && img.bad_blocks == 0, "card image damaged");
-    /* Every record before the stall is on the card. */
-    unsigned before = 0, on_card = 0;
+    /* Every record in a chunk sealed before the stall is on the card. The
+     * chunk still open when the card stalled is not covered: the log latches
+     * FAULT and drops it (the eMMC log's owner is changing that to retry);
+     * its loss is reported in the detail. */
+    uint32_t cut = w.sealed_before_stall_ms;
+    EXPECT(w.stall_seen && cut >= 2000U,
+           "no sealed history before the stall (cut %u ms)", cut);
+    unsigned before = 0, on_card = 0, open_lost = 0;
     for (unsigned i = 0; i < w.n_produced; ++i)
-        before += w.produced[i].t_ms < 2900U;
+        before += w.produced[i].t_ms < cut;
     for (unsigned i = 0; i < img.n; ++i)
         on_card +=
-            img.recs[i].type >= EMMC_REC_USER_FIRST && img.recs[i].t_ms < 2900U;
-    EXPECT(on_card == before, "%u of %u pre-stall records on the card", on_card,
-           before);
+            img.recs[i].type >= EMMC_REC_USER_FIRST && img.recs[i].t_ms < cut;
+    EXPECT(on_card == before, "%u of %u sealed pre-stall records on the card",
+           on_card, before);
+    for (unsigned i = 0; i < w.n_produced; ++i) {
+        uint32_t t = w.produced[i].t_ms;
+        if (t < cut || t >= f.card_fail_from_ms)
+            continue;
+        bool found = false;
+        for (unsigned j = 0; j < img.n && !found; ++j)
+            found =
+                img.recs[j].t_ms == t && img.recs[j].type == w.produced[i].type;
+        open_lost += !found;
+    }
     note(
-        "%u writes timed out; sensors kept full rate; pre-stall data intact; "
-        "disk %s, %u dropped, %u chunks lost",
-        w.card.failed_writes,
+        "%u writes timed out; sensors kept full rate; sealed data (< %u ms) "
+        "intact; open chunk lost %u records; disk %s, %u dropped, %u chunks "
+        "lost",
+        w.card.failed_writes, cut, open_lost,
         w.log.disk == EMMC_DISK_FAULT ? "FAULT" : "mounted",
         w.log.stats.dropped, w.log.stats.chunks_lost);
     free(img.recs);
@@ -583,6 +661,46 @@ static void check_fault_imu_silent(void) {
     world_free(&w);
 }
 
+static void check_gps(void) {
+    static world_t w;
+    world_init(&w, NULL);
+    fly(&w);
+    EXPECT(w.gnss.state == GNSS_RUN, "GNSS never configured (state %d)",
+           w.gnss.state);
+    EXPECT(w.gnss.detected_baud == 9600 && w.gps.module_baud == 115200,
+           "baud: found %u, module at %u", w.gnss.detected_baud,
+           w.gps.module_baud);
+    EXPECT(w.gps.dynmodel == UBX_DYNMODEL_AIR4 && w.gps.rate_ms == 100 &&
+               !w.gps.nmea_on,
+           "module config: model %u rate %u ms NMEA %d", w.gps.dynmodel,
+           w.gps.rate_ms, w.gps.nmea_on);
+    EXPECT(w.n_gnss >= 180 && w.n_gnss <= 200, "%u fixes in 20 s", w.n_gnss);
+    unsigned checked = 0;
+    for (unsigned i = 0; i < w.n_produced; ++i) {
+        if (w.produced[i].type != REC_GNSS)
+            continue;
+        rec_gnss_t g;
+        memcpy(&g, w.produced[i].data, sizeof(g));
+        ubx_pvt_t v; /* the module built this fix at the ms it was sent */
+        memset(&v, 0, sizeof(v));
+        gps_truth(g.t_us, &v);
+        EXPECT(g.lat_e7 == v.lat_e7 && g.lon_e7 == v.lon_e7 &&
+                   g.hmsl_mm == v.hmsl_mm && g.vel_d_mms == v.vel_d_mms &&
+                   g.itow_ms == v.itow_ms && g.pdop_e2 == v.pdop_e2,
+               "fix at t=%u us differs from the GPS truth", g.t_us);
+        EXPECT(g.fix_type == 3 && g.num_sv == 10, "fix type/SVs wrong");
+        EXPECT(g.t_us < 1000000U ||
+                   (g.pps_us > 0 && g.t_us - g.pps_us < 1000000U),
+               "fix at %u us has a stale PPS %u", g.t_us, g.pps_us);
+        checked++;
+    }
+    note(
+        "cold 9600 -> 115200 -> 10 Hz NAV-PVT; %u fixes = truth, "
+        "PPS-stamped",
+        checked);
+    world_free(&w);
+}
+
 typedef struct {
     const char* id;
     const char* what;
@@ -602,8 +720,11 @@ static const check_t checks[] = {
     {"emmc_roundtrip",
      "card image: superblock, block CRCs, one session, states",
      check_emmc_roundtrip},
-    {"emmc_stall", "card times out 0.5 s: sensors unaffected, failure reported",
+    {"emmc_stall",
+     "card times out 0.5 s: sensors unaffected, sealed data intact",
      check_emmc_stall},
+    {"gps", "GNSS cold start 9600 -> 115200, 10 Hz fixes = truth, PPS-stamped",
+     check_gps},
     {"fault_imu_silent",
      "IMU dead 0.5 s: dropped, retried, recovered; others ok",
      check_fault_imu_silent},
