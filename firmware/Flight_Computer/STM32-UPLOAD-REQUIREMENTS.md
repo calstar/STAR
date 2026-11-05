@@ -189,6 +189,29 @@ st-flash --reset write .pio/build/flight/firmware.bin 0x08000000
 
 ---
 
+## First power-up: what the bring-up firmware does
+
+On boot, `bringup_task` (Core/Src/bringup_task.c) releases each chip's reset
+in order, then runs the self-test over every chip (see `Core/DEVICE_CHECKS.md`
+and the commit history of `board_bringup.c`, one commit per chip). It never
+enables a pyro output and never transmits on the radio.
+
+| You see | Meaning |
+|---|---|
+| LED1 blinking fast | checks running (up to ~30 s if many fail) |
+| LED1 slow 1 Hz blink, LED2 off | done; every **required** check passed (IMU, high-g, baro, radio, eMMC) |
+| LED1 slow blink, LED2 on | done; a required check failed. Look at `g_bringup_report` |
+| LED2 on, LED1 stopped | `Error_Handler()` halted the chip (an on-chip init failed) |
+| no LED at all | not running: power, flash or clock problem |
+
+**Reading the details:** start a PlatformIO debug session (bug icon in VS
+Code; it uses the ST-Link) and add `g_bringup_report` to Watch.
+`self_test.devices[i]` holds each chip's `result` (1 = PASS, 2 = FAIL,
+3 = TIMEOUT, 4 = NOT_CONFIGURED, 5 = NOT_IMPLEMENTED), `diagnostic` and
+`attempts`; `analog.counts[]` holds the raw ADC counts in `board_adc.h`
+order. Diagnostic codes are documented in `board_bringup.h`
+(GNSS: baud that worked; SD NAND: stage << 8 | R1; eMMC: manufacturer ID).
+
 ## How the build works
 
 `[env:flight]` in `platformio.ini` (checked 2026-11-04: builds, 40 KB of
