@@ -9,6 +9,7 @@ import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
 import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
+import { pressureLimitRows, pressureLimitKeyForRole, pressureRolesOf } from '@/lib/pressure-limit-rows';
 // The validation rules the backend's session-start gate evaluates. Imported rather than
 // re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
 import {
@@ -1485,12 +1486,15 @@ export default function ConfigPage() {
   const guiBars = config.gui?.pressure_bars ?? [];
   // Pressure-sensor role names ONLY — a top-bar gauge shows a pressure, so it should offer roles from
   // PT boards, not TC/RTD/LC/encoder. Derived from each PT board's own [sensor_roles_<boardKey>] section.
-  const pressureRoles: string[] = Array.from(new Set(
-    Object.entries(config.boards || {})
-      .filter(([, b]) => (b as any)?.type === 'PT')
-      .flatMap(([boardKey]) => Object.keys((config as any)[`sensor_roles_${boardKey}`] || {})),
-  )).sort();
-  const pressureLimitKeys: string[] = Object.keys(config.pressure_limits ?? {}).sort();
+  const pressureRoles: string[] = pressureRolesOf(config);
+  // One row per current PT role (plus any key a gauge shares, plus leftovers), not the file's keys.
+  const limitRows = pressureLimitRows(config);
+  const removePressureLimit = (key: string) =>
+    setConfig((prev) => {
+      const next: any = { ...(prev as any), pressure_limits: { ...((prev as any).pressure_limits || {}) } };
+      delete next.pressure_limits[key];
+      return next as ConfigData;
+    });
 
   const setGuiTabs = (tabsList: string[]) =>
     setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), tabs: tabsList } }));
@@ -3156,14 +3160,37 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">Pressure Limits</h2>
               <p className="text-sm text-text-muted mb-4">
-                NOP/MEOP/POP per system. These are the single source of truth for gauge thresholds —
-                each top-bar gauge below points at one of these keys via its <code>limits</code> field, and the plots read them too.
+                NOP/MEOP/POP for each PT role on your PT boards (from Sensor Roles), plus any limits a gauge shares.
+                These are the single source of truth for gauge thresholds — each top-bar gauge below points at one
+                of them via its <code>limits</code> field, and the plots read them too.
               </p>
               <div className="space-y-4">
-                {Object.keys(config.pressure_limits || {}).map((system) => (
-                  <div key={system} className="border border-gray-700 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {limitRows.map(({ key: system, label, kind, defined, gauges }) => (
+                  <div key={system} className={`border rounded-lg p-4 ${kind === 'orphan' ? 'border-yellow-700/60' : 'border-gray-700'}`}>
+                    <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <h3 className="text-lg font-semibold">{label}</h3>
+                      <span className="font-mono text-xs text-text-muted">[pressure_limits.{system}]</span>
+                      {kind === 'gauge' && (
+                        <span className="text-xs text-text-muted">shared — used by {gauges.join(', ')}</span>
+                      )}
+                      {kind === 'pt' && !defined && (
+                        <span className="text-xs text-yellow-500">no limits yet — this PT's gauge uses generic thresholds until you set NOP/MEOP</span>
+                      )}
+                      {kind === 'orphan' && (
+                        <>
+                          <span className="text-xs text-yellow-500">no current PT and no gauge uses it (left from an older config)</span>
+                          {canEdit && (
+                            <button
+                              onClick={() => removePressureLimit(system)}
+                              className="ctl ml-auto border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-8 px-2 text-[11px]"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
                       {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
                       {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
@@ -3172,8 +3199,8 @@ export default function ConfigPage() {
                     </div>
                   </div>
                 ))}
-                {Object.keys(config.pressure_limits || {}).length === 0 && (
-                  <p className="text-sm text-text-muted">No pressure limits defined in config.</p>
+                {limitRows.length === 0 && (
+                  <p className="text-sm text-text-muted">No PT roles configured, and no pressure limits in config.</p>
                 )}
               </div>
             </div>
@@ -3248,10 +3275,9 @@ export default function ConfigPage() {
                             // Auto-fill the label from the sensor name unless the user typed a custom one.
                             // "Uncustomized" = empty, the 'NEW' add-default, or equal to the previous role.
                             if (!bar.label || bar.label === 'NEW' || bar.label === bar.role) patch.label = newRole ?? '';
-                            if (newRole) {
-                              const conv = newRole.replace(/\s+/g, '_');
-                              if (pressureLimitKeys.includes(conv)) patch.limits = conv;
-                            }
+                            // Every PT has its own limits row now, so the gauge links to it even before
+                            // values are entered; pick a shared row in the Limits column instead.
+                            if (newRole) patch.limits = pressureLimitKeyForRole(newRole);
                             setBar(patch);
                           }}
                           className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
@@ -3261,9 +3287,16 @@ export default function ConfigPage() {
                           {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
                         </select>
                         <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <div className="md:col-span-2 text-xs text-text-muted truncate self-center" title="Pressure limits (NOP/MEOP) for this gauge — from Pressure Limits above, matched to the sensor by name. 'default' = no matching limits, so generic thresholds are used.">
-                          {bar.limits ? bar.limits : 'default'}
-                        </div>
+                        <select
+                          value={bar.limits ?? ''}
+                          onChange={(e) => setBar({ limits: e.target.value || undefined })}
+                          title="Pressure limits (NOP/MEOP) for this gauge, from Pressure Limits above. Picking the sensor sets it to that PT's own row; choose a shared row (e.g. Chamber) here instead. 'generic' = no limits, so default thresholds are used."
+                          className="md:col-span-2 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="">— generic —</option>
+                          {limitRows.map((row) => <option key={row.key} value={row.key}>{row.label === row.key ? row.key : `${row.label} (${row.key})`}</option>)}
+                          {bar.limits && !limitRows.some((row) => row.key === bar.limits) && <option value={bar.limits}>{bar.limits} (missing)</option>}
+                        </select>
                         <div className="md:col-span-2 flex items-center gap-1">
                           <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
                           <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
