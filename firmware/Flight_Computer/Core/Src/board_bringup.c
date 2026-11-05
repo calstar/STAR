@@ -3,6 +3,7 @@
 #include "board.h"
 #include "board_adc.h"
 #include "board_spi.h"
+#include "board_time.h"
 #include "cmsis_os2.h"
 #include "gnss_frame.h"
 #include "main.h"
@@ -289,6 +290,8 @@ void board_bringup_power_up(board_bringup_t* b) {
     b->gnss_powered = false;
     b->emmc_reset_released = false;
     b->emmc_init_attempted = false;
+    /* µs timebase first: everything after this is stamped with it. */
+    b->time_ok = board_time_start();
     /* ADC1: offset + linearity calibration once, before any conversion. */
     b->adc_ready = board_adc_init();
     if (!board_spi_init()) {

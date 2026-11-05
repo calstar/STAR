@@ -41,6 +41,7 @@ typedef struct {
     bool emmc_init_attempted; /* the card is initialized once per power-up */
     self_test_reply_t emmc_result;
     bool adc_ready;
+    bool time_ok; /* TIM2 really ticks at 1 MHz (board_time_start) */
 } board_bringup_t;
 
 /* eMMC probe diagnostics: PASS = CID manufacturer ID (Kioxia/Toshiba is
