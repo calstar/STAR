@@ -3,11 +3,13 @@
 
 /*
  * Application tasks, started once by bringup_task after power/reset
- * sequencing and the self-test (so every chip is out of reset first).
+ * sequencing and the self-test (so every chip is out of reset first), then
+ * the board enters IDLE: only radio + idle run until an Arm (mode_core.h).
  *
  *   task       priority          owns     woken by
  *   sensors    Realtime          SPI3     IMU/high-g DRDY EXTI, deadlines
  *   radio      AboveNormal       SPI1     SX1262 DIO1 EXTI, 1 s poll
+ *   idle       BelowNormal       (Stop)   RTC wakeup, commands; IDLE only
  *   gnss       Normal            UART9    received bytes, deadlines
  *   emmc       Low (its own)     SDMMC1   records waiting (emmc_stm32.c)
  */

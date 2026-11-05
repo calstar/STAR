@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "board_adc.h"
+#include "board_bringup.h"
 #include "boot_report.h"
 #include "self_test_port.h"
 
@@ -42,6 +43,9 @@ typedef struct {
 } bringup_report_t;
 
 extern bringup_report_t g_bringup_report;
+
+/* The board context (ADC ready, chips powered), for the Idle battery read. */
+board_bringup_t* bringup_task_board(void);
 
 /* Create the bring-up task. Call between osKernelInitialize/osKernelStart. */
 void bringup_task_start(void);

@@ -64,14 +64,16 @@ const board_sleep_info_t* board_sleep_info(void) {
     return &info;
 }
 
-uint32_t board_sleep(uint32_t ms) {
+uint32_t board_sleep(uint32_t ms, bool (*wake_now)(void)) {
     if (!info.ready || !info.stop_allowed) {
         info.awake_waits++;
-        osDelay(ms);
-        info.last_slept_ms = ms;
-        return ms;
+        return 0;
     }
     vTaskSuspendAll();
+    if (wake_now && wake_now()) {
+        (void)xTaskResumeAll();
+        return 0;
+    }
     rtc_fired = false;
     (void)HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, sleep_wut_reload(ms, info.lsi_hz),
                                       RTC_WAKEUPCLOCK_RTCCLK_DIV16);

@@ -8,6 +8,7 @@
 #include "boot_report.h"
 #include "cmsis_os2.h"
 #include "main.h"
+#include "mode.h"
 #include "self_test.h"
 #include "self_test_devices.h"
 
@@ -100,14 +101,25 @@ static void bringup_task(void* argument) {
     /* Chips are out of reset and checked: start the application tasks. */
     g_bringup_report.app_started = app_start();
 
-    /* LED1: 1 Hz alive. LED2: off READY, blinking WARN, solid FAIL. */
+    /* LED1: 1 Hz alive. LED2: off READY, blinking WARN, solid FAIL. In
+     * Idle the board sleeps: LED1 is the Idle loop's (one flash per
+     * heartbeat) and LED2 only shows FAIL, so no LED burns through Stop. */
     boot_verdict_t verdict = g_bringup_report.report.verdict;
     for (bool on = true;; on = !on) {
+        if (app_state() == FLIGHT_IDLE) {
+            led(LED2_GPIO_Port, LED2_Pin, verdict == BOOT_FAIL);
+            osDelay(1000);
+            continue;
+        }
         led(LED1_GPIO_Port, LED1_Pin, on);
         led(LED2_GPIO_Port, LED2_Pin,
             verdict == BOOT_FAIL || (verdict == BOOT_WARN && on));
         osDelay(on ? 100 : 900);
     }
+}
+
+board_bringup_t* bringup_task_board(void) {
+    return &bringup;
 }
 
 void bringup_task_start(void) {

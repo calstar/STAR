@@ -29,17 +29,21 @@ typedef struct {
     bool ready;        /* RTC running, LSI measured */
     bool stop_allowed; /* NRST_STOP_D1 = 1 in the option bytes */
     uint32_t lsi_hz;   /* measured against TIM2 */
-    uint32_t sleeps, rtc_wakes, early_wakes, awake_waits;
+    uint32_t sleeps, rtc_wakes, early_wakes;
+    uint32_t awake_waits; /* sleeps refused: not ready or NRST_STOP_D1 = 0 */
     uint32_t last_slept_ms;
 } board_sleep_info_t;
 
 /* Once, from a task, after board_time_start(): ~0.5 s to measure LSI. */
 bool board_sleep_init(void);
 
-/* Sleep up to `ms` (Stop if allowed, else osDelay). Returns the ms that
- * really passed. Wakes early on any EXTI (radio DIO1). Call from the only
- * task still running (Idle): other tasks are frozen until it returns. */
-uint32_t board_sleep(uint32_t ms);
+/* Sleep up to `ms` in Stop. Returns the ms that really passed. Wakes early
+ * on any EXTI (radio DIO1). Other tasks are frozen until it returns.
+ * wake_now (may be NULL) is checked with the scheduler already suspended:
+ * true means work arrived just before (a queued command), so it returns 0
+ * without sleeping. Not ready / NRST_STOP_D1 = 0: returns 0 at once; the
+ * caller waits awake instead (board_sleep_info().stop_allowed). */
+uint32_t board_sleep(uint32_t ms, bool (*wake_now)(void));
 
 const board_sleep_info_t* board_sleep_info(void);
 
