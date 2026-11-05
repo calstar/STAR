@@ -3,6 +3,7 @@
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
 #include "gnss_task.h"
+#include "radio_task.h"
 #include "sensors_task.h"
 
 static bool start_emmc(void) {
@@ -21,5 +22,6 @@ bool app_start(void) {
     bool ok = start_emmc();
     ok = sensors_task_start() && ok;
     ok = gnss_task_start() && ok;
+    ok = radio_task_start() && ok;
     return ok;
 }
