@@ -19,9 +19,11 @@ public:
     }
 
     /**
-     * Drain at most one waiting packet. Returns the gate's action for it:
-     * ArmAction::None if nothing was waiting, the packet was invalid, or it was
-     * not an ARM/UN_ARM frame (check the counters to tell them apart).
+     * Drain at most one waiting packet (the SX1262 holds one at a time, so
+     * do not loop here; call again on the next DIO1 interrupt). Returns the
+     * gate's action for it: ArmAction::None if nothing was waiting, the packet
+     * was invalid, or it was not an ARM/UN_ARM frame (check the counters to
+     * tell them apart).
      */
     ArmAction poll(uint32_t now_ms);
 

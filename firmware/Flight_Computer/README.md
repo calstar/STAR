@@ -85,7 +85,8 @@ Run all of them on a laptop: `cd firmware/Flight_Computer && pio test -e native`
 
 Nothing here has run on a real radio or on the STM32.
 
-- Chip start-up: `radio_probe()`, frequency, LoRa settings, TCXO, DC-DC, RF switch.
+- Chip start-up: `radio_probe()`, frequency, LoRa settings, TCXO, DC-DC, RF switch. Two requirements for it: LoRa CRC on (otherwise `crc_errors()` never counts anything), and `start_rx_continuous()` after start-up and after every send.
+- Stack: with the buffers in `Link` and `Sx1262`, `Link::poll` uses 32 bytes and `Sx1262::receive` 48 (arm-none-eabi-g++ -O2 `-fstack-usage`); the two objects hold about 0.8 KB between them, so allocate them statically, once per radio task.
 - The real `SpiBus` (STM32 HAL SPI plus the BUSY pin) and the pin map.
 - A function that defines `radio_probe` / `radio_receive` / `radio_send` on top of `Sx1262`.
 - A board build environment for the STM32H723.

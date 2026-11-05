@@ -24,14 +24,15 @@ protected:
     }
 };
 
-// SX1262 command numbers (datasheet section 11, pages 62-64).
+// SX1262 command numbers (datasheet Rev 1.2, section 11, pages 62-64).
 constexpr uint8_t kOpClearIrqStatus = 0x02;
 constexpr uint8_t kOpGetIrqStatus = 0x12;
 constexpr uint8_t kOpGetRxBufferStatus = 0x13;
 constexpr uint8_t kOpReadBuffer = 0x1E;
 constexpr uint8_t kOpSetRx = 0x82;
 
-// Event flags in the chip's IRQ register (datasheet table 13-29, page 80).
+// Event flags in the chip's IRQ register (datasheet Rev 1.2, table 13-29,
+// page 80).
 constexpr uint16_t kIrqRxDone = 1u << 1;     // a packet was received
 constexpr uint16_t kIrqHeaderErr = 1u << 5;  // LoRa header failed its check
 constexpr uint16_t kIrqCrcErr = 1u << 6;     // the radio's own CRC was wrong
