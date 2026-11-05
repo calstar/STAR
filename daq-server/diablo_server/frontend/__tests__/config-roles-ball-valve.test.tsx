@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // One client for the whole test: the page's load effect depends on it, so a fresh object per call
@@ -47,5 +47,18 @@ describe('Actuator Roles editor — ball valve rows', () => {
     expect(screen.getAllByRole('option', { name: /Normally Open/ })).toHaveLength(1);
     expect(screen.getAllByRole('option', { name: 'Controller: fuel' })).toHaveLength(1);
     expect(screen.queryByTestId('ball-valve-kind:LOX Main')).toBeNull();
+  });
+
+  // The ball valve board reads position on the ESP32's own ADC and is sent only ACTUATOR_CONFIG, so
+  // a voltage reference set on it would reach nothing.
+  it('the Boards tab offers no voltage reference for a ball valve board, and still does for others', async () => {
+    const { default: ConfigPage } = await import('@/app/config/page');
+    render(<MemoryRouter initialEntries={['/config?tab=boards']}><ConfigPage /></MemoryRouter>);
+
+    const headers = await screen.findAllByRole('button', { expanded: false });
+    headers.forEach((h) => fireEvent.click(h));
+    // Two boards expanded, one voltage reference select: the ACTUATOR board's.
+    expect(await screen.findAllByRole('button', { expanded: true })).toHaveLength(2);
+    expect(screen.getAllByText('Voltage reference')).toHaveLength(1);
   });
 });

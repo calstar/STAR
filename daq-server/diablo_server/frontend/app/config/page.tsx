@@ -2474,6 +2474,9 @@ export default function ConfigPage() {
                         )}
                       </FieldSection>
 
+                      {/* A ball valve board reads its position on the ESP32's own ADC (0-3.3 V, fixed in firmware)
+                          and is sent only ACTUATOR_CONFIG, so no voltage_reference or ADC setting reaches it. */}
+                      {b.type !== 'BALL_VALVE' && (
                       <FieldSection title="Signal & ADC">
                         {b.type === 'PT' && (
                           <div className="space-y-1">
@@ -2544,6 +2547,7 @@ export default function ConfigPage() {
                           'shunt the loop current is measured across'
                         )}
                       </FieldSection>
+                      )}
 
                       <FieldSection title="Safety & logging">
                         {renderField(
