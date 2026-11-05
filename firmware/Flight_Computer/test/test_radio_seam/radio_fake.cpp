@@ -1,5 +1,6 @@
 #include "radio_fake.h"
 
+#include <assert.h>
 #include <string.h>
 
 namespace radio_link {
@@ -73,6 +74,9 @@ RadioStatus radio_probe() {
 }
 
 RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
+    // radio.h: a packet is 1 to 255 bytes. Sending nothing (or from nullptr)
+    // is a caller bug, so stop the test run loudly instead of answering Ok.
+    assert(bytes != nullptr && len > 0);
     if (!g_chip_present) {
         return RadioStatus::ErrNotFound;
     }
