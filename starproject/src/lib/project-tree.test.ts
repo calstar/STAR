@@ -6,6 +6,7 @@ import {
   colorOf,
   descendants,
   flatten,
+  foldRows,
   moveProblem,
   pathOf,
   totalTasks,
@@ -100,5 +101,44 @@ describe("colorOf", () => {
     expect(colorOf(t, "Engine")).toBe("#222222");
     expect(colorOf(t, "Spark")).toBe("#222222");
     expect(colorOf(t, "Media")).toBeNull();
+  });
+});
+
+describe("foldRows", () => {
+  // LE4 › Engine › Igniter, LE4 › Tanks, then Avionics on its own.
+  const rows = [
+    { id: "le4", depth: 0 },
+    { id: "engine", depth: 1 },
+    { id: "igniter", depth: 2 },
+    { id: "tanks", depth: 1 },
+    { id: "avionics", depth: 0 },
+  ];
+  const shown = (expanded: string[]) =>
+    foldRows(rows, new Set(expanded)).map((r) => `${r.id}:${r.below}`);
+
+  it("shows only the top level when nothing is expanded", () => {
+    expect(shown([])).toEqual(["le4:3", "avionics:0"]);
+  });
+
+  it("opens one level at a time", () => {
+    expect(shown(["le4"])).toEqual(["le4:3", "engine:1", "tanks:0", "avionics:0"]);
+  });
+
+  it("shows everything when every parent is expanded", () => {
+    expect(shown(["le4", "engine"])).toEqual([
+      "le4:3",
+      "engine:1",
+      "igniter:0",
+      "tanks:0",
+      "avionics:0",
+    ]);
+  });
+
+  it("keeps a grandchild hidden while its grandparent is folded", () => {
+    expect(shown(["engine"])).toEqual(["le4:3", "avionics:0"]);
+  });
+
+  it("brings back a sibling after a folded branch", () => {
+    expect(shown(["le4"]).at(-2)).toBe("tanks:0");
   });
 });

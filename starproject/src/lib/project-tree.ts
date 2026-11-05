@@ -141,3 +141,33 @@ export function totalTasks(
 ): number {
   return [id, ...descendants(tree, id).map((d) => d.id)].reduce((n, pid) => n + ownCount(pid), 0);
 }
+
+/** A row of a flattened tree as the collapsible project list shows it. */
+export type FoldedRow<R> = R & {
+  /** How many rows sit under this one, at every level (0 = a leaf). */
+  below: number;
+};
+
+/**
+ * The rows of a flattened tree (display order, each with its depth) that are
+ * visible when only the projects in `expanded` are open: a row shows when
+ * every project above it is expanded. Each shown row carries how many rows sit
+ * under it, so a folded parent can say what it hides and a leaf gets no toggle.
+ */
+export function foldRows<R extends { id: string; depth: number }>(
+  rows: readonly R[],
+  expanded: ReadonlySet<string>,
+): FoldedRow<R>[] {
+  const out: FoldedRow<R>[] = [];
+  // Rows deeper than this are inside a folded project and stay hidden.
+  let hideDeeperThan = Infinity;
+  rows.forEach((row, i) => {
+    if (row.depth > hideDeeperThan) return;
+    hideDeeperThan = Infinity;
+    let below = 0;
+    while (i + 1 + below < rows.length && rows[i + 1 + below].depth > row.depth) below++;
+    out.push({ ...row, below });
+    if (below > 0 && !expanded.has(row.id)) hideDeeperThan = row.depth;
+  });
+  return out;
+}

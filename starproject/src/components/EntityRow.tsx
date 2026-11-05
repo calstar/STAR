@@ -23,6 +23,8 @@ export function EntityRow({
   deleteAction,
   deleteMessage,
   editSlot,
+  leading,
+  meta,
   depth = 0,
 }: {
   href: string;
@@ -37,6 +39,10 @@ export function EntityRow({
   deleteMessage?: string;
   /** Optional control (e.g. an Edit button) shown left of Delete, above the link. */
   editSlot?: React.ReactNode;
+  /** Optional control left of the dot (e.g. a collapse toggle), above the link. */
+  leading?: React.ReactNode;
+  /** Optional muted text right after the name (e.g. "4 subprojects"). */
+  meta?: React.ReactNode;
   /** How deep in the project tree: 0 = top level, each level indents a step. */
   depth?: number;
 }) {
@@ -54,7 +60,8 @@ export function EntityRow({
           only the Delete button is lifted above with `relative`. */}
       <Link href={href} aria-label={name} className="absolute inset-0" />
       <span className="flex min-w-0 items-center gap-3">
-        {indent && <span className="text-neutral-300">↳</span>}
+        {leading && <span className="relative flex">{leading}</span>}
+        {indent && !leading && <span className="text-neutral-300">↳</span>}
         <span
           className={`inline-block shrink-0 rounded-full ${indent ? "h-2.5 w-2.5" : "h-3 w-3"}`}
           style={{ background: color ?? "#a3a3a3" }}
@@ -62,6 +69,9 @@ export function EntityRow({
         <span className={`truncate font-medium ${indent ? "text-sm" : ""}`}>
           {name}
         </span>
+        {meta && (
+          <span className="shrink-0 text-xs text-neutral-400 dark:text-neutral-500">{meta}</span>
+        )}
         {description && (
           <span className="truncate text-sm text-neutral-500 dark:text-neutral-400">
             {description}

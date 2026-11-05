@@ -1,4 +1,5 @@
-import { EntityRow, LIST_CARD, PAGE_CONTAINER } from "@/components/EntityRow";
+import { PAGE_CONTAINER } from "@/components/EntityRow";
+import { ProjectList } from "@/components/ProjectList";
 import { prisma } from "@/lib/db";
 import { flatten, totalTasks } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
@@ -30,26 +31,18 @@ export default async function ProjectsPage() {
     <div className={PAGE_CONTAINER}>
       <h1 className="text-2xl font-semibold">Projects</h1>
 
-      <ul className={LIST_CARD}>
-        {ordered.length === 0 && (
-          <li className="p-4 text-neutral-500 dark:text-neutral-400">
-            No projects yet. An admin can create one in Workspace setup.
-          </li>
-        )}
-        {ordered.map(({ node, depth }) => (
-          <EntityRow
-            key={node.id}
-            href={`/projects/${node.id}`}
-            color={node.color}
-            name={node.name}
-            description={depth === 0 ? description.get(node.id) : null}
-            // A project's count includes everything under it, at every level.
-            taskCount={totalTasks(tree, node.id, (id) => own.get(id) ?? 0)}
-            id={node.id}
-            depth={depth}
-          />
-        ))}
-      </ul>
+      {/* Parents fold (ProjectList); the order and counts are decided here. */}
+      <ProjectList
+        rows={ordered.map(({ node, depth }) => ({
+          id: node.id,
+          name: node.name,
+          color: node.color,
+          description: depth === 0 ? (description.get(node.id) ?? null) : null,
+          // A project's count includes everything under it, at every level.
+          taskCount: totalTasks(tree, node.id, (id) => own.get(id) ?? 0),
+          depth,
+        }))}
+      />
     </div>
   );
 }
