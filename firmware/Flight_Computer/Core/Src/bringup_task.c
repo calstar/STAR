@@ -5,6 +5,7 @@
 #include "app.h"
 #include "board.h"
 #include "board_bringup.h"
+#include "boot_report.h"
 #include "cmsis_os2.h"
 #include "main.h"
 #include "self_test.h"
@@ -81,19 +82,31 @@ static void bringup_task(void* argument) {
         g_bringup_report.self_test = *status;
     }
     board_adc_snapshot(&g_bringup_report.analog, 10);
+
+    /* Battery: the coordinator's last sample (taken during the checks,
+     * before anything transmits), or one fresh reading if it had none. */
+    self_test_battery_t sample =
+        status ? status->battery : (self_test_battery_t){0};
+    if (!sample.valid) {
+        sample = board_bringup_read_battery(&bringup, board_now_ms(), 50);
+    }
+    battery_t battery =
+        battery_assess(sample.valid, sample.raw_counts, board_bringup_on_usb());
+    boot_report_build(&g_bringup_report.report, status, battery,
+                      board_now_ms());
     g_bringup_report.finished_at_ms = board_now_ms();
     g_bringup_report.finished = true;
 
     /* Chips are out of reset and checked: start the application tasks. */
     g_bringup_report.app_started = app_start();
 
-    bool required_ok = status && status->probes_outcome == SELF_TEST_PASS;
-    led(LED2_GPIO_Port, LED2_Pin, !required_ok);
-    for (;;) {
-        led(LED1_GPIO_Port, LED1_Pin, true);
-        osDelay(100);
-        led(LED1_GPIO_Port, LED1_Pin, false);
-        osDelay(900);
+    /* LED1: 1 Hz alive. LED2: off READY, blinking WARN, solid FAIL. */
+    boot_verdict_t verdict = g_bringup_report.report.verdict;
+    for (bool on = true;; on = !on) {
+        led(LED1_GPIO_Port, LED1_Pin, on);
+        led(LED2_GPIO_Port, LED2_Pin,
+            verdict == BOOT_FAIL || (verdict == BOOT_WARN && on));
+        osDelay(on ? 100 : 900);
     }
 }
 

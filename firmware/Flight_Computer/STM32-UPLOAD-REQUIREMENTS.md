@@ -199,13 +199,39 @@ enables a pyro output and never transmits on the radio.
 | You see | Meaning |
 |---|---|
 | LED1 blinking fast | checks running (up to ~30 s if many fail) |
-| LED1 slow 1 Hz blink, LED2 off | done; every **required** check passed (IMU, high-g, baro, radio, eMMC) |
-| LED1 slow blink, LED2 on | done; a required check failed. Look at `g_bringup_report` |
+| LED1 1 Hz, LED2 off | **READY**: every chip passed and the battery is OK (or the board is on USB) |
+| LED1 1 Hz, LED2 blinking with it | **WARN**: an optional chip (GPS, Ethernet, SD NAND) failed, or the battery is below 7.0 V |
+| LED1 1 Hz, LED2 solid | **FAIL**: a required chip (IMU, high-g, baro, radio, eMMC) failed, or the battery is below 6.6 V, above 8.8 V or unreadable |
 | LED2 on, LED1 stopped | `Error_Handler()` halted the chip (an on-chip init failed) |
 | no LED at all | not running: power, flash or clock problem |
 
-**Reading the details:** start a PlatformIO debug session (bug icon in VS
-Code; it uses the ST-Link) and add `g_bringup_report` to Watch.
+The battery is judged only when the TPS2121 runs the board from it (SW_ST,
+PE10, high). On USB the ADC reads USB's 5 V, so the report says "on USB"
+and does not judge the pack. The 7.0 V / 6.6 V levels are proposals (#137),
+the same as Aaron's idle module (PR #162). Conversion and sources:
+`app/battery.h` (schematic p.2 and p.12).
+
+**Reading the report:** the board writes the whole self-test as text, one
+line per chip plus the battery voltage and the verdict. In a PlatformIO debug
+session (bug icon in VS Code; it uses the ST-Link), type in the debug console:
+
+```
+printf "%s", g_bringup_report.report.text
+```
+
+```
+STAR flight computer self-test, t = 3.2 s
+  IMU ISM330DHCX     PASS
+  ...
+  GPS MAX-M10S       PASS            9600 baud [optional]
+  SD NAND            TIMEOUT         (3 tries) [optional]
+  battery            7.92 V  OK
+  verdict            WARN (0 required, 1 optional failed)
+```
+
+`g_bringup_report.report` also holds the verdict, `battery.mv` and
+`result_bits` (bit = device id, set when it passed; the radio SelfTest
+frame's field). For the raw fields, add `g_bringup_report` to Watch.
 `self_test.devices[i]` holds each chip's `result` (1 = PASS, 2 = FAIL,
 3 = TIMEOUT, 4 = NOT_CONFIGURED, 5 = NOT_IMPLEMENTED), `diagnostic` and
 `attempts`; `analog.counts[]` holds the raw ADC counts in `board_adc.h`

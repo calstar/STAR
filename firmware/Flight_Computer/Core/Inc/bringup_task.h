@@ -7,7 +7,9 @@
  *
  * Results, with no console yet:
  *   LED1 (PB9)  fast blink while checks run, then 1 Hz forever (alive)
- *   LED2 (PE0)  on if a REQUIRED check did not pass
+ *   LED2 (PE0)  after the checks: off = READY, blinking with LED1 = WARN
+ *               (optional chip failed or battery low), solid = FAIL
+ *               (required chip failed, battery FAIL or unreadable)
  *               (LED2 on + LED1 stopped = Error_Handler halted the chip)
  *   g_bringup_report  watch it in the debugger (PlatformIO Debug, ST-Link)
  *
@@ -18,6 +20,7 @@
 #include <stdint.h>
 
 #include "board_adc.h"
+#include "boot_report.h"
 #include "self_test_port.h"
 
 #ifdef __cplusplus
@@ -33,6 +36,9 @@ typedef struct {
     /* Raw counts of every ADC input, taken after the checks. */
     board_adc_snapshot_t analog;
     bool app_started; /* app_start(): every application task created */
+    /* Verdict, battery (mV, OK/WARN/FAIL/USB), result_bits, and the same
+     * thing as text: in gdb, printf "%s", g_bringup_report.report.text */
+    boot_report_t report;
 } bringup_report_t;
 
 extern bringup_report_t g_bringup_report;
