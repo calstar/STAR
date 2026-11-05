@@ -516,58 +516,10 @@ MEOP = 5000
 POP = 1000
 show_in_top_bar = true
 
-[pressure_limits.GN2_Regulated]
-NOP = 900
-MEOP = 1250
-POP = 9000
-show_in_top_bar = true
-
 [pressure_limits.Fuel_Upstream]
 NOP = 540
 MEOP = 650
 POP = 750
-show_in_top_bar = true
-
-[pressure_limits.Fuel_Downstream]
-NOP = 540
-MEOP = 650
-POP = 750
-show_in_top_bar = true
-
-[pressure_limits.Ox_Upstream]
-NOP = 505
-MEOP = 650
-POP = 750
-show_in_top_bar = true
-
-[pressure_limits.Ox_Downstream]
-NOP = 505
-MEOP = 650
-POP = 750
-show_in_top_bar = true
-
-[pressure_limits.GSE_Low]
-NOP = 130
-MEOP = 155
-POP = 800
-show_in_top_bar = true
-
-[pressure_limits.GSE_Mid]
-NOP = 1500
-MEOP = 2000
-POP = 5000
-show_in_top_bar = true
-
-[pressure_limits.GSE_High]
-NOP = 4000
-MEOP = 5000
-POP = 800
-show_in_top_bar = true
-
-[pressure_limits.Chamber]
-NOP = 500
-MEOP = 650
-POP = 800
 show_in_top_bar = true
 
 [pressure_mappings]
