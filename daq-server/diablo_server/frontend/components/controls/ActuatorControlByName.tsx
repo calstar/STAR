@@ -5,6 +5,7 @@ import { useSensorStore, useActuatorCommandedState, useSensorValue } from '@/lib
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
+import { formatBallValvePosition } from '@/lib/ball-valve';
 
 /** Config-driven actuator control: sends command by role name (config.toml actuator_roles). */
 export interface ActuatorControlByNameProps {
@@ -12,18 +13,24 @@ export interface ActuatorControlByNameProps {
   channel: number;
   entity: string;
   boardId?: number;
+  /** On a BALL_VALVE board: shows % open / % closed (its position) in place of the current. */
+  ballValve?: boolean;
 }
 
-export default function ActuatorControlByName({ name, channel, entity, boardId }: ActuatorControlByNameProps) {
+export default function ActuatorControlByName({ name, channel, entity, boardId, ballValve = false }: ActuatorControlByNameProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
   const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
   // Subscribe to canonical commanded-state stream emitted by backend parser:
-  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded
-  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.CH${channel}` : entity;
+  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded, or BV_CMD.* for a ball valve
+  const cmdPrefix = ballValve ? 'BV_CMD' : 'ACT_CMD';
+  const commandedEntity = boardNumber != null ? `${cmdPrefix}.B${boardNumber}.CH${channel}` : entity;
   const commanded = useActuatorCommandedState(commandedEntity);
   const calEntity = entity.replace('ACT.', 'ACT_Cal.');
   const currentA = useSensorValue(calEntity, 'current_a');
+  // A ball valve's ACT_Cal.{Role} aliases resolve to BV<n>_Cal.CH<m> (store.buildAliasesFromConfig).
+  const positionPct = useSensorValue(calEntity, 'position_pct');
+  const positionStatus = useSensorValue(calEntity, 'cal_status');
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
@@ -45,35 +52,40 @@ export default function ActuatorControlByName({ name, channel, entity, boardId }
   const commandedClosed = commanded === ActuatorState.CLOSED;
 
   return (
-    <div className="rounded border border-gray-700 hover:border-gray-600 transition-colors h-full min-h-0 flex flex-col relative p-0.5 bg-background">
-      <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5">
+    <div className="relative flex h-full min-h-0 flex-col border border-line-strong bg-[#0b0b0b] px-2 py-1 transition-colors hover:border-[#5a5a5a]">
+      <div className="absolute right-2 top-1.5 flex items-center gap-1">
         {pending && <span className="text-yellow-400 text-[8px] leading-none">⟳</span>}
-        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+        <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
       </div>
       <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
-        <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
+        <h3 className="truncate text-[12px] font-semibold leading-tight text-ink xl:text-[13px]">{name}</h3>
       </div>
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden px-0.5">
-        <span className="text-[9px] tabular-nums text-yellow-400 font-mono">
-          {currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
+        <span
+          data-testid={`actuator-reading:${name}`}
+          className="font-mono text-[10px] tabular-nums text-ink-3"
+        >
+          {ballValve
+            ? formatBallValvePosition(positionPct, positionStatus, commanded)
+            : currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
+      <div className="mt-1 grid min-h-0 flex-shrink-0 grid-cols-2 gap-1">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`h-full min-h-0 rounded text-[8px] xl:text-[9px] font-bold uppercase tracking-wider leading-none transition-all py-0.5
-            ${commandedOpen ? (canControl ? 'bg-green-700 text-white ring-1 ring-green-400' : 'bg-green-700/50 text-green-300 ring-1 ring-green-700 cursor-not-allowed')
-              : canControl ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
+          className={`h-full min-h-0 border py-0.5 font-mono text-[9px] font-semibold uppercase leading-none tracking-[0.14em] transition-colors xl:text-[10px]
+            ${commandedOpen ? (canControl ? 'border-green-500 bg-green-900/40 text-green-300' : 'border-green-800 text-green-500/70 cursor-not-allowed')
+              : canControl ? 'border-line-strong text-ink-2 hover:border-[#5a5a5a] hover:bg-[#161616]' : 'border-line text-ink-4 cursor-not-allowed'}`}
         >
           Open
         </button>
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`h-full min-h-0 rounded text-[8px] xl:text-[9px] font-bold uppercase tracking-wider leading-none transition-all py-0.5
-            ${commandedClosed ? (canControl ? 'bg-red-700 text-white ring-1 ring-red-400' : 'bg-red-700/50 text-red-300 ring-1 ring-red-700 cursor-not-allowed')
-              : canControl ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
+          className={`h-full min-h-0 border py-0.5 font-mono text-[9px] font-semibold uppercase leading-none tracking-[0.14em] transition-colors xl:text-[10px]
+            ${commandedClosed ? (canControl ? 'border-red-500 bg-red-900/40 text-red-300' : 'border-red-800 text-red-500/70 cursor-not-allowed')
+              : canControl ? 'border-line-strong text-ink-2 hover:border-[#5a5a5a] hover:bg-[#161616]' : 'border-line text-ink-4 cursor-not-allowed'}`}
         >
           Close
         </button>

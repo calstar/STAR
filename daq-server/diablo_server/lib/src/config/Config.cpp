@@ -25,24 +25,6 @@ bool b_or(CNV n, bool d) {
     return n.value<bool>().value_or(d);
 }
 
-ActiveBoardKind kind_of(const std::string& type_str) {
-    if (type_str == "PT")
-        return ActiveBoardKind::PT;
-    if (type_str == "TC")
-        return ActiveBoardKind::TC;
-    if (type_str == "RTD")
-        return ActiveBoardKind::RTD;
-    if (type_str == "LC")
-        return ActiveBoardKind::LC;
-    if (type_str == "ENCODER")
-        return ActiveBoardKind::ENCODER;
-    if (type_str == "ENVIRONMENTAL")
-        return ActiveBoardKind::ENVIRONMENTAL;
-    if (type_str == "ACTUATOR")
-        return ActiveBoardKind::ACTUATOR;
-    return ActiveBoardKind::UNKNOWN;
-}
-
 // Verbatim from the old LoadActiveBoards.cpp: log slot collisions (kind-scoped) and slot>8
 // overflow.
 void check_board_slots(std::map<ActiveBoardKind, std::map<uint8_t, std::string>>& slot_owner,
@@ -67,6 +49,30 @@ void check_board_slots(std::map<ActiveBoardKind, std::map<uint8_t, std::string>>
                   << std::endl;
     }
 }
+
+}  // namespace
+
+ActiveBoardKind kind_of(const std::string& type_str) {
+    if (type_str == "PT")
+        return ActiveBoardKind::PT;
+    if (type_str == "TC")
+        return ActiveBoardKind::TC;
+    if (type_str == "RTD")
+        return ActiveBoardKind::RTD;
+    if (type_str == "LC")
+        return ActiveBoardKind::LC;
+    if (type_str == "ENCODER")
+        return ActiveBoardKind::ENCODER;
+    if (type_str == "ENVIRONMENTAL")
+        return ActiveBoardKind::ENVIRONMENTAL;
+    if (type_str == "ACTUATOR")
+        return ActiveBoardKind::ACTUATOR;
+    if (type_str == "BALL_VALVE")
+        return ActiveBoardKind::BALL_VALVE;
+    return ActiveBoardKind::UNKNOWN;
+}
+
+namespace {
 
 BoardConfig parse_board(const std::string& section, const toml::table& bt) {
     BoardConfig b;
@@ -207,6 +213,24 @@ Config from_table(const toml::table& t) {
                     r.controller_role = (*arr)[3].value<std::string>().value_or("");
                 c.actuator_roles[std::string(k.str())] = r;
             }
+
+    // A role on a BALL_VALVE board has no polarity: 1 is open and 0 is closed on the wire. Force
+    // pass-through so a stray "NO" cannot invert it (config validation rejects "NO" there too).
+    for (auto& [name, r] : c.actuator_roles) {
+        for (const auto& b : c.boards) {
+            if (b.board_id != r.board_id || kind_of(b.type) != ActiveBoardKind::BALL_VALVE)
+                continue;
+            r.ball_valve = true;
+            if (r.is_no)
+                std::cerr << "[Config] WARNING: actuator role '" << name
+                          << "' is on ball valve board " << r.board_id
+                          << " and is marked NO; ball valves have no NO/NC, treating it as "
+                             "pass-through (1 = open)."
+                          << std::endl;
+            r.is_no = false;
+            break;
+        }
+    }
 
     c.fire.state = s_or(t["fire"]["state"], "");
     c.fire.expiry_target = s_or(t["fire"]["expiry_target"], "");

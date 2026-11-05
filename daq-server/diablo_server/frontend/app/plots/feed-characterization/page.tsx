@@ -699,8 +699,8 @@ export default function FeedCharacterizationPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-3 gap-3">
       <div className="flex items-center gap-3 flex-shrink-0">
-        <div className="w-1 h-5 bg-blue-500 rounded-full" />
-        <h1 className="text-base font-bold text-blue-400 tracking-wider uppercase">
+        <div className="h-2 w-2 flex-shrink-0 bg-blue-500" />
+        <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">
           Feed System Characterization
         </h1>
       </div>
@@ -937,7 +937,7 @@ export default function FeedCharacterizationPage() {
                   <button
                     type="button"
                     onClick={unlock}
-                    className="bg-amber-600 hover:bg-amber-500 text-black font-bold py-1.5 rounded uppercase text-[10px]"
+                    className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-8 text-[10px]"
                   >
                     Arm control
                   </button>
@@ -958,7 +958,7 @@ export default function FeedCharacterizationPage() {
                 onClick={() => void runTimedPulse()}
                 disabled={pulseBusy || flowState === null || !canHold}
                 title={flowState !== null ? `Holds ${stateName(flowState)} for exactly this long` : undefined}
-                className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-black py-3 rounded-xl uppercase text-xs"
+                className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-11 w-full text-[12px]"
               >
                 {pulseBusy ? pulsePhase.replace('_', ' ') : 'Run timed pulse'}
               </button>

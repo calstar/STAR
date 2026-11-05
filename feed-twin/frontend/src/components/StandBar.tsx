@@ -1,6 +1,7 @@
 /**
  * The stand document this cockpit is on: open one, save the cockpit into it,
- * share it, cut a named release ("TRR rev B").
+ * share it, cut a named release ("TRR rev B"), or carry it to another server as
+ * one file (Export / Import, backend/bundle.py).
  *
  * The dialog, the checkout and the store are pid-designer's own
  * (lib/stardesign-ui, lib/stardesign), so sharing works here exactly as it does
@@ -10,7 +11,7 @@
  * every tick.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ApiError,
   ChangeModal,
@@ -24,17 +25,31 @@ import {
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
-import { standApi } from '../stands';
+import { exportStand, importStand, saveBundle, standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, checkout, locked } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where } = useStand();
+  // With no stand document open, the button names what is running: the
+  // featured stand on a fresh browser read "Unsaved stand" on every tab,
+  // which looks like work at risk. "Unsaved changes" once the operator has
+  // changed a setting or a knob.
+  const drawing = artifacts.find((a) => a.kind === 'diagram' && a.id === where.diagram);
+  const engine = artifacts.find((a) => a.kind === 'engine' && a.id === where.engine);
+  const featured = Boolean(drawing?.featured) && (!engine || Boolean(engine.featured));
+  const running = drawing ? drawing.name : 'No stand';
+  const shown = standDoc ? standDoc.name : changed ? 'Unsaved changes' : running;
   const [documents, setDocuments] = useState<DesignMeta[]>([]);
   const [picking, setPicking] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [menu, setMenu] = useState(false);
   const [label, setLabel] = useState('');
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
+  // What an import did that the person should know (a matched drawing, a
+  // state table carried as the stand's own): said once, not an error.
+  const [notice, setNotice] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
 
@@ -79,17 +94,95 @@ export function StandBar() {
       setSaved(new Date().toISOString());
     });
 
+  // A stand as one file: the open stand, or the console's unsaved set-up.
+  const exportBundle = () =>
+    act(async () => {
+      setMenu(false);
+      saveBundle(await exportStand(standDoc?.name ?? running, await snapshot()));
+    });
+
+  // A bundle becomes a stand document of this person's, opened and taken.
+  const importBundle = (file: File) =>
+    act(async () => {
+      setNotice('');
+      let bundle: unknown;
+      try {
+        bundle = JSON.parse(await file.text());
+      } catch {
+        throw new Error(`${file.name} is not a Hotbench stand (not JSON).`);
+      }
+      const got = await importStand(bundle);
+      const made = await standApi.create(got.name, got.stand);
+      await list();
+      await openStand(refOf({ ...made, mine: true }), made.name, true);
+      setNotice(got.notes.join(' '));
+    });
+
+  const item =
+    'px-3 py-1.5 text-left text-[12px] text-[var(--ink-2)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--ink)] disabled:text-[var(--ink-4)]';
+  const carryItems = (
+    <>
+      <button
+        role="menuitem"
+        className={item}
+        onClick={() => void exportBundle()}
+        title="Save this stand as one file: the drawing, the engine and its card, the state table, the drawing's overrides, every setting, the hookup and the knobs. Another Hotbench opens it with Import."
+      >
+        Export stand…
+      </button>
+      <button
+        role="menuitem"
+        className={item}
+        onClick={() => {
+          setMenu(false);
+          fileRef.current?.click();
+        }}
+        title="Open a stand exported from any Hotbench (*.hotbench.json). Its drawing, engine and the rest come into this library, and it becomes a stand of yours."
+      >
+        Import stand…
+      </button>
+    </>
+  );
+
   return (
-    <div className="flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
-      <span className="caps text-[11px]" title="A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Runs fired on it are kept with it.">
-        Stand
-      </span>
-      <button className={btn} onClick={() => { void list(); setPicking(true); }} title="Open, create, share or copy a stand">
-        {standDoc ? standDoc.name : 'Not on a stand'}
+    <div className="relative flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void importBundle(file);
+        }}
+      />
+      <button
+        className={`${btn} max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
+        onClick={() => { void list(); setPicking(true); }}
+        title={
+          standDoc
+            ? `Stand: ${standDoc.name}. A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Click to open, create, share or copy one.`
+            : changed
+              ? `${running}${engine ? ` with ${engine.name}` : ''}, changed since it opened and not saved as a stand. Click to save this set-up as a stand to share it, or to open one.`
+              : `${running}${engine ? ` with ${engine.name}` : ''}${featured ? ', the featured stand' : ''}, as it opened. Click to open a saved stand, or save this set-up as one to share it.`
+        }
+      >
+        {shown}
       </button>
       {standDoc && (
         <>
-          <CheckoutControl checkout={checkout} noun="stand" />
+          {/* The checkout says "Read only" itself; the hover says what that
+              covers -- running the stand never is. */}
+          <span
+            title={
+              locked
+                ? 'Read only: configuration, knobs, the hookup, the drawing and the engine are the stand\'s; take it to change them. States, valves, T-0 and Fire are operating it, and are never locked.'
+                : undefined
+            }
+          >
+            <CheckoutControl checkout={checkout} noun="stand" />
+          </span>
           <button
             className={primaryBtn}
             onClick={() => void save()}
@@ -120,31 +213,86 @@ export function StandBar() {
               </button>
             </span>
           ) : (
-            <button
-              className={btn}
-              onClick={() => setReleasing(true)}
-              disabled={!checkout.held}
-              title={checkout.held ? 'Freeze the cockpit as a named, immutable version of this stand' : 'Take the stand to save a release'}
-            >
-              Save as release…
-            </button>
-          )}
-          <button className={btn} onClick={closeStand} title="Leave the stand; the cockpit keeps what it has">
-            Close
-          </button>
-          {saved && <span className="text-gray-500" title={saved}>saved {relativeTime(saved)}</span>}
-          {locked && (
-            <span
-              className="text-amber-300/80"
-              title="Configuration, knobs, the hookup, the drawing and the engine are the stand's: take it to change them. States, valves, T-0 and Fire are operating it, and are never locked."
-            >
-              settings read only · running is not
+            <span className="relative">
+              <button
+                className={btn}
+                onClick={() => setMenu((m) => !m)}
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                title="More: save a release, export or import a stand, leave the stand"
+              >
+                ⋯
+              </button>
+              {menu && (
+                <span
+                  role="menu"
+                  className="absolute right-0 top-full z-40 mt-1 flex min-w-[200px] flex-col border border-[var(--line-strong)] bg-black py-1"
+                  onMouseLeave={() => setMenu(false)}
+                >
+                  <button
+                    role="menuitem"
+                    className="px-3 py-1.5 text-left text-[12px] text-[var(--ink-2)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--ink)] disabled:text-[var(--ink-4)]"
+                    onClick={() => {
+                      setMenu(false);
+                      setReleasing(true);
+                    }}
+                    disabled={!checkout.held}
+                    title={checkout.held ? 'Freeze the cockpit as a named, immutable version of this stand' : 'Take the stand to save a release'}
+                  >
+                    Save as release…
+                  </button>
+                  {carryItems}
+                  <button
+                    role="menuitem"
+                    className={item}
+                    onClick={() => {
+                      setMenu(false);
+                      closeStand();
+                    }}
+                    title="Leave the stand. The cockpit keeps its drawing, engine, settings and knobs, unsaved."
+                  >
+                    Close stand
+                  </button>
+                </span>
+              )}
             </span>
           )}
+          {saved && <span className="text-gray-500" title={saved}>saved {relativeTime(saved)}</span>}
           <CheckoutLostDialog checkout={checkout} noun="stand" name={standDoc.name} />
         </>
       )}
-      {error && <span className="text-red-400">{error}</span>}
+      {!standDoc && (
+        <span className="relative">
+          <button
+            className={btn}
+            onClick={() => setMenu((m) => !m)}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            title="Export this set-up as a stand file, or import one"
+          >
+            ⋯
+          </button>
+          {menu && (
+            <span
+              role="menu"
+              className="absolute right-0 top-full z-40 mt-1 flex min-w-[200px] flex-col border border-[var(--line-strong)] bg-black py-1"
+              onMouseLeave={() => setMenu(false)}
+            >
+              {carryItems}
+            </span>
+          )}
+        </span>
+      )}
+      {notice && !error && (
+        <span className="max-w-[260px] truncate text-[var(--ink-3)]" title={notice}>
+          {notice}
+        </span>
+      )}
+      {error && (
+        <span className="max-w-[260px] truncate text-red-400" title={error}>
+          {error}
+        </span>
+      )}
       {picking && (
         <ChangeModal
           open={picking}
@@ -163,7 +311,7 @@ export function StandBar() {
               const made = await standApi.create(name, await snapshot());
               await list();
               setPicking(false);
-              await openStand(refOf({ ...made, mine: true }), made.name);
+              await openStand(refOf({ ...made, mine: true }), made.name, true);
             })
           }
           onRename={(r, name) => act(async () => { await standApi.rename(r, name); await list(); })}

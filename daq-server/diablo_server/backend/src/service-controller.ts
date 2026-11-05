@@ -148,6 +148,15 @@ async function waitUntilActive(units: string[], timeoutMs = 10000): Promise<bool
 export class ServiceController {
   constructor(private readonly mode: SessionServiceMode) {}
 
+  /**
+   * The config file a run's pipeline reads, when it is not config.toml: the sim overlay for a
+   * simulated systemd run (pipeline.env DAQ_CONFIG below). null means config.toml. In mock mode
+   * the pipeline was started outside the backend, on whatever it was started on, so null.
+   */
+  pipelineConfigPath(simulated: boolean): string | null {
+    return this.mode === 'systemd' && simulated ? SIM_CONFIG : null;
+  }
+
   /** Mock-mode simulator child (systemd manages the sensor-simulator unit instead). */
   private simProc: ChildProcess | null = null;
 

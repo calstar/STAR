@@ -12,6 +12,9 @@
 numpy
 scipy
 pandas
+# Layer X's 'Every signal (Parquet)' export (engine/layerx/export.py to_parquet); without it
+# the button and design-mcp's layerx_export(fmt='parquet') answer 501.
+pyarrow
 matplotlib
 pydantic
 PyYAML

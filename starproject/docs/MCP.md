@@ -8,22 +8,31 @@ finance **as you**, with your permissions and the same audit trail the UI leaves
 - **Endpoint:** `https://project.starberkeley.org/api/mcp` (dev: `http://localhost:3000/api/mcp`)
 - **Transport:** Streamable HTTP, stateless, JSON responses. `POST` carries JSON-RPC; `GET`/`DELETE`
   are accepted and answered per the spec (no sessions, so nothing to resume or delete).
-- **Auth:** `Authorization: Bearer sp_…` — a personal access token. No cookie, no OAuth.
+- **Auth:** `Authorization: Bearer sp_…` — a personal access token with the `starproject` scope.
+  No cookie, no OAuth.
+
+STARProject issues the tokens for **both** of STAR's MCP servers: this one, and the design-tools
+server on the apps box (`https://mcp.starberkeley.org/mcp`, `design-mcp/README.md`). A token's
+**scopes** say which it opens -- `starproject`, `design`, or both -- and are fixed when it is minted.
+A token minted before scopes existed opens this server only, as it always did.
 
 ## Getting a token
 
-In the app: **Settings → API tokens → New token**. The token is shown once; copy it. Revoke it from
-the same list whenever you like (a revoked token gets `401` immediately).
+In the app: **Settings → API tokens**, tick what the token is for (STAR Project, Design tools),
+then **New token**. The token is shown once; copy it. Revoke it from the same list whenever you
+like (a revoked token gets `401` immediately here, and within a minute on the design server,
+which caches each answer for that long).
 
 Locally, without a browser:
 
 ```bash
 export DATABASE_URL="postgresql://starproject:starproject@localhost:5432/starproject?schema=public"
-node scripts/mcp-token.mjs you@berkeley.edu "laptop"      # prints sp_…
+node scripts/mcp-token.mjs you@berkeley.edu "laptop"                     # prints sp_…, starproject scope
+node scripts/mcp-token.mjs you@berkeley.edu "laptop" starproject,design  # both servers
 ```
 
-Tokens are stored hashed (SHA-256); the row keeps a short prefix, a name, created / last-used /
-revoked timestamps. Deleting a user deletes their tokens. Minting is only possible from the
+Tokens are stored hashed (SHA-256); the row keeps a short prefix, a name, its scopes, created /
+last-used / revoked timestamps. Deleting a user deletes their tokens. Minting is only possible from the
 browser session, never through MCP, so a leaked token cannot create a successor for itself;
 revoking (`revoke_api_token`) is available either way.
 
@@ -86,7 +95,24 @@ Swap the body for `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name
 to call a tool, or `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"starproject://me"}}`
 to read a resource.
 
-Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`.
+Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`;
+a live token without the `starproject` scope answers `401` with reason `scope`.
+
+## Token checks for the design server (`/api/mcp/verify`)
+
+The design-tools MCP holds no tokens. For each token it has not seen in the last minute it asks
+this app, over the public internet (the apps box is not on the EC2 compose network):
+
+```
+POST /api/mcp/verify          X-Internal-Secret: $DESIGN_MCP_VERIFY_SECRET
+{"token": "sp_…", "scope": "design"}
+→ 200 {"email", "name", "tokenId"}    401 {"error": "unauthorized", "reason"}    403 bad secret
+```
+
+It lives under `/api/mcp` because that prefix already bypasses the cookie gate and has `X-Auth-*`
+stripped; the shared secret is what admits the caller, and an unset secret refuses everyone. A
+successful check counts as a use of the token (`lastUsedAt`). `reason` is one of `malformed`,
+`unknown`, `revoked`, `scope`.
 
 ## Running locally
 
@@ -105,7 +131,7 @@ node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" resources
 node scripts/mcp-smoke.mjs http://localhost:3000/api/mcp "$TOKEN" read starproject://projects
 ```
 
-- `scripts/mcp-token.mjs <email> [name]` upserts the user and mints a token in the same format
+- `scripts/mcp-token.mjs <email> [name] [scopes]` upserts the user and mints a token in the same format
   `src/lib/apiTokens.ts` uses (`sp_` + 32 random bytes, stored as SHA-256), printing it once.
 - `scripts/mcp-smoke.mjs <url> <token> list | call <tool> [json] | resources | read <uri>` is a
   real MCP client; its exit code is 1 when a tool call returns `isError`, so it works in
@@ -222,11 +248,21 @@ defineTool(server, "archive_task", {
 
 ## Tools
 
+**PVPs only, for now:** every reimbursement tool (from `list_reimbursements` through
+`get_worker_status`, drafts included) and the purchase-request tools
+(`list_`/`get_`/`create_`/`approve_`/`reject_`/`cancel_purchase_request`) refuse anyone
+who is not a PVP (`src/lib/pvp.ts`), admins included, before they run
+(`guardedDefine` in `src/mcp/tools/_shared.ts`). The web pages are unchanged. The
+"admins only" notes below still apply on top.
+The Finance tab's tools (`get_finance_overview`, accounts, planned income) are
+admins only, as the tab is; the budget-line tools are open to every member, as
+Subteams → Budget is.
+
 | Tool | Does | Notes |
 |---|---|---|
 | `whoami` | The token's user and admin flag | read |
 | `health` | DB round-trip and counts | read |
-| `list_api_tokens` | Your tokens (never the secret) | read |
+| `list_api_tokens` | Your tokens with their scopes (never the secret) | read |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
 | `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done | read |
 | `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log | read |
@@ -279,7 +315,8 @@ defineTool(server, "archive_task", {
 | `delete_bom_item` | Remove a line | destructive; past Planned needs a PVP |
 | `list_purchase_requests` | Purchase requests, newest first, optionally by status: who asked and when, who decided, each line as requested and as it is now | read |
 | `get_purchase_request` | One request by PR number | read |
-| `create_purchase_request` | Ask a PVP to approve buying BOM lines (Planned, not already requested) | write |
+| `list_budget_lines` | This school year's budget lines by subteam: planned, left after approved requests, waiting on a PVP | read |
+| `create_purchase_request` | Ask a PVP to approve buying BOM lines (Planned, not already requested), naming the subteam and its budget line it spends | write; the line must be that subteam's, this school year |
 | `approve_purchase_request` | Approve a waiting request, all of it or the lines in `itemIds`; approved lines become Approved, the rest stay Planned | write; PVPs only |
 | `reject_purchase_request` | Reject a waiting request with a reason; lines stay Planned | write; PVPs only |
 | `cancel_purchase_request` | Withdraw a waiting request | write; its maker or a PVP |
@@ -297,10 +334,16 @@ defineTool(server, "archive_task", {
 | `delete_subteam` | Delete a subteam; its tasks keep existing with no subteam; returns `tasksDetached` | admins only; destructive |
 | `list_users` | Everyone who has signed in (the assignee picker's team): id, email, name, displayName, isAdmin, createdAt, openTaskCount | read |
 | `get_user` | One user by `userId` or `email` (exactly one): the same summary plus `assignedTaskCount`, `archivedTaskCount`, `tasksByStatus`. Never settings or tokens | read |
-| `list_reimbursements` | The Finance table, newest first, with the page's filters: `status` (a display-status key), `mine`, `review` (needs an admin), `search` | read |
+| `list_reimbursements` | Every reimbursement (STAR's and CalLink's), filtered by any of: `status`, `mine`, `review`, `search`, `person` (payee or submitter name), `vendor`, `minAmount`/`maxAmount` (dollars), `from`/`to` (Berkeley days), `schoolYear`, `source` (`callink`/`starproject`), `projectId`, `subteamId`; `sort` newest/oldest/largest/smallest, `limit`; `withItems` adds line items. Returns `{ total, totalCents, rows }` (totals before `limit`) | read |
 | `get_reimbursement` | One reimbursement by R-number: fields, items + receipts, timeline, `can`; PII and receipt links redacted unless you are the payee, the filer or an admin | read |
+| `get_reimbursement_receipts` | A reimbursement's line items plus the receipt files: PDFs as embedded resources, images as images (`item` for one item; up to 20 MB per call). A CalLink receipt not yet held is downloaded for that call (callink-worker, up to 30 s wait) and kept; nothing is downloaded unless asked for | read; payee, filer and admins only |
 | `get_payee_defaults` | What the New reimbursement form pre-fills for you (saved profile, else your newest CalLink request, else account) | read |
 | `file_reimbursement` | File a reimbursement like the form: the form's fields plus `receipts` (base64 PDF/PNG/JPEG, one per item, under 4 MB); lands as `pending_approval` | write; same code path as `POST /api/finance/requests` |
+| `draft_reimbursement` | Start a draft (D-number): any of the form's fields so far, plus `receipts` by item index; returns `problems`, what filing still needs | write; private to you |
+| `update_reimbursement_draft` | Change a draft: fields given replace (payee merges, `items` replaces the list), `receipts` set by item index, `removeReceipts` | write |
+| `list_reimbursement_drafts` / `get_reimbursement_draft` | Your drafts with their fields, receipts and `problems` | read |
+| `file_reimbursement_draft` | File a ready draft exactly as `file_reimbursement` does, then delete it | write; refused while it has problems |
+| `delete_reimbursement_draft` | Throw a draft away | destructive |
 | `approve_reimbursement` | Queue a pending reimbursement for the CalLink worker | admins only; write |
 | `reject_reimbursement` | Reject a pending reimbursement with a reason (≤1000 chars) | admins only; destructive (final) |
 | `retry_reimbursement` | Put a failed filing back in the queue | admins only; write |
@@ -308,7 +351,16 @@ defineTool(server, "archive_task", {
 | `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`) | admins only; write |
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
-
+| `tag_reimbursement` | Set the project and subteam a reimbursement counts under in the Finance tab's spending breakdown (left out stays, null clears) | write; admins or its filer |
+| `get_finance_overview` | The Finance tab for a school year: CalLink SUMMARY and other accounts, hand-kept accounts, spending (paid/pending by month, subteam, project), planned income, every subteam's budget; cents | admins only; read |
+| `create_finance_account` / `update_finance_account` | Add an account CalLink doesn't report (balance in dollars, may be negative); change one (left out stays; a CalLink account takes only its note) | admins only; write |
+| `delete_finance_account` | Remove a hand-kept account; CalLink's can't be | admins only; destructive |
+| `create_planned_income` / `update_planned_income` | Add expected income to a school year (source, dollars, optional `expectedOn`, `received`); change one (left out stays) | admins only; write |
+| `set_income_received` | Tick or untick an income entry's received box | admins only; write |
+| `delete_planned_income` | Remove an income entry | admins only; destructive |
+| `get_subteam_budget` | A subteam's budget for a school year as Subteams → Budget shows it: lines with planned, approved and waiting; `years` to pick from | read |
+| `create_budget_line` / `update_budget_line` | Add a line to a subteam's year (name, dollars, optional project); change one (left out stays, empty clears project or note) | write; any member |
+| `delete_budget_line` | Remove a line | destructive; refused while a purchase request spends it |
 | `get_outreach_dashboard` | The /outreach Today page: deals needing attention by urgency, season pipeline and committed dollars, campaign deadlines, recent touches | admins only; read |
 | `list_sponsors` / `get_sponsor` | Sponsor deals (season, stage, needs-attention filters); one deal with its touch history and other seasons | admins only; read |
 | `save_sponsor` | Create a deal (org by name or id, created if new) or change its fields; stage changes are noted | admins only; write |

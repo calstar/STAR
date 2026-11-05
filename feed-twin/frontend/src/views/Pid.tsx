@@ -29,15 +29,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { DrawingView } from '@pid/DrawingView';
 import { listPages } from '@pid/pages';
-import { getDrawing } from '../api';
-import type { BoardId, Drawing } from '../api';
+import { getDrawing, getFreshness } from '../api';
+import type { BoardId, Drawing, Freshness } from '../api';
 import { DaqBox, type Drawn, plugIn } from '../components/DaqBox';
 import { DrawingPanel } from '../components/DrawingPanel';
 import { HookupSaveBar } from '../components/HookupSaveBar';
 import { HookupOverlay } from '../components/HookupOverlay';
+import { KeepView } from '../components/KeepView';
 import { LiveLayer } from '../components/LiveLayer';
 import { BOARD_KEY, DAQ_UI, type DaqUi, createStore } from '../lib/daqDrag';
 import { channelOf } from '../lib/hookupDraft';
+import { PRESSURE_UNIT } from '../lib/pressure';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 
@@ -71,7 +73,15 @@ export function Pid() {
   const diagram = where.diagram;
   const [drawing, setDrawing] = useState<{ id: string; doc: Drawing } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [panel, setPanel] = useState(() => recall(PANEL_KEY) !== 'closed');
+  // Whether this drawing is still what pid-designer holds, said either way.
+  const [fresh, setFresh] = useState<Freshness | null>(null);
+  useEffect(() => {
+    setFresh(null);
+    if (diagram) getFreshness(diagram).then(setFresh).catch(() => undefined);
+  }, [diagram]);
+  // Shut until somebody opens it: the drawing gets the width, and a wide
+  // sheet's readings are legible at the first fit.
+  const [panel, setPanel] = useState(() => recall(PANEL_KEY) === 'open');
   const [mode, setModeState] = useState<Mode>(() => (recall(MODE_KEY) === 'daq' ? 'daq' : 'symbols'));
   /** The symbol open in the Symbols panel, ringed on the drawing. */
   const [focus, setFocus] = useState<string | null>(null);
@@ -117,7 +127,9 @@ export function Pid() {
       new Map(
         (drawing?.doc.nodes ?? []).map((n) => {
           const d = n.data as { label?: string; componentType?: string; page?: string } | undefined;
-          return [n.id, { tag: d?.label || n.id, type: d?.componentType ?? n.type ?? '', page: d?.page || 'Main' }];
+          const type = d?.componentType ?? n.type ?? '';
+          // An unlabelled symbol is called what it is, never its node id.
+          return [n.id, { tag: d?.label || `unlabelled ${type || 'symbol'}`, type, page: d?.page || 'Main' }];
         }),
       ),
     [drawing],
@@ -226,7 +238,7 @@ export function Pid() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wanted, ready, drawn]);
 
-  if (error) return <p className="p-6 text-sm text-red-400">{error}</p>;
+  if (error) return <p className="p-6 text-sm text-[var(--bad)]">{error}</p>;
   if (!drawing || drawing.id !== diagram) {
     return <p className="p-6 text-sm text-text-muted">Loading…</p>;
   }
@@ -241,10 +253,10 @@ export function Pid() {
         <span className="caps">
           {title}
         </span>
-        {running && live && <span className="font-mono text-[12px] text-blue-400">{live.state}</span>}
+        {running && live && <span className="font-mono text-[12px] text-[var(--ink)]">{live.state}</span>}
         <span
           className="cursor-help text-[11.5px] text-gray-600"
-          title={`Scroll to zoom, drag to pan. ${
+          title={`${running ? "Live readings are the white chips, in psia and K; the small grey figures are the drawing's own settings. " : ''}Scroll to zoom, drag to pan. ${
             daq
               ? 'Click a symbol for its connector.'
               : running
@@ -252,8 +264,29 @@ export function Pid() {
                 : 'Click a symbol to open it in the panel.'
           }`}
         >
-          {running ? 'psig' : 'not running'}
+          {running ? (
+            <>
+              <span className="mr-1 inline-block bg-[var(--ink)] px-1 font-mono text-[10px] font-semibold text-black">live</span>
+              {PRESSURE_UNIT} · K
+            </>
+          ) : (
+            'not running'
+          )}
         </span>
+        {fresh && (
+          <span
+            className={`text-[11px] ${fresh.tracked && fresh.current === false ? 'text-[var(--warn)]' : 'text-[var(--ink-3)]'}`}
+            title={fresh.detail || (fresh.tracked ? '' : 'An uploaded file: there is no design to compare it with.')}
+          >
+            {!fresh.tracked
+              ? 'uploaded copy'
+              : fresh.current === false
+                ? 'changed in Hotbench P&ID since pulled'
+                : fresh.current
+                  ? 'current with Hotbench P&ID'
+                  : 'not checked'}
+          </span>
+        )}
         {live?.setup?.ignore_gse && pages.length > 1 && (
           // The cart's page still draws; nothing on it is simulated.
           <Link
@@ -304,6 +337,7 @@ export function Pid() {
                 focus={panel && mode === 'symbols' ? focus : null}
               />
             )}
+            <KeepView sheet={`${diagram}|${shownPage ?? ''}`} />
             <HookupOverlay
               ui={ui}
               badges={panel}

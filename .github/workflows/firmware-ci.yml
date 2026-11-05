@@ -11,6 +11,19 @@ on:
       - '.github/workflows/firmware-ci.yml'
 
 jobs:
+  stm32-self-test-host:
+    name: STM32 portable self-test (host only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure portable tests with sanitizers
+        run: cmake -S firmware/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
+      - name: Build portable tests
+        run: cmake --build /tmp/star-self-test
+      - name: Run portable tests
+        run: ctest --test-dir /tmp/star-self-test --output-on-failure
+
   build-firmware:
     name: Build ${{ matrix.project }}
     runs-on: ubuntu-latest
@@ -23,6 +36,7 @@ jobs:
           - Hotfire_Code/RTD_Hotfire
           - Hotfire_Code/LC_Hotfire
           - Hotfire_Code/Actuator_Hotfire
+          - Hotfire_Code/BallValve_Hotfire
 
     steps:
       - name: Checkout repository
@@ -62,3 +76,22 @@ jobs:
       - name: Run native tests
         run: pio test -e native
         working-directory: firmware/Hotfire_Code/Hotfire_Tests
+
+  flight-computer-tests:
+    name: Flight_Computer Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run native tests
+        run: pio test -e native
+        working-directory: firmware/Flight_Computer

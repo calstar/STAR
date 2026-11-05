@@ -29,15 +29,15 @@ RUN --mount=type=cache,target=/root/.npm \
       echo "npm ci hit a network error (attempt $n) -- retrying in 10s"; \
       sleep 10; \
     done
-# The drawing's source, copied before the app so a change to the app alone
-# reuses the install layer above. Only the canvas: none of pid-designer's
-# packages are installed here -- vite.config.ts pins what it imports to this
-# app's own.
+# The drawing's source and the shared stand controls, copied before the app
+# so a change to the app alone reuses the install layer above, at the paths
+# ../../pid-designer and ../../lib reach from here. Only the canvas: none of
+# pid-designer's packages are installed here -- vite.config.ts pins what it
+# imports to this app's own. (The build stage is node 24 and the runtime 22,
+# as in every frontend here: the runtime only serves the built files.)
 COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
 COPY pid-designer/frontend/src/components/pid/ /build/pid-designer/frontend/src/components/pid/
 COPY feed-twin/frontend/ .
-# The shared stand controls, at the path ../../lib reaches from here.
-COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
 RUN npm run build
 
 FROM node:22-alpine

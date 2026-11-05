@@ -6,6 +6,72 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
+
+### Changed
+- **A blank dome loader starts at the dome it loads; a blank COPV fill at the
+  bottle's drawn charge** (`hookup.drawn_settings`, `bottle_charge`, D-20). LE4 (6)
+  draws DPR_HP's dome at 535 and the COPV at 4000 and leaves DR-REG-G and PR-1
+  blank; the knobs started at the session's 500 and 4,500, so the cockpit primed at
+  498.6 psia against Layer X's 541 psia on the same drawing. It now primes at 540.9
+  psia, bottle at 4,014.7 psia. `regulators()` shows the loader's implied setting.
+- **Fire with no thrust is a cold flow, not a burn** (D-10): after `COLD_FLOW_S`
+  (0.5 s, a display delay) of Fire with nothing lit the notes say "Not lit: cold
+  flow" with the tank pressures; a tank run dry without the engine lighting is
+  "Not lit: ... on a cold flow" (or "Flow test, no engine"), never "Burnout".
+  `Session.lit_this_state` says whether the engine has made thrust since the state
+  began.
+- **An abort row that leaves a main open is said** (D-18): "Engine Abort leaves Fuel
+  Main and LOX Main open: the stand's state table says so. Fix the row on the State
+  machine tab." The table is still run as the DAQ reads it (NEEDS-REPAIR.md).
+- **A trip names the vessel furthest over its MAWP** (D-33), not the first looked at.
+- `MixtureBalance.feed_term` is 0 when either injector drop is not positive (D-53):
+  an abort's trickle with the chamber above one injector inlet raised a math domain
+  error out of `/history`.
+
+### Changed results
+- LE4 (6) in the cockpit: dome 535, COPV 4000 at T-0 (above). No benchmark figure
+  moves: `scripts/physics_benchmark.py` passes 50/50.
+
+### Tests
+- `test_rocket_and_gse.py`: `test_blank_loader_and_fill_start_at_what_they_feed`,
+  `test_a_trip_names_the_vessel_furthest_over`; `test_balance.py`:
+  `test_a_leg_flowing_backwards_does_not_raise`.
+
+## Unreleased — 2026-10-17: people read psia (ADR 0007)
+
+### Added
+- **`feedtwin.session.gauge.say(pa, places=0)`**, `psia(pa)` and `ATMOSPHERE_PSI`
+  (14.696). `say` is the one place text spells a pressure out: `"514.7 psia"`,
+  thousands grouped, never "-0". Defined in `feedtwin.model.pressure` so the drawing
+  reader, the engine importer and the vessels can use it without importing the
+  session; `gauge` re-exports the same functions.
+
+### Changed
+- **Every message a person reads says psia.** The trip ("TK-LOX reached 1,164.7 psia
+  against a 1,014.7 psia MAWP", one decimal so a trip just over its limit does not
+  read as equal to it), the burst trip-limit assumption, a ground dewar's or transfer
+  tank's drawn pressure, the critical-pressure and low-bottle notes ("down to 27 psi"
+  had no reference), the T-0 lockup notes, the watcher's held-open flag (psia, and
+  the psi off atmosphere), a source drawn with no pressure, the gas-in-a-tank
+  warning, the engine importer's chamber-pressure provenance, an engine's one-line
+  summary, and the liquid-ullage, negative-pressure and choked-upstream errors (which
+  said bar). Differences (bias, droop, feed loss, sag) stay plain psi.
+- The regulator's fallback setpoint is spelled `500 psia` (it was `500 psi`, which
+  the unit table reads as the same absolute pressure): the assumptions table shows
+  the unit, and a bare psi there read as gauge to anyone who knew the drawing rule.
+- The wire is untouched: `psig`, `from_psig`, `Knob.psig`, every `*_psi` and the
+  `BurnPlan` fields stay gauge (ADR 0007).
+
+### Changed results
+- None. No number in the model moves; `scripts/physics_benchmark.py` passes as before.
+
+### Tests
+- `tests/test_people_read_psia.py`: the atmosphere by arithmetic, `say` on fixed
+  cases, one formatter, the burst limit's words. `test_burn_trip.py` checks the
+  trip message carries the trip's own numbers in psia. Each fails with the messages
+  put back in gauge.
+
 ## Unreleased — 2026-10-11/12: a sealed tank holds its liquid; the watcher; properties near saturation
 
 ### Fixed

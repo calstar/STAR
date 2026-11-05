@@ -73,7 +73,7 @@ persistent and expire a fixed 24 h after sign-in, so the profile survives restar
 one Duo approval a day keeps the worker signed in. `session.mjs check` records whether
 the stored session still reaches the form.
 
-The /finance banner's **Sign in to CalLink** button (admins) runs the same sign-in from
+The /reimbursements banner's **Sign in to CalLink** button (admins) runs the same sign-in from
 the worker: STARProject marks a request (`WorkerStatus.loginState = requested`), the
 worker polls `GET /api/worker/login` every 10 s, takes it once, and runs
 `session.mjs login --fresh`, reporting `waiting_duo` then `ok`/`failed`. `--fresh` sets
@@ -180,7 +180,7 @@ specialInstructions?, items[{date, vendor, total, comment?, file}]`.
 ## The system (built 2026-10-02)
 
 ```
-member ──form──▶ STARProject /finance ──admin approves──▶ queue
+member ──form──▶ STARProject /reimbursements ──approve──▶ queue
                      ▲   (Postgres: requests, PII, receipts)    │
                      │                                          ▼
    nightly scrape ───┴──── callink-worker ◀──claim/report── /api/worker/* (bearer token)
@@ -189,10 +189,14 @@ member ──form──▶ STARProject /finance ──admin approves──▶ qu
                            CalLink
 ```
 
-- **STARProject** (`starproject/src/lib/finance/`, `src/app/finance`, `src/app/api/finance`,
-  `src/app/api/worker`): the Finance tab lists every request (CalLink's history plus ours),
+- **STARProject** (`starproject/src/lib/finance/`, `src/app/reimbursements`, `src/app/api/finance`,
+  `src/app/api/worker`): the Reimbursements tab lists every request (CalLink's history plus ours),
   the detail card hides address/phone/UID/receipts from everyone but the payee, the filer
   and admins, the form files to `pending_approval`, admins approve/reject/retry.
+  The admin-only Finance tab (`src/app/finance`) shows CalLink's account balances (the
+  worker reads them hourly off the `financeAccount` on the newest request on each
+  account), accounts admins keep by hand, the school year's spending by project and
+  subteam (from these reimbursements' tags), and planned income.
 - **callink-worker** (`worker.mjs`, `lib/`): claims approved requests, files them, reports
   the CalLink id; scrapes and pushes CalLink nightly (`push.mjs` for the first import).
   Runs as the `callink-worker` service in `deploy/ec2/docker-compose.yml`, dry until

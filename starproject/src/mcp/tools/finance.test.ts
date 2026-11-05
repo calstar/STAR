@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FinanceRow } from "@/lib/finance/queries";
 import { checkReceipt } from "@/lib/finance/receipts";
 
-import { buildFilingForm, filterFinanceRows, receiptToFile, stripBase64 } from "./finance";
+import { buildFilingForm, filterFinanceRows, receiptToFile, sortFinanceRows, stripBase64 } from "./finance";
 
 // The pure half of the finance tools: the FinanceWorkspace filters and the
 // base64 -> File mapping the filing tool feeds to fileReimbursement.
@@ -21,6 +21,9 @@ const row = (over: Partial<FinanceRow>): FinanceRow => ({
   vendors: "",
   mine: false,
   needsAdmin: false,
+  source: "starproject",
+  projectId: null,
+  subteamId: null,
   ...over,
 });
 
@@ -121,5 +124,46 @@ describe("buildFilingForm", () => {
     expect((form.get("receipt-0") as File).name).toBe("a.png");
     expect((form.get("receipt-1") as File).name).toBe("b.png");
     expect(form.get("receipt-2")).toBeNull();
+  });
+});
+
+describe("filterFinanceRows: MCP's own filters", () => {
+  const more: FinanceRow[] = [
+    row({ number: 10, payeeName: "Ada Lovelace", amountCents: 5_000, date: "2026-07-01T06:59:00.000Z", vendors: "Digikey", source: "callink" }),
+    row({ number: 11, payeeName: "Grace Hopper", submitterName: "Ada L.", amountCents: 25_000, date: "2026-10-01T12:00:00.000Z", subteamId: "av" }),
+    row({ number: 12, payeeName: "Alan Turing", amountCents: 100_000, date: "2027-03-01T12:00:00.000Z", vendors: "McMaster-Carr, Digikey", projectId: "le4" }),
+  ];
+  const nums = (f: Parameters<typeof filterFinanceRows>[1]) => filterFinanceRows(more, f).map((r) => r.number);
+
+  it("person matches the payee or the submitter", () => {
+    expect(nums({ person: "ada" })).toEqual([10, 11]);
+    expect(nums({ person: "turing" })).toEqual([12]);
+  });
+
+  it("amount bounds are dollars, inclusive", () => {
+    expect(nums({ minAmount: 50 })).toEqual([10, 11, 12]);
+    expect(nums({ minAmount: 50.01, maxAmount: 250 })).toEqual([11]);
+  });
+
+  it("dates are Berkeley days, inclusive", () => {
+    // 2026-07-01 06:59 UTC is 23:59 on June 30 in Berkeley.
+    expect(nums({ to: "2026-06-30" })).toEqual([10]);
+    expect(nums({ from: "2026-07-01", to: "2026-10-01" })).toEqual([11]);
+    expect(nums({ schoolYear: 2025 })).toEqual([10]);
+    expect(nums({ schoolYear: 2026 })).toEqual([11, 12]);
+  });
+
+  it("vendor, source, project and subteam", () => {
+    expect(nums({ vendor: "digikey" })).toEqual([10, 12]);
+    expect(nums({ source: "callink" })).toEqual([10]);
+    expect(nums({ projectId: "le4" })).toEqual([12]);
+    expect(nums({ subteamId: "av" })).toEqual([11]);
+  });
+
+  it("sorts by amount or age", () => {
+    expect(sortFinanceRows(more, "largest").map((r) => r.number)).toEqual([12, 11, 10]);
+    expect(sortFinanceRows(more, "smallest").map((r) => r.number)).toEqual([10, 11, 12]);
+    expect(sortFinanceRows(more, "newest").map((r) => r.number)).toEqual([12, 11, 10]);
+    expect(sortFinanceRows([...more].reverse(), "oldest").map((r) => r.number)).toEqual([10, 11, 12]);
   });
 });

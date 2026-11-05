@@ -405,20 +405,20 @@ export default function OscopeTriggerPlot() {
       },
       axes: [
         {
-          stroke: '#888',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
+          stroke: '#7a7a7a',
+          grid: { stroke: '#1c1c1c' },
           values: (_u: uPlot, vals: number[]) => vals.map((v) => `${v.toFixed(0)} ms`),
           label: 'Time (ms)',
           labelSize: 14,
-          font: '11px monospace',
+          font: '11px "SF Mono", ui-monospace, Menlo, monospace',
         },
         {
-          stroke: '#888',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
+          stroke: '#7a7a7a',
+          grid: { stroke: '#1c1c1c' },
           values: (_u: uPlot, vals: number[]) => vals.map((v) => `${v.toFixed(0)}°`),
           label: 'Angle (°)',
           labelSize: 14,
-          font: '11px monospace',
+          font: '11px "SF Mono", ui-monospace, Menlo, monospace',
         },
       ],
       series: [
@@ -476,7 +476,7 @@ export default function OscopeTriggerPlot() {
           {triggerState === 'IDLE' && (
             <button
               onClick={handleArm}
-              className="px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-green-700 hover:bg-green-600 text-white transition-colors"
+              className="ctl border-[var(--color-success)] text-[var(--color-success)] hover:!border-[var(--color-success)] hover:!bg-[var(--color-success-solid)] hover:!text-white h-8 px-4 text-[11px]"
             >
               ARM
             </button>
@@ -484,7 +484,7 @@ export default function OscopeTriggerPlot() {
           {triggerState === 'ARMED' && (
             <button
               onClick={handleReset}
-              className="px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-yellow-700/60 hover:bg-yellow-600/70 text-yellow-200 animate-pulse transition-colors"
+              className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-8 animate-pulse px-4 text-[11px]"
             >
               ARMED — waiting...
             </button>
@@ -492,7 +492,7 @@ export default function OscopeTriggerPlot() {
           {triggerState === 'TRIGGERED' && (
             <button
               onClick={handleReset}
-              className="px-4 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider bg-gray-700 hover:bg-gray-600 text-gray-200 transition-colors"
+              className="ctl h-8 px-4 text-[11px]"
             >
               RESET
             </button>

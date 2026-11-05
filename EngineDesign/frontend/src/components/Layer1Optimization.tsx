@@ -438,8 +438,8 @@ function ParameterConvergencePlots({
     ['expansion_ratio', 'Expansion Ratio', '', 2, 10.0, 1.0],
     ['D_chamber_outer', 'Chamber Outer Diameter', 'mm', 3, 0.1, 1000],
     ['D_chamber_inner', 'Chamber Inner Diameter', 'mm', 3, 0.1, 1000],
-    ['P_O_start_psi', 'LOX Tank Pressure', 'psi', hasImpingingHistory ? 11 : 8, 500, 1.0],
-    ['P_F_start_psi', 'Fuel Tank Pressure', 'psi', hasImpingingHistory ? 12 : 9, 600, 1.0],
+    ['P_O_start_psi', 'LOX Tank Pressure', 'psia', hasImpingingHistory ? 11 : 8, 500, 1.0],
+    ['P_F_start_psi', 'Fuel Tank Pressure', 'psia', hasImpingingHistory ? 12 : 9, 600, 1.0],
     ['exit_diameter', 'Exit Diameter', 'mm', -1, 0.1, 1000],
   ] as const;
   const pintleParameters = [
@@ -1338,7 +1338,7 @@ export function Layer1Optimization({
               <ResultCard
                 label="Chamber Pressure"
                 value={results.performance.Pc ? (results.performance.Pc as number) / 6894.76 : undefined}
-                unit="psi"
+                unit="psia"
                 decimals={1}
                 color="green"
               />
@@ -1352,7 +1352,7 @@ export function Layer1Optimization({
                   <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">psi</span>
                   {results.performance.target_P_exit !== undefined && results.performance.target_P_exit !== null && (
                     <span className="text-xs font-normal text-[var(--color-text-secondary)] ml-1">
-                      (Target: {((results.performance.target_P_exit as number) / 6894.76).toFixed(1)} psi)
+                      (Target: {((results.performance.target_P_exit as number) / 6894.76).toFixed(1)} psia)
                     </span>
                   )}
                 </p>
@@ -1687,14 +1687,14 @@ export function Layer1Optimization({
               <ResultCard
                 label="LOX Tank Pressure"
                 value={results.performance.P_O_start_psi}
-                unit="psi"
+                unit="psia"
                 decimals={1}
                 color="cyan"
               />
               <ResultCard
                 label="Fuel Tank Pressure"
                 value={results.performance.P_F_start_psi}
-                unit="psi"
+                unit="psia"
                 decimals={1}
                 color="orange"
               />
@@ -1711,7 +1711,7 @@ export function Layer1Optimization({
               const prF = perf.P_F_start_psi_validation_replay;
               const replayPsi =
                 typeof prO === 'number' && Number.isFinite(prO) && typeof prF === 'number' && Number.isFinite(prF)
-                  ? `LOX ${prO.toFixed(1)} psi, fuel ${prF.toFixed(1)} psi`
+                  ? `LOX ${prO.toFixed(1)} psia, fuel ${prF.toFixed(1)} psia`
                   : undefined;
               return (
                 <p className="mt-2 text-xs text-[var(--color-text-secondary)] leading-relaxed">
@@ -1745,9 +1745,9 @@ export function Layer1Optimization({
                 (typeof v === 'number' && Number.isFinite(v)) ? v * paToPsi : undefined;
               return (
                 <div className="grid grid-cols-3 gap-4">
-                  <ResultCard label="P_injector LOX" value={asPsi(ip.P_injector_O)} unit="psi" decimals={1} color="cyan" />
-                  <ResultCard label="P_injector Fuel" value={asPsi(ip.P_injector_F)} unit="psi" decimals={1} color="orange" />
-                  <ResultCard label="Post-Inj (Pc)" value={results.performance.Pc ? (results.performance.Pc as number) / 6894.76 : undefined} unit="psi" decimals={1} color="green" />
+                  <ResultCard label="P_injector LOX" value={asPsi(ip.P_injector_O)} unit="psia" decimals={1} color="cyan" />
+                  <ResultCard label="P_injector Fuel" value={asPsi(ip.P_injector_F)} unit="psia" decimals={1} color="orange" />
+                  <ResultCard label="Post-Inj (Pc)" value={results.performance.Pc ? (results.performance.Pc as number) / 6894.76 : undefined} unit="psia" decimals={1} color="green" />
                   <ResultCard label="ΔP Injector LOX" value={asPsi(ip.delta_p_injector_O)} unit="psi" decimals={1} color="cyan" />
                   <ResultCard label="ΔP Injector Fuel" value={asPsi(ip.delta_p_injector_F)} unit="psi" decimals={1} color="orange" />
                   <ResultCard label="ΔP Feed Total" value={(() => {

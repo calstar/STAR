@@ -111,14 +111,14 @@ describe('the Burn pages', () => {
     expect(html).toContain('LOX tank at 1,100');
   });
 
-  it('Stand: the cold-flow modes wait on the backend until a run carries a test mode', () => {
+  it('Stand: names the run\'s own test and offers nothing it cannot do (D-24)', () => {
     const stand = PAGES[5][1];
-    expect(draw(stand, result())).toContain('cold flow: backend pending');
+    const plain = draw(stand, result());
+    expect(plain).toContain('Hot fire');
+    expect(plain).not.toMatch(/backend pending|Calibrate/);
     const r = result() as unknown as Record<string, unknown>;
     r.test_mode = 'coldflow_ln2';
-    const html = draw(stand, r as unknown as LayerXResult);
-    expect(html).not.toContain('cold flow: backend pending');
-    expect(html).toMatch(/aria-checked="true"[^>]*>LOX \/ LN2 cold flow/);
+    expect(draw(stand, r as unknown as LayerXResult)).toContain('LOX / LN2 cold flow');
   });
 
   it('Uncertainty: names the input to measure next and the cases that break a limit', () => {

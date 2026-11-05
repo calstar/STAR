@@ -463,6 +463,30 @@ def stability(model_id: str, request: StabilityRequest):
     }
 
 
+class DesignRequestsBody(BaseModel):
+    #: A saved design: the document body the header bar saves, ``{cad, recovery}``.
+    config: dict
+
+
+@app.post("/api/design/requests")
+def design_requests(body: DesignRequestsBody):
+    """A design as the request bodies its simulations take (backend/design_requests.py).
+
+    The same conversion the browser does before Simulate, so anything that holds
+    a saved design -- an agent through the design-tools MCP, a script -- runs it
+    exactly as the UI would. Returns the bodies for /stability, /flight-dynamics,
+    /export.ork and /api/simulate, plus which recovery bound the design reads.
+    """
+    from .design_requests import DesignError, all_requests, model_id
+
+    try:
+        mid = model_id(body.config)
+        manifest = json.loads((_model_dir(mid) / "manifest.json").read_text())
+        return all_requests(body.config, manifest.get("parts", []))
+    except DesignError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.post("/api/models/{model_id}/export.ork")
 # Sync `def` for the same reason as /stability above: a mesh walk and a Barrowman
 # sweep, run in a worker thread so the event loop stays free.

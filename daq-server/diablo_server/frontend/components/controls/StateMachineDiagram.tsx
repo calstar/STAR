@@ -118,8 +118,14 @@ function StateNode({
   const name = stateNameUpper(state) ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
-  const fill = isActive ? '#2563EB' : isReachable ? '#059669' : isEmergency ? '#7F1D1D' : '#1F2937';
-  const stroke = isActive ? '#60A5FA' : isReachable ? '#34D399' : isEmergency ? '#EF4444' : '#374151';
+  // feed-twin's console: the current state is filled white, a state you can go to is a lit
+  // hairline box, and the rest recede. An abort keeps its red.
+  const isAbort = /abort/i.test(name);
+  const fill = isActive ? '#ededed' : isReachable ? '#0d0d0d' : isEmergency ? '#7F1D1D' : '#080808';
+  const stroke = isActive
+    ? '#ededed'
+    : isReachable ? (isAbort ? '#ef4444' : '#8a8a8a') : isEmergency ? '#EF4444' : '#3a3a3a';
+  const textFill = isActive ? '#000000' : isEmergency || isAbort ? '#f87171' : isReachable ? '#ededed' : '#bdbdbd';
   const sw = (isActive || isReachable || isEmergency) ? 2 : 1.5;
 
   return (
@@ -131,21 +137,21 @@ function StateNode({
       {/* Native SVG tooltip — the node had none at all, so an unreachable state was simply dead
           under the cursor with nothing to explain it. */}
       {blockedReason !== undefined && <title>{`${name} unavailable — ${blockedReason}`}</title>}
-      <rect x={x} y={y} width={NW} height={NH} rx={12}
+      <rect x={x} y={y} width={NW} height={NH} rx={0}
         fill={fill} stroke={stroke} strokeWidth={sw}
         style={{ transition: 'fill 0.15s, stroke 0.15s' }}
       />
       {isEmergency && (
-        <rect x={x - 4} y={y - 4} width={NW + 8} height={NH + 8} rx={14}
+        <rect x={x - 4} y={y - 4} width={NW + 8} height={NH + 8} rx={0}
           fill="none" stroke="#EF4444" strokeWidth={3} opacity={0.35}
         />
       )}
       <text
         x={x + NW / 2} y={y + NH / 2 + 2}
         textAnchor="middle" dominantBaseline="middle"
-        fill={isEmergency ? '#FCA5A5' : 'white'}
-        fontSize={32} fontWeight={(isActive || isEmergency) ? 700 : 600}
-        fontFamily="ui-monospace, monospace" letterSpacing="0.05em"
+        fill={textFill}
+        fontSize={30} fontWeight={(isActive || isEmergency) ? 700 : 600}
+        fontFamily='"SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace' letterSpacing="0.14em"
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         {name}
@@ -167,11 +173,16 @@ export default function StateMachineDiagram() {
   // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
   // positions until a full page reload.
   useEffect(() => {
+    // A load can resolve after unmount (a test's teardown, a page change): bumping state then
+    // throws "window is not defined" under jsdom teardown, so a finished load checks first.
+    let mounted = true;
     const refreshStates = (force: boolean) =>
-      void loadStates(getApiBaseUrl(), force).then(() => setStatesVersion((v) => v + 1));
+      void loadStates(getApiBaseUrl(), force).then(() => {
+        if (mounted) setStatesVersion((v) => v + 1);
+      });
     refreshStates(false);
     const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
-    return () => { unsub(); };
+    return () => { mounted = false; unsub(); };
   }, [ws]);
 
   useEffect(() => {
@@ -332,15 +343,17 @@ export default function StateMachineDiagram() {
 
   return (
     <div className="overflow-hidden flex flex-col h-full min-h-0">
-      <div className="px-3 py-1.5 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
-        <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
-        <span className="text-[10px] font-mono">
-          <span className="text-text-muted">CURRENT: </span>
-          <span className="text-blue-400 font-bold">{stateNameUpper(effectiveState)}</span>
+      <div className="flex flex-shrink-0 items-baseline justify-between gap-3 pb-3">
+        <h2 className="caps">State Machine</h2>
+        <span className="flex items-baseline gap-3">
+          <span className="caps text-[11px]">Current</span>
+          <span className="font-mono text-[17px] font-bold uppercase tracking-[0.14em] text-ink">
+            {stateNameUpper(effectiveState)}
+          </span>
         </span>
       </div>
 
-      <div className="overflow-hidden bg-background min-h-0 flex-1 p-1 flex flex-col">
+      <div className="overflow-hidden min-h-0 flex-1 flex flex-col">
         <svg viewBox={`0 0 ${svgW} ${svgH}`}
           className="min-h-0 flex-1"
           style={{ display: 'block', width: '100%', height: '100%' }}
@@ -353,7 +366,7 @@ export default function StateMachineDiagram() {
               <path d="M0,0 L14,5 L0,10 Z" fill="#EF4444" />
             </marker>
             <marker id="arr-blue" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">
-              <path d="M0,0 L14,5 L0,10 Z" fill="#60A5FA" />
+              <path d="M0,0 L14,5 L0,10 Z" fill="#bdbdbd" />
             </marker>
           </defs>
 
@@ -368,8 +381,8 @@ export default function StateMachineDiagram() {
                 y={laneY}
                 width={svgW - 2 * (PAD - 16)}
                 height={laneHeight}
-                fill={rowIdx % 2 === 0 ? '#020617' : '#020617'}
-                opacity={rowIdx % 2 === 0 ? 0.35 : 0.2}
+                fill="#0b0b0b"
+                opacity={0}
               />
             );
           })}

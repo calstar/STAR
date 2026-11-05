@@ -8,6 +8,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { getDataCache } from '@/lib/data-cache';
 import { serverNowMs } from '@/lib/plot-time';
 import { xWindowMs, tPlusAxisValues, fmtAxisVal, YAxisHysteresis } from '@/lib/plot-shared';
+import { AXIS_FONT, AXIS_GRID, AXIS_STROKE, AXIS_TICKS } from '@/lib/plot-theme';
 
 interface TimeSeriesPlotProps {
   title: string;
@@ -103,17 +104,17 @@ export default function TimeSeriesPlot({
       },
       axes: [
         {
-          label: 'T+ (s)', stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace', labelFont: '12px system-ui', gap: 8, space: 120,
+          label: 'T+ (s)', stroke: AXIS_STROKE,
+          grid: { ...AXIS_GRID },
+          ticks: { ...AXIS_TICKS },
+          font: AXIS_FONT, labelFont: '12px system-ui', gap: 8, space: 120,
           values: tPlusAxisValues,
         },
         {
-          label: yLabel, stroke: '#9CA3AF',
-          grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 12px monospace', labelFont: '12px system-ui', size: 60, gap: 5, space: 80,
+          label: yLabel, stroke: AXIS_STROKE,
+          grid: { ...AXIS_GRID },
+          ticks: { ...AXIS_TICKS },
+          font: AXIS_FONT, labelFont: '12px system-ui', size: 60, gap: 5, space: 80,
           values: (_u, vals) => vals.map(v => v == null ? '' : fmtAxisVal(v)),
         },
       ],
@@ -268,8 +269,8 @@ export default function TimeSeriesPlot({
     >
       <div className="flex items-center justify-end mb-1 px-1 flex-shrink-0">
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
-          <span className="text-[10px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
+          <div className={`h-1.5 w-1.5 rounded-full ${actuallyConnected ? 'bg-green-400' : 'bg-red-500'}`} />
+          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-3">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
       <div
@@ -279,7 +280,7 @@ export default function TimeSeriesPlot({
       >
         <div ref={plotRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} />
         {!isInitialized && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm z-10 pointer-events-none bg-gray-900/50">
+          <div className="absolute inset-0 flex items-center justify-center font-mono text-[12px] text-ink-3 z-10 pointer-events-none">
             Initializing plot...
           </div>
         )}
@@ -291,13 +292,13 @@ export default function TimeSeriesPlot({
         {entities.map((e, i) => (
           <div
             key={e}
-            className="flex items-center gap-2 bg-black/20 px-2 py-0.5 rounded-md border border-white/5 flex-shrink-0"
+            className="flex items-center gap-2 flex-shrink-0"
           >
             <span
-              className="w-3 h-[2px] rounded-full inline-block flex-shrink-0"
-              style={{ background: colors[i] || '#3498DB', boxShadow: `0 0 6px ${(colors[i] || '#3498DB')}80` }}
+              className="w-3 h-[2px] inline-block flex-shrink-0"
+              style={{ background: colors[i] || '#3498DB' }}
             />
-            <span className="font-semibold font-mono text-gray-300 whitespace-nowrap" style={{ fontSize: `${legendFontSize}px` }}>
+            <span className="font-mono uppercase tracking-[0.06em] text-ink-2 whitespace-nowrap" style={{ fontSize: `${legendFontSize}px` }}>
               {labels?.[i] ?? e.split('.').pop() ?? e}
             </span>
           </div>

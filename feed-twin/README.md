@@ -1,4 +1,6 @@
-# feed-twin
+# Hotbench Twin (feed-twin)
+
+*Hotbench, a STAR project: [Hotbench P&ID](../pid-designer/README.md) draws the stand, [Hotbench Engine](../EngineDesign/README.md) designs the engine, and Hotbench Twin runs the two together.*
 
 A simulator for the whole propellant feed system — COPV through regulator,
 tanks, lines, valves and injector to the chamber. It predicts pressure and

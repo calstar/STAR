@@ -156,19 +156,51 @@ type AppCard = {
   restricted?: string;
 };
 
-const APPS: AppCard[] = [
+/**
+ * Hotbench, a STAR project: three apps that are one pipeline. The stand is
+ * drawn once, the engine designed once, and the twin runs the two together.
+ * Listed in the order the work flows through them.
+ */
+const HOTBENCH: AppCard[] = [
+  {
+    id: 'pid-designer',
+    href: 'https://pid-designer.starberkeley.org',
+    label: 'Hotbench P&ID',
+    subdomain: 'pid-designer.starberkeley.org',
+    description:
+      'Draw the stand: the P&ID of the vehicle and its ground support, with the numbers that describe each part and where each number came from. Named releases and a full history.',
+    icon: <IconPID />,
+    colorClass: 'card-purple',
+    iconBg: 'linear-gradient(135deg, #7e22ce 0%, #a855f7 100%)',
+    iconColor: '#d8b4fe',
+  },
   {
     id: 'engine-design',
     href: 'https://engine-design.starberkeley.org',
-    label: 'Engine Design',
+    label: 'Hotbench Engine',
     subdomain: 'engine-design.starberkeley.org',
     description:
-      'Simulation and optimization of the liquid engine. Includes static geometry, the feed system, and thermodynamics.',
+      'Design the engine: chamber, nozzle, injector and cooling, sized and optimised against the requirements. Publishes the engine card the twin fires.',
     icon: <IconEngine />,
     colorClass: 'card-blue',
     iconBg: 'linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)',
     iconColor: '#93c5fd',
   },
+  {
+    id: 'feed-twin',
+    href: 'https://feed-twin.starberkeley.org',
+    label: 'Hotbench Twin',
+    subdomain: 'feed-twin.starberkeley.org',
+    description:
+      'Run the stand: the drawn feed system and the designed engine as one transient model, COPV to chamber, driven from a copy of the DAQ console. Every burn is kept as a run record.',
+    icon: <IconValve />,
+    colorClass: 'card-orange',
+    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
+    iconColor: '#fdba74',
+  },
+] as const;
+
+const APPS: AppCard[] = [
   {
     id: 'daq-server',
     href: 'https://daq-server.starberkeley.org',
@@ -196,18 +228,6 @@ const APPS: AppCard[] = [
     iconColor: '#5eead4',
   },
   {
-    id: 'pid-designer',
-    href: 'https://pid-designer.starberkeley.org',
-    label: 'P&ID Designer',
-    subdomain: 'pid-designer.starberkeley.org',
-    description:
-      'Software similar to draw.io that is designed to make P&ID diagrams. Includes version control and backups.',
-    icon: <IconPID />,
-    colorClass: 'card-purple',
-    iconBg: 'linear-gradient(135deg, #7e22ce 0%, #a855f7 100%)',
-    iconColor: '#d8b4fe',
-  },
-  {
     id: 'star-openrocket',
     href: 'https://openrocket.starberkeley.org',
     label: 'STAR OpenRocket',
@@ -220,18 +240,6 @@ const APPS: AppCard[] = [
     iconColor: '#67e8f9',
     restricted:
       'Open to any Berkeley login. Pulling or building CAD from Onshape is limited to approved users (shared API credits) — contact Aidan for import access.',
-  },
-  {
-    id: 'feed-twin',
-    href: 'https://feed-twin.starberkeley.org',
-    label: 'Feed System Twin',
-    subdomain: 'feed-twin.starberkeley.org',
-    description:
-      'Transient model of the whole propellant feed system — COPV through regulator, tanks, lines, valves and injector to the chamber. Imports schematics and engine configs straight from the P&ID Designer and Engine Design. Early build: the physics lands over the coming phases, so today it reports the stack it is running.',
-    icon: <IconValve />,
-    colorClass: 'card-orange',
-    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
-    iconColor: '#fdba74',
   },
   {
     id: 'parts-hub',
@@ -271,6 +279,55 @@ const APPS: AppCard[] = [
     restricted: 'STAR Project admins only.',
   },
 ] as const;
+
+/* ── One app card ────────────────────────────────────────────────────── */
+function Card({ app, i }: { app: AppCard; i: number }) {
+  return (
+    <a
+      href={app.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`app-card ${app.colorClass} fade-up`}
+      style={{ animationDelay: `${0.1 * (i + 2)}s` }}
+    >
+      {/* Icon + label inline, URL below */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div className="icon-wrap" style={{ background: app.iconBg, color: app.iconColor }}>
+            {app.icon}
+          </div>
+          <div style={{ fontWeight: 600, fontSize: 19 }}>{app.label}</div>
+        </div>
+        <div className="mono" style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 8 }}>
+          {app.subdomain}
+        </div>
+      </div>
+
+      {/* Description */}
+      <p style={{ margin: 0, fontSize: 16, color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
+        {app.description}
+      </p>
+
+      {/* Footer row: Open (left) + optional Restricted chip (right) */}
+      <div className="card-footer">
+        <span className="arrow-chip">
+          Open <IconArrow />
+        </span>
+        {app.restricted && (
+          <span
+            className="restricted-chip"
+            onClick={e => e.preventDefault()}
+          >
+            <IconLock /> Restricted
+            <span className="restricted-tip" role="tooltip">
+              {app.restricted}
+            </span>
+          </span>
+        )}
+      </div>
+    </a>
+  );
+}
 
 /* ── App ─────────────────────────────────────────────────────────────── */
 export default function App() {
@@ -353,54 +410,24 @@ export default function App() {
             </p>
           </div>
 
-          {/* App cards grid */}
+          {/* Hotbench: the three apps of the pipeline, in the order work flows */}
+          <section className="fade-up" style={{ marginBottom: 56 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+              <h2 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em' }}>Hotbench</h2>
+              <span style={{ fontSize: 15, color: 'var(--color-text-secondary)' }}>a STAR project</span>
+            </div>
+            <p style={{ margin: '0 0 20px', fontSize: 16, color: 'var(--color-text-secondary)', lineHeight: 1.6, maxWidth: 760 }}>
+              Draw the stand, design the engine, run the two together. One drawing and one engine card pass through all three.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 24 }}>
+              {HOTBENCH.map((app, i) => <Card key={app.id} app={app} i={i} />)}
+            </div>
+          </section>
+
+          {/* Everything else the team runs */}
+          <h2 className="fade-up" style={{ margin: '0 0 20px', fontSize: 20, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Team tools</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 24 }}>
-            {APPS.map((app, i) => (
-              <a
-                key={app.id}
-                href={app.href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`app-card ${app.colorClass} fade-up`}
-                style={{ animationDelay: `${0.1 * (i + 2)}s` }}
-              >
-                {/* Icon + label inline, URL below */}
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                    <div className="icon-wrap" style={{ background: app.iconBg, color: app.iconColor }}>
-                      {app.icon}
-                    </div>
-                    <div style={{ fontWeight: 600, fontSize: 19 }}>{app.label}</div>
-                  </div>
-                  <div className="mono" style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 8 }}>
-                    {app.subdomain}
-                  </div>
-                </div>
-
-                {/* Description */}
-                <p style={{ margin: 0, fontSize: 16, color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
-                  {app.description}
-                </p>
-
-                {/* Footer row: Open (left) + optional Restricted chip (right) */}
-                <div className="card-footer">
-                  <span className="arrow-chip">
-                    Open <IconArrow />
-                  </span>
-                  {app.restricted && (
-                    <span
-                      className="restricted-chip"
-                      onClick={e => e.preventDefault()}
-                    >
-                      <IconLock /> Restricted
-                      <span className="restricted-tip" role="tooltip">
-                        {app.restricted}
-                      </span>
-                    </span>
-                  )}
-                </div>
-              </a>
-            ))}
+            {APPS.map((app, i) => <Card key={app.id} app={app} i={i + HOTBENCH.length} />)}
           </div>
         </div>
       </main>

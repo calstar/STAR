@@ -24,7 +24,11 @@ import sys
 
 #: Hosts with no auth by design. auth itself must never be gated -- it is what
 #: grants access, so protecting it would deadlock the login flow.
-PUBLIC_HOSTS = {"auth"}
+#:   mcp -- the design-tools MCP server, for agents with no browser session. It
+#:   checks a STARProject bearer token on every /mcp request itself
+#:   (design-mcp/star_design_mcp/server.py, BearerAuth) and serves /files/* only
+#:   on a signed, expiring link; the site strips X-Auth-* before proxying.
+PUBLIC_HOSTS = {"auth", "mcp"}
 
 #: Path prefixes that are public by design on an otherwise gated host, keyed by
 #: the host's first label. A route is exempt only if EVERY path it matches lies

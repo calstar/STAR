@@ -45,6 +45,8 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Mapping
 
+from feedtwin.model.pressure import say
+
 if TYPE_CHECKING:  # card.py imports this module; the annotation is all that is needed
     from feedtwin.engine.card import InjectorCard
 
@@ -292,7 +294,7 @@ class EngineDesign:
             f"A_inj ox {self.oxidiser.area * 1e6:.2f} mm^2 / "
             f"fuel {self.fuel.area * 1e6:.2f} mm^2, "
             f"design {self.design_thrust:.0f} N at "
-            f"{self.design_chamber_pressure / 1e5:.1f} bar, O/F "
+            f"{say(self.design_chamber_pressure)}, O/F "
             f"{self.design_mixture_ratio:.2f}"
         )
 

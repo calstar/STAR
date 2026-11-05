@@ -4,7 +4,7 @@ import type { PIDNodeData } from '../types';
 import { DraggableLabel } from './DraggableLabel';
 import { Frame } from './Frame';
 import { turn } from '../route';
-import { fmtParam } from '../fmt';
+import { fmtPressure } from '../fmt';
 
 const W = 60, H = 60;
 
@@ -43,11 +43,12 @@ export function RVNode({ id, data, selected }: NodeProps) {
             pointerEvents: 'none',
           }}
         >
-          {set && <>{fmtParam(set)}</>}
+          {/* A relief's set and reseat are differences: plain psi. */}
+          {set && <>{fmtPressure('set_pressure', set)}</>}
           {reseat && (
             <>
               <br />
-              <span style={{ color: 'var(--color-text-muted)' }}>↺ {fmtParam(reseat)}</span>
+              <span style={{ color: 'var(--color-text-muted)' }}>↺ {fmtPressure('reseat_pressure', reseat)}</span>
             </>
           )}
         </span>

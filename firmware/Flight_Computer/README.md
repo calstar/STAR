@@ -11,12 +11,13 @@ It only uses the three functions listed in `src/radio.h`:
 
 - `radio_probe()` checks that the radio chip is there and answering.
 - `radio_receive()` checks whether a message has arrived, without waiting.
-- `radio_send()` sends a message (not used yet, the rocket only listens).
+- `radio_send()` transmits heartbeats and self-test reports to the ground station. Success requires SX1262 TxDone within a bounded timeout. No ground-station ACK is required.
 
 Because everything goes through these three functions, we can later swap in a
 pretend radio and test the code on a laptop with no hardware.
 
-What exists now: `src/radio.h`, a pretend radio, and 7 tests for it.
+What exists now: `src/radio.h`, a pretend radio, and 14 tests for it.
+CI runs the tests on every PR that touches `firmware/` (`.github/workflows/firmware-ci.yml`).
 The real radio driver and the message format come in later PRs.
 
 ## Architecture
@@ -42,7 +43,7 @@ Flight_Computer/
 │   └── radio.h               # the three radio functions and their answers
 └── test/
     └── test_radio_seam/
-        ├── test_main.cpp     # 7 tests for what radio.h promises
+        ├── test_main.cpp     # 14 tests for what radio.h promises
         ├── radio_fake.h      # the pretend radio
         └── radio_fake.cpp    # test only, never built into the rocket
 ```
@@ -56,7 +57,7 @@ cd firmware/Flight_Computer
 pio test -e native
 ```
 
-You should see 7 tests pass. If `pio` is missing, install PlatformIO with
+You should see 14 tests pass. If `pio` is missing, install PlatformIO with
 `pipx install platformio`.
 
 ## Documentation
@@ -64,7 +65,8 @@ You should see 7 tests pass. If `pio` is missing, install PlatformIO with
 - [`src/radio.h`](src/radio.h): the radio functions. The comment above each
   one says what it promises.
 - [`test/test_radio_seam/test_main.cpp`](test/test_radio_seam/test_main.cpp):
-  the tests. They show what any radio driver has to do.
+  the tests. They run against the pretend radio, and the promises they check
+  are the ones the real radio driver must also keep.
 
 ## Radio link status
 
@@ -97,3 +99,9 @@ Nothing here has run on a real radio or on the STM32.
 - There is no acknowledgement; the ground cannot tell whether ARM arrived.
 - The sequence number is forgotten on reboot.
 - The key, window and target id in `arm_gate.h` are placeholders.
+
+## Self-test integration
+
+[Inez confirmed the radio requirements in #137](https://github.com/calstar/STAR/issues/137#issuecomment-6486161496). Heartbeats run at 1–2 Hz during self-test and roughly once every ten seconds in Idle. Messages carry a type, sequence number and checksum; Ryan still owns their exact byte layout. `ErrTimeout` and `NotImplemented` distinguish an expired transmission from an absent driver. A no-op or queued packet must never return `Ok` from `radio_send()`.
+
+The portable C coordinator lives in [`../Core`](../Core/README.md). A C++ adapter must translate its status snapshot into the agreed packet and map radio outcomes to the C callback contract. If a transmission exceeds the callback budget, a separate driver service must own it while the callback polls bounded state. The current header supplies no implementation, timeout value, packet encoder or such service.

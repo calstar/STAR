@@ -13,7 +13,8 @@ import {
     runLayer3Optimization,
     getLayer3Status,
     stopLayer3Optimization,
-    uploadLayer3Config
+    uploadLayer3Config,
+    API_BASE
 } from '../api/client';
 import type {
     Layer3Settings,
@@ -345,21 +346,16 @@ export function Layer3Optimization({
         URL.revokeObjectURL(url);
     };
 
+    // The backend writes this file (GET /api/optimizer/layer3/results.csv,
+    // backend/results_csv.py) so the same CSV is there for anyone who asks, not only
+    // an open tab; the button just fetches it.
     const downloadCSV = () => {
         if (!results?.time_array) return;
-        let csv = 'Time (s),LOX Pressure (Pa),Fuel Pressure (Pa)\\n';
-        results.time_array.forEach((t: number, i: number) => {
-            csv += `${t},${results.lox_pressure[i]},${results.fuel_pressure[i]}\\n`;
-        });
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = 'layer3_results.csv';
+        a.href = `${API_BASE}/optimizer/layer3/results.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
     };
 
     return (

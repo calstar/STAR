@@ -16,6 +16,9 @@ export interface SystemLimits {
     NOP: number;
     MEOP: number;
     POP: number;
+    /** [pressure_limits.<key>].show_in_top_bar: false hides this entry's NOP/MEOP lines and
+     *  numbers on the top-bar gauges that use it. Absent means shown. */
+    show_in_top_bar?: boolean;
 }
 
 export type PressureLimitsMap = Record<string, SystemLimits>;

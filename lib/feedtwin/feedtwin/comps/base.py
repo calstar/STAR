@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Mapping, Sequence
 
 from feedtwin.model.component import ComponentInstance, EvalContext, PortState
+from feedtwin.model.pressure import say
 from feedtwin.model.spec import SpecError
 
 R_UNIVERSAL = 8.31446261815324
@@ -54,7 +55,7 @@ class InfeasibleOperatingPoint(ValueError):
     def __init__(self, component: str, mdot: float, p_upstream: float) -> None:
         super().__init__(
             f"{component}: {mdot:.6g} kg/s cannot pass with only "
-            f"{p_upstream / 1e5:.4g} bar upstream -- the required downstream "
+            f"{say(p_upstream, 1)} upstream -- the required downstream "
             "pressure is below zero. Either the flow is too high, the "
             "restriction too small, or the upstream pressure too low."
         )

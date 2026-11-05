@@ -1,4 +1,4 @@
-// Send CalLink's requests to STARProject's Finance tab.
+// Send CalLink's requests to STARProject's Reimbursements tab.
 //
 //   node push.mjs              # scrape CalLink (reusing settled requests) and push it all,
 //                              # including which requests CalLink no longer lists

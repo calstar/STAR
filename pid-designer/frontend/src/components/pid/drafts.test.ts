@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fromDraft, pickProvenance, placeholderFor, toDraft } from './drafts';
 import type { ParamSpec } from './spec';
+import type { ParamValue } from './params';
 
 const cv: ParamSpec = { key: 'Cv', label: 'Cv', dimension: 'flow_coefficient' };
 const k: ParamSpec = {
@@ -69,5 +70,36 @@ describe('the two-way provenance select', () => {
 
   it('promotes an estimate to measured, not manufacturer', () => {
     expect(pickProvenance({ value: '4', unit: 'Cv', source: 'estimated' }, true).source).toBe('measured');
+  });
+});
+
+describe('a pressure at a place, reopened', () => {
+  const spec = (key: string) => ({ key, label: key, dimension: 'pressure' }) as ParamSpec;
+  const at = (value: number, unit: string) => ({ value, unit, source: 'measured' }) as ParamValue;
+
+  it('opens a gauge or bare psi in psia, the number the sheet prints', () => {
+    // The COPV drawn at "4000 psi" is 4014.7 psia on the sheet; the dialog
+    // said 4000 beside it.
+    expect(toDraft(spec('pressure'), at(4000, 'psi'), 'KBOTTLE')).toMatchObject({ value: '4014.696', unit: 'psia', source: 'measured' });
+    expect(toDraft(spec('burst_pressure'), at(15000, 'psig'), 'KBOTTLE')).toMatchObject({ value: '15014.696', unit: 'psia' });
+  });
+
+  it('keeps an engine pressure and a psia one as they are', () => {
+    expect(toDraft(spec('chamber_pressure'), at(385, 'psi'), 'ENGINE')).toMatchObject({ value: '385', unit: 'psia' });
+    expect(toDraft(spec('pressure'), at(600, 'psia'), 'TANK')).toMatchObject({ value: '600', unit: 'psia' });
+  });
+
+  it('says the reference of a metric pressure without converting it', () => {
+    expect(toDraft(spec('pressure'), at(40, 'bar'), 'TANK')).toMatchObject({ value: '40', unit: 'barg' });
+  });
+
+  it('leaves a difference in plain psi', () => {
+    expect(toDraft(spec('set_pressure'), at(750, 'psi'), 'RV')).toMatchObject({ value: '750', unit: 'psi' });
+  });
+
+  it('saves back to the same pressure, to a ten-thousandth of a psi', () => {
+    const back = fromDraft(toDraft(spec('pressure'), at(4000, 'psi'), 'KBOTTLE'))!;
+    expect(back.unit).toBe('psia');
+    expect(Math.abs(back.value - 14.695948775513 - 4000)).toBeLessThan(1e-4);
   });
 });

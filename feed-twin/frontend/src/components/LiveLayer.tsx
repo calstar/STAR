@@ -26,6 +26,7 @@ import { useDrawnRoutes } from '@pid/edgeGeometry';
 import type { Pt } from '@pid/route';
 import type { Frame } from '../api';
 import { fixed } from '../api';
+import { psiaText } from '../lib/pressure';
 import { dashPeriod, isFlowing } from '../lib/schematic';
 
 /** What reads or holds a pressure: these carry one. */
@@ -79,7 +80,7 @@ export function LiveLayer({ frame, lines, valves, held, focus = null }: Props) {
               height={n.measured!.height! + 24}
               rx={12}
               fill="none"
-              stroke="#60A5FA"
+              stroke="var(--ink)"
               strokeWidth={2.5}
             />
           ))}
@@ -92,12 +93,15 @@ export function LiveLayer({ frame, lines, valves, held, focus = null }: Props) {
         const x = n.position.x + n.measured!.width! / 2;
         const y = n.position.y - 3;
         return (
+          // Live is a light chip with dark figures: the drawing's own numbers
+          // (a drawn 585 psi, 293 K) are small grey text, and a reading set
+          // in the same grey beside one was taken for it.
           <div
             key={n.id}
-            className="pointer-events-none absolute rounded bg-[var(--color-bg-primary)]/80 px-1 font-mono text-[11px] leading-tight text-[var(--color-text-primary)] tabular-nums"
+            className="pointer-events-none absolute bg-[var(--ink)] px-1 font-mono text-[13px] font-semibold leading-tight text-black tabular-nums"
             style={{ transform: `translate(${x}px, ${y}px) translate(-50%, -100%)`, zIndex: 1 }}
           >
-            {kelvin !== undefined ? `${fixed(kelvin, 0)} K` : fixed(psi ?? 0, 0)}
+            {kelvin !== undefined ? `${fixed(kelvin, 0)} K` : psiaText(psi ?? 0)}
           </div>
         );
       })}

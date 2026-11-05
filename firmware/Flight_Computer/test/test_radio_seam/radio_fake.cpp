@@ -19,6 +19,8 @@ unsigned g_count = 0;
 bool g_chip_present = true;
 uint8_t g_tx[kMaxPacket];
 uint8_t g_tx_len = 0;
+unsigned g_tx_count = 0;
+RadioStatus g_send_result = RadioStatus::Ok;
 
 }  // namespace
 
@@ -29,6 +31,12 @@ void reset(bool chip_present) {
     g_count = 0;
     g_chip_present = chip_present;
     g_tx_len = 0;
+    g_tx_count = 0;
+    g_send_result = RadioStatus::Ok;
+}
+
+void set_send_result(RadioStatus result) {
+    g_send_result = result;
 }
 
 bool inject(const uint8_t* bytes, uint8_t len) {
@@ -48,6 +56,10 @@ uint8_t last_sent(uint8_t* out, uint8_t out_cap) {
     return n;
 }
 
+unsigned sent_count() {
+    return g_tx_count;
+}
+
 }  // namespace fake
 
 RadioStatus radio_probe() {
@@ -55,8 +67,15 @@ RadioStatus radio_probe() {
 }
 
 RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
+    if (!g_chip_present) {
+        return RadioStatus::ErrNotFound;
+    }
+    if (g_send_result != RadioStatus::Ok) {
+        return g_send_result;
+    }
     memcpy(g_tx, bytes, len);
     g_tx_len = len;
+    g_tx_count++;
     return RadioStatus::Ok;
 }
 

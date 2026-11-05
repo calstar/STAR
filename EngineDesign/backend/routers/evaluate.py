@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 import math
 import numpy as np
 
-from backend.session import UserSession, get_session
+from backend.session import UserSession, get_session, run_compute
 
 router = APIRouter(prefix="/api/evaluate", tags=["evaluate"])
 
@@ -80,8 +80,18 @@ async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_
     Takes LOX and fuel tank pressures in psi, returns the full results from runner.evaluate().
     Ambient pressure is computed automatically by the runner from the config's environment elevation.
     The results dict is passed through directly (with numpy conversion) - same format as Streamlit UI uses.
+
+    The solve runs in the thread pool (``run_compute``): Forward Mode evaluates every design it
+    opens, and on the event loop that second or two froze every other request.
     """
-    if not session.app_state.has_config():
+    return await run_compute(session, _evaluate, request, session)
+
+
+def _evaluate(request: EvaluateRequest, session: UserSession) -> dict:
+    # One config and its runner for the whole solve. Off the event loop a PUT /api/config can
+    # land while the solve runs; the report must describe the design the numbers came from.
+    config, runner = session.app_state.snapshot()
+    if config is None or runner is None:
         raise HTTPException(
             status_code=400, 
             detail="No config loaded. Upload a config file first."
@@ -98,7 +108,7 @@ async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_
             overrides = {
                 k: v for k, v in request.stability_overrides.model_dump().items() if v is not None
             } or None
-        results = session.app_state.runner.evaluate(
+        results = runner.evaluate(
             P_tank_O, P_tank_F, debug=True, rich_stability=True, stability_overrides=overrides,
         )
 
@@ -106,16 +116,16 @@ async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_
         # than is now live, surface a non-fatal warning so the forward result is read as a seed, not
         # a validated design.
         from engine.pipeline.config_switch import design_staleness
-        design_warning = design_staleness(session.app_state.config)
+        design_warning = design_staleness(config)
 
         # Forward mode's view: every quantity once, with its basis and what it rests on.
         from engine.pipeline.forward_report import forward_report
         try:
             from engine.pipeline.handcheck import handcheck
-            hc = handcheck(session.app_state.config, results, P_tank_O, P_tank_F)
+            hc = handcheck(config, results, P_tank_O, P_tank_F)
         except Exception as e:   # the check is optional; a missing CEA must not fail the solve
             hc = {"rows": [], "flags": [], "error": f"{type(e).__name__}: {e}"}
-        report = forward_report(session.app_state.config, results, handcheck_rows=hc)
+        report = forward_report(config, results, handcheck_rows=hc)
 
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs

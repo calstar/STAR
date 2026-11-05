@@ -149,7 +149,7 @@ export default function SessionPage() {
   if (!session) {
     return (
       <main className="h-full bg-background text-text overflow-auto p-8">
-        <h1 className="text-3xl font-bold mb-3">Session control</h1>
+        <h1 className="mb-3 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Connecting… (waiting for the backend WebSocket). If this persists, the live data
           connection isn’t reaching the browser.
@@ -161,7 +161,7 @@ export default function SessionPage() {
   if (!session.enabled) {
     return (
       <main className="h-full bg-background text-text overflow-auto p-8">
-        <h1 className="text-3xl font-bold mb-3">Session control</h1>
+        <h1 className="mb-3 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Session control is disabled in this deployment — the stack runs until the process is
           stopped manually. (This is the expected behavior on a launch-site laptop with no
@@ -177,7 +177,7 @@ export default function SessionPage() {
     <main className="h-full bg-background text-text overflow-auto">
       <div className="p-6 sm:p-8 max-w-3xl mx-auto w-full">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold">Session control</h1>
+        <h1 className="font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Session control</h1>
         <span
           className={`rounded-full px-4 py-1.5 text-base font-bold uppercase tracking-wider ${
             active ? 'bg-green-900/50 text-green-300' : 'bg-gray-800 text-gray-400'
@@ -297,10 +297,10 @@ export default function SessionPage() {
                   data: { keepData, durationMs: durationMin * 60000, simulated, force: !!blocked },
                 });
               }}
-              className={`rounded-lg border px-5 py-2 text-sm font-bold uppercase tracking-wider text-white disabled:opacity-40 disabled:cursor-not-allowed ${
+              className={`h-10 px-5 text-[12px] ${
                 blocked
-                  ? 'border-amber-500 bg-amber-700/70 hover:bg-amber-600'
-                  : 'border-green-600 bg-green-800/70 hover:bg-green-700'
+                  ? 'ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white'
+                  : 'ctl border-[var(--color-success)] text-[var(--color-success)] hover:!border-[var(--color-success)] hover:!bg-[var(--color-success-solid)] hover:!text-white'
               }`}
             >
               {pending === 'start' ? 'Starting…' : blocked ? 'Start anyway' : 'Start run'}
@@ -326,7 +326,7 @@ export default function SessionPage() {
               disabled={!controlEnabled}
               title={lockedNote}
               onClick={() => send({ commandType: 'session_extend', data: { addMs: addMin * 60000 } })}
-              className="rounded-lg border border-blue-600 bg-blue-800/70 px-4 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="ctl h-10 px-4 text-[12px]"
             >
               Add time
             </button>
@@ -352,7 +352,7 @@ export default function SessionPage() {
                   setPending('stop'); send({ commandType: 'session_stop', data: {} });
                 }
               }}
-              className="ml-auto rounded-lg border border-red-600 bg-red-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white ml-auto h-10 px-5 text-[12px]"
             >
               {pending === 'stop' ? 'Stopping…' : 'Stop run'}
             </button>

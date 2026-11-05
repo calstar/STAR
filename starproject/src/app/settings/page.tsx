@@ -105,8 +105,10 @@ export default async function SettingsPage() {
       <section className={`mt-4 ${card}`}>
         <h2 className="font-medium">API tokens</h2>
         <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          Personal tokens for the MCP endpoint (<code>/api/mcp</code>), so an agent can
-          act as you with your permissions. See <code>docs/MCP.md</code> for client setup.
+          Personal tokens for STAR&apos;s MCP servers, so an agent can act as you with your
+          permissions: this app&apos;s (<code>/api/mcp</code>) and the design tools&apos;
+          (<code>mcp.starberkeley.org</code>). Each token opens only the ones you tick. See{" "}
+          <code>docs/MCP.md</code> for client setup.
         </p>
         <div className="mt-3">
           <ApiTokens tokens={tokens} />

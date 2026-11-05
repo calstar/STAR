@@ -1,0 +1,80 @@
+{
+  "about": "Typed mass beats material; a catalog material sets volume x density; a hidden part still counts; no fins picked means auto-detect; an ISA site sends no pad numbers; UI-only device/study fields are dropped; the airframe sweep row is recomputed from the vehicle, not read from its stale seed.",
+  "manifestParts": [
+    {"key": "occ:a", "mass": 1.0, "volume": 0.001},
+    {"key": "occ:b", "mass": 0.0, "volume": 0.0002},
+    {"key": "occ:c", "mass": 2.0, "volume": 0.01},
+    {"key": "occ:d", "mass": 0.5, "volume": 0.0001}
+  ],
+  "config": {
+    "version": 1,
+    "cad": {
+      "version": 1,
+      "modelId": "m-test",
+      "overrides": {
+        "occ:b": {"material": "6061", "massOverridden": false, "mass": null},
+        "occ:c": {"material": "5052", "massOverridden": true, "mass": 0.3}
+      },
+      "outerFaces": [{"key": "occ:a", "faceId": "F1"}],
+      "finFaces": [],
+      "finCount": 0,
+      "motor": {"motorId": "mot-1", "simfileId": "s-1", "aftOffset": 0, "refFace": null, "state": "launch"},
+      "railLength": 2.5,
+      "flight": {"inclination": 88, "heading": 10, "cpModel": "both"},
+      "hiddenKeys": ["occ:d"]
+    },
+    "recovery": {
+      "vehicle": {"m": 5.6699, "h_a": 914.4, "d_body": 0.1016, "l_body": 1.4224, "z0": null, "v0": null, "v_lat": 3.5, "v_lat_dir": 90},
+      "site": {"T_pad": 300, "p_pad": 95000, "lapse": 0.0065, "source": "isa", "station": "KNID", "profile": "standard", "month": 6},
+      "devices": [
+        {"name": "Drogue", "CdS": 0.3, "D0": 0.6, "m_c": 0.05, "j": 2, "n": 8, "Cx": 1.8,
+         "trigger": {"kind": "APOGEE", "value": 0}, "delay": 1.0, "k_eff": null, "v_rel": 10,
+         "measured": false, "catalog": null}
+      ],
+      "sweep": [
+        {"key": "Cx", "label": "Cx", "enabled": true, "min": 1.2, "max": 1.8, "unit": ""},
+        {"key": "CdS_body", "label": "Airframe", "enabled": true, "min": 999, "max": 999, "kind": "area", "unit": "m²"}
+      ],
+      "study": [
+        {"key": "CdS", "device": 0, "enabled": true, "mode": "range", "start": 0.2, "stop": 0.4, "points": 3, "values": null, "canopies": null, "pads": null}
+      ],
+      "sources": {"apogeeFromDesign": true, "massFromDesign": false, "lateralFromDesign": false},
+      "wind": {"kind": "constant", "speed": 5, "direction": 270},
+      "airframeBound": "broadside"
+    }
+  },
+  "expected": {
+    "flightDynamics": {
+      "outerFaces": [{"key": "occ:a", "faceId": "F1"}],
+      "finFaces": null,
+      "nFins": null,
+      "overrides": {"occ:a": 1.0, "occ:b": 0.54, "occ:c": 0.3, "occ:d": 0.5},
+      "motor": {"motorId": "mot-1", "simfileId": "s-1", "aftOffset": 0, "refFace": null, "state": "launch"},
+      "railLength": 2.5,
+      "inclination": 88,
+      "heading": 10,
+      "site": {"T_pad": null, "p_pad": null, "lapse": null},
+      "wind": {"kind": "constant", "speed": 5, "direction": 270}
+    },
+    "ork_devices": [
+      {"name": "Drogue", "CdS": 0.3, "D0": 0.6, "m_c": 0.05, "j": 2, "n": 8, "Cx": 1.8,
+       "trigger": {"kind": "APOGEE", "value": 0}, "delay": 1.0, "k_eff": null, "v_rel": 10}
+    ],
+    "recovery": {
+      "vehicle": {"m": 5.6699, "h_a": 914.4, "d_body": 0.1016, "l_body": 1.4224, "z0": null, "v0": null, "v_lat": 3.5, "v_lat_dir": 90},
+      "site": {"T_pad": null, "p_pad": null, "lapse": null},
+      "devices": [
+        {"name": "Drogue", "CdS": 0.3, "D0": 0.6, "m_c": 0.05, "j": 2, "n": 8, "Cx": 1.8,
+         "trigger": {"kind": "APOGEE", "value": 0}, "delay": 1.0, "k_eff": null, "v_rel": 10}
+      ],
+      "sweep": [
+        {"key": "Cx", "enabled": true, "low": 1.2, "high": 1.8},
+        {"key": "CdS_body", "enabled": true, "low": 0.0048643917993359785, "high": 0.17341900799999996}
+      ],
+      "study": [
+        {"key": "CdS", "device": 0, "enabled": true, "mode": "range", "start": 0.2, "stop": 0.4, "points": 3, "values": null, "canopies": null, "pads": null}
+      ],
+      "wind": {"kind": "constant", "speed": 5, "direction": 270}
+    }
+  }
+}

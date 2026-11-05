@@ -46,8 +46,10 @@ export type ReceiptDto = {
   id: string;
   fileName: string;
   size: number;
-  /** Our copy (/api/finance/receipts/…) or the document on CalLink. */
+  /** Our copy (/api/finance/receipts/…) once we hold the bytes, else the document on CalLink. */
   url: string;
+  /** Whether we hold the bytes (get_reimbursement_receipt can return them). */
+  stored: boolean;
 };
 
 export type ItemDto = {

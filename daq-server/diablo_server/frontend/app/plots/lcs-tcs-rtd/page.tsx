@@ -240,7 +240,7 @@ export default function LCS_TCS_RTDPage() {
 
   const loadChannelConfig = useCallback(() => {
     Promise.all([
-      fetch(`${getApiBaseUrl()}/api/config`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${getApiBaseUrl()}/api/config/running`).then((r) => (r.ok ? r.json() : null)),
       fetch(`${getApiBaseUrl()}/api/sensor-config`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]).then(([configRes, sensorRes]) => {
       const config = configRes?.config;
@@ -362,7 +362,7 @@ export default function LCS_TCS_RTDPage() {
         {/* ── TC (left column) ──────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 min-w-0 h-full">
           <div className="flex items-center gap-2 flex-shrink-0">
-            <div className="w-1.5 h-10 rounded-full bg-amber-500/90" />
+            <div className="h-2.5 w-2.5 flex-shrink-0 bg-amber-500" />
             <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               Thermocouples (K-type)
             </h2>
@@ -415,7 +415,7 @@ export default function LCS_TCS_RTDPage() {
         {/* ── RTD (middle column) ────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 min-w-0 h-full">
           <div className="flex items-center gap-2 flex-shrink-0">
-            <div className="w-1.5 h-10 rounded-full bg-emerald-500/90" />
+            <div className="h-2.5 w-2.5 flex-shrink-0 bg-emerald-500" />
             <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               RTDs (Pt1000)
             </h2>
@@ -464,7 +464,7 @@ export default function LCS_TCS_RTDPage() {
         {/* ── LC (right column) ─────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 min-w-0 h-full">
           <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="w-1.5 h-10 rounded-full bg-violet-500/90" />
+            <div className="h-2.5 w-2.5 flex-shrink-0 bg-violet-500" />
             <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               Load cells (LCS)
             </h2>

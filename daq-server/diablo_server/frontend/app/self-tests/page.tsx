@@ -123,7 +123,7 @@ export default function SelfTestsPage() {
     }, [ws, updateSensor, updateBoards]);
 
     useEffect(() => {
-        fetch(`${getApiBaseUrl()}/api/config`)
+        fetch(`${getApiBaseUrl()}/api/config/running`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[] }> } } | null) => {
                 const boards = data?.config?.boards;
@@ -153,7 +153,7 @@ export default function SelfTestsPage() {
     return (
         <main className="h-full bg-background text-text flex flex-col overflow-auto p-8 md:p-10">
             <div className="mb-8">
-                <h1 className="text-4xl font-bold text-text mb-2 tracking-tight">Self Test Dashboard</h1>
+                <h1 className="mb-2 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Self Test Dashboard</h1>
                 <p className="text-lg text-text-muted max-w-2xl">
                     Detailed breakdown of diagnostic self-test passes, fails, and sensor calibrations.
                 </p>

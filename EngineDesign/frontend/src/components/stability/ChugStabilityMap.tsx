@@ -12,6 +12,20 @@ interface Props {
   etaInjOverride?: number;
 }
 
+/** Round ticks (1/2/5 x 10^k) from `lo` up to the first one at or above `hi`. */
+function niceTicks(lo: number, hi: number, target = 4): number[] {
+  const span = hi - lo;
+  if (!Number.isFinite(span) || span <= 0) return [lo, lo + 1];
+  const raw = span / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+  const out: number[] = [];
+  for (let v = Math.floor(lo / step) * step; v < hi + step - 1e-9 * step; v += step) out.push(+v.toPrecision(12));
+  if (out[out.length - 1] < hi) out.push(+(out[out.length - 1] + step).toPrecision(12));
+  return out;
+}
+
 export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const boundary = data.chug.boundary_curve;
   const streams = data.chug.design_streams ?? [
@@ -41,14 +55,18 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const dp = data.chug.design_point;
   const system = dp != null && Number.isFinite(dp.eta) && Number.isFinite(dp.tau_theta_c);
   const gateY = dp?.gate_tau_theta_c;
-  const yMax = Math.max(
-    // The curve can run far above the design where the injector is stiff; cap the view at a few
-    // times the design so the design end of the chart stays readable.
-    ...(system
-      ? [Math.min(Math.max(...boundary.map(([, t]) => t), 1), 4 * Math.max(dp!.tau_theta_c, gateY ?? 0, 1)), dp!.tau_theta_c, gateY ?? 0]
-      : [...boundary.map(([, t]) => t), tauO, tauF]),
-    1,
-  ) * 1.12;
+  // The y range is set by the design and gate points, with room above them: the question the chart
+  // answers is how far the design sits below the boundary at its own stiffness. Where the injector
+  // is stiff the boundary climbs steeply out of that range (it is computed up to 20x the design's
+  // lag); it leaves through the top of the plot rather than being flattened along it. The old
+  // range (the curve, capped at 4x the design) ran the curve flat along the top for a third of
+  // the chart, which read as a boundary that stops rising.
+  const anchors = system
+    ? [dp!.tau_theta_c, gateY ?? 0]
+    : [tauO, tauF];
+  const yTop = Math.max(...anchors.filter((v) => Number.isFinite(v)), 0.1) * 2.4;
+  const yTicks = niceTicks(0, yTop);
+  const yMax = yTicks[yTicks.length - 1];
 
   const W = 300;
   const H = 220;
@@ -58,13 +76,35 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
 
   const toX = (eta: number) => pad.l + ((eta - X_MIN) / (X_MAX - X_MIN)) * plotW;
   const toY = (tau: number) => pad.t + plotH - (tau / yMax) * plotH;
+  const clipId = 'chug-map-clip';
 
-  const boundaryPts = boundary
-    .map(([eta, tau]) => `${toX(eta)},${toY(Math.min(tau, yMax))}`)
-    .join(' ');
+  // Drawn at its true height and clipped to the plot.
+  const boundaryPts = boundary.map(([eta, tau]) => `${toX(eta)},${toY(tau)}`).join(' ');
+  // Where the boundary leaves the top of the plot, for a small arrow saying it carries on.
+  const exitAt = (() => {
+    for (let i = 1; i < boundary.length; i++) {
+      const [e0, t0] = boundary[i - 1];
+      const [e1, t1] = boundary[i];
+      if (t0 <= yMax && t1 > yMax) return e0 + ((yMax - t0) / (t1 - t0)) * (e1 - e0);
+    }
+    return null;
+  })();
+  // The boundary is computed only where some lag up to its search limit goes unstable; at a
+  // stiffer injector there is no boundary to draw, and the design can sit out there.
+  const lastEta = boundary.length ? boundary[boundary.length - 1][0] : null;
+  const endsEarly = lastEta != null && lastEta < X_MAX - 0.02 * (X_MAX - X_MIN);
+  const beyondCurve = system && lastEta != null && dp!.eta > lastEta;
 
-  const yTicks = [0, yMax * 0.33, yMax * 0.66, yMax].map((v) => Math.round(v * 10) / 10);
   const xTicks = Array.from({ length: 4 }, (_, i) => X_MIN + ((X_MAX - X_MIN) * (i + 0.5)) / 4);
+
+  // The two markers sit on one vertical a few units apart; their labels used to print on top of
+  // each other. Close together, "gate" goes above its ring and "design" below its dot.
+  const designPy = system ? toY(dp!.tau_theta_c) : 0;
+  const gatePy = system && gateY != null && Number.isFinite(gateY) ? toY(gateY) : null;
+  const crowded = gatePy != null && Math.abs(gatePy - designPy) < 14;
+  const labelX = system ? toX(dp!.eta) + 9 : 0;
+  const labelAnchor: 'start' | 'end' = system && labelX > W - pad.r - 36 ? 'end' : 'start';
+  const lx = labelAnchor === 'end' ? toX(dp!.eta) - 9 : labelX;
 
   return (
     <VizCard
@@ -88,7 +128,7 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
               strokeDasharray="3 3"
             />
             <text x={pad.l - 6} y={toY(t) + 4} fill={MUTED} fontSize={9} textAnchor="end">
-              {t.toFixed(1)}
+              {Number.isInteger(t) ? t : t.toFixed(1)}
             </text>
           </g>
         ))}
@@ -125,27 +165,41 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
           τ / θ_c
         </text>
 
-        {/* marginal boundary */}
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={pad.l} y={pad.t} width={plotW} height={plotH} />
+          </clipPath>
+        </defs>
+
+        {/* marginal boundary, clipped to the plot */}
         {boundary.length > 1 && (
           <polyline
             points={boundaryPts}
             fill="none"
             stroke={UNSTABLE}
             strokeWidth={2.5}
+            clipPath={`url(#${clipId})`}
           />
+        )}
+        {exitAt != null && (
+          <g>
+            <path d={`M ${toX(exitAt) - 4} ${pad.t + 7} L ${toX(exitAt)} ${pad.t + 1} L ${toX(exitAt) + 4} ${pad.t + 7}`}
+                  fill="none" stroke={UNSTABLE} strokeWidth={1.5} />
+            <text x={toX(exitAt) + 7} y={pad.t + 9} fill={UNSTABLE} fontSize={8}>continues above</text>
+          </g>
         )}
 
         {system ? (
           <>
-            {gateY != null && Number.isFinite(gateY) && (
+            {gatePy != null && (
               <>
-                <line x1={toX(dp!.eta)} y1={toY(dp!.tau_theta_c)} x2={toX(dp!.eta)} y2={toY(gateY)} stroke="#e2e8f0" strokeDasharray="2 2" />
-                <circle cx={toX(dp!.eta)} cy={toY(gateY)} r={6} fill="none" stroke="#e2e8f0" strokeWidth={1.5} />
-                <text x={toX(dp!.eta) + 9} y={toY(gateY) + 4} fill="#e2e8f0" fontSize={9}>gate</text>
+                <line x1={toX(dp!.eta)} y1={designPy} x2={toX(dp!.eta)} y2={gatePy} stroke="#e2e8f0" strokeDasharray="2 2" />
+                <circle cx={toX(dp!.eta)} cy={gatePy} r={6} fill="none" stroke="#e2e8f0" strokeWidth={1.5} />
+                <text x={lx} y={crowded ? Math.min(gatePy, designPy) - 8 : gatePy + 4} fill="#e2e8f0" fontSize={9} textAnchor={labelAnchor}>gate</text>
               </>
             )}
-            <circle cx={toX(dp!.eta)} cy={toY(dp!.tau_theta_c)} r={6} fill="#e2e8f0" stroke="#0f172a" strokeWidth={1.5} />
-            <text x={toX(dp!.eta) + 9} y={toY(dp!.tau_theta_c) + 4} fill="#e2e8f0" fontSize={9}>design</text>
+            <circle cx={toX(dp!.eta)} cy={designPy} r={6} fill="#e2e8f0" stroke="#0f172a" strokeWidth={1.5} />
+            <text x={lx} y={crowded ? Math.max(gatePy!, designPy) + 14 : designPy + 4} fill="#e2e8f0" fontSize={9} textAnchor={labelAnchor}>design</text>
           </>
         ) : (
           <>
@@ -168,6 +222,12 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
         )}
       </div>
 
+      {endsEarly && (
+        <p className="text-xs text-[var(--color-text-secondary)] mb-1">
+          The boundary ends at η {lastEta!.toFixed(2)}: at a stiffer injector no lag up to 20× the design's makes the loop unstable.
+          {beyondCurve && <> The design, at η {dp!.eta.toFixed(2)}, is past it.</>}
+        </p>
+      )}
       <p className="text-xs text-[var(--color-text-secondary)]">
         {system ? <>mean η = {dp!.eta.toFixed(3)} (O {etaO.toFixed(2)}, F {etaF.toFixed(2)})</> : <>O η={etaO.toFixed(2)} F η={etaF.toFixed(2)}</>}
         {' · gain margin '}
