@@ -240,7 +240,7 @@ export default function CalibrationPage() {
 
   // Load full config once (physics params).
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: Record<string, any> } | null) => {
         const cfg = data?.config;

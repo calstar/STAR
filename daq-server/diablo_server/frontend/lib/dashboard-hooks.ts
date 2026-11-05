@@ -29,7 +29,7 @@ export function useActuatorsFromConfig(): ActuatorEntry[] {
   const [actuators, setActuators] = useState<ActuatorEntry[]>([]);
 
   const load = useCallback(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: { actuator_roles?: Record<string, any>; boards?: Record<string, any>; adc?: { internal_v?: number; absolute_5v_v?: number } } } | null) => {
         const config = data?.config;

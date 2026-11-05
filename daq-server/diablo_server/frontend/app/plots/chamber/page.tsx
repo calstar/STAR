@@ -75,7 +75,7 @@ export default function ChamberGraphsPage() {
     const [lcData, setLcData] = useState<SenseRowConfig[]>([]);
 
     const loadChannelConfig = useCallback(() => {
-      fetch(`${getApiBaseUrl()}/api/config`)
+      fetch(`${getApiBaseUrl()}/api/config/running`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data: any) => {
           const config = data?.config;

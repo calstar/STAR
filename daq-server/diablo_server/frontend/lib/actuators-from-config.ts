@@ -29,7 +29,7 @@ function entityFromName(name: string): string {
  */
 export async function fetchActuatorsFromConfig(): Promise<ActuatorFromConfig[]> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/api/config`);
+    const res = await fetch(`${getApiBaseUrl()}/api/config/running`);
     if (!res.ok) return [];
     const data = await res.json();
     const roles = data?.config?.actuator_roles ?? data?.actuator_roles;

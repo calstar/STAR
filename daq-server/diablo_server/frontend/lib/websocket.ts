@@ -203,7 +203,7 @@ export class WebSocketClient {
    *  name) resolve to the generic CH<n> keys the streams actually use. */
   private async refreshEntityAliases(): Promise<void> {
     try {
-      const cfgRes = await fetch(`${getApiBaseUrl()}/api/config`);
+      const cfgRes = await fetch(`${getApiBaseUrl()}/api/config/running`);
       if (cfgRes.ok) {
         const cfgData = await cfgRes.json();
         if (cfgData.config) buildAliasesFromConfig(cfgData.config);

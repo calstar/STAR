@@ -15,6 +15,7 @@ import { MessageType } from '../../shared/types.js';
 import { ServiceController, getSessionServiceMode } from './service-controller.js';
 import { loadSession, saveSession } from './session-state.js';
 import { deployActiveProfile } from './routes/config-profiles.js';
+import { getRunningConfigPath, setRunningConfigPath } from './routes/config.js';
 import { validateActiveProfile, ConfigIssuesError } from './config-validation.js';
 import { resetTareState, setRunDir } from './lc-tare.js';
 
@@ -133,10 +134,31 @@ class SessionManager {
         void this.stop(true); // expired while we were down
       } else {
         this.scheduleTimers();
+        // A recovered simulated run is still reading the sim overlay.
+        this.followPipelineConfig();
         // The spawned simulator (mock mode) dies with the backend — re-launch it
         // for a recovered simulated run. (systemd units survive; resume is a no-op.)
         void this.controller.resume(this.simulated);
       }
+    }
+  }
+
+  /**
+   * Make the backend read the config this run's pipeline reads (routes/config.ts
+   * getRunningConfigPath), and when that moves, rebuild what is derived from it and tell open
+   * browsers to refetch. Without it a simulated run showed the profile's stand, not the sim's.
+   */
+  private followPipelineConfig(): void {
+    // this.simulated is false whenever no run is active, so this is null between runs.
+    const path = this.controller.pipelineConfigPath(this.simulated);
+    const before = getRunningConfigPath();
+    setRunningConfigPath(path);
+    if (getRunningConfigPath() === before) return;
+    console.log(`[Session] running config -> ${getRunningConfigPath()}`);
+    try {
+      this.onConfigDeployed();
+    } catch (e) {
+      console.warn('Config-deployed handler threw:', e);
     }
   }
 
@@ -312,6 +334,8 @@ class SessionManager {
       }
     }
     await this.controller.start(this.dbDir, this.simulated);
+    // After start: a simulated run's sim_config.toml is (re)generated inside it.
+    this.followPipelineConfig();
     this.onSessionStarted();
     this.active = true;
     this.scheduleTimers();
@@ -353,6 +377,7 @@ class SessionManager {
     this.durationMs = null;
     this.keepData = false;
     this.simulated = false;
+    this.followPipelineConfig();
     this.persist();
     this.emit();
     // Forget the tare: there is no run to record against any more, and a held offset would

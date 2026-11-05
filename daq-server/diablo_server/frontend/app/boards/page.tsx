@@ -51,7 +51,7 @@ export default function BoardsPage() {
   const [openLogsBoardId, setOpenLogsBoardId] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; enable_serial_printing?: number | boolean }> } } | null) => {
         const boards = data?.config?.boards;

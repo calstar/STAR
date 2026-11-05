@@ -440,7 +440,7 @@ export default function SensorInfoPage() {
   >([]);
 
   const loadChannelConfig = useCallback(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
         const config = data?.config;

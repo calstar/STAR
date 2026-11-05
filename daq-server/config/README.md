@@ -49,6 +49,15 @@ has no reservation yet and will pull a dynamic-pool address — read its MAC fro
 the lease table, fill it in here, and run `deploy/dhcp/reload_dhcp.sh`. The IP is
 handed out unchanged, so filling in `mac` never renumbers a board.
 
+### Running config vs the editor's draft
+
+`GET /api/config` is the config editor's draft (the active profile). Everything that *displays*
+the stand reads `GET /api/config/running`: the file the pipeline is reading right now. That is
+`config.toml`, except in a simulated run, where the C++ services read the sim overlay built from
+`config_base.toml` (`sim_config.toml`; `start_tmux_dev.sh` with `USE_SIM=1` passes it to the
+backend as `RUNNING_CONFIG_PATH`, a simulated session sets it for the run). The backend's own
+`readConfig()` defaults to the same file. Writes and deploys still target `config.toml`.
+
 ### Ball valve boards
 
 A motorized ball valve board is `type = "BALL_VALVE"` (`[boards.ball_valve_board]`, board_id 71,
