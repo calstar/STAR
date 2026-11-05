@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "board.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -78,7 +78,6 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_SDMMC1_MMC_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_SPI3_Init(void);
@@ -133,7 +132,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
-  MX_SDMMC1_MMC_Init();
   MX_SPI1_Init();
   MX_SPI2_Init();
   MX_SPI3_Init();
@@ -377,7 +375,7 @@ static void MX_I2C4_Init(void)
   * @param None
   * @retval None
   */
-static void MX_SDMMC1_MMC_Init(void)
+void MX_SDMMC1_MMC_Init(void)
 {
 
   /* USER CODE BEGIN SDMMC1_Init 0 */
@@ -1121,7 +1119,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  /* Inside board_soft_init() (an init that talks to an external chip, e.g.
+   * the eMMC) a failure is recorded and returned, not fatal. */
+  if (board_error_is_soft())
+  {
+    return;
+  }
+  /* Fatal: LED2 on (active low) so a halted board is visible, then stop.
+   * Pyro outputs keep their safe state: nothing here drives them. */
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
   __disable_irq();
   while (1)
   {
