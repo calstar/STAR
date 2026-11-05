@@ -20,9 +20,14 @@
 extern "C" {
 #endif
 
+/* GNSS probe diagnostics: PASS carries the baud rate that worked. */
+#define BOARD_GNSS_DIAG_ANTENNA_SHORT 1 /* PD10 low: antenna switch fault */
+#define BOARD_GNSS_LISTEN_MS 1500U      /* > one 1 Hz NMEA period */
+
 typedef struct {
     /* Pranay's SPI identity checks, wired to board_spi. */
     self_test_devices_t devices;
+    bool gnss_powered;
 } board_bringup_t;
 
 /* Release resets / power rails in order and enable each ready device. */

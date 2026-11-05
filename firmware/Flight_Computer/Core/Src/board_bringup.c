@@ -3,7 +3,10 @@
 #include "board.h"
 #include "board_spi.h"
 #include "cmsis_os2.h"
+#include "gnss_frame.h"
 #include "main.h"
+
+extern UART_HandleTypeDef huart9;
 
 static void enable(board_bringup_t* b, uint16_t device_id) {
     b->devices.configured_mask |= SELF_TEST_DEVICE_ENABLED(device_id);
@@ -39,10 +42,68 @@ static bool ms5611_reset(void) {
     return st == BOARD_SPI_OK;
 }
 
+static self_test_reply_t reply(self_test_result_t result, int32_t diag) {
+    self_test_reply_t r = {result, diag};
+    return r;
+}
+
+static bool uart9_set_baud(uint32_t baud) {
+    if (huart9.Init.BaudRate == baud) {
+        return true;
+    }
+    huart9.Init.BaudRate = baud;
+    return HAL_UART_Init(&huart9) == HAL_OK;
+}
+
+/*
+ * MAX-M10S on UART9 (PD14 RX <- GPS TXD, PD15 TX -> GPS RXD; schematic p.10).
+ * Out of the box it sends NMEA at 1 Hz, so listening is enough: PASS on one
+ * complete frame with a valid checksum (NMEA or UBX). No fix is required
+ * (#137). The startup baud is still open (38400 per the M10 defaults and the
+ * .ioc; 9600 per the R03 datasheet), so attempts alternate: 1 and 3 listen at
+ * 38400, 2 at 9600. Nothing is sent to the module.
+ */
+static self_test_reply_t gnss_probe(board_bringup_t* b, uint8_t attempt,
+                                    uint32_t budget_ms) {
+    if (!b->gnss_powered) {
+        return reply(SELF_TEST_NOT_CONFIGURED, 0);
+    }
+    uint32_t baud = (attempt % 2U == 0U) ? 9600U : 38400U;
+    if (!uart9_set_baud(baud)) {
+        return reply(SELF_TEST_FAIL, 0);
+    }
+    uint32_t listen =
+        budget_ms < BOARD_GNSS_LISTEN_MS ? budget_ms : BOARD_GNSS_LISTEN_MS;
+    uint32_t deadline = board_now_ms() + listen;
+    gnss_frame_parser_t parser;
+    gnss_frame_init(&parser);
+    __HAL_UART_CLEAR_FLAG(&huart9, UART_CLEAR_OREF | UART_CLEAR_FEF |
+                                       UART_CLEAR_NEF | UART_CLEAR_PEF);
+    while (!board_deadline_passed(deadline)) {
+        uint32_t left = board_ms_left(deadline);
+        uint8_t byte;
+        if (HAL_UART_Receive(&huart9, &byte, 1, left < 20U ? left : 20U) ==
+            HAL_OK) {
+            if (gnss_frame_feed(&parser, byte) != GNSS_FRAME_NONE) {
+                return reply(SELF_TEST_PASS, (int32_t)baud);
+            }
+        } else {
+            /* an overrun stalls reception until cleared */
+            __HAL_UART_CLEAR_FLAG(&huart9, UART_CLEAR_OREF | UART_CLEAR_FEF |
+                                               UART_CLEAR_NEF | UART_CLEAR_PEF);
+        }
+    }
+    bool antenna_short = HAL_GPIO_ReadPin(GPS_ANT_STATUS_GPIO_Port,
+                                          GPS_ANT_STATUS_Pin) == GPIO_PIN_RESET;
+    return reply(SELF_TEST_TIMEOUT,
+                 antenna_short ? BOARD_GNSS_DIAG_ANTENNA_SHORT : 0);
+}
+
 void board_bringup_power_up(board_bringup_t* b) {
     b->devices.exchange = board_spi_self_test_exchange;
     b->devices.io_context = NULL;
     b->devices.configured_mask = 0;
+    b->gnss_powered = false;
     if (!board_spi_init()) {
         return; /* no bus locks: no SPI device is enabled */
     }
@@ -90,6 +151,16 @@ void board_bringup_power_up(board_bringup_t* b) {
         osDelay(1);
     }
     enable(b, SELF_TEST_DEVICE_RADIO);
+
+    /* MAX-M10S (MD1), GNSS: its 3V3A rail comes from the 3V6 buck (U15) and
+     * LP5907 LDO (U16), off until REG_3V6_EN (PE11) goes high (#137 power
+     * tree). GPS_RST (PD11, open drain) is already released by MX_GPIO_Init.
+     * 10 ms covers both regulators' start-up; the module then needs up to a
+     * second before its first sentence, which the probe's listen window
+     * covers. */
+    HAL_GPIO_WritePin(REG_3V6_EN_GPIO_Port, REG_3V6_EN_Pin, GPIO_PIN_SET);
+    osDelay(10);
+    b->gnss_powered = true;
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
@@ -101,6 +172,8 @@ self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
         return r;
     }
     switch (device_id) {
+        case SELF_TEST_DEVICE_GNSS:
+            return gnss_probe(b, attempt, budget_ms);
         default:
             /* SPI identity checks (IMU, high-g, baro, Ethernet, radio). */
             return self_test_devices_probe(&b->devices, device_id, attempt,
