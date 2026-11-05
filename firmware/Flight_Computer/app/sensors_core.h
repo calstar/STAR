@@ -4,7 +4,7 @@
 /*
  * The SPI3 sensors (IMU, high-g, barometer) as one state machine. Portable:
  * no HAL, no RTOS; time and events are passed in, so the same code runs in
- * sensors_task on the board and in flight_test on a laptop.
+ * sensors_task on the board and in the host tests on a laptop.
  *
  *   IMU     read on its data-ready edge (EV_IMU), stamped with the edge time
  *   high-g  read on its data-ready edge (EV_HIGHG); its DRDY is a level, so

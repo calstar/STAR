@@ -3,7 +3,7 @@
 
 /*
  * MAX-M10S on UART9 as one state machine. Portable: bytes, baud changes and
- * time are passed in / out, so gnss_task and flight_test run the same code.
+ * time are passed in / out, so gnss_task and the host tests run the same code.
  *
  *   DETECT  listen GNSS_LISTEN_US at each of 9600 (the module's default,
  *           data sheet p.13), 38400, 115200 for one valid NMEA/UBX frame
