@@ -3,7 +3,8 @@
 #include <string.h>
 
 /* PA0 = VDD * 10k / (22k + 10k) = VDD * 0.3125, buffered, 16-bit ADC with a
- * 3.32 V reference (DEVICE_CHECKS.md on pranay/self-test-confirmed-requirements, #137).
+ * 3.32 V reference (DEVICE_CHECKS.md on
+ * pranay/self-test-confirmed-requirements, #137).
  * mV = counts / 65535 * 3320 / 0.3125 = counts * 10624 / 65535.
  * 65535 * 10624 fits in uint32_t, so this is exact integer math. */
 #define IDLE_ADC_FULL_SCALE 65535U
@@ -14,8 +15,9 @@ uint16_t idle_counts_to_mv(uint32_t raw_counts) {
         return 0U;
     }
     /* Round to nearest. */
-    uint32_t mv = (raw_counts * IDLE_MV_AT_FULL_SCALE + IDLE_ADC_FULL_SCALE / 2U) /
-                  IDLE_ADC_FULL_SCALE;
+    uint32_t mv =
+        (raw_counts * IDLE_MV_AT_FULL_SCALE + IDLE_ADC_FULL_SCALE / 2U) /
+        IDLE_ADC_FULL_SCALE;
     return (uint16_t)mv;
 }
 
@@ -94,8 +96,10 @@ static idle_battery_state_t band_fresh(const idle_config_t* c, uint16_t mv) {
 static idle_battery_state_t band_next(const idle_config_t* c,
                                       idle_battery_state_t previous,
                                       uint16_t mv) {
-    uint32_t warn_recover = (uint32_t)c->battery_warn_mv + c->battery_hysteresis_mv;
-    uint32_t fail_recover = (uint32_t)c->battery_fail_mv + c->battery_hysteresis_mv;
+    uint32_t warn_recover =
+        (uint32_t)c->battery_warn_mv + c->battery_hysteresis_mv;
+    uint32_t fail_recover =
+        (uint32_t)c->battery_fail_mv + c->battery_hysteresis_mv;
     switch (previous) {
         case IDLE_BATT_WARN:
             if (mv < c->battery_fail_mv) {
@@ -155,7 +159,8 @@ static void send_heartbeat(idle_t* idle, uint32_t now_ms) {
     }
 }
 
-/* Signed distance from a to b in modular milliseconds (valid for |gap| < 2^31). */
+/* Signed distance from a to b in modular milliseconds (valid for |gap| < 2^31).
+ */
 static int32_t ms_until(uint32_t now_ms, uint32_t target_ms) {
     return (int32_t)(target_ms - now_ms);
 }

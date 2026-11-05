@@ -13,7 +13,9 @@
     } while (0)
 
 /* Counts that convert to an exact-ish voltage: mv * 65535 / 10624. */
-static uint32_t counts_for_mv(uint32_t mv) { return mv * 65535U / 10624U + 1U; }
+static uint32_t counts_for_mv(uint32_t mv) {
+    return mv * 65535U / 10624U + 1U;
+}
 
 typedef struct {
     self_test_battery_t battery;
@@ -85,8 +87,9 @@ static idle_config_t config(void) {
 }
 
 static void set_mv(fake_t* f, uint32_t mv) {
-    f->battery = (self_test_battery_t){
-        .reply = {SELF_TEST_PASS, 0}, .valid = true, .raw_counts = counts_for_mv(mv)};
+    f->battery = (self_test_battery_t){.reply = {SELF_TEST_PASS, 0},
+                                       .valid = true,
+                                       .raw_counts = counts_for_mv(mv)};
 }
 
 static void setup(idle_t* idle, fake_t* f, uint32_t now) {
@@ -154,7 +157,8 @@ static void test_wake_before_enter_is_error(void) {
     f.send_reply.result = SELF_TEST_PASS;
     idle_config_t c = config();
     CHECK(idle_init(&idle, &c, &port, &f));
-    /* Uptime past 2^31 ms: an unset schedule must not mean "sleep for weeks". */
+    /* Uptime past 2^31 ms: an unset schedule must not mean "sleep for weeks".
+     */
     idle_result_t r = idle_on_wake(&idle, 3000000000U);
     CHECK(r.event == IDLE_EVENT_ERROR);
     CHECK(f.send_calls == 0 && f.poll_calls == 0);
@@ -324,7 +328,7 @@ static void test_send_failure_counted_and_sleep_continues(void) {
     idle_result_t r = idle_on_wake(&idle, now);
     CHECK(r.event == IDLE_EVENT_SLEEP); /* never stuck awake retrying */
     CHECK(r.sleep_s == 10);
-    CHECK(f.send_calls == 1);           /* no retry burst */
+    CHECK(f.send_calls == 1); /* no retry burst */
 
     now += 10000;
     f.send_reply.result = SELF_TEST_FAIL;

@@ -43,7 +43,7 @@ typedef enum {
 
 typedef struct {
     idle_event_t event;
-    uint32_t sleep_s; /* valid for IDLE_EVENT_SLEEP; at least 1 */
+    uint32_t sleep_s;    /* valid for IDLE_EVENT_SLEEP; at least 1 */
     bool heartbeat_sent; /* a heartbeat was attempted on this wake */
 } idle_result_t;
 
@@ -52,7 +52,7 @@ typedef struct {
     idle_config_t config;
     idle_port_t port;
     void* context;
-    idle_heartbeat_t last; /* most recent heartbeat contents */
+    idle_heartbeat_t last;             /* most recent heartbeat contents */
     idle_battery_state_t battery_band; /* OK/WARN/FAIL memory for hysteresis */
     uint32_t next_heartbeat_ms;
     bool initialized;
