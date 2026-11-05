@@ -92,7 +92,7 @@ OK/WARN on every heartbeat.
 From the repository root, with CMake 3.16+ and a C99 compiler:
 
 ```sh
-cmake -S firmware/tests/idle -B /tmp/star-idle -DIDLE_SANITIZERS=ON
+cmake -S firmware/Flight_Computer/tests/idle -B /tmp/star-idle -DIDLE_SANITIZERS=ON
 cmake --build /tmp/star-idle
 ctest --test-dir /tmp/star-idle --output-on-failure
 ```
