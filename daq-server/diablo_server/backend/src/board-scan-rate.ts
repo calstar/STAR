@@ -39,6 +39,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
   if (/^LC\d+(_Cal)?\.CH/.test(entity)) return 'lc';
   if (/^ACT\d+(_Cal)?\.CH/.test(entity)) return 'act';
   if (/^ENC\d+(_Cal)?\.CH/.test(entity)) return 'enc';
+  if (/^BV\d+(_Cal)?\.CH/.test(entity)) return 'bv';
   return null;
 }
 
@@ -50,7 +51,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
 export function isPrimaryPhysicalStream(entity: string, component: string): boolean {
   if (/^ENV\d+$/.test(entity)) return component === 'temperature_c';
   if (component === 'raw_adc_counts') {
-    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH/.test(entity);
+    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH|^BV\d+\.CH/.test(entity);
   }
   if (component === 'raw_resistance_counts') {
     return /^RTD\d+(_Cal)?\.CH/.test(entity);

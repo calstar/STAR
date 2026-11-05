@@ -761,7 +761,10 @@ static void updatePWM() {
 }
 
 //-----------------------------------------------------------------------------
-// Current-sense: 1-based (match Actuator_Testing), send to server only
+// Current-sense: 1-based (match Actuator_Testing), send to server only.
+// Raw 12-bit ADC counts, which is what daq_bridge publishes as raw_adc_counts
+// and calibration_service converts (counts / 4095 * 3.3). This used to send
+// float volts as bits, which the server read as a ~1e9 count.
 //-----------------------------------------------------------------------------
 static void readCurrentSensePinsAndSend() {
     daq::SensorDataChunkCollection chunk(millis(), NUM_SENSORS);
@@ -769,11 +772,8 @@ static void readCurrentSensePinsAndSend() {
         int pin = getCurrentSensePin(actuator_id);
         if (pin < 0)
             continue;
-        int adcValue = analogRead(pin);
-        float voltage = (static_cast<float>(adcValue) / 4095.0f) * 3.3f;
-        uint32_t voltage_bits;
-        memcpy(&voltage_bits, &voltage, sizeof(float));
-        chunk.add_datapoint(actuator_id, voltage_bits);
+        chunk.add_datapoint(actuator_id,
+                            static_cast<uint32_t>(analogRead(pin)));
     }
     if (chunk.empty())
         return;

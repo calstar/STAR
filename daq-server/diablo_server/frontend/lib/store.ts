@@ -32,6 +32,7 @@ import {
   BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
+import { ballValveBoardIds } from './config-validation';
 import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -162,6 +163,9 @@ export function buildAliasesFromConfig(config: any): void {
   const rtdComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const lcComponents = ['force_kg', 'force_kg_tared', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
+  // Ball valve boards stream position, not current, under their own BV* entities.
+  const bvRawComponents = ['raw_adc_counts'];
+  const bvCalComponents = ['position_pct', 'raw_adc', 'cal_status'];
   const actCmdComponents = ['actuator_state_commanded'];
 
   // Helper: add aliases for a sensor role with multiple prefixes and components
@@ -244,8 +248,11 @@ export function buildAliasesFromConfig(config: any): void {
   // (HP PT board reads its own [sensor_roles_<boardKey>] section in the generic loop above —
   // no special sensor_roles_pt2 handling needed; prefix comes from board_id % 10.)
 
-  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3
+  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3. A role on a BALL_VALVE board lives under
+  // BV<n>.CH<m> / BV<n>_Cal.CH<m> / BV_CMD.B<n>.CH<m> instead (its own Elodin namespace), but keeps
+  // the same ACT.{Role} / ACT_Cal.{Role} names here so every actuator display reads it unchanged.
   const actRoles = config.actuator_roles as Record<string, any> | undefined;
+  const bvBoardIds = ballValveBoardIds(config);
   if (actRoles && typeof actRoles === 'object') {
     for (const [name, value] of Object.entries(actRoles)) {
       const arr = Array.isArray(value) ? value : [];
@@ -257,6 +264,14 @@ export function buildAliasesFromConfig(config: any): void {
       if (!isFinite(localCh) || localCh < 1) continue;
       const entityName = name.replace(/\s+/g, '_');
       const roleEntity = `ACT.${entityName}`;
+      if (bvBoardIds.has(boardId)) {
+        roleToCmdEntity[roleEntity] = `BV_CMD.B${boardNumber}.CH${localCh}`;
+        for (const comp of bvRawComponents)
+          addAlias(`ACT.${entityName}.${comp}`, `BV${boardNumber}.CH${localCh}.${comp}`);
+        for (const comp of bvCalComponents)
+          addAlias(`ACT_Cal.${entityName}.${comp}`, `BV${boardNumber}_Cal.CH${localCh}.${comp}`);
+        continue;
+      }
       roleToCmdEntity[roleEntity] = `ACT_CMD.B${boardNumber}.CH${localCh}`;
       for (const comp of actComponents) {
         addAlias(`ACT${boardNumber}.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);

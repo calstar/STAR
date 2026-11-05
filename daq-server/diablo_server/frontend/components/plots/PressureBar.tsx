@@ -10,6 +10,9 @@ interface PressureBarProps {
   color?: string;
   unit?: string;
   showLabels?: boolean; // Show NOP/MEOP labels on this bar (default true)
+  /** Draw the NOP/MEOP lines at all (default true). Off hides the lines AND their numbers;
+   *  the edge and readout still turn amber past NOP and red past MEOP. */
+  showLimits?: boolean;
   compact?: boolean;    // Reduced font sizes for use in tight spaces (e.g. TopBar)
 }
 
@@ -126,6 +129,7 @@ function PressureBar({
   color,
   unit = 'psig',
   showLabels = true,
+  showLimits = true,
   compact = false,
 }: PressureBarProps) {
   const { noData, sane, nopPct, meopPct, displayHeight, barColor } =
@@ -137,7 +141,7 @@ function PressureBar({
   const readout = noData
     ? NO_DATA_COLOR
     : level === 'meop' ? '#f87171' : level === 'nop' ? '#e5b53a' : 'var(--ink)';
-  const gutter = showLabels ? GUTTER : 0;
+  const gutter = showLabels && showLimits ? GUTTER : 0;
 
   // A rule across the capsule, and its number just outside the capsule's right
   // edge, centred on the rule.
@@ -208,8 +212,8 @@ function PressureBar({
                 />
               )}
             </div>
-            {limit(meopPct, meop, '#ef4444')}
-            {limit(nopPct, nop, '#e5b53a')}
+            {showLimits && limit(meopPct, meop, '#ef4444')}
+            {showLimits && limit(nopPct, nop, '#e5b53a')}
           </div>
         </div>
       </div>
