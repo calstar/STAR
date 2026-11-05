@@ -21,4 +21,6 @@ bool board_soft_init(void (*init)(void)) {
     return !soft_failed;
 }
 
-uint32_t board_now_ms(void) { return HAL_GetTick(); }
+uint32_t board_now_ms(void) {
+    return HAL_GetTick();
+}
