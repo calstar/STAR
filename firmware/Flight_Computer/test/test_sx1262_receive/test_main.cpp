@@ -220,6 +220,21 @@ static void test_start_rx_continuous_fails_when_busy_never_clears(void) {
     TEST_ASSERT_EQUAL_UINT(0, chip.transfers());
 }
 
+static void test_damaged_packets_are_counted(void) {
+    Sx1262 radio(chip);
+    uint8_t buf[16];
+    uint8_t len = 0;
+    chip.set_irq(kIrqCrcErr);
+    TEST_ASSERT_EQUAL(RadioStatus::NoData, radio.receive(buf, sizeof buf, len));
+    chip.set_irq(kIrqHeaderErr);
+    TEST_ASSERT_EQUAL(RadioStatus::NoData, radio.receive(buf, sizeof buf, len));
+    TEST_ASSERT_EQUAL_UINT32(2, radio.crc_errors());
+    // A good packet does not count.
+    chip.packet_arrives(kFrame, sizeof kFrame, 0);
+    TEST_ASSERT_EQUAL(RadioStatus::Ok, radio.receive(buf, sizeof buf, len));
+    TEST_ASSERT_EQUAL_UINT32(2, radio.crc_errors());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_no_flags_returns_no_data);
@@ -240,5 +255,6 @@ int main(void) {
     RUN_TEST(test_bad_status_while_reading_a_packet_reports_not_found);
     RUN_TEST(test_start_rx_continuous_sends_setrx_ffffff);
     RUN_TEST(test_start_rx_continuous_fails_when_busy_never_clears);
+    RUN_TEST(test_damaged_packets_are_counted);
     return UNITY_END();
 }

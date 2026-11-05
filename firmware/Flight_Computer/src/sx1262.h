@@ -57,6 +57,13 @@ public:
     // one a working chip can send (a missing chip reads 0x00 or 0xFF).
     RadioStatus receive(uint8_t* buf, uint8_t max_len, uint8_t& len);
 
+    // Packets the radio received but rejected (LoRa header or CRC error).
+    // receive() reports them as NoData; this count makes a bad antenna or
+    // too much range visible in telemetry. Needs LoRa CRC on at start-up.
+    uint32_t crc_errors() const {
+        return crc_errors_;
+    }
+
 private:
     // Wait for BUSY to go low, then do one SPI exchange.
     bool command(const uint8_t* tx, uint8_t* rx, uint16_t n);
@@ -65,6 +72,7 @@ private:
     bool clear_irq(uint16_t mask);
 
     SpiBus& bus_;
+    uint32_t crc_errors_ = 0;
 };
 
 }  // namespace radio_link

@@ -60,6 +60,7 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
 
     // A packet the radio itself flagged as damaged: throw it away.
     if ((irq & (kIrqHeaderErr | kIrqCrcErr)) != 0) {
+        crc_errors_++;
         return clear_irq(kPacketFlags) ? RadioStatus::NoData
                                        : RadioStatus::ErrNotFound;
     }
