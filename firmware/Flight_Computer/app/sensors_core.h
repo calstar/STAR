@@ -35,10 +35,7 @@ extern "C" {
 #define SENSORS_RETRY_US 1000000U
 #define SENSORS_MAX_ERRORS 3U
 
-typedef struct {
-    void (*record)(void* ctx, uint8_t type, const void* data, uint8_t len);
-    void* ctx;
-} sensors_sink_t;
+typedef record_sink_t sensors_sink_t;
 
 typedef struct {
     bool ok;

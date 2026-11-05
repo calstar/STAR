@@ -7,6 +7,7 @@
  *
  *   task       priority          owns     woken by
  *   sensors    Realtime          SPI3     IMU/high-g DRDY EXTI, deadlines
+ *   gnss       Normal            UART9    received bytes, deadlines
  *   emmc       Low (its own)     SDMMC1   records waiting (emmc_stm32.c)
  */
 

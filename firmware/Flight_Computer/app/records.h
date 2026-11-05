@@ -25,6 +25,13 @@ enum {
     REC_EVENT = 0x15,
 };
 
+/* Where a task core hands its records (eMMC log on the board, a list in
+ * tests). Called from task context only. */
+typedef struct {
+    void (*record)(void* ctx, uint8_t type, const void* data, uint8_t len);
+    void* ctx;
+} record_sink_t;
+
 typedef struct __attribute__((packed)) {
     uint32_t t_us;
     int16_t temp;     /* ISM330DHCX raw: degC = 25 + temp / 256 */
@@ -43,7 +50,20 @@ typedef struct __attribute__((packed)) {
     int32_t pressure_pa;
 } rec_baro_t;
 
+typedef struct __attribute__((packed)) {
+    uint32_t t_us;   /* arrival of the NAV-PVT frame (UART9 RX) */
+    uint32_t pps_us; /* latest GPS TIMEPULSE edge before it (0: none yet) */
+    uint32_t itow_ms;
+    int32_t lat_e7, lon_e7; /* 1e-7 deg */
+    int32_t hmsl_mm;
+    int32_t vel_n_mms, vel_e_mms, vel_d_mms;
+    uint32_t hacc_mm, vacc_mm;
+    uint16_t pdop_e2;
+    uint8_t fix_type, num_sv, flags;
+} rec_gnss_t;
+
 _Static_assert(sizeof(rec_imu_t) == 18, "rec_imu_t layout");
+_Static_assert(sizeof(rec_gnss_t) == 49, "rec_gnss_t layout");
 _Static_assert(sizeof(rec_highg_t) == 7, "rec_highg_t layout");
 _Static_assert(sizeof(rec_baro_t) == 12, "rec_baro_t layout");
 
