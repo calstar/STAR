@@ -370,15 +370,30 @@ self_test_battery_t board_bringup_read_battery(void* context, uint32_t now_ms,
         battery.reply = reply(SELF_TEST_NOT_CONFIGURED, 0);
         return battery;
     }
-    if (!board_adc_read(BOARD_ADC_VBAT, &counts, budget_ms)) {
-        battery.reply = reply(SELF_TEST_FAIL, 0);
-        return battery;
+    /* Average 16 conversions (~0.1 ms each at 387.5 cycles): the 16-bit
+     * reading of a 2 V node carries a few counts of noise. Each read gets
+     * the remaining budget, so the whole batch stays inside budget_ms. */
+    uint32_t start = board_now_ms(), sum = 0;
+    for (unsigned i = 0; i < 16U; ++i) {
+        uint32_t used = board_now_ms() - start;
+        if (used >= budget_ms ||
+            !board_adc_read(BOARD_ADC_VBAT, &counts, budget_ms - used)) {
+            battery.reply = reply(SELF_TEST_FAIL, 0);
+            return battery;
+        }
+        sum += counts;
     }
     battery.reply = reply(SELF_TEST_PASS, 0);
     battery.valid = true;
-    battery.raw_counts = counts;
+    battery.raw_counts = (sum + 8U) / 16U;
     battery.sampled_at_ms = now_ms;
     return battery;
+}
+
+bool board_bringup_on_usb(void) {
+    /* TPS2121 ST, pulled up by R65: HIGH = IN1 (battery), LOW = IN2 (USB);
+     * schematic p.12, TPS2121 datasheet p.21. */
+    return HAL_GPIO_ReadPin(SW_ST_GPIO_Port, SW_ST_Pin) == GPIO_PIN_RESET;
 }
 
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,

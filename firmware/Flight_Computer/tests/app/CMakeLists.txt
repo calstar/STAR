@@ -12,6 +12,8 @@ set(FAKES ${ROOT}/tests/fakes)
 add_library(star_app STATIC
     ${ROOT}/app/sensors_core.c
     ${ROOT}/app/gnss_core.c
+    ${ROOT}/app/battery.c
+    ${ROOT}/app/boot_report.c
     ${ROOT}/chips/ubx.c
     ${ROOT}/Core/Src/gnss_frame.c
     ${FAKES}/fake_gnss.c
@@ -22,7 +24,7 @@ add_library(star_app STATIC
     ${FAKES}/fake_baro.c)
 target_include_directories(star_app PUBLIC ${ROOT}/app ${ROOT}/chips ${ROOT}/Core/Inc ${FAKES})
 
-set(TESTS test_sensors_core test_gnss_core)
+set(TESTS test_sensors_core test_gnss_core test_boot_report)
 foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} PRIVATE star_app)

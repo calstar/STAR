@@ -51,10 +51,15 @@ typedef struct {
 /* Release resets / power rails in order and enable each ready device. */
 void board_bringup_power_up(board_bringup_t* bringup);
 
-/* self_test_port_t.read_battery: raw PA0 counts (VDD after the ORing,
- * x 0.3125). Conversion and thresholds are the battery adapter's (#137). */
+/* self_test_port_t.read_battery: PA0 counts, the mean of 16 conversions
+ * (VDD after the ORing, x 0.3125). Conversion and thresholds: app/battery.h.
+ */
 self_test_battery_t board_bringup_read_battery(void* context, uint32_t now_ms,
                                                uint32_t budget_ms);
+
+/* SW_ST (PE10): true when the TPS2121 runs the board from USB, so PA0 reads
+ * USB_5V, not the pack. */
+bool board_bringup_on_usb(void);
 
 /* self_test_port_t.probe with a board_bringup_t context. */
 self_test_reply_t board_bringup_probe(void* context, uint16_t device_id,
