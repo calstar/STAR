@@ -359,6 +359,23 @@ describe('ball valve boards', () => {
     expect(messages(validateConfigForRun(cleanConfig(), cleanCsv()))).not.toMatch(/NO\/NC/);
   });
 
+  it('takes two valves on one board, one per active connector', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.ball_valve_board.active_connectors = [1, 2];
+    cfg.actuator_roles['Second Ball Valve'] = ['NC', 2, 71];
+    csv.actuators += '\nSecond Ball Valve,CLOSE,CLOSE,OPEN';
+    csv.delays += '\nSecond Ball Valve,0,0,0';
+    expect(validateConfigForRun(cfg, csv)).toEqual([]);
+  });
+
+  it('refuses a ball valve role on a connector the board does not list', () => {
+    const { cfg, csv } = withValve(['NC', 2, 71]);
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/active_connectors \[1\]/);
+  });
+
   it('does not judge a ball valve board by the sensor-role map', () => {
     const { cfg, csv } = withValve(['NC', 1, 71]);
     cfg.boards.ball_valve_board.active_connectors = [];

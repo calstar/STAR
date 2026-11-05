@@ -242,10 +242,26 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
   // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would
   // close it. The C++ forces pass-through anyway; this says so where it can be fixed. Nor is it a
   // PWM output: a 4th element would hand it to the controller and skip it in the fire state.
+  // Nor can a role name a valve the board does not have: active_connectors is the only statement
+  // of which valves exist, and a channel outside it has no position to show and no command table.
   const bvIds = ballValveBoardIds(config);
   if (bvIds.size > 0) {
+    const bvConnectors = new Map<number, number[]>();
+    for (const b of Object.values(boards)) {
+      if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE) continue;
+      const id = Number(b?.board_id ?? b?.id);
+      const declared: number[] = Array.isArray(b?.active_connectors)
+        ? b.active_connectors.map(Number).filter((n: number) => Number.isFinite(n))
+        : [];
+      bvConnectors.set(id, declared);
+    }
     for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}) as Record<string, any>)) {
       if (!Array.isArray(tup) || !bvIds.has(Number(tup[2]))) continue;
+      const declared = bvConnectors.get(Number(tup[2])) ?? [];
+      if (!declared.includes(Number(tup[1])))
+        add('roles', 'error',
+          `${role} is valve ${tup[1]} on ball valve board ${tup[2]}, which lists active_connectors ` +
+          `[${declared.join(', ')}]. Add ${tup[1]} to the board's Active Connectors, or move the role.`);
       if (String(tup[0] ?? '').toUpperCase() === 'NO')
         add('roles', 'error',
           `${role} is on ball valve board ${tup[2]} and is marked NO. A ball valve has no NO/NC — 1 opens it — so set it to NC.`);

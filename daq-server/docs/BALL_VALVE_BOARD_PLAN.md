@@ -17,16 +17,17 @@ All seven phases below are in. Where the build departs from the plan:
 - **The simulator** gates CLOSE on heartbeats only once one has been heard, so a loopback sim
   stack that never delivers the broadcast heartbeat can still close it.
 
-Firmware: `firmware/Hotfire_Code/BallValve_Hotfire` (board 71). One valve per
-board today, a second later.
+Firmware: `firmware/Hotfire_Code/BallValve_Hotfire` (board 71). Two valves per
+board: actuator/sensor 1 (enable GPIO25, position GPIO32) and 2 (enable GPIO26,
+position GPIO33), `active_connectors = [ 1, 2 ]`.
 
 | Direction | Packet | Meaning |
 |---|---|---|
-| server → board | `ACTUATOR_COMMAND` actuator 1 | 1 = open (20 mA), 0 = closed |
+| server → board | `ACTUATOR_COMMAND` actuator 1, 2 | 1 = open (20 mA), 0 = closed |
 | server → board | `ACTUATOR_CONFIG` | only the log-mode byte is read |
 | server → board | `SERVER_HEARTBEAT` | board is Active while current; after 5 s without one it **opens the valve** and ignores CLOSE until heartbeats return |
 | board → server | `BOARD_HEARTBEAT` | |
-| board → server | `SENSOR_DATA` sensor 1 | position, raw 12-bit counts: V = counts/4095·3.3, mA = V·10, % open = (mA−4)/16·100 |
+| board → server | `SENSOR_DATA` sensors 1, 2 | position, raw 12-bit counts: V = counts/4095·3.3, mA = V·10, % open = (mA−4)/16·100 |
 
 Goal: the valve is configured as a board plus an actuator role, appears as an
 actuator everywhere actuators appear, shows **% open when commanded open and %

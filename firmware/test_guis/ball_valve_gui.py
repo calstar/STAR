@@ -1,17 +1,17 @@
 """
-Ball Valve GUI — open/close the BallValve_Hotfire board's valve over Ethernet
-and watch its position.
+Ball Valve GUI — open/close the BallValve_Hotfire board's two valves over
+Ethernet and watch their positions.
 
 Sends DAQv2 packets to firmware/Hotfire_Code/BallValve_Hotfire on UDP 5005:
   - SERVER_HEARTBEAT every 500 ms while "Heartbeats" is running. The board
     only leaves the open state with a current heartbeat, and OPENS the valve
     5 s after they stop (its safe state: 20 mA), so stopping heartbeats or
-    closing this window opens the valve.
-  - ACTUATOR_COMMAND (actuator_id 1): state 1 = open (20 mA), 0 = closed.
+    closing this window opens every valve.
+  - ACTUATOR_COMMAND (actuator_id 1 or 2): state 1 = open (20 mA), 0 = closed.
 
 Listens on UDP 5006 for the board's BOARD_HEARTBEAT (alive, and ACTIVE when it
-hears our heartbeats) and SENSOR_DATA (sensor_id 1: raw 12-bit ADC counts of
-the 100 ohm position shunt; V = counts / 4095 * 3.3, 4-20 mA = 0.4-2.0 V).
+hears our heartbeats) and SENSOR_DATA (sensor_id 1, 2: raw 12-bit ADC counts of
+each valve's 100 ohm position shunt; V = counts / 4095 * 3.3, 4-20 mA = 0.4-2.0 V).
 
 Your computer needs an address on the board's subnet, e.g. 192.168.2.20/24.
 
@@ -45,8 +45,9 @@ SENSOR_DATAPOINT_FORMAT = "<BI"  # sensor_id, data
 SENSOR_DATAPOINT_SIZE = 5
 
 VALVE_BOARD_ID = 71  # -DBOARD_ID in BallValve_Hotfire/platformio.ini
-VALVE_ACTUATOR_ID = 1
-VALVE_POSITION_SENSOR_ID = 1
+# (actuator_id, position sensor_id) per valve -- the `valves` table in
+# BallValve_Hotfire/src/main.cpp.
+VALVES = [(1, 1), (2, 2)]
 POSITION_SHUNT_OHMS = 100.0
 ADC_MAX = 4095.0  # 12-bit
 ADC_VREF = 3.3
@@ -102,18 +103,97 @@ def parse_sensor_data(data: bytes):
     return values
 
 
+class ValvePanel(QtWidgets.QGroupBox):
+    """One valve: commanded state, position, OPEN/CLOSE."""
+
+    def __init__(self, gui: "BallValveGui", actuator_id: int, sensor_id: int):
+        super().__init__(f"Valve {actuator_id}")
+        self.actuator_id = actuator_id
+        self.sensor_id = sensor_id
+        self.commanded: str | None = None
+        self.position_volts: float | None = None
+        self.position_last_seen = 0.0
+
+        self.state_label = QtWidgets.QLabel()
+        self.state_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.state_label.setMinimumHeight(48)
+        font = self.state_label.font()
+        font.setPointSize(18)
+        font.setBold(True)
+        self.state_label.setFont(font)
+
+        self.position_label = QtWidgets.QLabel()
+        self.position_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.position_label.setWordWrap(True)
+        self.position_bar = QtWidgets.QProgressBar()
+        self.position_bar.setRange(0, 100)
+        self.position_bar.setFormat("%p% open")
+
+        self.open_btn = QtWidgets.QPushButton("OPEN (1)")
+        self.close_btn = QtWidgets.QPushButton("CLOSE (0)")
+        for btn in (self.open_btn, self.close_btn):
+            btn.setMinimumHeight(40)
+        self.open_btn.clicked.connect(lambda: gui.command(self, 1))
+        self.close_btn.clicked.connect(lambda: gui.command(self, 0))
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addWidget(self.open_btn)
+        btn_row.addWidget(self.close_btn)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.state_label)
+        layout.addWidget(self.position_label)
+        layout.addWidget(self.position_bar)
+        layout.addLayout(btn_row)
+
+    def on_counts(self, counts: int):
+        self.position_volts = counts / ADC_MAX * ADC_VREF
+        self.position_last_seen = time.time()
+
+    def refresh_position(self):
+        if (
+            self.position_volts is None
+            or time.time() - self.position_last_seen >= BOARD_SILENT_SEC
+        ):
+            self.position_label.setText("Position: no data")
+            self.position_bar.setValue(0)
+            return
+        ma = self.position_volts / POSITION_SHUNT_OHMS * 1000.0
+        pct = (ma - 4.0) / 16.0 * 100.0
+        text = f"{ma:.2f} mA ({self.position_volts:.3f} V) — {pct:.0f}% open"
+        if ma < 3.5:
+            text += "  [below 4 mA: open loop / no signal?]"
+        self.position_label.setText(text)
+        self.position_bar.setValue(int(max(0.0, min(100.0, pct))))
+
+    def set_command_label(self, heartbeats_on: bool):
+        if not heartbeats_on:
+            label, fg, bg = "HEARTBEATS STOPPED", "#757575", "#fafafa"
+        elif self.commanded == "OPEN":
+            label, fg, bg = "COMMANDED OPEN", "#1b5e20", "#c8e6c9"
+        elif self.commanded == "CLOSED":
+            label, fg, bg = "COMMANDED CLOSED", "#424242", "#eeeeee"
+        else:
+            label, fg, bg = "READY", "#424242", "#eeeeee"
+        self.state_label.setText(label)
+        self.state_label.setStyleSheet(
+            f"color: {fg}; background: {bg}; border: 1px solid {fg}; "
+            "border-radius: 6px;"
+        )
+
+    def update_controls(self, heartbeats_on: bool):
+        self.open_btn.setEnabled(True)
+        self.close_btn.setEnabled(heartbeats_on)
+
+
 class BallValveGui(QtWidgets.QWidget):
     def __init__(self, board_ip: str):
         super().__init__()
         self.setWindowTitle("Ball Valve — Ethernet")
         self.sock: socket.socket | None = None
         self.heartbeats_on = False
-        self.commanded: str | None = None
         self.board_last_seen = 0.0
         self.board_state = 0
         self.board_src_ip: str | None = None
-        self.position_volts: float | None = None
-        self.position_last_seen = 0.0
 
         # --- target row ---
         self.ip_edit = QtWidgets.QLineEdit(board_ip)
@@ -132,38 +212,16 @@ class BallValveGui(QtWidgets.QWidget):
         target_row.addWidget(self.follow_ip)
         target_row.addWidget(self.hb_btn)
 
-        # --- board, command and position ---
+        # --- board and one panel per valve ---
         self.board_label = QtWidgets.QLabel()
-        self.state_label = QtWidgets.QLabel()
-        self.state_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        self.state_label.setMinimumHeight(64)
-        font = self.state_label.font()
-        font.setPointSize(22)
-        font.setBold(True)
-        self.state_label.setFont(font)
-
-        self.position_label = QtWidgets.QLabel()
-        self.position_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        pos_font = self.position_label.font()
-        pos_font.setPointSize(16)
-        self.position_label.setFont(pos_font)
-        self.position_bar = QtWidgets.QProgressBar()
-        self.position_bar.setRange(0, 100)
-        self.position_bar.setFormat("%p% open")
-
-        self.open_btn = QtWidgets.QPushButton("OPEN (1)")
-        self.close_btn = QtWidgets.QPushButton("CLOSE (0)")
-        for btn in (self.open_btn, self.close_btn):
-            btn.setMinimumHeight(48)
-        self.open_btn.clicked.connect(lambda: self.command(1))
-        self.close_btn.clicked.connect(lambda: self.command(0))
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.addWidget(self.open_btn)
-        btn_row.addWidget(self.close_btn)
+        self.panels = [ValvePanel(self, aid, sid) for aid, sid in VALVES]
+        valve_row = QtWidgets.QHBoxLayout()
+        for panel in self.panels:
+            valve_row.addWidget(panel)
 
         note = QtWidgets.QLabel(
-            "The board OPENS the valve 5 s after heartbeats stop — stopping "
-            "heartbeats or closing this window opens it."
+            "The board OPENS every valve 5 s after heartbeats stop — stopping "
+            "heartbeats or closing this window opens them."
         )
         note.setWordWrap(True)
 
@@ -178,13 +236,10 @@ class BallValveGui(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(target_row)
         layout.addWidget(self.board_label)
-        layout.addWidget(self.state_label)
-        layout.addWidget(self.position_label)
-        layout.addWidget(self.position_bar)
-        layout.addLayout(btn_row)
+        layout.addLayout(valve_row)
         layout.addWidget(note)
         layout.addWidget(self.log, 1)
-        self.resize(600, 600)
+        self.resize(800, 640)
 
         self.hb_timer = QtCore.QTimer(self)
         self.hb_timer.timeout.connect(self.send_server_heartbeat)
@@ -241,10 +296,9 @@ class BallValveGui(QtWidgets.QWidget):
                 # SENSOR_DATA carries no board id: take it from the address
                 # our board's heartbeats come from.
                 values = parse_sensor_data(data)
-                if values and VALVE_POSITION_SENSOR_ID in values:
-                    counts = values[VALVE_POSITION_SENSOR_ID]
-                    self.position_volts = counts / ADC_MAX * ADC_VREF
-                    self.position_last_seen = time.time()
+                for panel in self.panels:
+                    if values and panel.sensor_id in values:
+                        panel.on_counts(values[panel.sensor_id])
 
     def on_board_heartbeat(self, data: bytes, src_ip: str):
         hb = parse_board_heartbeat(data)
@@ -274,8 +328,9 @@ class BallValveGui(QtWidgets.QWidget):
         if self.heartbeats_on:
             self.heartbeats_on = False
             self.hb_timer.stop()
-            self.append("Heartbeats stopped — board OPENS the valve within 5 s.")
-            self.commanded = None
+            self.append("Heartbeats stopped — board OPENS every valve within 5 s.")
+            for panel in self.panels:
+                panel.commanded = None
         else:
             self.heartbeats_on = True
             self.send_server_heartbeat()
@@ -291,7 +346,7 @@ class BallValveGui(QtWidgets.QWidget):
         self.send(build_server_heartbeat())
 
     # ------------------------------------------------------------- commands
-    def command(self, state: int):
+    def command(self, panel: "ValvePanel", state: int):
         # OPEN (the safe state) always goes out; CLOSE is ignored without
         # heartbeats.
         if not state and not self.heartbeats_on:
@@ -300,10 +355,10 @@ class BallValveGui(QtWidgets.QWidget):
         # the instant heartbeats start.
         if self.heartbeats_on:
             self.send_server_heartbeat()
-        if self.send(build_actuator_command(VALVE_ACTUATOR_ID, state)):
-            self.commanded = "OPEN" if state else "CLOSED"
+        if self.send(build_actuator_command(panel.actuator_id, state)):
+            panel.commanded = "OPEN" if state else "CLOSED"
             self.append(
-                f"> ACTUATOR_COMMAND id={VALVE_ACTUATOR_ID} state={state} "
+                f"> ACTUATOR_COMMAND id={panel.actuator_id} state={state} "
                 f"to {self.ip_edit.text().strip()}:{COMMAND_PORT}"
             )
             if not state and not self.board_active():
@@ -311,7 +366,7 @@ class BallValveGui(QtWidgets.QWidget):
                     "  warning: board is not reporting ACTIVE, so it may not "
                     "be hearing our heartbeats and will ignore CLOSE."
                 )
-        self.set_command_label()
+        panel.set_command_label(self.heartbeats_on)
 
     # ------------------------------------------------------------------ UI
     def board_active(self) -> bool:
@@ -336,42 +391,19 @@ class BallValveGui(QtWidgets.QWidget):
         self.board_label.setText(text)
         self.board_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
-        if (
-            self.position_volts is None
-            or time.time() - self.position_last_seen >= BOARD_SILENT_SEC
-        ):
-            self.position_label.setText("Position: no data")
-            self.position_bar.setValue(0)
-            return
-        ma = self.position_volts / POSITION_SHUNT_OHMS * 1000.0
-        pct = (ma - 4.0) / 16.0 * 100.0
-        text = f"Position: {ma:.2f} mA ({self.position_volts:.3f} V) — {pct:.0f}% open"
-        if ma < 3.5:
-            text += "  [below 4 mA: open loop / no signal?]"
-        self.position_label.setText(text)
-        self.position_bar.setValue(int(max(0.0, min(100.0, pct))))
+        for panel in self.panels:
+            panel.refresh_position()
 
     def set_command_label(self):
-        if not self.heartbeats_on:
-            label, fg, bg = "HEARTBEATS STOPPED", "#757575", "#fafafa"
-        elif self.commanded == "OPEN":
-            label, fg, bg = "COMMANDED OPEN", "#1b5e20", "#c8e6c9"
-        elif self.commanded == "CLOSED":
-            label, fg, bg = "COMMANDED CLOSED", "#424242", "#eeeeee"
-        else:
-            label, fg, bg = "READY", "#424242", "#eeeeee"
-        self.state_label.setText(label)
-        self.state_label.setStyleSheet(
-            f"color: {fg}; background: {bg}; border: 1px solid {fg}; "
-            "border-radius: 6px;"
-        )
+        for panel in self.panels:
+            panel.set_command_label(self.heartbeats_on)
 
     def update_controls(self):
         self.hb_btn.setText(
             "Stop heartbeats" if self.heartbeats_on else "Start heartbeats"
         )
-        self.open_btn.setEnabled(True)
-        self.close_btn.setEnabled(self.heartbeats_on)
+        for panel in self.panels:
+            panel.update_controls(self.heartbeats_on)
 
     def append(self, text: str):
         self.log.appendPlainText(f"{time.strftime('%H:%M:%S')}  {text}")

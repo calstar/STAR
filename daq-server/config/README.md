@@ -52,8 +52,10 @@ handed out unchanged, so filling in `mac` never renumbers a board.
 ### Ball valve boards
 
 A motorized ball valve board is `type = "BALL_VALVE"` (`[boards.ball_valve_board]`, board_id 71,
-disabled until it is on the stand). Its valve is named in `[actuator_roles]` like any actuator —
-`"Main Ball Valve" = ["NC", 1, 71]` — and needs a row in each state CSV. Ball valves have no NO/NC;
+disabled until it is on the stand). It drives two valves, connectors 1 and 2
+(`active_connectors = [ 1, 2 ]`). Each valve is named in `[actuator_roles]` like any actuator —
+`"Main Ball Valve" = ["NC", 1, 71]`, `"Second Ball Valve" = ["NC", 2, 71]` — and needs a row in
+each state CSV. A role's channel must be in `active_connectors`. Ball valves have no NO/NC;
 the GUI shows their position (% open / % closed) instead of a current. Board 71 shares slot 1 with
 actuator board 11 but has its own Elodin namespace (0x33-0x35), so the two never collide.
 
