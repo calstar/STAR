@@ -22,7 +22,7 @@ sim.** A run that converges, plots smoothly and violates no assertion is not evi
 | `feed-twin` | the feed-system digital twin / cockpit | API 8003, UI 5177 |
 | `parts-hub` | CAD parts library + the "STAR Parts" insert panel in Onshape (Node/TS) | 8080 (`npm run mock`) |
 | `daq-server` | the real stand's DAQ | — |
-| `firmware/Flight_Computer` | the rocket's STM32H723 flight computer (CubeMX project + self-test + radio). **Read its `STM32-UPLOAD-REQUIREMENTS.md` before building, flashing or regenerating.** | — |
+| `firmware/Flight_Computer` | the rocket's STM32H723 flight computer (CubeMX project + self-test + radio). **Read its `STM32-UPLOAD-REQUIREMENTS.md` before building, flashing or regenerating; run `./flight_test` (or `scripts/flight_test.sh`) before every commit to it.** | — |
 | `design-mcp` | the design-tools MCP server: agents read every app above as the token's owner (STARProject tokens, `design` scope) | 8010 |
 | `lib/feedtwin` | the physics library both EngineDesign and feed-twin import | — |
 | `lib/stardesign` | the shared document store (checkout, versions, sharing) | — |
