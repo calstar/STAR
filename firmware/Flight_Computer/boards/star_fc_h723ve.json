@@ -2,7 +2,7 @@
   "build": {
     "cpu": "cortex-m7",
     "extra_flags": "-DSTM32H7 -DSTM32H7xx -DSTM32H723xx",
-    "f_cpu": "550000000L",
+    "f_cpu": "64000000L",
     "mcu": "stm32h723vet6",
     "product_line": "STM32H723xx"
   },
@@ -25,7 +25,7 @@
   ],
   "name": "STAR flight computer rev 1 (STM32H723VET6)",
   "upload": {
-    "maximum_ram_size": 327680,
+    "maximum_ram_size": 131072,
     "maximum_size": 524288,
     "protocol": "stlink",
     "protocols": [

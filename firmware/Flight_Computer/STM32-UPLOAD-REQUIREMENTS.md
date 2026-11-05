@@ -7,9 +7,9 @@ and the rules that keep the build matched to the chip that is actually on the
 board.
 
 Status as of 2026-11-04: tools installed and checked on Inez's Mac (Apple
-Silicon). Rev 1 board arriving ~2026-11-05. **No firmware has been flashed to
-real hardware yet**, and there is no STM32 build target yet (see
-[Build path](#build-path-open-decision)).
+Silicon). The firmware builds with PlatformIO (`[env:flight]`, see
+[How the build works](#how-the-build-works)). Rev 1 board arriving ~2026-11-05.
+**No firmware has been flashed to real hardware yet.**
 
 ---
 
@@ -240,6 +240,13 @@ device-only.
   (`self_test*.c` style), not in `main.c`.
 - **Change pins and clocks in the `.ioc` through CubeMX**, never by hand-editing
   generated init code. The `.ioc` is the source of truth.
+- **DMA cannot reach DTCM.** The linker script puts `.data`, `.bss`, heap and
+  stack in DTCMRAM (128 KB at 0x20000000). DMA1/DMA2/BDMA and the SDMMC IDMA
+  can't access it, so DMA buffers must be placed in RAM_D1/RAM_D2 with a
+  section attribute. The board file's `maximum_ram_size` is DTCM's 128 KB for
+  the same reason.
+- **Clock:** `f_cpu` in the board file is 64 MHz because SYSCLK runs from HSI
+  until HSE + PLL is configured in the `.ioc`. Update both together.
 - **Generated and vendored code is not formatted.** `format.sh` skips the
   CubeMX files listed in its prune list; keep that list in step with what
   CubeMX generates.
