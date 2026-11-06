@@ -335,6 +335,15 @@ describe('ball valve boards', () => {
     return { cfg, csv };
   };
 
+  it('refuses a role on a board that is not declared, and says which board to add', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    delete cfg.boards.ball_valve_board;
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/board 71, which is not in Boards/);
+  });
+
   it('a ball valve role marked NC raises nothing', () => {
     const { cfg, csv } = withValve(['NC', 1, 71]);
     expect(validateConfigForRun(cfg, csv)).toEqual([]);
