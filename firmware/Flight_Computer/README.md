@@ -122,3 +122,7 @@ Nothing here has run on a real radio or on the STM32.
 [Inez confirmed the radio requirements in #137](https://github.com/calstar/STAR/issues/137#issuecomment-6486161496). Heartbeats run at 1–2 Hz during self-test and roughly once every ten seconds in Idle. Messages carry a type, sequence number and checksum; Ryan still owns their exact byte layout. `ErrTimeout` and `NotImplemented` distinguish an expired transmission from an absent driver. A no-op or queued packet must never return `Ok` from `radio_send()`.
 
 The portable C coordinator lives in [`Core/`](Core/README.md). A C++ adapter must translate its status snapshot into the agreed packet and map radio outcomes to the C callback contract. If a transmission exceeds the callback budget, a separate driver service must own it while the callback polls bounded state. The current header supplies no implementation, timeout value, packet encoder or such service.
+
+## Ethernet DAQ transport
+
+See [ETHERNET-DAQ.md](ETHERNET-DAQ.md) for the W5500 UDP task, DAQv2 packet compatibility, host tests and deployment requirements. Networking defaults to disabled until the board address and server-side channel mapping are supplied.
