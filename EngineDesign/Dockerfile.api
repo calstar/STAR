@@ -57,8 +57,13 @@ COPY lib/feedtwin/ /feedtwin/
 RUN --mount=type=cache,target=/root/.cache/pip pip install /feedtwin
 COPY feed-twin/backend/diagrams/ /layerx/diagrams/
 COPY feed-twin/backend/statemachines/ /layerx/statemachines/
+# feed-twin's sample set: the team's current stand, featured (a browser with no drawing of its own opens
+# on it). Without it the image resolved LAYERX_SAMPLE to /feed-twin/backend/sample, which is not here.
+# The twin's library is on the shared volume: LAYERX_FEEDTWIN_LIBRARY in docker-compose.yml.
+COPY feed-twin/backend/sample/ /layerx/sample/
 ENV LAYERX_DRAWINGS=/layerx/diagrams \
-    LAYERX_STATEMACHINES=/layerx/statemachines
+    LAYERX_STATEMACHINES=/layerx/statemachines \
+    LAYERX_SAMPLE=/layerx/sample
 
 COPY EngineDesign/backend/ ./backend/
 COPY EngineDesign/engine/  ./engine/

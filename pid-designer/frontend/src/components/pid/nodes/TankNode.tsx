@@ -7,7 +7,7 @@ import { DraggableLabel } from './DraggableLabel';
 import { Upright } from './Upright';
 import { portId, portKind } from '../ports';
 import { useEffect } from 'react';
-import { fmtParam, fmtPressure } from '../fmt';
+import { TANK_READOUT_W, fitMono, fmtParam, fmtPressure } from '../fmt';
 import { GRID } from '../route';
 
 /** The tank's box: what its end ports are placed from before they are measured. */
@@ -147,8 +147,10 @@ export function TankNode({ id, data, selected }: NodeProps) {
         </Upright>
         {readout.map((line, i) => (
           <Upright key={line} rotation={rotation} x={30} y={55 + i * 11}>
-            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize="7.5" fill="var(--color-text-secondary)"
-              fontFamily="monospace">{line}</text>
+            {/* Fitted inside the barrel: a pressure of 1000 psia or more is
+                eleven characters and ran through both walls (`fitMono`). */}
+            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize={fitMono(line, TANK_READOUT_W, 7.5)}
+              fill="var(--color-text-secondary)" fontFamily="monospace">{line}</text>
           </Upright>
         ))}
       </svg>

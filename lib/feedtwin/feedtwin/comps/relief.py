@@ -87,6 +87,7 @@ MODEL_SOURCE = (
 
 
 class ReliefValve(Valve):
+    symmetric = False  # a relief lifts on its own inlet; never mirrored
     """A pressure-actuated relief valve. See the module docstring."""
 
     # ------------------------------------------------------------ the law

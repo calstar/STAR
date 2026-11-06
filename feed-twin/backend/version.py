@@ -67,9 +67,19 @@ def code_version() -> dict[str, object]:
     commit = os.environ.get("FEEDTWIN_COMMIT", "") or _git(
         "rev-parse", "--short=12", "HEAD"
     )
+    # Code only. The dev library is the tracked feed-twin/backend/library,
+    # and every import adds a blob and rewrites its manifest: counting it made
+    # every dev run after an import read "dirty" with no code changed (R053).
     dirty = bool(
         not os.environ.get("FEEDTWIN_COMMIT")
-        and _git("status", "--porcelain", "--", "feed-twin", "lib/feedtwin")
+        and _git(
+            "status",
+            "--porcelain",
+            "--",
+            "feed-twin",
+            "lib/feedtwin",
+            ":(exclude)feed-twin/backend/library",
+        )
     )
     return {
         "app": __version__,

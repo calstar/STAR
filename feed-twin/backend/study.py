@@ -31,9 +31,12 @@ from feedtwin.session.hookup import CHARGE, DOME
 
 from backend.session import LIVE_STEP, Session
 from feedtwin.session.core import DRY_MASS
-from backend.tunables import GAUGE_WIRE
+from backend.tunables import GAUGE_WIRE, TUNABLES
 
 _log = logging.getLogger("feed-twin.study")
+
+#: The Configuration row a case's fill sets: its bounds are the case's.
+FILL = next(t for t in TUNABLES if t.key == "full_fraction")
 
 #: What a case can swap the bottle's gas for, by the fluid name drawings use.
 PRESSURANTS = ("helium", "nitrogen")
@@ -65,7 +68,21 @@ class StudyCase:
     """This case's value of the swept quantity, for the sweep plot."""
 
     @staticmethod
-    def parse(raw: Mapping[str, Any], index: int) -> "StudyCase":
+    def parse(raw: Any, index: int) -> "StudyCase":
+        """A case as the view sends it. ``ValueError`` saying what is wrong
+        with it, for anything that is not one: a case that was not an object
+        was a 500."""
+        if not isinstance(raw, Mapping):
+            raise ValueError(
+                f"case {index + 1} is an object of what it changes; got {raw!r}"
+            )
+        for key in ("knobs", "setup"):
+            if raw.get(key) is not None and not isinstance(raw.get(key), Mapping):
+                raise ValueError(
+                    f"case {index + 1}: {key} is an object, {{name: value}}; "
+                    f"got {raw.get(key)!r}"
+                )
+
         def number(key: str) -> float | None:
             value = raw.get(key)
             if value is None or value == "":
@@ -90,9 +107,22 @@ class StudyCase:
         if litres is not None and not 0.0 < litres <= 500.0:
             raise ValueError(f"case {index + 1}: bottle {litres:g} L is out of range")
         fill = number("fill_fraction")
-        if fill is not None and not 0.0 < fill <= 1.0:
-            raise ValueError(f"case {index + 1}: fill {fill:g} is not in (0, 1]")
-        knobs = {str(k): float(v) for k, v in dict(raw.get("knobs") or {}).items()}
+        if fill is not None and not FILL.low <= fill <= FILL.high:
+            # The row's own bounds: (0, 1] was accepted here, then clamped to
+            # them, and a 30 % case burned at 50 % reading "fill 30 %".
+            raise ValueError(
+                f"case {index + 1}: fill {fill * 100:.0f} % is outside the "
+                f"{FILL.label.lower()}'s {FILL.low * 100:.0f} to "
+                f"{FILL.high * 100:.0f} %"
+            )
+        knobs: dict[str, float] = {}
+        for knob, setting in dict(raw.get("knobs") or {}).items():
+            try:
+                knobs[str(knob)] = float(setting)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"case {index + 1}: {knob} is a number; got {setting!r}"
+                ) from None
         for knob, value in knobs.items():
             # Gauge on the wire: below zero is a regulator set under the air
             # around it, which no knob reaches (a typed 10 psia was -4.7).
@@ -162,6 +192,13 @@ class StudyResult:
     notes: list[str] = field(default_factory=list)
 
 
+class CaseCancelled(Exception):
+    """A case whose burn a cancel cut short: not a burn to table or plot.
+
+    It was kept as if it had finished -- no error, no tank dry -- and the
+    table read it '>horizon', 'Reached the horizon with no tank dry'."""
+
+
 #: Builds the session a case burns on: the stand's inputs, the case's setup
 #: and knobs merged in, and a pressurant to swap the bottle's gas for.
 Build = Callable[[Mapping[str, Any], str | None], Session]
@@ -224,6 +261,40 @@ def describe(base: Mapping[str, Any], case: StudyCase) -> list[str]:
     return out or ["the stand as set"]
 
 
+def _fill_as_loaded(
+    changes: list[str],
+    case: StudyCase,
+    session: Session,
+    planned: Mapping[str, float],
+    loaded: Mapping[str, float],
+) -> list[str]:
+    """A case's fill said as what it loaded.
+
+    A fill is liquid over tank volume for a tank the engine's fire load does
+    not name; for one it names, T-0 loads the fire load and the fill is only
+    the most the tank may hold (:func:`~feedtwin.session.burn.jump_to_t0`):
+    it cuts a fire load that does not fit and otherwise changes nothing. The
+    change read "fill 80 %" while the fire loads burned unchanged."""
+    if case.fill_fraction is None:
+        return changes
+    fire = session.fire_loads()
+    named = [k for k in session.vehicle_tanks if k in fire]
+    if not named:
+        return changes
+    cut = [
+        f"{session.tanks[k].label} {loaded.get(k, planned[k]):.3f} kg"
+        for k in named
+        if k in planned and planned[k] < fire[k] - 1e-6
+    ]
+    asked = f"fill {case.fill_fraction * 100:.0f} %"
+    said = (
+        f"{asked}, cutting the fire load to {', '.join(cut)}"
+        if cut
+        else f"{asked}, which cuts no fire load"
+    )
+    return [said if change == asked else change for change in changes]
+
+
 def _thin(n: int) -> list[int]:
     if n <= MAX_POINTS:
         return list(range(n))
@@ -275,6 +346,11 @@ def run_case(
         dry_kg=DRY_MASS,
     )
     trace = run_burn(session, plan, cancelled=cancelled)
+    if trace.end is not None and trace.end.cancelled:
+        cut = trace.t[-1] if trace.t else 0.0
+        raise CaseCancelled(
+            f"{case.label} was cancelled {cut:.2f} s into its burn and is left out."
+        )
     keep = _thin(len(trace.t))
     labels = {sim.id: sim.label for sim in session.tanks.values()}
     bottle_labels = {b.id: b.label for b in session.bottles.values()}
@@ -288,10 +364,18 @@ def run_case(
     except Exception as exc:  # noqa: BLE001 - the traces still stand
         totals = {}
         trace.notes.append(f"Not totalled: {exc}")
+    # What each tank held at ignition, off the trace: what was burned.
+    loaded = {
+        k: round(v["liquid_mass_kg"][0], 3)
+        for k, v in trace.tank.items()
+        if v.get("liquid_mass_kg") and k not in ground
+    }
     return CaseResult(
         label=case.label,
         x=case.x,
-        changes=describe(request.base, case),
+        changes=_fill_as_loaded(
+            describe(request.base, case), case, session, t0.loads, loaded
+        ),
         t0={
             "copv_psi": round(copv, 1),
             "tank_psi": t0.tank_psi,
@@ -301,12 +385,7 @@ def run_case(
             # The gas swapped in, or "" for the stand's own: what a sweep
             # crossed with the pressurant groups its series by.
             "pressurant": case.pressurant or "",
-            # What each tank held at ignition, off the trace: what was burned.
-            "loads_kg": {
-                labels.get(k, k): round(v["liquid_mass_kg"][0], 3)
-                for k, v in trace.tank.items()
-                if v.get("liquid_mass_kg") and k not in ground
-            },
+            "loads_kg": {labels.get(k, k): kg for k, kg in loaded.items()},
         },
         t=column(trace.t, 3),
         # The vehicle's tanks: a cart's transfer tank sits at atmosphere through
@@ -369,6 +448,10 @@ def run_study(
             progress(index, total, f"{case.label} ({index + 1} of {total})")
         try:
             done = run_case(request, case, build, outcome, cancelled)
+        except CaseCancelled as cut:
+            # Only finished cases are kept; this one is said, not shown.
+            result.notes.append(str(cut))
+            break
         except Exception as exc:  # noqa: BLE001 - reported on the case
             # The case carries the type and message; the traceback stays in the
             # server log, or a crash in the physics has to be reproduced to be

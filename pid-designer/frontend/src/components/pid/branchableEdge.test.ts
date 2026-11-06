@@ -333,7 +333,12 @@ describe('a hand edit', () => {
     expect(dataOf(re.edges.find(e => e.id === down.id)!).waypoints).toEqual(dataOf(d).waypoints);
   });
 
-  it('is undone for the whole pipe by a double-click on a grip', () => {
+  it('leaves a double-click on a grip to the line, whose dialog it opens', () => {
+    // The click that picks a line puts a grip under the pointer, so the second
+    // click of a double-click landed on the grip -- which took it to reset the
+    // route and stopped it, and the line's dialog never opened from the middle
+    // of a straight run (LE4 (3)'s node_2-junc_49 at a quarter and a half of
+    // its length). Re-routing is the line's right-click menu now.
     const { nodes, edges, tee } = teedZ();
     flow.nodes = nodes; flow.edges = edges;
     const down = edges.find(e => e.source === tee)!;
@@ -343,12 +348,12 @@ describe('a hand edit', () => {
       return { ...e, data: rest };
     });
     const tree = rt.settle(() => BranchableEdge(propsOf(frozen.find(e => e.id === down.id)!, true)));
-    // A grip, by its mark: the line's own element takes double-clicks too,
-    // to hand one aimed at a nearer line to that line.
     const grip = find(tree, e => 'data-grip' in e.props)[0];
-    (grip.props.onDoubleClick as (e: unknown) => void)({ stopPropagation() {}, preventDefault() {} });
-    const after = flow.writes[0](frozen);
-    for (const e of after) expect(dataOf(e).waypoints).toBeUndefined();
+    const did = { stopped: false };
+    (grip.props.onDoubleClick as ((e: unknown) => void) | undefined)?.({
+      stopPropagation() { did.stopped = true; }, preventDefault() {} });
+    expect(did.stopped).toBe(false);
+    expect(flow.writes).toHaveLength(0);
   });
 });
 

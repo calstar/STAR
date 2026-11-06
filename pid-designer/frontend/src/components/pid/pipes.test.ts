@@ -4,7 +4,7 @@ import type { Edge, Node } from '@xyflow/react';
 import {
   CORNER_GAP, END_GAP, J_END, TEE_END_GAP, TEE_GAP, adoptTee, dragging, freezePipe, isJunction, junctionData, junctionEnd, keptShape,
   latestSpots, legalSpot, pipeGeometry, pipeOf, pipesOf, pointLines, reseatJunctions, setHandCorners, slideAlong, splitSpot,
-  freeFaces, thawPipe,
+  freeFaces, handRouted, thawPipe,
 } from './junctions';
 import type { Along, Dragging, EndLookup, Face } from './junctions';
 import { dissolveAfterDelete, insertInline, rejoinChains, splitEdgeAt } from './splitEdge';
@@ -2096,6 +2096,19 @@ describe('a hand edit on a pipe', () => {
     for (const e of thawed) expect(dataOf(e).waypoints).toBeUndefined();
     const re = settle(s.nodes, thawed);
     expect(dataOf(re.edges.find(e => e.id === s.down)!)).toMatchObject({ waypoints: [P(230, 30), P(230, 330)], viaRun: true });
+  });
+
+  it('is what the line menu offers to undo, on any line of the pipe, and only then', () => {
+    // The router's own corners (`viaRun`) and crossbar offsets are not a
+    // person's: `thawPipe` clears those too, so it cannot be the test of
+    // whether there is anything to give back.
+    const s = teedZ();
+    const settled = settle(s.nodes, s.edges).edges;
+    expect(settled.some(e => dataOf(e).viaRun)).toBe(true);
+    expect(handRouted(s.nodes, settled, s.up)).toBe(false);
+    const edges = setHandCorners(s.nodes, settled, s.down, [P(290, 30), P(290, 330)]);
+    expect(handRouted(s.nodes, edges, s.up)).toBe(true);
+    expect(handRouted(s.nodes, thawPipe(s.nodes, edges, s.up), s.up)).toBe(false);
   });
 });
 

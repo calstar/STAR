@@ -13,6 +13,7 @@ is asserted is what feed-twin asks for and what it does with the answer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -90,11 +91,14 @@ def engine_design() -> list[httpx.Request]:
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         if request.url.path == "/api/layerx/engine-card":
+            # A fingerprint per config, as EngineDesign's is: one shared by
+            # every card would make every engine here the same engine.
+            sent = json.loads(request.read())["yaml"].encode()
             return httpx.Response(
                 200,
                 json={
                     "card": a_card(throat).to_dict(),
-                    "config_sha256": "stub",
+                    "config_sha256": hashlib.sha256(sent).hexdigest(),
                     "center_psia": 578.0,
                     "ambient_pa": 94070.0,
                     "within_tolerance": True,
@@ -103,6 +107,9 @@ def engine_design() -> list[httpx.Request]:
             )
         if request.url.path.endswith("/load"):
             return httpx.Response(200, json=current)
+        if request.url.path.endswith("/releases"):
+            # Whether the caller may open it (backend.main._may_read): yes.
+            return httpx.Response(200, json=[])
         return httpx.Response(404)
 
     designtools.transport = httpx.MockTransport(handler)

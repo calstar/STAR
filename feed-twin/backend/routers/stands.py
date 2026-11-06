@@ -26,6 +26,7 @@ import os
 from typing import Any
 
 from pydantic import BaseModel, Field
+from stardesign import admins
 from stardesign.documents import DesignStore, make_router
 
 from backend import storage, userdata
@@ -89,10 +90,16 @@ store = DesignStore(
     micro_interval=int(os.environ.get("FEEDTWIN_MICRO_INTERVAL", "300")),
     empty_payload=lambda: dict(EMPTY),
     # The stand a fresh browser opens on (``.site/stand/featured.json``): the
-    # demo's, or the team's current one. Anyone who may edit a stand may
-    # choose it -- a local install has no admins to ask.
+    # demo's, or the team's current one. Everyone may open and run it; an
+    # admin chooses it (``PUT /api/twin/stands/featured``), as pid-designer's
+    # main drawing. Admins are :mod:`stardesign.admins` -- the team's list,
+    # plus ``STAR_ADMINS`` (``STAR_ADMINS=local`` on an install with no
+    # sign-in, where every caller is ``local``). scripts/demo.sh writes the
+    # file itself. It is edited like any other stand: by its owner and its
+    # share list.
     featured=True,
     main_admin_only=False,
+    is_admin=lambda request: admins.is_admin(request, userdata.store),
 )
 
 router = make_router(store, prefix="/api/twin", sub="/stands")

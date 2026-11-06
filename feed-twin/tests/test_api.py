@@ -106,6 +106,31 @@ def test_json_without_nodes_is_refused() -> None:
     assert "no 'nodes'" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"nodes": [{"id": "n1", "type": "TANK"}]},
+        {"nodes": "x", "edges": []},
+        {"nodes": [1, 2], "edges": []},
+        {"nodes": [], "edges": "x"},
+        {"nodes": [{"data": {"componentType": "TANK"}}], "edges": []},
+    ],
+)
+def test_a_drawing_that_could_never_open_is_refused_at_upload(
+    payload: dict[str, object],
+) -> None:
+    """Only 'nodes' was checked: a file without 'edges', or with nodes that are
+    not symbols, was stored and then failed every open, and sat in every
+    picker. Refused now with what read_diagram would say."""
+    before = {a["id"] for a in client.get("/api/library").json()}
+    response = client.post(
+        "/api/library/diagrams",
+        files={"file": ("junk.json", json.dumps(payload).encode(), "application/json")},
+    )
+    assert response.status_code == 422, response.text
+    assert {a["id"] for a in client.get("/api/library").json()} == before
+
+
 @needs_engine
 def test_importing_an_engine_records_what_it_is() -> None:
     """The listing has to be useful without opening the blob."""

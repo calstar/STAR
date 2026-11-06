@@ -28,34 +28,17 @@ from engine.pipeline.constants import DEFAULT_GAMMA_ND
 
 
 def compute_ambient_pressure_from_elevation(elevation_m: float) -> float:
-    """Compute ambient pressure from elevation using standard atmosphere model.
-    
-    Uses the barometric formula:
-    P = P0 * exp(-M*g*h/(R*T0))
-    
-    Parameters:
-    -----------
-    elevation_m : float
-        Elevation above sea level [m]
-    
-    Returns:
-    --------
-    float
-        Ambient pressure [Pa]
-    
-    Reference values:
-        P0 = 101325 Pa (sea level pressure)
-        M = 0.0289644 kg/mol (molar mass of dry air)
-        g = 9.80665 m/s² (standard gravity)
-        R = 8.31447 J/(mol·K) (universal gas constant)
-        T0 = 288.15 K (sea level temperature, 15°C)
+    """Ambient pressure [Pa] at ``elevation_m`` above sea level: the 1976 U.S. Standard Atmosphere.
+
+    Adapted from ``fluids.atmosphere.ATMOSPHERE_1976`` (U.S. Standard Atmosphere 1976, NOAA/NASA/
+    USAF). This used to be an isothermal exponential ``P0 exp(-M g h / (R T0))`` with T0 held at
+    288.15 K, which the docstring called a standard atmosphere but is not one: it ignores the
+    6.5 K/km lapse, so it reads high by 49 Pa at the LE4 site (626.67 m: 94 069.7 vs 94 020.4 Pa),
+    0.26 % at 1.4 km and 1.25 % at 3 km.
     """
-    P0 = 101325.0  # Pa
-    M = 0.0289644  # kg/mol
-    g = 9.80665    # m/s²
-    R = 8.31447    # J/(mol·K)
-    T0 = 288.15    # K
-    return P0 * np.exp(-M * g * elevation_m / (R * T0))
+    from fluids.atmosphere import ATMOSPHERE_1976
+
+    return float(ATMOSPHERE_1976(float(elevation_m)).P)
 
 
 class PintleEngineRunner:

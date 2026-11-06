@@ -1,6 +1,7 @@
 import { MeasuredView } from '../../layerx/Measured';
 import { testModeOf, type TestMode } from '../contract';
 import { Button, Panel } from '../ui';
+import { useUnits } from '../units';
 import { Hint, Legacy } from './kit';
 import type { PageProps } from './Overview';
 
@@ -21,6 +22,9 @@ export function Stand({ data, job, theme }: PageProps) {
   // names the run's own mode and offers no choice it cannot act on.
   const mode: TestMode = testModeOf(data.result) ?? 'hotfire';
   const instruments = Object.keys(data.result.series.instruments ?? {}).length;
+  // The readings in the page's unit system, as the rail and Feed show them; the DAQ's psig in each cell's hover.
+  const u = useUnits();
+  const shown = { pressure: u.scale('pressure'), dp: u.scale('dp'), temp: u.scale('temp'), force: u.scale('force') };
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
       <Panel ariaLabel="Test card" className="lg:col-span-12">
@@ -41,7 +45,7 @@ export function Stand({ data, job, theme }: PageProps) {
              className="lg:col-span-12"
              right={<span className="lx-num">{instruments} instruments on the drawing</span>}>
         <Legacy theme={theme} className="lx-measured">
-          <MeasuredView result={data.result} />
+          <MeasuredView result={data.result} shown={shown} />
         </Legacy>
       </Panel>
     </div>

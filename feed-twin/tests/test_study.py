@@ -83,9 +83,19 @@ def test_a_case_changes_only_what_it_says() -> None:
         ({"copv_psi": -5}, "COPV"),
         ({"bottle_litres": 0}, "bottle"),
         ({"fill_fraction": 1.5}, "fill"),
+        # Outside the Configuration's full fraction (50-99 %) it was clamped
+        # and run there, the results still saying the fill asked.
+        ({"fill_fraction": 0.3}, "fill 30 %"),
+        ({"fill_fraction": 1.0}, "fill 100 %"),
         ({"copv_psi": "lots"}, "convert"),
         # A knob typed 10 psia went on the wire as -4.7 psig and into the run.
         ({"knobs": {"DOME": -4.7}}, "DOME"),
+        # Shapes that were a TypeError or a cryptic dict() message.
+        ({"knobs": [1]}, "knobs"),
+        ({"knobs": "abc"}, "knobs"),
+        ({"knobs": {"dome": "abc"}}, "dome"),
+        ({"setup": [1]}, "setup"),
+        ({"setup": "x"}, "setup"),
     ],
 )
 def test_a_bad_case_is_refused_with_what_is_wrong(
@@ -93,6 +103,13 @@ def test_a_bad_case_is_refused_with_what_is_wrong(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         StudyCase.parse({"label": "x", **raw}, 0)
+
+
+@pytest.mark.parametrize("raw", ["x", None, 1, [1]])
+def test_a_case_that_is_not_an_object_is_refused(raw: Any) -> None:
+    """It was a 500, "'str' object has no attribute 'get'"."""
+    with pytest.raises(ValueError, match="case 3"):
+        StudyCase.parse(raw, 2)
 
 
 # ------------------------------------------------------------------- the API
@@ -172,6 +189,47 @@ def test_nothing_to_run_and_unknown_names_are_refused(stand: str) -> None:
     assert row.status_code == 422 and "warp_drive" in row.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    "body, words",
+    [
+        # Each was a 500, or ran: a horizon of 'abc' was a 500 and 'nan' ran
+        # and echoed null; a case's dome of 'nan' ran and reported 'dome = nan'
+        # .
+        ({"horizon_s": "abc"}, "horizon"),
+        ({"horizon_s": "nan"}, "horizon"),
+        ({"cases": ["x"]}, "Case 1"),
+        ({"cases": [None]}, "Case 1"),
+        ({"cases": [1]}, "Case 1"),
+        ({"cases": [{"setup": {"dome": "nan"}}]}, "dome"),
+        ({"cases": [{"setup": {"line_walls": "maybe"}}]}, "line_walls"),
+        ({"cases": [{"knobs": {"dome": "nan"}}]}, "dome"),
+    ],
+)
+def test_a_study_that_cannot_be_read_is_refused_before_it_runs(
+    stand: str, body: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a"}], **body}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
+
+
+def test_a_horizon_of_zero_is_the_shortest_not_the_default(stand: str) -> None:
+    """``horizon_s or 20`` read 0 as unsent and ran 20 s."""
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={"session": sid, "horizon_s": 0, "cases": [{"label": "a"}]},
+    )
+    client.post("/api/study/cancel", params={"session": sid})
+    assert started.status_code == 200, started.text
+    assert started.json()["horizon_s"] == 1.0
+    _finish()
+
+
 def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     """The stand at a 4,000 psig COPV target and a 450 psig dome: the blank
     case starts there, not at the old study's fixed 4,500 / 550. A case that
@@ -208,6 +266,125 @@ def test_the_study_burns_the_stand_as_the_cockpit_has_it(stand: str) -> None:
     loads = as_set["t0"]["loads_kg"]
     assert any(abs(kg - 6.75) < 0.02 for kg in loads.values()), loads
     assert all(kg < 10.0 for kg in loads.values()), loads
+
+
+def test_a_case_cut_short_by_cancel_is_not_shown_as_a_burn(
+    stand: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel stops the burn running now, mid-case. That case was kept as if it
+    had finished -- no error, no tank dry -- and the table read it '>horizon',
+    'Reached the horizon with no tank dry', at half the impulse. It is left out
+    now, and the study's notes say where it was cut."""
+    from backend import study as study_mod
+
+    real = study_mod.run_burn
+
+    def cut_short(session: Any, plan: Any, cancelled: Any = lambda: False) -> Any:
+        asked = [0]
+
+        def soon() -> bool:
+            # Cancel as a person would, part way into the first burn: the
+            # runner's own event (``cancelled`` is its bound ``is_set``).
+            asked[0] += 1
+            if asked[0] > 40:
+                cancelled.__self__.set()
+            return bool(cancelled())
+
+        return real(session, plan, cancelled=soon)
+
+    monkeypatch.setattr(study_mod, "run_burn", cut_short)
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={
+            "session": sid,
+            "horizon_s": 5.0,
+            "cases": [{"label": "a"}, {"label": "b"}],
+        },
+    )
+    assert started.status_code == 200, started.text
+    body = _finish()
+    assert body["stage"] == "cancelled", body["stage"]
+    assert body["cases"] == [], [(c["label"], c["t"][-1:]) for c in body["cases"]]
+    assert any("cancelled" in n and "a" in n for n in body["notes"]), body["notes"]
+
+
+@pytest.mark.parametrize(
+    "case, words",
+    [
+        # The dome knob's own arc is 0-1,000 psig; the Configuration row
+        # clamped 8,000 to 6,000 and the case still said 'dome 8,014.7 psia'.
+        ({"knobs": {"dome": 8000}}, "dome 8,014.7 psia"),
+        ({"knobs": {"dome": 2000}}, "dome 2,014.7 psia"),
+        # The COPV column is the charge; the row starts at 100 psig.
+        ({"copv_psi": 50}, "COPV 64.7 psia"),
+    ],
+)
+def test_a_case_outside_a_knobs_range_is_refused_not_clamped(
+    stand: str, case: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a", **case}]}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
+
+
+@pytest.mark.parametrize(
+    "setup, words",
+    [
+        # The same 8,000 psig dome as a Configuration row: clamped to the
+        # row's 6,000 and run there, the case saying "dome = 8,014.7 psia".
+        ({"dome": 8000}, "8,014.7 psia is outside its row's 14.7 psia to 6,014.7"),
+        ({"ambient_leak": -5}, "-5"),
+        ({"live_step": 10}, "live_step"),
+    ],
+)
+def test_a_case_setting_outside_its_row_is_refused_not_clamped(
+    stand: str, setup: dict[str, Any], words: str
+) -> None:
+    sid = _session(stand)
+    response = client.post(
+        "/api/study", json={"session": sid, "cases": [{"label": "a", "setup": setup}]}
+    )
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    assert not client.get("/api/study", params={"session": sid}).json()["running"]
+
+
+def test_a_case_fill_says_what_it_loaded(stand: str) -> None:
+    """A fill is liquid over tank volume for a tank the engine's fire load
+    does not name, and for one it names only the most it may hold. A case's
+    'fill 50 %' read as a fill while the stand loaded its fire loads; now its
+    change says which loads it cut, and one that cuts none says so."""
+    sid = _session(stand)
+    started = client.post(
+        "/api/study",
+        json={
+            "session": sid,
+            "horizon_s": 1.0,
+            "cases": [
+                {"label": "half", "fill_fraction": 0.5},
+                {"label": "ninety", "fill_fraction": 0.9},
+            ],
+        },
+    )
+    assert started.status_code == 200, started.text
+    half, ninety = _finish()["cases"]
+    assert half["error"] == "" and ninety["error"] == ""
+    loads = half["t0"]["loads_kg"]
+    # The 7.00 kg fuel fire load does not fit half the 8.67 L fuel tank; the
+    # 6.75 kg of LOX does fit half the 15 L LOX tank.
+    fuel = next(k for k in loads if "FU" in k.upper())
+    lox = next(k for k in loads if "LOX" in k.upper())
+    (said,) = [c for c in half["changes"] if c.startswith("fill")]
+    assert f"{fuel} {loads[fuel]:.3f} kg" in said, said
+    assert lox not in said, said
+    assert loads[lox] == pytest.approx(6.75, abs=0.02)
+    (said,) = [c for c in ninety["changes"] if c.startswith("fill")]
+    assert fuel in said and lox not in said, said
 
 
 def test_a_tank_too_small_for_its_fire_load_is_said(stand: str) -> None:

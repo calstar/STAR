@@ -41,11 +41,22 @@ export function runLabel(r: Pick<RunView, 'started' | 'settings' | 'summary' | '
   return `${r.meta?.name || runWhen(r)} · ${runContext(r as RunView)}${r.summary ? ` · ${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s` : ''}`;
 }
 
-/** The figures a finished burn is listed with. */
-export function runFigures(r: RunView): string {
+/** The figures a finished burn is listed with. `altitude` writes the apogee in the page's length unit
+ * (Layer X's units: `(m) => u.fmt(u.alt(m))`); without it, feet, as the old GUI did. The run menus printed
+ * '10,137 ft' beside an Overview reading 'Apogee 3,090 m'. */
+export function runFigures(r: RunView, altitude?: (m: number) => string): string {
   if (r.status !== 'done') return r.status;
   if (!r.summary) return '';
-  return `${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s${r.summary.apogee_agl_m ? ` · ${fmt(r.summary.apogee_agl_m * FT, 0)} ft` : ''}`;
+  const apogee = r.summary.apogee_agl_m;
+  return `${fmt(r.summary.total_impulse_Ns / 1000, 2)} kN·s${apogee ? ` · ${altitude ? altitude(apogee) : `${fmt(apogee * FT, 0)} ft`}` : ''}`;
+}
+
+/** How long a sweep takes, said before it starts: as long as the last one did (its wall clock), else 'a few
+ * minutes'. The page said 'about a minute' for a sweep that took 5.9 minutes (19 burns on 3 workers). */
+export function sweepDuration(lastWallS?: number | null): string {
+  if (lastWallS === null || lastWallS === undefined || !Number.isFinite(lastWallS) || lastWallS <= 0) return 'a few minutes';
+  const min = lastWallS / 60;
+  return min < 1.5 ? 'about a minute, as the last sweep' : `about ${Math.round(min)} minutes, as the last sweep`;
 }
 
 /** What each kind of job is called on the page. */

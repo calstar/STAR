@@ -20,3 +20,19 @@ describe('what an exported sheet says about itself', () => {
     expect(fileStem({ name: 'a/b:c', page: 'p?' })).toBe('a-b-c - p-');
   });
 });
+
+const TOOLBAR = Object.values(import.meta.glob('./PIDToolbar.tsx', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>)[0];
+
+describe('what the export menu says each file is for', () => {
+  it('does not offer the SVG for a document, which it is not', () => {
+    // exportSvg is html-to-image's toSvg: the page's HTML in a foreignObject,
+    // 8.35 MB for LE4 (3)'s GSE sheet. Browsers draw it; Inkscape, Word,
+    // LibreOffice and PDF converters do not.
+    const row = /exportImage\('svg'\)[^>]*?title="([^"]*)"\s+hint="([^"]*)"/s.exec(TOOLBAR)!;
+    expect(row[1]).toMatch(/browser/i);
+    expect(row[2]).not.toMatch(/scalable, for a document/);
+    expect(row[2]).toMatch(/for a document, use a PNG/);
+  });
+});

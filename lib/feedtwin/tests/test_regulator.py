@@ -242,6 +242,44 @@ def test_saturated_outlet_is_set_by_the_seat() -> None:
     assert reg.is_saturated(0.5, flow)
 
 
+def test_running_past_the_rated_flow_is_flagged_not_clamped() -> None:
+    """A datasheet droop is quoted at its rated flow. LE4's regulator ran at
+    2.7-3.2x its (default) 0.05 kg/s for the whole burn, extrapolating 54-64 psi
+    of droop, and nothing said so. The physics stays linear; the envelope says
+    how far past the characterisation it is."""
+    reg = make(
+        flow_droop=Param(20.0, "psi", M, "droop at rated"),
+        rated_flow=Param(0.05, "kg/s", M, "rated"),
+    )
+    flow = FlowConditions(39.0, 1.78e-5, 4500 * PSI)
+    assert not any(v.limit == "rated_flow" for v in reg.envelope_violations(0.05, flow))
+    past = [v for v in reg.envelope_violations(0.1355, flow) if v.limit == "rated_flow"]
+    assert past and past[0].severity == "warning"
+    assert "2.71x" in past[0].detail and "54.2 psi" in past[0].detail
+    assert reg.diagnostics(0.1355, flow)["rated_multiple"] == pytest.approx(2.71)
+    # Not clamped: the droop at 2.71x is still 2.71 x 20 psi.
+    at_rated = reg.outlet_setpoint(0.05, flow)
+    assert at_rated - reg.outlet_setpoint(0.1355, flow) == pytest.approx(
+        1.71 * 20.0 * PSI
+    )
+
+
+def test_an_assumed_rated_flow_is_flagged() -> None:
+    """The droop scales with rated_flow; a fallback one is as unmeasured as a
+    fallback droop."""
+    reg = make(
+        flow_droop=Param(20.0, "psi", M, "droop at rated"),
+        rated_flow=Param(0.05, "kg/s", Provenance.DEFAULT, "fallback"),
+    )
+    warnings = [v for v in reg.check() if v.limit == "rated_flow"]
+    assert warnings and warnings[0].severity == "warning"
+    measured = make(
+        flow_droop=Param(20.0, "psi", M, "droop at rated"),
+        rated_flow=Param(0.05, "kg/s", M, "rated"),
+    )
+    assert not [v for v in measured.check() if v.limit == "rated_flow"]
+
+
 def test_dropout_below_minimum_differential() -> None:
     reg = make(
         min_inlet_differential=Param(50.0, "psi", Provenance.MANUFACTURER, "dropout")

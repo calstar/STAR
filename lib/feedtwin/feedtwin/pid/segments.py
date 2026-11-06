@@ -53,8 +53,7 @@ def read_segments(raw: Any, where: str) -> LineLoss:
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
         return LineLoss()
 
-    segments: list[LineSegment] = []
-    warnings: list[str] = []
+    read: list[tuple[LineSegment, str, str, list[str]]] = []
     known = _known_fittings()
 
     for index, entry in enumerate(raw):
@@ -62,6 +61,7 @@ def read_segments(raw: Any, where: str) -> LineLoss:
             continue
         seg_id = str(entry.get("id", "") or f"s{index + 1}")
         place = f"{where} segment {seg_id}"
+        warnings: list[str] = []
 
         method = str(entry.get("method") or DEFAULT_METHOD)
         if method not in LOSS_METHODS:
@@ -91,20 +91,33 @@ def read_segments(raw: Any, where: str) -> LineLoss:
             fittings=fittings,
             curve=_curve(entry.get("curve"), place, warnings),
         )
-        warnings.extend(_check(segment, basis, place))
-        segments.append(segment)
+        read.append((segment, basis, place, warnings))
 
-    return LineLoss(segments=tuple(segments), warnings=tuple(warnings))
+    # A segment with no bore of its own is sized at the narrowest bore stated
+    # on the run (`SegmentedPipe`), so what its missing bore costs is known
+    # only once the whole list is.
+    stated = [segment.bore_si for segment, *_ in read if segment.bore_si > 0.0]
+    run_bore = min(stated) if stated else 0.0
+    said: list[str] = []
+    for segment, basis, place, warnings in read:
+        said.extend(warnings)
+        said.extend(_check(segment, basis, place, run_bore))
+    return LineLoss(segments=tuple(s for s, *_ in read), warnings=tuple(said))
 
 
-def _check(segment: LineSegment, basis: str, place: str) -> list[str]:
+def _check(
+    segment: LineSegment, basis: str, place: str, run_bore: float = 0.0
+) -> list[str]:
     """What the drawing said that will not survive contact with the solver.
 
     Every one of these is a case where the segment still produces a number --
     the point is that the number is not the one the drawing appears to promise,
-    so it is said out loud rather than absorbed.
+    so it is said out loud rather than absorbed. ``run_bore`` is the narrowest
+    bore stated anywhere on the run [m], zero for none: what the solver sizes a
+    segment with no bore of its own at.
     """
     out: list[str] = []
+    unbored = segment.bore is None or segment.bore.si <= 0.0
     if basis == "overall" and segment.fittings:
         if any(f.length <= 0.0 for f in segment.fittings):
             out.append(
@@ -136,12 +149,34 @@ def _check(segment: LineSegment, basis: str, place: str) -> list[str]:
                 f"{place}: itemised but states no length, so it contributes "
                 "its fittings and no pipe friction"
             )
-        if segment.bore is None or segment.bore.si <= 0.0:
+        if unbored and run_bore > 0.0:
+            # Split before its diameter was given: priced, at a bore the drawing
+            # gave somewhere else. This used to say "contributes nothing",
+            # which the solver does not do.
+            out.append(
+                f"{place}: itemised but states no bore; its friction and "
+                "fittings are sized at the run's narrowest stated bore, "
+                f"{run_bore * 1e3:.2f} mm, which the drawing does not say"
+            )
+        elif unbored:
             # A stated 0 mm is no bore too; it used to pass here and the run
             # then contributed nothing, silently (LE4's fuel tank-to-main run).
             out.append(
                 f"{place}: itemised but states no bore, so neither its friction "
                 "nor its fittings can be sized; it contributes nothing"
+            )
+    if segment.method in ("measured_K", "lumped_K") and segment.K is not None:
+        # A K multiplies a dynamic head, and a head needs a bore.
+        if unbored and run_bore > 0.0:
+            out.append(
+                f"{place}: states a K but no bore; the K is referred to the "
+                f"run's narrowest stated bore, {run_bore * 1e3:.2f} mm, which "
+                "the drawing does not say"
+            )
+        elif unbored:
+            out.append(
+                f"{place}: states a K but no bore to refer it to, here or "
+                "anywhere on the run; it contributes nothing"
             )
     return out
 

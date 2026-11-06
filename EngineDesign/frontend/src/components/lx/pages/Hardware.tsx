@@ -59,7 +59,7 @@ function RecessionAlong({ contour, u }: { contour: Contour; u: Units }) {
   }, [frames, k, contour.r0_mm, len]);
   if (!series) return null;
   const xs = contour.x_mm.map((v) => len.to(v / 1000));
-  return <Chart t={xs} series={series} yUnit={len.unit} xLabel={len.unit} height={200} store={null} digits={len.digits} title="Wall recession along the engine" />;
+  return <Chart t={xs} series={series} yUnit={len.unit} xLabel={len.unit} height={200} store={null} xTime={false} digits={len.digits} title="Wall recession along the engine" />;
 }
 
 // ------------------------------------------------------------------ the axial sidecar
@@ -134,7 +134,7 @@ function AlongEngine({ x, t, z, unit, xLabel, digits, title }: {
       { key: 'now', label: 'Cursor', color: '--lx-hot', values: [...now], width: 2 },
     ];
   }, [x, z, k]);
-  return <Chart t={x} series={series} yUnit={unit} xLabel={xLabel} height={220} store={null} digits={digits} title={title} />;
+  return <Chart t={x} series={series} yUnit={unit} xLabel={xLabel} height={220} store={null} xTime={false} digits={digits} title={title} />;
 }
 
 // ------------------------------------------------------------------ separation, soak

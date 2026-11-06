@@ -255,6 +255,7 @@ def solve_steady(
             stubs,
             isolated,
             report=report,
+            signals=signals,
         )
 
     x = _initial_guess(network, free, branch_ids, initial_flow)
@@ -343,6 +344,7 @@ def solve_steady(
                     isolated,
                     stores,
                     report=report,
+                    signals=signals,
                 ),
                 "the residual converged on a state with a non-physical "
                 f"pressure ({say(min(x[: len(free)]), 1)}). A "
@@ -379,6 +381,7 @@ def solve_steady(
                     isolated,
                     stores,
                     report=report,
+                    signals=signals,
                 ),
                 f"the Jacobian could not be factorised ({exc}). This usually "
                 "means a node with no path to a fixed pressure.",
@@ -417,6 +420,7 @@ def solve_steady(
         isolated,
         stores,
         report=report,
+        signals=signals,
     )
 
     if not converged and raise_on_failure:
@@ -630,37 +634,62 @@ def _branch_row(
     p_dn: float,
     signals: Mapping[str, float] | None = None,
 ) -> _BranchRow:
-    """Assemble one branch's equation, in whichever form applies."""
+    """Assemble one branch's equation, in whichever form applies.
+
+    A symmetric component (``component.symmetric``) is priced at the node the
+    fluid actually comes from: when the drawn downstream is the higher
+    pressure, the conditions are the downstream node's and the choke test reads
+    the drop the other way. It used to be priced at the drawn upstream whatever
+    the gradient, and a reverse drop never choked: a valve drawn against its
+    flow passed 3-8x less than the same valve drawn with it, both converged.
+    One-way laws (check valve, regulator, relief, injector) keep the drawing's
+    direction.
+    """
     branch = network.branches[branch_id]
     component = branch.component
-    conditions = network.conditions(branch.upstream, p_up, dict(signals or {}))
-
     available = p_up - p_dn
+    reverse = available < 0.0 and component.symmetric
+    if reverse:
+        conditions = network.conditions(branch.downstream, p_dn, dict(signals or {}))
+    else:
+        conditions = network.conditions(branch.upstream, p_up, dict(signals or {}))
+    # The drop from the inlet the component is priced at, and that inlet.
+    drive, p_in = (-available, p_dn) if reverse else (available, p_up)
     ceiling = component.flow_ceiling(conditions)
 
     def choked_row(limit: float | None = None) -> _BranchRow:
         # Choked: the flow is pinned and downstream pressure is decoupled. The
-        # ceiling is proportional to upstream pressure, which is the only
-        # pressure this row depends on at all.
+        # ceiling is proportional to the inlet pressure, which is the only
+        # pressure this row depends on at all. Reverse, the pin is negative and
+        # the inlet is the drawn downstream.
         pinned = ceiling if limit is None else limit
         assert pinned is not None
+        slope = _CHOKE_STIFFNESS * (pinned / p_in if p_in > 0.0 else 0.0)
+        if reverse:
+            return _BranchRow(
+                residual=_CHOKE_STIFFNESS * (-pinned - mdot),
+                d_mdot=-_CHOKE_STIFFNESS,
+                d_p_up=0.0,
+                d_p_dn=-slope,
+                choked=True,
+            )
         return _BranchRow(
             residual=_CHOKE_STIFFNESS * (pinned - mdot),
             d_mdot=-_CHOKE_STIFFNESS,
-            d_p_up=_CHOKE_STIFFNESS * (pinned / p_up if p_up > 0.0 else 0.0),
+            d_p_up=slope,
             d_p_dn=0.0,
             choked=True,
         )
 
     # A component that pins its own flow at this drop (the opt-in compressible
     # regulator seat, choked wide open). None for everything else.
-    pinned = component.pinned_flow(available, conditions)
+    pinned = component.pinned_flow(drive, conditions)
     if pinned is not None:
         return choked_row(pinned)
 
     # The component reads the pressures and says the drop has carried it past
     # its critical ratio (or, for a regulator, that it has shut -- ceiling 0).
-    if ceiling is not None and component.is_choked(available, conditions):
+    if ceiling is not None and component.is_choked(drive, conditions):
         return choked_row()
 
     h = max(abs(mdot) * _FD_REL, _FD_ABS)
@@ -684,7 +713,7 @@ def _branch_row(
         # row does not know what downstream is doing -- and two such
         # sub-steps put 26 psi into a three-gram ullage. Repeated, the tank
         # ratcheted to 745 psig against a 550 psig regulator.
-        if ceiling is not None and ceiling > 0.0 and available > 0.0:
+        if ceiling is not None and ceiling > 0.0 and drive > 0.0:
             return choked_row()
         if ceiling is None or ceiling <= 0.0:
             raise
@@ -930,8 +959,13 @@ def _result(
     stores: Mapping[str, tuple[float, float]] | None = None,
     *,
     report: bool = True,
+    signals: Mapping[str, float] | None = None,
 ) -> SteadyResult:
     """Package a solution vector as a result.
+
+    ``signals`` must be the solve's own: the report re-evaluates every branch
+    at the answer, and without them a dome-loaded regulator reported its drawn
+    setpoint and a part-open valve reported itself wide open.
 
     ``isolated`` is not optional and must be the same set the solve used. This
     function rebuilds the branch ordering to read ``x`` back, and that ordering
@@ -1015,11 +1049,14 @@ def _result(
             # was trapped in it, not the pressure across the seat -- and a ball
             # valve's drop at zero flow is identically zero, so the test above
             # never caught it: a transducer there followed the tank.
-            if (
-                branch.component.pressure_drop(0.0, conditions) > 0.0
-                or dead.branch in isolated
-                or dead.live_end in indeterminate_nodes
-            ):
+            try:
+                holds = branch.component.pressure_drop(0.0, conditions) > 0.0
+            except Exception:  # noqa: BLE001 - the back-fill must not fail the solve
+                # A component that cannot price zero flow cannot say the stub
+                # is defined either; a measured curve off its range raised out
+                # of a solve asked not to raise from here.
+                holds = True
+            if holds or dead.branch in isolated or dead.live_end in indeterminate_nodes:
                 # Undefined-ness travels. A regulator with nothing drawing
                 # through it leaves its outlet undefined; the manifold that
                 # outlet feeds is then no better known, and reporting *it* as
@@ -1076,7 +1113,7 @@ def _result(
             elapsed=time.perf_counter() - started,
         )
     try:
-        branch_rows = _branch_rows(network, x, node_index, branch_index)
+        branch_rows = _branch_rows(network, x, node_index, branch_index, signals)
     except Exception:  # noqa: BLE001 - the report must not fail the solve
         # Classifying branches (regularised, choked) re-evaluates every one at
         # the answer. A correlation refusing there is a reporting gap, not a
@@ -1084,7 +1121,9 @@ def _result(
         branch_rows = {}
     for branch_id, branch in network.branches.items():
         conditions = network.conditions(
-            branch.upstream, pressures.get(branch.upstream, 0.0) or 1.0e5
+            branch.upstream,
+            pressures.get(branch.upstream, 0.0) or 1.0e5,
+            dict(signals or {}),
         )
         try:
             diagnostics[branch_id] = branch.component.diagnostics(
@@ -1112,6 +1151,7 @@ def _result(
         diagnostics=diagnostics,
         violations=network.check(),
         regularised_branches=sorted(regularised),
+        choked_branches=sorted(choked),
         elapsed=time.perf_counter() - started,
         stack=stack_versions(),
     )

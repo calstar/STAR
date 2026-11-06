@@ -11,7 +11,10 @@ through the design-tools MCP gets the same file. The format is unchanged:
 - pressures go out in psia, as their header says, to 3 places (the wire is psig
   hundredths); every other number as JavaScript prints it;
 - ``state`` is the state machine's state at each sample, walked from the
-  transitions; with none recorded, the stand's current state.
+  transitions (an event matches the sample it was rounded from); before the
+  first transition it is blank, and with none recorded it is the stand's
+  current state;
+- a thermocouple the twin cannot read (all 0 K on the wire) is an empty column.
 Numbers are printed by stardesign.jsformat so the file is byte-for-byte what the
 browser wrote.
 """
@@ -37,6 +40,25 @@ def shown_unit(unit: str | None) -> str:
     return PRESSURE_UNIT if is_pressure(unit) else (unit or "")
 
 
+#: How far a state change's time on the wire can sit from the sample it
+#: happened at [s]: /history rounds an event to the millisecond and keeps a
+#: sample's time whole, so the first Fire sample at 0.7577 s came with its
+#: event at 0.758 and was labelled Ready.
+EVENT_ROUNDING_S = 0.0005
+
+
+def unread(channel: Mapping[str, Any]) -> bool:
+    """A temperature channel the twin has nothing to read for: the node its
+    thermocouple sits on carries no temperature and the wire sends 0 K, which
+    no sensor reads. Its column is left empty, never written as 0 K."""
+    values = channel.get("values") or []
+    return (
+        not is_pressure(channel.get("unit"))
+        and channel.get("unit") == "K"
+        and all(not (v is not None and v > 0) for v in values)
+    )
+
+
 def _quote(v: str) -> str:
     return '"' + v.replace('"', '""') + '"' if any(ch in v for ch in '",\n') else v
 
@@ -46,6 +68,7 @@ def history_csv(
 ) -> str:
     """``history`` is the /history response (RunOut as a dict) at full rate."""
     channels = history.get("channels") or []
+    blind = [unread(c) for c in channels]
     events = history.get("events") or []
     at = 0
     state = "" if events else state_now
@@ -55,14 +78,14 @@ def history_csv(
     ]
     lines = [",".join(_quote(h) for h in header)]
     for i, t in enumerate(history.get("times_s") or []):
-        while at < len(events) and events[at]["t"] <= t:
+        while at < len(events) and events[at]["t"] <= t + EVENT_ROUNDING_S:
             state = events[at]["label"]
             at += 1
         cells = [js_to_fixed(t, 3), _quote(state)]
-        for c in channels:
+        for c, dark in zip(channels, blind):
             values = c.get("values") or []
             v = values[i] if i < len(values) else None
-            if v is None:
+            if v is None or dark:
                 cells.append("")
             elif is_pressure(c.get("unit")):
                 cells.append(js_to_fixed(v + ATMOSPHERE_PSI, 3))

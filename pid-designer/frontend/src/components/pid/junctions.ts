@@ -559,7 +559,7 @@ export const onAxisOf = (e: End, p: Pt) =>
 // The pipe model: pipes, their paths, placing tees on them, and pointing
 // the lines. It lives in its own module; these are its entry points.
 export {
-  adoptTee, crowdOf, dragging, freezePipe, keptShape, pipeGeometry, pipeOf, pipesOf, pointLines, recordPipes, reseatJunctions,
-  seatTees, setHandCorners, slideAlong, splitSpot, thawPipe,
+  adoptTee, crowdOf, dragging, freezePipe, handRouted, keptShape, pipeGeometry, pipeOf, pipesOf, pointLines, recordPipes,
+  reseatJunctions, seatTees, setHandCorners, slideAlong, splitSpot, thawPipe,
 } from './pipes';
 export type { Crowd, Dragging, Pipe, PipeEnd, PipeGeometry } from './pipes';

@@ -99,6 +99,18 @@ describe('deriveRunData', () => {
     expect(byKey(deriveRunData(r).limits, 'chug').worstT).toBe(0.15);
   });
 
+  it('holds a saved run\'s tank peak to the absolute trip it recorded, across the wall on the gauge zero', () => {
+    // derived.tank_mawp_psi is the pressure the twin trips the tank at, absolute (764.7 psia for a 1500 psi
+    // burst over 2). A 770 psia peak is over it: 755.3 psi across against 750. Read as already across the
+    // wall the rating was 764.7 and the peak only amber.
+    const r = result({ summary: summary({ ox: sideSummary({ peak_psia: 770 }) }) });
+    r.provenance.derived = { ...r.provenance.derived, tank_mawp_psi: { OXT: 764.696, FUT: 764.696 } };
+    const peak = byKey(deriveRunData(r).limits, 'peak_lox');
+    expect(peak.value).toBeCloseTo(770 - 101325 / PSI, 9);
+    expect(peak.spec.limit).toBeCloseTo(764.696 - 101325 / PSI, 9);
+    expect(peak.status).toBe('bad');
+  });
+
   it('grades as the old verdict did and sorts worst first', () => {
     const s = Object.fromEntries(d.limits.map((l) => [l.key, l.status]));
     expect(s).toEqual({

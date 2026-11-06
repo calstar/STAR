@@ -47,12 +47,22 @@ describe('the canvas lends the previews', () => {
   });
 });
 
+const PAGE_BAR = Object.values(import.meta.glob('./PageBar.tsx', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>)[0];
+
 describe('the hint', () => {
   it('is one line, and says a line is reshaped by clicking it', () => {
-    const at = SOURCE.indexOf('<Panel position="bottom-center"');
-    const panel = SOURCE.slice(at, SOURCE.indexOf('</Panel>', at));
-    const span = /<span className="([^"]*)">\s*([^<]*?)\s*<\/span>/.exec(panel)!;
-    expect(span[1].split(' ')).toEqual(expect.arrayContaining(['whitespace-nowrap', 'truncate']));
-    expect(span[2]).toBe('Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates');
+    const text = /\bhint=\{readOnly \? undefined\s*:\s*'([^']*)'\}/.exec(tag('PageBar'))!;
+    expect(text[1]).toBe('Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates');
+    const span = /\{hint && \(\s*<span className="([^"]*)">\s*\{hint\}/.exec(PAGE_BAR)!;
+    expect(span[1].split(' ')).toEqual(expect.arrayContaining(['whitespace-nowrap', 'truncate', 'hidden', '2xl:block']));
+  });
+
+  it('is not printed over the drawing', () => {
+    // A panel at the canvas's bottom centre sat over OX-RTD-1's tag on
+    // opening LE4 (3) at 1920 px, and on the Rocket section's border after
+    // Fit View. The page bar is under the canvas, not on it.
+    expect(SOURCE).not.toMatch(/<Panel\b/);
   });
 });

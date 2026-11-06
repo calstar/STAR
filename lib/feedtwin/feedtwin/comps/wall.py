@@ -57,7 +57,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from feedtwin.comps.base import HydraulicComponent
 from feedtwin.comps.correlations import LAMINAR_LIMIT
+from feedtwin.comps.elements import SegmentedPipe
 
 #: Specific heat of austenitic stainless [J/(kg.K)] against temperature [K].
 #:
@@ -104,6 +106,40 @@ def fitting_metal(count: float, bore: float) -> float:
     if count <= 0.0 or bore <= 0.0:
         return 0.0
     return count * UNION_MASS * (bore / UNION_BORE) ** 2
+
+
+def wall_runs(component: HydraulicComponent) -> tuple[tuple[float, float], ...]:
+    """``(bore, length)`` of each piece of a line a wall wraps [m].
+
+    A plain line carries its geometry in ``p``. A line the drawing itemised does
+    not: the segment list supersedes the line-level bore and length (see
+    ``feedtwin.pid.network._SUPERSEDED_BY_SEGMENTS``), so the geometry is the
+    segments'. Reading only ``p`` left every itemised line without a wall -- on a
+    stand drawn with pid-designer's centerline sketch, every line. Empty when
+    nothing on the line states a bore: a wall cannot be sized on no bore.
+    """
+    if isinstance(component, SegmentedPipe):
+        return component.wetted_runs()
+    bore = component.p.get("bore", 0.0)
+    if bore <= 0.0:
+        return ()
+    return ((bore, component.p.get("length", 0.0)),)
+
+
+def wall_bore(runs: tuple[tuple[float, float], ...]) -> float:
+    """The one bore a :class:`LineWall` takes for its film coefficient [m].
+
+    One run: its own bore, exactly. Several: the length-weighted mean, which is
+    an approximation and says so -- the film goes as ``D^-1.8`` in turbulence
+    and not at all in laminar flow, so no single bore is exact for both. No
+    shipped stand has a multi-bore itemised gas line.
+    """
+    if len(runs) == 1:
+        return runs[0][0]
+    total = sum(length for _, length in runs)
+    if total <= 0.0:
+        return min(bore for bore, _ in runs)
+    return sum(bore * length for bore, length in runs) / total
 
 
 def stainless_capacity(temperature: float) -> float:

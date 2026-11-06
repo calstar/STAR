@@ -3,7 +3,9 @@
 A run record is what a burn was *and* everything it depended on:
 
 * **inputs** -- the drawing and engine (library artifact ids: content hashes,
-  so they name exact bytes), the fluid set, the state machine, every
+  so they name exact bytes), the Drawing tab's overrides in force, the engine
+  card fired (the SHA-256 of its bytes: a card is rebuilt under the same
+  engine id), the fluid set, the state machine, every
   Configuration-tab setting, the hookup and its knobs, and T-0 (each tank's
   pressure, load and temperature, each bottle's pressure, at the last sample
   before ignition);
@@ -25,8 +27,9 @@ reported as such rather than spread across the groups.
 
 Records live in the stardesign user-data volume, ``<root>/<user>/runs``: on a
 stand, in the stand owner's folder, so everyone the stand is shared with sees
-its runs; otherwise in the runner's own. They are evidence, so they are never
-edited; an owner may delete one.
+its runs; otherwise in the runner's own -- and only those people see them. They
+are evidence, so they are never edited; the folder's owner may delete one.
+Each has a small summary beside it (``<id>.summary.json``) that the list reads.
 """
 
 from __future__ import annotations
@@ -76,6 +79,13 @@ GAUGE_KEYS = frozenset(key for key, _, unit in OUTCOME_KEYS if unit == "psig")
 
 _ID = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{6}$")
 
+#: A record's summary is kept beside it as ``<id>.summary.json``; the list
+#: reads those. Bump the version when :func:`summary` changes what it says,
+#: and every summary is written again from its record the next time it is
+#: listed.
+SUMMARY_SUFFIX = ".summary.json"
+SUMMARY_VERSION = 2
+
 
 def new_id(now: float | None = None) -> str:
     """Sortable by time, unique by suffix: ``20261006T171502-3fa9c1``."""
@@ -108,7 +118,33 @@ class RunStore:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record, indent=1, default=_jsonable))
         tmp.replace(path)
+        self._summarise(path, record)
         return record
+
+    def _summarise(self, path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Write the record's summary beside it, for :meth:`list`: a record is
+        ~20 kB with its traces, and the Runs tab lists every one every 5 s."""
+        out = {"summary_version": SUMMARY_VERSION, **summary(record)}
+        side = path.with_name(f"{path.stem}{SUMMARY_SUFFIX}")
+        tmp = side.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(out, default=_jsonable))
+            tmp.replace(side)
+        except OSError:
+            pass  # the list reads the record instead
+        return out
+
+    def delete(self, user: str, run_id: str) -> bool:
+        """Remove one record and its summary; whether there was one."""
+        if not _ID.match(run_id):
+            return False
+        folder = self.folder(user, create=False)
+        path = folder / f"{run_id}.json"
+        if not path.is_file():
+            return False
+        path.unlink()
+        (folder / f"{run_id}{SUMMARY_SUFFIX}").unlink(missing_ok=True)
+        return True
 
     def get(self, user: str, run_id: str) -> dict[str, Any] | None:
         if not _ID.match(run_id):
@@ -129,16 +165,36 @@ class RunStore:
             if not folder.is_dir():
                 continue
             for path in folder.glob("*.json"):
-                try:
-                    record = json.loads(path.read_text())
-                except (OSError, ValueError):
+                if not _ID.match(path.stem):
+                    continue  # a summary, or not a record
+                found = self._summary_of(path)
+                if found is None:
                     continue
-                ref = record.get("stand") or {}
+                ref = found.get("stand") or {}
                 if stand is not None and ref.get("id") != stand:
                     continue
-                out.append(summary(record))
+                out.append(found)
         out.sort(key=lambda r: str(r["id"]), reverse=True)
         return out
+
+    def _summary_of(self, path: Path) -> dict[str, Any] | None:
+        """A record's summary: its file beside it, else (an older record, or
+        one summarised by older code) read from the record and written."""
+        side = path.with_name(f"{path.stem}{SUMMARY_SUFFIX}")
+        try:
+            kept = json.loads(side.read_text())
+            if kept.get("summary_version") == SUMMARY_VERSION:
+                kept.pop("summary_version", None)
+                return dict(kept)
+        except (OSError, ValueError, AttributeError):
+            pass
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        written = self._summarise(path, record)
+        written.pop("summary_version", None)
+        return written
 
 
 def summary(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -179,6 +235,10 @@ def summary(record: Mapping[str, Any]) -> dict[str, Any]:
             if isinstance(t0_tanks.get(k), Mapping)
         },
         "outcome": {k: outcome.get(k) for k, _, _ in OUTCOME_KEYS},
+        # How the burn ended: burnout, abort, operator, trip, closed, out
+        # ("" on a record written before it was kept), and in words.
+        "end_cause": str(outcome.get("end_cause") or ""),
+        "ended": str(outcome.get("ended") or ""),
         "converged": not solver.get("unconverged"),
         # Unexplained mass where the record has it (error less the guards'
         # booked corrections); older records carry only the mass error.
@@ -279,10 +339,21 @@ GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # rows, so swapping one without the other runs the mains unbound. Named
     # for all of it: a rung that swaps only the table is not "the drawing".
     ("drawing & hookup", ("diagram", "hookup", "machine_table", "multiphase")),
-    ("engine", ("engine",)),
+    # The Drawing tab's operator overrides: numbers typed over the drawing's,
+    # applied at assembly. Not the drawing -- its bytes are the same -- so a
+    # rung of their own.
+    ("drawing overrides", ("overrides",)),
+    # The card rides with the engine: rebuilt in place, under the same id, it
+    # is a different engine.
+    ("engine", ("engine", "card")),
     ("fluids", ("fluid_set",)),
     ("state machine", ("machine",)),
     ("regulator knobs", ("knobs",)),
+    # What the operator commanded between Fire and the end of the burn (an
+    # abort, a vent, a knob turned): it changes the burn as surely as a
+    # setting, and a replay repeats it at its T+. A burn flown to burnout has
+    # none, and no key.
+    ("operator sequence", ("sequence",)),
     ("T-0", ("t0",)),
     ("settings", ("setup",)),
 )
@@ -484,10 +555,17 @@ class Explainer:
             if base.error or full.error:
                 state["error"] = base.error or full.error
             else:
-                state["attribution"] = attribute(
-                    base.outcome, full.outcome, [r for r in rungs if not r.error]
-                )
                 state["reproduction"] = _reproduction(a, b, base, full)
+                missed = _unreproduced(a, b, base, full)
+                if missed:
+                    # The bars would explain the replays, not the burns: a
+                    # zero ladder beside a 111 % thrust change read as the
+                    # answer (H062). Said instead of shown.
+                    state["error"] = missed
+                else:
+                    state["attribution"] = attribute(
+                        base.outcome, full.outcome, [r for r in rungs if not r.error]
+                    )
             state["stage"] = "done"
         except _Cancelled:
             state["stage"] = "cancelled"
@@ -500,6 +578,39 @@ class Explainer:
 
 class _Cancelled(Exception):
     pass
+
+
+#: How far a replay may land from the burn it replays, as a fraction of the
+#: recorded mean thrust or impulse, before the ladder is not shown. A replay
+#: of a burn flown to burnout lands within a few hundredths of a percent (the
+#: cockpit and the replay share a grid); one that misses by more replays a
+#: different burn -- something the record does not hold made the difference.
+REPRODUCTION_TOLERANCE = 0.05
+
+
+def _unreproduced(
+    a: Mapping[str, Any], b: Mapping[str, Any], base: Rung, full: Rung
+) -> str:
+    """Why the ladder is not shown, or "": a run its replay does not reproduce."""
+    for name, record, rung in (("first", a, base), ("second", b, full)):
+        recorded = record.get("outcome") or {}
+        for key, label, unit in OUTCOME_KEYS:
+            if key not in ("thrust_mean_N", "impulse_Ns"):
+                continue
+            was, now = recorded.get(key), rung.outcome.get(key)
+            if not isinstance(was, (int, float)) or not isinstance(now, (int, float)):
+                continue
+            if abs(now - was) <= REPRODUCTION_TOLERANCE * max(abs(was), 1e-9):
+                continue
+            ended = str(recorded.get("ended") or "")
+            return (
+                f"The {name} run's replay does not reproduce it: {label.lower()} "
+                f"{now:,.0f} {unit} replayed against {was:,.0f} {unit} recorded"
+                + (f" (it ended: {ended})" if ended else "")
+                + ". Something that run depended on is not among its inputs, so "
+                "which input moved the answer cannot be said from these replays."
+            )
+    return ""
 
 
 def _reproduction(

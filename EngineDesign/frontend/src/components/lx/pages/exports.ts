@@ -19,6 +19,11 @@ export async function downloadExport(runId: string, fmt: ExportFormat): Promise<
   try {
     const res = await fetch(exportUrl(runId, fmt));
     if (res.status === 404) return `${fmt.toUpperCase()} export: not on this server yet`;
+    if (res.status === 501) {
+      // The server can't write this format (Parquet without pyarrow): its own words say what is missing.
+      const detail = await res.json().then((b: { detail?: unknown }) => b?.detail).catch(() => null);
+      return typeof detail === 'string' && detail ? detail : `${fmt.toUpperCase()} export is not available on this server`;
+    }
     if (!res.ok) return `${fmt.toUpperCase()} export failed (HTTP ${res.status})`;
     const name = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? `layerx_${runId}.${fmt === 'fea' ? 'zip' : fmt}`;
     const url = URL.createObjectURL(await res.blob());

@@ -46,6 +46,18 @@ export function superseded(artifacts: Artifact[]): Set<string> {
   return out;
 }
 
+/** A stand file (`*.hotbench.json`, backend/bundle.py FORMAT) rather than a
+ *  drawing: dropped on the Library, it went to the drawing import and came
+ *  back "That JSON has no 'nodes'. Export the diagram from pid-designer". */
+export function isStandBundle(text: string): boolean {
+  try {
+    const parsed = JSON.parse(text) as { format?: unknown } | null;
+    return parsed !== null && typeof parsed === 'object' && parsed.format === 'hotbench-stand';
+  } catch {
+    return false;
+  }
+}
+
 interface Props {
   artifacts: Artifact[];
   diagramId: string;
@@ -55,6 +67,8 @@ interface Props {
   busy: boolean;
   /** Put the bundled sample stand back in the library and open it. */
   onSample?: () => Promise<void>;
+  /** Import a stand file and open it; resolves to what to say. */
+  onStandFile?: (file: File) => Promise<string>;
 }
 
 export function LibraryPanel({
@@ -65,6 +79,7 @@ export function LibraryPanel({
   onChanged,
   busy,
   onSample,
+  onStandFile,
 }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -136,10 +151,21 @@ export function LibraryPanel({
     setNote(null);
     for (const file of Array.from(files)) {
       // The extension decides: a P&ID is JSON, a Layer-1 config is YAML. That
-      // is not a guess — it is what the two tools write.
+      // is not a guess — it is what the two tools write. A stand file is JSON
+      // too, and says so in its `format`.
       const kind = file.name.toLowerCase().endsWith('.json')
         ? 'diagram'
         : 'engine';
+      if (kind === 'diagram' && isStandBundle(await file.text())) {
+        try {
+          if (!onStandFile) throw new Error(`${file.name} is a Hotbench stand: open it with Import stand… in the top bar.`);
+          setNote(`Importing the stand ${file.name}…`);
+          setNote((await onStandFile(file)) || `Imported the stand ${file.name}; it is on the console.`);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+        continue;
+      }
       try {
         if (kind === 'engine') setNote(`Importing ${file.name}… building its EngineDesign card (5-15 s).`);
         const result = await importFile(kind, file);
@@ -189,7 +215,7 @@ export function LibraryPanel({
             : 'border-[var(--edge-strong)] text-[var(--dim)] hover:border-[var(--accent)]'
         }`}
       >
-        Or drop a P&amp;ID (.json) or an engine config (.yaml)
+        Or drop a P&amp;ID (.json), an engine config (.yaml) or a stand file (.hotbench.json)
         <input
           ref={picker}
           type="file"
@@ -279,7 +305,7 @@ export function LibraryPanel({
                     onClick={() => onPick(kind, active && kind === 'engine' ? '' : a.id)}
                     disabled={busy}
                     aria-current={active ? 'true' : undefined}
-                    title={`${a.name}\n${a.id} · ${bytes(a.size)}\nfrom ${pulledFrom(a) ? a.source : a.source === 'upload' ? 'an uploaded file: nothing to compare it with' : a.source}\nimported ${a.imported_at}`}
+                    title={`${a.name}\n${a.id} · ${bytes(a.size)}\nfrom ${pulledFrom(a) ? a.source : a.source === 'upload' ? 'an uploaded file: nothing to compare it with' : a.source}\nimported ${a.imported_at}${active && kind === 'engine' ? '\nOn the stand: click to take it off (Fire then lights nothing).' : ''}`}
                     className={`flex min-w-0 flex-1 items-baseline gap-2 rounded border-l-2 px-2 py-1 text-left transition-colors disabled:cursor-wait ${
                       active
                         ? 'border-l-[var(--accent)] bg-[var(--lift)]'
