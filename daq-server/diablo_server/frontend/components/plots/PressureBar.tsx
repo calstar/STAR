@@ -161,13 +161,19 @@ function PressureBar({
 
   return (
     <div className="flex h-full min-h-0 w-full select-none flex-col overflow-visible">
-      {/* The tag and the reading centre on the capsule, not on the column. */}
+      {/* The tag and the reading centre on the capsule, not on the column -- except the
+          compact tag below xl, which takes the whole column: in a tablet's narrow columns
+          the capsule's share truncated "GN2 REG" to "GN2 R…", and a name beats a centre.
+          On desktop the columns are wide enough, so it centres on the capsule again. */}
       <div
-        className="flex-shrink-0 truncate text-center font-mono uppercase leading-none tracking-[0.08em] text-ink-2"
+        className={`flex-shrink-0 truncate text-center font-mono uppercase leading-none tracking-[0.08em] text-ink-2 ${compact ? 'xl:pr-[var(--gutter)]' : ''}`}
         style={{
-          paddingRight: gutter,
+          paddingRight: compact ? undefined : gutter,
+          ['--gutter' as string]: `${gutter}px`,
           paddingBottom: compact ? 'clamp(4px, 0.8vh, 12px)' : 12,
-          fontSize: compact ? 'clamp(9px, 1.1vh, 13px)' : 'clamp(12px, 1.5vh, 18px)',
+          // Compact (the top strip) scales with width too: a portrait tablet is tall, so
+          // vh alone sized text for a screen far wider than the column it sits in.
+          fontSize: compact ? 'clamp(9px, min(1.1vh, 0.95vw), 13px)' : 'clamp(12px, 1.5vh, 18px)',
         }}
         title={label}
       >
@@ -224,7 +230,7 @@ function PressureBar({
           color: readout,
           paddingRight: gutter,
           paddingTop: compact ? 'clamp(4px, 0.8vh, 12px)' : 12,
-          fontSize: compact ? 'clamp(12px, 1.7vh, 22px)' : 'clamp(16px, 1.9vh, 28px)',
+          fontSize: compact ? 'clamp(12px, min(1.7vh, 1.5vw), 22px)' : 'clamp(16px, 1.9vh, 28px)',
         }}
         title={unit}
       >

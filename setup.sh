@@ -89,7 +89,8 @@ show_help() {
     --no-aliases         Don't add the STAR shell aliases to your shell rc
     --help, -h           This help
 
-  Any additional flags are passed through to each project's setup.sh, e.g.:
+  Any additional flags are passed through to each project's setup.sh that
+  takes them (the others are told and skip them), e.g.:
     bash setup.sh --engine-design --ci --no-frontend
     bash setup.sh --daq-server --no-build
 
@@ -120,7 +121,8 @@ while [ $# -gt 0 ]; do
     # dispatcher rather than per project.
     --no-aliases)    NO_ALIASES=1 ;;
     --help|-h)       show_help; exit 0 ;;
-    # Anything else is passed through to sub-scripts (e.g. --ci, --no-build)
+    # Anything else is passed through to the sub-scripts that take it (e.g.
+    # --ci, --no-build): see flags_for in scripts/setup_common.sh
     *)               PASSTHRU+=("$1") ;;
   esac
   shift
@@ -253,10 +255,23 @@ for row in "${FINAL[@]}"; do
     continue
   fi
 
+  # Only the flags this project takes (flags_for): each setup.sh stops on a
+  # flag it does not know, so passing every project every flag failed
+  # feed-twin, pid-designer and firmware on daq-server's --no-hook.
+  ARGS=()
+  while IFS= read -r f; do ARGS+=("$f"); done \
+    < <(flags_for "$REPO_ROOT/$script" ${PASSTHRU[@]+"${PASSTHRU[@]}"})
+  for f in ${PASSTHRU[@]+"${PASSTHRU[@]}"}; do
+    case " ${ARGS[*]-} " in
+      *" $f "*) ;;
+      *) info "$f is not one of $name's setup flags; not passed to it" ;;
+    esac
+  done
+
   # We run each project's setup as a *subshell* rather than sourcing so a
   # single project's failure doesn't kill the dispatcher for the others,
   # and each project sees a clean environment.
-  if bash "$REPO_ROOT/$script" "${PASSTHRU[@]}"; then
+  if bash "$REPO_ROOT/$script" ${ARGS[@]+"${ARGS[@]}"}; then
     COMPLETED+=("$name")
     ok "$name setup complete"
   else

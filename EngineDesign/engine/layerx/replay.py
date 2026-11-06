@@ -514,6 +514,10 @@ def delivered(rp: Dict[str, Any], series: Dict[str, Any], dt: float) -> Optional
         # burn, ignition included: below 1 the feed-coupled loop is predicted unstable.
         "chug_margin_min": None,
         "chug_margin_min_t": None,
+        # Its feed is EngineDesign's own feed_system, not the drawing's lines: the run grades its chug
+        # on the drawing (diagnostics.stability, the limits' ``chug_margin``). On LE4 (3) the two read
+        # 1.21 and 1.004; anything quoting this figure says which it is.
+        "chug_margin_basis": "config",
     }
     gm = [(v, tt) for v, tt in zip(out.get("chug_margin") or [], t) if math.isfinite(v)]
     if gm:

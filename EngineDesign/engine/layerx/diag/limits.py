@@ -280,7 +280,8 @@ def _defaulted(config: Any) -> frozenset:
 # ---------------------------------------------------------------------- the graders
 
 
-def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset()) -> List[Dict[str, Any]]:
+def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset(),
+          derived: Optional[Mapping[str, Any]] = None) -> List[Dict[str, Any]]:
     msm = _num(req.get("min_stability_margin"))
     amber = THRESHOLDS["chug_margin_amber"]["value"]
     warn = max(amber, msm) if msm is not None else amber
@@ -305,19 +306,24 @@ def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset())
             # reported 34.6 Hz was not the gating ~22 Hz).
             freq = _num(_dig(st, "settled_min.frequency_hz"))
             window = _num(st.get("start_window_s"))
-            scope = (f"from the first full-flow step (after the first {window:g} s)" if window is not None
+            scope = (f"from the first full-flow step (after the first {window:.3f} s)" if window is not None
                      else "from the first full-flow step")
         else:
             value, t, scope = worst, _num(_dig(st, "worst.t")), "over the whole burn, start included"
             idx = _dig(st, "worst.index")
             freq = _num(_dig(st, "worst.frequency_hz"))
         i = idx if isinstance(idx, int) and 0 <= idx < len(run.t) else run.index_of(t)
+        # The gaps in the drawing this margin stands on, beside it rather than buried in the block's
+        # flags (W14: LE4 (3)'s LOX path is undrawn and its fuel tank line has a 0 mm bore).
+        gaps = [str(f) for f in (st.get("flags") or [])
+                if isinstance(f, str) and ("no usable length/bore" in f or "declares no line" in f)]
         out.append(_entry(
             "chug_margin", "Chug margin", "stability", value, "", red, warn, "min", _grade(value, red, warn, "min"),
             t, i, "diagnostics.stability.margin",
             f"EngineDesign double-time-lag chug model, {basis_name} feed basis, {scope}",
-            f"Feed-coupled gain margin, worst over the mixing-lag band. {why}",
-            frequency_hz=freq))
+            f"Feed-coupled gain margin, worst over the mixing-lag band. {why}"
+            + (f" It rests on gaps in the drawing: {'; '.join(gaps)}." if gaps else ""),
+            frequency_hz=freq, **({"drawing_gaps": gaps} if gaps else {})))
         if settled is not None and worst is not None and worst < settled:
             tw = _num(_dig(st, "worst.t"))
             iw = _dig(st, "worst.index")
@@ -350,13 +356,26 @@ def _chug(run: _Run, req: Mapping[str, Any], defaulted: frozenset = frozenset())
     col = [_num(v) for v in (dv.get("chug_margin") or [])]
     k = run.argext(col, range(len(col)), min) if col else None
     i = run.firing_to_series(k) if k is not None else run.index_of(t)
+    basis = ("EngineDesign double-time-lag chug model at the erosion replay's points (config feed basis, A_t and L* "
+             "at the design point), interpolated onto the twin's firing steps; lowest over every firing step, the "
+             "first included, which lies inside the valve ramp, so the minimum moves with the time step "
+             "(AUDIT 5.1, #12)")
+    if _dig(derived or {}, "options.chug_basis") == "drawing":
+        # The run is graded on the drawing's feed (decided 2026-10-03: "physics, not options"), and its
+        # stability block is absent (a set-point, Hardware, reconcile or sweep burn runs no diagnostics).
+        # The replay's figure is EngineDesign's own feed_system: it read 1.21 'ok' on LE4 (3) where the
+        # drawing basis grades 1.004 'warn'. Shown for what it is, never graded.
+        out.append(_entry(
+            "chug_margin", "Chug margin, config basis (not graded)", "stability", value, "", red, warn, "min", "info",
+            t, i, "delivered.chug_margin", basis,
+            "EngineDesign's own feed_system, not the drawing's lines the run is graded on: that margin is the "
+            "stability diagnostic's, which this burn did not run (a Burn-tab run does) or could not compute, so "
+            f"its chug is not graded. Feed-coupled gain margin, worst over the mixing-lag band. {why}",
+            feed_basis="config"))
+        return out
     out.append(_entry(
         "chug_margin", "Chug margin", "stability", value, "", red, warn, "min", _grade(value, red, warn, "min"),
-        t, i, "delivered.chug_margin",
-        "EngineDesign double-time-lag chug model at the erosion replay's points (config feed basis, A_t and L* "
-        "at the design point), interpolated onto the twin's firing steps; lowest over every firing step, the "
-        "first included, which lies inside the valve ramp, so the minimum moves with the time step "
-        "(AUDIT 5.1, #12)",
+        t, i, "delivered.chug_margin", basis,
         f"Feed-coupled gain margin, worst over the mixing-lag band. {why}"))
     return out
 
@@ -410,8 +429,12 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
     out: List[Dict[str, Any]] = []
     roles = derived.get("roles") or {}
     mawps = derived.get("tank_mawp_psi") or {}
+    ratings = derived.get("vessel_ratings") or {}
+    ratings = ratings if isinstance(ratings, Mapping) else {}
     ambient_pa = _num(derived.get("ambient_pa"))
     ambient_psia = ambient_pa / PSI if ambient_pa is not None else 14.6959
+    gauge_pa = _num(derived.get("gauge_zero_pa"))
+    gauge_zero_psia = gauge_pa / PSI if gauge_pa is not None else 101325.0 / PSI
     meops = dict(derived.get("tank_meop_psi") or {})
     use = THRESHOLDS["rating_use"]["value"]
     for side, short, name, cap_key in (("oxidiser", "ox", "LOX", "max_lox_tank_pressure_psi"),
@@ -425,18 +448,31 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
         t, i = run.at(i)
         across = peak - ambient_psia
         tank_id = roles.get(side)
-        mawp = _num(mawps.get(tank_id)) if tank_id else None
-        if mawp is not None:
+        trip = _num(mawps.get(tank_id)) if tank_id else None
+        if trip is not None and trip > gauge_zero_psia:
+            # ``tank_mawp_psi`` is the absolute pressure the twin trips the stand at (prepare.vessel_trip;
+            # MAWP.si on runs before burst ratings were read, absolute too). Graded on the gauge the
+            # drawing states its rating on, so the red line is exactly the trip and the percentage is
+            # of the drawn psig. It used to subtract the site's atmosphere from the peak and hold that
+            # against the absolute figure: one atmosphere and more lenient, the % reading low.
+            rating = ratings.get(tank_id) if isinstance(ratings.get(tank_id), Mapping) else {}
+            words = rating.get("words") or f"{trip:.1f} psia (the drawing's MAWP)"
+            vessel = rating.get("label") or tank_id
+            peak_g, rating_g = peak - gauge_zero_psia, trip - gauge_zero_psia
             out.append(_entry(
-                f"tank_mawp_{short}", f"{name} tank peak vs MAWP", "tanks", across, "psi", mawp, use * mawp, "max",
+                # "psi": a pressure across the wall is a difference (ADR 0007: psia to people, a difference
+                # plain psi); the page draws "psi" as a gap and has no "psig" kind (contract.limitKindOf).
+                f"tank_mawp_{short}", f"{name} tank peak vs rating", "tanks", peak_g, "psi", rating_g, use * rating_g,
+                "max",
                 # Information for now (the team, 2026-10-03: "don't worry about tank limits for now"); a
-                # vessel over its MAWP still trips the stand (vessel_trip, the twin's own physics).
+                # vessel over its rating still trips the stand (vessel_trip, the twin's own physics).
                 "info", t, i, f"series.{short}.tank_psia",
-                f"Ullage pressure, highest over the recorded lead-in and the burn, less the site's atmosphere "
-                f"({ambient_psia:.2f} psia), against the drawing's MAWP for {tank_id}",
-                f"Highest pressure across the wall: {across / mawp * 100:.0f} % of the drawing's MAWP (amber above "
-                f"{use * 100:.0f} %, a judgement). The recorded lead-in is the last 0.5 s before Fire, not the "
-                "pad hold.", rating_source="drawing"))
+                f"Ullage pressure, highest over the recorded lead-in and the burn, less the gauge zero "
+                f"({gauge_zero_psia:.2f} psia) the drawing's rating is stated on, against the {words} {vessel} trips "
+                "the stand at",
+                f"Highest pressure across the wall: {peak_g / rating_g * 100:.0f} % of the rating the twin trips at "
+                f"(amber above {use * 100:.0f} %, a judgement). The recorded lead-in is the last 0.5 s before Fire, "
+                "not the pad hold.", rating_source=str(rating.get("basis") or "drawing")))
         meop = None
         for src in (meop_psi or {}, meops):
             meop = _num(src.get(side)) if src.get(side) is not None else _num(src.get(tank_id)) if tank_id else None
@@ -446,8 +482,8 @@ def _tanks(run: _Run, derived: Mapping[str, Any], req: Mapping[str, Any],
             out.append(_entry(
                 f"tank_meop_{short}", f"{name} tank peak vs MEOP", "tanks", across, "psi", meop, None, "max",
                 "info", t, i, f"series.{short}.tank_psia",
-                "Ullage pressure across the wall (as for the MAWP), against the stated maximum expected operating "
-                "pressure",
+                f"Ullage pressure less the site's atmosphere ({ambient_psia:.2f} psia), against the stated maximum "
+                "expected operating pressure",
                 "MEOP is the most the vessel is meant to see in operation: above it the burn has left the envelope "
                 "the vessel was qualified for.", rating_source="restated MEOP"))
         cap = _num(req.get(cap_key))
@@ -914,7 +950,7 @@ def grade(result: Mapping[str, Any], prep: Any = None, config: Any = None, *,
     defaulted = _defaulted(config)
     band = derived.get("stiffness_band") or {}
     sections = (
-        lambda: _chug(run, req, defaulted),
+        lambda: _chug(run, req, defaulted, derived),
         lambda: _stiffness(run, band),
         lambda: _tanks(run, derived, req, meop_psi, defaulted),
         lambda: _bottle(run),

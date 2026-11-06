@@ -201,7 +201,7 @@ function TauSweep({ st }: { st: StabilityDiag }) {
   return (
     <Panel title={<Hint text="The lowest chug margin if the combustion time lag were longer or shorter than the model's. The tick marks the lag the burn used.">Sensitivity to the time lag</Hint>}
            className="lg:col-span-4" bodyClassName="!pt-1">
-      <Chart t={tau.tau_ms} series={series} yUnit="" xLabel="ms" height={220} limits={limits} events={events} digits={2} store={null} />
+      <Chart t={tau.tau_ms} series={series} yUnit="" xLabel="ms" height={220} limits={limits} events={events} digits={2} store={null} xTime={false} />
     </Panel>
   );
 }
@@ -265,8 +265,8 @@ function StartPanel({ start, shutdown }: { start: StartDiag | undefined; shutdow
       )}
       {st?.t && (series || mr) && (
         <div className="mt-3 grid grid-cols-2 gap-4">
-          {series ? <Chart t={st.t} series={series} yUnit={pa.unit} xLabel="s" height={140} store={null} /> : <span />}
-          {mr ? <Chart t={st.t} series={mr} yUnit="O/F" xLabel="s" height={140} store={null} digits={2} /> : <span />}
+          {series ? <Chart t={st.t} series={series} yUnit={pa.unit} xLabel="s" height={140} store={null} xTime={false} /> : <span />}
+          {mr ? <Chart t={st.t} series={mr} yUnit="O/F" xLabel="s" height={140} store={null} xTime={false} digits={2} /> : <span />}
         </div>
       )}
       <div className={start ? 'mt-4 border-t border-[var(--lx-line)] pt-3' : ''}>

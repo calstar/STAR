@@ -23,6 +23,8 @@ SLOW_TESTS = {
     "test_ox_fill_loads_the_flight_lox_tank_from_the_dewar",
     "test_the_pad_charges_the_copv_and_loads_fuel_through_the_drawing",
     "test_the_dome_loads_on_the_pad_and_holds_when_its_valve_shuts",
+    # 50 s of a vented LOX load (2026-11-02), ~18 s.
+    "test_a_vented_lox_load_keeps_its_ullage_over_the_liquid",
 }
 
 

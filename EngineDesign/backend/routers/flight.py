@@ -7,6 +7,8 @@ import math
 import numpy as np
 import copy
 
+from starlette.concurrency import run_in_threadpool
+
 from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/flight", tags=["flight"])
@@ -904,12 +906,20 @@ async def simulate_flight(request: FlightSimRequest, session: UserSession = Depe
 
     Uses provided thrust/mdot arrays from time-series analysis.
     Returns apogee, max velocity, and flight trajectory.
+
+    In the thread pool: a RocketPy flight is about a second of CPU, and inline on the event loop
+    it froze every other request (/api/health included) for as long. The config is read once.
     """
-    if not session.app_state.has_config():
+    config, _ = session.app_state.snapshot()
+    if config is None:
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first.",
         )
+    return await run_in_threadpool(_simulate_flight, request, config)
+
+
+def _simulate_flight(request: FlightSimRequest, config) -> FlightSimResponse:
 
     try:
         try:
@@ -920,7 +930,7 @@ async def simulate_flight(request: FlightSimRequest, session: UserSession = Depe
                 detail=f"RocketPy or flight simulation module not available: {e}",
             )
 
-        return _execute_flight_simulation(session.app_state.config, request)
+        return _execute_flight_simulation(config, request)
 
     except HTTPException:
         raise
@@ -933,12 +943,22 @@ async def simulate_flight(request: FlightSimRequest, session: UserSession = Depe
 
 @router.post("/optimize-altitude", response_model=FlightOptimizeResponse)
 async def optimize_flight_altitude(request: FlightOptimizeRequest, session: UserSession = Depends(get_session)):
-    """Find minimum-fuel burn time to reach a target apogee for the loaded time-series curve."""
-    if not session.app_state.has_config():
+    """Find minimum-fuel burn time to reach a target apogee for the loaded time-series curve.
+
+    In the thread pool: the search flies a dozen RocketPy flights (~7 s on the LE4 stand), and
+    inline on the event loop /api/health went unanswered for all of it. Every flight of the
+    search uses the one config read here.
+    """
+    config, _ = session.app_state.snapshot()
+    if config is None:
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first.",
         )
+    return await run_in_threadpool(_optimize_flight_altitude, request, config)
+
+
+def _optimize_flight_altitude(request: FlightOptimizeRequest, config) -> FlightOptimizeResponse:
 
     try:
         try:
@@ -969,7 +989,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
                 times, thrust, mdot_O, mdot_F, burn_time_s
             )
             flight_result = _execute_flight_simulation(
-                session.app_state.config,
+                config,
                 request,
                 time_array=t_out,
                 thrust_array=thrust_out,
@@ -997,7 +1017,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
             )
 
         # A target above the ceiling has no admissible answer; say so before searching.
-        base_cfg = session.app_state.config
+        base_cfg = config
         pad = float(request.environment.elevation) if request.environment else float(base_cfg.environment.elevation)
         ceiling = ceiling_agl_m(getattr(base_cfg, "design_requirements", None), pad)
         if ceiling is not None and float(request.target_apogee_m) - float(request.apogee_tolerance_m) > ceiling:
@@ -1040,7 +1060,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest, session: User
                 times, thrust, mdot_O, mdot_F, opt.optimal_burn_time_s
             )
             flight_at_optimum = _execute_flight_simulation(
-                session.app_state.config,
+                config,
                 request,
                 time_array=t_out,
                 thrust_array=thrust_out,

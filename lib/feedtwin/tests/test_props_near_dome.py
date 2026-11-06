@@ -44,6 +44,26 @@ def test_a_vent_gas_temperature_from_its_enthalpy() -> None:
     assert N2.get("T", p=p, h=h) == pytest.approx(T, abs=0.02)
 
 
+@pytest.mark.parametrize(
+    "T,p",
+    [(144.0, 5.0e6), (148.5, 5.0e6), (144.0, 6.0e6), (140.0, 6.0e6)],
+)
+def test_just_past_the_critical_band_the_tables_are_not_trusted(
+    T: float, p: float
+) -> None:
+    """Nitrogen just outside the old band (0.75-1.5 p_c, below T_c + 16 K)
+    read density 3.7 % off, cp 9.4 %, cp/cv 14 % and viscosity 15 % at these
+    points. The band reaches 2.5 p_c and T_c + 30 K now; HEOS answers there."""
+    for key, prop in (("rho", "D"), ("cp", "C"), ("mu", "V")):
+        assert N2.get(key, p=p, T=T) == pytest.approx(
+            CP.PropsSI(prop, "P", p, "T", T, "Nitrogen"), rel=1e-3
+        ), key
+    gamma = CP.PropsSI("C", "P", p, "T", T, "Nitrogen") / CP.PropsSI(
+        "O", "P", p, "T", T, "Nitrogen"
+    )
+    assert N2.get("gamma", p=p, T=T) == pytest.approx(gamma, rel=1e-3)
+
+
 def test_away_from_the_line_the_tables_still_answer() -> None:
     """The guard costs nothing where the tables are good: warm pressurant and
     subcooled LOX at tank pressure stay on the fast backend."""

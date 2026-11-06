@@ -4,7 +4,6 @@ import {
   ReactFlow,
   Background,
   Controls,
-  Panel,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -73,7 +72,7 @@ import { useHistory } from './history';
 import { matePair, translateSubgraph, turnSelected } from './graphOps';
 import { clearOfHost, clipAt, isInstrument } from './attach';
 import { drawnLines } from './lineHit';
-import { J_END, dragging, isJunction, junctionEnd } from './junctions';
+import { J_END, dragging, handRouted, isJunction, junctionEnd, thawPipe } from './junctions';
 import type { Dragging, EndLookup, Face } from './junctions';
 import { BranchDragProvider, BranchPreview } from './BranchDrag';
 import { ConnectionLine } from './ConnectionLine';
@@ -1660,19 +1659,6 @@ function PIDCanvas({
         <BranchPreview />
         <Controls />
         <TitleBlock meta={{ ...sheet, page }} />
-        {/* One line, and only the gestures nothing else on screen mentions.
-            It used to list nine, which wrapped to four lines on any canvas
-            narrower than a desktop and climbed up through the middle of the
-            drawing -- printing the instructions over the thing they are about.
-            `nowrap` is what makes that impossible rather than unlikely, and
-            it stopped taking clicks meant for the canvas underneath. Only
-            where there is room beside the title block -- at 1440 the two
-            overlapped -- and only to someone who can draw. */}
-        <Panel position="bottom-center" className={`pointer-events-none max-w-full ${readOnly ? 'hidden' : 'hidden 2xl:block'}`}>
-          <span className="block truncate whitespace-nowrap text-[10px] text-[var(--color-text-muted)] select-none">
-            Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates
-          </span>
-        </Panel>
       </ReactFlow>
       </BranchDragProvider>
       </FluidProvider>
@@ -1682,6 +1668,13 @@ function PIDCanvas({
       <PageBar
         pages={pages}
         current={page}
+        // The gestures nothing else on screen mentions, to someone who can
+        // draw. In the page bar, under the canvas: as a panel at the canvas's
+        // bottom centre it was printed over the drawing at 1920 px -- over
+        // OX-RTD-1's tag on opening, over the Rocket section's border after
+        // Fit View.
+        hint={readOnly ? undefined
+          : 'Pull from a port or a line to draw · Click a line to reshape it · Drop a valve on a line to put it in · R rotates'}
         count={(p) => nodes.filter(n => pageOf(n.data as unknown as PIDNodeData) === p).length}
         // Leaving a page leaves its selection behind, cleared: what R,
         // Backspace, Cmd+C and Cmd+D act on has to be something on screen.
@@ -1816,6 +1809,12 @@ function PIDCanvas({
           onPick={hex => setColor(colorMenu, hex)}
           onClear={() => setColor(colorMenu, undefined)}
           onClose={() => setColorMenu(null)}
+          // A pipe somebody routed by hand, given back to the router. It was
+          // a double-click on a grip, which took the double-click that opens
+          // the line's dialog (BranchableEdge).
+          onReroute={colorMenu.kind === 'edge' && handRouted(nodes, edges, colorMenu.id)
+            ? () => setEdges(eds => thawPipe(nodes, eds, colorMenu.id))
+            : undefined}
         />
       )}
 

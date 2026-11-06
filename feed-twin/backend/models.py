@@ -243,6 +243,10 @@ class SourceDocument(BaseModel):
     owner_name: str = ""
     updated_at: str = ""
     mine: bool = False
+    featured: bool = False
+    """The store's main design (heads its list)."""
+    star: bool = False
+    """In the store's STAR set (a curated store: pid-designer)."""
     releases: list[str] = Field(default_factory=list)
 
 

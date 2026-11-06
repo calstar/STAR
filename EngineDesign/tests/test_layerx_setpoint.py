@@ -256,7 +256,8 @@ def test_the_card_change_list_and_model_block():
         assert set(c) >= {"component", "pid_node_id", "field", "before", "after", "unit", "provenance", "effect", "cad_impact"}
     assert by["op:lockup_psia"]["pid_node_id"] == "PR_D" and by["op:dome_psig"]["pid_node_id"] == "PR_C"
     assert by["op:lockup_psia"]["effect"]["mean_thrust_N"] == pytest.approx(187.0, abs=1e-6)
-    assert cl["exports"]["settings_patch"] == {"tank_pressure_psia": pytest.approx(596.51, abs=0.01)}
+    # The patch clears the rail's dome dial, which would otherwise win over the tank pressure it sets.
+    assert cl["exports"]["settings_patch"] == {"tank_pressure_psia": pytest.approx(596.51, abs=0.01), "dome_psia": None}
     m = out["model"]
     assert m["name"] and "Broyden" in m["source"] and m["assumptions"]
     for name, v in m["inputs"].items():
@@ -277,7 +278,8 @@ def test_the_target_defaults_to_the_design_and_refuses_none():
 
 
 def test_the_fallback_grade_by_hand():
-    """Peaks 642.0 (LOX) / 642.5 (fuel) psia at 13.64 psia ambient: MAWP 1000 psi -> 1013.64 psia, ok;
+    """Peaks 642.0 (LOX) / 642.5 (fuel) psia at 13.64 psia ambient: the tanks trip at 1000 psia (``tank_mawp_psi``
+    is absolute, prepare.vessel_trip; it is held as it is, not with the site's atmosphere added), ok;
     the design cap 600 -> warn (AUDIT D11); fuel MEOP 625 psi -> 638.64 psia, bad by 3.86 psi."""
     pytest.importorskip("feedtwin")
     res = {"summary": {"ox": {"peak_psia": 642.0, "stiffness_min": 0.37, "min_psia": 600.0, "residual_kg": 0.0},
@@ -293,7 +295,7 @@ def test_the_fallback_grade_by_hand():
                                                                  max_fuel_tank_pressure_psi=600.0))
     rows = {r["key"]: r for r in sp._fallback_limits(res, prep, config, {"margin_psi": 100.0})}
     assert rows["dropout"]["value"] == pytest.approx(1544.4 - 600.36) and rows["dropout"]["grade"] == "ok"
-    assert rows["tank_peak_mawp.fuel"]["limit"] == pytest.approx(1013.64) and rows["tank_peak_mawp.fuel"]["grade"] == "ok"
+    assert rows["tank_peak_mawp.fuel"]["limit"] == pytest.approx(1000.0) and rows["tank_peak_mawp.fuel"]["grade"] == "ok"
     assert rows["tank_peak_cap.oxidiser"]["grade"] == "warn"
     graded, basis = sp.grade_limits(res, prep, config, {"margin_psi": 100.0, "meop_psi": {"fuel": 625.0}})
     by = {r["key"]: r for r in graded}

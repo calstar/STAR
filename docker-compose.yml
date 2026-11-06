@@ -165,6 +165,13 @@ services:
       # picker reported "pid-designer is not answering". feed-twin-api already
       # points here the same way.
       PID_DESIGNER_URL: http://pid-designer-api:8001
+      # Layer X burns the feed system the twin holds (ADR 0005): it reads
+      # feed-twin's library in place, on the shared `userdata` volume -- the
+      # same directory as feed-twin-api's FEEDTWIN_LIBRARY below. Unset, it
+      # resolved to /feed-twin/backend/library, which is not in this image,
+      # and quietly listed none of the cockpit's drawings or pulls. The sample
+      # set (the featured stand) is baked into the image: Dockerfile.api.
+      LAYERX_FEEDTWIN_LIBRARY: /data/feed-twin/library
       # Per-user saved configs + working copies live here (a mounted volume).
       # See userdata.py.
       USERDATA_DIR: /data
@@ -258,6 +265,11 @@ services:
       # the physics core it shares with EngineDesign.
       context: .
       dockerfile: feed-twin/Dockerfile.api
+      args:
+        # The commit every run record names (feed-twin/backend/version.py):
+        # `FEEDTWIN_COMMIT=$(git rev-parse HEAD) docker compose build`.
+        # Unset, the image says commit '' rather than a wrong one.
+        FEEDTWIN_COMMIT: ${FEEDTWIN_COMMIT:-}
     restart: unless-stopped
     # Larger than the other design tools on purpose: CoolProp's bicubic tables
     # are built per species on first use and held for the life of the process.

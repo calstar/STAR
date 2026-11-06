@@ -18,11 +18,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Configure portable tests with sanitizers
-        run: cmake -S firmware/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
+        run: cmake -S firmware/Flight_Computer/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
       - name: Build portable tests
         run: cmake --build /tmp/star-self-test
       - name: Run portable tests
         run: ctest --test-dir /tmp/star-self-test --output-on-failure
+
+  stm32-emmc-host:
+    name: STM32 flight state + eMMC log (host only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Configure with sanitizers
+        run: cmake -S firmware/Flight_Computer/tests/emmc -B /tmp/star-emmc -DSELF_TEST_SANITIZERS=ON
+      - name: Build
+        run: cmake --build /tmp/star-emmc
+      - name: Run
+        run: ctest --test-dir /tmp/star-emmc --output-on-failure
 
   build-firmware:
     name: Build ${{ matrix.project }}
@@ -92,6 +105,19 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Run native tests
-        run: pio test -e native
+      # Same pin as daq-server-ci: clang-format formatting changes between
+      # major versions, so CI and laptops must agree.
+      - name: Install clang-format 19 (LLVM apt repo)
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-format-19
+          sudo ln -sf /usr/bin/clang-format-19 /usr/local/bin/clang-format
+          clang-format --version
+
+      # The gate: build, unit suites (incl. pio test -e native), the
+      # end-to-end pipeline and the canary. See firmware/Flight_Computer/flight_test.
+      - name: flight_test
+        run: ./flight_test -v
         working-directory: firmware/Flight_Computer

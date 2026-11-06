@@ -326,7 +326,10 @@ def test_a_burn_that_cannot_be_recorded_is_said_on_the_console(
 
 
 @needs_engine
-def test_a_tank_running_dry_burns_no_phantom_propellant() -> None:
+# 0.0401: the fuel tank empties to a 2e-19 kg residue rather than to zero on
+# this machine -- what 0.04 did on some CI runners and not others.
+@pytest.mark.parametrize("fill", [0.04, 0.0401])
+def test_a_tank_running_dry_burns_no_phantom_propellant(fill: float) -> None:
     """The step a tank empties on delivers what it held, not the step's flow.
 
     It used to stop debiting the tank while the network went on delivering
@@ -335,6 +338,11 @@ def test_a_tank_running_dry_burns_no_phantom_propellant() -> None:
     Booking the overdraw as a guard would close the balance too, and is not
     a fix: the engine would still have burned it. So the guards must stay
     quiet as well.
+
+    Nor may the empty tank lose its gas. Where the cut left a round-off
+    residue of liquid, the heat balance warmed it as q / (m cp) to -58,000 K,
+    the vessel step was refused, and the ullage was rebuilt at atmosphere:
+    a 336 g guard (CI, 2026-11-06; `LIQUID_ROUNDOFF`).
     """
     from feedtwin.pid import read_diagram  # noqa: F401 - keeps the import cost here
 
@@ -358,13 +366,27 @@ def test_a_tank_running_dry_burns_no_phantom_propellant() -> None:
             "/api/session", params={"diagram": diagram, "engine": engine}, json={}
         ).json()["id"]
         session = main._SESSIONS[sid]
-        run_burn(session, BurnPlan(fill_fraction=0.04, horizon_s=4.0, settle_max_s=3.0))
+        run_burn(session, BurnPlan(fill_fraction=fill, horizon_s=4.0, settle_max_s=3.0))
         # The burn stops reading at dry_kg; the stand, like the cockpit, goes on.
         for _ in range(10):
             session.step(0.05)
         last = session.solver_log[-1]
-        assert abs(last.mass_error_kg - last.guard_kg) < 1e-4 * last.throughput_kg
-        assert abs(last.guard_kg) < 1e-4 * last.throughput_kg
+        # What the stand was and where each tank's guard went, so a failure
+        # says which vessel refused or overdrew and what it was built on.
+        seen = {
+            "tanks": {
+                tid: {
+                    "liquid_kg": sim.state.liquid_mass,
+                    "fixed_kg": sim.fixed_kg,
+                    "refused_kg": sim.refused_kg,
+                }
+                for tid, sim in session.tanks.items()
+            },
+            "overrides": main._overrides_for(diagram),
+            "sessions_open": len(main._SESSIONS),
+        }
+        assert abs(last.mass_error_kg - last.guard_kg) < 1e-4 * last.throughput_kg, seen
+        assert abs(last.guard_kg) < 1e-4 * last.throughput_kg, seen
     finally:
         main.library.remove(engine)
         main.library.remove(diagram)

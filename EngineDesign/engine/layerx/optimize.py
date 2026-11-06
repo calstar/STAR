@@ -107,9 +107,12 @@ def default_variables(prep: Any, config: Any) -> List[Variable]:
         cap = getattr(req, key, None) if req is not None else None
         if cap:
             caps.append((float(cap), f"design_requirements.{key} ({side})"))
-    for tank_id, mawp in (d.get("tank_mawp_psi") or {}).items():
-        # MAWP is across the wall: absolute cap is the MAWP over the site's atmosphere.
-        caps.append((mawp + d["ambient_pa"] / PSI, f"{tank_id} MAWP on the drawing, over the site's atmosphere"))
+    ratings = d.get("vessel_ratings") or {}
+    for tank_id, trip in (d.get("tank_mawp_psi") or {}).items():
+        # The absolute pressure the twin trips the stand at (prepare.vessel_trip): the cap as it is.
+        # It used to add the site's atmosphere on top, one atmosphere and more over the trip.
+        why = (ratings.get(tank_id) or {}).get("words") or f"{trip:.1f} psia"
+        caps.append((float(trip), f"{(ratings.get(tank_id) or {}).get('label') or tank_id} trips the stand at {why}"))
     hi, hi_why = min(caps, key=lambda c: c[0])
     hi = round(hi, 1)
     lo = round(min(lockup * 0.85, hi * 0.95))
@@ -125,7 +128,8 @@ def default_variables(prep: Any, config: Any) -> List[Variable]:
     out.append(Variable("copv_psig", "Bottle fill", "psig", c_lo, c_hi, min(max(copv, c_lo), c_hi),
                         basis=f"{c_lo:.0f} psig (an assumed floor, 60 % of the top) to {c_hi:.0f} psig, the bottle pressure "
                               "the drawing states: a fill above what the bottle is drawn for is not searched"
-                              + (f" (its MAWP of {mawp:.0f} psi is a proof margin, not a fill)" if mawp else "") + "."))
+                              + (f" (the {mawp:.0f} psia it trips the stand at is a proof margin, not a fill)"
+                                 if mawp else "") + "."))
 
     vol = d.get("copv_volume_L")
     if vol:
@@ -154,18 +158,17 @@ def resolve_variables(prep: Any, config: Any, request: OptimizeRequest) -> List[
 def _candidate(settings: Any, variables: List[Variable], x: Dict[str, float], copv_id: Optional[str],
                objective: str, center_psia: float) -> Tuple[Any, List[Any]]:
     from engine.layerx.measurements import Override
+    from engine.layerx.prepare import at_operating_point
 
     changes: Dict[str, Any] = {"replay": False, "flight": objective == "apogee", "card_center_psia": center_psia}
-    if "lockup_psia" in x:
-        changes["tank_pressure_psia"] = x["lockup_psia"]
-    if "copv_psig" in x:
-        changes["copv_pressure_psig"] = x["copv_psig"]
     extra: List[Any] = []
     volume = next((v for v in variables if v.key == "copv_volume_L"), None)
     if volume is not None and volume.enabled and "copv_volume_L" in x and copv_id:
         extra.append(Override(target=f"node:{copv_id}", parameter="volume", value=float(x["copv_volume_L"]),
                               unit="L", source="Layer X optimiser candidate", provenance="estimated"))
-    return replace(settings, **changes), extra
+    # The candidate's lockup and fill whatever the rail's dome dial and bottle knob say (they win in prepare()).
+    return at_operating_point(replace(settings, **changes), lockup_psia=x.get("lockup_psia"),
+                              fill_psig=x.get("copv_psig")), extra
 
 
 def _figures(res: Dict[str, Any]) -> Dict[str, Any]:

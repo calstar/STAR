@@ -1,7 +1,7 @@
 import { cloneElement, useMemo } from 'react';
 import type { ReactElement } from 'react';
 import { ViewportPortal, type Edge, type Node } from '@xyflow/react';
-import { centreOf, lineRoutes } from './attach';
+import { landingOn, lineRoutes } from './attach';
 import type { ClipData } from './attach';
 import { drawnCorners, useDrawnRoutes } from './edgeGeometry';
 import { pointAt } from './route';
@@ -17,7 +17,8 @@ import type { Pt } from './route';
  * centre: a line drawn from the middle crosses the symbol and its text, which
  * looked like a pipe running through the probe.
  *
- * It lands where the probe is clipped: the centre of a component, or the
+ * It lands where the probe is clipped: a component (on a tank, the barrel wall
+ * facing the probe, clear of the readout at its centre -- `landingOn`), or the
  * point on a line as it is drawn -- round its bends, not on the chord between
  * its two ends -- that the probe was dropped on.
  *
@@ -50,11 +51,16 @@ export function AttachmentLayer({ nodes, edges, routes }: AttachmentLayerProps) 
   for (const n of nodes) {
     const { attachedTo: host, attachedAt } = (n.data ?? {}) as ClipData;
     if (!host || n.hidden) continue;
+    const w = n.measured?.width ?? 60;
+    const h = n.measured?.height ?? 60;
+    const cx = n.position.x + w / 2;
+    const cy = n.position.y + h / 2;
     let to: Pt | null = null;
     const hostNode = nodeById.get(host);
     if (hostNode) {
       if (hostNode.hidden) continue;
-      to = centreOf(hostNode);
+      // A tank's on the wall facing the probe, clear of its readout.
+      to = landingOn(hostNode, { x: cx, y: cy });
     } else {
       const hostEdge = edgeById.get(host);
       if (!hostEdge || hostEdge.hidden) continue;
@@ -62,10 +68,6 @@ export function AttachmentLayer({ nodes, edges, routes }: AttachmentLayerProps) 
       to = pts ? pointAt(pts, attachedAt ?? 0.5)?.point ?? null : null;
     }
     if (!to) continue;
-    const w = n.measured?.width ?? 60;
-    const h = n.measured?.height ?? 60;
-    const cx = n.position.x + w / 2;
-    const cy = n.position.y + h / 2;
     // Step out from the centre along the line to the host, by the symbol's
     // radius, so the leader begins where the circle ends.
     const dx = to.x - cx;

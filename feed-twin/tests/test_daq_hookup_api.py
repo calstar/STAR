@@ -335,6 +335,26 @@ def test_checking_a_table_says_what_is_wrong_with_it() -> None:
     assert refused["warnings"] == []
 
 
+@pytest.mark.parametrize(
+    "table, words",
+    [
+        ({"states": "x"}, "states"),
+        ({"states": ["Idle"]}, "states"),
+        ({"states": [{"name": "Idle"}], "actuators": "LOX Main"}, "actuators"),
+        ({"states": [{"name": "Idle"}], "open": ["Idle"]}, "open"),
+        ({"states": [{"name": "Idle"}], "allowed": "Idle"}, "allowed"),
+    ],
+)
+def test_a_table_of_the_wrong_shape_says_which_part(
+    table: dict[str, object], words: str
+) -> None:
+    """It answered with Python's own complaint ("'str' object has no
+    attribute 'get'"), which names nothing in the table."""
+    said = client.post("/api/statemachine/check", json=table).json()
+    assert said["ok"] is False
+    assert words in said["error"] and "object has no" not in said["error"], said
+
+
 # ---------------------------------------------------------------- live names
 
 

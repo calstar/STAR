@@ -28,6 +28,7 @@ top-level directory with its own README. Start with the one you're working on.
 | [`pid-designer/`](pid-designer/README.md) | **Hotbench P&ID.** Interactive P&ID (Piping & Instrumentation Diagram) editor for the stand: the vehicle and its ground support, each part carrying its numbers and where they came from, with autosaved history and named releases. | FastAPI, React + React Flow |
 | [`feed-twin/`](feed-twin/README.md) | **Hotbench Twin.** The stand's digital twin — the drawn feed system and the designed engine as one transient model, COPV through regulator, tanks and lines to the chamber, driven from a copy of the DAQ console. Every burn is kept as a run record. Built on `lib/feedtwin`. | Python, FastAPI, React |
 | [`star-openrocket/`](star-openrocket/README.md) | **Onshape CM viewer, stability, ascent flight dynamics and recovery** (the recovery calculator merged in as a tab) — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
+| [`live-video/`](live-video/README.md) | **Live video link** — macOS viewer, link dashboard and CLI for the HiDes HV-320 DVB-T transmitter and UT-130 USB receiver, replacing the vendor's Windows tools. Talks to the receiver from user space over libusb and decodes with VideoToolbox. | Swift, SwiftUI, C, libusb |
 
 ### Hotbench
 

@@ -10,25 +10,16 @@
 import { useMemo, useState } from 'react';
 import { channelColor, channelPalette, fixed } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
-import { PRESSURE_UNIT, isPressureChannel, toPsia, unitLabel } from '../lib/pressure';
+import { shownUnit, unread } from '../lib/history';
+import { PRESSURE_UNIT, isPressureChannel, toPsia } from '../lib/pressure';
 import { ordered } from '../lib/shown';
 import { useStand } from '../stand';
 
-/** What a channel plots in, as a person reads it: pressure (gauge on the
- *  wire, psia here) or temperature. Thrust, O/F and flows are the Engine
- *  page's. */
-const shownUnit = (c: { unit?: string }) => (isPressureChannel(c) ? PRESSURE_UNIT : unitLabel(c.unit ?? ''));
 /** A channel's samples, in its shown unit. */
 const shownValues = (c: { unit?: string; values: number[] }) =>
   isPressureChannel(c) ? c.values.map(toPsia) : c.values;
 
 const PLOTTED = [PRESSURE_UNIT, 'K'];
-
-/** A temperature channel the twin has nothing to read for: the node its
- *  thermocouple sits on carries no temperature, and the wire sends 0 K --
- *  which no sensor reads. Plotted, it was a flat line at absolute zero. */
-const unread = (c: { unit?: string; values: number[] }) =>
-  !isPressureChannel(c) && c.unit === 'K' && c.values.every((v) => !(v > 0));
 
 export function Plots() {
   const {
@@ -110,7 +101,7 @@ export function Plots() {
         <span className="text-[11.5px] text-gray-600">{result.message}</span>
         <button
           type="button"
-          onClick={() => void downloadCsv()}
+          onClick={downloadCsv}
           className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
           title="Every channel the stand records, at full rate, over the last hour of stand time: one column per channel (by its console name), time in the first, and the state."
         >

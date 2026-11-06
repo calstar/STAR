@@ -104,6 +104,15 @@ def test_dome_dial_matches_the_regulator_relation_by_hand(prepared, drawing):
     assert got / PSI == pytest.approx(578.0, abs=1e-6)
 
 
+def test_the_engine_boundary_says_its_drop_is_at_lossless_lines(prepared):
+    """The card's reference is EngineDesign solved with the line exit at the lockup itself, so LOX and
+    fuel read the same drop by construction (153.1 / 153.1 psi on LE4 (3)) where the burn, after the
+    drawing's lines, gives ~114 / 108. It was printed as the drop "at T-0"."""
+    detail = _check(prepared, "engine_boundary").detail
+    assert "at T-0" not in detail
+    assert detail.startswith("EngineDesign at the 578.0 psia lockup with the drawing's lines taken as lossless")
+
+
 # ------------------------------------------------------------------ the T-0 calibration
 
 

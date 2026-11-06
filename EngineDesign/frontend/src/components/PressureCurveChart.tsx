@@ -172,6 +172,8 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
       </div>
     );
   }
+  // The COPV must stay this far above the tank to regulate (design_requirements.regulator_min_differential_psi).
+  const copvMarginNeeded = summary.copv_margin_needed_psi ?? null;
 
   // Transform data for recharts - keep it simple like before
   const chartData: ChartDataPoint[] = data.time.map((t, i) => ({
@@ -271,6 +273,24 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
 
   return (
     <div className="space-y-6">
+      {/* Points solved off the CEA table's clamped edge (backend/routers/timeseries.py) */}
+      {summary.cea_clamped_note && (
+        <div role="alert" className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-sm flex items-start gap-2">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>{summary.cea_clamped_note}. Thrust, Isp and c* at those points rest on the edge's values, not their own.</span>
+        </div>
+      )}
+      {/* A curve that needs more propellant than the config loads (backend/routers/timeseries.py) */}
+      {summary.propellant_short_note && (
+        <div role="alert" className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-sm flex items-start gap-2">
+          <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>{summary.propellant_short_note}. The curves past it assume propellant that is not loaded; the Flight tab cuts the burn there.</span>
+        </div>
+      )}
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
         <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30">
@@ -485,16 +505,34 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
               {data.copv_pressure_psi ? "COPV & Tank Pressures vs Time" : "Tank Pressures vs Time"}
             </h4>
-            {summary.copv_initial_pressure_psi && (
-              <div className="flex gap-4 text-xs">
-                <span className="text-green-400">
-                  P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
+            {!!summary.copv_initial_pressure_psi && summary.copv_mode === 'configured' && (
+              // The charge the config loads (press_tank.initial_gas_mass), checked against the curve.
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs justify-end">
+                <span className="text-[var(--color-text-primary)]">
+                  Charge P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
                 </span>
                 <span className="text-[var(--color-text-secondary)]">
                   m₀: {formatValue(summary.copv_initial_mass_kg || 0, 3)} kg
                 </span>
-                <span className={`${(summary.copv_min_margin_psi || 0) > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  Min Margin: {formatValue(summary.copv_min_margin_psi || 0, 1)} psi
+                <span className={`${(summary.copv_min_margin_psi ?? 0) > (copvMarginNeeded ?? 0) ? 'text-green-400' : 'text-red-400'}`}>
+                  Min margin: {formatValue(summary.copv_min_margin_psi ?? 0, 0)} psi{copvMarginNeeded != null ? ` (needs ${formatValue(copvMarginNeeded, 0)})` : ''}
+                </span>
+                <span className="text-[var(--color-text-muted)]">
+                  required: {formatValue(summary.copv_required_pressure_psi ?? 0, 0)} psia / {formatValue(summary.copv_required_mass_kg ?? 0, 3)} kg
+                </span>
+              </div>
+            )}
+            {!!summary.copv_initial_pressure_psi && summary.copv_mode !== 'configured' && (
+              // No charge in the config: the numbers are what the curve needs, margin zero by construction.
+              <div className="flex gap-4 text-xs">
+                <span className="text-[var(--color-text-primary)]">
+                  Required P₀: {formatValue(summary.copv_initial_pressure_psi, 0)} psia
+                </span>
+                <span className="text-[var(--color-text-secondary)]">
+                  m₀: {formatValue(summary.copv_initial_mass_kg || 0, 3)} kg
+                </span>
+                <span className="text-[var(--color-text-muted)]">
+                  sized for zero margin; set press_tank.initial_gas_mass to check a charge
                 </span>
               </div>
             )}

@@ -291,7 +291,7 @@ export function timelineEvents(events: readonly BurnEvent[], burnoutT: number | 
 
 interface VerdictContext {
   chug?: { min: number | null | undefined; t: number | null | undefined } | null;
-  /** psi across the wall, per side, from the drawing; and the site's atmosphere [psia]. */
+  /** Each tank's rating as psi across the wall (the trip less the gauge zero), and that zero [psia]. */
   mawp?: { oxidiser?: number; fuel?: number; ambientPsia: number } | null;
   converged?: boolean;
   cardOutside?: number | null;
@@ -546,9 +546,12 @@ export function deriveRunData(result: LayerXResult): RunData {
 
   const roles = (derived.roles ?? {}) as Record<string, string>;
   const mawps = (derived.tank_mawp_psi ?? {}) as Record<string, number>;
+  const acrossZero = (v: number | undefined) => (typeof v === 'number' ? v - gaugeZeroPsia : undefined);
   const ctx: VerdictContext = {
     chug: dv?.summary ? { min: dv.summary.chug_margin_min, t: dv.summary.chug_margin_min_t } : null,
-    mawp: { oxidiser: mawps[roles.oxidiser], fuel: mawps[roles.fuel], ambientPsia },
+    // `tank_mawp_psi` is the absolute pressure the twin trips each tank at: across the wall, on the gauge zero the
+    // drawing states its rating on, it is that less the zero (it used to be read as already across, one atmosphere lenient).
+    mawp: { oxidiser: acrossZero(mawps[roles.oxidiser]), fuel: acrossZero(mawps[roles.fuel]), ambientPsia: gaugeZeroPsia },
     converged: result.converged,
     cardOutside: summary.card_outside_steps ?? null,
   };

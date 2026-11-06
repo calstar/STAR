@@ -38,7 +38,9 @@ from feedtwin.engine import (
     species_for,
 )
 
-ENGINE_DESIGN = Path("/Users/carlton/Downloads/STAR_ASF/STAR/EngineDesign")
+# The sibling app in this monorepo. It was a path on one laptop, so these tests
+# skipped everywhere else, CI included.
+ENGINE_DESIGN = Path(__file__).resolve().parents[3] / "EngineDesign"
 REAL_CONFIG = ENGINE_DESIGN / "configs" / "impinging_lox_ch4_8000N_optimal.yaml"
 REAL_CACHE = ENGINE_DESIGN / "output" / "cache" / "cea_cache_LOX_CH4_3D.npz"
 

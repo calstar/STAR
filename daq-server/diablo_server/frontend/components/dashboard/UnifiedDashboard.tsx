@@ -27,13 +27,17 @@ export default function UnifiedDashboard() {
   const isFire = isFireState(currentState);
   const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
   return (
-    <main className="flex h-full w-full flex-col overflow-hidden bg-background px-8 text-text">
+    <main className="flex h-full w-full flex-col overflow-y-auto bg-background px-4 text-text sm:px-5 lg:overflow-hidden xl:px-8">
       {/* ── The console's lower half, as feed-twin lays it: the plot gets the room on the
-          left; the valves and the state machine share the right, between hairlines. */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]">
+          left; the valves and the state machine share the right, between hairlines (xl+).
+          lg..xl (landscape tablet) is too short to stack valves over the state machine --
+          at ~480 px the valves scrolled and the diagram shrank past reading -- so the right
+          column dissolves (lg:contents) and the three sit side by side, valves two across.
+          Below lg (iPad portrait, phones) the three stack into one scrolling column. */}
+      <div className="flex flex-col lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(270px,300px)_minmax(0,1.15fr)] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
 
-        <section className="flex min-h-0 min-w-0 flex-col py-5 pr-8">
-          <div className="mb-3 flex flex-shrink-0 items-baseline justify-between gap-4">
+        <section className="flex h-[clamp(320px,50vh,560px)] min-w-0 flex-shrink-0 flex-col border-b border-line py-4 lg:h-auto lg:min-h-0 lg:border-b-0 lg:py-5 lg:pr-5 xl:pr-8">
+          <div className="mb-3 flex flex-shrink-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
             <h2 className="caps">Pressure History</h2>
             <WindowPicker windows={TIME_WINDOWS} value={timeWindow} onChange={setTimeWindow} />
           </div>
@@ -50,20 +54,27 @@ export default function UnifiedDashboard() {
           </div>
         </section>
 
-        <div className="flex min-h-0 min-w-0 flex-col border-l border-line pl-8">
-          {/* Actuators: 4x4 grid, dynamically sized to fit allotment */}
-          <section className="flex max-h-[42%] min-h-0 flex-1 flex-col border-b border-line py-5">
-            <h2 className="caps mb-3 flex-shrink-0">Actuators</h2>
-            <div className="grid min-h-0 flex-1 grid-cols-4 grid-rows-4 gap-2 overflow-hidden">
+        <div className="flex min-w-0 flex-col lg:contents xl:flex xl:min-h-0 xl:border-l xl:border-line xl:pl-8">
+          {/* Actuators: 4x4 grid (two across on a landscape tablet). Rows never go below a
+              tile's content height (name, current, buttons) -- squeezed past that, the name
+              row collapsed to nothing and the tiles showed only "0.40 A". On a tablet, when
+              the column is too short, the grid scrolls.
+              Desktop (xl): the panel takes its four rows' natural height and the state
+              machine takes the rest. Splitting the column evenly (both flex-1) cut the
+              fourth row off on a laptop-height screen. */}
+          <section className="flex min-w-0 flex-col border-b border-line py-4 lg:min-h-0 lg:border-b-0 lg:border-l lg:px-5 xl:flex-none xl:border-b xl:border-l-0 xl:px-0 xl:py-5">
+            <h2 className="caps mb-3 flex-shrink-0 lg:mb-2 xl:mb-3">Actuators</h2>
+            <div className="grid auto-rows-[minmax(64px,auto)] grid-cols-2 gap-2 sm:grid-cols-4 lg:min-h-0 lg:flex-1 lg:auto-rows-[minmax(55px,1fr)] lg:grid-cols-2 lg:gap-1.5 lg:overflow-y-auto xl:flex-none xl:grid-cols-4 xl:grid-rows-[repeat(4,minmax(52px,auto))] xl:gap-2 xl:overflow-visible">
               {Array.from({ length: 16 }, (_, i) => {
                 const a = actuatorsFromConfig[i];
-                if (!a) return <div key={`empty-${i}`} className="min-h-0 border border-line/60" />;
+                // Placeholders only hold the 4x4 shape; anywhere else they are just blank tiles.
+                if (!a) return <div key={`empty-${i}`} className="hidden min-h-0 border border-line/60 xl:block" />;
                 return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} ballValve={a.ballValve} />;
               })}
             </div>
           </section>
 
-          <section className="min-h-0 flex-1 overflow-auto py-5">
+          <section className="min-w-0 py-4 lg:min-h-0 lg:overflow-auto lg:border-l lg:border-line lg:py-5 lg:pl-5 xl:flex-1 xl:border-l-0 xl:pl-0 xl:pt-4">
             <StateMachineDiagram />
           </section>
         </div>

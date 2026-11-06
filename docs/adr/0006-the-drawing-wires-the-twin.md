@@ -65,7 +65,8 @@ for what the drawing does not settle.
 5. **Every valve has a resting position.**
    * Actuated (SOL, ROT, MOV): the drawing's `failState`.
    * Hand (MAN): **shut**, every one, until a person opens it (the team's rule,
-     2026-10-07). The exception is a valve the drawing marks `normalPosition: open`.
+     2026-10-07). The exception is a valve the drawing marks `normalPosition: open`
+     (pid-designer: the hand valve's *Normal position*, drawn hollow and marked NO).
 
    Hand valves are turned on the P&ID and never offered to the table. The crew's
    transfer valve on a drawn load (4) is a hand valve the twin opens for the load.
@@ -143,8 +144,6 @@ for what the drawing does not settle.
 * **The drawing should name each valve's DAQ actuator** (`options.actuator` in
   pid-designer), so the binding is the drawing's and inference fills only the gaps.
   Deferred by the team; names, prefixes and the plumbing do it until then.
-* **A "normally open" choice on hand valves in pid-designer.** The twin reads
-  `options.normalPosition` already; the symbol's dialog does not offer it yet.
 
 ## LE4 (6): what the drawing is missing
 

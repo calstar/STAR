@@ -81,8 +81,12 @@ export function fmtTick(value: number, incr: number): string {
   if (value === 0 || Math.abs(value) < Math.abs(incr) * 1e-9) return '0';
   const abs = Math.abs(value);
   const step = incr > 0 && Number.isFinite(incr) ? incr : abs;
-  if (abs >= 1e3 && step >= 100) {
-    return `${(value / 1e3).toFixed(decimalsOf(step / 1e3))}K`;
+  // Thousands are written out and grouped ("4,000"), never "4K": a plot of
+  // bottle pressure or thrust sits beside a temperature panel in kelvin.
+  if (abs >= 1e6 && step >= 1e5) return `${(value / 1e6).toFixed(decimalsOf(step / 1e6))}M`;
+  if (abs >= 1e3 && step >= 1e-3) {
+    const places = decimalsOf(step);
+    return value.toLocaleString('en-US', { minimumFractionDigits: places, maximumFractionDigits: places });
   }
   if (step < 1e-3) {
     // As many mantissa digits as the step has at this value's scale, and

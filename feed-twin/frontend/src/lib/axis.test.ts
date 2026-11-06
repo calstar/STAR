@@ -41,6 +41,18 @@ describe('linear ticks are told apart', () => {
     });
   }
 
+  it('writes thousands out, never with a K a temperature axis beside it reads as kelvin', () => {
+    // The bottle axis ticked "4K", "2K" and the thrust axis "7.5K", next to a
+    // temperature panel in K.
+    expect(ticks(0, 4500, 500).map((v) => fmtTick(v, 500))).toContain('4,000');
+    expect(fmtTick(7500, 2500)).toBe('7,500');
+    expect(fmtTick(1020, 20)).toBe('1,020');
+    expect(fmtTick(-2000, 1000)).toBe('-2,000');
+    for (const [, lo, hi, incr] of cases) {
+      for (const v of ticks(lo, hi, incr)) expect(fmtTick(v, incr)).not.toMatch(/\dK$/);
+    }
+  });
+
   it('reads zero as 0, whatever the spacing', () => {
     expect(fmtTick(0, 5e-13)).toBe('0');
     expect(fmtTick(1e-30, 0.5)).toBe('0');
