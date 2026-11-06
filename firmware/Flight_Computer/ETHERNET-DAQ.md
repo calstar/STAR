@@ -22,6 +22,8 @@ Sources: [W5500 datasheet v1.1.0](https://docs.wiznet.io/img/products/w5500/W550
 
 ## Deployment configuration
 
+The default hook now stores the user-provided bench placeholder **192.168.2.20:5006** as the board's local IPv4 address and UDP receive port. This is a stand-in, not a confirmed reservation. It is not the DAQ server address. The server endpoint, board ID, MAC, subnet/gateway and channel mapping still need configuration; `enabled` remains false. A strong deployment override replaces the entire hook, so it must retain these local values if the bench uses them.
+
 Provide a strong definition of `daq_board_config()` in a hand-written `app/*.c` file. PlatformIO includes it automatically. Assign:
 
 | Field | Required value |
@@ -29,8 +31,9 @@ Provide a strong definition of `daq_board_config()` in a hand-written `app/*.c` 
 | `enabled` | `true` only for the configured deployment |
 | `board_id` | Team-assigned ID, nonzero |
 | `network.mac` | Unique unicast MAC; W5500 has no factory MAC |
-| `network.ip`, `subnet`, `gateway` | Assigned static IPv4 settings |
-| `network.port` | Board receive port from the active DAQ profile |
+| `network.ip` | Placeholder `192.168.2.20`; confirm before deployment |
+| `network.subnet`, `network.gateway` | Bench network settings, still unassigned |
+| `network.port` | Placeholder `5006`; confirm against the active DAQ profile |
 | `server_ip`, `server_port` | DAQ host and sensor listener port from that profile |
 | `firmware_hash` | Build hash if available; otherwise zero |
 | `sources[0..9]` | Source for channel 1 through 10; unused entries `DAQ_NONE` |

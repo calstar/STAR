@@ -16,8 +16,9 @@ typedef struct {
 } daq_config_t;
 
 /* Override this weak function in a deployment-specific source file. The
- * default is disabled: no board ID, IP, or server-side channel schema has
- * been assigned. Static addressing only; no implicit DHCP/static fallback. */
+ * default holds the bench placeholder 192.168.2.20:5006 for the LOCAL board
+ * and stays disabled until identity, network and DAQ channel setup is complete.
+ * Static addressing only; no implicit DHCP/static fallback. */
 void daq_board_config(daq_config_t* out);
 bool daq_task_start(void);
 /* Task context only. Copies immediately to a bounded queue without waiting.

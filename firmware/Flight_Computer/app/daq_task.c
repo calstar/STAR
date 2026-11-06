@@ -14,7 +14,11 @@ static uint32_t deadline;
 static uint8_t packet[DAQ_PACKET_MAX];
 
 __attribute__((weak)) void daq_board_config(daq_config_t* out) {
-    *out = (daq_config_t){0};
+    /* User-provided bench placeholder: LOCAL board endpoint, not server.
+     * Keep disabled until identity, subnet and DAQ routing are configured. */
+    *out = (daq_config_t){
+        .network = {.ip = {192, 168, 2, 20}, .port = 5006},
+    };
 }
 
 /* One VDM frame, with a common absolute budget across all register calls
