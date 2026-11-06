@@ -306,6 +306,60 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     expect(seconds).toBeLessThanOrEqual(19);
   }, 60_000);
 
+  it('Record: press to Stop, one video-only file per stream, trimmed to the press', async () => {
+    await svc.sync();
+    const started = await svc.startRecording();
+    expect(started.streams).toEqual(['cam1', 'hides']);
+    const t0 = Date.now();
+    await new Promise((r) => setTimeout(r, 10_000)); // spans at least three 3 s segments
+    await svc.sync();
+    expect(svc.bufferStatus().recording).toMatchObject({ active: true, streams: ['cam1', 'hides'] });
+    const done = await svc.stopRecording();
+    const held = (Date.now() - t0) / 1000;
+    expect(done.reason).toBe('stopped');
+    const cam = done.streams.find((x) => x.stream === 'cam1')!;
+    expect(cam.error, JSON.stringify(done)).toBeUndefined();
+    expect(cam.file).toMatch(/_record\/cam1\.mp4$/);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', cam.file!], { encoding: 'utf8' }));
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // Trimmed to the press (to a keyframe, 1 s apart here): not the whole segment before it.
+    expect(Number(probe.format.duration)).toBeGreaterThan(held - 2);
+    expect(Number(probe.format.duration)).toBeLessThan(held + 2);
+  }, 60_000);
+
+  it('the disk guard: refuses to start below the threshold, stops cleanly at the floor', async () => {
+    const agent = (path: string, body: unknown) => fetch(`http://127.0.0.1:${ports.agent}${path}`, { method: 'POST', body: JSON.stringify(body) });
+    const refused = await agent('/record/start', { streams: ['cam1'], refuseBelowBytes: 1e18, stopBelowBytes: 0 });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toMatch(/GB free on the gateway machine; recording needs/);
+
+    // A floor above what is free: the first check (2 s) stops it, with the reason.
+    expect((await agent('/record/start', { streams: ['cam1'], refuseBelowBytes: 0, stopBelowBytes: 1e18 })).status).toBe(200);
+    const last = await waitFor('the guard to stop the recording', async () => {
+      const st = await (await fetch(`http://127.0.0.1:${ports.agent}/status`)).json();
+      return st.recording.active ? undefined : st.lastRecording;
+    }, 15_000);
+    expect(last.reason).toBe('disk nearly full');
+  }, 60_000);
+
+  it('a recording cut short by a gateway restart is finished from what was kept', async () => {
+    await svc.startRecording();
+    await new Promise((r) => setTimeout(r, 8_000)); // a couple of segments linked
+    await stopGateway(); // agent and MediaMTX go down mid-recording
+    camera?.kill('SIGKILL');
+    await startGateway();
+    const st = await waitFor('the recovered recording', async () => {
+      const s = await (await fetch(`http://127.0.0.1:${ports.agent}/status`)).json();
+      return s.lastRecording?.reason?.startsWith('interrupted') ? s : undefined;
+    }, 20_000);
+    expect(st.recording.active).toBe(false);
+    const cam = st.lastRecording.streams.find((x: any) => x.stream === 'cam1');
+    expect(cam.file, JSON.stringify(st.lastRecording)).toMatch(/cam1\.mp4$/);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', cam.file], { encoding: 'utf8' }));
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    startCamera(); // the restart test below expects the camera back
+  }, 90_000);
+
   it('a gateway that restarts empty is refilled by the next sync', async () => {
     camera?.kill('SIGKILL');
     await stopGateway();

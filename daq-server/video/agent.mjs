@@ -7,8 +7,17 @@
  * files. So this process runs beside MediaMTX (it starts it, and exits when it exits, so a
  * supervisor restarts both) and does the file work the backend asks for:
  *
- *   GET  /status   buffer contents per stream, free disk, where recordings go
- *   POST /save     keep the last BUFFER_SECONDS of the given streams: { streams: [id] }
+ *   GET  /status        buffer contents per stream, free disk, the recording (if any)
+ *   POST /save          keep the last BUFFER_SECONDS of the given streams: { streams: [id] }
+ *   POST /record/start  record the given streams from now: { streams, refuseBelowBytes, stopBelowBytes }
+ *   POST /record/stop   end it: one file per stream
+ *
+ * Recording: from the press until Stop, each finished segment is linked into the
+ * recording's folder as it completes (so a long recording outlives the buffer's cleanup),
+ * and the first is trimmed to the press. The disk guard is enforced here, on the machine
+ * whose disk it is: Record is refused below refuseBelowBytes free, and a recording stops
+ * cleanly at stopBelowBytes -- whether or not the DAQ laptop is still there. A recording
+ * interrupted by a restart of this process is finished from what was linked, at startup.
  *
  * How the buffer works: MediaMTX records every included stream (`raw/<id>`, record: true,
  * set by the backend) into short segments under buffer/, and deletes them after a while
@@ -122,8 +131,31 @@ export function createAgent({
       const starts = (await listSegments(id)).map(segmentStart).filter((x) => x !== null && x <= t);
       if (starts.length) buffered[id] = Math.min(bufferSeconds, Math.round((t - Math.min(...starts)) / 1000));
     }
-    return { bufferSeconds, buffered, disk: disk(), recordingsDir };
+    const recording = rec
+      ? { active: true, stopping: !!rec.stopping, folder: rec.folder, startedAt: rec.startedAt, streams: rec.streams, elapsedSeconds: Math.round((t - rec.startedAt) / 1000) }
+      : { active: false };
+    return { bufferSeconds, buffered, disk: disk(), bytesPerSecond: await bufferRate(ids), recordingsDir, recording, lastRecording };
   }
+
+  /**
+   * One video-only file per stream from segments already in `work` (oldest first):
+   * concat, `-map 0:v -c copy`. `inpointMs` trims the first segment (to a keyframe).
+   */
+  async function writeKept(work, names, out, inpointMs = 0) {
+    const list = join(work, 'list.txt');
+    const lines = names.map((n, i) => {
+      const f = `file '${join(work, n).replace(/'/g, "'\\''")}'`;
+      return i === 0 && inpointMs > 0 ? `${f}\ninpoint ${(inpointMs / 1000).toFixed(3)}` : f;
+    });
+    await fs.writeFile(list, lines.join('\n') + '\n');
+    await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
+      '-map', '0:v', '-c', 'copy', '-movflags', '+faststart', '-y', out]);
+    return (await fs.stat(out)).size;
+  }
+
+  /** Link a finished segment into `work` (instant; immune to MediaMTX deleting it). */
+  const linkInto = (id, name, work) => fs.link(join(bufferDir, id, name), join(work, name))
+    .catch((e) => (e.code === 'EEXIST' ? undefined : fs.copyFile(join(bufferDir, id, name), join(work, name))));
 
   /** Keep the last bufferSeconds of each stream: one video-only file per stream. */
   async function save({ streams, label = 'save' }) {
@@ -144,12 +176,8 @@ export function createAgent({
           if (i === names.length - 1) await fs.copyFile(src, dst);
           else await fs.link(src, dst).catch(() => fs.copyFile(src, dst));
         }
-        const list = join(work, 'list.txt');
-        await fs.writeFile(list, names.map((n) => `file '${join(work, n).replace(/'/g, "'\\''")}'`).join('\n') + '\n');
         const out = join(folder, `${id}.mp4`);
-        await run(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
-          '-map', '0:v', '-c', 'copy', '-movflags', '+faststart', '-y', out]);
-        const { size } = await fs.stat(out);
+        const size = await writeKept(work, names, out);
         // How much it really covers: the window, or less if the buffer is younger than that.
         const seconds = Math.round(Math.min(bufferSeconds * 1000, t - segmentStart(names[0])) / 1000);
         return { stream: id, file: out, bytes: size, seconds, gaps: countGaps(names) };
@@ -160,6 +188,149 @@ export function createAgent({
       }
     }));
     return { folder, seconds: bufferSeconds, streams: results };
+  }
+
+  // ── Recording ─────────────────────────────────────────────────────────────────
+
+  /** The recording in progress: { folder, startedAt, streams, stopBelowBytes, timer, linked } */
+  let rec = null;
+  /** How the last recording ended: what Stop (or the disk guard, or a restart) produced. */
+  let lastRecording = null;
+  const META = '.recording.json';
+
+  class Refused extends Error {}
+
+  /** Link every finished segment since the press; on the final pass, copy the running one too. */
+  async function collect(r, final) {
+    const t = now();
+    for (const id of r.streams) {
+      const names = segmentsForWindow(await listSegments(id), t, t - r.startedAt);
+      const work = join(r.folder, `.${id}`);
+      for (const [i, name] of names.entries()) {
+        const running = i === names.length - 1;
+        if (running && !final) continue; // still being written: wait for it to finish
+        if (r.linked[id].has(name) && !running) continue;
+        if (running) await fs.copyFile(join(bufferDir, id, name), join(work, name)).catch(() => {});
+        else await linkInto(id, name, work);
+        r.linked[id].add(name);
+      }
+    }
+  }
+
+  /** One file per stream from a recording folder's work dirs; removes them. */
+  async function finish(folder, streams, startedAt, stoppedAt, reason) {
+    const results = await Promise.all(streams.map(async (id) => {
+      const work = join(folder, `.${id}`);
+      try {
+        const names = (await fs.readdir(work).catch(() => [])).filter((n) => SEGMENT_RE.test(n))
+          .sort((a, b) => segmentStart(a) - segmentStart(b));
+        if (!names.length) return { stream: id, error: 'nothing arrived from this stream while recording' };
+        const first = segmentStart(names[0]);
+        const out = join(folder, `${id}.mp4`);
+        const bytes = await writeKept(work, names, out, Math.max(0, startedAt - first));
+        return { stream: id, file: out, bytes, seconds: Math.round((stoppedAt - startedAt) / 1000), gaps: countGaps(names) };
+      } catch (e) {
+        return { stream: id, error: e.message };
+      } finally {
+        await fs.rm(work, { recursive: true, force: true });
+      }
+    }));
+    await fs.rm(join(folder, META), { force: true });
+    return { folder, startedAt, stoppedAt, reason, streams: results };
+  }
+
+  async function startRecording({ streams, refuseBelowBytes = 0, stopBelowBytes = 0 }) {
+    if (rec) throw new Refused(`already recording since ${new Date(rec.startedAt).toLocaleTimeString()}`);
+    const d = disk();
+    if (d && d.freeBytes < refuseBelowBytes) {
+      throw new Refused(`only ${(d.freeBytes / 1e9).toFixed(1)} GB free on the gateway machine; recording needs ${(refuseBelowBytes / 1e9).toFixed(0)} GB`);
+    }
+    const startedAt = now();
+    const folder = join(recordingsDir, `${stamp(new Date(startedAt))}_record`);
+    for (const id of streams) await fs.mkdir(join(folder, `.${id}`), { recursive: true });
+    await fs.writeFile(join(folder, META), JSON.stringify({ startedAt, streams }));
+    const r = { folder, startedAt, streams, stopBelowBytes, linked: Object.fromEntries(streams.map((id) => [id, new Set()])) };
+    rec = r;
+    r.timer = setInterval(() => void tick(r), 2000);
+    r.timer.unref?.();
+    return { folder, startedAt, streams };
+  }
+
+  async function tick(r) {
+    if (rec !== r || r.busy || r.stopping) return;
+    r.busy = true;
+    try {
+      await collect(r, false);
+      const d = disk();
+      if (d && d.freeBytes < r.stopBelowBytes && rec === r && !r.stopping) {
+        console.error(`video-agent: ${(d.freeBytes / 1e9).toFixed(1)} GB free -- stopping the recording before the disk fills`);
+        r.busy = false;
+        await stopRecording('disk nearly full');
+      }
+    } finally {
+      r.busy = false;
+    }
+  }
+
+  async function stopRecording(reason = 'stopped') {
+    const r = rec;
+    if (!r || r.stopping) throw new Refused(r ? 'already stopping' : 'not recording');
+    // Still "the recording" (stopping) until its files exist: a status read in between must
+    // not say "not recording" while lastRecording still describes the one before.
+    r.stopping = true;
+    clearInterval(r.timer);
+    try {
+      while (r.busy) await new Promise((ok) => setTimeout(ok, 50));
+      const stoppedAt = now();
+      await collect(r, true);
+      lastRecording = await finish(r.folder, r.streams, r.startedAt, stoppedAt, reason);
+      return lastRecording;
+    } finally {
+      rec = null;
+    }
+  }
+
+  /** A recording cut short by a restart of this process: finish what was linked. */
+  async function recover() {
+    let folders = [];
+    try { folders = await fs.readdir(recordingsDir); } catch { return; }
+    for (const f of folders) {
+      const folder = join(recordingsDir, f);
+      const meta = await fs.readFile(join(folder, META), 'utf8').then(JSON.parse).catch(() => null);
+      if (!meta) continue;
+      const st = await fs.stat(join(folder, META));
+      lastRecording = await finish(folder, meta.streams, meta.startedAt, Math.max(st.mtimeMs, meta.startedAt), 'interrupted (the gateway restarted)');
+      console.error(`video-agent: finished an interrupted recording in ${folder}`);
+    }
+  }
+
+  /**
+   * Bytes per second the buffer is writing now, all streams together: for "hours left".
+   * Per stream, from its finished segments of the last few minutes -- each one's size over
+   * the time it covers (the gap to the next one's start) -- skipping spans that are outages,
+   * so a restart or a camera dropout does not dilute it.
+   */
+  async function bufferRate(ids) {
+    const t = now();
+    let total = 0;
+    for (const id of ids) {
+      const segs = (await listSegments(id))
+        .map((name) => ({ name, start: segmentStart(name) }))
+        .filter((x) => x.start !== null && t - x.start <= 180_000)
+        .sort((a, b) => a.start - b.start);
+      const spans = segs.slice(0, -1).map((x, i) => ({ name: x.name, ms: segs[i + 1].start - x.start }));
+      if (!spans.length) continue;
+      const typical = [...spans].sort((a, b) => a.ms - b.ms)[Math.floor(spans.length / 2)].ms;
+      let bytes = 0;
+      let ms = 0;
+      for (const sp of spans) {
+        if (sp.ms > Math.max(2 * typical, typical + 5000)) continue; // an outage, not a segment
+        bytes += (await fs.stat(join(bufferDir, id, sp.name)).catch(() => ({ size: 0 }))).size;
+        ms += sp.ms;
+      }
+      if (ms > 0) total += bytes / (ms / 1000);
+    }
+    return Math.round(total);
   }
 
   function authorized(req) {
@@ -176,22 +347,25 @@ export function createAgent({
     if (!authorized(req)) return send(401, { error: 'the video agent needs the gateway password' });
     try {
       if (req.method === 'GET' && req.url === '/status') return send(200, await status());
-      if (req.method === 'POST' && req.url === '/save') {
+      if (req.method === 'POST' && ['/save', '/record/start', '/record/stop'].includes(req.url)) {
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) return send(413, { error: 'body too large' }); }
         let input;
         try { input = JSON.parse(body || '{}'); } catch { return send(400, { error: 'body is not JSON' }); }
+        if (req.url === '/record/stop') return send(200, await stopRecording());
         const streams = Array.isArray(input.streams) ? input.streams.filter((s) => typeof s === 'string' && STREAM_ID_RE.test(s)) : [];
-        if (!streams.length) return send(400, { error: 'no streams to save' });
-        return send(200, await save({ streams, label: input.label }));
+        if (!streams.length) return send(400, { error: 'no streams given' });
+        if (req.url === '/save') return send(200, await save({ streams, label: input.label }));
+        const bytes = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
+        return send(200, await startRecording({ streams, refuseBelowBytes: bytes(input.refuseBelowBytes), stopBelowBytes: bytes(input.stopBelowBytes) }));
       }
       return send(404, { error: 'not found' });
     } catch (e) {
-      return send(500, { error: e.message });
+      return send(e instanceof Refused ? 409 : 500, { error: e.message });
     }
   });
 
-  return { server, status, save };
+  return { server, status, save, startRecording, stopRecording, recover };
 }
 
 // ── Run ──────────────────────────────────────────────────────────────────────
@@ -201,6 +375,7 @@ if (isMain) {
   const arg = (name) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; };
   const port = Number(process.env.VIDEO_AGENT_PORT) || DEFAULT_PORT;
   const agent = createAgent();
+  await agent.recover();
   const { bufferSeconds } = await agent.status();
   agent.server.listen(port, () => console.error(`video-agent: listening on :${port}, buffer ${bufferSeconds} s, recordings in ${resolve('recordings')}`));
 

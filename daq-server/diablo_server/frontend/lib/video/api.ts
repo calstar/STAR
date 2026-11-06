@@ -19,12 +19,28 @@ export interface GatewayStatus {
 }
 
 /** The rolling buffer, as the video agent on the gateway machine reports it. */
+export interface RecordingState {
+  active: boolean;
+  /** Stop was pressed; the files are being written. */
+  stopping?: boolean;
+  folder?: string;
+  startedAt?: number;
+  streams?: string[];
+  elapsedSeconds?: number;
+}
+
 export interface BufferStatus {
   available: boolean;
   error?: string;
   bufferSeconds?: number;
   buffered?: Record<string, number>;
   disk?: { freeBytes: number; totalBytes: number } | null;
+  /** What the buffer is writing now, all streams together. */
+  bytesPerSecond?: number;
+  recording?: RecordingState;
+  lastRecording?: (SaveResult & { startedAt: number; stoppedAt: number; reason: string }) | null;
+  refuseBelowBytes?: number;
+  stopBelowBytes?: number;
 }
 
 export interface SaveResult {
@@ -132,4 +148,42 @@ export function describeSave(r: SaveResult): string {
   const gapped = ok.filter((s) => (s.gaps ?? 0) > 0);
   const gaps = gapped.length ? `; gaps (stream was down) in ${gapped.map((s) => s.stream).join(', ')}` : '';
   return bad.length ? `${head}${gaps}; not saved: ${bad.map((b) => `${b.stream} (${b.error})`).join(', ')}` : `${head}${gaps}`;
+}
+
+export const startRecording = () => call<{ folder: string; startedAt: number; streams: string[] }>('POST', '/api/video/record/start');
+export const stopRecording = () => call<SaveResult & { reason: string }>('POST', '/api/video/record/stop');
+
+/** "12:04", "1:02:09" */
+export function clock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(s / 3600);
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(h ? 2 : 1, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * How long the gateway's disk lasts: free space down to the stop floor, at the rate the
+ * buffer is writing (a recording keeps what the buffer writes, so the rate is the same).
+ */
+export function diskLeft(b: BufferStatus): string | null {
+  if (!b.disk) return null;
+  const usable = b.disk.freeBytes - (b.stopBelowBytes ?? 0);
+  const gb = `${(b.disk.freeBytes / 1e9).toFixed(0)} GB free`;
+  if (!b.bytesPerSecond || b.bytesPerSecond <= 0) return gb;
+  const h = Math.max(0, usable) / b.bytesPerSecond / 3600;
+  return `${gb}, ${h >= 1 ? `${Math.floor(h)} h ${Math.round((h % 1) * 60)} m` : `${Math.round(h * 60)} m`} at this rate`;
+}
+
+/** One line after Stop: where it went, how long, and anything missing or gappy. */
+export function describeRecording(r: SaveResult & { reason: string; startedAt?: number; stoppedAt?: number }): string {
+  const ok = r.streams.filter((s) => s.file);
+  const bad = r.streams.filter((s) => s.error);
+  const folder = r.folder.split(/[\\/]/).pop();
+  const len = r.startedAt != null && r.stoppedAt != null ? ` ${clock((r.stoppedAt - r.startedAt) / 1000)}` : '';
+  const why = r.reason === 'stopped' ? 'recorded' : `recording ended early (${r.reason}) --`;
+  const gapped = ok.filter((s) => (s.gaps ?? 0) > 0);
+  return `${why}${len}${r.reason === 'stopped' ? ',' : ''} ${ok.length} stream${ok.length === 1 ? '' : 's'} to recordings/${folder}`
+    + (gapped.length ? `; gaps (stream was down) in ${gapped.map((s) => s.stream).join(', ')}` : '')
+    + (bad.length ? `; not recorded: ${bad.map((b) => `${b.stream} (${b.error})`).join(', ')}` : '');
 }

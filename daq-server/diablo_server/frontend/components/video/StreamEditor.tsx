@@ -20,7 +20,7 @@ import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, UDP_PO
 import {
   draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, obsUrls, toSave, withKind, withLabel, withPreset, type DraftStream,
 } from '@/lib/video/editor';
-import { geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
+import { CONTROLS_SLOT, geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
 import { previewEndpoint } from '@/lib/video/whep';
 
 const input = 'w-full border border-line-strong bg-black px-2 py-1 font-mono text-xs text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none';
@@ -296,6 +296,7 @@ function LayoutSection({ layout, drafts, onChange }: { layout: VideoLayout; draf
               >
                 <option value="">Empty</option>
                 {drafts.map((d) => <option key={d.key} value={d.key}>{d.label || d.id}{d.isNew ? ' (unsaved)' : ''}</option>)}
+                <option value={CONTROLS_SLOT}>Recording controls</option>
               </select>
             </li>
           ))}

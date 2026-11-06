@@ -66,7 +66,7 @@ describe('video config validation', () => {
   it('a missing file is an empty config, not an error', () => {
     rmSync(CONFIG, { force: true });
     rmSync(SECRETS, { force: true });
-    expect(loadVideoConfig()).toEqual({ config: { version: 1, streams: [], layout: { preset: 'auto', slots: [] } }, secrets: { streams: {} }, errors: [] });
+    expect(loadVideoConfig()).toEqual({ config: { version: 1, streams: [], layout: { preset: 'auto', slots: [] }, recording: { refuseBelowGB: 20, stopBelowGB: 5 } }, secrets: { streams: {} }, errors: [] });
   });
 
   it('a corrupt secrets file is reported without echoing its contents', () => {
@@ -665,7 +665,7 @@ describe('Save, through the video agent', () => {
     const svc = svcWith();
     expect(svc.bufferStatus().available).toBe(false);
     await svc.sync();
-    expect(svc.bufferStatus()).toEqual({ available: true, bufferSeconds: 300, buffered: { pad: 120 }, disk: { freeBytes: 5e10, totalBytes: 1e12 } });
+    expect(svc.bufferStatus()).toMatchObject({ available: true, bufferSeconds: 300, buffered: { pad: 120 }, disk: { freeBytes: 5e10, totalBytes: 1e12 }, refuseBelowBytes: 20e9, stopBelowBytes: 5e9 });
   });
 
   it('says why a Save failed: agent error, wrong password, nothing to save, agent gone', async () => {
@@ -691,5 +691,35 @@ describe("this machine's LAN name", () => {
     const { lanName } = await import('../video/service.js');
     const { hostname } = await import('os');
     expect(lanName('linux', () => { throw new Error('no scutil'); })).toBe(`${hostname().includes('.') ? hostname() : `${hostname()}.local`}`);
+  });
+});
+
+describe('recording settings and the controls slot', () => {
+  it('the disk guard defaults to 20 GB / 5 GB, can be set, and must make sense', () => {
+    expect(validateVideoConfig({ version: 1, streams: [] }).config.recording).toEqual({ refuseBelowGB: 20, stopBelowGB: 5 });
+    expect(validateVideoConfig({ version: 1, streams: [], recording: { refuseBelowGB: 50, stopBelowGB: 10 } }).config.recording).toEqual({ refuseBelowGB: 50, stopBelowGB: 10 });
+    expect(validateVideoConfig({ version: 1, streams: [], recording: { refuseBelowGB: 5, stopBelowGB: 10 } }).errors[0]).toMatch(/stop as soon as it started/);
+    expect(validateVideoConfig({ version: 1, streams: [], recording: { stopBelowGB: 'lots' } }).errors[0]).toMatch(/number of GB/);
+  });
+
+  it('a slot can hold the recording controls, which is not a stream', () => {
+    expect(validateLayout({ preset: '2x2', slots: ['@controls', 'pad', '@other'] }, new Set(['pad'])).layout.slots).toEqual(['@controls', 'pad', null, null]);
+  });
+
+  it('Record passes the disk guard to the agent, in bytes', async () => {
+    const seen: any[] = [];
+    const srv = http.createServer((req, res) => {
+      let b = ''; req.on('data', (c) => (b += c));
+      req.on('end', () => { seen.push({ url: req.url, body: b ? JSON.parse(b) : undefined }); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(req.url === '/status' ? {} : { folder: 'f', startedAt: 1, streams: ['pad'] })); });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    try {
+      writeFileSync(CONFIG, JSON.stringify({ version: 1, streams: [pad, { ...pad, id: 'off', record: false }], recording: { refuseBelowGB: 30, stopBelowGB: 8 } }));
+      const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, host: '127.0.0.1' }, new FakeGateway());
+      await svc.startRecording();
+      expect(seen.find((x) => x.url === '/record/start').body).toEqual({ streams: ['pad'], refuseBelowBytes: 30e9, stopBelowBytes: 8e9 });
+    } finally {
+      srv.close();
+    }
   });
 });

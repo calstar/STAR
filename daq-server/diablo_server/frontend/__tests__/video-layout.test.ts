@@ -70,3 +70,14 @@ describe('stand and operator layouts', () => {
     expect(effectiveLayout(stand, two, o).focus).toBeNull();
   });
 });
+
+describe('the recording controls slot', () => {
+  it('can be placed in a slot, by the stand layout or an operator, but never focused', async () => {
+    const { CONTROLS_SLOT } = await import('@/lib/video/layout');
+    const l: VideoLayout = { preset: '2x2', slots: ['pad', CONTROLS_SLOT, null, null] };
+    expect(resolveSlots(l, ids)).toEqual(['pad', CONTROLS_SLOT, null, null]);
+    const o = withSlot(l, ids, null, 3, CONTROLS_SLOT);
+    expect(effectiveLayout(l, ids, o).slots).toEqual(['pad', CONTROLS_SLOT, null, CONTROLS_SLOT]);
+    expect(effectiveLayout(l, ids, { ...o, focus: CONTROLS_SLOT }).focus).toBeNull();
+  });
+});

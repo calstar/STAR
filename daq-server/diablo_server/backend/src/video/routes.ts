@@ -11,6 +11,7 @@
  *   ...    /api/video/streams/:id/low/whep[/:s]       the same, for a stream's low-res URL
  *   GET    /api/video/streams/:id[/low]/check         why that camera is not giving video
  *   POST   /api/video/save                            keep the last buffer window (the agent)
+ *   POST   /api/video/record/start | /record/stop     record included streams (the agent)
  *
  * The WHEP routes are a proxy, so a browser's handshake travels the same origin and the same
  * sign-in as the rest of the GUI, and the gateway's HTTP side never faces the LAN. Only the
@@ -185,6 +186,14 @@ export async function handleVideoRequest(
 
     if (pathname === '/api/video/save' && req.method === 'POST') {
       sendJson(res, 200, await video.save());
+      return true;
+    }
+    if (pathname === '/api/video/record/start' && req.method === 'POST') {
+      sendJson(res, 200, await video.startRecording());
+      return true;
+    }
+    if (pathname === '/api/video/record/stop' && req.method === 'POST') {
+      sendJson(res, 200, await video.stopRecording());
       return true;
     }
 

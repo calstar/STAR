@@ -19,6 +19,10 @@ export const PRESET_LABELS: Record<LayoutPreset, string> = {
   '1+7': '1+7',
 };
 
+/** A slot showing the recording controls (Record, Save, disk) instead of a stream. Not a
+ *  stream id -- those cannot start with "@" -- and the server keeps it (CONTROLS_SLOT). */
+export const CONTROLS_SLOT = '@controls';
+
 export interface VideoLayout {
   preset: LayoutPreset;
   slots: (string | null)[];
@@ -72,7 +76,7 @@ export function geometry(preset: LayoutPreset, autoCount = 0): Geometry {
 /** The stream in each slot. 'auto' is every stream in list order. */
 export function resolveSlots(layout: VideoLayout, streamIds: string[]): (string | null)[] {
   if (layout.preset === 'auto') return [...streamIds];
-  const known = new Set(streamIds);
+  const known = new Set([...streamIds, CONTROLS_SLOT]);
   return Array.from({ length: PRESET_SLOT_COUNTS[layout.preset] }, (_, i) => {
     const id = layout.slots[i];
     return id && known.has(id) ? id : null;
@@ -110,11 +114,11 @@ export function effectiveLayout(stand: VideoLayout, streamIds: string[], overrid
   const standSlots = resolveSlots(stand, streamIds);
   const geo = geometry(stand.preset, standSlots.length);
   const valid = !!override && override.base === fingerprint(stand, streamIds);
-  const known = new Set(streamIds);
+  const known = new Set([...streamIds, CONTROLS_SLOT]);
   const slots = valid && override!.slots && override!.slots.length === standSlots.length
     ? override!.slots.map((id) => (id && known.has(id) ? id : null))
     : standSlots;
-  const focus = valid && override!.focus && known.has(override!.focus) ? override!.focus : null;
+  const focus = valid && override!.focus && override!.focus !== CONTROLS_SLOT && known.has(override!.focus) ? override!.focus : null;
   return { geometry: geo, slots, focus, overridden: valid && (!!override!.slots || !!focus) };
 }
 

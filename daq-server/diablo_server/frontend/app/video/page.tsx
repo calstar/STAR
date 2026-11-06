@@ -23,10 +23,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import VideoTile from '@/components/video/VideoTile';
 import StreamEditor from '@/components/video/StreamEditor';
+import RecordingPanel from '@/components/video/RecordingPanel';
 import { useWindowManager } from '@/components/windows/WindowManager';
 import { isPopupWindow } from '@/lib/is-popup';
-import { describeSave, fetchVideoStreams, saveBuffer, type VideoStreamInfo, type VideoStreamsResponse } from '@/lib/video/api';
-import { effectiveLayout, fingerprint, withFocus, withSlot, type Cell, type VideoLayout } from '@/lib/video/layout';
+import { clock, fetchVideoStreams, type VideoStreamInfo, type VideoStreamsResponse } from '@/lib/video/api';
+import { CONTROLS_SLOT, effectiveLayout, fingerprint, withFocus, withSlot, type Cell, type VideoLayout } from '@/lib/video/layout';
+import { useRecording } from '@/lib/video/use-recording';
 import { useOperatorLayout } from '@/lib/video/operator-layout';
 import { streamEndpoint } from '@/lib/video/whep';
 
@@ -69,6 +71,7 @@ function SlotPicker({ value, streams, active, onPick }: {
     >
       <option value="">Empty</option>
       {streams.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+      <option value={CONTROLS_SLOT}>Recording controls</option>
     </select>
   );
 }
@@ -100,25 +103,6 @@ export default function VideoPage() {
   const [editing, setEditing] = useState(false);
   const [draftLayout, setDraftLayout] = useState<VideoLayout | null>(null);
   const [override, setOverride] = useOperatorLayout();
-  /** The last Save's outcome, shown in the corner for a while. */
-  const [saveNote, setSaveNote] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const save = useCallback(async () => {
-    setSaving(true);
-    try {
-      setSaveNote(describeSave(await saveBuffer()));
-    } catch (e) {
-      setSaveNote(`save failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSaving(false);
-    }
-  }, []);
-  useEffect(() => {
-    if (!saveNote) return;
-    const t = setTimeout(() => setSaveNote(null), 8000);
-    return () => clearTimeout(t);
-  }, [saveNote]);
-
   const load = useCallback((signal?: AbortSignal) =>
     fetchVideoStreams(signal)
       .then((d) => { setData(d); setLoadError(null); })
@@ -131,7 +115,9 @@ export default function VideoPage() {
     return () => { ctl.abort(); clearInterval(t); };
   }, [load]);
 
+  const r = useRecording(data?.buffer, useCallback(() => void load(), [load]));
   const streams = useMemo(() => data?.streams ?? [], [data]);
+  const included = streams.filter((s) => s.record).length;
   const ids = useMemo(() => streams.map((s) => s.id), [streams]);
   const byId = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams]);
   const stand: VideoLayout = useMemo(() => data?.layout ?? { preset: 'auto', slots: [] }, [data]);
@@ -168,6 +154,7 @@ export default function VideoPage() {
   const showControls = !editing && (active || empty);
   const buffer = data?.buffer;
   const bufferMin = buffer?.bufferSeconds ? Math.round(buffer.bufferSeconds / 60) : 5;
+  const recording = !!buffer?.recording?.active;
   const focused = eff.focus ? byId.get(eff.focus) : undefined;
 
   const tileFor = (id: string | null, large: boolean, slot: number | null) => {
@@ -175,6 +162,7 @@ export default function VideoPage() {
     const picker = slot !== null && !editing && (
       <SlotPicker value={id} streams={streams} active={active} onPick={(v) => setOverride(withSlot(stand, ids, override, slot, v))} />
     );
+    if (id === CONTROLS_SLOT) return <RecordingPanel r={r} total={included}>{picker}</RecordingPanel>;
     if (!s) {
       return (
         <div className="group relative flex items-center justify-center bg-black font-mono text-[10px] uppercase tracking-[0.18em] text-ink-4" data-testid={slot !== null ? `video-slot-${slot}` : undefined}>
@@ -188,6 +176,7 @@ export default function VideoPage() {
         label={s.label}
         endpoint={streamEndpoint(s.id, !large && s.hasLowRes)}
         testId={`video-tile-${s.id}`}
+        recording={r.streams.has(s.id) ? r.elapsed : null}
         onDoubleClick={editing ? undefined : () => setFocus(eff.focus ? null : s.id)}
       >
         {picker}
@@ -247,14 +236,35 @@ export default function VideoPage() {
                 Reset layout
               </button>
             )}
+            {recording && (
+              <span className="flex items-center gap-1.5 px-2 py-1 text-ink" data-testid="corner-rec">
+                <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden />
+                REC {clock(r.elapsed ?? 0)} · {buffer?.recording?.streams?.length ?? 0} of {included}
+              </span>
+            )}
+            {recording ? (
+              <button type="button" className="ctl h-6 px-2 text-[10px] text-ink" disabled={!!r.busy || buffer?.recording?.stopping} onClick={() => void r.stop()}>
+                {r.busy === 'stop' || buffer?.recording?.stopping ? 'Stopping' : 'Stop'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="ctl h-6 px-2 text-[10px] text-ink-2"
+                disabled={!!r.busy || !buffer?.available || included === 0}
+                title={buffer?.available ? 'Record every stream marked "include in recording" until Stop, on the gateway machine' : buffer?.error}
+                onClick={() => void r.record()}
+              >
+                {r.busy === 'record' ? 'Starting' : 'Record'}
+              </button>
+            )}
             <button
               type="button"
               className="ctl h-6 px-2 text-[10px] text-ink-2"
-              disabled={saving || !buffer?.available}
+              disabled={!!r.busy || !buffer?.available || included === 0}
               title={buffer?.available ? `Keep the last ${bufferMin} minutes of every stream marked "include in recording", on the gateway machine` : buffer?.error}
-              onClick={() => void save()}
+              onClick={() => void r.save()}
             >
-              {saving ? 'Saving' : `Save last ${bufferMin} min`}
+              {r.busy === 'save' ? 'Saving' : `Save last ${bufferMin} min`}
             </button>
             <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={() => setEditing(true)}>
               Edit
@@ -268,8 +278,8 @@ export default function VideoPage() {
               </>
             )}
           </div>
-          {saveNote && (
-            <div className="max-w-xl bg-black/80 px-2 py-1 font-mono text-[11px] text-ink" role="status">{saveNote}</div>
+          {r.note && (
+            <div className="max-w-xl bg-black/80 px-2 py-1 font-mono text-[11px] text-ink">{r.note}</div>
           )}
           {data && data.errors.length > 0 && (
             <ul className="max-w-md bg-black/80 px-2 py-1 font-mono text-[11px] text-ink-2">

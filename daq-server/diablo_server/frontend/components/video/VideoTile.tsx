@@ -18,6 +18,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { playWhep, type WhepState } from '@/lib/video/whep';
 import { staleLabel, tileStatus, type TileStatus } from '@/lib/video/tile-state';
+import { clock } from '@/lib/video/api';
 
 const RETRY_MS = 3000;
 const TICK_MS = 500;
@@ -98,9 +99,11 @@ export interface VideoTileProps {
   onDoubleClick?: () => void;
   /** Extra overlay (the page's slot picker). */
   children?: ReactNode;
+  /** Seconds this stream has been recording, or null. Shown always, not with the controls. */
+  recording?: number | null;
 }
 
-export default function VideoTile({ label, endpoint, testId, onDoubleClick, children }: VideoTileProps) {
+export default function VideoTile({ label, endpoint, testId, onDoubleClick, children, recording = null }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [conn, setConn] = useState<WhepState>({ kind: 'connecting' });
@@ -171,6 +174,13 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
       <figcaption className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-3 bg-black/70 px-2 py-1 font-mono text-[11px] uppercase tracking-[0.18em]">
         <span className="truncate text-ink">{label}</span>
         <StateBadge status={status} />
+        {recording !== null && (
+          // White, never red: red is the stand's colour on this console.
+          <span className="flex items-center gap-1.5 text-ink" data-testid={testId ? `${testId}-rec` : undefined}>
+            <span className="h-1.5 w-1.5 rounded-full bg-white" aria-hidden />
+            REC {clock(recording)}
+          </span>
+        )}
       </figcaption>
       {children}
     </figure>

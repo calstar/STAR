@@ -38,13 +38,20 @@ export interface GatewayStatus {
 
 /** What the video agent on the gateway machine says about the buffer (video/agent.mjs). */
 export interface BufferStatus {
-  /** The agent answered: Save is possible. */
+  /** The agent answered: Save and Record are possible. */
   available: boolean;
   error?: string;
   bufferSeconds?: number;
   /** Seconds currently buffered, per stream id. */
   buffered?: Record<string, number>;
   disk?: { freeBytes: number; totalBytes: number } | null;
+  /** What the buffer is writing now, all streams together: for "hours left". */
+  bytesPerSecond?: number;
+  recording?: { active: boolean; stopping?: boolean; folder?: string; startedAt?: number; streams?: string[]; elapsedSeconds?: number };
+  lastRecording?: (SaveResult & { startedAt: number; stoppedAt: number; reason: string }) | null;
+  /** The disk guard in force (config/video.json recording). */
+  refuseBelowBytes?: number;
+  stopBelowBytes?: number;
 }
 
 export interface SaveResult {
@@ -209,6 +216,7 @@ export class VideoService {
     }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) throw new AgentError('video agent refused the password');
+    if (res.status === 409) throw new AgentError(data?.error ?? 'refused');
     if (!res.ok) throw new AgentError(data?.error ?? `video agent answered ${res.status}`);
     return data as T;
   }
@@ -216,7 +224,17 @@ export class VideoService {
   private async refreshBuffer(): Promise<void> {
     try {
       const s = await this.agent<Omit<BufferStatus, 'available'>>('GET', '/status', undefined, AGENT_STATUS_TIMEOUT_MS);
-      this.buffer = { available: true, bufferSeconds: s.bufferSeconds, buffered: s.buffered, disk: s.disk };
+      const g = this.guardBytes();
+      this.buffer = {
+        available: true,
+        bufferSeconds: s.bufferSeconds,
+        buffered: s.buffered,
+        disk: s.disk,
+        bytesPerSecond: s.bytesPerSecond,
+        recording: s.recording,
+        lastRecording: s.lastRecording,
+        ...g,
+      };
     } catch (e) {
       this.buffer = { available: false, error: (e as Error).message };
     }
@@ -224,6 +242,27 @@ export class VideoService {
 
   bufferStatus(): BufferStatus {
     return { ...this.buffer };
+  }
+
+  private guardBytes() {
+    const r = this.current().config.recording;
+    return { refuseBelowBytes: r.refuseBelowGB * 1e9, stopBelowBytes: r.stopBelowGB * 1e9 };
+  }
+
+  /** Record every stream marked "include in recording", from now until Stop. */
+  async startRecording(): Promise<{ folder: string; startedAt: number; streams: string[] }> {
+    const streams = this.current().config.streams.filter((s) => s.record).map((s) => s.id);
+    if (!streams.length) throw new AgentError('no stream is marked "include in recording"');
+    const started = await this.agent<{ folder: string; startedAt: number; streams: string[] }>(
+      'POST', '/record/start', { streams, ...this.guardBytes() }, AGENT_STATUS_TIMEOUT_MS);
+    await this.refreshBuffer();
+    return started;
+  }
+
+  async stopRecording(): Promise<SaveResult & { reason: string }> {
+    const done = await this.agent<SaveResult & { reason: string }>('POST', '/record/stop', {}, AGENT_SAVE_TIMEOUT_MS);
+    await this.refreshBuffer();
+    return done;
   }
 
   /** Keep the last buffer window of every stream marked "include in recording". */

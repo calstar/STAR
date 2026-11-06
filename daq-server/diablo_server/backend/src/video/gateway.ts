@@ -13,7 +13,7 @@
  * audio m-line to send on; nothing sits in the video path to add latency. Proven against
  * the real gateway by test/video-gateway.integration.test.ts.
  */
-import type { LoadedVideoConfig, RtspStream, VideoSecrets } from './config.js';
+import type { RtspStream, VideoConfig, VideoSecrets, VideoStream } from './config.js';
 
 export const MANAGED_PREFIX = 'raw/';
 
@@ -53,7 +53,7 @@ export function withCredentials(url: string, secret: { username?: string; passwo
 /** Temporary paths for the editor's live preview of an unsaved URL. Never reconciled. */
 export const PREVIEW_PREFIX = 'preview/';
 
-export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets'>): Map<string, ManagedPathConf> {
+export function desiredPaths(loaded: { config: Partial<VideoConfig> & { streams: VideoStream[] }; secrets: VideoSecrets }): Map<string, ManagedPathConf> {
   const out = new Map<string, ManagedPathConf>();
   for (const s of loaded.config.streams) {
     if (s.kind === 'udp') {

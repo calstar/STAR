@@ -63,11 +63,26 @@ export interface VideoLayout {
 
 export const AUTO_LAYOUT: VideoLayout = { preset: 'auto', slots: [] };
 
+/** The disk guard, enforced by the video agent on the gateway machine (ticket 09). */
+export interface RecordingSettings {
+  /** Record is refused with less than this free. */
+  refuseBelowGB: number;
+  /** A recording stops cleanly at this much free. */
+  stopBelowGB: number;
+}
+
+export const DEFAULT_RECORDING: RecordingSettings = { refuseBelowGB: 20, stopBelowGB: 5 };
+
 export interface VideoConfig {
   version: 1;
   streams: VideoStream[];
   layout: VideoLayout;
+  recording: RecordingSettings;
 }
+
+/** A layout slot that shows the recording controls instead of a stream (not a stream id:
+ *  ids cannot start with "@"). */
+export const CONTROLS_SLOT = '@controls';
 
 export interface StreamSecret {
   username?: string;
@@ -109,7 +124,7 @@ export function videoSecretsPath(): string {
   return process.env.VIDEO_SECRETS_PATH || join(dirname(videoConfigPath()), 'video.secrets.json');
 }
 
-export const EMPTY_CONFIG: VideoConfig = { version: 1, streams: [], layout: AUTO_LAYOUT };
+export const EMPTY_CONFIG: VideoConfig = { version: 1, streams: [], layout: AUTO_LAYOUT, recording: { refuseBelowGB: 20, stopBelowGB: 5 } };
 
 export function checkRtspUrl(value: unknown, field: string, errors: string[]): string | undefined {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -154,7 +169,7 @@ export function validateLayout(raw: unknown, streamIds: Set<string>): { layout: 
   const given = Array.isArray(r.slots) ? r.slots : [];
   const slots = Array.from({ length: n }, (_, i) => {
     const v = given[i];
-    return typeof v === 'string' && streamIds.has(v) ? v : null;
+    return typeof v === 'string' && (streamIds.has(v) || v === CONTROLS_SLOT) ? v : null;
   });
   return { layout: { preset, slots }, errors: [] };
 }
@@ -167,7 +182,7 @@ export function validateLayout(raw: unknown, streamIds: Set<string>): { layout: 
 export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors: string[] } {
   const errors: string[] = [];
   if (!raw || typeof raw !== 'object') {
-    return { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] } }, errors: ['video config is not a JSON object'] };
+    return { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] }, recording: { ...DEFAULT_RECORDING } }, errors: ['video config is not a JSON object'] };
   }
   const obj = raw as Record<string, unknown>;
   if (obj.version !== 1) errors.push(`unsupported video config version ${String(obj.version)}`);
@@ -219,7 +234,17 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
   });
   const l = validateLayout(obj.layout, new Set(streams.map((s) => s.id)));
   errors.push(...l.errors);
-  return { config: { version: 1, streams, layout: l.layout }, errors };
+  const recording = { ...DEFAULT_RECORDING };
+  const r = obj.recording as Record<string, unknown> | undefined;
+  if (r && typeof r === 'object') {
+    for (const k of ['refuseBelowGB', 'stopBelowGB'] as const) {
+      if (r[k] === undefined) continue;
+      if (typeof r[k] === 'number' && (r[k] as number) >= 0) recording[k] = r[k] as number;
+      else errors.push(`recording.${k} must be a number of GB`);
+    }
+    if (recording.stopBelowGB > recording.refuseBelowGB) errors.push('recording.stopBelowGB is above refuseBelowGB: a recording would stop as soon as it started');
+  }
+  return { config: { version: 1, streams, layout: l.layout, recording }, errors };
 }
 
 export function validateVideoSecrets(raw: unknown): { secrets: VideoSecrets; errors: string[] } {
@@ -269,7 +294,7 @@ export function loadVideoConfig(): LoadedVideoConfig {
   const errors: string[] = [];
   const c = readJson(videoConfigPath());
   if (c.error) errors.push(c.error);
-  const vc = c.value === undefined ? { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] } }, errors: [] } : validateVideoConfig(c.value);
+  const vc = c.value === undefined ? { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] }, recording: { ...DEFAULT_RECORDING } }, errors: [] } : validateVideoConfig(c.value);
   errors.push(...vc.errors);
   const s = readJson(videoSecretsPath());
   // Never echo the secrets file's contents: a parse error says the file is bad, not what is in it.

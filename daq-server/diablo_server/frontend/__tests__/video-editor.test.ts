@@ -133,3 +133,26 @@ describe('the Save note', () => {
       .toBe('saved 2 streams (last 94 s) to recordings/f; gaps (stream was down) in pad');
   });
 });
+
+describe('recording words', () => {
+  it('clock, disk left, and the line after Stop', async () => {
+    const { clock, diskLeft, describeRecording } = await import('@/lib/video/api');
+    expect(clock(724)).toBe('12:04');
+    expect(clock(3729)).toBe('1:02:09');
+    // 100 GB free, 5 GB floor, 2 MB/s -> 95e9 / 2e6 = 47,500 s = 13 h 11.7 m
+    expect(diskLeft({ available: true, disk: { freeBytes: 100e9, totalBytes: 1e12 }, stopBelowBytes: 5e9, bytesPerSecond: 2e6 })).toBe('100 GB free, 13 h 12 m at this rate');
+    expect(diskLeft({ available: true, disk: { freeBytes: 6e9, totalBytes: 1e12 }, stopBelowBytes: 5e9, bytesPerSecond: 2e6 })).toBe('6 GB free, 8 m at this rate');
+    expect(describeRecording({ folder: '/r/2026-11-06_120000_record', seconds: 0, reason: 'stopped', startedAt: 0, stoppedAt: 724_000, streams: [{ stream: 'pad', file: 'x' }] }))
+      .toBe('recorded 12:04, 1 stream to recordings/2026-11-06_120000_record');
+    expect(describeRecording({ folder: '/r/f', seconds: 0, reason: 'disk nearly full', streams: [{ stream: 'pad', file: 'x', gaps: 1 }] }))
+      .toBe('recording ended early (disk nearly full) -- 1 stream to recordings/f; gaps (stream was down) in pad');
+  });
+});
+
+describe('a Recording controls slot in the editor', () => {
+  it('survives the round trip through draft keys', () => {
+    const drafts = draftsFrom(loaded);
+    const l = draftLayoutFrom({ preset: '2x2', slots: ['pad', '@controls', null, null] }, drafts);
+    expect(layoutIds(l, drafts)).toEqual({ preset: '2x2', slots: ['pad', '@controls', null, null] });
+  });
+});

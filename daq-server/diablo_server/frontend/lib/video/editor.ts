@@ -4,7 +4,7 @@
  * all, that a password the operator did not touch is *omitted*, so the saved one is kept.
  */
 import { UDP_PORTS, type CredentialChange, type EditableConfig, type EditableStream } from './api';
-import { PRESET_SLOT_COUNTS, type LayoutPreset, type VideoLayout } from './layout';
+import { CONTROLS_SLOT, PRESET_SLOT_COUNTS, type LayoutPreset, type VideoLayout } from './layout';
 
 export interface DraftStream {
   /** React key; stable across edits of id. */
@@ -142,13 +142,13 @@ export function isDirty(drafts: DraftStream[], original: DraftStream[]): boolean
 // label as it is typed, and the slot must follow the stream, not the half-typed id.
 
 export function draftLayoutFrom(layout: VideoLayout, drafts: DraftStream[]): VideoLayout {
-  const keyOf = new Map(drafts.map((d) => [d.id, d.key]));
+  const keyOf = new Map<string, string>([...drafts.map((d) => [d.id, d.key] as [string, string]), [CONTROLS_SLOT, CONTROLS_SLOT]]);
   return { preset: layout.preset, slots: layout.slots.map((id) => (id ? keyOf.get(id) ?? null : null)) };
 }
 
 /** The editor's layout as the server takes it: keys -> current ids; gone -> empty. */
 export function layoutIds(layout: VideoLayout, drafts: DraftStream[]): VideoLayout {
-  const idOf = new Map(drafts.map((d) => [d.key, d.id.trim()]));
+  const idOf = new Map<string, string>([...drafts.map((d) => [d.key, d.id.trim()] as [string, string]), [CONTROLS_SLOT, CONTROLS_SLOT]]);
   return { preset: layout.preset, slots: layout.slots.map((k) => (k ? idOf.get(k) ?? null : null)) };
 }
 
