@@ -209,6 +209,47 @@ ensure_pinned_black() {
   fi
 }
 
+# ─── Flags a project's setup.sh takes ────────────────────────────────────────
+# Prints, one per line, those of the flags given after the script that the
+# script's own argument parser has a case arm for (`--no-hook)`, `--yes|-y)`).
+# The dispatcher passes a project only these: every setup.sh stops on a flag
+# it does not know, so `setup.sh --all --no-hook` (daq-server's flag) or
+# `--ci` (EngineDesign's and star-openrocket's) failed feed-twin, pid-designer
+# and firmware before they installed anything.
+flags_for() {
+  local script="$1" flag
+  shift
+  for flag in "$@"; do
+    if grep -qE -- "^[[:space:]]*([^)[:space:]]+\|)*${flag}(\|[^)[:space:]]+)*\)" "$script"; then
+      printf '%s\n' "$flag"
+    fi
+  done
+}
+
+# ─── A Python new enough ─────────────────────────────────────────────────────
+# Prints the path of the first of python3.13, python3.12, python3.11 and
+# python3 that is at least 3.<minor>, or returns 1 when none is. `python3`
+# alone is not enough: on a Mac it is the system 3.9 beside Homebrew's
+# python3.11, on Ubuntu 22.04 it is 3.10, and pip then stops on a package's
+# requires-python without a word about which interpreter to use instead.
+python_at_least() {
+  local minor="$1" py
+  for py in python3.13 python3.12 python3.11 python3; do
+    command -v "$py" >/dev/null 2>&1 || continue
+    if "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, $minor) else 1)" 2>/dev/null; then
+      command -v "$py"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Whether the venv at $1 runs a Python of at least 3.<$2>. A venv made by an
+# older setup on an older python3 is otherwise reused as it is.
+venv_at_least() {
+  "$1/bin/python" -c "import sys; sys.exit(0 if sys.version_info >= (3, $2) else 1)" 2>/dev/null
+}
+
 # ─── Repo root discovery ─────────────────────────────────────────────────────
 # Locates the STAR repo root by walking up from a given directory looking for
 # setup.sh + daq-server + firmware. Callers pass their own script dir.

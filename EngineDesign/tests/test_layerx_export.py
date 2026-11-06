@@ -179,6 +179,14 @@ def test_parquet_carries_the_same_table_with_units():
     assert "diagnostics.start" in json.loads(meta[b"columns_skipped"])
 
 
+def test_parquet_ships_with_the_server():
+    """The UI offers "Every signal (Parquet)". Without pyarrow in the image (Dockerfile.api and CI install
+    requirements-base.txt) every click answered HTTP 501, and the test above skipped itself, so CI never
+    noticed. The base list carries it."""
+    reqs = (Path(__file__).resolve().parents[1] / "requirements-base.txt").read_text().splitlines()
+    assert any(line.split("#")[0].strip().lower().startswith("pyarrow") for line in reqs)
+
+
 def _sidecar():
     return {"x_mm": [0.0, 40.0, 80.0], "t": [0.05, 0.25],
             "q_MW_m2": [[1.0, 8.0, 3.0], [1.5, 9.5, 2.0]], "T_wall_K": [[600.0, 1800.0, 900.0], [800.0, 2300.0, 950.0]],

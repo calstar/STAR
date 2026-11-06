@@ -129,9 +129,34 @@ def apply_overrides(payload: Mapping[str, Any], overrides: List[Override]) -> Tu
     return out, applied, missing
 
 
+_PSI = 6894.757293168361
+
+
+def absolute_psia(parameter: str, value: float, unit: str, symbol: str = "") -> Optional[float]:
+    """An absolute pressure on the drawing as the twin reads it, in psia; None for anything else.
+
+    A bare ``psi`` on a tank's ``pressure`` or a regulator's ``dome_pressure`` is gauge
+    (``feedtwin.model.pressure.drawn_unit``, ADR 0004), so a drawn 3750 psi is 3764.7 psia. A
+    person reads and types psia (ADR 0007): the restatement table shows that number, not the
+    drawing's spelling. Differences (droop, bias, relief set) are the same in either and stay as
+    drawn."""
+    try:
+        from feedtwin.model.pressure import DIFFERENCE, PressureReferenceError, drawn_unit
+        from feedtwin.model.units import UnknownUnit, get_unit
+    except ImportError:  # pragma: no cover - feedtwin is a dependency of Layer X
+        return None
+    try:
+        if get_unit(unit).dimension != "pressure" or parameter in DIFFERENCE:
+            return None
+        return get_unit(drawn_unit(parameter, unit, symbol)).to_si(float(value)) / _PSI
+    except (UnknownUnit, PressureReferenceError, TypeError, ValueError):
+        return None
+
+
 def parameter_table(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Every parameter on the drawing, as the drawing states it: what a person reviews before
-    deciding what to measure next."""
+    deciding what to measure next. An absolute pressure also carries ``psia``, the number it means
+    (:func:`absolute_psia`): the table shows and takes that one."""
     rows: List[Dict[str, Any]] = []
     for kind, items in (("node", payload.get("nodes") or []), ("edge", payload.get("edges") or [])):
         for item in items:
@@ -150,10 +175,26 @@ def parameter_table(payload: Mapping[str, Any]) -> List[Dict[str, Any]]:
                     value = float(p["value"])
                 except (TypeError, ValueError):
                     continue
-                rows.append({"target": f"{kind}:{item.get('id')}", "label": label, "type": ctype,
-                             "parameter": name, "value": value, "unit": p.get("unit", ""),
-                             "source": p.get("source", ""), "reference": p.get("reference", "")})
+                row = {"target": f"{kind}:{item.get('id')}", "label": label, "type": ctype,
+                       "parameter": name, "value": value, "unit": p.get("unit", ""),
+                       "source": p.get("source", ""), "reference": p.get("reference", "")}
+                psia = absolute_psia(name, value, str(p.get("unit", "")), str(ctype))
+                if psia is not None:
+                    row["psia"] = psia
+                rows.append(row)
     return rows
+
+
+def override_view(o: Override, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """A stored restatement as the table shows it: on an absolute pressure, with ``psia`` too, so a
+    restatement saved as a bare (gauge) psi before the table spoke psia reads back as what it means."""
+    out = asdict(o)
+    row = next((r for r in rows if r["target"] == o.target and r["parameter"] == o.parameter), None)
+    if row is not None and "psia" in row:
+        psia = absolute_psia(o.parameter, o.value, o.unit, str(row.get("type") or ""))
+        if psia is not None:
+            out["psia"] = psia
+    return out
 
 
 def lineage(drawing: Any) -> str:

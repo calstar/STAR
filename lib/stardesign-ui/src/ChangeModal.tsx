@@ -249,6 +249,11 @@ export function ChangeModal<T>({
               <input
                 autoFocus value={newName} onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
+                  // The Enter is spent here. A caller may close this dialog
+                  // inside onCreate; focus then returns to the button that
+                  // opened it, and Chrome delivers the same Enter's keypress
+                  // there, which opened the dialog again over the new document.
+                  if (e.key === 'Enter') e.preventDefault();
                   if (e.key === 'Enter' && newName.trim()) void run('new', () => onCreate(newName.trim()));
                   if (e.key === 'Escape') reset();
                 }}
@@ -297,6 +302,7 @@ export function ChangeModal<T>({
                       <input
                         autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
                         onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.preventDefault();
                           if (e.key === 'Enter' && renameValue.trim()) void run(key, () => onRename(ref, renameValue.trim()));
                           if (e.key === 'Escape') reset();
                         }}

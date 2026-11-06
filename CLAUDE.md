@@ -40,7 +40,7 @@ scripts/check.sh full     # plus tests marked slow and the Layer X parity test
 cd lib/feedtwin   && python3 -m pytest -q && python3 -m mypy feedtwin && python3 -m black --check feedtwin tests
 cd feed-twin      && python3 -m pytest -q -m "not slow"     # drop -m for all 200+
 cd pid-designer   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q
-cd EngineDesign   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q   # 4 known failures
+cd EngineDesign   && PYTHONPATH=../lib/stardesign python3 -m pytest tests/ -q   # green; tests/conftest.py lists what is quarantined
 ```
 
 feed-twin installs `lib/stardesign` (`pip install -e ../lib/stardesign`; dev.sh
@@ -88,10 +88,13 @@ very bugs they were written for.
   `insulation_thickness`/`insulation_conductivity`, wall boiling). The library's
   `Setup` carries those same on-values; only the vessel-level `Tank` constructor
   defaults them off (collapse aside, which defaults to `ConductionCollapse`), and the
-  benchmark study and Layer X turn them off themselves -- `burn_setup` drops stratification,
-  boiling onset and nucleate boiling, and each caller passes collapse, vapour and
+  benchmark study turns them off itself -- `burn_setup` drops stratification,
+  boiling onset and nucleate boiling, and it passes collapse, vapour and
   chilldown off unless a case asks for one (the benchmark's collapse case;
-  `backend/benchmark_study.py`, `engine/layerx/prepare.py`). The Study tab
+  `backend/benchmark_study.py`). Layer X does not: `engine/layerx/prepare.py`'s
+  `feed_twin_setup` runs the cockpit's own `Setup`, closures on (2026-10-03, AUDIT D1),
+  with only auto-vent off, a burn's Newton room and no tick budget;
+  `EngineDesign/tests/test_layerx_cockpit_parity.py` holds the two together. The Study tab
   (`backend/study.py`) is not the benchmark: it burns the open stand at the
   cockpit's own settings, case by case. A shut LOX tank
   climbs at tens of psi a minute because its *surface* warms, not because the leak

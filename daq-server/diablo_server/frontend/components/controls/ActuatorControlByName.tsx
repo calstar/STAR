@@ -57,7 +57,9 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
         {pending && <span className="text-yellow-400 text-[8px] leading-none">⟳</span>}
         <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
       </div>
-      <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
+      {/* min-h, not min-h-0: this is the only shrinkable row, so a short tile used to
+          take all of its squeeze out of the name and draw an unlabeled valve. */}
+      <div className="flex min-h-[1.25rem] flex-1 items-center overflow-hidden pr-4">
         <h3 className="truncate text-[12px] font-semibold leading-tight text-ink xl:text-[13px]">{name}</h3>
       </div>
       <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">

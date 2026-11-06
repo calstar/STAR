@@ -31,8 +31,9 @@ function Elapsed({ since }: { since: number }) {
 }
 
 function RunRow({ r, checked, onClick }: { r: RunView; checked: boolean; onClick: () => void }) {
+  const u = useUnits();
   return (
-    <MenuItem checked={checked} onClick={onClick} right={<span className="lx-num">{runFigures(r)}</span>}
+    <MenuItem checked={checked} onClick={onClick} right={<span className="lx-num">{runFigures(r, (m) => u.fmt(u.alt(m)))}</span>}
               note={`${r.meta?.name ? `${runWhen(r)} · ` : ''}${runContext(r)}`}>
       {r.meta?.pinned ? <span className="text-[var(--lx-accent)]" aria-label="pinned">★ </span> : null}{r.meta?.name || runWhen(r)}
     </MenuItem>

@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { niceTicks, stepDigits } from './format';
+import { modelsLeftOut, niceTicks, stepDigits } from './format';
+
+describe('modelsLeftOut', () => {
+  it('reads what the Setup ran; a null switch is the Setup, not off', () => {
+    const none = { ullage_collapse: null, ullage_vapour: null, line_walls: null };
+    expect(modelsLeftOut(none, { ullage_collapse: true, ullage_vapour: true, line_walls: true })).toEqual([]);
+    expect(modelsLeftOut(none, { ullage_collapse: false, ullage_vapour: true, line_walls: false })).toEqual(['ullage collapse', 'line-wall heat']);
+    // An old record with no Setup falls back on its switches.
+    expect(modelsLeftOut({ ullage_collapse: true, ullage_vapour: false, line_walls: true }, null)).toEqual(['propellant vapour']);
+  });
+});
 
 describe('niceTicks', () => {
   it('lands on round values inside the range', () => {

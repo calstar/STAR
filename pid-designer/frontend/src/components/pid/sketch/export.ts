@@ -24,27 +24,40 @@ export interface Exported {
 
 const SOURCE = 'from the centerline sketch';
 
+/**
+ * To a ten-thousandth: of a millimetre for a bore, of a metre for the fall.
+ * An inch sketch's 0.43 in is 10.921999999999999 mm in floating point, and a
+ * fall off its geometry 0.8029517354603677 m; written so, they were stored
+ * and shown so.
+ */
+const tidy = (x: number) => Math.round(x * 1e4) / 1e4;
+
 export function exportSketch(s: Sketch): Exported {
   const segments: LineSegment[] = [];
   let n = 0;
+  // A stretch whose inner diameter was never given states no bore: absent is
+  // "not stated", never zero (segments.ts). Written as 0 'estimated' it read
+  // as a size -- the sheet's check counted the line sized -- while feed-twin
+  // priced nothing for the run, tube or bends (LE4 (3)'s fuel tank-to-main).
   const open = (boreMm: number): LineSegment => ({
     id: `seg_${++n}`, method: 'itemised', standard: 'tube',
-    bore: { value: boreMm, unit: 'mm', source: 'estimated', reference: SOURCE },
+    ...(boreMm > 0 ? { bore: { value: tidy(boreMm), unit: 'mm', source: 'estimated', reference: SOURCE } } : {}),
     length: { value: 0, unit: 'mm', source: 'measured', reference: SOURCE },
     lengthBasis: 'tube', fittings: [],
   });
   let current: LineSegment | null = null;
+  let currentBore = NaN;
 
   const boundaries = s.sections.map(sec => sec.fromMm).sort((a, b) => a - b);
 
   for (const piece of pieces(s)) {
     if (piece.kind === 'bend') {
-      if (!current) current = open(boreAt(s, piece.fromMm));
       const bore = boreAt(s, piece.fromMm);
+      if (!current) { current = open(bore); currentBore = bore; }
       current.fittings!.push({
         id: `fit_${current.fittings!.length + 1}`, kind: 'bend', count: 1,
-        boreMm: bore, lengthMm: piece.lengthMm,
-        bendDiameters: bore > 0 ? piece.radiusMm! / bore : undefined,
+        ...(bore > 0 ? { boreMm: tidy(bore), bendDiameters: piece.radiusMm! / bore } : {}),
+        lengthMm: piece.lengthMm,
         angleDeg: Math.abs((piece.angleRad! * 180) / Math.PI),
       });
       continue;
@@ -55,8 +68,9 @@ export function exportSketch(s: Sketch): Exported {
     const cuts = boundaries.filter(b => b > from + 1e-9 && b < end - 1e-9);
     for (const cut of [...cuts, end]) {
       const bore = boreAt(s, from);
-      if (!current || current.bore!.value !== bore) {
+      if (!current || currentBore !== bore) {
         current = open(bore);
+        currentBore = bore;
         segments.push(current);
       }
       current.length!.value += cut - from;
@@ -73,7 +87,7 @@ export function exportSketch(s: Sketch): Exported {
 
   return {
     segments,
-    elevationChange: { value: -fallMm(s) / 1000, unit: 'm', source: 'measured', reference: SOURCE },
+    elevationChange: { value: -tidy(fallMm(s) / 1000), unit: 'm', source: 'measured', reference: SOURCE },
     totalLengthMm: segments.reduce((L, seg) => L + seg.length!.value, 0)
       + s.bends.reduce((L, b) => L + (pieces(s).find(p => p.kind === 'bend' && p.legIndex === b.atLeg)?.lengthMm ?? 0), 0),
     orientation,

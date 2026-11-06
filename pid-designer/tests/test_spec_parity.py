@@ -174,3 +174,22 @@ def test_spec_declares_no_param_the_catalogue_lacks_for_the_regulator() -> None:
     known = catalogue().get("regulator", set()) | {"model"}
     orphans = sorted(declared - known)
     assert not orphans, f"PR offers fields feed-twin never reads: {orphans}"
+
+
+def test_hand_valve_offers_the_rest_position_feedtwin_reads() -> None:
+    """feed-twin rests every hand valve shut unless the drawing says
+    ``options.normalPosition: open``, and its build warning tells the user to
+    draw exactly that. The dialog offered no such option -- and dropped one
+    written by hand on the next save -- so the advice could not be followed.
+    An option, not a catalogue param, so the tests above cannot see it."""
+    network = ROOT / "lib" / "feedtwin" / "feedtwin" / "pid" / "network.py"
+    if not network.exists():
+        pytest.skip("network.py is not present")
+    read = network.read_text()
+    assert 'options.get("normalPosition"' in read, "feed-twin no longer reads normalPosition"
+    assert 'drawn == "open"' in read, "feed-twin no longer reads 'open' as standing open"
+    text = spec_text()
+    start = text.index("MAN: {")
+    block = text[start : text.index("\n  },", start)]
+    assert "key: 'normalPosition'" in block, "MAN does not offer normalPosition"
+    assert "value: 'open'" in block, "MAN's normalPosition cannot be set open"

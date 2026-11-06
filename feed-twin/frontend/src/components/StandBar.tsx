@@ -25,11 +25,12 @@ import {
   type DesignMeta,
   type DocRef,
 } from '@stardesign-ui';
-import { exportStand, importStand, saveBundle, standApi } from '../stands';
+import { exportStand, saveBundle, standApi } from '../stands';
 import { useStand } from '../stand';
 
 export function StandBar() {
-  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where } = useStand();
+  const { standDoc, openStand, closeStand, snapshot, checkout, locked, changed, artifacts, where, leaveFor, importStandFile } =
+    useStand();
   // With no stand document open, the button names what is running: the
   // featured stand on a fresh browser read "Unsaved stand" on every tab,
   // which looks like work at risk. "Unsaved changes" once the operator has
@@ -50,6 +51,24 @@ export function StandBar() {
   // state table carried as the stand's own): said once, not an error.
   const [notice, setNotice] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  // The ⋯ menu closes as a menu does: on Escape, on a click anywhere else,
+  // and before the stand picker opens -- it stayed up over the picker.
+  const menuRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+    };
+  }, [menu]);
 
   const ref: DocRef | null = standDoc?.ref ?? null;
 
@@ -105,17 +124,9 @@ export function StandBar() {
   const importBundle = (file: File) =>
     act(async () => {
       setNotice('');
-      let bundle: unknown;
-      try {
-        bundle = JSON.parse(await file.text());
-      } catch {
-        throw new Error(`${file.name} is not a Hotbench stand (not JSON).`);
-      }
-      const got = await importStand(bundle);
-      const made = await standApi.create(got.name, got.stand);
+      const note = await importStandFile(file);
       await list();
-      await openStand(refOf({ ...made, mine: true }), made.name, true);
-      setNotice(got.notes.join(' '));
+      setNotice(note);
     });
 
   const item =
@@ -145,7 +156,9 @@ export function StandBar() {
   );
 
   return (
-    <div className="relative flex flex-shrink-0 items-center gap-2 font-mono text-[12px]">
+    // The last thing in the header to give way (TopBar): its name, then the
+    // checkout, clipped, before the ENG ABORT beside it moves off screen.
+    <div className="relative flex min-w-0 items-center gap-2 whitespace-nowrap font-mono text-[12px]">
       <input
         ref={fileRef}
         type="file"
@@ -154,12 +167,13 @@ export function StandBar() {
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = '';
-          if (file) void importBundle(file);
+          // Opening it starts a fresh stand: past Idle, that is asked first.
+          if (file) leaveFor(`Import ${file.name} and open it?`, 'Import and open', () => void importBundle(file));
         }}
       />
       <button
-        className={`${btn} max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
-        onClick={() => { void list(); setPicking(true); }}
+        className={`${btn} min-w-[3.5rem] max-w-[150px] truncate min-[1600px]:max-w-[240px]`}
+        onClick={() => { void list(); setMenu(false); setPicking(true); }}
         title={
           standDoc
             ? `Stand: ${standDoc.name}. A stand is the whole set-up as one shared, versioned document: drawing, engine, every setting, the hookup and the knobs. Click to open, create, share or copy one.`
@@ -175,6 +189,7 @@ export function StandBar() {
           {/* The checkout says "Read only" itself; the hover says what that
               covers -- running the stand never is. */}
           <span
+            className="min-w-0 overflow-hidden"
             title={
               locked
                 ? 'Read only: configuration, knobs, the hookup, the drawing and the engine are the stand\'s; take it to change them. States, valves, T-0 and Fire are operating it, and are never locked.'
@@ -213,7 +228,7 @@ export function StandBar() {
               </button>
             </span>
           ) : (
-            <span className="relative">
+            <span className="relative" ref={menuRef}>
               <button
                 className={btn}
                 onClick={() => setMenu((m) => !m)}
@@ -262,7 +277,7 @@ export function StandBar() {
         </>
       )}
       {!standDoc && (
-        <span className="relative">
+        <span className="relative" ref={menuRef}>
           <button
             className={btn}
             onClick={() => setMenu((m) => !m)}
@@ -304,16 +319,22 @@ export function StandBar() {
           onSelect={(r) => {
             setPicking(false);
             const meta = documents.find((d) => keyOf(refOf(d)) === keyOf(r));
-            void act(() => openStand(r, meta?.name ?? r.id));
+            const name = meta?.name ?? r.id;
+            leaveFor(`Open the stand ${name}?`, 'Open', () => void act(() => openStand(r, name)));
           }}
-          onCreate={(name) =>
-            act(async () => {
-              const made = await standApi.create(name, await snapshot());
-              await list();
-              setPicking(false);
-              await openStand(refOf({ ...made, mine: true }), made.name, true);
-            })
-          }
+          // Saved as a stand, the cockpit opens it on a fresh session (the
+          // server has no way yet to put a stand on a running one): past
+          // Idle, asked first.
+          onCreate={async (name) => {
+            setPicking(false);
+            leaveFor(`Save this set-up as the stand ${name} and open it?`, 'Save and open', () =>
+              void act(async () => {
+                const made = await standApi.create(name, await snapshot());
+                await list();
+                await openStand(refOf({ ...made, mine: true }), made.name, true);
+              }),
+            );
+          }}
           onRename={(r, name) => act(async () => { await standApi.rename(r, name); await list(); })}
           onShare={(r, emails) => act(async () => { await standApi.share(r, emails); await list(); })}
           onLeave={(r) => act(async () => { await standApi.leave(r); await list(); })}

@@ -76,6 +76,31 @@ def test_inline_matches_rocketpy_through_the_burn(config, rocketpy_le4):
     assert out["velocity_m_s"][k] == pytest.approx(float(fl.vz(t[k])), rel=1e-3)
 
 
+def test_rocketpys_drag_is_read_linearly_across_the_burnout_step():
+    """RocketPy's ``Flight.R3`` is a cubic spline over its solution nodes, and the drag steps at
+    burnout (power-on to power-off Cd). Across the step the spline rings: on the LE4 helium flight it
+    read -423 N 36 ms before cutoff, between -646 N and -747 N while the speed rose, so RocketPy's
+    specific force jumped 3.4 % and the inline check (vs_rocketpy 0.0338 against 0.005) failed under
+    rocketpy 1.11.0 and 1.13.0 alike. Read linearly between its nodes, the drag is bounded by them."""
+    from types import SimpleNamespace
+
+    from rocketpy import Function
+
+    tb = 3.4864
+    x = list(np.arange(3.30, 3.44, 0.02)) + [3.45, tb, tb + 1e-5, 3.49, 3.51, 3.53]
+    y = [-600.0 - 300.0 * (t - 3.30) for t in x[:-5]] + [-648.0, -722.2, -722.0, -721.5, -721.0]
+    r3 = Function(np.column_stack([x, y]), interpolation="spline")
+    assert abs(float(r3(3.46)) - float(np.interp(3.46, x, y))) > 100.0      # the spline rings here
+    motor = SimpleNamespace(nozzle_radius=0.0, reference_pressure=None, burn_start_time=0.0, burn_out_time=tb,
+                            thrust=lambda t: 7200.0 if t <= tb else 0.0)
+    flight = SimpleNamespace(rocket=SimpleNamespace(motor=motor, total_mass=lambda t: 70.0), R3=r3,
+                             out_of_rail_time=0.5, inclination=90.0)
+    for t in (3.43, 3.46, 3.47, 3.48):
+        drag = float(np.interp(t, x, y))
+        assert -722.2 <= drag <= -600.0
+        assert flt.axial_acceleration(flight, t) == pytest.approx((7200.0 + drag) / 70.0, rel=1e-12)
+
+
 def test_inline_is_a_drop_in_for_the_flown_schedule(config):
     """``{t, accel_m_s2}`` on the burn's clock, as ``fly``'s schedule: the outer loop's own measure
     of change between them is far inside its tolerance."""

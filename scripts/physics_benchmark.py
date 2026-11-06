@@ -116,6 +116,21 @@ def tier1_lines() -> None:
 
 
 # --------------------------------------------------------------------------- 1.3
+def _flow_at(valve, flow, dp: float) -> float:
+    """The flow at which the valve drops ``dp``: its own pressure_drop inverted
+    by bisection, or its ceiling once the drop has choked it."""
+    if valve.is_choked(dp, flow):
+        return valve.flow_ceiling(flow)
+    lo, hi = 0.0, valve.flow_ceiling(flow)
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if valve.pressure_drop(mid, flow) < dp:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
 def tier1_choking() -> None:
     import fluids.control_valve as cv_lib
     from feedtwin.comps import build_component
@@ -126,9 +141,12 @@ def tier1_choking() -> None:
     R = 8.31446261815324 * 1000.0
     KV_PER_CV = 1.0 / 1.1560992283536566
 
-    def reference(Cv, mw, gamma, p1, T, bore):
+    def reference(Cv, mw, gamma, p1, T, bore, p2=101325.0):
+        # fluids' Q is volume at 0 degC and 1 atm (its docstring; its N9). This
+        # read it at 15 degC, as the valve's old calibration did, and the two
+        # agreed to 1e-6 while both were 5.4 % low.
         r_specific = R / mw
-        rho_std = 101325.0 / (r_specific * 288.15)
+        rho_std = 101325.0 / (r_specific * 273.15)
         sized = cv_lib.size_control_valve_g(
             T=T,
             MW=mw,
@@ -136,7 +154,7 @@ def tier1_choking() -> None:
             gamma=gamma,
             Z=1.0,
             P1=p1,
-            P2=101325.0,
+            P2=p2,
             Q=1.0,
             D1=bore,
             D2=bore,
@@ -154,6 +172,7 @@ def tier1_choking() -> None:
         ("helium 1in dump", 60.0, 4.0026, 1.667, 550 * PSI, 293.15, 0.0254),
     ]
     worst = 0.0
+    worst_swept = 0.0
     for name, Cv, mw, gamma, p1, T, bore in cases:
         r_specific = R / mw
         valve = build_component(
@@ -174,10 +193,20 @@ def tier1_choking() -> None:
             temperature=T,
             gamma=gamma,
             r_specific=r_specific,
+            gamma_ideal=gamma,
         )
         want = reference(Cv, mw, gamma, p1, T, bore)
         worst = max(worst, abs(valve.flow_ceiling(flow) - want) / want)
-    check("worst error across 5 cases", worst * 100.0, 0.0, 1e-4, "%")
+        # Below the choke too: the expansion factor, x from 1 % to past choked.
+        for x in (0.01, 0.1, 0.3, 0.5, 0.65, 0.9):
+            dp = x * p1
+            got = _flow_at(valve, flow, dp)
+            want = reference(Cv, mw, gamma, p1, T, bore, p2=p1 - dp)
+            worst_swept = max(worst_swept, abs(got - want) / want)
+    # The scale alone: the Cv definition (Cv_to_K) the library uses against
+    # IEC's tabulated N9 that fluids uses, constant at every drop and gas.
+    check("worst ceiling error across 5 cases", worst * 100.0, 0.112, 0.01, "%")
+    check("worst error, x = 0.01-0.9, 30 points", worst_swept * 100.0, 0.112, 0.01, "%")
 
     liquid = FlowConditions(
         rho=1141.0, mu=1.9e-4, p_upstream=550 * PSI, temperature=90.0

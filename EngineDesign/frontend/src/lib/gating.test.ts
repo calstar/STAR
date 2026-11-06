@@ -151,9 +151,9 @@ const VIEW_ONLY: Record<string, string> = {
   'Layer3Optimization.tsx:downloadCSV': 'downloads results as a file',
   'Layer3Optimization.tsx:downloadConfig': 'downloads the result config as a file',
 
-  // /control/upload-config-and-simulate restores the previous config in a
-  // finally block (backend/routers/control.py), so it does not leave the
-  // session changed -- it is a simulation, not an edit.
+  // /control/upload-config-and-simulate builds its own runner and controller
+  // from the file and never touches the session config
+  // (backend/routers/control.py) -- it is a simulation, not an edit.
   'Layer2Optimization.tsx:setControllerLoading': 'simulate-from-file; restores the config afterwards',
 
   // Replays the Layer 2 thrust curve through the controller. /control/

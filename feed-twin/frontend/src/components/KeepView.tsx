@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useNodesInitialized, useOnViewportChange, useReactFlow, type Viewport } from '@xyflow/react';
+import { useOnViewportChange, useReactFlow, type Viewport } from '@xyflow/react';
+import { useSheetReady } from '@pid/DrawingView';
 
 const STORE = 'feedtwin.pid.view';
 
@@ -52,7 +53,11 @@ function store(sheet: string, v: Viewport) {
 /** `sheet` names what is shown: the drawing and its page. */
 export function KeepView({ sheet }: { sheet: string }) {
   const { fitView, setViewport } = useReactFlow();
-  const ready = useNodesInitialized();
+  // Every symbol of this page measured. `useNodesInitialized` still answered
+  // for the page left on the render that switched, and the fit queued then was
+  // resolved by the first few GSE symbols measured: the page came up at 2x on
+  // a corner of it, and that was kept as where it was looked at.
+  const ready = useSheetReady();
   const placed = useRef<string | null>(null);
 
   useEffect(() => {

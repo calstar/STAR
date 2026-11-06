@@ -12,13 +12,16 @@ import {
 import { createPortal } from "react-dom";
 
 import { AssigneeAvatar, AssigneeChip } from "@/components/AssigneeChip";
+import { selectedFirst } from "@/lib/assignees";
 import { updateField } from "@/lib/fieldUpdate";
 import { displayNameOf } from "@/lib/names";
 
 /**
  * Multi-assignee picker. A custom dropdown (portal-rendered so table `overflow`
  * can't clip it) whose options toggle on/off — the menu stays open so several
- * people can be picked in one go. A type-ahead box filters long rosters.
+ * people can be picked in one go. A type-ahead box filters long rosters. The
+ * people already assigned are listed first (as of when the menu opened), so
+ * removing someone doesn't mean scrolling the whole roster to find them.
  *
  * Two modes:
  *  - inline persist: pass `taskId`; each change is saved via `updateField`
@@ -51,6 +54,9 @@ export function AssigneeSelect({
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Who is listed at the top: the selection when the menu opened. Frozen while
+  // it is open so a row doesn't jump out from under the cursor when toggled.
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(() => new Set());
   const [coords, setCoords] = useState<{
     top?: number;
     bottom?: number;
@@ -69,6 +75,7 @@ export function AssigneeSelect({
   const visible = q
     ? users.filter((u) => displayNameOf(u).toLowerCase().includes(q))
     : users;
+  const { top, rest } = selectedFirst(visible, pinned);
 
   const selectedUsers = users.filter((u) => selectedSet.has(u.id));
   const label =
@@ -124,6 +131,7 @@ export function AssigneeSelect({
   const openMenu = () => {
     place();
     setQuery("");
+    setPinned(new Set(selected));
     setOpen(true);
   };
 
@@ -156,6 +164,29 @@ export function AssigneeSelect({
       window.visualViewport?.removeEventListener("resize", reposition);
     };
   }, [open, close, place]);
+
+  const renderOption = (u: User) => {
+    const isSelected = selectedSet.has(u.id);
+    return (
+      <div
+        key={u.id}
+        role="option"
+        aria-selected={isSelected}
+        onClick={() => toggle(u.id)}
+        className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm sm:min-h-0 sm:px-2 sm:py-1.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800`}
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <AssigneeAvatar user={u} />
+          <span className="truncate">{displayNameOf(u)}</span>
+        </span>
+        {isSelected && (
+          <span aria-hidden="true" className="text-xs opacity-70">
+            ✓
+          </span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -250,28 +281,16 @@ export function AssigneeSelect({
                   No matches
                 </div>
               ) : (
-                visible.map((u) => {
-                  const isSelected = selectedSet.has(u.id);
-                  return (
+                <>
+                  {top.map(renderOption)}
+                  {top.length > 0 && rest.length > 0 && (
                     <div
-                      key={u.id}
-                      role="option"
-                      aria-selected={isSelected}
-                      onClick={() => toggle(u.id)}
-                      className={`flex min-h-11 cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm sm:min-h-0 sm:px-2 sm:py-1.5 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800`}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <AssigneeAvatar user={u} />
-                        <span className="truncate">{displayNameOf(u)}</span>
-                      </span>
-                      {isSelected && (
-                        <span aria-hidden="true" className="text-xs opacity-70">
-                          ✓
-                        </span>
-                      )}
-                    </div>
-                  );
-                })
+                      role="separator"
+                      className="my-1 border-t border-neutral-200 dark:border-neutral-700"
+                    />
+                  )}
+                  {rest.map(renderOption)}
+                </>
               )}
             </div>
           </div>,

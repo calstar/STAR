@@ -7,7 +7,8 @@ import { findVents } from './vents';
 import { drawnPortsOf, portsOf, portIsDrawn, CV_INLET } from './ports';
 import { PSI_PA, toGaugePa as toPa } from './params';
 import { fmtPressure, fmtPsi } from './fmt';
-import { overlapOf } from './segments';
+import { methodOf, overlapOf, statesBore } from './segments';
+import type { LineSegment } from './segments';
 import { drawnRoute, routesItself } from './lineRoute';
 import type { LineData } from './lineRoute';
 import { pipesOf } from './pipes';
@@ -504,12 +505,26 @@ export function runChecks(nodes: Node[], edges: Edge[]): Finding[] {
   // Sized one of two ways: the one-number fields, or the itemised run, whose
   // segments carry the length and bore instead. The check used to read only
   // the first and fired on every line built the recommended way.
+  //
+  // A bore is a positive number, not a stated object: the centreline sketch
+  // once saved a run it had no diameter for as bore 0, this called that line
+  // sized, and feed-twin priced nothing for it. And when the run has segments
+  // they are what the solver reads -- the line-level numbers are superseded
+  // (feed-twin's `_SUPERSEDED_BY_SEGMENTS`) -- so they are what is judged.
+  // Except a segment known by a measured curve: its loss is the bench's Δp
+  // against ṁ, which needs no length and no bore, and it is the top of the
+  // ladder -- calling that line unsized would send somebody to guess numbers
+  // the measurement already beats.
+  const bored = (p: { value: number } | undefined) => !!p && p.value > 0;
+  const sized = (s: LineSegment) => methodOf(s) === 'curve'
+    ? (s.curve?.mdot?.length ?? 0) > 0
+    : !!s.length && statesBore(s);
   const bare = edges.filter(e => {
     const d = edgeDataOf(e);
     if (d.partNumber) return false;
-    if (d.params?.length && d.params?.bore) return false;
     const segs = d.segments ?? [];
-    return !(segs.length > 0 && segs.every(s => s.length && s.bore));
+    if (segs.length) return !segs.every(sized);
+    return !(d.params?.length && bored(d.params?.bore));
   });
   if (bare.length) {
     push({

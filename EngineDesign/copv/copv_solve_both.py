@@ -48,6 +48,7 @@ def size_or_check_copv_for_polytropic_N2(
     branch_temperatures_K=None,
     copv_volume_m3=None,
     copv_P0_Pa=None,
+    copv_m0_kg=None,
     tol=1e-4,
     max_iter=60
 ):
@@ -55,11 +56,15 @@ def size_or_check_copv_for_polytropic_N2(
     Updated solver that uses known COPV volume (config.press_tank.press_volume)
     and initial ullage computed from initial propellant mass, prop tank volume, and density.
 
-    Provide either copv_volume_m3 OR copv_P0_Pa (exactly one).
+    Provide either copv_volume_m3 OR copv_P0_Pa (exactly one). With copv_volume_m3, also giving
+    copv_m0_kg (the charge actually loaded) CHECKS that charge -- its P0 at T0_K, its pressure
+    trace and its margin -- instead of sizing the P0 that just meets the requirement.
     """
 
     assert (copv_volume_m3 is None) ^ (copv_P0_Pa is None), \
         "Provide exactly one: copv_volume_m3 OR copv_P0_Pa."
+    assert copv_m0_kg is None or copv_volume_m3 is not None, \
+        "copv_m0_kg checks a charge in a known volume: give copv_volume_m3 with it."
 
     branch_temperatures_K = branch_temperatures_K or {}
 
@@ -296,7 +301,8 @@ def size_or_check_copv_for_polytropic_N2(
     def estimate_Z_H(P_H):
         if not use_real_gas:
             return 1.0
-        # clamp P_H inside lookup table domain by using the interp directly; interp returns nan if out of range
+        # The interpolator EXTRAPOLATES outside the table (fill_value=None), so the table must cover
+        # COPV pressures: n2_Z_lookup.csv runs to 60 MPa (CoolProp; it stopped at 8.3 MPa before).
         z = Z_lookup(T0_K, P_H, interp, default_Z=1.0)
         return z
 
@@ -420,7 +426,29 @@ def size_or_check_copv_for_polytropic_N2(
         "n": n,
     }
 
-    if copv_volume_m3 is not None:
+    if copv_volume_m3 is not None and copv_m0_kg is not None:
+        # a charge m0 in a known volume: its P0 is the state m0 = P0 V / (Z(P0) R T0)
+        V_H, m0 = float(copv_volume_m3), float(copv_m0_kg)
+        P0 = m0 * R * T0_K / V_H
+        for _ in range(50):
+            P0_new = m0 * estimate_Z_H(P0) * R * T0_K / V_H
+            if abs(P0_new - P0) <= 1e-9 * P0_new:
+                P0 = P0_new
+                break
+            P0 = P0_new
+        PH = copv_pressure_trace(m0, V_H, P0)
+        results.update({
+            "mode": "checked_m0_given_VH",
+            "copv_volume_m3": V_H,
+            "P0_Pa": float(P0),
+            "m0_kg": m0,
+            "PH_trace_Pa": PH,
+            "min_margin_Pa": float(np.min(PH - P_tank_required_Pa)),
+            "branch_min_margins_Pa": {
+                name: float(np.min(PH - data["P_tank_Pa"])) for name, data in branch_results.items()
+            },
+        })
+    elif copv_volume_m3 is not None:
         # user gave a COPV physical volume; solve for P0
         P0_star, m0_star, PH_star = solve_for_P0_given_VH(copv_volume_m3)
         branch_margins = {

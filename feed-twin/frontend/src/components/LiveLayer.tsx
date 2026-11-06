@@ -27,7 +27,7 @@ import type { Pt } from '@pid/route';
 import type { Frame } from '../api';
 import { fixed } from '../api';
 import { psiaText } from '../lib/pressure';
-import { dashPeriod, isFlowing } from '../lib/schematic';
+import { dashPeriod, isFlowing, readingAnchor } from '../lib/schematic';
 
 /** What reads or holds a pressure: these carry one. */
 const PRESSURE = new Set(['PT', 'PG', 'TANK', 'KBOTTLE', 'DEWAR', 'ENGINE']);
@@ -90,8 +90,12 @@ export function LiveLayer({ frame, lines, valves, held, focus = null }: Props) {
         const kelvin = TEMPERATURE.has(type) ? frame.temperature_K?.[n.id] : undefined;
         const psi = PRESSURE.has(type) ? (frame.pressure_psi[n.id] ?? frame.node_psi[n.id]) : undefined;
         if (psi === undefined && kelvin === undefined) return null;
-        const x = n.position.x + n.measured!.width! / 2;
-        const y = n.position.y - 3;
+        // Over the symbol, or over its tag when the tag sits above it.
+        const { x, y } = readingAnchor({
+          position: n.position,
+          measured: { width: n.measured!.width!, height: n.measured!.height! },
+          data: n.data as { labelOffset?: { x: number; y: number } },
+        });
         return (
           // Live is a light chip with dark figures: the drawing's own numbers
           // (a drawn 585 psi, 293 K) are small grey text, and a reading set
