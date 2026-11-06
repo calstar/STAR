@@ -11,12 +11,21 @@
  */
 import { getApiBaseUrl } from '@/lib/websocket';
 
+/**
+ * `live` here means the WebRTC connection is up; whether frames are arriving is the tile's
+ * business (lib/video/tile-state). A failure says where: `gateway` -- the handshake was
+ * refused, so ask the camera why (GET .../check); `network` -- the handshake worked but no
+ * media path did, which is what a browser off the stand LAN sees.
+ */
 export type WhepState =
   | { kind: 'connecting' }
   | { kind: 'live' }
-  | { kind: 'failed'; reason: string };
+  | { kind: 'failed'; reason: string; where: 'gateway' | 'network' };
 
 const GATHER_TIMEOUT_MS = 2000;
+/** On the LAN media connects in well under a second; the browser's own ICE failure takes ~30 s. */
+const MEDIA_TIMEOUT_MS = 8000;
+export const OFF_LAN_REASON = 'video is only available on the stand network';
 
 function gatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -52,8 +61,11 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
   let sessionUrl: string | null = null;
   let stopped = false;
 
-  const fail = (reason: string) => {
-    if (!stopped) onState({ kind: 'failed', reason });
+  let mediaTimer: ReturnType<typeof setTimeout> | undefined;
+  const fail = (reason: string, where: 'gateway' | 'network' = 'gateway') => {
+    clearTimeout(mediaTimer);
+    if (!stopped) onState({ kind: 'failed', reason, where });
+    stopped = true; // one report per attempt; the caller retries with a fresh peer
   };
 
   pc.ontrack = (e) => {
@@ -63,9 +75,11 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
   };
   pc.onconnectionstatechange = () => {
     if (stopped) return;
-    if (pc.connectionState === 'connected') onState({ kind: 'live' });
-    else if (pc.connectionState === 'failed') fail('no media path to the gateway (are you on the stand network?)');
-    else if (pc.connectionState === 'disconnected') fail('connection lost');
+    if (pc.connectionState === 'connected') {
+      clearTimeout(mediaTimer);
+      onState({ kind: 'live' });
+    } else if (pc.connectionState === 'failed') fail(OFF_LAN_REASON, 'network');
+    else if (pc.connectionState === 'disconnected') fail('connection to the gateway lost', 'network');
   };
 
   onState({ kind: 'connecting' });
@@ -90,6 +104,7 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
       const answer = await res.text();
       if (stopped) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+      mediaTimer = setTimeout(() => { if (pc.connectionState !== 'connected') fail(OFF_LAN_REASON, 'network'); }, MEDIA_TIMEOUT_MS);
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     }
@@ -97,6 +112,7 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
 
   return () => {
     stopped = true;
+    clearTimeout(mediaTimer);
     pc.close();
     video.srcObject = null;
     if (sessionUrl) void fetch(sessionUrl, { method: 'DELETE' }).catch(() => {});

@@ -9,6 +9,7 @@
  *   POST   /api/video/{streams|previews}/:id/whep     WHEP offer -> gateway, answer back (201)
  *   DELETE /api/video/{streams|previews}/:id/whep/:s  end that WebRTC session
  *   ...    /api/video/streams/:id/low/whep[/:s]       the same, for a stream's low-res URL
+ *   GET    /api/video/streams/:id[/low]/check         why that camera is not giving video
  *
  * The WHEP routes are a proxy, so a browser's handshake travels the same origin and the same
  * sign-in as the rest of the GUI, and the gateway's HTTP side never faces the LAN. Only the
@@ -171,6 +172,14 @@ export async function handleVideoRequest(
         fromStreamId: typeof body.fromStreamId === 'string' ? body.fromStreamId : undefined,
       });
       sendJson(res, 201, { id });
+      return true;
+    }
+
+    const check = pathname.match(/^\/api\/video\/streams\/([^/]+)(\/low)?\/check$/);
+    if (check && req.method === 'GET') {
+      const result = STREAM_ID_RE.test(check[1]) ? video.checkStream(check[1], !!check[2]) : undefined;
+      if (!result) sendJson(res, 404, { error: `no stream "${check[1]}"` });
+      else sendJson(res, 200, await result);
       return true;
     }
 

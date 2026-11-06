@@ -11,6 +11,7 @@ import {
   checkRtspUrl, loadVideoConfig, videoConfigPath, videoSecretsPath, VideoConfigError,
   type LoadedVideoConfig,
 } from './config.js';
+import { checkCamera, type CameraCheck } from './camera-check.js';
 import {
   desiredPaths, gatewayEndpointFromEnv, HttpGatewayApi, reconcile, withCredentials, PREVIEW_PREFIX,
   type GatewayApi, type GatewayEndpoint,
@@ -20,6 +21,8 @@ const RECONCILE_INTERVAL_MS = 5000;
 /** An editor's preview lives this long unless it is closed sooner. */
 export const PREVIEW_TTL_MS = 2 * 60_000;
 export const PREVIEW_ID_RE = /^[0-9a-f]{12}$/;
+/** A camera check is reused this long, so every screen's failing tile does not probe at once. */
+const CHECK_TTL_MS = 5000;
 
 export interface GatewayStatus {
   reachable: boolean;
@@ -41,6 +44,8 @@ export class VideoService {
   private status: GatewayStatus = { reachable: false, error: 'not contacted yet' };
   /** Live previews: id -> expiry (epoch ms). */
   private previews = new Map<string, number>();
+  /** Recent camera checks: `${id}` or `${id}/low` -> result in flight or done, and when. */
+  private checks = new Map<string, { at: number; result: Promise<CameraCheck> }>();
 
   constructor(
     readonly endpoint: GatewayEndpoint = gatewayEndpointFromEnv(),
@@ -121,6 +126,20 @@ export class VideoService {
   private async sweepPreviews(): Promise<void> {
     const now = Date.now();
     for (const [id, until] of this.previews) if (until <= now) await this.deletePreview(id);
+  }
+
+  /** Why stream `id` (or its low-res URL) is not giving video. undefined: no such stream. */
+  checkStream(id: string, low = false): Promise<CameraCheck> | undefined {
+    const { config, secrets } = this.current();
+    const s = config.streams.find((x) => x.id === id);
+    const url = s && (low ? s.lowResUrl : s.url);
+    if (!s || !url) return undefined;
+    const key = `${id}${low ? '/low' : ''}`;
+    const hit = this.checks.get(key);
+    if (hit && Date.now() - hit.at < CHECK_TTL_MS) return hit.result;
+    const result = checkCamera(url, secrets.streams[id]);
+    this.checks.set(key, { at: Date.now(), result });
+    return result;
   }
 
   start(): void {
