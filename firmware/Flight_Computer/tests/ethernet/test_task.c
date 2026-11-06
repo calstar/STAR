@@ -22,17 +22,26 @@ static unsigned count, put_count, sends, heartbeats, samples_sent, opens;
 static uint32_t now, stop_at;
 static bool locked, selected, header_received, fail_shift, enabled = true,
                                                            injected;
-static bool hold_send, foreign;
+static bool hold_send, foreign, discover;
+static unsigned broadcast_sends, learned_sends;
 static uint8_t hdr[3];
 static void (*task)(void*);
 static jmp_buf done;
+#ifndef TEST_DEFAULTS
 void daq_board_config(daq_config_t* c) {
     *c = (daq_config_t){.enabled = enabled,
+                        .discover_server = discover,
                         .board_id = 99,
                         .network = net,
                         .server_ip = {192, 0, 2, 20},
                         .server_port = 5006,
                         .sources = {DAQ_HIGHG_X}};
+}
+#endif
+void board_uid(uint32_t words[3]) {
+    words[0] = 1;
+    words[1] = 2;
+    words[2] = 3;
 }
 uint32_t board_now_ms(void) {
     return now;
@@ -94,6 +103,16 @@ board_spi_status_t board_spi_shift(board_spi_device_t d, const uint8_t* tx,
         ++opens;
     if (b == 1 && a == 1 && write && tx[0] == 0x20) {
         ++sends;
+        if (discover) {
+            const uint8_t broadcast[4] = {255, 255, 255, 255};
+            if (!memcmp(fake.socket + 0x0c, broadcast, 4))
+                ++broadcast_sends;
+            else {
+                const uint8_t learned[4] = {192, 0, 2, 21};
+                CHECK(!memcmp(fake.socket + 0x0c, learned, 4));
+                ++learned_sends;
+            }
+        }
         /* All task test packets fit in the first 2 KiB; find start of the
            most recent write from the pointer and encoded size. */
         unsigned end = read16(fake.socket + 0x24), len = 0;
@@ -178,6 +197,20 @@ static void run(uint32_t duration) {
         task(NULL);
 }
 int main(void) {
+#ifdef TEST_DEFAULTS
+    daq_config_t defaults;
+    daq_board_config(&defaults);
+    const uint8_t ip[4] = {192, 168, 2, 81}, server[4] = {192, 168, 2, 20};
+    CHECK(!defaults.enabled && defaults.discover_server &&
+          defaults.board_id == 81);
+    CHECK(!memcmp(defaults.network.ip, ip, 4) && defaults.network.port == 5005);
+    CHECK(!memcmp(defaults.server_ip, server, 4) &&
+          defaults.server_port == 5006);
+    CHECK((defaults.network.mac[0] & 3) == 2);
+    CHECK(daq_task_start() && !task);
+    puts("Disabled proposal defaults passed");
+    return 0;
+#endif
     /* Disabled builds do not allocate a task or queue. */
     enabled = false;
     CHECK(daq_task_start() && !task);
@@ -219,6 +252,17 @@ int main(void) {
     unsigned before = sends;
     run(2200);
     CHECK(sends == before && count == 0);
+    /* Production task learns a non-default server, unicasts, then resumes
+       broadcast after ten seconds without traffic. */
+    now = 0;
+    injected = false;
+    hold_send = false;
+    foreign = true;
+    discover = true;
+    CHECK(daq_task_start());
+    init(&fake, &(w5500_udp_t){0});
+    run(11050);
+    CHECK(broadcast_sends >= 2 && learned_sends >= 9);
     puts(
         "Network task queue, config, send timeout, SPI cleanup and cable-loss "
         "checks passed");

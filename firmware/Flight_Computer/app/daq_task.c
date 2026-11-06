@@ -5,6 +5,7 @@
 #include "board.h"
 #include "board_spi.h"
 #include "cmsis_os2.h"
+#include "daq_network.h"
 
 static daq_config_t config;
 static osMessageQueueId_t samples;
@@ -14,11 +15,19 @@ static uint32_t deadline;
 static uint8_t packet[DAQ_PACKET_MAX];
 
 __attribute__((weak)) void daq_board_config(daq_config_t* out) {
-    /* User-provided bench placeholder: LOCAL board endpoint, not server.
-     * Keep disabled until identity, subnet and DAQ routing are configured. */
+    /* Proposal from #180, deliberately disabled until team sign-off. */
     *out = (daq_config_t){
-        .network = {.ip = {192, 168, 2, 20}, .port = 5006},
+        .discover_server = true,
+        .board_id = 81,
+        .network = {.ip = {192, 168, 2, 81},
+                    .subnet = {255, 255, 255, 0},
+                    .port = 5005},
+        .server_ip = {192, 168, 2, 20},
+        .server_port = 5006,
     };
+    uint32_t uid[3];
+    board_uid(uid);
+    daq_mac_from_uid(uid, out->network.mac);
 }
 
 /* One VDM frame, with a common absolute budget across all register calls
@@ -76,8 +85,7 @@ static void network_task(void* argument) {
             if (sent < 0 || (sent == 0 && now - sent_at >= 1000U))
                 goto reconnect;
         }
-        /* At most one inbound datagram per tick. Source IP is pinned; a
-         * sender on another host cannot replace the configured DAQ server. */
+        /* Learn only from a valid server packet, then pin until expiry. */
         uint8_t from[4], incoming[64];
         uint16_t port;
         size_t length;
@@ -85,14 +93,15 @@ static void network_task(void* argument) {
                                          sizeof(incoming), &length);
         if (received < 0)
             goto reconnect;
-        if (received == 1 && memcmp(from, config.server_ip, 4) == 0) {
+        if (received == 1) {
             daq_peer_t next = peer;
             uint16_t supported = 0;
             for (unsigned i = 0; i < DAQ_CHANNELS; ++i)
                 if (config.sources[i] != DAQ_NONE)
                     supported |= (uint16_t)(1U << i);
-            if (daq_peer_receive(&next, incoming, length, now) &&
-                !(next.channels & (uint16_t)~supported)) {
+            if (daq_server_receive(&next, config.server_ip, from,
+                                   config.discover_server, supported, incoming,
+                                   length, now)) {
                 if (next.channels != peer.channels) {
                     pending = false;
                     osMessageQueueReset(samples);
@@ -131,8 +140,11 @@ static void network_task(void* argument) {
             }
         }
         if (pending) {
-            int sent = w5500_udp_send(&chip, config.server_ip,
-                                      config.server_port, packet, pending_len);
+            int sent =
+                w5500_udp_send(&chip,
+                               daq_server_destination(&peer, config.server_ip,
+                                                      config.discover_server),
+                               config.server_port, packet, pending_len);
             if (sent < 0)
                 goto reconnect;
             if (sent == 1) {

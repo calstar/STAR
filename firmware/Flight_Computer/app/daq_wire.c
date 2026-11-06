@@ -45,7 +45,7 @@ bool daq_peer_receive(daq_peer_t* p, const uint8_t* b, size_t n, uint32_t ms) {
     return true;
 }
 void daq_peer_expire(daq_peer_t* p, uint32_t ms) {
-    if (p->heard_server && ms - p->last_server_ms >= 5000U) {
+    if (p->heard_server && ms - p->last_server_ms >= 10000U) {
         p->configured = false;
         p->channels = 0;
         p->heard_server = false;

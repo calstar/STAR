@@ -7,6 +7,7 @@
 
 typedef struct {
     bool enabled;
+    bool discover_server;
     uint8_t board_id;
     w5500_net_t network;
     uint8_t server_ip[4];
@@ -15,10 +16,9 @@ typedef struct {
     daq_source_t sources[DAQ_CHANNELS];
 } daq_config_t;
 
-/* Override this weak function in a deployment-specific source file. The
- * default holds the bench placeholder 192.168.2.20:5006 for the LOCAL board
- * and stays disabled until identity, network and DAQ channel setup is complete.
- * Static addressing only; no implicit DHCP/static fallback. */
+/* Proposed issue #180 profile: board .81:5005, server .20:5006, UID MAC.
+ * Disabled pending sign-off and DAQ routing. Static only for now; DHCP and
+ * the five-second lease fallback are not implemented. Override as a whole. */
 void daq_board_config(daq_config_t* out);
 bool daq_task_start(void);
 /* Task context only. Copies immediately to a bounded queue without waiting.

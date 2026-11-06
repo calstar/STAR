@@ -56,9 +56,9 @@ int main() {
                                          expected.data(), expected.size());
     CHECK(daq_peer_receive(&p, expected.data(), n, UINT32_MAX - 1000));
     CHECK(p.configured && p.channels == 0x205);
-    daq_peer_expire(&p, 3998);
+    daq_peer_expire(&p, 8998);
     CHECK(p.configured);
-    daq_peer_expire(&p, 3999);
+    daq_peer_expire(&p, 8999);
     CHECK(!p.configured && !p.channels);
     for (size_t len = 0; len < n; ++len)
         CHECK(!daq_peer_receive(&p, expected.data(), len, 0));
