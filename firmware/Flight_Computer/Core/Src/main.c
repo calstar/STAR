@@ -23,7 +23,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "board.h"
+#include "bringup_task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -78,7 +79,6 @@ void SystemClock_Config(void);
 static void MPU_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_SDMMC1_MMC_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_SPI3_Init(void);
@@ -133,7 +133,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
-  MX_SDMMC1_MMC_Init();
   MX_SPI1_Init();
   MX_SPI2_Init();
   MX_SPI3_Init();
@@ -172,7 +171,8 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  /* Bring-up: power/reset sequencing + self-test of every chip. */
+  bringup_task_start();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -377,7 +377,7 @@ static void MX_I2C4_Init(void)
   * @param None
   * @retval None
   */
-static void MX_SDMMC1_MMC_Init(void)
+void MX_SDMMC1_MMC_Init(void)
 {
 
   /* USER CODE BEGIN SDMMC1_Init 0 */
@@ -392,7 +392,7 @@ static void MX_SDMMC1_MMC_Init(void)
   hmmc1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hmmc1.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hmmc1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hmmc1.Init.ClockDiv = 0;
+  hmmc1.Init.ClockDiv = 3;
   if (HAL_MMC_Init(&hmmc1) != HAL_OK)
   {
     Error_Handler();
@@ -438,7 +438,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
   hspi1.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi1.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
-  hspi1.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi1.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_ENABLE;
   hspi1.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
   hspi1.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
@@ -486,7 +486,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
   hspi2.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi2.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
-  hspi2.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi2.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_ENABLE;
   hspi2.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
   hspi2.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   if (HAL_SPI_Init(&hspi2) != HAL_OK)
@@ -534,7 +534,7 @@ static void MX_SPI3_Init(void)
   hspi3.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
   hspi3.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi3.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
-  hspi3.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi3.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_ENABLE;
   hspi3.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
   hspi3.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   if (HAL_SPI_Init(&hspi3) != HAL_OK)
@@ -582,7 +582,7 @@ static void MX_SPI4_Init(void)
   hspi4.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
   hspi4.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
   hspi4.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
-  hspi4.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi4.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_ENABLE;
   hspi4.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_DISABLE;
   hspi4.Init.IOSwap = SPI_IO_SWAP_DISABLE;
   if (HAL_SPI_Init(&hspi4) != HAL_OK)
@@ -685,7 +685,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 63;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 4294967295;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -810,11 +810,11 @@ static void MX_UART9_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_UARTEx_SetRxFifoThreshold(&huart9, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart9, UART_RXFIFO_THRESHOLD_1_2) != HAL_OK)
   {
     Error_Handler();
   }
-  if (HAL_UARTEx_DisableFifoMode(&huart9) != HAL_OK)
+  if (HAL_UARTEx_EnableFifoMode(&huart9) != HAL_OK)
   {
     Error_Handler();
   }
@@ -979,7 +979,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : ETH_INT_Pin */
   GPIO_InitStruct.Pin = ETH_INT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ETH_INT_GPIO_Port, &GPIO_InitStruct);
 
@@ -1035,6 +1035,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(LED2_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(IMU_INT1_EXTI_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(IMU_INT1_EXTI_IRQn);
+
+  HAL_NVIC_SetPriority(RADIO_DIO1_EXTI_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(RADIO_DIO1_EXTI_IRQn);
+
+  HAL_NVIC_SetPriority(ACCEL_INT_1_EXTI_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(ACCEL_INT_1_EXTI_IRQn);
+
+  HAL_NVIC_SetPriority(ETH_INT_EXTI_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(ETH_INT_EXTI_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -1121,7 +1134,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
+  /* Inside board_soft_init() (an init that talks to an external chip, e.g.
+   * the eMMC) a failure is recorded and returned, not fatal. */
+  if (board_error_is_soft())
+  {
+    return;
+  }
+  /* Fatal: LED2 on (active low) so a halted board is visible, then stop.
+   * Pyro outputs keep their safe state: nothing here drives them. */
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
   __disable_irq();
   while (1)
   {

@@ -313,6 +313,9 @@ void HAL_MMC_MspInit(MMC_HandleTypeDef* hmmc)
     GPIO_InitStruct.Alternate = GPIO_AF12_SDMMC1;
     HAL_GPIO_Init(EMMC_CMD_GPIO_Port, &GPIO_InitStruct);
 
+    /* SDMMC1 interrupt Init */
+    HAL_NVIC_SetPriority(SDMMC1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(SDMMC1_IRQn);
     /* USER CODE BEGIN SDMMC1_MspInit 1 */
 
     /* USER CODE END SDMMC1_MspInit 1 */
@@ -350,6 +353,8 @@ void HAL_MMC_MspDeInit(MMC_HandleTypeDef* hmmc)
 
     HAL_GPIO_DeInit(EMMC_CMD_GPIO_Port, EMMC_CMD_Pin);
 
+    /* SDMMC1 interrupt DeInit */
+    HAL_NVIC_DisableIRQ(SDMMC1_IRQn);
     /* USER CODE BEGIN SDMMC1_MspDeInit 1 */
 
     /* USER CODE END SDMMC1_MspDeInit 1 */
@@ -682,6 +687,9 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
     HAL_GPIO_Init(TIMEPULSE_GPIO_Port, &GPIO_InitStruct);
 
+    /* TIM2 interrupt Init */
+    HAL_NVIC_SetPriority(TIM2_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(TIM2_IRQn);
     /* USER CODE BEGIN TIM2_MspInit 1 */
 
     /* USER CODE END TIM2_MspInit 1 */
@@ -791,6 +799,8 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* htim_base)
     */
     HAL_GPIO_DeInit(TIMEPULSE_GPIO_Port, TIMEPULSE_Pin);
 
+    /* TIM2 interrupt DeInit */
+    HAL_NVIC_DisableIRQ(TIM2_IRQn);
     /* USER CODE BEGIN TIM2_MspDeInit 1 */
 
     /* USER CODE END TIM2_MspDeInit 1 */
@@ -838,6 +848,9 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     GPIO_InitStruct.Alternate = GPIO_AF11_UART9;
     HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
+    /* UART9 interrupt Init */
+    HAL_NVIC_SetPriority(UART9_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(UART9_IRQn);
     /* USER CODE BEGIN UART9_MspInit 1 */
 
     /* USER CODE END UART9_MspInit 1 */
@@ -868,6 +881,8 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
     */
     HAL_GPIO_DeInit(GPIOD, GPIO_PIN_14|GPIO_PIN_15);
 
+    /* UART9 interrupt DeInit */
+    HAL_NVIC_DisableIRQ(UART9_IRQn);
     /* USER CODE BEGIN UART9_MspDeInit 1 */
 
     /* USER CODE END UART9_MspDeInit 1 */
