@@ -138,7 +138,10 @@ jobs:
   # behaviour (API calls, video-only negotiation, restart refill) is checked.
   video-gateway:
     name: Video gateway (real MediaMTX + Chromium)
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that is 26.04, and the pinned Playwright refuses to install
+    # Chromium there ("Playwright does not support chromium on ubuntu26.04-x64"). Same
+    # pin as the E2E browser job below.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
