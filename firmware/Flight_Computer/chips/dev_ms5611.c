@@ -15,9 +15,12 @@ uint8_t ms5611_crc4(const ms5611_prom_t* prom) {
         remainder ^=
             (byte & 1U) ? (uint16_t)(word & 0xFFU) : (uint16_t)(word >> 8);
         for (uint8_t bit = 0; bit < 8; ++bit) {
+            /* Both arms uint16_t: GCC's -Wsign-compare rejects an int and an
+             * unsigned int arm. AN520 keeps bits above 15, but only bits
+             * 15..12 are read and higher bits never shift back down. */
+            uint16_t shifted = (uint16_t)(remainder << 1);
             remainder =
-                (uint16_t)((remainder & 0x8000U) ? (remainder << 1) ^ 0x3000U
-                                                 : (remainder << 1));
+                (remainder & 0x8000U) ? (uint16_t)(shifted ^ 0x3000U) : shifted;
         }
     }
     return (uint8_t)((remainder >> 12) & 0x0FU);
