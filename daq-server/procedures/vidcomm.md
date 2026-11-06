@@ -5,14 +5,20 @@
 ## Setup
 - [ ] Setup camera monitoring stations focusing on pad, engine, tanks, and GSE. We have 4 cameras from RFS, 2 DGI cameras, and our insta 360. One person must also be on the drone.
 - [ ] Verify clear line of sight to chamber/injector, vents, and GSE.
-- [ ] Ensure cameras are connected to a central server.
-- [ ] Verify live stream feed is visible in Mission Control.
+- [ ] Ensure cameras are connected to a central server (the video gateway):
+  - Workspace: the gateway starts with the stack (`sensor-video`); nothing to do.
+  - Desert: on the media Mac run `daq-server/scripts/media-laptop.sh` (lid open, charger in). On the DAQ laptop: Video view > Edit > Gateway = the name it prints, plus the gateway password.
+  - HiDes link: in HiDes Viewer press Start and turn on Send to UDP (`localhost:5600` on the media Mac).
+  - Wired LAN for the media Mac and the bunker screens wherever possible.
+- [ ] Verify live stream feed is visible in Mission Control: Video view, every tile **LIVE** (green). Amber **STALE** = frozen picture; grey **OFFLINE** says why.
 - [ ] **TELL MISSION CONTROL MANAGER TO CONFIRM CAMERA ANGLES.**
 - [ ] Adjust angles per Mission Control feedback.
 - [ ] Check camera batteries.
 - [ ] Confirm backup power sources available or if they need to be charged.
 - [ ] Confirm weatherproofing and cable protection.
-- [ ] Confirm recording is active before proceeding.
+- [ ] Confirm every critical camera is marked "include in recording" (Edit), so it is in the 5-minute buffer.
+- [ ] Check disk left on the Recording controls panel (Record is refused below 20 GB free).
+- [ ] Press **Record**; confirm the white **REC** on each critical tile before proceeding.
 
 ## Dry Run & Testing
 - [ ] Confirm with Mission Control Manager which camera views are critical for dry run (pad overview, engine close-up, tanks, vents, GSE).
@@ -43,6 +49,6 @@
 - [ ] Watch for structural movement or hardware failure.
 - [ ] Continue recording until system is safed.
 - [ ] Maintain recording through safing and venting.
-- [ ] Verify full recording saved.
-- [ ] Backup video files if required.
+- [ ] Press **Stop**; confirm the note names every stream and shows no gaps (files land in `daq-server/video/recordings/` on the gateway machine). Missed the moment? **Save last 5 min** keeps the buffer.
+- [ ] Back up video files if required: copy the recording's folder off the gateway machine.
 - [ ] **TELL OPERATIONS MANAGER OF ANY VISUAL ANOMALY ENCOUNTERED BEFORE, DURING, OR AFTER TEST.**

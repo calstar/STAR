@@ -123,7 +123,7 @@ every control transfer.
 |---|---|
 | `hides rx-info`, `rx-init` | Read the receiver EEPROM; load firmware and init |
 | `hides rx-watch --freq KHZ --bw KHZ [--csv]` | Receive-only link status with automatic recovery |
-| `hides rx-stream --freq KHZ --bw KHZ --udp HOST:PORT` | Forward the TS over UDP, e.g. to `ffplay udp://127.0.0.1:5000` |
+| `hides rx-stream --freq KHZ --bw KHZ --udp HOST:PORT` | Forward the TS over UDP, e.g. to `ffplay udp://127.0.0.1:5000`, or to the DAQ video gateway at `<gateway>:5600` (ports 5600-5609; the Video view's Edit shows the exact address) |
 | `hides rx-scan --from KHZ --to KHZ [--step KHZ]` | Step across a range and print signal strength |
 | `hides tx-get PORT`, `tx-set PORT --freq KHZ …` | Read or change the transmitter's RF settings |
 | `hides tx-name PORT --service CALLSIGN` | Set the broadcast service name (16 characters max) |

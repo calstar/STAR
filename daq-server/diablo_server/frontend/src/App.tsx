@@ -93,6 +93,7 @@ export default function App() {
               <Route path="/sensor-info" element={<P.SensorInfoPage />} />
               <Route path="/status" element={<P.StatusPage />} />
               <Route path="/session" element={<P.SessionPage />} />
+              <Route path="/video" element={<P.VideoPage />} />
 
               {/* ── Plot pages: short canonical path + legacy /plots alias ── */}
               <Route path="/chamber" element={<P.ChamberPage />} />

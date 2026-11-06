@@ -247,3 +247,13 @@ scripts/calibration/calibrations/abort_thresholds.txt
 # beside it are tracked and shared, but a pull must not tell another rig that a
 # calibration it has never loaded is the active one.
 scripts/calibration/calibrations/profiles/.active
+
+# VIDCOMM video. config/video.json is tracked (labels, URLs, layout); the secrets file
+# beside it (camera credentials, the gateway address on this machine) never is. It must
+# come after the `!config/*.json` exception above, or that exception re-includes it.
+config/video.secrets.json
+video/.bin/
+video/gateway.password
+video/obs.password
+video/buffer/
+video/recordings/

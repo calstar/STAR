@@ -84,7 +84,7 @@ systemctl --user daemon-reload
 PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator"
 # SKIP_FRONTEND=1 omits the Vite dist build (CI/WS-only runs don't need the GUI;
 # the backend still serves :8081 and, if dist already exists, :3000).
-WEB_UNITS="sensor-backend sensor-config-broadcast sensor-heartbeat"
+WEB_UNITS="sensor-backend sensor-config-broadcast sensor-heartbeat sensor-video"
 [ "${SKIP_FRONTEND:-0}" = "1" ] || WEB_UNITS="sensor-frontend $WEB_UNITS"
 systemctl --user stop $PIPELINE_UNITS sensor-frontend $WEB_UNITS 2>/dev/null || true
 

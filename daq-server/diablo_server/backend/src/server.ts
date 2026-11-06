@@ -33,6 +33,7 @@ import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, note
 import { refusalText } from './refusal-text.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
+import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
@@ -727,7 +728,13 @@ let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
+// The video pane: keeps the gateway (MediaMTX, sensor-video) in step with config/video.json.
+// Independent of the run pipeline: a missing gateway only greys the video view.
+const video = new VideoService();
+video.start();
+
 const apiHandler = createAPIHandler({
+  video,
   getEngineState: () => currentState,
   getDebugInfo: () => {
     // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
