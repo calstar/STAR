@@ -38,7 +38,15 @@ The real radio driver and the message format come in later PRs.
 ```text
 Flight_Computer/
 ├── README.md
-├── platformio.ini            # setup for running the tests on a laptop
+├── firmware.ioc              # STM32CubeMX project: pins, clocks, peripherals
+├── .mxproject                # CubeMX bookkeeping (generated)
+├── Core/                     # CubeMX-generated startup code + the self-test
+│   ├── README.md             # how the self-test works
+│   ├── Inc/  Src/            # main.c, stm32h7xx_* are generated; self_test* is hand-written
+│   └── DEVICE_CHECKS.md      # each chip's self-test check, with datasheet citations
+├── tests/
+│   └── self_test/            # CMake host tests for the self-test (run in CI)
+├── platformio.ini            # setup for running the radio tests on a laptop
 ├── src/
 │   └── radio.h               # the three radio functions and their answers
 └── test/
@@ -47,6 +55,9 @@ Flight_Computer/
         ├── radio_fake.h      # the pretend radio
         └── radio_fake.cpp    # test only, never built into the rocket
 ```
+
+CubeMX writes `Core/` next to `firmware.ioc` on every Generate Code, so the
+two must stay in the same folder.
 
 Written in C++ (C++11). Everything lives in `namespace radio_link`.
 
@@ -61,6 +72,10 @@ You should see 14 tests pass. If `pio` is missing, install PlatformIO with
 `pipx install platformio`.
 
 ## Documentation
+
+- [`STM32-UPLOAD-REQUIREMENTS.md`](STM32-UPLOAD-REQUIREMENTS.md): **read first**
+  before building or flashing. Tools to install, ST-Link wiring, upload commands
+  and the rules for the CubeMX project.
 
 - [`src/radio.h`](src/radio.h): the radio functions. The comment above each
   one says what it promises.
@@ -106,4 +121,4 @@ Nothing here has run on a real radio or on the STM32.
 
 [Inez confirmed the radio requirements in #137](https://github.com/calstar/STAR/issues/137#issuecomment-6486161496). Heartbeats run at 1–2 Hz during self-test and roughly once every ten seconds in Idle. Messages carry a type, sequence number and checksum; Ryan still owns their exact byte layout. `ErrTimeout` and `NotImplemented` distinguish an expired transmission from an absent driver. A no-op or queued packet must never return `Ok` from `radio_send()`.
 
-The portable C coordinator lives in [`../Core`](../Core/README.md). A C++ adapter must translate its status snapshot into the agreed packet and map radio outcomes to the C callback contract. If a transmission exceeds the callback budget, a separate driver service must own it while the callback polls bounded state. The current header supplies no implementation, timeout value, packet encoder or such service.
+The portable C coordinator lives in [`Core/`](Core/README.md). A C++ adapter must translate its status snapshot into the agreed packet and map radio outcomes to the C callback contract. If a transmission exceeds the callback budget, a separate driver service must own it while the callback polls bounded state. The current header supplies no implementation, timeout value, packet encoder or such service.

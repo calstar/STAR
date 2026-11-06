@@ -18,7 +18,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Configure portable tests with sanitizers
-        run: cmake -S firmware/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
+        run: cmake -S firmware/Flight_Computer/tests/self_test -B /tmp/star-self-test -DSELF_TEST_SANITIZERS=ON
       - name: Build portable tests
         run: cmake --build /tmp/star-self-test
       - name: Run portable tests

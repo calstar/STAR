@@ -1,0 +1,40 @@
+{
+  "build": {
+    "cpu": "cortex-m7",
+    "extra_flags": "-DSTM32H7 -DSTM32H7xx -DSTM32H723xx",
+    "f_cpu": "64000000L",
+    "mcu": "stm32h723vet6",
+    "product_line": "STM32H723xx"
+  },
+  "connectivity": [
+    "can",
+    "ethernet",
+    "usb"
+  ],
+  "debug": {
+    "default_tools": [
+      "stlink"
+    ],
+    "jlink_device": "STM32H723VE",
+    "openocd_target": "stm32h7x",
+    "svd_path": "STM32H723.svd"
+  },
+  "frameworks": [
+    "cmsis",
+    "stm32cube"
+  ],
+  "name": "STAR flight computer rev 1 (STM32H723VET6)",
+  "upload": {
+    "maximum_ram_size": 131072,
+    "maximum_size": 524288,
+    "protocol": "stlink",
+    "protocols": [
+      "stlink",
+      "cmsis-dap",
+      "jlink",
+      "blackmagic"
+    ]
+  },
+  "url": "https://github.com/calstar/STAR/issues/137",
+  "vendor": "STAR"
+}
