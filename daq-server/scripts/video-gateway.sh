@@ -94,7 +94,7 @@ set_password() {
   read -r -s -p "Again: " b; echo
   [[ "$a" == "$b" ]] || { echo "video-gateway: passwords differ, nothing changed" >&2; return 1; }
   ( umask 077; printf '%s' "$a" > "$file" )
-  echo "video-gateway: saved; restart the gateway for it to take effect"
+  echo "video-gateway: saved (used from the next time the gateway starts)"
 }
 
 case "${1:-}" in
