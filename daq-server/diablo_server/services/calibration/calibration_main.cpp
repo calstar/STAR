@@ -59,6 +59,7 @@
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "elodin/SubscriptionTracker.hpp"
 
 namespace {
 
@@ -1358,6 +1359,20 @@ int main(int argc, char* argv[]) {
         return t;
     };
 
+    // Every subscription goes out under its own request id, so a refusal (the DB answers a
+    // subscription to a table nobody has registered yet with ErrorResponse) names the table to
+    // ask for again. See SubscriptionTracker.hpp.
+    fsw::elodin::SubscriptionTracker sub_tracker;
+    auto subscribe_all = [&]() -> bool {
+        sub_tracker.reset();
+        auto tables = raw_tables();
+        tables.push_back(fsw::elodin::kTableCalibrationCommand);
+        bool ok = true;
+        for (const auto& t : tables)
+            ok = elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t)) && ok;
+        return ok;
+    };
+
     auto connect_and_register = [&]() -> bool {
         if (!elodin_client.connect(elodin_host, elodin_port)) {
             std::cerr << "[Cal] Failed to connect to Elodin at " << elodin_host << ":"
@@ -1368,12 +1383,9 @@ int main(int argc, char* argv[]) {
         // The raw sensor tables this service calibrates, built from the boards actually in
         // config. This used to be subscribe_stream(), which guessed boards 1-8 x channels 1-10
         // and sent 481 subscribe messages regardless of the rig.
-        if (!elodin_client.subscribe_tables(raw_tables())) {
-            std::cerr << "[Cal] Failed to subscribe to raw sensor tables" << std::endl;
-            return false;
-        }
-        if (!elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand})) {
-            std::cerr << "[Cal] Failed to subscribe to CalibrationCommand [0x46,0x00]" << std::endl;
+        if (!subscribe_all()) {
+            std::cerr << "[Cal] Failed to subscribe to raw sensor tables / CalibrationCommand"
+                      << std::endl;
             return false;
         }
         std::cout << "[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
@@ -1407,8 +1419,7 @@ int main(int argc, char* argv[]) {
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
                 register_calibrated();
-                elodin_client.subscribe_tables(raw_tables());
-                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
+                subscribe_all();
                 elodin_client.set_recv_timeout_ms(3000);
                 last_resubscribe = std::chrono::steady_clock::now();
                 last_packet_time = std::chrono::steady_clock::now();
@@ -1432,10 +1443,14 @@ int main(int argc, char* argv[]) {
             if (since_pkt >= 5 && since_sub >= 5) {
                 std::cout << "[Cal] No packets for " << since_pkt
                           << "s — re-subscribing to raw streams" << std::endl;
-                elodin_client.subscribe_tables(raw_tables());
-                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
+                subscribe_all();
                 last_resubscribe = now_s;
             }
+            // A table the DB refused (its publisher had not registered it yet) is asked for again
+            // until it is accepted. The check above never fires for this: the other tables keep
+            // packets arriving.
+            for (const auto& t : sub_tracker.due(now_s))
+                elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t));
         }
 
         ssize_t pkt_len = elodin_client.read_packet(pkt_buf, sizeof(pkt_buf));
@@ -1443,6 +1458,14 @@ int main(int argc, char* argv[]) {
             continue;
         if (pkt_len < 8)
             continue;
+        if (fsw::elodin::is_error_response(pkt_buf, static_cast<size_t>(pkt_len))) {
+            const auto t = sub_tracker.rejected(pkt_buf[7], std::chrono::steady_clock::now());
+            if (t.first != 0 || t.second != 0)
+                std::cout << "[Cal] DB refused the subscription to [0x" << std::hex
+                          << static_cast<int>(t.first) << ",0x" << static_cast<int>(t.second)
+                          << std::dec << "] (not registered yet) — asking again" << std::endl;
+            continue;
+        }
 
         const uint8_t type_hi = pkt_buf[5];
         const uint8_t type_lo = pkt_buf[6];

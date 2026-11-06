@@ -73,6 +73,10 @@ add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
 target_link_libraries(test_ball_valve_config fsw_daq_lib)
 add_test(NAME ball_valve_config COMMAND test_ball_valve_config)
 
+add_executable(test_subscription_tracker test/test_subscription_tracker.cpp)
+target_link_libraries(test_subscription_tracker fsw_daq_lib)
+add_test(NAME subscription_tracker COMMAND test_subscription_tracker)
+
 add_executable(test_ball_valve_position test/test_ball_valve_position.cpp)
 target_link_libraries(test_ball_valve_position fsw_daq_lib)
 add_test(NAME ball_valve_position COMMAND test_ball_valve_position)
