@@ -37,6 +37,8 @@ import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
+import { handleVideoRequest } from './video/routes.js';
+import type { VideoService } from './video/service.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -303,6 +305,8 @@ export interface APIHandlerOptions {
   /** A calibration profile was loaded / a blank was created on disk: tell the calibration service
    *  to re-read the live store (cmd 7) so the swap takes effect without a session restart. */
   onCalibrationReload?: () => void;
+  /** The VIDCOMM video pane's backend; /api/video/* answers 404 without it. */
+  video?: VideoService;
 }
 
 /**
@@ -335,7 +339,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload, video } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -343,7 +347,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -355,6 +359,11 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
     try {
+      // Video owns its own sub-tree (video/routes.ts) rather than growing this chain.
+      if (video && url.pathname.startsWith('/api/video/')) {
+        await handleVideoRequest(req, res, url.pathname, video);
+        return true;
+      }
       if (url.pathname === '/api/config' && req.method === 'GET') {
         // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
         const config = readActiveProfile();

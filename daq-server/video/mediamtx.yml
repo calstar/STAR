@@ -1,0 +1,83 @@
+# The VIDCOMM video gateway (MediaMTX). One file for every site: star-rfs runs it as
+# sensor-video, the media Mac runs it through scripts/video-gateway.sh, CI runs it too.
+#
+# Nothing here names a camera. The DAQ backend owns config/video.json and pushes one
+# `raw/<stream id>` path per stream through the control API; the gateway keeps them in
+# memory only, and the backend re-pushes them whenever the gateway comes back.
+#
+# Who may do what:
+#   * The control API, RTSP and publishing are localhost-only.
+#   * WebRTC (WHEP) reads are localhost-only too: browsers never call the gateway's
+#     HTTP side. Their handshake goes through the DAQ backend (/api/video/...), and only
+#     the media itself (UDP, webrtcLocalUDPAddress) flows browser <-> gateway directly.
+# Any setting can be overridden per run with MTX_<KEY> environment variables
+# (e.g. MTX_APIADDRESS=127.0.0.1:19997), which is how the tests move the ports.
+
+logLevel: info
+logDestinations: [stdout]
+
+readTimeout: 10s
+writeTimeout: 10s
+writeQueueSize: 512
+udpMaxPayloadSize: 1452
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+      - action: metrics
+
+api: true
+apiAddress: 127.0.0.1:9997
+
+metrics: false
+pprof: false
+playback: false
+
+# RTSP: how the gateway pulls cameras (as a client, unaffected by this) and how local
+# tools (the dev fake camera) publish. Not exposed to the LAN.
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+rtspEncryption: "no"
+
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+# WebRTC: the live view. The HTTP side (WHEP) answers the DAQ backend's proxy; the UDP
+# port carries video straight to each browser on the LAN.
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcAllowOrigins: []
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: true
+webrtcIPsFromInterfacesList: []
+webrtcAdditionalHosts: []
+webrtcICEServers2: []
+
+pathDefaults:
+  source: publisher
+  # A camera is pulled only while someone watches it (recording, ticket 08, pins
+  # the ones it needs).
+  sourceOnDemand: true
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+  record: false
+
+paths:
+  # Dev and CI only: a local publisher (ffmpeg testsrc) can stand in for a camera at
+  # rtsp://127.0.0.1:8554/fake/<name>. Publishing is localhost-only, so nothing on the
+  # LAN can appear here.
+  "~^fake/[a-z0-9-]+$":
+    source: publisher
+    sourceOnDemand: false

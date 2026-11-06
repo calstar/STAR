@@ -5,6 +5,9 @@ import { useWindowManager } from './WindowManager';
 import { navItemByPath } from '@/lib/nav-items';
 import { isPopupWindow } from '@/lib/is-popup';
 
+/** Full-bleed views that draw their own pop-out control instead of this floating one. */
+const OWN_POPOUT_PATHS = ['/video'];
+
 /**
  * Floating button (bottom-right) that pops the current view out into its own
  * window — handy for dedicating a TV to a single pane. Reuses WindowManager's
@@ -14,7 +17,7 @@ export default function OpenInPopupButton() {
   const { pathname, search } = useLocation();
   const { openWindow } = useWindowManager();
 
-  if (isPopupWindow()) return null;
+  if (isPopupWindow() || OWN_POPOUT_PATHS.includes(pathname)) return null;
 
   const item = navItemByPath(pathname);
   const name = item?.name ?? 'View';

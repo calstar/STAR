@@ -49,6 +49,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Discovered boards and heartbeat status' },
   { id: 'session', name: 'Session', path: '/session', accent: '#64748B', common: true,
     description: 'Recording session controls & history' },
+  { id: 'video', name: 'Video', path: '/video', accent: '#A3A3A3', common: true,
+    description: 'Live camera and HiDes feeds from the video gateway' },
 
   // ── Less-used views (reachable via the All Views tab) ────────────────────────
   { id: 'gse', name: 'GSE', path: '/gse', accent: '#F39C12',
