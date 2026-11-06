@@ -144,3 +144,32 @@ void boot_report_build(boot_report_t* r, const self_test_status_t* s,
         boot_verdict_name(r->verdict), (unsigned)r->required_failed,
         (unsigned)r->optional_failed);
 }
+
+const char* boot_reset_name(uint32_t flags) {
+    static const struct {
+        uint32_t bit;
+        const char* name;
+    } causes[] = {
+        {BOOT_RESET_IWDG, "IWDG watchdog"},
+        {BOOT_RESET_WWDG, "WWDG watchdog"},
+        {BOOT_RESET_LOW_POWER, "low-power"},
+        {BOOT_RESET_SOFTWARE, "software"},
+        {BOOT_RESET_POWER_ON, "power-on"},
+        {BOOT_RESET_BROWN_OUT, "brown-out"},
+        {BOOT_RESET_PIN, "reset pin"},
+    };
+    for (size_t i = 0; i < sizeof causes / sizeof causes[0]; ++i) {
+        if (flags & causes[i].bit) {
+            return causes[i].name;
+        }
+    }
+    return "unknown";
+}
+
+void boot_report_add_reset(boot_report_t* r, uint32_t flags) {
+    r->reset_flags = flags;
+    size_t len = strlen(r->text);
+    text_t t = {r->text, sizeof(r->text), len};
+    put(&t, "  %-18s %s (RSR 0x%08lx)\n", "reset", boot_reset_name(flags),
+        (unsigned long)flags);
+}

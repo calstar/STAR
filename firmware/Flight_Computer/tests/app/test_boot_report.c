@@ -134,6 +134,26 @@ static void test_usb_is_not_judged(void) {
     CHECK(strstr(r.text, "5.00 V  on USB (battery not measured)"));
 }
 
+/* RCC_RSR after an IWDG reset: IWDG1RSTF and PINRSTF (the internal reset
+ * also pulls NRST). The watchdog wins over the pin; a power-on (POR + BOR +
+ * PIN) reads as power-on. The cause is shown, the verdict is unchanged. */
+static void test_reset_cause(void) {
+    self_test_status_t s = all_pass();
+    boot_report_build(&r, &s, battery_assess(true, 48853, false), 3250);
+    boot_report_add_reset(&r, BOOT_RESET_IWDG | BOOT_RESET_PIN);
+    CHECK(r.reset_flags == (BOOT_RESET_IWDG | BOOT_RESET_PIN));
+    CHECK(r.verdict == BOOT_READY);
+    CHECK(
+        strstr(r.text, "reset              IWDG watchdog (RSR 0x04400000)\n"));
+    CHECK(strcmp(boot_reset_name(BOOT_RESET_POWER_ON | BOOT_RESET_BROWN_OUT |
+                                 BOOT_RESET_PIN),
+                 "power-on") == 0);
+    CHECK(strcmp(boot_reset_name(BOOT_RESET_PIN), "reset pin") == 0);
+    CHECK(strcmp(boot_reset_name(BOOT_RESET_SOFTWARE | BOOT_RESET_PIN),
+                 "software") == 0);
+    CHECK(strcmp(boot_reset_name(0), "unknown") == 0);
+}
+
 int main(void) {
     test_conversion();
     test_thresholds();
@@ -142,6 +162,7 @@ int main(void) {
     test_required_chip_or_bad_battery_is_fail();
     test_gps_reports_its_baud();
     test_usb_is_not_judged();
+    test_reset_cause();
     puts("boot_report: all tests passed");
     return 0;
 }

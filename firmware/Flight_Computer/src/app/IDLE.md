@@ -112,8 +112,8 @@ test fails.
 - **Clock through Stop**: `now_ms` must keep counting while the MCU is in
   Stop. The HAL tick (TIM6) and SysTick both stop there, so the state machine
   must advance its clock by the time slept, for example from the RTC.
-- **Watchdog**: if the IWDG is enabled, its timeout must exceed the longest
-  sleep, since it keeps counting in Stop.
+- **Watchdog**: done in [HEALTH-RADIO.md](HEALTH-RADIO.md): IWDG1 outlasts
+  the 10 s sleep and the Idle loop leases each sleep to the health task.
 
 ## Open questions
 

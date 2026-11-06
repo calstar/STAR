@@ -5,6 +5,7 @@
 #include "app.h"
 #include "board.h"
 #include "board_bringup.h"
+#include "board_watchdog.h"
 #include "boot_report.h"
 #include "cmsis_os2.h"
 #include "main.h"
@@ -56,6 +57,7 @@ static void led(GPIO_TypeDef* port, uint16_t pin, bool on) {
 
 static void bringup_task(void* argument) {
     (void)argument;
+    uint32_t reset_flags = board_reset_flags_take(); /* before anything */
     led(LED1_GPIO_Port, LED1_Pin, true);
     board_bringup_power_up(&bringup);
 
@@ -95,6 +97,7 @@ static void bringup_task(void* argument) {
         battery_assess(sample.valid, sample.raw_counts, board_bringup_on_usb());
     boot_report_build(&g_bringup_report.report, status, battery,
                       board_now_ms());
+    boot_report_add_reset(&g_bringup_report.report, reset_flags);
     g_bringup_report.finished_at_ms = board_now_ms();
     g_bringup_report.finished = true;
 
