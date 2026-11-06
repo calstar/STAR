@@ -8,6 +8,8 @@
 #include <string>
 #include <thread>
 
+#include "config/NetworkDefaults.hpp"
+
 namespace sequencer {
 
 /**
@@ -22,7 +24,8 @@ namespace sequencer {
  */
 class AbortBroadcaster {
 public:
-    explicit AbortBroadcaster(uint16_t port = 5005, uint32_t abort_done_delay_ms = 3000);
+    explicit AbortBroadcaster(uint16_t port = fsw::config::defaults::kBoardPort,
+                              uint32_t abort_done_delay_ms = 3000);
     ~AbortBroadcaster();
 
     /**
@@ -55,7 +58,7 @@ private:
     // Resolved once in configure(), not per send: the abort path is the wrong place to discover
     // that an address does not parse.
     struct in_addr dest_addr_{};
-    std::string dest_ip_{"255.255.255.255"};
+    std::string dest_ip_{fsw::config::defaults::kLimitedBroadcast};
     std::string bind_address_{"0.0.0.0"};
     std::atomic<bool> done_thread_running_{false};
     std::thread done_thread_;

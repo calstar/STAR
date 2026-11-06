@@ -39,6 +39,7 @@
 #include <thread>
 #include <vector>
 
+#include "config/NetworkDefaults.hpp"
 #include "control/HoldParse.hpp"
 #include "control/SequencerService.hpp"
 
@@ -224,7 +225,7 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
 
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
-    uint16_t listen_port = 9998;
+    uint16_t listen_port = fsw::config::defaults::kActuatorServicePort;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];

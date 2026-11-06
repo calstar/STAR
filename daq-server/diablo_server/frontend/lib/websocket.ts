@@ -24,6 +24,9 @@ const STALE_CONNECTION_MS = (() => {
 })();
 const STALE_CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 const WS_CLIENT_VERSION = 3; // v3: server-timeline plot time + sinceMs backfills
+/** Port the thin backend (backend/src/server.ts, WS_PORT) serves HTTP and WebSocket on. */
+const BACKEND_PORT = 8081;
+const DEFAULT_WS_URL = `ws://localhost:${BACKEND_PORT}`;
 
 export class WebSocketClient {
   public readonly _version = WS_CLIENT_VERSION;
@@ -53,8 +56,8 @@ export class WebSocketClient {
   private lastCloseCode: number | null = null;
   private lastCloseReason = '';
 
-  constructor(urls: string[] = ['ws://localhost:8081']) {
-    this.fallbackUrls = urls.length > 0 ? Array.from(new Set(urls)) : ['ws://localhost:8081'];
+  constructor(urls: string[] = [DEFAULT_WS_URL]) {
+    this.fallbackUrls = urls.length > 0 ? Array.from(new Set(urls)) : [DEFAULT_WS_URL];
   }
 
   connect(caller = 'unknown'): void {
@@ -447,9 +450,9 @@ export function getApiBaseUrl(): string {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     let hostname = window.location.hostname;
     if (hostname === '0.0.0.0' || hostname === '') hostname = 'localhost';
-    return `${protocol}//${hostname}:8081`;
+    return `${protocol}//${hostname}:${BACKEND_PORT}`;
   }
-  return 'http://localhost:8081';
+  return `http://localhost:${BACKEND_PORT}`;
 }
 
 export function getWebSocketClient(): WebSocketClient {
@@ -490,16 +493,16 @@ export function getWebSocketFallbackUrls(): string[] {
     let hostname = window.location.hostname;
     if (hostname === '0.0.0.0' || hostname === '') hostname = 'localhost';
     if (isProxiedOrigin()) {
-      // Only the proxied path is reachable here — :8081 is not published, and
+      // Only the proxied path is reachable here — BACKEND_PORT is not published, and
       // the localhost fallbacks would point at the *viewer's* machine.
       add(`${protocol}//${window.location.host}/ws`);
     } else {
-      add(`${protocol}//${hostname}:8081`);
-      add(`${protocol}//localhost:8081`);
-      add(`${protocol}//127.0.0.1:8081`);
+      add(`${protocol}//${hostname}:${BACKEND_PORT}`);
+      add(`${protocol}//localhost:${BACKEND_PORT}`);
+      add(`${protocol}//127.0.0.1:${BACKEND_PORT}`);
     }
   }
 
-  if (urls.length === 0) add('ws://localhost:8081');
+  if (urls.length === 0) add(DEFAULT_WS_URL);
   return urls;
 }
