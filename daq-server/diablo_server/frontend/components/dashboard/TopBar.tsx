@@ -499,8 +499,10 @@ export default function TopBar() {
         <section className="flex h-[clamp(130px,17vh,170px)] min-h-0 min-w-0 flex-col border-b border-line py-3 sm:col-span-2 lg:col-span-1 lg:h-auto lg:border-b-0 lg:pr-5 xl:pr-6">
           <h2 className="caps mb-2 flex-shrink-0 text-[11px]" title="Gauge: the stand's transducers and its log files read psig. Hotbench shows psia; add 14.7 to compare.">Pressure · psig</h2>
           {/* Each gauge keeps a minimum width (ReactivePressureBar); past that the row
-              scrolls sideways instead of overlapping the readouts. */}
-          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin] lg:gap-1.5 xl:gap-2">
+              scrolls sideways instead of overlapping the readouts. Not on desktop: the row
+              always fits there, and a scroll box clipped any limit number drawn near the top
+              of a bar and put a scrollbar under the gauges where scrollbars always show. */}
+          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin] lg:gap-1.5 xl:gap-2 xl:overflow-visible">
             {effectivePressureBars.map(({ label, entity, nop, meop, showLimits, color, avgEntities }) => (
               <ReactivePressureBar
                 key={entity}
