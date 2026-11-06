@@ -25,8 +25,11 @@ export function gatewayPathFor(streamId: string, low = false): string {
 /** Path settings the backend sets. Everything else is the gateway's pathDefaults. */
 export interface ManagedPathConf {
   source: string;
-  /** Pushed (UDP) sources listen all the time; pulled cameras default to on demand. */
-  sourceOnDemand?: boolean;
+  /** Pull only while watched. Off for anything recording (the buffer never stops) and for
+   *  pushed (UDP) sources, which are listeners. */
+  sourceOnDemand: boolean;
+  /** Write the rolling buffer (video/mediamtx.yml recordPath) -- "include in recording". */
+  record: boolean;
 }
 
 /** What MediaMTX listens on for a pushed MPEG-TS stream (every interface). */
@@ -55,12 +58,14 @@ export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets
   for (const s of loaded.config.streams) {
     if (s.kind === 'udp') {
       // A listener, not a pull: it must be up before HiDesViewer sends, whoever is watching.
-      out.set(gatewayPathFor(s.id), { source: udpSource(s.port), sourceOnDemand: false });
+      out.set(gatewayPathFor(s.id), { source: udpSource(s.port), sourceOnDemand: false, record: s.record });
       continue;
     }
-    out.set(gatewayPathFor(s.id), { source: cameraSource(s, loaded.secrets) });
-    // Same camera, same credentials, its sub stream. Pulled only while a small tile shows it.
-    if (s.lowResUrl) out.set(gatewayPathFor(s.id, true), { source: cameraSource(s, loaded.secrets, true) });
+    // A stream in the buffer is pulled all the time; one that is not, only while watched.
+    out.set(gatewayPathFor(s.id), { source: cameraSource(s, loaded.secrets), sourceOnDemand: !s.record, record: s.record });
+    // Same camera, same credentials, its sub stream: never recorded (recordings are main),
+    // pulled only while a small tile shows it.
+    if (s.lowResUrl) out.set(gatewayPathFor(s.id, true), { source: cameraSource(s, loaded.secrets, true), sourceOnDemand: true, record: false });
   }
   return out;
 }
@@ -70,6 +75,8 @@ export interface GatewayEndpoint {
   apiUrl: string;
   /** WebRTC/WHEP HTTP listener, e.g. http://127.0.0.1:8889 */
   webrtcUrl: string;
+  /** The video agent beside it (video/agent.mjs), e.g. http://127.0.0.1:8886 */
+  agentUrl?: string;
   /** Authorization header for a remote gateway (user "daq", see scripts/video-gateway.sh). */
   auth?: string;
   /** The host as an operator would name it. */
@@ -90,8 +97,15 @@ export function gatewayEndpoint(
   const host = env.VIDEO_GATEWAY_HOST || setting?.host || '127.0.0.1';
   const apiPort = env.VIDEO_GATEWAY_API_PORT || '8887';
   const webrtcPort = env.VIDEO_GATEWAY_WEBRTC_PORT || '8889';
+  const agentPort = env.VIDEO_AGENT_PORT || '8886';
   const auth = setting?.password ? `Basic ${Buffer.from(`${GATEWAY_USER}:${setting.password}`).toString('base64')}` : undefined;
-  return { apiUrl: `http://${host}:${apiPort}`, webrtcUrl: `http://${host}:${webrtcPort}`, host, ...(auth ? { auth } : {}) };
+  return {
+    apiUrl: `http://${host}:${apiPort}`,
+    webrtcUrl: `http://${host}:${webrtcPort}`,
+    agentUrl: `http://${host}:${agentPort}`,
+    host,
+    ...(auth ? { auth } : {}),
+  };
 }
 
 export function gatewayEndpointFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayEndpoint {

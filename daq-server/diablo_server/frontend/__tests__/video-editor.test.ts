@@ -120,3 +120,16 @@ describe('OBS URLs', () => {
     expect(obsUrls({ id: 'hides', kind: 'udp', lowResUrl: '' }, 'star-rfs.local')).toEqual([{ label: 'main', url: 'rtsp://star-rfs.local:8554/raw/hides' }]);
   });
 });
+
+describe('the Save note', () => {
+  it('says where it went, and names any stream that did not make it', async () => {
+    const { describeSave } = await import('@/lib/video/api');
+    expect(describeSave({ folder: '/srv/daq-server/video/recordings/2026-11-06_120000_save', seconds: 300, streams: [{ stream: 'pad', file: 'x', seconds: 300 }, { stream: 'eng', file: 'y', seconds: 300 }] }))
+      .toBe('saved 2 streams (last 5 min) to recordings/2026-11-06_120000_save');
+    // Just after a restart the buffer is young: say what was really kept, not the window.
+    expect(describeSave({ folder: 'C:\\rec\\f', seconds: 300, streams: [{ stream: 'pad', file: 'x', seconds: 28 }, { stream: 'hides', error: 'nothing buffered for this stream' }] }))
+      .toBe('saved 1 stream (last 28 s) to recordings/f; not saved: hides (nothing buffered for this stream)');
+    expect(describeSave({ folder: '/r/f', seconds: 300, streams: [{ stream: 'pad', file: 'x', seconds: 94, gaps: 1 }, { stream: 'eng', file: 'y', seconds: 94, gaps: 0 }] }))
+      .toBe('saved 2 streams (last 94 s) to recordings/f; gaps (stream was down) in pad');
+  });
+});

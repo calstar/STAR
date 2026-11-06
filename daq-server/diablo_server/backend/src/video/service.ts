@@ -35,6 +35,29 @@ export interface GatewayStatus {
   lastSyncAt?: number;
 }
 
+/** What the video agent on the gateway machine says about the buffer (video/agent.mjs). */
+export interface BufferStatus {
+  /** The agent answered: Save is possible. */
+  available: boolean;
+  error?: string;
+  bufferSeconds?: number;
+  /** Seconds currently buffered, per stream id. */
+  buffered?: Record<string, number>;
+  disk?: { freeBytes: number; totalBytes: number } | null;
+}
+
+export interface SaveResult {
+  folder: string;
+  seconds: number;
+  streams: { stream: string; file?: string; bytes?: number; seconds?: number; gaps?: number; error?: string }[];
+}
+
+export class AgentError extends Error {}
+
+const AGENT_STATUS_TIMEOUT_MS = 8000;
+/** A Save concatenates up to 5 minutes per stream; ffmpeg does that in about a second each. */
+const AGENT_SAVE_TIMEOUT_MS = 120_000;
+
 function mtime(path: string): number {
   try { return statSync(path).mtimeMs; } catch { return -1; }
 }
@@ -46,6 +69,7 @@ export class VideoService {
   private running: Promise<void> | undefined;
   private status: Omit<GatewayStatus, 'host'> = { reachable: false, error: 'not contacted yet' };
   private client: { key: string; api: GatewayApi } | undefined;
+  private buffer: BufferStatus = { available: false, error: 'not contacted yet' };
   /** Live previews: id -> expiry (epoch ms). */
   private previews = new Map<string, number>();
   /** Recent camera checks: `${id}` or `${id}/low` -> result in flight or done, and when. */
@@ -103,6 +127,7 @@ export class VideoService {
           console.log(`[video] gateway in sync (${this.endpoint.apiUrl}): +${r.added.length} ~${r.replaced.length} -${r.deleted.length}`);
         }
         this.status = { reachable: true, lastSyncAt: Date.now() };
+        await this.refreshBuffer();
       } catch (e) {
         const error = (e as Error).message;
         if (this.status.error !== error) console.warn(`[video] ${error}`);
@@ -129,7 +154,7 @@ export class VideoService {
       password: input.password !== undefined ? input.password : saved?.password,
     };
     const id = randomBytes(6).toString('hex');
-    await this.api.addPath(`${PREVIEW_PREFIX}${id}`, { source: withCredentials(url, secret) });
+    await this.api.addPath(`${PREVIEW_PREFIX}${id}`, { source: withCredentials(url, secret), sourceOnDemand: true, record: false });
     this.previews.set(id, Date.now() + PREVIEW_TTL_MS);
     return id;
   }
@@ -146,6 +171,47 @@ export class VideoService {
   private async sweepPreviews(): Promise<void> {
     const now = Date.now();
     for (const [id, until] of this.previews) if (until <= now) await this.deletePreview(id);
+  }
+
+  /** A request to the video agent beside the gateway, with the gateway password. */
+  private async agent<T>(method: 'GET' | 'POST', path: string, body: unknown, timeoutMs: number): Promise<T> {
+    const ep = this.endpoint;
+    if (!ep.agentUrl) throw new AgentError('no video agent configured');
+    let res: Response;
+    try {
+      res = await fetch(`${ep.agentUrl}${path}`, {
+        method,
+        headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(ep.auth ? { Authorization: ep.auth } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      throw new AgentError(`video agent unreachable at ${ep.agentUrl} (${(e as Error).message})`);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) throw new AgentError('video agent refused the password');
+    if (!res.ok) throw new AgentError(data?.error ?? `video agent answered ${res.status}`);
+    return data as T;
+  }
+
+  private async refreshBuffer(): Promise<void> {
+    try {
+      const s = await this.agent<Omit<BufferStatus, 'available'>>('GET', '/status', undefined, AGENT_STATUS_TIMEOUT_MS);
+      this.buffer = { available: true, bufferSeconds: s.bufferSeconds, buffered: s.buffered, disk: s.disk };
+    } catch (e) {
+      this.buffer = { available: false, error: (e as Error).message };
+    }
+  }
+
+  bufferStatus(): BufferStatus {
+    return { ...this.buffer };
+  }
+
+  /** Keep the last buffer window of every stream marked "include in recording". */
+  async save(): Promise<SaveResult> {
+    const streams = this.current().config.streams.filter((s) => s.record).map((s) => s.id);
+    if (!streams.length) throw new AgentError('no stream is marked "include in recording"');
+    return this.agent<SaveResult>('POST', '/save', { streams, label: 'save' }, AGENT_SAVE_TIMEOUT_MS);
   }
 
   /** Why stream `id` (or its low-res URL) is not giving video. undefined: no such stream. */

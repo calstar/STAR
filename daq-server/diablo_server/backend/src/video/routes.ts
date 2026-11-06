@@ -10,6 +10,7 @@
  *   DELETE /api/video/{streams|previews}/:id/whep/:s  end that WebRTC session
  *   ...    /api/video/streams/:id/low/whep[/:s]       the same, for a stream's low-res URL
  *   GET    /api/video/streams/:id[/low]/check         why that camera is not giving video
+ *   POST   /api/video/save                            keep the last buffer window (the agent)
  *
  * The WHEP routes are a proxy, so a browser's handshake travels the same origin and the same
  * sign-in as the rest of the GUI, and the gateway's HTTP side never faces the LAN. Only the
@@ -24,7 +25,7 @@ import {
   type CredentialChange,
 } from './config.js';
 import { gatewayPathFor, PREVIEW_PREFIX } from './gateway.js';
-import { PREVIEW_ID_RE, type VideoService } from './service.js';
+import { AgentError, PREVIEW_ID_RE, type VideoService } from './service.js';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const WHEP_TIMEOUT_MS = 10_000;
@@ -147,7 +148,13 @@ export async function handleVideoRequest(
   try {
     if (pathname === '/api/video/streams' && req.method === 'GET') {
       const { config, errors } = video.current();
-      sendJson(res, 200, { streams: config.streams.map(publicStream), layout: config.layout, errors, gateway: video.gatewayStatus() });
+      sendJson(res, 200, {
+        streams: config.streams.map(publicStream),
+        layout: config.layout,
+        errors,
+        gateway: video.gatewayStatus(),
+        buffer: video.bufferStatus(),
+      });
       return true;
     }
 
@@ -173,6 +180,11 @@ export async function handleVideoRequest(
       );
       await video.sync(); // live for everyone now, not at the next tick
       sendJson(res, 200, { ...saved, ingestHost: video.ingestHost() });
+      return true;
+    }
+
+    if (pathname === '/api/video/save' && req.method === 'POST') {
+      sendJson(res, 200, await video.save());
       return true;
     }
 
@@ -229,6 +241,7 @@ export async function handleVideoRequest(
     sendJson(res, 404, { error: 'Not found' });
   } catch (e) {
     if (e instanceof VideoConfigError) sendJson(res, e.status, { error: e.errors.join('; '), errors: e.errors });
+    else if (e instanceof AgentError) sendJson(res, 502, { error: e.message });
     else if (e instanceof BodyTooLarge) sendJson(res, 413, { error: 'body too large' });
     else sendJson(res, 502, { error: (e as Error).message });
   }

@@ -25,7 +25,7 @@ import VideoTile from '@/components/video/VideoTile';
 import StreamEditor from '@/components/video/StreamEditor';
 import { useWindowManager } from '@/components/windows/WindowManager';
 import { isPopupWindow } from '@/lib/is-popup';
-import { fetchVideoStreams, type VideoStreamInfo, type VideoStreamsResponse } from '@/lib/video/api';
+import { describeSave, fetchVideoStreams, saveBuffer, type VideoStreamInfo, type VideoStreamsResponse } from '@/lib/video/api';
 import { effectiveLayout, fingerprint, withFocus, withSlot, type Cell, type VideoLayout } from '@/lib/video/layout';
 import { useOperatorLayout } from '@/lib/video/operator-layout';
 import { streamEndpoint } from '@/lib/video/whep';
@@ -49,12 +49,20 @@ function usePointerActive(): [boolean, () => void] {
   return [active, poke];
 }
 
-/** The per-tile stream picker: an operator's own swap, shown with the other controls. */
-function SlotPicker({ value, streams, onPick }: { value: string | null; streams: VideoStreamInfo[]; onPick: (id: string | null) => void }) {
+/** The per-tile stream picker: an operator's own swap. Shown only on the hovered tile, and
+ *  only while the cursor is moving -- it fades with the corner controls -- unless its list is
+ *  open (focus). */
+function SlotPicker({ value, streams, active, onPick }: {
+  value: string | null;
+  streams: VideoStreamInfo[];
+  /** The cursor moved recently (the same clock as the corner controls). */
+  active: boolean;
+  onPick: (id: string | null) => void;
+}) {
   return (
     <select
       aria-label="Stream in this slot"
-      className="absolute bottom-2 left-2 max-w-[40%] border border-line-strong bg-black/80 px-1 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-2"
+      className={`absolute bottom-2 left-2 max-w-[40%] border border-line-strong bg-black/80 px-1 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-2 opacity-0 transition-opacity duration-300 focus:opacity-100 ${active ? 'group-hover:opacity-100' : ''}`}
       value={value ?? ''}
       onChange={(e) => onPick(e.target.value || null)}
       onDoubleClick={(e) => e.stopPropagation()}
@@ -92,6 +100,24 @@ export default function VideoPage() {
   const [editing, setEditing] = useState(false);
   const [draftLayout, setDraftLayout] = useState<VideoLayout | null>(null);
   const [override, setOverride] = useOperatorLayout();
+  /** The last Save's outcome, shown in the corner for a while. */
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      setSaveNote(describeSave(await saveBuffer()));
+    } catch (e) {
+      setSaveNote(`save failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!saveNote) return;
+    const t = setTimeout(() => setSaveNote(null), 8000);
+    return () => clearTimeout(t);
+  }, [saveNote]);
 
   const load = useCallback((signal?: AbortSignal) =>
     fetchVideoStreams(signal)
@@ -137,17 +163,21 @@ export default function VideoPage() {
         : `gateway unreachable${where}`
       : null;
   const empty = !!data && streams.length === 0;
-  const showControls = !editing && (active || empty || !!problem || (data?.errors.length ?? 0) > 0);
+  // Only while the cursor moves (or with nothing to show yet, so Edit can be found): the
+  // picture is the point. Problems are not lost when it fades -- each tile names its own.
+  const showControls = !editing && (active || empty);
+  const buffer = data?.buffer;
+  const bufferMin = buffer?.bufferSeconds ? Math.round(buffer.bufferSeconds / 60) : 5;
   const focused = eff.focus ? byId.get(eff.focus) : undefined;
 
   const tileFor = (id: string | null, large: boolean, slot: number | null) => {
     const s = id ? byId.get(id) : undefined;
-    const picker = slot !== null && showControls && (
-      <SlotPicker value={id} streams={streams} onPick={(v) => setOverride(withSlot(stand, ids, override, slot, v))} />
+    const picker = slot !== null && !editing && (
+      <SlotPicker value={id} streams={streams} active={active} onPick={(v) => setOverride(withSlot(stand, ids, override, slot, v))} />
     );
     if (!s) {
       return (
-        <div className="relative flex items-center justify-center bg-black font-mono text-[10px] uppercase tracking-[0.18em] text-ink-4" data-testid={slot !== null ? `video-slot-${slot}` : undefined}>
+        <div className="group relative flex items-center justify-center bg-black font-mono text-[10px] uppercase tracking-[0.18em] text-ink-4" data-testid={slot !== null ? `video-slot-${slot}` : undefined}>
           Empty
           {picker}
         </div>
@@ -217,6 +247,15 @@ export default function VideoPage() {
                 Reset layout
               </button>
             )}
+            <button
+              type="button"
+              className="ctl h-6 px-2 text-[10px] text-ink-2"
+              disabled={saving || !buffer?.available}
+              title={buffer?.available ? `Keep the last ${bufferMin} minutes of every stream marked "include in recording", on the gateway machine` : buffer?.error}
+              onClick={() => void save()}
+            >
+              {saving ? 'Saving' : `Save last ${bufferMin} min`}
+            </button>
             <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={() => setEditing(true)}>
               Edit
             </button>
@@ -229,6 +268,9 @@ export default function VideoPage() {
               </>
             )}
           </div>
+          {saveNote && (
+            <div className="max-w-xl bg-black/80 px-2 py-1 font-mono text-[11px] text-ink" role="status">{saveNote}</div>
+          )}
           {data && data.errors.length > 0 && (
             <ul className="max-w-md bg-black/80 px-2 py-1 font-mono text-[11px] text-ink-2">
               {data.errors.map((e) => <li key={e}>{e}</li>)}

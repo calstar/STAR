@@ -85,7 +85,19 @@ pathDefaults:
   sourceOnDemand: true
   sourceOnDemandStartTimeout: 10s
   sourceOnDemandCloseAfter: 10s
+
+  # The rolling buffer. The backend turns `record` on for each stream marked "include in
+  # recording" (and pins it out of on-demand); MediaMTX then writes 10 s segments under
+  # buffer/ (relative to the video dir, where the agent runs it) and deletes them after the
+  # window plus slack. Keeping a stretch of it -- Save, Record -- is the video agent's job
+  # (video/agent.mjs): it links segments out before they are deleted. Camera audio is in
+  # these segments; the agent drops it when it keeps them.
   record: false
+  recordPath: ./buffer/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 10s
+  recordDeleteAfter: 6m
 
 paths:
   # Dev and CI only: a local publisher (ffmpeg testsrc) can stand in for a camera at

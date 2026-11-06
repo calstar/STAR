@@ -18,8 +18,25 @@ export interface GatewayStatus {
   lastSyncAt?: number;
 }
 
+/** The rolling buffer, as the video agent on the gateway machine reports it. */
+export interface BufferStatus {
+  available: boolean;
+  error?: string;
+  bufferSeconds?: number;
+  buffered?: Record<string, number>;
+  disk?: { freeBytes: number; totalBytes: number } | null;
+}
+
+export interface SaveResult {
+  folder: string;
+  seconds: number;
+  /** seconds: how much each kept file really covers (less than the window after a restart). */
+  streams: { stream: string; file?: string; bytes?: number; seconds?: number; gaps?: number; error?: string }[];
+}
+
 export interface VideoStreamsResponse {
   streams: VideoStreamInfo[];
+  buffer: BufferStatus;
   /** The stand layout (config/video.json). */
   layout: VideoLayout;
   errors: string[];
@@ -99,3 +116,20 @@ export const createPreview = (input: { url: string; username?: string; password?
   call<{ id: string }>('POST', '/api/video/previews', input);
 
 export const deletePreview = (id: string) => call<void>('DELETE', `/api/video/previews/${encodeURIComponent(id)}`);
+
+/** Keep the last buffer window of every stream marked "include in recording" (on the gateway machine). */
+export const saveBuffer = () => call<SaveResult>('POST', '/api/video/save');
+
+/** One line for the operator: where it went, and anything that did not make it. */
+export function describeSave(r: SaveResult): string {
+  const ok = r.streams.filter((s) => s.file);
+  const bad = r.streams.filter((s) => s.error);
+  const folder = r.folder.split(/[\\/]/).pop();
+  const covered = Math.min(...ok.map((s) => s.seconds ?? r.seconds));
+  const span = covered >= 120 ? `${Math.round(covered / 60)} min` : `${covered} s`;
+  const head = `saved ${ok.length} stream${ok.length === 1 ? '' : 's'} (last ${span}) to recordings/${folder}`;
+  // A kept file plays straight across a gap (the gateway or a camera was down), so say so.
+  const gapped = ok.filter((s) => (s.gaps ?? 0) > 0);
+  const gaps = gapped.length ? `; gaps (stream was down) in ${gapped.map((s) => s.stream).join(', ')}` : '';
+  return bad.length ? `${head}${gaps}; not saved: ${bad.map((b) => `${b.stream} (${b.error})`).join(', ')}` : `${head}${gaps}`;
+}

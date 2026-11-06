@@ -138,10 +138,19 @@ else
   echo "video-gateway: OBS access off (--set-obs-password to allow a streaming laptop)" >&2
 fi
 unset password
-# MediaMTX writes nothing to its working directory with this config, but run it from the
-# video dir so a relative path in a future setting lands somewhere predictable.
+# The video agent (video/agent.mjs) runs MediaMTX and keeps recordings; it needs Node and
+# ffmpeg on this machine. Run from the video dir: buffer/ and recordings/ live there.
+need() { command -v "$1" >/dev/null 2>&1 || { echo "video-gateway: $1 not found -- $2" >&2; exit 1; }; }
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  need node "brew install node"
+  need ffmpeg "brew install ffmpeg"
+else
+  need node "install Node 20 (deploy/bootstrap_daq.sh does)"
+  need ffmpeg "sudo apt-get install -y ffmpeg"
+fi
+export VIDEO_GATEWAY_PASSWORD="${VIDEO_GATEWAY_PASSWORD:-$( [[ -s "$PASSWORD_FILE" ]] && cat "$PASSWORD_FILE" )}"
 cd "$VIDEO_DIR"
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  exec caffeinate -i "$BIN" "$CONFIG"
+  exec caffeinate -i node "$VIDEO_DIR/agent.mjs" --mediamtx "$BIN" --config "$CONFIG"
 fi
-exec "$BIN" "$CONFIG"
+exec node "$VIDEO_DIR/agent.mjs" --mediamtx "$BIN" --config "$CONFIG"

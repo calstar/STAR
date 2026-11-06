@@ -58,7 +58,7 @@ async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, ms = 1
 }
 
 describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
-  let ports: { api: number; rtsp: number; webrtc: number; udp: number; backend: number };
+  let ports: { api: number; rtsp: number; webrtc: number; udp: number; backend: number; agent: number };
   let gateway: ChildProcess | undefined;
   let camera: ChildProcess | undefined;
   let backend: http.Server;
@@ -69,11 +69,17 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
   let gatewayLog = '';
 
   const startGateway = async (extraEnv: Record<string, string> = {}) => {
-    gateway = spawn(bin, [join(DAQ, 'video', 'mediamtx.yml')], {
+    // As in production: the video agent runs MediaMTX as its child (scripts/video-gateway.sh).
+    gateway = spawn('node', [join(DAQ, 'video', 'agent.mjs'), '--mediamtx', bin, '--config', join(DAQ, 'video', 'mediamtx.yml')], {
       cwd: dir,
       env: {
         ...process.env,
         ...extraEnv,
+        VIDEO_AGENT_PORT: String(ports.agent),
+        // A short buffer and short segments, so a Save is testable in seconds.
+        VIDEO_BUFFER_SECONDS: '15',
+        MTX_PATHDEFAULTS_RECORDSEGMENTDURATION: '3s',
+        MTX_PATHDEFAULTS_RECORDDELETEAFTER: '30s',
         MTX_APIADDRESS: `127.0.0.1:${ports.api}`,
         MTX_RTSPADDRESS: `127.0.0.1:${ports.rtsp}`,
         MTX_WEBRTCADDRESS: `127.0.0.1:${ports.webrtc}`,
@@ -111,7 +117,7 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
   beforeAll(async () => {
     bin = execFileSync(join(DAQ, 'scripts', 'video-gateway.sh'), ['--print-bin'], { encoding: 'utf8' }).trim().split('\n').pop()!;
     execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); // fail loudly if missing
-    ports = { api: await freePort(), rtsp: await freePort(), webrtc: await freePort(), udp: await freePort(), backend: await freePort() };
+    ports = { api: await freePort(), rtsp: await freePort(), webrtc: await freePort(), udp: await freePort(), backend: await freePort(), agent: await freePort() };
 
     writeFileSync(process.env.VIDEO_CONFIG_PATH!, JSON.stringify({
       version: 1,
@@ -132,7 +138,7 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
 
     const { VideoService } = await import('../src/video/service.js');
     const { handleVideoRequest } = await import('../src/video/routes.js');
-    svc = new VideoService({ apiUrl: `http://127.0.0.1:${ports.api}`, webrtcUrl: `http://127.0.0.1:${ports.webrtc}`, host: '127.0.0.1' });
+    svc = new VideoService({ apiUrl: `http://127.0.0.1:${ports.api}`, webrtcUrl: `http://127.0.0.1:${ports.webrtc}`, agentUrl: `http://127.0.0.1:${ports.agent}`, host: '127.0.0.1' });
     active = svc;
 
     // The backend, plus a page on the same origin to run the browser's side.
@@ -271,6 +277,34 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
       await browser.close();
     }
   }, 90_000);
+
+  it('the rolling buffer: Save keeps the last window as one video-only file per stream', async () => {
+    await svc.sync(); // cam1 is "include in recording": the gateway now records it
+    const path = await (await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).json();
+    expect(path).toMatchObject({ record: true, sourceOnDemand: false });
+    // Let more than the window (15 s) build up, so the Save is trimmed, not everything.
+    await new Promise((r) => setTimeout(r, 21_000));
+    await svc.sync();
+    expect(svc.bufferStatus()).toMatchObject({ available: true, bufferSeconds: 15 });
+    expect(svc.bufferStatus().buffered?.cam1).toBeGreaterThanOrEqual(14);
+
+    const saved = await svc.save();
+    const cam = saved.streams.find((x) => x.stream === 'cam1')!;
+    expect(cam.error, JSON.stringify(saved)).toBeUndefined();
+    expect(cam.file).toMatch(/recordings\/\d{4}-\d{2}-\d{2}_\d{6}_save\/cam1\.mp4$/);
+    // A stream with nothing buffered says so, without failing the others.
+    const none = await (await fetch(`http://127.0.0.1:${ports.agent}/save`, { method: 'POST', body: JSON.stringify({ streams: ['never-sent', 'cam1'] }) })).json();
+    expect(none.streams.find((x: any) => x.stream === 'never-sent').error).toMatch(/nothing buffered/);
+    expect(none.streams.find((x: any) => x.stream === 'cam1').file).toMatch(/cam1\.mp4$/);
+
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', cam.file!], { encoding: 'utf8' }));
+    // The test camera sends G.711 audio; the kept file has none.
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // The window (15 s) plus at most one segment (3 s) before it -- not the whole 21 s.
+    const seconds = Number(probe.format.duration);
+    expect(seconds).toBeGreaterThanOrEqual(14);
+    expect(seconds).toBeLessThanOrEqual(19);
+  }, 60_000);
 
   it('a gateway that restarts empty is refilled by the next sync', async () => {
     camera?.kill('SIGKILL');

@@ -49,7 +49,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake ninja-build libeigen3-dev pkg-config \
   python3 python3-venv zlib1g-dev libssl-dev curl git \
-  dnsmasq
+  dnsmasq ffmpeg
 # dnsmasq serves DHCP static leases on the isolated board LAN. The distro ships
 # it as an enabled system service that would grab port 67 on every interface and
 # fight our board-LAN-only instance — disable it; the board DHCP runs as the

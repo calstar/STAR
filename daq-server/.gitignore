@@ -255,3 +255,5 @@ config/video.secrets.json
 video/.bin/
 video/gateway.password
 video/obs.password
+video/buffer/
+video/recordings/

@@ -153,7 +153,7 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
 
   return (
     <figure
-      className="relative min-h-0 min-w-0 overflow-hidden bg-black"
+      className="group relative min-h-0 min-w-0 overflow-hidden bg-black"
       data-testid={testId}
       data-state={status.kind}
       data-endpoint={endpoint}

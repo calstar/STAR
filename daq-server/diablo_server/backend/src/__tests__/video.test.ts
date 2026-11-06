@@ -438,8 +438,10 @@ describe('layout', () => {
       secrets: { streams: { pad: { username: 'u', password: 'p' } } },
     });
     expect([...paths]).toEqual([
-      ['raw/pad', { source: 'rtsp://u:p@192.0.2.10:554/stream1' }],
-      ['raw/pad/low', { source: 'rtsp://u:p@192.0.2.10/sub' }],
+      // In the buffer (record: true): pulled all the time.
+      ['raw/pad', { source: 'rtsp://u:p@192.0.2.10:554/stream1', sourceOnDemand: false, record: true }],
+      // Low-res: never recorded, pulled only while shown.
+      ['raw/pad/low', { source: 'rtsp://u:p@192.0.2.10/sub', sourceOnDemand: true, record: false }],
     ]);
   });
 });
@@ -502,7 +504,7 @@ describe('gateway on another machine', () => {
   const { gatewayEndpoint, HttpGatewayApi } = gatewayMod;
 
   it('defaults to this machine, follows the setting, and lets VIDEO_GATEWAY_HOST win', () => {
-    expect(gatewayEndpoint(undefined, {})).toEqual({ apiUrl: 'http://127.0.0.1:8887', webrtcUrl: 'http://127.0.0.1:8889', host: '127.0.0.1' });
+    expect(gatewayEndpoint(undefined, {})).toEqual({ apiUrl: 'http://127.0.0.1:8887', webrtcUrl: 'http://127.0.0.1:8889', agentUrl: 'http://127.0.0.1:8886', host: '127.0.0.1' });
     const ep = gatewayEndpoint({ host: 'theombp.local', password: 'gw-pass' }, {});
     expect(ep).toMatchObject({ apiUrl: 'http://theombp.local:8887', webrtcUrl: 'http://theombp.local:8889', host: 'theombp.local' });
     expect(ep.auth).toBe(`Basic ${Buffer.from('daq:gw-pass').toString('base64')}`);
@@ -583,7 +585,7 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
 
   it('becomes a gateway path that listens all the time, with no URL or credentials', () => {
     const paths = desiredPaths({ config: { version: 1, streams: [hides as any], layout: { preset: 'auto', slots: [] } }, secrets: { streams: { hides: { password: 'x' } } } });
-    expect([...paths]).toEqual([['raw/hides', { source: 'udp+mpegts://0.0.0.0:5600', sourceOnDemand: false }]]);
+    expect([...paths]).toEqual([['raw/hides', { source: 'udp+mpegts://0.0.0.0:5600', sourceOnDemand: false, record: true }]]);
     expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true });
   });
 
@@ -600,4 +602,82 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
     expect(await svc.checkStream('hides')!).toMatchObject({ ok: true });
     expect(svc.checkStream('hides', true)).toBeUndefined(); // no low-res for a pushed stream
   }, 10_000);
+});
+
+describe('the rolling buffer on the gateway', () => {
+  it('records only streams marked "include in recording", and pulls those all the time', () => {
+    const paths = desiredPaths({
+      config: { version: 1, layout: { preset: 'auto', slots: [] }, streams: [
+        { ...pad, record: true } as any,
+        { ...pad, id: 'overview', record: false } as any,
+        { id: 'hides', label: 'HiDes', kind: 'udp', port: 5600, record: false } as any,
+      ] },
+      secrets: { streams: {} },
+    });
+    expect(paths.get('raw/pad')).toMatchObject({ record: true, sourceOnDemand: false });
+    expect(paths.get('raw/overview')).toMatchObject({ record: false, sourceOnDemand: true });
+    expect(paths.get('raw/hides')).toMatchObject({ record: false, sourceOnDemand: false });
+  });
+
+  it('switching a stream out of the recording is pushed to the gateway', async () => {
+    const gw = new FakeGateway();
+    const mk = (record: boolean) => desiredPaths({ config: { version: 1, layout: { preset: 'auto', slots: [] }, streams: [{ ...pad, record } as any] }, secrets: { streams: {} } });
+    await reconcile(gw, mk(true));
+    expect((await reconcile(gw, mk(false))).replaced).toEqual(['raw/pad']);
+    expect(gw.paths.get('raw/pad')).toMatchObject({ record: false, sourceOnDemand: true });
+  });
+});
+
+describe('Save, through the video agent', () => {
+  let agentSrv: http.Server;
+  let agentUrl = '';
+  const got: { url: string; auth?: string; body: any }[] = [];
+  let reply: { status: number; body: unknown } = { status: 200, body: {} };
+
+  beforeAll(async () => {
+    agentSrv = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        got.push({ url: req.url!, auth: req.headers.authorization, body: body ? JSON.parse(body) : undefined });
+        const r = req.url === '/status' ? { status: 200, body: { bufferSeconds: 300, buffered: { pad: 120 }, disk: { freeBytes: 5e10, totalBytes: 1e12 } } } : reply;
+        res.writeHead(r.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(r.body));
+      });
+    });
+    await new Promise<void>((r) => agentSrv.listen(0, '127.0.0.1', r));
+    agentUrl = `http://127.0.0.1:${(agentSrv.address() as AddressInfo).port}`;
+  });
+  afterAll(() => agentSrv.close());
+
+  const svcWith = (auth?: string) => new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl, host: '127.0.0.1', ...(auth ? { auth } : {}) }, new FakeGateway());
+
+  it('asks for exactly the streams marked "include in recording", with the gateway password', async () => {
+    writeConfig([pad, { ...pad, id: 'overview', label: 'Overview', record: false }, { id: 'hides', label: 'HiDes', kind: 'udp', port: 5600, record: true }]);
+    reply = { status: 200, body: { folder: '/rec/2026-11-06_120000_save', seconds: 300, streams: [] } };
+    const r = await svcWith('Basic abc').save();
+    expect(r.folder).toBe('/rec/2026-11-06_120000_save');
+    expect(got.at(-1)).toEqual({ url: '/save', auth: 'Basic abc', body: { streams: ['pad', 'hides'], label: 'save' } });
+  });
+
+  it('reports the buffer from the agent on every sync', async () => {
+    writeConfig([pad]);
+    const svc = svcWith();
+    expect(svc.bufferStatus().available).toBe(false);
+    await svc.sync();
+    expect(svc.bufferStatus()).toEqual({ available: true, bufferSeconds: 300, buffered: { pad: 120 }, disk: { freeBytes: 5e10, totalBytes: 1e12 } });
+  });
+
+  it('says why a Save failed: agent error, wrong password, nothing to save, agent gone', async () => {
+    writeConfig([pad]);
+    reply = { status: 500, body: { error: 'ffmpeg: No such file' } };
+    await expect(svcWith().save()).rejects.toThrow('ffmpeg: No such file');
+    reply = { status: 401, body: {} };
+    await expect(svcWith().save()).rejects.toThrow('refused the password');
+    writeConfig([{ ...pad, record: false }]);
+    await expect(svcWith().save()).rejects.toThrow(/include in recording/);
+    writeConfig([pad]);
+    const gone = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl: 'http://127.0.0.1:1', host: '127.0.0.1' }, new FakeGateway());
+    await expect(gone.save()).rejects.toThrow(/unreachable/);
+  });
 });

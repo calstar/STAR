@@ -20,6 +20,7 @@ pkill -f "config_broadcast_service"    2>/dev/null || true
 pkill -f "controller_service"          2>/dev/null || true
 pkill -f "ota_service"                 2>/dev/null || true
 pkill -f "board_simulator"             2>/dev/null || true
+pkill -f "${REPO_ROOT}/video/agent.mjs"         2>/dev/null || true  # video agent (repo-anchored)
 pkill -f "${REPO_ROOT}/video/.bin/.*/mediamtx" 2>/dev/null || true  # video gateway (repo-anchored)
 
 # ── Elodin DB ─────────────────────────────────────────────────────────────────
