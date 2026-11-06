@@ -1,0 +1,103 @@
+name: Discord PR notifications
+
+on:
+  pull_request:
+    types: [opened, closed, reopened, ready_for_review, assigned, unassigned, review_requested, review_request_removed]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+  issue_comment:
+    types: [created]
+
+jobs:
+  notify:
+    # issue_comment also fires on plain issues; only keep PR comments
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          script: |
+            const e = context.payload;
+            const actor = e.sender.login;
+
+            // Skip bots (dependabot, github-actions, etc.)
+            if (e.sender.type === 'Bot') return;
+
+            // GitHub login -> Discord user ID, so people actually get pinged.
+            // Get IDs in Discord: Settings > Advanced > Developer Mode, then right-click a user > Copy User ID.
+            const discordIds = {
+              // "github-login": "123456789012345678",
+            };
+            function mention(login) {
+              if (discordIds[login]) return `<@${discordIds[login]}>`;
+              return `**${login}**`;
+            }
+
+            const pr = e.pull_request || e.issue;
+            const prRef = `[#${pr.number} ${pr.title}](<${pr.html_url}>)`;
+            const author = pr.user.login;
+            let text = null;
+            let body = null;
+
+            if (context.eventName === 'pull_request') {
+              const a = e.action;
+              if (a === 'opened') text = `🆕 **${actor}** opened ${prRef}`;
+              else if (a === 'closed') text = pr.merged ? `🟣 **${actor}** merged ${prRef}` : `🔴 **${actor}** closed ${prRef}`;
+              else if (a === 'reopened') text = `🔁 **${actor}** reopened ${prRef}`;
+              else if (a === 'ready_for_review') text = `✅ ${prRef} is ready for review`;
+              else if (a === 'assigned') text = `📌 ${mention(e.assignee.login)} assigned to ${prRef} by **${actor}**`;
+              else if (a === 'unassigned') text = `📌 **${e.assignee.login}** unassigned from ${prRef} by **${actor}**`;
+              else if (a === 'review_requested') {
+                const who = e.requested_reviewer ? mention(e.requested_reviewer.login) : `team **${e.requested_team.name}**`;
+                text = `👀 ${who}, review requested on ${prRef} by **${actor}**`;
+              }
+              else if (a === 'review_request_removed') {
+                const who = e.requested_reviewer ? e.requested_reviewer.login : e.requested_team.name;
+                text = `👀 Review request for **${who}** removed on ${prRef}`;
+              }
+              if (a === 'opened') body = pr.body;
+            }
+
+            else if (context.eventName === 'pull_request_review') {
+              const state = e.review.state;
+              // Inline-only reviews arrive as an empty "commented" review plus separate
+              // review_comment events; skip the empty one to avoid duplicates.
+              if (state === 'commented' && !e.review.body) return;
+              const label = { approved: '✅ approved', changes_requested: '❌ requested changes on', commented: '💬 reviewed' }[state] || state;
+              text = `**${actor}** ${label} ${prRef} (${mention(author)})`;
+              body = e.review.body;
+            }
+
+            else if (context.eventName === 'pull_request_review_comment') {
+              text = `💬 **${actor}** commented on \`${e.comment.path}\` in ${prRef} (${mention(author)})`;
+              body = e.comment.body;
+            }
+
+            else if (context.eventName === 'issue_comment') {
+              text = `💬 **${actor}** commented on ${prRef} (${mention(author)})`;
+              body = e.comment.body;
+            }
+
+            if (!text) return;
+
+            let content = text;
+            if (body) {
+              let trimmed = body.length > 500 ? body.slice(0, 500) + '…' : body;
+              let quoted = '';
+              const lines = trimmed.split('\n');
+              for (let i = 0; i < lines.length; i++) {
+                quoted += '> ' + lines[i] + '\n';
+              }
+              content += '\n' + quoted;
+            }
+
+            const res = await fetch(process.env.DISCORD_WEBHOOK, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: content, allowed_mentions: { parse: ['users'] } }),
+            });
+            if (!res.ok) core.setFailed(`Discord returned ${res.status}: ${await res.text()}`);
