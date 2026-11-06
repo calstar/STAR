@@ -94,7 +94,7 @@ void radio_task(void*) {
     try_setup();
     uint32_t last_setup = board_now_ms();
     for (;;) {
-        (void)osThreadFlagsWait(kEvDio1, osFlagsWaitAny, 1000);
+        const uint32_t flags = osThreadFlagsWait(kEvDio1, osFlagsWaitAny, 1000);
         if (!configured) {
             if (board_now_ms() - last_setup >= kSetupRetryMs) {
                 try_setup();
@@ -104,6 +104,13 @@ void radio_task(void*) {
         }
         take();
         const ArmAction action = link.poll(board_now_ms());
+        // In sniff mode the chip returns to STDBY_RC after any DIO1 event
+        // (RxDone, HeaderErr, CrcErr, p.71); restart the duty cycle so the
+        // radio does not go deaf. Skip the 1-second fallback poll: the chip
+        // is still cycling on its own and must not be interrupted.
+        if (flags == kEvDio1) {
+            setup.rearm_rx();
+        }
         status.frames_ok = link.frames_ok();
         status.frames_dropped = link.frames_dropped();
         status.radio_errors = link.radio_errors();
@@ -191,6 +198,20 @@ radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
 
 void radio_task_status(radio_status_t* out) {
     *out = status;
+}
+
+void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms) {
+    if (!mutex) return;
+    take();
+    if (configured) setup.start_rx_duty_cycle(rx_ms, sleep_ms);
+    give();
+}
+
+void radio_task_start_continuous_rx(void) {
+    if (!mutex) return;
+    take();
+    if (configured) setup.start_rx_continuous();
+    give();
 }
 
 }  // extern "C"

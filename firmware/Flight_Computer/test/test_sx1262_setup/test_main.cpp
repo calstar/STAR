@@ -275,6 +275,118 @@ static void test_send_refuses_bad_input_and_dead_chip(void) {
     TEST_ASSERT_EQUAL(RadioStatus::ErrNotFound, radio.send(frame, 1));
 }
 
+// --- Sniff mode (SetRxDutyCycle) tests ---
+
+static void test_duty_cycle_sends_correct_opcode_and_periods(void) {
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();
+    chip.n_cmds = 0;
+
+    TEST_ASSERT_TRUE(radio.start_rx_duty_cycle(33, 1000));
+
+    // SetRxDutyCycle (0x94): rxPeriod=33*64=2112=0x000840, sleepPeriod=1000*64=64000=0x00FA00
+    int dc = chip.find(0x94);
+    TEST_ASSERT_TRUE(dc >= 0);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][1]);
+    TEST_ASSERT_EQUAL_HEX8(0x08, chip.cmds[dc][2]);
+    TEST_ASSERT_EQUAL_HEX8(0x40, chip.cmds[dc][3]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][4]);
+    TEST_ASSERT_EQUAL_HEX8(0xFA, chip.cmds[dc][5]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][6]);
+    TEST_ASSERT_EQUAL_UINT(7, chip.lens[dc]);
+    // RF switch set for receive
+    TEST_ASSERT_TRUE(control.rx_switch);
+    // SetPacketParams (0x8C) with max length before duty cycle
+    int pp = chip.find(0x8C);
+    TEST_ASSERT_TRUE(pp >= 0 && pp < dc);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, chip.cmds[pp][4]);
+    // SetStandby (0x80) is first to put chip in STDBY_RC
+    TEST_ASSERT_EQUAL_HEX8(0x80, chip.cmds[0][0]);
+    // No continuous SetRx (0x82) after the duty cycle command
+    TEST_ASSERT_EQUAL(-1, chip.find(0x82, dc));
+}
+
+static void test_duty_cycle_1ms_is_64_steps(void) {
+    // The DS defines 1 step = 15.625 µs, so 1 ms = 64 steps exactly (p.71).
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();
+    chip.n_cmds = 0;
+
+    radio.start_rx_duty_cycle(1, 1);
+
+    int dc = chip.find(0x94);
+    TEST_ASSERT_TRUE(dc >= 0);
+    // 1 ms * 64 = 64 = 0x000040
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][1]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][2]);
+    TEST_ASSERT_EQUAL_HEX8(0x40, chip.cmds[dc][3]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][4]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][5]);
+    TEST_ASSERT_EQUAL_HEX8(0x40, chip.cmds[dc][6]);
+}
+
+static void test_rearm_restarts_duty_cycle_after_rxdone(void) {
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();
+    radio.start_rx_duty_cycle(33, 1000);
+    chip.n_cmds = 0;
+
+    // After RxDone the chip is in STDBY_RC; re-arm must restart the duty cycle.
+    TEST_ASSERT_TRUE(radio.rearm_rx());
+
+    int dc = chip.find(0x94);
+    TEST_ASSERT_TRUE(dc >= 0);
+    // Same params as before
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][1]);
+    TEST_ASSERT_EQUAL_HEX8(0x08, chip.cmds[dc][2]);
+    TEST_ASSERT_EQUAL_HEX8(0x40, chip.cmds[dc][3]);
+}
+
+static void test_rearm_is_noop_in_continuous_mode(void) {
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();  // leaves chip in continuous RX
+    chip.n_cmds = 0;
+
+    TEST_ASSERT_TRUE(radio.rearm_rx());
+
+    // In continuous mode the chip stays in RX on its own; nothing to send.
+    TEST_ASSERT_EQUAL_UINT(0, chip.n_cmds);
+}
+
+static void test_send_returns_to_duty_cycle_not_continuous(void) {
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();
+    radio.start_rx_duty_cycle(33, 1000);
+    chip.n_cmds = 0;
+
+    const uint8_t frame[14] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+    TEST_ASSERT_EQUAL(RadioStatus::Ok, radio.send(frame, sizeof frame));
+
+    // After TxDone send() must return to duty cycle, NOT continuous RX.
+    int tx = chip.find(0x83);
+    TEST_ASSERT_TRUE(tx >= 0);
+    TEST_ASSERT_EQUAL(-1, chip.find(0x82, tx));  // no SetRx
+    int dc = chip.find(0x94, tx);
+    TEST_ASSERT_TRUE(dc > tx);
+}
+
+static void test_start_continuous_after_duty_cycle(void) {
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    radio.configure();
+    radio.start_rx_duty_cycle(33, 1000);
+    chip.n_cmds = 0;
+
+    TEST_ASSERT_TRUE(radio.start_rx_continuous());
+
+    // Must end with SetRx 0xFFFFFF, not SetRxDutyCycle.
+    int rx = chip.find(0x82);
+    TEST_ASSERT_TRUE(rx >= 0);
+    const uint8_t expected[4] = {0x82, 0xFF, 0xFF, 0xFF};
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, chip.cmds[rx], sizeof expected);
+    // No duty cycle command after the continuous SetRx.
+    TEST_ASSERT_EQUAL(-1, chip.find(0x94, rx + 1));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_frequency_word_and_time_on_air);
@@ -284,5 +396,11 @@ int main(int, char**) {
     RUN_TEST(test_send_keeps_a_packet_that_just_arrived);
     RUN_TEST(test_send_times_out);
     RUN_TEST(test_send_refuses_bad_input_and_dead_chip);
+    RUN_TEST(test_duty_cycle_sends_correct_opcode_and_periods);
+    RUN_TEST(test_duty_cycle_1ms_is_64_steps);
+    RUN_TEST(test_rearm_restarts_duty_cycle_after_rxdone);
+    RUN_TEST(test_rearm_is_noop_in_continuous_mode);
+    RUN_TEST(test_send_returns_to_duty_cycle_not_continuous);
+    RUN_TEST(test_start_continuous_after_duty_cycle);
     return UNITY_END();
 }
