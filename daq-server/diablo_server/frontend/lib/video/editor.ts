@@ -4,6 +4,7 @@
  * all, that a password the operator did not touch is *omitted*, so the saved one is kept.
  */
 import type { CredentialChange, EditableConfig, EditableStream } from './api';
+import { PRESET_SLOT_COUNTS, type LayoutPreset, type VideoLayout } from './layout';
 
 export interface DraftStream {
   /** React key; stable across edits of id. */
@@ -109,4 +110,25 @@ export function isDirty(drafts: DraftStream[], original: DraftStream[]): boolean
     return d.key !== o.key || d.id !== o.id || d.label !== o.label || d.url !== o.url || d.lowResUrl !== o.lowResUrl
       || d.record !== o.record || d.username !== o.username || d.newPassword !== '' || d.clearPassword;
   });
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+// In the editor a slot holds a draft's *key*, not its id: a new stream's id follows its
+// label as it is typed, and the slot must follow the stream, not the half-typed id.
+
+export function draftLayoutFrom(layout: VideoLayout, drafts: DraftStream[]): VideoLayout {
+  const keyOf = new Map(drafts.map((d) => [d.id, d.key]));
+  return { preset: layout.preset, slots: layout.slots.map((id) => (id ? keyOf.get(id) ?? null : null)) };
+}
+
+/** The editor's layout as the server takes it: keys -> current ids; gone -> empty. */
+export function layoutIds(layout: VideoLayout, drafts: DraftStream[]): VideoLayout {
+  const idOf = new Map(drafts.map((d) => [d.key, d.id.trim()]));
+  return { preset: layout.preset, slots: layout.slots.map((k) => (k ? idOf.get(k) ?? null : null)) };
+}
+
+/** Switch preset, keeping the slots that still fit. */
+export function withPreset(layout: VideoLayout, preset: LayoutPreset): VideoLayout {
+  const n = PRESET_SLOT_COUNTS[preset];
+  return { preset, slots: Array.from({ length: n }, (_, i) => layout.slots[i] ?? null) };
 }

@@ -1,5 +1,6 @@
 /** The video pane's view of /api/video/streams. Streams carry no URL or credential. */
 import { getApiBaseUrl } from '@/lib/websocket';
+import type { VideoLayout } from './layout';
 
 export interface VideoStreamInfo {
   id: string;
@@ -17,6 +18,8 @@ export interface GatewayStatus {
 
 export interface VideoStreamsResponse {
   streams: VideoStreamInfo[];
+  /** The stand layout (config/video.json). */
+  layout: VideoLayout;
   errors: string[];
   gateway: GatewayStatus;
 }
@@ -44,6 +47,7 @@ export interface EditableStream {
 export interface EditableConfig {
   revision: string;
   streams: EditableStream[];
+  layout: VideoLayout;
 }
 
 /** username: set ('' clears). password: omit to keep, null to clear, string to set. */
@@ -77,7 +81,8 @@ export const saveVideoConfig = (
   revision: string,
   streams: Omit<EditableStream, 'username' | 'passwordSet'>[],
   credentials: Record<string, CredentialChange>,
-) => call<EditableConfig>('PUT', '/api/video/config', { revision, streams, credentials });
+  layout: VideoLayout,
+) => call<EditableConfig>('PUT', '/api/video/config', { revision, streams, credentials, layout });
 
 export const createPreview = (input: { url: string; username?: string; password?: string; fromStreamId?: string }) =>
   call<{ id: string }>('POST', '/api/video/previews', input);

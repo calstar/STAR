@@ -8,13 +8,19 @@
  * knows whether one is saved; leaving the field blank keeps it. "Test" plays a URL through
  * the gateway before it is saved, so a wrong IP shows up here and not on the bunker wall.
  *
+ * The Layout section picks the stand layout: a preset, and a stream for each slot. The grid
+ * behind the panel shows the draft as it is chosen (onDraftLayout).
+ *
  * No red on this page (VIDCOMM decision): red belongs to the stand, so Remove is a plain
  * control here.
  */
 import { useEffect, useMemo, useState } from 'react';
 import VideoTile from '@/components/video/VideoTile';
 import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, VideoApiError } from '@/lib/video/api';
-import { draftsFrom, isDirty, newDraft, toSave, withLabel, type DraftStream } from '@/lib/video/editor';
+import {
+  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, toSave, withLabel, withPreset, type DraftStream,
+} from '@/lib/video/editor';
+import { geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
 import { previewEndpoint } from '@/lib/video/whep';
 
 const input = 'w-full border border-line-strong bg-black px-2 py-1 font-mono text-xs text-ink placeholder:text-ink-4 focus:border-ink-3 focus:outline-none';
@@ -136,10 +142,65 @@ function StreamCard({
   );
 }
 
-export default function StreamEditor({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+/** Preset picker and a stream per slot. Slots hold draft keys (see lib/video/editor). */
+function LayoutSection({ layout, drafts, onChange }: { layout: VideoLayout; drafts: DraftStream[]; onChange: (l: VideoLayout) => void }) {
+  const cells = geometry(layout.preset).cells;
+  return (
+    <section className="space-y-2 border-b border-line px-4 py-3">
+      <span className={fieldLabel}>Stand layout</span>
+      <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Layout preset">
+        {PRESETS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            role="radio"
+            aria-checked={layout.preset === p}
+            className={`ctl h-6 min-w-[2.75rem] px-2 text-[10px] ${layout.preset === p ? 'border-ink-3 text-ink' : 'text-ink-3'}`}
+            onClick={() => onChange(withPreset(layout, p))}
+          >
+            {PRESET_LABELS[p]}
+          </button>
+        ))}
+      </div>
+      {layout.preset === 'auto' ? (
+        <p className="font-mono text-[11px] text-ink-3">Every stream, in list order, on an even grid.</p>
+      ) : (
+        <ol className="space-y-1">
+          {layout.slots.map((key, i) => (
+            <li key={i} className="grid grid-cols-[4.5rem_1fr] items-center gap-2">
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-3">
+                {cells[i]?.large ? 'Large' : `Slot ${i + 1}`}
+              </span>
+              <select
+                className={input}
+                aria-label={`Slot ${i + 1}`}
+                value={key ?? ''}
+                onChange={(e) => onChange({ ...layout, slots: layout.slots.map((k, j) => (j === i ? e.target.value || null : k)) })}
+              >
+                <option value="">Empty</option>
+                {drafts.map((d) => <option key={d.key} value={d.key}>{d.label || d.id}{d.isNew ? ' (unsaved)' : ''}</option>)}
+              </select>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+export default function StreamEditor({
+  onClose, onSaved, onDraftLayout,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+  /** The draft stand layout, in stream ids, as it changes (null when the editor closes). */
+  onDraftLayout?: (layout: VideoLayout | null) => void;
+}) {
   const [revision, setRevision] = useState<string | null>(null);
   const [original, setOriginal] = useState<DraftStream[]>([]);
   const [drafts, setDrafts] = useState<DraftStream[]>([]);
+  const [originalLayout, setOriginalLayout] = useState<VideoLayout>({ preset: 'auto', slots: [] });
+  const [layout, setLayout] = useState<VideoLayout>({ preset: 'auto', slots: [] });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -147,14 +208,26 @@ export default function StreamEditor({ onClose, onSaved }: { onClose: () => void
     fetchVideoConfig()
       .then((cfg) => {
         const d = draftsFrom(cfg);
+        const l = draftLayoutFrom(cfg.layout, d);
         setRevision(cfg.revision);
         setOriginal(d);
         setDrafts(d);
+        setOriginalLayout(l);
+        setLayout(l);
       })
       .catch((e) => setErrors([e instanceof Error ? e.message : String(e)]));
   }, []);
 
-  const dirty = useMemo(() => isDirty(drafts, original), [drafts, original]);
+  const dirty = useMemo(
+    () => isDirty(drafts, original) || JSON.stringify(layout) !== JSON.stringify(originalLayout),
+    [drafts, original, layout, originalLayout],
+  );
+
+  // Show the draft on the grid as it is chosen; hand the grid back on close.
+  useEffect(() => {
+    if (revision !== null) onDraftLayout?.(layoutIds(layout, drafts.filter((d) => !d.isNew)));
+  }, [layout, drafts, revision, onDraftLayout]);
+  useEffect(() => () => onDraftLayout?.(null), [onDraftLayout]);
   const patch = (key: string, p: Partial<DraftStream>) => setDrafts((ds) => ds.map((d) => (d.key === key ? { ...d, ...p } : d)));
 
   const save = async () => {
@@ -163,7 +236,7 @@ export default function StreamEditor({ onClose, onSaved }: { onClose: () => void
     setErrors([]);
     try {
       const { streams, credentials } = toSave(drafts);
-      await saveVideoConfig(revision, streams, credentials);
+      await saveVideoConfig(revision, streams, credentials, layoutIds(layout, drafts));
       onSaved();
       onClose();
     } catch (e) {
@@ -182,7 +255,9 @@ export default function StreamEditor({ onClose, onSaved }: { onClose: () => void
         </span>
       </header>
 
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      {revision !== null && <LayoutSection layout={layout} drafts={drafts} onChange={setLayout} />}
+      <ul>
         {drafts.map((d) => (
           <StreamCard
             key={d.key}
@@ -198,6 +273,7 @@ export default function StreamEditor({ onClose, onSaved }: { onClose: () => void
           </button>
         </li>
       </ul>
+      </div>
 
       <footer className="border-t border-line px-4 py-3">
         {errors.length > 0 && (

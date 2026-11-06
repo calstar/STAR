@@ -39,7 +39,7 @@ export function buildOfferPeer(): RTCPeerConnection {
 }
 
 /** WHEP endpoints the backend proxies: a saved stream, or an editor's preview. */
-export const streamEndpoint = (id: string) => `/api/video/streams/${encodeURIComponent(id)}`;
+export const streamEndpoint = (id: string, low = false) => `/api/video/streams/${encodeURIComponent(id)}${low ? '/low' : ''}`;
 export const previewEndpoint = (id: string) => `/api/video/previews/${encodeURIComponent(id)}`;
 
 /**

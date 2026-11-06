@@ -11,7 +11,7 @@
  * A failed attempt retries on its own (RETRY_MS), so a camera that reboots or a gateway
  * that restarts comes back without anyone touching the page.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { playWhep, type WhepState } from '@/lib/video/whep';
 
 const RETRY_MS = 3000;
@@ -34,9 +34,12 @@ export interface VideoTileProps {
   /** WHEP endpoint: streamEndpoint(id) or previewEndpoint(id). */
   endpoint: string;
   testId?: string;
+  onDoubleClick?: () => void;
+  /** Extra overlay (the page's slot picker). */
+  children?: ReactNode;
 }
 
-export default function VideoTile({ label, endpoint, testId }: VideoTileProps) {
+export default function VideoTile({ label, endpoint, testId, onDoubleClick, children }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<WhepState>({ kind: 'connecting' });
   const [attempt, setAttempt] = useState(0);
@@ -56,7 +59,13 @@ export default function VideoTile({ label, endpoint, testId }: VideoTileProps) {
   }, [endpoint, attempt]);
 
   return (
-    <figure className="relative min-h-0 min-w-0 overflow-hidden bg-black" data-testid={testId} data-state={state.kind}>
+    <figure
+      className="relative min-h-0 min-w-0 overflow-hidden bg-black"
+      data-testid={testId}
+      data-state={state.kind}
+      data-endpoint={endpoint}
+      onDoubleClick={onDoubleClick}
+    >
       <video ref={videoRef} className="absolute inset-0 h-full w-full object-contain" muted autoPlay playsInline disablePictureInPicture />
 
       {state.kind === 'failed' && (
@@ -70,6 +79,7 @@ export default function VideoTile({ label, endpoint, testId }: VideoTileProps) {
         <span className="truncate text-ink">{label}</span>
         <StateBadge state={state} />
       </figcaption>
+      {children}
     </figure>
   );
 }

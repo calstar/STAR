@@ -1,9 +1,10 @@
 /** The stream editor's rules (lib/video/editor.ts): ids from labels, and what a save sends. */
 import { describe, it, expect } from 'vitest';
-import { draftsFrom, isDirty, newDraft, slugId, toSave, withLabel } from '@/lib/video/editor';
+import { draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, slugId, toSave, withLabel, withPreset } from '@/lib/video/editor';
 
 const loaded = {
   revision: 'r1',
+  layout: { preset: '1+5' as const, slots: [null, 'pad', null, null, null, null] },
   streams: [
     { id: 'pad', label: 'Pad overview', kind: 'rtsp' as const, url: 'rtsp://192.0.2.10/main', lowResUrl: 'rtsp://192.0.2.10/sub', record: true, username: 'admin', passwordSet: true },
   ],
@@ -57,5 +58,29 @@ describe('saving', () => {
     expect(isDirty([{ ...orig[0], label: 'x' }], orig)).toBe(true);
     expect(isDirty([{ ...orig[0], newPassword: 'p' }], orig)).toBe(true);
     expect(isDirty([], orig)).toBe(true);
+  });
+});
+
+describe('layout in the editor', () => {
+  it('slots follow a stream through an id change, and resolve to ids on save', () => {
+    const drafts = [...draftsFrom(loaded), newDraft(draftsFrom(loaded))];
+    let layout = draftLayoutFrom(loaded.layout, drafts);
+    expect(layout.slots[1]).toBe(drafts[0].key);
+    layout = { ...layout, slots: [drafts[1].key, ...layout.slots.slice(1)] };
+    const renamed = withLabel(drafts, drafts[1].key, 'Engine');
+    expect(layoutIds(layout, renamed)).toEqual({ preset: '1+5', slots: ['engine', 'pad', null, null, null, null] });
+  });
+
+  it('a removed stream leaves an empty slot', () => {
+    const drafts = draftsFrom(loaded);
+    const layout = draftLayoutFrom(loaded.layout, drafts);
+    expect(layoutIds(layout, []).slots).toEqual([null, null, null, null, null, null]);
+  });
+
+  it('changing preset keeps the slots that still fit', () => {
+    const l = { preset: '1+5' as const, slots: ['a', 'b', 'c', null, null, 'f'] };
+    expect(withPreset(l, '2x2')).toEqual({ preset: '2x2', slots: ['a', 'b', 'c', null] });
+    expect(withPreset(l, '1+7').slots).toEqual(['a', 'b', 'c', null, null, 'f', null, null]);
+    expect(withPreset(l, 'auto')).toEqual({ preset: 'auto', slots: [] });
   });
 });

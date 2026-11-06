@@ -19,7 +19,7 @@ const SECRETS = join(dir, 'video.secrets.json');
 process.env.VIDEO_CONFIG_PATH = CONFIG;
 process.env.VIDEO_SECRETS_PATH = SECRETS;
 
-const { validateVideoConfig, loadVideoConfig, publicStream } = await import('../video/config.js');
+const { validateVideoConfig, validateLayout, loadVideoConfig, publicStream, LAYOUT_PRESETS } = await import('../video/config.js');
 const { cameraSource, desiredPaths, reconcile, gatewayEndpointFromEnv } = await import('../video/gateway.js');
 const { VideoService } = await import('../video/service.js');
 const { handleVideoRequest } = await import('../video/routes.js');
@@ -65,7 +65,7 @@ describe('video config validation', () => {
   it('a missing file is an empty config, not an error', () => {
     rmSync(CONFIG, { force: true });
     rmSync(SECRETS, { force: true });
-    expect(loadVideoConfig()).toEqual({ config: { version: 1, streams: [] }, secrets: { streams: {} }, errors: [] });
+    expect(loadVideoConfig()).toEqual({ config: { version: 1, streams: [], layout: { preset: 'auto', slots: [] } }, secrets: { streams: {} }, errors: [] });
   });
 
   it('a corrupt secrets file is reported without echoing its contents', () => {
@@ -112,7 +112,7 @@ describe('reconcile', () => {
   });
 
   const desired = (streams: any[], secrets = {}) =>
-    desiredPaths({ config: { version: 1, streams }, secrets: { streams: secrets } });
+    desiredPaths({ config: { version: 1, streams, layout: { preset: 'auto', slots: [] } }, secrets: { streams: secrets } });
 
   it('adds, then is a no-op on the second pass', async () => {
     const want = desired([pad]);
@@ -305,7 +305,7 @@ describe('editing from the pane', () => {
   afterAll(() => { whep.close(); api.close(); });
 
   beforeEach(() => {
-    writeFileSync(CONFIG, JSON.stringify({ version: 1, streams: [pad], layout: { preset: '2x2' } }));
+    writeFileSync(CONFIG, JSON.stringify({ version: 1, streams: [pad], layout: { preset: '2x2', slots: ['pad', null, null, null] }, notes: 'kept' }));
     writeSecrets({ pad: { username: 'admin', password: PASSWORD } });
   });
 
@@ -324,7 +324,8 @@ describe('editing from the pane', () => {
     expect(r.text).not.toContain(PASSWORD);
     const file = JSON.parse(readFileSync(CONFIG, 'utf8'));
     expect(file.streams.map((s: any) => s.label)).toEqual(['Pad wide', 'Engine']);
-    expect(file.layout).toEqual({ preset: '2x2' }); // other keys survive
+    expect(file.notes).toBe('kept'); // other keys survive
+    expect(file.layout).toEqual({ preset: '2x2', slots: ['pad', null, null, null] }); // no layout sent: kept
     expect(JSON.stringify(file)).not.toMatch(/pass/);
     const secrets = JSON.parse(readFileSync(SECRETS, 'utf8'));
     expect(secrets.streams).toEqual({ pad: { username: 'admin', password: PASSWORD }, eng: { username: 'op', password: 'eng-pass' } });
@@ -399,5 +400,97 @@ describe('editing from the pane', () => {
   it('refuses a preview of a URL with credentials in it', async () => {
     const r = await call('POST', '/api/video/previews', { url: 'rtsp://u:p@192.0.2.20/new' });
     expect(r.status).toBe(400);
+  });
+});
+
+describe('layout', () => {
+  const ids = new Set(['pad', 'eng']);
+
+  it('defaults to auto, and normalises slots to the preset', () => {
+    expect(validateLayout(undefined, ids)).toEqual({ layout: { preset: 'auto', slots: [] }, errors: [] });
+    expect(validateLayout({ preset: '2x2', slots: ['pad'] }, ids).layout).toEqual({ preset: '2x2', slots: ['pad', null, null, null] });
+    expect(validateLayout({ preset: '1x1', slots: ['eng', 'pad'] }, ids).layout).toEqual({ preset: '1x1', slots: ['eng'] });
+  });
+
+  it('empties a slot whose stream is gone, rather than failing', () => {
+    expect(validateLayout({ preset: '2x2', slots: ['gone', 'pad', 7, null] }, ids)).toEqual({
+      layout: { preset: '2x2', slots: [null, 'pad', null, null] }, errors: [],
+    });
+  });
+
+  it('reports an unknown preset and falls back to auto', () => {
+    const r = validateLayout({ preset: '5x5', slots: [] }, ids);
+    expect(r.layout.preset).toBe('auto');
+    expect(r.errors[0]).toMatch(/5x5/);
+  });
+
+  it('slot counts match the frontend presets', async () => {
+    const { PRESET_SLOT_COUNTS } = await import('../../../frontend/lib/video/layout.js');
+    expect(PRESET_SLOT_COUNTS).toEqual(LAYOUT_PRESETS);
+  });
+
+  it('a low-res URL becomes its own gateway path with the same credentials', () => {
+    const paths = desiredPaths({
+      config: { version: 1, streams: [{ ...pad, lowResUrl: 'rtsp://192.0.2.10/sub' } as any], layout: { preset: 'auto', slots: [] } },
+      secrets: { streams: { pad: { username: 'u', password: 'p' } } },
+    });
+    expect([...paths]).toEqual([
+      ['raw/pad', { source: 'rtsp://u:p@192.0.2.10:554/stream1' }],
+      ['raw/pad/low', { source: 'rtsp://u:p@192.0.2.10/sub' }],
+    ]);
+  });
+});
+
+describe('layout over HTTP', () => {
+  let whep: http.Server;
+  let api: http.Server;
+  let apiUrl = '';
+  const seen: string[] = [];
+
+  beforeAll(async () => {
+    whep = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      req.resume();
+      req.on('end', () => { res.writeHead(201, { 'Content-Type': 'application/sdp', Location: `${req.url}/1234abcd-0000-4000-8000-000000000000` }); res.end('v=0'); });
+    });
+    await new Promise<void>((r) => whep.listen(0, '127.0.0.1', r));
+    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}` }, new FakeGateway());
+    api = http.createServer(async (req, res) => { await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc); });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    apiUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+  });
+  afterAll(() => { whep.close(); api.close(); });
+
+  beforeEach(() => {
+    writeConfig([{ ...pad, lowResUrl: 'rtsp://192.0.2.10/sub' }, { ...pad, id: 'eng', label: 'Engine' }]);
+    rmSync(SECRETS, { force: true });
+  });
+
+  it('the low-res route proxies to raw/<id>/low, and only for streams that have one', async () => {
+    const ok = await fetch(`${apiUrl}/api/video/streams/pad/low/whep`, { method: 'POST', body: 'v=0' });
+    expect(ok.status).toBe(201);
+    expect(ok.headers.get('location')).toBe('/api/video/streams/pad/low/whep/1234abcd-0000-4000-8000-000000000000');
+    expect(seen.at(-1)).toBe('POST /raw/pad/low/whep');
+    expect((await fetch(`${apiUrl}/api/video/streams/eng/low/whep`, { method: 'POST', body: 'v=0' })).status).toBe(404);
+  });
+
+  it('saves a layout, rejects an unknown preset, and lists the layout to viewers', async () => {
+    const cfg = await (await fetch(`${apiUrl}/api/video/config`)).json();
+    const put = (layout: unknown, revision = cfg.revision) => fetch(`${apiUrl}/api/video/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revision, streams: cfg.streams.map(({ username, passwordSet, ...st }: any) => st), layout }),
+    });
+    expect((await put({ preset: 'huge', slots: [] })).status).toBe(400);
+    const saved = await (await put({ preset: '1+5', slots: ['eng', 'pad'] })).json();
+    expect(saved.layout).toEqual({ preset: '1+5', slots: ['eng', 'pad', null, null, null, null] });
+    const view = await (await fetch(`${apiUrl}/api/video/streams`)).json();
+    expect(view.layout).toEqual(saved.layout);
+
+    // Removing a stream empties its slot.
+    const put2 = await fetch(`${apiUrl}/api/video/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revision: saved.revision, streams: [pad] }),
+    });
+    expect((await put2.json()).layout).toEqual({ preset: '1+5', slots: [null, 'pad', null, null, null, null] });
   });
 });

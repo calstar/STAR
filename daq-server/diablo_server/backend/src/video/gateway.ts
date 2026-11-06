@@ -17,8 +17,9 @@ import type { LoadedVideoConfig, VideoStream, VideoSecrets } from './config.js';
 
 export const MANAGED_PREFIX = 'raw/';
 
-export function gatewayPathFor(streamId: string): string {
-  return `${MANAGED_PREFIX}${streamId}`;
+/** `raw/<id>` pulls a stream's main URL; `raw/<id>/low` its low-res URL, when it has one. */
+export function gatewayPathFor(streamId: string, low = false): string {
+  return `${MANAGED_PREFIX}${streamId}${low ? '/low' : ''}`;
 }
 
 /** Path settings the backend sets. Everything else is the gateway's pathDefaults. */
@@ -27,8 +28,8 @@ export interface ManagedPathConf {
 }
 
 /** The camera URL the gateway pulls: the configured URL with this machine's credentials. */
-export function cameraSource(stream: VideoStream, secrets: VideoSecrets): string {
-  return withCredentials(stream.url, secrets.streams[stream.id]);
+export function cameraSource(stream: VideoStream, secrets: VideoSecrets, low = false): string {
+  return withCredentials(low && stream.lowResUrl ? stream.lowResUrl : stream.url, secrets.streams[stream.id]);
 }
 
 export function withCredentials(url: string, secret: { username?: string; password?: string } | undefined): string {
@@ -44,7 +45,11 @@ export const PREVIEW_PREFIX = 'preview/';
 
 export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets'>): Map<string, ManagedPathConf> {
   const out = new Map<string, ManagedPathConf>();
-  for (const s of loaded.config.streams) out.set(gatewayPathFor(s.id), { source: cameraSource(s, loaded.secrets) });
+  for (const s of loaded.config.streams) {
+    out.set(gatewayPathFor(s.id), { source: cameraSource(s, loaded.secrets) });
+    // Same camera, same credentials, its sub stream. Pulled only while a small tile shows it.
+    if (s.lowResUrl) out.set(gatewayPathFor(s.id, true), { source: cameraSource(s, loaded.secrets, true) });
+  }
   return out;
 }
 

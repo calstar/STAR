@@ -8,6 +8,7 @@
  *   DELETE /api/video/previews/:id                    drop that preview
  *   POST   /api/video/{streams|previews}/:id/whep     WHEP offer -> gateway, answer back (201)
  *   DELETE /api/video/{streams|previews}/:id/whep/:s  end that WebRTC session
+ *   ...    /api/video/streams/:id/low/whep[/:s]       the same, for a stream's low-res URL
  *
  * The WHEP routes are a proxy, so a browser's handshake travels the same origin and the same
  * sign-in as the rest of the GUI, and the gateway's HTTP side never faces the LAN. Only the
@@ -141,7 +142,7 @@ export async function handleVideoRequest(
   try {
     if (pathname === '/api/video/streams' && req.method === 'GET') {
       const { config, errors } = video.current();
-      sendJson(res, 200, { streams: config.streams.map(publicStream), errors, gateway: video.gatewayStatus() });
+      sendJson(res, 200, { streams: config.streams.map(publicStream), layout: config.layout, errors, gateway: video.gatewayStatus() });
       return true;
     }
 
@@ -153,7 +154,7 @@ export async function handleVideoRequest(
     if (pathname === '/api/video/config' && req.method === 'PUT') {
       const body = await readJson(req);
       const saved = saveVideoConfig(
-        { streams: body.streams, credentials: credentialsFrom(body.credentials) },
+        { streams: body.streams, layout: body.layout, credentials: credentialsFrom(body.credentials) },
         typeof body.revision === 'string' ? body.revision : '',
       );
       await video.sync(); // live for everyone now, not at the next tick
@@ -181,18 +182,20 @@ export async function handleVideoRequest(
       return true;
     }
 
-    const whep = pathname.match(/^\/api\/video\/(streams|previews)\/([^/]+)\/whep(?:\/([^/]+))?$/);
+    const whep = pathname.match(/^\/api\/video\/(streams|previews)\/([^/]+)(\/low)?\/whep(?:\/([^/]+))?$/);
     if (whep) {
-      const [, kind, id, session] = whep;
-      const routeBase = `/api/video/${kind}/${id}`;
+      const [, kind, id, lowPart, session] = whep;
+      const low = !!lowPart;
+      const routeBase = `/api/video/${kind}/${id}${low ? '/low' : ''}`;
       if (kind === 'streams') {
-        if (!STREAM_ID_RE.test(id) || !video.current().config.streams.some((s) => s.id === id)) {
-          sendJson(res, 404, { error: `no stream "${id}"` });
+        const stream = STREAM_ID_RE.test(id) ? video.current().config.streams.find((s) => s.id === id) : undefined;
+        if (!stream || (low && !stream.lowResUrl)) {
+          sendJson(res, 404, { error: low ? `no low-res stream "${id}"` : `no stream "${id}"` });
           return true;
         }
-        await proxyWhep(req, res, video, gatewayPathFor(id), routeBase, session);
+        await proxyWhep(req, res, video, gatewayPathFor(id, low), routeBase, session);
       } else {
-        if (!PREVIEW_ID_RE.test(id) || !video.hasPreview(id)) {
+        if (low || !PREVIEW_ID_RE.test(id) || !video.hasPreview(id)) {
           sendJson(res, 404, { error: 'preview expired' });
           return true;
         }

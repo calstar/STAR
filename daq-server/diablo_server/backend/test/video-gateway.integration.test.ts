@@ -109,7 +109,8 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
 
     writeFileSync(process.env.VIDEO_CONFIG_PATH!, JSON.stringify({
       version: 1,
-      streams: [{ id: 'cam1', label: 'Test pattern', kind: 'rtsp', url: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, record: true }],
+      // The low-res URL is the same camera here; what matters is that raw/cam1/low is its own path.
+      streams: [{ id: 'cam1', label: 'Test pattern', kind: 'rtsp', url: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, lowResUrl: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, record: true }],
     }));
 
     await startGateway();
@@ -156,7 +157,7 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     try {
       const page = await browser.newPage();
       await page.goto(`http://127.0.0.1:${ports.backend}/`);
-      const probe = (withAudio: boolean) => page.evaluate(async (withAudio) => {
+      const probe = (withAudio: boolean, route = '/api/video/streams/cam1/whep') => page.evaluate(async ([withAudio, route]) => {
         const pc = new RTCPeerConnection({ iceServers: [] });
         pc.addTransceiver('video', { direction: 'recvonly' });
         if (withAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
@@ -169,7 +170,7 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
           pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') r(); };
           setTimeout(r, 2000);
         });
-        const res = await fetch('/api/video/streams/cam1/whep', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const res = await fetch(route as string, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
         const answer = await res.text();
         if (res.status !== 201) return { status: res.status, answer, frames: 0, audioPackets: 0, mlines: [] as string[], location: null };
         await pc.setRemoteDescription({ type: 'answer', sdp: answer });
@@ -183,7 +184,7 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
         pc.close(); v.remove();
         if (location) await fetch(location, { method: 'DELETE' });
         return { status: res.status, frames, audioPackets, mlines: answer.split(/\r?\n/).filter((l) => l.startsWith('m=')).map((l) => l.split(' ')[0]), location };
-      }, withAudio);
+      }, [withAudio, route] as const);
 
       const pane = await probe(false);
       expect(pane.status, gatewayLog.slice(-2000)).toBe(201);
@@ -195,6 +196,13 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
       const control = await probe(true);
       expect(control.mlines).toEqual(['m=video', 'm=audio']);
       expect(control.audioPackets).toBeGreaterThan(0);
+
+      // The low-res path: its own gateway path (raw/cam1/low), same proxy, same video-only rule.
+      const low = await probe(false, '/api/video/streams/cam1/low/whep');
+      expect(low.status, gatewayLog.slice(-2000)).toBe(201);
+      expect(low.location).toMatch(/^\/api\/video\/streams\/cam1\/low\/whep\/[0-9a-f-]+$/);
+      expect(low.frames).toBeGreaterThan(10);
+      expect(low.audioPackets).toBe(0);
     } finally {
       await browser.close();
     }

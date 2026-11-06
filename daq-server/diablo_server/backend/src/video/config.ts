@@ -30,9 +30,26 @@ export interface RtspStream {
 
 export type VideoStream = RtspStream;
 
+/**
+ * The stand layout: a preset and which stream each of its slots shows (null = empty).
+ * 'auto' has no slots of its own -- every stream, in list order, on an even grid.
+ * Slot counts live here; the geometry (which slot is the large one, where each sits) is
+ * the frontend's (lib/video/layout.ts), and a test holds the two counts together.
+ */
+export const LAYOUT_PRESETS = { auto: 0, '1x1': 1, '2x2': 4, '3x3': 9, '1+5': 6, '1+7': 8 } as const;
+export type LayoutPreset = keyof typeof LAYOUT_PRESETS;
+
+export interface VideoLayout {
+  preset: LayoutPreset;
+  slots: (string | null)[];
+}
+
+export const AUTO_LAYOUT: VideoLayout = { preset: 'auto', slots: [] };
+
 export interface VideoConfig {
   version: 1;
   streams: VideoStream[];
+  layout: VideoLayout;
 }
 
 export interface StreamSecret {
@@ -63,7 +80,7 @@ export function videoSecretsPath(): string {
   return process.env.VIDEO_SECRETS_PATH || join(dirname(videoConfigPath()), 'video.secrets.json');
 }
 
-export const EMPTY_CONFIG: VideoConfig = { version: 1, streams: [] };
+export const EMPTY_CONFIG: VideoConfig = { version: 1, streams: [], layout: AUTO_LAYOUT };
 
 export function checkRtspUrl(value: unknown, field: string, errors: string[]): string | undefined {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -93,6 +110,27 @@ export function checkRtspUrl(value: unknown, field: string, errors: string[]): s
 }
 
 /**
+ * Validate a layout against the streams that exist. An unknown preset is an error (and reads
+ * as 'auto'); a slot naming a stream that no longer exists is simply empty -- removing a
+ * stream empties its slots, it does not break the layout.
+ */
+export function validateLayout(raw: unknown, streamIds: Set<string>): { layout: VideoLayout; errors: string[] } {
+  if (raw === undefined || raw === null) return { layout: { ...AUTO_LAYOUT, slots: [] }, errors: [] };
+  const r = raw as Record<string, unknown>;
+  if (typeof r !== 'object' || typeof r.preset !== 'string' || !(r.preset in LAYOUT_PRESETS)) {
+    return { layout: { ...AUTO_LAYOUT, slots: [] }, errors: [`unknown layout preset ${JSON.stringify(r?.preset)}`] };
+  }
+  const preset = r.preset as LayoutPreset;
+  const n = LAYOUT_PRESETS[preset];
+  const given = Array.isArray(r.slots) ? r.slots : [];
+  const slots = Array.from({ length: n }, (_, i) => {
+    const v = given[i];
+    return typeof v === 'string' && streamIds.has(v) ? v : null;
+  });
+  return { layout: { preset, slots }, errors: [] };
+}
+
+/**
  * Validate a parsed video.json. Returns the streams that are well-formed and an error per
  * problem; a malformed stream is dropped rather than poisoning the rest, so one typo does
  * not black out every tile.
@@ -100,7 +138,7 @@ export function checkRtspUrl(value: unknown, field: string, errors: string[]): s
 export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors: string[] } {
   const errors: string[] = [];
   if (!raw || typeof raw !== 'object') {
-    return { config: { ...EMPTY_CONFIG, streams: [] }, errors: ['video config is not a JSON object'] };
+    return { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] } }, errors: ['video config is not a JSON object'] };
   }
   const obj = raw as Record<string, unknown>;
   if (obj.version !== 1) errors.push(`unsupported video config version ${String(obj.version)}`);
@@ -136,7 +174,9 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
       record: s.record !== false,
     });
   });
-  return { config: { version: 1, streams }, errors };
+  const l = validateLayout(obj.layout, new Set(streams.map((s) => s.id)));
+  errors.push(...l.errors);
+  return { config: { version: 1, streams, layout: l.layout }, errors };
 }
 
 export function validateVideoSecrets(raw: unknown): { secrets: VideoSecrets; errors: string[] } {
@@ -178,7 +218,7 @@ export function loadVideoConfig(): LoadedVideoConfig {
   const errors: string[] = [];
   const c = readJson(videoConfigPath());
   if (c.error) errors.push(c.error);
-  const vc = c.value === undefined ? { config: { ...EMPTY_CONFIG, streams: [] }, errors: [] } : validateVideoConfig(c.value);
+  const vc = c.value === undefined ? { config: { ...EMPTY_CONFIG, streams: [], layout: { ...AUTO_LAYOUT, slots: [] } }, errors: [] } : validateVideoConfig(c.value);
   errors.push(...vc.errors);
   const s = readJson(videoSecretsPath());
   // Never echo the secrets file's contents: a parse error says the file is bad, not what is in it.
@@ -206,6 +246,7 @@ export interface EditableConfig {
    *  overwrite each other. */
   revision: string;
   streams: EditableStream[];
+  layout: VideoLayout;
 }
 
 /** Per-stream credential change. username: set ('' clears). password: undefined keeps the
@@ -238,6 +279,7 @@ export function editableConfig(): EditableConfig {
       username: secrets.streams[s.id]?.username ?? '',
       passwordSet: !!secrets.streams[s.id]?.password,
     })),
+    layout: config.layout,
   };
 }
 
@@ -256,7 +298,7 @@ function writeAtomic(path: string, text: string, mode?: number): void {
  * dropped with them.
  */
 export function saveVideoConfig(
-  input: { streams: unknown; credentials?: Record<string, CredentialChange> },
+  input: { streams: unknown; layout?: unknown; credentials?: Record<string, CredentialChange> },
   baseRevision: string,
 ): EditableConfig {
   const configPath = videoConfigPath();
@@ -267,6 +309,11 @@ export function saveVideoConfig(
   const { config, errors } = validateVideoConfig({ version: 1, streams: input.streams });
   // Validation drops bad streams; a save must not silently lose one, so any error rejects it.
   if (errors.length) throw new VideoConfigError(400, errors);
+  // No layout in the request keeps the saved one (re-checked against the new stream list).
+  let currentLayout: unknown;
+  try { currentLayout = currentText ? JSON.parse(currentText).layout : undefined; } catch { currentLayout = undefined; }
+  const l = validateLayout(input.layout === undefined ? currentLayout : input.layout, new Set(config.streams.map((s) => s.id)));
+  if (input.layout !== undefined && l.errors.length) throw new VideoConfigError(400, l.errors);
 
   let current: Record<string, unknown> = {};
   try { current = currentText ? JSON.parse(currentText) : {}; } catch { current = {}; }
@@ -285,7 +332,7 @@ export function saveVideoConfig(
     if (next.username || next.password) nextSecrets.streams[s.id] = next;
   }
 
-  writeAtomic(configPath, JSON.stringify({ ...current, version: 1, streams: config.streams }, null, 2) + '\n');
+  writeAtomic(configPath, JSON.stringify({ ...current, version: 1, streams: config.streams, layout: l.layout }, null, 2) + '\n');
   writeAtomic(videoSecretsPath(), JSON.stringify(nextSecrets, null, 2) + '\n', 0o600);
   return editableConfig();
 }
