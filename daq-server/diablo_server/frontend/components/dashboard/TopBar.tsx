@@ -488,18 +488,19 @@ export default function TopBar() {
       </div>
 
       {/* ── The strip: the transducers as bars, the board notes, and the command stack.
-            One row of three from xl up. Narrower, sharing a row gave ten gauges ~10 px of
-            capsule each and their readouts ran together, so:
-              lg..xl (landscape tablet, small laptop) -- bars over a short notes row, the
-                command stack down the right beside both, keeping the header short;
+            One row of three from lg up -- a landscape tablet is short (~726 px under Safari's
+            bars), and a second header row cost the actuators and state machine below the
+            room they need. lg narrows the notes and the stack so ten gauges keep their
+            64 px floor at 1180 px. Below lg, sharing a row gave the gauges ~10 px of capsule
+            each and the readouts ran together, so:
               sm..lg (portrait tablet) -- bars full width, notes and stack side by side;
               phone -- all three stacked. */}
-      <div className="grid grid-cols-1 border-t border-line px-4 sm:grid-cols-[minmax(0,1fr)_minmax(260px,330px)] sm:px-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)] xl:h-[max(15vh,150px)] xl:grid-cols-[minmax(0,1fr)_minmax(200px,15vw)_minmax(280px,330px)] min-[1400px]:px-8">
-        <section className="flex h-[clamp(130px,17vh,170px)] min-h-0 min-w-0 flex-col border-b border-line py-3 sm:col-span-2 lg:col-span-1 lg:col-start-1 lg:row-start-1 lg:pr-5 xl:h-auto xl:border-b-0 xl:pr-6">
+      <div className="grid grid-cols-1 border-t border-line px-4 sm:grid-cols-[minmax(0,1fr)_minmax(260px,330px)] sm:px-5 lg:h-[max(15vh,150px)] lg:grid-cols-[minmax(0,1fr)_minmax(170px,14vw)_minmax(220px,240px)] xl:grid-cols-[minmax(0,1fr)_minmax(200px,15vw)_minmax(280px,330px)] min-[1400px]:px-8">
+        <section className="flex h-[clamp(130px,17vh,170px)] min-h-0 min-w-0 flex-col border-b border-line py-3 sm:col-span-2 lg:col-span-1 lg:h-auto lg:border-b-0 lg:pr-5 xl:pr-6">
           <h2 className="caps mb-2 flex-shrink-0 text-[11px]" title="Gauge: the stand's transducers and its log files read psig. Hotbench shows psia; add 14.7 to compare.">Pressure · psig</h2>
           {/* Each gauge keeps a minimum width (ReactivePressureBar); past that the row
               scrolls sideways instead of overlapping the readouts. */}
-          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]">
+          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin] lg:gap-1.5 xl:gap-2">
             {effectivePressureBars.map(({ label, entity, nop, meop, showLimits, color, avgEntities }) => (
               <ReactivePressureBar
                 key={entity}
@@ -515,11 +516,11 @@ export default function TopBar() {
           </div>
         </section>
 
-        <section className="flex h-[150px] min-h-0 min-w-0 flex-col py-3 sm:pr-5 lg:col-start-1 lg:row-start-2 lg:h-[84px] lg:py-2 xl:col-start-2 xl:row-start-1 xl:h-auto xl:border-l xl:border-line xl:px-5 xl:py-3">
+        <section className="flex h-[150px] min-h-0 min-w-0 flex-col py-3 sm:pr-5 lg:h-auto lg:border-l lg:border-line lg:px-3 xl:px-5">
           <NotificationPanel />
         </section>
 
-        <section className="flex h-[150px] min-h-0 min-w-0 flex-col gap-2 border-t border-line py-3 sm:border-l sm:border-t-0 sm:pl-5 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:h-auto xl:col-start-3 xl:row-span-1">
+        <section className="flex h-[150px] min-h-0 min-w-0 flex-col gap-2 border-t border-line py-3 sm:border-l sm:border-t-0 sm:pl-5 lg:h-auto lg:pl-4 xl:pl-5">
           <div className="flex flex-shrink-0 items-baseline justify-between gap-3">
             <span className="caps text-[11px]">State</span>
             <span className={`truncate font-mono text-[clamp(14px,1.7vh,22px)] font-bold uppercase tracking-[0.12em] ${stateColor}`}>

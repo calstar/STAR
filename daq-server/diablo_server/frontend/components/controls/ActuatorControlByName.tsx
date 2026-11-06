@@ -59,20 +59,20 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
       </div>
       {/* min-h, not min-h-0: this is the only shrinkable row, so a short tile used to
           take all of its squeeze out of the name and draw an unlabeled valve. */}
-      <div className="flex min-h-[1.25rem] flex-1 items-center overflow-hidden pr-4">
+      <div className="flex min-h-[1.125rem] flex-1 items-center overflow-hidden pr-4">
         <h3 className="truncate text-[12px] font-semibold leading-tight text-ink xl:text-[13px]">{name}</h3>
       </div>
       <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
         <span
           data-testid={`actuator-reading:${name}`}
-          className="font-mono text-[10px] tabular-nums text-ink-3"
+          className="font-mono text-[10px] leading-none tabular-nums text-ink-3"
         >
           {ballValve
             ? formatBallValvePosition(positionPct, positionStatus, commanded)
             : currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
         </span>
       </div>
-      <div className="mt-1 grid min-h-0 flex-shrink-0 grid-cols-2 gap-1">
+      <div className="mt-1 grid min-h-0 flex-shrink-0 grid-cols-2 gap-1 lg:mt-0.5 xl:mt-1">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}

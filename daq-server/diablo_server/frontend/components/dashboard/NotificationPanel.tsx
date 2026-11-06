@@ -71,7 +71,7 @@ export default function NotificationPanel() {
 
   return (
     <div className="flex h-full w-full min-w-[150px] flex-shrink-0 flex-col">
-      <div className="mb-2 flex flex-shrink-0 items-baseline justify-between gap-2">
+      <div className="mb-2 flex flex-shrink-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
         <h2 className="caps text-[11px]">Notifications</h2>
         <button
           type="button"
