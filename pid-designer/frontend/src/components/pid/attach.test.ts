@@ -278,6 +278,22 @@ describe('the leaders drawn', () => {
     // The same probes, all shown, all draw.
     expect(dots([...nodes, probe('TC1', 'A-B'), probe('TC3', 'B')], edges).size).toBe(2);
   });
+
+  it('lands on a tank\'s wall facing the probe, not on the readout at its centre', () => {
+    // LE4 (3)'s COPV-RTD: up and to the right of the COPV, whose leader's
+    // dot sat on "3764.7 psia". The barrel's walls are at x 6 and 54 of the
+    // tank's 60; its readout is printed from y 55 down.
+    const tank = node('COPV', 'TANK', 300, 40, 60, 100);
+    const rtd = { ...probe('RTD1', 'COPV'), position: { x: 400, y: 0 } } as Node;
+    const dot = dots([tank, rtd], []).get('RTD1')!;
+    expect(dot.x).toBeCloseTo(300 + 54, 6);
+    expect(dot.y).toBeLessThan(40 + 55 - 8);
+    expect(dot.y).toBeGreaterThan(40 + 10);
+    // Anything else is still landed on at its centre.
+    const valve = node('SOL', 'SOL', 300, 40);
+    expect(dots([valve, { ...probe('TC1', 'SOL'), position: { x: 400, y: 0 } } as Node], []).get('TC1'))
+      .toEqual({ x: 330, y: 70 });
+  });
 });
 
 describe('a probe on a line that is replaced', () => {

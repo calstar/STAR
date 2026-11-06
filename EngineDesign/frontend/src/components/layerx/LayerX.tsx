@@ -713,7 +713,16 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
   const activeWord = activeJob ? KIND_WORD[activeJob.kind ?? 'run'] ?? 'run' : '';
 
   return (
-    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]" style={SANS}>
+    <div style={SANS}>
+    {/* The old GUI is kept for one release (App.tsx). It grades with the limits it shipped with, so the same
+        burn read 'Within limits, 2 to check' here and 'Breaks 1 limit' in Layer X: say so, and where to look. */}
+    <div role="note" className="mb-5 rounded-md border border-[var(--color-warning)]/50 bg-[var(--color-warning)]/10 px-3 py-2 text-[12px] text-[var(--color-text-secondary)]">
+      <strong className="font-medium text-[var(--color-text-primary)]">The old Layer X, superseded.</strong>{' '}
+      It grades a burn with its own older limits and can disagree with Layer X (a burn ‘Within limits’ here broke a limit there).
+      Grade a burn in{' '}
+      <a className="text-[var(--color-accent)] hover:underline" href={(() => { const q = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search); q.delete('lx'); const t = q.toString(); return t ? `?${t}` : '?'; })()}>Layer X</a>.
+    </div>
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[18rem_minmax(0,1fr)]">
       {/* ---------------------------------------------------------------- setup rail */}
       <aside className="space-y-5 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto lg:pr-2">
         <Group title="Feed system">
@@ -969,6 +978,7 @@ export function LayerX({ config, isVisible, onConfigUpdated }: {
           )}
         </>}
       </main>
+    </div>
     </div>
   );
 }

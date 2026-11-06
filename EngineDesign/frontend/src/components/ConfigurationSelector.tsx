@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSwitchOptions, switchConfig, type SwitchOptions, type EngineConfig } from '../api/client';
 import { emitConfigChanged, useConfigChanged } from '../lib/configBus';
+import { switchChips, type SwitchChip } from '../lib/switchWarnings';
 import { useReadOnly } from '@stardesign-ui';
 
 declare const __API_PORT__: string
@@ -35,7 +36,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
   const [opts, setOpts] = useState<SwitchOptions | null>(null);
   const [busy, setBusy] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [designWarning, setDesignWarning] = useState<string | null>(null);
+  const [chips, setChips] = useState<SwitchChip[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const applyOptions = (res: Awaited<ReturnType<typeof getSwitchOptions>>) => {
@@ -69,7 +70,7 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
       return;
     }
     setWarnings(res.data.binding_warnings ?? []);
-    setDesignWarning(res.data.design_warning ?? null);
+    setChips(switchChips(res.data));
     // Optimistically move the dropdowns to the switch we just made. The <select>s
     // are driven by opts.current, which otherwise only updates when the trailing
     // loadOptions() round-trip lands -- so without this the controlled value snaps
@@ -154,11 +155,11 @@ export default function ConfigurationSelector({ onConfigChange }: Props) {
           ⚠ {warnings.length} binding warning{warnings.length > 1 ? 's' : ''}
         </span>
       )}
-      {designWarning && (
-        <span className="text-xs text-amber-500" title={designWarning}>
-          ⚠ needs re-optimization
+      {chips.map((c) => (
+        <span key={c.label} className="text-xs text-amber-500" title={c.title}>
+          ⚠ {c.label}
         </span>
-      )}
+      ))}
     </div>
   );
 }

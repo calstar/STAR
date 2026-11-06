@@ -59,3 +59,104 @@ def test_reading_the_lockup_moves_nothing() -> None:
     for loaded in (False, True):
         regulator_lockup(session, tank_id, loaded_dome=loaded)
         assert {v: session._positions[v] for v in moving} == moving
+
+
+def test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle() -> None:
+    """A regulator delivers no more than its inlet. A bottle charged under the
+    lockup leaves the regulator wide open and the tanks where the bottle is: by
+    hand, 200 psig of helium presses the tanks to at most 200 psig. T-0 primed
+    them at the 560 psig the regulator's law gives, from gas the bottle never
+    had (LE4 (3), COPV 400 psig: tanks at 579 psig)."""
+    session = _helium_stand()
+    t0 = jump_to_t0(session, copv_psi=200.0, fill_fraction=0.9)
+    bottle = next(iter(session.bottles.values()))
+    assert psig(bottle.pressure) == pytest.approx(200.0, abs=1.0)
+    for sim in session.tanks.values():
+        assert psig(sim.pressure) <= psig(bottle.pressure) + 0.5
+        assert psig(sim.pressure) == pytest.approx(200.0, abs=1.0)
+    assert t0.tank_psi == pytest.approx(200.0, abs=1.0)
+    # The regulator's own lockup is still reported, and the note says why the
+    # tanks are not at it.
+    assert all(v > 500.0 for v in t0.lockup_psi.values())
+    assert any("wide open" in n for n in t0.notes)
+
+
+def test_regulators_apart_over_a_low_bottle_say_where_the_tanks_went(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two regulators locking up 20 psi apart over a 200 psig bottle. The first
+    note said "every tank was primed at 574.7 psia" -- the lower lockup -- and
+    the next that they were primed at the bottle. They went to the bottle, and
+    both notes say so."""
+    import feedtwin.session.burn as burn
+
+    session = _helium_stand()
+    first, second = session.vehicle_tanks
+    apart = {first: from_psig(560.0), second: from_psig(580.0)}
+    monkeypatch.setattr(
+        burn, "regulator_lockup", lambda _s, tank_id, *_a, **_k: apart[tank_id]
+    )
+    t0 = jump_to_t0(session, copv_psi=200.0, fill_fraction=0.9)
+    assert t0.tank_psi == pytest.approx(200.0, abs=1.0)
+    (spread,) = [n for n in t0.notes if "lock up at" in n]
+    assert spread.endswith("every tank was primed at 214.7 psia."), spread
+    assert any("wide open" in n for n in t0.notes)
+
+
+def test_subcooled_lox_over_its_critical_pressure_is_not_critical() -> None:
+    """Dome 735 on LE4: both tanks lock up at ~745 psia, over oxygen's 731 psia
+    critical pressure, and Ready said "LOX-Tank is at its propellant's critical
+    pressure and the model can go no higher. The drawing has no relief valve" --
+    with the tank above it, and a relief drawn. 90 K LOX under nitrogen is an
+    ordinary compressed liquid; what nears the critical point is the propellant
+    itself, a liquid warmed toward oxygen's 154.6 K."""
+    from dataclasses import replace
+
+    from test_ignore_gse import _session as _le4
+
+    session = _le4(True)
+    session.setup = replace(session.setup, dome_psi=735.0)
+    jump_to_t0(session, copv_psi=3750.0, fill_fraction=0.95)
+    lox = next(
+        sim for sim in session.tanks.values() if sim.state.liquid_temperature < 120.0
+    )
+    p_crit = float(lox.tank.liquid.critical_pressure)
+    assert lox.pressure > p_crit, "the total pressure is over oxygen's critical"
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "critical" in n], notes
+    # A liquid that has warmed to within a hair of its critical point is (a
+    # kilogram of it: the load at 154 K would not fit the tank).
+    lox.state = replace(lox.state, liquid_temperature=154.0, liquid_mass=1.0)
+    (near,) = [n for n in session._notes() if "critical" in n]
+    assert near.startswith("LOX-Tank") and "Vent it." in near
+    assert "can go no higher" not in near
+    assert session._reliefs_on(lox.id), "LE4 draws a relief on the LOX tank"
+    assert "relief" not in near
+    # Without the LOX tank's own relief the note says so, though the COPV and
+    # the fuel tank keep theirs: neither lifts for this tank.
+    session._reliefs = [
+        (b, branch)
+        for b, branch in session._reliefs
+        if b not in dict(session._reliefs_on(lox.id))
+    ]
+    assert session._reliefs, "the other reliefs are still drawn"
+    (bare,) = [n for n in session._notes() if "critical" in n]
+    assert "No relief valve is drawn on LOX-Tank" in bare, bare
+
+
+def test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere() -> None:
+    """A dome turned to zero gives dome + bias - S x bottle under atmosphere on a
+    charged COPV: the regulator is shut, and no regulator pulls a vacuum. T-0
+    primed the tanks at 9.6 psia on LE4 (3)."""
+    from dataclasses import replace
+
+    from test_ignore_gse import _session as _le4
+
+    session = _le4(True)
+    session.setup = replace(session.setup, dome_psi=0.0)
+    t0 = jump_to_t0(session, copv_psi=3750.0, fill_fraction=0.95)
+    assert all(v < 0.0 for v in t0.lockup_psi.values()), "under atmosphere"
+    for tank_id in session.vehicle_tanks:
+        assert psig(session.tanks[tank_id].pressure) == pytest.approx(0.0, abs=0.05)
+    assert t0.tank_psi == pytest.approx(0.0, abs=0.05)
+    assert any("shut" in n for n in t0.notes)

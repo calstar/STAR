@@ -133,8 +133,17 @@ DOME_LIQUID_K = 16.0
 DOME_VAPOUR_K = 16.0
 #: And around the critical point, where the same tables are off by up to 20 %
 #: on nitrogen at 40 bar: pressures within this share of p_c, below T_c plus
-#: :data:`DOME_VAPOUR_K`.
-DOME_CRITICAL_SHARE = (0.75, 1.5)
+#: :data:`DOME_CRITICAL_K`. It was (0.75, 1.5) p_c below T_c + 16 K, and just
+#: outside that nitrogen read density 3.7 % off (144 K, 5 MPa), cp 9.4 % and
+#: cp/cv 14 % (148.5 K, 5 MPa), viscosity 15 % (144 K, 6 MPa), and 10 % on cp/cv
+#: at 140 K, 6 MPa (1.77 p_c) -- measured against HEOS over 142.5-230 K,
+#: 3-30 MPa. Out to 2.5 p_c and T_c + 30 K the worst left outside is density
+#: 0.22 %, cp 0.77 %, cp/cv 0.97 % (viscosity 3.9 %); 2 p_c and T_c + 25 K only
+#: moved the edge (cp/cv 3.3 % at 7.15 MPa). LE4 never comes near (its COPV is
+#: 1479 psia, 226 K at burnout).
+DOME_CRITICAL_SHARE = (0.75, 2.5)
+#: How far above T_c the critical band reaches [K]; see DOME_CRITICAL_SHARE.
+DOME_CRITICAL_K = 30.0
 #: A vapour denser than this share of the critical density, below T_c plus
 #: :data:`DOME_VAPOUR_K`, is near-critical whatever its pressure: the ideal-gas
 #: estimate a (rho, T) state is placed by overshoots there.
@@ -205,16 +214,16 @@ class _Dome:
 
     def _critical(self, p: float, T: float) -> bool:
         low, high = DOME_CRITICAL_SHARE
-        return low * self.p_c < p < high * self.p_c and T < self.T_c + DOME_VAPOUR_K
+        return low * self.p_c < p < high * self.p_c and T < self.T_c + DOME_CRITICAL_K
 
     def near(self, pair: StatePair, v1: float, v2: float) -> bool:
         """Whether this state is one the tables are not trusted at."""
         if pair is StatePair.PT:
             p, T = v1, v2
-            if T > self.T_c + DOME_VAPOUR_K:
-                return False
             if self._critical(p, T):
                 return True
+            if T > self.T_c + DOME_VAPOUR_K:
+                return False
             T_sat = self._at(self.T_sat, p)
             return T_sat is not None and (
                 T_sat - DOME_LIQUID_K < T < T_sat + DOME_VAPOUR_K

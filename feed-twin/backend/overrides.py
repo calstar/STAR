@@ -16,9 +16,13 @@ the time. The drawing's own value is kept beside it, so
   override records what the drawing said when it was made (``was``), and the
   drawing view flags it when the drawing now says something else.
 
-Overrides are keyed by the drawing's **name**, not its artifact id. A re-import
-of the same drawing is new bytes and a new id; tying overrides to the id would
-lose them every time somebody pulled the working copy, which is constantly.
+Overrides are keyed by the drawing's **lineage** (``main._lineage``: the
+pid-designer document, the shipped file, the upload's name), not its artifact
+id, as its hookup is. A re-import of the same drawing is new bytes and a new
+id; tying overrides to the id would lose them every time somebody pulled the
+working copy, which is constantly. They were keyed by the artifact's name,
+which a release pull changes ("LE4 (3) (0.4)") and an unrelated drawing can
+share (R006); a name's entry is still read until the lineage has its own.
 
 The same store keeps which symbols the console hides. That is shared too: the
 console is what the stand team looks at, and "who hid PT-FUEL-2" should have
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -39,7 +44,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from feedtwin.model.param import Param, Provenance
-from feedtwin.model.units import get_unit
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
+from feedtwin.model.units import UnknownUnit, get_unit
 from feedtwin.pid import Diagram
 
 #: Provenances an operator may give an override. ``default`` is refused: it
@@ -50,6 +56,10 @@ OVERRIDE_SOURCES = ("measured", "manufacturer", "estimated")
 #: Line parameters an itemised run replaces. Overriding one on a line that has
 #: segments would be silently ignored by the build, so it is refused instead.
 SUPERSEDED_BY_SEGMENTS = frozenset({"length", "bore", "K_minor"})
+
+
+#: Marks an entry copied from a drawing name's (:meth:`OverrideStore.adopt`).
+ADOPTED = "adopted_from"
 
 
 class OverrideError(ValueError):
@@ -79,7 +89,7 @@ class OverrideStore:
 
     Shape::
 
-        {"<drawing name>": {
+        {"<drawing lineage>": {
             "params": {"<element id>": {"<param>": {
                 "value", "unit", "source", "reference", "by", "at",
                 "was": {"value", "unit", "source"} | null}}},
@@ -121,22 +131,53 @@ class OverrideStore:
         temporary.replace(self.path)
 
     def entry(self, drawing: str) -> dict[str, Any]:
-        found = self._read().get(drawing) or {}
+        found = self._read().get(drawing)
+        found = found if isinstance(found, Mapping) else {}
+
+        def part(key: str) -> dict[str, Any]:
+            # A store written by something else (a bundle's entry, by hand)
+            # may hold any shape: one that is not a table is nothing here.
+            value = found.get(key)
+            return dict(value) if isinstance(value, Mapping) else {}
+
         return {
-            "params": dict(found.get("params") or {}),
-            "console_hidden": dict(found.get("console_hidden") or {}),
-            "console_shown": dict(found.get("console_shown") or {}),
-            "console_order": dict(found.get("console_order") or {}),
+            key: part(key)
+            for key in ("params", "console_hidden", "console_shown", "console_order")
         }
+
+    def has(self, drawing: str) -> bool:
+        """Whether anything is kept under ``drawing`` -- an emptied entry
+        that was adopted (:meth:`adopt`) included."""
+        return drawing in self._read()
+
+    def adopt(self, drawing: str, legacy: str) -> None:
+        """Start ``drawing``'s entry as a copy of ``legacy``'s, if it has none.
+
+        Entries were keyed by a drawing's name; they are keyed by its lineage
+        now (``main._drawing_key``, R006), and the name's entry is still read
+        until the lineage has one of its own. Copied, not moved: another
+        drawing of that name may still read it. The copy remembers where it
+        came from, so emptying it later does not bring the name's back."""
+        with self._lock:
+            data = self._read()
+            if drawing in data or not isinstance(data.get(legacy), Mapping):
+                return
+            data[drawing] = {**dict(data[legacy]), ADOPTED: legacy}
+            self._write(data)
 
     def _update(self, drawing: str, change: Any) -> dict[str, Any]:
         with self._lock:
             data = self._read()
+            kept = data.get(drawing)
+            adopted = kept.get(ADOPTED) if isinstance(kept, Mapping) else None
             entry = self.entry(drawing)
             change(entry)
             # An emptied entry is removed, so a drawing with nothing overridden
-            # reads exactly as one that never had anything.
+            # reads exactly as one that never had anything -- unless it was
+            # adopted from a name's, which would then be read again.
             entry = {k: v for k, v in entry.items() if v}
+            if adopted:
+                entry[ADOPTED] = adopted
             if entry:
                 data[drawing] = entry
             else:
@@ -183,7 +224,7 @@ class OverrideStore:
             get_unit(unit)
         except Exception as exc:  # UnknownUnit, but the message is the point
             raise OverrideError(f"unit {unit!r} is not a known unit ({exc})") from exc
-        if not isinstance(value, (int, float)) or value != value:
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
             raise OverrideError(f"value must be a number, got {value!r}")
 
         record = {
@@ -207,7 +248,9 @@ class OverrideStore:
 
     def clear_param(self, drawing: str, element: str, parameter: str) -> dict[str, Any]:
         def change(entry: dict[str, Any]) -> None:
-            own = entry["params"].get(element) or {}
+            own = entry["params"].get(element)
+            # One that is not a table of overrides goes with the clear.
+            own = dict(own) if isinstance(own, Mapping) else {}
             own.pop(parameter, None)
             if own:
                 entry["params"][element] = own
@@ -287,6 +330,66 @@ class OverrideStore:
 # ---------------------------------------------------------------- applying
 
 
+def unreadable(parameter: str, override: Any, symbol: str = "") -> str:
+    """Why a stored override cannot go into the drawing, or ``""`` if it can.
+
+    :meth:`OverrideStore.set_param` refuses each of these, but the store is
+    also written whole -- a stand bundle's import puts its entry in as it
+    came -- and one bad record made every assembly of the drawing raise: the
+    model, the session and the Drawing view, the one place it could be
+    cleared from. ``symbol``: the type of the symbol it is on, which decides
+    what a bare pressure unit means (:func:`feedtwin.model.pressure.drawn_unit`).
+    """
+    if not isinstance(override, Mapping):
+        return "it is not an override record"
+    source = override.get("source")
+    if source not in OVERRIDE_SOURCES:
+        return f"its source {source!r} is not one of {', '.join(OVERRIDE_SOURCES)}"
+    try:
+        value = float(override.get("value"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return f"its value {override.get('value')!r} is not a number"
+    if not math.isfinite(value):
+        return f"its value {value} is not a number"
+    unit = str(override.get("unit", ""))
+    try:
+        get_unit(unit)
+        drawn_unit(parameter, unit, symbol)
+    except PressureReferenceError as exc:
+        return str(exc)
+    except UnknownUnit:
+        return f"its unit {unit!r} is not a known unit"
+    return ""
+
+
+def unapplied(diagram: Diagram, entry: Mapping[str, Any]) -> list[str]:
+    """A sentence for each stored override on this drawing that cannot be
+    applied (:func:`unreadable`), for the assembly's warnings."""
+    params = entry.get("params")
+    if not isinstance(params, Mapping):
+        return []
+    symbols = {n.id: n.type for n in diagram.nodes}
+    here = set(symbols) | {e.id for e in diagram.edges}
+    out: list[str] = []
+    for element, own in sorted(params.items()):
+        if element not in here:
+            continue  # orphaned: the Drawing view lists those
+        if not isinstance(own, Mapping):
+            out.append(
+                f"The overrides stored for {element} cannot be read and are not "
+                "applied; clear them in the Drawing view."
+            )
+            continue
+        for name, o in sorted(own.items()):
+            why = unreadable(name, o, symbols.get(element, ""))
+            if why:
+                out.append(
+                    f"The override on {element} {name} is not applied: {why}. "
+                    "Clear it in the Drawing view."
+                )
+    return out
+
+
 def apply_overrides(
     diagram: Diagram, entry: Mapping[str, Any]
 ) -> tuple[Diagram, tuple[Applied, ...]]:
@@ -294,25 +397,36 @@ def apply_overrides(
 
     An override naming a symbol or line the drawing no longer has is skipped,
     not an error: the drawing was re-imported without it, and the drawing view
-    lists it as orphaned so somebody can clear it.
+    lists it as orphaned so somebody can clear it. One that cannot be read is
+    skipped too (:func:`unreadable`; :func:`unapplied` says which).
+
+    A pressure is read as the drawing reads its own: a bare ``psi`` on an
+    absolute pressure is gauge, except on the chamber (ADR 0004,
+    :func:`~feedtwin.model.pressure.drawn_unit`). Typed over a drawn
+    "1000 psi" MAWP, the same "1000 psi" was read absolute, 14.7 psi lower.
 
     Returns the *same* diagram object when nothing applies.
     """
     params = entry.get("params") or {}
-    if not params:
+    if not isinstance(params, Mapping) or not params:
         return diagram, ()
 
     applied: list[Applied] = []
 
-    def overlay(element: str, current: Mapping[str, Param]) -> Mapping[str, Param]:
-        own = params.get(element) or {}
-        if not own:
+    def overlay(
+        element: str, current: Mapping[str, Param], symbol: str = ""
+    ) -> Mapping[str, Param]:
+        own = params.get(element)
+        if not isinstance(own, Mapping) or not own:
             return current
         merged = dict(current)
         for name, o in sorted(own.items()):
+            if unreadable(name, o, symbol):
+                continue
+            unit = drawn_unit(name, str(o["unit"]), symbol)
             merged[name] = Param(
                 float(o["value"]),
-                str(o["unit"]),
+                unit,
                 Provenance(o["source"]),
                 f"override by {o.get('by') or 'unknown'} at {o.get('at', '')}: "
                 f"{o.get('reference', '')}",
@@ -322,7 +436,7 @@ def apply_overrides(
                     element=element,
                     parameter=name,
                     value=float(o["value"]),
-                    unit=str(o["unit"]),
+                    unit=unit,
                     source=str(o["source"]),
                     reference=str(o.get("reference", "")),
                     by=str(o.get("by", "")),
@@ -331,15 +445,18 @@ def apply_overrides(
             )
         return merged
 
+    def superseded(element: str) -> bool:
+        own = params.get(element)
+        return isinstance(own, Mapping) and bool(SUPERSEDED_BY_SEGMENTS & set(own))
+
     nodes = tuple(
-        replace(n, params=overlay(n.id, n.params)) if n.id in params else n
+        replace(n, params=overlay(n.id, n.params, n.type)) if n.id in params else n
         for n in diagram.nodes
     )
     edges = tuple(
         (
             replace(e, params=overlay(e.id, e.params))
-            if e.id in params
-            and not (e.segments.segments and SUPERSEDED_BY_SEGMENTS & set(params[e.id]))
+            if e.id in params and not (e.segments.segments and superseded(e.id))
             else e
         )
         for e in diagram.edges

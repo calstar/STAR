@@ -321,6 +321,34 @@ def test_the_sweep_leaves_a_tripped_case_out_of_the_swings_and_lists_it(tripped,
         U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], workers=1)
 
 
+def test_the_sweep_counts_a_flip_of_the_tank_that_runs_dry_first_only_when_it_strands_propellant(cfg, he, monkeypatch):
+    """Sweep 20261102-122930-2c5489 on LE4 (3): the nominal emptied LOX first, two Cd cases emptied fuel
+    first with 0.003 kg of LOX left, and the page said '2 inputs break a limit: measure these first'. A
+    run grades which tank empties first as information and the propellant left over at 0.2 kg (limits.py);
+    the sweep grades a flip by the same residual."""
+    from engine.layerx import uncertainty as U
+
+    # Stiff injectors and a bottle well above lockup: the depletion order is the only thing in question.
+    metrics = {**{k: 1.0 for k in U.METRICS}, "ox_stiffness_min": 0.3, "fuel_stiffness_min": 0.3, "copv_end_psia": 1200.0}
+    nominal = {"ok": True, "case": "nominal", "metrics": metrics, "thrust": [], "depleted": "oxidiser",
+               "lockup_psia": 578.0, "residual_kg": 0.004}
+
+    def fake_case(args):
+        cid = args[4]["id"]
+        if cid == "nominal":
+            return nominal
+        # Every low end flips by grams; every other case flips and strands 0.35 kg of LOX.
+        return {**nominal, "case": cid, "depleted": "fuel", "residual_kg": 0.003 if cid.endswith("|low") else 0.35}
+
+    monkeypatch.setattr(U, "_burn_case", fake_case)
+    out = U.run_sweep(cfg, he, LayerXSettings(drawing_id=he.id, tank_pressure_psia=STUDY_LOCKUP_PSIA), [], workers=1)
+    assert out["crossings"], "a flip that strands 0.35 kg is a crossing"
+    assert not [c for c in out["crossings"] if c["side"] == "low"]
+    assert {tuple(c["breaks"]) for c in out["crossings"]} == {("LOX-first becomes fuel-first, 0.35 kg of LOX left > 0.2 kg",)}
+    lows = [f["cases"]["low"] for f in out["factors"] if "low" in f["cases"]]
+    assert lows and all(cs["breaks"] == [] for cs in lows)
+
+
 def test_the_legacy_optimiser_and_reconcile_refuse_a_tripped_burn(tripped, cfg, he, monkeypatch):
     import engine.layerx.analysis as A
     from engine.layerx import optimize as opt

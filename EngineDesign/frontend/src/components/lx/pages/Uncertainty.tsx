@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { SweepFactor, SweepMetric } from '../../../api/layerx';
 import { UncertaintyView } from '../../layerx/Uncertainty';
+import { sweepDuration } from '../../layerx/runs';
 import { Badge, Button, NotComputed, Panel, STATUS_GLYPH, STATUS_VAR } from '../ui';
 import { NBSP, useUnits, type Units } from '../units';
 import { Hint, Legacy, Table } from './kit';
@@ -50,7 +51,7 @@ export function Uncertainty({ data, job, theme }: PageProps) {
           </Button>
           <span className="text-[12px] text-[var(--lx-text-3)]">
             <Hint text="Each unmeasured input low and high, one at a time, in parallel. Sweeps this burn's settings on the pad and without the erosion replay, so its nominal is not this burn's headline: the band and the ranking are what to read.">
-              about a minute
+              {sweepDuration(sweepResult?.wall_s)}
             </Hint>
           </span>
           {sweepLive && sweep && (

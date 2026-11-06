@@ -9,7 +9,9 @@ of it" is this library with every one of those removed first.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -17,8 +19,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import bundle
+from backend.assembly import card_version
 from backend.library import LibraryError
-from backend.main import HOOKUPS, _hookup_lineage, app, library, overrides
+from tests.design_stores import Tools, stores, who  # noqa: F401  (fixture)
+from backend.main import (
+    HOOKUPS,
+    _drawing_key,
+    _hookup_lineage,
+    app,
+    library,
+    overrides,
+)
 
 SAMPLE = Path(__file__).resolve().parents[1] / "backend" / "sample"
 client = TestClient(app)
@@ -59,7 +70,8 @@ def _stand() -> tuple[dict[str, Any], str]:
         SAMPLE / "ethalox-doublet.yaml", "/api/library/engines", "bundle engine.yaml"
     )
     library.attach(engine, "card", (SAMPLE / "ethalox-doublet.card.json").read_bytes())
-    name = library.get(drawing).name
+    # What its overrides are kept under: its lineage ("name:bundle LE4").
+    name = _drawing_key(drawing)
     NAMES.append(name)
     overrides.put_entry(
         name,
@@ -208,6 +220,55 @@ def test_a_newer_bundle_or_another_file_is_refused() -> None:
     )
 
 
+_RECORD = {"value": 4.0, "unit": "L", "source": "measured", "reference": "weighed"}
+
+
+@pytest.mark.parametrize(
+    "part, value, words",
+    [
+        # Each was a 500 halfway through the import, or stored and then never
+        # applied: one set_param would refuse went in as it came.
+        ("overrides", "oops", "overrides"),
+        ("overrides", {"params": ["x"]}, "params"),
+        ("overrides", {"params": {"node_1": "oops"}}, "node_1"),
+        (
+            "overrides",
+            {"params": {"node_1": {"volume": {**_RECORD, "source": "guess"}}}},
+            "guess",
+        ),
+        (
+            "overrides",
+            {"params": {"node_1": {"volume": {**_RECORD, "value": "lots"}}}},
+            "lots",
+        ),
+        (
+            "overrides",
+            {"params": {"node_2": {"dome_bias": {**_RECORD, "unit": "psig"}}}},
+            "difference",
+        ),
+        ("overrides", {"params": {}, "console_order": ["x"]}, "console_order"),
+        ("machine", ["x"], "state table"),
+        ("hookup", ["x"], "hookup"),
+    ],
+)
+def test_a_bundle_that_cannot_be_used_is_refused_before_anything_goes_in(
+    part: str, value: Any, words: str
+) -> None:
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    if part == "hookup":
+        out["stand"]["hookup"] = value
+    else:
+        out[part] = value
+    response = client.post("/api/twin/bundle/import", json=out)
+    assert response.status_code == 422, response.text
+    assert words in response.json()["detail"], response.text
+    with pytest.raises(LibraryError):
+        library.get(stand["diagram"])
+    assert overrides.entry(name)["params"] == {}
+
+
 def test_overrides_new_to_this_server_are_taken_as_they_are() -> None:
     incoming = {
         "params": {"n1": {"volume": {"value": 2.0, "unit": "L"}}},
@@ -256,3 +317,153 @@ def test_a_conflict_takes_the_stands_value_and_says_whose_it_replaced() -> None:
         bundle.merge_overrides({"params": {"copv": {"volume": theirs}}}, incoming)[1]
         == []
     )
+
+
+# ------------------------------------------------------------------- the card
+
+
+def _rebuilt_card(built: str) -> bytes:
+    card = json.loads((SAMPLE / "ethalox-doublet.card.json").read_text())
+    card["card"]["provenance"]["built"] = built
+    card["card"]["throat_area"] *= 1.05
+    return json.dumps(card).encode("utf-8")
+
+
+def test_an_import_onto_another_card_fires_the_stands_and_says_so() -> None:
+    """This server rebuilt the engine's card since the stand was exported:
+    the import kept this server's, silently, and the stand fired another
+    engine (H005). The stand's card is the one it was exported on -- as with
+    a conflicting override, the stand's wins, and the import says whose it
+    replaced; the replaced one is kept for the runs that fired it."""
+    stand, _ = _stand()
+    out = _export(stand)
+    exported = out["engine"]["card"].encode("utf-8")
+    local = _rebuilt_card("2026-11-01T00:00:00+00:00")
+    library.attach(stand["engine"], "card", local)
+
+    got = client.post("/api/twin/bundle/import", json=out)
+    assert got.status_code == 200, got.text
+    assert library.attachment(stand["engine"], "card") == exported
+    kept = card_version(hashlib.sha256(local).hexdigest())
+    assert library.attachment(stand["engine"], kept) == local
+    (note,) = [n for n in got.json()["notes"] if "card" in n]
+    assert "2026-11-01T00:00:00+00:00" in note
+    # EngineDesign stamps a card in epoch seconds; the note says the date.
+    built = json.loads(exported)["card"]["provenance"]["built"]
+    stamp = datetime.fromtimestamp(float(built), tz=timezone.utc)
+    assert stamp.isoformat(timespec="minutes") in note
+
+    # The same card again is no conflict.
+    again = client.post("/api/twin/bundle/import", json=out).json()
+    assert not [n for n in again["notes"] if "card" in n]
+
+
+def test_a_card_edited_by_hand_is_refused() -> None:
+    stand, _ = _stand()
+    out = _export(stand)
+    assert (
+        out["engine"]["card_sha256"]
+        == hashlib.sha256(out["engine"]["card"].encode("utf-8")).hexdigest()
+    )
+    card = json.loads(out["engine"]["card"])
+    card["card"]["throat_area"] *= 1.05
+    out["engine"]["card"] = json.dumps(card)
+    response = client.post("/api/twin/bundle/import", json=out)
+    assert response.status_code == 422
+    assert "card" in response.json()["detail"]
+    assert "changed after it was exported" in response.json()["detail"]
+    # A bundle from before cards were hashed is taken as it is.
+    del out["engine"]["card_sha256"]
+    assert client.post("/api/twin/bundle/import", json=out).status_code == 200
+
+
+def test_an_engine_already_here_under_another_name_is_said() -> None:
+    """The stand's engine matched one in this library by its bytes, and took
+    that one's name without a word: the header said 7200N for the stand's
+    "6800N drilled" (H066)."""
+    stand, _ = _stand()
+    out = _export(stand)
+    out["engine"]["name"] = "ethalox 6800N doublet drilled"
+    got = client.post("/api/twin/bundle/import", json=out).json()
+    here = library.get(stand["engine"]).name
+    assert any(
+        here in n and "ethalox 6800N doublet drilled" in n for n in got["notes"]
+    ), got["notes"]
+
+
+def test_an_imported_stand_is_not_named_like_one_already_yours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Imported twice, the picker showed two identical rows (H066)."""
+    monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
+    stand, _ = _stand()
+    out = _export(stand, name="Twice imported")
+    first = client.post("/api/twin/bundle/import", json=out).json()
+    assert first["name"] == "Twice imported"
+    made = client.post(
+        "/api/twin/stands", json={"name": first["name"], **first["stand"]}
+    )
+    assert made.status_code in (200, 201), made.text
+    second = client.post("/api/twin/bundle/import", json=out).json()
+    assert second["name"] == "Twice imported (2)"
+
+
+# --------------------------------------------- provenance from another server
+
+
+def test_a_pull_on_the_exporting_server_is_not_tracked_against_this_ones(
+    stores: Tools,
+) -> None:
+    """An export from a stand on pulled artifacts says where they were pulled
+    from: ``pid-designer:local/le4-3@working copy``, on *that* server. Every
+    dev install's user is ``local`` and an id is its name's slug, so stored
+    as it came, freshness here compared this server's own le4-3 -- another
+    drawing -- and offered to refresh the stand onto it (R012)."""
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    pulled = "pid-designer:local/le4-3@working copy"
+    out["drawing"]["source"] = pulled
+    # This server's local/le4-3 is somebody's other drawing.
+    me = who("local")
+    stores.pid.post("/api/pid/diagrams", json={"name": "le4-3"}, headers=me)
+    other = json.loads(out["drawing"]["text"])
+    other["nodes"] = other["nodes"][:3]
+    other["edges"] = []
+    stores.pid.post("/api/pid/diagrams/le4-3/autosave", json=other, headers=me)
+
+    got = client.post("/api/twin/bundle/import", json=out)
+    assert got.status_code == 200, got.text
+    drawing = library.get(got.json()["stand"]["diagram"])
+    assert drawing.source == f"bundle:{pulled}"
+    assert pulled in drawing.notes
+    assert any(pulled in n for n in got.json()["notes"])
+    fresh = client.get(f"/api/library/{drawing.id}/freshness").json()
+    assert fresh["tracked"] is False, fresh
+    refresh = client.post(f"/api/library/{drawing.id}/refresh")
+    assert refresh.status_code == 400, refresh.text
+
+
+def test_a_pull_this_server_holds_as_those_bytes_stays_tracked(
+    stores: Tools,
+) -> None:
+    """The other half: where this server's tool does hold that document as
+    the bundle's drawing, the provenance is kept, and freshness follows it."""
+    stand, name = _stand()
+    out = _export(stand)
+    _forget(stand, name)
+    pulled = "pid-designer:local/le4-3@working copy"
+    out["drawing"]["source"] = pulled
+    me = who("local")
+    stores.pid.post("/api/pid/diagrams", json={"name": "le4-3"}, headers=me)
+    stores.pid.post(
+        "/api/pid/diagrams/le4-3/autosave",
+        json=json.loads(out["drawing"]["text"]),
+        headers=me,
+    )
+
+    got = client.post("/api/twin/bundle/import", json=out).json()
+    drawing = library.get(got["stand"]["diagram"])
+    assert drawing.source == pulled
+    fresh = client.get(f"/api/library/{drawing.id}/freshness").json()
+    assert fresh["tracked"] is True and fresh["current"] is True, fresh

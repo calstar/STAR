@@ -420,6 +420,11 @@ def run_prepared(
         # Stopped at a vessel trip (the ``trip`` event says where and why): a failed burn, whatever
         # the passes did. Every tool that grades burns reads ``tripped`` as failing.
         result["converged"] = False
+    if result["summary"].get("t0_settled") is False:
+        # The settle to lockup missed the plan's datum (a relief lifting on an over-fill, a dial the
+        # regulator cannot reach): the burn ran from another T-0, which the ``T-0 did not settle``
+        # event states. Not the burn that was asked for, so not a settled answer; it was "done".
+        result["converged"] = False
     if loop:
         result["replay"] = rp
         result["delivered"] = _delivered(rp, result, prep.plan.dt)
@@ -1076,6 +1081,10 @@ def _instrument_series(prep: Prepared, trace: Any) -> Dict[str, Dict[str, Any]]:
 def reduce_trace(prep: Prepared, trace: Any, initial: Dict[str, float]) -> Dict[str, Any]:
     ox_tank, fuel_tank = prep.roles["oxidiser"], prep.roles["fuel"]
     probes = trace.probes
+    # The clock sums its steps and carries their float noise (T-0 read -6.9e-17 s in the events and the
+    # CSV): a sample within 1e-12 s of a whole nanosecond is that nanosecond. A step cut to land on
+    # depletion or a trip is further off than that and keeps its own time.
+    trace.t[:] = [r + 0.0 if abs(x - (r := round(x, 9))) < 1e-12 else x for x in trace.t]   # + 0.0: never -0.0
     n = len(trace.t)
     firing = trace.firing
     dt = prep.plan.dt
@@ -1234,8 +1243,15 @@ def reduce_trace(prep: Prepared, trace: Any, initial: Dict[str, float]) -> Dict[
                    "detail": (f"Tanks at lockup ({ox_s['tank_psia'][t0]:.1f} / {fuel_s['tank_psia'][t0]:.1f} psia), "
                               f"bottle {summary['copv_t0_psia']:.0f} psia") if summary["copv_t0_psia"] else "Primed"})
     if not trace.t0_settled:
+        # What it asked for against what it started from, so a burn whose T-0 a relief or a regulator
+        # moved (a fill over the bottle's relief vented 3260 psi in the settle) cannot read as the burn asked.
+        asked_lockup, asked_fill = (prep.derived or {}).get("target_lockup_psia"), (prep.derived or {}).get("copv_psia")
+        started = (f" Asked for a {asked_lockup:.1f} psia lockup from a {asked_fill:.0f} psia bottle; T-0 is LOX "
+                   f"{ox_s['tank_psia'][t0]:.1f} / fuel {fuel_s['tank_psia'][t0]:.1f} psia"
+                   + (f", bottle {summary['copv_t0_psia']:.0f} psia." if summary["copv_t0_psia"] else ".")
+                   if isinstance(asked_lockup, (int, float)) and isinstance(asked_fill, (int, float)) else "")
         events.append({"t": trace.t[0] - dt, "kind": "warn", "label": "T-0 did not settle",
-                       "detail": "The tanks were still moving at T-0; the trace opens off its datum."})
+                       "detail": "The tanks were still moving at T-0; the trace opens off its datum." + started})
     events.append({"t": 0.0, "kind": "fire", "key": "fire", "label": "Fire", "detail": "Mains commanded open"})
     for side, key, s in (("LOX", "ox", ox_s), ("Fuel", "fuel", fuel_s)):
         if fire_idx:

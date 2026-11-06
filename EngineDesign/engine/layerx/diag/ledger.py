@@ -113,12 +113,20 @@ def build_ledger(result: Mapping[str, Any], prep: Any = None, config: Any = None
             return _stats(vv, w)
 
         rows: List[Dict[str, Any]] = []
+        # No replay (Nozzle erosion off, or one that did not run): what only the replay computes (the
+        # eroding throat, eta_c*, L*) is not in this run, and the row says so instead of a bare dash.
+        no_replay = not dl.get("t")
+        replay_off = ((result.get("provenance") or {}).get("settings") or {}).get("replay") is False
+        why = ("not computed: nozzle erosion off" if replay_off else "not computed: the run has no erosion replay") \
+            if no_replay else ""
 
         def row(key: str, label: str, design: Optional[float], unit: str, delivered: Any, series_ref: str,
                 replaced: str, note: str = "", design_source: str = "") -> None:
             rows.append({"key": key, "label": label, "design_value": scalar(design) if design is not None else None,
                          "design_source": design_source or fwd_note, "unit": unit, "delivered": delivered,
                          "series_ref": series_ref, "replaced": replaced, "note": note})
+            if delivered is None and why and series_ref.startswith(("delivered.", "replay.")):
+                rows[-1]["missing"] = "erosion off" if replay_off else "no replay"
 
         sides = (("ox", "O", "LOX", "oxidizer"), ("fuel", "F", "Fuel", "fuel"))
         for s, k, lab, _ in sides:
@@ -138,13 +146,22 @@ def build_ledger(result: Mapping[str, Any], prep: Any = None, config: Any = None
                 firing_stats(ser(f"{s}.tank_psia") - ser(f"{s}.manifold_psia")),
                 f"series.{s}.tank_psia - series.{s}.manifold_psia", "yes",
                 "design: the config's lumped K0 + Borda dump; delivered: the drawing's lines, head and the dump")
-        row("pc", "Chamber pressure", fwd_val("Pc", PSI), "psia", dl_stats("pc_psia"), "delivered.pc_psia", "yes")
-        row("thrust", "Thrust", fwd_val("F"), "N", dl_stats("thrust_N"), "delivered.thrust_N", "yes")
-        row("of", "O/F", fwd_val("MR"), "-", dl_stats("mr"), "delivered.mr", "yes")
+        # The engine's figures are the replay's (delivered, on the eroding throat) when the run has one;
+        # a burn with the erosion replay off still fired, on the twin's own chamber (series.chamber).
+        twin_note = "the twin's chamber on the as-built throat (no erosion replay)" if no_replay else ""
+
+        def engine_row(key: str, label: str, design: Optional[float], unit: str, dl_key: str, twin_path: str) -> None:
+            if not no_replay:
+                row(key, label, design, unit, dl_stats(dl_key), f"delivered.{dl_key}", "yes")
+            else:
+                row(key, label, design, unit, firing_stats(ser(twin_path)), f"series.{twin_path}", "yes", twin_note)
+
+        engine_row("pc", "Chamber pressure", fwd_val("Pc", PSI), "psia", "pc_psia", "chamber.pc_psia")
+        engine_row("thrust", "Thrust", fwd_val("F"), "N", "thrust_N", "chamber.thrust_N")
+        engine_row("of", "O/F", fwd_val("MR"), "-", "mr", "chamber.mr")
         for s, k, lab, _ in sides:
-            row(f"mdot_{s}", f"{lab} flow", fwd_val(f"mdot_{k}"), "kg/s", dl_stats(f"mdot_{k}"),
-                f"delivered.mdot_{k}", "yes")
-        row("isp", "Isp", fwd_val("Isp"), "s", dl_stats("isp_s"), "delivered.isp_s", "yes")
+            engine_row(f"mdot_{s}", f"{lab} flow", fwd_val(f"mdot_{k}"), "kg/s", f"mdot_{k}", f"{s}.mdot")
+        engine_row("isp", "Isp", fwd_val("Isp"), "s", "isp_s", "chamber.isp_s")
         pc_f = fwd_val("Pc", PSI)
         for s, k, lab, _ in sides:
             dpi = fwd_val(f"delta_p_injector_{k}", PSI)
@@ -162,7 +179,7 @@ def build_ledger(result: Mapping[str, Any], prep: Any = None, config: Any = None
         ratio = dl.get("throat_area_ratio")
         row("throat_area", "Throat area", at0 * 1e6 if at0 else None, "mm^2",
             dl_stats("throat_area_ratio", at0 * 1e6) if (at0 and ratio is not None) else None,
-            "delivered.throat_area_ratio x A_t0", "yes", "recession rates unvalidated (AUDIT 1 #10)",
+            "delivered.throat_area_ratio x A_t0", "yes", why or "recession rates unvalidated (AUDIT 1 #10)",
             design_source="config chamber_geometry.A_throat (as built)")
         eps0 = scalar(_get(config, "chamber_geometry.expansion_ratio")) if config is not None else None
         row("eps", "Expansion ratio", eps0, "-", dl_stats("eps"), "delivered.eps", "yes",
@@ -173,7 +190,7 @@ def build_ledger(result: Mapping[str, Any], prep: Any = None, config: Any = None
             design_source="config chamber_geometry.Lstar")
         row("eta_cstar", "eta_c*", fwd_val("eta_cstar"), "-",
             _stats(arr(rep.get("eta_cstar"))) if rep.get("eta_cstar") else None, "replay.eta_cstar", "partly",
-            "the same model at each replay point; its inputs (E_m, SMD) stay assumed")
+            why or "the same model at each replay point; its inputs (E_m, SMD) stay assumed")
         if config is not None:
             for s, k, lab, ck in sides:
                 geo = orifice_geometry(config, s)
@@ -230,7 +247,9 @@ def build_ledger(result: Mapping[str, Any], prep: Any = None, config: Any = None
                 (scalar(_get(config, "design_requirements.fuel_tank_capacity_kg")) or 0.0)
         isp_f = fwd_val("Isp")
         row("impulse", "Total impulse", (load * isp_f * G0) if (load and isp_f) else None, "N s",
-            _one(summ.get("total_impulse_Ns")), "delivered.summary.total_impulse_Ns", "yes",
+            _one(summ.get("total_impulse_Ns") if not no_replay
+                 else (result.get("summary") or {}).get("total_impulse_Ns")),
+            "delivered.summary.total_impulse_Ns" if not no_replay else "summary.total_impulse_Ns", "yes",
             "design: propellant load x Forward Isp x g0",
             design_source="config load x Forward Isp")
         return rows

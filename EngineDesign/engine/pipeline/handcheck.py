@@ -1,6 +1,7 @@
 """Re-derive a design's headline numbers by hand and set them beside the model's.
 
-Nothing here calls the engine's physics: thermochemistry comes from NASA CEA through rocketcea,
+Nothing here calls the engine's physics: thermochemistry comes from NASA CEA through rocketcea (or,
+where rocketcea is not installed, c* from the committed wide CEA table and nothing else),
 everything else from the textbook relation named on its row. ``handcheck`` takes a solved result
 (``PintleEngineRunner.evaluate``) and returns the rows; scripts/design_handcheck.py prints them and
 forward mode shows them in its independent-check box.
@@ -17,10 +18,48 @@ PSI = 6894.757
 G0 = 9.80665
 
 
+#: Said on the report when the deployment has no rocketcea (the API image leaves it out: it builds
+#: CEA from Fortran). The textbook rows need no CEA; c* is checked against the committed wide table.
+NO_ROCKETCEA = ("rocketcea is not installed here: c* is checked against the committed wide CEA "
+                "table; Tc, γ, Cf and exit pressure need live CEA and are not checked")
+
+
+def _cea_names(cfg: Any) -> tuple:
+    cea = getattr(cfg.combustion, "cea", None)
+    return (getattr(cea, "ox_name", "LOX"), getattr(cea, "fuel_name", "Ethanol"))
+
+
+def _live_cea(cfg: Any):
+    """rocketcea's CEA_Obj for the design's propellants, or None where rocketcea is not installed."""
+    try:
+        from rocketcea.cea_obj import CEA_Obj
+    except ImportError:
+        return None
+    ox, fu = _cea_names(cfg)
+    return CEA_Obj(oxName=ox, fuelName=fu)
+
+
+def _table_cstar(cfg: Any, Pc: float, MR: float):
+    """c* [m/s] from the committed wide CEA table (O/F 0.1–20, its own grid and interpolation), or
+    None if the pair has none. Built from CEA's equilibrium chamber like the trilinear cache the
+    model reads, but on a different grid -- so it catches a stale cache or a clamped O/F."""
+    import numpy as np
+    from engine.pipeline.combustion_physics import get_cstar_wide_table
+
+    w = get_cstar_wide_table(*_cea_names(cfg))
+    if w is None or not (w.MR_min <= MR <= w.MR_max):
+        return None
+    return float(np.interp(math.log(MR), np.log(w.MR), w.row(Pc)))
+
+
 def handcheck(cfg: Any, r: Mapping[str, Any], PO: float, PF: float) -> Dict[str, Any]:
     """Rows ``{quantity, model, hand, diff, ok, source, kind}`` (kind: "compare" or "bound") and the
-    flags, for result ``r`` of ``cfg`` at tank pressures PO, PF [Pa]."""
-    from rocketcea.cea_obj import CEA_Obj
+    flags, for result ``r`` of ``cfg`` at tank pressures PO, PF [Pa].
+
+    Without rocketcea (the deployed API image) the textbook rows still run, c* is checked against
+    the committed wide table, and the rows that need live CEA say so; ``note`` carries why.
+    """
+    cea = _live_cea(cfg)
 
     rows: List[Dict[str, Any]] = []
     flags: List[str] = []
@@ -58,31 +97,49 @@ def handcheck(cfg: Any, r: Mapping[str, Any], PO: float, PF: float) -> Dict[str,
     mdot, F = r["mdot_total"], r["F"]
 
     # ---- thermochemistry: CEA (infinite-area combustor, equilibrium)
-    cea = CEA_Obj(oxName=cfg.combustion.cea.ox_name if hasattr(cfg.combustion, "cea") else "LOX",
-                  fuelName=cfg.combustion.cea.fuel_name if hasattr(cfg.combustion, "cea") else "Ethanol")
     pc_psia = Pc / PSI
-    cstar_cea = cea.get_Cstar(pc_psia, MR) * 0.3048
-    Tc_cea = cea.get_Tcomb(pc_psia, MR) / 1.8
-    _, g_ch = cea.get_Chamber_MolWt_gamma(pc_psia, MR, eps)
-    Isp_vac_cea = cea.get_Isp(pc_psia, MR, eps)
-    compare("c* ideal", r["cstar_ideal"], cstar_cea, 0.005, "CEA (rocketcea)", "m/s")
-    compare("Tc ideal", d.get("Tc_ideal", r["Tc"]), Tc_cea, 0.005, "CEA", "K")
-    compare("gamma chamber", r["gamma"], g_ch, 0.01, "CEA")
+    zeta = cg.nozzle_efficiency
+    needs_cea = "needs rocketcea"
+    if cea is not None:
+        cstar_cea = cea.get_Cstar(pc_psia, MR) * 0.3048
+        cstar_src = "CEA (rocketcea)"
+        Tc_cea = cea.get_Tcomb(pc_psia, MR) / 1.8
+        _, g_ch = cea.get_Chamber_MolWt_gamma(pc_psia, MR, eps)
+        Isp_vac_cea = cea.get_Isp(pc_psia, MR, eps)
+    else:
+        cstar_cea = _table_cstar(cfg, Pc, MR)
+        cstar_src = "CEA wide c* table (committed)"
+    if cstar_cea is not None:
+        compare("c* ideal", r["cstar_ideal"], cstar_cea, 0.005, cstar_src, "m/s")
+    else:
+        info("c* ideal", f"{r['cstar_ideal']:.5g} m/s", needs_cea, "CEA")
+    if cea is not None:
+        compare("Tc ideal", d.get("Tc_ideal", r["Tc"]), Tc_cea, 0.005, "CEA", "K")
+        compare("gamma chamber", r["gamma"], g_ch, 0.01, "CEA")
+    else:
+        info("Tc ideal", f"{d.get('Tc_ideal', r['Tc']):.5g} K", needs_cea, "CEA")
+        info("gamma chamber", f"{r['gamma']:.5g}", needs_cea, "CEA")
 
     # ---- mass balance: c* = p1 At / mdot (Sutton eq 3-32), at the nozzle stagnation pressure
     compare("mdot = Pc_ns At / c*", mdot, Pc_ns * At / r["cstar_actual"], 0.003, "Sutton 3-32", "kg/s")
-    compare("eta c*", r["eta_cstar"], r["cstar_actual"] / cstar_cea, 0.005, "c*_act / c*_CEA")
+    if cstar_cea is not None:
+        compare("eta c*", r["eta_cstar"], r["cstar_actual"] / cstar_cea, 0.005, f"c*_act / c*_CEA ({cstar_src})")
 
     # ---- thrust coefficient: F = Cf p1 At; Cf = zeta_n Cf_vac - pa eps / p1
-    Cf_vac_cea = Isp_vac_cea * G0 / cstar_cea
-    zeta = cg.nozzle_efficiency
-    Cf_hand = zeta * Cf_vac_cea - Pa * eps / Pc_ns
-    compare("Cf (zeta_n on vacuum Cf)", r["Cf"], Cf_hand, 0.01, f"Sutton 3-30, CEA Cf_vac, zeta_n={zeta}")
+    if cea is not None:
+        Cf_vac_cea = Isp_vac_cea * G0 / cstar_cea
+        Cf_hand = zeta * Cf_vac_cea - Pa * eps / Pc_ns
+        compare("Cf (zeta_n on vacuum Cf)", r["Cf"], Cf_hand, 0.01, f"Sutton 3-30, CEA Cf_vac, zeta_n={zeta}")
+    else:
+        info("Cf (zeta_n on vacuum Cf)", f"{r['Cf']:.5g}", needs_cea, "Sutton 3-30, CEA Cf_vac")
     compare("F = Cf Pc_ns At", F, r["Cf"] * Pc_ns * At, 0.002, "Sutton 3-31", "N")
     compare("Isp = F / (mdot g0)", r["Isp"], F / (mdot * G0), 0.002, "definition", "s")
     # exit state: CEA shifting equilibrium at this area ratio
-    pe_cea = Pc / cea.get_PcOvPe(pc_psia, MR, eps)
-    compare("exit pressure", r["P_exit"], pe_cea, 0.02, "CEA Pc/Pe at eps", "Pa")
+    if cea is not None:
+        pe_cea = Pc / cea.get_PcOvPe(pc_psia, MR, eps)
+        compare("exit pressure", r["P_exit"], pe_cea, 0.02, "CEA Pc/Pe at eps", "Pa")
+    else:
+        info("exit pressure", f"{r['P_exit']:.5g} Pa", needs_cea, "CEA Pc/Pe at eps")
     bound("pe / pa (Summerfield > 0.4)", r["P_exit"] / Pa, 0.4, None, "Sutton 3.3 flow separation")
 
     # ---- injector: mdot = Cd A sqrt(2 rho dP) per stream (Sutton eq 8-1)
@@ -129,5 +186,8 @@ def handcheck(cfg: Any, r: Mapping[str, Any], PO: float, PF: float) -> Dict[str,
     bound("contraction ratio", CR, 3.0, 15.0, "Huzel & Huang 4.3 practice")
     bound("chamber Mach", ch["mach_number_chamber"], None, 0.3, "Rayleigh loss small below ~0.3")
 
-    return {"rows": rows, "flags": flags,
-            "summary": {"Pc_psia": Pc / PSI, "OF": MR, "F": F, "Isp": r["Isp"], "Pa": Pa}}
+    out = {"rows": rows, "flags": flags,
+           "summary": {"Pc_psia": Pc / PSI, "OF": MR, "F": F, "Isp": r["Isp"], "Pa": Pa}}
+    if cea is None:
+        out["note"] = NO_ROCKETCEA
+    return out

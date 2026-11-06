@@ -37,11 +37,20 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Iterable, Mapping
 
 from feedtwin.comps import HydraulicComponent, build_component
+from feedtwin.comps.elements import Fitting
 from feedtwin.model.component import ComponentInstance
 from feedtwin.model.param import Param, Provenance
 from feedtwin.model.pressure import say
 from feedtwin.model.segments import LineSegment
-from feedtwin.pid.document import Diagram, DiagramError, PidEdge, PidNode
+from feedtwin.pid.document import (
+    BOUNDARY_TYPES,
+    INLINE_TYPES,
+    SOURCE_TYPES,
+    Diagram,
+    DiagramError,
+    PidEdge,
+    PidNode,
+)
 from feedtwin.pid.roles import ground_ids, vehicle_ids
 from feedtwin.solve.network import Network
 from feedtwin.vessels.geometry import cylindrical_from_volume, level_of_volume
@@ -61,7 +70,9 @@ BRANCH_KINDS: dict[str, tuple[str, str]] = {
 LINE_KINDS: dict[str, tuple[str, str]] = {
     "pipe": ("pipe", "darcy"),
     "flex_hose": ("flex_hose", "darcy"),
-    "bend": ("bend", "darcy"),
+    # The geometry-aware hardline bend; "rounded" is its correlation model
+    # (there is no darcy bend, and asking for one could not be built).
+    "bend": ("bend", "rounded"),
     "fitting": ("fitting", "K"),
 }
 
@@ -498,6 +509,21 @@ def build_network(
                 "make that explicit."
             )
 
+    vehicles = _separate_vehicles(diagram)
+    if len(vehicles) > 1:
+        named = "; ".join(
+            _and([f"{e.label or e.id} (page {e.page or 'Main'})" for e in engines])
+            for engines in vehicles
+        )
+        raise DiagramError(
+            f"{diagram.name}: this drawing holds {len(vehicles)} separate vehicles, "
+            f"each with its own engine: {named}. Every page is built into one "
+            "stand, so two versions of a rocket on one drawing -- pid-designer's "
+            "Duplicate page -- run as two vehicles sharing their tags, and no "
+            "valve binds. Keep one version on this drawing and save the other "
+            "as a drawing of its own."
+        )
+
     # 1. Places. Sources are boundaries; junctions and manifolds are free.
     sources = [n for n in diagram.nodes if n.is_source]
     if not sources:
@@ -647,11 +673,34 @@ def build_network(
             actuators[node.id] = f"{node.label}.command"
             hand.add(node.id)
 
+    # Two valves the table drives under one tag share one signal: whatever the
+    # state machine says, it says to both, and a role two valves share binds
+    # neither. pid-designer checks tags per page, so a copied page passes there.
+    tagged: dict[str, list[PidNode]] = {}
+    for node in diagram.nodes:
+        if node.type in ACTUATED_VALVE_TYPES and node.id in net.branches and node.label:
+            tagged.setdefault(node.label, []).append(node)
+    for tag, valves in sorted(tagged.items()):
+        if len(valves) > 1:
+            pages = sorted({v.page or "Main" for v in valves})
+            warnings.append(
+                f"{tag} is the tag of {len(valves)} valves (page "
+                f"{_and(pages)}): the state table drives them as one signal, "
+                "and binds neither by its job. Give each its own tag."
+            )
+
     # 3. Instruments observe. They join the network at the place they clip to.
+    #    One clipped to a *line* (pid-designer clips probes to lines too) waits
+    #    for step 4, which is where a line's two ends become network nodes.
+    edge_ids = {edge.id for edge in diagram.edges}
+    on_lines: list[PidNode] = []
     for node in diagram.nodes:
         if node.id in dome_loaders:
             placements.append(Placement(node.id, node.label, node.type, node.x, node.y))
         if not node.is_instrument:
+            continue
+        if node.attached_to in edge_ids and node.attached_to not in by_id:
+            on_lines.append(node)
             continue
         anchor = _instrument_anchor(node, by_id, node_of, diagram)
         if anchor is None:
@@ -667,6 +716,9 @@ def build_network(
     #    line leaves. Unless the direction leaves a symbol one-sided and the
     #    ports say better; see _sides_by_port.
     plumbing: list[PidEdge] = []
+    #: Each landed line's two ends, source end first: where a probe clipped to
+    #: the line reads.
+    line_ends: dict[str, tuple[str, str]] = {}
     for edge in diagram.edges:
         source = by_id.get(edge.source)
         target = by_id.get(edge.target)
@@ -713,6 +765,7 @@ def build_network(
         if upstream == downstream:
             continue
         landed.update((upstream, downstream))
+        line_ends[edge.id] = (upstream, downstream)
 
         kind, model = LINE_KINDS.get(edge.line_type, LINE_KINDS["pipe"])
         # Named apart from the symbol loop's `params`/`options` above: this
@@ -720,6 +773,19 @@ def build_network(
         line_params: Mapping[str, Param] = edge.params
         line_options: Mapping[str, str] = edge.options
         segments = edge.segments.segments
+        stated_bore = line_params.get("bore")
+        if not segments and stated_bore is not None and stated_bore.si <= 0.0:
+            # A bore of 0 is a line no flow can pass, and it built without a
+            # word: a steady solve through it stalls on its first step. Said,
+            # not replaced -- Layer X reads the drawn 0 as "not a line" and
+            # leaves it out of the inertance (`diag.stability.drawing_feed`),
+            # which a fallback bore here would quietly contradict.
+            warnings.append(
+                f"{edge.id} ({source.label or source.id} -> "
+                f"{target.label or target.id}): states a bore of "
+                f"{stated_bore.value:g} {stated_bore.unit}, which no flow can "
+                "pass; give the line its bore"
+            )
         if segments:
             # The drawing itemised this run, so the itemised model is the one
             # in force and the geometry comes from the segments.
@@ -763,6 +829,21 @@ def build_network(
         )
         net.add_branch(edge.id, component, upstream, downstream)
         branches_of[edge.id] = (edge.id,)
+
+    # 3b. Probes clipped to a line read the end of it they sit nearer to: the
+    #     line is one pipe, and its ends are the places the network solves.
+    #     Before the direct joins below, which rename the ends with the rest.
+    for node in on_lines:
+        ends = line_ends.get(node.attached_to)
+        if ends is None:
+            warnings.append(
+                f"{node.label} is clipped to a line the twin does not solve as "
+                "plumbing (a dome or clip line), and reads nothing."
+            )
+            continue
+        anchor = ends[0] if node.attached_at < 0.5 else ends[1]
+        instruments.append(Instrument(node.id, node.label, node.type, anchor))
+        placements.append(Placement(node.id, node.label, node.type, node.x, node.y))
 
     # 4a. Disconnects paired across the drawing's pages are mated: the rocket
     #     half and the GSE half are one coupling, so their free sides are one
@@ -813,6 +894,7 @@ def build_network(
     # Their symbols are loading gas, read off the drawing, not vents of feed.
     dome_lines = _dome_lines(diagram, dome_loaders)
     on_dome_lines = {sid for line in dome_lines.values() for sid in line.adjacent}
+    on_dome_lines |= _unloaded_dome_valves(diagram, dome_loaders)
 
     # 4b. A valve with one side unplumbed is a vent to atmosphere.
     #
@@ -863,8 +945,9 @@ def build_network(
     if resting_shut:
         warnings.append(
             f"{len(resting_shut)} hand valve(s) rest shut until opened by hand: "
-            f"{', '.join(resting_shut)}. A hand valve that stands open draws "
-            "normalPosition: open."
+            f"{', '.join(resting_shut)}. A hand valve that stands open is drawn "
+            "so: pid-designer's Normal position set to Normally open "
+            "(normalPosition: open)."
         )
 
     if vents:
@@ -888,6 +971,19 @@ def build_network(
             hint = "gas"
         elif fluids.get(drawing_id, "") in tank_contents:
             hint = "liquid"
+        elif (
+            fluids.get(drawing_id, default_fluid) == pressurant_species
+            and pressurant_species not in tank_contents
+        ):
+            # The pressurant where the reaches above do not go -- a vent run
+            # through a mated QD on the cart, say -- is still gas when no tank
+            # holds it as a liquid. Left undeclared it fell to the temperature
+            # rule, and GN2 vented off a chilling LOX tank was priced as liquid
+            # nitrogen (414-730 kg/m^3 against ~2.7) once it passed 126 K: the
+            # vent's back-pressure vanished mid-load. (A cold flow, where a
+            # tank holds the pressurant's own species, cannot be told apart
+            # by fluid and still falls to the rule.)
+            hint = "gas"
         else:
             continue
         for candidate in (anchor, f"{drawing_id}.in", f"{drawing_id}.out"):
@@ -962,6 +1058,24 @@ def build_network(
     roles.update(_dome_valve_roles(dome_lines, ground))
     gse = _gse_vents(net, diagram, tanks, fluids, engine_ports, roles)
     gse_unsized = tuple(qd.id for qd, _ in gse if not {"Cv", "Cd"} & set(qd.params))
+    # A disconnect with no coefficient stays a fitting of the spec's default
+    # kind: a 5D long-radius 90-degree elbow, K ~0.25 -- a small fraction of a
+    # real QD's loss (a Cv 2 QD in 9.5 mm is K 4.35). It is not invented away
+    # here (no number for a QD is better sourced than another), it is said.
+    # The GSE vents just read are sized by the cart's valve and are not holes.
+    elbows = sorted(
+        node.label or node.id
+        for node in diagram.nodes
+        if node.type == "QD"
+        and node.id in net.branches
+        and isinstance(net.branches[node.id].component, Fitting)
+    )
+    if elbows:
+        warnings.append(
+            f"{len(elbows)} disconnect(s) have no Cv or Cd and are priced as a "
+            "long-radius 90-degree elbow (K ~0.25), far less loss than a real "
+            f"quick disconnect: {', '.join(elbows)}. Give each its datasheet Cv."
+        )
     if gse:
         for qd, _ in gse:
             actuators[qd.id] = f"{qd.label}.command"
@@ -1008,6 +1122,33 @@ def build_network(
     )
 
 
+def _separate_vehicles(diagram: Diagram) -> list[list[PidNode]]:
+    """The drawing's engines, grouped by the drawn-line piece each sits on.
+
+    One group is one vehicle: an engine and its injector, or a cluster on one
+    feed, are joined by lines and stay together. More than one group is more
+    than one rocket on the drawing -- most often the same rocket twice, a
+    hotfire and a launch version on two pages -- which :func:`build_network`
+    refuses rather than run as a stand whose shared tags bind nothing.
+    """
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        while parent.get(node, node) != node:
+            node = parent[node]
+        return node
+
+    for edge in diagram.edges:
+        a, b = find(edge.source), find(edge.target)
+        if a != b:
+            parent[a] = b
+    groups: dict[str, list[PidNode]] = {}
+    for node in diagram.nodes:
+        if node.type in ENGINE_TYPES:
+            groups.setdefault(find(node.id), []).append(node)
+    return list(groups.values())
+
+
 def _mate_disconnects(
     diagram: Diagram, net: Network, landed: set[str]
 ) -> tuple[list[tuple[str, str, str]], list[str]]:
@@ -1024,7 +1165,8 @@ def _mate_disconnects(
     Pairing need not be written on both halves (pid-designer saves only the
     half that was edited); two halves naming different partners are a drawing
     error and are left unmated, said so. A half that has lines on both of its
-    sides, or none, has no free side to mate and is left as it is.
+    sides, or none, has no free side to mate and is left as it is. Two halves a
+    drawn line already joins are coupled by it, and are left as drawn.
 
     Returns ``("mate:<a>:<b>", free side of a, free side of b)`` per pair, in
     the shape of the direct connections ``_join_direct`` takes.
@@ -1061,8 +1203,15 @@ def _mate_disconnects(
         a, b = sorted((node.id, mate.id))
         pairs.add((a, b))
 
+    # Two halves joined by a line of their own are coupled on the page already,
+    # whatever the pair says -- pid-designer reads them so (its checks.ts) and
+    # raises nothing. Mating them as well found no free side on either half
+    # and warned of an uncoupled pair that the drawing had in fact coupled.
+    joined = {frozenset((e.source, e.target)) for e in diagram.edges}
     out: list[tuple[str, str, str]] = []
     for a, b in sorted(pairs):
+        if frozenset((a, b)) in joined:
+            continue
         free: dict[str, list[str]] = {}
         for qd in (a, b):
             ends = (f"{qd}.in", f"{qd}.out")
@@ -1447,6 +1596,17 @@ def _gse_vents(
 #: to put the two lines on different sides.
 PORT_SIDES: Mapping[str, bool] = {"l": False, "r": True}  # True: the outlet
 
+#: Inline symbols whose two sides are not interchangeable, so the port a line
+#: is on decides its side whenever every line on the symbol says which port it
+#: was drawn on -- not only when the direction leaves a side empty. A check
+#: valve's inlet is ``l`` (pid-designer's ``CV_INLET``, its arrow, and its
+#: ``cv-backwards`` check); a regulator's is ``l`` by the same convention, which
+#: is how every regulator on the team's drawings is plumbed. Read by direction
+#: instead, a CV whose lines were both dragged from the far end -- correct on
+#: the page, nothing flagged -- sat with the bottle on its outlet and passed
+#: nothing, while one pid-designer flags as backwards flowed.
+DIRECTED_TYPES = frozenset({"CV", "PR"})
+
 
 def _sides_by_port(
     diagram: Diagram, plumbing: list[PidEdge]
@@ -1464,8 +1624,10 @@ def _sides_by_port(
 
     So where direction leaves one side of an inline symbol with nothing on it,
     and every line on the symbol says which of its ports it was drawn on, the
-    port decides instead. Nothing else changes: a symbol with lines on both
-    sides reads exactly as before, ports or no ports.
+    port decides instead. A symmetric valve with lines on both sides reads
+    exactly as before, ports or no ports. A directed one (:data:`DIRECTED_TYPES`)
+    is read by its ports whenever they are all drawn: there the port is the
+    valve's direction, and the end the mouse started at is not.
 
     Returns ``{(edge id, node id): outgoing}`` overrides, and one warning per
     symbol read this way.
@@ -1481,11 +1643,25 @@ def _sides_by_port(
         here = ends.get(node.id, [])
         if not node.is_inline or len(here) < 2:
             continue
-        if len({outgoing for _, outgoing, _ in here}) != 1:
-            continue  # lines on both sides already: the direction works
         ports = {port for _, _, port in here}
         if ports != set(PORT_SIDES):
             continue  # nothing to read, or not pid-designer's two ports
+        if len({outgoing for _, outgoing, _ in here}) != 1:
+            # Lines on both sides already: the direction works -- unless the
+            # symbol has a direction of its own and the lines say otherwise.
+            if node.type not in DIRECTED_TYPES or all(
+                outgoing == PORT_SIDES[port] for _, outgoing, port in here
+            ):
+                continue
+            for edge_id, _, port in here:
+                overrides[(edge_id, node.id)] = PORT_SIDES[port]
+            warnings.append(
+                f"{node.label or node.id}: its lines run against its ports, so "
+                "its inlet and outlet were read from the ports (l in, r out). "
+                "If the flow really enters on r, it is drawn backwards: turn it "
+                "180 degrees."
+            )
+            continue
         for edge_id, _, port in here:
             overrides[(edge_id, node.id)] = PORT_SIDES[port]
         drawn = "into" if not here[0][1] else "out of"
@@ -1743,6 +1919,65 @@ def _dome_lines(
             vents=frozenset(v for v in valves if lines_on[v] == 1),
         )
     return out
+
+
+def _unloaded_dome_valves(
+    diagram: Diagram, loaders: Mapping[str, str]
+) -> frozenset[str]:
+    """Valves on the dome line of a dome-loaded regulator nothing drawn loads.
+
+    :func:`_dome_lines` finds a dome line by its loader. With none on the
+    drawing -- the loader was on the cart and the cart was cut
+    (``ignore_gse``), or the dome is filled off the drawing -- the line is still
+    drawn up to the coupling its gas comes in through, and the valves on it
+    fell through to step 4b: the rocket's dome isolation solenoid was reported
+    as a vent to atmosphere, its dome-side node (and the dome transducer on it)
+    pinned there. Walked as the session walks a cut dome line
+    (``Session._find_cut_dome_lines``): from the ``dome`` handle through
+    junctions, instruments and on/off valves, stopping at a disconnect or any
+    other inline symbol. A walk that reaches a vessel, a boundary or another
+    regulator is no dome line of its own -- the dome is tapped off plumbing --
+    and is left to step 4b as before.
+    """
+    loaded = set(loaders.values())
+    by_id = {n.id: n for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for edge in diagram.edges:
+        adjacent.setdefault(edge.source, set()).add(edge.target)
+        adjacent.setdefault(edge.target, set()).add(edge.source)
+    tapped_types = SOURCE_TYPES | BOUNDARY_TYPES | {"PR"}
+    stop = INLINE_TYPES - VENTING_VALVE_TYPES | {"RV"}
+    out: set[str] = set()
+    for node in diagram.nodes:
+        if (
+            node.type != "PR"
+            or node.options.get("domeLoaded") != "yes"
+            or node.id in loaded
+        ):
+            continue
+        frontier = [
+            edge.target if edge.source == node.id else edge.source
+            for edge in diagram.edges
+            if (edge.source == node.id and edge.source_handle == DOME_HANDLE)
+            or (edge.target == node.id and edge.target_handle == DOME_HANDLE)
+        ]
+        seen: set[str] = set()
+        tapped = False
+        while frontier and not tapped:
+            here = frontier.pop()
+            if here in seen or here not in by_id or here == node.id:
+                continue
+            seen.add(here)
+            kind = by_id[here].type
+            if kind in tapped_types:
+                tapped = True
+            elif kind not in stop:
+                frontier.extend(adjacent.get(here, ()))
+        if not tapped:
+            out |= {
+                sid for sid in seen if by_id[sid].type in VENTING_VALVE_TYPES - {"RV"}
+            }
+    return frozenset(out)
 
 
 def _dome_valve_roles(

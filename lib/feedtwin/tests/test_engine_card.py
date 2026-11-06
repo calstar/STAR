@@ -55,9 +55,16 @@ def constant_card(
     phi: float = 1.7e-3,
     throat: float = 1.8e-3,
     exit_area: float = 8.7e-3,
+    injector_hull: tuple[tuple[float, float], ...] = (
+        (0.0, 0.0),
+        (100.0, 0.0),
+        (100.0, 1e8),
+        (0.0, 1e8),
+    ),
 ) -> EngineCard:
-    box = ((0.0, 0.0), (100.0, 0.0), (100.0, 1e8), (0.0, 1e8))
-    inj = InjectorCard(table(lambda m, p: phi, (0.0, 5.0, 3), (1e5, 1e7, 3)), hull=box)
+    inj = InjectorCard(
+        table(lambda m, p: phi, (0.0, 5.0, 3), (1e5, 1e7, 3)), hull=injector_hull
+    )
     ch = ChamberCard(
         table(lambda r, m: cstar, (0.5, 3.0, 3), (0.1, 6.0, 3)),
         table(lambda r, m: vvac, (0.5, 3.0, 3), (0.1, 6.0, 3)),
@@ -263,7 +270,7 @@ needs_stand = pytest.mark.skipif(
 )
 
 
-def _card_burn(**setup: object):  # type: ignore[no-untyped-def]
+def _card_burn(injector_hull=None, **setup: object):  # type: ignore[no-untyped-def]
     """A short GN2 burn on a constant card: phi 1.6e-3, c* 1520 m/s."""
     import yaml
 
@@ -276,6 +283,14 @@ def _card_burn(**setup: object):  # type: ignore[no-untyped-def]
     card = constant_card(
         cstar=1520.0, vvac=2550.0, phi=1.6e-3, throat=design.throat_area
     )
+    if injector_hull is not None:
+        card = constant_card(
+            cstar=1520.0,
+            vvac=2550.0,
+            phi=1.6e-3,
+            throat=design.throat_area,
+            injector_hull=injector_hull,
+        )
     design = card.attach(design)
     model = assemble_model(
         read_diagram(json.loads(STAND.read_text()), name="gn2"),
@@ -380,3 +395,44 @@ def test_the_hull_includes_its_own_edges() -> None:
     for point in [(3.001, 3.5e6), (1.7, 5.00001e6), (0.499, 3.0e6), (1.7, 1.99999e6)]:
         assert not _inside(hull, *point), point
     assert not _inside([], 1.0, 3.0e6)
+
+
+def test_an_injector_leg_off_its_card_says_so() -> None:
+    """The leg reports whether its lookup was inside the hull the card was
+    fitted to, as the chamber does; Table2D clamps silently outside its box."""
+    from feedtwin.engine.design import DischargeModel, EngineDesign, InjectorSide
+
+    side = InjectorSide("oxygen", 5.0e-5, 1.6e-3, DischargeModel(cd_inf=0.6, a_re=0.0))
+    design = EngineDesign(
+        name="t",
+        injector_type="impinging",
+        oxidiser=side,
+        fuel=replace(side, propellant="ethanol"),
+        throat_area=1.8e-3,
+        expansion_ratio=4.8,
+        chamber_volume=2.4e-3,
+    )
+    hull = ((0.5, 2.0e6), (3.0, 2.0e6), (3.0, 5.0e6), (0.5, 5.0e6))
+    leg, _ = injector_legs(constant_card(injector_hull=hull).attach(design))
+    inside = FlowConditions(rho=1140.0, mu=1.8e-4, p_upstream=3.7e6)
+    vented = FlowConditions(rho=1140.0, mu=1.8e-4, p_upstream=1.0e6)
+    assert not leg.off_card(1.8, inside)
+    assert leg.off_card(1.8, vented)
+    assert leg.diagnostics(1.8, vented)["extrapolated"] == 1.0
+    assert leg.diagnostics(1.8, inside)["extrapolated"] == 0.0
+    plain, _ = injector_legs(design)
+    assert not plain.off_card(1.8, vented), "no card, nothing to be off"
+
+
+@needs_stand
+def test_a_burn_off_the_injector_card_counts_as_extrapolated() -> None:
+    """Every injector lookup of this burn is below the card's sampled inlet
+    pressures, so every firing step is outside what the card knows, and the
+    step's flag says so as it does for the chamber's own table."""
+    inside, _ = _card_burn()
+    firing = [i for i, f in enumerate(inside.firing) if f]
+    assert firing and not any(inside.chamber["extrapolated"][i] for i in firing)
+    high = ((0.0, 5.0e7), (100.0, 5.0e7), (100.0, 1.0e8), (0.0, 1.0e8))
+    off, _ = _card_burn(injector_hull=high)
+    firing = [i for i, f in enumerate(off.firing) if f]
+    assert firing and all(off.chamber["extrapolated"][i] for i in firing)

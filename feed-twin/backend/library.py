@@ -122,8 +122,10 @@ class Library:
     # -------------------------------------------------------------- the store
 
     def list(self, kind: ArtifactKind | None = None) -> list[Artifact]:
-        """Newest first, optionally of one kind."""
-        artifacts = self._read()
+        """Newest first, optionally of one kind; not the hidden ones
+        (:meth:`hide`)."""
+        hidden = self.hidden()
+        artifacts = [a for a in self._read() if a.id not in hidden]
         if kind is not None:
             artifacts = [a for a in artifacts if a.kind == kind]
         return sorted(artifacts, key=lambda a: a.imported_at, reverse=True)
@@ -183,6 +185,8 @@ class Library:
         if existing is not None:
             if summary is not None and summary != existing.summary:
                 existing = self._resummarise(existing, summary)
+            # Imported again, a hidden artifact is back in the lists.
+            self._keep_hidden(self.hidden() - {artifact_id})
             return existing, True
 
         filename = f"{artifact_id}{suffix}"
@@ -323,7 +327,40 @@ class Library:
         if known & set(marks):
             self._keep_forgotten(known - set(marks))
 
+    # ---------------------------------------------------------------- hidden
+    #
+    # An artifact somebody removed while a stand or a run record still names
+    # it: out of every list, its bytes kept, so the run replays on what it
+    # ran on and the stand still opens. Importing the same bytes again shows
+    # it again.
+
+    @property
+    def _hidden_path(self) -> Path:
+        return self.root / "hidden.json"
+
+    def hidden(self) -> set[str]:
+        """The ids out of the lists but kept."""
+        try:
+            raw = json.loads(self._hidden_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return set()
+        ids = raw.get("ids") if isinstance(raw, dict) else None
+        return {str(i) for i in ids} if isinstance(ids, list) else set()
+
+    def _keep_hidden(self, ids: set[str]) -> None:
+        if ids == self.hidden():
+            return
+        temporary = self._hidden_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps({"ids": sorted(ids)}, indent=1), "utf-8")
+        temporary.replace(self._hidden_path)
+
+    def hide(self, artifact_id: str) -> None:
+        """Take an artifact out of the lists, keeping its bytes."""
+        self.get(artifact_id)
+        self._keep_hidden(self.hidden() | {artifact_id})
+
     def remove(self, artifact_id: str) -> None:
+        self._keep_hidden(self.hidden() - {artifact_id})
         artifacts = self._read()
         kept = [a for a in artifacts if a.id != artifact_id]
         if len(kept) == len(artifacts):

@@ -5,7 +5,7 @@ import {
 import type { LayerXResult, Series, Summary, BurnEvent, CrossCheck, Provenance, Calibration, EngineCheck, Delivered, Replay, ReplayPass } from '../../api/layerx';
 import { useViewState } from '../../lib/viewState';
 import { Hint } from '../Hint';
-import { fmt, niceTicks, sig, stepDigits, FT, LOX, FUEL, PSI, VERDICT } from './format';
+import { fmt, modelsLeftOut, niceTicks, sig, stepDigits, FT, LOX, FUEL, PSI, VERDICT } from './format';
 import { FeedFitSummary, FeedFitView } from './FeedFit';
 import { FeedSchematic } from './FeedSchematic';
 import type { NozzleState } from './plume';
@@ -109,12 +109,8 @@ function Figures({ cells }: { cells: Cell[] }) {
 
 /** What the figures leave out: each term the model does not carry, and the thermal models this
  * burn ran without (feed-twin's cockpit runs with them on, so the two answer differently). */
-function leftOut(settings: Provenance['settings']): { off: string[]; terms: string[]; dry: boolean } {
-  const off = [
-    !settings.ullage_collapse && 'ullage collapse',
-    !settings.ullage_vapour && 'propellant vapour',
-    !settings.line_walls && 'line-wall heat',
-  ].filter(Boolean) as string[];
+function leftOut(settings: Provenance['settings'], setup?: Record<string, unknown> | null): { off: string[]; terms: string[]; dry: boolean } {
+  const off = modelsLeftOut(settings, setup);
   const dry = (settings.dry_kg ?? 0.001) <= 0.002;
   const terms = [
     'The start transient: −0.7 to −1.5 % impulse.',
@@ -137,7 +133,7 @@ type VerdictItem = { label: string; value: string; grade: Grade; hint: string; l
  * run's own health. */
 interface VerdictContext {
   chug?: { min: number | null | undefined; t: number | null | undefined } | null;
-  /** psi across the wall, per side, from the drawing; and the site's atmosphere [psia]. */
+  /** Each tank's rating as psi across the wall (the trip less the gauge zero), and that zero [psia]. */
   mawp?: { oxidiser?: number; fuel?: number; ambientPsia: number } | null;
   converged?: boolean;
   cardOutside?: number | null;
@@ -857,10 +853,13 @@ export function LayerXResultView({ result, uncertainty, runId = '', onConfigUpda
     const d = provenance.derived as Record<string, unknown> | undefined;
     const roles = (d?.roles ?? {}) as Record<string, string>;
     const mawps = (d?.tank_mawp_psi ?? {}) as Record<string, number>;
-    const ambient = typeof d?.ambient_pa === 'number' ? (d.ambient_pa as number) / PSI : 14.6959;
+    // `tank_mawp_psi` is the absolute pressure the twin trips each tank at; across the wall, on the gauge zero
+    // the drawing states its rating on, it is that less the zero (it was read as already across: one atmosphere lenient).
+    const zero = typeof d?.gauge_zero_pa === 'number' ? (d.gauge_zero_pa as number) / PSI : 14.6959;
+    const across = (v: number | undefined) => (typeof v === 'number' ? v - zero : undefined);
     return {
       chug: result.delivered?.summary ? { min: result.delivered.summary.chug_margin_min, t: result.delivered.summary.chug_margin_min_t } : null,
-      mawp: { oxidiser: mawps[roles.oxidiser], fuel: mawps[roles.fuel], ambientPsia: ambient },
+      mawp: { oxidiser: across(mawps[roles.oxidiser]), fuel: across(mawps[roles.fuel]), ambientPsia: zero },
       converged: result.converged,
       cardOutside: summary.card_outside_steps ?? null,
     };
@@ -901,7 +900,7 @@ export function LayerXResultView({ result, uncertainty, runId = '', onConfigUpda
       ? figureCells(reference.result.summary, reference.result.delivered, reference.result.flight?.ok ? reference.result.flight.apogee_agl_m : null) : null;
     return withDeltas(figureCells(summary, result.delivered, flight ? flight.apogee_agl_m : null), ref);
   }, [summary, result.delivered, flight, reference]);
-  const out = leftOut(provenance.settings);
+  const out = leftOut(provenance.settings, provenance.setup);
   const cc = result.cross_check;
   const warnEvents = events.filter((e) => e.kind === 'warn').length;
   const w = result.engine_check?.worst;

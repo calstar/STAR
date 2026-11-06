@@ -43,19 +43,33 @@ step "feed-twin setup — OS: $OS"
 # ─── 1. System packages ──────────────────────────────────────────────────────
 step "System packages"
 
+# Node 22.12 or newer: the frontend's vitest 5 requires ^22.12 (npm warns
+# EBADENGINE on 20), and its image builds on node:24.
+node_new_enough() {
+  command -v node >/dev/null 2>&1 && node -e '
+    const [a, b] = process.versions.node.split(".").map(Number);
+    process.exit(a > 22 || (a === 22 && b >= 12) ? 0 : 1);' 2>/dev/null
+}
+
 if is_macos; then
   ensure_homebrew
-  brew install python@3.11 node@20 || true
+  brew install python@3.11 node@22 || true
 else
   APT_PKGS=(python3 python3-pip curl git)
   ensure_apt_packages "${APT_PKGS[@]}"
   ensure_python_venv
   if [ "$DO_FRONTEND" = "1" ]; then
-    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | sed 's/v\([0-9]*\).*/\1/')" -lt 20 ]; then
-      info "Installing Node 20 from NodeSource"
-      curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    if ! node_new_enough; then
+      info "Installing Node 22 from NodeSource"
+      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
       sudo apt-get install -y nodejs
     fi
+  fi
+fi
+if [ "$DO_FRONTEND" = "1" ] && ! node_new_enough; then
+  warn "Node $(node -v 2>/dev/null || echo 'not found') on PATH; the frontend wants 22.12 or newer."
+  if is_macos; then
+    warn "Homebrew's node@22 is keg-only: put \$(brew --prefix node@22)/bin on PATH."
   fi
 fi
 ok "System packages ready"
@@ -64,9 +78,15 @@ ok "System packages ready"
 step "Python venv (feed-twin/.venv)"
 
 cd "$APP_DIR"
+# lib/feedtwin and lib/stardesign require Python 3.11 or newer; a bare
+# `python3` is the macOS system 3.9 beside the python3.11 installed above, or
+# Ubuntu 22.04's 3.10.
+PY="$(python_at_least 11)" || fail "feed-twin needs Python 3.11 or newer (lib/feedtwin and lib/stardesign require it); python3 here is $(python3 --version 2>&1). Install python3.11 or newer (brew install python@3.11; apt install python3.11 python3.11-venv) and run this again."
 if [ ! -d .venv ]; then
-  python3 -m venv .venv
-  ok ".venv created"
+  "$PY" -m venv .venv
+  ok ".venv created ($("$PY" --version 2>&1))"
+elif ! venv_at_least .venv 11; then
+  fail "feed-twin/.venv is $(.venv/bin/python --version 2>&1); feed-twin needs 3.11 or newer. Remove feed-twin/.venv and run this again to rebuild it on $("$PY" --version 2>&1)."
 else
   ok ".venv already exists"
 fi

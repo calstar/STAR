@@ -52,7 +52,7 @@ import {
   wire,
 } from '../lib/hookupDraft';
 import { NO_UI, badge, clashNote, dropFreshRow, type DaqUi, type FreshRow, type Store } from '../lib/daqDrag';
-import { PRESSURE_UNIT, asShown } from '../lib/pressure';
+import { PRESSURE_UNIT, asShown, isGaugeUnit } from '../lib/pressure';
 import { useHookup } from '../lib/useHookup';
 import { useStand } from '../stand';
 import { HookupStatus, ReadOnly } from './HookupSaveBar';
@@ -96,12 +96,14 @@ function Source({ source, override = false }: { source: string; override?: boole
   );
 }
 
-/** A value as written, except a gauge pressure, which reads absolute like
- *  every other pressure on the screen; the hover keeps what was written. */
-function Value({ v }: { v: ParamValue }) {
-  const shown = asShown(v);
+/** A value as written, except a pressure in gauge or in the library's
+ *  pascals, which reads in psia like every other pressure on the screen (psi
+ *  for a difference); the hover keeps what was written. */
+function Value({ v, name }: { v: ParamValue; name: string }) {
+  const shown = asShown(v, name);
+  const written = isGaugeUnit(v.unit) ? `${num(v.value)} gauge` : `${num(v.value)} ${v.unit}`;
   return (
-    <span className="font-mono tabular-nums" title={shown === v ? undefined : `${num(v.value)} gauge, as written`}>
+    <span className="font-mono tabular-nums" title={shown === v ? undefined : `${written}, as written`}>
       {num(shown.value)} <span className="text-gray-500">{shown.unit}</span>
     </span>
   );
@@ -121,7 +123,7 @@ function EditForm({
   // A gauge value opens in psia, as the panel shows it; an override typed
   // psia carries its unit, so the drawing reads it as absolute.
   const written = param.override ?? param.effective;
-  const start = written && param.units.includes(PRESSURE_UNIT) ? asShown(written) : written;
+  const start = written && param.units.includes(PRESSURE_UNIT) ? asShown(written, param.name) : written;
   const [value, setValue] = useState(
     start ? String(start === written ? start.value : Number(start.value.toFixed(3))) : '',
   );
@@ -260,7 +262,7 @@ function ParamRow({
         <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-gray-300" title={param.name}>
           {param.name}
         </span>
-        {effective && <Value v={effective} />}
+        {effective && <Value v={effective} name={param.name} />}
         {effective && <Source source={effective.source} override={Boolean(override) && !param.locked} />}
         {!editing && !param.locked && !locked && (
           <button
@@ -276,7 +278,7 @@ function ParamRow({
       {override && under && (
         <div className="mt-0.5 flex items-baseline gap-1.5 pl-2 text-[11px] text-gray-500">
           <span>{drawing ? 'drawing says' : 'library default'}</span>
-          <Value v={under} />
+          <Value v={under} name={param.name} />
           <Source source={under.source} />
         </div>
       )}
@@ -301,7 +303,7 @@ function ParamRow({
           The drawing changed underneath this override
           {override.was ? (
             <>
-              {' '}— it said {num(asShown(override.was).value)} {asShown(override.was).unit} when the override was made
+              {' '}— it said {num(asShown(override.was, param.name).value)} {asShown(override.was, param.name).unit} when the override was made
             </>
           ) : (
             ' — it said nothing when the override was made'

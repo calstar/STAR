@@ -39,11 +39,11 @@ TARGET_MR = 3.5
 
 
 def ambient_pa(cfg) -> float:
+    """The engine solver's site ambient (engine.core.runner, the 1976 standard atmosphere)."""
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
     el = float(getattr(cfg.environment, "elevation", 0.0) or 0.0)
-    return float(
-        101325.0
-        * math.exp(-0.0289644 * 9.80665 * el / (8.31447 * 288.15))
-    )
+    return float(compute_ambient_pressure_from_elevation(el))
 
 
 def mission_metrics(result: Dict[str, Any]) -> Tuple[float, float, float, float, float, Optional[float]]:

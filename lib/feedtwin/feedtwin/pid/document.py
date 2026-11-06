@@ -64,6 +64,10 @@ class PidNode:
 
     page: str = ""
     attached_to: str = ""
+    attached_at: float = 0.5
+    """Where on a *line* a clipped probe sits: the fraction of the line's drawn
+    length from its source end (pid-designer's ``attachedAt``). A probe saved
+    before it existed was drawn at the middle. Meaningless on a symbol."""
     params: Mapping[str, Param] = field(default_factory=dict)
     options: Mapping[str, str] = field(default_factory=dict)
     ports: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
@@ -196,6 +200,17 @@ def _ports(raw: Any) -> dict[str, dict[str, str]]:
     return out
 
 
+def _fraction(raw: Any, default: float) -> float:
+    """A fraction in [0, 1], or ``default`` when it is missing or not a number."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if value != value:  # NaN
+        return default
+    return min(max(value, 0.0), 1.0)
+
+
 def _rotation(raw: Any) -> float:
     try:
         return float(raw or 0.0) % 360.0
@@ -235,6 +250,7 @@ def read_diagram(payload: Mapping[str, Any], *, name: str = "diagram") -> Diagra
                 role=str(data.get("fluidType", "") or "").strip().lower(),
                 page=str(data.get("page", "") or ""),
                 attached_to=str(data.get("attachedTo", "") or ""),
+                attached_at=_fraction(data.get("attachedAt"), 0.5),
                 params=_params(
                     data.get("params"),
                     f"{name}:{node_id}",

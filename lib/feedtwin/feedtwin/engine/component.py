@@ -29,6 +29,8 @@ chamber more than to its tanks.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
+from typing import TYPE_CHECKING, Mapping
 
 from feedtwin.comps.base import (
     FlowConditions,
@@ -36,8 +38,12 @@ from feedtwin.comps.base import (
     InfeasibleOperatingPoint,
     Violation,
 )
+from feedtwin.engine.chamber import ChamberResult
 from feedtwin.engine.design import EngineDesign, InjectorSide
 from feedtwin.model.component import ComponentInstance
+
+if TYPE_CHECKING:
+    from feedtwin.solve.network import Network
 
 
 class InjectorLeg(HydraulicComponent):
@@ -95,6 +101,18 @@ class InjectorLeg(HydraulicComponent):
             raise InfeasibleOperatingPoint(self.id, mdot, flow.p_upstream)
         return magnitude * magnitude / (2.0 * flow.rho * area * area)
 
+    def off_card(self, mdot: float, flow: FlowConditions) -> bool:
+        """True when this lookup is outside the hull the leg's card was fitted to.
+
+        The card's table clamps outside its box, which keeps the number
+        physical and says nothing; the hull is how a trace learns it left what
+        the card knows (:func:`fold_injectors`). No card, nothing to be off.
+        """
+        card = self.side.card
+        if card is None or mdot == 0.0:
+            return False
+        return not card.covers(mdot, flow.p_upstream)
+
     def diagnostics(self, mdot: float, flow: FlowConditions) -> dict[str, float]:
         area = self.effective_area(mdot, flow)
         velocity = abs(mdot) / (flow.rho * self.side.area) if flow.rho > 0.0 else 0.0
@@ -110,6 +128,7 @@ class InjectorLeg(HydraulicComponent):
             ),
             "elements": float(self.side.element_count),
             "dp": self.pressure_drop(mdot, flow),
+            "extrapolated": 1.0 if self.off_card(mdot, flow) else 0.0,
         }
 
     def check(self) -> list[Violation]:
@@ -161,3 +180,38 @@ def injector_legs(
         return InjectorLeg(instance, side)
 
     return leg(design.oxidiser, "OX"), leg(design.fuel, "FUEL")
+
+
+def fold_injectors(
+    chamber: ChamberResult,
+    network: Network,
+    ports: Mapping[str, str],
+    flows: Mapping[str, float],
+    pressures: Mapping[str, float],
+) -> ChamberResult:
+    """The chamber's answer, flagged extrapolated if either injector leg's card
+    lookup was off its hull.
+
+    A step's ``extrapolated`` flag is the chamber's, which only ever asked the
+    chamber table; an injector card read below its sampled inlet pressures (a
+    vent-down, a low-pressure firing) was clamped and never counted. The flag
+    means "outside what the card knows", so the injectors fold into it.
+    """
+    if chamber.combustion.extrapolated:
+        return chamber
+    for side in ("oxidiser", "fuel"):
+        branch_id = ports.get(side, "")
+        branch = network.branches.get(branch_id) if branch_id else None
+        if branch is None or not isinstance(branch.component, InjectorLeg):
+            continue
+        mdot = flows.get(branch_id, 0.0)
+        p_inlet = pressures.get(branch.upstream)
+        if mdot <= 0.0 or p_inlet is None:
+            continue
+        if branch.component.off_card(
+            mdot, FlowConditions(rho=0.0, mu=0.0, p_upstream=p_inlet)
+        ):
+            return replace(
+                chamber, combustion=replace(chamber.combustion, extrapolated=True)
+            )
+    return chamber

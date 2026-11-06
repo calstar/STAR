@@ -66,3 +66,22 @@ def test_residence_time_is_rho_v_over_mdot(rep):
     # shown once: the chug model's own theta_c (nozzle-stagnation form, 0.4 % lower) is not a second row
     keys = [q["key"] for s in R["sections"] for q in s["quantities"]]
     assert keys.count("theta_c") == 1
+
+
+def test_thrust_and_cstar_close_by_hand_from_the_page(rep):
+    """F = Cf · Pc_ns · At and c* = Pc_ns · At / ṁ from the numbers the report shows.
+
+    The bases said Pc where the nozzle uses Pc_ns = Pc / κ, and Pc_ns was not on the page: on the
+    LE4 (3) stand Cf · Pc · At came to 6898 N against the 6870 N shown (+0.41 %), and Pc · At / ṁ to
+    1574 m/s against c* 1568. Nothing from the page closed.
+    """
+    _, R = rep
+    q = {x["key"]: x for s in R["sections"] for x in s["quantities"]}
+    h = {x["key"]: x for x in R["headline"]}
+    pc_ns = q["Pc_ns"]["value"] * PSI
+    At = q["At"]["value"] * 1e-6
+    assert "Pc_ns" in h["F"]["basis"] and "Pc_ns" in q["Cf"]["basis"] and "Pc_ns" in q["cstar"]["basis"]
+    assert h["F"]["value"] * 1000.0 == pytest.approx(q["Cf"]["value"] * pc_ns * At, rel=2e-4)
+    assert q["cstar"]["value"] == pytest.approx(pc_ns * At / h["mdot"]["value"], rel=2e-4)
+    assert q["Pc"]["value"] / q["Pc_ns"]["value"] == pytest.approx(q["kappa"]["value"], rel=1e-9)
+    assert q["kappa"]["value"] > 1.0, "no Rayleigh loss: the case no longer tells Pc from Pc_ns"

@@ -12,7 +12,7 @@ import { pollJob } from '../layerx/jobs';
 import { burnCsv } from '../layerx/csv';
 import { testCardHtml } from '../layerx/testcard';
 import { fmt, LB } from '../layerx/format';
-import { drawingWords, KIND_WORD, runLabel } from '../layerx/runs';
+import { drawingWords, KIND_WORD, runLabel, runWhen } from '../layerx/runs';
 
 /**
  * Layer X's run lifecycle, lifted out of layerx/LayerX.tsx so the rebuilt shell is only layout:
@@ -157,7 +157,7 @@ export function settingsDiff(ran: LayerXSettings, now: LayerXSettings, drawingNa
 /** The sweep that belongs to a burn when this browser has no link for it (a fresh browser, cleared
  *  storage, another machine): the newest finished uncertainty job started from the burn's own
  *  settings, after it. Without this a design that HAS been swept read "Not swept yet". */
-export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'started' | 'settings'>, runs: readonly RunView[]): string {
+export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'design_sha256' | 'started' | 'settings'>, runs: readonly RunView[]): string {
   const want = (burn.settings ?? {}) as unknown as Record<string, unknown>;
   const same = (s: LayerXSettings | undefined) => {
     const got = (s ?? {}) as unknown as Record<string, unknown>;
@@ -166,7 +166,10 @@ export function sweepFor(burn: Pick<RunView, 'id' | 'design' | 'started' | 'sett
   let best: RunView | null = null;
   for (const r of runs) {
     if (r.kind !== 'uncertainty' || r.status !== 'done' || r.id === burn.id) continue;
-    if (r.design !== burn.design || r.started < burn.started || !same(r.settings)) continue;
+    // The design by its fingerprint when both jobs carry one; by name for older ones. Every run used to be
+    // filed as 'default' (the file the session first loaded), so the name alone could not tell two apart.
+    const sameDesign = r.design_sha256 && burn.design_sha256 ? r.design_sha256 === burn.design_sha256 : r.design === burn.design;
+    if (!sameDesign || r.started < burn.started || !same(r.settings)) continue;
     if (!best || r.started > best.started) best = r;
   }
   return best?.id ?? '';
@@ -530,6 +533,9 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     if (r.data) set('drawing_id', r.data.id);
   };
   const useDrawing = async (d: Drawing) => { await loadDrawings(); set('drawing_id', d.id); };
+  // An upload's refusal is about that file: once a drawing is picked (any way) it no longer applies. It stayed
+  // at the rail's foot across views with the valid LE4 (3) selected.
+  useEffect(() => { setUploadError(null); }, [settings.drawing_id, mainView]);
 
   const drawing = drawings.find((d) => d.id === settings.drawing_id) ?? null;
   const derived = pf?.derived;
@@ -613,9 +619,16 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     },
     deleteRun: async () => {
       if (!run) return null;
-      const r = await layerx.deleteRun(run.id);
+      const gone = run.id;
+      const r = await layerx.deleteRun(gone);
       if (r.error) return r.error;
-      setOpenRunId(''); setRun(null); loadRuns();
+      // Out of every slot at once: the open run, the comparison (nothing is open to compare it with), its
+      // sweep link, and the listing until it reloads -- the guided start's "last burn" was the deleted run
+      // until then, and the compare slot read 'vs Nov 2, 12:07 PM' over 'Open a burn'.
+      setOpenRunId(''); setRun(null); setCompare('');
+      setRuns((rs) => rs.filter((x) => x.id !== gone));
+      setSweepByRun((m) => { if (!(gone in m)) return m; const next = { ...m }; delete next[gone]; return next; });
+      loadRuns();
       return null;
     },
     compareId: reference ? compareId : '', compareWanted: compareId, setCompare, reference,
@@ -635,7 +648,13 @@ export function useLayerXJob({ config, isVisible }: { config: EngineConfig | nul
     sent: !!run && sentId === run.id,
     canSend: !!result?.timeseries && !designMoved && !designUnknown && !whatIf,
     sendNote,
-    sendToForward: () => { if (result?.timeseries && run) { saveTimeSeriesResults(result.timeseries, configFingerprint(config)); setSentId(run.id); } },
+    // Named, so Forward and Flight say whose burn they show (Forward read 'from the Time-Series tab').
+    sendToForward: () => {
+      if (result?.timeseries && run) {
+        saveTimeSeriesResults(result.timeseries, configFingerprint(config), `the Layer X burn ${run.meta?.name || runWhen(run)}`);
+        setSentId(run.id);
+      }
+    },
     printTestCard: async () => {
       if (!result || !run) return;
       // Opened on the click itself, so a popup blocker lets it through; filled once the channel map is in.

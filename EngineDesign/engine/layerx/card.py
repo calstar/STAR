@@ -450,11 +450,18 @@ class _ExpansionScaling:
             return res
         from dataclasses import replace
 
+        from feedtwin.engine.chamber import GRAVITY, burning
+
         total = res.mdot_total
+        # The flow that burns, as CardChamber prices it: outside the card's O/F range the excess of one
+        # propellant passes the throat unburned and carries no vacuum velocity. Pricing thrust on the
+        # total gave kN where the card says unlit or lean (O/F 20: 2489 N against 0) once a throat
+        # schedule was applied; in range the two are the same flow, and the nominal burn is unchanged.
+        table = self.card.chamber.cstar
+        burned = burning(res.mdot_oxidiser, res.mdot_fuel, (table.x0, table.x_max))
         scale = self.expansion_scale(res.mixture_ratio, res.pressure)
-        v_vac = self.card.chamber.vacuum_velocity(res.mixture_ratio, total) * scale
-        thrust = max(total * v_vac - self.ambient_pressure * self.card.exit_area, 0.0)
-        from feedtwin.engine.chamber import GRAVITY
+        v_vac = self.card.chamber.vacuum_velocity(res.mixture_ratio, burned) * scale
+        thrust = max(burned * v_vac - self.ambient_pressure * self.card.exit_area, 0.0)
 
         return replace(
             res,
@@ -536,6 +543,11 @@ def card_for_config_text(text: str, *, center_psia: Optional[float] = None) -> D
     from engine.core.runner import compute_ambient_pressure_from_elevation
     from engine.pipeline.io import load_config
 
+    if center_psia is not None and not center_psia > 0.0:
+        # The caller's own number, said as theirs: it read as "the config states no tank pressure" though
+        # the config stated 578 psia and the caller had sent -5.
+        raise ValueError(f"center_psia {center_psia!r} is not an absolute pressure: give one above 0 psia, or "
+                         "leave it out to centre the card on the config's tank pressure")
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "engine.yaml"
         path.write_text(text, encoding="utf-8")

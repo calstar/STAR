@@ -12,6 +12,7 @@ operator with a measurement puts the better number.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, fields, replace
 from typing import Any, Mapping
 
@@ -189,6 +190,21 @@ TUNABLES: tuple[Tunable, ...] = (
         step=5.0,
     ),
     Tunable(
+        "supply_press_s",
+        "supply_press_s",
+        "Cart supply press time",
+        "s",
+        GROUPS[1],
+        "Seconds the cart's press line takes to bring a ground supply tank (a fuel "
+        'transfer tank) to its drawn pressure while its press valve ("Fuel Fill '
+        'Press") is open, when that line is not on the drawing. Assumed: a '
+        "first-order rate standing in for a regulator and a line nobody has drawn; "
+        "the tank's notes say when it is used. Draw the press line and this is not.",
+        low=0.1,
+        high=600.0,
+        step=0.5,
+    ),
+    Tunable(
         "load_chill_s",
         "load_chill_s",
         "LOX chilldown time",
@@ -198,7 +214,8 @@ TUNABLES: tuple[Tunable, ...] = (
         "liquid stays in it. What is poured flashes on the warm wall and vents; on "
         "the stand that is about ten minutes of pouring (operator), compressed here "
         "so it can be watched. 0: liquid collects from the start and the wall chills "
-        "as it goes. Only with the dewar pressure at 0; a dewar chills in real time.",
+        "as it goes. Only with the dewar vented (14.7 psia, the bottom of its "
+        "range); a pressed dewar chills in real time.",
         low=0.0,
         high=3600.0,
         step=5.0,
@@ -211,8 +228,9 @@ TUNABLES: tuple[Tunable, ...] = (
         GROUPS[1],
         "Seconds for the dewar transfer to reach the full fraction once the tank is "
         "chilled. The wall is near saturation by then; what heat it still has boils "
-        "LOX, which the vent has to carry. Only with the dewar pressure at 0; with a "
-        "dewar, the load takes as long as its line delivers.",
+        "LOX, which the vent has to carry. Only with the dewar vented (14.7 psia, "
+        "the bottom of its range); with a pressed dewar, the load takes as long as "
+        "its line delivers.",
         low=1.0,
         high=3600.0,
         step=10.0,
@@ -467,13 +485,13 @@ TUNABLES: tuple[Tunable, ...] = (
         "takes heat from the warm pressurant, the tank sags ~13 psi in the "
         "lead-in and the helium burn draws ~225 psi more bottle (estimated, "
         "EngineDesign/docs/layerx/AUDIT.md D1). Unmeasured: an RTD on the upper "
-        "shell would settle it. This console loads and presses through the "
-        "sequence, so its walls follow what it did and this changes nothing here; "
-        "the Study tab burns at its benchmark settings and does not read it.",
+        "shell would settle it. Read at the next Jump to T-0, no Reset needed: "
+        "the console's Jump to T-0 and every Study case prime the LOX tank's "
+        "upper wall at it. A stand loaded and pressed through the sequence "
+        "instead keeps the wall its own history gave it.",
         low=0.0,
         high=330.0,
         step=1.0,
-        applies="reset",
     ),
     Tunable(
         "line_walls",
@@ -709,9 +727,10 @@ TUNABLES: tuple[Tunable, ...] = (
         "Bottle wall mass per litre",
         "kg/L",
         GROUPS[5],
-        "Wall mass of a bottle that declares none: 60 kg at 44 L for a steel K-bottle. "
-        "The shipped COPV declares its own 3.5 kg, so this only matters for a drawing "
-        "that does not.",
+        "Wall mass of a bottle whose drawing declares no wall_mass: 60 kg at 44 L "
+        "for a steel K-bottle. The shipped stands' COPV declares its own 3.5 kg and "
+        "keeps it; every bottle drawn without one takes this -- LE4 (3)'s COPV "
+        "among them, which each Study case's notes list as estimated.",
         low=0.05,
         high=5.0,
         step=0.05,
@@ -750,8 +769,10 @@ TUNABLES: tuple[Tunable, ...] = (
         "Outer step",
         "s",
         GROUPS[6],
-        "A panel tick is integrated as ceil(tick / this) steps, so the console runs on "
-        "the Study's grid. Smaller is slower and no more accurate below the coupling "
+        "A panel tick is integrated as round(tick / this) equal steps, at least one, so "
+        "the console runs on the Study's grid to within half a step: a 0.2 s tick is "
+        "ten 0.02 s steps, a 0.21 s tick ten of 0.021 s, and a tick under 1.5 x this "
+        "is one step. Smaller is slower and no more accurate below the coupling "
         "rules; larger lets a fast press alias.",
         low=0.002,
         high=0.25,
@@ -869,28 +890,74 @@ for _t in TUNABLES:
 GAUGE_WIRE = frozenset(t.key for t in TUNABLES if t.gauge_wire)
 
 
-def parse_setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
+class SetupError(ValueError):
+    """A Configuration value that cannot be read, said with its row."""
+
+
+#: How a person or a file writes a flag's two values.
+_ON = frozenset({"1", "true", "yes", "on"})
+_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _flag(raw: Any) -> bool | None:
+    """On, off, or ``None`` when it is neither. ``bool("false")`` is True:
+    the string turned every flag it was sent for on."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)) and raw in (0, 1):
+        return bool(raw)
+    word = str(raw).strip().lower()
+    return True if word in _ON else False if word in _OFF else None
+
+
+def parse_setup(
+    settings: Mapping[str, Any], base: Setup | None = None, *, strict: bool = False
+) -> Setup:
     """The dials, from whatever the client sent. Anything unsent is kept.
 
     ``replace`` on the base, never a fresh ``Setup``: building it field by
     field silently reset every dial the client did not send.
+
+    A value that cannot be read -- not a number, NaN or infinite, a flag that
+    is neither on nor off, a choice not offered -- is skipped and the dial
+    keeps its value; with ``strict`` it is refused instead
+    (:class:`SetupError`, naming the row). A stand opened from a saved
+    document still opens; an edit made now says why it did nothing. NaN went
+    through the clamp (``max(nan, low)`` is nan) and left a session that
+    failed every tick.
     """
     current = base or Setup()
     changes: dict[str, Any] = {}
+
+    def unreadable(t: Tunable, raw: Any, wanted: str) -> None:
+        if strict:
+            raise SetupError(f"{t.label} ({t.key}) is {wanted}; got {raw!r}")
+
     for t in TUNABLES:
         raw = settings.get(t.key)
         if raw is None:
             continue
         if t.kind == "flag":
-            changes[t.field] = bool(raw)
+            flag = _flag(raw)
+            if flag is None:
+                unreadable(t, raw, "on or off (true or false)")
+            else:
+                changes[t.field] = flag
             continue
         if t.kind == "choice":
-            if str(raw) in {value for value, _ in t.choices}:
+            known = [value for value, _ in t.choices]
+            if str(raw) in known:
                 changes[t.field] = str(raw)
+            else:
+                unreadable(t, raw, "one of " + ", ".join(repr(v) for v in known))
             continue
         try:
             value = float(raw)
         except (TypeError, ValueError):
+            unreadable(t, raw, "a number")
+            continue
+        if not math.isfinite(value):
+            unreadable(t, raw, "a finite number")
             continue
         value = min(max(value, t.low), t.high)
         if t.field == "max_iterations":

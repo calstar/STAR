@@ -676,6 +676,26 @@ def test_expansion_chamber_scales_vacuum_velocity_by_cf_vac(card, prep):
     assert b.specific_impulse == pytest.approx(b.thrust / (b.mdot_total * 9.80665), rel=1e-12)
 
 
+def test_expansion_chamber_prices_thrust_on_the_flow_that_burns(card, prep):
+    """Off the card's O/F range the excess propellant passes the throat unburned (CardChamber's
+    ``burning``). With the Cf_vac ratio forced to 1 the expansion chamber must be the card's, at any
+    throat and any O/F: it priced thrust on the total flow instead (O/F 20 at a 0.1 % larger throat:
+    2489 N against the card's 0 on LE4 (3)'s card)."""
+    from engine.layerx.card import expansion_chamber
+
+    plain = card.chamber_model(ambient_pressure=AMBIENT)
+    ex = expansion_chamber(card, prep.link.sampler.runner.cea_cache, ambient_pressure=AMBIENT)
+    ex.cf_vac = lambda mr, p, eps: 1.0
+    plain.throat_area = ex.throat_area = card.throat_area * 1.001
+    lo, hi = card.chamber.cstar.x0, card.chamber.cstar.x_max
+    cases = [(1.90, 1.27), (2.0, 0.1), (0.5, 1.0), (hi * 1.6, 1.0), (lo * 0.5, 1.0)]
+    assert any(not lo <= mo / mf <= hi for mo, mf in cases)
+    for mo, mf in cases:
+        a, b = plain.evaluate(mo, mf), ex.evaluate(mo, mf)
+        assert b.thrust == pytest.approx(a.thrust, rel=1e-12, abs=1e-9), (mo, mf)
+        assert b.pressure == a.pressure and b.specific_impulse == pytest.approx(a.specific_impulse, rel=1e-12, abs=1e-12)
+
+
 def test_expansion_chamber_follows_enginedesign_at_the_eroded_throat(card, prep, replayed):
     """At the replay's eroded throat and EngineDesign's own flows, the plain card's thrust runs high
     (it keeps the as-built eps); the expansion-scaled card closes most of it (audit D4-B)."""

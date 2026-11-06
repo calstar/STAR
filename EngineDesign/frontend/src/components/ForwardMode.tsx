@@ -290,6 +290,7 @@ export function ForwardMode({ config, onConfigUpdated }: ForwardModeProps) {
             report={report}
             burn={burnData}
             burnWhen={burn?.timestamp ?? null}
+            burnSource={burn?.source ?? null}
             measurements={((config as unknown as { measurements?: Record<string, MeasuredValue | null> }).measurements) ?? {}}
             readOnly={readOnly}
             onSaveMeasurements={async (patch) => {

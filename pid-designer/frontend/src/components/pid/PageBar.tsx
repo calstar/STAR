@@ -19,8 +19,14 @@ export function copyName(page: string, pages: readonly string[]): string {
 }
 
 export function PageBar({
-  pages, current, onSelect, onAdd, onRename, onDuplicate, count, selectedCount, onMoveSelection,
+  pages, current, onSelect, onAdd, onRename, onDuplicate, count, selectedCount, onMoveSelection, hint,
 }: {
+  /**
+   * One line of how-to, beside the tabs where there is room for it (2xl).
+   * One line, and only the gestures nothing else on screen mentions: it used
+   * to list nine, wrapped to four lines and climbed up through the drawing.
+   */
+  hint?: string;
   pages: string[];
   current: string;
   onSelect: (page: string) => void;
@@ -102,6 +108,12 @@ export function PageBar({
           )
         ))}
       </div>
+
+      {hint && (
+        <span className="hidden min-w-0 shrink truncate whitespace-nowrap px-2 text-[10px] text-[var(--color-text-muted)] select-none 2xl:block">
+          {hint}
+        </span>
+      )}
 
       {selectedCount > 0 && (
         <span className="ml-2 flex shrink-0 items-center gap-1 border-l border-[var(--color-border)] pl-2">

@@ -38,11 +38,12 @@ function BowtieWithActuator({ selected, actuatorLabel, failOpen, rotation }: {
   );
 }
 
-function ManualValve({ selected }: { selected: boolean }) {
+function ManualValve({ selected, open }: { selected: boolean; open: boolean }) {
   const stroke = selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)';
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-      <polygon points="8,10 52,46 52,10 8,46" fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
+      <polygon points="8,10 52,46 52,10 8,46"
+        fill={open ? 'none' : 'var(--color-bg-tertiary)'} stroke={stroke} strokeWidth={selected ? 2.5 : 1.5} />
       <rect x="24" y="2" width="12" height="12" rx="2" transform="rotate(45 30 8)"
         fill="var(--color-bg-tertiary)" stroke={stroke} strokeWidth={1.2} />
     </svg>
@@ -58,6 +59,12 @@ export function ValveNode({ id, data, selected }: NodeProps) {
   // drawing during a procedure review looks for -- so it belongs on the
   // symbol, not two clicks away inside a dialog.
   const failOpen = options?.failState === 'open';
+  // A hand valve has no fail state; it rests where somebody leaves it, which
+  // is shut unless the drawing says it stands open (feed-twin reads the same
+  // option). Marked only when open: NC on every hand valve on a sheet is noise.
+  const handOpen = componentType === 'MAN' && options?.normalPosition === 'open';
+  const marked = componentType !== 'MAN' || handOpen;
+  const open = componentType === 'MAN' ? handOpen : failOpen;
   // Where the writing goes, which is wherever the ports are not.
   //
   // A valve's ports are on its left and right, so unturned there is room
@@ -72,16 +79,17 @@ export function ValveNode({ id, data, selected }: NodeProps) {
     : { left: 0, top: boxH + 2 };
   const tagOffset = quarter
     ? { x: boxW + 4, y: 14 }
-    : { x: -4, y: boxH + (componentType === 'MAN' ? 2 : 13) };
+    : { x: -4, y: boxH + (marked ? 13 : 2) };
   return (
     <Frame
       nodeId={id} w={W} h={H} rotation={rotation}
       extra={<>
         <Port position={turn(Position.Left, rotation)}  id="l" />
         <Port position={turn(Position.Right, rotation)} id="r" />
-        {componentType !== 'MAN' && (
+        {marked && (
           <span
-            title={failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
+            title={handOpen ? 'Normally open — a hand valve that stands open'
+              : failOpen ? 'Normally open — passes with no command applied' : 'Normally closed — shuts with no command applied'}
             style={{
               // Its own row, with the tag on the next one. Inside the box the
               // bowtie was drawn across it -- the hourglass reaches all four
@@ -89,18 +97,18 @@ export function ValveNode({ id, data, selected }: NodeProps) {
               // covered it.
               position: 'absolute', ...markStyle, fontSize: 8, lineHeight: 1,
               fontFamily: 'monospace', letterSpacing: '0.02em',
-              color: failOpen ? 'var(--color-warning)' : 'var(--color-text-muted)',
+              color: open ? 'var(--color-warning)' : 'var(--color-text-muted)',
               whiteSpace: 'nowrap', pointerEvents: 'none',
             }}
           >
-            {failOpen ? 'NO' : 'NC'}
+            {open ? 'NO' : 'NC'}
           </span>
         )}
         <DraggableLabel nodeId={id} label={label} offset={labelOffset} defaultOffset={tagOffset} />
       </>}
     >
       {componentType === 'MAN'
-        ? <ManualValve selected={!!selected} />
+        ? <ManualValve selected={!!selected} open={handOpen} />
         : <BowtieWithActuator selected={!!selected} actuatorLabel={actuator} failOpen={failOpen} rotation={rotation} />}
     </Frame>
   );

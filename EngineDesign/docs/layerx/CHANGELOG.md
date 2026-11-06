@@ -2,6 +2,154 @@
 
 Changes to Layer X physics, defaults and results, newest first. Each entry gives the baseline it was measured against. Any figure that moves more than 1 % gets reported here with its before and after values. That rule applies to the full figure list in `AUDIT.md` section 8, not to impulse alone.
 
+## 2026-11-02 RocketPy's drag read linearly across burnout: the inline check passes, max acceleration −3.4 %
+
+`test_layerx_integration_le4.py::test_the_flight_settles_on_the_pad_first_then_flies_inline` failed:
+inline against RocketPy 0.0338, tolerance 0.005. Not the RocketPy version: rocketpy 1.11.0 (what AUDIT
+9.3 validated against) and 1.13.0 give the same 0.033833. Every firing sample agreed within 0.21 % but
+one, 36 ms before the motor's cutoff on he_flight: inline 94.50 m/s², RocketPy 97.81. There RocketPy's
+`Flight.R3` read −423 N between −646 N (50 ms earlier) and −747 N (at cutoff) while the speed rose:
+`R3` is a cubic spline over RocketPy's solution nodes, and the drag steps at burnout (power-on to
+power-off Cd), so the spline rings across the step. `flight.axial_acceleration` now reads `R3` linearly
+between those nodes (`flight._axial_drag`), bounded by them; elsewhere the two agree to ~0.1 N. he_flight:
+`vs_rocketpy` 0.0338 → 0.0021; the RocketPy schedule's max acceleration 9.97 → 9.63 g (−3.4 %, the
+spike had set it). Apogee, the burn and every pad figure are untouched (the burn flies the inline
+ascent; RocketPy's own trajectory is unchanged). Guarded by
+`test_layerx_flight_inline.py::test_rocketpys_drag_is_read_linearly_across_the_burnout_step` (red on the
+old code).
+
+## 2026-11-02 Gaps in the drawn feed lines are said up front (W14, still open)
+
+The graded chug margin (drawing basis, 2026-10-03) and the line losses stand on the drawing's own
+tank-to-injector lines. LE4 (3) draws its LOX path as direct connections and its fuel tank line with a
+0 mm bore: the graded margin is 1.004 (warn) against 1.21 on EngineDesign's feed_system, and a pad
+preflight said nothing. Preflight now warns (`feed_lines`) per side when the path has no line at all
+or a line with no usable length or bore, and the graded `chug_margin` names those gaps in its hint
+(`drawing_gaps`). The decision stands and nothing is graded differently; the drawing is pid-designer's
+to fix (give node_15-node_38 its bore, draw the LOX tank → OM-R → injector lines). Guarded by
+`tests/test_layerx_feed_gaps.py` (both red on the old code).
+
+## 2026-11-02 Golden baseline: the state-table fingerprint re-stated; no figure moved
+
+`test_layerx_golden.py::test_inputs_unchanged` failed on `state_machines`: the fingerprint hashes
+every file in `feed-twin/backend/statemachines`, and #109/#124 (2026-10-08/11) added
+`diablo_states.csv` (the DAQ panel's layout and abort flags; the three aborts it flags are the ones
+feedtwin already treated as aborts by name), `diablo_channels.json` (the DAQ's channel map, which
+Layer X does not read) and edited `NEEDS-REPAIR.md`. The tables a burn runs on,
+`diablo_transitions.csv` and `diablo_actuators.csv`, are byte-identical to the baseline's. Every
+golden figure passed against the baseline with these inputs (the 2026-11-02 baseline run: only
+`test_inputs_unchanged` and the inline-flight check failed), so the stored `state_machines_sha256` in
+`baseline-2026-10-07.json` is re-stated (6c12351c… → c0cb7d89…) rather than the burn re-baselined.
+
+## 2026-11-02 One impulse per run, pressures at a tenth of a psi, words that say what they mean
+
+Display only; no burn moves.
+
+- The `.eng` header quoted the trapezoid of the hand-off curve (23743.9 N-s on LE4 (3)), a third
+  impulse beside the twin's (23729.9) and the delivered (23737.9). It now quotes the run's own,
+  step-held (each sample after Fire carries the step that ends there), and its mean; the file's own
+  integral stays beside it. Its T-0 line read `tanks 544.5709487755134 psia, bottle 3750.0 psig`: now
+  `tanks 544.6 psia, bottle 3764.7 psia at T-0`, the run's own T-0 (what was asked, if none recorded).
+- The runs list swapped in the delivered impulse but kept the twin's mean thrust; it takes the
+  delivered mean too.
+- The chug limit's basis read `after the first 0.0556569 s`; it is printed to the millisecond.
+- The set point's `dome_per_1000psi_fill` read 14.699999999999818; rounded to 0.001.
+- T-0 read −6.9e-17 s in the events and the CSV: a sample within 1e-12 s of a whole nanosecond is
+  that nanosecond (a step cut to land on depletion or a trip keeps its time).
+- `POST /engine-card` with `center_psia: -5` said "the config states no tank pressure" though the
+  config stated 578 psia; it now names the caller's number.
+- Preflight's "Engine boundary" quoted EngineDesign's drop with the line exit at the lockup (153.1 /
+  153.1 psi, equal by construction) as the drop "at T-0"; the burn's are ~114 / 108 psi once the
+  drawing's lines have taken theirs. It now says it is the drop with the lines taken as lossless.
+
+Guarded by `test_layerx_eng.py::test_the_header_quotes_the_runs_impulse_and_t0_in_psia`,
+`test_layerx_router.py::test_the_listing_quotes_one_burn_the_delivered_one` and
+`::test_a_card_centre_that_is_not_a_pressure_names_the_callers_number`, the start-window assertion in
+`test_layerx_limits.py`, `test_layerx.py::test_the_engine_boundary_says_its_drop_is_at_lossless_lines`
+and the T-0 assertions in `test_layerx_ratings.py` (all red on the old code).
+
+## 2026-11-02 The eroding-nozzle card prices thrust on the flow that burns
+
+`card._ExpansionScaling` (AUDIT D4-B, on in every pass that applies a throat schedule) recomputed
+thrust as `total x v_vac(O/F, total) - p_a A_e`, where the card's own `CardChamber` prices it on the
+flow that burns (`feedtwin.engine.chamber.burning`: outside the table's O/F range the excess passes the
+throat unburned). With the Cf_vac ratio forced to 1 the two must agree; at a 0.1 % larger throat they
+did not: O/F 20 gave 2489 N against the card's 0, O/F 4.8 4162 against 1768 N. It now uses the burned
+flow (Isp stays on the total, as the card's). Inside the card's O/F range the two flows are the same, so
+the nominal burns do not move (LE4 (3) runs O/F 1.508-1.515 against the table's 0.85-2.52); an
+off-ratio Hardware or trim candidate, or a dry-out inside a step, now gets the card's thrust. Guarded by
+`test_layerx_hardware.py::test_expansion_chamber_prices_thrust_on_the_flow_that_burns` (red on the old
+code).
+
+## 2026-11-02 Dead legs are not graded for saturation
+
+`diagnostics.saturation` graded every liquid node of the recorded network over the firing steps,
+dead legs included. LE4 (3)'s capped LOX fill QD (OF-QD-B outlet) and its dump valve's outlet
+(Ox-Dump-R) carry no flow and the twin holds them at 101.325 kPa, where LOX at 90.19 K sits on its own
+saturation line: −0.003 psi, amber on every LOX burn. A liquid node whose branches carry less than
+`saturation.DEAD_LEG_KG_S` (1 g/s, 0.05 % of the LOX feed; the twin's dead legs carry exactly zero)
+on every firing step is now listed under `skipped` and not graded. The feed's own nodes grade as
+before; no burn figure moves. Guarded by
+`test_layerx_feeddiag.py::test_a_dead_leg_held_at_atmosphere_is_not_graded` (red on the old code).
+
+## 2026-11-02 One chug margin: the graded one, on the drawing's lines
+
+Since 2026-10-03 the chug margin is graded on the drawing's feed (`diagnostics.stability`, "physics,
+not options"). The replay's `delivered.summary.chug_margin_min` is EngineDesign's own feed_system: on
+LE4 (3) it reads 1.21 where the graded margin is 1.004 (warn), straddling the 1.2 amber edge. The
+printed test card quoted it as "the" chug margin, and a burn with no stability block (every set-point,
+Hardware, reconcile and sweep burn) was graded on it. Now: the test card prints the graded limit and
+says which feed it is on; a drawing-basis run without its stability block reports the replay's figure
+as information ("Chug margin, config basis (not graded)"), so it no longer counts toward a set point's
+feasibility; `delivered.summary.chug_margin_basis` and the set point's `chug_margin_basis` say
+"config", and the change lists label the figure. Runs saved before the decision grade as they did.
+Guarded by `test_layerx_limits.py::test_a_drawing_basis_run_without_its_stability_block_does_not_grade_the_config_margin`
+and `testcard.test.ts` (both red on the old code).
+
+## 2026-11-02 Candidates burn at the lockup and fill they ask for
+
+The rail writes `dome_psia` and `copv_pressure_psia` as soon as a person turns the dome or bottle knob
+(2026-10-07), and `prepare` reads both first. The set point, the Hardware re-solve, the optimiser, the
+uncertainty sweep's "Tank pressure as set" / "Bottle fill as filled" cases and "Put the settings on
+the rail" all set only `tank_pressure_psia` / `copv_pressure_psig`: with either knob turned, every
+candidate burned the rail's point (LE4 (3) at dome 560 / fill 3600 psia: candidates at 600 and 500
+psia both burned 557.3 psia, 3585.3 psig). The set point stopped on "Mean thrust does not rise with
+lockup", the tornado showed no swing for the two operating factors, and the patch was ignored.
+`prepare.at_operating_point` clears the knob that governs what a candidate sets; the settings patch
+writes `dome_psia: null` / `copv_pressure_psia: null` as the rail itself does. A rail with neither
+knob turned burns exactly as before. Guarded by `tests/test_layerx_operating_point.py` (all five red
+on the old code).
+
+## 2026-11-02 Vessels held to the pressure the twin trips them at; no burn figure moves
+
+Layer X read the drawing's MAWP as a pressure *across* the wall, but feedtwin reads a drawn bare psi
+as gauge (ADR 0004), so `MAWP.si` is already absolute and `Session._check_limits` trips the stand at
+it. And it never read `burst_pressure`, which is how LE4 (3) rates every vessel (the twin trips at
+burst over `Setup.burst_safety_factor`, across the wall). One function now mirrors the twin
+(`prepare.vessel_trip`, which calls feedtwin's `_trip_limit`), and every reader holds the absolute
+trip as it is:
+
+| where | was | now (LE4 (3); copv_study_gn2 MAWP 1000 psi) |
+|---|---|---|
+| preflight lockup / fill check | `target - site ambient > MAWP.si`: passed up to 28 psi over the trip, which then died in the settle (`StandTripped`) | `target > trip`: 1022 psia fails against 1014.7; LE4 (3) tanks 764.7 psia, COPV 7514.7 psia |
+| preflight "ratings" | LE4 (3): "No MAWP … nothing checks those vessels" | "LOX-Tank trips at 764.7 psia (burst 1500 psig over a safety factor of 2, estimated)" |
+| `derived.tank_mawp_psi` / `copv_mawp_psi` | MAWP.si only; `{}` on LE4 (3) | the trip, absolute (same name, same meaning on MAWP drawings); `vessel_ratings` says the basis |
+| optimiser lockup ceiling, set-point cap, set-point fallback grade | trip + site ambient (1028.3 psia) | the trip (1014.7 psia) |
+| water-hammer rating | trip + 14.696 psi | the trip |
+| limits `tank_mawp_*` | peak less site ambient against the absolute trip (% read ~2 % low) | peak less the gauge zero against the trip less the gauge zero: red exactly where the twin trips, % of the drawn psig |
+| test card, legacy UI verdict | "MAWP 750 psi on the drawing" for a burst rating; legacy verdict one atmosphere lenient | names the burst basis; the legacy verdict reads the trip on the gauge zero |
+
+New preflight warning `relief`: a lockup or fill over the set pressure of a relief valve on the vessel
+(drawn onto it, or behind manifolds and junctions: COPV-RV on COPV-MFLD) lifts it during the settle.
+The tank-rise estimate names a relief or trip it would cross. A burn whose T-0 did not settle now has
+`converged: false`, and its "T-0 did not settle" event states what was asked and what T-0 was (an
+8000 psia fill on LE4 (3) settled at 4740 psia and read as a normal "done" burn; it now fails
+preflight on the COPV's 7514.7 psia trip, and a 6000 psia fill warns of the 5000 psi relief).
+
+No burn moves: the twin's trip, the plan and the scheme are untouched. Guarded by
+`tests/test_layerx_ratings.py` (red on the old code: all six) and the slow
+`test_layerx_transients.py` water-hammer rating assertion.
+
 ## 2026-10-07 (later) The feed-diagnostics LE4 test re-baselined; no physics changed
 
 `tests/test_layerx_feeddiag.py::test_feed_diagnostics_on_the_le4_helium_burn` (`LAYERX_GOLDEN=1`,
