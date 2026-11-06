@@ -5,6 +5,7 @@
 #include "board_time.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "health_task.h"
 #include "main.h"
 
 static sensors_core_t core;
@@ -44,6 +45,7 @@ static void sensors_task(void* argument) {
         sensors_core_step(&core, flags, board_exti_last_us(IMU_INT1_Pin),
                           board_exti_last_us(ACCEL_INT_1_Pin), board_time_us());
         osMutexRelease(snapshot_lock);
+        health_task_beat(HEALTH_SENSORS);
     }
 }
 

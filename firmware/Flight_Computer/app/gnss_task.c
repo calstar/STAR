@@ -4,6 +4,7 @@
 #include "board_uart9.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "health_task.h"
 
 #define EV_RX (1U << 0)
 
@@ -45,6 +46,7 @@ static void gnss_task(void* argument) {
             gnss_core_feed(&core, buf, n, board_time_us());
         }
         gnss_core_poll(&core, board_time_us());
+        health_task_beat(HEALTH_GNSS);
     }
 }
 

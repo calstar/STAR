@@ -10,6 +10,7 @@
 #include "main.h"
 #include "self_test.h"
 #include "self_test_devices.h"
+#include "selftest_radio.h"
 
 bringup_report_t g_bringup_report;
 
@@ -99,6 +100,9 @@ static void bringup_task(void* argument) {
 
     /* Chips are out of reset and checked: start the application tasks. */
     g_bringup_report.app_started = app_start();
+    g_bringup_report.radio_task_started =
+        selftest_radio_task_start(g_bringup_report.report.result_bits,
+                                  g_bringup_report.report.battery.mv);
 
     /* LED1: 1 Hz alive. LED2: off READY, blinking WARN, solid FAIL. */
     boot_verdict_t verdict = g_bringup_report.report.verdict;

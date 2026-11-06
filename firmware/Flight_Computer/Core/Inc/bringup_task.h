@@ -13,7 +13,8 @@
  *               (LED2 on + LED1 stopped = Error_Handler halted the chip)
  *   g_bringup_report  watch it in the debugger (PlatformIO Debug, ST-Link)
  *
- * Nothing here enables a pyro output or transmits on the radio.
+ * Nothing here enables a pyro output. A separate task publishes the final
+ * SelfTest frame when a board radio transport is installed.
  */
 
 #include <stdbool.h>
@@ -35,7 +36,8 @@ typedef struct {
     self_test_status_t self_test;
     /* Raw counts of every ADC input, taken after the checks. */
     board_adc_snapshot_t analog;
-    bool app_started; /* app_start(): every application task created */
+    bool radio_task_started; /* final report worker created, not TX success */
+    bool app_started;        /* app_start(): every application task created */
     /* Verdict, battery (mV, OK/WARN/FAIL/USB), result_bits, and the same
      * thing as text: in gdb, printf "%s", g_bringup_report.report.text */
     boot_report_t report;

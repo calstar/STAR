@@ -30,6 +30,7 @@
 
 #include "board.h"
 #include "cmsis_os2.h"
+#include "health_task.h"
 #include "main.h"
 
 extern MMC_HandleTypeDef hmmc1;
@@ -244,6 +245,7 @@ void emmc_stm32_writer_task(void* argument) {
     (void)argument;
     for (;;) {
         (void)emmc_log_service(&flight_log, osKernelGetTickCount());
+        health_task_beat(HEALTH_LOG);
         if (emmc_log_backlog(&flight_log) == 0U) {
             osDelay(10U); /* nothing sealed: check again in 10 ms */
         }
