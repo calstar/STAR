@@ -31,6 +31,7 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
   // A ball valve's ACT_Cal.{Role} aliases resolve to BV<n>_Cal.CH<m> (store.buildAliasesFromConfig).
   const positionPct = useSensorValue(calEntity, 'position_pct');
   const positionStatus = useSensorValue(calEntity, 'cal_status');
+  const positionRaw = useSensorValue(calEntity, 'raw_adc');
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
@@ -66,7 +67,7 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
           className="font-mono text-[10px] tabular-nums text-ink-3"
         >
           {ballValve
-            ? formatBallValvePosition(positionPct, positionStatus, commanded)
+            ? formatBallValvePosition(positionPct, positionStatus, commanded, positionRaw)
             : currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
         </span>
       </div>

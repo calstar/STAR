@@ -10,14 +10,25 @@ import { ActuatorState } from './types';
 /** cal_status on [0x34]: the loop is below 2 mA (calibration/ValvePosition.hpp). */
 export const BALL_VALVE_STATUS_NO_SIGNAL = 2;
 
+/**
+ * Loop current from the board's raw 12-bit reading: 3.3 V full scale across the 100 ohm shunt
+ * (calibration/ValvePosition.hpp). As the board reads it, so it carries the ESP32 ADC's ~1 mA low
+ * offset at this end; it is shown so a dead loop can be told from a valve reading a little low.
+ */
+export function loopMilliamps(rawCounts: number): number {
+  return (rawCounts / 4095) * 3.3 / 100 * 1000;
+}
+
 export function formatBallValvePosition(
   pct: number | null,
   status: number | null,
   commanded: ActuatorState | null,
+  rawCounts?: number | null,
 ): string {
-  if (status === BALL_VALVE_STATUS_NO_SIGNAL) return 'NO SIGNAL';
+  const ma = rawCounts != null && Number.isFinite(rawCounts) ? `, ${loopMilliamps(rawCounts).toFixed(1)} mA` : '';
+  if (status === BALL_VALVE_STATUS_NO_SIGNAL) return `NO SIGNAL${ma}`;
   if (pct == null || !Number.isFinite(pct)) return '--- %';
   const open = Math.min(100, Math.max(0, pct));
-  if (commanded === ActuatorState.CLOSED) return `${Math.round(100 - open)}% CLOSED`;
-  return `${Math.round(open)}% OPEN`;
+  if (commanded === ActuatorState.CLOSED) return `${Math.round(100 - open)}% CLOSED${ma}`;
+  return `${Math.round(open)}% OPEN${ma}`;
 }
