@@ -3,7 +3,7 @@
  * the rules are testable: how an id is made from a label, and what a save sends -- above
  * all, that a password the operator did not touch is *omitted*, so the saved one is kept.
  */
-import type { CredentialChange, EditableConfig, EditableStream } from './api';
+import { UDP_PORTS, type CredentialChange, type EditableConfig, type EditableStream } from './api';
 import { PRESET_SLOT_COUNTS, type LayoutPreset, type VideoLayout } from './layout';
 
 export interface DraftStream {
@@ -11,8 +11,12 @@ export interface DraftStream {
   key: string;
   id: string;
   label: string;
+  /** rtsp: a camera the gateway pulls. udp: MPEG-TS pushed to the gateway (HiDes). */
+  kind: 'rtsp' | 'udp';
   url: string;
   lowResUrl: string;
+  /** UDP listen port, as typed (udp only). */
+  port: string;
   record: boolean;
   username: string;
   /** A password is saved on the server for this stream (as loaded). */
@@ -35,8 +39,10 @@ export function draftsFrom(cfg: EditableConfig): DraftStream[] {
     key: nextKey(),
     id: s.id,
     label: s.label,
-    url: s.url,
-    lowResUrl: s.lowResUrl ?? '',
+    kind: s.kind,
+    url: s.kind === 'rtsp' ? s.url : '',
+    lowResUrl: s.kind === 'rtsp' ? s.lowResUrl ?? '' : '',
+    port: s.kind === 'udp' ? String(s.port) : '',
     record: s.record,
     username: s.username,
     passwordSet: s.passwordSet,
@@ -60,8 +66,10 @@ export function newDraft(existing: DraftStream[]): DraftStream {
     key: nextKey(),
     id: slugId('stream', existing.map((d) => d.id)),
     label: '',
+    kind: 'rtsp',
     url: '',
     lowResUrl: '',
+    port: '',
     record: true,
     username: '',
     passwordSet: false,
@@ -81,18 +89,34 @@ export function withLabel(drafts: DraftStream[], key: string, label: string): Dr
   });
 }
 
-/** What PUT /api/video/config takes. */
+/** The first UDP port in the video range no other draft uses ('' if all are taken). */
+export function freeUdpPort(drafts: DraftStream[], except?: string): string {
+  const used = new Set(drafts.filter((d) => d.kind === 'udp' && d.key !== except).map((d) => d.port));
+  for (let p = UDP_PORTS.first; p <= UDP_PORTS.last; p++) if (!used.has(String(p))) return String(p);
+  return '';
+}
+
+/** Switch a draft between a pulled camera and a pushed (UDP) stream. */
+export function withKind(drafts: DraftStream[], key: string, kind: 'rtsp' | 'udp'): DraftStream[] {
+  return drafts.map((d) => (d.key !== key || d.kind === kind ? d
+    : { ...d, kind, port: kind === 'udp' && !d.port ? freeUdpPort(drafts, key) : d.port }));
+}
+
+/** What PUT /api/video/config takes. A pushed stream sends no URL and no credentials. */
 export function toSave(drafts: DraftStream[]) {
-  const streams = drafts.map((d) => ({
-    id: d.id.trim(),
-    label: d.label.trim(),
-    kind: 'rtsp' as const,
-    url: d.url.trim(),
-    ...(d.lowResUrl.trim() ? { lowResUrl: d.lowResUrl.trim() } : {}),
-    record: d.record,
-  }));
+  const streams = drafts.map((d) => (d.kind === 'udp'
+    ? { id: d.id.trim(), label: d.label.trim(), kind: 'udp' as const, port: Number(d.port), record: d.record }
+    : {
+      id: d.id.trim(),
+      label: d.label.trim(),
+      kind: 'rtsp' as const,
+      url: d.url.trim(),
+      ...(d.lowResUrl.trim() ? { lowResUrl: d.lowResUrl.trim() } : {}),
+      record: d.record,
+    }));
   const credentials: Record<string, CredentialChange> = {};
   for (const d of drafts) {
+    if (d.kind === 'udp') continue;
     const c: CredentialChange = { username: d.username.trim() };
     if (d.newPassword) c.password = d.newPassword;
     else if (d.clearPassword) c.password = null;
@@ -107,7 +131,8 @@ export function isDirty(drafts: DraftStream[], original: DraftStream[]): boolean
   if (drafts.length !== original.length) return true;
   return drafts.some((d, i) => {
     const o = original[i];
-    return d.key !== o.key || d.id !== o.id || d.label !== o.label || d.url !== o.url || d.lowResUrl !== o.lowResUrl
+    return d.key !== o.key || d.id !== o.id || d.label !== o.label || d.kind !== o.kind || d.port !== o.port
+      || d.url !== o.url || d.lowResUrl !== o.lowResUrl
       || d.record !== o.record || d.username !== o.username || d.newPassword !== '' || d.clearPassword;
   });
 }

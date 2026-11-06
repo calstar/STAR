@@ -25,6 +25,7 @@ import * as http from 'http';
 import * as net from 'net';
 
 const ENABLED = process.env.VIDEO_GATEWAY_IT === '1';
+const HIDES_PORT = 5607;
 const here = dirname(fileURLToPath(import.meta.url));
 const DAQ = resolve(here, '..', '..', '..');
 
@@ -115,7 +116,11 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     writeFileSync(process.env.VIDEO_CONFIG_PATH!, JSON.stringify({
       version: 1,
       // The low-res URL is the same camera here; what matters is that raw/cam1/low is its own path.
-      streams: [{ id: 'cam1', label: 'Test pattern', kind: 'rtsp', url: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, lowResUrl: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, record: true }],
+      streams: [
+        { id: 'cam1', label: 'Test pattern', kind: 'rtsp', url: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, lowResUrl: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, record: true },
+        // The HiDes link: MPEG-TS pushed over UDP (a port in the video range, 5600-5609).
+        { id: 'hides', label: 'HiDes', kind: 'udp', port: HIDES_PORT, record: true },
+      ],
     }));
 
     await startGateway();
@@ -213,6 +218,59 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
       await browser.close();
     }
   }, 60_000);
+
+  it('a HiDes-style UDP push plays as video only, and its check sees it arriving', async () => {
+    const { chromium } = await import('playwright-core');
+    expect(await svc.checkStream('hides')).toMatchObject({ ok: false, detail: expect.stringMatching(/nothing arriving on UDP 5607/) });
+    // As HiDesViewer forwards the UT-130's TS: H.264 plus audio (Opus, which WebRTC could carry).
+    const sender = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-re',
+      '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-pix_fmt', 'yuv420p',
+      '-c:a', 'libopus', '-f', 'mpegts', `udp://127.0.0.1:${HIDES_PORT}?pkt_size=1316`,
+    ], { stdio: 'ignore' });
+    const browser = await chromium.launch();
+    try {
+      // The check is cached for 5 s, so this can take one cache period to flip.
+      await waitFor('TS arriving on the HiDes path', async () => ((await svc.checkStream('hides'))!.ok ? true : undefined), 20000);
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${ports.backend}/`);
+      const probe = (withAudio: boolean) => page.evaluate(async (withAudio) => {
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        if (withAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
+        const v = document.createElement('video'); v.muted = true; v.autoplay = true; document.body.append(v);
+        pc.ontrack = (e) => { if (e.track.kind === 'video') v.srcObject = new MediaStream([e.track]); };
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetch('/api/video/streams/hides/whep', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const answer = await res.text();
+        if (res.status !== 201) return { status: res.status, answer, frames: 0, audioPackets: 0, mlines: [] as string[] };
+        await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        let frames = 0;
+        const tick = () => { frames++; (v as any).requestVideoFrameCallback(tick); };
+        (v as any).requestVideoFrameCallback(tick);
+        await new Promise((r) => setTimeout(r, 3000));
+        let audioPackets = 0;
+        (await pc.getStats()).forEach((s: any) => { if (s.type === 'inbound-rtp' && s.kind === 'audio') audioPackets += s.packetsReceived; });
+        const loc = res.headers.get('Location');
+        pc.close(); v.remove();
+        if (loc) await fetch(loc, { method: 'DELETE' });
+        return { status: res.status, frames, audioPackets, mlines: answer.split(/\r?\n/).filter((l) => l.startsWith('m=')).map((l) => l.split(' ')[0]) };
+      }, withAudio);
+      const pane = await probe(false);
+      expect(pane.status, gatewayLog.slice(-2000)).toBe(201);
+      expect(pane.mlines).toEqual(['m=video']);
+      expect(pane.frames).toBeGreaterThan(10);
+      expect(pane.audioPackets).toBe(0);
+      const control = await probe(true);
+      expect(control.mlines).toEqual(['m=video', 'm=audio']);
+      expect(control.audioPackets).toBeGreaterThan(0);
+    } finally {
+      sender.kill('SIGKILL');
+      await browser.close();
+    }
+  }, 90_000);
 
   it('a gateway that restarts empty is refilled by the next sync', async () => {
     camera?.kill('SIGKILL');

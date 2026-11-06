@@ -28,7 +28,24 @@ export interface RtspStream {
   record: boolean;
 }
 
-export type VideoStream = RtspStream;
+/**
+ * MPEG-TS pushed to the gateway over UDP -- the HiDes link: HiDesViewer (or `hides
+ * rx-stream --udp`) on the receiver Mac forwards the UT-130's transport stream here. No URL
+ * and no credentials: the gateway listens on `port`, on every interface.
+ */
+export interface UdpStream {
+  id: string;
+  label: string;
+  kind: 'udp';
+  /** In UDP_PORTS: clear of the DAQ's own UDP (5000, 5005, 5006, 5008), opened by bootstrap. */
+  port: number;
+  record: boolean;
+}
+
+export type VideoStream = RtspStream | UdpStream;
+
+/** UDP ports a pushed stream may listen on. bootstrap_daq.sh opens exactly this range. */
+export const UDP_PORTS = { first: 5600, last: 5609 } as const;
 
 /**
  * The stand layout: a preset and which stream each of its slots shows (null = empty).
@@ -158,6 +175,7 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
   if (!Array.isArray(obj.streams)) errors.push('streams must be a list');
 
   const seen = new Set<string>();
+  const udpPorts = new Set<number>();
   const streams: VideoStream[] = [];
   list.forEach((s: any, i) => {
     const where = `stream ${i + 1}${s && typeof s.id === 'string' ? ` ("${s.id}")` : ''}`;
@@ -172,7 +190,20 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
       errors.push(`${where}: duplicate id`);
     }
     if (typeof s.label !== 'string' || s.label.trim() === '') errors.push(`${where}: label is required`);
-    if (s.kind !== 'rtsp') errors.push(`${where}: kind must be "rtsp"`);
+    if (s.kind === 'udp') {
+      const port = s.port;
+      if (!Number.isInteger(port) || port < UDP_PORTS.first || port > UDP_PORTS.last) {
+        errors.push(`${where}: UDP port must be ${UDP_PORTS.first}-${UDP_PORTS.last}`);
+      } else if (udpPorts.has(port)) {
+        errors.push(`${where}: UDP port ${port} is already used by another stream`);
+      }
+      if (errors.length > before) return;
+      seen.add(s.id);
+      udpPorts.add(port);
+      streams.push({ id: s.id, label: s.label.trim(), kind: 'udp', port, record: s.record !== false });
+      return;
+    }
+    if (s.kind !== 'rtsp') errors.push(`${where}: kind must be "rtsp" or "udp"`);
     const url = checkRtspUrl(s.url, `${where}: url`, errors);
     const lowResUrl = s.lowResUrl === undefined || s.lowResUrl === '' ? undefined : checkRtspUrl(s.lowResUrl, `${where}: lowResUrl`, errors);
     if (errors.length > before || !url) return;
@@ -249,17 +280,17 @@ export function loadVideoConfig(): LoadedVideoConfig {
 }
 
 export function publicStream(s: VideoStream): PublicStream {
-  return { id: s.id, label: s.label, kind: s.kind, hasLowRes: !!s.lowResUrl, record: s.record };
+  return { id: s.id, label: s.label, kind: s.kind, hasLowRes: s.kind === 'rtsp' && !!s.lowResUrl, record: s.record };
 }
 
 // ── Editing (the pane's Edit mode) ─────────────────────────────────────────────
 
 /** A stream as the editor sees it: URLs (never with credentials), the username, and only
  *  *whether* a password is set. A password is write-only: it is never sent back. */
-export interface EditableStream extends VideoStream {
+export type EditableStream = VideoStream & {
   username: string;
   passwordSet: boolean;
-}
+};
 
 export interface EditableConfig {
   /** Hash of video.json as read; a save must name it, so two editors cannot silently

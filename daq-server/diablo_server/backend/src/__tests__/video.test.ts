@@ -103,6 +103,8 @@ class FakeGateway implements GatewayApi {
   async addPath(name: string, conf: ManagedPathConf) { this.calls.push(`add ${name}`); this.paths.set(name, { ...conf }); }
   async replacePath(name: string, conf: ManagedPathConf) { this.calls.push(`replace ${name}`); this.paths.set(name, { ...conf }); }
   async deletePath(name: string) { this.calls.push(`delete ${name}`); this.paths.delete(name); }
+  ready = new Set<string>();
+  async pathReady(name: string) { return this.ready.has(name); }
 }
 
 describe('reconcile', () => {
@@ -563,4 +565,39 @@ describe('gateway on another machine', () => {
     expect(JSON.parse(readFileSync(SECRETS, 'utf8')).gateway).toBeUndefined();
     expect(JSON.stringify(readFileSync(CONFIG, 'utf8'))).not.toContain('theombp'); // never in the committed file
   });
+});
+
+describe('HiDes: MPEG-TS pushed over UDP', () => {
+  const hides = { id: 'hides', label: 'HiDes link', kind: 'udp', port: 5600, record: true };
+
+  it('validates the port: in 5600-5609, one stream per port, never a DAQ port', () => {
+    expect(validateVideoConfig({ version: 1, streams: [hides] }).config.streams).toEqual([hides]);
+    for (const port of [5006, 5000, 5599, 5610, 5600.5, '5600']) {
+      const r = validateVideoConfig({ version: 1, streams: [{ ...hides, port }] });
+      expect(r.config.streams, String(port)).toEqual([]);
+      expect(r.errors[0]).toMatch(/5600-5609/);
+    }
+    const dup = validateVideoConfig({ version: 1, streams: [hides, { ...hides, id: 'hides2' }] });
+    expect(dup.errors[0]).toMatch(/already used/);
+  });
+
+  it('becomes a gateway path that listens all the time, with no URL or credentials', () => {
+    const paths = desiredPaths({ config: { version: 1, streams: [hides as any], layout: { preset: 'auto', slots: [] } }, secrets: { streams: { hides: { password: 'x' } } } });
+    expect([...paths]).toEqual([['raw/hides', { source: 'udp+mpegts://0.0.0.0:5600', sourceOnDemand: false }]]);
+    expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true });
+  });
+
+  it('its check says whether TS is arriving, and where to send it', async () => {
+    writeFileSync(CONFIG, JSON.stringify({ version: 1, streams: [hides] }));
+    writeFileSync(SECRETS, JSON.stringify({ streams: {}, gateway: { host: 'theombp.local' } }));
+    const gw = new FakeGateway();
+    const svc = new VideoService(undefined, gw);
+    const idle = await svc.checkStream('hides')!;
+    expect(idle).toMatchObject({ ok: false });
+    expect((idle as any).detail).toBe('nothing arriving on UDP 5600 -- point HiDesViewer at theombp.local:5600 (localhost:5600 on the gateway machine itself)');
+    gw.ready.add('raw/hides');
+    await new Promise((r) => setTimeout(r, 5100)); // past the check cache
+    expect(await svc.checkStream('hides')!).toMatchObject({ ok: true });
+    expect(svc.checkStream('hides', true)).toBeUndefined(); // no low-res for a pushed stream
+  }, 10_000);
 });

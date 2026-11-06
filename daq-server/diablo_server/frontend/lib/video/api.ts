@@ -5,7 +5,7 @@ import type { VideoLayout } from './layout';
 export interface VideoStreamInfo {
   id: string;
   label: string;
-  kind: 'rtsp';
+  kind: 'rtsp' | 'udp';
   hasLowRes: boolean;
   record: boolean;
 }
@@ -35,16 +35,14 @@ export async function fetchVideoStreams(signal?: AbortSignal): Promise<VideoStre
 // ── Editing ──────────────────────────────────────────────────────────────────
 
 /** A stream as the editor sees it. The password itself is never sent to a browser. */
-export interface EditableStream {
-  id: string;
-  label: string;
-  kind: 'rtsp';
-  url: string;
-  lowResUrl?: string;
-  record: boolean;
-  username: string;
-  passwordSet: boolean;
-}
+export type EditableStream = (
+  | { id: string; label: string; kind: 'rtsp'; url: string; lowResUrl?: string; record: boolean }
+  /** MPEG-TS pushed to the gateway over UDP (the HiDes link). */
+  | { id: string; label: string; kind: 'udp'; port: number; record: boolean }
+) & { username: string; passwordSet: boolean };
+
+/** UDP ports a pushed stream may use (the backend's UDP_PORTS; bootstrap opens them). */
+export const UDP_PORTS = { first: 5600, last: 5609 } as const;
 
 export interface EditableConfig {
   revision: string;
@@ -52,6 +50,8 @@ export interface EditableConfig {
   layout: VideoLayout;
   /** This machine's gateway: host ('' = this machine) and whether a password is saved. */
   gateway: { host: string; passwordSet: boolean };
+  /** Where a pushed (UDP) stream should be sent from another machine. */
+  ingestHost: string;
 }
 
 /** host: '' = this machine. password: omit to keep, null to clear, string to set. */
@@ -89,7 +89,7 @@ export const fetchVideoConfig = () => call<EditableConfig>('GET', '/api/video/co
 
 export const saveVideoConfig = (
   revision: string,
-  streams: Omit<EditableStream, 'username' | 'passwordSet'>[],
+  streams: unknown[],
   credentials: Record<string, CredentialChange>,
   layout: VideoLayout,
   gateway: GatewayChange,

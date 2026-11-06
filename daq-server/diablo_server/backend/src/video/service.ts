@@ -7,13 +7,14 @@
  */
 import { statSync } from 'fs';
 import { randomBytes } from 'crypto';
+import { hostname } from 'os';
 import {
   checkRtspUrl, loadVideoConfig, videoConfigPath, videoSecretsPath, VideoConfigError,
   type LoadedVideoConfig,
 } from './config.js';
 import { checkCamera, type CameraCheck } from './camera-check.js';
 import {
-  desiredPaths, gatewayEndpoint, HttpGatewayApi, reconcile, withCredentials, PREVIEW_PREFIX,
+  desiredPaths, gatewayEndpoint, gatewayPathFor, HttpGatewayApi, reconcile, withCredentials, PREVIEW_PREFIX,
   type GatewayApi, type GatewayEndpoint,
 } from './gateway.js';
 
@@ -151,6 +152,7 @@ export class VideoService {
   checkStream(id: string, low = false): Promise<CameraCheck> | undefined {
     const { config, secrets } = this.current();
     const s = config.streams.find((x) => x.id === id);
+    if (s?.kind === 'udp') return low ? undefined : this.checkUdp(s.id, s.port);
     const url = s && (low ? s.lowResUrl : s.url);
     if (!s || !url) return undefined;
     const key = `${id}${low ? '/low' : ''}`;
@@ -159,6 +161,25 @@ export class VideoService {
     const result = checkCamera(url, secrets.streams[id]);
     this.checks.set(key, { at: Date.now(), result });
     return result;
+  }
+
+  /** A pushed stream has no camera to ask: ask the gateway whether TS is arriving. */
+  private async checkUdp(id: string, port: number): Promise<CameraCheck> {
+    const where = `${this.ingestHost()}:${port}`;
+    try {
+      if (await this.api.pathReady(gatewayPathFor(id))) return { ok: true, detail: `MPEG-TS arriving on UDP ${port}` };
+      return { ok: false, problem: 'unreachable', detail: `nothing arriving on UDP ${port} -- point HiDesViewer at ${where} (localhost:${port} on the gateway machine itself)` };
+    } catch (e) {
+      return { ok: false, problem: 'error', detail: (e as Error).message };
+    }
+  }
+
+  /** The name a sender on the LAN should use for the gateway. */
+  ingestHost(): string {
+    const host = this.endpoint.host;
+    if (host !== '127.0.0.1' && host !== 'localhost') return host;
+    const name = hostname();
+    return name.includes('.') ? name : `${name}.local`;
   }
 
   start(): void {

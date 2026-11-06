@@ -152,7 +152,8 @@ export async function handleVideoRequest(
     }
 
     if (pathname === '/api/video/config' && req.method === 'GET') {
-      sendJson(res, 200, editableConfig());
+      // ingestHost: where a pushed (UDP) stream should be sent, as the editor shows it.
+      sendJson(res, 200, { ...editableConfig(), ingestHost: video.ingestHost() });
       return true;
     }
 
@@ -171,7 +172,7 @@ export async function handleVideoRequest(
         typeof body.revision === 'string' ? body.revision : '',
       );
       await video.sync(); // live for everyone now, not at the next tick
-      sendJson(res, 200, saved);
+      sendJson(res, 200, { ...saved, ingestHost: video.ingestHost() });
       return true;
     }
 
@@ -210,7 +211,7 @@ export async function handleVideoRequest(
       const routeBase = `/api/video/${kind}/${id}${low ? '/low' : ''}`;
       if (kind === 'streams') {
         const stream = STREAM_ID_RE.test(id) ? video.current().config.streams.find((s) => s.id === id) : undefined;
-        if (!stream || (low && !stream.lowResUrl)) {
+        if (!stream || (low && (stream.kind !== 'rtsp' || !stream.lowResUrl))) {
           sendJson(res, 404, { error: low ? `no low-res stream "${id}"` : `no stream "${id}"` });
           return true;
         }

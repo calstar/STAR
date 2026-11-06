@@ -13,7 +13,7 @@
  * audio m-line to send on; nothing sits in the video path to add latency. Proven against
  * the real gateway by test/video-gateway.integration.test.ts.
  */
-import type { LoadedVideoConfig, VideoStream, VideoSecrets } from './config.js';
+import type { LoadedVideoConfig, RtspStream, VideoSecrets } from './config.js';
 
 export const MANAGED_PREFIX = 'raw/';
 
@@ -25,10 +25,17 @@ export function gatewayPathFor(streamId: string, low = false): string {
 /** Path settings the backend sets. Everything else is the gateway's pathDefaults. */
 export interface ManagedPathConf {
   source: string;
+  /** Pushed (UDP) sources listen all the time; pulled cameras default to on demand. */
+  sourceOnDemand?: boolean;
+}
+
+/** What MediaMTX listens on for a pushed MPEG-TS stream (every interface). */
+export function udpSource(port: number): string {
+  return `udp+mpegts://0.0.0.0:${port}`;
 }
 
 /** The camera URL the gateway pulls: the configured URL with this machine's credentials. */
-export function cameraSource(stream: VideoStream, secrets: VideoSecrets, low = false): string {
+export function cameraSource(stream: RtspStream, secrets: VideoSecrets, low = false): string {
   return withCredentials(low && stream.lowResUrl ? stream.lowResUrl : stream.url, secrets.streams[stream.id]);
 }
 
@@ -46,6 +53,11 @@ export const PREVIEW_PREFIX = 'preview/';
 export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets'>): Map<string, ManagedPathConf> {
   const out = new Map<string, ManagedPathConf>();
   for (const s of loaded.config.streams) {
+    if (s.kind === 'udp') {
+      // A listener, not a pull: it must be up before HiDesViewer sends, whoever is watching.
+      out.set(gatewayPathFor(s.id), { source: udpSource(s.port), sourceOnDemand: false });
+      continue;
+    }
     out.set(gatewayPathFor(s.id), { source: cameraSource(s, loaded.secrets) });
     // Same camera, same credentials, its sub stream. Pulled only while a small tile shows it.
     if (s.lowResUrl) out.set(gatewayPathFor(s.id, true), { source: cameraSource(s, loaded.secrets, true) });
@@ -96,6 +108,8 @@ export interface GatewayApi {
   addPath(name: string, conf: ManagedPathConf): Promise<void>;
   replacePath(name: string, conf: ManagedPathConf): Promise<void>;
   deletePath(name: string): Promise<void>;
+  /** Is media arriving on this path right now? */
+  pathReady(name: string): Promise<boolean>;
 }
 
 export class GatewayError extends Error {}
@@ -151,6 +165,15 @@ export class HttpGatewayApi implements GatewayApi {
 
   async deletePath(name: string): Promise<void> {
     await this.call('DELETE', `/v3/config/paths/delete/${name}`);
+  }
+
+  async pathReady(name: string): Promise<boolean> {
+    try {
+      return !!(await this.call('GET', `/v3/paths/get/${name}`))?.ready;
+    } catch (e) {
+      if (/: 404 /.test((e as Error).message)) return false; // no source yet: not ready
+      throw e;
+    }
   }
 }
 

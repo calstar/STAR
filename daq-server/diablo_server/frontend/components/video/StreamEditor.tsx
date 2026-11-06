@@ -16,9 +16,9 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import VideoTile from '@/components/video/VideoTile';
-import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, VideoApiError, type GatewayChange } from '@/lib/video/api';
+import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, UDP_PORTS, VideoApiError, type GatewayChange } from '@/lib/video/api';
 import {
-  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, toSave, withLabel, withPreset, type DraftStream,
+  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, toSave, withKind, withLabel, withPreset, type DraftStream,
 } from '@/lib/video/editor';
 import { geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
 import { previewEndpoint } from '@/lib/video/whep';
@@ -73,11 +73,14 @@ function Preview({ draft }: { draft: DraftStream }) {
 }
 
 function StreamCard({
-  draft, onChange, onLabel, onRemove,
+  draft, ingestHost, onChange, onLabel, onKind, onRemove,
 }: {
   draft: DraftStream;
+  /** Where a UDP stream is sent from another machine (the gateway's LAN name). */
+  ingestHost: string;
   onChange: (patch: Partial<DraftStream>) => void;
   onLabel: (label: string) => void;
+  onKind: (kind: 'rtsp' | 'udp') => void;
   onRemove: () => void;
 }) {
   const [previewing, setPreviewing] = useState(0); // a new number restarts the preview
@@ -97,41 +100,68 @@ function StreamCard({
           )}
         </Field>
       </div>
-      <Field label="Main URL">
-        <input className={input} value={draft.url} placeholder="rtsp://192.168.1.64:554/stream1" onChange={(e) => onChange({ url: e.target.value })} />
+      <Field label="Source">
+        <select className={input} value={draft.kind} onChange={(e) => onKind(e.target.value as 'rtsp' | 'udp')}>
+          <option value="rtsp">Camera (RTSP) -- the gateway pulls it</option>
+          <option value="udp">HiDes link (MPEG-TS over UDP) -- sent to the gateway</option>
+        </select>
       </Field>
-      <Field label="Low-res URL (optional)">
-        <input className={input} value={draft.lowResUrl} placeholder="rtsp://192.168.1.64:554/stream2" onChange={(e) => onChange({ lowResUrl: e.target.value })} />
-      </Field>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Username">
-          <input className={input} value={draft.username} autoComplete="off" onChange={(e) => onChange({ username: e.target.value })} />
-        </Field>
-        <Field label="Password">
-          <div className="flex gap-1">
-            <input
-              className={input}
-              type="password"
-              autoComplete="new-password"
-              value={draft.newPassword}
-              placeholder={passwordPlaceholder}
-              onChange={(e) => onChange({ newPassword: e.target.value, clearPassword: false })}
-            />
-            {draft.passwordSet && !draft.newPassword && (
-              <button type="button" className="ctl h-[26px] shrink-0 px-2 text-[10px] text-ink-2" onClick={() => onChange({ clearPassword: !draft.clearPassword })}>
-                {draft.clearPassword ? 'Keep' : 'Clear'}
-              </button>
-            )}
+      {draft.kind === 'udp' ? (
+        <>
+          <Field label={`UDP port (${UDP_PORTS.first}-${UDP_PORTS.last})`}>
+            <input className={input} value={draft.port} inputMode="numeric" onChange={(e) => onChange({ port: e.target.value.replace(/\D/g, '') })} />
+          </Field>
+          <p className="font-mono text-[11px] leading-relaxed text-ink-2" data-testid="udp-target">
+            In HiDesViewer, turn on Send to UDP with{' '}
+            <span className="select-all text-ink">{ingestHost}:{draft.port || '?'}</span>
+            {' '}-- or <span className="select-all text-ink">localhost:{draft.port || '?'}</span> when HiDesViewer runs on the gateway machine.
+          </p>
+        </>
+      ) : (
+        <>
+          <Field label="Main URL">
+            <input className={input} value={draft.url} placeholder="rtsp://192.168.1.64:554/stream1" onChange={(e) => onChange({ url: e.target.value })} />
+          </Field>
+          <Field label="Low-res URL (optional)">
+            <input className={input} value={draft.lowResUrl} placeholder="rtsp://192.168.1.64:554/stream2" onChange={(e) => onChange({ lowResUrl: e.target.value })} />
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Username">
+              <input className={input} value={draft.username} autoComplete="off" onChange={(e) => onChange({ username: e.target.value })} />
+            </Field>
+            <Field label="Password">
+              <div className="flex gap-1">
+                <input
+                  className={input}
+                  type="password"
+                  autoComplete="new-password"
+                  value={draft.newPassword}
+                  placeholder={passwordPlaceholder}
+                  onChange={(e) => onChange({ newPassword: e.target.value, clearPassword: false })}
+                />
+                {draft.passwordSet && !draft.newPassword && (
+                  <button type="button" className="ctl h-[26px] shrink-0 px-2 text-[10px] text-ink-2" onClick={() => onChange({ clearPassword: !draft.clearPassword })}>
+                    {draft.clearPassword ? 'Keep' : 'Clear'}
+                  </button>
+                )}
+              </div>
+            </Field>
           </div>
-        </Field>
-      </div>
+        </>
+      )}
       <div className="flex items-center justify-between gap-2 pt-1">
         <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-2">
           <input type="checkbox" className="h-3.5 w-3.5" checked={draft.record} onChange={(e) => onChange({ record: e.target.checked })} />
           Include in recording
         </label>
         <div className="flex gap-1">
-          <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" disabled={!draft.url.trim()} onClick={() => setPreviewing((n) => (n ? 0 : Date.now()))}>
+          <button
+            type="button"
+            className="ctl h-6 px-2 text-[10px] text-ink-2"
+            disabled={draft.kind === 'udp' || !draft.url.trim()}
+            title={draft.kind === 'udp' ? 'A UDP stream plays once saved: its tile says whether anything is arriving' : undefined}
+            onClick={() => setPreviewing((n) => (n ? 0 : Date.now()))}
+          >
             {previewing ? 'Stop test' : 'Test'}
           </button>
           <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={onRemove}>Remove</button>
@@ -251,6 +281,7 @@ export default function StreamEditor({
   const [layout, setLayout] = useState<VideoLayout>({ preset: 'auto', slots: [] });
   const [originalGateway, setOriginalGateway] = useState<GatewayDraft | null>(null);
   const [gateway, setGateway] = useState<GatewayDraft | null>(null);
+  const [ingestHost, setIngestHost] = useState('');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -267,6 +298,7 @@ export default function StreamEditor({
         const g = { host: cfg.gateway.host, passwordSet: cfg.gateway.passwordSet, newPassword: '', clearPassword: false };
         setOriginalGateway(g);
         setGateway(g);
+        setIngestHost(cfg.ingestHost);
       })
       .catch((e) => setErrors([e instanceof Error ? e.message : String(e)]));
   }, []);
@@ -317,7 +349,9 @@ export default function StreamEditor({
           <StreamCard
             key={d.key}
             draft={d}
+            ingestHost={ingestHost}
             onChange={(p) => patch(d.key, p)}
+            onKind={(kind) => setDrafts((ds) => withKind(ds, d.key, kind))}
             onLabel={(label) => setDrafts((ds) => withLabel(ds, d.key, label))}
             onRemove={() => setDrafts((ds) => ds.filter((o) => o.key !== d.key))}
           />

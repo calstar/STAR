@@ -89,7 +89,10 @@ final class ReceiverModel: ObservableObject {
     // Remembered between launches.
     @AppStorage("frequencyMHz") var frequencyMHz = "1280"
     @AppStorage("bandwidthMHz") var bandwidthMHz = "8"
-    @AppStorage("udpTarget") var udpTarget = "127.0.0.1:5000"
+    // 5600: the DAQ video gateway's first port for pushed streams (5600-5609), clear of the
+    // DAQ's own UDP (5000, 5005, 5006, 5008). On the gateway machine itself this is right as
+    // is; from another machine, use the gateway's name (the Video view's Edit shows it).
+    @AppStorage("udpTarget") var udpTarget = "127.0.0.1:5600"
     @AppStorage("udpEnabled") var udpEnabled = false
     @AppStorage("logEnabled") var logEnabled = false
     @AppStorage("scanFromMHz") var scanFromMHz = "1240"

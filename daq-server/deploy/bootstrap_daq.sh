@@ -203,6 +203,9 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   # Video: browsers receive WebRTC media from the gateway on this one UDP port. Its HTTP
   # side (:8889, WHEP) and API (:8887) stay closed -- only the backend talks to them.
   sudo ufw allow 8189/udp comment 'DAQ video (WebRTC media)'
+  # Pushed video (the HiDes link's MPEG-TS from HiDesViewer): the range video.json may use
+  # (UDP_PORTS in backend/src/video/config.ts), clear of the boards' 5000/5005/5006/5008.
+  sudo ufw allow 5600:5609/udp comment 'DAQ video (pushed MPEG-TS)'
   c_ok "GUI/API/video port rules applied"
 else
   c_info "ufw not active — skipping GUI/API port rules (nothing blocking :3000/:8081)."

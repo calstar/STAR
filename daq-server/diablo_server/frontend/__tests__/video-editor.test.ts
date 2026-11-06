@@ -1,11 +1,12 @@
 /** The stream editor's rules (lib/video/editor.ts): ids from labels, and what a save sends. */
 import { describe, it, expect } from 'vitest';
-import { draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, slugId, toSave, withLabel, withPreset } from '@/lib/video/editor';
+import { draftLayoutFrom, draftsFrom, freeUdpPort, isDirty, layoutIds, newDraft, slugId, toSave, withKind, withLabel, withPreset } from '@/lib/video/editor';
 
 const loaded = {
   revision: 'r1',
   layout: { preset: '1+5' as const, slots: [null, 'pad', null, null, null, null] },
   gateway: { host: '', passwordSet: false },
+  ingestHost: 'star-rfs.local',
   streams: [
     { id: 'pad', label: 'Pad overview', kind: 'rtsp' as const, url: 'rtsp://192.0.2.10/main', lowResUrl: 'rtsp://192.0.2.10/sub', record: true, username: 'admin', passwordSet: true },
   ],
@@ -83,5 +84,27 @@ describe('layout in the editor', () => {
     expect(withPreset(l, '2x2')).toEqual({ preset: '2x2', slots: ['a', 'b', 'c', null] });
     expect(withPreset(l, '1+7').slots).toEqual(['a', 'b', 'c', null, null, 'f', null, null]);
     expect(withPreset(l, 'auto')).toEqual({ preset: 'auto', slots: [] });
+  });
+});
+
+describe('a HiDes (UDP) stream in the editor', () => {
+  it('switching to UDP picks the first free port in the video range', () => {
+    let d = [newDraft([]), newDraft([])];
+    d = withKind(d, d[0].key, 'udp');
+    d = withKind(d, d[1].key, 'udp');
+    expect(d.map((x) => x.port)).toEqual(['5600', '5601']);
+    expect(freeUdpPort(d)).toBe('5602');
+  });
+
+  it('saves a port, and no URL or credentials', () => {
+    const [d] = withKind([{ ...newDraft([]), id: 'hides', label: 'HiDes', url: 'rtsp://leftover', username: 'u', newPassword: 'p' }], '', 'rtsp');
+    const udp = { ...d, kind: 'udp' as const, port: '5600' };
+    expect(toSave([udp])).toEqual({ streams: [{ id: 'hides', label: 'HiDes', kind: 'udp', port: 5600, record: true }], credentials: {} });
+  });
+
+  it('a kind or port change is a change to save', () => {
+    const orig = draftsFrom(loaded);
+    expect(isDirty([{ ...orig[0], kind: 'udp' }], orig)).toBe(true);
+    expect(isDirty([{ ...orig[0], port: '5600' }], orig)).toBe(true);
   });
 });
