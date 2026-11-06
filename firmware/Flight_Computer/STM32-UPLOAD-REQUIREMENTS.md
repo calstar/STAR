@@ -189,6 +189,21 @@ st-flash --reset write .pio/build/flight/firmware.bin 0x08000000
 
 ---
 
+## The gate: `./flight_test`
+
+Run it before every commit. It lists every check with ✅/❌ and exits non-zero
+on any failure; CI runs it too.
+
+```bash
+./flight_test              # build, unit suites, end-to-end pipeline, canary
+./flight_test --board      # + flash and read the on-board self-test over SWD
+./flight_test --list       # every check id and what it proves
+./flight_test --only=conservation,12 -v
+```
+
+`--board` needs the board powered and the ST-Link on P1; it uses PlatformIO's
+own OpenOCD and arm-none-eabi-gdb, so nothing extra to install.
+
 ## First power-up: what the bring-up firmware does
 
 On boot, `bringup_task` (Core/Src/bringup_task.c) releases each chip's reset
