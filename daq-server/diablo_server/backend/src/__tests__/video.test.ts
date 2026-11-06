@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as http from 'http';
-import { readFileSync } from 'fs';
+import { readFileSync, utimesSync } from 'fs';
 import { fileURLToPath } from 'url';
 import type { AddressInfo } from 'net';
 
@@ -20,7 +20,8 @@ process.env.VIDEO_CONFIG_PATH = CONFIG;
 process.env.VIDEO_SECRETS_PATH = SECRETS;
 
 const { validateVideoConfig, validateLayout, loadVideoConfig, publicStream, LAYOUT_PRESETS } = await import('../video/config.js');
-const { cameraSource, desiredPaths, reconcile, gatewayEndpointFromEnv } = await import('../video/gateway.js');
+const gatewayMod = await import('../video/gateway.js');
+const { cameraSource, desiredPaths, reconcile, gatewayEndpointFromEnv } = gatewayMod;
 const { VideoService } = await import('../video/service.js');
 const { handleVideoRequest } = await import('../video/routes.js');
 type GatewayApi = import('../video/gateway.js').GatewayApi;
@@ -136,7 +137,7 @@ describe('reconcile', () => {
   });
 
   it('refills a gateway that restarted empty', async () => {
-    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x' }, gw);
+    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', host: 'x' }, gw);
     writeConfig([pad]);
     rmSync(SECRETS, { force: true });
     await svc.sync();
@@ -183,7 +184,7 @@ describe('routes', () => {
 
     writeConfig([{ ...pad, lowResUrl: 'rtsp://192.0.2.10/sub' }]);
     writeSecrets({ pad: { username: 'admin', password: PASSWORD } });
-    const svc = new VideoService({ apiUrl: 'http://127.0.0.1:1', webrtcUrl: whepUrl }, new FakeGateway());
+    const svc = new VideoService({ apiUrl: 'http://127.0.0.1:1', webrtcUrl: whepUrl, host: '127.0.0.1' }, new FakeGateway());
     api = http.createServer(async (req, res) => {
       const handled = await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc);
       if (!handled) { res.writeHead(418); res.end(); }
@@ -295,7 +296,7 @@ describe('editing from the pane', () => {
     });
     await new Promise<void>((r) => whep.listen(0, '127.0.0.1', r));
     gw = new FakeGateway();
-    svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}` }, gw);
+    svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}`, host: '127.0.0.1' }, gw);
     api = http.createServer(async (req, res) => {
       await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc);
     });
@@ -454,7 +455,7 @@ describe('layout over HTTP', () => {
       req.on('end', () => { res.writeHead(201, { 'Content-Type': 'application/sdp', Location: `${req.url}/1234abcd-0000-4000-8000-000000000000` }); res.end('v=0'); });
     });
     await new Promise<void>((r) => whep.listen(0, '127.0.0.1', r));
-    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}` }, new FakeGateway());
+    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}`, host: '127.0.0.1' }, new FakeGateway());
     api = http.createServer(async (req, res) => { await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc); });
     await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
     apiUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
@@ -492,5 +493,74 @@ describe('layout over HTTP', () => {
       body: JSON.stringify({ revision: saved.revision, streams: [pad] }),
     });
     expect((await put2.json()).layout).toEqual({ preset: '1+5', slots: [null, 'pad', null, null, null, null] });
+  });
+});
+
+describe('gateway on another machine', () => {
+  const { gatewayEndpoint, HttpGatewayApi } = gatewayMod;
+
+  it('defaults to this machine, follows the setting, and lets VIDEO_GATEWAY_HOST win', () => {
+    expect(gatewayEndpoint(undefined, {})).toEqual({ apiUrl: 'http://127.0.0.1:8887', webrtcUrl: 'http://127.0.0.1:8889', host: '127.0.0.1' });
+    const ep = gatewayEndpoint({ host: 'theombp.local', password: 'gw-pass' }, {});
+    expect(ep).toMatchObject({ apiUrl: 'http://theombp.local:8887', webrtcUrl: 'http://theombp.local:8889', host: 'theombp.local' });
+    expect(ep.auth).toBe(`Basic ${Buffer.from('daq:gw-pass').toString('base64')}`);
+    expect(gatewayEndpoint({ host: 'theombp.local' }, { VIDEO_GATEWAY_HOST: '10.0.0.5' }).host).toBe('10.0.0.5');
+  });
+
+  it('the service follows the local file, live', () => {
+    const before = process.env.VIDEO_GATEWAY_HOST;
+    delete process.env.VIDEO_GATEWAY_HOST;
+    try {
+      writeConfig([pad]);
+      writeFileSync(SECRETS, JSON.stringify({ streams: {}, gateway: { host: 'media-mac.local', password: 'p' } }));
+      const svc = new VideoService();
+      expect(svc.endpoint.host).toBe('media-mac.local');
+      expect(svc.gatewayStatus().host).toBe('media-mac.local');
+      writeFileSync(SECRETS, JSON.stringify({ streams: {} }));
+      // mtime resolution: make sure the change is seen
+      utimesSync(SECRETS, new Date(), new Date(Date.now() + 5000));
+      expect(svc.endpoint.host).toBe('127.0.0.1');
+      expect(svc.endpoint.auth).toBeUndefined();
+    } finally {
+      if (before !== undefined) process.env.VIDEO_GATEWAY_HOST = before;
+    }
+  });
+
+  it('sends the password to the control API, and says so when it is refused', async () => {
+    const got: (string | undefined)[] = [];
+    const srv = http.createServer((req, res) => {
+      got.push(req.headers.authorization);
+      const ok = req.headers.authorization === `Basic ${Buffer.from('daq:right').toString('base64')}`;
+      res.writeHead(ok ? 200 : 401, { 'Content-Type': 'application/json' });
+      res.end(ok ? JSON.stringify({ items: [], pageCount: 1 }) : '');
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+      await new HttpGatewayApi(url, gatewayEndpoint({ password: 'right' }, {}).auth).listPaths();
+      await expect(new HttpGatewayApi(url, gatewayEndpoint({ password: 'wrong' }, {}).auth).listPaths()).rejects.toThrow(/refused the password/);
+      expect(got[0]).toBe(`Basic ${Buffer.from('daq:right').toString('base64')}`);
+    } finally {
+      srv.close();
+    }
+  });
+
+  it('is set from the editor: host checked, password write-only and kept when omitted', async () => {
+    writeConfig([pad]);
+    writeFileSync(SECRETS, JSON.stringify({ streams: { pad: { username: 'admin', password: PASSWORD } } }));
+    const { editableConfig, saveVideoConfig } = await import('../video/config.js');
+    let cfg = editableConfig();
+    expect(cfg.gateway).toEqual({ host: '', passwordSet: false });
+    expect(() => saveVideoConfig({ streams: [pad], gateway: { host: 'not a host!' } }, cfg.revision)).toThrow(/not a hostname/);
+    cfg = saveVideoConfig({ streams: [pad], gateway: { host: 'theombp.local', password: 'gw-pass' } }, cfg.revision);
+    expect(cfg.gateway).toEqual({ host: 'theombp.local', passwordSet: true });
+    expect(JSON.stringify(cfg)).not.toContain('gw-pass');
+    cfg = saveVideoConfig({ streams: [pad], gateway: { host: 'theombp.local' } }, cfg.revision);
+    const file = JSON.parse(readFileSync(SECRETS, 'utf8'));
+    expect(file.gateway).toEqual({ host: 'theombp.local', password: 'gw-pass' });
+    expect(file.streams.pad.password).toBe(PASSWORD); // cameras untouched
+    cfg = saveVideoConfig({ streams: [pad], gateway: { host: '', password: null } }, cfg.revision);
+    expect(JSON.parse(readFileSync(SECRETS, 'utf8')).gateway).toBeUndefined();
+    expect(JSON.stringify(readFileSync(CONFIG, 'utf8'))).not.toContain('theombp'); // never in the committed file
   });
 });

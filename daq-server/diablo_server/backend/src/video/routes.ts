@@ -77,7 +77,7 @@ async function proxyWhep(
     try {
       upstream = await fetch(target, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: { 'Content-Type': 'application/sdp', ...(video.endpoint.auth ? { Authorization: video.endpoint.auth } : {}) },
         body: offer,
         signal: AbortSignal.timeout(WHEP_TIMEOUT_MS),
       });
@@ -107,7 +107,11 @@ async function proxyWhep(
       return;
     }
     try {
-      const upstream = await fetch(`${target}/${session}`, { method: 'DELETE', signal: AbortSignal.timeout(WHEP_TIMEOUT_MS) });
+      const upstream = await fetch(`${target}/${session}`, {
+        method: 'DELETE',
+        headers: video.endpoint.auth ? { Authorization: video.endpoint.auth } : undefined,
+        signal: AbortSignal.timeout(WHEP_TIMEOUT_MS),
+      });
       res.writeHead(upstream.ok ? 200 : upstream.status === 404 ? 404 : 502);
     } catch {
       res.writeHead(200); // the gateway is gone, and the session with it
@@ -155,7 +159,15 @@ export async function handleVideoRequest(
     if (pathname === '/api/video/config' && req.method === 'PUT') {
       const body = await readJson(req);
       const saved = saveVideoConfig(
-        { streams: body.streams, layout: body.layout, credentials: credentialsFrom(body.credentials) },
+        {
+          streams: body.streams,
+          layout: body.layout,
+          credentials: credentialsFrom(body.credentials),
+          gateway: body.gateway && typeof body.gateway === 'object' ? {
+            ...(typeof body.gateway.host === 'string' ? { host: body.gateway.host } : {}),
+            ...(body.gateway.password === null || typeof body.gateway.password === 'string' ? { password: body.gateway.password } : {}),
+          } : undefined,
+        },
         typeof body.revision === 'string' ? body.revision : '',
       );
       await video.sync(); // live for everyone now, not at the next tick

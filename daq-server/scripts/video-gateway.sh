@@ -9,6 +9,13 @@
 #   scripts/video-gateway.sh              download if needed, then run in the foreground
 #   scripts/video-gateway.sh --fetch      download and verify only (setup / CI)
 #   scripts/video-gateway.sh --print-bin  print the binary's path (downloading if needed)
+#   scripts/video-gateway.sh --set-password   set the password a DAQ backend on another
+#                                            machine uses to reach this gateway (desert)
+#
+# Remote access: with a password (VIDEO_GATEWAY_PASSWORD, or the gitignored file
+# video/gateway.password that --set-password writes) the gateway admits user "daq" from
+# any address, for its control API and WebRTC reads. Without one, only this machine can
+# use it. Enter the same password in the Video view's Edit > Gateway on the DAQ laptop.
 #
 # Settings can be overridden with MTX_<KEY> environment variables (MediaMTX's own
 # mechanism), e.g. MTX_APIADDRESS=127.0.0.1:18887.
@@ -74,14 +81,43 @@ fetch() {
   chmod +x "$BIN"
 }
 
+PASSWORD_FILE="$VIDEO_DIR/gateway.password"
+
+set_password() {
+  local a b
+  read -r -s -p "Gateway password (empty: this machine only): " a; echo
+  if [[ -z "$a" ]]; then rm -f "$PASSWORD_FILE"; echo "video-gateway: remote access off"; return; fi
+  read -r -s -p "Again: " b; echo
+  [[ "$a" == "$b" ]] || { echo "video-gateway: passwords differ, nothing changed" >&2; return 1; }
+  ( umask 077; printf '%s' "$a" > "$PASSWORD_FILE" )
+  echo "video-gateway: saved; restart the gateway for it to take effect"
+}
+
 case "${1:-}" in
   --fetch) fetch; exit 0 ;;
   --print-bin) fetch; echo "$BIN"; exit 0 ;;
+  --set-password) set_password; exit $? ;;
   "") ;;
-  *) echo "usage: $0 [--fetch | --print-bin]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--fetch | --print-bin | --set-password]" >&2; exit 2 ;;
 esac
 
 fetch
+
+# Remote access for a DAQ backend on another machine (see the header). Passed to MediaMTX
+# as an extra internal user through its MTX_* environment overrides; never echoed.
+password="${VIDEO_GATEWAY_PASSWORD:-}"
+if [[ -z "$password" && -s "$PASSWORD_FILE" ]]; then password="$(cat "$PASSWORD_FILE")"; fi
+if [[ -n "$password" ]]; then
+  export MTX_AUTHINTERNALUSERS_1_USER=daq
+  export MTX_AUTHINTERNALUSERS_1_PASS="$password"
+  export MTX_AUTHINTERNALUSERS_1_IPS=
+  export MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_ACTION=api
+  export MTX_AUTHINTERNALUSERS_1_PERMISSIONS_1_ACTION=read
+  echo "video-gateway: remote access on (user daq)" >&2
+else
+  echo "video-gateway: remote access off (this machine only; --set-password to allow a DAQ laptop)" >&2
+fi
+unset password
 # MediaMTX writes nothing to its working directory with this config, but run it from the
 # video dir so a relative path in a future setting lands somewhere predictable.
 cd "$VIDEO_DIR"

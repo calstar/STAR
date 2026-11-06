@@ -57,9 +57,21 @@ export interface StreamSecret {
   password?: string;
 }
 
+/** Where this machine's backend finds the gateway (default: this machine), and the
+ *  password the gateway was given (scripts/video-gateway.sh --set-password). */
+export interface GatewaySetting {
+  host?: string;
+  password?: string;
+}
+
+/** The machine-local file: camera credentials, and this machine's gateway setting. */
 export interface VideoSecrets {
   streams: Record<string, StreamSecret>;
+  gateway?: GatewaySetting;
 }
+
+/** A hostname (theombp.local), an IPv4 address, or localhost. Ports are fixed by mediamtx.yml. */
+export const GATEWAY_HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)*$/;
 
 /** What a browser may see of a stream. Deliberately has no URL field. */
 export interface PublicStream {
@@ -183,6 +195,14 @@ export function validateVideoSecrets(raw: unknown): { secrets: VideoSecrets; err
   const errors: string[] = [];
   const secrets: VideoSecrets = { streams: {} };
   if (!raw || typeof raw !== 'object') return { secrets, errors: ['video secrets file is not a JSON object'] };
+  const g = (raw as any).gateway;
+  if (g && typeof g === 'object') {
+    const gateway: GatewaySetting = {};
+    if (typeof g.host === 'string' && GATEWAY_HOST_RE.test(g.host)) gateway.host = g.host;
+    else if (g.host !== undefined && g.host !== '') errors.push('video secrets: gateway host is not a hostname or address');
+    if (typeof g.password === 'string' && g.password) gateway.password = g.password;
+    if (gateway.host || gateway.password) secrets.gateway = gateway;
+  }
   const streams = (raw as any).streams;
   if (streams === undefined) return { secrets, errors };
   if (!streams || typeof streams !== 'object' || Array.isArray(streams)) {
@@ -247,6 +267,8 @@ export interface EditableConfig {
   revision: string;
   streams: EditableStream[];
   layout: VideoLayout;
+  /** This machine's gateway: host ('' = this machine) and whether a password is saved. */
+  gateway: { host: string; passwordSet: boolean };
 }
 
 /** Per-stream credential change. username: set ('' clears). password: undefined keeps the
@@ -280,6 +302,7 @@ export function editableConfig(): EditableConfig {
       passwordSet: !!secrets.streams[s.id]?.password,
     })),
     layout: config.layout,
+    gateway: { host: secrets.gateway?.host ?? '', passwordSet: !!secrets.gateway?.password },
   };
 }
 
@@ -298,7 +321,7 @@ function writeAtomic(path: string, text: string, mode?: number): void {
  * dropped with them.
  */
 export function saveVideoConfig(
-  input: { streams: unknown; layout?: unknown; credentials?: Record<string, CredentialChange> },
+  input: { streams: unknown; layout?: unknown; credentials?: Record<string, CredentialChange>; gateway?: CredentialChange & { host?: string } },
   baseRevision: string,
 ): EditableConfig {
   const configPath = videoConfigPath();
@@ -319,7 +342,18 @@ export function saveVideoConfig(
   try { current = currentText ? JSON.parse(currentText) : {}; } catch { current = {}; }
   const { secrets } = loadVideoConfig();
 
-  const nextSecrets: VideoSecrets = { streams: {} };
+  // This machine's gateway: host ('' = this machine), password write-only like a camera's.
+  const nextGateway: GatewaySetting = { ...secrets.gateway };
+  const gw = input.gateway;
+  if (gw && typeof gw.host === 'string') {
+    const host = gw.host.trim();
+    if (host && !GATEWAY_HOST_RE.test(host)) throw new VideoConfigError(400, [`gateway "${host}" is not a hostname or address`]);
+    if (host) nextGateway.host = host; else delete nextGateway.host;
+  }
+  if (gw?.password === null || gw?.password === '') delete nextGateway.password;
+  else if (typeof gw?.password === 'string') nextGateway.password = gw.password;
+
+  const nextSecrets: VideoSecrets = { streams: {}, ...(nextGateway.host || nextGateway.password ? { gateway: nextGateway } : {}) };
   for (const s of config.streams) {
     const prev = secrets.streams[s.id] ?? {};
     const change = input.credentials?.[s.id] ?? {};

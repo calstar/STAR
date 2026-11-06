@@ -16,7 +16,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import VideoTile from '@/components/video/VideoTile';
-import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, VideoApiError } from '@/lib/video/api';
+import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, VideoApiError, type GatewayChange } from '@/lib/video/api';
 import {
   draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, toSave, withLabel, withPreset, type DraftStream,
 } from '@/lib/video/editor';
@@ -142,6 +142,54 @@ function StreamCard({
   );
 }
 
+interface GatewayDraft {
+  host: string;
+  passwordSet: boolean;
+  newPassword: string;
+  clearPassword: boolean;
+}
+
+/** Where this machine's backend finds the gateway: blank = this machine (the workspace);
+ *  the media Mac's name in the desert. Stored on this machine only, never committed. */
+function GatewaySection({ draft, onChange }: { draft: GatewayDraft; onChange: (p: Partial<GatewayDraft>) => void }) {
+  const placeholder = draft.clearPassword ? 'will be cleared' : draft.passwordSet ? 'saved -- type to replace' : 'none';
+  return (
+    <section className="space-y-2 border-b border-line px-4 py-3">
+      <span className={fieldLabel}>Gateway (this machine's setting)</span>
+      <div className="grid grid-cols-[1fr_10rem] gap-2">
+        <Field label="Host">
+          <input className={input} value={draft.host} placeholder="this machine" onChange={(e) => onChange({ host: e.target.value })} />
+        </Field>
+        <Field label="Password">
+          <div className="flex gap-1">
+            <input
+              className={input}
+              type="password"
+              autoComplete="new-password"
+              value={draft.newPassword}
+              placeholder={placeholder}
+              onChange={(e) => onChange({ newPassword: e.target.value, clearPassword: false })}
+            />
+            {draft.passwordSet && !draft.newPassword && (
+              <button type="button" className="ctl h-[26px] shrink-0 px-2 text-[10px] text-ink-2" onClick={() => onChange({ clearPassword: !draft.clearPassword })}>
+                {draft.clearPassword ? 'Keep' : 'Clear'}
+              </button>
+            )}
+          </div>
+        </Field>
+      </div>
+      <p className="font-mono text-[10px] leading-relaxed text-ink-3">
+        Blank: the gateway on this machine. Another machine (e.g. theombp.local): run
+        scripts/video-gateway.sh --set-password there and enter the same password here.
+      </p>
+    </section>
+  );
+}
+
+function gatewayChange(d: GatewayDraft): GatewayChange {
+  return { host: d.host.trim(), ...(d.newPassword ? { password: d.newPassword } : d.clearPassword ? { password: null } : {}) };
+}
+
 /** Preset picker and a stream per slot. Slots hold draft keys (see lib/video/editor). */
 function LayoutSection({ layout, drafts, onChange }: { layout: VideoLayout; drafts: DraftStream[]; onChange: (l: VideoLayout) => void }) {
   const cells = geometry(layout.preset).cells;
@@ -201,6 +249,8 @@ export default function StreamEditor({
   const [drafts, setDrafts] = useState<DraftStream[]>([]);
   const [originalLayout, setOriginalLayout] = useState<VideoLayout>({ preset: 'auto', slots: [] });
   const [layout, setLayout] = useState<VideoLayout>({ preset: 'auto', slots: [] });
+  const [originalGateway, setOriginalGateway] = useState<GatewayDraft | null>(null);
+  const [gateway, setGateway] = useState<GatewayDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -214,13 +264,17 @@ export default function StreamEditor({
         setDrafts(d);
         setOriginalLayout(l);
         setLayout(l);
+        const g = { host: cfg.gateway.host, passwordSet: cfg.gateway.passwordSet, newPassword: '', clearPassword: false };
+        setOriginalGateway(g);
+        setGateway(g);
       })
       .catch((e) => setErrors([e instanceof Error ? e.message : String(e)]));
   }, []);
 
   const dirty = useMemo(
-    () => isDirty(drafts, original) || JSON.stringify(layout) !== JSON.stringify(originalLayout),
-    [drafts, original, layout, originalLayout],
+    () => isDirty(drafts, original) || JSON.stringify(layout) !== JSON.stringify(originalLayout)
+      || JSON.stringify(gateway) !== JSON.stringify(originalGateway),
+    [drafts, original, layout, originalLayout, gateway, originalGateway],
   );
 
   // Show the draft on the grid as it is chosen; hand the grid back on close.
@@ -236,7 +290,7 @@ export default function StreamEditor({
     setErrors([]);
     try {
       const { streams, credentials } = toSave(drafts);
-      await saveVideoConfig(revision, streams, credentials, layoutIds(layout, drafts));
+      await saveVideoConfig(revision, streams, credentials, layoutIds(layout, drafts), gatewayChange(gateway!));
       onSaved();
       onClose();
     } catch (e) {
@@ -256,6 +310,7 @@ export default function StreamEditor({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+      {gateway && <GatewaySection draft={gateway} onChange={(p) => setGateway((g) => (g ? { ...g, ...p } : g))} />}
       {revision !== null && <LayoutSection layout={layout} drafts={drafts} onChange={setLayout} />}
       <ul>
         {drafts.map((d) => (

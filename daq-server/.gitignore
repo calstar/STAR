@@ -253,3 +253,4 @@ scripts/calibration/calibrations/profiles/.active
 # come after the `!config/*.json` exception above, or that exception re-includes it.
 config/video.secrets.json
 video/.bin/
+video/gateway.password

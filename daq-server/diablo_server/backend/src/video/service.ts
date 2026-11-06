@@ -13,7 +13,7 @@ import {
 } from './config.js';
 import { checkCamera, type CameraCheck } from './camera-check.js';
 import {
-  desiredPaths, gatewayEndpointFromEnv, HttpGatewayApi, reconcile, withCredentials, PREVIEW_PREFIX,
+  desiredPaths, gatewayEndpoint, HttpGatewayApi, reconcile, withCredentials, PREVIEW_PREFIX,
   type GatewayApi, type GatewayEndpoint,
 } from './gateway.js';
 
@@ -25,6 +25,8 @@ export const PREVIEW_ID_RE = /^[0-9a-f]{12}$/;
 const CHECK_TTL_MS = 5000;
 
 export interface GatewayStatus {
+  /** Where the backend is looking for it. */
+  host: string;
   reachable: boolean;
   /** Why the last pass failed, if it did. */
   error?: string;
@@ -41,17 +43,34 @@ export class VideoService {
   private stamp = '';
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
-  private status: GatewayStatus = { reachable: false, error: 'not contacted yet' };
+  private status: Omit<GatewayStatus, 'host'> = { reachable: false, error: 'not contacted yet' };
+  private client: { key: string; api: GatewayApi } | undefined;
   /** Live previews: id -> expiry (epoch ms). */
   private previews = new Map<string, number>();
   /** Recent camera checks: `${id}` or `${id}/low` -> result in flight or done, and when. */
   private checks = new Map<string, { at: number; result: Promise<CameraCheck> }>();
 
+  /**
+   * With no arguments the gateway is wherever this machine's setting says (the Video view's
+   * Edit > Gateway, kept in the local file), re-read on every use. Tests pin both.
+   */
   constructor(
-    readonly endpoint: GatewayEndpoint = gatewayEndpointFromEnv(),
-    private readonly api: GatewayApi = new HttpGatewayApi(endpoint.apiUrl),
+    private readonly fixedEndpoint?: GatewayEndpoint,
+    private readonly fixedApi?: GatewayApi,
   ) {
     this.loaded = this.reload(true);
+  }
+
+  get endpoint(): GatewayEndpoint {
+    return this.fixedEndpoint ?? gatewayEndpoint(this.current().secrets.gateway);
+  }
+
+  private get api(): GatewayApi {
+    if (this.fixedApi) return this.fixedApi;
+    const ep = this.endpoint;
+    const key = `${ep.apiUrl}|${ep.auth ?? ''}`;
+    if (this.client?.key !== key) this.client = { key, api: new HttpGatewayApi(ep.apiUrl, ep.auth) };
+    return this.client.api;
   }
 
   private reload(force = false): LoadedVideoConfig {
@@ -68,7 +87,7 @@ export class VideoService {
   }
 
   gatewayStatus(): GatewayStatus {
-    return { ...this.status };
+    return { host: this.endpoint.host, ...this.status };
   }
 
   /** One reconcile pass. Concurrent callers share the pass in flight. */

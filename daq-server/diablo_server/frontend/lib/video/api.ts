@@ -11,6 +11,8 @@ export interface VideoStreamInfo {
 }
 
 export interface GatewayStatus {
+  /** Where the backend looks for the gateway. */
+  host: string;
   reachable: boolean;
   error?: string;
   lastSyncAt?: number;
@@ -48,6 +50,14 @@ export interface EditableConfig {
   revision: string;
   streams: EditableStream[];
   layout: VideoLayout;
+  /** This machine's gateway: host ('' = this machine) and whether a password is saved. */
+  gateway: { host: string; passwordSet: boolean };
+}
+
+/** host: '' = this machine. password: omit to keep, null to clear, string to set. */
+export interface GatewayChange {
+  host: string;
+  password?: string | null;
 }
 
 /** username: set ('' clears). password: omit to keep, null to clear, string to set. */
@@ -82,7 +92,8 @@ export const saveVideoConfig = (
   streams: Omit<EditableStream, 'username' | 'passwordSet'>[],
   credentials: Record<string, CredentialChange>,
   layout: VideoLayout,
-) => call<EditableConfig>('PUT', '/api/video/config', { revision, streams, credentials, layout });
+  gateway: GatewayChange,
+) => call<EditableConfig>('PUT', '/api/video/config', { revision, streams, credentials, layout, gateway });
 
 export const createPreview = (input: { url: string; username?: string; password?: string; fromStreamId?: string }) =>
   call<{ id: string }>('POST', '/api/video/previews', input);

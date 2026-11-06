@@ -128,7 +128,14 @@ export default function VideoPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [eff.focus, setFocus]);
 
-  const problem = loadError ? 'backend unreachable' : data && !data.gateway.reachable ? 'gateway unreachable' : null;
+  const where = data && data.gateway.host !== '127.0.0.1' ? ` (${data.gateway.host})` : '';
+  const problem = loadError
+    ? 'backend unreachable'
+    : data && !data.gateway.reachable
+      ? /refused the password/.test(data.gateway.error ?? '')
+        ? `gateway refused the password${where}`
+        : `gateway unreachable${where}`
+      : null;
   const empty = !!data && streams.length === 0;
   const showControls = !editing && (active || empty || !!problem || (data?.errors.length ?? 0) > 0);
   const focused = eff.focus ? byId.get(eff.focus) : undefined;

@@ -62,14 +62,17 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
   let camera: ChildProcess | undefined;
   let backend: http.Server;
   let svc: InstanceType<typeof import('../src/video/service.js').VideoService>;
+  /** The service the test backend answers with (swapped for the password case). */
+  let active: typeof svc;
   let bin = '';
   let gatewayLog = '';
 
-  const startGateway = async () => {
+  const startGateway = async (extraEnv: Record<string, string> = {}) => {
     gateway = spawn(bin, [join(DAQ, 'video', 'mediamtx.yml')], {
       cwd: dir,
       env: {
         ...process.env,
+        ...extraEnv,
         MTX_APIADDRESS: `127.0.0.1:${ports.api}`,
         MTX_RTSPADDRESS: `127.0.0.1:${ports.rtsp}`,
         MTX_WEBRTCADDRESS: `127.0.0.1:${ports.webrtc}`,
@@ -81,7 +84,9 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     });
     gateway.stdout?.on('data', (d) => (gatewayLog += d));
     gateway.stderr?.on('data', (d) => (gatewayLog += d));
-    await waitFor('gateway API', async () => ((await fetch(`http://127.0.0.1:${ports.api}/v3/paths/list`)).ok ? true : undefined));
+    // Any answer (401 included) means it is up.
+    await waitFor('gateway API', async () => ((await fetch(`http://127.0.0.1:${ports.api}/v3/paths/list`)).status ? true : undefined))
+      .catch((e) => { throw new Error(`${(e as Error).message}\n--- gateway log ---\n${gatewayLog.slice(-3000)}`); });
   };
 
   const startCamera = () => {
@@ -122,12 +127,13 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
 
     const { VideoService } = await import('../src/video/service.js');
     const { handleVideoRequest } = await import('../src/video/routes.js');
-    svc = new VideoService({ apiUrl: `http://127.0.0.1:${ports.api}`, webrtcUrl: `http://127.0.0.1:${ports.webrtc}` });
+    svc = new VideoService({ apiUrl: `http://127.0.0.1:${ports.api}`, webrtcUrl: `http://127.0.0.1:${ports.webrtc}`, host: '127.0.0.1' });
+    active = svc;
 
     // The backend, plus a page on the same origin to run the browser's side.
     backend = http.createServer(async (req, res) => {
       const path = new URL(req.url!, 'http://x').pathname;
-      if (await handleVideoRequest(req, res, path, svc)) return;
+      if (await handleVideoRequest(req, res, path, active)) return;
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<!doctype html><title>probe</title>');
     });
@@ -219,4 +225,67 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     expect(svc.gatewayStatus().reachable).toBe(true);
     expect((await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).status).toBe(200);
   }, 60_000);
+
+  it('a gateway that only admits the password: the backend gets in with it, and not without', async () => {
+    // As the media Mac in the desert: the launcher's user "daq", and this machine no longer
+    // trusted (so loopback cannot stand in for the password).
+    camera?.kill('SIGKILL');
+    await stopGateway();
+    await startGateway({
+      MTX_AUTHINTERNALUSERS_0_IPS: '192.0.2.1/32',
+      MTX_AUTHINTERNALUSERS_1_USER: 'daq',
+      MTX_AUTHINTERNALUSERS_1_PASS: 'gw-pass',
+      MTX_AUTHINTERNALUSERS_1_IPS: '',
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_ACTION: 'api',
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_1_ACTION: 'read',
+      // The test camera publishes as user daq too, now that loopback is not trusted.
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_2_ACTION: 'publish',
+    });
+    const { VideoService } = await import('../src/video/service.js');
+    const { gatewayEndpoint } = await import('../src/video/gateway.js');
+    const env = { VIDEO_GATEWAY_HOST: '127.0.0.1', VIDEO_GATEWAY_API_PORT: String(ports.api), VIDEO_GATEWAY_WEBRTC_PORT: String(ports.webrtc) };
+
+    const wrong = new VideoService(gatewayEndpoint({ password: 'nope' }, env));
+    await wrong.sync();
+    expect(wrong.gatewayStatus(), JSON.stringify(wrong.gatewayStatus())).toMatchObject({ reachable: false, error: expect.stringMatching(/refused the password/) });
+
+    const right = new VideoService(gatewayEndpoint({ password: 'gw-pass' }, env));
+    await right.sync();
+    expect(right.gatewayStatus().reachable).toBe(true);
+
+    camera = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-pix_fmt', 'yuv420p',
+      '-f', 'rtsp', '-rtsp_transport', 'tcp', `rtsp://daq:gw-pass@127.0.0.1:${ports.rtsp}/fake/cam1`,
+    ], { stdio: 'ignore' });
+
+    // The stream's own pull needs the password now too: give the camera URL's credentials.
+    writeFileSync(process.env.VIDEO_SECRETS_PATH!, JSON.stringify({ streams: { cam1: { username: 'daq', password: 'gw-pass' } } }));
+    await right.sync();
+
+    const { chromium } = await import('playwright-core');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${ports.backend}/`);
+      const whep = () => page.evaluate(async () => {
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetch('/api/video/streams/cam1/whep', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const loc = res.headers.get('Location');
+        pc.close();
+        if (loc) await fetch(loc, { method: 'DELETE' });
+        return res.status;
+      });
+      active = wrong;
+      expect(await whep()).not.toBe(201);
+      active = right;
+      expect(await waitFor('WHEP with the password', async () => ((await whep()) === 201 ? 201 : undefined))).toBe(201);
+    } finally {
+      active = svc;
+      await browser.close();
+    }
+  }, 90_000);
 });

@@ -58,16 +58,37 @@ export interface GatewayEndpoint {
   apiUrl: string;
   /** WebRTC/WHEP HTTP listener, e.g. http://127.0.0.1:8889 */
   webrtcUrl: string;
+  /** Authorization header for a remote gateway (user "daq", see scripts/video-gateway.sh). */
+  auth?: string;
+  /** The host as an operator would name it. */
+  host: string;
+}
+
+/** The user scripts/video-gateway.sh admits with the gateway password. */
+export const GATEWAY_USER = 'daq';
+
+/**
+ * Where the gateway is. VIDEO_GATEWAY_HOST (tests, unusual setups) wins; then this machine's
+ * setting from the Video view (the local file); then this machine.
+ */
+export function gatewayEndpoint(
+  setting: { host?: string; password?: string } | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): GatewayEndpoint {
+  const host = env.VIDEO_GATEWAY_HOST || setting?.host || '127.0.0.1';
+  const apiPort = env.VIDEO_GATEWAY_API_PORT || '8887';
+  const webrtcPort = env.VIDEO_GATEWAY_WEBRTC_PORT || '8889';
+  const auth = setting?.password ? `Basic ${Buffer.from(`${GATEWAY_USER}:${setting.password}`).toString('base64')}` : undefined;
+  return { apiUrl: `http://${host}:${apiPort}`, webrtcUrl: `http://${host}:${webrtcPort}`, host, ...(auth ? { auth } : {}) };
 }
 
 export function gatewayEndpointFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayEndpoint {
-  const host = env.VIDEO_GATEWAY_HOST || '127.0.0.1';
-  const apiPort = env.VIDEO_GATEWAY_API_PORT || '8887';
-  const webrtcPort = env.VIDEO_GATEWAY_WEBRTC_PORT || '8889';
-  return { apiUrl: `http://${host}:${apiPort}`, webrtcUrl: `http://${host}:${webrtcPort}` };
+  return gatewayEndpoint(undefined, env);
 }
 
-const API_TIMEOUT_MS = 3000;
+/** Generous on purpose: MediaMTX answers a wrong password only after a deliberate ~2 s pause
+ *  (brute-force protection), and a timeout must not turn "wrong password" into "unreachable". */
+const API_TIMEOUT_MS = 8000;
 
 /** The four control-API calls reconcile needs. An interface so tests can count calls. */
 export interface GatewayApi {
@@ -80,14 +101,17 @@ export interface GatewayApi {
 export class GatewayError extends Error {}
 
 export class HttpGatewayApi implements GatewayApi {
-  constructor(private readonly apiUrl: string) {}
+  constructor(private readonly apiUrl: string, private readonly auth?: string) {}
 
   private async call(method: string, path: string, body?: unknown): Promise<any> {
     let res: Response;
     try {
       res = await fetch(`${this.apiUrl}${path}`, {
         method,
-        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+        headers: {
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(this.auth ? { Authorization: this.auth } : {}),
+        },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
@@ -95,6 +119,9 @@ export class HttpGatewayApi implements GatewayApi {
       throw new GatewayError(`gateway unreachable at ${this.apiUrl} (${(e as Error).message})`);
     }
     const text = await res.text();
+    if (res.status === 401) {
+      throw new GatewayError(`gateway at ${this.apiUrl} refused the password (set the same one with scripts/video-gateway.sh --set-password there)`);
+    }
     if (!res.ok) {
       // MediaMTX answers {"status":"error","error":"..."}; never include the request body,
       // which carries camera credentials.

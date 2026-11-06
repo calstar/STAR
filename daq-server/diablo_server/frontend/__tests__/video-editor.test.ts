@@ -5,6 +5,7 @@ import { draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, slugId, toSa
 const loaded = {
   revision: 'r1',
   layout: { preset: '1+5' as const, slots: [null, 'pad', null, null, null, null] },
+  gateway: { host: '', passwordSet: false },
   streams: [
     { id: 'pad', label: 'Pad overview', kind: 'rtsp' as const, url: 'rtsp://192.0.2.10/main', lowResUrl: 'rtsp://192.0.2.10/sub', record: true, username: 'admin', passwordSet: true },
   ],
