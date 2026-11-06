@@ -532,6 +532,16 @@ MAX_TEMPERATURE_FRACTION = 0.03
 #: ullage is violent enough to beat an estimate.
 STEP_RETRIES = 6
 
+#: What is left of a tank's liquid, as a fraction of what a vessel step began
+#: with, below which it is round-off and the tank is empty. Not physics: the
+#: step a tank empties on lands at ``held - leaving * span``, which is zero
+#: only to the last bit, and which side of zero it falls on depends on the
+#: machine. A residue of 2e-19 kg was then a liquid whose temperature the heat
+#: balance integrated as q / (m cp): -58,000 K, no density at that, every
+#: halving refused, and the ullage rebuilt at atmosphere -- 336 g of nitrogen
+#: gone from a dry fuel tank, on some CI runners and not others.
+LIQUID_ROUNDOFF = 1.0e-12
+
 #: Cap on the adaptive sub-steps, so one violent instant cannot stall the tick.
 MAX_VESSEL_STEPS = 200
 
@@ -1803,10 +1813,15 @@ class TankSim:
                 mdot_vapour_out=vapour_out,
             )
             stepped = self.tank.step(self.state, rates, remaining)
+            liquid = stepped.liquid_mass
+            if liquid <= LIQUID_ROUNDOFF * self.state.liquid_mass:
+                # Emptied on this piece: what is left is round-off, not
+                # propellant (LIQUID_ROUNDOFF). The ledger books the residue.
+                liquid = 0.0
             candidate = replace(
                 stepped,
                 ullage=self._settled(stepped.ullage),
-                liquid_mass=max(stepped.liquid_mass, 0.0),
+                liquid_mass=liquid,
             )
             try:
                 self.tank.pressure(candidate)
