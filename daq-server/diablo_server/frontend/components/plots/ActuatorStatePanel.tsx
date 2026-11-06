@@ -20,9 +20,10 @@ export function BallValvePositionText({ entity, commanded, className }: {
   const calEntity = entity.replace('ACT.', 'ACT_Cal.');
   const pct = useSensorValue(calEntity, 'position_pct');
   const status = useSensorValue(calEntity, 'cal_status');
+  const raw = useSensorValue(calEntity, 'raw_adc');
   return (
     <span data-testid={`ball-valve-position:${entity}`} className={className}>
-      {formatBallValvePosition(pct, status, commanded)}
+      {formatBallValvePosition(pct, status, commanded, raw)}
     </span>
   );
 }

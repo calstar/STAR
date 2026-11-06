@@ -49,9 +49,15 @@ int main() {
     require(vp::from_counts(counts_for_ma(3.7)).percent_open == 0.0f, "clamped at 0");
     require(vp::from_counts(counts_for_ma(3.7)).status == vp::kStatusOk, "3.7 mA still a signal");
 
-    // Below 3.5 mA the loop is open or unpowered: say so, rather than report "closed".
+    // A closed valve as the stand's ESP32 actually reads it (Ox Vent, 2026-11-05): 355 counts,
+    // 2.86 mA by the raw formula. That is closed, not a dead loop.
+    require(vp::from_counts(355).status == vp::kStatusOk, "closed valve read low is a signal");
+    require(vp::from_counts(355).percent_open == 0.0f, "closed valve read low is 0 % open");
+
+    // Below 2 mA the loop is open or unpowered: say so, rather than report "closed".
     require(vp::from_counts(0).status == vp::kStatusNoSignal, "0 counts is no signal");
-    require(vp::from_counts(counts_for_ma(2.0)).status == vp::kStatusNoSignal, "2 mA no signal");
+    require(vp::from_counts(counts_for_ma(1.9)).status == vp::kStatusNoSignal, "1.9 mA no signal");
+    require(vp::from_counts(counts_for_ma(2.1)).status == vp::kStatusOk, "2.1 mA is a signal");
 
     // Tables: board 71 is slot 1, the same slot as actuator board 11, but on its own type_hi.
     const std::vector<BoardChannels> bv{{71, 1, {1}}};

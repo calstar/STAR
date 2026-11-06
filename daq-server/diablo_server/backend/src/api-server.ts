@@ -39,6 +39,7 @@ import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
 import { handleVideoRequest } from './video/routes.js';
 import type { VideoService } from './video/service.js';
+import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -911,6 +912,32 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         } else {
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'GET') {
+        // Each ball valve channel's stored closed/open endpoints and its live reading.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'POST') {
+        // { entity: "BV1_Cal.CH1", action: "closed" | "open" | "clear" }
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        const entity = String(body?.entity ?? '');
+        const action = String(body?.action ?? '');
+        if (action === 'clear') {
+          clearEndpoints(entity);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+        } else if (action === 'closed' || action === 'open') {
+          const r = captureEndpoint(entity, action);
+          res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(r.ok ? { valves: valveCalibrationSnapshot() } : { error: r.error }));
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
         }
       } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
         // The live load-cell tares, for the UI to badge tared channels and show their offsets.

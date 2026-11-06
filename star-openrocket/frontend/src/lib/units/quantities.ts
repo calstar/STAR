@@ -27,8 +27,8 @@ export type System = 'metric' | 'imperial'
  * dropdown for them would be a control that does nothing.
  */
 export type Kind =
-  | 'altitude' | 'length' | 'distance' | 'area' | 'volume'
-  | 'mass' | 'speed' | 'accel' | 'force' | 'torque' | 'stiffness' | 'energy'
+  | 'altitude' | 'length' | 'smallLength' | 'distance' | 'area' | 'volume'
+  | 'mass' | 'charge' | 'speed' | 'accel' | 'force' | 'torque' | 'stiffness' | 'energy'
   | 'pressure' | 'temperature' | 'tempDelta' | 'density' | 'lapse'
 
 export interface UnitDef {
@@ -75,6 +75,13 @@ export const QUANTITIES: Record<Kind, {
     metric: { label: 'm', perUnit: 1, digits: 3, step: 0.01 },
     imperial: { label: 'in', perUnit: M_PER_IN, digits: 2, step: 0.25 },
   },
+  smallLength: {
+    // Vent holes and fasteners: a metre with three decimals cannot tell a
+    // 3/16 in hole from a 13/64 one, which is the whole question.
+    name: 'Hole / fastener size', si: 'm',
+    metric: { label: 'mm', perUnit: 1e-3, digits: 2, step: 0.1 },
+    imperial: { label: 'in', perUnit: M_PER_IN, digits: 3, step: 1 / 64 },
+  },
   distance: {
     name: 'Distance', si: 'm',
     metric: { label: 'km', perUnit: 1000, digits: 0, step: 1 },
@@ -96,6 +103,13 @@ export const QUANTITIES: Record<Kind, {
     name: 'Mass', si: 'kg',
     metric: { label: 'kg', perUnit: 1, digits: 2, step: 0.05 },
     imperial: { label: 'lb', perUnit: KG_PER_LB, digits: 1, step: 0.1 },
+  },
+  charge: {
+    // Ejection charges: a few grams, which kg and lb render as noise. The
+    // imperial unit is the grain, 64.79891 mg exactly (7000 to the pound).
+    name: 'Ejection charge', si: 'kg',
+    metric: { label: 'g', perUnit: 1e-3, digits: 2, step: 0.1 },
+    imperial: { label: 'gr', perUnit: KG_PER_LB / 7000, digits: 1, step: 1 },
   },
   speed: {
     name: 'Speed', si: 'm/s',
@@ -183,7 +197,10 @@ export type UnitPrefs = Record<Kind, System>
 export const DEFAULT_PREFS: UnitPrefs = {
   altitude: 'imperial',
   length: 'imperial',
+  smallLength: 'imperial',
   mass: 'imperial',
+  // Black powder is weighed in grams even on imperial teams.
+  charge: 'metric',
   force: 'imperial',
   distance: 'metric',
   area: 'metric',

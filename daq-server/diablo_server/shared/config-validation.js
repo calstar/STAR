@@ -198,6 +198,21 @@ export function validateConfigForRun(config, csv) {
                 'Connectors, or remove the roles.');
         }
     }
+    // ── Actuator roles on a board that is not declared ───────────────────────
+    // A role is ["kind", channel, board_id]. The board's IP, and whether it is an actuator or a ball
+    // valve, come only from its [boards.*] entry, so a role on an undeclared board commands nothing
+    // and nothing said so -- e.g. a ball valve role on board 71 in a profile copied before the ball
+    // valve board was added to the shipped ones.
+    const declaredIds = new Set(Object.values(boards).map((b) => Number(b?.board_id ?? b?.id)).filter((n) => Number.isFinite(n)));
+    for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+        if (!Array.isArray(tup) || tup.length < 3)
+            continue;
+        const id = Number(tup[2]);
+        if (!Number.isFinite(id) || declaredIds.has(id))
+            continue;
+        add('roles', 'error', `${role} is on board ${tup[2]}, which is not in Boards. Add board ${tup[2]} under Boards ` +
+            `(type ACTUATOR, or BALL_VALVE for a motorized ball valve), or move the role.`);
+    }
     // ── Ball valve roles ──────────────────────────────────────────────────────
     // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would
     // close it. The C++ forces pass-through anyway; this says so where it can be fixed. Nor is it a
