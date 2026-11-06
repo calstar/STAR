@@ -206,6 +206,8 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   # Pushed video (the HiDes link's MPEG-TS from HiDesViewer): the range video.json may use
   # (UDP_PORTS in backend/src/video/config.ts), clear of the boards' 5000/5005/5006/5008.
   sudo ufw allow 5600:5609/udp comment 'DAQ video (pushed MPEG-TS)'
+  # OBS on a streaming laptop reads the feeds over RTSP (user "obs", read-only, digest).
+  sudo ufw allow 8554/tcp comment 'DAQ video (RTSP for OBS)'
   c_ok "GUI/API/video port rules applied"
 else
   c_info "ufw not active — skipping GUI/API port rules (nothing blocking :3000/:8081)."

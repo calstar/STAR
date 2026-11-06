@@ -11,6 +11,8 @@
 #   scripts/video-gateway.sh --print-bin  print the binary's path (downloading if needed)
 #   scripts/video-gateway.sh --set-password   set the password a DAQ backend on another
 #                                            machine uses to reach this gateway (desert)
+#   scripts/video-gateway.sh --set-obs-password   set the read-only password OBS uses to
+#                                                pull the feeds over RTSP (:8554)
 #
 # Remote access: with a password (VIDEO_GATEWAY_PASSWORD, or the gitignored file
 # video/gateway.password that --set-password writes) the gateway admits user "daq" from
@@ -82,40 +84,58 @@ fetch() {
 }
 
 PASSWORD_FILE="$VIDEO_DIR/gateway.password"
+OBS_PASSWORD_FILE="$VIDEO_DIR/obs.password"
 
+# Prompt for a password and keep it in a gitignored, owner-only file ($1). Empty removes it.
 set_password() {
-  local a b
-  read -r -s -p "Gateway password (empty: this machine only): " a; echo
-  if [[ -z "$a" ]]; then rm -f "$PASSWORD_FILE"; echo "video-gateway: remote access off"; return; fi
+  local file="$1" what="$2" a b
+  read -r -s -p "$what password (empty: none): " a; echo
+  if [[ -z "$a" ]]; then rm -f "$file"; echo "video-gateway: $what access off"; return; fi
   read -r -s -p "Again: " b; echo
   [[ "$a" == "$b" ]] || { echo "video-gateway: passwords differ, nothing changed" >&2; return 1; }
-  ( umask 077; printf '%s' "$a" > "$PASSWORD_FILE" )
+  ( umask 077; printf '%s' "$a" > "$file" )
   echo "video-gateway: saved; restart the gateway for it to take effect"
 }
 
 case "${1:-}" in
   --fetch) fetch; exit 0 ;;
   --print-bin) fetch; echo "$BIN"; exit 0 ;;
-  --set-password) set_password; exit $? ;;
+  --set-password) set_password "$PASSWORD_FILE" "Gateway (DAQ backend)"; exit $? ;;
+  --set-obs-password) set_password "$OBS_PASSWORD_FILE" "OBS (read-only RTSP)"; exit $? ;;
   "") ;;
-  *) echo "usage: $0 [--fetch | --print-bin | --set-password]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--fetch | --print-bin | --set-password | --set-obs-password]" >&2; exit 2 ;;
 esac
 
 fetch
 
-# Remote access for a DAQ backend on another machine (see the header). Passed to MediaMTX
-# as an extra internal user through its MTX_* environment overrides; never echoed.
+# Users beyond this machine's own (see the header), passed to MediaMTX as extra internal
+# users through its MTX_* environment overrides; passwords are never echoed.
+next_user=1
+add_user() {   # add_user NAME PASSWORD ACTION...
+  local name="$1" pass="$2" i=0; shift 2
+  export "MTX_AUTHINTERNALUSERS_${next_user}_USER=$name"
+  export "MTX_AUTHINTERNALUSERS_${next_user}_PASS=$pass"
+  export "MTX_AUTHINTERNALUSERS_${next_user}_IPS="
+  for action in "$@"; do export "MTX_AUTHINTERNALUSERS_${next_user}_PERMISSIONS_${i}_ACTION=$action"; i=$((i + 1)); done
+  next_user=$((next_user + 1))
+}
+
 password="${VIDEO_GATEWAY_PASSWORD:-}"
 if [[ -z "$password" && -s "$PASSWORD_FILE" ]]; then password="$(cat "$PASSWORD_FILE")"; fi
 if [[ -n "$password" ]]; then
-  export MTX_AUTHINTERNALUSERS_1_USER=daq
-  export MTX_AUTHINTERNALUSERS_1_PASS="$password"
-  export MTX_AUTHINTERNALUSERS_1_IPS=
-  export MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_ACTION=api
-  export MTX_AUTHINTERNALUSERS_1_PERMISSIONS_1_ACTION=read
+  add_user daq "$password" api read          # a DAQ backend on another machine
   echo "video-gateway: remote access on (user daq)" >&2
 else
   echo "video-gateway: remote access off (this machine only; --set-password to allow a DAQ laptop)" >&2
+fi
+
+password="${VIDEO_OBS_PASSWORD:-}"
+if [[ -z "$password" && -s "$OBS_PASSWORD_FILE" ]]; then password="$(cat "$OBS_PASSWORD_FILE")"; fi
+if [[ -n "$password" ]]; then
+  add_user obs "$password" read              # OBS: RTSP reads only, no API, no publishing
+  echo "video-gateway: OBS access on (user obs, RTSP :8554)" >&2
+else
+  echo "video-gateway: OBS access off (--set-obs-password to allow a streaming laptop)" >&2
 fi
 unset password
 # MediaMTX writes nothing to its working directory with this config, but run it from the

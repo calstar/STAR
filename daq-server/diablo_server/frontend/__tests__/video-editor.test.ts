@@ -108,3 +108,15 @@ describe('a HiDes (UDP) stream in the editor', () => {
     expect(isDirty([{ ...orig[0], port: '5600' }], orig)).toBe(true);
   });
 });
+
+describe('OBS URLs', () => {
+  it('point at the gateway, main and low-res', async () => {
+    const { obsUrls } = await import('@/lib/video/editor');
+    const [pad] = draftsFrom(loaded);
+    expect(obsUrls(pad, 'theombp.local')).toEqual([
+      { label: 'main', url: 'rtsp://theombp.local:8554/raw/pad' },
+      { label: 'low-res', url: 'rtsp://theombp.local:8554/raw/pad/low' },
+    ]);
+    expect(obsUrls({ id: 'hides', kind: 'udp', lowResUrl: '' }, 'star-rfs.local')).toEqual([{ label: 'main', url: 'rtsp://star-rfs.local:8554/raw/hides' }]);
+  });
+});

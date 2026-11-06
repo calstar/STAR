@@ -14,7 +14,8 @@
 #   * Browsers never call the gateway's HTTP side. Their handshake goes through the DAQ
 #     backend (/api/video/...), and only the media itself (UDP, webrtcLocalUDPAddress)
 #     flows browser <-> gateway directly.
-#   * RTSP and publishing stay localhost-only.
+#   * OBS: user "obs" (--set-obs-password) may read over RTSP, nothing else.
+#   * Publishing stays localhost-only.
 # Any setting can be overridden per run with MTX_<KEY> environment variables
 # (e.g. MTX_APIADDRESS=127.0.0.1:18887), which is how the tests move the ports.
 
@@ -48,12 +49,16 @@ metrics: false
 pprof: false
 playback: false
 
-# RTSP: how the gateway pulls cameras (as a client, unaffected by this) and how local
-# tools (the dev fake camera) publish. Not exposed to the LAN.
+# RTSP: how the gateway pulls cameras (as a client, unaffected by this), how local tools
+# (the dev fake camera) publish, and how OBS on a streaming laptop reads the feeds
+# (rtsp://<gateway>:8554/raw/<id>) -- as user "obs", read-only, when the launcher was given
+# an OBS password (--set-obs-password). Anonymous LAN readers are refused. Digest auth, so
+# the password does not cross the LAN in the clear. OBS gets camera audio too: mute it there.
 rtsp: true
-rtspAddress: 127.0.0.1:8554
+rtspAddress: :8554
 rtspTransports: [tcp]
 rtspEncryption: "no"
+rtspAuthMethods: [digest]
 
 rtmp: false
 hls: false

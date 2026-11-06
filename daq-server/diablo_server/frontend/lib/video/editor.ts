@@ -157,3 +157,19 @@ export function withPreset(layout: VideoLayout, preset: LayoutPreset): VideoLayo
   const n = PRESET_SLOT_COUNTS[preset];
   return { preset, slots: Array.from({ length: n }, (_, i) => layout.slots[i] ?? null) };
 }
+
+// ── OBS ──────────────────────────────────────────────────────────────────────
+
+/** RTSP port of the gateway (video/mediamtx.yml rtspAddress). */
+export const GATEWAY_RTSP_PORT = 8554;
+
+/**
+ * Where OBS on a streaming laptop reads a saved stream: the gateway re-serves it over RTSP
+ * (user "obs", read-only) with no transcoding. Main, plus low-res for a camera that has one.
+ */
+export function obsUrls(d: Pick<DraftStream, 'id' | 'kind' | 'lowResUrl'>, gatewayHost: string): { label: string; url: string }[] {
+  const base = `rtsp://${gatewayHost}:${GATEWAY_RTSP_PORT}/raw/${d.id}`;
+  const out = [{ label: 'main', url: base }];
+  if (d.kind === 'rtsp' && d.lowResUrl.trim()) out.push({ label: 'low-res', url: `${base}/low` });
+  return out;
+}

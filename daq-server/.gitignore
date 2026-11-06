@@ -254,3 +254,4 @@ scripts/calibration/calibrations/profiles/.active
 config/video.secrets.json
 video/.bin/
 video/gateway.password
+video/obs.password

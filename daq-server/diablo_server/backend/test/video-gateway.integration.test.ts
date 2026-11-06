@@ -298,6 +298,11 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
       MTX_AUTHINTERNALUSERS_1_PERMISSIONS_1_ACTION: 'read',
       // The test camera publishes as user daq too, now that loopback is not trusted.
       MTX_AUTHINTERNALUSERS_1_PERMISSIONS_2_ACTION: 'publish',
+      // OBS on a streaming laptop: RTSP reads only (scripts/video-gateway.sh --set-obs-password).
+      MTX_AUTHINTERNALUSERS_2_USER: 'obs',
+      MTX_AUTHINTERNALUSERS_2_PASS: 'obs-pass',
+      MTX_AUTHINTERNALUSERS_2_IPS: '',
+      MTX_AUTHINTERNALUSERS_2_PERMISSIONS_0_ACTION: 'read',
     });
     const { VideoService } = await import('../src/video/service.js');
     const { gatewayEndpoint } = await import('../src/video/gateway.js');
@@ -341,6 +346,21 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
       expect(await whep()).not.toBe(201);
       active = right;
       expect(await waitFor('WHEP with the password', async () => ((await whep()) === 201 ? 201 : undefined))).toBe(201);
+
+      // OBS: reads the same path over RTSP with its own read-only password, and nothing more.
+      const rtsp = `127.0.0.1:${ports.rtsp}/raw/cam1`;
+      const probe = (url: string) => {
+        try {
+          return execFileSync('ffprobe', ['-v', 'error', '-rtsp_transport', 'tcp', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', url], { encoding: 'utf8', timeout: 15000 }).trim();
+        } catch (e) {
+          return `failed: ${String((e as any).stderr ?? e).trim().split('\n')[0]}`;
+        }
+      };
+      expect(probe(`rtsp://obs:obs-pass@${rtsp}`)).toMatch(/^video/);
+      expect(probe(`rtsp://${rtsp}`)).toMatch(/401/);
+      expect(probe(`rtsp://obs:wrong@${rtsp}`)).toMatch(/401/);
+      const obsApi = await fetch(`http://127.0.0.1:${ports.api}/v3/paths/list`, { headers: { Authorization: `Basic ${Buffer.from('obs:obs-pass').toString('base64')}` } });
+      expect(obsApi.status).toBe(401);
     } finally {
       active = svc;
       await browser.close();

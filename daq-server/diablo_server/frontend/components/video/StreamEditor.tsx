@@ -14,11 +14,11 @@
  * No red on this page (VIDCOMM decision): red belongs to the stand, so Remove is a plain
  * control here.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import VideoTile from '@/components/video/VideoTile';
 import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, UDP_PORTS, VideoApiError, type GatewayChange } from '@/lib/video/api';
 import {
-  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, toSave, withKind, withLabel, withPreset, type DraftStream,
+  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, obsUrls, toSave, withKind, withLabel, withPreset, type DraftStream,
 } from '@/lib/video/editor';
 import { geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
 import { previewEndpoint } from '@/lib/video/whep';
@@ -68,6 +68,44 @@ function Preview({ draft }: { draft: DraftStream }) {
     <div className="relative aspect-video border border-line">
       {id ? <div className="absolute inset-0 grid"><VideoTile label={draft.label || 'Preview'} endpoint={previewEndpoint(id)} /></div>
         : <div className="flex h-full items-center justify-center font-mono text-[11px] text-ink-3">STARTING PREVIEW</div>}
+    </div>
+  );
+}
+
+/** Copy to the clipboard; on plain-HTTP LAN pages (no Clipboard API) select the text instead. */
+function CopyText({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      const r = document.createRange();
+      if (ref.current) { r.selectNodeContents(ref.current); window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(r); }
+    }
+  };
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span ref={ref} className="min-w-0 select-all truncate text-ink">{text}</span>
+      <button type="button" className="ctl h-5 shrink-0 px-1.5 text-[9px] text-ink-2" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy'}</button>
+    </span>
+  );
+}
+
+/** The streaming laptop's view of a stream: RTSP from the gateway, as user "obs". */
+function ObsUrls({ draft, host }: { draft: DraftStream; host: string }) {
+  if (draft.isNew) return <p className="font-mono text-[10px] text-ink-3">OBS: the RTSP URL appears once this stream is saved.</p>;
+  return (
+    <div className="space-y-0.5 font-mono text-[10px] text-ink-3" data-testid="obs-urls">
+      <span className={fieldLabel}>For OBS (Media Source, user obs)</span>
+      {obsUrls(draft, host).map((u) => (
+        <div key={u.label} className="grid grid-cols-[3.5rem_1fr] items-center gap-1">
+          <span className="uppercase tracking-[0.14em]">{u.label}</span>
+          <CopyText text={u.url} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -168,6 +206,7 @@ function StreamCard({
         </div>
       </div>
       {previewing > 0 && <Preview key={previewing} draft={draft} />}
+      <ObsUrls draft={draft} host={ingestHost} />
     </li>
   );
 }
