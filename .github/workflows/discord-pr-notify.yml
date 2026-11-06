@@ -30,7 +30,8 @@ jobs:
             // GitHub login -> Discord user ID, so people actually get pinged.
             // Get IDs in Discord: Settings > Advanced > Developer Mode, then right-click a user > Copy User ID.
             const discordIds = {
-              // "github-login": "123456789012345678",
+              "github-login": "123456789012345678",
+              "roshantaneja": "886062573131276290",
             };
             function mention(login) {
               if (discordIds[login]) return `<@${discordIds[login]}>`;
