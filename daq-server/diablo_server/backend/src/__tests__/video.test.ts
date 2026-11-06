@@ -681,3 +681,15 @@ describe('Save, through the video agent', () => {
     await expect(gone.save()).rejects.toThrow(/unreachable/);
   });
 });
+
+describe("this machine's LAN name", () => {
+  it('on macOS is the Bonjour name, not the Unix hostname', async () => {
+    const { lanName } = await import('../video/service.js');
+    expect(lanName('darwin', () => 'Theos-MacBook-Pro-774\n')).toBe('Theos-MacBook-Pro-774.local');
+  });
+  it('on Linux is the hostname, which avahi announces', async () => {
+    const { lanName } = await import('../video/service.js');
+    const { hostname } = await import('os');
+    expect(lanName('linux', () => { throw new Error('no scutil'); })).toBe(`${hostname().includes('.') ? hostname() : `${hostname()}.local`}`);
+  });
+});

@@ -8,6 +8,7 @@
 import { statSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { hostname } from 'os';
+import { execFileSync } from 'child_process';
 import {
   checkRtspUrl, loadVideoConfig, videoConfigPath, videoSecretsPath, VideoConfigError,
   type LoadedVideoConfig,
@@ -57,6 +58,24 @@ export class AgentError extends Error {}
 const AGENT_STATUS_TIMEOUT_MS = 8000;
 /** A Save concatenates up to 5 minutes per stream; ffmpeg does that in about a second each. */
 const AGENT_SAVE_TIMEOUT_MS = 120_000;
+
+let cachedLanName: string | undefined;
+
+/**
+ * This machine's name as other machines on the LAN can resolve it. On macOS that is the
+ * Bonjour name (`scutil --get LocalHostName`, e.g. Theos-MacBook-Pro-774.local) -- *not*
+ * the Unix hostname, which mDNS does not announce. On Linux avahi announces the hostname.
+ */
+export function lanName(platform: NodeJS.Platform = process.platform, run = (cmd: string, args: string[]) => execFileSync(cmd, args, { encoding: 'utf8' })): string {
+  if (cachedLanName && platform === process.platform) return cachedLanName;
+  let name = hostname();
+  if (platform === 'darwin') {
+    try { name = run('scutil', ['--get', 'LocalHostName']).trim() || name; } catch { /* keep hostname */ }
+  }
+  const out = name.includes('.') ? name : `${name}.local`;
+  if (platform === process.platform) cachedLanName = out;
+  return out;
+}
 
 function mtime(path: string): number {
   try { return statSync(path).mtimeMs; } catch { return -1; }
@@ -244,8 +263,7 @@ export class VideoService {
   ingestHost(): string {
     const host = this.endpoint.host;
     if (host !== '127.0.0.1' && host !== 'localhost') return host;
-    const name = hostname();
-    return name.includes('.') ? name : `${name}.local`;
+    return lanName();
   }
 
   start(): void {
