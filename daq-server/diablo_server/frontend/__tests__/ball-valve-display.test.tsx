@@ -37,6 +37,12 @@ describe('formatBallValvePosition', () => {
     expect(formatBallValvePosition(40, 1, ActuatorState.CLOSED)).toBe('60% CLOSED');
     expect(formatBallValvePosition(0, 1, ActuatorState.CLOSED)).toBe('100% CLOSED');
   });
+  it('adds the loop current after the position when the raw reading is known', () => {
+    // 355 counts (the stand's Ox Vent, closed) = 2.86 mA; 2482 counts = 20 mA.
+    expect(formatBallValvePosition(0, 1, ActuatorState.CLOSED, 355)).toBe('100% CLOSED, 2.9 mA');
+    expect(formatBallValvePosition(100, 1, ActuatorState.OPEN, 2482)).toBe('100% OPEN, 20.0 mA');
+    expect(formatBallValvePosition(0, BALL_VALVE_STATUS_NO_SIGNAL, ActuatorState.CLOSED, 0)).toBe('NO SIGNAL, 0.0 mA');
+  });
   it('says NO SIGNAL on a dead loop and --- with no data', () => {
     expect(formatBallValvePosition(0, BALL_VALVE_STATUS_NO_SIGNAL, ActuatorState.CLOSED)).toBe('NO SIGNAL');
     expect(formatBallValvePosition(null, null, ActuatorState.OPEN)).toBe('--- %');
@@ -65,6 +71,10 @@ describe('ball valve tile on the main panel', () => {
 
     await push('BV_CMD.B1.CH1', 'actuator_state_commanded', 0);
     expect(screen.getByTestId('actuator-reading:Main Ball Valve')).toHaveTextContent('60% CLOSED');
+
+    // The raw reading rides on the same calibrated entity; the tile shows its current after.
+    await push('BV1_Cal.CH1', 'raw_adc', 1489);
+    expect(screen.getByTestId('actuator-reading:Main Ball Valve')).toHaveTextContent('60% CLOSED, 12.0 mA');
   });
 
   it('an actuator tile still shows its current', async () => {
