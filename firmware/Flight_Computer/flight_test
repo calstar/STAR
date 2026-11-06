@@ -126,10 +126,10 @@ size_budget() {
 
 format_clean() {
   local files
-  files=$(cd "$HERE" && ls app/*.[ch] chips/*.[ch] tests/*/*.[ch] 2>/dev/null
-          cd "$HERE" && ls Core/Src/board*.c Core/Inc/board*.h Core/Src/bringup_task.c \
-            Core/Inc/bringup_task.h Core/Src/self_test*.c Core/Src/gnss_frame.c \
-            Core/Src/sd_spi.c src/*.cpp src/*.h 2>/dev/null)
+  # Every hand-written file: src/ and tests/. Core/, Drivers/ and
+  # Middlewares/ are CubeMX's and are left as CubeMX writes them.
+  files=$(cd "$HERE" && ls src/*/*.[ch] src/*/*.cpp tests/*/*.[ch] tests/*/*.cpp \
+            tests/radio/*/*.cpp tests/radio/*/*.h 2>/dev/null)
   (cd "$HERE" && clang-format --dry-run --Werror $files)
 }
 
@@ -291,7 +291,7 @@ GDB
 }
 
 board_battery() {
-  # battery_state_t (app/battery.h): 1 OK, 2 WARN, 3 FAIL, 4 USB, 5 INVALID
+  # battery_state_t (src/app/battery.h): 1 OK, 2 WARN, 3 FAIL, 4 USB, 5 INVALID
   local state mv
   read -r _ state mv _ < <(grep '^BATT ' "$OUT/board_report.txt")
   local v; v=$(printf '%d.%02d V' $((mv / 1000)) $((mv % 1000 / 10)))
@@ -305,7 +305,7 @@ board_battery() {
 }
 
 board_verdict() {
-  # boot_verdict_t (app/boot_report.h): 0 READY, 1 WARN, 2 FAIL
+  # boot_verdict_t (src/app/boot_report.h): 0 READY, 1 WARN, 2 FAIL
   local v; v=$(awk '/^VERDICT /{print $2}' "$OUT/board_report.txt")
   sed -n '/^REPORT_BEGIN/,/^REPORT_END/p' "$OUT/board_report.txt" | sed '1d;$d'
   case "$v" in

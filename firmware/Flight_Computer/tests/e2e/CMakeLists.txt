@@ -11,22 +11,22 @@ option(FLIGHT_TEST_CANARY "Corrupt the card image before checking it" OFF)
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(SOURCES
     flight_e2e.c
-    ${ROOT}/app/sensors_core.c
-    ${ROOT}/app/gnss_core.c
-    ${ROOT}/chips/ubx.c
-    ${ROOT}/Core/Src/gnss_frame.c
+    ${ROOT}/src/app/sensors_core.c
+    ${ROOT}/src/app/gnss_core.c
+    ${ROOT}/src/chips/ubx.c
+    ${ROOT}/src/chips/gnss_frame.c
     ${ROOT}/tests/fakes/fake_gnss.c
-    ${ROOT}/chips/dev_ism330dhcx.c
-    ${ROOT}/chips/dev_h3lis100dl.c
-    ${ROOT}/chips/dev_ms5611.c
-    ${ROOT}/Core/Src/emmc_log.c
-    ${ROOT}/Core/Src/flight_state.c
+    ${ROOT}/src/chips/dev_ism330dhcx.c
+    ${ROOT}/src/chips/dev_h3lis100dl.c
+    ${ROOT}/src/chips/dev_ms5611.c
+    ${ROOT}/src/app/emmc_log.c
+    ${ROOT}/src/app/flight_state.c
     ${ROOT}/tests/fakes/fake_regs.c
     ${ROOT}/tests/fakes/fake_baro.c)
 
 add_executable(flight_e2e ${SOURCES})
 target_include_directories(flight_e2e PRIVATE
-    ${ROOT}/app ${ROOT}/chips ${ROOT}/Core/Inc ${ROOT}/tests/fakes)
+    ${ROOT}/src/app ${ROOT}/src/chips ${ROOT}/src/radio ${ROOT}/tests/fakes)
 set_target_properties(flight_e2e PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
 target_compile_options(flight_e2e PRIVATE -Wall -Wextra -Werror)
 if(FLIGHT_TEST_CANARY)
@@ -42,18 +42,18 @@ endif()
 # state hook; fake radio chip, RTC, ADC and ground station.
 add_executable(idle_e2e
     idle_e2e.cpp
-    ${ROOT}/Core/Src/idle.c
-    ${ROOT}/Core/Src/emmc_log.c
-    ${ROOT}/Core/Src/flight_state.c
-    ${ROOT}/app/mode_core.c
-    ${ROOT}/app/sleep_math.c
-    ${ROOT}/src/frame.cpp
-    ${ROOT}/src/link.cpp
-    ${ROOT}/src/arm_gate.cpp
-    ${ROOT}/src/sx1262.cpp
-    ${ROOT}/src/sx1262_setup.cpp)
+    ${ROOT}/src/app/idle.c
+    ${ROOT}/src/app/emmc_log.c
+    ${ROOT}/src/app/flight_state.c
+    ${ROOT}/src/app/mode_core.c
+    ${ROOT}/src/app/sleep_math.c
+    ${ROOT}/src/radio/frame.cpp
+    ${ROOT}/src/radio/link.cpp
+    ${ROOT}/src/radio/arm_gate.cpp
+    ${ROOT}/src/chips/sx1262.cpp
+    ${ROOT}/src/chips/sx1262_setup.cpp)
 target_include_directories(idle_e2e PRIVATE
-    ${ROOT}/app ${ROOT}/Core/Inc ${ROOT}/src ${ROOT}/tests/fakes)
+    ${ROOT}/src/app ${ROOT}/src/chips ${ROOT}/src/radio ${ROOT}/tests/fakes)
 set_target_properties(idle_e2e PROPERTIES CXX_STANDARD 17 C_STANDARD 11)
 target_compile_options(idle_e2e PRIVATE -Wall -Wextra -Werror)
 if(SELF_TEST_SANITIZERS)

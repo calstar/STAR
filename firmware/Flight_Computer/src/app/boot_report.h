@@ -10,7 +10,7 @@
  *             WARN   an optional chip did not pass, or the battery is low
  *             READY  everything passed (on USB the battery is not judged)
  *   result_bits      bit <device id> set when that chip passed: the
- *                    SelfTest radio frame's result_bits (src/frame.h)
+ *                    SelfTest radio frame's result_bits (src/radio/frame.h)
  *   text             one line per check, for a person (ST-Link, later radio
  *                    or USB)
  * Required vs optional comes from the self-test config (#137 section 7, a

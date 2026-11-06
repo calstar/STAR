@@ -133,8 +133,8 @@ test fails.
 
 ## Documentation
 
-- [`idle_port.h`](Inc/idle_port.h): seam callbacks and their contracts.
-- [`idle.h`](Inc/idle.h): configuration, events and API.
-- [`test_idle.c`](../tests/idle/test_idle.c): executable examples with fakes.
+- [`idle_port.h`](idle_port.h): seam callbacks and their contracts.
+- [`idle.h`](idle.h): configuration, events and API.
+- [`test_idle.c`](../../tests/idle/test_idle.c): executable examples with fakes.
 - `DEVICE_CHECKS.md` (on `pranay/self-test-confirmed-requirements`): component map
   and confirmed requirements.

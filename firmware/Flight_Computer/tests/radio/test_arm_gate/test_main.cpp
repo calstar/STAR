@@ -5,8 +5,8 @@
 #include "unity.h"
 
 // Build the code under test.
-#include "../../src/arm_gate.cpp"
-#include "../../src/frame.cpp"
+#include "../../../src/radio/arm_gate.cpp"
+#include "../../../src/radio/frame.cpp"
 
 using namespace radio_link;
 

@@ -52,7 +52,8 @@ typedef struct {
 void board_bringup_power_up(board_bringup_t* bringup);
 
 /* self_test_port_t.read_battery: PA0 counts, the mean of 16 conversions
- * (VDD after the ORing, x 0.3125). Conversion and thresholds: app/battery.h.
+ * (VDD after the ORing, x 0.3125). Conversion and thresholds:
+ * src/app/battery.h.
  */
 self_test_battery_t board_bringup_read_battery(void* context, uint32_t now_ms,
                                                uint32_t budget_ms);

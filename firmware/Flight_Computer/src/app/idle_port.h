@@ -7,7 +7,7 @@
  * Idle never calls STM32 HAL. The board provides these callbacks through
  * adapters that own the HAL handles; host tests provide fakes. Sleep entry,
  * RTC wakeup scheduling and clock restoration belong to the state machine,
- * not to this seam (see Core/IDLE.md).
+ * not to this seam (see src/app/IDLE.md).
  *
  * Battery samples and replies reuse the self-test types so both modules
  * share one battery adapter and one result vocabulary.

@@ -4,8 +4,8 @@ project(star_idle LANGUAGES C)
 enable_testing()
 option(IDLE_SANITIZERS "Run host tests with address/undefined sanitizers" OFF)
 
-add_library(star_idle STATIC ../../Core/Src/idle.c)
-target_include_directories(star_idle PUBLIC ../../Core/Inc)
+add_library(star_idle STATIC ../../src/app/idle.c)
+target_include_directories(star_idle PUBLIC ../../src/app ../../src/chips)
 target_compile_features(star_idle PUBLIC c_std_99)
 set_target_properties(star_idle PROPERTIES C_EXTENSIONS OFF)
 

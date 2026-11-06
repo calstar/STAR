@@ -6,10 +6,10 @@ project(star_chips LANGUAGES C)
 enable_testing()
 option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" OFF)
 
-set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../chips)
+set(DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/../../src/chips)
 
-add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c ${DRIVERS}/ubx.c ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/gnss_frame.c)
-target_include_directories(star_drivers PUBLIC ${DRIVERS} ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Inc)
+add_library(star_drivers STATIC ${DRIVERS}/dev_ism330dhcx.c ${DRIVERS}/dev_h3lis100dl.c ${DRIVERS}/dev_ms5611.c ${DRIVERS}/ubx.c ${CMAKE_CURRENT_SOURCE_DIR}/../../src/chips/gnss_frame.c)
+target_include_directories(star_drivers PUBLIC ${DRIVERS})
 set(FAKES ${CMAKE_CURRENT_SOURCE_DIR}/../fakes)
 add_library(fakes STATIC ${FAKES}/fake_regs.c ${FAKES}/fake_baro.c)
 target_include_directories(fakes PUBLIC ${FAKES})

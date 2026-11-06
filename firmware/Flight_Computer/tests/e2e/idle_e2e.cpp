@@ -10,7 +10,7 @@
  *   RTC on an LSI that is not 32 kHz -> REAL sleep_math (WUT reload,
  *   elapsed time) -> the board's clock
  *
- * The harness plays the RTOS exactly as app/idle_task.c and the radio task
+ * The harness plays the RTOS exactly as src/app/idle_task.c and the radio task
  * do: run the radio task on DIO1, call idle_on_wake(), sleep until the RTC
  * wakeup or an earlier DIO1. Only the radio chip, RTC, ADC and the ground
  * station are fake.
@@ -103,7 +103,7 @@ RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
 
 namespace {
 
-// --- idle_port, as app/idle_task.c wires it ------------------------------
+// --- idle_port, as src/app/idle_task.c wires it ------------------------------
 self_test_battery_t read_battery(void*, uint32_t now_ms, uint32_t) {
     self_test_battery_t b = {};
     b.reply.result = SELF_TEST_PASS;
@@ -202,7 +202,7 @@ emmc_status_t no_write(void*, uint32_t, const void*, uint32_t, uint32_t) {
     return EMMC_OK;
 }
 
-// --- the Idle loop, as app/idle_task.c runs it ----------------------------
+// --- the Idle loop, as src/app/idle_task.c runs it ------------------------
 void world_init(World& w) {
     W = &w;
     w.control.now = &w.now;

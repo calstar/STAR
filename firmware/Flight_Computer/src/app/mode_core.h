@@ -3,7 +3,7 @@
 
 /*
  * What runs in each flight state, and what a ground command does there.
- * Portable: app/mode.c applies it on the board, the tests check it here.
+ * Portable: src/app/mode.c applies it on the board, the tests check it here.
  *
  *   SELF_TEST      bring-up checks; nothing sampling yet
  *   IDLE           only the radio (Inez): IMU/high-g powered down, baro

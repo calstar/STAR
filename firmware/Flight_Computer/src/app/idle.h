@@ -66,7 +66,8 @@ bool idle_init(idle_t* idle, const idle_config_t* config,
 /* Call on entry to Idle. The first wake after entry sends a heartbeat. */
 bool idle_enter(idle_t* idle, uint32_t now_ms);
 /* Call on every wake. now_ms must come from a clock that keeps counting
- * through Stop mode (see Core/IDLE.md). Modular milliseconds; gaps < 2^31. */
+ * through Stop mode (see src/app/IDLE.md). Modular milliseconds;
+ * gaps < 2^31. */
 idle_result_t idle_on_wake(idle_t* idle, uint32_t now_ms);
 /* Most recent heartbeat contents; NULL for an invalid instance. */
 const idle_heartbeat_t* idle_last_heartbeat(const idle_t* idle);

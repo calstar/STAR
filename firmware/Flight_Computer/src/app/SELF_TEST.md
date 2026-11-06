@@ -91,8 +91,8 @@ Once the board layer and build exist, pass existing HAL handles in adapter conte
 
 ## Documentation
 
-- [`self_test_port.h`](Inc/self_test_port.h): callback and status contracts.
-- [`self_test.h`](Inc/self_test.h): configuration and public coordinator API.
-- [`test_self_test.c`](../tests/self_test/test_self_test.c): executable examples with fake devices and time.
-- [`firmware.ioc`](../firmware.ioc): existing CubeMX configuration.
-- [`firmware README`](../README.md): existing ESP32 workflows.
+- [`self_test_port.h`](self_test_port.h): callback and status contracts.
+- [`self_test.h`](self_test.h): configuration and public coordinator API.
+- [`test_self_test.c`](../../tests/self_test/test_self_test.c): executable examples with fake devices and time.
+- [`firmware.ioc`](../../firmware.ioc): existing CubeMX configuration.
+- [`firmware README`](../../README.md): existing ESP32 workflows.
