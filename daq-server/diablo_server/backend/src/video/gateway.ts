@@ -28,13 +28,19 @@ export interface ManagedPathConf {
 
 /** The camera URL the gateway pulls: the configured URL with this machine's credentials. */
 export function cameraSource(stream: VideoStream, secrets: VideoSecrets): string {
-  const secret = secrets.streams[stream.id];
-  if (!secret?.username && !secret?.password) return stream.url;
-  const u = new URL(stream.url);
+  return withCredentials(stream.url, secrets.streams[stream.id]);
+}
+
+export function withCredentials(url: string, secret: { username?: string; password?: string } | undefined): string {
+  if (!secret?.username && !secret?.password) return url;
+  const u = new URL(url);
   u.username = encodeURIComponent(secret.username ?? '');
   u.password = encodeURIComponent(secret.password ?? '');
   return u.toString();
 }
+
+/** Temporary paths for the editor's live preview of an unsaved URL. Never reconciled. */
+export const PREVIEW_PREFIX = 'preview/';
 
 export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets'>): Map<string, ManagedPathConf> {
   const out = new Map<string, ManagedPathConf>();

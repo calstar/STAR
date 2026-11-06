@@ -5,7 +5,7 @@
  * the offer's shape.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildOfferPeer, playWhep } from '@/lib/video/whep';
+import { buildOfferPeer, playWhep, streamEndpoint, previewEndpoint } from '@/lib/video/whep';
 
 class FakePeer {
   static last: FakePeer;
@@ -45,7 +45,7 @@ describe('WHEP offer', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const states: string[] = [];
-    const stop = playWhep('pad', document.createElement('video'), (s) => states.push(s.kind));
+    const stop = playWhep(streamEndpoint('pad'), document.createElement('video'), (s) => states.push(s.kind));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toMatch(/\/api\/video\/streams\/pad\/whep$/);
@@ -63,7 +63,7 @@ describe('WHEP offer', () => {
     vi.stubGlobal('RTCPeerConnection', FakePeer);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'gateway: no stream is available' }), { status: 404 })));
     const states: any[] = [];
-    playWhep('pad', document.createElement('video'), (s) => states.push(s));
+    playWhep(previewEndpoint('0a1b2c3d4e5f'), document.createElement('video'), (s) => states.push(s));
     await vi.waitFor(() => expect(states.at(-1)).toEqual({ kind: 'failed', reason: 'gateway: no stream is available' }));
   });
 });

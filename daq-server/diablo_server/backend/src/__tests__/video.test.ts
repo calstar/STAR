@@ -4,7 +4,7 @@
  * server standing in for MediaMTX's WHEP listener). The real gateway is exercised by
  * test/video-gateway.integration.test.ts.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -260,5 +260,144 @@ describe('gateway defaults', () => {
     for (const off of ['metrics', 'pprof', 'playback', 'rtmp', 'hls', 'srt', 'moq']) {
       expect(setting(off), off).toBe('false');
     }
+  });
+});
+
+describe('editing from the pane', () => {
+  let whep: http.Server;
+  let api: http.Server;
+  let apiUrl = '';
+  let gw: FakeGateway;
+  let svc: InstanceType<typeof VideoService>;
+  const whepSeen: string[] = [];
+
+  const call = async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(`${apiUrl}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    return { status: res.status, text, json: text ? JSON.parse(text) : undefined };
+  };
+  const config = () => call('GET', '/api/video/config');
+  const save = (revision: string, streams: unknown[], credentials?: unknown) =>
+    call('PUT', '/api/video/config', { revision, streams, credentials });
+
+  beforeAll(async () => {
+    whep = http.createServer((req, res) => {
+      whepSeen.push(`${req.method} ${req.url}`);
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(201, { 'Content-Type': 'application/sdp', Location: `${req.url}/1234abcd-0000-4000-8000-000000000000` });
+        res.end('v=0\r\n');
+      });
+    });
+    await new Promise<void>((r) => whep.listen(0, '127.0.0.1', r));
+    gw = new FakeGateway();
+    svc = new VideoService({ apiUrl: 'x', webrtcUrl: `http://127.0.0.1:${(whep.address() as AddressInfo).port}` }, gw);
+    api = http.createServer(async (req, res) => {
+      await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc);
+    });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    apiUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+  });
+  afterAll(() => { whep.close(); api.close(); });
+
+  beforeEach(() => {
+    writeFileSync(CONFIG, JSON.stringify({ version: 1, streams: [pad], layout: { preset: '2x2' } }));
+    writeSecrets({ pad: { username: 'admin', password: PASSWORD } });
+  });
+
+  it('shows usernames and whether a password is set, never the password', async () => {
+    const r = await config();
+    expect(r.json.streams[0]).toMatchObject({ id: 'pad', url: pad.url, username: 'admin', passwordSet: true });
+    expect(r.text).not.toContain(PASSWORD);
+  });
+
+  it('saves streams, keeps an untouched password, and pushes to the gateway at once', async () => {
+    const { json: before } = await config();
+    const r = await save(before.revision, [{ ...pad, label: 'Pad wide' }, { ...pad, id: 'eng', label: 'Engine' }], {
+      eng: { username: 'op', password: 'eng-pass' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.text).not.toContain(PASSWORD);
+    const file = JSON.parse(readFileSync(CONFIG, 'utf8'));
+    expect(file.streams.map((s: any) => s.label)).toEqual(['Pad wide', 'Engine']);
+    expect(file.layout).toEqual({ preset: '2x2' }); // other keys survive
+    expect(JSON.stringify(file)).not.toMatch(/pass/);
+    const secrets = JSON.parse(readFileSync(SECRETS, 'utf8'));
+    expect(secrets.streams).toEqual({ pad: { username: 'admin', password: PASSWORD }, eng: { username: 'op', password: 'eng-pass' } });
+    expect(gw.paths.get('raw/eng')?.source).toBe('rtsp://op:eng-pass@192.0.2.10:554/stream1');
+  });
+
+  it('keeps the secrets file private to its owner', async () => {
+    const { json } = await config();
+    await save(json.revision, [pad], { pad: { password: 'new' } });
+    const { statSync } = await import('fs');
+    expect(statSync(SECRETS).mode & 0o077).toBe(0);
+  });
+
+  it('clears a password with null and drops a removed stream\'s secret', async () => {
+    let { json } = await config();
+    await save(json.revision, [pad, { ...pad, id: 'eng', label: 'Engine' }], { eng: { password: 'x' } });
+    ({ json } = await config());
+    await save(json.revision, [pad], { pad: { password: null } });
+    expect(JSON.parse(readFileSync(SECRETS, 'utf8')).streams).toEqual({ pad: { username: 'admin' } });
+  });
+
+  it('rejects a save made against an older revision', async () => {
+    const { json } = await config();
+    await save(json.revision, [{ ...pad, label: 'First editor' }]);
+    const r = await save(json.revision, [{ ...pad, label: 'Second editor' }]);
+    expect(r.status).toBe(409);
+    expect(JSON.parse(readFileSync(CONFIG, 'utf8')).streams[0].label).toBe('First editor');
+  });
+
+  it('rejects the whole save if any stream is invalid, and writes nothing', async () => {
+    const { json } = await config();
+    const before = readFileSync(CONFIG, 'utf8');
+    for (const bad of [{ ...pad, id: 'eng', url: 'rtsp://u:p@cam/x' }, { ...pad }, { ...pad, id: 'eng', label: '' }]) {
+      const r = await save(json.revision, [pad, bad]);
+      expect(r.status).toBe(400);
+      expect(r.json.errors.length).toBeGreaterThan(0);
+    }
+    expect(readFileSync(CONFIG, 'utf8')).toBe(before);
+  });
+
+  it('previews an unsaved URL, reusing the saved password of the stream being edited', async () => {
+    const r = await call('POST', '/api/video/previews', { url: 'rtsp://192.0.2.20/new', fromStreamId: 'pad' });
+    expect(r.status).toBe(201);
+    const id = r.json.id;
+    expect(gw.paths.get(`preview/${id}`)?.source).toBe(`rtsp://admin:${PASSWORD}@192.0.2.20/new`);
+    expect(r.text).not.toContain(PASSWORD);
+
+    const offer = await fetch(`${apiUrl}/api/video/previews/${id}/whep`, { method: 'POST', body: 'v=0' });
+    expect(offer.status).toBe(201);
+    expect(offer.headers.get('location')).toBe(`/api/video/previews/${id}/whep/1234abcd-0000-4000-8000-000000000000`);
+    expect(whepSeen.at(-1)).toBe(`POST /preview/${id}/whep`);
+
+    expect((await call('DELETE', `/api/video/previews/${id}`)).status).toBe(200);
+    expect(gw.paths.has(`preview/${id}`)).toBe(false);
+    expect((await fetch(`${apiUrl}/api/video/previews/${id}/whep`, { method: 'POST', body: 'v=0' })).status).toBe(404);
+  });
+
+  it('a preview is never reconciled away, and expires on its own', async () => {
+    const { json } = await call('POST', '/api/video/previews', { url: 'rtsp://192.0.2.20/new' });
+    await svc.sync();
+    expect(gw.paths.has(`preview/${json.id}`)).toBe(true);
+    const now = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(now + 3 * 60_000);
+    try {
+      await svc.sync();
+      expect(gw.paths.has(`preview/${json.id}`)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('refuses a preview of a URL with credentials in it', async () => {
+    const r = await call('POST', '/api/video/previews', { url: 'rtsp://u:p@192.0.2.20/new' });
+    expect(r.status).toBe(400);
   });
 });

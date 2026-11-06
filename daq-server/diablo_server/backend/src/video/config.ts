@@ -9,7 +9,8 @@
  * browser gets `PublicStream`, which has no URL at all. The gateway is the only thing that
  * ever sees a camera URL with its credentials in it (see gateway.ts `cameraSource`).
  */
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, renameSync, chmodSync } from 'fs';
+import { createHash } from 'crypto';
 import { dirname, join } from 'path';
 import { getConfigPath } from '../routes/config.js';
 
@@ -64,7 +65,7 @@ export function videoSecretsPath(): string {
 
 export const EMPTY_CONFIG: VideoConfig = { version: 1, streams: [] };
 
-function checkRtspUrl(value: unknown, field: string, errors: string[]): string | undefined {
+export function checkRtspUrl(value: unknown, field: string, errors: string[]): string | undefined {
   if (typeof value !== 'string' || value.trim() === '') {
     errors.push(`${field} is required`);
     return undefined;
@@ -189,4 +190,102 @@ export function loadVideoConfig(): LoadedVideoConfig {
 
 export function publicStream(s: VideoStream): PublicStream {
   return { id: s.id, label: s.label, kind: s.kind, hasLowRes: !!s.lowResUrl, record: s.record };
+}
+
+// ── Editing (the pane's Edit mode) ─────────────────────────────────────────────
+
+/** A stream as the editor sees it: URLs (never with credentials), the username, and only
+ *  *whether* a password is set. A password is write-only: it is never sent back. */
+export interface EditableStream extends VideoStream {
+  username: string;
+  passwordSet: boolean;
+}
+
+export interface EditableConfig {
+  /** Hash of video.json as read; a save must name it, so two editors cannot silently
+   *  overwrite each other. */
+  revision: string;
+  streams: EditableStream[];
+}
+
+/** Per-stream credential change. username: set ('' clears). password: undefined keeps the
+ *  saved one, null or '' clears it, a string sets it. */
+export interface CredentialChange {
+  username?: string;
+  password?: string | null;
+}
+
+export class VideoConfigError extends Error {
+  constructor(readonly status: number, readonly errors: string[]) {
+    super(errors.join('; '));
+  }
+}
+
+function fileText(path: string): string {
+  try { return readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+export function revisionOf(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+export function editableConfig(): EditableConfig {
+  const { config, secrets } = loadVideoConfig();
+  return {
+    revision: revisionOf(fileText(videoConfigPath())),
+    streams: config.streams.map((s) => ({
+      ...s,
+      username: secrets.streams[s.id]?.username ?? '',
+      passwordSet: !!secrets.streams[s.id]?.password,
+    })),
+  };
+}
+
+/** Write via a temp file and rename, so a crash mid-write never leaves half a config. */
+function writeAtomic(path: string, text: string, mode?: number): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, mode === undefined ? undefined : { mode });
+  if (mode !== undefined) chmodSync(tmp, mode);
+  renameSync(tmp, path);
+}
+
+/**
+ * Save the editor's stream list. All-or-nothing: an invalid stream rejects the whole save
+ * (400) and nothing is written; a stale `baseRevision` is a 409. Keys of video.json other
+ * than `streams` (the layout, later) are kept as they are. Secrets for removed streams are
+ * dropped with them.
+ */
+export function saveVideoConfig(
+  input: { streams: unknown; credentials?: Record<string, CredentialChange> },
+  baseRevision: string,
+): EditableConfig {
+  const configPath = videoConfigPath();
+  const currentText = fileText(configPath);
+  if (baseRevision !== revisionOf(currentText)) {
+    throw new VideoConfigError(409, ['The video config changed since you opened Edit. Cancel and edit again.']);
+  }
+  const { config, errors } = validateVideoConfig({ version: 1, streams: input.streams });
+  // Validation drops bad streams; a save must not silently lose one, so any error rejects it.
+  if (errors.length) throw new VideoConfigError(400, errors);
+
+  let current: Record<string, unknown> = {};
+  try { current = currentText ? JSON.parse(currentText) : {}; } catch { current = {}; }
+  const { secrets } = loadVideoConfig();
+
+  const nextSecrets: VideoSecrets = { streams: {} };
+  for (const s of config.streams) {
+    const prev = secrets.streams[s.id] ?? {};
+    const change = input.credentials?.[s.id] ?? {};
+    const next: StreamSecret = { ...prev };
+    if (typeof change.username === 'string') {
+      if (change.username) next.username = change.username; else delete next.username;
+    }
+    if (change.password === null || change.password === '') delete next.password;
+    else if (typeof change.password === 'string') next.password = change.password;
+    if (next.username || next.password) nextSecrets.streams[s.id] = next;
+  }
+
+  writeAtomic(configPath, JSON.stringify({ ...current, version: 1, streams: config.streams }, null, 2) + '\n');
+  writeAtomic(videoSecretsPath(), JSON.stringify(nextSecrets, null, 2) + '\n', 0o600);
+  return editableConfig();
 }

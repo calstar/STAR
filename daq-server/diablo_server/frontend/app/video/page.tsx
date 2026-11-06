@@ -11,13 +11,17 @@
  *
  * Streams come from the backend (config/video.json); the page re-reads them every few
  * seconds, so a stream added on the server or a gateway coming back shows up on its own.
+ * Edit opens the stream editor beside the grid (components/video/StreamEditor); the grid
+ * keeps playing while you edit, and only Save changes what anyone sees.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import VideoTile from '@/components/video/VideoTile';
+import StreamEditor from '@/components/video/StreamEditor';
 import { useWindowManager } from '@/components/windows/WindowManager';
 import { isPopupWindow } from '@/lib/is-popup';
 import { fetchVideoStreams, type VideoStreamsResponse } from '@/lib/video/api';
+import { streamEndpoint } from '@/lib/video/whep';
 
 const POLL_MS = 5000;
 const IDLE_MS = 2500;
@@ -49,17 +53,19 @@ export default function VideoPage() {
   const [active, poke] = usePointerActive();
   const { openWindow } = useWindowManager();
   const popup = isPopupWindow();
+  const [editing, setEditing] = useState(false);
+
+  const load = useCallback((signal?: AbortSignal) =>
+    fetchVideoStreams(signal)
+      .then((d) => { setData(d); setLoadError(null); })
+      .catch((e) => { if (!signal?.aborted) setLoadError(e instanceof Error ? e.message : String(e)); }), []);
 
   useEffect(() => {
     const ctl = new AbortController();
-    const load = () =>
-      fetchVideoStreams(ctl.signal)
-        .then((d) => { setData(d); setLoadError(null); })
-        .catch((e) => { if (!ctl.signal.aborted) setLoadError(e instanceof Error ? e.message : String(e)); });
-    void load();
-    const t = setInterval(load, POLL_MS);
+    void load(ctl.signal);
+    const t = setInterval(() => void load(ctl.signal), POLL_MS);
     return () => { ctl.abort(); clearInterval(t); };
-  }, []);
+  }, [load]);
 
   const streams = data?.streams ?? [];
   const cols = columnsFor(streams.length);
@@ -70,47 +76,54 @@ export default function VideoPage() {
     : data && !data.gateway.reachable
       ? 'gateway unreachable'
       : null;
-  const showControls = active || !!problem || (data?.errors.length ?? 0) > 0;
+  const empty = !!data && streams.length === 0;
+  const showControls = !editing && (active || empty || !!problem || (data?.errors.length ?? 0) > 0);
 
   return (
-    <main className="relative h-full min-h-0 flex-1 overflow-hidden bg-black text-text" onMouseMove={poke} onPointerDown={poke}>
-      {data && streams.length === 0 ? (
-        <div className="flex h-full items-center justify-center font-mono text-xs uppercase tracking-[0.18em] text-ink-3">
-          No streams configured
-        </div>
-      ) : (
+    <main className="flex h-full min-h-0 flex-1 overflow-hidden bg-black text-text">
+      <div className="relative min-w-0 flex-1" onMouseMove={poke} onPointerDown={poke}>
+        {empty ? (
+          <div className="flex h-full items-center justify-center font-mono text-xs uppercase tracking-[0.18em] text-ink-3">
+            No streams configured -- Edit to add one
+          </div>
+        ) : (
+          <div
+            className="grid h-full gap-px bg-line"
+            style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+          >
+            {streams.map((s) => <VideoTile key={s.id} label={s.label} endpoint={streamEndpoint(s.id)} testId={`video-tile-${s.id}`} />)}
+            {/* Fill the last row, or the hairline colour shows through the empty cells. */}
+            {Array.from({ length: cols * rows - streams.length }, (_, i) => <div key={`empty-${i}`} className="bg-black" />)}
+          </div>
+        )}
+  
         <div
-          className="grid h-full gap-px bg-line"
-          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))` }}
+          className={`absolute right-2 top-2 z-10 flex flex-col items-end gap-1 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
         >
-          {streams.map((s) => <VideoTile key={s.id} stream={s} />)}
-          {/* Fill the last row, or the hairline colour shows through the empty cells. */}
-          {Array.from({ length: cols * rows - streams.length }, (_, i) => <div key={`empty-${i}`} className="bg-black" />)}
-        </div>
-      )}
-
-      <div
-        className={`absolute right-2 top-2 z-10 flex flex-col items-end gap-1 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-      >
-        <div className="flex items-center gap-1 bg-black/80 font-mono text-[10px] uppercase tracking-[0.18em]">
-          <span className={`px-2 py-1 ${problem ? 'text-ink' : 'text-ink-3'}`} title={data?.gateway.error ?? loadError ?? undefined}>
-            {problem ?? (data ? 'gateway connected' : '')}
-          </span>
-          {!popup && (
-            <>
-              <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={() => openWindow('popout:/video', 'Video', '/video')}>
-                Pop out
-              </button>
-              <Link to="/views" className="ctl h-6 px-2 text-[10px] text-ink-2">Views</Link>
-            </>
+          <div className="flex items-center gap-1 bg-black/80 font-mono text-[10px] uppercase tracking-[0.18em]">
+            <span className={`px-2 py-1 ${problem ? 'text-ink' : 'text-ink-3'}`} title={data?.gateway.error ?? loadError ?? undefined}>
+              {problem ?? (data ? 'gateway connected' : '')}
+            </span>
+            <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={() => setEditing(true)}>
+              Edit
+            </button>
+            {!popup && (
+              <>
+                <button type="button" className="ctl h-6 px-2 text-[10px] text-ink-2" onClick={() => openWindow('popout:/video', 'Video', '/video')}>
+                  Pop out
+                </button>
+                <Link to="/views" className="ctl h-6 px-2 text-[10px] text-ink-2">Views</Link>
+              </>
+            )}
+          </div>
+          {data && data.errors.length > 0 && (
+            <ul className="max-w-md bg-black/80 px-2 py-1 font-mono text-[11px] text-ink-2">
+              {data.errors.map((e) => <li key={e}>{e}</li>)}
+            </ul>
           )}
         </div>
-        {data && data.errors.length > 0 && (
-          <ul className="max-w-md bg-black/80 px-2 py-1 font-mono text-[11px] text-ink-2">
-            {data.errors.map((e) => <li key={e}>{e}</li>)}
-          </ul>
-        )}
       </div>
+      {editing && <StreamEditor onClose={() => setEditing(false)} onSaved={() => void load()} />}
     </main>
   );
 }

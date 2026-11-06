@@ -13,7 +13,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { playWhep, type WhepState } from '@/lib/video/whep';
-import type { VideoStreamInfo } from '@/lib/video/api';
 
 const RETRY_MS = 3000;
 
@@ -29,7 +28,15 @@ function StateBadge({ state }: { state: WhepState }) {
   return <span className="text-ink-3">{state.kind === 'connecting' ? 'CONNECTING' : 'OFFLINE'}</span>;
 }
 
-export default function VideoTile({ stream }: { stream: VideoStreamInfo }) {
+export interface VideoTileProps {
+  /** What the overlay says. */
+  label: string;
+  /** WHEP endpoint: streamEndpoint(id) or previewEndpoint(id). */
+  endpoint: string;
+  testId?: string;
+}
+
+export default function VideoTile({ label, endpoint, testId }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<WhepState>({ kind: 'connecting' });
   const [attempt, setAttempt] = useState(0);
@@ -38,7 +45,7 @@ export default function VideoTile({ stream }: { stream: VideoStreamInfo }) {
     const video = videoRef.current;
     if (!video) return;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    const stop = playWhep(stream.id, video, (s) => {
+    const stop = playWhep(endpoint, video, (s) => {
       setState(s);
       if (s.kind === 'failed') retry = setTimeout(() => setAttempt((n) => n + 1), RETRY_MS);
     });
@@ -46,10 +53,10 @@ export default function VideoTile({ stream }: { stream: VideoStreamInfo }) {
       if (retry) clearTimeout(retry);
       stop();
     };
-  }, [stream.id, attempt]);
+  }, [endpoint, attempt]);
 
   return (
-    <figure className="relative min-h-0 min-w-0 overflow-hidden bg-black" data-testid={`video-tile-${stream.id}`} data-state={state.kind}>
+    <figure className="relative min-h-0 min-w-0 overflow-hidden bg-black" data-testid={testId} data-state={state.kind}>
       <video ref={videoRef} className="absolute inset-0 h-full w-full object-contain" muted autoPlay playsInline disablePictureInPicture />
 
       {state.kind === 'failed' && (
@@ -60,7 +67,7 @@ export default function VideoTile({ stream }: { stream: VideoStreamInfo }) {
 
       {/* The label, over the picture. A dark plate keeps it readable on a bright frame. */}
       <figcaption className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-3 bg-black/70 px-2 py-1 font-mono text-[11px] uppercase tracking-[0.18em]">
-        <span className="truncate text-ink">{stream.label}</span>
+        <span className="truncate text-ink">{label}</span>
         <StateBadge state={state} />
       </figcaption>
     </figure>

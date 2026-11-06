@@ -38,11 +38,15 @@ export function buildOfferPeer(): RTCPeerConnection {
   return pc;
 }
 
+/** WHEP endpoints the backend proxies: a saved stream, or an editor's preview. */
+export const streamEndpoint = (id: string) => `/api/video/streams/${encodeURIComponent(id)}`;
+export const previewEndpoint = (id: string) => `/api/video/previews/${encodeURIComponent(id)}`;
+
 /**
- * Play `streamId` into `video`. Returns a stop function; `onState` reports progress.
- * One attempt: the caller decides when to retry.
+ * Play the stream at `endpoint` (streamEndpoint / previewEndpoint) into `video`. Returns a
+ * stop function; `onState` reports progress. One attempt: the caller decides when to retry.
  */
-export function playWhep(streamId: string, video: HTMLVideoElement, onState: (s: WhepState) => void): () => void {
+export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s: WhepState) => void): () => void {
   const base = getApiBaseUrl();
   const pc = buildOfferPeer();
   let sessionUrl: string | null = null;
@@ -70,7 +74,7 @@ export function playWhep(streamId: string, video: HTMLVideoElement, onState: (s:
       await pc.setLocalDescription(await pc.createOffer());
       await gatheringComplete(pc);
       if (stopped) return;
-      const res = await fetch(`${base}/api/video/streams/${encodeURIComponent(streamId)}/whep`, {
+      const res = await fetch(`${base}${endpoint}/whep`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
         body: pc.localDescription?.sdp ?? '',
