@@ -1,0 +1,211 @@
+menu "DVB-T transmitter"
+    # Pins: GPIO24/25 (USB Serial/JTAG: flashing, console, FPGA updates)
+    # and GPIO26/27 (USB OTG FS) are left free; nothing here sits on the
+    # strapping pins GPIO34-38.
+    config DVBT_FPGA_SCK
+        int "FPGA SPI SCK GPIO"
+        default 20
+    config DVBT_FPGA_MOSI
+        int "FPGA SPI MOSI GPIO"
+        default 21
+    config DVBT_FPGA_MISO
+        int "FPGA SPI MISO GPIO"
+        default 22
+    config DVBT_FPGA_CS
+        int "FPGA SPI CS GPIO"
+        default 23
+    config DVBT_FPGA_DREQ
+        int "FPGA DREQ GPIO"
+        default 28
+    config DVBT_FPGA_SPI_HZ
+        int "FPGA SPI clock (Hz, <= 20 MHz)"
+        default 20000000
+    config DVBT_I2C_SDA
+        int "I2C SDA GPIO (Si5351A)"
+        default 7
+    config DVBT_I2C_SCL
+        int "I2C SCL GPIO (Si5351A)"
+        default 8
+    config DVBT_SI5351_XTAL_HZ
+        int "Si5351A crystal (Hz)"
+        default 25000000
+    config DVBT_SI5351_LOAD_PF
+        int "Si5351A crystal load (6, 8 or 10 pF)"
+        default 8
+    config DVBT_SETUP_SCLK
+        int "Setup bus SCLK GPIO (AD9116 + ADRF6755)"
+        default 30
+    config DVBT_SETUP_SDIO
+        int "Setup bus data GPIO (AD9116 SDIO, ADRF6755 SDI)"
+        default 31
+    config DVBT_SETUP_MISO
+        int "ADRF6755 SDO GPIO"
+        default 32
+    config DVBT_DAC_CS
+        int "AD9116 CS GPIO"
+        default 33
+    config DVBT_ADRF_CS
+        int "ADRF6755 CS GPIO"
+        default 50
+    config DVBT_DAC_RESET
+        int "AD9116 RESET/PINMD GPIO (needs a board pull-down)"
+        default 51
+    config DVBT_SETUP_SPI_HZ
+        int "Setup bus clock (Hz, <= 20 MHz)"
+        default 10000000
+    config DVBT_CFG_CCLK
+        int "FPGA config CCLK GPIO"
+        default 40
+    config DVBT_CFG_MOSI
+        int "FPGA config D0/MOSI GPIO"
+        default 41
+    config DVBT_CFG_MISO
+        int "FPGA config D1/MISO GPIO"
+        default 42
+    config DVBT_CFG_SN
+        int "FPGA config SN (slave select) GPIO"
+        default 43
+    config DVBT_CFG_PROGRAMN
+        int "FPGA PROGRAMN GPIO (open drain)"
+        default 44
+    config DVBT_CFG_INITN
+        int "FPGA INITN GPIO"
+        default 45
+    config DVBT_CFG_DONE
+        int "FPGA DONE GPIO"
+        default 46
+    config DVBT_CFG_CFG0
+        int "FPGA CFG0 GPIO"
+        default 47
+    config DVBT_CFG_CFG1
+        int "FPGA CFG1 GPIO"
+        default 48
+    config DVBT_CFG_SSPI_CODE
+        int "CFG[1:0] value for slave SPI (confirm in Lattice TN1260)"
+        range 0 3
+        default 0
+    config DVBT_CFG_SPI_HZ
+        int "FPGA configuration SPI clock (Hz)"
+        default 20000000
+    config DVBT_ADRF_REFIN_HZ
+        int "ADRF6755 reference (TCXO) frequency (Hz)"
+        default 40000000
+    config DVBT_ADRF_REFIN_TOL_PPM
+        int "ADRF6755 reference worst-case error (ppm: TCXO tolerance + aging)"
+        default 5
+        help
+            The PLL's phase detector must stay at or below 40 MHz with the
+            reference at its fastest. A 40 MHz TCXO with any tolerance is
+            therefore divided by 2 (20 MHz PFD). 0 runs the PFD at REFIN.
+    config DVBT_LO_KHZ
+        int "Carrier (LO) frequency at boot (kHz)"
+        default 1279000
+        help
+            The channel until the flight computer moves it ($HOP on its UART).
+    config DVBT_LO_MIN_KHZ
+        int "Lowest carrier allowed (kHz)"
+        default 1243500
+        help
+            The 5.7 MHz signal must stay inside the band: 1240 MHz + 3.5.
+    config DVBT_LO_MAX_KHZ
+        int "Highest carrier allowed (kHz)"
+        default 1296500
+    config DVBT_FC_UART
+        int "Flight computer UART port"
+        default 1
+    config DVBT_FC_TX
+        int "Flight computer UART TX GPIO (P4 -> flight computer)"
+        default 11
+    config DVBT_FC_RX
+        int "Flight computer UART RX GPIO (flight computer -> P4)"
+        default 12
+    config DVBT_FC_BAUD
+        int "Flight computer UART baud"
+        default 115200
+    config DVBT_ADRF_ATTEN_DB
+        int "ADRF6755 output attenuation (dB, 0-47)"
+        range 0 47
+        default 0
+    config DVBT_ADRF_LDET
+        int "ADRF6755 LDET (lock detect) GPIO"
+        default 29
+    config DVBT_ADRF_TXDIS
+        int "ADRF6755 TXDIS (RF off when high) GPIO"
+        default 49
+    config DVBT_VIDEO
+        bool "Camera + H.264 video (needs tools/fetch-video-deps.sh)"
+        default y
+    config DVBT_CAM_SCCB_SCL
+        int "Camera I2C (SCCB) SCL GPIO"
+        default 9
+    config DVBT_CAM_SCCB_SDA
+        int "Camera I2C (SCCB) SDA GPIO"
+        default 10
+    config DVBT_CAM_RESET
+        int "Camera reset GPIO (-1: none)"
+        default -1
+    config DVBT_CAM_PWDN
+        int "Camera power-down GPIO (-1: none)"
+        default -1
+    config DVBT_VIDEO_WIDTH
+        int "Video width (match the OV5647 format in menuconfig)"
+        default 1920
+    config DVBT_VIDEO_HEIGHT
+        int "Video height"
+        default 1080
+    config DVBT_VIDEO_KBPS
+        int "H.264 bit rate (kbit/s; the channel carries 4147)"
+        default 3300
+    config DVBT_VIDEO_GOP
+        int "Frames between key frames (receiver lock time = GOP / 30 s)"
+        default 30
+    config DVBT_VIDEO_DELAY_MS
+        int "Decoder delay added to the PTS (ms)"
+        default 400
+    config DVBT_SD_RECORD
+        bool "Record the transmitted TS to a microSD card"
+        default y
+    config DVBT_SD_CLK
+        int "microSD CLK GPIO (SDMMC slot 1, 1-bit)"
+        default 52
+        depends on DVBT_SD_RECORD
+    config DVBT_SD_CMD
+        int "microSD CMD GPIO"
+        default 53
+        depends on DVBT_SD_RECORD
+    config DVBT_SD_D0
+        int "microSD D0 GPIO"
+        default 54
+        depends on DVBT_SD_RECORD
+    config DVBT_USB_FPGA_UPDATE
+        bool "Accept FPGA images over the USB serial port (tools/fpga_update.py)"
+        default y
+    menu "Per-board RF calibration (bench, spectrum analyser)"
+        config DVBT_CAL_DC_I
+            int "I DC offset (DAC LSB): null the LO feedthrough"
+            range -2048 2047
+            default 0
+        config DVBT_CAL_DC_Q
+            int "Q DC offset (DAC LSB)"
+            range -2048 2047
+            default 0
+        config DVBT_CAL_GAIN_I
+            int "I gain, Q2.14 (0: default 2.5 = 40960)"
+            range 0 65535
+            default 0
+        config DVBT_CAL_GAIN_Q
+            int "Q gain, Q2.14 (0: default 2.5 = 40960)"
+            range 0 65535
+            default 0
+        config DVBT_CAL_PHASE
+            int "I-into-Q phase trim, Q2.14 (null the image)"
+            range -32768 32767
+            default 0
+    endmenu
+    config DVBT_HEALTH_MS
+        int "Health check period (ms)"
+        default 100
+    config DVBT_CALLSIGN
+        string "Service name in the SDT (your callsign: station ID)"
+        default "N0CALL"
+endmenu
