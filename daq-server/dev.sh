@@ -15,7 +15,7 @@
 #   ./dev.sh --restart       stop, then start
 #   ./dev.sh --status        show whether it is up and which ports are listening
 #   ./dev.sh --logs [name]   follow logs (sim daq db calibration backend
-#                            frontend heartbeat config sequencer ota controller)
+#                            frontend heartbeat config sequencer ota controller video)
 #
 # --sim is the flag people actually want day to day: it runs the whole pipeline
 # against simulated boards, so you need no test stand.
@@ -117,7 +117,7 @@ daq-server dev stack
   ./dev.sh --restart       stop, then start fresh
   ./dev.sh --status        show whether it is up and which ports are listening
   ./dev.sh --logs [name]   follow logs (sim daq db calibration backend frontend
-                           heartbeat config sequencer ota controller)
+                           heartbeat config sequencer ota controller video)
   ./dev.sh -h, --help      this message
 
 Starting when a session is already up attaches to it rather than restarting.

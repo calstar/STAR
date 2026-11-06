@@ -230,6 +230,11 @@ else
   CMD_OTA='printf "\n  ❌ ota_service not built — cd build && cmake .. && make ota_service\n\n" && sleep infinity'
 fi
 
+# Video gateway (VIDCOMM): the pinned MediaMTX the Video view plays from. Independent of
+# everything else here -- no hardware, no Elodin -- so it starts at once.
+CMD_LOG_VIDEO="/tmp/gui_logs/video.log"
+CMD_VIDEO='printf "\n  ══ VIDEO GATEWAY (MediaMTX) — WebRTC :8889 / UDP :8189, API :8887 ══\n\n" && cd '"$PROJECT"' && exec bash scripts/video-gateway.sh 2>&1 | tee '"$CMD_LOG_VIDEO"
+
 # Board simulator (pane 0); set USE_SIM=1 to run (default off for real hardware)
 # Waits for the backend WS port so the Elodin→backend pipeline is up before traffic.
 # Full firmware lifecycle: SETUP → SENSOR_CONFIG → SELF_TEST → ACTIVE (no --skip-startup).
@@ -294,6 +299,10 @@ launch_background() {
   echo ""
   echo "  📦 Launching services as background processes (no tmux available)"
   echo ""
+
+  # Video gateway (independent of the pipeline)
+  nohup bash -c "cd '$PROJECT' && exec bash scripts/video-gateway.sh" >> "$LOGDIR/video.log" 2>&1 &
+  echo "    Video:        PID $! → $LOGDIR/video.log"
 
   # Elodin DB first
   nohup bash -c "mkdir -p '$HOME/.local/share/elodin' && exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'" >> "$LOGDIR/db.log" 2>&1 &
@@ -411,6 +420,7 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   tmux_split_right "$CMD_SEQUENCER"
   tmux_split_right "$CMD_OTA"
   tmux_split_right "$CMD_CTRL"
+  tmux_split_right "$CMD_VIDEO"
 
   tmux select-layout -t "$SESSION:main" tiled
   tmux select-pane -t "$SESSION:main.4"
@@ -420,7 +430,7 @@ if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
   echo "│  3: Calibration  4: Backend :${THIN_WS_PORT}  5: Frontend :3000 │"
   echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
-  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller                │"
+  echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller  11: Video gateway │"
   echo "│  USE_SIM=1 enables simulator                                  │"
   echo "│  Override: THIN_WS_PORT THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
   echo "│  Ctrl+B arrows=switch  D=detach                              │"

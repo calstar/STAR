@@ -43,7 +43,7 @@ export function desiredPaths(loaded: Pick<LoadedVideoConfig, 'config' | 'secrets
 }
 
 export interface GatewayEndpoint {
-  /** Control API, e.g. http://127.0.0.1:9997 */
+  /** Control API, e.g. http://127.0.0.1:8887 (video/mediamtx.yml apiAddress) */
   apiUrl: string;
   /** WebRTC/WHEP HTTP listener, e.g. http://127.0.0.1:8889 */
   webrtcUrl: string;
@@ -51,7 +51,7 @@ export interface GatewayEndpoint {
 
 export function gatewayEndpointFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayEndpoint {
   const host = env.VIDEO_GATEWAY_HOST || '127.0.0.1';
-  const apiPort = env.VIDEO_GATEWAY_API_PORT || '9997';
+  const apiPort = env.VIDEO_GATEWAY_API_PORT || '8887';
   const webrtcPort = env.VIDEO_GATEWAY_WEBRTC_PORT || '8889';
   return { apiUrl: `http://${host}:${apiPort}`, webrtcUrl: `http://${host}:${webrtcPort}` };
 }

@@ -11,7 +11,7 @@
 #   scripts/video-gateway.sh --print-bin  print the binary's path (downloading if needed)
 #
 # Settings can be overridden with MTX_<KEY> environment variables (MediaMTX's own
-# mechanism), e.g. MTX_APIADDRESS=127.0.0.1:19997.
+# mechanism), e.g. MTX_APIADDRESS=127.0.0.1:18887.
 set -euo pipefail
 
 VERSION="v1.21.3"

@@ -9,6 +9,8 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as http from 'http';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import type { AddressInfo } from 'net';
 
 const dir = mkdtempSync(join(tmpdir(), 'daq-video-'));
@@ -18,7 +20,7 @@ process.env.VIDEO_CONFIG_PATH = CONFIG;
 process.env.VIDEO_SECRETS_PATH = SECRETS;
 
 const { validateVideoConfig, loadVideoConfig, publicStream } = await import('../video/config.js');
-const { cameraSource, desiredPaths, reconcile } = await import('../video/gateway.js');
+const { cameraSource, desiredPaths, reconcile, gatewayEndpointFromEnv } = await import('../video/gateway.js');
 const { VideoService } = await import('../video/service.js');
 const { handleVideoRequest } = await import('../video/routes.js');
 type GatewayApi = import('../video/gateway.js').GatewayApi;
@@ -234,5 +236,29 @@ describe('routes', () => {
 
   it('leaves non-video paths to the caller', async () => {
     expect((await fetch(`${apiUrl}/api/config`)).status).toBe(418);
+  });
+});
+
+describe('gateway defaults', () => {
+  // The backend's default endpoint and daq-server/video/mediamtx.yml must name the same ports,
+  // and neither may take a port the DAQ already uses (9997 OTA, 9998 actuator, 9999 fire).
+  const yml = readFileSync(fileURLToPath(new URL('../../../../video/mediamtx.yml', import.meta.url)), 'utf8');
+  const setting = (key: string) => yml.match(new RegExp(`^${key}:\\s*(\\S+)`, 'm'))?.[1] ?? '';
+  const port = (addr: string) => addr.split(':').pop();
+
+  it('match the gateway config', () => {
+    const ep = gatewayEndpointFromEnv({});
+    expect(port(setting('apiAddress'))).toBe(new URL(ep.apiUrl).port);
+    expect(port(setting('webrtcAddress'))).toBe(new URL(ep.webrtcUrl).port);
+  });
+
+  it('stay off the DAQ service ports', () => {
+    const taken = new Set(['9997', '9998', '9999', '8081', '3000', '2240']);
+    for (const key of ['apiAddress', 'webrtcAddress', 'webrtcLocalUDPAddress', 'rtspAddress']) {
+      expect(taken.has(port(setting(key))!), `${key} = ${setting(key)}`).toBe(false);
+    }
+    for (const off of ['metrics', 'pprof', 'playback', 'rtmp', 'hls', 'srt', 'moq']) {
+      expect(setting(off), off).toBe('false');
+    }
   });
 });

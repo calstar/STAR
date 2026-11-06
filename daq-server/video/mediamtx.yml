@@ -11,7 +11,7 @@
 #     HTTP side. Their handshake goes through the DAQ backend (/api/video/...), and only
 #     the media itself (UDP, webrtcLocalUDPAddress) flows browser <-> gateway directly.
 # Any setting can be overridden per run with MTX_<KEY> environment variables
-# (e.g. MTX_APIADDRESS=127.0.0.1:19997), which is how the tests move the ports.
+# (e.g. MTX_APIADDRESS=127.0.0.1:18887), which is how the tests move the ports.
 
 logLevel: info
 logDestinations: [stdout]
@@ -34,7 +34,9 @@ authInternalUsers:
       - action: metrics
 
 api: true
-apiAddress: 127.0.0.1:9997
+# Not MediaMTX's default 9997: that is the DAQ's OTA service (OTA_SERVICE_CMD_PORT).
+# Its metrics/pprof defaults (9998 actuator, 9999 fire) are off below for the same reason.
+apiAddress: 127.0.0.1:8887
 
 metrics: false
 pprof: false

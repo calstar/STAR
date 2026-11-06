@@ -1,0 +1,21 @@
+[Unit]
+Description=VIDCOMM video gateway (MediaMTX)
+After=network.target
+
+[Service]
+Type=simple
+# Rebased onto the real checkout by install_services.sh, like the other units.
+WorkingDirectory=%h/sensor_system
+# The same launcher the media Mac runs by hand: the pinned MediaMTX with
+# video/mediamtx.yml. bootstrap_daq.sh fetches the binary at install time, so a
+# boot with no internet (the desert) still starts.
+ExecStart=/bin/bash scripts/video-gateway.sh
+Restart=always
+RestartSec=5
+# Independent of sensor-backend on purpose: restarting the backend must not drop
+# video, and a gateway crash must not touch telemetry. The backend re-pushes the
+# stream list whenever the gateway comes back.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target
