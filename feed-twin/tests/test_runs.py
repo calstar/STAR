@@ -363,8 +363,22 @@ def test_a_tank_running_dry_burns_no_phantom_propellant() -> None:
         for _ in range(10):
             session.step(0.05)
         last = session.solver_log[-1]
-        assert abs(last.mass_error_kg - last.guard_kg) < 1e-4 * last.throughput_kg
-        assert abs(last.guard_kg) < 1e-4 * last.throughput_kg
+        # What the stand was and where each tank's guard went, so a failure
+        # says which vessel refused or overdrew and what it was built on.
+        seen = {
+            "tanks": {
+                tid: {
+                    "liquid_kg": sim.state.liquid_mass,
+                    "fixed_kg": sim.fixed_kg,
+                    "refused_kg": sim.refused_kg,
+                }
+                for tid, sim in session.tanks.items()
+            },
+            "overrides": main._overrides_for(diagram),
+            "sessions_open": len(main._SESSIONS),
+        }
+        assert abs(last.mass_error_kg - last.guard_kg) < 1e-4 * last.throughput_kg, seen
+        assert abs(last.guard_kg) < 1e-4 * last.throughput_kg, seen
     finally:
         main.library.remove(engine)
         main.library.remove(diagram)
