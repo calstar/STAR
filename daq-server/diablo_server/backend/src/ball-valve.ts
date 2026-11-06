@@ -3,7 +3,7 @@
  *
  * A ball valve is commanded like any actuator, but where an actuator board reports a current, this
  * board reports where the ball actually is: calibration_service publishes position_pct (0 closed,
- * 100 open) on [0x34] as BV<n>_Cal.CH<m>, with cal_status 2 when the 4-20 mA loop is below 3.5 mA.
+ * 100 open) on [0x34] as BV<n>_Cal.CH<m>, with cal_status 2 when the 4-20 mA loop is below 2 mA.
  *
  * For the actuator-mismatch check a position is only OPEN or CLOSED near the end of travel. A
  * valve part-way is travelling (it takes a few seconds), and a dead loop says nothing — neither

@@ -7,7 +7,7 @@
  */
 import { ActuatorState } from './types';
 
-/** cal_status on [0x34]: the loop is below 3.5 mA (calibration/ValvePosition.hpp). */
+/** cal_status on [0x34]: the loop is below 2 mA (calibration/ValvePosition.hpp). */
 export const BALL_VALVE_STATUS_NO_SIGNAL = 2;
 
 export function formatBallValvePosition(

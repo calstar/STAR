@@ -292,7 +292,7 @@ export function parseElodinPacket(
   // ── Ball valve: [0x33] raw, [0x34] calibrated, [0x35] commanded ───────────
   // Its own namespace, so board 71 (slot 1) never decodes as actuator board 11's ACT1.*.
   // Raw: 4-20 mA position counts. Calibrated: position_pct (0 closed, 100 open), raw_adc, and
-  // cal_status (1 ok, 2 no signal: the loop is below 3.5 mA). Commanded: as [0x32].
+  // cal_status (1 ok, 2 no signal: the loop is below 2 mA). Commanded: as [0x32].
   if (high === 0x33 && low >= 0x01) {
     const { boardNumber, channel, isRaw } = decodeLow(low);
     if (isRaw && channel >= 1 && channel <= 10) {
