@@ -27,6 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
+import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
@@ -1595,7 +1596,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // would apply today's offset to yesterday's samples) and rather than in the outbox drain
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
-    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
+    // applyValveCalibration replaces a ball valve's position_pct with its two-point calibrated
+    // figure (ball-valve-cal.ts) before the mismatch check below and the browser see it.
+    const parsedList = applyValveCalibration(
+      expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers)));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
