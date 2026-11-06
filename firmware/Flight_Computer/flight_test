@@ -126,7 +126,7 @@ size_budget() {
 
 format_clean() {
   local files
-  files=$(cd "$HERE" && ls app/*.[ch] chips/*.[ch] tests/*/*.[ch] 2>/dev/null
+  files=$(cd "$HERE" && ls app/*.[ch] app/*.cpp chips/*.[ch] tests/*/*.[ch] 2>/dev/null
           cd "$HERE" && ls Core/Src/board*.c Core/Inc/board*.h Core/Src/bringup_task.c \
             Core/Inc/bringup_task.h Core/Src/self_test*.c Core/Src/gnss_frame.c \
             Core/Src/sd_spi.c src/*.cpp src/*.h 2>/dev/null)
@@ -169,6 +169,8 @@ check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
 check app "task cores + boot report: sensors, GNSS, battery, self-test verdict" ctest_suite app tests/app
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
+check health_radio "task health, sleep lease and startup SelfTest delivery" ctest_suite health_radio tests/health_radio
+
 stage "3  end to end: flight profile -> drivers -> cores -> eMMC -> read back"
 E2E_BUILD="$OUT/build_e2e"
 E2E_READY=0
