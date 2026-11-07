@@ -63,6 +63,13 @@ static bool dma_reachable(const void* p, uint32_t bytes) {
     return (a & 31U) == 0U && a >= AXI_SRAM_START && a + bytes <= AXI_SRAM_END;
 }
 
+/* Cache maintenance only when the D-cache is on. CubeMX leaves it off on
+ * this board, and there DCIMVAC/DCCMVAC on AXI SRAM raised an imprecise
+ * BusFault on the rev 1 board (CFSR 0x400, first DMA read at mount). */
+static bool dcache_on(void) {
+    return (SCB->CCR & SCB_CCR_DC_Msk) != 0U;
+}
+
 static uint32_t divider_for(uint32_t kernel_hz, uint32_t max_hz) {
     /* SDMMC_CK = kernel / (2 x CLKDIV) for CLKDIV > 0 (RM0468). */
     return (kernel_hz + 2U * max_hz - 1U) / (2U * max_hz);
@@ -130,6 +137,12 @@ static emmc_status_t port_start(void* context, uint32_t* block_count) {
         return EMMC_ERR_NOT_READY;
     }
     clamp_clock();
+    /* Hardware flow control: SDMMC_CK stops while the FIFO is full, so a
+     * polling read preempted by a higher-priority task (the sensors start
+     * with recording) cannot overrun (seen on the rev 1 board: EXT_CSD read
+     * failed with HAL_MMC_ERROR_RX_OVERRUN, 0x20). RM0468 SDMMC_CLKCR
+     * HWFC_EN. */
+    SET_BIT(hmmc1.Instance->CLKCR, SDMMC_CLKCR_HWFC_EN);
 
     /* Polling read of EXT_CSD: once, before any DMA, at bring-up. */
     if (HAL_MMC_GetCardExtCSD(&hmmc1, ext_csd, 100U) != HAL_OK) {
@@ -160,7 +173,9 @@ static emmc_status_t port_read(void* context, uint32_t lba, void* buffer,
         return EMMC_ERR_IO;
     }
     emmc_status_t st = finish(budget_ms);
-    SCB_InvalidateDCache_by_Addr(buffer, (int32_t)bytes);
+    if (dcache_on()) {
+        SCB_InvalidateDCache_by_Addr(buffer, (int32_t)bytes);
+    }
     return st;
 }
 
@@ -171,7 +186,9 @@ static emmc_status_t port_write(void* context, uint32_t lba, const void* buffer,
     if (count == 0U || !dma_reachable(buffer, bytes)) {
         return EMMC_ERR_PARAM;
     }
-    SCB_CleanDCache_by_Addr((uint32_t*)(uintptr_t)buffer, (int32_t)bytes);
+    if (dcache_on()) {
+        SCB_CleanDCache_by_Addr((uint32_t*)(uintptr_t)buffer, (int32_t)bytes);
+    }
     (void)osSemaphoreAcquire(transfer_done, 0U);
     if (HAL_MMC_WriteBlocks_DMA(&hmmc1, (uint8_t*)(uintptr_t)buffer, lba,
                                 count) != HAL_OK) {
