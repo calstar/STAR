@@ -51,6 +51,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Recording session controls & history' },
   { id: 'video', name: 'Video', path: '/video', accent: '#A3A3A3', common: true,
     description: 'Live camera and HiDes feeds from the video gateway' },
+  { id: 'recordings', name: 'Recordings', path: '/recordings', accent: '#A3A3A3', common: true,
+    description: 'Saved and recorded video, opened in the gateway machine\'s file manager' },
 
   // ── Less-used views (reachable via the All Views tab) ────────────────────────
   { id: 'gse', name: 'GSE', path: '/gse', accent: '#F39C12',

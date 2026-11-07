@@ -257,3 +257,5 @@ video/gateway.password
 video/obs.password
 video/buffer/
 video/recordings/
+# ...but not the GUI's Recordings view, which the bare `recordings/` rule above would hide.
+!diablo_server/frontend/app/recordings/

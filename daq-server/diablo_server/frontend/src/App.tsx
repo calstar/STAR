@@ -94,6 +94,7 @@ export default function App() {
               <Route path="/status" element={<P.StatusPage />} />
               <Route path="/session" element={<P.SessionPage />} />
               <Route path="/video" element={<P.VideoPage />} />
+              <Route path="/recordings" element={<P.RecordingsPage />} />
 
               {/* ── Plot pages: short canonical path + legacy /plots alias ── */}
               <Route path="/chamber" element={<P.ChamberPage />} />

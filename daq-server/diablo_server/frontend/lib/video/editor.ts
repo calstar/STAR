@@ -18,6 +18,8 @@ export interface DraftStream {
   /** UDP listen port, as typed (udp only). */
   port: string;
   record: boolean;
+  /** Zoom to fill the tile (crop) instead of letterboxing. */
+  fill: boolean;
   username: string;
   /** A password is saved on the server for this stream (as loaded). */
   passwordSet: boolean;
@@ -44,6 +46,7 @@ export function draftsFrom(cfg: EditableConfig): DraftStream[] {
     lowResUrl: s.kind === 'rtsp' ? s.lowResUrl ?? '' : '',
     port: s.kind === 'udp' ? String(s.port) : '',
     record: s.record,
+    fill: !!s.fill,
     username: s.username,
     passwordSet: s.passwordSet,
     newPassword: '',
@@ -71,6 +74,7 @@ export function newDraft(existing: DraftStream[]): DraftStream {
     lowResUrl: '',
     port: '',
     record: true,
+    fill: false,
     username: '',
     passwordSet: false,
     newPassword: '',
@@ -105,7 +109,7 @@ export function withKind(drafts: DraftStream[], key: string, kind: 'rtsp' | 'udp
 /** What PUT /api/video/config takes. A pushed stream sends no URL and no credentials. */
 export function toSave(drafts: DraftStream[]) {
   const streams = drafts.map((d) => (d.kind === 'udp'
-    ? { id: d.id.trim(), label: d.label.trim(), kind: 'udp' as const, port: Number(d.port), record: d.record }
+    ? { id: d.id.trim(), label: d.label.trim(), kind: 'udp' as const, port: Number(d.port), record: d.record, ...(d.fill ? { fill: true } : {}) }
     : {
       id: d.id.trim(),
       label: d.label.trim(),
@@ -113,6 +117,7 @@ export function toSave(drafts: DraftStream[]) {
       url: d.url.trim(),
       ...(d.lowResUrl.trim() ? { lowResUrl: d.lowResUrl.trim() } : {}),
       record: d.record,
+      ...(d.fill ? { fill: true } : {}),
     }));
   const credentials: Record<string, CredentialChange> = {};
   for (const d of drafts) {
@@ -133,7 +138,7 @@ export function isDirty(drafts: DraftStream[], original: DraftStream[]): boolean
     const o = original[i];
     return d.key !== o.key || d.id !== o.id || d.label !== o.label || d.kind !== o.kind || d.port !== o.port
       || d.url !== o.url || d.lowResUrl !== o.lowResUrl
-      || d.record !== o.record || d.username !== o.username || d.newPassword !== '' || d.clearPassword;
+      || d.record !== o.record || d.fill !== o.fill || d.username !== o.username || d.newPassword !== '' || d.clearPassword;
   });
 }
 
