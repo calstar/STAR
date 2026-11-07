@@ -31,7 +31,14 @@ void board_uart9_send(const uint8_t* bytes, uint16_t len);
 /* Re-open at another baud (receive restarts; the ring is kept). */
 void board_uart9_set_baud(uint32_t baud);
 
-/* Bytes dropped because the ring was full; UART errors seen. */
+/* Only reconfigure the UART at `baud`, FIFO included, without starting the
+ * interrupt receive (the self-test's polled listen). Every baud change goes
+ * through this: a bare HAL_UART_Init turns the hardware FIFO off. */
+bool board_uart9_apply_baud(uint32_t baud);
+
+/* Bytes received since boot (counts on past a full ring); bytes dropped
+ * because the ring was full; UART errors seen. */
+uint32_t board_uart9_rx_bytes(void);
 uint32_t board_uart9_overflows(void);
 uint32_t board_uart9_errors(void);
 

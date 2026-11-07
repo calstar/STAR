@@ -92,3 +92,56 @@ bool ubx_parse_nav_pvt(const uint8_t* p, uint16_t len, ubx_pvt_t* out) {
     out->pdop_e2 = (uint16_t)(p[76] | p[77] << 8);
     return true;
 }
+
+size_t ubx_poll(uint8_t* out, size_t cap, uint8_t cls, uint8_t id) {
+    return ubx_frame(out, cap, cls, id, NULL, 0);
+}
+
+static uint16_t u16(const uint8_t* p) {
+    return (uint16_t)(p[0] | p[1] << 8);
+}
+
+bool ubx_parse_mon_rf(const uint8_t* p, uint16_t len, ubx_rf_t* out) {
+    /* 4-byte header, then nBlocks blocks of 24 (3.14.6, p.86) */
+    if (!p || !out || len < 4U + 24U || p[1] < 1U) {
+        return false;
+    }
+    const uint8_t* b = p + 4;
+    out->jamming = (uint8_t)(b[1] & 3U); /* flags bits 1..0 */
+    out->ant_status = b[2];
+    out->ant_power = b[3];
+    out->noise = u16(b + 12);
+    out->agc = u16(b + 14);
+    out->cw = b[16];
+    return true;
+}
+
+bool ubx_sat_summary(const uint8_t* p, uint16_t len, ubx_sats_t* out) {
+    /* 8-byte header, then numSvs blocks of 12 (3.15.13, p.98) */
+    if (!p || !out || len < 8U) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->listed = p[5];
+    uint16_t fit = (uint16_t)((len - 8U) / 12U);
+    uint8_t n = out->listed < fit ? out->listed : (uint8_t)fit;
+    for (uint8_t i = 0; i < n; ++i) {
+        const uint8_t* sv = p + 8 + 12U * i;
+        uint8_t cno = sv[2];
+        uint32_t flags = u32(sv + 8);
+        out->seen++;
+        if (cno > 0U) {
+            out->with_signal++;
+        }
+        if ((flags & 7U) >= 4U) { /* qualityInd */
+            out->locked++;
+        }
+        if (flags & (1UL << 3)) { /* svUsed */
+            out->used++;
+        }
+        if (cno > out->best_cno) {
+            out->best_cno = cno;
+        }
+    }
+    return true;
+}

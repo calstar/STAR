@@ -11,6 +11,8 @@
  *           NMEA off, NAV-PVT on, 10 Hz, dynamic model AIR4; wait for
  *           UBX-ACK-ACK (GNSS_ACK_US, GNSS_CONFIG_TRIES tries)
  *   RUN     every NAV-PVT -> REC_GNSS; none for GNSS_SILENCE_US -> DETECT
+ *           on request (gnss_core_request_status): poll MON-RF (antenna)
+ *           and NAV-SAT (satellites); the answers land in rf / sats
  * Nothing is written to the module's flash: the RAM-layer config is re-sent
  * after every power-up or silence.
  */
@@ -61,6 +63,10 @@ typedef struct {
     uint32_t configs;       /* configurations acknowledged */
     uint32_t naks, resets;  /* NAKs; returns to DETECT */
     rec_gnss_t latest;
+    /* Receiver status, only filled when asked for (bench, bring-up) */
+    uint32_t rf_reports, sat_reports; /* answers decoded */
+    ubx_rf_t rf;
+    ubx_sats_t sats;
 } gnss_core_t;
 
 /* io and sink set first. Opens UART9 at the first candidate baud. */
@@ -75,6 +81,10 @@ void gnss_core_poll(gnss_core_t* core, uint32_t now_us);
 
 /* Latest GPS TIMEPULSE edge (board_time_last_pps), stamped into records. */
 void gnss_core_set_pps(gnss_core_t* core, uint32_t edge_us);
+
+/* Ask the module for MON-RF and NAV-SAT once. Only in RUN (the module is
+ * configured and at GNSS_RUN_BAUD); returns false otherwise. */
+bool gnss_core_request_status(gnss_core_t* core);
 
 /* Microseconds until the next deadline. */
 uint32_t gnss_core_wait_us(const gnss_core_t* core, uint32_t now_us);

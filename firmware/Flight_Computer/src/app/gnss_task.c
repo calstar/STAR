@@ -12,6 +12,7 @@
 static gnss_core_t core;
 static osThreadId_t thread;
 static volatile bool want_active;
+static volatile bool want_status; /* gnss_task_poll_status */
 
 /* REG_3V6_EN (PE11): the 3V6 buck + LP5907 that make 3V3A, which only the
  * MAX-M10S uses (schematic p.10, p.12). 10 ms covers both regulators. */
@@ -75,6 +76,13 @@ static void gnss_task(void* argument) {
             gnss_core_feed(&core, buf, n, board_time_us());
         }
         gnss_core_poll(&core, board_time_us());
+        /* NAV-PVT wakes the task 10 times a second, so 1 s is honoured */
+        static uint32_t last_status_us;
+        uint32_t now = board_time_us();
+        if (want_status && now - last_status_us >= 1000000U &&
+            gnss_core_request_status(&core)) {
+            last_status_us = now;
+        }
     }
 }
 
@@ -93,6 +101,10 @@ void gnss_task_set_active(bool on) {
     if (thread) {
         (void)osThreadFlagsSet(thread, EV_MODE);
     }
+}
+
+void gnss_task_poll_status(bool on) {
+    want_status = on;
 }
 
 const gnss_core_t* gnss_task_core(void) {

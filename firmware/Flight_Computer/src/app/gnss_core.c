@@ -112,9 +112,25 @@ static void on_frame(gnss_core_t* c, gnss_frame_kind_t kind, uint32_t now_us) {
             }
             break;
         case GNSS_RUN:
-            if (kind == GNSS_FRAME_UBX && p->ubx_class == UBX_CLASS_NAV &&
-                p->ubx_id == UBX_ID_NAV_PVT) {
+            if (kind != GNSS_FRAME_UBX) {
+                break;
+            }
+            if (p->ubx_class == UBX_CLASS_NAV && p->ubx_id == UBX_ID_NAV_PVT) {
                 on_pvt(c, now_us);
+            } else if (p->ubx_class == UBX_CLASS_MON &&
+                       p->ubx_id == UBX_ID_MON_RF) {
+                if (ubx_parse_mon_rf(p->ubx_payload, p->ubx_len, &c->rf)) {
+                    c->rf_reports++;
+                }
+            } else if (p->ubx_class == UBX_CLASS_NAV &&
+                       p->ubx_id == UBX_ID_NAV_SAT) {
+                /* only the captured prefix of a long list is in hand */
+                uint16_t got = p->ubx_len < GNSS_FRAME_UBX_CAPTURE
+                                   ? p->ubx_len
+                                   : (uint16_t)GNSS_FRAME_UBX_CAPTURE;
+                if (ubx_sat_summary(p->ubx_payload, got, &c->sats)) {
+                    c->sat_reports++;
+                }
             }
             break;
     }
@@ -150,6 +166,18 @@ void gnss_core_poll(gnss_core_t* c, uint32_t now_us) {
             restart(c, now_us);
             break;
     }
+}
+
+bool gnss_core_request_status(gnss_core_t* c) {
+    if (c->state != GNSS_RUN) {
+        return false;
+    }
+    uint8_t frame[8];
+    size_t n = ubx_poll(frame, sizeof(frame), UBX_CLASS_MON, UBX_ID_MON_RF);
+    c->io.send(c->io.ctx, frame, (uint16_t)n);
+    n = ubx_poll(frame, sizeof(frame), UBX_CLASS_NAV, UBX_ID_NAV_SAT);
+    c->io.send(c->io.ctx, frame, (uint16_t)n);
+    return true;
 }
 
 uint32_t gnss_core_wait_us(const gnss_core_t* c, uint32_t now_us) {
