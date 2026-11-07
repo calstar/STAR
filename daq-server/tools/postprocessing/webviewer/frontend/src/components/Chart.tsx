@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { Series, SeriesMeta } from '../types';
 import { colorFor, fmtDuration, mergeForUplot } from '../util';
-import { AXIS_FONT, AXIS_STROKE, GRID_STROKE, LABEL_FONT } from '../chartTheme';
+import { AXIS_FONT, AXIS_STROKE, GRID_STROKE, LABEL_FONT, PLAYHEAD_STROKE } from '../chartTheme';
 
 interface Props {
   series: Series[];
@@ -20,7 +20,14 @@ interface Props {
   /** Double-click, and a wheel zoom-out that reaches the full run. */
   onResetView?: () => void;
   onReady?: (u: uPlot) => void;
+  /** Epoch seconds of the video playhead, drawn as a line; null draws nothing. */
+  playhead?: number | null;
+  /** A click (not a drag) on the plot: put the playhead there. */
+  onPlayhead?: (t: number) => void;
 }
+
+// A press that moves less than this before release is a click, not a drag-zoom.
+const CLICK_SLOP_PX = 3;
 
 const stepped = uPlot.paths.stepped!({ align: 1 });
 
@@ -106,6 +113,7 @@ function visitedSplits(u: uPlot, rows: number[]): number[] | null {
 
 export default function Chart({
   series, meta, view, bounds, minHeight = 320, onViewChange, onResetView, onReady,
+  playhead = null, onPlayhead,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const uRef = useRef<uPlot | null>(null);
@@ -118,6 +126,10 @@ export default function Chart({
   resetCb.current = onResetView;
   const boundsRef = useRef(bounds);
   boundsRef.current = bounds;
+  const playheadRef = useRef(playhead);
+  playheadRef.current = playhead;
+  const playheadCb = useRef(onPlayhead);
+  playheadCb.current = onPlayhead;
   // Wheel events arrive in bursts; the scale follows every one of them so the zoom feels
   // direct, but the parent (which refetches the window at higher resolution) hears only
   // once the gesture settles.
@@ -265,6 +277,26 @@ export default function Chart({
       },
       legend: { live: true },
       hooks: {
+        // The video playhead: one line over the plot, drawn with the plot, so moving it
+        // costs a redraw and nothing else (no series, no refetch).
+        draw: [
+          (u) => {
+            const t = playheadRef.current;
+            if (t == null) return;
+            const x = Math.round(u.valToPos(t, 'x', true));
+            const { left, top, width, height } = u.bbox;
+            if (x < left || x > left + width) return;
+            const ctx = u.ctx;
+            ctx.save();
+            ctx.strokeStyle = PLAYHEAD_STROKE;
+            ctx.lineWidth = 2 * devicePixelRatio;
+            ctx.beginPath();
+            ctx.moveTo(x, top);
+            ctx.lineTo(x, top + height);
+            ctx.stroke();
+            ctx.restore();
+          },
+        ],
         // uPlot sizes .u-select as the drag goes but says nothing about it. setCursor is
         // the only per-move hook, so the "you are about to zoom to this" readout rides on
         // it — what the highlighted band is worth in seconds, before you commit to it.
@@ -348,6 +380,22 @@ export default function Chart({
     };
     u.over.addEventListener('wheel', onWheel, { passive: false });
 
+    // A click places the video playhead; a drag still zooms. uPlot only reports drags
+    // (setSelect with a width), so a click is told apart here by how far the pointer went.
+    let down: { x: number; y: number } | null = null;
+    const onDown = (e: MouseEvent) => {
+      down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+    };
+    const onUp = (e: MouseEvent) => {
+      const d = down;
+      down = null;
+      if (!d || !playheadCb.current) return;
+      if (Math.abs(e.clientX - d.x) > CLICK_SLOP_PX || Math.abs(e.clientY - d.y) > CLICK_SLOP_PX) return;
+      playheadCb.current(u.posToVal(e.clientX - u.over.getBoundingClientRect().left, 'x'));
+    };
+    u.over.addEventListener('mousedown', onDown);
+    u.over.addEventListener('mouseup', onUp);
+
     // Re-measure the legend from the live element each time (it renders taller
     // transiently before settling, so a one-shot sync read under-sizes the plot)
     // and re-fit. Triggered by: parent resize, legend resize, window resize, and
@@ -368,6 +416,8 @@ export default function Chart({
       ro.disconnect();
       window.removeEventListener('resize', refit);
       u.over.removeEventListener('wheel', onWheel);
+      u.over.removeEventListener('mousedown', onDown);
+      u.over.removeEventListener('mouseup', onUp);
       if (notifyTimer.current) clearTimeout(notifyTimer.current);
       u.destroy();
       uRef.current = null;
@@ -386,6 +436,11 @@ export default function Chart({
     u.setScale('x', { min: view[0], max: view[1] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, view[0], view[1]]);
+
+  // The playhead moved: redraw the canvas (no rebuild, no rescale) so the line follows.
+  useEffect(() => {
+    uRef.current?.redraw(false, false);
+  }, [playhead]);
 
   return <div ref={rootRef} style={{ width: '100%' }} />;
 }

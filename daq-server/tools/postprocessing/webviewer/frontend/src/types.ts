@@ -98,3 +98,25 @@ export interface SeriesMeta {
   /** State id → name, for the fields whose value IS a state. null for everything else. */
   valueNames: Record<string, string> | null;
 }
+
+/** One kept video file: a camera's footage from one Save or Record, placed on the plot's
+ *  epoch-seconds axis. See backend/video.py. */
+export interface VideoClip {
+  /** The recording folder on the gateway: `2026-11-07_140322_record`. */
+  recording: string;
+  /** "record", "save" (or another label the agent was given). */
+  kind: string;
+  stream: string;
+  /** Epoch seconds of the first frame, and of the last. */
+  start: number;
+  end: number;
+  duration: number;
+  /** Timing read from the folder name only: within a second or two, not a frame. */
+  approx: boolean;
+}
+
+export interface RunVideo {
+  /** A recordings folder is mounted. False: no video panel at all. */
+  available: boolean;
+  clips: VideoClip[];
+}

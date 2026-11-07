@@ -72,6 +72,16 @@ overhangs, for cameras whose shape wastes the slot. Off by default: letterboxing
   **Recordings** view (`/recordings`) lists them and opens a folder in the gateway machine's
   file manager (Finder; xdg-open on Linux) -- useful when you are at that machine. The
   note after a save names gaps (gateway or camera down) and streams that were missing.
+- The **DAQ Run Viewer** shows these clips above a run's plot, at their time
+  (`tools/postprocessing/webviewer`, `VIDEO_RECORDINGS_HOST_DIR`). After a desert trip,
+  copy the media Mac's recordings into that folder on star-rfs (names carry their
+  time, so a second copy changes nothing):
+
+  ```bash
+  rsync -av --exclude '.*' <media-mac>.local:<Recordings>/ <VIDEO_RECORDINGS_HOST_DIR>/
+  ```
+
+  `<Recordings>` is the folder `scripts/media-laptop.sh` prints at start-up.
 - The disk guard runs on the gateway machine: Record is refused below 20 GB free, and stops
   cleanly at 5 GB. A recording interrupted by a restart is finished when the gateway starts.
 

@@ -12,6 +12,7 @@
 export const AXIS_STROKE = '#9fb0c4'; // --color-text-muted (7.8:1 on bg)
 export const GRID_STROKE = '#383848'; // --color-border
 export const AXIS_FONT = '13px system-ui, sans-serif'; // tick values, never below 13px
+export const PLAYHEAD_STROKE = '#fbbf24'; // --color-playhead: the video playhead line
 export const LABEL_FONT = 'bold 15px system-ui, sans-serif'; // axis (unit) label — prominent
 
 /*

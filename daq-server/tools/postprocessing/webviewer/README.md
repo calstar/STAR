@@ -34,6 +34,8 @@ Single-process (build the frontend, serve everything from uvicorn):
 | `ELODIN_DB_DIR` | `~/.local/share/elodin` | where run dirs live |
 | `WEBVIEWER_CACHE_DIR` | `./.cache` | exported parquet cache |
 | `PORT` | `8000` | backend port |
+| `WEBVIEWER_VIDEO_DIR` | unset (no video) | the video gateway's recordings folder, read-only; see [Video](#video) |
+| `WEBVIEWER_VIDEO_TZ` | `America/Los_Angeles` | the gateway machine's time zone (recording folders are named in local time) |
 | `WEBVIEWER_MAX_DOWNLOAD_BPS` | `0` (unlimited); `run.sh --build` sets `10485760` (10 MB/s) | CSV download rate cap in bytes/sec. Dev is unthrottled; the deployment (`--build`) applies the cap |
 
 ## What it does
@@ -75,6 +77,27 @@ Single-process (build the frontend, serve everything from uvicorn):
   saturate the host uplink and starve co-located services — it paces, not caps
   size.
 - **Save image** — PNG of the current chart (uPlot canvas).
+
+## Video
+
+The video gateway's **Record** and **Save** clips (`daq-server/video/recordings/`) appear
+above the plot, at the time they were taken, for any run they overlap. Outside a clip
+there is no video. Click the plot to put the playhead there and the video shows that
+moment; a drag still zooms and hovering never seeks. In compose the folder is
+`VIDEO_RECORDINGS_HOST_DIR`, mounted read-only; unset, an empty folder (`no-video/`) is
+mounted instead and the panel never appears. Desert recordings are copied in afterwards
+(`daq-server/video/README.md`).
+
+Matching is by time overlap with the run's extent on either clock (`backend/video.py`), so
+a Save made after a run, or a recording copied in later, still finds it. A clip's duration
+comes from its mp4 header, read once and cached; a recording still in progress has no
+finished mp4 and is not listed. Files are served with HTTP Range, so the browser fetches
+only what it shows.
+
+**Timing.** A clip without a timing file is placed by its folder name: a Record starts at
+the name, a Save *ends* at it (it keeps the buffer before the press). That is whole
+seconds in the gateway's local time, and the agent cuts at a keyframe, so such a clip is
+marked **approx. timing** and sits within a second or two of the data.
 
 ## Which clock the x-axis is
 

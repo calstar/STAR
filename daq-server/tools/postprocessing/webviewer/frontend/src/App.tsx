@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
 import starWordmark from './assets/star-wordmark.png';
-import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource } from './types';
+import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource, VideoClip } from './types';
 import { fmtBytes, fmtDuration } from './util';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
@@ -11,6 +11,7 @@ import Chart from './components/Chart';
 import ConfigView from './components/ConfigView';
 import RunDescription from './components/RunDescription';
 import RunSummaryPanel from './components/RunSummaryPanel';
+import VideoPanel from './components/VideoPanel';
 
 const MAX_POINTS = 4000;
 
@@ -63,6 +64,10 @@ export default function App() {
   const [series, setSeries] = useState<Series[]>([]);
   const [seriesBusy, setSeriesBusy] = useState(false);
   const uplotRef = useRef<uPlot | null>(null);
+
+  // Video clips overlapping the run (empty: no panel), and the playhead they follow.
+  const [clips, setClips] = useState<VideoClip[]>([]);
+  const [playhead, setPlayhead] = useState<number | null>(null);
   const seriesReq = useRef(0);
 
   useEffect(() => {
@@ -109,6 +114,8 @@ export default function App() {
     setConfigText(undefined);
     setConfigErr(null);
     setSummary(null);
+    setClips([]);
+    setPlayhead(null);
     // Cheap either way: the summary never exports, and the index is only fetched when one
     // already exists. A run is indexed on request (runIndex), not by being clicked.
     api
@@ -126,6 +133,20 @@ export default function App() {
       })
       .catch((e) => setIndexErr(String(e.message || e)));
   }, []);
+
+  // Which clips overlap this run: one listing on the server, once per indexed run. No
+  // recordings folder mounted, or none overlapping, and the page has no video panel.
+  useEffect(() => {
+    if (!index) return;
+    let live = true;
+    api
+      .video(index.run_id)
+      .then((v) => live && setClips(v.available ? v.clips : []))
+      .catch(() => live && setClips([]));
+    return () => {
+      live = false;
+    };
+  }, [index]);
 
   // Fetch series whenever the selection or window changes (debounced).
   useEffect(() => {
@@ -399,6 +420,9 @@ export default function App() {
                   </div>
 
                   <div className="pane-right">
+                    {clips.length > 0 && (
+                      <VideoPanel clips={clips} playhead={playhead} onPlayhead={setPlayhead} />
+                    )}
                     <div className="toolbar">
                       {index.t_min != null && index.t_max != null && (
                         <TimeRange
@@ -439,6 +463,8 @@ export default function App() {
                           onViewChange={onViewChange}
                           onResetView={resetView}
                           onReady={(u) => (uplotRef.current = u)}
+                          playhead={clips.length > 0 ? playhead : null}
+                          onPlayhead={clips.length > 0 ? setPlayhead : undefined}
                         />
                       ) : (
                         <div className="placeholder">
