@@ -24,11 +24,19 @@ extern "C" {
 #endif
 
 typedef struct {
-    bool sensors;   /* IMU, high-g, baro sampling */
-    bool gps;       /* GPS rail on, GNSS task running */
-    bool ethernet;  /* W5500 out of reset */
-    bool idle_loop; /* heartbeats + Stop between them */
+    bool sensors;     /* IMU, high-g, baro sampling */
+    bool gps;         /* GPS rail on, GNSS task running */
+    bool ethernet;    /* W5500 out of reset */
+    bool idle_loop;   /* heartbeats + Stop between them */
+    bool radio_sniff; /* radio duty-cycles (SetRxDutyCycle) instead of
+                         listening continuously; only in Idle */
 } mode_outputs_t;
+
+/* Idle sniff timing (SX1262 DS 13.1.7, p.71; Megan, #182): listen 33 ms,
+ * sleep 1 s. The ground must send Arm / Un-arm with a preamble longer than
+ * the sleep (>= 260 symbols, ~1.08 s at SF9/125 kHz) or it can be missed. */
+#define MODE_SNIFF_RX_MS 33U
+#define MODE_SNIFF_SLEEP_MS 1000U
 
 mode_outputs_t mode_outputs(flight_state_t state);
 

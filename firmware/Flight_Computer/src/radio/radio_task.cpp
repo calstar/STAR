@@ -69,6 +69,9 @@ osMutexId_t mutex;
 bool configured;
 uint16_t tx_seq;
 radio_status_t status;
+// The RX mode last asked for (mode.c), kept so it survives a late start-up.
+bool want_sniff;
+uint32_t want_rx_ms, want_sleep_ms;
 void (*on_command)(radio_command_t);
 uint8_t frame_buf[kFrameMaxLen];
 
@@ -86,6 +89,10 @@ void try_setup() {
     status.setup_step = static_cast<uint8_t>(step);
     status.device_errors = setup.device_errors();
     configured = step == SetupStep::Ok;
+    // A mode asked for before start-up finished (Idle can begin first).
+    if (configured && want_sniff) {
+        (void)setup.start_rx_duty_cycle(want_rx_ms, want_sleep_ms);
+    }
     give();
 }
 
@@ -204,6 +211,9 @@ void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms) {
     if (!mutex)
         return;
     take();
+    want_sniff = true;
+    want_rx_ms = rx_ms;
+    want_sleep_ms = sleep_ms;
     if (configured)
         setup.start_rx_duty_cycle(rx_ms, sleep_ms);
     give();
@@ -213,6 +223,7 @@ void radio_task_start_continuous_rx(void) {
     if (!mutex)
         return;
     take();
+    want_sniff = false;
     if (configured)
         setup.start_rx_continuous();
     give();

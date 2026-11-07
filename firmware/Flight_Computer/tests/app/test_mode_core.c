@@ -16,6 +16,7 @@ static void test_idle_keeps_only_the_radio(void) {
     mode_outputs_t o = mode_outputs(FLIGHT_IDLE);
     CHECK(!o.sensors && !o.gps && !o.ethernet);
     CHECK(o.idle_loop);
+    CHECK(o.radio_sniff); /* Idle saves power: the radio duty-cycles */
 }
 
 static void test_armed_onwards_runs_everything(void) {
@@ -24,9 +25,10 @@ static void test_armed_onwards_runs_everything(void) {
     for (unsigned i = 0; i < 3; ++i) {
         mode_outputs_t o = mode_outputs(on[i]);
         CHECK(o.sensors && o.gps && o.ethernet && !o.idle_loop);
+        CHECK(!o.radio_sniff); /* armed: listen all the time */
     }
     mode_outputs_t s = mode_outputs(FLIGHT_SELF_TEST);
-    CHECK(!s.sensors && !s.idle_loop);
+    CHECK(!s.sensors && !s.idle_loop && !s.radio_sniff);
     mode_outputs_t bad = mode_outputs(FLIGHT_STATE_COUNT);
     CHECK(!bad.sensors && !bad.gps && !bad.idle_loop);
 }
