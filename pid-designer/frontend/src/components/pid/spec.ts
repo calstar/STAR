@@ -169,6 +169,9 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       P('pressure', 'Operating pressure', 'pressure'),
       { key: 'temperature', label: 'Temperature', dimension: 'temperature', presets: TEMPERATURES },
       P('volume', 'Volume', 'volume'),
+      // The bore of the barrel. feed-twin builds the vessel from it and the
+      // volume -- liquid column, outlet head -- and assumes 152 mm without it.
+      P('diameter', 'Inside diameter', 'length'),
       // What the tank will take, which is what a team that built it knows.
       // The checks read it: a relief must lift below it, and a tank run past
       // half of it is a factor of safety under two.
@@ -236,6 +239,11 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
       // measured from zero inlet (outlet = dome + bias - S x inlet), so there is
       // no reference inlet to give.
       { key: 'supply_coefficient', label: 'Supply effect', dimension: 'pressure_ratio', ratio: true },
+      // Not asked: flow_droop, rated_flow, lockup_rise, min_inlet_differential.
+      // Datasheet lines the team does not have (NOT_DRAWN in
+      // tests/test_spec_parity.py); feed-twin takes its fallbacks and its
+      // assembly report says so. One written on the drawing by hand is kept
+      // through a Save (ConfigDialog keeps what it does not own).
     ],
     options: [
       COEFFICIENT('Cv'),
@@ -269,7 +277,21 @@ export const COMPONENT_SPECS: Partial<Record<ComponentType, ComponentSpec>> = {
     ],
   },
 
-  MAN: { catalogued: true, params: [CD, CV, P('bore', 'Bore', 'length')], options: [COEFFICIENT('Cd')] },
+  MAN: {
+    catalogued: true,
+    params: [CD, CV, P('bore', 'Bore', 'length')],
+    options: [
+      COEFFICIENT('Cd'),
+      // feed-twin rests every hand valve shut until somebody opens it, unless
+      // the drawing says it stands open (`normalPosition`, ADR 0006) -- and
+      // told the user to draw that, which there was no way to do here.
+      { key: 'normalPosition', label: 'Normal position', default: 'closed',
+        choices: [
+          { value: 'closed', label: 'Normally closed' },
+          { value: 'open',   label: 'Normally open' },
+        ] },
+    ],
+  },
   ROT: actuatedValveSpec(),
   SOL: actuatedValveSpec(),
   MOV: actuatedValveSpec(),

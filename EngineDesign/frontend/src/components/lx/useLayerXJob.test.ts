@@ -171,4 +171,10 @@ describe('sweepFor', () => {
       job('c', { started: 50 }), job('d', { status: 'running' }), job('e', { kind: 'run' }),
     ])).toBe('');
   });
+  it('tells two designs filed under one name apart by their fingerprints', () => {
+    // Every job used to be filed as 'default'; the fingerprint is what the design was.
+    const mine = { ...burn, design: 'default', design_sha256: 'aaa' };
+    expect(sweepFor(mine, [job('other', { design: 'default', design_sha256: 'bbb' })])).toBe('');
+    expect(sweepFor(mine, [job('same', { design: 'default', design_sha256: 'aaa' })])).toBe('same');
+  });
 });

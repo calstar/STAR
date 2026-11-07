@@ -4272,6 +4272,17 @@ function linesWith(nodes: Node[], edges: Edge[], edgeId: string): string[] {
 }
 
 /**
+ * Whether somebody routed the pipe `edgeId` is on by hand: a line of it
+ * carries a person's corners. What the line menu's *Let it route itself*
+ * is offered for -- not the router's own corners (`viaRun`) or crossbar
+ * offset, which `thawPipe` also clears but which nobody put there.
+ */
+export function handRouted(nodes: Node[], edges: Edge[], edgeId: string): boolean {
+  const byId = new Map(edges.map(e => [e.id, e]));
+  return linesWith(nodes, edges, edgeId).some(id => { const e = byId.get(id); return !!e && isHand(e); });
+}
+
+/**
  * The first hand edit on any line of a pipe makes the whole pipe a person's:
  * every one of its lines keeps the slice it draws, as its own corners. Were
  * only the edited line to lose its `viaRun`, the pipe would be half the
@@ -4295,8 +4306,8 @@ export function freezePipe(nodes: Node[], edges: Edge[], edgeId: string): Edge[]
 
 /**
  * Back to the router: every line of the pipe `edgeId` is on gives up its
- * corners, and the pipe routes itself again. What double-clicking a grip
- * does. Returns the same array when nothing changed.
+ * corners, and the pipe routes itself again. What *Let it route itself*, on
+ * the line's right-click menu, does. Returns the same array when nothing changed.
  */
 export function thawPipe(nodes: Node[], edges: Edge[], edgeId: string): Edge[] {
   const ids = new Set(linesWith(nodes, edges, edgeId));

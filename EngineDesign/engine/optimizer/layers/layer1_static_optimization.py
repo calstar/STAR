@@ -1222,6 +1222,24 @@ def _layer1_chamber_lengths(
     }
 
 
+def _layer1_site_ambient_pa(config_obj: Any) -> float:
+    """The site's ambient pressure [Pa]: the engine solver's own (runner._get_ambient_pressure).
+
+    ``compute_ambient_pressure_from_elevation`` (the 1976 standard atmosphere) at
+    ``environment.elevation``; sea level without one. Layer 1 runs every evaluation at this
+    pressure and targets it as the exit pressure. It used to compute its own isothermal
+    exponential, which read 94 069.7 Pa at the LE4 site's 626.67 m while the solver -- forward
+    mode, the Time-Series tab, Layer X -- evaluates the design at 94 020.4 Pa.
+    """
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
+    env = getattr(config_obj, "environment", None)
+    elevation = getattr(env, "elevation", None) if env is not None else None
+    if elevation is None or not np.isfinite(float(elevation)) or float(elevation) < 0:
+        return 101325.0
+    return float(compute_ambient_pressure_from_elevation(float(elevation)))
+
+
 def _layer1_bell_length_m(A_throat: float, eps: float) -> float:
     """Rao 80 % bell length from the throat [m]: 0.8 (sqrt(eps) - 1) R_t / tan 15 deg.
 
@@ -5717,27 +5735,11 @@ def run_layer1_optimization(
     max_nozzle_exit = requirements.get("max_nozzle_exit_diameter", 0.101)
     thrust_tol = tolerances.get("thrust", 0.10)
     
-    # Calculate target exit pressure from environment config (GPS/GFS-derived atmospheric pressure)
-    # Use standard atmosphere model based on elevation if environment config is available
-    target_P_exit = 101325.0  # Default: sea level (1 atm)
-    if hasattr(config_obj, 'environment') and config_obj.environment is not None:
-        elevation = getattr(config_obj.environment, 'elevation', 0.0)
-        if elevation is not None and elevation >= 0:
-            # Standard atmosphere model: P = P0 * exp(-M*g*h/(R*T0))
-            # P0 = 101325 Pa (sea level)
-            # M = 0.0289644 kg/mol (molar mass of dry air)
-            # g = 9.80665 m/s² (standard gravity)
-            # R = 8.31447 J/(mol·K) (universal gas constant)
-            # T0 = 288.15 K (sea level temperature)
-            P0 = 101325.0  # Pa
-            M = 0.0289644  # kg/mol
-            g = 9.80665    # m/s²
-            R = 8.31447    # J/(mol·K)
-            T0 = 288.15    # K
-            target_P_exit = P0 * np.exp(-M * g * elevation / (R * T0))
-            layer1_logger.info(f"Using atmospheric pressure from elevation: {elevation:.1f} m -> {target_P_exit:.1f} Pa ({target_P_exit/101325.0:.3f} atm)")
-    else:
-        layer1_logger.info(f"Environment config not available, using default sea level pressure: {target_P_exit:.1f} Pa")
+    # Target exit pressure = the site's ambient, the one every evaluation below is run at
+    # (P_ambient). The solver's own (_layer1_site_ambient_pa), so Layer 1 designs at the pressure
+    # forward mode, the Time-Series tab and Layer X evaluate the design at.
+    target_P_exit = _layer1_site_ambient_pa(config_obj)
+    layer1_logger.info(f"Site ambient (target exit pressure): {target_P_exit:.1f} Pa ({target_P_exit/101325.0:.3f} atm)")
     
     # An O/F the propellant's table cannot evaluate (a blank template keeps the previous
     # propellant's) is replaced, with a warning, rather than aborting the run.

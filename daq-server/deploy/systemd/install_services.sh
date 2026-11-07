@@ -9,7 +9,7 @@ SYSTEMD_DIR="$HOME/.config/systemd/user"
 
 UNITS="sensor-elodin sensor-daq sensor-simulator sensor-calibration \
 sensor-controller sensor-actuator sensor-backend sensor-frontend \
-sensor-heartbeat sensor-config-broadcast"
+sensor-heartbeat sensor-config-broadcast sensor-video"
 
 mkdir -p "$SYSTEMD_DIR"
 
@@ -38,11 +38,11 @@ echo ""
 echo "Pipeline: UDP → daq_bridge → Elodin DB → backend → frontend."
 echo ""
 echo "Start the always-on web layer (the run pipeline is started by the GUI Session button):"
-echo "  systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat"
+echo "  systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat sensor-video"
 echo ""
 echo "Or start the whole stack by hand:"
 echo "  systemctl --user start sensor-elodin sensor-daq sensor-simulator sensor-calibration \\"
-echo "    sensor-controller sensor-actuator sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat"
+echo "    sensor-controller sensor-actuator sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat sensor-video"
 echo ""
 echo "Logs:"
 echo "  journalctl --user -u sensor-backend -f          # one service"

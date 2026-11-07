@@ -30,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping
 
 from feedtwin.session.core import PAD_HOLD_S, Sample, Session, Setup
-from feedtwin.session.gauge import PSI, from_psig, psia, psig, say
+from feedtwin.session.gauge import ATMOSPHERE, PSI, from_psig, psia, psig, say
 from feedtwin.session.model import Model
 from feedtwin.session.network_trace import NetworkTrace
 from feedtwin.session.hookup import Hookup
@@ -125,7 +125,8 @@ class BurnPlan:
     """Tank pressure at prime [psig] when no regulator feeds the tanks. Where one
     does, the tanks are primed and settled at the lockup it gives off the
     charged bottle (:func:`regulator_lockup`): dome + bias - S x bottle, which
-    a fixed number here would miss by the supply effect."""
+    a fixed number here would miss by the supply effect -- no higher than the
+    bottle and no lower than atmosphere (:func:`reachable_lockup`)."""
     copv_psi: float = 4500.0
     """Bottle at T-0 [psig]."""
     fill_fraction: float = 0.95
@@ -223,9 +224,13 @@ def prime_at_t0(session: Session, plan: BurnPlan) -> bool:
             for tank_id in session.vehicle_tanks
             if (lockup := regulator_lockup(session, tank_id, place=True)) is not None
         ]
-        if lockups and abs(psig(min(lockups)) - plan.tank_psi) > 0.05:
-            tank_psi = psig(min(lockups))
-            prime(tank_psi)
+        if lockups:
+            primed, note = reachable_lockup(session, min(lockups))
+            if note:
+                session.assumptions.append(note)
+            if abs(psig(primed) - plan.tank_psi) > 0.05:
+                tank_psi = psig(primed)
+                prime(tank_psi)
     if not plan.settle:
         return True
 
@@ -345,6 +350,40 @@ def regulator_lockup(
     return float(component.lockup_pressure(flow))
 
 
+def reachable_lockup(session: Session, lockup: float) -> tuple[float, str]:
+    """Where tanks pressed toward ``lockup`` [Pa abs] off the vehicle's bottle
+    land, and a note when that is not ``lockup`` (empty when it is).
+
+    :func:`regulator_lockup` is the regulator's law at zero flow, dome + bias
+    - S x inlet, and nothing in that law stops at the inlet. A regulator
+    delivers no more than its inlet: with the bottle under the lockup it stands
+    wide open and the tanks end at the bottle (T-0 primed LE4 (3) at 579 psig
+    off a 400 psig COPV). Nor does it pull a vacuum: a lockup under atmosphere
+    -- a dome turned to zero against the supply effect -- is a shut regulator,
+    and the tanks stay at atmosphere (it primed them at 9.6 psia).
+    """
+    ground = session.ground
+    bottles = [b for k, b in session.bottles.items() if k not in ground]
+    note = ""
+    if bottles:
+        bottle = max(bottles, key=lambda b: b.pressure)
+        if lockup > bottle.pressure:
+            note = (
+                f"{bottle.label} at {say(bottle.pressure, 1)} is under the "
+                f"{say(lockup, 1)} lockup: the regulator stands wide open, and "
+                "the tanks were primed at the bottle."
+            )
+            lockup = bottle.pressure
+    if lockup < ATMOSPHERE:
+        note = (
+            f"The regulator locks up at {say(lockup, 1)}, under atmosphere: it is "
+            f"shut at these knobs, and the tanks were primed at "
+            f"{say(ATMOSPHERE, 1)}. Turn the dome up to press them."
+        )
+        lockup = ATMOSPHERE
+    return lockup, note
+
+
 @dataclass(frozen=True, slots=True)
 class T0:
     """Where :func:`jump_to_t0` left the stand."""
@@ -386,7 +425,9 @@ def jump_to_t0(
     stay as they are. The pad itself (fills, chilldown, presses) is skipped,
     which is the point; fly it from Idle for the transients it carries.
     Tanks fed by regulators that lock up at different pressures are primed at
-    the lowest of them and the note says so.
+    the lowest of them and the note says so. Never above the bottle nor below
+    atmosphere (:func:`reachable_lockup`): a bottle under the lockup leaves
+    the regulator wide open, and a lockup under the air is a shut regulator.
 
     The tanks hold what a fire is loaded with: ``loads`` [kg] per tank, or the
     engine's fire load (:meth:`Session.fire_loads`) -- never a fraction of the
@@ -436,13 +477,19 @@ def jump_to_t0(
     }
     tank_psi = fallback_psi
     if lockups:
-        tank_psi = psig(min(lockups.values()))
+        primed, note = reachable_lockup(session, min(lockups.values()))
+        tank_psi = psig(primed)
         if max(lockups.values()) - min(lockups.values()) > PSI:
+            # Where the tanks went, not the lowest lockup: under a bottle below
+            # it the next note says they were primed at the bottle, and this one
+            # said the lockup.
             notes.append(
                 f"The regulators lock up at {psia(min(lockups.values())):,.1f}-"
                 f"{say(max(lockups.values()), 1)}; every tank was primed at "
-                f"{say(min(lockups.values()), 1)}."
+                f"{say(primed, 1)}."
             )
+        if note:
+            notes.append(note)
         session.prime(
             fill_fraction=fill_fraction,
             tank_psi=tank_psi,

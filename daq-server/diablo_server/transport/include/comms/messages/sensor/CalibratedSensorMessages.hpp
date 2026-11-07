@@ -77,7 +77,7 @@ using CalibratedValvePositionMessage =
                  std::array<uint8_t, 3>,  // (2) padding
                  float,                   // (3) position_pct — 0 closed, 100 open
                  uint32_t,                // (4) raw_adc_counts — for reference
-                 uint8_t                  // (5) status — 1=ok, 2=no signal (< 3.5 mA)
+                 uint8_t                  // (5) status — 1=ok, 2=no signal (< 2 mA)
                  >;
 
 }  // namespace sensor

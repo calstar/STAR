@@ -148,6 +148,18 @@ export const boardSlotIssue = (boards, boardKey) => {
  * state-machine rules for the same reason — that is a different and much louder problem, and
  * burying it under fifty derived complaints helps nobody.
  */
+/**
+ * Where a board sits when no DHCP server answered it: 169.254.<1 + mac[4] % 254>.<mac[5]>.
+ * Must match BoardNet::recoveryAddress (firmware/Hotfire_Code/common/board_net.h),
+ * firmware/tools/ota_upload.py and deploy/dhcp/generate_dhcp_config.py. Null for a malformed MAC.
+ */
+export function recoveryAddress(mac) {
+    const parts = mac.trim().split(/[:-]/);
+    if (parts.length !== 6 || !parts.every((p) => /^[0-9a-fA-F]{2}$/.test(p)))
+        return null;
+    const b = parts.map((p) => parseInt(p, 16));
+    return `169.254.${1 + (b[4] % 254)}.${b[5]}`;
+}
 export function validateConfigForRun(config, csv) {
     const issues = [];
     const add = (page, level, message) => issues.push({ page, level, message });
@@ -158,6 +170,34 @@ export function validateConfigForRun(config, csv) {
         const msg = boardSlotIssue(boards, key);
         if (msg)
             add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${msg}`);
+    }
+    // ── DHCP identity (boards with a mac = line) ──────────────────────────────
+    // star-dhcp-sync refuses these too, leaving the served reservations stale, so
+    // they are caught here, where they can be fixed. The board takes its ID from
+    // its DHCP address (firmware board_net.h), so board_id and ip must agree; and
+    // two boards on one recovery address could not be reflashed if DHCP failed.
+    const recoveryOwner = new Map();
+    for (const key of Object.keys(boards)) {
+        const b = boards[key] ?? {};
+        const mac = typeof b.mac === 'string' ? b.mac.trim() : '';
+        if (!mac || typeof b.ip !== 'string')
+            continue;
+        const name = `${boardDisplayName(boards, key)} (${key})`;
+        const octet = Number(b.ip.split('.').pop());
+        if (b.board_id !== undefined && Number(b.board_id) !== octet)
+            add('boards', 'error', `${name}: board_id ${b.board_id} but ip ${b.ip}. The board takes its ID from its address, ` +
+                `so set board_id to ${octet} or change the ip.`);
+        const rec = recoveryAddress(mac);
+        if (rec === null) {
+            add('boards', 'error', `${name}: mac "${mac}" is not a MAC address (aa:bb:cc:dd:ee:ff).`);
+            continue;
+        }
+        const other = recoveryOwner.get(rec);
+        if (other)
+            add('boards', 'error', `${name} and ${other} would share the recovery address ${rec} (their MACs end alike), so ` +
+                'neither could be reflashed there if DHCP failed. Check both mac = lines.');
+        else
+            recoveryOwner.set(rec, name);
     }
     // ── Roles vs active_connectors ────────────────────────────────────────────
     // active_connectors is wire-level: config_broadcast packs it into the packet sent to the
@@ -197,6 +237,21 @@ export function validateConfigForRun(config, csv) {
                 'board is not told to sample, so those roles can never show data. Add them to Active ' +
                 'Connectors, or remove the roles.');
         }
+    }
+    // ── Actuator roles on a board that is not declared ───────────────────────
+    // A role is ["kind", channel, board_id]. The board's IP, and whether it is an actuator or a ball
+    // valve, come only from its [boards.*] entry, so a role on an undeclared board commands nothing
+    // and nothing said so -- e.g. a ball valve role on board 71 in a profile copied before the ball
+    // valve board was added to the shipped ones.
+    const declaredIds = new Set(Object.values(boards).map((b) => Number(b?.board_id ?? b?.id)).filter((n) => Number.isFinite(n)));
+    for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+        if (!Array.isArray(tup) || tup.length < 3)
+            continue;
+        const id = Number(tup[2]);
+        if (!Number.isFinite(id) || declaredIds.has(id))
+            continue;
+        add('roles', 'error', `${role} is on board ${tup[2]}, which is not in Boards. Add board ${tup[2]} under Boards ` +
+            `(type ACTUATOR, or BALL_VALVE for a motorized ball valve), or move the role.`);
     }
     // ── Ball valve roles ──────────────────────────────────────────────────────
     // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would

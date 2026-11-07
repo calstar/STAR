@@ -14,7 +14,8 @@
 import type { Climatology } from '../types/climatology'
 import type { Kind } from '../../lib/units/quantities'
 import type {
-  AtmosphereProfile, ChartSample, Config, DriftResult, Result, TrajectorySample,
+  AtmosphereProfile, ChartSample, Config, DriftResult, EjectionInputs, EjectionResult,
+  PinSpec, Result, TrajectorySample,
 } from '../types/schema'
 import bundledClimatology from '../fixtures/climatology.json'
 import { stubResult } from './fixture'
@@ -751,4 +752,20 @@ export async function resolveAtmosphere(body: {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+/** POST /api/ejection. Shear pins, ejection charges and vent holes for the
+ *  Ejection & Pins tab. No stub fallback: a made-up charge is worse than none. */
+export async function runEjection(
+  body: { config: Config; ejection: Omit<EjectionInputs, 'joints'> & { joints: object[] } },
+): Promise<ApiResponse<EjectionResult>> {
+  return request<EjectionResult>('/ejection', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/** GET /api/ejection/pins. The shear pin catalog, each with its source. */
+export async function getPinCatalog(): Promise<ApiResponse<PinSpec[]>> {
+  return request<PinSpec[]>('/ejection/pins')
 }

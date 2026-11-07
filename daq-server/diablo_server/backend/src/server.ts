@@ -27,11 +27,13 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
+import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
+import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
@@ -46,6 +48,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
+import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
@@ -726,7 +729,13 @@ let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
+// The video pane: keeps the gateway (MediaMTX, sensor-video) in step with config/video.json.
+// Independent of the run pipeline: a missing gateway only greys the video view.
+const video = new VideoService();
+video.start();
+
 const apiHandler = createAPIHandler({
+  video,
   getEngineState: () => currentState,
   getDebugInfo: () => {
     // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
@@ -864,6 +873,7 @@ function broadcastBoardStatus(): void {
 
   // Compute frequencyHz from heartbeatTimes for each board
   for (const b of boards) {
+    b.dhcp = getBoardDhcpStatus(b.ip);
     const times = b.heartbeatTimes;
     if (times && times.length >= 2) {
       const span = times[times.length - 1] - times[0];
@@ -876,6 +886,7 @@ function broadcastBoardStatus(): void {
   broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
 }
 
+startDhcpStatusPoller();
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
 // ── Keepalive ────────────────────────────────────────────────────────────────
@@ -1595,7 +1606,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // would apply today's offset to yesterday's samples) and rather than in the outbox drain
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
-    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
+    // applyValveCalibration replaces a ball valve's position_pct with its two-point calibrated
+    // figure (ball-valve-cal.ts) before the mismatch check below and the browser see it.
+    const parsedList = applyValveCalibration(
+      expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers)));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {

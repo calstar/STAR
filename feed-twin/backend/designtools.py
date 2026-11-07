@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -197,10 +198,17 @@ async def list_documents(
 ) -> list[dict[str, Any]]:
     """Everything the caller could import: their own, shared, and browsable.
 
-    Two calls, because the store separates them: ``/`` is what you may edit and
-    ``/browse`` is everyone else's, grouped by owner. feed-twin never edits
-    either, so the distinction it keeps is not "editable" but *whose it is* --
-    which is the only part a person picking a drawing cares about.
+    Two calls, because the store separates them: ``/`` is what you may open
+    and ``/browse`` is everyone else's, grouped by owner. A pull is a
+    ``/load``, which the store answers only for a design the caller may
+    *open*; ``/browse`` also lists designs that may only be copied
+    (``editable: false`` outside ``open_to_all``; stardesign.documents), and
+    offering those made a pull that could only 403 (R001). They are left out.
+
+    In the store's own order, which is the order its picker shows: its list
+    as it gave it (the main design, then the STAR set, then newest first),
+    then everyone else's, newest first. Sorting oldest first put a week-old
+    copy above the team's main drawing (R013).
     """
     async with _client(headers) as c:
         mine = await _get(c, tool, tool.documents)
@@ -221,11 +229,17 @@ async def list_documents(
                 "owner_name": record.get("ownerName") or "",
                 "updated_at": record.get("updatedAt") or "",
                 "mine": True,
+                "featured": bool(record.get("featured")),
+                "star": bool(record.get("star")),
             }
         )
+    browsed: list[dict[str, Any]] = []
     for group in others if isinstance(others, list) else []:
         for record in group.get("designs", []):
-            out.append(
+            # Copy-only: the store would refuse the /load a pull is.
+            if record.get("editable") is not True:
+                continue
+            browsed.append(
                 {
                     "id": record.get("id", ""),
                     "name": record.get("name") or record.get("id", ""),
@@ -233,10 +247,12 @@ async def list_documents(
                     "owner_name": group.get("ownerName") or group.get("owner", ""),
                     "updated_at": record.get("updatedAt") or "",
                     "mine": False,
+                    "featured": False,
+                    "star": False,
                 }
             )
-    out.sort(key=lambda d: (not d["mine"], d["updated_at"]), reverse=False)
-    return out
+    browsed.sort(key=lambda d: str(d["updated_at"]), reverse=True)
+    return out + browsed
 
 
 async def releases(
@@ -255,6 +271,31 @@ async def releases(
         for r in found
         if r.get("label")
     ]
+
+
+async def can_open(
+    tool: DesignTool, doc_id: str, owner: str, headers: Mapping[str, str]
+) -> bool | None:
+    """Whether the caller may open one document in ``tool``: ``True``,
+    ``False`` (the store refuses it, or has no such document), or ``None``
+    (the store could not be asked).
+
+    Asked as the store's ``/releases``, which wants exactly what ``/load``
+    and a release want -- leave to *view* the design -- and answers with a
+    few labels rather than the drawing."""
+    path = f"{tool.documents}/{doc_id}/releases"
+    try:
+        async with _client(headers) as c:
+            response = await c.get(
+                f"{tool.base_url}{path}", params={"owner": owner} if owner else {}
+            )
+    except httpx.HTTPError:
+        return None
+    if response.status_code == 200:
+        return True
+    if response.status_code in (401, 403, 404):
+        return False
+    return None
 
 
 async def fetch(
@@ -346,14 +387,23 @@ async def engine_card(
     return dict(answer)
 
 
+#: ``<owner>/<doc id>@<stamp>`` as :func:`fetch` writes it. The owner (an
+#: email) and the id are store slugs, which never hold a space, so the first
+#: ``@`` followed by a stamp ends them; a release label may hold an ``@`` of
+#: its own -- the store keeps one ("hotfire@pad-2") -- and splitting on the
+#: last ``@`` cut the label in two (R010).
+_PROVENANCE = re.compile(r"(?P<where>\S*?)@(?:working copy|release (?P<release>.+))")
+
+
 def parse_source(source: str) -> tuple[str, str, str, str] | None:
     """``(tool key, owner, doc id, release)`` from an artifact's ``source``,
     as :func:`fetch` wrote it; ``None`` for anything else (an upload, a
     shipped file). ``release`` is empty for a working copy."""
     key, sep, rest = source.partition(":")
-    if not sep or key not in tools() or "@" not in rest:
+    if not sep or key not in tools():
         return None
-    where, _, stamp = rest.rpartition("@")
-    owner, _, doc_id = where.rpartition("/")
-    release = stamp[len("release ") :] if stamp.startswith("release ") else ""
-    return key, owner, doc_id, release
+    found = _PROVENANCE.fullmatch(rest)
+    if found is None:
+        return None
+    owner, _, doc_id = found["where"].rpartition("/")
+    return key, owner, doc_id, found["release"] or ""

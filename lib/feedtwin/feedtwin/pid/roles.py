@@ -49,10 +49,23 @@ def vehicle_ids(diagram: Diagram) -> frozenset[str] | None:
             if other not in seen:
                 seen.add(other)
                 stack.append(other)
-    for node in diagram.nodes:
-        if node.attached_to in seen:
-            seen.add(node.id)
+    _clip_with(diagram, seen)
     return frozenset(seen)
+
+
+def _clip_with(diagram: Diagram, members: set[str]) -> None:
+    """Add to ``members`` every probe clipped to one of them, or to a line both
+    of whose ends are among them (pid-designer clips probes to lines too)."""
+    lines = {
+        edge.id
+        for edge in diagram.edges
+        if edge.source in members and edge.target in members
+    }
+    for node in diagram.nodes:
+        if node.attached_to and (
+            node.attached_to in members or node.attached_to in lines
+        ):
+            members.add(node.id)
 
 
 def ground_ids(diagram: Diagram) -> frozenset[str]:
@@ -122,9 +135,7 @@ def vent_branches(diagram: Diagram) -> frozenset[str]:
         ):
             continue
         kept |= branch
-    for node in diagram.nodes:
-        if node.attached_to in kept:
-            kept.add(node.id)
+    _clip_with(diagram, kept)
     return frozenset(kept)
 
 

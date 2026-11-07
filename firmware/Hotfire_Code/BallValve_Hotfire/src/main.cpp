@@ -85,9 +85,8 @@ static constexpr uint8_t NUM_VALVES = sizeof(valves) / sizeof(valves[0]);
 //-----------------------------------------------------------------------------
 // Board identity and network
 //-----------------------------------------------------------------------------
-static uint8_t board_id = BOARD_ID;
+static uint8_t board_id = 0;  // from the DHCP-assigned address; see board_net.h
 static byte mac[6];
-static IPAddress staticIP(192, 168, 2, BOARD_ID);
 static IPAddress gateway(0, 0, 0, 0);
 static IPAddress subnet(255, 255, 255, 0);
 static IPAddress dns(192, 168, 2, 1);
@@ -387,26 +386,23 @@ void setup() {
     FirmwareHash::print();
     Serial.println("Ball Valve Hotfire starting...");
 
-    board_id = static_cast<uint8_t>(BOARD_ID);
-    staticIP = IPAddress(192, 168, 2, board_id);
-    Serial.print("Board ID and IP: ");
-    Serial.print(static_cast<unsigned>(board_id));
-    Serial.print(" / 192.168.2.");
-    Serial.println(static_cast<unsigned>(board_id));
-
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
-    BoardNet::configure(net, mac, staticIP, subnet);
+    BoardNet::configure(net, mac);
     BoardNet::printMac(net);
     SPI.begin(ETH_SCLK, ETH_MISO, ETH_MOSI, ETH_CS);
     delay(ETHERNET_SPI_DELAY_MS);
     Ethernet.init(ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
 #ifdef SENSOR_ETH_USE_DHCP
-    // The ground station decides our address; we only ask for one.
+    // The ground station decides our address, and our ID with it.
     BoardNet::begin(net, dns, gateway);
+    board_id = BoardNet::boardId(net);
 #else
-    Ethernet.begin(mac, staticIP, dns, gateway, subnet);
+    board_id = static_cast<uint8_t>(BOARD_ID);
+    Ethernet.begin(mac, IPAddress(192, 168, 2, board_id), dns, gateway, subnet);
 #endif
+    Serial.print("Board ID: ");
+    Serial.println(static_cast<unsigned>(board_id));
     delay(ETHERNET_BEGIN_DELAY_MS);
 
     // Same prints as the other hotfire boards so the shared test-GUI serial
@@ -461,6 +457,16 @@ static void pollNetwork() {
 #ifdef SENSOR_ETH_USE_DHCP
     // Renew the lease as it expires; no-op while an OTA is in flight.
     BoardNet::maintainLease(net);
+    // On the recovery address, keep asking; a lease brings our ID with it.
+    if (BoardNet::retryDhcp(net, dns, gateway)) {
+        board_id = BoardNet::boardId(net);
+        HF_LOG("ONLINE board=");
+        HF_LOG(static_cast<unsigned>(board_id));
+        HF_LOG(" ip=");
+        HF_LOG(Ethernet.localIP());
+        HF_LOGLN_();
+        flushLogs();
+    }
 #endif
     // Blocks only if a client connects; never returns on success.
     otaServer.poll();

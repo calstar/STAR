@@ -4,7 +4,10 @@
  * stand whose PTs had been renamed showed an older stand's names and offered no row for its own.
  */
 import { describe, it, expect } from 'vitest';
-import { pressureLimitRows, pressureLimitKeyForRole } from '@/lib/pressure-limit-rows';
+import {
+  pressureLimitRows, pressureLimitKeyForRole,
+  renamePressureLimitRole, removePressureLimitRole, pruneOrphanPressureLimits,
+} from '@/lib/pressure-limit-rows';
 
 // A stand whose PTs were renamed since its limits were written.
 const config = {
@@ -55,5 +58,35 @@ describe('pressureLimitRows', () => {
 
   it('links a role to its key with spaces as underscores', () => {
     expect(pressureLimitKeyForRole('GN2  Regulated ')).toBe('GN2_Regulated');
+  });
+});
+
+// Orphans came from two editor paths that moved every other per-role map but not this one.
+describe('a PT limits row follows its role', () => {
+  const cfg = {
+    boards: { pt_board: { type: 'PT', board_id: 21 } },
+    sensor_roles_pt_board: { 'Ox Tank': 1, 'Fuel Tank': 2 },
+    pressure_limits: {
+      Ox_Tank: { NOP: 500, MEOP: 600, POP: 700 },
+      Fuel_Tank: { NOP: 400, MEOP: 500, POP: 600 },
+      GN2_High: { NOP: 4000, MEOP: 5000, POP: 6000 },
+    },
+    gui: { pressure_bars: [{ label: 'Ox Tank', role: 'Ox Tank', limits: 'Ox_Tank' }] },
+  };
+
+  it('a rename moves the row and the gauge with it', () => {
+    const p = renamePressureLimitRole(cfg, 'Ox Tank', 'OU-PT-R');
+    expect(Object.keys(p.pressure_limits)).toEqual(['OU-PT-R', 'Fuel_Tank', 'GN2_High']);
+    expect(p.pressure_limits['OU-PT-R'].NOP).toBe(500);
+    expect(p.gui.pressure_bars[0]).toEqual({ label: 'OU-PT-R', role: 'OU-PT-R', limits: 'OU-PT-R' });
+  });
+
+  it('a remove drops the row, unless a gauge still uses the key', () => {
+    expect(Object.keys(removePressureLimitRole(cfg, 'Fuel Tank').pressure_limits)).toEqual(['Ox_Tank', 'GN2_High']);
+    expect(removePressureLimitRole(cfg, 'Ox Tank')).toEqual({});
+  });
+
+  it('save prunes rows no PT or gauge uses', () => {
+    expect(Object.keys(pruneOrphanPressureLimits(cfg).pressure_limits)).toEqual(['Ox_Tank', 'Fuel_Tank']);
   });
 });

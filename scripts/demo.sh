@@ -11,6 +11,13 @@
 # rewrites or deletes the originals, and nothing here touches the dev servers,
 # their ports or their tmux sessions.
 #
+# One exception, which this script cannot redirect: a YAML config uploaded to
+# EngineDesign (Configuration -> upload) is written to the checkout's
+# EngineDesign/output/user_configs/local/<file>, the folder the dev stack uses
+# too (backend/routers/config.py; gitignored, so git never sees it), and an
+# upload of a same-named file replaces the developer's. Do not upload configs
+# in a demo until that folder follows USERDATA_DIR.
+#
 #   scripts/demo.sh               start detached (tmux session star-demo), wait, print URLs
 #   scripts/demo.sh --reload      same, with uvicorn --reload (for a night of code edits)
 #   scripts/demo.sh --reset       re-seed the demo data (old copy is moved aside), start, curate
@@ -170,24 +177,42 @@ _port_pids() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | sort -u || true
 }
 
+# The pid a demo pane recorded for the service on this port: each pane writes
+# it just before it execs the service (_write_pane_script), so it is the
+# service's own. Nothing when no pane of this demo has run one there.
+_recorded_pid() {
+  local port="$1" i
+  for i in "${!SVC_PORTS[@]}"; do
+    if [ "${SVC_PORTS[$i]}" = "$port" ]; then
+      cat "$DEMO_LOGS/panes/${SVC_NAMES[$i]}.pid" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 # Did this demo start the process holding a port? Only then may it be killed.
-# A uvicorn API is ours when its command line names the port; under --reload the
-# socket is shared with a multiprocessing worker, which is ours when its parent
-# is. A UI is ours when it is our vite-serve helper on that port.
+# It is ours when it is the pid a demo pane recorded for that port, and still
+# the service it was (a pid is reused once its process exits); under --reload
+# the socket is shared with uvicorn's worker, a child of the recorded reloader.
+# A command line naming the port is not enough: it is any uvicorn anybody
+# starts with --port 8103, and --stop and start killed them (kill -9 after 3 s).
 _owned_pid() {
-  local pid="$1" port="$2" cmd ppid pcmd
+  local pid="$1" port="$2" mine cmd ppid
+  mine="$(_recorded_pid "$port")"
+  [ -n "$mine" ] || return 1
   cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
   [ -n "$cmd" ] || return 1
-  case "$cmd" in
-    *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;;
-    *demo-vite-serve.mjs*" $port "*) return 0 ;;
-    *multiprocessing*)
-      ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
-      [ -n "$ppid" ] || return 1
-      pcmd="$(ps -o command= -p "$ppid" 2>/dev/null || true)"
-      case "$pcmd" in *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;; esac
-      ;;
-  esac
+  if [ "$pid" = "$mine" ]; then
+    case "$cmd" in
+      *uvicorn*"--port $port"|*uvicorn*"--port $port "*) return 0 ;;
+      *demo-vite-serve.mjs*" $port "*) return 0 ;;
+    esac
+    return 1
+  fi
+  ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  if [ "$ppid" = "$mine" ]; then
+    case "$cmd" in *multiprocessing*|*uvicorn*) return 0 ;; esac
+  fi
   return 1
 }
 
@@ -376,6 +401,11 @@ _write_pane_script() {
     printf 'export PATH=%q\n' "$(dirname "$NODE_BIN"):$(dirname "$ENGINE_PYTHON"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     printf "printf '\\\\n  == %%s ==\\\\n\\\\n' %q\n" "$name"
     printf '{\n'
+    # This group's pid, which the service's `exec` keeps: what --stop and a
+    # start may kill on this port (_owned_pid), and nothing else. sh's parent
+    # is the group; $$ would be the pane's shell, and BASHPID is not in the
+    # bash 3.2 a Mac runs this with.
+    printf "sh -c 'echo \$PPID' > %q\n" "$DEMO_LOGS/panes/$name.pid"
     _service_command "$name" "$reload"
     printf '} 2>&1 | tee %q\n' "$log"
   } > "$path"
@@ -406,6 +436,7 @@ _seed() {
   PID_STAND_FROM="$PID_STAND_FROM" PID_STAND_ID="$PID_STAND_ID" PID_STAND_NAME="$PID_STAND_NAME" \
   ENGINE_KEEP_USERS="$ENGINE_KEEP_USERS" ENGINE_KEEP_DOCS="$ENGINE_KEEP_DOCS" \
   ENGINE_LAYERX_KEEP="$ENGINE_LAYERX_KEEP" DEMO_DATA_FINAL="$DEMO_DATA" \
+  FEEDTWIN_PYTHON="$FEEDTWIN_PYTHON" \
   python3 - <<'PY' || { rm -rf "$building"; die "seeding failed; nothing was changed"; }
 """Copy the curated slice of the team's data into DEMO_DATA. Reads the sources,
 writes only under DEMO_DATA, and records what it kept and left in SEED.json."""
@@ -474,8 +505,10 @@ for s in (load(sample_dir / "sample.json", {}) or {}).get("artifacts", []):
         continue
     sample[hashlib.sha256(data).hexdigest()[:12]] = s
 missing = sorted(set(keep) - {e["id"] for e in kept})
-# An id the team's library lacks but the sample carries is put back by the
-# twin's own sample route after start (POST /api/library/sample, in _curate).
+# An id the team's library lacks but the sample carries is added from the
+# sample's own bytes and card, below -- not by POST /api/library/sample after
+# start, which also revives the sample's LE4 (6) drawing the demo leaves out
+# (and which nothing called: the stand came up with no engine).
 via_sample = [i for i in missing if i in sample]
 missing = [i for i in missing if i not in sample]
 if missing:
@@ -510,6 +543,57 @@ for pair in words("FEEDTWIN_ENGINE_NAMED"):
 # The library's own format: a plain list, indent=1 (backend/library.py _write).
 dump(dst_lib / "manifest.json", kept, indent=1)
 
+# The ids only the sample carries, added to the demo library by the twin's own
+# Library and summaries (run on the twin's Python), as its sample seeding adds
+# them (backend/main.py _seed_sample): the sample's bytes, its card, its name
+# -- or the engine design's (FEEDTWIN_ENGINE_NAMED).
+ADD_FROM_SAMPLE = r'''
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from backend.assembly import diagram_summary, engine_from_bytes, engine_summary
+from backend.library import Library
+library = Library(Path(sys.argv[2]))
+added = []
+for job in json.loads(sys.argv[3]):
+    data = Path(job["file"]).read_bytes()
+    if job["kind"] == "engine":
+        summary = engine_summary(engine_from_bytes(data, name=Path(job["file"]).name))
+    else:
+        summary = diagram_summary(json.loads(data))
+    art, _ = library.add(data, kind=job["kind"], name=job["name"], source=job["source"],
+                         suffix=Path(job["file"]).suffix, summary=summary, notes=job["notes"])
+    if job.get("card"):
+        library.attach(art.id, "card", Path(job["card"]).read_bytes())
+    added.append(art.id)
+print(json.dumps(added))
+'''
+design_name = {}
+for pair in words("FEEDTWIN_ENGINE_NAMED"):
+    artifact, _, design = pair.partition("=")
+    design_name[artifact] = next((r.get("name") for r in ed_index if r.get("id") == design), None)
+added_from_sample = []
+if via_sample:
+    import subprocess
+
+    jobs = [{
+        "kind": sample[i]["kind"], "file": str(sample_dir / sample[i]["file"]),
+        "card": str(sample_dir / sample[i]["card"]) if sample[i].get("card") else None,
+        "name": design_name.get(i) or sample[i].get("name") or i,
+        "source": f"sample:{sample[i]['file']}", "notes": sample[i].get("provenance", ""),
+    } for i in via_sample]
+    python = os.environ.get("FEEDTWIN_PYTHON") or sys.executable
+    done = subprocess.run([python, "-c", ADD_FROM_SAMPLE, str(star / "feed-twin"), str(dst_lib), json.dumps(jobs)],
+                          capture_output=True, text=True)
+    got = json.loads(done.stdout.strip().splitlines()[-1]) if done.returncode == 0 and done.stdout.strip() else []
+    if sorted(got) != sorted(via_sample):
+        sys.exit(f"could not add {', '.join(via_sample)} from the twin's sample with {python}: "
+                 f"{(done.stderr.strip().splitlines() or ['added ' + ', '.join(got)])[-1]}; nothing seeded")
+    for i, job in zip(via_sample, jobs):
+        added_from_sample.append(f"{i}  {job['kind']:7s}  {job['name']}  (from the sample's {Path(job['file']).name}"
+                                 + (" + card)" if job["card"] else ")"))
+    kept = load(dst_lib / "manifest.json", [])
+
 
 def lineage(e):
     """backend/main.py _lineage: what a drawing's hookup is kept under."""
@@ -542,7 +626,7 @@ report["feed_twin_library"] = {
     "records": records_kept,
     "overrides": sorted(overrides),
     "bytes_from_sample": from_sample,
-    "put_back_by_sample_route": via_sample,
+    "added_from_sample": added_from_sample,
     "renamed": renamed,
 }
 
@@ -689,7 +773,7 @@ def show(title, items):
 
 
 show("feed-twin library", report["feed_twin_library"]["kept"]
-     + [f"(renamed) {r}" for r in renamed] + [f"(after start, from the sample) {i}" for i in via_sample])
+     + [f"(renamed) {r}" for r in renamed] + [f"(added from the sample) {a}" for a in added_from_sample])
 show("feed-twin stands", [k + ("  (featured)" if stands_wanted and k.split()[0] == stands_wanted[0] else "") for k in stands_kept] or ["(none)"])
 print(f"      runs kept: {len(runs_kept)}")
 show("pid-designer diagrams", ([report['pid_designer'].get('main_diagram', '')] if stand_id else []) + report["pid_designer"]["kept"])
@@ -732,10 +816,11 @@ _curated_marker() { printf '%s' "$DEMO_DATA/.hotbench-demo-curated"; }
 _curate() {
   [ -f "$(_curated_marker)" ] && return 0
   say "curating the demo data through the apps"
+  local rc=0
   FT="http://127.0.0.1:$FEEDTWIN_API_PORT" DEMO_DATA="$DEMO_DATA" \
   PID_STAND_ID="$PID_STAND_ID" PID_OWNER="${PID_KEEP_USERS%% *}" \
   ABORT_STATES="$DEMO_ABORT_STATES" ABORT_CLOSES="$DEMO_ABORT_CLOSES" \
-  python3 - <<'PY' || { warn "curating failed (above); the demo stand runs the DAQ's table as shipped. Fix it and run --reset."; return 1; }
+  python3 - <<'PY' || rc=$?
 """Curate the demo copy through feed-twin's own API; see _curate above."""
 import json
 import os
@@ -769,7 +854,8 @@ def call(method, path, body=None):
 
 
 try:
-    # 1. The featured stand, and what it runs on.
+    # 1. The featured stand, and what it runs on. Without it there is no demo:
+    # exit 3, which stops _start from printing the stack as ready.
     main = call("GET", "/api/twin/stands/featured").get("featured")
     if not main:
         raise Refused("the twin has no featured stand (the seed writes .site/stand/featured.json)")
@@ -781,7 +867,11 @@ try:
     if diagram is None or engine is None:
         raise Refused(f"the featured stand's drawing {stand.get('diagram')} or engine {stand.get('engine')} is not in the library")
     done["featured"] = {"stand": f"{main['owner']}/{main['id']}", "diagram": f"{diagram['id']}  {diagram['name']}", "engine": f"{engine['id']}  {engine['name']}"}
+except (Refused, OSError, KeyError, ValueError) as exc:
+    print(f"  error: {exc}", file=sys.stderr)
+    sys.exit(3)
 
+try:
     # 2. The same drawing pulled from Hotbench P&ID (not fatal: freshness only).
     if os.environ.get("PID_STAND_ID"):
         try:
@@ -880,6 +970,12 @@ for state, gone in done["hookup"]["closed"].items():
 for line in done["stands"]:
     print(f"    stand         {line}")
 PY
+  if [ "$rc" -eq 3 ]; then
+    warn "the featured stand cannot be opened (above): there is no demo to show. Fix the data and run --reset."
+  elif [ "$rc" -ne 0 ]; then
+    warn "curating failed (above); the demo stand runs the DAQ's table as shipped. Fix it and run --reset."
+  fi
+  return "$rc"
 }
 
 # ── Preflight ──────────────────────────────────────────────────────────────
@@ -1006,7 +1102,15 @@ _start() {
 
   say "starting ($(_last_mode)); waiting for six services (up to ${READY_TIMEOUT}s)..."
   if _wait_ready; then
-    _curate || true
+    # A curation that fails past step 1 leaves a demo that runs (the DAQ's
+    # table as shipped, say); one that cannot open the featured stand leaves
+    # none, and the URLs are not printed as though it were ready.
+    local curated=0
+    _curate || curated=$?
+    if [ "$curated" -eq 3 ]; then
+      warn "the stack is up but the demo is not ready; the session is left running for inspection (scripts/demo.sh --logs)"
+      return 1
+    fi
     _print_urls
   else
     warn "not everything came up; the session is left running for inspection (scripts/demo.sh --logs)"

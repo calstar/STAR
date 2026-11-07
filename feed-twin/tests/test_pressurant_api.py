@@ -110,16 +110,19 @@ def test_the_tick_names_the_drawings_own_gas_through_a_swap() -> None:
 @pytest.mark.skipif(not DRAWING.exists(), reason="LE4 (6) fixture absent")
 def test_a_running_stand_keeps_the_gas_it_was_built_with() -> None:
     """The gas is in the network: a command cannot change it on a running
-    stand (the cockpit opens a fresh one), and the setup keeps saying what the
-    stand holds."""
+    stand (the cockpit opens a fresh one). It is refused, saying so -- it was
+    a 200 that quietly kept the old gas -- and the setup keeps saying
+    what the stand holds."""
     diagram = _upload()
     stand = _open(diagram, pressurant="helium")
     out = client.post(
         f"/api/session/{stand['id']}/command",
         json={"setup": {"pressurant": "nitrogen"}},
     )
-    assert out.status_code == 200, out.text
-    assert out.json()["setup"]["pressurant"] == "helium"
+    assert out.status_code == 409, out.text
+    assert "fresh stand" in out.json()["detail"]
+    tick = client.post(f"/api/session/{stand['id']}/tick", json={"dt": 0.01})
+    assert tick.json()["setup"]["pressurant"] == "helium"
     assert _gases(stand["id"]) == {"helium"}
 
 

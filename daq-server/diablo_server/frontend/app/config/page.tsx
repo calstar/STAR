@@ -9,7 +9,10 @@ import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
 import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
-import { pressureLimitRows, pressureLimitKeyForRole, pressureRolesOf } from '@/lib/pressure-limit-rows';
+import {
+  pressureLimitRows, pressureLimitKeyForRole, pressureRolesOf,
+  renamePressureLimitRole, removePressureLimitRole, pruneOrphanPressureLimits,
+} from '@/lib/pressure-limit-rows';
 // The validation rules the backend's session-start gate evaluates. Imported rather than
 // re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
 import {
@@ -1196,7 +1199,7 @@ export default function ConfigPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Re-sort the role maps (board→channel) at save time only, so editing never moves a row.
-        body: JSON.stringify({ config: sortRolesForSave(config) }),
+        body: JSON.stringify({ config: sortRolesForSave(pruneOrphanPressureLimits(config)) }),
       });
 
       if (!response.ok) {
@@ -2471,6 +2474,9 @@ export default function ConfigPage() {
                         )}
                       </FieldSection>
 
+                      {/* A ball valve board reads its position on the ESP32's own ADC (0-3.3 V, fixed in firmware)
+                          and is sent only ACTUATOR_CONFIG, so no voltage_reference or ADC setting reaches it. */}
+                      {b.type !== 'BALL_VALVE' && (
                       <FieldSection title="Signal & ADC">
                         {b.type === 'PT' && (
                           <div className="space-y-1">
@@ -2541,6 +2547,7 @@ export default function ConfigPage() {
                           'shunt the loop current is measured across'
                         )}
                       </FieldSection>
+                      )}
 
                       <FieldSection title="Safety & logging">
                         {renderField(
@@ -2856,6 +2863,8 @@ export default function ConfigPage() {
                                     rebuiltAbort[k === name ? newName : k] = v as number;
                                   patch.abort_pts = rebuiltAbort;
                                 }
+                                // And its pressure limits row and gauge, or they orphan the same way.
+                                Object.assign(patch, renamePressureLimitRole(config, name, newName));
                                 setConfig(patch);
                               }}
                               onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
@@ -2978,6 +2987,7 @@ export default function ConfigPage() {
                                   delete ua[name];
                                   patch.abort_pts = ua;
                                 }
+                                Object.assign(patch, removePressureLimitRole(config, name));
                                 setConfig(patch);
                               }}
                               className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 w-24 shrink-0 px-3 text-[11px]"

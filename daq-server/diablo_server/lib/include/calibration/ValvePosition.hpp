@@ -22,8 +22,16 @@ constexpr double kAdcRefVolts = 3.3;
 constexpr double kShuntOhms = 100.0;
 constexpr double kLoopMinMa = 4.0;   // closed
 constexpr double kLoopMaxMa = 20.0;  // open
-/** Below this the loop is open or unpowered: no position, not "fully closed". */
-constexpr double kNoSignalMa = 3.5;
+/**
+ * Below this the loop is open or unpowered: no position, not "fully closed". Anything from here
+ * up to 4 mA is a closed valve, rounded to 0 % open.
+ *
+ * Not 3.5 mA (or NAMUR's 3.6): the ESP32's ADC1 at 11 dB, read raw as counts / 4095 * 3.3 V,
+ * reads about 0.1 V low at this end, about 1 mA of loop current. On 2026-11-05 the Ox Vent valve,
+ * physically closed, read a steady 353-356 counts = 2.86 mA by this formula, and was shown as
+ * NO SIGNAL; the same valve read 0 counts while its loop was unpowered. 2 mA sits clear of both.
+ */
+constexpr double kNoSignalMa = 2.0;
 
 /** cal_status values published beside the position. */
 constexpr uint8_t kStatusOk = 1;

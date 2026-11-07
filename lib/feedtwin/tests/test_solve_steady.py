@@ -423,3 +423,73 @@ def test_the_stub_memo_follows_the_wiring() -> None:
     assert {d.branch for d in net.dead_ends(exclude={"FL-03"})} == set()
     net.branches["FL-04"].downstream = "cap"
     assert {d.branch for d in net.dead_ends()} == {"FL-04"}
+
+
+# ------------------------------------------------- the report is of this solve
+
+PSI = 6894.757293168361
+
+
+def _regulated_vent() -> Network:
+    """Bottle -> dome-loaded regulator -> part-open valve -> atmosphere."""
+    reg = build_component(
+        ComponentInstance.build(
+            "REG",
+            "regulator",
+            {
+                "setpoint": Param(400.0, "psia", M, ""),
+                "dome_bias": Param(50.0, "psi", M, ""),
+                "Cv": Param(0.8, "Cv", M, ""),
+                "bore": Param(7.75, "mm", M, ""),
+                "flow_droop": Param(20.0, "psi", M, ""),
+                "rated_flow": Param(0.05, "kg/s", M, ""),
+            },
+            model="droop",
+        )
+    )
+    net = Network()
+    net.add_node("COPV", "nitrogen", 293.0, pressure=3000.0 * PSI)
+    net.add_node("R", "nitrogen", 293.0)
+    net.add_node("atm", "nitrogen", 293.0, pressure=14.7 * PSI)
+    for node in net.nodes.values():
+        node.phase = "gas"
+    net.add_branch("REG", reg, "COPV", "R")  # type: ignore[arg-type]
+    net.add_branch("V", _valve("V", 1.0), "R", "atm")  # type: ignore[arg-type]
+    return net
+
+
+def test_the_report_describes_the_signals_the_solve_ran_with() -> None:
+    """Diagnostics re-evaluate each branch at the answer. They used to do it
+    with no signals: a dome-loaded regulator reported its drawn 400 psia
+    setpoint and a zero dome while it held 530 psia, and a valve commanded to
+    30 % reported itself fully open with a 14 psi drop against an actual 516."""
+    net = _regulated_vent()
+    signals = {"REG.dome": 500.0 * PSI, "V.command": 0.3}
+    result = solve_steady(net, signals=signals)
+    assert result.converged
+    regulator = result.diagnostics["REG"]
+    assert regulator["dome_pressure"] == pytest.approx(500.0 * PSI)
+    assert regulator["outlet_target"] / PSI > 500.0
+    valve = result.diagnostics["V"]
+    component = net.branches["V"].component
+    assert valve["position"] == pytest.approx(0.3)
+    assert valve["Cv"] == pytest.approx(component.effective_cv(0.3))  # type: ignore[attr-defined]
+    # 530 psia to atmosphere through a part-open valve is sonic, and the
+    # classification is taken with the same command.
+    assert result.choked_branches == ["V"]
+
+
+def test_a_choked_branch_is_listed_as_choked() -> None:
+    """``choked_branches`` was built and never handed to the result."""
+    net = Network()
+    net.add_node("tank", "nitrogen", 293.0, pressure=500.0 * PSI)
+    net.add_node("atm", "nitrogen", 293.0, pressure=14.7 * PSI)
+    for node in net.nodes.values():
+        node.phase = "gas"
+    net.add_branch("V", _valve("V", 1.0), "tank", "atm")  # type: ignore[arg-type]
+    result = solve_steady(net)
+    assert result.converged
+    valve = net.branches["V"].component
+    ceiling = valve.flow_ceiling(net.conditions("tank", 500.0 * PSI))
+    assert result.flows["V"] == pytest.approx(ceiling, rel=1e-6)
+    assert result.choked_branches == ["V"]

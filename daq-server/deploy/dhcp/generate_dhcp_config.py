@@ -26,6 +26,12 @@ must never serve the same wire at once.
 The systemd unit points dnsmasq at star-dhcp.conf, which references the hosts
 file via dhcp-hostsfile. Reservations reload on SIGHUP (systemctl reload) with
 no service bounce; base-config changes need a restart.
+
+--hosts-only rewrites just the reservations, atomically. star-dhcp-sync.path
+runs that (as root, from a root-owned copy of this script) whenever the
+deployed config.toml changes, then reloads dnsmasq -- so saving a board's `mac =`
+in the config editor is the whole procedure. A config this refuses leaves the
+served reservations exactly as they were.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ import ipaddress
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,10 +50,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - older Python on the Jetson
     import tomli as _toml  # type: ignore[no-redef]
 
-# Board LAN NIC on the DAQ host. The USB Ethernet adapter is statically
-# 192.168.2.20/24 (see deploy/setup/fix_board_ip.sh). Override with --interface
-# or $DHCP_INTERFACE if the adapter (and thus the enx… name) ever changes.
-DEFAULT_INTERFACE = os.environ.get("DHCP_INTERFACE", "enx00e04c680240")
+# Board LAN NIC on the DAQ host: by default, whichever interface holds an
+# address in the board subnet (star-rfs: enp4s0, 192.168.2.20/24). This used to
+# be a hardcoded adapter name from a laptop, which on any other host made
+# dnsmasq crash-loop. Override with --interface or $DHCP_INTERFACE.
+ENV_INTERFACE = os.environ.get("DHCP_INTERFACE")
 DEFAULT_POOL_START = 200
 DEFAULT_POOL_END = 250
 DEFAULT_LEASE = "2h"
@@ -93,6 +101,52 @@ def resolve_subnet(cfg: dict) -> ipaddress.IPv4Network:
     return ipaddress.ip_network(f"{ipaddress.ip_address(ips[0])}/24", strict=False)
 
 
+def detect_interface(subnet: ipaddress.IPv4Network) -> str:
+    """The interface holding an address in `subnet` (`ip -o -4 addr show`)."""
+    try:
+        out = subprocess.run(["ip", "-o", "-4", "addr", "show"], capture_output=True,
+                             text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        _die(f"cannot list interfaces ({exc}); pass --interface")
+    found = interfaces_in_subnet(out, subnet)
+    if len(found) != 1:
+        _die(f"expected one interface with an address in {subnet}, found "
+             f"{found or 'none'}; pass --interface (or set DHCP_INTERFACE)")
+    return found[0]
+
+
+def interfaces_in_subnet(ip_addr_output: str, subnet: ipaddress.IPv4Network) -> list[str]:
+    """Parse `ip -o -4 addr show`: names of interfaces with an address in subnet."""
+    found: list[str] = []
+    for line in ip_addr_output.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[2] != "inet":
+            continue
+        try:
+            addr = ipaddress.ip_interface(parts[3]).ip
+        except ValueError:
+            continue
+        if addr in subnet and parts[1] not in found:
+            found.append(parts[1])
+    return found
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """dnsmasq may re-read at any moment; it must never see half a file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def recovery_address(mac: str) -> str:
+    """Where a board sits when no DHCP server answered it:
+    169.254.<1 + mac[4] % 254>.<mac[5]>. Must match BoardNet::recoveryAddress
+    (firmware/Hotfire_Code/common/board_net.h) and firmware/tools/ota_upload.py."""
+    b = [int(x, 16) for x in mac.split(":")]
+    return f"169.254.{1 + b[4] % 254}.{b[5]}"
+
+
 def collect_reservations(cfg: dict, subnet: ipaddress.IPv4Network) -> list[tuple[str, str, str]]:
     """(name, mac, ip) per board that has a usable mac. Boards without a mac are
     skipped with a warning — that's the normal pre-discovery state."""
@@ -104,6 +158,7 @@ def collect_reservations(cfg: dict, subnet: ipaddress.IPv4Network) -> list[tuple
     reservations: list[tuple[str, str, str]] = []
     seen_mac: dict[str, str] = {}
     seen_ip: dict[str, str] = {}
+    seen_recovery: dict[str, str] = {}
     for name, b in boards.items():
         if not isinstance(b, dict):
             continue
@@ -122,6 +177,19 @@ def collect_reservations(cfg: dict, subnet: ipaddress.IPv4Network) -> list[tuple
             _die(f"duplicate MAC {mac} on {name!r} and {seen_mac[mac]!r}")
         if ip in seen_ip:
             _die(f"duplicate IP {ip} on {name!r} and {seen_ip[ip]!r}")
+        # The board takes its ID from the address it is given (board_net.h), so
+        # a board_id that disagrees with the address is a board the server will
+        # file under the wrong ID.
+        bid = b.get("board_id")
+        if bid is not None and int(bid) != int(ip.rsplit(".", 1)[1]):
+            _die(f"board {name!r} has board_id {bid} but ip {ip}: the board takes "
+                 f"its ID from its address, so these must agree")
+        rec = recovery_address(mac)
+        if rec in seen_recovery:
+            _die(f"{name!r} and {seen_recovery[rec]!r} would share the recovery "
+                 f"address {rec} (their MACs end alike), so neither could be "
+                 f"reflashed there if DHCP failed")
+        seen_recovery[rec] = name
         seen_mac[mac] = name
         seen_ip[ip] = name
         reservations.append((name, mac, ip))
@@ -227,8 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out-dir", default="/etc/star-dhcp", type=Path,
                     help="where to write star-dhcp.conf and star-dhcp.hosts "
                          "(default: /etc/star-dhcp)")
-    ap.add_argument("--interface", default=DEFAULT_INTERFACE,
-                    help=f"board-LAN NIC to serve (default: {DEFAULT_INTERFACE})")
+    ap.add_argument("--interface", default=ENV_INTERFACE,
+                    help="board-LAN NIC to serve (default: $DHCP_INTERFACE, else "
+                         "the interface with an address in the board subnet)")
+    ap.add_argument("--hosts-only", action="store_true",
+                    help="rewrite only star-dhcp.hosts (atomically), for "
+                         "star-dhcp-sync; the base config is left alone")
     ap.add_argument("--pool-start", type=int, default=DEFAULT_POOL_START,
                     help=f"last octet of pool start (default: {DEFAULT_POOL_START})")
     ap.add_argument("--pool-end", type=int, default=DEFAULT_POOL_END,
@@ -265,11 +337,19 @@ def main(argv: list[str] | None = None) -> int:
                  f"{base}.{args.pool_start}-{args.pool_end}")
 
     hostsfile = (args.out_dir / "star-dhcp.hosts").resolve()
+    hosts = build_hosts(reservations)
+    if args.hosts_only:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+        write_atomic(hostsfile, hosts)
+        print(f"wrote {hostsfile}: {len(reservations)} reservation(s) from {cfg_path}")
+        return 0
+
+    if not args.interface:
+        args.interface = detect_interface(subnet)
     conf = build_conf(interface=args.interface, subnet=subnet,
                       pool_start=args.pool_start, pool_end=args.pool_end,
                       lease=args.lease, hostsfile=hostsfile,
                       leasefile=args.leasefile)
-    hosts = build_hosts(reservations)
 
     if args.check:
         print("# ===== star-dhcp.conf =====")
@@ -285,8 +365,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    (args.out_dir / "star-dhcp.conf").write_text(conf)
-    hostsfile.write_text(hosts)
+    write_atomic(args.out_dir / "star-dhcp.conf", conf)
+    write_atomic(hostsfile, hosts)
     print(f"wrote {args.out_dir/'star-dhcp.conf'} and {hostsfile}")
     if args.gui_reservations:
         args.gui_reservations.parent.mkdir(parents=True, exist_ok=True)

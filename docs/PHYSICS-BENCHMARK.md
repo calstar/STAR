@@ -99,20 +99,39 @@ have.
 
 ### 1.3 Gas choking against `fluids`' own IEC 60534
 
-`Valve.flow_ceiling()` vs `fluids.control_valve.size_control_valve_g` across helium
-and nitrogen, 200–4500 psi, Cv 1.6–60, 250–293 K.
+`Valve.flow_ceiling()`, and the flow at drops x = 0.01–0.9, vs
+`fluids.control_valve.size_control_valve_g` across helium and nitrogen, 200–4500 psi,
+Cv 1.6–60, 250–293 K. 30 points below and past the choke, 5 ceilings.
 
-Expected: **worst error 0.000000%** (test asserts `rel=1e-6`).
+Expected: **worst error 0.112 %, constant** (± 0.01). It is the scale alone: the
+library prices a Cv by its definition (`fluids.fittings.Cv_to_K`, one US gpm of water
+at one psi), `fluids` by IEC's tabulated N9. The same at every drop and every gas is
+the check that the *form* -- `W = N6 C Y sqrt(x p1 rho1)`, `Y = 1 - x/(3 F_gamma xT)`
+-- is IEC's. Re-baselined 2026-11-02 (R035): it read **0.000000%** while it checked
+only the ceiling, against a reference that read `fluids`' volumetric Q at **15 degC**
+where `fluids` states **0 degC** -- exactly as the valve's own calibration did, so the
+two agreed to 1e-6 while both were 5.4 % low. And below the choke the plain valve was
+not IEC at all: Y = 1 up to that ceiling, 1.52x IEC just short of it on 500 psia
+nitrogen, then 36 % *less* flow 10 psi further down. A gas valve is now
+`feedtwin.comps.iec_gas.GasCv` (the relief valve's and the compressible seat's).
 
 This one has a specific trap. The published `N6` depends on which unit set *and*
 which flow coefficient (Kv or Cv) the table is written for. Pairing `N6 = 27.3` with
 Cv and kPa over-predicts by **10.5×**; getting the Kv/Cv factor backwards leaves a
-clean **33.657%** (= 1/0.865²). Both look plausible. The coefficient is therefore
-*calibrated from the library at import*, not transcribed — if you "simplify" that to
-a literal, this check is what catches you.
+clean **33.657%** (= 1/0.865²). Both look plausible. The scale therefore comes from
+`Cv_to_K`, not a transcribed N6 -- if you "simplify" that to a literal, this check is
+what catches you. And the reference's standard state is `fluids`' own (0 degC); a
+check that shares an assumption with the code it checks cannot catch it.
 
 Also assert the negative: a **liquid** valve must still return `flow_ceiling() is
-None`. A LOX main valve must not acquire a sonic limit.
+None`. A LOX main valve must not acquire a sonic limit. **Known gap (R037,
+deferred):** that holds for hand-built liquid conditions only. The conditions a
+network builds carry the saturated liquid's cp/cv (LOX 1.83), and the plain valve
+still gives anything not priced as a gas the old ceiling at `x = gamma/1.4 . xT`
+(0.54–0.69x the IEC liquid law to atmosphere). Removing it waits on the session: a
+drawing with no engine model holds its chamber at ambient for the step the mains
+open, and that false ceiling is what keeps the step from emptying the LOX tank.
+`tests/test_gas_choking.py` carries the two checks as strict xfails.
 
 ### 1.4 Latent heats against the handbook
 
@@ -131,6 +150,60 @@ LOX at 90 K, 612.9 W of interfacial heat.
 
 Expected: **2.874 g/s**, and `evaporation == latent_power / h_fg` to `rel=1e-12`.
 This is a definition, not a correlation. It must be exact.
+
+### 1.5b The partial pressures decide the direction, the heat only pays (2026-11-02)
+
+`SaturatedVapour` used to take the latent share as `q x clip(driving)`, with
+`driving = (p_sat - p_v) / p_sat`: the *product* of the two signs chose the phase
+change. Two of the four quadrants came out backwards:
+
+| heat at the surface | ullage | before | now |
+|---|---|---|---|
+| in | subsaturated | evaporates | evaporates (1.5, unchanged) |
+| out | supersaturated | **evaporates** | condenses |
+| out | subsaturated | **condenses** | no phase change: the surface cools |
+| in | supersaturated | **condenses** | no phase change: the surface warms to p_v |
+
+The third row made liquid out of nothing. LE4 (3)'s vented ethanol tank in Ox Fill
+(ullage gas 3 K under the liquid, wall 0.1 K under it, no vapour) condensed
+3.3 mg/s that `Tank.step` then clipped out of a vapour mass of zero; the liquid grew
+4.4038 -> 4.4039 kg over 65 s with nothing filling it.
+
+The layered branch had a second count of the same heat: the exchange priced the
+wall's convective heat as latent at the surface *including* the share that goes to
+the bulk (`to_bulk`), and the layer was then debited for that share again. With the
+wall colder than the liquid the debit was negative, so the layer warmed above the
+bulk, the gas and the wall (293.00 -> 293.04 K in the 65 s above, against a
+292.999 K bulk, 290.0 K gas and 292.94 K wall; 293.86 K, above the 293.15 K room,
+over the whole pad sequence) -- a second-law violation. The exchange now sees only what reaches the surface.
+
+Expected (`tests/test_vapour.py`, `tests/test_stratification.py`): no phase change
+in rows three and four; a vented ethanol tank losing heat has
+`d(liquid_mass)/dt <= 0` and `d(T_surface)/dt <= 0`; a LOX layer at 91 K between a
+90 K bulk and a 92 K wall evaporates exactly `q_gas + 0.5 q_wall` and the bulk takes
+the other `0.5 q_wall`.
+
+What moved: the LE4 (3) T-0 burn is bit-identical while it fires (row one is the
+burn's quadrant: warm pressurant over a saturated surface). After burnout the
+drained fuel tank's dregs stay at 293.0 K instead of drifting to 291.3 K. On the pad
+the vented fuel tank's mass holds (4.40379 kg through Fuel Fill, Armed and 40 s of Ox
+Fill) and its surface cools towards the colder gas (292.69 K at 65 s) instead of
+warming above everything. The Tier 1 and Tier 3 figures checked by
+`scripts/physics_benchmark.py` do not move. Row four is a pad quadrant: a LOX tank
+filled from the dewar (`test_ox_fill_loads_the_flight_lox_tank_from_the_dewar`) passes
+through it some 1,400 times, fills to the same figure, and sealed in Armed afterwards
+keeps 117.5 g of oxygen vapour where it condensed down to 104.9 g (751.7 against
+751.0 psig). That row is a modelling choice, not a measurement: condensation there
+would need the liquid to carry the latent heat away faster than the gas brings heat
+in, and the lumped surface has no such term.
+
+The layer's single count does move one pinned figure, and only through the
+second fix (the quadrant fix alone leaves it bit for bit): a shut LOX tank at 40 %
+fill climbs 37.3 psig in three minutes under the fiberglass (was 37.8) and 39.6 psig
+bare (was 44.8), so the wrap is worth 2.3 psi there, not 7.0 (3.11). The old bare
+figure came from wall heat bound for the bulk evaporating the surface: with the
+wetted wall colder than the layer, `reach` is 0, all of that heat went to the bulk,
+and the exchange still priced it as latent at the surface and cooled the layer to pay.
 
 ### 1.6 Vapour partial pressure is linear and never negative
 
@@ -320,6 +393,17 @@ dome + bias). Everything follows the 76.5 psi: less flow (0.89x), a shallower di
 peak 8.79 -> 7.77 kN. GN2 now climbs back to its T-0 lockup at 2.5 s, where it used
 to fall short: the same supply effect per psi of bottle, against a regulator drooping less
 at the lower flow. 0 failed ticks.
+
+**2026-11-02, a gas valve is IEC 60534-2-1** (R035; `Valve` prices a gas-priced node
+through `iec_gas.GasCv`, expansion factor and all, instead of Y = 1 under a separately
+calibrated ceiling). The study's press solenoids run far below their critical ratio,
+where the old law and IEC differ by Y ~ 1 - x/1.47; the vents are not in the burn.
+GN2: dip -25.8 -> -25.9, t = 1 s 459.11 -> 458.96, t = 4 s 483.08 -> 482.78, COPV
+576.9 -> 577.7, peak 7.238 -> 7.233 kN; helium within 0.01 psi, COPV 834.4 -> 834.5.
+0 failed ticks. Reverse-flow pricing (R036), the pressurant declared gas (R034), the
+check-valve / lockup-rise closures (R038, no rise on these drawings) and the wider
+near-critical guard (R045) move nothing further. Tier 2.3: Pc 399.92 -> 399.84 psia,
+thrust 6765.8 -> 6764.1 N. All inside tolerance; the table stands.
 
 Three properties matter more than the individual numbers, because they are the
 physics rather than the arithmetic:
@@ -515,6 +599,45 @@ sweep before trusting a wall result on new geometry.**
 **Quote the total thermal effect, not "+59 psi from line walls" alone**: the split
 between bottle wall and line walls still rides on an estimated `hA`.
 
+### 2.4b2 An itemised line carries its wall too (2026-11-02)
+
+A line the drawing itemises (pid-designer's segment list or centerline sketch) is
+solved as `model="segmented"`, and its line-level `bore` and `length` are dropped as
+superseded (`pid/network.py _SUPERSEDED_BY_SEGMENTS`). `Session._build_line_walls`
+read only `p["bore"]`, so every itemised line was left bare: on LE4 (3), where every
+sized line is itemised, the default-on fitting heat built **zero walls** in Hotbench
+and in Layer X, and Layer X's "line walls off" uncertainty case moved nothing.
+
+The geometry now comes from the segments (`SegmentedPipe.wetted_runs`, through
+`comps.wall.wall_runs`): each segment's bore, and its run as installed, fitting
+bodies included (the gas touches a bend's bore as much as the tube's; the loss path
+takes them out because they are already a K). The metal is the line-level
+`fitting_count` pid-designer writes from the segment list, as on a plain line.
+
+Expected: **a one-segment itemised run builds the same wall as the plain darcy line**
+-- same mass and bore to 1e-12, area to pid-designer's millimetre rounding of the
+line-level length (`tests/test_line_walls.py`). Hand check on LE4 (3)'s 0.817 m run
+off the regulator: 3 x 0.113 kg x (10.922/10.92)^2 = 0.339 kg, area
+pi x 10.922 mm x 816.85 mm = 0.0280 m^2. No shipped benchmark drawing itemises a line,
+so no figure in Tiers 1-2 moves (`scripts/physics_benchmark.py` passes unchanged).
+
+What moved, LE4 (3) as uploaded (ignore_gse, GN2, dome 535, COPV 3750):
+
+| | walls bare (before) | walls built |
+|---|---|---|
+| Hotbench T-0 burn, mean thrust | 6142.9 N | 6175.5 N (+0.53 %) |
+| Hotbench COPV at t = 4 s | 1140.8 psia | 1212.7 psia (+72) |
+| Hotbench tanks at t = 3 s (Eth / LOX) | 502.7 / 500.2 psia | 505.9 / 504.3 psia |
+| Layer X (replay off) mean thrust | 6148.9 N | 6175.2 N (+0.43 %) |
+| Layer X burn time | 3.860 s | 3.843 s |
+| Layer X COPV at burnout | 1211.6 psia | 1284.6 psia (+73) |
+| Layer X ox / fuel tank at end | 501.0 / 503.6 psia | 505.5 / 507.2 psia |
+| Layer X total impulse | 23,732 N·s | 23,730 N·s |
+
+The direction is 2.4's: warmer pressurant holds the same pressure on fewer kilograms,
+so the bottle keeps ~70 psi, and with the tanks under lockup late in the burn they sit
+3-4 psi higher. The golden (`copv_study_he`, no itemised lines) does not move.
+
 ### 2.4c T-0 is an initial condition, not a burn result
 
 A GN2 trace with collapse + vapour + walls + chilldown opened with a violent drop and
@@ -569,7 +692,11 @@ costing where it buys nothing: liquid must be leaving; the tank must ride its su
 within `supply_band` of it (the shipped GN2 stand burns 6-8 psi under its manifold and
 traced identically either way, at twice the cost); and the tick's drain must cover a
 tenth of that band (without it a nearly empty tank at Engine Abort read 0.3 ms and the
-API random-walk test crawled for an hour). LE4 helium drawn: 6,579 → 6,726 N mean, LOX
+API random-walk test crawled for an hour). A fourth (2026-11-02): the supply must stand
+clear of atmosphere by that band. A manifold vented through another tank is a vent one
+node further on; LE4 (3)'s fuel tank draining by gravity at an Engine Abort with the LOX
+tank empty read 0.27 ms against it, 79 couplings per 20 ms step, 10 s of CPU per 0.25 s
+tick, and now takes one (`test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing`). LE4 helium drawn: 6,579 → 6,726 N mean, LOX
 min 519 → 552 psia, identical to a forced 2 ms step (6,954 vs 6,953 N on the proposed
 holes). GN2 +5 N. This tier: unchanged within tolerance (He dip −12.9, recovery 0.37 →
 0.38 s) but 160 s instead of 96 s for both gases at dt = 10 ms -- the study's helium
@@ -757,8 +884,9 @@ forever. The operator knows a shut LOX tank climbs. Defaults are now: collapse o
 **vapour on, wall-to-liquid 100 W/(m²·K), an 8 W/(m²·K) air film on the tank skin in
 series with the insulation the drawing declares, wall boiling on** (the library's
 `Setup` carries these same on-values; only the vessel-level `Tank` constructor defaults
-them off, collapse aside, and the Study and Layer X turn them off through `burn_setup`
-and their own collapse/vapour/chilldown arguments). The shipped LOX tank declares **an
+them off, collapse aside, and the benchmark Study turns them off through `burn_setup`
+and its own collapse/vapour/chilldown arguments; Layer X runs the cockpit's `Setup`, closures
+on: `engine/layerx/prepare.py::feed_twin_setup`, 2026-10-03, AUDIT D1). The shipped LOX tank declares **an
 inch of fiberglass** (operator; `insulation_thickness` 25.4 mm, `insulation_conductivity`
 0.04 W/(m·K)), so its skin passes `1/(1/8 + 0.0254/0.04)` = **1.3 W/(m²·K)**, ~75 W on
 0.47 m² of skin at 200 K —
@@ -841,7 +969,12 @@ budget** that folded the remaining coupling steps into one when the solver fell 
 which on a stiff stand is every tick, so the console was integrating a different scheme
 from the one benchmarked here, and Fire was precomputed and replayed to hide it. Now
 (`LIVE_STEP = 0.02`, `LIVE_ITERATIONS = 120`, `TICK_BUDGET = 1e9`): a panel tick of dt is
-integrated as ⌈dt/0.02⌉ outer steps of 0.02 s, exactly the study grid, and nothing folds.
+integrated as round(dt/0.02) equal outer steps (at least one), the study grid to within
+half a step, and nothing folds. (This read ⌈dt/0.02⌉ until 2026-11-02; the code has
+always rounded. The panel sends wall-clock ticks, so a 0.21 s tick is ten 0.021 s steps
+and a tick under 0.03 s one step. Rounding is what Layer X's 0.05 s step and the settle
+run on -- two 0.025 s steps; a ceiling would make them three of 0.0167 s and move every
+Layer X number, so changing it is a decision with a fresh golden, not a fix.)
 When a stand cannot keep up it runs in **slow motion** and the top bar says the ratio.
 Asserted by `test_a_panel_tick_integrates_on_the_study_grid` (a 0.2 s tick advances the
 clock in ten 0.02 s steps).
@@ -854,7 +987,13 @@ pressure it reached and a Reset. Dome knob to 1000 psig, LOX loaded, GN2 High Pr
 Ox Press: TK-LOX 722 → 1045 psig in one tick, trip
 (`test_a_vessel_over_its_mawp_trips_the_stand`). The model could go on to the
 propellant's critical pressure; a tank could not, and the point of the cockpit is that
-the operator learns which knob did it.
+the operator learns which knob did it. The limit is the drawing's burst over
+`burst_safety_factor` (2), so the trip says the vessel is past its rating, not that it
+failed; and a relief drawn on the vessel at or above that limit (LE4's 750 psi tank
+reliefs against a 764.7 psia limit) can never lift first, which the trip now names
+(`test_a_trip_says_what_it_is_and_which_reliefs_it_beat`, 2026-11-02). Letting such a
+relief act -- tripping at an ASME-style accumulation over MAWP when one is drawn -- is a
+decision for the team, not taken.
 
 **Regulators are knobs, not numbers.** The GSE Controls tab has two hand-loaded
 regulators — high press (what the cart charges the COPV to) and dome control (what the
@@ -962,6 +1101,24 @@ written at runs Fuel Fill at the same 1.47x as the "before" column, so compare t
 columns, not the two tables. What a fill still costs is the active LOX tank's
 own thermal model (chilldown, vapour, the surface layer): about a third of a step.
 
+**The floor's restate ratcheted the ullage down (2026-11-02).** A vented, chilled LOX
+load on LE4 (3) ran its nitrogen ullage to 77.4 K -- nitrogen's boiling point at one
+atmosphere -- over 90.2 K liquid and a 92.2 K wall, drew 0.70 kg of "air" in through a
+vent that was blowing out, and booked -0.60 kg of clamps: the Solver tab failed Clamps,
+Mass balance and Watch after every pad run. No surface in the tank was colder than 90
+K, so the sink had to be a guard. It was `TankSim._settled`: each time the tank dipped
+a hundredth of a psi under the air, the floor restated the ullage at u(1 atm, T) while
+the nitrogen held only its partial pressure beside the oxygen vapour. Nitrogen near
+its dew line is far from ideal (u(0.5 atm, 85 K) - u(1 atm, 85 K) is 1.06 K of c_v,
+CoolProp), so the gas read back colder than it was restated at, the next dip restated
+it colder still, and the colder gas dipped the tank again. Restated at its own partial
+density (`TankSim._specific_energy_at`), the ullage sits between the liquid and the
+wall (91.3-92.3 K), 0.6 g is drawn in 120 s of load, and nothing is clamped
+(`test_a_vented_lox_load_keeps_its_ullage_over_the_liquid`, red on the old code at
+12.5 K under the coldest surface). The built-in chill restates at the wall at a whole
+atmosphere, which is its own partial density, and is unchanged; no burn floors its
+ullage, and Tiers 1 and 2.3 are unchanged.
+
 ### 3.11 A shut LOX tank climbs at tens of psi a minute, and why
 
 The operator: "lox boiloff pressure goes up wayyy too fast, it's usually only like 20
@@ -1021,7 +1178,11 @@ DAQ trace to fit against.
 The same change shrinks the wrap's effect on a shut tank at 85 % full to ~1 psi in ten
 minutes: the leak reaches the ullage only through the dry wall. So
 `test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one` now runs at the vehicle's
-~40 % fill, where it is 5 psi in three minutes. Burns do not move: LE4 GN2 6,255 N
+~40 % fill, where it is 2.3 psi in three minutes (37.3 psig insulated, 39.6 bare). It read
+7.0 (37.8 against 44.8) until 2026-11-02, when the layer stopped evaporating with the
+wall heat that goes to the bulk (1.5b): the bare tank's extra leak lands on a wetted wall
+colder than the layer, warms the subcooled bulk, and presses nothing. The insulated
+climb, the one the operator's ~20 psi/min calibrates, moved 0.5 psi. Burns do not move: LE4 GN2 6,255 N
 (-2 N), helium unchanged, Tier 2.1 identical.
 
 **The benchmark study keeps the old closures** (`backend/benchmark_study.py` sets `stratification=False`,
@@ -1194,6 +1355,17 @@ same tank pressure as before needs a dome of ~566. The study tiers moved accordi
 
 When a regulator's outlet looks off by tens of psi, read it as dome + bias - S x inlet
 before suspecting the solver.
+
+**The law stops at the inlet (2026-11-02).** Nothing in dome + bias - S x inlet stops at
+the inlet, and T-0 primed LE4 (3) at 593.8 psia off a 414.7 psia COPV, from gas the
+bottle never had; with the dome knob at 0 it primed the tanks at 9.6 psia, a vacuum no
+regulator pulls. By hand: a regulator delivers no more than its inlet (a bottle under
+the lockup leaves it wide open and the tanks end at the bottle), and a lockup under
+atmosphere is a shut regulator. `burn.reachable_lockup` caps T-0 there for
+`prime_at_t0` and `jump_to_t0` and says so in a note; `regulator_lockup` is still the
+law, which the GSE tab's lockup range reads. Check: COPV 400 psig at T-0 -> tanks
+<= 400 psig (`test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`); dome 0
+-> tanks at 14.7 psia. Nothing at a charged bottle moves; this tier passes unchanged.
 
 
 ### 4.12 Tables that interpolate across the saturation line

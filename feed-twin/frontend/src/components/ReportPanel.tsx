@@ -15,7 +15,7 @@ import { asShown } from '../lib/pressure';
 const SECTION: Record<CheckKind, { title: string; hint: string; tone: string }> = {
   fix: {
     title: 'Worth fixing on the drawing',
-    hint: 'Each of these changes an answer, or leaves part of the stand out. Fix it in pid-designer (or Library for the engine).',
+    hint: 'Each of these changes an answer, or leaves part of the stand out. Fix it on the drawing in Hotbench P&ID (or in Library for the engine).',
     tone: 'var(--warn)',
   },
   assumed: {
@@ -142,9 +142,9 @@ export function ReportPanel({ report, labels }: { report: Report; labels?: Recor
       {open && (
         <ul className="m-0 grid max-h-[280px] list-none grid-cols-[max-content_1fr_max-content_max-content_max-content] gap-x-3 overflow-y-auto p-0">
           {sorted.map((raw) => {
-            // A value the library assumed in gauge reads absolute, as every
-            // pressure on the screen does.
-            const a = { ...raw, ...asShown(raw) };
+            // A value the library assumed in gauge or in pascals reads in
+            // psia, as every pressure on the screen does (a difference in psi).
+            const a = { ...raw, ...asShown(raw, raw.parameter) };
             return (
             <li
               key={`${a.component}.${a.parameter}`}

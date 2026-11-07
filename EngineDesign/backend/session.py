@@ -194,6 +194,22 @@ async def run_compute(session: UserSession, fn: Callable[..., T], /, *args, **kw
     return await run_in_threadpool(locked)
 
 
+async def replace_config(session: UserSession, config, config_path: Optional[str] = None) -> str:
+    """Put a whole new config in the session: off the event loop, with a new ``load_token``.
+
+    Every route that swaps the design wholesale (an upload, a design opened, a YAML handed to a
+    Layer or the Time-Series tab) goes through here, so none of them forgets either half.
+    ``set_config`` builds the runner -- a cold CEA cache is minutes of CPU, which inline on the
+    loop froze every request. The token is how a second tab of the same user (one session per
+    user) sees that this is no longer the design it loaded and stops autosaving into it; a
+    replacement that kept the old token let that tab write the newcomer over its own design.
+    Returns the new token, for the response.
+    """
+    await run_in_threadpool(session.app_state.set_config, config, config_path)
+    session.load_token = uuid.uuid4().hex
+    return session.load_token
+
+
 async def gated_stream(agen):
     """Hold JOB_SEMAPHORE for the lifetime of an async generator (an SSE stream).
 

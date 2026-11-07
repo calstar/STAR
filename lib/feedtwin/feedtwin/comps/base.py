@@ -163,6 +163,13 @@ class HydraulicComponent:
     inlet_port = "inlet"
     outlet_port = "outlet"
 
+    #: Whether the law is the same whichever way the fluid goes, so the solver
+    #: may price reverse flow at the node it actually comes from (the higher
+    #: pressure end) and choke it there. False keeps the drawn direction: a
+    #: check valve, a regulator, a relief, an injector are one-way laws, and
+    #: anything not declared symmetric keeps the behaviour it always had.
+    symmetric = False
+
     def __init__(self, instance: ComponentInstance) -> None:
         self.instance = instance
         # Resolved once, in canonical units. Nothing in an inner loop should be

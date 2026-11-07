@@ -54,9 +54,16 @@ its reasoning (the sweep reads the bottle and stiffness ones from there too).
   "capped_from": "bad",          // the grade it would have had without that cap
   "frequency_hz": 21.8,          // chug entries: the frequency at the graded point
   "cap_source": "design_requirements" | "schema default",   // tank_cap_*
-  "rating_source": "drawing" | "restated MEOP"              // tank_mawp_* / tank_meop_*
+  "rating_source": "MAWP" | "burst" | "drawing" | "restated MEOP",  // tank_mawp_* / tank_meop_*
+  "drawing_gaps": ["fuel: node_15-node_38: no usable length/bore; ..."],  // chug_margin on the drawing basis
+  "feed_basis": "config"         // chug_margin read off the replay on a drawing-basis run: info, not graded
 }]
 ```
+
+`tank_mawp_*` (2026-11-02): `value` and `limit` are psi across the wall on the gauge zero (unit `psi`):
+the peak and `derived.tank_mawp_psi` -- the absolute pressure the twin trips the vessel at
+(`prepare.vessel_trip`: burst over `Setup.burst_safety_factor`, else the MAWP) -- each less
+`derived.gauge_zero_pa`, so the red line is exactly the trip. `derived.vessel_ratings` says the basis.
 
 **Keys.** `chug_margin`, `chug_margin_settled`, `chug_margin_other_basis`, `chug_margin_start`;
 `stiffness_ox`, `stiffness_fuel`, `stiffness_ox_ignition`, `stiffness_fuel_ignition`;

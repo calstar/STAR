@@ -28,7 +28,9 @@ import {
   type Tunable,
 } from '../api';
 import { DaqPlot, type Channel } from '../components/DaqPlot';
+import { holdOn, unionTimes } from '../lib/clock';
 import { PRESSURE_UNIT, fmtP, isGaugeInput, isGaugeTunable, isGaugeUnit, psiaText, toPsia, unitLabel } from '../lib/pressure';
+import { isSequence, sequenceText } from '../lib/sequence';
 import { useStand } from '../stand';
 
 /** The record's outcome columns. A run record keeps Pc gauge, as the wire
@@ -60,6 +62,18 @@ const show = (v: unknown): string => {
 /** The gas that pressed a burn, as the stand says it. */
 const GAS: Record<string, string> = { helium: 'He', nitrogen: 'GN2' };
 
+/** A burn that did not end by running a tank dry says how it did end, beside
+ *  when it was fired: a burn cut short at T+1.5 s compared with one flown to
+ *  burnout read as a 111 % thrust change with nothing to say why (H062).
+ *  Burnout, the ordinary end, carries no mark; the words are on hover. */
+const ENDED: Record<string, { text: string; tone: string }> = {
+  abort: { text: 'abort', tone: 'text-[var(--warn)]' },
+  operator: { text: 'cut short', tone: 'text-[var(--warn)]' },
+  trip: { text: 'trip', tone: 'text-[var(--bad)]' },
+  closed: { text: 'closed mid-burn', tone: 'text-[var(--warn)]' },
+  out: { text: 'flame-out', tone: 'text-[var(--warn)]' },
+};
+
 /** A run as the list has it, with what the record keeps beside the outcome:
  *  the gas and the burned tanks at T-0 [psig on the wire]. */
 type Listed = RunSummary & { pressurant?: string; t0_tanks?: Record<string, number | null> };
@@ -75,6 +89,8 @@ const software = (c: RunSummary['code']) => (c ? `${c.app} ${c.commit.slice(0, 7
  *  whole of it on hover) rather than printed as JSON that runs off the page. */
 const brief = (v: unknown): string => {
   if (v === null || v === undefined) return '—';
+  // A run's operator sequence: what was commanded mid-burn, and when.
+  if (isSequence(v)) return sequenceText(v);
   if (Array.isArray(v)) {
     const named = v.every((x) => x && typeof x === 'object' && 'label' in (x as object));
     return named
@@ -325,6 +341,14 @@ export function Runs() {
                 </td>
                 <td className="py-1 pr-3" title={r.created}>
                   {when(r.created)} {r.label && <span className="text-gray-400">· {r.label}</span>}
+                  {r.end_cause && ENDED[r.end_cause] && (
+                    <span
+                      className={`ml-1.5 text-[10px] uppercase tracking-wider ${ENDED[r.end_cause].tone}`}
+                      title={r.ended || ENDED[r.end_cause].text}
+                    >
+                      {ENDED[r.end_cause].text}
+                    </span>
+                  )}
                 </td>
                 <td className="max-w-[22rem] truncate pr-3 text-gray-400" title={`${named(r.diagram)} · ${named(r.engine)}`}>
                   {r.diagram ? (
@@ -419,23 +443,18 @@ export function Runs() {
 
 function Traces({ records }: { records: RunRecord[] }) {
   const colors = [A_COLOR, B_COLOR];
-  // Two runs share one time base only if they were thinned alike; plot each on
-  // the first's clock by nearest sample, which is close enough at 600 points.
-  const base = records[0].series.t;
-  const resample = (rec: RunRecord, values: number[]) =>
-    base.map((t) => {
-      const ts = rec.series.t;
-      let i = 0;
-      while (i < ts.length - 1 && ts[i + 1] <= t) i += 1;
-      return t < ts[0] || t > ts[ts.length - 1] ? NaN : values[i];
-    });
+  // Two runs share one time base only if they were thinned alike; plot both on
+  // the union of their clocks, each held at its own last sample, which is
+  // close enough at 600 points. On A's clock alone, a B that burned longer
+  // lost its tail-off and burnout.
+  const base = unionTimes(records.map((rec) => rec.series.t));
   // The record's chamber trace is gauge; the panel draws it absolute. O/F is
   // a gap outside the burn, not a 0: two zero flows have no ratio.
   const panel = (name: string, read: (s: RunRecord['series']) => number[]): Channel[] =>
     records.map((rec, i) => ({
       key: `${rec.id}.${name}`,
       tag: records.length > 1 ? (i === 0 ? 'A' : 'B') : name,
-      values: i === 0 ? read(rec.series) : resample(rec, read(rec.series)),
+      values: holdOn(base, rec.series.t, read(rec.series)),
       color: colors[i],
     }));
   return (

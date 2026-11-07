@@ -48,8 +48,16 @@ const RULES: Rule[] = [
     items: (m) => [m[1]],
   },
   {
+    // Ahead of the next rule, which it would otherwise fall under: a segment
+    // with no bore on a run that states one elsewhere is priced, at that bore.
+    kind: 'assumed',
+    match: /^(.+?) segment (\S+): (?:itemised but states no bore|states a K but no bore);.* narrowest stated bore/,
+    title: () => "Line segments with no bore — sized at the narrowest bore stated on their run",
+    items: (m) => [`${m[1].replace(/^[^:]*:/, '')} ${m[2]}`],
+  },
+  {
     kind: 'fix',
-    match: /^(.+?) segment (\S+): itemised but states no bore/,
+    match: /^(.+?) segment (\S+): (?:itemised but states no bore|states a K but no bore to refer it to)/,
     title: () => 'Line segments with no bore — they add no loss',
     items: (m) => [`${m[1].replace(/^[^:]*:/, '')} ${m[2]}`],
   },
@@ -97,7 +105,9 @@ const RULES: Rule[] = [
   },
   {
     kind: 'read',
-    match: /^\d+ hand valve\(s\) rest shut until opened by hand: (.+?)\.?$/,
+    // The names end at the first full stop: after it the sentence says how to
+    // draw one that stands open, which read as part of the last valve's name.
+    match: /^\d+ hand valve\(s\) rest shut until opened by hand: (.+?)\.(?:\s|$)/,
     title: () => 'Hand valves rest shut until opened on the P&ID',
     items: (m) => m[1].split(', '),
   },

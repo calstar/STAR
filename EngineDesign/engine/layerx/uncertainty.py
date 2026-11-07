@@ -51,6 +51,10 @@ from engine.layerx.diag.limits import THRESHOLDS as _LIMITS  # noqa: E402 - the 
 SPARE_PSI = float(_LIMITS["copv_headroom_psi"]["value"])
 #: The injector dP/Pc floor when the design states no band: the shared limits' ``stiffness_floor``.
 STIFFNESS_FLOOR = float(_LIMITS["stiffness_floor"]["value"])
+#: Propellant left in the other tank above which a flip of the tank that runs dry first is worth a
+#: look: the shared limits' ``residual_kg`` ("Propellant left over"). Below it, which tank empties
+#: first is the Cd scatter's call and information, as a run grades it (limits.py; the team, 2026-10-03).
+RESIDUAL_KG = float(_LIMITS["residual_kg"]["value"])
 
 #: Outputs every case reports, and the summary path each is read from.
 METRICS: Dict[str, Tuple[str, ...]] = {
@@ -265,13 +269,19 @@ def factors(prep: Any, config: Any) -> Tuple[List[Factor], List[str]]:
     # ---- the stand on the day: how well the operator can set what the rail says ----
     lockup = float(prep.derived["target_lockup_psia"])
     fill = float(prep.derived["copv_psig"])
+    # Each case clears the rail's own knob for what it moves: the dome dial and the absolute fill win
+    # over a tank pressure and a gauge fill in prepare(), so with either set on the rail both sides of
+    # these factors burned the nominal and read as a zero swing (prepare.at_operating_point).
     out.append(Factor("op.lockup", "Tank pressure as set", "operation",
                       "±5 psi: the dome set by hand against a gauge (assumed)",
-                      [Case("op.lockup", "low", f"{lockup - 5:.0f} psia", settings={"tank_pressure_psia": lockup - 5}),
-                       Case("op.lockup", "high", f"{lockup + 5:.0f} psia", settings={"tank_pressure_psia": lockup + 5})], lockup, "psia"))
+                      [Case("op.lockup", "low", f"{lockup - 5:.0f} psia",
+                            settings={"tank_pressure_psia": lockup - 5, "dome_psia": None}),
+                       Case("op.lockup", "high", f"{lockup + 5:.0f} psia",
+                            settings={"tank_pressure_psia": lockup + 5, "dome_psia": None})], lockup, "psia"))
     out.append(Factor("op.fill", "Bottle fill as filled", "operation",
                       "−150 / +0 psig: a fill that stops short, or cools after filling (assumed)",
-                      [Case("op.fill", "low", f"{fill - 150:.0f} psig", settings={"copv_pressure_psig": fill - 150})], fill, "psig"))
+                      [Case("op.fill", "low", f"{fill - 150:.0f} psig",
+                            settings={"copv_pressure_psig": fill - 150, "copv_pressure_psia": None})], fill, "psig"))
     return out, notes
 
 
@@ -339,8 +349,13 @@ def _burn_case(args: Tuple[Any, Any, Any, List[Any], Dict[str, Any]]) -> Dict[st
         s = res["summary"]
         thrust = [(t, f) for t, f, on in zip(res["series"]["t"], res["series"]["chamber"]["thrust_N"],
                                                res["series"]["firing"]) if on]
+        depleted = s.get("depleted_side") or ""
+        # What the tank that did not run dry still holds at burnout.
+        other = (s.get("fuel") if depleted == "oxidiser" else s.get("ox") if depleted == "fuel" else None) or {}
+        left = other.get("residual_kg")
         return {"ok": True, "case": case["id"], "metrics": _metrics(s), "thrust": thrust,
-                "depleted": s.get("depleted_side") or "", "lockup_psia": prep.derived.get("target_lockup_psia"),
+                "depleted": depleted, "lockup_psia": prep.derived.get("target_lockup_psia"),
+                "residual_kg": float(left) if isinstance(left, (int, float)) and math.isfinite(left) else None,
                 "wall_s": time.perf_counter() - started}
     except Exception as exc:  # noqa: BLE001 - one failed case is reported, the sweep goes on
         out = {"ok": False, "case": case["id"], "error": f"{type(exc).__name__}: {exc}"}
@@ -462,7 +477,15 @@ def run_sweep(config: Any, drawing: Any, settings: Any, overrides: List[Any], *,
             if spare is not None and spare < SPARE_PSI:
                 breaks.append(f"bottle spare {spare:.0f} psi < {SPARE_PSI:.0f}")
             if r.get("depleted") and nominal_side and r["depleted"] != nominal_side:
-                breaks.append(f"{'fuel' if r['depleted'] == 'fuel' else 'LOX'} runs dry first")
+                # A flip is a crossing only when it strands propellant: with the loads at the burn's O/F
+                # either tank may empty first by grams (0.003 kg left on LE4 (3)), the Cd scatter's call.
+                left = r.get("residual_kg")
+                if left is None or left > RESIDUAL_KG:
+                    word = {"oxidiser": "LOX", "fuel": "fuel"}
+                    held = "fuel" if r["depleted"] == "oxidiser" else "LOX"
+                    breaks.append(f"{word.get(nominal_side, nominal_side)}-first becomes "
+                                  f"{word.get(r['depleted'], r['depleted'])}-first"
+                                  + (f", {left:.2f} kg of {held} left > {RESIDUAL_KG:g} kg" if left is not None else ""))
             cs["breaks"] = breaks
             if breaks:
                 crossings.append({"factor": e["label"], "side": side, "case": cs["label"], "breaks": breaks})

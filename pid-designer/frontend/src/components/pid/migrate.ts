@@ -8,6 +8,9 @@ import { faceTowards, pathPoints, routeCost, routeOrthogonal } from './route';
 import type { End, Pt } from './route';
 import { unmeasuredEnd as portEnd } from './unmeasured';
 import { COMPONENT_DEFS } from './types';
+import { SAT_REFERENCE, saturationK } from './materials';
+import { toAbsolutePa, toPsia } from './params';
+import type { ParamValue } from './params';
 
 /**
  * What an older drawing means in today's vocabulary.
@@ -146,6 +149,14 @@ export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; e
   // first reseat to touch it -- on opening, after the baseline.
   nodes = recordPipes(nodes, edges, portEnd);
 
+  // 2026-10: a dewar's temperature is filled from its delivery pressure, on
+  // the saturation curve. One filled before ADR 0004 read a bare psi on a
+  // dewar as gauge is Tsat at that number read absolute: LE4 (3)'s LOX
+  // dewar, 50 psi, sat at 103.79 K -- Tsat at 50 psia, 3.4 K under Tsat at
+  // 50 psig. One the dialog filled (a default naming the curve) follows its
+  // pressure as it is read today; one somebody typed is theirs.
+  nodes = nodes.map(n => saturatedDewar(n) ?? n);
+
   // 2026-09: the K-bottle, the dewar and a manifold with no saved layout were
   // resized so their ports sit on the 10 px grid (SupplyNode, ManifoldNode).
   // No rule here, on purpose. A saved drawing keeps a symbol's position and
@@ -161,6 +172,20 @@ export function migrate(d: { nodes: Node[]; edges: Edge[] }): { nodes: Node[]; e
   // by identity sees only what changed.
   const unchanged = <T,>(xs: T[], was: T[]) => xs.length === was.length && xs.every((x, i) => x === was[i]);
   return { nodes: unchanged(nodes, d.nodes) ? d.nodes : nodes, edges: unchanged(edges, d.edges) ? d.edges : edges };
+}
+
+/** A dewar whose filled-in temperature is off its pressure's Tsat, refilled; else nothing. */
+function saturatedDewar(n: Node): Node | undefined {
+  const data = (n.data ?? {}) as { componentType?: string; fluid?: string; params?: Record<string, ParamValue> };
+  const p = data.params?.pressure, t = data.params?.temperature;
+  if (data.componentType !== 'DEWAR' || !p || !t || t.source !== 'default'
+    || !t.reference?.startsWith(SAT_REFERENCE)) return undefined;
+  const k = saturationK(data.fluid ?? '', toAbsolutePa(p) ?? NaN);
+  const psia = toPsia(p, 'DEWAR');
+  if (k === undefined || psia === undefined || (t.unit === 'K' && Math.abs(t.value - k) < 0.005)) return undefined;
+  const temperature: ParamValue = { value: k, unit: 'K', source: 'default',
+    reference: `${SAT_REFERENCE}, at ${Number(psia.toFixed(3))} psia` };
+  return { ...n, data: { ...data, params: { ...data.params, temperature } } } as Node;
 }
 
 /** Every component type there is a symbol for. */

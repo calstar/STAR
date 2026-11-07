@@ -141,7 +141,8 @@ def test_the_reference_run_matches_the_audits_hand_worked_worst_times():
     assert g["stiffness_fuel_ignition"]["grade"] == "info"
     for short in ("ox", "fuel"):
         assert g[f"tank_mawp_{short}"]["t_worst"] == pytest.approx(3.4663, abs=1e-4)
-    assert g["tank_mawp_ox"]["value"] == pytest.approx(580.28 - 94069.72225 / PSI, abs=0.01)
+    # Across the wall on the gauge zero the drawing rates the tank on (the trip is absolute), not the site.
+    assert g["tank_mawp_ox"]["value"] == pytest.approx(580.28 - 101325.0 / PSI, abs=0.01)
     assert g["bottle_margin"]["value"] == pytest.approx(1405.71 - 578.05, abs=0.01)
     assert g["tank_sag"]["value"] == pytest.approx(578.0486 - 552.0311, abs=1e-3)
     assert g["tank_sag"]["t_worst"] == pytest.approx(0.40, abs=1e-9)
@@ -164,7 +165,7 @@ SERIES_BACKED = {"stiffness_ox": "ox.stiffness", "stiffness_fuel": "fuel.stiffne
 def test_the_worst_index_points_at_the_graded_value(name, result):
     series = result["series"]
     d = result["provenance"].get("derived") or {}
-    ambient = d.get("ambient_pa", 101325.0) / PSI
+    zero = d.get("gauge_zero_pa", 101325.0) / PSI   # the tank rating is graded across the wall on the gauge zero
     t = series["t"]
     for e in grade(result):
         i = e["index_worst"]
@@ -182,7 +183,7 @@ def test_the_worst_index_points_at_the_graded_value(name, result):
             continue
         side, col = path.split(".")
         v = series[side][col][i]
-        expect = v - ambient if e["key"].startswith("tank_mawp") else v
+        expect = v - zero if e["key"].startswith("tank_mawp") else v
         assert expect == pytest.approx(e["value"], rel=1e-12), f"{name}: {e['key']} at index {i}"
 
 
@@ -237,6 +238,10 @@ def test_chug_from_the_stability_diagnostics_grades_the_settled_minimum_and_repo
     assert g["chug_margin"]["frequency_hz"] == 22.0 and g["chug_margin_start"]["frequency_hz"] == 34.6
     assert g["chug_margin"]["series_ref"] == "diagnostics.stability.margin"
     assert g["chug_margin"]["grade"] == "ok" and "drawing feed basis" in g["chug_margin"]["basis"]
+    assert "after the first 0.100 s" in g["chug_margin"]["basis"]
+    # The start window is a solved time: printed to the millisecond, not as '0.0556569 s'.
+    r["diagnostics"]["stability"]["start_window_s"] = 0.0556569
+    assert "after the first 0.056 s" in _by_key(grade(r))["chug_margin"]["basis"]
     assert g["chug_margin_start"]["grade"] == "info" and g["chug_margin_start"]["value"] == 1.15
     assert g["chug_margin_start"]["index_worst"] == 2
     assert g["chug_margin_other_basis"]["grade"] == "info"
@@ -266,6 +271,24 @@ def test_the_chug_amber_edge_follows_a_requirement_above_one_point_two_but_never
     g = _by_key(grade(r, config=Cfg))["chug_margin"]
     assert g["warn"] == 1.5 and g["grade"] == "warn"
     assert "1.5" in g["hint"]
+
+
+def test_a_drawing_basis_run_without_its_stability_block_does_not_grade_the_config_margin():
+    """A run graded on the drawing's feed (``options.chug_basis``, decided 2026-10-03) that carries no
+    stability block -- every set-point, Hardware, reconcile and sweep burn -- has only the replay's
+    margin, on EngineDesign's feed_system. It was graded as "the" chug margin: 1.21 'ok' on LE4 (3),
+    where the drawing basis grades 1.004 'warn'. It is now information, labelled with its basis. A run
+    saved before the decision (no options, or ``config``) grades it as it always did."""
+    r = _result()
+    r["delivered"] = {"t": r["series"]["t"][2:], "chug_margin": [0.9] * 8,
+                      "summary": {"chug_margin_min": 0.9, "chug_margin_min_t": 0.05}}
+    assert _by_key(grade(r))["chug_margin"]["grade"] == "bad"
+    r["provenance"]["derived"]["options"] = {"chug_basis": "config"}
+    assert _by_key(grade(r))["chug_margin"]["grade"] == "bad"
+    r["provenance"]["derived"]["options"] = {"chug_basis": "drawing"}
+    g = _by_key(grade(r))["chug_margin"]
+    assert g["grade"] == "info" and g["value"] == 0.9 and g["feed_basis"] == "config"
+    assert "config basis" in g["label"] and "not graded" in g["label"]
 
 
 def test_the_delivered_chug_minimum_maps_onto_the_series_by_firing_step():

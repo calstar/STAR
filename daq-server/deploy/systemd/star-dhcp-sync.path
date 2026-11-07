@@ -1,0 +1,11 @@
+[Unit]
+Description=STAR board-LAN DHCP: watch the DAQ config for reservation changes
+
+[Path]
+# The backend writes config.toml in place (save, profile deploy), which closes
+# the file after a write: exactly what PathChanged= fires on.
+PathChanged=@CONFIG@
+Unit=star-dhcp-sync.service
+
+[Install]
+WantedBy=multi-user.target

@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.library import LibraryError
-from backend.main import HOOKUPS, _lineage, app, library
+from backend.main import HOOKUPS, _lineage, app, library, overrides
 
 client = TestClient(app)
 ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +104,38 @@ def test_the_repro_carries_the_drawing_the_setup_and_every_command() -> None:
     assert isinstance(repro["end"]["flags"], list)
     solver = client.get(f"/api/session/{sid}/solver").json()
     assert solver["flags"] == repro["end"]["flags"]
+
+
+def test_the_repro_carries_the_drawing_tabs_overrides() -> None:
+    """The other machine's override store has none of this one's: a stand
+    built on an override replayed there as drawn."""
+    response = client.post(
+        "/api/library/diagrams",
+        files={"file": ("repro LE4.json", DRAWING.read_bytes(), "application/json")},
+    )
+    diagram = response.json()["artifact"]["id"]
+    UPLOADED.append(diagram)
+    name = library.get(diagram).name
+    entry = {
+        "value": 41.0,
+        "unit": "L",
+        "source": "measured",
+        "reference": "weighed",
+        "by": "test",
+        "at": "now",
+    }
+    overrides.put_entry(name, {"params": {"node_63": {"volume": entry}}})
+    try:
+        opened = client.post(
+            "/api/session",
+            params={"diagram": diagram},
+            json={"state": "Idle", "ignore_gse": False},
+        )
+        assert opened.status_code == 200, opened.text
+        repro = client.get(f"/api/session/{opened.json()['id']}/repro").json()
+    finally:
+        overrides.put_entry(name, {})
+    assert repro["overrides"] == {"node_63": {"volume": entry}}
 
 
 def test_a_repro_replays_to_where_it_ended(tmp_path: Path) -> None:

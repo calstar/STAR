@@ -218,3 +218,10 @@ def test_a_pull_that_is_an_existing_drawing_keeps_the_pulls_saved_hookup() -> No
     finally:
         library.drop_record(HOOKUPS, pulled)
         library.drop_record(ALIASES, diagram)
+
+
+def test_resetting_the_hookup_of_an_unknown_drawing_is_a_404() -> None:
+    """It was a 500: the LibraryError escaped. PUT and GET say 422/404."""
+    response = client.delete("/api/hookup", params={"diagram": "zzz"})
+    assert response.status_code == 404, response.text
+    assert "zzz" in response.json()["detail"]

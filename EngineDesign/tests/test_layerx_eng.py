@@ -56,6 +56,39 @@ def test_the_file_reads_back_as_the_burn():
     assert eng["name"].startswith("STAR-") and " " not in eng["name"]
 
 
+def test_the_header_quotes_the_runs_impulse_and_t0_in_psia():
+    """One impulse, the run's: each sample after Fire carries the step that ends there, so the run
+    totals a step-held curve (sum of thrust x step, by hand); the header quoted the trapezoid, a third
+    figure (LE4 (3): 23743.9 against the run's 23737.9 N-s). T-0 in psia at a tenth (ADR 0007): it read
+    'tanks 544.5709487755134 psia, bottle 3750.0 psig'."""
+    r, impulse = _result()
+    head = [line for line in to_eng(r).splitlines() if line.startswith(";")]
+    assert f"total impulse {impulse:.1f} N-s" in head[2]
+    assert f"mean thrust {impulse / (N * DT):.1f} N" in head[2]
+    assert "tanks 578.0 psia, bottle - psia (as set)" in head[1]
+    r["summary"] = {"ox": {"t0_psia": 544.5709487755134}, "fuel": {"t0_psia": 544.5709487755134},
+                    "copv_t0_psia": 3764.6959487755134}
+    head = [line for line in to_eng(r).splitlines() if line.startswith(";")]
+    assert "tanks 544.6 psia, bottle 3764.7 psia at T-0" in head[1] and "psig" not in head[1]
+
+
+def test_the_download_is_named_for_the_motor_inside_it():
+    """The file's name and the motor's name in it carry the same mean thrust, the run's (step-held).
+    The header moved to the run's mean on 2026-11-02 while the download kept the trapezoid's: this
+    falling curve (6800 N less 20 N a step) read STAR-5070N on the file and STAR-5060N inside it.
+    By hand: 0.02 s x (175 x 6800 - 20 x 15225) N = 17710 N s over 3.5 s = 5060 N."""
+    from engine.layerx.eng import filename
+
+    r, impulse = _result(thrust=lambda k: 6800.0 - 20.0 * k)
+    mean = impulse / (N * DT)
+    t, f = [0.0] + [DT * (k + 1) for k in range(N)], [6800.0] + [6800.0 - 20.0 * k for k in range(N)]
+    trapezoid = sum(0.5 * (f[i] + f[i + 1]) * (t[i + 1] - t[i]) for i in range(N)) / (N * DT)
+    assert round(trapezoid) != round(mean)      # the case tells the two apart
+    motor = check(to_eng(r))["name"]
+    assert motor == f"STAR-{round(mean)}N"
+    assert filename(r, "abc") == f"{motor}-abc.eng"
+
+
 def test_given_dimensions_override_the_run():
     r, _ = _result()
     eng = check(to_eng(r, diameter_mm=152.4, length_mm=500.0, dry_kg=0.0))

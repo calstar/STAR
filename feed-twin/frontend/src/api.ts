@@ -1142,6 +1142,9 @@ export function channelPalette(tags: readonly string[]): Record<string, string> 
 }
 
 export const fixed = (value: number, places = 1) => {
+  // A value nobody has (a failed case's impulse, a field not yet sent) reads
+  // as the dash every other empty cell shows, never "NaN".
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '–';
   // A vented gauge reads 0, never "-0.0": the model's rounding noise around
   // atmosphere is not a reading.
   const shown = Math.abs(value) < 0.5 * 10 ** -places ? 0 : value;
@@ -1204,6 +1207,12 @@ export interface RunSummary {
   engine?: string;
   rocket_only?: boolean;
   outcome: Record<string, number | null>;
+  /** How the burn ended: `burnout` (a tank ran dry), `abort`, `operator`
+   *  (a state commanded mid-burn), `trip`, `closed` (reset or closed while it
+   *  burned), `out` (the engine went out with Fire held); `""` on a record
+   *  written before it was kept. `ended` says it in words. */
+  end_cause?: string;
+  ended?: string;
   converged: boolean;
   mass_error_ppm: number | null;
   code: CodeVersion | null;

@@ -14,6 +14,11 @@ environmental tracker).
     python firmware/tools/ota_upload.py --ip 192.168.2.41 \
         --project firmware/Hotfire_Code/LC_Hotfire
 
+    # by MAC or by config name: tries the board's DHCP address, then its
+    # recovery address 169.254.x.y (a board whose DHCP failed sits there)
+    python firmware/tools/ota_upload.py --mac 4a:27:e2:3a:ad:71 --bin rtd.bin
+    python firmware/tools/ota_upload.py --board rtd_board --bin rtd.bin
+
     # bake a marker into the build so you can SEE the update land on serial:
     # the board starts printing "[OTA-MSG] third try" instead of whatever it
     # printed before
@@ -69,6 +74,70 @@ class OtaError(RuntimeError):
     """Upload failed. The message is meant to be shown to a human."""
 
 
+class ConnectError(OtaError):
+    """Nothing answered at that address: safe to try the next one."""
+
+
+# ---------------------------------------------------------------------------
+# Finding a board: its DHCP address, or its MAC-derived recovery address
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CONFIG = REPO_ROOT / "daq-server" / "config" / "config.toml"
+
+
+def parse_mac(mac: str) -> bytes:
+    parts = mac.strip().replace("-", ":").split(":")
+    if len(parts) != 6:
+        raise OtaError(f"{mac!r} is not a MAC address (aa:bb:cc:dd:ee:ff)")
+    try:
+        out = bytes(int(p, 16) for p in parts)
+    except ValueError as exc:
+        raise OtaError(f"{mac!r} is not a MAC address (aa:bb:cc:dd:ee:ff)") from exc
+    return out
+
+
+def recovery_address(mac: str) -> str:
+    """Where a board sits when no DHCP server answered it:
+    169.254.<1 + mac[4] % 254>.<mac[5]>. Must match BoardNet::recoveryAddress
+    (firmware/Hotfire_Code/common/board_net.h) and daq-server's config check."""
+    m = parse_mac(mac)
+    return f"169.254.{1 + m[4] % 254}.{m[5]}"
+
+
+def board_from_config(name: str, config: Path) -> tuple:
+    """(mac, ip) of [boards.<name>] in a daq-server config.toml."""
+    import tomllib
+
+    try:
+        cfg = tomllib.loads(config.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise OtaError(f"cannot read {config}: {exc}") from exc
+    boards = cfg.get("boards", {})
+    b = boards.get(name)
+    if not isinstance(b, dict):
+        raise OtaError(
+            f"no [boards.{name}] in {config}; boards there: {', '.join(sorted(boards))}"
+        )
+    mac = str(b.get("mac") or "")
+    if not mac:
+        raise OtaError(
+            f"[boards.{name}] has no mac = line, so its recovery address is unknown"
+        )
+    return mac, (str(b["ip"]) if b.get("ip") else None)
+
+
+def candidate_addresses(ip: Optional[str], mac: Optional[str]) -> list:
+    """Addresses to try, in order: the DHCP one, then recovery."""
+    out = []
+    if ip:
+        out.append(ip)
+    if mac:
+        rec = recovery_address(mac)
+        if rec not in out:
+            out.append(rec)
+    return out
+
+
 def firmware_sha256(data: bytes) -> str:
     """SHA-256 of the .bin file itself. NOT what the board reports."""
     return hashlib.sha256(data).hexdigest()
@@ -113,7 +182,7 @@ def upload(
     try:
         sock = socket.create_connection((ip, port), timeout=connect_timeout)
     except OSError as exc:
-        raise OtaError(
+        raise ConnectError(
             f"could not connect to {ip}:{port} — {exc}. Is the board powered, "
             f"on this subnet, and past its boot delay?"
         ) from exc
@@ -153,6 +222,29 @@ def upload(
         return reply
     finally:
         sock.close()
+
+
+def upload_to_first(
+    data: bytes, hosts: list, port: int = DEFAULT_PORT, **kwargs
+) -> str:
+    """Upload to the first of `hosts` that accepts a connection. Moves on only
+    when nothing answered; a board that answered and then failed is an error."""
+    errors = []
+    for host in hosts:
+        try:
+            upload(data, host, port, **kwargs)
+            return host
+        except ConnectError as exc:
+            errors.append(str(exc))
+            print(f"  nothing at {host}:{port}, trying the next address")
+    hint = ""
+    if any(h.startswith("169.254.") for h in hosts):
+        hint = (
+            "\n  To reach a recovery address this machine needs one on the board "
+            "LAN too: sudo ip addr add 169.254.0.20/16 dev <board NIC> "
+            "(star-dhcp.service adds it on the DAQ server)."
+        )
+    raise OtaError("no board answered:\n  " + "\n  ".join(errors) + hint)
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +343,16 @@ def main(argv=None) -> int:
         description="Push firmware to a STAR board over Ethernet."
     )
     p.add_argument("--ip", help="board IP address")
+    p.add_argument(
+        "--mac",
+        help="board MAC; also tries its recovery address 169.254.x.y "
+        "(where a board whose DHCP failed sits)",
+    )
+    p.add_argument(
+        "--board",
+        help="[boards.<name>] in --config: its ip, then its recovery address",
+    )
+    p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.add_argument(
         "--bin", type=Path, help="firmware.bin to upload (skip to build with --project)"
@@ -276,12 +378,19 @@ def main(argv=None) -> int:
         _self_test()
         return 0
 
-    if not args.ip:
-        p.error("--ip is required (or use --self-test)")
+    if not (args.ip or args.mac or args.board):
+        p.error("pass --ip, --mac or --board (or use --self-test)")
     if not args.bin and not args.project:
         p.error("pass --bin (an existing image) or --project (build it first)")
 
     try:
+        ip, mac = args.ip, args.mac
+        if args.board:
+            cfg_mac, cfg_ip = board_from_config(args.board, args.config)
+            mac = mac or cfg_mac
+            ip = ip or cfg_ip
+        hosts = candidate_addresses(ip, mac)
+
         bin_path = args.bin
         if args.project:
             bin_path = build(args.project, args.env, args.message)
@@ -298,16 +407,16 @@ def main(argv=None) -> int:
         print(f"  image:  {bin_path}")
         print(f"  size:   {len(data)} bytes")
         print(f"  sha256: {digest}   (of the .bin file)")
-        print(f"  target: {args.ip}:{args.port}")
+        print(f"  target: {' then '.join(hosts)} (port {args.port})")
 
-        upload(
+        host = upload_to_first(
             data,
-            args.ip,
+            hosts,
             args.port,
             on_progress=_progress_printer(),
             transfer_timeout=args.timeout,
         )
-        print("\n  board acknowledged — rebooting into the new image.")
+        print(f"\n  {host} acknowledged — rebooting into the new image.")
         if board_digest:
             print('  The board will print this at boot ("Firmware hash:") and')
             print("  report it in BOARD_HEARTBEAT -- compare against this, not")
@@ -409,6 +518,49 @@ def _self_test() -> None:
             raise AssertionError(f"{why} image must raise")
         except OtaError:
             pass
+
+    # -- recovery address: the vectors board_net.h's tests pin too ----------
+    assert recovery_address("4a:27:e2:3a:ad:71") == "169.254.174.113"
+    assert recovery_address("00:00:00:00:00:00") == "169.254.1.0"
+    assert recovery_address("00:00:00:00:fe:ff") == "169.254.1.255"
+    assert recovery_address("00:00:00:00:ff:01") == "169.254.2.1"
+    assert candidate_addresses("192.168.2.31", "4a:27:e2:3a:ad:71") == [
+        "192.168.2.31",
+        "169.254.174.113",
+    ]
+    for bad in ("4a:27:e2:3a:ad", "zz:27:e2:3a:ad:71"):
+        try:
+            recovery_address(bad)
+            raise AssertionError(f"{bad} must be refused")
+        except OtaError:
+            pass
+
+    # -- nothing at the first address: the image goes to the next ----------
+    received.clear()
+    srv, t = serve()
+    port = srv.getsockname()[1]
+    # 127.0.0.2 has nothing on `port`; 127.0.0.1 is the fake board.
+    assert (
+        upload_to_first(image, ["127.0.0.2", "127.0.0.1"], port, connect_timeout=1.0)
+        == "127.0.0.1"
+    )
+    t.join(timeout=5)
+    srv.close()
+    assert received["body"] == image
+
+    # -- a board that answered and failed is NOT retried elsewhere ----------
+    srv, t = serve(reply=b"ERR\r\n")
+    port = srv.getsockname()[1]
+    try:
+        upload_to_first(image, ["127.0.0.1", "127.0.0.2"], port, connect_timeout=1.0)
+        raise AssertionError("a rejecting board must fail, not fall through")
+    except ConnectError:
+        raise AssertionError("a rejection is not a connect failure")
+    except OtaError as exc:
+        # The rejection itself, not "no board answered" after trying 127.0.0.2.
+        assert str(exc).startswith("board replied"), exc
+    t.join(timeout=5)
+    srv.close()
 
     print("ota_upload self-test: OK")
 

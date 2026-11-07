@@ -609,3 +609,117 @@ def test_a_trip_names_the_vessel_furthest_over() -> None:
     session._check_limits()
     assert session.trip is not None and session.trip.vessel == ids["LOX-Tank"]
     assert session.tripped and session.tripped.startswith("LOX-Tank reached")
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_trip_says_what_it_is_and_which_reliefs_it_beat() -> None:
+    """The trip limit is the drawing's burst over a factor of two, and the trip
+    said "The tank would have failed" at half the burst. LE4's tank reliefs are
+    drawn at 750 psi, the trip limit itself, so they can never lift before it:
+    the message says so rather than leave the operator wondering why the drawn
+    relief did nothing."""
+    from feedtwin.session.gauge import PSI, psig
+
+    ids = _ids()
+    session = _session()
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.prime(fill_fraction=0.5, tank_psi=500.0, copv_psi=4000.0, state="Ready")
+    # Both tank reliefs at the limit; the COPV's well above it, behind a
+    # regulator, protecting something else.
+    sets = {
+        label: branch.component.set_pressure / PSI
+        for branch_id, branch in session._reliefs
+        for label in [next(k for k, v in ids.items() if v == branch_id)]
+    }
+    assert sets["RV_O"] == pytest.approx(psig(lox.mawp), abs=0.5), sets
+    assert sets["RV-HPF"] > psig(lox.mawp) + 1000.0, sets
+    lox.state = lox.tank.initial_state(
+        pressure=lox.mawp + 5.0 * PSI,
+        liquid_mass=lox.state.liquid_mass,
+        liquid_temperature=lox.state.liquid_temperature,
+        gas_temperature=293.15,
+    )
+    session._check_limits()
+    message = session.tripped or ""
+    assert message.startswith("LOX-Tank reached"), message
+    assert "would have failed" not in message
+    assert "MAWP" in message and "at risk" in message
+    assert "RV_O is set at or above that limit and cannot lift" in message, message
+    assert "RV-HPF" not in message, "the COPV relief protects the COPV"
+
+
+# ------------------------------------------- the cart's tanks end no burn
+
+
+def _cart_tank_ran_dry(session: Any) -> Any:
+    """The cart's Fuel Transfer Tank after the loads it gave: dry, as a real fill
+    leaves it (``TankSim.advance`` sets ``empty``, and a resting cart vessel is
+    never advanced again to clear it)."""
+    cart = session.tanks[_ids()["Fuel Transfer Tank"]]
+    cart.state = replace(cart.state, liquid_mass=0.0)
+    cart.empty = True
+    return cart
+
+
+@pytest.mark.skipif(
+    not (ENGINE.exists() and CEA.exists() and TABLES.is_dir()),
+    reason="engine, CEA table or state machine tables absent",
+)
+def test_an_empty_cart_tank_is_not_a_burnout() -> None:
+    """Only the vehicle's tanks end a burn. ``_burnout_check`` counted every tank
+    on the stand, so a cart transfer tank emptied by the loads it gave sent each
+    Fire to Vent at T+0.00 s with the flight tanks full ("Burnout at T+0.00 s:
+    Fuel Transfer Tank ran dry")."""
+    import yaml
+
+    from feedtwin.engine.importer import engine_from_config
+    from feedtwin.session import assemble_model, load_machine
+    from feedtwin.session.burn import jump_to_t0, open_session
+    from feedtwin.session.hookup import suggest
+
+    design = engine_from_config(yaml.safe_load(ENGINE.read_text()), name="6800N")
+    model = assemble_model(
+        read_diagram(_payload(), name="LE4 (6)"),
+        diagram_id="le4",
+        engine=design,
+        cea_cache=str(CEA),
+    )
+    session = open_session(
+        model, load_machine(tables=TABLES), hookup=suggest(model, 500.0, 4500.0)
+    )
+    jump_to_t0(session, copv_psi=4500.0, fill_fraction=0.95)
+    _cart_tank_ran_dry(session)
+    session.command_state("Fire")
+    for _ in range(25):  # 0.5 s
+        session.step(0.02)
+    assert session.burnout is None
+    assert session.state == "Fire"
+    assert session.history[-1].chamber.thrust > 5000.0
+
+
+@pytest.mark.skipif(not TABLES.is_dir(), reason="no state machine tables")
+def test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart() -> None:
+    """With no engine model the ENGINE symbol's design pressure is the boundary
+    while the feed can hold it. "The feed" counted the cart: a dewar at 50 psig
+    or a dry transfer tank under the 385 psia design kept the chamber at
+    atmosphere with both flight tanks pressed well above it."""
+    from feedtwin.session.burn import jump_to_t0
+
+    session = _session()
+    jump_to_t0(session, copv_psi=4000.0, fill_fraction=0.95)
+    _cart_tank_ran_dry(session)
+    session.command_state("Fire")
+    session.step(0.02)
+    session.step(0.02)
+    vehicle = [session.tanks[k] for k in session.vehicle_tanks]
+    assert min(sim.outlet_pressure for sim in vehicle) > session._design_chamber
+    chamber = session.model.built.network.nodes[session._chamber_node]
+    assert chamber.pressure == pytest.approx(session._design_chamber)
+
+
+def test_a_pair_drawn_joined_is_not_called_unmated(built: Any) -> None:
+    """HP-QD-A and HP-QD-B are paired and joined by their own line; OF-QDA has
+    no line at all, which is worth saying."""
+    unmated = [w for w in built.warnings if "unmated" in w]
+    assert not [w for w in unmated if "HP-QD" in w], unmated
+    assert [w for w in unmated if "OF-QDA" in w], "the real one is still said"

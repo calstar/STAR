@@ -42,6 +42,19 @@ export const VERIFIED: ReadonlySet<Provenance> = new Set(['measured', 'manufactu
 
 export const isVerified = (source: Provenance) => VERIFIED.has(source);
 
+/**
+ * A stored number as a field shows it.
+ *
+ * A sketch in inches writes 0.43 in as 10.921999999999999 mm, and its fall
+ * off the geometry as 0.8029517354603677 m; shown verbatim, that is binary
+ * noise dressed as precision. Six significant figures is more than anything
+ * on a stand is measured to. A pressure keeps the thousandth of a psi it is
+ * typed to (a COPV at 15014.696 psia), so it only loses the noise.
+ */
+function shown(value: number, dimension: ParamSpec['dimension']): string {
+  return String(Number(value.toPrecision(dimension === 'pressure' ? 12 : 6)));
+}
+
 export function toDraft(spec: ParamSpec, existing?: ParamValue, symbol = ''): Draft {
   const units = unitsFor(spec);
   const pressureAt = spec.dimension === 'pressure' && isAbsoluteField(spec.key);
@@ -57,7 +70,7 @@ export function toDraft(spec: ParamSpec, existing?: ParamValue, symbol = ''): Dr
     const unit = pressureAt ? explicitUnit(spec.key, existing.unit, symbol) : existing.unit;
     const psia = unit === 'psig' ? toPsia(existing, symbol) : undefined;
     return {
-      value: psia !== undefined ? String(Number(psia.toFixed(3))) : String(existing.value),
+      value: psia !== undefined ? String(Number(psia.toFixed(3))) : shown(existing.value, spec.dimension),
       unit: (psia !== undefined ? 'psia' : unit) || units[0],
       source: existing.source,
       ...(existing.reference ? { reference: existing.reference } : {}),

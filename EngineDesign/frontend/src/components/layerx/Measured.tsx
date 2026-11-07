@@ -20,7 +20,18 @@ const axisTick = { fill: 'var(--color-text-muted)', fontSize: 10 };
 
 type Row = { id: string; tag: string; unit: 'psia' | 'K' | 'N'; values: number[] };
 
-export function MeasuredView({ result }: { result: LayerXResult }) {
+/** A display unit: what Layer X's unit system shows a quantity in (lx/units Scale). */
+export type ShownIn = { unit: string; digits: number; to: (base: number) => number };
+
+/**
+ * ``shown``: the page's unit system, for pressures (absolute, and the residual's difference),
+ * temperatures and thrust. Without it the table reads psia, K and N, as the old GUI did. On the Stand
+ * page in SI the rail read 'Dome 37.9 bar(a)' while this table read 'COPV-PT psia 3,761.6'.
+ */
+export function MeasuredView({ result, shown }: {
+  result: LayerXResult;
+  shown?: { pressure: ShownIn; dp: ShownIn; temp: ShownIn; force: ShownIn };
+}) {
   const drawingId = result.provenance.drawing.id;
   const s = result.series;
   const gauge = ((result.provenance.derived?.gauge_zero_pa as number | undefined) ?? 101325) / PSI;
@@ -115,6 +126,20 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
   const cell = 'rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-1.5 py-0.5 text-[12px] text-[var(--color-text-primary)]';
   const kindOf = (r: Row) => (r.unit === 'K' ? ['TC', 'RTD'] : ['PT']);
   const digits = (r: Row) => (r.unit === 'N' ? 0 : r.unit === 'K' ? 1 : 1);
+  // In the page's units when it names them; a residual is a difference (bar, not bar(a), for a pressure).
+  const scaleOf = (r: Row) => (shown ? (r.unit === 'psia' ? shown.pressure : r.unit === 'K' ? shown.temp : shown.force) : null);
+  const unitOf = (r: Row) => scaleOf(r)?.unit ?? r.unit;
+  const value = (r: Row, v: number | null | undefined) => {
+    const sc = scaleOf(r);
+    return v === null || v === undefined || !Number.isFinite(v) ? '—' : sc ? fmt(sc.to(v), sc.digits) : fmt(v, digits(r));
+  };
+  const diff = (r: Row, v: number) => {
+    const sc = shown ? (r.unit === 'psia' ? shown.dp : scaleOf(r)) : null;
+    return sc ? fmt(r.unit === 'psia' ? sc.to(v) : sc.to(v) - sc.to(0), sc.digits) : fmt(v, digits(r));
+  };
+  // The DAQ logs gauge: a pressure cell says what the DAQ's own column should read.
+  const daqTitle = (r: Row, v: number | null | undefined) =>
+    r.unit === 'psia' && v !== null && v !== undefined && Number.isFinite(v) ? `${fmt(v - gauge, 1)} psig on the DAQ` : undefined;
 
   return (
     <div className="space-y-5">
@@ -138,7 +163,7 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
               const options = (daq ?? []).filter((c) => kindOf(r).includes(c.kind));
               return (
                 <tr key={r.id} className="border-t border-[var(--color-border)]/50">
-                  <td className="py-1 text-[var(--color-text-secondary)]">{r.tag} <span className="text-[var(--color-text-muted)]">{r.unit}</span></td>
+                  <td className="py-1 text-[var(--color-text-secondary)]">{r.tag} <span className="text-[var(--color-text-muted)]">{unitOf(r)}</span></td>
                   <td className="py-1">
                     {r.id === THRUST ? (
                       <span className="text-[var(--color-text-muted)]">sum of the LC_ channels in{' '}
@@ -153,12 +178,12 @@ export function MeasuredView({ result }: { result: LayerXResult }) {
                       </select>
                     )}
                   </td>
-                  <td className="py-1 text-right">{fmt(fireIndex > 0 ? r.values[fireIndex - 1] : r.values[0], digits(r))}</td>
-                  <td className="py-1 text-right">{fmt(at(r, 1.0), digits(r))}</td>
-                  <td className="py-1 text-right">{fmt(r.values[r.values.length - 1], digits(r))}</td>
+                  {[fireIndex > 0 ? r.values[fireIndex - 1] : r.values[0], at(r, 1.0), r.values[r.values.length - 1]].map((v, k) => (
+                    <td key={k} className="py-1 text-right" title={daqTitle(r, v)}>{value(r, v)}</td>
+                  ))}
                   {data && fireAt !== null && (
                     <td className="py-1 text-right">
-                      {res ? <>{res.mean >= 0 ? '+' : '−'}{fmt(Math.abs(res.mean), digits(r))} <span className="text-[var(--color-text-muted)]">± {fmt(res.rms, digits(r))}</span></>
+                      {res ? <>{res.mean >= 0 ? '+' : '−'}{diff(r, Math.abs(res.mean))} <span className="text-[var(--color-text-muted)]">± {diff(r, res.rms)}</span></>
                         : <span className="text-[var(--color-text-muted)]">{m ? 'no overlap' : 'not in the file'}</span>}
                     </td>
                   )}

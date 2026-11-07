@@ -1,5 +1,5 @@
-import type { LayerXResult, RunView, SweepResult } from '../../api/layerx';
-import { fmt, PSI, VERDICT } from './format';
+import type { LayerXResult, LimitRow, RunView, SweepResult } from '../../api/layerx';
+import { fmt, modelsLeftOut, PSI, VERDICT } from './format';
 
 /**
  * A run as the test card a stand operator and a reviewer read: what to dial, what each channel
@@ -20,6 +20,7 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
   const lockup = d.target_lockup_psia as number | undefined;
   const roles = (d.roles ?? {}) as Record<string, string>;
   const mawp = (d.tank_mawp_psi ?? {}) as Record<string, number>;
+  const ratings = (d.vessel_ratings ?? {}) as Record<string, { basis?: string; rating_psig?: number; safety_factor?: number | null; source?: string }>;
   const loads = (d.loads_kg ?? {}) as Record<string, number>;
   const band = (b: number[] | null | undefined) => b?.[0] ?? VERDICT.stiffnessFloor;
   const stiff = (d.stiffness_band ?? {}) as Record<string, number[] | null>;
@@ -67,7 +68,13 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
     // bare "MAWP 750 psi" reads as psig and arrives here as 764.7 psia. That IS the redline -- the
     // twin trips the stand there (Session._check_limits). It used to be printed with a psig label
     // and no conversion, 14.7 psi above the vessel's limit.
-    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating, 1)} psia</td><td>MAWP ${fmt(rating - gauge, 0)} psi on the drawing (a drawn psi is gauge: ${fmt(rating, 1)} psia), where the twin trips the stand${peak ? `; expected peak ${fmt(peak, 0)} psia` : ''}</td></tr>`);
+    // Since burst ratings are read (prepare.vessel_trip) the trip may be burst over the safety factor, not
+    // an MAWP: `vessel_ratings` says which, with the drawn number and its provenance.
+    const basis = ratings[roles[side]];
+    const why = basis?.basis === 'burst'
+      ? `burst ${fmt(basis.rating_psig ?? NaN, 0)} psi on the drawing over a safety factor of ${fmt(basis.safety_factor ?? NaN, 1)} (${esc(basis.source ?? '')})`
+      : `MAWP ${fmt(rating - gauge, 0)} psi on the drawing (a drawn psi is gauge: ${fmt(rating, 1)} psia)`;
+    if (rating) redlines.push(`<tr><td>${label}</td><td class="n">${fmt(rating, 1)} psia</td><td>${why}, where the twin trips the stand${peak ? `; expected peak ${fmt(peak, 0)} psia` : ''}</td></tr>`);
   }
   if (lockup) redlines.push(`<tr><td>Bottle</td><td class="n">≥ ${fmt(lockup + VERDICT.copvHeadroomPsi, 0)} psia</td><td>${VERDICT.copvHeadroomPsi} psi above lockup, or the regulator stops holding tank pressure; expected at burnout ${fmt(sum.copv_end_psia ?? NaN, 0)} psia</td></tr>`);
   for (const [side, label, key] of [['oxidiser', 'LOX injector inlet', 'ox'], ['fuel', 'Fuel injector inlet', 'fuel']] as const) {
@@ -75,10 +82,19 @@ export function testCardHtml(result: LayerXResult, run: RunView, channels: Recor
     const min = (key === 'ox' ? sum.ox : sum.fuel).dp_injector_min_psi;
     redlines.push(`<tr><td>${label}</td><td class="n">≥ ${fmt(pcMean * (1 + floor), 0)} psia</td><td>ΔP/Pc floor ${fmt(floor * 100, 0)} % at ${fmt(pcMean, 0)} psia chamber (chug); expected lowest ΔP ${fmt(min, 0)} psi</td></tr>`);
   }
-  if (dv?.chug_margin_min != null) redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(dv.chug_margin_min, 2)} at ${fmt(dv.chug_margin_min_t ?? NaN, 2)} s</td></tr>`);
+  // The chug margin the run is graded on (DATA-CONTRACT 1; the drawing's feed since 2026-10-03), not the replay's
+  // figure on EngineDesign's own feed_system: on LE4 (3) the card printed 1.21 where the graded margin is 1.004.
+  const gradedChug = ((result as unknown as { limits?: LimitRow[] }).limits ?? [])
+    .find((l) => l.key === 'chug_margin' && l.grade !== 'info' && l.value != null);
+  if (gradedChug) {
+    const basis = /drawing feed basis/.test(gradedChug.basis ?? '') ? 'on the drawing’s feed lines' : 'on EngineDesign’s feed_system';
+    redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(gradedChug.value as number, 2)}${gradedChug.t_worst != null ? ` at ${fmt(gradedChug.t_worst, 2)} s` : ''}, ${basis}</td></tr>`);
+  } else if (dv?.chug_margin_min != null) {
+    redlines.push(`<tr><td>Chug margin</td><td class="n">&gt; 1</td><td>predicted lowest ${fmt(dv.chug_margin_min, 2)} at ${fmt(dv.chug_margin_min_t ?? NaN, 2)} s, on EngineDesign’s feed_system (this run has no graded margin on the drawing’s lines)</td></tr>`);
+  }
 
   const settings = p.settings;
-  const off = [!settings.ullage_collapse && 'ullage collapse', !settings.ullage_vapour && 'propellant vapour', !settings.line_walls && 'line-wall heat'].filter(Boolean);
+  const off = modelsLeftOut(settings, p.setup);
   const when = new Date(run.started * 1000).toLocaleString('en-US');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Test card · ${esc(p.drawing.name)} · ${esc(run.meta?.name || when)}</title>
 <style>

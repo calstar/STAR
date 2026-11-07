@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterator
+from pathlib import Path
 
 _STORE = tempfile.mkdtemp(prefix="feedtwin-tests-")
 os.environ["FEEDTWIN_LIBRARY"] = _STORE
@@ -112,3 +114,64 @@ def _no_console_watches(monkeypatch: pytest.MonkeyPatch) -> None:
     from backend import main
 
     monkeypatch.setattr(main, "_WATCHED_S", 0.0)
+
+
+# ------------------------------------------------------- one test's server
+#: What the library keeps for a drawing's *lineage* rather than for an
+#: artifact: the operator's overrides and the saved hookups. An upload of a
+#: shipped file is the shipped artifact (content-addressed), so every test
+#: that uploads ``ethalox_stand.json`` shares one lineage, and whatever one
+#: of them leaves there wires the next one's stand.
+_LINEAGE_STATE = ("overrides.json", "hookups")
+
+
+def _lineage_state(root: Path) -> dict[str, bytes]:
+    held: dict[str, bytes] = {}
+    for name in _LINEAGE_STATE:
+        path = root / name
+        found = [path] if path.is_file() else sorted(path.glob("*.json"))
+        for file in found:
+            held[str(file.relative_to(root))] = file.read_bytes()
+    return held
+
+
+@pytest.fixture(autouse=True)
+def _a_test_leaves_the_server_as_it_found_it() -> Iterator[None]:
+    """Every test starts on the server the one before it started on.
+
+    A worker runs whatever tests xdist hands it, in no fixed order, on one
+    ``backend.main``: the stands a test opened stayed open, a study it started
+    went on burning in its thread, and a test that cleaned up only in the
+    *next* test of its own file (test_overrides' ``setup_function``) left its
+    overrides for whichever test came next. Twelve stands later the server
+    is full and the next open closes the oldest -- a burn still going in an
+    earlier test's stand, recorded into this test's runs as cut short
+    (test_run_endings failed on it in a fixed order). So: studies and
+    attributions started here are stopped, stands opened here are dropped
+    unrecorded, and the lineage records are put back as they were.
+    """
+    from backend import main
+
+    root = Path(main.library.root)
+    opened = set(main._SESSIONS)
+    kept = _lineage_state(root)
+    yield
+    for runner in list(main._STUDIES.values()):
+        runner.cancel()
+        runner.wait(60.0)
+    for explainer in list(main._EXPLAIN.values()):
+        explainer.cancel()
+        thread = explainer._thread
+        if thread is not None:
+            thread.join(60.0)
+    for sid in set(main._SESSIONS) - opened:
+        main._SESSIONS.pop(sid, None)
+        main._OPENED.pop(sid, None)
+        main._TOUCHED.pop(sid, None)
+    now = _lineage_state(root)
+    for name in set(now) - set(kept):
+        (root / name).unlink(missing_ok=True)
+    for name, data in kept.items():
+        if now.get(name) != data:
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_bytes(data)

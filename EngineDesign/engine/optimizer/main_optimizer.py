@@ -181,18 +181,11 @@ def run_full_engine_optimization_with_flight_sim(
     try:
         env_cfg = getattr(config_obj, "environment", None)
         if env_cfg is not None and getattr(env_cfg, "elevation", None) is not None:
-            elev = float(env_cfg.elevation)
-            # Simple barometric approximation valid for low altitudes
-            # P = P0 * (1 - L*h/T0)^(g*M/(R*L))
-            P0 = 101325.0
-            T0 = 288.15
-            L = 0.0065
-            g = 9.80665
-            M = 0.0289644
-            R = 8.3144598
-            exponent = g * M / (R * L)
-            factor = max(0.0, 1.0 - L * elev / T0)
-            P_amb_launch = P0 * (factor ** exponent)
+            # The engine solver's own site ambient (the 1976 standard atmosphere), not a second
+            # barometric formula beside it.
+            from engine.core.runner import compute_ambient_pressure_from_elevation
+
+            P_amb_launch = float(compute_ambient_pressure_from_elevation(float(env_cfg.elevation)))
     except Exception:
         P_amb_launch = P_atm_default
 

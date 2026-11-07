@@ -282,6 +282,27 @@ export function leaderTarget(
   return pts ? pointAt(pts, at ?? 0.5)?.point ?? null : null;
 }
 
+/**
+ * Where a leader from `toward` lands on a component.
+ *
+ * A tank's centre is where its readout is printed, so a leader landing there
+ * put its dot on the pressure (LE4 (3)'s COPV-RTD on "3764.7 psia"). On a
+ * tank it lands on the barrel wall facing the probe instead -- the symbol's
+ * box less a tenth each side, which is the barrel (TankNode: walls at 6 and
+ * 54 of 60, heads from 10 to 90 of 100), turned or not. Anything else keeps
+ * its centre, where its symbol is.
+ */
+export function landingOn(host: Node, toward: XYPosition): XYPosition {
+  const c = centreOf(host);
+  if ((host.data as unknown as PIDNodeData | undefined)?.componentType !== 'TANK') return c;
+  const { w, h } = nodeSize(host);
+  const dx = toward.x - c.x, dy = toward.y - c.y;
+  const hx = 0.4 * w, hy = 0.4 * h;
+  const t = Math.min(dx ? hx / Math.abs(dx) : Infinity, dy ? hy / Math.abs(dy) : Infinity);
+  if (!Number.isFinite(t) || t >= 1) return c;
+  return { x: c.x + dx * t, y: c.y + dy * t };
+}
+
 /** Instrument size, for placing one clear of its host. */
 const PROBE = 60;
 const GAP = 14;

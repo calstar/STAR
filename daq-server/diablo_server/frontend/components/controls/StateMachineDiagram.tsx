@@ -356,7 +356,10 @@ export default function StateMachineDiagram() {
       <div className="overflow-hidden min-h-0 flex-1 flex flex-col">
         <svg viewBox={`0 0 ${svgW} ${svgH}`}
           className="min-h-0 flex-1"
-          style={{ display: 'block', width: '100%', height: '100%' }}
+          // aspectRatio only applies when the parent leaves height open (the stacked
+          // narrow layout): the diagram then takes its natural height for its width
+          // instead of collapsing. In a sized panel, height:100% still wins.
+          style={{ display: 'block', width: '100%', height: '100%', aspectRatio: `${svgW} / ${svgH}` }}
           preserveAspectRatio="xMidYMin meet">
           <defs>
             <marker id="arr-green" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">

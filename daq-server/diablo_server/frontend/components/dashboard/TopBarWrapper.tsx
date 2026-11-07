@@ -6,7 +6,8 @@ import TabBar from './TabBar';
 import { isPopupWindow } from '@/lib/is-popup';
 
 // Routes that render their own compact header and no tab bar (full-bleed views).
-const SUPPRESS_TOPBAR_PATHS = ['/mobile', '/livestream'];
+// /video is all picture: its own hover controls carry the way back and the pop-out.
+const SUPPRESS_TOPBAR_PATHS = ['/mobile', '/livestream', '/video'];
 
 /**
  * The header, as feed-twin's: the brand and the views on one line, the stand's

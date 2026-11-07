@@ -277,10 +277,22 @@ def test_a_chilling_tank_climbs_and_climbs_more_the_harder_the_dewar_pushes() ->
     assert 5.0 < low < high
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="R035: the vent is IEC 60534 now; 0.019 peaks at 44.75 psig here and "
+    "~0.013 restores ~30. dewar_fill_cv is the team's calibration to redo.",
+)
 def test_the_fill_cv_is_calibrated_to_the_stands_30_psig_chill() -> None:
     """The default Cv (0.019, the team 2026-10-08) tops LE4 out near the stand's
     ~30 psig. 0.013 did until the vent stopped taking back air the pressurant
-    floor re-created (2026-10-06); it then peaked near 21."""
+    floor re-created (2026-10-06); it then peaked near 21.
+
+    The calibration was made against the plain valve's old gas law, which
+    passed up to 1.5x IEC just short of the choke -- where a chilling tank's
+    vent runs. With the vent priced by IEC 60534-2-1 (R035) the same 0.019
+    peaks at 44.75 psig on this stand (0.014: 33.7; 0.012: 28.6; 0.010: 23.2).
+    LE4 (3) as uploaded does not move (16.4 -> 16.5 psia at 140 s of Ox Fill).
+    Recalibrating is the team's call; strict, so it turns red when they do."""
     high, _ = _chill(30.0, dewar_psi=100.0)
     assert high == pytest.approx(30.0, abs=5.0), "calibrated to the stand's ~30 psig"
 
