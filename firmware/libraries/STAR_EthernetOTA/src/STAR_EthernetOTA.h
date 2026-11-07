@@ -17,6 +17,12 @@
  * for the duration of the transfer (or ``timeout_ms`` of silence). On success
  * the board reboots into the new image and never returns from poll().
  *
+ * Boards that cannot afford to block (anything that must keep heartbeating
+ * or sampling during a transfer) call ``service()`` instead, every pass of
+ * their network task. Each call does at most one chunk of work and returns
+ * Result::InProgress until the transfer ends, so a client that connects and
+ * then goes quiet costs nothing but the timeout check.
+ *
  * Wire protocol (unchanged from the original hotfire_ota.h, so existing
  * uploaders keep working):
  *
@@ -86,7 +92,9 @@ enum class Result : uint8_t {
     BeginFailed,    ///< Update.begin() refused (no OTA partition / too big)
     DataTimeout,    ///< transfer stalled partway through
     WriteFailed,    ///< flash write came up short
-    EndFailed       ///< image received but failed validation
+    EndFailed,      ///< image received but failed validation
+    InProgress,     ///< service() only: a transfer is under way, call again
+    Refused         ///< service() only: the caller said OTA is not allowed now
 };
 
 /** Human-readable form of a Result, for logs. */
@@ -152,6 +160,26 @@ public:
     Result poll();
 
     /**
+     * Non-blocking form of poll(): do at most one step of a transfer and
+     * return. Call it every pass of the task that owns Ethernet.
+     *
+     * Returns Idle when nothing is happening, InProgress while a transfer is
+     * under way, and the final Result once it ends (on Success the board
+     * reboots and the call does not return).
+     *
+     * `allowed` is the caller's state gate. When false, a waiting client is
+     * dropped with Result::Refused, and a transfer already under way is
+     * aborted the same way, so the board never writes flash outside the
+     * states its owner permits.
+     */
+    Result service(bool allowed = true);
+
+    /** True while a transfer is under way (between accept and finish). */
+    bool busy() const {
+        return phase_ != Phase::Listening;
+    }
+
+    /**
      * Run the transfer on a client you accepted yourself.
      *
      * poll() is what you want; this exists for boards that own their own
@@ -175,12 +203,26 @@ public:
     Config config;
 
 private:
-    Result transfer(EthernetClient& client);
-    Result fail(EthernetClient& client, Result r, const char* why);
-    bool readSize(EthernetClient& client, uint32_t& size_out);
+    enum class Phase : uint8_t { Listening, Header, Receiving };
+
+    Result stepHeader();
+    Result stepReceive();
+    Result finish(Result r, const char* why);
 
     PortableServer server_;
     Result last_result_ = Result::Idle;
+
+    // Transfer state, carried between service() calls.
+    Phase phase_ = Phase::Listening;
+    EthernetClient client_;
+    uint8_t header_[4] = {0, 0, 0, 0};
+    uint8_t header_len_ = 0;
+    uint32_t image_bytes_ = 0;
+    uint32_t received_ = 0;
+    unsigned long last_activity_ms_ = 0;
+    int last_percent_bucket_ = -1;
+    // Member, not a local: 4 KB is too much to put on a task's stack.
+    uint8_t buf_[STAR_OTA_CHUNK_SIZE];
 
     StartCallback on_start_ = nullptr;
     void* on_start_data_ = nullptr;

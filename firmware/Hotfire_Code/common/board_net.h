@@ -139,6 +139,22 @@ inline bool serverWentSilent(const State& s) {
 }
 
 /**
+ * A UDP send to an address that does not answer blocks in endPacket() until
+ * the W5500 gives up: 200 ms x (8 retries + 1) = 1.8 s with the defaults.
+ * A few of those in one pass of a network task would trip the 5 s task
+ * watchdog. On the stand's LAN a live board answers ARP in well under a
+ * millisecond, so give up after 50 ms x (2 + 1) = 150 ms.
+ */
+constexpr uint16_t SEND_RETRY_TIMEOUT_MS = 50;
+constexpr uint8_t SEND_RETRY_COUNT = 2;
+
+/** Apply the limits above. Ethernet.begin() resets them: call it after. */
+inline void limitSendRetries() {
+    Ethernet.setRetransmissionTimeout(SEND_RETRY_TIMEOUT_MS);
+    Ethernet.setRetransmissionCount(SEND_RETRY_COUNT);
+}
+
+/**
  * Bring the interface up: ask the ground station for an address, and fall
  * back to the static one only if nothing answers.
  *
@@ -150,6 +166,7 @@ inline AddressSource begin(State& s, IPAddress dns, IPAddress gateway) {
     if (Ethernet.begin(s.mac, SENSOR_ETH_DHCP_TIMEOUT_MS,
                        SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS) == 1) {
         s.source = AddressSource::Dhcp;
+        limitSendRetries();
         Serial.print("[NET] server assigned us ");
         Serial.println(Ethernet.localIP());
         Serial.flush();
@@ -174,6 +191,7 @@ inline AddressSource begin(State& s, IPAddress dns, IPAddress gateway) {
         "the ground station's DHCP server and reboot to get the assigned one.");
     Serial.flush();
     Ethernet.begin(s.mac, s.staticIP, dns, gateway, s.staticSubnet);
+    limitSendRetries();
 #endif
     return s.source;
 }

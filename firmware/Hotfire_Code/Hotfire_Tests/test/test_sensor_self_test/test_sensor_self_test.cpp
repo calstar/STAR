@@ -9,9 +9,18 @@ bool g_mock_adc_checksum = true;
 ADS126X mock_adc;
 uint8_t dummy_pin = 0;
 
+static int g_check_ins = 0;
+static void count_check_in() {
+    g_check_ins++;
+}
+
 void setUp() {
     g_mock_adc_value = 0;
     g_mock_adc_checksum = true;
+    stub_set_digital_read(LOW);
+    SensorSelfTest::g_drdy_timeout_us = 0xFFFFFFFFu;
+    SensorSelfTest::g_check_in = nullptr;
+    g_check_ins = 0;
 }
 
 void tearDown() {
@@ -102,6 +111,39 @@ void test_sensor_bias_checksum_fails() {
     TEST_ASSERT_FALSE(result.checksum_valid);
 }
 
+// ===========================================================================
+// Dead ADC: data-ready never asserts
+// ===========================================================================
+
+void test_adc_tdac_times_out_when_adc_silent() {
+    stub_set_digital_read(HIGH);
+    SensorSelfTest::g_drdy_timeout_us = 1000;
+    g_mock_adc_value = SensorSelfTest::ADC_TDAC_EXPECTED_CODE;
+
+    auto result = SensorSelfTest::run_adc_self_test(mock_adc, dummy_pin, 0, 0);
+    TEST_ASSERT_FALSE(result.passed);
+    TEST_ASSERT_TRUE(result.timed_out);
+}
+
+void test_sensor_bias_times_out_as_ambiguous() {
+    stub_set_digital_read(HIGH);
+    SensorSelfTest::g_drdy_timeout_us = 1000;
+    g_mock_adc_value = 500000000;  // would read CONNECTED if the ADC answered
+
+    auto result =
+        SensorSelfTest::read_sensor_bias(mock_adc, dummy_pin, 0, 0, 5);
+    TEST_ASSERT_EQUAL((int)SensorSelfTest::BiasResult::AMBIGUOUS,
+                      (int)result.result);
+    TEST_ASSERT_FALSE(result.checksum_valid);
+}
+
+void test_self_test_steps_check_in() {
+    SensorSelfTest::g_check_in = count_check_in;
+    SensorSelfTest::run_adc_self_test(mock_adc, dummy_pin, 0, 0);
+    SensorSelfTest::read_sensor_bias(mock_adc, dummy_pin, 0, 0, 1);
+    TEST_ASSERT_EQUAL(2, g_check_ins);
+}
+
 int main(int argc, char** argv) {
     UNITY_BEGIN();
 
@@ -113,6 +155,10 @@ int main(int argc, char** argv) {
     RUN_TEST(test_sensor_bias_ambiguous);
     RUN_TEST(test_sensor_bias_disconnected);
     RUN_TEST(test_sensor_bias_checksum_fails);
+
+    RUN_TEST(test_adc_tdac_times_out_when_adc_silent);
+    RUN_TEST(test_sensor_bias_times_out_as_ambiguous);
+    RUN_TEST(test_self_test_steps_check_in);
 
     return UNITY_END();
 }

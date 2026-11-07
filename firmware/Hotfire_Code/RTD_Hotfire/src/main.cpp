@@ -50,12 +50,9 @@ ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 static ADS126X ads126x;    // ADC1 — connectors 1 & 2
 static ADS126X ads126x_2;  // ADC2 — connectors 3 & 4
 SPIClass ADC_SPI(HSPI);
-std::vector<daq::SensorDataChunkCollection> dataChunks;
 
 static SensorHotfire::CoreState coreState;
 static SensorHotfire::Config coreConfig;
-
-static unsigned long g_last_sensor_packet_log_ms = 0;
 
 bool g_verbose = true;
 
@@ -85,85 +82,20 @@ static void set_connector_rtd(uint8_t connector_id) {
     }
 }
 
-static void collect_chunk_impl() {
-    const uint8_t active_count = coreState.stored_config.num_sensors;
-    if (active_count == 0)
-        return;
-    const uint8_t* active_ids = coreState.stored_config.sensor_ids;
-
-    daq::SensorDataChunkCollection chunk(millis(), active_count);
-    for (uint8_t i = 0; i < active_count; i++) {
-        const uint8_t conn = active_ids[i];
+// ADC task: one reading of every configured connector.
+static bool read_chunk_cb(void*, const SensorHotfire::StoredSensorConfig& cfg,
+                          SensorHotfire::Chunk& out) {
+    for (uint8_t i = 0; i < cfg.num_sensors; i++) {
+        const uint8_t conn = cfg.sensor_ids[i];
         set_connector_rtd(conn);
         const int drdy_pin = drdy_for_connector(conn);
         ADS126X& adc = adc_for_connector(conn);
         delayMicroseconds(10);
-        while (digitalRead(drdy_pin) != LOW)
-            delayMicroseconds(10);
-        const auto reading = adc.readADC1();
-        const uint32_t value =
-            reading.checksumValid ? static_cast<uint32_t>(reading.value) : 0u;
-        chunk.add_datapoint(conn, value);
+        if (!SensorHotfire::waitDrdy(drdy_pin) ||
+            !SensorHotfire::readChecked(adc, drdy_pin, out.values[i]))
+            return false;
     }
-    if (chunk.size() == active_count &&
-        dataChunks.size() < SENSOR_MAX_CHUNKS_BEFORE_SEND)
-        dataChunks.push_back(chunk);
-}
-
-static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
-                                bool also_to_abort_controller,
-                                IPAddress abort_controller_ip,
-                                int abort_controller_port) {
-    if (dataChunks.empty())
-        return;
-    if (dataChunks.size() < SENSOR_MAX_CHUNKS_BEFORE_SEND)
-        return;
-    uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
-    const uint8_t num_sensors = dataChunks[0].num_sensors;
-    size_t packetSize = daq::create_sensor_data_packet(
-        dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
-    if (packetSize == 0)
-        return;
-    coreState.udp.beginPacket(dest_ip, dest_port);
-    coreState.udp.write(packetBuffer, packetSize);
-    coreState.udp.endPacket();
-    HF_VERBOSE("Sent: sensor_data to ");
-    HF_VERBOSE(dest_ip);
-    HF_VERBOSE(":");
-    HF_VERBOSELN(dest_port);
-
-    unsigned long now = millis();
-    if (now - g_last_sensor_packet_log_ms >= 1000) {
-        g_last_sensor_packet_log_ms = now;
-        HF_VERBOSELN("SENSOR_DATA contents:");
-        for (size_t i = 0; i < dataChunks.size(); ++i) {
-            const auto& chunk = dataChunks[i];
-            HF_VERBOSE("  chunk ");
-            HF_VERBOSE(i);
-            HF_VERBOSE(" ts=");
-            HF_VERBOSE(chunk.timestamp);
-            HF_VERBOSE(" :");
-            for (const auto& dp : chunk.datapoints) {
-                HF_VERBOSE(" (id=");
-                HF_VERBOSE(static_cast<unsigned>(dp.sensor_id));
-                HF_VERBOSE(", data=");
-                HF_VERBOSE(dp.data);
-                HF_VERBOSE(")");
-            }
-            HF_VERBOSELN_();
-        }
-    }
-
-    if (also_to_abort_controller) {
-        coreState.udp.beginPacket(abort_controller_ip, abort_controller_port);
-        coreState.udp.write(packetBuffer, packetSize);
-        coreState.udp.endPacket();
-        HF_VERBOSE("Sent: sensor_data to ");
-        HF_VERBOSE(abort_controller_ip);
-        HF_VERBOSE(":");
-        HF_VERBOSELN(abort_controller_port);
-    }
-    dataChunks.clear();
+    return true;
 }
 
 static void init_adc_cb(void*) {
@@ -231,18 +163,6 @@ static void on_reference_voltage_cb(void*, uint8_t reference_voltage) {
     ads126x_2.setReference(ADS126X_REF_NEG_VSS, ref_pos);
 }
 
-static void collect_chunk_cb(void*) {
-    collect_chunk_impl();
-}
-
-static void send_chunks_to_cb(void*, IPAddress dest_ip, int dest_port,
-                              bool also_to_abort_controller,
-                              IPAddress abort_controller_ip,
-                              int abort_controller_port) {
-    send_chunks_to_impl(dest_ip, dest_port, also_to_abort_controller,
-                        abort_controller_ip, abort_controller_port);
-}
-
 static void run_self_test_cb(void*,
                              const SensorHotfire::StoredSensorConfig& cfg,
                              std::vector<daq::SelfTestResult>& results_out) {
@@ -293,9 +213,10 @@ void setup() {
 
     coreConfig.board_name = "RTD";
     coreConfig.pins = &Pins;
+    coreConfig.adc_rate_code = DATA_RATE;
+    coreConfig.adc_settle_conversions = settlePulses(FILTER, DATA_RATE);
     coreConfig.init_adc = init_adc_cb;
-    coreConfig.collect_chunk = collect_chunk_cb;
-    coreConfig.send_chunks_to = send_chunks_to_cb;
+    coreConfig.read_chunk = read_chunk_cb;
     coreConfig.run_self_test = run_self_test_cb;
     coreConfig.on_reference_voltage_config = on_reference_voltage_cb;
     coreConfig.user_data = nullptr;

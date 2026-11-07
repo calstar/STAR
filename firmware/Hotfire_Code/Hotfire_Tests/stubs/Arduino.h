@@ -47,15 +47,23 @@ inline void pinMode(int, int) {
 }
 inline void digitalWrite(int, int) {
 }
+// Level digitalRead() returns; tests set HIGH to simulate an ADC whose
+// data-ready line never asserts.
+static int _stub_digital_read_value = LOW;
+inline void stub_set_digital_read(int v) {
+    _stub_digital_read_value = v;
+}
 inline int digitalRead(int) {
-    return LOW;
+    return _stub_digital_read_value;
 }
 inline int analogRead(int) {
     return 0;
 }
 inline void delay(unsigned long) {
 }
-inline void delayMicroseconds(unsigned int) {
+// Advances micros() so busy-wait timeouts can expire on the host.
+inline void delayMicroseconds(unsigned int us) {
+    _stub_micros_value += us;
 }
 
 // Minimal IPAddress stub (real Arduino gets this from IPAddress.h via
