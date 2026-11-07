@@ -155,7 +155,8 @@ bool Sx1262Setup::send_duty_cycle() {
 
 bool Sx1262Setup::back_to_rx() {
     control_.set_rx_switch(true);
-    if (!set_packet_params(0xFF)) return false;
+    if (!set_packet_params(0xFF))
+        return false;
     if (rx_mode_ == RxMode::DutyCycle) {
         return send_duty_cycle();
     }
@@ -166,7 +167,8 @@ bool Sx1262Setup::back_to_rx() {
 bool Sx1262Setup::start_rx_duty_cycle(uint32_t rx_ms, uint32_t sleep_ms) {
     // 1 ms = 64 steps (1000 µs / 15.625 µs, DS p.71)
     const uint8_t standby[2] = {kOpSetStandby, 0x00};
-    if (!cmd(standby, sizeof standby)) return false;
+    if (!cmd(standby, sizeof standby))
+        return false;
     duty_rx_steps_ = rx_ms * 64u;
     duty_sleep_steps_ = sleep_ms * 64u;
     rx_mode_ = RxMode::DutyCycle;
@@ -175,13 +177,15 @@ bool Sx1262Setup::start_rx_duty_cycle(uint32_t rx_ms, uint32_t sleep_ms) {
 
 bool Sx1262Setup::start_rx_continuous() {
     const uint8_t standby[2] = {kOpSetStandby, 0x00};
-    if (!cmd(standby, sizeof standby)) return false;
+    if (!cmd(standby, sizeof standby))
+        return false;
     rx_mode_ = RxMode::Continuous;
     return back_to_rx();
 }
 
 bool Sx1262Setup::rearm_rx() {
-    if (rx_mode_ != RxMode::DutyCycle) return true;
+    if (rx_mode_ != RxMode::DutyCycle)
+        return true;
     return back_to_rx();
 }
 

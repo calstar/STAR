@@ -284,7 +284,8 @@ static void test_duty_cycle_sends_correct_opcode_and_periods(void) {
 
     TEST_ASSERT_TRUE(radio.start_rx_duty_cycle(33, 1000));
 
-    // SetRxDutyCycle (0x94): rxPeriod=33*64=2112=0x000840, sleepPeriod=1000*64=64000=0x00FA00
+    // SetRxDutyCycle (0x94): rxPeriod=33*64=2112=0x000840,
+    // sleepPeriod=1000*64=64000=0x00FA00
     int dc = chip.find(0x94);
     TEST_ASSERT_TRUE(dc >= 0);
     TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[dc][1]);

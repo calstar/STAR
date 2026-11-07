@@ -201,16 +201,20 @@ void radio_task_status(radio_status_t* out) {
 }
 
 void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms) {
-    if (!mutex) return;
+    if (!mutex)
+        return;
     take();
-    if (configured) setup.start_rx_duty_cycle(rx_ms, sleep_ms);
+    if (configured)
+        setup.start_rx_duty_cycle(rx_ms, sleep_ms);
     give();
 }
 
 void radio_task_start_continuous_rx(void) {
-    if (!mutex) return;
+    if (!mutex)
+        return;
     take();
-    if (configured) setup.start_rx_continuous();
+    if (configured)
+        setup.start_rx_continuous();
     give();
 }
 

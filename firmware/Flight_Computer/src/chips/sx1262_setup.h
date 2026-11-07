@@ -127,8 +127,8 @@ private:
     RadioControl& control_;
     LoraConfig cfg_;
     RxMode rx_mode_ = RxMode::Continuous;
-    uint32_t duty_rx_steps_ = 0;    // rxPeriod in 15.625 µs steps
-    uint32_t duty_sleep_steps_ = 0; // sleepPeriod in 15.625 µs steps
+    uint32_t duty_rx_steps_ = 0;     // rxPeriod in 15.625 µs steps
+    uint32_t duty_sleep_steps_ = 0;  // sleepPeriod in 15.625 µs steps
     uint16_t device_errors_ = 0;
     uint32_t tx_ok_ = 0;
     uint32_t tx_timeouts_ = 0;

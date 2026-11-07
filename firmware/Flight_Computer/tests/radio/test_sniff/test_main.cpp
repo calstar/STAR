@@ -10,11 +10,10 @@
 
 #include <string.h>
 
-#include "unity.h"
-
 #include "../../../src/chips/sx1262.cpp"
 #include "../../../src/chips/sx1262_setup.cpp"
 #include "fake_air.h"
+#include "unity.h"
 
 using namespace radio_link;
 
@@ -44,12 +43,15 @@ public:
 
     int find(uint8_t opcode, int from = 0) const {
         for (unsigned i = static_cast<unsigned>(from); i < n_cmds; ++i) {
-            if (cmds[i][0] == opcode) return static_cast<int>(i);
+            if (cmds[i][0] == opcode)
+                return static_cast<int>(i);
         }
         return -1;
     }
 
-    bool wait_busy() override { return !never_ready; }
+    bool wait_busy() override {
+        return !never_ready;
+    }
     void transfer(const uint8_t* tx, uint8_t* rx, uint16_t len) override {
         if (n_cmds < kMaxCmds) {
             memcpy(cmds[n_cmds], tx, len < 12 ? len : 12);
@@ -66,9 +68,12 @@ public:
                                          : 0;
                 break;
             case 0x0D:  // WriteRegister
-                if (addr == 0x08D8) tx_clamp = tx[3];
-                if (addr == 0x0889) tx_modulation = tx[3];
-                if (addr == 0x0740) memcpy(sync, tx + 3, 2);
+                if (addr == 0x08D8)
+                    tx_clamp = tx[3];
+                if (addr == 0x0889)
+                    tx_modulation = tx[3];
+                if (addr == 0x0740)
+                    memcpy(sync, tx + 3, 2);
                 break;
             case 0x17:  // GetDeviceErrors
                 rx[2] = static_cast<uint8_t>(device_errors >> 8);
@@ -77,7 +82,8 @@ public:
             case 0x12:  // GetIrqStatus — no TX in idle tests, always idle
                 rx[2] = rx[3] = 0;
                 break;
-            default: break;
+            default:
+                break;
         }
     }
 };
@@ -85,8 +91,11 @@ public:
 class IdleControl : public RadioControl {
 public:
     bool rx_switch = false;
-    void set_rx_switch(bool receive) override { rx_switch = receive; }
-    void delay_ms(uint32_t) override {}
+    void set_rx_switch(bool receive) override {
+        rx_switch = receive;
+    }
+    void delay_ms(uint32_t) override {
+    }
 };
 
 IdleChip chip;
@@ -99,12 +108,14 @@ void setUp(void) {
     control = IdleControl();
     fake_air_configure(33, 1000);
 }
-void tearDown(void) {}
+void tearDown(void) {
+}
 
 // 1. A long-preamble Arm (> sleep period) is always heard regardless of when
 //    in the duty cycle the ground starts transmitting.
 static void test_idle_arm_wake_long_preamble_always_heard(void) {
-    // SF9 / 125 kHz: symbol time ≈ 4.096 ms. 260 symbols ≈ 1065 ms > 1000 ms sleep.
+    // SF9 / 125 kHz: symbol time ≈ 4.096 ms. 260 symbols ≈ 1065 ms > 1000 ms
+    // sleep.
     const uint32_t preamble_ms = 1065;
     const uint32_t period = 33 + 1000;
     for (uint32_t offset = 0; offset < period; offset += 50) {
