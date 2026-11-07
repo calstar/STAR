@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 // @ts-expect-error -- plain ESM, no types: it runs on the gateway machine with bare Node
-import { countGaps, createAgent, openerFor, segmentStart, segmentsForWindow, stamp, timingFor } from '../../../../video/agent.mjs';
+import { clockFrom, countGaps, createAgent, openerFor, segmentStart, segmentsForWindow, stamp, timingFor } from '../../../../video/agent.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -79,6 +79,17 @@ describe('the timing file: when each stretch of a kept file was filmed', () => {
     const t = timingFor([0, 10, 20].map((s) => name(12, 0, s)), [10, 10, 3.2], 23.2);
     expect(t.firstFrameMs).toBe(at(12, 0, 0));
     expect(t.pieces[2]).toEqual({ fileS: 20, wallMs: at(12, 0, 20) });
+  });
+});
+
+describe('the DAQ\'s clock offset in a request', () => {
+  it('is kept when it is two numbers, the uncertainty not negative', () => {
+    expect(clockFrom({ clock: { offsetMs: -1234.5, uncertaintyMs: 3 } })).toEqual({ clockOffsetMs: -1234.5, clockUncertaintyMs: 3 });
+  });
+  it('is dropped otherwise, rather than written into a timing file', () => {
+    for (const input of [{}, { clock: null }, { clock: { offsetMs: '5', uncertaintyMs: 1 } }, { clock: { offsetMs: 5 } }, { clock: { offsetMs: 5, uncertaintyMs: -1 } }, { clock: { offsetMs: Infinity, uncertaintyMs: 1 } }, undefined]) {
+      expect(clockFrom(input)).toBeNull();
+    }
   });
 });
 

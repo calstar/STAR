@@ -4,7 +4,7 @@ import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
   recording, kind, stream, start, end: start + duration, duration, approx: true,
-  pieces: [{ fileS: 0, wall: start }],
+  pieces: [{ fileS: 0, wall: start }], clockOffset: null, clockUncertainty: null,
 });
 
 describe('clipAt', () => {
@@ -51,7 +51,7 @@ describe('a clip with an outage in it (timing file pieces)', () => {
   // 20 s filmed from t=1000, the camera dropped for 32 s, then 10 s more from t=1052.
   const c: VideoClip = {
     recording: 'r', kind: 'record', stream: 'cam1', start: 1000, end: 1062, duration: 30, approx: false,
-    pieces: [{ fileS: 0, wall: 1000 }, { fileS: 20, wall: 1052 }],
+    pieces: [{ fileS: 0, wall: 1000 }, { fileS: 20, wall: 1052 }], clockOffset: null, clockUncertainty: null,
   };
 
   it('maps a moment after the outage to where the file really has it', () => {

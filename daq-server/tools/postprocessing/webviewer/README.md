@@ -97,7 +97,12 @@ only what it shows.
 **Timing.** The agent writes `<stream>.json` beside each clip it keeps: pieces saying
 which second of the file was filmed when, by the gateway's clock. They carry the keyframe
 cut (the first frame is up to a keyframe interval before the press) and any outage (the
-file plays straight through it; the timeline does not, so the plot shows no video there).
+file plays straight through it; the timeline does not, so the plot shows no video there),
+and the gateway's clock offset from the DAQ's. When Record or Save is pressed, the DAQ
+backend times three round trips to the agent's clock and keeps the quickest
+(`clockOffset`, NTP-style, ±half that round trip). The viewer takes the offset off, so a
+clip filmed on the media Mac lands on the sensors' clock, not the Mac's. At the workspace
+both are star-rfs and the offset is ~0. The clip's tooltip says what was corrected.
 A clip without one (kept before timing files existed) is placed by its folder name: a
 Record starts at the name, a Save *ends* at it. That is whole seconds in the gateway's
 local time plus the keyframe cut, so such a clip is marked **approx. timing** and sits

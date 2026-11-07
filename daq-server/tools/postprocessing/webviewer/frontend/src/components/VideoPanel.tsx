@@ -10,6 +10,15 @@ interface Props {
   onPlayhead: (t: number) => void;
 }
 
+/** What the clip's placement rests on, for its tooltip. */
+function timingNote(c: VideoClip): string {
+  if (c.approx) return '';
+  if (c.clockOffset == null) return 'Placed by its timing file. The gateway\u2019s clock was not measured against the DAQ\u2019s, so the two are taken as equal.';
+  const ms = Math.round(c.clockOffset * 1000);
+  const pm = c.clockUncertainty != null ? ` (\u00b1${Math.max(1, Math.round(c.clockUncertainty * 1000))} ms)` : '';
+  return `Placed by its timing file. The gateway\u2019s clock was ${Math.abs(ms)} ms ${ms >= 0 ? 'ahead of' : 'behind'} the DAQ\u2019s${pm} when this was recorded; corrected.`;
+}
+
 const timeOfDay = (t: number) =>
   new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -65,7 +74,7 @@ export default function VideoPanel({ clips, playhead, onPlayhead }: Props) {
           <span className="video-stream">{stream}</span>
         )}
         {at && (
-          <span className="video-meta">
+          <span className="video-meta" title={timingNote(at.clip) || undefined}>
             {at.clip.kind === 'record' ? 'Record' : 'Save'} {timeOfDay(at.clip.start)}
             {at.clip.approx && (
               <span

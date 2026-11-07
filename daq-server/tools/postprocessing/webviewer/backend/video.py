@@ -10,7 +10,10 @@ Timing. Every clip the agent has kept since timing files existed has one beside 
 at `fileS` seconds was filmed at `wallMs` and runs on at real speed to the next piece. The
 pieces carry the keyframe cut (the first frame is not the press) and any outage (the file
 plays straight through a gap; the wall clock does not). Such a clip is exact to the
-gateway's clock.
+gateway's clock, and the file also carries `clockOffsetMs`, the gateway's clock minus the
+DAQ's as the DAQ backend measured it at the press (`clockUncertaintyMs` either way). The
+sensors are stamped on the DAQ's clock, so the offset is taken off every piece. A file
+without one (an older agent or backend) is taken to share the DAQ's clock.
 
 A clip with no timing file is placed by its folder name, which the agent writes in the
 gateway machine's local time to the second (`config.VIDEO_TZ`):
@@ -32,6 +35,7 @@ yet, and a file ffmpeg has not finished has no readable duration, so neither is 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import struct
@@ -61,6 +65,10 @@ class Clip:
     approx: bool  # timing from the folder name only
     # (file seconds, wall epoch seconds) per stretch; one piece for an approximate clip.
     pieces: tuple[tuple[float, float], ...] = ()
+    # Gateway clock minus DAQ clock (seconds), already taken off `start` and `pieces`;
+    # None when not measured. Reported so the page can say what was corrected.
+    clock_offset: float | None = None
+    clock_uncertainty: float | None = None
 
     @property
     def end(self) -> float:
@@ -80,6 +88,8 @@ class Clip:
             "approx": self.approx,
             "pieces": [{"fileS": f, "wall": w} for f, w in self.pieces]
             or [{"fileS": 0.0, "wall": self.start}],
+            "clockOffset": self.clock_offset,
+            "clockUncertainty": self.clock_uncertainty,
         }
 
 
@@ -149,22 +159,39 @@ def mp4_duration(path: Path) -> float | None:
 TIMING_VERSION = 1
 
 
-def read_timing(path: Path) -> tuple[float, tuple[tuple[float, float], ...]] | None:
-    """(duration, pieces in seconds) from a clip's timing file, or None if there is none
-    or it is not one this viewer understands — then the clip falls back to its name."""
+@dataclass(frozen=True)
+class Timing:
+    duration: float
+    pieces: tuple[tuple[float, float], ...]  # (file s, DAQ-clock epoch s)
+    clock_offset: float | None
+    clock_uncertainty: float | None
+
+
+def read_timing(path: Path) -> Timing | None:
+    """A clip's timing file, on the DAQ's clock, or None if there is none or it is not one
+    this viewer understands — then the clip falls back to its name."""
     try:
         t = json.loads(path.read_text(encoding="utf-8"))
         if t.get("version") != TIMING_VERSION:
             return None
         dur = float(t["durationS"])
-        pieces = tuple((float(p["fileS"]), float(p["wallMs"]) / 1000.0) for p in t["pieces"])
+        off = t.get("clockOffsetMs")
+        unc = t.get("clockUncertaintyMs")
+        off = float(off) / 1000.0 if off is not None else None
+        unc = float(unc) / 1000.0 if unc is not None else None
+        if off is not None and not math.isfinite(off):
+            return None
+        shift = off or 0.0
+        pieces = tuple(
+            (float(p["fileS"]), float(p["wallMs"]) / 1000.0 - shift) for p in t["pieces"]
+        )
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
     if not pieces or dur <= 0 or pieces[0][0] != 0:
         return None
     if any(b[0] <= a[0] for a, b in zip(pieces, pieces[1:])) or pieces[-1][0] >= dur:
         return None
-    return dur, pieces
+    return Timing(dur, pieces, off, unc)
 
 
 # ── Listing ──────────────────────────────────────────────────────────────────
@@ -257,8 +284,12 @@ def list_clips() -> list[Clip]:
                 continue
             timing = _timing_cached(Path(e.path[:-4] + ".json"))
             if timing is not None:
-                tdur, pieces = timing
-                clips.append(Clip(folder.name, kind, stream, pieces[0][1], tdur, False, pieces))
+                clips.append(
+                    Clip(
+                        folder.name, kind, stream, timing.pieces[0][1], timing.duration, False,
+                        timing.pieces, timing.clock_offset, timing.clock_uncertainty,
+                    )
+                )
                 continue
             start = named if kind == "record" else named - dur
             clips.append(Clip(folder.name, kind, stream, start, dur, approx=True))

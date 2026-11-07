@@ -117,6 +117,10 @@ export interface VideoClip {
    *  (epoch seconds) and runs at real speed to the next piece. A jump in `wall` between
    *  pieces is an outage the file plays straight through. Always at least one. */
   pieces: { fileS: number; wall: number }[];
+  /** The gateway's clock minus the DAQ's (seconds), measured at the press and already
+   *  taken off `start`/`pieces`; null when not measured (clocks taken as equal). */
+  clockOffset: number | null;
+  clockUncertainty: number | null;
 }
 
 export interface RunVideo {

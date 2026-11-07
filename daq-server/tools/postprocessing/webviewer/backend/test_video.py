@@ -133,6 +133,33 @@ def test_timing_file_places_the_clip_exactly_and_spans_its_gap(rec_dir):
     ]
 
 
+def test_gateway_clock_offset_is_taken_off_so_clips_sit_on_the_daq_clock(rec_dir):
+    folder = "2026-11-07_140322_record"
+    put(rec_dir, folder, "cam1", 30)
+    g0 = epoch(2026, 11, 7, 14, 3, 21)  # first frame, by the gateway's clock
+    put_timing(rec_dir, folder, "cam1", {
+        "version": 1, "durationS": 30,
+        # The gateway runs 2.5 s ahead of the DAQ: its 14:03:21 is the sensors' 14:03:18.5.
+        "clockOffsetMs": 2500, "clockUncertaintyMs": 3,
+        "pieces": [{"fileS": 0, "wallMs": g0 * 1000}, {"fileS": 10, "wallMs": (g0 + 10) * 1000}],
+    })
+    (clip,) = video.list_clips()
+    assert clip.start == pytest.approx(g0 - 2.5, abs=1e-3)
+    assert clip.pieces[1][1] == pytest.approx(g0 + 7.5, abs=1e-3)
+    assert clip.end == pytest.approx(g0 + 27.5, abs=1e-3)
+    j = clip.as_json()
+    assert (j["clockOffset"], j["clockUncertainty"]) == (2.5, 0.003)
+
+
+def test_no_measured_offset_means_the_clocks_are_taken_as_equal(rec_dir):
+    folder = "2026-11-07_140322_record"
+    put(rec_dir, folder, "cam1", 30)
+    g0 = epoch(2026, 11, 7, 14, 3, 21)
+    put_timing(rec_dir, folder, "cam1", {"version": 1, "durationS": 30, "pieces": [{"fileS": 0, "wallMs": g0 * 1000}]})
+    (clip,) = video.list_clips()
+    assert clip.start == pytest.approx(g0, abs=1e-3) and clip.clock_offset is None
+
+
 @pytest.mark.parametrize("bad", [
     "not json",
     {"version": 2, "durationS": 30, "pieces": [{"fileS": 0, "wallMs": 1}]},

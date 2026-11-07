@@ -293,6 +293,8 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     const cam = saved.streams.find((x) => x.stream === 'cam1')!;
     expect(cam.error, JSON.stringify(saved)).toBeUndefined();
     expect(cam.file).toMatch(/recordings\/\d{4}-\d{2}-\d{2}_\d{6}_save\/cam1\.mp4$/);
+    // Read now: the next Save lands in the same second, so the same folder.
+    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
     // A stream with nothing buffered says so, without failing the others.
     const none = await (await fetch(`http://127.0.0.1:${ports.agent}/save`, { method: 'POST', body: JSON.stringify({ streams: ['never-sent', 'cam1'] }) })).json();
     expect(none.streams.find((x: any) => x.stream === 'never-sent').error).toMatch(/nothing buffered/);
@@ -308,13 +310,15 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
 
     // The timing file beside it: the clip ends where Save was pressed (to within a
     // segment still being written) and starts the file's length before that.
-    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
     expect(timing).toMatchObject({ version: 1, stream: 'cam1', kind: 'save', latencyMs: 0 });
     expect(timing.durationS).toBeCloseTo(seconds, 1);
     const last = timing.pieces[timing.pieces.length - 1];
     const endMs = last.wallMs + (timing.durationS - last.fileS) * 1000;
     expect(Math.abs(endMs - pressed)).toBeLessThan(2000);
     expect(timing.firstFrameMs).toBe(timing.pieces[0].wallMs);
+    // The backend measured the gateway's clock against its own: the same machine here.
+    expect(Math.abs(timing.clockOffsetMs)).toBeLessThanOrEqual(timing.clockUncertaintyMs + 2);
+    expect(timing.clockUncertaintyMs).toBeLessThan(50);
   }, 60_000);
 
   it('Record: press to Stop, one video-only file per stream, trimmed to the press', async () => {
@@ -388,6 +392,10 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     expect(cam.file, JSON.stringify(st.lastRecording)).toMatch(/cam1\.mp4$/);
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', cam.file], { encoding: 'utf8' }));
     expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // The clock offset measured at the press survived the restart (it rides in the
+    // recording's meta file) and reached the timing file.
+    const timing = JSON.parse(readFileSync(cam.file.replace(/\.mp4$/, '.json'), 'utf8'));
+    expect(Number.isFinite(timing.clockOffsetMs) && Number.isFinite(timing.clockUncertaintyMs)).toBe(true);
     startCamera(); // the restart test below expects the camera back
   }, 90_000);
 
