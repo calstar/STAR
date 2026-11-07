@@ -86,7 +86,7 @@ describe('credentials', () => {
 
   it('are absent from what a browser is given', () => {
     const pub = publicStream({ ...pad, lowResUrl: 'rtsp://192.0.2.10/sub' } as any);
-    expect(pub).toEqual({ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true });
+    expect(pub).toEqual({ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true, fill: false });
   });
 });
 
@@ -204,7 +204,7 @@ describe('routes', () => {
     const res = await fetch(`${apiUrl}/api/video/streams`);
     const text = await res.text();
     expect(res.status).toBe(200);
-    expect(JSON.parse(text).streams).toEqual([{ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true }]);
+    expect(JSON.parse(text).streams).toEqual([{ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true, fill: false }]);
     expect(text).not.toContain(PASSWORD);
     expect(text).not.toContain('admin');
     expect(text).not.toContain('rtsp://');
@@ -586,7 +586,7 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
   it('becomes a gateway path that listens all the time, with no URL or credentials', () => {
     const paths = desiredPaths({ config: { version: 1, streams: [hides as any], layout: { preset: 'auto', slots: [] } }, secrets: { streams: { hides: { password: 'x' } } } });
     expect([...paths]).toEqual([['raw/hides', { source: 'udp+mpegts://0.0.0.0:5600', sourceOnDemand: false, record: true }]]);
-    expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true });
+    expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true, fill: false });
   });
 
   it('its check says whether TS is arriving, and where to send it', async () => {
@@ -595,7 +595,7 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
     const gw = new FakeGateway();
     const svc = new VideoService(undefined, gw);
     const idle = await svc.checkStream('hides')!;
-    expect(idle).toMatchObject({ ok: false });
+    expect(idle).toMatchObject({ ok: false, problem: 'no-data' });
     expect((idle as any).detail).toBe('nothing arriving on UDP 5600 -- point HiDesViewer at theombp.local:5600 (localhost:5600 on the gateway machine itself)');
     gw.ready.add('raw/hides');
     await new Promise((r) => setTimeout(r, 5100)); // past the check cache
@@ -720,6 +720,57 @@ describe('recording settings and the controls slot', () => {
       expect(seen.find((x) => x.url === '/record/start').body).toEqual({ streams: ['pad'], refuseBelowBytes: 30e9, stopBelowBytes: 8e9 });
     } finally {
       srv.close();
+    }
+  });
+});
+
+describe('zoom to fill', () => {
+  it('is off unless set, kept when set, and must be true or false', () => {
+    expect(validateVideoConfig({ version: 1, streams: [pad] }).config.streams[0].fill).toBeUndefined();
+    expect(validateVideoConfig({ version: 1, streams: [{ ...pad, fill: true }] }).config.streams[0]).toMatchObject({ fill: true });
+    expect(validateVideoConfig({ version: 1, streams: [{ id: 'h', label: 'H', kind: 'udp', port: 5600, fill: true }] }).config.streams[0]).toMatchObject({ fill: true });
+    const bad = validateVideoConfig({ version: 1, streams: [{ ...pad, fill: 'yes' }] });
+    expect(bad.config.streams).toEqual([]);
+    expect(bad.errors[0]).toMatch(/fill must be true or false/);
+  });
+
+  it('reaches the browser, and survives a save from the editor', async () => {
+    expect(publicStream({ ...pad, fill: true } as any).fill).toBe(true);
+    writeConfig([pad]);
+    const { editableConfig, saveVideoConfig } = await import('../video/config.js');
+    const saved = saveVideoConfig({ streams: [{ ...pad, fill: true }] }, editableConfig().revision);
+    expect(saved.streams[0]).toMatchObject({ id: 'pad', fill: true });
+    expect(JSON.parse(readFileSync(CONFIG, 'utf8')).streams[0].fill).toBe(true);
+  });
+});
+
+describe('recordings, through the agent', () => {
+  it('lists and opens through the agent, and an agent refusal comes back as its words', async () => {
+    const seen: any[] = [];
+    const srv = http.createServer((req, res) => {
+      let b = ''; req.on('data', (c) => (b += c));
+      req.on('end', () => {
+        seen.push({ url: req.url, body: b ? JSON.parse(b) : undefined });
+        const refuse = req.url === '/open' && JSON.parse(b).name === 'bad';
+        res.writeHead(refuse ? 409 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(refuse ? { error: 'not a recording' } : req.url === '/recordings' ? { dir: '/r', recordings: [] } : { opened: '/r' }));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, host: '127.0.0.1' }, new FakeGateway());
+    const api = http.createServer(async (req, res) => { await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc); });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+    try {
+      expect(await (await fetch(`${base}/api/video/recordings`)).json()).toEqual({ dir: '/r', recordings: [] });
+      const ok = await fetch(`${base}/api/video/recordings/open`, { method: 'POST', body: JSON.stringify({ name: '2026-11-06_120000_save' }) });
+      expect(ok.status).toBe(200);
+      expect(seen.at(-1)).toEqual({ url: '/open', body: { name: '2026-11-06_120000_save' } });
+      const bad = await fetch(`${base}/api/video/recordings/open`, { method: 'POST', body: JSON.stringify({ name: 'bad' }) });
+      expect(bad.status).toBe(502);
+      expect((await bad.json()).error).toBe('not a recording');
+    } finally {
+      srv.close(); api.close();
     }
   });
 });

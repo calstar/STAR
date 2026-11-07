@@ -66,7 +66,7 @@ function Preview({ draft }: { draft: DraftStream }) {
   if (error) return <div className="border border-line px-2 py-3 font-mono text-[11px] text-ink-2">{error}</div>;
   return (
     <div className="relative aspect-video border border-line">
-      {id ? <div className="absolute inset-0 grid"><VideoTile label={draft.label || 'Preview'} endpoint={previewEndpoint(id)} /></div>
+      {id ? <div className="absolute inset-0 grid"><VideoTile label={draft.label || 'Preview'} endpoint={previewEndpoint(id)} fill={draft.fill} /></div>
         : <div className="flex h-full items-center justify-center font-mono text-[11px] text-ink-3">STARTING PREVIEW</div>}
     </div>
   );
@@ -187,12 +187,16 @@ function StreamCard({
           </div>
         </>
       )}
-      <div className="flex items-center justify-between gap-2 pt-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-1">
         <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-2">
           <input type="checkbox" className="h-3.5 w-3.5" checked={draft.record} onChange={(e) => onChange({ record: e.target.checked })} />
           Include in recording
         </label>
-        <div className="flex gap-1">
+        <label className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-2" title="Fill the tile, cropping what overhangs, instead of letterboxing. For cameras whose shape wastes the slot.">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={draft.fill} onChange={(e) => onChange({ fill: e.target.checked })} />
+          Zoom to fill
+        </label>
+        <div className="ml-auto flex gap-1">
           <button
             type="button"
             className="ctl h-6 px-2 text-[10px] text-ink-2"

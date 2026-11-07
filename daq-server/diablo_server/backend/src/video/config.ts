@@ -26,6 +26,9 @@ export interface RtspStream {
   lowResUrl?: string;
   /** Include in the rolling buffer and recordings (tickets 08, 09). */
   record: boolean;
+  /** Zoom to fill the tile, cropping what overhangs, instead of letterboxing. For cameras
+   *  whose aspect ratio wastes the slot. Off by default: letterboxing never hides an edge. */
+  fill?: boolean;
 }
 
 /**
@@ -40,6 +43,8 @@ export interface UdpStream {
   /** In UDP_PORTS: clear of the DAQ's own UDP (5000, 5005, 5006, 5008), opened by bootstrap. */
   port: number;
   record: boolean;
+  /** As RtspStream.fill. */
+  fill?: boolean;
 }
 
 export type VideoStream = RtspStream | UdpStream;
@@ -112,6 +117,8 @@ export interface PublicStream {
   kind: VideoStream['kind'];
   hasLowRes: boolean;
   record: boolean;
+  /** Zoom to fill the tile instead of letterboxing. */
+  fill: boolean;
 }
 
 export const STREAM_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -205,6 +212,8 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
       errors.push(`${where}: duplicate id`);
     }
     if (typeof s.label !== 'string' || s.label.trim() === '') errors.push(`${where}: label is required`);
+    if (s.fill !== undefined && typeof s.fill !== 'boolean') errors.push(`${where}: fill must be true or false`);
+    const fill = s.fill === true ? { fill: true } : {};
     if (s.kind === 'udp') {
       const port = s.port;
       if (!Number.isInteger(port) || port < UDP_PORTS.first || port > UDP_PORTS.last) {
@@ -215,7 +224,7 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
       if (errors.length > before) return;
       seen.add(s.id);
       udpPorts.add(port);
-      streams.push({ id: s.id, label: s.label.trim(), kind: 'udp', port, record: s.record !== false });
+      streams.push({ id: s.id, label: s.label.trim(), kind: 'udp', port, record: s.record !== false, ...fill });
       return;
     }
     if (s.kind !== 'rtsp') errors.push(`${where}: kind must be "rtsp" or "udp"`);
@@ -230,6 +239,7 @@ export function validateVideoConfig(raw: unknown): { config: VideoConfig; errors
       url,
       ...(lowResUrl ? { lowResUrl } : {}),
       record: s.record !== false,
+      ...fill,
     });
   });
   const l = validateLayout(obj.layout, new Set(streams.map((s) => s.id)));
@@ -305,7 +315,7 @@ export function loadVideoConfig(): LoadedVideoConfig {
 }
 
 export function publicStream(s: VideoStream): PublicStream {
-  return { id: s.id, label: s.label, kind: s.kind, hasLowRes: s.kind === 'rtsp' && !!s.lowResUrl, record: s.record };
+  return { id: s.id, label: s.label, kind: s.kind, hasLowRes: s.kind === 'rtsp' && !!s.lowResUrl, record: s.record, fill: !!s.fill };
 }
 
 // ── Editing (the pane's Edit mode) ─────────────────────────────────────────────
