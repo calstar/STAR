@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clipAt, clipUrl, fileOffset, sameClip, streamsOf } from './video';
+import { clipAt, clipUrl, fileOffset, fileToWall, frameSeconds, pageForward, playable, sameClip, streamsOf } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
   recording, kind, stream, start, end: start + duration, duration, approx: true,
-  pieces: [{ fileS: 0, wall: start }], clockOffset: null, clockUncertainty: null,
+  pieces: [{ fileS: 0, wall: start }], clockOffset: null, clockUncertainty: null, frameS: 1 / 30,
 });
 
 describe('clipAt', () => {
@@ -51,7 +51,7 @@ describe('a clip with an outage in it (timing file pieces)', () => {
   // 20 s filmed from t=1000, the camera dropped for 32 s, then 10 s more from t=1052.
   const c: VideoClip = {
     recording: 'r', kind: 'record', stream: 'cam1', start: 1000, end: 1062, duration: 30, approx: false,
-    pieces: [{ fileS: 0, wall: 1000 }, { fileS: 20, wall: 1052 }], clockOffset: null, clockUncertainty: null,
+    pieces: [{ fileS: 0, wall: 1000 }, { fileS: 20, wall: 1052 }], clockOffset: null, clockUncertainty: null, frameS: null,
   };
 
   it('maps a moment after the outage to where the file really has it', () => {
@@ -69,6 +69,14 @@ describe('a clip with an outage in it (timing file pieces)', () => {
     expect(fileOffset(c, 1021)).toBeNull();
     expect(fileOffset(c, 1051.9)).toBeNull();
     expect(clipAt([c], 'cam1', 1030)).toBeNull();
+  });
+
+  it('a playing file maps back onto the timeline, jumping the outage it played through', () => {
+    expect(fileToWall(c, 0)).toBe(1000);
+    expect(fileToWall(c, 19.5)).toBe(1019.5);
+    expect(fileToWall(c, 20)).toBe(1052);
+    expect(fileToWall(c, 25)).toBe(1057);
+    for (const t of [1003, 1019, 1052, 1061]) expect(fileToWall(c, fileOffset(c, t)!)).toBe(t);
   });
 
   it('outside the clip there is nothing either', () => {
@@ -93,5 +101,42 @@ describe('helpers', () => {
     expect(sameClip(a, { ...a })).toBe(true);
     expect(sameClip(a, { ...a, stream: 'cam2' })).toBe(false);
     expect(sameClip(a, null)).toBe(false);
+  });
+});
+
+describe('playback', () => {
+  it('steps by the clip\'s own frame period, or 1/30 s when it has none', () => {
+    expect(frameSeconds(clip('a', 'record', 0, 10))).toBe(1 / 30);
+    expect(frameSeconds({ ...clip('a', 'record', 0, 10), frameS: 0.04 })).toBe(0.04);
+    expect(frameSeconds({ ...clip('a', 'record', 0, 10), frameS: null })).toBe(1 / 30);
+    expect(frameSeconds(null)).toBe(1 / 30);
+  });
+
+  it('the last frame is not somewhere to play from', () => {
+    const c = clip('a', 'record', 0, 10);
+    expect(playable(c, 9.9)).toBe(true);
+    expect(playable(c, 9.99)).toBe(false);
+    expect(playable(c, 10)).toBe(false);
+  });
+
+  describe('paging the plot while playing', () => {
+    const bounds: [number, number] = [0, 100];
+    it('nothing while the playhead is in view', () => {
+      expect(pageForward([10, 20], bounds, 15)).toBeNull();
+      expect(pageForward([10, 20], bounds, 20)).toBeNull();
+    });
+    it('one window forward, same width, once it runs off the right', () => {
+      expect(pageForward([10, 20], bounds, 20.05)).toEqual([20, 30]);
+    });
+    it('a playhead that jumped (an outage) lands just inside the new window', () => {
+      const [s, e] = pageForward([10, 20], bounds, 50)!;
+      expect(e - s).toBeCloseTo(10);
+      expect(s).toBeLessThan(50);
+      expect(s).toBeGreaterThan(49);
+    });
+    it('slides back to end at the run\'s end, and stops there', () => {
+      expect(pageForward([85, 95], bounds, 95.1)).toEqual([90, 100]);
+      expect(pageForward([90, 100], bounds, 100.5)).toBeNull();
+    });
   });
 });

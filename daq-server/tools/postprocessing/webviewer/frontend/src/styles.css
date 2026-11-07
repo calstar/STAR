@@ -275,6 +275,13 @@ body {
 .video-el[hidden] { display: none; }
 .video-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--color-text-muted); font-size: var(--text-xs); }
 
+/* Play / step controls in the video header. */
+.video-transport { display: flex; gap: 4px; }
+.video-play { min-width: 4.5em; }
+/* The playhead's grip: a wide invisible strip on the line, with a tab at the top. */
+.playhead-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; z-index: 5; }
+.playhead-handle::before { content: ''; position: absolute; top: 0; left: 1px; width: 10px; height: 10px; background: var(--color-playhead); border-radius: 0 0 3px 3px; }
+
 .chart-wrap { position: relative; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px 22px; flex: 1; min-height: 440px; }
 .chart-busy { position: absolute; top: 16px; right: 18px; color: var(--color-accent); font-size: var(--text-2xs); }
 

@@ -67,6 +67,27 @@ def test_duration_none_for_unfinished_or_foreign_files(tmp_path):
         assert video.mp4_duration(tmp_path / name) is None
 
 
+def trak(handler: bytes, scale: int, dur: int, samples: int) -> bytes:
+    mdhd = bytes([0, 0, 0, 0]) + struct.pack(">IIII", 0, 0, scale, dur) + bytes(4)
+    hdlr = bytes(4) + bytes(4) + handler + bytes(12) + b"\0"
+    stsz = bytes(4) + struct.pack(">II", 0, samples)
+    stbl = box(b"stbl", box(b"stsz", stsz))
+    return box(b"trak", box(b"mdia", box(b"mdhd", mdhd) + box(b"hdlr", hdlr) + box(b"minf", stbl)))
+
+
+def test_frame_period_from_the_video_track(tmp_path):
+    mvhd = bytes([0, 0, 0, 0]) + struct.pack(">IIII", 0, 0, 1000, 10000) + bytes(80)
+    # An audio track first, so the video one has to be found, not assumed.
+    moov = box(b"moov", box(b"mvhd", mvhd) + trak(b"soun", 8000, 80000, 500) + trak(b"vide", 90000, 900000, 250))
+    (tmp_path / "v.mp4").write_bytes(box(b"ftyp", b"isom" + bytes(4)) + moov)
+    assert video.mp4_frame_seconds(tmp_path / "v.mp4") == pytest.approx(1 / 25)
+    # No video track, or no header at all: nothing to step by.
+    (tmp_path / "a.mp4").write_bytes(box(b"moov", box(b"mvhd", mvhd) + trak(b"soun", 8000, 80000, 500)))
+    assert video.mp4_frame_seconds(tmp_path / "a.mp4") is None
+    (tmp_path / "x.mp4").write_bytes(mp4(10))
+    assert video.mp4_frame_seconds(tmp_path / "x.mp4") is None
+
+
 # ── Timing from the folder name ──────────────────────────────────────────────
 
 

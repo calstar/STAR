@@ -88,6 +88,13 @@ moment; a drag still zooms and hovering never seeks. In compose the folder is
 mounted instead and the panel never appears. Desert recordings are copied in afterwards
 (`daq-server/video/README.md`).
 
+**Playback.** Play/pause (space) runs at 1×, and while it plays the video drives the
+playhead from the frames it actually shows (`requestVideoFrameCallback`). Where the camera
+has no footage, the page clock carries the playhead on at real speed. ← / → (and ◀ ▶) step
+one frame, using the clip's own frame period from its mp4 header. Drag the playhead's tab
+to scrub. When it runs off the right edge of a zoomed plot, the view pages forward one
+window at the same zoom, and play stops at the end of the run.
+
 Matching is by time overlap with the run's extent on either clock (`backend/video.py`), so
 a Save made after a run, or a recording copied in later, still finds it. A clip's duration
 comes from its mp4 header, read once and cached; a recording still in progress has no

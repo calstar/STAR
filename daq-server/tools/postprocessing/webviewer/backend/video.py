@@ -69,6 +69,7 @@ class Clip:
     # None when not measured. Reported so the page can say what was corrected.
     clock_offset: float | None = None
     clock_uncertainty: float | None = None
+    frame: float | None = None  # seconds per frame, from the file's header
 
     @property
     def end(self) -> float:
@@ -90,6 +91,7 @@ class Clip:
             or [{"fileS": 0.0, "wall": self.start}],
             "clockOffset": self.clock_offset,
             "clockUncertainty": self.clock_uncertainty,
+            "frameS": self.frame,
         }
 
 
@@ -120,6 +122,74 @@ def _boxes(f, start: int, end: int):
         pos += size
 
 
+def _full_box_times(f, at: int) -> tuple[int, int] | None:
+    """(timescale, duration) from an mvhd/mdhd payload at `at` (both share the layout)."""
+    f.seek(at)
+    version = f.read(1)
+    if not version:
+        return None
+    f.read(3)  # flags
+    if version[0] == 1:
+        raw = f.read(28)
+        if len(raw) < 28:
+            return None
+        _ct, _mt, scale, dur = struct.unpack(">QQIQ", raw)
+    else:
+        raw = f.read(16)
+        if len(raw) < 16:
+            return None
+        _ct, _mt, scale, dur = struct.unpack(">IIII", raw)
+    return scale, dur
+
+
+def _child(f, a: int, b: int, kind: bytes):
+    for k, c, d in _boxes(f, a, b):
+        if k == kind:
+            return c, d
+    return None
+
+
+def mp4_frame_seconds(path: Path) -> float | None:
+    """Seconds per frame of the first video track: its duration over its sample count
+    (mdhd, stsz). The kept files are video only, constant rate, so this is the step one
+    arrow press moves. None if the header does not say."""
+    try:
+        with open(path, "rb") as f:
+            total = os.fstat(f.fileno()).st_size
+            moov = _child(f, 0, total, b"moov")
+            if not moov:
+                return None
+            for k, a, b in _boxes(f, *moov):
+                if k != b"trak":
+                    continue
+                mdia = _child(f, a, b, b"mdia")
+                if not mdia:
+                    continue
+                hdlr = _child(f, *mdia, b"hdlr")
+                if not hdlr:
+                    continue
+                f.seek(hdlr[0] + 8)  # version/flags, pre_defined
+                if f.read(4) != b"vide":
+                    continue
+                mdhd = _child(f, *mdia, b"mdhd")
+                minf = _child(f, *mdia, b"minf")
+                stbl = _child(f, *minf, b"stbl") if minf else None
+                stsz = _child(f, *stbl, b"stsz") if stbl else None
+                times = _full_box_times(f, mdhd[0]) if mdhd else None
+                if not (times and stsz):
+                    return None
+                f.seek(stsz[0] + 8)  # version/flags, sample_size
+                raw = f.read(4)
+                if len(raw) < 4:
+                    return None
+                (count,) = struct.unpack(">I", raw)
+                scale, dur = times
+                return (dur / scale) / count if scale and count and dur else None
+    except OSError:
+        return None
+    return None
+
+
 def mp4_duration(path: Path) -> float | None:
     """Duration in seconds from the movie header (moov/mvhd), or None if the file has
     no complete header — not an mp4, or still being written."""
@@ -129,26 +199,12 @@ def mp4_duration(path: Path) -> float | None:
             for kind, a, b in _boxes(f, 0, total):
                 if kind != b"moov":
                     continue
-                for k2, c, _d in _boxes(f, a, b):
-                    if k2 != b"mvhd":
-                        continue
-                    f.seek(c)
-                    version = f.read(1)
-                    if not version:
-                        return None
-                    f.read(3)  # flags
-                    if version[0] == 1:
-                        raw = f.read(28)
-                        if len(raw) < 28:
-                            return None
-                        _ct, _mt, scale, dur = struct.unpack(">QQIQ", raw)
-                    else:
-                        raw = f.read(16)
-                        if len(raw) < 16:
-                            return None
-                        _ct, _mt, scale, dur = struct.unpack(">IIII", raw)
-                    return dur / scale if scale else None
-                return None
+                mvhd = _child(f, a, b, b"mvhd")
+                times = _full_box_times(f, mvhd[0]) if mvhd else None
+                if not times:
+                    return None
+                scale, dur = times
+                return dur / scale if scale else None
     except OSError:
         return None
     return None
@@ -196,22 +252,25 @@ def read_timing(path: Path) -> Timing | None:
 
 # ── Listing ──────────────────────────────────────────────────────────────────
 
-_dur_cache: dict[str, tuple[int, int, float]] = {}
+_dur_cache: dict[str, tuple[int, int, float, float | None]] = {}
 _timing_cache: dict[str, tuple[int, int, object]] = {}
 _lock = threading.Lock()
 
 
-def _duration_cached(path: Path, st: os.stat_result) -> float | None:
+def _header_cached(path: Path, st: os.stat_result) -> tuple[float, float | None] | None:
+    """(duration, seconds per frame) from the file's header, read once per version."""
     key = str(path)
     with _lock:
         hit = _dur_cache.get(key)
     if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
-        return hit[2]
+        return hit[2], hit[3]
     d = mp4_duration(path)
-    if d is not None and d > 0:
-        with _lock:
-            _dur_cache[key] = (st.st_mtime_ns, st.st_size, d)
-    return d
+    if d is None or d <= 0:
+        return None
+    fr = mp4_frame_seconds(path)
+    with _lock:
+        _dur_cache[key] = (st.st_mtime_ns, st.st_size, d, fr)
+    return d, fr
 
 
 def _timing_cached(path: Path):
@@ -279,20 +338,21 @@ def list_clips() -> list[Clip]:
                 st = e.stat()
             except OSError:
                 continue
-            dur = _duration_cached(Path(e.path), st)
-            if dur is None:
+            header = _header_cached(Path(e.path), st)
+            if header is None:
                 continue
+            dur, frame = header
             timing = _timing_cached(Path(e.path[:-4] + ".json"))
             if timing is not None:
                 clips.append(
                     Clip(
                         folder.name, kind, stream, timing.pieces[0][1], timing.duration, False,
-                        timing.pieces, timing.clock_offset, timing.clock_uncertainty,
+                        timing.pieces, timing.clock_offset, timing.clock_uncertainty, frame,
                     )
                 )
                 continue
             start = named if kind == "record" else named - dur
-            clips.append(Clip(folder.name, kind, stream, start, dur, approx=True))
+            clips.append(Clip(folder.name, kind, stream, start, dur, approx=True, frame=frame))
     clips.sort(key=lambda c: (c.start, c.stream))
     return clips
 

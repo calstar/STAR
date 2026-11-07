@@ -22,7 +22,7 @@ interface Props {
   onReady?: (u: uPlot) => void;
   /** Epoch seconds of the video playhead, drawn as a line; null draws nothing. */
   playhead?: number | null;
-  /** A click (not a drag) on the plot: put the playhead there. */
+  /** A click (not a drag) on the plot, or a drag of the playhead's handle: put it there. */
   onPlayhead?: (t: number) => void;
 }
 
@@ -282,6 +282,12 @@ export default function Chart({
         draw: [
           (u) => {
             const t = playheadRef.current;
+            const css = t == null ? NaN : u.valToPos(t, 'x');
+            if (handle) {
+              const shown = playheadCb.current && Number.isFinite(css) && css >= 0 && css <= u.over.clientWidth;
+              handle.style.display = shown ? '' : 'none';
+              if (shown) handle.style.left = `${css}px`;
+            }
             if (t == null) return;
             const x = Math.round(u.valToPos(t, 'x', true));
             const { left, top, width, height } = u.bbox;
@@ -332,6 +338,8 @@ export default function Chart({
     // Declared before opts so the setCursor hook closes over it; filled in below, once
     // uPlot has built the .u-over it lives in.
     let selLabel: HTMLDivElement | null = null;
+    // The playhead's grip, positioned by the draw hook. Same story.
+    let handle: HTMLDivElement | null = null;
 
     const data = mergeForUplot(series) as uPlot.AlignedData;
     const u = new uPlot(opts, data, el);
@@ -343,6 +351,40 @@ export default function Chart({
     selLabel.className = 'u-select-span';
     selLabel.style.display = 'none';
     u.over.appendChild(selLabel);
+
+    // Dragging the playhead scrubs. The grip swallows its own mousedown, so uPlot never
+    // starts a zoom from it; positions are coalesced to one per animation frame, so a fast
+    // drag asks the video for at most one seek per frame drawn.
+    handle = document.createElement('div');
+    handle.className = 'playhead-handle';
+    handle.style.display = 'none';
+    handle.title = 'Drag to scrub the video';
+    u.over.appendChild(handle);
+    const onGrip = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      let pending: number | null = null;
+      let raf = 0;
+      const move = (ev: MouseEvent) => {
+        const rect = u.over.getBoundingClientRect();
+        const x = Math.min(Math.max(ev.clientX - rect.left, 0), rect.width);
+        pending = u.posToVal(x, 'x');
+        if (!raf) {
+          raf = requestAnimationFrame(() => {
+            raf = 0;
+            if (pending != null) playheadCb.current?.(pending);
+          });
+        }
+      };
+      const up = () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    };
+    handle.addEventListener('mousedown', onGrip);
 
     // Wheel zoom about the cursor: the value under the pointer stays put, so you zoom
     // into what you are looking at rather than the middle of the plot. Clamped to the
@@ -418,6 +460,7 @@ export default function Chart({
       u.over.removeEventListener('wheel', onWheel);
       u.over.removeEventListener('mousedown', onDown);
       u.over.removeEventListener('mouseup', onUp);
+      handle?.removeEventListener('mousedown', onGrip);
       if (notifyTimer.current) clearTimeout(notifyTimer.current);
       u.destroy();
       uRef.current = null;

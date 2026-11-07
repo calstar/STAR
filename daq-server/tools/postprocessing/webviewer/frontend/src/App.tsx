@@ -4,6 +4,7 @@ import { api } from './api';
 import starWordmark from './assets/star-wordmark.png';
 import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource, VideoClip } from './types';
 import { fmtBytes, fmtDuration } from './util';
+import { pageForward } from './video';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
 import TimeRange from './components/TimeRange';
@@ -68,6 +69,7 @@ export default function App() {
   // Video clips overlapping the run (empty: no panel), and the playhead they follow.
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [playhead, setPlayhead] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
   const seriesReq = useRef(0);
 
   useEffect(() => {
@@ -116,6 +118,7 @@ export default function App() {
     setSummary(null);
     setClips([]);
     setPlayhead(null);
+    setPlaying(false);
     // Cheap either way: the summary never exports, and the index is only fetched when one
     // already exists. A run is indexed on request (runIndex), not by being clicked.
     api
@@ -210,6 +213,18 @@ export default function App() {
     [win, bounds],
   );
   const zoomed = win.start != null || win.end != null;
+
+  // Playing: keep the playhead in sight by paging the plot one window forward when it runs
+  // off the right (same zoom, one refetch per page), and stop at the end of the run.
+  useEffect(() => {
+    if (!playing || playhead == null || !index) return;
+    if (playhead >= bounds[1]) {
+      setPlaying(false);
+      return;
+    }
+    const next = pageForward(view, bounds, playhead);
+    if (next) setWin({ start: next[0], end: next[1] });
+  }, [playing, playhead, view, bounds, index]);
   const resetView = useCallback(() => setWin({ start: null, end: null }), []);
 
   const toggle = (name: string) =>
@@ -421,7 +436,13 @@ export default function App() {
 
                   <div className="pane-right">
                     {clips.length > 0 && (
-                      <VideoPanel clips={clips} playhead={playhead} onPlayhead={setPlayhead} />
+                      <VideoPanel
+                        clips={clips}
+                        playhead={playhead}
+                        onPlayhead={setPlayhead}
+                        playing={playing}
+                        onPlaying={setPlaying}
+                      />
                     )}
                     <div className="toolbar">
                       {index.t_min != null && index.t_max != null && (

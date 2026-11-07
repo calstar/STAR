@@ -58,3 +58,39 @@ export function clipAt(
 }
 
 const rank = (c: VideoClip) => (c.kind === 'record' ? 0 : 1);
+
+/** When the frame at `fileS` seconds into `c` was filmed (epoch seconds, DAQ clock). The
+ *  inverse of fileOffset, for following a playing video with the playhead. */
+export function fileToWall(c: VideoClip, fileS: number): number {
+  let p = c.pieces[0];
+  for (const q of c.pieces) if (q.fileS <= fileS) p = q;
+  return p.wall + (fileS - p.fileS);
+}
+
+/** Seconds per frame of a clip, for the arrow keys. Every camera here is 30 fps or near
+ *  it, so a clip whose header did not say steps as if it were. */
+export const frameSeconds = (c: VideoClip | null | undefined) =>
+  c?.frameS && c.frameS > 0 ? c.frameS : 1 / 30;
+
+/** True while there is footage left to play from `offset` (the last frame is not
+ *  "playable": playing from it would end at once, or restart the file). */
+export const playable = (c: VideoClip, offset: number) => offset < c.duration - frameSeconds(c) / 2;
+
+/**
+ * During play, the window to page to when the playhead `t` has run past the right edge of
+ * `view`: the next window of the same width, slid back to end at the run's end if it would
+ * overrun. Null while the playhead is still in view (or the view is already at the end).
+ */
+export function pageForward(
+  view: [number, number],
+  bounds: [number, number],
+  t: number,
+): [number, number] | null {
+  const [lo, hi] = view;
+  if (t <= hi || hi >= bounds[1]) return null;
+  const span = hi - lo;
+  let start = Math.max(hi, t - span * 0.02); // a playhead that jumped far lands just inside
+  let end = start + span;
+  if (end > bounds[1]) [start, end] = [bounds[1] - span, bounds[1]];
+  return [start, end];
+}

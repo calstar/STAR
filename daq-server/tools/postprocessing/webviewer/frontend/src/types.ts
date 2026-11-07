@@ -121,6 +121,8 @@ export interface VideoClip {
    *  taken off `start`/`pieces`; null when not measured (clocks taken as equal). */
   clockOffset: number | null;
   clockUncertainty: number | null;
+  /** Seconds per frame, from the file's header; null if it did not say. */
+  frameS: number | null;
 }
 
 export interface RunVideo {
