@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 // @ts-expect-error -- plain ESM, no types: it runs on the gateway machine with bare Node
-import { countGaps, createAgent, openerFor, segmentStart, segmentsForWindow, stamp } from '../../../../video/agent.mjs';
+import { countGaps, createAgent, openerFor, segmentStart, segmentsForWindow, stamp, timingFor } from '../../../../video/agent.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -44,6 +44,41 @@ describe('which segments a Save keeps', () => {
 
   it('nothing buffered keeps nothing', () => {
     expect(segmentsForWindow([], at(12, 0, 45), 20_000)).toEqual([]);
+  });
+});
+
+describe('the timing file: when each stretch of a kept file was filmed', () => {
+  it('a steady run maps file time straight onto the segments\' own start times', () => {
+    const t = timingFor([0, 10, 20].map((s) => name(12, 0, s)), [10, 10, 10], 30);
+    expect(t.firstFrameMs).toBe(at(12, 0, 0));
+    expect(t.pieces).toEqual([
+      { fileS: 0, wallMs: at(12, 0, 0) },
+      { fileS: 10, wallMs: at(12, 0, 10) },
+      { fileS: 20, wallMs: at(12, 0, 20) },
+    ]);
+    expect(t).toMatchObject({ version: 1, durationS: 30, latencyMs: 0 });
+  });
+
+  it('the keyframe cut: the first frame is where the file starts, not the segment', () => {
+    // Record pressed 4.5 s into the first segment; the concat kept from a keyframe at 4 s.
+    const t = timingFor([0, 10].map((s) => name(12, 0, s)), [10, 10], 16);
+    expect(t.firstFrameMs).toBe(at(12, 0, 4));
+    expect(t.pieces).toEqual([
+      { fileS: 0, wallMs: at(12, 0, 4) },
+      { fileS: 6, wallMs: at(12, 0, 10) },
+    ]);
+  });
+
+  it('an outage: frames after it keep their real time instead of sliding early', () => {
+    // Camera dropped from 12:00:20 to 12:00:52; the file plays straight through the gap.
+    const t = timingFor([0, 10, 52].map((s) => name(12, 0, s)), [10, 10, 10], 30);
+    expect(t.pieces[2]).toEqual({ fileS: 20, wallMs: at(12, 0, 52) });
+  });
+
+  it('a short last segment (Stop mid-segment) changes nothing before it', () => {
+    const t = timingFor([0, 10, 20].map((s) => name(12, 0, s)), [10, 10, 3.2], 23.2);
+    expect(t.firstFrameMs).toBe(at(12, 0, 0));
+    expect(t.pieces[2]).toEqual({ fileS: 20, wallMs: at(12, 0, 20) });
   });
 });
 

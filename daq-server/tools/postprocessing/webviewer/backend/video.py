@@ -5,7 +5,14 @@ The video agent (daq-server/video/agent.mjs) keeps each Save and Record as a fol
 folder is mounted read-only here (`config.VIDEO_DIR`); this module lists the clips in it,
 says which overlap a run, and resolves a clip to its file. It never writes.
 
-Timing. A clip's start is taken from its folder name, which the agent writes in the
+Timing. Every clip the agent has kept since timing files existed has one beside it,
+`<stream>.json` (agent.mjs, timingFor): pieces of `{fileS, wallMs}`, each saying the file
+at `fileS` seconds was filmed at `wallMs` and runs on at real speed to the next piece. The
+pieces carry the keyframe cut (the first frame is not the press) and any outage (the file
+plays straight through a gap; the wall clock does not). Such a clip is exact to the
+gateway's clock.
+
+A clip with no timing file is placed by its folder name, which the agent writes in the
 gateway machine's local time to the second (`config.VIDEO_TZ`):
 
 - `_record`: the name is when Record was pressed, so that is the clip's start;
@@ -24,6 +31,7 @@ yet, and a file ffmpeg has not finished has no readable duration, so neither is 
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import struct
@@ -51,10 +59,15 @@ class Clip:
     start: float  # epoch seconds, first frame
     duration: float  # seconds
     approx: bool  # timing from the folder name only
+    # (file seconds, wall epoch seconds) per stretch; one piece for an approximate clip.
+    pieces: tuple[tuple[float, float], ...] = ()
 
     @property
     def end(self) -> float:
-        return self.start + self.duration
+        if not self.pieces:
+            return self.start + self.duration
+        file_s, wall = self.pieces[-1]
+        return wall + (self.duration - file_s)
 
     def as_json(self) -> dict:
         return {
@@ -65,6 +78,8 @@ class Clip:
             "end": self.end,
             "duration": self.duration,
             "approx": self.approx,
+            "pieces": [{"fileS": f, "wall": w} for f, w in self.pieces]
+            or [{"fileS": 0.0, "wall": self.start}],
         }
 
 
@@ -129,9 +144,33 @@ def mp4_duration(path: Path) -> float | None:
     return None
 
 
+# ── Timing file ──────────────────────────────────────────────────────────────
+
+TIMING_VERSION = 1
+
+
+def read_timing(path: Path) -> tuple[float, tuple[tuple[float, float], ...]] | None:
+    """(duration, pieces in seconds) from a clip's timing file, or None if there is none
+    or it is not one this viewer understands — then the clip falls back to its name."""
+    try:
+        t = json.loads(path.read_text(encoding="utf-8"))
+        if t.get("version") != TIMING_VERSION:
+            return None
+        dur = float(t["durationS"])
+        pieces = tuple((float(p["fileS"]), float(p["wallMs"]) / 1000.0) for p in t["pieces"])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if not pieces or dur <= 0 or pieces[0][0] != 0:
+        return None
+    if any(b[0] <= a[0] for a, b in zip(pieces, pieces[1:])) or pieces[-1][0] >= dur:
+        return None
+    return dur, pieces
+
+
 # ── Listing ──────────────────────────────────────────────────────────────────
 
 _dur_cache: dict[str, tuple[int, int, float]] = {}
+_timing_cache: dict[str, tuple[int, int, object]] = {}
 _lock = threading.Lock()
 
 
@@ -146,6 +185,22 @@ def _duration_cached(path: Path, st: os.stat_result) -> float | None:
         with _lock:
             _dur_cache[key] = (st.st_mtime_ns, st.st_size, d)
     return d
+
+
+def _timing_cached(path: Path):
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = str(path)
+    with _lock:
+        hit = _timing_cache.get(key)
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    t = read_timing(path)
+    with _lock:
+        _timing_cache[key] = (st.st_mtime_ns, st.st_size, t)
+    return t
 
 
 def folder_time(name: str, tz: str) -> float | None:
@@ -199,6 +254,11 @@ def list_clips() -> list[Clip]:
                 continue
             dur = _duration_cached(Path(e.path), st)
             if dur is None:
+                continue
+            timing = _timing_cached(Path(e.path[:-4] + ".json"))
+            if timing is not None:
+                tdur, pieces = timing
+                clips.append(Clip(folder.name, kind, stream, pieces[0][1], tdur, False, pieces))
                 continue
             start = named if kind == "record" else named - dur
             clips.append(Clip(folder.name, kind, stream, start, dur, approx=True))

@@ -94,10 +94,14 @@ comes from its mp4 header, read once and cached; a recording still in progress h
 finished mp4 and is not listed. Files are served with HTTP Range, so the browser fetches
 only what it shows.
 
-**Timing.** A clip without a timing file is placed by its folder name: a Record starts at
-the name, a Save *ends* at it (it keeps the buffer before the press). That is whole
-seconds in the gateway's local time, and the agent cuts at a keyframe, so such a clip is
-marked **approx. timing** and sits within a second or two of the data.
+**Timing.** The agent writes `<stream>.json` beside each clip it keeps: pieces saying
+which second of the file was filmed when, by the gateway's clock. They carry the keyframe
+cut (the first frame is up to a keyframe interval before the press) and any outage (the
+file plays straight through it; the timeline does not, so the plot shows no video there).
+A clip without one (kept before timing files existed) is placed by its folder name: a
+Record starts at the name, a Save *ends* at it. That is whole seconds in the gateway's
+local time plus the keyframe cut, so such a clip is marked **approx. timing** and sits
+within a second or two of the data.
 
 ## Which clock the x-axis is
 

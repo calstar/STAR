@@ -21,6 +21,21 @@ export const sameClip = (a: VideoClip | null, b: VideoClip | null) =>
   !!a && !!b && a.recording === b.recording && a.stream === b.stream;
 
 /**
+ * Where in `c`'s file the moment `t` is, in seconds, or null when the clip has no frame
+ * then: before it, after it, or inside an outage it played straight through.
+ */
+export function fileOffset(c: VideoClip, t: number): number | null {
+  const ps = c.pieces;
+  for (let i = ps.length - 1; i >= 0; i--) {
+    const p = ps[i];
+    if (t < p.wall) continue;
+    const len = (i + 1 < ps.length ? ps[i + 1].fileS : c.duration) - p.fileS;
+    return t - p.wall <= len ? p.fileS + (t - p.wall) : null;
+  }
+  return null;
+}
+
+/**
  * The clip `stream` shows at time `t`, and the offset into it in seconds; null when that
  * camera has no footage then. Where clips overlap (a Save made during a Record holds the
  * same seconds), a Record wins, then the one that started first, so playback switches
@@ -31,12 +46,15 @@ export function clipAt(
   stream: string,
   t: number,
 ): { clip: VideoClip; offset: number } | null {
-  let best: VideoClip | null = null;
+  let best: { clip: VideoClip; offset: number } | null = null;
   for (const c of clips) {
     if (c.stream !== stream || t < c.start || t > c.end) continue;
-    if (!best || rank(c) < rank(best) || (rank(c) === rank(best) && c.start < best.start)) best = c;
+    const offset = fileOffset(c, t);
+    if (offset == null) continue;
+    const b = best?.clip;
+    if (!b || rank(c) < rank(b) || (rank(c) === rank(b) && c.start < b.start)) best = { clip: c, offset };
   }
-  return best ? { clip: best, offset: t - best.start } : null;
+  return best;
 }
 
 const rank = (c: VideoClip) => (c.kind === 'record' ? 0 : 1);

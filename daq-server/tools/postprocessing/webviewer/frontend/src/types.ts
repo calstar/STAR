@@ -113,6 +113,10 @@ export interface VideoClip {
   duration: number;
   /** Timing read from the folder name only: within a second or two, not a frame. */
   approx: boolean;
+  /** Stretches of the file, oldest first: the file at `fileS` seconds was filmed at `wall`
+   *  (epoch seconds) and runs at real speed to the next piece. A jump in `wall` between
+   *  pieces is an outage the file plays straight through. Always at least one. */
+  pieces: { fileS: number; wall: number }[];
 }
 
 export interface RunVideo {

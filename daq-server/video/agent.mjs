@@ -30,7 +30,13 @@
  * because camera audio is not kept (VIDCOMM decision). The segment still being written is
  * copied, not linked, so the file is exactly what had arrived when Save was pressed.
  *
- * No dependencies beyond Node >= 18.15 and ffmpeg. Auth: this machine is trusted, as it is
+ * Timing: beside each kept `<stream>.mp4` the agent writes `<stream>.json`, which says when
+ * each stretch of the file was filmed (see timingFor). The concat joins segments end to end,
+ * so an outage would otherwise slide everything after it early, and the keyframe cut moves
+ * the first frame away from the press. The DAQ Run Viewer reads it to place the video on a
+ * run's timeline. It costs one ffprobe per kept segment, at Stop/Save only.
+ *
+ * No dependencies beyond Node >= 18.15 and ffmpeg (with its ffprobe). Auth: this machine is trusted, as it is
  * by MediaMTX; anyone else needs user "daq" and the gateway password
  * (VIDEO_GATEWAY_PASSWORD, from scripts/video-gateway.sh).
  *
@@ -86,6 +92,32 @@ export function countGaps(names) {
   return diffs.filter((d) => d > Math.max(2 * typical, typical + 5000)).length;
 }
 
+export const TIMING_VERSION = 1;
+
+/**
+ * Where each stretch of a kept file sits in wall time, from the segments it was concatenated
+ * from: `names` (oldest first), each segment's own media duration in seconds, and the kept
+ * file's duration. One piece per segment, `{ fileS, wallMs }`: the file at `fileS` seconds
+ * was filmed at `wallMs` (the gateway's clock, as MediaMTX named the segment), and runs on
+ * at real speed until the next piece. A gap between pieces' wall times is an outage.
+ *
+ * The concat cuts the first segment at a keyframe before the press, so the file is shorter
+ * than the segments by however much of the first one it skipped: that difference is where
+ * the first frame really is.
+ */
+export function timingFor(names, segSeconds, fileSeconds) {
+  const total = segSeconds.reduce((a, b) => a + b, 0);
+  const skip = Math.min(Math.max(0, total - fileSeconds), segSeconds[0] ?? 0);
+  const pieces = [];
+  let pos = 0;
+  names.forEach((name, i) => {
+    const cut = i === 0 ? skip : 0;
+    pieces.push({ fileS: +pos.toFixed(6), wallMs: segmentStart(name) + Math.round(cut * 1000) });
+    pos += segSeconds[i] - cut;
+  });
+  return { version: TIMING_VERSION, firstFrameMs: pieces[0]?.wallMs ?? null, durationS: fileSeconds, pieces, latencyMs: 0 };
+}
+
 /** A recording folder's name: stamp(), then "_save" / "_record" (or another label). */
 export const RECORDING_NAME_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})_([a-z0-9-]{1,32})$/i;
 
@@ -106,11 +138,31 @@ function run(cmd, args) {
   });
 }
 
+function runOut(cmd, args) {
+  return new Promise((ok, fail) => {
+    execFile(cmd, args, { maxBuffer: 1 << 20 }, (err, out, stderr) => (err ? fail(new Error(`${cmd}: ${String(stderr).trim().split('\n').pop() || err.message}`)) : ok(String(out))));
+  });
+}
+
+/** Map `fn` over `items`, at most `limit` at a time, keeping order. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
+}
+
 export function createAgent({
   videoDir = process.cwd(),
   bufferSeconds = Number(process.env.VIDEO_BUFFER_SECONDS) || DEFAULT_BUFFER_SECONDS,
   password = process.env.VIDEO_GATEWAY_PASSWORD || '',
   ffmpeg = process.env.FFMPEG || 'ffmpeg',
+  ffprobe = process.env.FFPROBE || 'ffprobe',
   now = () => Date.now(),
   /** Opens a path in the file manager; resolves, or rejects with why. Injected by tests. */
   openPath = (path) => new Promise((ok, fail) => {
@@ -170,6 +222,29 @@ export function createAgent({
     return (await fs.stat(out)).size;
   }
 
+  const probeSeconds = async (file) => {
+    const v = parseFloat(await runOut(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]));
+    if (!Number.isFinite(v)) throw new Error(`ffprobe: no duration for ${file}`);
+    return v;
+  };
+
+  /**
+   * Write `<out minus .mp4>.json`, the kept file's timing (timingFor), from the segments
+   * still in `work`. Never fails the keep: without it the viewer places the clip by its
+   * folder name, approximately, and says so.
+   */
+  async function writeTiming(work, names, out, extra) {
+    try {
+      const segSeconds = await mapLimit(names, 8, (n) => probeSeconds(join(work, n)));
+      const timing = { ...timingFor(names, segSeconds, await probeSeconds(out)), ...extra };
+      await fs.writeFile(out.replace(/\.mp4$/, '.json'), JSON.stringify(timing));
+      return true;
+    } catch (e) {
+      console.error(`video-agent: no timing file for ${out} (${e.message})`);
+      return false;
+    }
+  }
+
   /** Link a finished segment into `work` (instant; immune to MediaMTX deleting it). */
   const linkInto = (id, name, work) => fs.link(join(bufferDir, id, name), join(work, name))
     .catch((e) => (e.code === 'EEXIST' ? undefined : fs.copyFile(join(bufferDir, id, name), join(work, name))));
@@ -195,6 +270,7 @@ export function createAgent({
         }
         const out = join(folder, `${id}.mp4`);
         const size = await writeKept(work, names, out);
+        await writeTiming(work, names, out, { stream: id, kind: String(label) });
         // How much it really covers: the window, or less if the buffer is younger than that.
         const seconds = Math.round(Math.min(bufferSeconds * 1000, t - segmentStart(names[0])) / 1000);
         return { stream: id, file: out, bytes: size, seconds, gaps: countGaps(names) };
@@ -245,6 +321,7 @@ export function createAgent({
         const first = segmentStart(names[0]);
         const out = join(folder, `${id}.mp4`);
         const bytes = await writeKept(work, names, out, Math.max(0, startedAt - first));
+        await writeTiming(work, names, out, { stream: id, kind: 'record' });
         return { stream: id, file: out, bytes, seconds: Math.round((stoppedAt - startedAt) / 1000), gaps: countGaps(names) };
       } catch (e) {
         return { stream: id, error: e.message };

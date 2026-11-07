@@ -3,6 +3,7 @@
 Run: cd webviewer && .venv/bin/python -m pytest backend/test_video.py -q
 """
 
+import json
 import struct
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -38,6 +39,7 @@ def rec_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "VIDEO_DIR", tmp_path)
     monkeypatch.setattr(config, "VIDEO_TZ", TZ)
     video._dur_cache.clear()
+    video._timing_cache.clear()
     return tmp_path
 
 
@@ -104,6 +106,54 @@ def test_no_mount_means_no_clips(monkeypatch, tmp_path):
     assert not video.available() and video.list_clips() == []
     monkeypatch.setattr(config, "VIDEO_DIR", tmp_path / "missing")
     assert not video.available() and video.list_clips() == []
+
+
+# ── Timing files ─────────────────────────────────────────────────────────────
+
+
+def put_timing(rec_dir, folder, stream, timing) -> None:
+    (rec_dir / folder / f"{stream}.json").write_text(json.dumps(timing))
+
+
+def test_timing_file_places_the_clip_exactly_and_spans_its_gap(rec_dir):
+    folder = "2026-11-07_140322_record"
+    put(rec_dir, folder, "cam1", 30)
+    t0 = epoch(2026, 11, 7, 14, 3, 21) + 0.6  # keyframe before the press
+    put_timing(rec_dir, folder, "cam1", {
+        "version": 1, "durationS": 30, "latencyMs": 0,
+        # 20 s of footage, a 32 s outage, then 10 s more
+        "pieces": [{"fileS": 0, "wallMs": t0 * 1000}, {"fileS": 20, "wallMs": (t0 + 52) * 1000}],
+    })
+    (clip,) = video.list_clips()
+    assert not clip.approx
+    assert clip.start == pytest.approx(t0, abs=1e-3)
+    assert clip.end == pytest.approx(t0 + 62, abs=1e-3)  # not t0 + 30: the gap is real time
+    assert clip.as_json()["pieces"] == [
+        {"fileS": 0.0, "wall": pytest.approx(t0, abs=1e-3)}, {"fileS": 20.0, "wall": pytest.approx(t0 + 52, abs=1e-3)}
+    ]
+
+
+@pytest.mark.parametrize("bad", [
+    "not json",
+    {"version": 2, "durationS": 30, "pieces": [{"fileS": 0, "wallMs": 1}]},
+    {"version": 1, "durationS": 30, "pieces": []},
+    {"version": 1, "durationS": 30, "pieces": [{"fileS": 5, "wallMs": 1}]},
+    {"version": 1, "durationS": 30, "pieces": [{"fileS": 0, "wallMs": 1}, {"fileS": 0, "wallMs": 2}]},
+    {"version": 1, "durationS": 30, "pieces": [{"fileS": 0, "wallMs": 1}, {"fileS": 31, "wallMs": 2}]},
+    {"version": 1, "pieces": [{"fileS": 0, "wallMs": 1}]},
+])
+def test_a_timing_file_that_does_not_parse_falls_back_to_the_name(rec_dir, bad):
+    folder = "2026-11-07_140322_record"
+    put(rec_dir, folder, "cam1", 30)
+    (rec_dir / folder / "cam1.json").write_text(bad if isinstance(bad, str) else json.dumps(bad))
+    (clip,) = video.list_clips()
+    assert clip.approx and clip.start == epoch(2026, 11, 7, 14, 3, 22)
+
+
+def test_approximate_clip_serves_one_piece(rec_dir):
+    put(rec_dir, "2026-11-07_140322_record", "cam1", 30)
+    (clip,) = video.list_clips()
+    assert clip.as_json()["pieces"] == [{"fileS": 0.0, "wall": clip.start}]
 
 
 # ── Matching a run ───────────────────────────────────────────────────────────

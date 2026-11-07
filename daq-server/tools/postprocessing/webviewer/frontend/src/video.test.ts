@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clipAt, clipUrl, sameClip, streamsOf } from './video';
+import { clipAt, clipUrl, fileOffset, sameClip, streamsOf } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
   recording, kind, stream, start, end: start + duration, duration, approx: true,
+  pieces: [{ fileS: 0, wall: start }],
 });
 
 describe('clipAt', () => {
@@ -43,6 +44,36 @@ describe('clipAt', () => {
     const a = clip('cam1', 'save', 0, 300);
     const b = clip('cam1', 'save', 60, 300);
     expect(clipAt([b, a], 'cam1', 100)?.clip).toBe(a);
+  });
+});
+
+describe('a clip with an outage in it (timing file pieces)', () => {
+  // 20 s filmed from t=1000, the camera dropped for 32 s, then 10 s more from t=1052.
+  const c: VideoClip = {
+    recording: 'r', kind: 'record', stream: 'cam1', start: 1000, end: 1062, duration: 30, approx: false,
+    pieces: [{ fileS: 0, wall: 1000 }, { fileS: 20, wall: 1052 }],
+  };
+
+  it('maps a moment after the outage to where the file really has it', () => {
+    expect(fileOffset(c, 1055)).toBe(23);
+    expect(fileOffset(c, 1052)).toBe(20);
+    expect(fileOffset(c, 1062)).toBe(30);
+  });
+
+  it('before the outage, file time is wall time from the start', () => {
+    expect(fileOffset(c, 1012.5)).toBe(12.5);
+    expect(fileOffset(c, 1020)).toBe(20);
+  });
+
+  it('inside the outage there is no frame, rather than the wrong one', () => {
+    expect(fileOffset(c, 1021)).toBeNull();
+    expect(fileOffset(c, 1051.9)).toBeNull();
+    expect(clipAt([c], 'cam1', 1030)).toBeNull();
+  });
+
+  it('outside the clip there is nothing either', () => {
+    expect(fileOffset(c, 999)).toBeNull();
+    expect(fileOffset(c, 1062.1)).toBeNull();
   });
 });
 
