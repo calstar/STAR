@@ -28,6 +28,14 @@
 #ifndef SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS
 #define SENSOR_ETH_DHCP_RESPONSE_TIMEOUT_MS 2000  // per-request response wait
 #endif
+// On the recovery address (no DHCP answer at boot) the board asks again this
+// often, for this long each time. See common/board_net.h.
+#ifndef SENSOR_ETH_DHCP_RETRY_INTERVAL_MS
+#define SENSOR_ETH_DHCP_RETRY_INTERVAL_MS 15000
+#endif
+#ifndef SENSOR_ETH_DHCP_RETRY_TIMEOUT_MS
+#define SENSOR_ETH_DHCP_RETRY_TIMEOUT_MS 3000
+#endif
 
 // Server discovery. While no server has been heard the board broadcasts
 // BOARD_HEARTBEAT, and it learns the server's address from the server's own

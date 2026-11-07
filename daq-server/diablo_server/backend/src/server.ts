@@ -48,6 +48,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
+import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
@@ -872,6 +873,7 @@ function broadcastBoardStatus(): void {
 
   // Compute frequencyHz from heartbeatTimes for each board
   for (const b of boards) {
+    b.dhcp = getBoardDhcpStatus(b.ip);
     const times = b.heartbeatTimes;
     if (times && times.length >= 2) {
       const span = times[times.length - 1] - times[0];
@@ -884,6 +886,7 @@ function broadcastBoardStatus(): void {
   broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
 }
 
+startDhcpStatusPoller();
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
 // ── Keepalive ────────────────────────────────────────────────────────────────
