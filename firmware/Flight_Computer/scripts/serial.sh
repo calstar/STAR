@@ -23,11 +23,20 @@ SIZE=0x20000
   -c "rtt server start $PORT 0" >/tmp/star_serial_openocd.log 2>&1 &
 OCD=$!
 trap 'kill $OCD 2>/dev/null' EXIT
-sleep 2
-echo "-- RTT on localhost:$PORT (Ctrl-C to stop) --"
+echo "-- connecting to the board over the ST-Link (RTT, localhost:$PORT) --"
 python3 -u -c '
-import socket, sys
-s = socket.create_connection(("localhost", int(sys.argv[1])))
+import socket, sys, time
+# OpenOCD needs a few seconds to find the buffer in DTCM: keep trying.
+for _ in range(40):
+    try:
+        s = socket.create_connection(("localhost", int(sys.argv[1])))
+        break
+    except OSError:
+        time.sleep(0.5)
+else:
+    sys.exit("no RTT server: is the ST-Link plugged in and the board on? "
+             "See /tmp/star_serial_openocd.log")
+print("-- connected (Ctrl-C to stop) --", flush=True)
 while True:
     d = s.recv(4096)
     if not d:
