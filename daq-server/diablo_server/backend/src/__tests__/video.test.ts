@@ -86,7 +86,7 @@ describe('credentials', () => {
 
   it('are absent from what a browser is given', () => {
     const pub = publicStream({ ...pad, lowResUrl: 'rtsp://192.0.2.10/sub' } as any);
-    expect(pub).toEqual({ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true });
+    expect(pub).toEqual({ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true, fill: false });
   });
 });
 
@@ -204,7 +204,7 @@ describe('routes', () => {
     const res = await fetch(`${apiUrl}/api/video/streams`);
     const text = await res.text();
     expect(res.status).toBe(200);
-    expect(JSON.parse(text).streams).toEqual([{ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true }]);
+    expect(JSON.parse(text).streams).toEqual([{ id: 'pad', label: 'Pad overview', kind: 'rtsp', hasLowRes: true, record: true, fill: false }]);
     expect(text).not.toContain(PASSWORD);
     expect(text).not.toContain('admin');
     expect(text).not.toContain('rtsp://');
@@ -586,7 +586,7 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
   it('becomes a gateway path that listens all the time, with no URL or credentials', () => {
     const paths = desiredPaths({ config: { version: 1, streams: [hides as any], layout: { preset: 'auto', slots: [] } }, secrets: { streams: { hides: { password: 'x' } } } });
     expect([...paths]).toEqual([['raw/hides', { source: 'udp+mpegts://0.0.0.0:5600', sourceOnDemand: false, record: true }]]);
-    expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true });
+    expect(publicStream(hides as any)).toEqual({ id: 'hides', label: 'HiDes link', kind: 'udp', hasLowRes: false, record: true, fill: false });
   });
 
   it('its check says whether TS is arriving, and where to send it', async () => {
@@ -721,5 +721,25 @@ describe('recording settings and the controls slot', () => {
     } finally {
       srv.close();
     }
+  });
+});
+
+describe('zoom to fill', () => {
+  it('is off unless set, kept when set, and must be true or false', () => {
+    expect(validateVideoConfig({ version: 1, streams: [pad] }).config.streams[0].fill).toBeUndefined();
+    expect(validateVideoConfig({ version: 1, streams: [{ ...pad, fill: true }] }).config.streams[0]).toMatchObject({ fill: true });
+    expect(validateVideoConfig({ version: 1, streams: [{ id: 'h', label: 'H', kind: 'udp', port: 5600, fill: true }] }).config.streams[0]).toMatchObject({ fill: true });
+    const bad = validateVideoConfig({ version: 1, streams: [{ ...pad, fill: 'yes' }] });
+    expect(bad.config.streams).toEqual([]);
+    expect(bad.errors[0]).toMatch(/fill must be true or false/);
+  });
+
+  it('reaches the browser, and survives a save from the editor', async () => {
+    expect(publicStream({ ...pad, fill: true } as any).fill).toBe(true);
+    writeConfig([pad]);
+    const { editableConfig, saveVideoConfig } = await import('../video/config.js');
+    const saved = saveVideoConfig({ streams: [{ ...pad, fill: true }] }, editableConfig().revision);
+    expect(saved.streams[0]).toMatchObject({ id: 'pad', fill: true });
+    expect(JSON.parse(readFileSync(CONFIG, 'utf8')).streams[0].fill).toBe(true);
   });
 });

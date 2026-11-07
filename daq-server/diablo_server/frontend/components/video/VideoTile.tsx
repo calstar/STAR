@@ -11,8 +11,9 @@
  * stream, the backend asks the camera itself (GET .../check) -- unreachable, refused, wrong
  * password, wrong path. Off the stand LAN it says that instead.
  *
- * The picture is letterboxed (object-contain), never cropped: an edge of the frame is
- * where a vent or a line is most likely to be. A failed attempt retries on its own.
+ * The picture is letterboxed (object-contain) by default, never cropped: an edge of the
+ * frame is where a vent or a line is most likely to be. A stream set to "Zoom to fill"
+ * (object-cover) fills the tile instead, for cameras whose aspect ratio wastes the slot. A failed attempt retries on its own.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getApiBaseUrl } from '@/lib/websocket';
@@ -101,9 +102,11 @@ export interface VideoTileProps {
   children?: ReactNode;
   /** Seconds this stream has been recording, or null. Shown always, not with the controls. */
   recording?: number | null;
+  /** Zoom to fill the tile, cropping what overhangs (the stream's "Zoom to fill"). */
+  fill?: boolean;
 }
 
-export default function VideoTile({ label, endpoint, testId, onDoubleClick, children, recording = null }: VideoTileProps) {
+export default function VideoTile({ label, endpoint, testId, onDoubleClick, children, recording = null, fill = false }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [conn, setConn] = useState<WhepState>({ kind: 'connecting' });
@@ -162,7 +165,7 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
       data-endpoint={endpoint}
       onDoubleClick={onDoubleClick}
     >
-      <video ref={videoRef} className="absolute inset-0 h-full w-full object-contain" muted autoPlay playsInline disablePictureInPicture />
+      <video ref={videoRef} className={`absolute inset-0 h-full w-full ${fill ? 'object-cover' : 'object-contain'}`} muted autoPlay playsInline disablePictureInPicture />
 
       {status.kind === 'offline' && (
         <div className="absolute inset-0 flex items-center justify-center p-6 text-center font-mono text-xs text-ink-2" data-testid={testId ? `${testId}-reason` : undefined}>

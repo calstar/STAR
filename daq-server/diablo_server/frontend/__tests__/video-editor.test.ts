@@ -156,3 +156,19 @@ describe('a Recording controls slot in the editor', () => {
     expect(layoutIds(l, drafts)).toEqual({ preset: '2x2', slots: ['pad', '@controls', null, null] });
   });
 });
+
+describe('zoom to fill in the editor', () => {
+  it('is saved only when on, for either kind, and counts as a change', () => {
+    const [d] = draftsFrom(loaded);
+    expect(d.fill).toBe(false);
+    expect('fill' in toSave([d]).streams[0]).toBe(false);
+    expect(toSave([{ ...d, fill: true }]).streams[0]).toMatchObject({ fill: true });
+    expect(toSave([{ ...d, kind: 'udp', port: '5600', fill: true }]).streams[0]).toEqual({ id: 'pad', label: 'Pad overview', kind: 'udp', port: 5600, record: true, fill: true });
+    expect(isDirty([{ ...d, fill: true }], [d])).toBe(true);
+  });
+
+  it('loads as set', () => {
+    const cfg = { ...loaded, streams: [{ ...loaded.streams[0], fill: true }] };
+    expect(draftsFrom(cfg)[0].fill).toBe(true);
+  });
+});

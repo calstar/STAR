@@ -8,6 +8,8 @@ export interface VideoStreamInfo {
   kind: 'rtsp' | 'udp';
   hasLowRes: boolean;
   record: boolean;
+  /** Zoom to fill the tile (crop) instead of letterboxing. */
+  fill: boolean;
 }
 
 export interface GatewayStatus {
@@ -69,9 +71,9 @@ export async function fetchVideoStreams(signal?: AbortSignal): Promise<VideoStre
 
 /** A stream as the editor sees it. The password itself is never sent to a browser. */
 export type EditableStream = (
-  | { id: string; label: string; kind: 'rtsp'; url: string; lowResUrl?: string; record: boolean }
+  | { id: string; label: string; kind: 'rtsp'; url: string; lowResUrl?: string; record: boolean; fill?: boolean }
   /** MPEG-TS pushed to the gateway over UDP (the HiDes link). */
-  | { id: string; label: string; kind: 'udp'; port: number; record: boolean }
+  | { id: string; label: string; kind: 'udp'; port: number; record: boolean; fill?: boolean }
 ) & { username: string; passwordSet: boolean };
 
 /** UDP ports a pushed stream may use (the backend's UDP_PORTS; bootstrap opens them). */
