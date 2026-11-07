@@ -82,6 +82,9 @@ bool configured;
 uint16_t tx_seq;
 radio_status_t status;
 radio_rx_t last_rx;
+// The RX mode last asked for (mode.c), kept so it survives a late start-up.
+bool want_sniff;
+uint32_t want_rx_ms, want_sleep_ms;
 void (*on_command)(radio_command_t);
 uint8_t frame_buf[kFrameMaxLen];
 
@@ -99,6 +102,10 @@ void try_setup() {
     status.setup_step = static_cast<uint8_t>(step);
     status.device_errors = setup.device_errors();
     configured = step == SetupStep::Ok;
+    // A mode asked for before start-up finished (Idle can begin first).
+    if (configured && want_sniff) {
+        (void)setup.start_rx_duty_cycle(want_rx_ms, want_sleep_ms);
+    }
     give();
 }
 
@@ -107,7 +114,7 @@ void radio_task(void*) {
     try_setup();
     uint32_t last_setup = board_now_ms();
     for (;;) {
-        (void)osThreadFlagsWait(kEvDio1, osFlagsWaitAny, 1000);
+        const uint32_t flags = osThreadFlagsWait(kEvDio1, osFlagsWaitAny, 1000);
         if (!configured) {
             if (board_now_ms() - last_setup >= kSetupRetryMs) {
                 try_setup();
@@ -135,6 +142,13 @@ void radio_task(void*) {
                        : sizeof last_rx.payload);
             last_rx.at_ms = board_now_ms();
             last_rx.count++;
+        }
+        // In sniff mode the chip returns to STDBY_RC after any DIO1 event
+        // (RxDone, HeaderErr, CrcErr, p.71); restart the duty cycle so the
+        // radio does not go deaf. Skip the 1-second fallback poll: the chip
+        // is still cycling on its own and must not be interrupted.
+        if (flags == kEvDio1) {
+            setup.rearm_rx();
         }
         status.frames_ok = link.frames_ok();
         status.frames_dropped = link.frames_dropped();
@@ -223,6 +237,28 @@ radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
 
 void radio_task_status(radio_status_t* out) {
     *out = status;
+}
+
+void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms) {
+    if (!mutex)
+        return;
+    take();
+    want_sniff = true;
+    want_rx_ms = rx_ms;
+    want_sleep_ms = sleep_ms;
+    if (configured)
+        setup.start_rx_duty_cycle(rx_ms, sleep_ms);
+    give();
+}
+
+void radio_task_start_continuous_rx(void) {
+    if (!mutex)
+        return;
+    take();
+    want_sniff = false;
+    if (configured)
+        setup.start_rx_continuous();
+    give();
 }
 
 void radio_task_last_rx(radio_rx_t* out) {

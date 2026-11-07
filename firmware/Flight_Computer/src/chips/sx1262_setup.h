@@ -69,6 +69,11 @@ enum class SetupStep : uint8_t {
     StartRx,
 };
 
+enum class RxMode : uint8_t {
+    Continuous,  // SetRx 0xFFFFFF: chip stays in RX until commanded otherwise
+    DutyCycle,   // SetRxDutyCycle: chip sniffs then sleeps, loops autonomously
+};
+
 class Sx1262Setup {
 public:
     Sx1262Setup(SpiBus& bus, RadioControl& control, const LoraConfig& cfg)
@@ -81,8 +86,22 @@ public:
 
     // Ryan's radio_send() contract: Ok only after TxDone; ErrTimeout if
     // neither TxDone nor the chip's own Timeout came in time; ErrNotFound
-    // if the chip stops answering. Always returns the chip to RX.
+    // if the chip stops answering. Always returns the chip to whichever RX
+    // mode was last set (continuous or duty cycle).
     RadioStatus send(const uint8_t* bytes, uint8_t len);
+
+    // Switch to sniff mode (DS 13.1.7, p.71): listen rx_ms, sleep sleep_ms,
+    // repeat. Must be called from STDBY_RC or any RX mode. Returns false if
+    // the chip doesn't respond. send() returns here after every TX.
+    bool start_rx_duty_cycle(uint32_t rx_ms, uint32_t sleep_ms);
+
+    // Switch back to continuous RX (SetRx 0xFFFFFF). Stops the duty cycle.
+    bool start_rx_continuous();
+
+    // Re-arm after every RxDone in sniff mode: the chip returns to STDBY_RC
+    // after a packet (p.71) and must be restarted or it goes deaf. No-op in
+    // continuous mode (chip stays in RX on its own).
+    bool rearm_rx();
 
     // OpError bits from the last configure() (Table 13-85, p.98).
     uint16_t device_errors() const {
@@ -102,10 +121,14 @@ private:
     bool set_packet_params(uint8_t payload_len);
     bool irq_status(uint16_t& irq);
     bool back_to_rx();
+    bool send_duty_cycle();
 
     SpiBus& bus_;
     RadioControl& control_;
     LoraConfig cfg_;
+    RxMode rx_mode_ = RxMode::Continuous;
+    uint32_t duty_rx_steps_ = 0;     // rxPeriod in 15.625 µs steps
+    uint32_t duty_sleep_steps_ = 0;  // sleepPeriod in 15.625 µs steps
     uint16_t device_errors_ = 0;
     uint32_t tx_ok_ = 0;
     uint32_t tx_timeouts_ = 0;
