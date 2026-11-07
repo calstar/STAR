@@ -12,7 +12,8 @@
 import * as net from 'net';
 import { createHash, randomBytes } from 'crypto';
 
-export type CameraProblem = 'unreachable' | 'refused' | 'auth' | 'not-found' | 'error';
+/** Shown to operators only as a short code (frontend lib/video/tile-state codeForProblem). */
+export type CameraProblem = 'unreachable' | 'refused' | 'auth' | 'not-found' | 'no-data' | 'error';
 
 export type CameraCheck =
   | { ok: true; detail: string }

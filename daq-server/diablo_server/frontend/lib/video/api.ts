@@ -8,6 +8,8 @@ export interface VideoStreamInfo {
   kind: 'rtsp' | 'udp';
   hasLowRes: boolean;
   record: boolean;
+  /** Zoom to fill the tile (crop) instead of letterboxing. */
+  fill: boolean;
 }
 
 export interface GatewayStatus {
@@ -69,9 +71,9 @@ export async function fetchVideoStreams(signal?: AbortSignal): Promise<VideoStre
 
 /** A stream as the editor sees it. The password itself is never sent to a browser. */
 export type EditableStream = (
-  | { id: string; label: string; kind: 'rtsp'; url: string; lowResUrl?: string; record: boolean }
+  | { id: string; label: string; kind: 'rtsp'; url: string; lowResUrl?: string; record: boolean; fill?: boolean }
   /** MPEG-TS pushed to the gateway over UDP (the HiDes link). */
-  | { id: string; label: string; kind: 'udp'; port: number; record: boolean }
+  | { id: string; label: string; kind: 'udp'; port: number; record: boolean; fill?: boolean }
 ) & { username: string; passwordSet: boolean };
 
 /** UDP ports a pushed stream may use (the backend's UDP_PORTS; bootstrap opens them). */
@@ -186,4 +188,30 @@ export function describeRecording(r: SaveResult & { reason: string; startedAt?: 
   return `${why}${len}${r.reason === 'stopped' ? ',' : ''} ${ok.length} stream${ok.length === 1 ? '' : 's'} to recordings/${folder}`
     + (gapped.length ? `; gaps (stream was down) in ${gapped.map((s) => s.stream).join(', ')}` : '')
     + (bad.length ? `; not recorded: ${bad.map((b) => `${b.stream} (${b.error})`).join(', ')}` : '');
+}
+
+// ── Recordings on the gateway machine ─────────────────────────────────────────
+
+export interface RecordingEntry {
+  /** Folder name, e.g. 2026-11-06_141503_record */
+  name: string;
+  /** "save" or "record" */
+  kind: string;
+  startedAt: number;
+  /** Still being recorded. */
+  active: boolean;
+  files: { stream: string; bytes: number }[];
+  bytes: number;
+}
+
+export const listRecordings = () => call<{ dir: string; recordings: RecordingEntry[] }>('GET', '/api/video/recordings');
+
+/** Open one recording (or, with no name, the recordings folder) in the gateway machine's file manager. */
+export const openRecording = (name?: string) => call<{ opened: string }>('POST', '/api/video/recordings/open', name ? { name } : {});
+
+/** "1.4 GB", "230 MB", "12 KB" */
+export function size(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }

@@ -7,17 +7,20 @@
  *
  * Status comes from frames, not the connection (lib/video/tile-state): LIVE (green) while
  * decoded frames keep arriving, STALE (amber, with how long) when they stop, CONNECTING and
- * OFFLINE (grey) otherwise. An OFFLINE tile says why in words: when the gateway refuses a
- * stream, the backend asks the camera itself (GET .../check) -- unreachable, refused, wrong
- * password, wrong path. Off the stand LAN it says that instead.
+ * NO SIGNAL (grey) otherwise, with a short code (lib/video/whep SignalCode) and nothing longer:
+ * when the gateway refuses a stream the backend asks the camera itself (GET .../check), and
+ * the answer is narrowed to UNREACH, REFUSED, AUTH, PATH or NO DATA; GW if the camera is fine;
+ * NET when no media path reaches this browser (off the stand LAN).
  *
- * The picture is letterboxed (object-contain), never cropped: an edge of the frame is
- * where a vent or a line is most likely to be. A failed attempt retries on its own.
+ * The picture is letterboxed (object-contain) by default, never cropped: an edge of the
+ * frame is where a vent or a line is most likely to be. A stream set to "Zoom to fill"
+ * (object-cover) fills the tile instead, for cameras whose aspect ratio wastes the slot. A failed attempt retries on its own.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { playWhep, type WhepState } from '@/lib/video/whep';
-import { staleLabel, tileStatus, type TileStatus } from '@/lib/video/tile-state';
+import { codeForProblem, staleLabel, tileStatus, type TileStatus } from '@/lib/video/tile-state';
+import type { SignalCode } from '@/lib/video/whep';
 import { clock } from '@/lib/video/api';
 
 const RETRY_MS = 3000;
@@ -43,11 +46,11 @@ function StateBadge({ status }: { status: TileStatus }) {
       </span>
     );
   }
-  return <span className="text-ink-3">{status.kind === 'connecting' ? 'CONNECTING' : 'OFFLINE'}</span>;
+  return <span className="text-ink-3">{status.kind === 'connecting' ? 'CONNECTING' : 'NO SIGNAL'}</span>;
 }
 
 /** The backend's check of the camera behind a stream endpoint (null if it cannot say). */
-async function checkCamera(endpoint: string): Promise<{ ok: boolean; detail: string } | null> {
+async function checkCamera(endpoint: string): Promise<{ ok: boolean; problem?: string } | null> {
   try {
     const res = await fetch(`${getApiBaseUrl()}${endpoint}/check`);
     return res.ok ? await res.json() : null;
@@ -56,11 +59,11 @@ async function checkCamera(endpoint: string): Promise<{ ok: boolean; detail: str
   }
 }
 
-/** The camera's own account of a gateway refusal, or the refusal itself if the camera seems fine. */
-async function explain(endpoint: string, fallback: string): Promise<string> {
+/** A gateway refusal, narrowed by asking the camera: its code, or GW if the camera is fine. */
+async function explain(endpoint: string): Promise<SignalCode> {
   const r = await checkCamera(endpoint);
-  if (!r) return fallback;
-  return r.ok ? `camera answers, but the gateway has no video from it (${fallback})` : r.detail;
+  if (!r || r.ok) return 'GW';
+  return codeForProblem(r.problem);
 }
 
 /** Track decoded frames: requestVideoFrameCallback where there is one, else currentTime. */
@@ -101,9 +104,11 @@ export interface VideoTileProps {
   children?: ReactNode;
   /** Seconds this stream has been recording, or null. Shown always, not with the controls. */
   recording?: number | null;
+  /** Zoom to fill the tile, cropping what overhangs (the stream's "Zoom to fill"). */
+  fill?: boolean;
 }
 
-export default function VideoTile({ label, endpoint, testId, onDoubleClick, children, recording = null }: VideoTileProps) {
+export default function VideoTile({ label, endpoint, testId, onDoubleClick, children, recording = null, fill = false }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [conn, setConn] = useState<WhepState>({ kind: 'connecting' });
@@ -111,7 +116,7 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
   const [now, setNow] = useState(() => Date.now());
   const lastFrame = useLastFrame(video, `${endpoint}#${attempt}`);
   /** A camera problem found while still connecting (see EARLY_CHECK_MS). */
-  const [early, setEarly] = useState<string | null>(null);
+  const [early, setEarly] = useState<SignalCode | null>(null);
   const isStream = endpoint.startsWith('/api/video/streams/');
 
   useEffect(() => setVideo(videoRef.current), []);
@@ -128,9 +133,9 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
     const stop = playWhep(endpoint, el, (s) => {
       if (s.kind !== 'failed') { setConn(s); return; }
       retry = setTimeout(() => setAttempt((n) => n + 1), RETRY_MS);
-      // Keep showing the last known reason while the camera is asked again.
+      // Keep showing the last known code while the camera is asked again.
       if (s.where === 'gateway' && isStream) {
-        void explain(endpoint, s.reason).then((reason) => live && setConn({ ...s, reason }));
+        void explain(endpoint).then((code) => live && setConn({ ...s, code }));
       } else {
         setConn(s);
       }
@@ -148,11 +153,11 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
     if (!isStream) return;
     let live = true;
     const t = setTimeout(() => {
-      void checkCamera(endpoint).then((r) => { if (live && r && !r.ok) setEarly(r.detail); });
+      void checkCamera(endpoint).then((r) => { if (live && r && !r.ok) setEarly(codeForProblem(r.problem)); });
     }, EARLY_CHECK_MS);
     return () => { live = false; clearTimeout(t); };
   }, [raw.kind, endpoint, attempt, isStream]);
-  const status: TileStatus = raw.kind === 'connecting' && early ? { kind: 'offline', reason: early } : raw;
+  const status: TileStatus = raw.kind === 'connecting' && early ? { kind: 'offline', code: early } : raw;
 
   return (
     <figure
@@ -162,11 +167,12 @@ export default function VideoTile({ label, endpoint, testId, onDoubleClick, chil
       data-endpoint={endpoint}
       onDoubleClick={onDoubleClick}
     >
-      <video ref={videoRef} className="absolute inset-0 h-full w-full object-contain" muted autoPlay playsInline disablePictureInPicture />
+      <video ref={videoRef} className={`absolute inset-0 h-full w-full ${fill ? 'object-cover' : 'object-contain'}`} muted autoPlay playsInline disablePictureInPicture />
 
       {status.kind === 'offline' && (
-        <div className="absolute inset-0 flex items-center justify-center p-6 text-center font-mono text-xs text-ink-2" data-testid={testId ? `${testId}-reason` : undefined}>
-          {status.reason}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 font-mono uppercase" data-testid={testId ? `${testId}-reason` : undefined}>
+          <span className="text-sm tracking-[0.32em] text-ink-2">No signal</span>
+          <span className="text-[11px] tracking-[0.18em] text-ink-3">{status.code}</span>
         </div>
       )}
 

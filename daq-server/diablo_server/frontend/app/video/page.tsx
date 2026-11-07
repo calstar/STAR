@@ -177,6 +177,7 @@ export default function VideoPage() {
         endpoint={streamEndpoint(s.id, !large && s.hasLowRes)}
         testId={`video-tile-${s.id}`}
         recording={r.streams.has(s.id) ? r.elapsed : null}
+        fill={s.fill}
         onDoubleClick={editing ? undefined : () => setFocus(eff.focus ? null : s.id)}
       >
         {picker}
