@@ -339,7 +339,7 @@ active_connectors = [ 1, 2 ]
 [boards.labjack_1]
 type = "T7"
 ip = "192.168.2.81"
-mac = ""
+mac = "90:2e:87:01:24:f1"
 board_id = 81
 enabled = true
 scan_rate_hz = 100.0
