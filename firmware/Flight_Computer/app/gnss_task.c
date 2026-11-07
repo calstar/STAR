@@ -3,8 +3,8 @@
 #include "board_time.h"
 #include "board_uart9.h"
 #include "cmsis_os2.h"
-#include "emmc_stm32.h"
 #include "daq_task.h"
+#include "emmc_stm32.h"
 
 #define EV_RX (1U << 0)
 

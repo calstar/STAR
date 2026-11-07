@@ -4,8 +4,8 @@
 #include "board_exti.h"
 #include "board_time.h"
 #include "cmsis_os2.h"
-#include "emmc_stm32.h"
 #include "daq_task.h"
+#include "emmc_stm32.h"
 #include "main.h"
 
 static sensors_core_t core;
