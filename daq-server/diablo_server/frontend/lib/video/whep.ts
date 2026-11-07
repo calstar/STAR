@@ -14,18 +14,27 @@ import { getApiBaseUrl } from '@/lib/websocket';
 /**
  * `live` here means the WebRTC connection is up; whether frames are arriving is the tile's
  * business (lib/video/tile-state). A failure says where: `gateway` -- the handshake was
- * refused, so ask the camera why (GET .../check); `network` -- the handshake worked but no
- * media path did, which is what a browser off the stand LAN sees.
+ * refused (code GW until the camera is asked why, GET .../check); `network` -- the handshake
+ * worked but no media path did, which is what a browser off the stand LAN sees (code NET).
  */
 export type WhepState =
   | { kind: 'connecting' }
   | { kind: 'live' }
-  | { kind: 'failed'; reason: string; where: 'gateway' | 'network' };
+  | { kind: 'failed'; code: SignalCode; where: 'gateway' | 'network' };
+
+/**
+ * Why a tile has no signal, as a short code -- the tile says "NO SIGNAL" and this, nothing
+ * longer (operators found sentences wrong too often to trust):
+ *   UNREACH  no answer from the camera's address      REFUSED  nothing listening on that port
+ *   AUTH     username/password rejected, or missing    PATH     no stream at that URL path
+ *   NO DATA  nothing arriving on the UDP port (HiDes)  NET      no media path to this browser
+ *   GW       the camera answers; the gateway has no video from it        ERR  anything else
+ */
+export type SignalCode = 'UNREACH' | 'REFUSED' | 'AUTH' | 'PATH' | 'NO DATA' | 'NET' | 'GW' | 'ERR';
 
 const GATHER_TIMEOUT_MS = 2000;
 /** On the LAN media connects in well under a second; the browser's own ICE failure takes ~30 s. */
 const MEDIA_TIMEOUT_MS = 8000;
-export const OFF_LAN_REASON = 'video is only available on the stand network';
 
 function gatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
@@ -62,9 +71,9 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
   let stopped = false;
 
   let mediaTimer: ReturnType<typeof setTimeout> | undefined;
-  const fail = (reason: string, where: 'gateway' | 'network' = 'gateway') => {
+  const fail = (code: SignalCode, where: 'gateway' | 'network' = 'gateway') => {
     clearTimeout(mediaTimer);
-    if (!stopped) onState({ kind: 'failed', reason, where });
+    if (!stopped) onState({ kind: 'failed', code, where });
     stopped = true; // one report per attempt; the caller retries with a fresh peer
   };
 
@@ -78,8 +87,8 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
     if (pc.connectionState === 'connected') {
       clearTimeout(mediaTimer);
       onState({ kind: 'live' });
-    } else if (pc.connectionState === 'failed') fail(OFF_LAN_REASON, 'network');
-    else if (pc.connectionState === 'disconnected') fail('connection to the gateway lost', 'network');
+    } else if (pc.connectionState === 'failed') fail('NET', 'network');
+    else if (pc.connectionState === 'disconnected') fail('NET', 'network');
   };
 
   onState({ kind: 'connecting' });
@@ -94,9 +103,7 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
         body: pc.localDescription?.sdp ?? '',
       });
       if (res.status !== 201) {
-        let reason = `HTTP ${res.status}`;
-        try { reason = (await res.json()).error ?? reason; } catch { /* not JSON */ }
-        fail(reason);
+        fail('GW');
         return;
       }
       const loc = res.headers.get('Location');
@@ -104,9 +111,9 @@ export function playWhep(endpoint: string, video: HTMLVideoElement, onState: (s:
       const answer = await res.text();
       if (stopped) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-      mediaTimer = setTimeout(() => { if (pc.connectionState !== 'connected') fail(OFF_LAN_REASON, 'network'); }, MEDIA_TIMEOUT_MS);
+      mediaTimer = setTimeout(() => { if (pc.connectionState !== 'connected') fail('NET', 'network'); }, MEDIA_TIMEOUT_MS);
     } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
+      fail('GW');
     }
   })();
 

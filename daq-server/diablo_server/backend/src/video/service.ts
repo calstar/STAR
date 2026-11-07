@@ -292,7 +292,7 @@ export class VideoService {
     const where = `${this.ingestHost()}:${port}`;
     try {
       if (await this.api.pathReady(gatewayPathFor(id))) return { ok: true, detail: `MPEG-TS arriving on UDP ${port}` };
-      return { ok: false, problem: 'unreachable', detail: `nothing arriving on UDP ${port} -- point HiDesViewer at ${where} (localhost:${port} on the gateway machine itself)` };
+      return { ok: false, problem: 'no-data', detail: `nothing arriving on UDP ${port} -- point HiDesViewer at ${where} (localhost:${port} on the gateway machine itself)` };
     } catch (e) {
       return { ok: false, problem: 'error', detail: (e as Error).message };
     }

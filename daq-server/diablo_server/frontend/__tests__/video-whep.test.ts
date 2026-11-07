@@ -5,7 +5,7 @@
  * the offer's shape.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildOfferPeer, playWhep, streamEndpoint, previewEndpoint, OFF_LAN_REASON } from '@/lib/video/whep';
+import { buildOfferPeer, playWhep, streamEndpoint, previewEndpoint } from '@/lib/video/whep';
 
 class FakePeer {
   static last: FakePeer;
@@ -59,12 +59,12 @@ describe('WHEP offer', () => {
     expect(states[0]).toBe('connecting');
   });
 
-  it('reports a gateway refusal with its reason', async () => {
+  it('reports a gateway refusal as GW, never the gateway\'s own words', async () => {
     vi.stubGlobal('RTCPeerConnection', FakePeer);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'gateway: no stream is available' }), { status: 404 })));
     const states: any[] = [];
     playWhep(previewEndpoint('0a1b2c3d4e5f'), document.createElement('video'), (s) => states.push(s));
-    await vi.waitFor(() => expect(states.at(-1)).toEqual({ kind: 'failed', reason: 'gateway: no stream is available', where: 'gateway' }));
+    await vi.waitFor(() => expect(states.at(-1)).toEqual({ kind: 'failed', code: 'GW', where: 'gateway' }));
   });
 });
 
@@ -79,7 +79,7 @@ describe('off the stand network', () => {
       await vi.advanceTimersByTimeAsync(7000);
       expect(states.at(-1)).toEqual({ kind: 'connecting' });
       await vi.advanceTimersByTimeAsync(2000);
-      expect(states.at(-1)).toEqual({ kind: 'failed', reason: OFF_LAN_REASON, where: 'network' });
+      expect(states.at(-1)).toEqual({ kind: 'failed', code: 'NET', where: 'network' });
     } finally {
       vi.useRealTimers();
     }

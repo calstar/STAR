@@ -36,6 +36,25 @@ committed.
 Camera audio never reaches the Video view (it asks for video only) or recordings (the agent
 drops it). OBS does get it: mute it there, or turn audio off on the cameras.
 
+## What a tile says
+
+**LIVE** (green) while frames arrive, **STALE** (amber) when the picture has frozen, and
+otherwise **NO SIGNAL** with one code:
+
+| Code | Means |
+|---|---|
+| `UNREACH` | no answer from the camera's address (unplugged, wrong IP, other network) |
+| `REFUSED` | the camera answered but nothing listens on that port |
+| `AUTH` | username/password rejected, or the camera wants one and none is set |
+| `PATH` | the camera has no stream at that URL path |
+| `NO DATA` | nothing arriving on the HiDes UDP port |
+| `NET` | no media path to this browser (off the stand network) |
+| `GW` | the camera answers, but the gateway has no video from it |
+| `ERR` | anything else |
+
+Each stream can also be set to **Zoom to fill** (Edit): its tiles fill the slot and crop what
+overhangs, for cameras whose shape wastes the slot. Off by default: letterboxing never crops.
+
 ## Files and passwords
 
 | File | Tracked | What |

@@ -595,7 +595,7 @@ describe('HiDes: MPEG-TS pushed over UDP', () => {
     const gw = new FakeGateway();
     const svc = new VideoService(undefined, gw);
     const idle = await svc.checkStream('hides')!;
-    expect(idle).toMatchObject({ ok: false });
+    expect(idle).toMatchObject({ ok: false, problem: 'no-data' });
     expect((idle as any).detail).toBe('nothing arriving on UDP 5600 -- point HiDesViewer at theombp.local:5600 (localhost:5600 on the gateway machine itself)');
     gw.ready.add('raw/hides');
     await new Promise((r) => setTimeout(r, 5100)); // past the check cache
