@@ -85,7 +85,9 @@ function parseMessage(msg: Buffer): UdpRecord {
 
 const packets: UdpRecord[] = [];
 
-const socket = dgram.createSocket('udp4');
+// reuseAddr: the simulated ball valve binds 127.0.0.71 on this same port to receive its own
+// ACTUATOR_COMMANDs; unicast to it goes to that more specific binding, everything else here.
+const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
 socket.on('message', (msg: Buffer, rinfo) => {
   const rec = parseMessage(msg);

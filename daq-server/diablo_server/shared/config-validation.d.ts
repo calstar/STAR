@@ -53,6 +53,14 @@ export declare const diffKeys: (have: string[], want: string[]) => {
     orphan: string[];
     missing: string[];
 };
+/** [boards.*].type of a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). */
+export declare const BALL_VALVE_TYPE = "BALL_VALVE";
+/**
+ * board_ids of every [boards.*] with type BALL_VALVE, enabled or not. An actuator role whose
+ * board_id is in this set is a ball valve: no NO/NC (1 is open on the wire), no PWM, and its
+ * position (not a current) is what shows under it.
+ */
+export declare const ballValveBoardIds: (config: any) => Set<number>;
 /**
  * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
  * Numbered by position among boards of the same type, so it tracks what is actually configured
@@ -125,6 +133,12 @@ export declare function t7RoleClashes(config: any): Array<{
  * state-machine rules for the same reason — that is a different and much louder problem, and
  * burying it under fifty derived complaints helps nobody.
  */
+/**
+ * Where a board sits when no DHCP server answered it: 169.254.<1 + mac[4] % 254>.<mac[5]>.
+ * Must match BoardNet::recoveryAddress (firmware/Hotfire_Code/common/board_net.h),
+ * firmware/tools/ota_upload.py and deploy/dhcp/generate_dhcp_config.py. Null for a malformed MAC.
+ */
+export declare function recoveryAddress(mac: string): string | null;
 export declare function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): ConfigIssue[];
 /** Group issues by the editor page that fixes them, preserving rule order within a page. */
 export declare function groupIssuesByPage(issues: ConfigIssue[]): {

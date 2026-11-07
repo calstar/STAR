@@ -20,6 +20,7 @@ import { useDesignSlice } from '../lib/designState';
 import {
   loadTimeSeriesResults,
   saveTimeSeriesResults,
+  saveTimeSeriesResultsUnlessOvertaken,
   TIMESERIES_RUN_EVENT,
   TIMESERIES_RUN_FAILED_EVENT,
 } from '../utils/timeseriesSession';
@@ -292,6 +293,23 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A run this tab started by itself (the auto-run below) records the stored burn's timestamp when it
+  // starts; if another tab stored a burn meanwhile (Layer X's 'Send to Forward & Flight'), that one stays
+  // and this tab shows it. A run a person asked for always stores. undefined: no auto-run is going.
+  const autoSince = useRef<number | null | undefined>(undefined);
+  const keep = useCallback((newResults: { data: TimeSeriesData; summary: TimeSeriesSummary }) => {
+    const since = autoSince.current;
+    autoSince.current = undefined;
+    if (since === undefined) {
+      setResults(newResults);
+      saveTimeSeriesResults(newResults, configFingerprint(config));
+    } else if (saveTimeSeriesResultsUnlessOvertaken(newResults, configFingerprint(config), since)) {
+      setResults(newResults);
+    } else {
+      setResults(loadResultsFromSession());
+    }
+  }, [config]);
+
   // Handle simple profile submission
   const handleSimpleSubmit = useCallback(async () => {
     setIsLoading(true);
@@ -315,11 +333,10 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         data: response.data.data,
         summary: response.data.summary,
       };
-      setResults(newResults);
-      saveTimeSeriesResults(newResults, configFingerprint(config));
+      keep(newResults);
     }
     return null;
-  }, [duration, nSteps, loxProfile, fuelProfile, config]);
+  }, [duration, nSteps, loxProfile, fuelProfile, keep]);
 
   // Handle segment-based submission
   const handleSegmentSubmit = useCallback(async () => {
@@ -345,11 +362,10 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         data: response.data.data,
         summary: response.data.summary,
       };
-      setResults(newResults);
-      saveTimeSeriesResults(newResults, configFingerprint(config));
+      keep(newResults);
     }
     return null;
-  }, [segmentDuration, nPoints, loxSegments, fuelSegments, config]);
+  }, [segmentDuration, nPoints, loxSegments, fuelSegments, keep]);
 
   const propSplit = splitPropellantMass(totalPropellantKg, ofRatio);
 
@@ -394,12 +410,11 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         data: response.data.data,
         summary: response.data.summary,
       };
-      setResults(newResults);
-      saveTimeSeriesResults(newResults, configFingerprint(config));
+      keep(newResults);
     }
     return null;
   }, [
-    config,
+    keep,
     segmentDuration,
     nPoints,
     loxInitialPressure,
@@ -440,8 +455,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         data: response.data.data,
         summary: response.data.summary,
       };
-      setResults(newResults);
-      saveTimeSeriesResults(newResults, configFingerprint(config));
+      keep(newResults);
 
       // If it was a YAML config file, fetch and update the config
       const isConfigFile = uploadedFile.name.endsWith('.yaml') || uploadedFile.name.endsWith('.yml');
@@ -453,7 +467,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
       }
     }
     return null;
-  }, [uploadedFile, onConfigLoaded, config]);
+  }, [uploadedFile, onConfigLoaded, keep]);
 
   // Another tab (Flight) asks for the burn: run whichever profile this tab is set to, as its own
   // Run button would, and answer with the error if there is one. Success is announced by
@@ -491,6 +505,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     }
     const id = setTimeout(() => {
       autoRanFor.current = engine;
+      autoSince.current = loadTimeSeriesResults()?.timestamp ?? null;
       void runCurrent.current().then((err) => {
         if (err) window.dispatchEvent(new CustomEvent(TIMESERIES_RUN_FAILED_EVENT, { detail: err }));
       });

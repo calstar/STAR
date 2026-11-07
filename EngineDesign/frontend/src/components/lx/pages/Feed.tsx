@@ -279,12 +279,20 @@ function MarginsPanel({ data, d, missing }: { data: RunData; d: Diagnostics; mis
   ));
   const rows: ReactNode[][] = [];
   for (const node of d.saturation?.nodes ?? []) {
-    const m = colOf(node.margin_psi, n);
+    // One quantity, one number: the margin the limits grade, the static one (less the line's dynamic
+    // head) where the drawing prices the head, else the total. Feed read the total (LOX-Tank outlet 481 psi)
+    // beside a graded 444 psi under the same name.
+    const staticMin = node.min_static_psi ?? null;
+    const isStatic = staticMin !== null && Number.isFinite(staticMin);
+    const m = colOf(isStatic ? node.margin_static_psi : node.margin_psi, n);
     const lim = limitFor(data.limits, node.id, `saturation_${node.label}`);
+    const basis = isStatic
+      ? `Static: the node's pressure less the line's dynamic head, as the limits grade it. Total (with the head): lowest ${u.fmt(u.dp(node.min_psi ?? null))}.`
+      : 'Total: the node\u2019s pressure; the drawing gives no bore to take the line\u2019s dynamic head off.';
     rows.push([
-      <span key="l" className="flex items-baseline gap-2 whitespace-nowrap"><Glyph status={lim?.status ?? null} /><SideName side={node.side as SideKey}>{node.label}</SideName></span>,
-      u.fmt(u.dp(node.min_psi ?? null)),
-      jump(node.t_min, `sat-${node.id}`),
+      <span key="l" className="flex items-baseline gap-2 whitespace-nowrap"><Glyph status={lim?.status ?? null} /><Hint text={basis}><SideName side={node.side as SideKey}>{node.label}</SideName></Hint></span>,
+      `${u.fmt(u.dp(isStatic ? staticMin : node.min_psi ?? null))}${isStatic ? '' : ' total'}`,
+      jump(isStatic ? node.t_min_static : node.t_min, `sat-${node.id}`),
       m ? <span key="s" className="inline-block align-middle"><MiniSpark t={data.t} values={m} color={SIDE_TOKEN[(node.side ?? 'gas') as SideKey]} width={72} height={18} band={{ lo: 0, hi: 0 }} /></span> : '',
     ]);
   }
@@ -309,7 +317,7 @@ function MarginsPanel({ data, d, missing }: { data: RunData; d: Diagnostics; mis
     ]);
   }
   return (
-    <Panel title={<Hint text="Each liquid node's pressure above the propellant's vapour pressure at the node's temperature (psi above boiling); below zero it boils. K: the injector orifice's cavitation number, (p_in − p_vap) / (p_in − p_c); below the incipient value the orifice starts to cavitate.">Boiling and cavitation</Hint>}
+    <Panel title={<Hint text="Each liquid node's static pressure (less the line's dynamic head, the margin the limits grade) above the propellant's vapour pressure at the node's temperature (psi above boiling); below zero it boils. A node the drawing gives no bore for reads its total, and says so. K: the injector orifice's cavitation number, (p_in − p_vap) / (p_in − p_c); below the incipient value the orifice starts to cavitate.">Boiling and cavitation</Hint>}
            right={<span>psi above boiling, lowest</span>} className="lg:col-span-6">
       {rows.length
         ? <Table caption="Saturation and cavitation margins" head={[{ sr: 'Node' }, 'Lowest', 'When', { sr: 'Through the burn' }]}

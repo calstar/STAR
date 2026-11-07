@@ -17,16 +17,19 @@ export interface StoredTimeSeriesResults {
   timestamp: number;
   /** lib/engineIdentity.configFingerprint of the design the run was made on. */
   configFingerprint?: string;
+  /** Who made it, in words, when not the Time-Series tab: "Layer X burn Nov 2, 12:44 PM". */
+  source?: string;
 }
 
 export function saveTimeSeriesResults(results: {
   data: TimeSeriesData;
   summary: TimeSeriesSummary;
-}, configFingerprint?: string): void {
+}, configFingerprint?: string, source?: string): void {
   const stored: StoredTimeSeriesResults = {
     ...results,
     timestamp: Date.now(),
     configFingerprint,
+    ...(source ? { source } : {}),
   };
   sessionStorage.setItem(TIMESERIES_RESULTS_KEY, JSON.stringify(stored));
   window.dispatchEvent(new CustomEvent(TIMESERIES_UPDATED_EVENT, { detail: stored }));
@@ -40,6 +43,19 @@ export function loadTimeSeriesResults(): StoredTimeSeriesResults | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Store a run the Time-Series tab made by itself, unless the stored burn changed since it started (`since`:
+ * the stored timestamp then, or null for none). Layer X's 'Send to Forward & Flight' stored its burn while
+ * the auto-run of page load was still going; the auto-run then overwrote it and Flight flew the 578 psia
+ * Time-Series burn under a menu that said 'Sent'. Returns whether it stored.
+ */
+export function saveTimeSeriesResultsUnlessOvertaken(results: { data: TimeSeriesData; summary: TimeSeriesSummary },
+                                                      configFingerprint: string | undefined, since: number | null): boolean {
+  if ((loadTimeSeriesResults()?.timestamp ?? null) !== since) return false;
+  saveTimeSeriesResults(results, configFingerprint);
+  return true;
 }
 
 export function loadTimeSeriesData(): TimeSeriesData | null {

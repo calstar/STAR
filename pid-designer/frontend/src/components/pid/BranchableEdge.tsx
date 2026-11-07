@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { flushSync } from 'react-dom';
 import { BaseEdge, useConnection, useNodesData, useReactFlow, useStore, useStoreApi, type EdgeProps } from '@xyflow/react';
 import type { Edge, Node } from '@xyflow/react';
-import { J_END, crowdOf, isJunction, setHandCorners, splitSpot, thawPipe } from './junctions';
+import { J_END, crowdOf, isJunction, setHandCorners, splitSpot } from './junctions';
 import type { EndLookup } from './junctions';
 import { splitEdgeAt } from './splitEdge';
 import {
@@ -45,8 +45,9 @@ export { nearestOnPath, faceTowards } from './route';
  * segment; drag it and the segment moves across, the two ends stay on their
  * ports, and the corners are stored on the line (see `routeThrough`) so the
  * routing somebody chose survives a reload. Alt-drag puts a detour into a
- * segment instead of moving the whole of it. Double-click a grip and the
- * line routes itself again. The grips used to be there on every line the
+ * segment instead of moving the whole of it. *Let it route itself*, on the
+ * line's right-click menu, gives the pipe back to the router; a double-click
+ * on a grip is the line's, and opens its dialog. The grips used to be there on every line the
  * pointer crossed, at the middle of every segment -- exactly where people aim
  * to start a branch -- so the same press-and-pull reshaped the line at its
  * middle and branched it everywhere else, with nothing on screen to say
@@ -380,14 +381,6 @@ export function BranchableEdge(props: EdgeProps) {
     };
   }, [drag, id, setEdges, getNodes, toFlow]);
 
-  /** Back to routing itself: the whole pipe the line is on, as a hand edit froze the whole of it. */
-  const resetRoute = useCallback((e: React.MouseEvent) => {
-    if (readOnly) return;
-    e.stopPropagation();
-    e.preventDefault();
-    setEdges(eds => thawPipe(getNodes(), eds, id));
-  }, [readOnly, id, setEdges, getNodes]);
-
   // ── Putting a tee in, or pulling a line out ────────────────────────────────
   const placeJunction = useCallback((line: LineSource) => {
     // The same operation dropping a connection on a line performs -- see
@@ -484,7 +477,10 @@ export function BranchableEdge(props: EdgeProps) {
           data-grip=""
           onPointerDown={e => startSegmentDrag(g.i, e)}
           onClick={e => e.stopPropagation()}
-          onDoubleClick={resetRoute}
+          // No double-click of its own. The click that picks a line puts a
+          // grip under the pointer, so a double-click's second click lands
+          // here; taking it (it used to reset the route) kept the line's
+          // dialog from ever opening in the middle of a straight run.
           // React Flow sets `pointer-events: visibleStroke` on an edge, so a
           // shape with a fill and no stroke is invisible to the pointer no
           // matter how large it is. The grip needs saying explicitly.

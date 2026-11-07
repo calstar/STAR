@@ -146,7 +146,8 @@ def size_or_check_copv_for_polytropic_N2(
     def estimate_Z_H(P_H):
         if not use_real_gas:
             return 1.0
-        # clamp P_H inside lookup table domain by using the interp directly; interp returns nan if out of range
+        # The interpolator EXTRAPOLATES outside the table (fill_value=None), so the table must cover
+        # COPV pressures: n2_Z_lookup.csv runs to 60 MPa (CoolProp; it stopped at 8.3 MPa before).
         z = Z_lookup(T0_K, P_H, interp, default_Z=1.0)
         return z
 

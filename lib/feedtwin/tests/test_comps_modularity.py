@@ -39,7 +39,7 @@ from feedtwin.model import (
     SpecError,
     registered_component_types,
 )
-from feedtwin.model.curve import Curve, CurveError
+from feedtwin.model.curve import Curve
 
 M = Provenance.MANUFACTURER
 WATER = FlowConditions(rho=999.0, mu=1.138e-3, p_upstream=1.0e6)
@@ -186,19 +186,24 @@ def test_measured_data_supersedes_the_correlation_for_every_type(
     assert instance.curves["dp_mdot"].source is Provenance.MEASURED
 
 
-def test_measured_data_refuses_outside_its_range() -> None:
-    """It does not fall back to a correlation, and does not extrapolate.
+def test_measured_data_never_falls_back_to_a_correlation() -> None:
+    """Off its range it does not switch to a correlation.
 
     Silently switching to a correlation halfway up a flow sweep would put a kink
-    in the result that nobody asked for and nobody would see.
+    in the result that nobody asked for and nobody would see. It is continued
+    in its own measured shape, ``dp ~ mdot^2`` from the last point, and the
+    diagnostics say the point was not measured (see test_measured_off_curve:
+    raising here made a sweep that did not start at zero unsolvable).
     """
     component = build_component(
         ComponentInstance.build(
             "X-01", "pipe", {}, curves={"dp_mdot": _measured_curve()}, model="measured"
         )
     )
-    with pytest.raises(CurveError, match="outside the curve's range"):
-        component.pressure_drop(5.0, WATER)
+    top = _measured_curve()(2.0)
+    assert component.pressure_drop(5.0, WATER) == pytest.approx(top * 2.5**2)
+    assert component.diagnostics(5.0, WATER)["extrapolated"] == 1.0
+    assert component.diagnostics(1.5, WATER)["extrapolated"] == 0.0
 
 
 def test_the_measured_model_says_what_it_needs() -> None:

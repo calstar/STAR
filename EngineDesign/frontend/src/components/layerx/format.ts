@@ -79,6 +79,19 @@ export function psig(psia: number | null | undefined, gaugeZeroPsia = 14.6959): 
   return psia === null || psia === undefined || !Number.isFinite(psia) ? null : psia - gaugeZeroPsia;
 }
 
+type ThermalSwitches = { ullage_collapse?: boolean | null; ullage_vapour?: boolean | null; line_walls?: boolean | null };
+
+/** The thermal models a burn ran without, in words. What it ran is the feed twin's Setup
+ * (`provenance.setup`); the run's own switches (`provenance.settings`) are null when the run left
+ * them to that Setup, so a null switch is not "off". Every place that prints "run without ..."
+ * reads it here: the test card said "without ullage collapse, propellant vapour, line-wall heat"
+ * of a burn that ran all three. */
+export function modelsLeftOut(settings: ThermalSwitches, setup?: Record<string, unknown> | null): string[] {
+  const ran = (k: keyof ThermalSwitches) => (setup && k in setup ? !!setup[k] : !!settings[k]);
+  return [!ran('ullage_collapse') && 'ullage collapse', !ran('ullage_vapour') && 'propellant vapour',
+    !ran('line_walls') && 'line-wall heat'].filter(Boolean) as string[];
+}
+
 /**
  * The thresholds the verdicts grade by, in one place, each with what it is. None is a
  * requirement from the config; they are judgement, stated so a reader can disagree.

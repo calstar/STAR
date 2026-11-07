@@ -910,7 +910,8 @@ export function Layer1Optimization({
     }
     setMessage(
       'Switched the injector to impinging (canonical doublet, your propellant and requirements kept).' +
-        (res.data.design_warning ? ` ${res.data.design_warning}` : '')
+        (res.data.design_warning ? ` ${res.data.design_warning}` : '') +
+        (res.data.fluid_warning ? ` ${res.data.fluid_warning}` : '')
     );
     return true;
   };
@@ -1349,7 +1350,7 @@ export function Layer1Optimization({
                   {results.performance.P_exit
                     ? ((results.performance.P_exit as number) / 6894.76).toFixed(1)
                     : '-'}
-                  <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">psi</span>
+                  <span className="text-sm font-normal text-[var(--color-text-secondary)] ml-1">psia</span>
                   {results.performance.target_P_exit !== undefined && results.performance.target_P_exit !== null && (
                     <span className="text-xs font-normal text-[var(--color-text-secondary)] ml-1">
                       (Target: {((results.performance.target_P_exit as number) / 6894.76).toFixed(1)} psia)

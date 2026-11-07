@@ -276,7 +276,7 @@ export default function MobileDashboard() {
           <h2 className="caps mb-3 text-[11px]">Actuators</h2>
           <div className="grid grid-cols-2 gap-2">
             {actuatorsFromConfig.map((a) => (
-              <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />
+              <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} ballValve={a.ballValve} />
             ))}
           </div>
         </div>

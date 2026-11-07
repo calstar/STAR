@@ -9,10 +9,14 @@ import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
 import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
+import {
+  pressureLimitRows, pressureLimitKeyForRole, pressureRolesOf,
+  renamePressureLimitRole, removePressureLimitRole, pruneOrphanPressureLimits,
+} from '@/lib/pressure-limit-rows';
 // The validation rules the backend's session-start gate evaluates. Imported rather than
 // re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
 import {
-  parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName,
+  parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName, ballValveBoardIds,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
   t7Channels, t7BoardIssues, t7RoleClashes, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
 } from '@/lib/config-validation';
@@ -174,7 +178,7 @@ const DEFAULT_CONFIG: ConfigData = {};
  * makes a board legible at a glance instead of a wall of inputs.
  */
 /** Board types the editor offers. T7 is a LabJack (t7_bridge); the rest are ESP32 boards. */
-const BOARD_TYPES = ['PT', 'ACTUATOR', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL', 'T7'];
+const BOARD_TYPES = ['PT', 'ACTUATOR', 'BALL_VALVE', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL', 'T7'];
 
 function FieldSection({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -1199,7 +1203,7 @@ export default function ConfigPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Re-sort the role maps (board→channel) at save time only, so editing never moves a row.
-        body: JSON.stringify({ config: sortRolesForSave(config) }),
+        body: JSON.stringify({ config: sortRolesForSave(pruneOrphanPressureLimits(config)) }),
       });
 
       if (!response.ok) {
@@ -1543,7 +1547,13 @@ export default function ConfigPage() {
     const chs = t7ChannelsOf(boardKey).map((c) => ({ ...c }));
     const c = chs[i];
     // The model is filed by role, so a rename carries it along rather than orphaning it.
-    if (field === 'role' && c.role && c.role !== value) setT7Model(boardKey, c.role, undefined, value ?? '');
+    if (field === 'role' && c.role && c.role !== value) {
+      setT7Model(boardKey, c.role, undefined, value ?? '');
+      // A PT's pressure limits row and gauge are keyed by its role too (as on an ESP32 PT board).
+      const oldRole = c.role;
+      if (c.kind === 'PT' && value)
+        setConfig((prev) => ({ ...prev, ...renamePressureLimitRole(prev, oldRole, value) }) as ConfigData);
+    }
     if (value === undefined || value === '') delete c[field];
     else c[field] = value;
     if (field === 'kind') {
@@ -1573,16 +1583,15 @@ export default function ConfigPage() {
   const guiBars = config.gui?.pressure_bars ?? [];
   // Pressure-sensor role names ONLY — a top-bar gauge shows a pressure, so it should offer roles from
   // PT boards, not TC/RTD/LC/encoder. Derived from each PT board's own [sensor_roles_<boardKey>] section.
-  const pressureRoles: string[] = Array.from(new Set([
-    ...Object.entries(config.boards || {})
-      .filter(([, b]) => (b as any)?.type === 'PT')
-      .flatMap(([boardKey]) => Object.keys((config as any)[`sensor_roles_${boardKey}`] || {})),
-    // A PT on a LabJack T7 is named in its channel row, not in a sensor_roles_ section.
-    ...t7Channels(config.boards as Record<string, any>)
-      .filter((c) => c.kind === 'PT' && c.role)
-      .map((c) => c.role),
-  ])).sort();
-  const pressureLimitKeys: string[] = Object.keys(config.pressure_limits ?? {}).sort();
+  const pressureRoles: string[] = pressureRolesOf(config);
+  // One row per current PT role (plus any key a gauge shares, plus leftovers), not the file's keys.
+  const limitRows = pressureLimitRows(config);
+  const removePressureLimit = (key: string) =>
+    setConfig((prev) => {
+      const next: any = { ...(prev as any), pressure_limits: { ...((prev as any).pressure_limits || {}) } };
+      delete next.pressure_limits[key];
+      return next as ConfigData;
+    });
 
   const setGuiTabs = (tabsList: string[]) =>
     setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), tabs: tabsList } }));
@@ -2607,6 +2616,8 @@ export default function ConfigPage() {
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
                     : b.type === 'T7'
                       ? (Array.isArray(b.channels) ? `${b.channels.length} AIN` : null)
+                    : b.type === 'BALL_VALVE'
+                      ? (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} valve` : null)
                       : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
                   // The board DECLARES its sensor interface via pt_type — the same key the backend
                   // (isCurrentLoopBoard) and the C++ calibration service read, so there is one
@@ -2753,6 +2764,9 @@ export default function ConfigPage() {
                         )}
                       </FieldSection>
 
+                      {/* A ball valve board reads its position on the ESP32's own ADC (0-3.3 V, fixed in firmware)
+                          and is sent only ACTUATOR_CONFIG, so no voltage_reference or ADC setting reaches it. */}
+                      {b.type !== 'BALL_VALVE' && (
                       <FieldSection title="Signal & ADC">
                         {b.type === 'PT' && (
                           <div className="space-y-1">
@@ -2823,6 +2837,7 @@ export default function ConfigPage() {
                           'shunt the loop current is measured across'
                         )}
                       </FieldSection>
+                      )}
 
                       <FieldSection title="Safety & logging">
                         {renderField(
@@ -2839,7 +2854,7 @@ export default function ConfigPage() {
                           (val) => updateBoard(boardKey, 'necessary_for_abort', val),
                           'boolean'
                         )}
-                        {(board as any).designated_survivor !== undefined && renderField(
+                        {(board as any).designated_survivor !== undefined && (board as any).type === 'ACTUATOR' && renderField(
                           'Designated survivor (actuator only)',
                           (board as any).designated_survivor,
                           (val) => updateBoard(boardKey, 'designated_survivor', val),
@@ -3171,6 +3186,8 @@ export default function ConfigPage() {
                                     rebuiltAbort[k === name ? newName : k] = v as number;
                                   patch.abort_pts = rebuiltAbort;
                                 }
+                                // And its pressure limits row and gauge, or they orphan the same way.
+                                Object.assign(patch, renamePressureLimitRole(config, name, newName));
                                 setConfig(patch);
                               }}
                               onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
@@ -3293,6 +3310,7 @@ export default function ConfigPage() {
                                   delete ua[name];
                                   patch.abort_pts = ua;
                                 }
+                                Object.assign(patch, removePressureLimitRole(config, name));
                                 setConfig(patch);
                               }}
                               className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 w-24 shrink-0 px-3 text-[11px]"
@@ -3341,7 +3359,9 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
-                {Object.entries(config.actuator_roles || {})
+                {(() => {
+                const bvBoards = ballValveBoardIds(config);
+                return Object.entries(config.actuator_roles || {})
                   // File (insertion) order so editing a channel/board/name doesn't move the row.
                   // Re-sorted by board_id then channel only on Save (sortRolesForSave), not mid-edit.
                   .map(([name, value], idx) => {
@@ -3355,6 +3375,9 @@ export default function ConfigPage() {
                   // silently drop the assignment — which would hand the valve back to the
                   // sequencer during a burn without anyone touching that field.
                   const assignment = typeof arr[3] === 'string' ? arr[3] : '';
+                  // A ball valve has no NO/NC (1 opens it on the wire) and is never a PWM output,
+                  // so neither control is offered; its role is always written as NC.
+                  const isBallValve = boardId !== undefined && bvBoards.has(boardId);
                   const writeRole = (t: string, ch: number, b: number | undefined, assign: string) => {
                     const next: any[] = [t, ch];
                     if (b !== undefined) next.push(b);
@@ -3382,6 +3405,15 @@ export default function ConfigPage() {
                       className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                     />
                     <span className="text-text-muted">=</span>
+                    {isBallValve ? (
+                      <span
+                        data-testid={`ball-valve-kind:${name}`}
+                        title="Ball valve: no NO/NC — 1 opens it, 0 closes it"
+                        className="w-[11.5rem] px-3 py-2 text-text-muted"
+                      >
+                        Ball valve
+                      </span>
+                    ) : (
                     <select
                       value={type}
                       onChange={(e) => writeRole(e.target.value, actuatorId, boardId, assignment)}
@@ -3390,22 +3422,30 @@ export default function ConfigPage() {
                       <option value="NO">NO (Normally Open)</option>
                       <option value="NC">NC (Normally Closed)</option>
                     </select>
+                    )}
                     <CommitOnBlurNumber
                       value={actuatorId}
-                      onCommit={(n) => { if (n !== undefined) writeRole(type, n, boardId, assignment); }}
+                      onCommit={(n) => { if (n !== undefined) writeRole(isBallValve ? 'NC' : type, n, boardId, isBallValve ? '' : assignment); }}
                       className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Ch"
                     />
                     <CommitOnBlurNumber
                       value={Number.isFinite(boardId as number) ? (boardId as number) : undefined}
                       allowEmpty
-                      onCommit={(n) => writeRole(type, actuatorId, n, assignment)}
+                      onCommit={(n) => {
+                        // Moving a role onto a ball valve board drops what a ball valve cannot have.
+                        const toBv = n !== undefined && bvBoards.has(n);
+                        writeRole(toBv ? 'NC' : type, actuatorId, n, toBv ? '' : assignment);
+                      }}
                       className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="Board ID"
                     />
                     {/* Assigning an actuator here is what hands it to controller_service: the
                         controller resolves its PWM output from this, and the sequencer stops
                         commanding the actuator during a burn so there is one writer. */}
+                    {isBallValve ? (
+                      <span className="w-40 px-3 py-2 text-text-muted">Sequencer</span>
+                    ) : (
                     <select
                       value={assignment}
                       onChange={(e) => writeRole(type, actuatorId, boardId, e.target.value)}
@@ -3417,6 +3457,7 @@ export default function ConfigPage() {
                       <option value="pwm_fuel">Controller: fuel</option>
                       <option value="pwm_ox">Controller: ox</option>
                     </select>
+                    )}
                     <button
                       onClick={() => {
                         const updated = { ...config.actuator_roles };
@@ -3429,7 +3470,8 @@ export default function ConfigPage() {
                     </button>
                   </div>
                   );
-                })}
+                });
+                })()}
                 <button
                   onClick={() => {
                     const updated = { ...config.actuator_roles };
@@ -3451,22 +3493,47 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">Pressure Limits</h2>
               <p className="text-sm text-text-muted mb-4">
-                NOP/MEOP/POP per system. These are the single source of truth for gauge thresholds —
-                each top-bar gauge below points at one of these keys via its <code>limits</code> field, and the plots read them too.
+                NOP/MEOP/POP for each PT role on your PT boards (from Sensor Roles), plus any limits a gauge shares.
+                These are the single source of truth for gauge thresholds — each top-bar gauge below points at one
+                of them via its <code>limits</code> field, and the plots read them too.
               </p>
               <div className="space-y-4">
-                {Object.keys(config.pressure_limits || {}).map((system) => (
-                  <div key={system} className="border border-gray-700 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {limitRows.map(({ key: system, label, kind, defined, gauges }) => (
+                  <div key={system} className={`border rounded-lg p-4 ${kind === 'orphan' ? 'border-yellow-700/60' : 'border-gray-700'}`}>
+                    <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <h3 className="text-lg font-semibold">{label}</h3>
+                      <span className="font-mono text-xs text-text-muted">[pressure_limits.{system}]</span>
+                      {kind === 'gauge' && (
+                        <span className="text-xs text-text-muted">shared — used by {gauges.join(', ')}</span>
+                      )}
+                      {kind === 'pt' && !defined && (
+                        <span className="text-xs text-yellow-500">no limits yet — this PT's gauge uses generic thresholds until you set NOP/MEOP</span>
+                      )}
+                      {kind === 'orphan' && (
+                        <>
+                          <span className="text-xs text-yellow-500">no current PT and no gauge uses it (left from an older config)</span>
+                          {canEdit && (
+                            <button
+                              onClick={() => removePressureLimit(system)}
+                              className="ctl ml-auto border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-8 px-2 text-[11px]"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                       {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
                       {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
                       {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
+                      {/* Absent reads as shown, so an untouched config draws every limit as before. */}
+                      {renderField('Show in top bar', (config.pressure_limits as any)?.[system]?.show_in_top_bar !== false, (val) => updateField('pressure_limits', 'show_in_top_bar', val, system), 'boolean')}
                     </div>
                   </div>
                 ))}
-                {Object.keys(config.pressure_limits || {}).length === 0 && (
-                  <p className="text-sm text-text-muted">No pressure limits defined in config.</p>
+                {limitRows.length === 0 && (
+                  <p className="text-sm text-text-muted">No PT roles configured, and no pressure limits in config.</p>
                 )}
               </div>
             </div>
@@ -3541,10 +3608,9 @@ export default function ConfigPage() {
                             // Auto-fill the label from the sensor name unless the user typed a custom one.
                             // "Uncustomized" = empty, the 'NEW' add-default, or equal to the previous role.
                             if (!bar.label || bar.label === 'NEW' || bar.label === bar.role) patch.label = newRole ?? '';
-                            if (newRole) {
-                              const conv = newRole.replace(/\s+/g, '_');
-                              if (pressureLimitKeys.includes(conv)) patch.limits = conv;
-                            }
+                            // Every PT has its own limits row now, so the gauge links to it even before
+                            // values are entered; pick a shared row in the Limits column instead.
+                            if (newRole) patch.limits = pressureLimitKeyForRole(newRole);
                             setBar(patch);
                           }}
                           className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
@@ -3554,9 +3620,16 @@ export default function ConfigPage() {
                           {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
                         </select>
                         <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <div className="md:col-span-2 text-xs text-text-muted truncate self-center" title="Pressure limits (NOP/MEOP) for this gauge — from Pressure Limits above, matched to the sensor by name. 'default' = no matching limits, so generic thresholds are used.">
-                          {bar.limits ? bar.limits : 'default'}
-                        </div>
+                        <select
+                          value={bar.limits ?? ''}
+                          onChange={(e) => setBar({ limits: e.target.value || undefined })}
+                          title="Pressure limits (NOP/MEOP) for this gauge, from Pressure Limits above. Picking the sensor sets it to that PT's own row; choose a shared row (e.g. Chamber) here instead. 'generic' = no limits, so default thresholds are used."
+                          className="md:col-span-2 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="">— generic —</option>
+                          {limitRows.map((row) => <option key={row.key} value={row.key}>{row.label === row.key ? row.key : `${row.label} (${row.key})`}</option>)}
+                          {bar.limits && !limitRows.some((row) => row.key === bar.limits) && <option value={bar.limits}>{bar.limits} (missing)</option>}
+                        </select>
                         <div className="md:col-span-2 flex items-center gap-1">
                           <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
                           <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />

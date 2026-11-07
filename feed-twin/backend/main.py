@@ -15,11 +15,13 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import hashlib
 import logging
 import math
+import os
 import re
 import json
 from dataclasses import asdict, dataclass, field, replace
@@ -29,13 +31,13 @@ import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Mapping, Sequence, cast
 
-from fastapi import Body, FastAPI, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 import feedtwin
 from feedtwin.pid import INLINE_TYPES, INSTRUMENT_TYPES, SOURCE_TYPES
-from feedtwin.pid.document import Diagram, PidNode
+from feedtwin.pid.document import Diagram, PidNode, read_diagram
 from feedtwin.pid.network import SINK_TYPES, propellant_side
 
 from backend.assembly import (
@@ -43,6 +45,7 @@ from backend.assembly import (
     Model,
     assemble,
     card_summary,
+    card_version,
     diagram_summary,
     engine_from_bytes,
     engine_summary,
@@ -65,7 +68,9 @@ from backend.overrides import (
     OverrideStore,
     apply_overrides,
     fingerprint,
+    unreadable,
 )
+from feedtwin.model.pressure import PressureReferenceError, drawn_unit
 from feedtwin.model.param import Param
 from feedtwin.model.units import UnknownUnit, dimension_of, registered_units
 from backend.models import (
@@ -142,8 +147,9 @@ from feedtwin.session.report import (
     finite,
 )
 from backend.version import VALIDATION, code_version
-from backend.tunables import TUNABLES
-from backend.tunables import describe as describe_tunables, parse_setup, wire_setup
+from backend.tunables import TUNABLES, Tunable
+from backend.tunables import SetupError, describe as describe_tunables, parse_setup
+from backend.tunables import wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
 from backend.statemachine import available as sm_available, load_machine
 from backend import daqbox
@@ -201,10 +207,38 @@ library = Library()
 overrides = OverrideStore(library.root / "overrides.json")
 
 
+def _override_keys(diagram_id: str) -> tuple[str, str]:
+    """Where a drawing's overrides are read from, and where a change goes.
+
+    Its lineage (:func:`_lineage`, or a pull of the same drawing's), as its
+    hookup is, so a re-import -- a pull of the working copy, a release named
+    "LE4 (3) (0.4)" -- keeps them and an unrelated drawing that shares the
+    name does not get them. They were kept under the artifact's name (R006):
+    a name's entry is read until the lineage has one, and a change starts
+    the lineage's as a copy of it (:meth:`OverrideStore.adopt`). Raises
+    LibraryError for an unknown id."""
+    artifact = library.get(diagram_id)
+    lineages = _lineages(artifact)
+    held = next((k for k in lineages if overrides.has(k)), None)
+    if held is not None:
+        return held, held
+    if overrides.has(artifact.name):
+        return artifact.name, lineages[0]
+    return lineages[0], lineages[0]
+
+
 def _drawing_key(diagram_id: str) -> str:
-    """What overrides are kept under: the drawing's name, so a re-import keeps
-    them. Raises LibraryError for an unknown id."""
-    return library.get(diagram_id).name
+    """What this drawing's overrides are read from (:func:`_override_keys`)."""
+    return _override_keys(diagram_id)[0]
+
+
+def _change_key(diagram_id: str) -> str:
+    """What a change to this drawing's overrides is written under: its
+    lineage, started from the name's entry if that is what it read."""
+    read, write = _override_keys(diagram_id)
+    if read != write:
+        overrides.adopt(write, read)
+    return write
 
 
 def _overrides_for(diagram_id: str) -> dict[str, Any]:
@@ -255,11 +289,25 @@ def _who(request: Request) -> str:
     return str(userdata.store.current_user(request))
 
 
-#: Where a CEA table is looked for. Absent, the chamber falls back to a constant
-#: c* and says so in the warnings.
+#: Where a CEA table is looked for in a checkout: EngineDesign's committed
+#: cache. Absent, the simplified engine has no combustion table, and the
+#: report says so (backend.assembly.NO_CEA_TABLE).
 CEA_SEARCH = [
     Path(__file__).resolve().parents[2] / "EngineDesign" / "output" / "cache",
 ]
+
+#: Directories searched first (``os.pathsep``-separated). The image sets it
+#: to the tables it carries (Dockerfile.api, /app/cea): there the checkout's
+#: path resolves to /EngineDesign/output/cache, which nothing puts there, and
+#: every engine without a card made 0 N, reported as a cold flow (R048).
+CEA_DIR_ENV = "FEEDTWIN_CEA_DIR"
+
+
+def _cea_dirs() -> list[Path]:
+    """Where :func:`_cea_for` looks, in order."""
+    configured = os.environ.get(CEA_DIR_ENV, "")
+    return [*(Path(d) for d in configured.split(os.pathsep) if d), *CEA_SEARCH]
+
 
 #: The stands shipped with the app, seeded into the library on first start so
 #: there is something real on screen before anybody imports anything.
@@ -325,13 +373,56 @@ def _seed(revive: bool = False) -> None:
 SAMPLE = Path(__file__).parent / "sample"
 
 
+#: React Flow's view state on a node: what the canvas works out, or flips,
+#: while somebody looks at a drawing, not what was drawn. pid-designer's
+#: ``toStored`` (frontend/src/api/diagrams.ts) drops ``selected``, ``dragging``
+#: and ``measured`` on every save and its Export JSON keeps them, so the one
+#: drawing exported and pulled was two artifacts, and a save that changed no
+#: symbol made a pulled stand "changed since pulled" (R004). ``hidden`` is
+#: which page was on screen (pid-designer pages.ts), ``resizing`` is a drag
+#: in progress, ``positionAbsolute`` React Flow 11's computed position, and
+#: ``width``/``height`` a region box's size: none is anything the twin builds.
+VIEW_STATE_NODE = frozenset(
+    {
+        "selected",
+        "dragging",
+        "measured",
+        "resizing",
+        "width",
+        "height",
+        "hidden",
+        "positionAbsolute",
+    }
+)
+#: The same on a line: ``toStored`` drops ``selected`` and ``reconnectable``.
+VIEW_STATE_EDGE = frozenset({"selected", "reconnectable", "hidden"})
+
+
+def _drawn(items: Any, view: frozenset[str]) -> list[Any]:
+    """Nodes or edges without their view state."""
+    if not isinstance(items, list):
+        return []
+    return [
+        (
+            {k: v for k, v in item.items() if k not in view}
+            if isinstance(item, Mapping)
+            else item
+        )
+        for item in items
+    ]
+
+
 def drawing_digest(payload: Mapping[str, Any]) -> str:
     """A drawing's identity, whatever its formatting: the sha256 of its nodes
-    and edges (all a stand is built from) with sorted keys and no whitespace.
-    A pull re-serialises the drawing (``designtools._diagram_bytes``), so the
-    same drawing pulled and uploaded used to be two artifacts (D-52)."""
+    and edges (all a stand is built from) with sorted keys and no whitespace,
+    less the canvas's view state (:data:`VIEW_STATE_NODE`). A pull
+    re-serialises the drawing (``designtools._diagram_bytes``), so the same
+    drawing pulled and uploaded used to be two artifacts (D-52)."""
     canonical = json.dumps(
-        {"nodes": payload.get("nodes") or [], "edges": payload.get("edges") or []},
+        {
+            "nodes": _drawn(payload.get("nodes"), VIEW_STATE_NODE),
+            "edges": _drawn(payload.get("edges"), VIEW_STATE_EDGE),
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -350,12 +441,47 @@ def _digest_of(artifact_id: str, sha256: str) -> str:
     return drawing_digest(payload) if isinstance(payload, Mapping) else sha256
 
 
+def _fingerprint(card: bytes | None) -> str:
+    """EngineDesign's fingerprint of the config a stored card was built
+    from (``config_sha256``: the sha256 of the validated config, defaults
+    filled in); "" without one."""
+    if not card:
+        return ""
+    try:
+        stored = json.loads(card.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    found = stored.get("config_sha256") if isinstance(stored, Mapping) else None
+    return str(found) if isinstance(found, str) else ""
+
+
 def _identity(artifact: Artifact) -> str:
     """What two artifacts must share to be the same thing: a drawing's
-    :func:`drawing_digest`, an engine's bytes."""
+    :func:`drawing_digest`; an engine's config as EngineDesign fingerprints
+    it, where it has a card, else its bytes.
+
+    EngineDesign stores a design as its validated config, defaults written
+    out, so the bundled YAML and the same engine pulled from EngineDesign
+    are different bytes -- two "Ethalox 7200N Doublet"s, freshness and the
+    featured mark on one -- although the cards built from them carry the
+    same ``config_sha256`` (R008)."""
     if artifact.kind == "diagram":
         return _digest_of(artifact.id, artifact.sha256)
-    return artifact.sha256
+    try:
+        card = library.attachment(artifact.id, "card")
+    except LibraryError:
+        card = None
+    return _fingerprint(card) or artifact.sha256
+
+
+def _same_engine(fingerprint: str) -> Artifact | None:
+    """The engine already in the library that EngineDesign fingerprints as
+    ``fingerprint`` (:func:`_identity`), if any."""
+    if not fingerprint:
+        return None
+    return next(
+        (a for a in library.list("engine") if _identity(a) == fingerprint), None
+    )
 
 
 def _same_drawing(payload: Mapping[str, Any]) -> Artifact | None:
@@ -380,7 +506,14 @@ def _sample_entries() -> tuple[dict[str, Any], ...]:
         if entry.get("kind") == "diagram":
             identity = drawing_digest(json.loads(data))
         else:
-            identity = hashlib.sha256(data).hexdigest()
+            # As :func:`_identity` names an engine: its card's fingerprint.
+            try:
+                card = (
+                    (SAMPLE / entry["card"]).read_bytes() if entry.get("card") else None
+                )
+            except OSError:
+                card = None
+            identity = _fingerprint(card) or hashlib.sha256(data).hexdigest()
         out.append({**entry, "data": data, "identity": identity})
     return tuple(out)
 
@@ -431,14 +564,21 @@ def _seed_sample(revive: bool = False) -> list[Artifact]:
                     "the sample engine %s does not import", entry["file"]
                 )
                 continue
-            artifact, _ = library.add(
-                data,
-                kind="engine",
-                name=entry["name"],
-                source=source,
-                suffix=".yaml",
-                summary=summary,
-                notes=entry.get("provenance", ""),
+            # The same engine pulled from EngineDesign is the sample's, as a
+            # drawing is (R008): left as it is, and featured all the same.
+            same = _same_engine(entry["identity"])
+            artifact = (
+                same
+                if same is not None and same.sha256 != hashlib.sha256(data).hexdigest()
+                else library.add(
+                    data,
+                    kind="engine",
+                    name=entry["name"],
+                    source=source,
+                    suffix=".yaml",
+                    summary=summary,
+                    notes=entry.get("provenance", ""),
+                )[0]
             )
             card = entry.get("card")
             if card and library.attachment(artifact.id, "card") is None:
@@ -517,15 +657,218 @@ def _aliases(artifact_id: str) -> list[str]:
     return [str(s) for s in sources] if isinstance(sources, list) else []
 
 
-def _alias(artifact: Artifact, provenance: str) -> None:
-    """Remember that ``provenance`` was this artifact too."""
+def _compared(artifact: Artifact) -> tuple[str, str, str, str] | None:
+    """The pull freshness compares this artifact with, and refresh pulls
+    again (:func:`designtools.parse_source`); None if it was never pulled.
+
+    The newest working-copy pull: its own source is its *first* pull, and
+    the aliases are the later ones, newest first. Asked in the other order,
+    a drawing first pulled as a release said "a release never changes"
+    forever, after the working copy it was later pulled as had moved on
+    (R011). Only when every pull was a release is the newest release it."""
+    found = _compared_source(artifact)
+    return found[1] if found is not None else None
+
+
+def _compared_source(
+    artifact: Artifact,
+) -> tuple[str, tuple[str, str, str, str]] | None:
+    """:func:`_compared`, with the provenance it was parsed from."""
+    pulls = [
+        (source, found)
+        for source in [*_aliases(artifact.id), artifact.source]
+        if (found := designtools.parse_source(source)) is not None
+    ]
+    return next((p for p in pulls if not p[1][3]), pulls[0] if pulls else None)
+
+
+def _alias(artifact: Artifact, provenance: str, pulled: str = "") -> None:
+    """Remember that ``provenance`` was this artifact too, and the sha256 of
+    the bytes it gave (``pulled``): an engine EngineDesign pulled is the same
+    engine in other bytes (R008), and freshness compares the next pull with
+    those."""
     if provenance == artifact.source:
         return
+    found = library.record(ALIASES, artifact.id) or {}
     known = _aliases(artifact.id)
     # The newest first: freshness asks the latest pull.
     sources = [provenance, *(s for s in known if s != provenance)][:20]
-    if sources != known:
-        library.put_record(ALIASES, artifact.id, {"sources": sources})
+    shas = found.get("pulled")
+    shas = {
+        k: v
+        for k, v in (shas if isinstance(shas, Mapping) else {}).items()
+        if k in sources
+    }
+    if pulled:
+        shas[provenance] = pulled
+    if sources != known or shas != found.get("pulled", {}):
+        record: dict[str, object] = {"sources": sources}
+        if shas:
+            record["pulled"] = shas
+        library.put_record(ALIASES, artifact.id, record)
+
+
+# ------------------------------------------------------------------ access
+#
+# The library is one store for everyone on this server, and an artifact is
+# its bytes. A drawing pulled from a design tool came through that tool's
+# access rules (designtools forwards the caller's identity), and then it was
+# in every Hotbench user's library -- and Layer X's -- whatever the tool
+# would say to them: a private pid-designer drawing Alice pulled was Bob's to
+# open in full, though pid-designer answers him 403 (R002). So a pulled
+# artifact is shown, served and run only for someone the tool it came from
+# lets open it. An upload, a shipped drawing, the sample and an imported
+# bundle are everyone's, and so is a pulled artifact somebody also uploaded:
+# the same bytes are the same artifact.
+
+#: Record kind: who pulled an artifact, and whether it was published.
+ACCESS = "access"
+
+#: How long a design tool's answer for one person and one design is kept.
+ACCESS_TTL_S = 60.0
+
+#: ... and an answer of "could not be asked", so a tool that is down is not
+#: asked again for every artifact on every listing.
+ACCESS_DOWN_TTL_S = 10.0
+
+_ACCESS_SEEN: dict[tuple[str, str, str, str], tuple[float, bool | None]] = {}
+
+
+def _access(artifact_id: str) -> dict[str, Any]:
+    return dict(library.record(ACCESS, artifact_id) or {})
+
+
+def _pulled_by(artifact: Artifact, viewer: str) -> None:
+    """Remember that ``viewer`` pulled ``artifact``: the tool let them then,
+    and asks again when it can be asked (:func:`_may_read`)."""
+    if designtools.parse_source(artifact.source) is None:
+        return
+    record = _access(artifact.id)
+    pullers = [str(p) for p in record.get("pulled_by") or []]
+    if viewer not in pullers:
+        record["pulled_by"] = [*pullers, viewer]
+        record.pop("key", None)
+        library.put_record(ACCESS, artifact.id, record)
+
+
+def _publish(artifact: Artifact, by: str) -> None:
+    """``artifact`` reached this library by an upload or a bundle as well:
+    the bytes were the uploader's to give, so it is everyone's now."""
+    if designtools.parse_source(artifact.source) is None:
+        return
+    record = _access(artifact.id)
+    if not record.get("published"):
+        record.pop("key", None)
+        library.put_record(ACCESS, artifact.id, {**record, "published": by})
+
+
+def _gates(artifact: Artifact) -> list[tuple[str, str, str]]:
+    """The design-tool documents a reader of ``artifact`` must be let open,
+    any one of them: ``(tool, owner, doc id)`` of each pull of it. Empty for
+    anything everyone may read. A pull that named no owner was the puller's
+    own document."""
+    if designtools.parse_source(artifact.source) is None:
+        return []
+    record = _access(artifact.id)
+    if record.get("published"):
+        return []
+    pullers = [str(p) for p in record.get("pulled_by") or []] or ["local"]
+    out: list[tuple[str, str, str]] = []
+    for source in [artifact.source, *_aliases(artifact.id)]:
+        parsed = designtools.parse_source(source)
+        if parsed is None:
+            continue
+        key, owner, doc_id, _ = parsed
+        out.extend((key, who, doc_id) for who in ([owner] if owner else pullers))
+    return list(dict.fromkeys(out))
+
+
+async def _opens(request: Request, key: str, owner: str, doc_id: str) -> bool | None:
+    """Whether the design tool lets this caller open a document (cached)."""
+    viewer = _who(request)
+    seen = _ACCESS_SEEN.get((viewer, key, owner, doc_id))
+    now = time.monotonic()
+    if seen is not None:
+        at, answer = seen
+        if now - at < (ACCESS_TTL_S if answer is not None else ACCESS_DOWN_TTL_S):
+            return answer
+    answer = await designtools.can_open(tools()[key], doc_id, owner, request.headers)
+    _ACCESS_SEEN[(viewer, key, owner, doc_id)] = (now, answer)
+    return answer
+
+
+async def _may_read(request: Request, artifact: Artifact) -> str:
+    """ "" if the caller may read ``artifact``, else why not.
+
+    Its design tool decides: anyone it lets open the document (any one, if
+    the same drawing was pulled from several) may. When it cannot be asked,
+    the people who pulled it may, and nobody else."""
+    gates = _gates(artifact)
+    if not gates:
+        return ""
+    answers = [await _opens(request, *gate) for gate in gates]
+    if any(answers):
+        return ""
+    key, owner, doc_id = gates[0]
+    label = tools()[key].label
+    if None in answers:
+        if _who(request) in (_access(artifact.id).get("pulled_by") or []):
+            return ""
+        return (
+            f"{artifact.name} was pulled from {label} ({owner}/{doc_id}), which "
+            "could not be asked whether you may open it, so it is not shown."
+        )
+    return (
+        f"{artifact.name} was pulled from {label} ({owner}/{doc_id}), which "
+        "does not share it with you."
+    )
+
+
+async def _readable(request: Request) -> None:
+    """Refuse a request that names an artifact the caller may not read: a
+    ``diagram``, ``engine`` or ``artifact_id`` in its path, query or JSON
+    body (a stand bundle's ``stand`` included). A dependency of every route
+    that serves, runs or changes an artifact (:data:`READABLE`); one that
+    names nothing in the library is the route's own 404."""
+    named: list[Any] = [
+        request.query_params.get("diagram"),
+        request.query_params.get("engine"),
+        request.path_params.get("artifact_id"),
+    ]
+    if "json" in request.headers.get("content-type", ""):
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        for scope in (body, body.get("stand") if isinstance(body, Mapping) else None):
+            if isinstance(scope, Mapping):
+                named += [scope.get("diagram"), scope.get("engine")]
+    for artifact_id in dict.fromkeys(str(n) for n in named if n):
+        try:
+            artifact = library.get(artifact_id)
+        except LibraryError:
+            continue
+        why = await _may_read(request, artifact)
+        if why:
+            raise HTTPException(status_code=403, detail=why)
+
+
+#: Every route that serves, runs or changes an artifact depends on this.
+READABLE = [Depends(_readable)]
+
+
+async def _visible(request: Request, artifacts: Sequence[Artifact]) -> list[Artifact]:
+    """``artifacts`` less the ones the caller may not read, in order."""
+    refused = await asyncio.gather(*(_may_read(request, a) for a in artifacts))
+    return [a for a, why in zip(artifacts, refused) if not why]
+
+
+def _pulled_sha(artifact_id: str, provenance: str) -> str:
+    """The sha256 of the bytes ``provenance`` gave when it was aliased onto
+    this artifact (:func:`_alias`); "" if not recorded."""
+    shas = (library.record(ALIASES, artifact_id) or {}).get("pulled")
+    found = shas.get(provenance) if isinstance(shas, Mapping) else None
+    return str(found) if isinstance(found, str) else ""
 
 
 def _card_info(artifact: Artifact) -> dict[str, object]:
@@ -549,8 +892,76 @@ async def _build_card(artifact_id: str, data: bytes, headers: Mapping[str, str])
         answer = await designtools.engine_card(data, headers)
     except DesignToolError as exc:
         return str(exc)
-    library.attach(artifact_id, "card", json.dumps(answer).encode("utf-8"))
+    _keep_card(artifact_id, json.dumps(answer).encode("utf-8"))
     return ""
+
+
+async def _engine_here(
+    data: bytes, headers: Mapping[str, str]
+) -> tuple[Artifact | None, bytes | None, str]:
+    """For a pulled engine whose bytes are new here: the engine already in
+    the library that it is (EngineDesign fingerprints both configs the same,
+    :func:`_identity`), the card built for it, and why no card, or "".
+
+    The card is what says which engine this is, and a new engine needs one
+    anyway, so it is built first: an engine already here is aliased rather
+    than stored again (R008). Bytes already here are left to
+    ``Library.add``, as before."""
+    try:
+        library.get(hashlib.sha256(data).hexdigest()[:12])
+        return None, None, ""
+    except LibraryError:
+        pass
+    try:
+        answer = await designtools.engine_card(data, headers)
+    except DesignToolError as exc:
+        return None, None, str(exc)
+    card = json.dumps(answer).encode("utf-8")
+    return _same_engine(_fingerprint(card)), card, ""
+
+
+async def _card_for(
+    artifact: Artifact,
+    data: bytes,
+    card: bytes | None,
+    problem: str,
+    headers: Mapping[str, str],
+) -> str:
+    """Give a just-stored engine its card: the one built already
+    (:func:`_engine_here`), else one built now if it has none and nothing
+    has failed yet. Returns why it has none, or ""."""
+    if card is not None and not _card_info(artifact):
+        _keep_card(artifact.id, card)
+        return ""
+    if problem or _card_info(artifact):
+        return problem
+    return await _build_card(artifact.id, data, headers)
+
+
+def _card_built(raw: bytes) -> str:
+    """When a stored card says it was built, for a note; "unknown" if it
+    does not say or cannot be read."""
+    try:
+        built = card_summary(json.loads(raw.decode("utf-8"))).get("card_built")
+    except (UnicodeDecodeError, ValueError, AttributeError):
+        built = None
+    if isinstance(built, (int, float)) and not isinstance(built, bool) and built > 0:
+        # EngineDesign stamps a card with the epoch seconds it was built at.
+        stamp = datetime.fromtimestamp(float(built), tz=timezone.utc)
+        return stamp.isoformat(timespec="minutes")
+    return str(built) if built else "unknown"
+
+
+def _keep_card(artifact_id: str, data: bytes) -> None:
+    """Store ``data`` as the engine's card, keeping the one it replaces.
+
+    A card is rebuilt in place, under the same engine id, so the runs that
+    fired the old one name it by hash (``inputs.card``) and replay on the
+    copy kept here (``backend.assembly.card_version``)."""
+    old = library.attachment(artifact_id, "card")
+    if old is not None and old != data:
+        library.attach(artifact_id, card_version(hashlib.sha256(old).hexdigest()), old)
+    library.attach(artifact_id, "card", data)
 
 
 def _cea_for(engine: EngineDesign) -> str:
@@ -558,7 +969,7 @@ def _cea_for(engine: EngineDesign) -> str:
     ox, fuel = engine.oxidiser.propellant, engine.fuel.propellant
     wanted = {"oxygen": "LOX", "ethanol": "Ethanol", "methane": "CH4"}
     key = f"{wanted.get(ox, ox)}_{wanted.get(fuel, fuel)}"
-    for directory in CEA_SEARCH:
+    for directory in _cea_dirs():
         if not directory.is_dir():
             continue
         for candidate in sorted(directory.glob("cea_cache_*.npz")):
@@ -575,7 +986,13 @@ def _assemble(
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
     gas: Mapping[str, str] | None = None,
+    entry: Mapping[str, Any] | None = None,
+    card: str | None = None,
 ) -> Model:
+    """The model, with the drawing's overrides as the store holds them now --
+    or ``entry``, a run's own (:func:`_recorded_overrides`) -- and the engine's
+    card stored now, or the one whose SHA-256 is ``card`` (a run's own;
+    ``""`` for none, ``backend.assembly.assemble``)."""
     if fluid_set not in FLUID_SETS:
         raise HTTPException(
             status_code=404,
@@ -595,8 +1012,9 @@ def _assemble(
             gas_swap=gas,
             cea_resolver=_cea_for,
             multiphase=multiphase,
-            overrides=_overrides_for(diagram_id),
+            overrides=_overrides_for(diagram_id) if entry is None else entry,
             vehicle_only=vehicle_only,
+            card_sha256=card,
         )
     except (AssemblyError, LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -704,15 +1122,21 @@ async def version() -> dict[str, object]:
 
 
 @app.get("/api/library")
-async def list_artifacts(kind: str | None = None) -> list[ArtifactOut]:
+async def list_artifacts(
+    request: Request, kind: str | None = None
+) -> list[ArtifactOut]:
+    """What the caller may read: a pull only for someone its design tool
+    lets open it (:func:`_may_read`)."""
     if kind not in (None, "diagram", "engine"):
         raise HTTPException(status_code=400, detail="kind is 'diagram' or 'engine'")
-    return [_out(a) for a in library.list(kind)]  # type: ignore[arg-type]
+    listed = library.list(kind)  # type: ignore[arg-type]
+    return [_out(a) for a in await _visible(request, listed)]
 
 
 @app.post("/api/library/diagrams")
-async def import_diagram(file: UploadFile) -> ImportResult:
-    """Import a P&ID saved out of pid-designer."""
+async def import_diagram(request: Request, file: UploadFile) -> ImportResult:
+    """Import a P&ID saved out of pid-designer. An upload is everyone's: one
+    that is a drawing pulled here before publishes that one (:func:`_publish`)."""
     data = await file.read()
     try:
         payload = json.loads(data.decode("utf-8"))
@@ -728,10 +1152,32 @@ async def import_diagram(file: UploadFile) -> ImportResult:
             detail="that JSON has no 'nodes'. Export the diagram from "
             "pid-designer rather than a browser page save.",
         )
+    # Refused here what could never be opened: only 'nodes' was checked, so a
+    # file without 'edges', or with nodes that are not symbols, was stored and
+    # failed every open from every picker.
+    nodes, edges = payload.get("nodes"), payload.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        raise HTTPException(
+            status_code=422,
+            detail="that is not a P&ID: expected 'nodes' and 'edges' lists. "
+            "Export the diagram from pid-designer.",
+        )
+    if not all(isinstance(item, dict) for item in (*nodes, *edges)):
+        raise HTTPException(
+            status_code=422,
+            detail="that is not a P&ID: every node and edge is an object.",
+        )
+    try:
+        read_diagram(payload, name=file.filename or "diagram")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"that P&ID cannot be read: {exc}"
+        ) from exc
     # The same drawing saved with other formatting is the drawing already
     # here, not a second copy under another name (D-52).
     same = _same_drawing(payload)
     if same is not None:
+        _publish(same, _who(request))
         return ImportResult(artifact=_out(same), already_present=True)
     artifact, existed = library.add(
         data,
@@ -763,6 +1209,7 @@ async def import_engine(request: Request, file: UploadFile) -> ImportResult:
         suffix=".yaml",
         summary=engine_summary(design),
     )
+    _publish(artifact, _who(request))
     problem = ""
     if not _card_info(artifact):
         problem = await _build_card(artifact.id, data, request.headers)
@@ -790,7 +1237,51 @@ def _carried(artifact: Artifact) -> dict[str, Any]:
     )
 
 
-@app.post("/api/twin/bundle/export")
+async def _carried_source(
+    source: str, data: bytes, what: str, headers: Mapping[str, str]
+) -> tuple[str, list[str]]:
+    """The provenance a bundle's drawing or engine is stored under here, and
+    what to say about it.
+
+    A pull's provenance names a document on the *exporting* server's design
+    tool -- ``pid-designer:local/le4-3@working copy``, where every dev
+    install's user is ``local`` and an id is its name's slug -- and freshness
+    and refresh read it on this one's. Taken as it came, a teammate's own
+    design of the same name was compared, and "Pull the current design"
+    swapped the stand onto it (R012). It is kept only when this server's
+    tool holds that document as these bytes; otherwise it is stored as
+    ``bundle:<what it said>``, which nothing tracks, and the note says so."""
+    parsed = designtools.parse_source(source)
+    if parsed is None:
+        return source, []
+    key, owner, doc_id, release = parsed
+    try:
+        here, _ = await designtools.fetch(
+            _tool(key), doc_id, owner=owner, release=release, headers=headers
+        )
+    except (DesignToolError, HTTPException):
+        here = b""
+    if here:
+        if what == "drawing":
+            try:
+                same = drawing_digest(json.loads(here)) == drawing_digest(
+                    json.loads(data)
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+                same = False
+        else:
+            same = here == data
+        if same:
+            return source, []
+    return f"bundle:{source}", [
+        f"The stand's {what} was pulled from {source} on the server that "
+        "exported it; this server's design tool does not hold that document "
+        "as these bytes, so it is kept as the bundle's and not compared with "
+        "or refreshed from anything here."
+    ]
+
+
+@app.post("/api/twin/bundle/export", dependencies=READABLE)
 async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
     """A stand and everything it names, as one ``*.hotbench.json``: the
     drawing, the engine and its card, the state table, the drawing's
@@ -821,8 +1312,7 @@ async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
     # kept beside this library under the drawing's lineage: carried, or the
     # importer would run a different wiring.
     if not stand.get("hookup"):
-        lineage, _ = _hookup_lineage(drawing_art)
-        record = library.record(HOOKUPS, lineage) or {}
+        record = library.record(HOOKUPS, _wired_lineage(drawing_art)) or {}
         saved = record.get("hookup")
         if isinstance(saved, Mapping):
             stand["hookup"] = dict(saved)
@@ -837,13 +1327,15 @@ async def export_stand_bundle(body: BundleExportBody) -> dict[str, Any]:
         engine=engine,
         card=card,
         machine=machine,
-        overrides=overrides.entry(drawing_art.name),
+        overrides=overrides.entry(_drawing_key(drawing_art.id)),
         code=code_version(),
     )
 
 
 @app.post("/api/twin/bundle/import")
-async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOut:
+async def import_stand_bundle(
+    request: Request, raw: dict[str, Any] = Body(...)
+) -> BundleImportOut:
     """Unpack a bundle into this library: the drawing and engine (same bytes,
     so the same ids), the engine's card, the drawing's overrides, and the
     state table when this server's differs. Returns the stand to create."""
@@ -868,13 +1360,21 @@ async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOu
         if same.id != carried.get("id"):
             notes.append(f"The drawing matched {same.name}, already in this library.")
     else:
+        drawing_source, said = await _carried_source(
+            str(carried.get("source") or "upload"),
+            carried["text"].encode("utf-8"),
+            "drawing",
+            request.headers,
+        )
+        notes.extend(said)
         drawing_art, _ = library.add(
             carried["text"].encode("utf-8"),
             kind="diagram",
             name=str(carried.get("name") or raw.get("name") or "imported drawing"),
-            source=str(carried.get("source") or "upload"),
+            source=drawing_source,
             suffix=str(carried.get("suffix") or ".json"),
             summary=diagram_summary(payload),
+            notes=" ".join(said),
         )
 
     engine_art: Artifact | None = None
@@ -886,21 +1386,58 @@ async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOu
             design = engine_from_bytes(data, name=name)
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        engine_art, _ = library.add(
+        source, said = await _carried_source(
+            str(carried_engine.get("source") or "upload"),
+            data,
+            "engine",
+            request.headers,
+        )
+        notes.extend(said)
+        engine_art, existed = library.add(
             data,
             kind="engine",
             name=name,
-            source=str(carried_engine.get("source") or "upload"),
+            source=source,
             suffix=str(carried_engine.get("suffix") or ".yaml"),
             summary=engine_summary(design),
+            notes=" ".join(said),
         )
+        if existed and (engine_art.name, engine_art.source) != (name, source):
+            # The same bytes are the same artifact, whatever the stand called
+            # it: said, or the header names an engine the stand never did.
+            notes.append(
+                f"The stand's engine, {name!r} ({source}), is {engine_art.name!r} "
+                f"({engine_art.source}), already in this library: the same "
+                "config, so the same engine under this library's name."
+            )
+            if designtools.parse_source(source) is not None:
+                _alias(engine_art, source)
         card = carried_engine.get("card")
-        if card and library.attachment(engine_art.id, "card") is None:
-            library.attach(engine_art.id, "card", str(card).encode("utf-8"))
-        elif not card and library.attachment(engine_art.id, "card") is None:
+        here = library.attachment(engine_art.id, "card")
+        if card:
+            theirs = str(card).encode("utf-8")
+            if here is not None and here != theirs:
+                # The stand's card is the engine it was exported on; this
+                # server's rebuilt one would fire another (H005). As with an
+                # override, the stand's wins and the import says so; the one
+                # it replaces is kept for the runs that fired it.
+                notes.append(
+                    f"{engine_art.name}: this server's EngineDesign card (built "
+                    f"{_card_built(here)}) differs from the stand's (built "
+                    f"{_card_built(theirs)}); the stand's is used. The one it "
+                    "replaced is kept for the runs that fired it."
+                )
+            _keep_card(engine_art.id, theirs)
+        elif here is None:
             notes.append(
                 f"{engine_art.name} came without EngineDesign's card, so it fires "
                 "the simplified engine until the card is built (Engine page)."
+            )
+        else:
+            notes.append(
+                f"{engine_art.name} came without EngineDesign's card (the stand "
+                "fired the simplified engine); it fires this server's card, built "
+                f"{_card_built(here)}."
             )
 
     # The state table: the stand's own travels in its hookup already. A named
@@ -941,15 +1478,29 @@ async def import_stand_bundle(raw: dict[str, Any] = Body(...)) -> BundleImportOu
     incoming = raw.get("overrides") or {}
     if any(incoming.values()):
         merged, more = stand_bundle.merge_overrides(
-            overrides.entry(drawing_art.name), incoming
+            overrides.entry(_drawing_key(drawing_art.id)), incoming
         )
-        overrides.put_entry(drawing_art.name, merged)
+        overrides.put_entry(_change_key(drawing_art.id), merged)
         notes.extend(more)
 
+    # The bundle's bytes were the importer's to give, as an upload's are.
+    for given in (drawing_art, engine_art):
+        if given is not None:
+            _publish(given, _who(request))
     stand["diagram"] = drawing_art.id
     stand["engine"] = engine_art.id if engine_art is not None else ""
+    # The name the client creates the stand under: not one of the caller's
+    # own already, or the picker lists two identical rows.
+    wanted = str(raw.get("name") or drawing_art.name)
+    taken = {
+        str(r.get("name") or "")
+        for r in stands.store.load_index(userdata.store.current_user(request))
+    }
+    named, n = wanted, 2
+    while named in taken:
+        named, n = f"{wanted} ({n})", n + 1
     return BundleImportOut(
-        name=str(raw.get("name") or drawing_art.name),
+        name=named,
         stand=stand,
         drawing=_out(drawing_art),
         engine=_out(engine_art) if engine_art is not None else None,
@@ -1010,17 +1561,22 @@ async def source_documents(
     tool = _tool(key)
     try:
         found = await designtools.list_documents(tool, request.headers)
-        out = [SourceDocument(**d) for d in found]
-        if with_releases:
-            for doc in out:
-                doc.releases = [
-                    r["label"]
-                    for r in await designtools.releases(
-                        tool, doc.id, doc.owner, request.headers
-                    )
-                ]
     except DesignToolError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    out = [SourceDocument(**d) for d in found]
+    if with_releases:
+        for doc in out:
+            # One document's releases, not the list: a design the store will
+            # not show this caller (or one that went away between the two
+            # calls) failed the whole panel for everyone (R001). Its working
+            # copy is still offered; the pull says why if that fails too.
+            try:
+                listed = await designtools.releases(
+                    tool, doc.id, doc.owner, request.headers
+                )
+            except DesignToolError:
+                continue
+            doc.releases = [r["label"] for r in listed]
     return out
 
 
@@ -1062,13 +1618,21 @@ async def import_from_source(
         same = _same_drawing(payload)
         if same is not None:
             _alias(same, provenance)
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
         summary = diagram_summary(payload)
-    else:
+    card: bytes | None = None
+    problem = ""
+    if tool.kind == "engine":
         try:
             summary = engine_summary(engine_from_bytes(data, name=name or doc_id))
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        same, card, problem = await _engine_here(data, request.headers)
+        if same is not None:
+            _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            _pulled_by(same, _who(request))
+            return ImportResult(artifact=_out(same), already_present=True)
 
     label = name or doc_id
     artifact, existed = library.add(
@@ -1079,15 +1643,18 @@ async def import_from_source(
         suffix=tool.suffix,
         summary=summary,
     )
-    problem = ""
-    if tool.kind == "engine" and not _card_info(artifact):
-        problem = await _build_card(artifact.id, data, request.headers)
+    # The same bytes pulled from another document are this artifact too, and
+    # whoever may open that document may read it (:func:`_may_read`).
+    _alias(artifact, provenance)
+    _pulled_by(artifact, _who(request))
+    if tool.kind == "engine":
+        problem = await _card_for(artifact, data, card, problem, request.headers)
     return ImportResult(
         artifact=_out(artifact), already_present=existed, card_error=problem
     )
 
 
-@app.post("/api/library/{artifact_id}/card")
+@app.post("/api/library/{artifact_id}/card", dependencies=READABLE)
 async def build_engine_card(request: Request, artifact_id: str) -> ImportResult:
     """(Re)build an engine's EngineDesign card, so the stand fires the engine
     EngineDesign designed rather than feedtwin's simplified one."""
@@ -1103,7 +1670,7 @@ async def build_engine_card(request: Request, artifact_id: str) -> ImportResult:
     return ImportResult(artifact=_out(artifact), already_present=True)
 
 
-@app.get("/api/library/{artifact_id}/freshness")
+@app.get("/api/library/{artifact_id}/freshness", dependencies=READABLE)
 async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut:
     """Is this still what the design tool it was pulled from holds?
 
@@ -1115,19 +1682,8 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    # An upload that a pull later matched is compared with that pull's
-    # document (the newest alias).
-    parsed = next(
-        (
-            found
-            for found in map(
-                designtools.parse_source, [artifact.source, *_aliases(artifact_id)]
-            )
-            if found is not None
-        ),
-        None,
-    )
-    if parsed is None:
+    compared = _compared_source(artifact)
+    if compared is None:
         return FreshnessOut(
             artifact_id=artifact_id,
             tracked=False,
@@ -1139,7 +1695,7 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
                 "with."
             ),
         )
-    key, owner, doc_id, release = parsed
+    provenance, (key, owner, doc_id, release) = compared
     if release:
         return FreshnessOut(
             artifact_id=artifact_id,
@@ -1163,20 +1719,24 @@ async def artifact_freshness(request: Request, artifact_id: str) -> FreshnessOut
         except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
             current = False
     else:
-        current = hashlib.sha256(data).hexdigest() == artifact.sha256
+        # An engine pulled onto one already here is the same engine in other
+        # bytes (R008): unchanged if the working copy still gives those.
+        fetched = hashlib.sha256(data).hexdigest()
+        current = fetched in (artifact.sha256, _pulled_sha(artifact_id, provenance))
+    where = f"{owner}/{doc_id}" if owner else doc_id
     return FreshnessOut(
         artifact_id=artifact_id,
         tracked=True,
         current=current,
         detail=(
-            "Same as the working copy."
+            f"Same as the working copy of {where}."
             if current
-            else f"The working copy of {doc_id} has changed since this was pulled."
+            else f"The working copy of {where} has changed since this was pulled."
         ),
     )
 
 
-@app.post("/api/library/{artifact_id}/refresh")
+@app.post("/api/library/{artifact_id}/refresh", dependencies=READABLE)
 async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
     """Pull the design tool's working copy again, as a new artifact, and (for
     an engine) build its card. The old artifact stays: runs made on it still
@@ -1185,7 +1745,9 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         artifact = library.get(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    parsed = designtools.parse_source(artifact.source)
+    # What freshness compared with: an upload a pull later matched refreshes
+    # from that pull's document, as its freshness says it should.
+    parsed = _compared(artifact)
     if parsed is None:
         raise HTTPException(
             status_code=400, detail="uploaded, not pulled: nothing to refresh from"
@@ -1198,16 +1760,24 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         )
     except DesignToolError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    card: bytes | None = None
+    problem = ""
     if tool.kind == "engine":
         try:
             summary = engine_summary(engine_from_bytes(data, name=artifact.name))
         except (AssemblyError, EngineImportError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        same, card, problem = await _engine_here(data, request.headers)
+        if same is not None:
+            _alias(same, provenance, hashlib.sha256(data).hexdigest())
+            _pulled_by(same, _who(request))
+            return ImportResult(artifact=_out(same), already_present=True)
     else:
         payload = json.loads(data.decode("utf-8"))
         same = _same_drawing(payload)
         if same is not None:
             _alias(same, provenance)
+            _pulled_by(same, _who(request))
             return ImportResult(artifact=_out(same), already_present=True)
         summary = diagram_summary(payload)
     fresh, existed = library.add(
@@ -1218,35 +1788,85 @@ async def refresh_artifact(request: Request, artifact_id: str) -> ImportResult:
         suffix=tool.suffix,
         summary=summary,
     )
-    problem = ""
-    if tool.kind == "engine" and not _card_info(fresh):
-        problem = await _build_card(fresh.id, data, request.headers)
+    _alias(fresh, provenance)
+    _pulled_by(fresh, _who(request))
+    if tool.kind == "engine":
+        problem = await _card_for(fresh, data, card, problem, request.headers)
     return ImportResult(
         artifact=_out(fresh), already_present=existed, card_error=problem
     )
 
 
-@app.delete("/api/library/{artifact_id}")
-async def remove_artifact(artifact_id: str) -> dict[str, str]:
+def _references(artifact_id: str) -> list[str]:
+    """What still names an artifact: an open stand, a saved one (its working
+    copy), a run record. Each names it by content, to be opened -- or
+    replayed -- on the bytes it named."""
+    found: list[str] = []
+    if any(artifact_id in (o.diagram, o.engine) for o in list(_OPENED.values())):
+        found.append("a stand open now")
+    for owner in userdata.store.all_users():
+        folder = userdata.store.user_dir(owner, create=False)
+        for record in stands.store.load_index(owner):
+            try:
+                data = json.loads(
+                    (folder / str(record.get("id")) / "current.json").read_text("utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, Mapping) and artifact_id in (
+                data.get("diagram"),
+                data.get("engine"),
+            ):
+                name = record.get("name") or record.get("id")
+                found.append(f"stand {name!r} ({owner})")
+    runs = sum(
+        1
+        for row in run_records.store.list(userdata.store.all_users(run_records.APP))
+        if artifact_id in (row.get("diagram"), row.get("engine"))
+    )
+    if runs:
+        found.append(f"{runs} run record{'' if runs == 1 else 's'}")
+    return found
+
+
+@app.delete("/api/library/{artifact_id}", dependencies=READABLE)
+def remove_artifact(artifact_id: str) -> dict[str, str]:
     """Remove an artifact. Removed means removed: a shipped drawing or the
-    sample is not put back on the next restart (D-78)."""
+    sample is not put back on the next restart (D-78).
+
+    One a stand or a run still names leaves the lists and keeps its bytes:
+    removing those failed the run's replay with "no artifact" and the stand
+    would not reopen (H039). Importing the same bytes shows it again. A plain
+    ``def``: it reads every stand and run summary off the disk."""
     try:
         artifact = library.get(artifact_id)
         identity = _identity(artifact)
-        library.remove(artifact_id)
+        named = _references(artifact_id)
+        if named:
+            library.hide(artifact_id)
+        else:
+            library.remove(artifact_id)
     except LibraryError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     marks = [f"sha256:{identity}"]
     if artifact.source.startswith(("shipped:", "sample:")):
         marks.append(artifact.source)
     library.forget(*marks)
-    library.drop_record(ALIASES, artifact_id)
     _UNBUILDABLE.pop(artifact_id, None)
+    if named:
+        return {
+            "removed": artifact_id,
+            "kept": f"{artifact.name} is out of the library's lists, its bytes "
+            f"kept: {', '.join(named)} still name it, and a run replays on what "
+            "it ran on.",
+        }
+    library.drop_record(ALIASES, artifact_id)
+    library.drop_record(ACCESS, artifact_id)
     return {"removed": artifact_id}
 
 
 @app.post("/api/library/sample")
-async def load_sample() -> list[ArtifactOut]:
+async def load_sample(request: Request) -> list[ArtifactOut]:
     """Put the sample stand in the library -- the LE4 stand drawing, the team's
     ethalox engine and its EngineDesign card -- even if it was removed before.
     Idempotent; answers with the library as it stands afterwards."""
@@ -1256,13 +1876,13 @@ async def load_sample() -> list[ArtifactOut]:
         raise HTTPException(
             status_code=500, detail=f"The sample stand could not be loaded: {exc}"
         ) from exc
-    return [_out(a) for a in library.list()]
+    return [_out(a) for a in await _visible(request, library.list())]
 
 
 # -------------------------------------------------------------------- model
 
 
-@app.get("/api/diagram")
+@app.get("/api/diagram", dependencies=READABLE)
 async def diagram_document(diagram: str) -> dict[str, list[Any]]:
     """The drawing itself, as pid-designer saved it.
 
@@ -1311,7 +1931,7 @@ def _not_operated(model: Model) -> frozenset[str]:
     return frozenset(n.id for n in model.diagram.nodes if n.type in daqbox.NOT_CABLED)
 
 
-@app.get("/api/model")
+@app.get("/api/model", dependencies=READABLE)
 async def model_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire", ignore_gse: bool = False
 ) -> ModelView:
@@ -1398,6 +2018,24 @@ def _role(component_type: str) -> str:
     return "component"
 
 
+def _was(raw: Any) -> ParamValue | None:
+    """What a stored override says the drawing had when it was made, or None
+    when it says nothing readable. A store written whole (a bundle's import)
+    can hold any shape here, and one that did not fit took the Drawing view
+    down -- the one place the override could be cleared from."""
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        value = float(raw["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or "unit" not in raw:
+        return None
+    return ParamValue(
+        value=value, unit=str(raw["unit"]), source=str(raw.get("source", ""))
+    )
+
+
 def _same_dimension(unit: str) -> list[str]:
     try:
         dim = dimension_of(unit)
@@ -1406,7 +2044,7 @@ def _same_dimension(unit: str) -> list[str]:
     return [u for u in registered_units() if dimension_of(u) == dim]
 
 
-@app.get("/api/drawing")
+@app.get("/api/drawing", dependencies=READABLE)
 async def drawing_view(
     diagram: str, engine: str = "", fluid_set: str = "hotfire"
 ) -> DrawingOut:
@@ -1457,9 +2095,10 @@ async def drawing_view(
     _, applied = apply_overrides(raw.diagram, entry)
 
     def params_of(
-        element: str, declared: Mapping[str, Param], segmented: bool
+        element: str, declared: Mapping[str, Param], segmented: bool, symbol: str = ""
     ) -> list[DrawingParam]:
-        own = stored.get(element) or {}
+        own = stored.get(element)
+        own = own if isinstance(own, Mapping) else {}
         filled = assumed.get(element, {})
         out = []
         for name in sorted(set(declared) | set(filled) | set(own)):
@@ -1468,30 +2107,38 @@ async def drawing_view(
             # drawing's own number, so it is shown once, as the drawing's.
             fill = filled.get(name) if drawn is None else None
             o = own.get(name)
+            # One that cannot be read is not applied: shown with why, and its
+            # revert, which is the only way to be rid of it.
+            why = unreadable(name, o, symbol) if o is not None else ""
             locked = (
                 "superseded by the line's itemised run"
                 if segmented and name in SUPERSEDED_BY_SEGMENTS
-                else ""
+                else f"Not applied: {why}." if why else ""
             )
             override = None
             stale = False
             if o is not None:
-                was = o.get("was")
+                record = o if isinstance(o, Mapping) else {}
+                was = _was(record.get("was"))
+                unit = str(record.get("unit", "-"))
                 override = OverrideOut(
-                    value=o["value"],
-                    unit=o["unit"],
-                    source=o["source"],
-                    reference=o.get("reference", ""),
-                    by=o.get("by", ""),
-                    at=o.get("at", ""),
-                    was=ParamValue(**was, reference="") if was else None,
+                    value=0.0 if why else record["value"],
+                    # In the unit the model reads it in: a bare 'psi' typed
+                    # over an absolute pressure is applied as psig (ADR 0004),
+                    # and shown as that, not as the absolute 'psi' it is not.
+                    unit=unit if why else drawn_unit(name, unit, symbol),
+                    source=str(record.get("source", "")),
+                    reference=str(record.get("reference", "")),
+                    by=str(record.get("by", "")),
+                    at=str(record.get("at", "")),
+                    was=was,
                 )
                 if was is None:
                     stale = drawn is not None
                 else:
                     stale = drawn is None or (drawn.value, drawn.unit) != (
-                        was["value"],
-                        was["unit"],
+                        was.value,
+                        was.unit,
                     )
             base = _value(drawn) if drawn is not None else fill
             effective = (
@@ -1531,7 +2178,7 @@ async def drawing_view(
                 type=n.type,
                 role=_role(n.type),
                 fluid=n.fluid,
-                params=params_of(n.id, n.params, False),
+                params=params_of(n.id, n.params, False, n.type),
                 options=dict(n.options),
                 on_console=n.id in console,
                 console_hidden=n.id in hidden,
@@ -1563,7 +2210,12 @@ async def drawing_view(
         imported_at=artifact.imported_at,
         elements=elements,
         orphaned=sorted(
-            [f"{el}.{p}" for el, ps in stored.items() if el not in known for p in ps]
+            [
+                f"{el}.{p}"
+                for el, ps in stored.items()
+                if el not in known
+                for p in (ps if isinstance(ps, Mapping) else ["(unreadable)"])
+            ]
             + [f"{el} (console)" for el in hidden if el not in known]
         ),
         overrides_hash=fingerprint(applied),
@@ -1571,7 +2223,7 @@ async def drawing_view(
     )
 
 
-@app.put("/api/drawing/override")
+@app.put("/api/drawing/override", dependencies=READABLE)
 async def set_override(
     request: Request,
     diagram: str = Body(...),
@@ -1585,7 +2237,7 @@ async def set_override(
     """Type a number over the drawing's. Takes effect on the next Reset."""
     try:
         drawing = load_diagram_artifact(library, diagram)
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
     except (AssemblyError, LibraryError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     node = drawing.node(element)
@@ -1613,6 +2265,14 @@ async def set_override(
             raise HTTPException(
                 status_code=422, detail=f"unknown unit {unit!r}"
             ) from exc
+    # Read as the drawing reads its own (ADR 0004): a gauge or absolute
+    # reference on a difference is refused there, so it is here.
+    try:
+        drawn_unit(parameter, unit, node.type if node is not None else "")
+    except PressureReferenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except UnknownUnit:
+        pass  # set_param says so
     try:
         entry = overrides.set_param(
             key,
@@ -1630,18 +2290,18 @@ async def set_override(
     return {"key": key, "params": entry["params"].get(element, {})}
 
 
-@app.delete("/api/drawing/override")
+@app.delete("/api/drawing/override", dependencies=READABLE)
 async def clear_override(diagram: str, element: str, parameter: str) -> dict[str, Any]:
     """Back to the drawing's number."""
     try:
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
         entry = overrides.clear_param(key, element, parameter)
     except (LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"key": key, "params": entry["params"].get(element, {})}
 
 
-@app.get("/api/drawing/console")
+@app.get("/api/drawing/console", dependencies=READABLE)
 async def console_visibility(diagram: str) -> dict[str, Any]:
     """Which symbols the console hides, and the order it draws its
     transducers and tanks in. Cheap; the console polls it."""
@@ -1655,7 +2315,7 @@ async def console_visibility(diagram: str) -> dict[str, Any]:
     }
 
 
-@app.put("/api/drawing/console")
+@app.put("/api/drawing/console", dependencies=READABLE)
 async def set_console_visibility(
     request: Request,
     diagram: str = Body(...),
@@ -1665,7 +2325,7 @@ async def set_console_visibility(
     """Hide a symbol from the console, or show it again, for everyone. The
     ground support starts hidden, so for it this records a showing."""
     try:
-        key = _drawing_key(diagram)
+        key = _change_key(diagram)
         if element in _ground_of(diagram):
             overrides.set_console_shown(key, element, not hidden, by=_who(request))
         else:
@@ -1675,13 +2335,13 @@ async def set_console_visibility(
     return {"hidden": sorted(_console_hidden(diagram))}
 
 
-@app.put("/api/drawing/console/order")
+@app.put("/api/drawing/console/order", dependencies=READABLE)
 async def set_console_order(
     diagram: str = Body(...), order: dict[str, list[str]] = Body(...)
 ) -> dict[str, Any]:
     """The order the console draws transducers and tanks in, for everyone."""
     try:
-        overrides.set_console_order(_drawing_key(diagram), order)
+        overrides.set_console_order(_change_key(diagram), order)
     except (LibraryError, OverrideError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
@@ -1690,7 +2350,7 @@ async def set_console_order(
     }
 
 
-@app.put("/api/drawing/console/view")
+@app.put("/api/drawing/console/view", dependencies=READABLE)
 async def set_console_view(
     request: Request,
     diagram: str = Body(...),
@@ -1701,7 +2361,7 @@ async def set_console_view(
     in ``order``. Opening a stand puts its view back this way."""
     try:
         overrides.set_console_view(
-            _drawing_key(diagram),
+            _change_key(diagram),
             hidden=set(hidden),
             ground=set(_ground_of(diagram)),
             order=order,
@@ -1724,18 +2384,32 @@ def _stand(
     swap: Mapping[str, tuple[str, float]] | None = None,
     vehicle_only: bool = False,
     gas: Mapping[str, str] | None = None,
+    entry: Mapping[str, Any] | None = None,
+    card: str | None = None,
 ) -> "Stand":
     """A model with the stand's state machine bound to its valves.
 
     ``vehicle_only`` (``Setup.ignore_gse``) builds the rocket alone: the
     drawing's hookup keeps its vehicle pins, and its knobs are the cut
-    drawing's (:func:`feedtwin.session.hookup.on_vehicle`)."""
-    model = _assemble(diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas)
+    drawing's (:func:`feedtwin.session.hookup.on_vehicle`). ``entry`` and
+    ``card`` build a run's own overrides and card (:func:`_assemble`)."""
+    model = _assemble(
+        diagram, engine, fluid_set, multiphase, swap, vehicle_only, gas, entry, card
+    )
     shipped = _shipped_machine(machine)
     hookup, _, problem = _hookup_for(diagram, model)
     drawn = _drawn_knobs(diagram, engine, fluid_set, model, hookup, vehicle_only)
     whole = (
-        _assemble(diagram, engine, fluid_set, multiphase, swap, gas=gas)
+        _assemble(
+            diagram,
+            engine,
+            fluid_set,
+            multiphase,
+            swap,
+            gas=gas,
+            entry=entry,
+            card=card,
+        )
         if vehicle_only
         else model
     )
@@ -1810,13 +2484,28 @@ def _source_lineage(source: str) -> str | None:
 
 def _lineage(artifact: Artifact) -> str:
     """Where a drawing comes from, whatever its bytes: the pid-designer
-    document, the shipped file, or the name it was uploaded under (a browser's
-    " (3)" on a re-download stripped). A hookup is kept per lineage, so saving
-    the drawing again -- a new artifact by content -- keeps what was linked."""
+    document, the shipped file, or the name it was uploaded under. A hookup
+    is kept per lineage, so saving the drawing again -- a new artifact by
+    content -- keeps what was linked.
+
+    The name as it is: a browser's " (3)" on a re-download used to be
+    stripped, which put 'LE4', 'LE4 (1)', 'LE4 (3)' and 'LE4 (6)' -- four
+    different drawings in the team's library -- on one hookup, and saving
+    one rewired the others (R005). What was saved under the stripped name
+    before is still read, where it fits (:func:`_inherited`)."""
     own = _source_lineage(artifact.source)
     if own is not None:
         return own
-    return "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+    return "name:" + artifact.name.strip()
+
+
+def _legacy_lineage(artifact: Artifact) -> str | None:
+    """The lineage an upload's hookup was saved under before R005: its name
+    with a trailing " (n)" stripped. None where that is the lineage itself."""
+    if _source_lineage(artifact.source) is not None:
+        return None
+    legacy = "name:" + re.sub(r"\s*\(\d+\)$", "", artifact.name).strip()
+    return legacy if legacy != _lineage(artifact) else None
 
 
 def _lineages(artifact: Artifact) -> list[str]:
@@ -1832,13 +2521,88 @@ def _lineages(artifact: Artifact) -> list[str]:
     return out
 
 
+def _holds_hookup(lineage: str) -> bool:
+    """Whether a hookup is saved under ``lineage`` (not a reset's marker)."""
+    return "hookup" in (library.record(HOOKUPS, lineage) or {})
+
+
 def _hookup_lineage(artifact: Artifact) -> tuple[str, list[str]]:
     """The lineage whose saved hookup this drawing wires -- the first of
     :func:`_lineages` that has one, else its own, where a save goes -- and the
     other lineages that hold a hookup the stand does not wire."""
-    held = [lin for lin in _lineages(artifact) if library.record(HOOKUPS, lin)]
+    held = [lin for lin in _lineages(artifact) if _holds_hookup(lin)]
     used = held[0] if held else _lineage(artifact)
     return used, [lin for lin in held if lin != used]
+
+
+@functools.lru_cache(maxsize=64)
+def _symbols_of(artifact_id: str) -> frozenset[str]:
+    """The ids drawn on a drawing in the library (content-addressed, so an
+    id's answer never changes); empty if it cannot be read."""
+    try:
+        payload = json.loads(library.read(artifact_id).decode("utf-8"))
+    except (LibraryError, UnicodeDecodeError, json.JSONDecodeError):
+        return frozenset()
+    items = [
+        *(payload.get("nodes") or [] if isinstance(payload, Mapping) else []),
+        *(payload.get("edges") or [] if isinstance(payload, Mapping) else []),
+    ]
+    return frozenset(str(i.get("id")) for i in items if isinstance(i, Mapping))
+
+
+def _bound_symbols(raw: Mapping[str, Any]) -> set[str]:
+    """The drawing ids a stored hookup binds: pinned valves, knob regulators
+    and cabled symbols. Not the engine's channels (``engine.pc``), which no
+    drawing draws."""
+    engine = {channel for channel, *_ in ENGINE_CHANNELS}
+    bound: set[str] = set()
+    valves = raw.get("valves")
+    if isinstance(valves, Mapping):
+        bound |= {str(s) for s in valves.values() if s}
+    for knob in raw.get("knobs") or ():
+        if isinstance(knob, Mapping):
+            bound |= {str(r) for r in knob.get("regulators") or ()}
+    for channel in raw.get("channels") or ():
+        if isinstance(channel, Mapping) and channel.get("symbol"):
+            bound.add(str(channel["symbol"]))
+    return bound - engine
+
+
+def _inherited(artifact: Artifact) -> tuple[str | None, str]:
+    """The pre-R005 hookup this upload still wires, and why one is not.
+
+    Saved under the name less its " (n)" (:func:`_legacy_lineage`), which
+    every upload of that name shared. It is this drawing's when none of its
+    own lineages holds a hookup (or was reset) and every symbol the hookup
+    binds is on this drawing; one that names symbols this drawing does not
+    have is another drawing's, and is said and left alone. Returns the
+    lineage it is under (None if none applies) and a note, or ""."""
+    legacy = _legacy_lineage(artifact)
+    if legacy is None or any(
+        library.record(HOOKUPS, lin) is not None for lin in _lineages(artifact)
+    ):
+        return None, ""
+    raw = (library.record(HOOKUPS, legacy) or {}).get("hookup")
+    if not isinstance(raw, Mapping):
+        return None, ""
+    absent = sorted(_bound_symbols(raw) - _symbols_of(artifact.id))
+    if absent:
+        return None, (
+            f'A hookup saved for {legacy} (the name without its " (n)") is '
+            f"another drawing's: it wires {', '.join(absent[:6])}"
+            f"{', ...' if len(absent) > 6 else ''}, which this drawing does not "
+            "have. The suggested hookup is wired; save one on the Hookup tab to "
+            "keep it for this drawing."
+        )
+    return legacy, ""
+
+
+def _wired_lineage(artifact: Artifact) -> str:
+    """The lineage whose saved hookup the stand runs: its own (or a pull's of
+    the same drawing), else the one it inherits (:func:`_inherited`), else
+    its own, where a save goes."""
+    inherited, _ = _inherited(artifact)
+    return inherited or _hookup_lineage(artifact)[0]
 
 
 def _drawn_knobs(
@@ -1868,13 +2632,16 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
     never saved, and used to be indistinguishable from it: the stand ran on a
     different wiring and nothing said so."""
     try:
-        lineage, shadowed = _hookup_lineage(library.get(diagram_id))
+        artifact = library.get(diagram_id)
     except LibraryError:
         suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
         return suggested, False, ""
+    lineage, shadowed = _hookup_lineage(artifact)
+    inherited, problem = _inherited(artifact)
+    if inherited is not None:
+        lineage = inherited
     stored = library.record(HOOKUPS, lineage)
-    problem = ""
-    if stored is not None:
+    if stored is not None and "hookup" in stored:
         try:
             raw = stored.get("hookup")
             unused = (
@@ -1884,7 +2651,9 @@ def _hookup_for(diagram_id: str, model: Model) -> tuple[Hookup, bool, str]:
                 if shadowed
                 else ""
             )
-            hookup = Hookup.from_dict(raw if isinstance(raw, Mapping) else {})
+            if not isinstance(raw, Mapping):
+                raise ValueError("it is not a table of pins and knobs")
+            hookup = Hookup.from_dict(raw)
             return hookup, True, unused
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             problem = (
@@ -1930,6 +2699,9 @@ def _engine_state(chamber: ChamberResult | None) -> EngineState | None:
 #
 # A stand that exists in time. Everything else in this API answers "what would
 # happen if"; this one answers "what is happening". See backend.session.
+
+#: A step that fails is said to the operator as a 422; its traceback is here.
+_session_log = logging.getLogger("feed-twin.session")
 
 _SESSIONS: dict[str, Session] = {}
 #: Stands held open at once. Each is a whole model and its history in memory.
@@ -1980,6 +2752,12 @@ class _Opened:
     events: list[dict[str, Any]] = field(default_factory=list)
     """Every command and T-0, stamped with stand time, for the repro
     (``/api/session/{id}/repro``). Capped at :data:`REPRO_EVENTS`."""
+    commands: list[dict[str, Any]] = field(default_factory=list)
+    """The latest commands, stamped with stand time, newest last: a run record
+    takes the ones between Fire and the end of its burn (its ``sequence``).
+    Kept apart from ``events``, which keeps the first ones once full."""
+    tripped: bool = False
+    """The stand's trip has been seen, and the burn it ended recorded."""
 
 
 def _notices(session_id: str) -> list[str]:
@@ -1996,9 +2774,64 @@ _OPENED: dict[str, _Opened] = {}
 KEPT_BURNS = 20
 
 
-def _setup(settings: Mapping[str, Any], base: Setup | None = None) -> Setup:
-    """The dials, from whatever the client sent. Anything unsent is kept."""
-    return parse_setup(settings, base)
+def _setup(
+    settings: Mapping[str, Any], base: Setup | None = None, *, strict: bool = False
+) -> Setup:
+    """The dials, from whatever the client sent. Anything unsent is kept.
+
+    ``strict``: a value that cannot be read is a 422 naming its row, rather
+    than skipped (:func:`backend.tunables.parse_setup`)."""
+    try:
+        return parse_setup(settings, base, strict=strict)
+    except SetupError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _command_setup(session: Session, settings: Mapping[str, Any]) -> dict[str, Any]:
+    """The Configuration rows a command changes, read before anything is
+    done: one that cannot be read is refused, naming its row, and the stand
+    is as it was. A row the stand was built from (ignoring the GSE,
+    the pressurant) is a different network, so a fresh stand -- stand.tsx
+    reopens for it; sent here it was reverted silently, the echo the only
+    sign, and is refused instead."""
+    raw = settings.get("setup")
+    if raw is not None and not isinstance(raw, Mapping):
+        raise HTTPException(
+            status_code=422,
+            detail="setup is an object of Configuration rows, {row: value}.",
+        )
+    asked = {
+        **dict(raw or {}),
+        **({"dome": settings["dome"]} if "dome" in settings else {}),
+    }
+    wanted = _setup(asked, session.setup, strict=True)
+    built = {"ignore_gse": session.gse_ignored, "pressurant": session.setup.pressurant}
+    for key, was in built.items():
+        if key in asked and getattr(wanted, key) != was:
+            label = next(t.label for t in TUNABLES if t.key == key)
+            raise HTTPException(
+                status_code=409,
+                detail=f"{label} is what the stand was built from: Reset to open "
+                "a fresh stand with it.",
+            )
+    return asked
+
+
+def _operated(session: Session, valve: str) -> str:
+    """``valve`` checked: a valve on this drawing a person may take by hand
+    (the console's and the P&ID's, the model view's actuators). An unknown id
+    was a 200 and listed as held, with nothing to release."""
+    if valve in _not_operated(session.model):
+        raise HTTPException(
+            status_code=409,
+            detail="A disconnect is not a valve: nobody opens or shuts it.",
+        )
+    signal = session.model.built.actuators.get(valve)
+    if signal is None or signal.endswith(".dome"):
+        raise HTTPException(
+            status_code=404, detail=f"No valve {valve!r} on this drawing."
+        )
+    return valve
 
 
 def _session(session_id: str) -> Session:
@@ -2015,7 +2848,26 @@ def _session(session_id: str) -> Session:
 
 
 def _close_session(session_id: str, why: str) -> None:
-    """Forget a session, remembering why for whoever asks after it."""
+    """Forget a session, remembering why for whoever asks after it.
+
+    A burn still going is recorded first, as cut short: a Reset, a drawing or
+    engine switch or an eviction mid-burn took the burn with it, and every
+    burn that lit leaves a run record (H034)."""
+    session, opened = _SESSIONS.get(session_id), _OPENED.get(session_id)
+    if (
+        session is not None
+        and opened is not None
+        and not opened.tripped
+        and (opened.burning or opened.lit_t is not None)
+    ):
+        # A stand replaced is a Reset, or another drawing, engine or setting
+        # that takes a new stand (stand.tsx): the server cannot tell which.
+        how = (
+            "reset or replaced"
+            if "replaced" in why
+            else "closed to make room" if "make room" in why else "closed"
+        )
+        _record_safely(session, opened, session.t, closing=how)
     _SESSIONS.pop(session_id, None)
     _OPENED.pop(session_id, None)
     _TOUCHED.pop(session_id, None)
@@ -2247,7 +3099,7 @@ def _stand_box_notes(own: Hookup, stand: Stand) -> list[str]:
     return [n for n in out if n]
 
 
-@app.post("/api/session")
+@app.post("/api/session", dependencies=READABLE)
 async def open_session(
     request: Request,
     diagram: str,
@@ -2264,6 +3116,9 @@ async def open_session(
     a thirtieth of the density. Not ready for flashing work yet.
     """
     settings = dict(body or {})
+    # The stand it is opened from, checked before anything is built, seated or
+    # closed: a refused open leaves the server as it was.
+    stand_ref = _stand_ref(request, settings.get("stand"))
     # The session this one replaces (a Reset, a new drawing): closed now, not
     # left holding a seat until the server is full.
     replaces = str(settings.pop("replaces", "") or "")
@@ -2356,6 +3211,7 @@ async def open_session(
         *(stand.notes if hookup is stand.hookup else ()),
         *hookup_notes,
         *session.short_loads(),
+        *_rests_open_onto_vehicle(session),
     ]
     session.assumptions.extend(notices)
     # The first frame before the session is kept: a stand whose first step
@@ -2372,12 +3228,73 @@ async def open_session(
         machine=machine,
         multiphase=multiphase,
         user=userdata.store.current_user(request),
-        stand=_stand_ref(request, settings.get("stand")),
+        stand=stand_ref,
         notices=notices,
         body=json.loads(json.dumps(settings, default=str)),
     )
     _UNBUILDABLE.pop(diagram, None)
     return _session_out(session, first)
+
+
+#: Symbols a walk along the drawing stops at: something that shuts, holds a
+#: pressure, or only lets flow one way.
+_WALK_STOPS = frozenset({"PR", "RV", "CV"})
+
+
+def _rests_open_onto_vehicle(session: Session) -> list[str]:
+    """A sentence for each actuated valve that rests open (its drawing's
+    ``failState``) with no state-table row to drive it, and opens a vehicle
+    tank through nothing that shuts -- across a mated disconnect included.
+
+    Nothing on the stand ever closes one. LE4 (3) with its cart drawn: FD-ROT
+    rests open on the fuel fill line, and through the mated fill disconnect
+    it drained the fuel tank in 0.9 s of a 3.9 s burn with nothing said.
+    Whether the drawing binds it or draws a check valve is the team's (ADR
+    0006); the stand says so. Empty when there is none."""
+    built = session.model.built
+    diagram = session.model.diagram
+    types = {n.id: n.type for n in diagram.nodes}
+    labels = {n.id: n.label or n.id for n in diagram.nodes}
+    adjacent: dict[str, set[str]] = {}
+    for a, b in [*((e.source, e.target) for e in diagram.edges), *built.mated]:
+        adjacent.setdefault(a, set()).add(b)
+        adjacent.setdefault(b, set()).add(a)
+    vehicle = set(session.vehicle_tanks)
+    shuts = set(built.actuators) | set(built.hand_valves)
+    out: list[str] = []
+    for valve in session.binding.uncommanded:
+        signal = built.actuators.get(valve, "")
+        if (
+            not signal
+            or signal.endswith(".dome")
+            or valve in built.hand_valves
+            or built.rest.get(valve, 0.0) < 0.5
+        ):
+            continue
+        reached: set[str] = set()
+        seen, frontier = {valve}, [valve]
+        while frontier:
+            for nxt in adjacent.get(frontier.pop(), ()):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                if nxt in vehicle:
+                    reached.add(nxt)
+                elif not (
+                    nxt in shuts
+                    or nxt in session.tanks
+                    or types.get(nxt) in _WALK_STOPS | SOURCE_TYPES
+                ):
+                    frontier.append(nxt)
+        if reached:
+            out.append(
+                f"{labels.get(valve, valve)} rests open (its drawing's failState) "
+                "and no state-table row drives it, so nothing on the stand shuts "
+                f"it; it opens {', '.join(sorted(labels[t] for t in reached))} "
+                "with nothing between. Shut it by hand, pin it to a row on the "
+                "Hookup tab, or draw what closes it."
+            )
+    return out
 
 
 def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
@@ -2399,16 +3316,31 @@ def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
 #: Events a session keeps for its repro; a stand driven for hours keeps the
 #: first ones, which are the ones that set it up.
 REPRO_EVENTS = 5000
+#: Commands a session keeps for its run records' sequences: the latest ones,
+#: however long the stand has been driven.
+RECENT_COMMANDS = 200
 
 
 def _remember(session_id: str, session: Session, event: dict[str, Any]) -> None:
     """Note an operator's action for the repro, at the stand time it lands."""
     opened = _OPENED.get(session_id)
-    if opened is None or len(opened.events) >= REPRO_EVENTS:
+    if opened is None:
         return
-    opened.events.append(
-        {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
-    )
+    stamped = {"t": round(session.t, 4), **json.loads(json.dumps(event, default=str))}
+    if "command" in stamped:
+        command = stamped["command"]
+        moves = isinstance(command, Mapping) and any(
+            key in command for key in ("setup", "dome", "knob")
+        )
+        # What the settings were before this command changed them: a run
+        # whose operator turned a knob mid-burn records them as they stood at
+        # Fire, and its sequence turns the knob at its T+ (:func:`_fired_on`).
+        opened.commands.append(
+            {**stamped, "was": _settings_now(session)} if moves else stamped
+        )
+        del opened.commands[:-RECENT_COMMANDS]
+    if len(opened.events) < REPRO_EVENTS:
+        opened.events.append(stamped)
 
 
 @app.get("/api/session/{session_id}/repro")
@@ -2457,6 +3389,9 @@ async def session_repro(session_id: str) -> dict[str, Any]:
             "body": opened.body,
         },
         "drawing": drawing,
+        # The Drawing tab's overrides the stand was built with, as the store
+        # keeps them: the other machine's store has none of them.
+        "overrides": _override_inputs(session.model, provenance=True),
         "engine": engine,
         "hookup": session.hookup.to_dict() if session.hookup is not None else None,
         "events": list(opened.events),
@@ -2496,7 +3431,17 @@ async def tick_session(
     # consecutive full steps of the session's own size -- nothing is coarsened,
     # it only goes faster when the machine can (a 20-minute LOX load watched at
     # x20). The cockpit drops back to x1 at Fire.
-    dt = min(max(float(settings.get("dt") or 0.1), 0.0), MAX_TICK_S)
+    try:
+        asked = float(settings.get("dt") or 0.1)
+    except (TypeError, ValueError):
+        asked = math.nan
+    if not math.isfinite(asked):
+        raise HTTPException(
+            status_code=422,
+            detail=f"A tick's dt is the stand time to run, in seconds; got "
+            f"{settings.get('dt')!r}",
+        )
+    dt = min(max(asked, 0.0), MAX_TICK_S)
     left = dt
     try:
         while True:
@@ -2507,6 +3452,9 @@ async def tick_session(
             if left <= 1e-9 or session.tripped or session.state == "Fire":
                 break
     except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
+        # Said to the operator, and kept for whoever debugs it: a physics
+        # crash in a live burn left no traceback on the server.
+        _session_log.exception("tick failed for session %s", session_id)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _session_out(session, sample)
 
@@ -2575,6 +3523,50 @@ async def study_status(request: Request, session: str = "") -> StudyOut:
     return _study_out(_study_key(request, session))
 
 
+def _knob_ranges(session: Session) -> dict[str, tuple[float, float]]:
+    """Each knob's range [psig] as this stand holds it: the GSE dial's arc,
+    and for the dome and the COPV charge also their Configuration rows, which
+    clamp them again -- the narrower of the two is what runs."""
+    rows = {t.key: (t.low, t.high) for t in TUNABLES}
+    out = {DOME: rows["dome"], CHARGE: rows["copv_target"]}
+    for knob in session.hookup.knobs if session.hookup is not None else ():
+        low, high = out.get(knob.id, (knob.low, knob.high))
+        out[knob.id] = (max(low, knob.low), min(high, knob.high))
+    return out
+
+
+def _on_row(row: Tunable, number: float) -> str:
+    """A Configuration row's number as a person reads it: a gauge pressure in
+    psia (ADR 0007), anything else in the row's own unit."""
+    if row.gauge_wire:
+        return str(say(from_psig(number), 1))
+    return f"{number:g} {row.unit}".rstrip()
+
+
+#: A study's horizon when none is sent, and the range it is held to [s].
+STUDY_HORIZON_S = (20.0, 1.0, 120.0)
+
+
+def _horizon(raw: Any) -> float:
+    """The study's horizon: unsent is the default; a number is held to the
+    range, 0 to its floor (``or 20`` read 0 as unsent); anything else is a
+    422 -- 'abc' was a 500 and 'nan' ran, echoed null."""
+    default, low, high = STUDY_HORIZON_S
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = math.nan
+    if not math.isfinite(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"The horizon is a number of seconds, {low:g} to {high:g}; "
+            f"got {raw!r}",
+        )
+    return min(max(value, low), high)
+
+
 @app.post("/api/study")
 async def start_study(
     http: Request, body: dict[str, Any] | None = Body(None)
@@ -2621,22 +3613,65 @@ async def start_study(
             detail=f"No knob {', '.join(stray)} on this stand. Knobs: "
             f"{', '.join(sorted(known)) or 'none'}.",
         )
+    # Inside the range the stand would hold it to, or refused: the dome knob's
+    # arc is 0-1,000 psig, its Configuration row clamped 8,000 to 6,000, and
+    # the case still said "dome 8,014.7 psia".
+    ranges = _knob_ranges(session)
+    for i, case in enumerate(cases):
+        asked = [*case.knobs.items()]
+        if case.copv_psi is not None:
+            asked.append((CHARGE, case.copv_psi))
+        for knob, value in asked:
+            low, high = ranges.get(knob, (0.0, math.inf))
+            if not low <= value <= high:
+                name = "COPV" if knob == CHARGE and knob not in case.knobs else knob
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"case {i + 1}: {name} {say(from_psig(value), 1)} is "
+                    f"outside {say(from_psig(low), 1)} to {say(from_psig(high), 1)}, "
+                    "where this stand holds it.",
+                )
     keys = {t.key for t in TUNABLES}
     unknown = sorted({k for c in cases for k in c.setup} - keys)
     if unknown:
         raise HTTPException(
             status_code=422, detail=f"No Configuration row {', '.join(unknown)}."
         )
-    horizon = min(max(float(settings.get("horizon_s") or 20.0), 1.0), 120.0)
+    # Read as the console reads an edit (strict): a case's 'nan' dome ran and
+    # reported "dome = nan".
+    for i, case in enumerate(cases):
+        try:
+            parse_setup(case.setup, strict=True)
+        except SetupError as exc:
+            raise HTTPException(status_code=422, detail=f"case {i + 1}: {exc}") from exc
+        # And inside its row, as a knob is inside its arc: a row's number
+        # outside it was clamped and run there, the case still saying the
+        # number asked ("dome = 8,014.7 psia" burned at 6,014.7).
+        for row in TUNABLES:
+            setting = case.setup.get(row.key)
+            if row.kind != "number" or setting is None:
+                continue
+            if not row.low <= float(setting) <= row.high:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"case {i + 1}: {row.label} ({row.key}) "
+                    f"{_on_row(row, float(setting))} is outside its row's "
+                    f"{_on_row(row, row.low)} to {_on_row(row, row.high)}.",
+                )
+    horizon = _horizon(settings.get("horizon_s"))
     base = {
         "diagram": opened.diagram,
         "engine": opened.engine,
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
-        "setup": wire_setup(session.setup),
+        # The stand as it burns: a row that applies on Reset at the value it
+        # was built with, not a change still waiting for one (H019) -- each
+        # case is a fresh stand, which would take it -- and the dome and
+        # charge knobs as set, not as opened (H009).
+        "setup": _setup_inputs(session, opened),
         **_hookup_inputs(session),
-        "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
+        "knobs": _knob_inputs(session),
     }
     engine_name = opened.engine
     try:
@@ -2671,8 +3706,9 @@ async def start_study(
 
 @app.post("/api/study/cancel")
 async def cancel_study(request: Request, session: str = "") -> StudyOut:
-    """Stop your study at the end of the case running now, keeping the ones
-    finished. Only your own: a study is cancelled by whoever started it."""
+    """Stop your study now, keeping the cases finished: the one burning is cut
+    short and left out, and the study's notes say where. Only your own: a
+    study is cancelled by whoever started it."""
     key = _study_key(request, session)
     runner = _STUDIES.get(key)
     if runner is not None:
@@ -2690,6 +3726,41 @@ async def command_session(
     settings = dict(body or {})
     _remember(session_id, session, {"command": settings})
 
+    # Read before anything is done: a command that cannot be read is refused
+    # whole, and the stand is as it was.
+    asked = (
+        _command_setup(session, settings)
+        if "setup" in settings or "dome" in settings
+        else None
+    )
+    knob = settings.get("knob")
+    turned: tuple[Any, float] | None = None
+    if isinstance(knob, Mapping) and session.hookup is not None:
+        found = next((k for k in session.hookup.knobs if k.id == knob.get("id")), None)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"No knob {knob.get('id')!r}.")
+        try:
+            value = float(knob.get("value", ""))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="knob value is a number"
+            ) from exc
+        # NaN passed the clamp (max(nan, low) is nan): the dial read null and
+        # T-0 primed off it.
+        if not math.isfinite(value):
+            raise HTTPException(
+                status_code=422, detail=f"knob value is a finite number; got {value}"
+            )
+        turned = (found, min(max(value, found.low), found.high))
+    valve = _operated(session, str(settings["valve"])) if "valve" in settings else None
+    release: str | None = None
+    if settings.get("release") is not None:
+        # No id, or the console's Release all ('*', stand.tsx): every valve a
+        # person holds. '*' was read as a valve called '*' and released none.
+        wanted = str(settings.get("release") or "")
+        release = "" if wanted in ("", "*") else _operated(session, wanted)
+    had = session.setup
+
     if session.tripped and "state" in settings:
         raise HTTPException(status_code=409, detail=session.tripped)
     if "state" in settings:
@@ -2706,17 +3777,8 @@ async def command_session(
         # regulator-ullage loop is too stiff for real time now simply runs
         # slower than the wall clock, and the panel says by how much; that is
         # honest and it is never a frozen screen.
-    knob = settings.get("knob")
-    if isinstance(knob, Mapping) and session.hookup is not None:
-        found = next((k for k in session.hookup.knobs if k.id == knob.get("id")), None)
-        if found is None:
-            raise HTTPException(status_code=404, detail=f"No knob {knob.get('id')!r}.")
-        try:
-            value = min(max(float(knob.get("value", "")), found.low), found.high)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=422, detail="knob value is a number"
-            ) from exc
+    if turned is not None:
+        found, value = turned
         if found.id == DOME:
             session.setup = _setup({"dome": value}, session.setup)
         elif found.id == CHARGE:
@@ -2773,18 +3835,13 @@ async def command_session(
                 "restart the stand wired the new way.",
             )
         session.hookup = renamed
-    if "valve" in settings:
-        if str(settings["valve"]) in _not_operated(session.model):
-            raise HTTPException(
-                status_code=409,
-                detail="A disconnect is not a valve: nobody opens or shuts it.",
-            )
+    if valve is not None:
         try:
-            session.set_valve(str(settings["valve"]), bool(settings.get("open")))
+            session.set_valve(valve, bool(settings.get("open")))
         except PermissionError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if settings.get("release") is not None:
-        session.release(str(settings.get("release") or ""))
+    if release is not None:
+        session.release(release)
     skip = settings.get("skip_chill")
     if skip:
         # True: every vehicle tank still chilling; a tank id: that one.
@@ -2792,27 +3849,30 @@ async def command_session(
             session.skip_chilldown("" if skip is True else str(skip))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if "setup" in settings or "dome" in settings:
-        built_gas = session.setup.pressurant
-        session.setup = _setup(
-            {
-                **dict(settings.get("setup") or {}),
-                **({"dome": settings["dome"]} if "dome" in settings else {}),
-            },
-            session.setup,
-        )
+    if asked is not None:
+        # Read already (_command_setup): what the stand was built from --
+        # ignoring the GSE, the pressurant -- is as built.
+        session.setup = _setup(asked, session.setup)
         # The tanks were built with the old knobs; a physics toggle that only
         # took effect on the next session was a toggle that did not work.
         session.apply_thermal()
-        # ...except what the stand was built from: ignoring the GSE is a
-        # different network, so it takes a new stand, and this one says what
-        # it is.
-        if session.setup.ignore_gse != session.gse_ignored:
-            session.setup = replace(session.setup, ignore_gse=session.gse_ignored)
-        # The pressurant is in the network too: a new stand.
-        session.setup = replace(session.setup, pressurant=built_gas)
 
-    return _session_out(session, session.step(1e-3))
+    try:
+        first = session.step(1e-3)
+    except Exception as exc:
+        if session.setup == had:
+            raise
+        # A value every clamp passes can still be one the stand cannot step
+        # with; kept, every tick after failed the same way.
+        _session_log.exception("command on %s could not be run", session_id)
+        session.setup = had
+        session.apply_thermal()
+        raise HTTPException(
+            status_code=422,
+            detail=f"The stand could not run with that setting, so it keeps the "
+            f"one it had: {exc}",
+        ) from exc
+    return _session_out(session, first)
 
 
 @app.get("/api/session/{session_id}/history")
@@ -2882,7 +3942,7 @@ async def session_history_csv(
     ).model_dump()
     aliases = session.hookup.names() if session.hookup is not None else {}
     # Math.round, as the browser named it: a half rounds up, not to even.
-    name = f"feed-twin-{session_id}-{math.floor(session.t + 0.5)}s.csv"
+    name = f"hotbench-{session_id}-{math.floor(session.t + 0.5)}s.csv"
     return PlainTextResponse(
         history_csv(full, aliases, session.state),
         media_type="text/csv",
@@ -3075,7 +4135,7 @@ def _hookup_out(
         runs = cut
     suggested = suggest_hookup(model, Setup().dome_psi, Setup().copv_target_psi)
     return HookupOut(
-        lineage=_hookup_lineage(library.get(diagram))[0],
+        lineage=_wired_lineage(library.get(diagram)),
         saved=saved,
         hookup=_hookup_body(daqbox.wiring(hookup, model, table)),
         suggested=_hookup_body(daqbox.wiring(suggested, model, shipped)),
@@ -3123,7 +4183,7 @@ def _hookup_out(
     )
 
 
-@app.get("/api/hookup")
+@app.get("/api/hookup", dependencies=READABLE)
 async def get_hookup(
     diagram: str,
     engine: str = "",
@@ -3136,7 +4196,7 @@ async def get_hookup(
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
-@app.post("/api/hookup/view")
+@app.post("/api/hookup/view", dependencies=READABLE)
 async def view_hookup(
     diagram: str,
     body: HookupBody,
@@ -3174,7 +4234,7 @@ def _refuse_impossible(hookup: Hookup, model: Model) -> None:
         raise HTTPException(status_code=422, detail=" ".join(wrong))
 
 
-@app.put("/api/hookup")
+@app.put("/api/hookup", dependencies=READABLE)
 async def save_hookup(
     diagram: str,
     body: HookupBody,
@@ -3183,7 +4243,11 @@ async def save_hookup(
     machine: str = "diablo",
     ignore_gse: bool = False,
 ) -> HookupOut:
-    """Keep a hookup for this drawing's lineage. New stands open with it."""
+    """Keep a hookup for this drawing's lineage. New stands open with it.
+
+    Under its own lineage, never the one it inherits (:func:`_inherited`):
+    that is every same-named upload's, and a save on 'LE4 (1)' rewired
+    'LE4 (3)' (R005)."""
     hookup = _hookup_from_body(body)
     _refuse_impossible(hookup, _assemble(diagram, engine, fluid_set))
     library.put_record(
@@ -3194,7 +4258,7 @@ async def save_hookup(
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
-@app.delete("/api/hookup")
+@app.delete("/api/hookup", dependencies=READABLE)
 async def reset_hookup(
     diagram: str,
     engine: str = "",
@@ -3203,7 +4267,18 @@ async def reset_hookup(
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
-    library.drop_record(HOOKUPS, _hookup_lineage(library.get(diagram))[0])
+    try:
+        artifact = library.get(diagram)
+    except LibraryError as exc:
+        # It escaped as a 500.
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    own = _hookup_lineage(artifact)[0]
+    library.drop_record(HOOKUPS, own)
+    # One it would inherit is other drawings' too, so it is left where it is
+    # and this drawing marked as reset: it runs the suggestion.
+    legacy = _legacy_lineage(artifact)
+    if legacy is not None and _holds_hookup(legacy):
+        library.put_record(HOOKUPS, own, {"reset": True, "diagram": diagram})
     return _hookup_out(diagram, engine, fluid_set, machine, ignore_gse)
 
 
@@ -3212,10 +4287,40 @@ async def check_state_machine(table: dict[str, Any] = Body(...)) -> dict[str, An
     """What is wrong with a state table being edited: the warnings the twin
     would give it once saved, or why it cannot be read at all."""
     try:
+        wrong = _table_shape(table)
+        if wrong:
+            raise ValueError(wrong)
         machine = machine_from_dict(table)
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return {"ok": False, "error": str(exc), "warnings": []}
     return {"ok": True, "error": "", "warnings": list(machine.warnings)}
+
+
+def _table_shape(table: Mapping[str, Any]) -> str:
+    """What is the wrong shape in an edited state table, said by its part, or
+    ``""``. Read as it was, a string where a list goes came back as Python's
+    own complaint ("'str' object has no attribute 'get'")."""
+    states = table.get("states")
+    if states is not None and not (
+        isinstance(states, list) and all(isinstance(s, Mapping) for s in states)
+    ):
+        return "states is a list of states, each {name: ...}"
+    actuators = table.get("actuators")
+    if actuators is not None and not (
+        isinstance(actuators, list) and all(isinstance(a, str) for a in actuators)
+    ):
+        return "actuators is a list of row names"
+    for part, says in (
+        ("open", "the rows it opens"),
+        ("allowed", "the states it may go to"),
+    ):
+        value = table.get(part)
+        if value is not None and not (
+            isinstance(value, Mapping)
+            and all(isinstance(v, list) for v in value.values())
+        ):
+            return f"{part} is a table of state -> {says}"
+    return ""
 
 
 @app.get("/api/session/{session_id}/burns")
@@ -3235,22 +4340,48 @@ async def session_burns(session_id: str) -> BurnsOut:
     # A recorded burn carries its run and its traces, and stays listed after
     # the history has rolled past it.
     opened = _OPENED.get(session_id)
-    kept = {
-        round(float(k["outcome"]["start_s"]), 3): k
-        for k in (opened.kept if opened else [])
-    }
+    kept = list(opened.kept if opened else [])
+
+    def recorded(k: Mapping[str, Any]) -> BurnOut:
+        return BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
+
     burns: list[BurnOut] = []
     for out in live:
-        found = kept.pop(round(out.start_s, 3), None)
-        if found is not None:
-            out = out.model_copy(
-                update={"run_id": found["run_id"], "series": found["series"]}
+        # The recorded burn this one is part of, if any: by overlap, not by
+        # start alone. Once the history's head is inside a recorded burn,
+        # the burn found there is timed from the head with part of its
+        # impulse -- listed beside the record, and last, as "Last burn" (H008).
+        found = next(
+            (
+                k
+                for k in kept
+                if out.start_s <= float(k["outcome"]["end_s"]) + 1e-3
+                and out.end_s >= float(k["outcome"]["start_s"]) - 1e-3
+            ),
+            None,
+        )
+        if found is None:
+            # A trip ends the burn the frozen frame still shows burning.
+            burns.append(
+                out.model_copy(update={"burning": False}) if session.tripped else out
             )
-        burns.append(out)
-    burns.extend(
-        BurnOut(**{**k["outcome"], "run_id": k["run_id"], "series": k["series"]})
-        for k in kept.values()
-    )
+            continue
+        kept.remove(found)
+        if round(out.start_s, 3) != round(float(found["outcome"]["start_s"]), 3):
+            burns.append(recorded(found))
+            continue
+        # A recorded burn is over -- a trip records one the frozen frame
+        # still shows burning.
+        burns.append(
+            out.model_copy(
+                update={
+                    "run_id": found["run_id"],
+                    "series": found["series"],
+                    "burning": False,
+                }
+            )
+        )
+    burns.extend(recorded(k) for k in kept)
     return BurnsOut(
         engine_id=session.model.report.engine,
         engine_model=model_kind,
@@ -3439,7 +4570,13 @@ _log = logging.getLogger("feed-twin.runs")
 
 
 def _stand_ref(request: Request, raw: Any) -> dict[str, Any] | None:
-    """The stand a session is opened from, checked: the caller may edit it."""
+    """The stand a session is opened from, checked: the caller may view it.
+
+    Viewing is the stand store's rule (stardesign ``_can_view``): its owner,
+    its share list, and anyone at all for the featured stand -- the one a
+    fresh browser opens on. Running a stand changes nothing in it; its burns
+    file under the owner. This used to ask for owner or share list only, so
+    behind Caddy everyone else's first console came up failed."""
     if not isinstance(raw, Mapping) or not raw.get("id"):
         return None
     viewer = userdata.store.current_user(request)
@@ -3449,7 +4586,17 @@ def _stand_ref(request: Request, raw: Any) -> dict[str, Any] | None:
     if record is None:
         raise HTTPException(status_code=404, detail=f"No stand {doc_id!r}")
     shared = record.get("sharedWith") or []
-    if viewer != owner and not any(slug_user(str(e)) == viewer for e in shared):
+    featured = stands.store.read_featured()
+    main = featured is not None and (
+        slug_user(str(featured["owner"])),
+        str(featured["id"]),
+    ) == (owner, doc_id)
+    if not (
+        main
+        or stands.store.open_to_all
+        or viewer == owner
+        or any(slug_user(str(e)) == viewer for e in shared)
+    ):
         raise HTTPException(status_code=403, detail="This stand is not shared with you")
     return {
         "id": doc_id,
@@ -3497,16 +4644,169 @@ def _hookup_inputs(session: Session) -> dict[str, Any]:
     return {"hookup": raw, **({"machine_table": table} if table else {})}
 
 
-def _inputs(session: Session, opened: _Opened, before: SessionSample) -> dict[str, Any]:
+def _override_inputs(
+    model: Model, *, provenance: bool = False
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """The Drawing tab's overrides that took effect on this stand, as a run
+    records them: what builds it -- value, unit, provenance -- keyed like the
+    store, so a replay applies them as recorded (:func:`_recorded_overrides`).
+    Who typed each and why go in the record's notes (:func:`_override_notes`):
+    the same number re-entered by somebody else builds the same stand
+    (``backend.overrides.fingerprint``). Empty when none: a record of a stand
+    with none diffs clean against one written before overrides were kept.
+
+    ``provenance`` adds the reference, who and when: the store's own entry,
+    for a repro to put in another machine's store."""
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for a in _applied(model):
+        row: dict[str, Any] = {"value": a.value, "unit": a.unit, "source": a.source}
+        if provenance:
+            row.update(reference=a.reference, by=a.by, at=a.at)
+        out.setdefault(a.element, {})[a.parameter] = row
+    return out
+
+
+def _override_notes(model: Model) -> list[str]:
+    return [
+        f"Override in force: {a.element} {a.parameter} = {a.value:g} {a.unit} "
+        f"({a.source}{', by ' + a.by if a.by else ''}"
+        f"{', ' + a.at if a.at else ''}: {a.reference})"
+        for a in _applied(model)
+    ]
+
+
+def _recorded_overrides(inputs: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A run's overrides as an override-store entry, for its replay; ``None``
+    for a record written before they were kept (the store's, as then)."""
+    if "overrides" not in inputs:
+        return None
+    return {
+        "params": {
+            str(element): {
+                str(name): {**dict(o), "reference": "as recorded with the run"}
+                for name, o in dict(by_param).items()
+            }
+            for element, by_param in dict(inputs.get("overrides") or {}).items()
+        }
+    }
+
+
+def _card_inputs(model: Model) -> dict[str, Any]:
+    """The engine card the stand fires, by the SHA-256 of its bytes, and when
+    it was built; empty when it fires the simplified engine."""
+    meta = model.meta
+    if meta.get("engine_model") != "card" or not meta.get("card_sha256"):
+        return {}
+    return {"sha256": meta["card_sha256"], "built": meta.get("card_built")}
+
+
+def _recorded_card(inputs: Mapping[str, Any]) -> str | None:
+    """Which card a run's replay fires (``backend.assembly.assemble``'s
+    ``card``): the run's by hash, ``""`` for the simplified engine it fired,
+    ``None`` for a record written before cards were named."""
+    if "card" not in inputs:
+        return None
+    return str(dict(inputs.get("card") or {}).get("sha256") or "")
+
+
+def _built_setup(opened: _Opened) -> dict[str, Any]:
+    """The settings the session's stand was built from, as the client keys
+    them: what it was opened with (the Configuration rows that apply on
+    Reset are built into the vessels then, and a change to one on the
+    running stand waits for the next)."""
+    return wire_setup(_setup(opened.body))
+
+
+def _setup_inputs(
+    session: Session, opened: _Opened, fired: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    """The settings a burn ran on: every live row as set, every row that
+    applies on Reset as the stand was built. Recording the setup as set put
+    a change no vessel had taken in the record, and its replay rebuilt a
+    stand that never burned -- and tripped it (H019, H033).
+
+    ``fired``: the settings as they stood at Fire (:func:`_fired_on`), when
+    the operator changed one mid-burn; else as they stand now."""
+    built = _built_setup(opened)
+    waits = {t.key for t in TUNABLES if t.applies == "reset"}
+    live = dict(fired["setup"]) if fired else wire_setup(session.setup)
+    return {k: built[k] if k in waits and k in built else v for k, v in live.items()}
+
+
+def _pending_setup(session: Session, opened: _Opened) -> dict[str, Any]:
+    """Rows that apply on Reset, changed since the stand was built: set, and
+    not what it burns on until it is reset."""
+    built, ran = _built_setup(opened), _setup_inputs(session, opened)
+    live = wire_setup(session.setup)
+    return {k: v for k, v in live.items() if k in built and v != ran[k]}
+
+
+def _knob_inputs(
+    session: Session, fired: Mapping[str, Any] | None = None
+) -> dict[str, float]:
+    """The knobs as set [psig] -- as they stood at Fire, given ``fired``. The
+    dome and the COPV charge are settings (``setup.dome``,
+    ``setup.copv_target``): a turn of either sets those, and
+    ``Session.knobs`` keeps the value it opened with -- a burn at dome 500
+    recorded ``knobs.dome = 535`` beside ``setup.dome = 500`` (H009)."""
+    setup = dict(fired["setup"]) if fired else wire_setup(session.setup)
+    knobs: dict[str, Any] = dict(fired["knobs"]) if fired else dict(session.knobs)
+    live: dict[str, Any] = {DOME: setup.get("dome"), CHARGE: setup.get("copv_target")}
+    return {
+        k: round(float(v if live.get(k) is None else live[k]), 3)
+        for k, v in knobs.items()
+    }
+
+
+def _settings_now(session: Session) -> dict[str, Any]:
+    """The settings and the knobs as they stand, as a command finds them."""
+    return {"setup": wire_setup(session.setup), "knobs": dict(session.knobs)}
+
+
+def _fired_on(opened: _Opened, fire_t: float) -> dict[str, Any] | None:
+    """The settings a burn was fired on, when the operator has changed one
+    since its Fire: what the first such command found (``was``,
+    :func:`_remember`). ``None`` when nothing changed them -- they are as they
+    stand now.
+
+    A record's settings are read when it is written: when the burn ends, or
+    -- an engine out with Fire held -- COLD_FLOW_S after. A dome turned
+    mid-burn was recorded at its new value, and the replay -- which turns it
+    again at its T+ (``sequence``) -- burned the whole burn there: on the LE4
+    stand, dome 535 turned to 435 at T+1.0 s replayed at 5,178 N mean thrust
+    against 5,469 N recorded, 5.3 % short. A turn after the burn ended but
+    before its record was written is not in its sequence, and is not what it
+    was fired on either."""
+    return next(
+        (
+            dict(c["was"])
+            for c in opened.commands
+            if "was" in c and float(c["t"]) > fire_t
+        ),
+        None,
+    )
+
+
+def _inputs(
+    session: Session,
+    opened: _Opened,
+    before: SessionSample,
+    fired: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """What a burn depended on (the run record's ``inputs``); ``fired``, the
+    settings as they stood at Fire when they changed mid-burn
+    (:func:`_fired_on`)."""
     return {
         "diagram": opened.diagram,
+        "overrides": _override_inputs(session.model),
         "engine": opened.engine,
+        "card": _card_inputs(session.model),
         "fluid_set": opened.fluid_set,
         "machine": opened.machine,
         "multiphase": opened.multiphase,
-        "setup": wire_setup(session.setup),
+        "setup": _setup_inputs(session, opened, fired),
         **_hookup_inputs(session),
-        "knobs": {k: round(float(v), 3) for k, v in session.knobs.items()},
+        "knobs": _knob_inputs(session, fired),
         "t0": _t0(session, before),
     }
 
@@ -3547,16 +4847,22 @@ def _burn_series(
     keep = run_records.stride_indices(len(window))
     picked = [window[i] for i in keep]
 
-    def engine(read: Any) -> list[float]:
+    def engine(read: Any, idle: bool = False) -> list[float]:
         return [
-            round(read(s.chamber), 4) if is_burning(s) and s.chamber else 0.0
+            (
+                round(read(s.chamber), 4)
+                if s.chamber is not None and (idle or is_burning(s))
+                else 0.0
+            )
             for s in picked
         ]
 
     return {
         "t": [round(s.t - start, 4) for s in picked],
         "thrust_N": engine(lambda c: c.thrust),
-        "pc_psig": engine(lambda c: psig(c.pressure)),
+        # The chamber with the engine out too, as the live channel reads it
+        # (IDLE_READS): the site's air, not a literal 0 psig (H013).
+        "pc_psig": engine(lambda c: psig(c.pressure), idle=True),
         "of": engine(lambda c: c.mixture_ratio),
         "tanks": {
             sim.id: [round(s.tanks[sim.id]["pressure_psi"], 2) for s in picked]
@@ -3693,23 +4999,148 @@ def _assumed_droop(session: Session) -> str:
     )
 
 
-def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
-    """Record every finished burn in the history not yet recorded."""
+#: What a run record keeps of a command between Fire and the end of its burn:
+#: what moves the stand. Names, chilldown skips and the like do not.
+SEQUENCE_KEYS = ("state", "valve", "open", "release", "knob", "setup", "dome")
+
+
+def _fire_time(opened: _Opened, history: list[SessionSample], burn: Any) -> float:
+    """Stand time of the Fire command that lit ``burn``: the last one sent
+    before it, else where the history's run of Fire before it began."""
+    fired = [
+        float(c["t"])
+        for c in opened.commands
+        if (c.get("command") or {}).get("state") == "Fire"
+        and float(c["t"]) <= burn.start_s + 1e-9
+    ]
+    if fired:
+        return fired[-1]
+    start = float(burn.start_s)
+    for sample in reversed(history):
+        if sample.t > burn.start_s + 1e-9:
+            continue
+        if sample.state != "Fire":
+            break
+        start = sample.t
+    return start
+
+
+def _burn_sequence(
+    opened: _Opened, fire_t: float, end_s: float
+) -> list[dict[str, Any]]:
+    """What the operator commanded between Fire and the end of a burn, at its
+    T+ [s]: a run record's ``sequence``, which its replay repeats."""
+    out = []
+    for c in opened.commands:
+        t = float(c["t"])
+        if not fire_t < t <= end_s + 1e-9:
+            continue
+        moved = {
+            k: v for k, v in dict(c.get("command") or {}).items() if k in SEQUENCE_KEYS
+        }
+        if moved:
+            out.append({"t": round(t - fire_t, 3), "command": moved})
+    return out
+
+
+def _end_cause(
+    session: Session,
+    history: list[SessionSample],
+    burn: Any,
+    fire_t: float,
+    sequence: list[dict[str, Any]],
+    closing: str = "",
+) -> tuple[str, str]:
+    """How ``burn`` ended, as a code and in words: ``trip`` (a vessel over its
+    MAWP), ``abort`` or ``operator`` (a state commanded mid-burn), ``burnout``
+    (a tank ran dry), ``closed`` (the stand was reset or closed while it
+    burned), ``out`` (the engine went out with Fire held)."""
+    trip = session.trip
+    if trip is not None and burn.start_s < trip.t <= burn.end_s + 1e-6:
+        return "trip", str(session.tripped or trip.label)
+    # The burn's samples and the one that ended it: the step a tank runs dry
+    # on is the first past the burn's last thrust, and Vent with it.
+    after = next((s for s in history if s.t > burn.end_s + 1e-9), None)
+    inside = [s for s in history if burn.start_s < s.t <= burn.end_s + 1e-9] + (
+        [after] if after is not None else []
+    )
+    left = next((s for s in inside if s.state != "Fire"), None)
+    commanded = {
+        str(step["command"]["state"]) for step in sequence if "state" in step["command"]
+    }
+    dry = [
+        sim.label
+        for sim in session.tanks.values()
+        if sim.id not in session.ground
+        and any(
+            sim.id in s.tanks and s.tanks[sim.id]["liquid_mass_kg"] <= DRY_MASS * 1.01
+            for s in inside
+        )
+    ]
+    if left is not None and (
+        session.machine.is_abort(left.state) or left.state in commanded or not dry
+    ):
+        # Commanded: an abort, or a state the operator chose. (Burnout's own
+        # Vent comes with a tank dry, and nobody sent it.)
+        kind = "abort" if session.machine.is_abort(left.state) else "operator"
+        when = next(
+            (
+                float(step["t"])
+                for step in sequence
+                if step["command"].get("state") == left.state
+            ),
+            left.t - fire_t,
+        )
+        return kind, f"{left.state} commanded at T+{when:.2f} s"
+    if dry:
+        return (
+            "burnout",
+            f"{', '.join(dry)} ran dry at T+{burn.end_s - fire_t:.2f} s",
+        )
+    if closing:
+        return (
+            "closed",
+            f"The stand was {closing} at T+{burn.end_s - fire_t:.2f} s with the "
+            "engine still burning.",
+        )
+    return (
+        "out",
+        f"The engine went out at T+{burn.end_s - fire_t:.2f} s with Fire held.",
+    )
+
+
+def _record_burns(
+    session: Session, opened: _Opened, *, closing: str = ""
+) -> list[dict[str, Any]]:
+    """Record every finished burn in the history not yet recorded.
+
+    A trip, or ``closing`` (the stand reset or closed: how), finishes the burn
+    still going: a tripped stand holds its last frame, burning, for good."""
     if session.model.engine is None:
         return []
     history = list(session.history)
     inlets = find_probes(session).injector_inlet
     model_kind = str(session.model.meta.get("engine_model", ""))
+    finishing = bool(closing or session.tripped)
     saved: list[dict[str, Any]] = []
     for burn in _lit_burns(history, inlets):
         key = round(burn.start_s, 3)
-        if burn.burning or key in opened.recorded:
+        if (burn.burning and not finishing) or key in opened.recorded:
             continue
+        burn = replace(burn, burning=False)
         before = next(
             (s for s in reversed(history) if s.t <= burn.start_s + 1e-9), None
         )
         if before is None:
             continue
+        fire_t = _fire_time(opened, history, burn)
+        sequence = _burn_sequence(opened, fire_t, burn.end_s)
+        cause, ended = _end_cause(session, history, burn, fire_t, sequence, closing)
+        outcome = {
+            **_burn_out(session, history, burn, model_kind).model_dump(),
+            "end_cause": cause,
+            "ended": ended,
+        }
         record = {
             "schema": run_records.SCHEMA,
             "id": run_records.new_id(),
@@ -3725,8 +5156,11 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
             # the inputs, so a diff and the ladder never see it twice (the
             # swap that chose it is `setup.pressurant`).
             "pressurant": _pressurant_of(session),
-            "inputs": _inputs(session, opened, before),
-            "outcome": _burn_out(session, history, burn, model_kind).model_dump(),
+            "inputs": {
+                **_inputs(session, opened, before, _fired_on(opened, fire_t)),
+                **({"sequence": sequence} if sequence else {}),
+            },
+            "outcome": outcome,
             "solver": _burn_solver(session, burn.start_s, burn.end_s),
             "series": _burn_series(session, history, burn.start_s, burn.end_s),
             "clock": {"start_s": burn.start_s, "end_s": burn.end_s},
@@ -3734,6 +5168,17 @@ def _record_burns(session: Session, opened: _Opened) -> list[dict[str, Any]]:
                 *filter(
                     None,
                     [_after_abort(session, history, burn), _assumed_droop(session)],
+                ),
+                *_override_notes(session.model),
+                *(
+                    [
+                        "Set but waiting for a Reset, so not what this burn ran "
+                        "on: "
+                        + ", ".join(f"{k} = {v}" for k, v in pending.items())
+                        + "."
+                    ]
+                    if (pending := _pending_setup(session, opened))
+                    else []
                 ),
                 *list(dict.fromkeys(session.assumptions))[-40:],
             ],
@@ -3770,6 +5215,14 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     opened = _OPENED.get(session.id)
     if opened is None:
         return
+    if session.tripped:
+        # A trip ends the burn. The stand holds the frame it tripped on --
+        # still burning -- for good, so burnout never comes (H003).
+        if not opened.tripped:
+            opened.tripped = True
+            opened.burning, opened.lit_t = False, None
+            _record_safely(session, opened, sample.t)
+        return
     burning = is_burning(sample)
     if burning and sample.chamber is not None and sample.chamber.thrust > 0.0:
         opened.lit_t = sample.t
@@ -3779,17 +5232,32 @@ def _record_on_burnout(session: Session, sample: SessionSample) -> None:
     opened.burning = burning
     if not (ended or out):
         return
-    opened.lit_t = None
+    saved = _record_safely(session, opened, sample.t)
+    # ``lit_t`` is the last *tick* that showed thrust, but the history holds
+    # the steps inside it: a flame that went out mid-tick is later there, and
+    # the burn reads as still going for a tick or two after ``out``. Keep the
+    # clock until the record lands, or the burn is never recorded while an
+    # abort's open main keeps the propellant flowing.
+    if ended or saved or sample.t - (opened.lit_t or sample.t) > 10.0 * COLD_FLOW_S:
+        opened.lit_t = None
+
+
+def _record_safely(
+    session: Session, opened: _Opened, t: float, closing: str = ""
+) -> int:
+    """:func:`_record_burns`, never stopping the stand over a lost record.
+    How many runs it recorded."""
     try:
-        _record_burns(session, opened)
+        return len(_record_burns(session, opened, closing=closing))
     except Exception as exc:  # noqa: BLE001 - a lost record must not stop the stand
         _log.exception("run not recorded for session %s", session.id)
         # ...nor go unsaid: a burn with no record has no provenance, and only
         # the server log knew.
         opened.unrecorded = (
-            f"The burn that ended at t = {sample.t:.1f} s was not recorded "
+            f"The burn that ended at t = {t:.1f} s was not recorded "
             f"({type(exc).__name__}: {exc}); it is not in Runs."
         )
+        return 0
 
 
 _DRAWN_FLUIDS: dict[str, dict[str, str]] = {}
@@ -3837,7 +5305,10 @@ def _session_from_inputs(
 ) -> Session:
     """A fresh session on the stand a run record (or a study) describes: its
     drawing, engine, fluids, settings, hookup and knobs, in Idle, the
-    automatic vent at burnout off.
+    automatic vent at burnout off. The drawing's overrides and the engine's
+    card are the record's own where it names them (``overrides``, ``card``),
+    not whatever the store holds now; a record (or a study) that does not
+    name them builds on the store's.
 
     ``pressurant`` swaps the gas in the bottle and the press lines (helium or
     nitrogen, whichever the drawing has) for the other; without one, the
@@ -3855,6 +5326,8 @@ def _session_from_inputs(
         bool(inputs.get("multiphase")),
         vehicle_only=setup.ignore_gse,
         gas=_pressurant_swap(setup.pressurant),
+        entry=_recorded_overrides(inputs),
+        card=_recorded_card(inputs),
     )
     raw = inputs.get("hookup")
     if isinstance(raw, Mapping) and raw and inputs.get("machine_table"):
@@ -3883,23 +5356,73 @@ def _session_from_inputs(
     return session
 
 
-def _replay(
-    inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
-) -> tuple[dict[str, float], list[str]]:
-    """One run's inputs, burned headless from its T-0: the ladder's rung.
+def _replay_command(session: Session, command: Mapping[str, Any]) -> None:
+    """One step of a run's ``sequence``, as the console's command route takes
+    it (:func:`command_session`): a state, a valve taken or released, a knob,
+    a setting. One the stand refused is refused here too."""
+    try:
+        if "state" in command:
+            session.command_state(str(command["state"]))
+        knob = command.get("knob")
+        if isinstance(knob, Mapping) and session.hookup is not None:
+            found = next(
+                (k for k in session.hookup.knobs if k.id == knob.get("id")), None
+            )
+            if found is not None:
+                value = min(max(float(knob.get("value", "")), found.low), found.high)
+                if found.id == DOME:
+                    session.setup = _setup({"dome": value}, session.setup)
+                elif found.id == CHARGE:
+                    session.setup = _setup({"copv_target": value}, session.setup)
+                else:
+                    session.knobs[found.id] = value
+        # A disconnect is refused by the route (409), but the run's commands
+        # are kept as sent, refusals too; a session takes one by hand, and a
+        # capped QD on a rocket-only stand is the vent row's stand-in.
+        if "valve" in command and str(command["valve"]) not in _not_operated(
+            session.model
+        ):
+            session.set_valve(str(command["valve"]), bool(command.get("open")))
+        if command.get("release") is not None:
+            session.release(str(command.get("release") or ""))
+        if "setup" in command or "dome" in command:
+            built = session.setup
+            session.setup = _setup(
+                {
+                    **dict(command.get("setup") or {}),
+                    **({"dome": command["dome"]} if "dome" in command else {}),
+                },
+                built,
+            )
+            session.apply_thermal()
+            session.setup = replace(
+                session.setup,
+                ignore_gse=built.ignore_gse,
+                pressurant=built.pressurant,
+                auto_vent=built.auto_vent,
+            )
+    except (PermissionError, ValueError, KeyError, TypeError):
+        pass
 
-    The record's settings, hookup and knobs, its tanks loaded to their T-0
-    mass, primed at their mean T-0 pressure and settled by the regulators, the
-    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion. The
-    cockpit's automatic vent at burnout is off: it would act after the window
-    being compared.
-    """
-    session = _session_from_inputs(inputs)
+
+def _replay_plan(
+    session: Session, inputs: Mapping[str, Any], horizon_s: float
+) -> BurnPlan:
+    """The T-0 a run's replay burns from: its tanks' loads and mean pressure,
+    the vehicle's bottle at its recorded charge, on the cockpit's grid."""
     t0 = dict(inputs.get("t0") or {})
     tanks = {k: v for k, v in dict(t0.get("tanks") or {}).items() if k in session.tanks}
     pressures = [float(v["psig"]) for v in tanks.values()]
-    bottles = [float(v["psig"]) for v in dict(t0.get("bottles") or {}).values()]
-    plan = BurnPlan(
+    recorded = dict(t0.get("bottles") or {})
+    # The vehicle's bottle, whatever the drawing's order: T-0 records every
+    # bottle, the cart's too, and a cart K-bottle drawn first charged the
+    # COPV to 6,000 psig (H040).
+    ground = set(session.ground)
+    bottles = [
+        float(v["psig"])
+        for _, v in sorted(recorded.items(), key=lambda kv: kv[0] in ground)
+    ]
+    return BurnPlan(
         tank_psi=sum(pressures) / len(pressures) if pressures else 550.0,
         copv_psi=bottles[0] if bottles else 4500.0,
         loads={k: float(v["liquid_kg"]) for k, v in tanks.items()} or None,
@@ -3909,8 +5432,41 @@ def _replay(
         # not BurnPlan's 60 g design residual -- a replay that stopped 60 g
         # early read 0.6 % short of the burn it was replaying (D-80).
         dry_kg=DRY_MASS,
+        # The cockpit's grid -- the run's own live step, as the Study burns
+        # on (CLAUDE.md: the console runs the study's numerics). BurnPlan's
+        # 0.05 s split into two 0.025 s steps put grid error into the
+        # replayed-vs-recorded gap (H045).
+        dt=session.setup.live_step,
     )
-    trace = run_burn(session, plan, cancelled=cancelled)
+
+
+def _replay(
+    inputs: Mapping[str, Any], cancelled: Any, *, horizon_s: float
+) -> tuple[dict[str, float], list[str]]:
+    """One run's inputs, burned headless from its T-0: the ladder's rung.
+
+    The record's settings, hookup and knobs, its tanks loaded to their T-0
+    mass, primed at their mean T-0 pressure and settled by the regulators, the
+    bottle at its T-0 charge, then Fire for ``horizon_s`` or to depletion,
+    with whatever the operator commanded mid-burn (``sequence``) at its T+.
+    The cockpit's automatic vent at burnout is off: it would act after the
+    window being compared.
+    """
+    session = _session_from_inputs(inputs)
+    plan = _replay_plan(session, inputs, horizon_s)
+    # What the operator commanded mid-burn, at its T+ from Fire: an abort, a
+    # vent, a knob. Applied after the step that reaches it, as the console's
+    # next tick would.
+    pending = sorted(
+        (dict(step) for step in inputs.get("sequence") or ()),
+        key=lambda step: float(step.get("t") or 0.0),
+    )
+
+    def commanded(clock: float, sample: SessionSample, firing: bool) -> None:
+        while firing and pending and clock >= float(pending[0].get("t") or 0.0) - 1e-9:
+            _replay_command(session, dict(pending.pop(0).get("command") or {}))
+
+    trace = run_burn(session, plan, cancelled=cancelled, also=commanded)
     history = list(session.history)
     found = _lit_burns(history, find_probes(session).injector_inlet)
     if not found:
@@ -3922,17 +5478,69 @@ def _replay(
         for key, _, _ in run_records.OUTCOME_KEYS
         if isinstance(out.get(key), (int, float))
     }
-    return numbers, list(trace.notes)
+    # A run whose card is gone replays on today's: said first, on the rung.
+    lost = [
+        w
+        for w in session.model.report.warnings
+        if session.model.meta.get("card_missing") and w.startswith("The engine card")
+    ]
+    return numbers, [*lost, *trace.notes]
 
 
-_EXPLAIN = run_records.Explainer()
+#: Explanations by whose: one each, as studies are (D-51). One for the whole
+#: server let anyone watch -- and cancel -- someone else's, and refused a
+#: second person's with a 409 (H006).
+_EXPLAIN: dict[str, run_records.Explainer] = {}
+#: Explanations burning at once on this server: each rung is a headless
+#: burn, so a few keep the consoles live where one per person might not.
+EXPLAIN_LIMIT = 3
+
+
+def _explainer(request: Request) -> run_records.Explainer:
+    return _EXPLAIN.setdefault(
+        userdata.store.current_user(request), run_records.Explainer()
+    )
+
+
+def _sees_stand(viewer: str, owner: str, doc_id: str) -> bool:
+    """Whether ``viewer`` may look at the stand ``owner``/``doc_id``, as the
+    stands router lets them open it: its owner, its share list, or anyone
+    when it is the featured stand."""
+    if viewer == owner:
+        return True
+    record = stands.store.find_record(owner, doc_id)
+    if record is None:
+        return False
+    if getattr(stands.store, "open_to_all", False):
+        return True
+    if any(slug_user(str(e)) == viewer for e in record.get("sharedWith") or []):
+        return True
+    featured = stands.store.read_featured()
+    return featured is not None and (
+        slug_user(str(featured["owner"])),
+        str(featured["id"]),
+    ) == (owner, doc_id)
+
+
+def _sees_run(viewer: str, owner: str, record: Mapping[str, Any]) -> bool:
+    """A run is seen by whoever sees its stand; one not on a stand, by the
+    folder's owner alone (runs.py: "everyone the stand is shared with")."""
+    if viewer == owner:
+        return True
+    ref = record.get("stand") or {}
+    return bool(ref.get("id")) and _sees_stand(viewer, owner, str(ref["id"]))
 
 
 def _run_for(request: Request, run_id: str, owner: str | None) -> dict[str, Any]:
-    who = slug_user(owner) if owner else userdata.store.current_user(request)
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
     record = run_records.store.get(who, run_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
+    if not _sees_run(viewer, who, record):
+        raise HTTPException(
+            status_code=403, detail="This run is on a stand not shared with you"
+        )
     return record
 
 
@@ -3962,6 +5570,17 @@ async def session_t0(session_id: str) -> SessionOut:
                 f"over its {say(sim.mawp, 1)} MAWP: turn the dome down on the GSE "
                 "tab first.",
             )
+    # The vehicle's bottles too: T-0 charges them to the COPV target, and one
+    # charged over its MAWP tripped the stand on the first frame.
+    charge = from_psig(float(session.setup.copv_target_psi))
+    for bottle in session.bottles.values():
+        if bottle.id not in session.ground and 0.0 < bottle.mawp < charge:
+            raise HTTPException(
+                status_code=422,
+                detail=f"T-0 would charge {bottle.label} to {say(charge, 1)}, over "
+                f"its {say(bottle.mawp, 1)} MAWP: turn the COPV fill down on the "
+                "GSE tab first.",
+            )
     _remember(session_id, session, {"t0": True})
     try:
         t0 = jump_to_t0(
@@ -3988,17 +5607,34 @@ async def session_t0(session_id: str) -> SessionOut:
 
 
 @app.get("/api/twin/runs")
-async def list_runs(
+def list_runs(
     request: Request, stand: str | None = None, owner: str | None = None
 ) -> list[dict[str, Any]]:
     """Run summaries, newest first: a stand's (in its owner's folder, so the
-    people it is shared with see the same list), or your own."""
-    who = slug_user(owner) if owner else userdata.store.current_user(request)
-    return run_records.store.list([who], stand=stand)
+    people it is shared with see the same list), or your own -- and of
+    someone else's folder, only the runs on stands you may see.
+
+    A plain ``def``: it reads the disk, so it runs in the threadpool rather
+    than on the loop that ticks every console."""
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
+    listed = run_records.store.list([who], stand=stand)
+    if who == viewer:
+        return listed
+    seen: dict[str, bool] = {}
+    out = []
+    for row in listed:
+        ref = row.get("stand") or {}
+        doc_id = str(ref.get("id") or "")
+        if doc_id and doc_id not in seen:
+            seen[doc_id] = _sees_stand(viewer, who, doc_id)
+        if doc_id and seen[doc_id]:
+            out.append(row)
+    return out
 
 
 @app.get("/api/twin/runs/diff")
-async def diff_runs(
+def diff_runs(
     request: Request,
     a: str,
     b: str,
@@ -4013,8 +5649,9 @@ async def diff_runs(
 
 
 @app.get("/api/twin/runs/explain")
-async def explain_status() -> dict[str, Any]:
-    return dict(_EXPLAIN.state)
+async def explain_status(request: Request) -> dict[str, Any]:
+    """Your explanation: running, or the last one's answer."""
+    return dict(_explainer(request).state)
 
 
 @app.post("/api/twin/runs/explain")
@@ -4037,22 +5674,57 @@ async def explain_runs(
     ) -> tuple[dict[str, float], list[str]]:
         return _replay(inputs, cancelled, horizon_s=horizon)
 
-    if not _EXPLAIN.start(first, second, replay):
-        raise HTTPException(status_code=409, detail="An explanation is already running")
-    return dict(_EXPLAIN.state)
+    mine = _explainer(request)
+    if mine.running:
+        raise HTTPException(
+            status_code=409,
+            detail="Your explanation is still running; cancel it or wait for it.",
+        )
+    if sum(1 for job in _EXPLAIN.values() if job.running) >= EXPLAIN_LIMIT:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{EXPLAIN_LIMIT} explanations are running on this server; "
+            "try again when one finishes.",
+        )
+    if not mine.start(first, second, replay):
+        raise HTTPException(
+            status_code=409,
+            detail="Your explanation is still running; cancel it or wait for it.",
+        )
+    return dict(mine.state)
 
 
 @app.post("/api/twin/runs/explain/cancel")
-async def explain_cancel() -> dict[str, Any]:
-    _EXPLAIN.cancel()
-    return dict(_EXPLAIN.state)
+async def explain_cancel(request: Request) -> dict[str, Any]:
+    """Cancel your explanation; nobody else's."""
+    mine = _explainer(request)
+    mine.cancel()
+    return dict(mine.state)
 
 
 @app.get("/api/twin/runs/{run_id}")
-async def get_run(
-    request: Request, run_id: str, owner: str | None = None
-) -> dict[str, Any]:
+def get_run(request: Request, run_id: str, owner: str | None = None) -> dict[str, Any]:
     return _run_for(request, run_id, owner)
+
+
+@app.delete("/api/twin/runs/{run_id}")
+def delete_run(
+    request: Request, run_id: str, owner: str | None = None
+) -> dict[str, str]:
+    """Delete a run record: the folder's owner only -- the stand's owner for
+    a run on a stand, the runner for one that was not. Evidence is never
+    edited; a practice burn need not be kept for ever."""
+    viewer = userdata.store.current_user(request)
+    who = slug_user(owner) if owner else viewer
+    if who != viewer:
+        _run_for(request, run_id, owner)  # 404 or 403 before the refusal
+        raise HTTPException(
+            status_code=403,
+            detail="Only the stand's owner may delete its runs.",
+        )
+    if not run_records.store.delete(who, run_id):
+        raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
+    return {"deleted": run_id}
 
 
 @app.get("/api/tunables")
@@ -4089,7 +5761,7 @@ def _machine_out(
     )
 
 
-@app.get("/api/statemachine")
+@app.get("/api/statemachine", dependencies=READABLE)
 async def state_machine(
     diagram: str,
     engine: str = "",

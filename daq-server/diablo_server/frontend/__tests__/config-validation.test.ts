@@ -13,6 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  recoveryAddress,
   validateConfigForRun,
   groupIssuesByPage,
   countByLevel,
@@ -320,6 +321,85 @@ describe('roles vs active_connectors', () => {
   });
 });
 
+// A motorized ball valve board is commanded through [actuator_roles] like any actuator, but it has
+// no NO/NC (1 opens it on the wire) and is never a PWM output.
+describe('ball valve boards', () => {
+  const withValve = (role: unknown[]) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.ball_valve_board = {
+      type: 'BALL_VALVE', board_id: 71, enabled: true, ip: '192.0.2.71', active_connectors: [1],
+    };
+    cfg.actuator_roles['Main Ball Valve'] = role;
+    const csv = cleanCsv();
+    csv.actuators += '\nMain Ball Valve,CLOSE,CLOSE,OPEN';
+    csv.delays += '\nMain Ball Valve,0,0,0';
+    return { cfg, csv };
+  };
+
+  it('refuses a role on a board that is not declared, and says which board to add', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    delete cfg.boards.ball_valve_board;
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/board 71, which is not in Boards/);
+  });
+
+  it('a ball valve role marked NC raises nothing', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    expect(validateConfigForRun(cfg, csv)).toEqual([]);
+  });
+
+  it('refuses NO on a ball valve role — the sequencer would invert it on the wire', () => {
+    const { cfg, csv } = withValve(['NO', 1, 71]);
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/NO\/NC/);
+  });
+
+  it('refuses a PWM assignment on a ball valve role', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71, 'pwm_fuel']);
+    const issues = validateConfigForRun(cfg, csv);
+    expect(issues.some((i) => i.level === 'error' && i.message.includes('not a PWM output'))).toBe(true);
+  });
+
+  it('still lets an ACTUATOR role be NO', () => {
+    // cleanConfig's LOX Press is ["NO", 8, 12, ...] on an ACTUATOR board.
+    expect(messages(validateConfigForRun(cleanConfig(), cleanCsv()))).not.toMatch(/NO\/NC/);
+  });
+
+  it('takes two valves on one board, one per active connector', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.ball_valve_board.active_connectors = [1, 2];
+    cfg.actuator_roles['Second Ball Valve'] = ['NC', 2, 71];
+    csv.actuators += '\nSecond Ball Valve,CLOSE,CLOSE,OPEN';
+    csv.delays += '\nSecond Ball Valve,0,0,0';
+    expect(validateConfigForRun(cfg, csv)).toEqual([]);
+  });
+
+  it('refuses a ball valve role on a connector the board does not list', () => {
+    const { cfg, csv } = withValve(['NC', 2, 71]);
+    const issue = validateConfigForRun(cfg, csv).find((i) => i.message.includes('Main Ball Valve'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('roles');
+    expect(issue?.message).toMatch(/active_connectors \[1\]/);
+  });
+
+  it('does not judge a ball valve board by the sensor-role map', () => {
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.ball_valve_board.active_connectors = [];
+    expect(validateConfigForRun(cfg, csv).some((i) => i.message.includes('ball_valve_board'))).toBe(false);
+  });
+
+  it('does not report slot 1 as shared with an actuator board on board_id 11', () => {
+    // Its own Elodin namespace (0x33-0x35), so board 71 and actuator board 11 never merge.
+    const { cfg, csv } = withValve(['NC', 1, 71]);
+    cfg.boards.act_11 = { type: 'ACTUATOR', board_id: 11, enabled: true, ip: '192.0.2.11' };
+    expect(validateConfigForRun(cfg, csv).some((i) => i.page === 'boards')).toBe(false);
+  });
+});
+
 /**
  * Dynamic states.
  *
@@ -446,5 +526,48 @@ describe('validateConfigForRun — dynamic states', () => {
       'LOX Press,CLOSE,CLOSE,OPEN',
     ].join('\n');
     expect(messages(validateConfigForRun(cfg, csv))).toContain('no column in the Actuators table');
+  });
+});
+
+// A board takes its ID from its DHCP address and, if DHCP fails, sits on a recovery address
+// derived from its MAC. star-dhcp-sync refuses both mistakes; the editor names them first.
+describe('DHCP identity', () => {
+  const withMacs = (a: Record<string, unknown>, b: Record<string, unknown>) => {
+    const cfg: any = cleanConfig();
+    cfg.boards.dhcp_a = { type: 'PT', enabled: false, active_connectors: [1], ...a };
+    cfg.boards.dhcp_b = { type: 'PT', enabled: false, active_connectors: [1], ...b };
+    return cfg;
+  };
+
+  it('recovery address matches the firmware and the upload tool', () => {
+    expect(recoveryAddress('4a:27:e2:3a:ad:71')).toBe('169.254.174.113');
+    expect(recoveryAddress('00:00:00:00:fe:ff')).toBe('169.254.1.255');
+    expect(recoveryAddress('nope')).toBeNull();
+  });
+
+  it('two boards whose MACs share a recovery address are an error', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 91, mac: 'aa:aa:aa:aa:00:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:fe:10' });
+    const issue = validateConfigForRun(cfg, cleanCsv()).find((i) => i.message.includes('recovery address'));
+    expect(issue?.level).toBe('error');
+    expect(issue?.page).toBe('boards');
+    expect(issue?.message).toMatch(/169\.254\.1\.16/);
+  });
+
+  it('board_id must match the address the board is given', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 93, mac: 'aa:aa:aa:aa:01:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:02:10' });
+    const msgs = validateConfigForRun(cfg, cleanCsv()).map((i) => i.message).join('\n');
+    expect(msgs).toMatch(/board_id 93 but ip 192\.0\.2\.91/);
+    expect(msgs).not.toMatch(/dhcp_b\).*board_id/);
+  });
+
+  it('distinct MACs with matching ids raise nothing', () => {
+    const cfg = withMacs(
+      { ip: '192.0.2.91', board_id: 91, mac: 'aa:aa:aa:aa:01:10' },
+      { ip: '192.0.2.92', board_id: 92, mac: 'bb:bb:bb:bb:02:10' });
+    expect(validateConfigForRun(cfg, cleanCsv()).filter((i) => /dhcp_/.test(i.message))).toEqual([]);
   });
 });

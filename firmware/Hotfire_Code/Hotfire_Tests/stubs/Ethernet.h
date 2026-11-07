@@ -59,8 +59,13 @@ public:
     IPAddress static_ip;
     IPAddress static_subnet;
 
-    /** DHCP form: returns 1 on success, 0 on failure, like Ethernet 2.x. */
+    int dhcp_begin_calls = 0;
+
+    /** DHCP form: returns 1 on success, 0 on failure, like Ethernet 2.x —
+     *  which zeroes the address before asking, so a failure leaves 0.0.0.0. */
     int begin(uint8_t*, unsigned long, unsigned long) {
+        dhcp_begin_calls++;
+        local_ip = IPAddress(0, 0, 0, 0);
         if (!dhcp_should_succeed)
             return 0;
         local_ip = dhcp_assigned;
@@ -104,6 +109,7 @@ public:
         static_begin_calls = 0;
         static_ip = IPAddress();
         static_subnet = IPAddress();
+        dhcp_begin_calls = 0;
     }
 };
 

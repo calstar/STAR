@@ -48,6 +48,15 @@ export function importedNote(result: ImportResult, name: string, release = ''): 
 
 /** A design tool to open: the first one of `kind` that answers. `n` counts
  *  the asks, so asking again re-opens it. */
+/** The design tools by the names the suite's header gives them (Hotbench
+ *  P&ID, Hotbench Engine); the server lists them by its own keys. A tool this
+ *  app does not know keeps the server's label. */
+const SUITE_NAMES: Record<string, string> = {
+  'pid-designer': 'Hotbench P&ID',
+  'engine-design': 'Hotbench Engine',
+};
+export const sourceName = (source: { key: string; label: string }): string => SUITE_NAMES[source.key] ?? source.label;
+
 export interface Want {
   kind: 'diagram' | 'engine';
   n: number;
@@ -177,7 +186,7 @@ export function SourcePanel({ onImported, busy, want }: Props) {
                 background: source.reachable ? 'var(--ok)' : 'var(--edge-strong)',
               }}
             />
-            <span className="text-[13px]">{source.label}</span>
+            <span className="text-[13px]">{sourceName(source)}</span>
             <span className="text-[11.5px] text-[var(--dim)]">
               {source.kind === 'diagram' ? 'drawings' : 'engines'}
             </span>

@@ -64,8 +64,8 @@ export default function TabBar({ nav = true }: { nav?: boolean }) {
   const offLine = current && !pinnedIds.has(current.id) ? current : undefined;
 
   return (
-    <div className="relative z-40 flex min-w-0 flex-nowrap items-center gap-7 px-8 pt-3 max-[1400px]:gap-5 max-[1400px]:px-5">
-      <span className="flex flex-shrink-0 flex-col whitespace-nowrap border-r border-line pb-1.5 pr-7 font-mono leading-none max-[1400px]:pr-5">
+    <div className="relative z-40 flex min-w-0 flex-nowrap items-center gap-4 px-4 pt-3 sm:gap-5 sm:px-5 min-[1400px]:gap-7 min-[1400px]:px-8">
+      <span className="flex flex-shrink-0 flex-col whitespace-nowrap border-r border-line pb-1.5 pr-4 font-mono leading-none sm:pr-5 min-[1400px]:pr-7">
         <span
           className="text-[15px] font-bold uppercase tracking-[0.34em] text-ink"
           title="Diablo DAQ: the stand's data acquisition and control. A STAR project."

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { Calibration, CrossCheck, EngineCheck, Provenance } from '../../../api/layerx';
 import type { EngineConfig } from '../../../api/client';
 import { FeedFitSummary, FeedFitView } from '../../layerx/FeedFit';
-import { PSI, sig } from '../../layerx/format';
+import { modelsLeftOut, PSI, sig } from '../../layerx/format';
 import { drawingWords, runWhen } from '../../layerx/runs';
 import { partName, type NetNames } from '../names';
 import { useTimeStore } from '../time/hooks';
@@ -59,9 +59,7 @@ function RunNote({ job }: Pick<PageProps, 'job'>) {
 
 function LeftOut({ settings, setup, className }: { settings: Provenance['settings']; setup?: Record<string, unknown> | null; className: string }) {
   // What the burn ran: the feed twin's Setup (provenance.setup), else the run's own switches.
-  const ran = (k: 'ullage_collapse' | 'ullage_vapour' | 'line_walls') => (setup && k in setup ? !!setup[k] : !!settings[k]);
-  const off = [!ran('ullage_collapse') && 'ullage collapse', !ran('ullage_vapour') && 'propellant vapour', !ran('line_walls') && 'line-wall heat']
-    .filter(Boolean) as string[];
+  const off = modelsLeftOut(settings, setup);
   const dry = (settings.dry_kg ?? 0.001) <= 0.002;
   const items: [string, string][] = [
     ['Start transient', '−0.7 to −1.5 % impulse'],
@@ -269,10 +267,43 @@ function Scroll({ label, children }: { label: string; children: ReactNode }) {
 
 const SOURCE_LABEL: Record<string, string> = { default: 'Default', estimated: 'Estimated', manufacturer: 'Datasheet', measured: 'Measured', drawing: 'Drawing' };
 
-function kv(obj: Record<string, unknown>): [string, string][] {
+/** The run record's pressures are the wire's, gauge (ADR 0004: the API and run records stay gauge). A
+ * person reads psia (ADR 0007), as the rail shows the same burn: Record listed 'dome_psi 535' beside a
+ * rail reading 'Dome 550 psia'. */
+const GAUGE_KEYS = new Set(['dome_psi', 'copv_target_psi', 'dewar_psi', 'tank_psi', 'copv_psi', 'lockup_psi']);
+
+/** Settings the record carries that this burn did not use, and what was used instead. */
+const NOT_USED: Record<string, string> = {
+  copv_target_psi: 'the cockpit\u2019s COPV charge target; not used by Layer X, whose bottle fill is the burn\u2019s copv_psi',
+};
+
+type Fmt = (psia: number) => string;
+
+function kv(obj: Record<string, unknown>, psia?: { gaugeZero: number; fmt: Fmt }): [ReactNode, ReactNode][] {
   return Object.entries(obj)
     .filter(([, v]) => v === null || ['string', 'number', 'boolean'].includes(typeof v))
-    .map(([k, v]) => [k, typeof v === 'number' ? (Number.isInteger(v) ? String(v) : sig(v)) : String(v)]);
+    .map(([k, v]): [ReactNode, ReactNode] => {
+      const unused = NOT_USED[k];
+      const key = unused ? <span title={unused}>{k} <span className="text-[var(--lx-text-3)]">(not used)</span></span> : k;
+      if (v === null || v === '') return [key, '—'];
+      if (typeof v === 'number' && psia && GAUGE_KEYS.has(k)) {
+        return [key, <span key="v" title={`${sig(v)} psig on the wire`}>{psia.fmt(v + psia.gaugeZero)}</span>];
+      }
+      return [key, typeof v === 'number' ? (Number.isInteger(v) ? String(v) : sig(v)) : String(v)];
+    });
+}
+
+/** Pressure differences on a drawing (feedtwin.model.pressure.DIFFERENCE): psi. Every other pressure is absolute: psia. */
+const PRESSURE_DIFFERENCES = new Set(['dome_bias', 'flow_droop', 'lockup_rise', 'cracking_pressure', 'set_pressure',
+  'reseat_pressure', 'min_inlet_differential', 'pressure_drop', 'dp']);
+const PASCALS: Record<string, number> = { Pa: 1, kPa: 1e3, MPa: 1e6, bar: 1e5 };
+
+/** An unstated parameter's value with its unit. The library's own defaults come in SI: 'inlet_reference 0 Pa',
+ *  'lockup_rise 0 Pa' read to a person in Pa; a pressure is psi across a difference, psia otherwise (ADR 0007). */
+function assumedValue(parameter: string, value: number, unit: string): ReactNode {
+  const k = PASCALS[unit];
+  const [v, u] = k === undefined ? [value, unit] : [(value * k) / PSI, PRESSURE_DIFFERENCES.has(parameter) ? 'psi' : 'psia'];
+  return <>{sig(v)}<span className="lx-unit">{'\u00a0'}{u}</span></>;
 }
 
 /** Where the drawing came from, in words (the raw source in the hover). */
@@ -284,6 +315,8 @@ const sourceWords = (src: string) => (src.startsWith('shipped:') ? 'Benchmark, s
 
 function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }) {
   const [all, setAll] = useState<'defaults' | 'all'>('defaults');
+  const u = useUnits();
+  const gauged = { gaugeZero: ((p.derived?.gauge_zero_pa as number | undefined) ?? 101325) / PSI, fmt: (x: number) => u.fmt(u.p(x)) };
   const defaults = p.assembly.assumptions.filter((a) => a.source === 'default');
   const rows = all === 'all' ? p.assembly.assumptions : defaults;
   const short = (h: string) => (h ? h.slice(0, 12) : '—');
@@ -299,10 +332,10 @@ function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }
         ]} />
       </Panel>
       <Panel title="Solver settings" right={<span className="lx-num">{kv(p.setup).length}</span>} className="lg:col-span-4">
-        <Scroll label="Solver settings"><Pairs rows={kv(p.setup)} /></Scroll>
+        <Scroll label="Solver settings"><Pairs rows={kv(p.setup, gauged)} /></Scroll>
       </Panel>
       <Panel title="Burn settings" right={<span className="lx-num">{kv(p.plan).length}</span>} className="lg:col-span-4">
-        <Scroll label="Burn settings"><Pairs rows={kv(p.plan)} /></Scroll>
+        <Scroll label="Burn settings"><Pairs rows={kv(p.plan, gauged)} /></Scroll>
       </Panel>
       <Panel title="Unspecified parameters" className="lg:col-span-12"
              right={<Segmented ariaLabel="Which parameters" size="sm" value={all} onChange={setAll}
@@ -311,7 +344,7 @@ function ProvenanceBlock({ p, names }: { p: Provenance; names: NetNames | null }
           <Table caption="Parameters the drawing does not state" head={['Component', 'Parameter', 'Value', 'Basis', 'Reference']} align={['l', 'l', 'r', 'l', 'l']} maxHeight={300}
                  rows={rows.map((a) => [
                    <span key="c" title={a.component}>{partName(names, { label: a.component })}</span>, <span key="p" className="font-sans text-[var(--lx-text-2)]">{a.parameter}</span>,
-                   <span key="v">{sig(a.value)}<span className="lx-unit">{'\u00a0'}{a.unit}</span></span>,
+                   <span key="v">{assumedValue(a.parameter, a.value, a.unit)}</span>,
                    <span key="s" className="font-sans" style={{ color: a.source === 'default' ? 'var(--lx-warn)' : 'var(--lx-text-3)' }}>{SOURCE_LABEL[a.source] ?? a.source}</span>,
                    <span key="r" className="block max-w-[22rem] truncate font-sans text-[var(--lx-text-3)]" title={a.reference}>{a.reference}</span>,
                  ])} />

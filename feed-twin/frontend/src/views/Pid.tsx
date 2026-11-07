@@ -294,7 +294,7 @@ export function Pid() {
             className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] text-[var(--ink-2)] hover:text-[var(--ink)]"
             title="Ignore the drawn GSE is on: the stand is the rocket and the cart's vent lines, which stay plugged in until launch. The rest of the cart's page is drawn here but not simulated -- its valves do nothing and its gauges read nothing. Turn it off on GSE Controls."
           >
-            GSE not simulated · vents are
+            GSE not simulated except its vents
           </Link>
         )}
         <button
@@ -351,7 +351,7 @@ export function Pid() {
             <div className="flex flex-shrink-0 border-b border-[var(--line)]" role="tablist" aria-label="Panel">
               {(
                 [
-                  ['symbols', 'Symbols', 'Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in feed-twin and never touch the drawing in pid-designer; they are shared with everyone and follow the drawing when it is re-imported.'],
+                  ['symbols', 'Symbols', 'Every symbol on the drawing: where it is wired on the DAQ box, what the console calls it, the states that open it, and the numbers the model uses. Overrides stay in the Twin and never touch the drawing in Hotbench P&ID; they are shared with everyone and follow the drawing when it is re-imported.'],
                   ['daq', 'DAQ box', 'The boards of connectors: which valve or sensor each one is cabled to'],
                 ] as const
               ).map(([m, label, hint]) => (

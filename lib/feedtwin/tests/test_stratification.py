@@ -250,3 +250,29 @@ def test_the_surface_boils_at_saturation_instead_of_running_to_the_critical_poin
         state = tank.step(state, tank.rates(state), 0.02)
         assert tank.pressure(state) < 1.01 * p_crit
     assert state.liquid_temperature > 90.05
+
+
+def test_the_wall_heat_that_goes_to_the_bulk_boils_nothing_at_the_surface(
+    parts,
+) -> None:
+    """A wall at 92 K over 90 K liquid with the layer at 91 K: half the wall's
+    convective heat reaches the surface, half thickens the layer into the bulk.
+    Only the half that arrives can evaporate the surface. The exchange used to
+    price all of it as latent and then debit the layer again for the half the
+    bulk took -- evaporating with heat that never got there."""
+    tank = build(parts, boiling_onset=5.0, surface_layer=0.01, surface_mixing=0.0)
+    state = shut(tank, parts, wall_above=2.0, pressure=2.5e5)
+    state = replace(state, vapour_mass=0.0, surface_temperature=91.0)
+    rates = tank.rates(state)
+    reach = (92.0 - 91.0) / (92.0 - 90.0)
+    assert rates.heat_to_wetted_wall > 0.0 and rates.heat_to_liquid > 0.0
+    arrives = rates.heat_to_liquid + reach * rates.heat_to_wetted_wall
+    assert rates.latent_power == pytest.approx(arrives, rel=1e-9)
+    # The rest warms the bulk, and none of it is taken back off the surface.
+    to_bulk = (1.0 - reach) * rates.heat_to_wetted_wall
+    m_s = tank.surface_mass(state)
+    cp = parts[0].get("cp", T=90.0, q=0.0)
+    assert rates.liquid_temperature == pytest.approx(
+        to_bulk / ((state.liquid_mass - m_s) * cp), rel=1e-9
+    )
+    assert rates.surface_temperature == pytest.approx(0.0, abs=1e-12)

@@ -1,6 +1,19 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { SessionState, StandSetup, TankState } from '../api';
-import { chargeDone, phaseDone, PAD_ORDER, chillEndK, chillFraction, chillLeftS, underPressed, waitText } from '../components/PadSequence';
+import type { SessionState, StandSetup, StateMachine, TankState } from '../api';
+import {
+  chargeDone,
+  phaseDone,
+  PAD_ORDER,
+  chillEndK,
+  chillFraction,
+  chillLeftS,
+  padMemory,
+  readPad,
+  underPressed,
+  waitText,
+} from '../components/PadSequence';
 
 const tank = (over: Partial<TankState>) =>
   ({ id: 't', label: 'LOX', pressure_psi: 0, liquid_temperature_K: 293, ...over }) as TankState;
@@ -127,5 +140,99 @@ describe('the LOX is pressed last, and the guide does not walk back past it', ()
   it('nor is a fuel tank pressed again behind it', () => {
     expect(phaseDone('fuelpress', stand(3051, 420, 545), setup, new Set(['fuelpress', 'topup', 'oxpress']))).toBe(true);
     expect(phaseDone('fuelpress', stand(3051, 420, 20), setup, new Set(['fuelpress']))).toBe(false);
+  });
+});
+
+describe('the pad at x1, as recorded on LE4 (3): the guide stays on a press until the tank is pressed', () => {
+  // A quarter second into each press the COPV is under 85 % of its charge and
+  // the tank is still climbing to a lockup that rises as the bottle falls. The
+  // guide read "charge copv" there, and Auto to Ready left the press for it.
+  const fx = JSON.parse(readFileSync(fileURLToPath(new URL('./padGuide.le4-3.json', import.meta.url)), 'utf8')) as {
+    setup: StandSetup;
+    machine: StateMachine;
+    frames: SessionState[];
+  };
+  const replay = () => {
+    const memory = padMemory();
+    return fx.frames.map((f) => ({ frame: f, guide: readPad(f, fx.machine, fx.setup, memory) }));
+  };
+
+  it('never walks back down the checklist', () => {
+    let last = -1;
+    for (const { frame, guide } of replay()) {
+      const at = PAD_ORDER.indexOf(guide.current?.key ?? 'fire');
+      expect(at, `t=${frame.t} ${frame.state}: ${guide.current?.key}`).toBeGreaterThanOrEqual(last);
+      last = at;
+    }
+  });
+
+  it('sits in each press while its tank climbs, with nothing to press', () => {
+    // Still climbing: more than the guide's 3 psi under the lockup it gives now.
+    const climbing = replay().filter(({ frame }) => {
+      const side = frame.state === 'Fuel Press' ? 'fuel' : frame.state === 'Ox Press' ? 'lox' : '';
+      const t = frame.tanks.find((x) => x.side === side);
+      return t !== undefined && t.pressure_psi < (t.lockup_psi as number) - 3;
+    });
+    expect(climbing.map(({ frame }) => frame.t)).toEqual([531.263, 531.513, 531.763, 533.017, 533.267, 533.517]);
+    for (const { frame, guide } of climbing) {
+      expect(guide.current?.target, `t=${frame.t}`).toBe(frame.state);
+      expect(guide.inTarget).toBe(true);
+      expect(guide.hop).toBe('');
+    }
+  });
+
+  it('at Ready, the presses that drew the COPV down are not a slip, and the bottle is never named twice', () => {
+    const ready = replay().filter(({ frame }) => frame.state === 'Ready');
+    expect(ready.length).toBeGreaterThan(0);
+    for (const { guide } of ready) expect(guide.sagged.map((p) => p.key)).toEqual([]);
+  });
+
+  it('at Ready, says what is aboard against the fire load: the guide moved on at 95 %', () => {
+    const [{ guide }] = replay().filter(({ frame }) => frame.state === 'Ready');
+    expect(guide.short).toEqual([
+      { label: 'Eth-Tank', percent: 95 },
+      { label: 'LOX-Tank', percent: 95 },
+    ]);
+  });
+});
+
+describe('what Ready reports of the bottle', () => {
+  const setup = { dome: 535, copv_target: 3750 } as StandSetup;
+  const machine = {
+    states: ['Idle', 'Armed', 'Press Standby', 'Fuel Fill', 'Ox Fill', 'GN2 High Press', 'Fuel Press', 'Ox Press', 'Ready', 'Fire'],
+    transitions: {},
+  } as unknown as StateMachine;
+  const ready = (copv: number, tanks = 530) =>
+    ({
+      id: 's',
+      state: 'Ready',
+      reachable: [],
+      notes: [],
+      bottles: [{ id: 'copv', pressure_psi: copv }],
+      tanks: [
+        tank({ id: 'lox', side: 'lox', liquid_temperature_K: 91, pressure_psi: tanks, lockup_psi: 539, liquid_mass_kg: 6.6, load_kg: 6.6 }),
+        tank({ id: 'fuel', side: 'fuel', pressure_psi: tanks, lockup_psi: 539, liquid_mass_kg: 4.4, load_kg: 4.4 }),
+      ],
+    }) as unknown as SessionState;
+  const sagged = (copv: number, pressed: string[], tanks = 530) => {
+    const memory = { ...padMemory(), id: 's', reached: new Set(['fuel', 'ox', 'charge', ...pressed]) };
+    return readPad(ready(copv, tanks), machine, setup, memory).sagged.map((p) => p.key);
+  };
+  it('once, when no press has spent it', () => {
+    // Walked to Ready unpressed: both tanks and the bottle, the bottle once.
+    expect(sagged(1500, [], 20)).toEqual(['fuelpress', 'topup', 'oxpress']);
+  });
+  it('a bottle the presses spent is fine while it can hold the lockup', () => {
+    expect(sagged(3129, ['fuelpress', 'topup', 'oxpress'])).toEqual([]);
+  });
+  it('and reported once it cannot', () => {
+    expect(sagged(520, ['fuelpress', 'topup', 'oxpress'])).toEqual(['topup']);
+  });
+  it('a page reloaded at Ready remembers nothing, and still reads pressed tanks as what spent it', () => {
+    const memory = padMemory();
+    expect(readPad(ready(3129), machine, setup, memory).sagged.map((p) => p.key)).toEqual([]);
+  });
+  it('nothing short at Ready when the full fire load is aboard', () => {
+    expect(readPad(ready(3129), machine, setup, padMemory()).short).toEqual([]);
   });
 });

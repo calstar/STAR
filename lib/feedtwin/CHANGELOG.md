@@ -6,6 +6,348 @@ and which test or benchmark holds it. Format: newest first. A change that moves 
 result names it under **Changed results**; a reader comparing two runs should
 be able to find why they differ.
 
+## Unreleased — 2026-11-02: component numerics (review round 2)
+
+### Changed results
+- **A gas valve is IEC 60534-2-1** (`Valve`, `ValveCd`; R035). Below the choke it
+  was the incompressible Cv law (Y = 1) under a separately calibrated ceiling, and the
+  two never met: a Cv 4 valve on 500 psia nitrogen passed 1.52x IEC at 140 psia
+  downstream and 36 % *less* at 130 -- a vent sped up as its tank fell, and some
+  networks had two converged answers. The ceiling also read fluids' Q at 15 degC where
+  fluids states 0 degC (5.4 % low); Tier 1.3 agreed to 1e-6 because its reference made
+  the same assumption. A gas-priced node now goes through `iec_gas.GasCv`, the relief
+  valve's and the seat's adapter: within 0.112 % of `size_control_valve_g` at every
+  drop (Cv_to_K against N9), monotone and continuous into the choke. Moved: Tier 2.1
+  GN2 t = 1 s 459.11 -> 458.96, t = 4 s 483.08 -> 482.78, COPV 576.9 -> 577.7 psig
+  (inside tolerance; helium < 0.1); Tier 2.3 Pc 399.92 -> 399.84 psia; LE4 (3) T-0
+  burn impulse 23158.1 -> 23157.5 N s, peak 6236 -> 6233 N, COPV at burnout 1212.7 ->
+  1212.1 psia; its post-burnout vent runs faster choked and slower subcritical (LOX
+  171.0 -> 165.6 psia at t = 5 s, 30.9 -> 36.5 at t = 8 s). Ox Fill on LE4 (3): chill
+  peak 17.5 -> 17.7 psia. Benchmark 1.3 now also checks 30 sub-choke points.
+- **The pressurant is gas wherever it is drawn** (`build_network` 4c; R034). Nodes on
+  the cart side of a mated vent QD were neither in the pressurant reach nor painted
+  with a tank's contents and fell to the temperature rule; GN2 vented off a chilling
+  LOX tank was priced as liquid nitrogen (414-730 kg/m^3 against ~2.7) once it passed
+  126.2 K. LE4 (3) Ox Fill at 221 s: LOX tank 14.9 -> 15.8 psia, 241 s 14.8 -> 15.7 (the
+  vent's back-pressure no longer vanishes). Six such nodes on LE4 (3), sixteen on the
+  rocket-and-GSE fixture.
+- **Reverse flow is priced at the node it comes from, and chokes** (`_branch_row`,
+  `HydraulicComponent.symmetric`; R036). A valve drawn against its flow passed 3-8x
+  less (0.47 against 3.81 kg/s at 3000 psia) and never choked. Symmetric components
+  (pipe, fitting, bend, hose, orifices, valve, segmented, measured) mirror; check valve,
+  regulator, relief and injector keep their drawn direction. Nothing moves on LE4's
+  burn or Tier 2.1.
+- **Crane f_T multiples are of `ft_Crane(D)`**, and a segment tee is Crane's unsplit
+  tee, 20 f_T run / 60 f_T branch (R042). A 30 f_T elbow in 9.5 mm read 0.55-1.09
+  against 0.885; the branch tee 0.41 against 1.77. No shipped drawing uses these kinds.
+- **The near-critical table guard reaches 2.5 p_c and T_c + 30 K** (R045), from a
+  measured table-vs-HEOS map: nitrogen just outside the old band read density 3.7 %,
+  cp/cv 14 %, viscosity 15 % off; the worst left outside is now 0.22 % / 0.97 % / 3.9 %.
+
+### Fixed
+- **A check valve short of cracking and a regulator inside its lockup rise are shut,
+  not rootless** (R038). Both stepped their branch at zero flow and every solve with
+  the far side inside the step failed. The check valve gets the regulator's closure
+  (ceiling 0 while 0 <= dp < crack); the lockup rise ramps out at the droop's own rate
+  and the shut band is taken from lockup. No rise, bit-identical (both study drawings
+  declare 0; LE4 none).
+- **A measured curve off its ends is continued (dp ~ mdot^2) and flagged, never
+  fatal** (`MeasuredElement`; R039); the stub back-fill's zero-flow call is guarded.
+- **A steady solve's report describes that solve** (R044): diagnostics carry the
+  solve's signals, and `choked_branches` is filled.
+- **A bend fitting hands fluids its angle in degrees** (R041; K 0.018 -> 0.229 at 90
+  deg), and **lineType `bend` builds** (R047).
+- **An injector card read off its hull counts as extrapolated** (R046; the step's
+  flag, as the chamber's already was).
+- **Out-of-range use is said**: a regulator past its rated flow (R040, a
+  `rated_flow` envelope warning naming the multiple and the droop; `check()` flags an
+  assumed rated_flow), and an unsized QD priced as an elbow (R043, one build warning
+  naming each; LE4 (3) has eight).
+
+### Deferred
+- **R037, a liquid valve's false gas ceiling.** A network-priced liquid carries its
+  cp/cv, and the plain valve still applies the old "sonic" ceiling to anything not
+  priced as a gas (LOX to atmosphere at 0.69x the IEC liquid law). Gating it on
+  `is_gas` is a one-line component change, but on a drawing with no engine model the
+  session holds the chamber at ambient for the coupling step the mains open
+  (`Session._chamber` reads "lit" from the previous step's flows); the false ceiling is
+  what keeps that step from emptying the LOX tank (LE4 (6): 8.9 kg gone in 0.5 s at
+  18 kg/s, liquid refused, the watcher's "Liquid from nowhere"). Needed first: close
+  the no-engine chamber within the step. Two strict xfails in `test_gas_choking.py`.
+- **`dewar_fill_cv` against the IEC vent.** The team's 0.019 was calibrated against
+  the old vent law; on `test_dewar_load`'s stand it now peaks at 44.75 psig, not ~30
+  (0.014: 33.7, 0.012: 28.6). LE4 (3) does not move. A strict xfail holds it until the
+  team recalibrates (and feed-twin's tunables text quotes the old peaks).
+- **A default coefficient for an unsized QD** (R043): said, not chosen.
+
+## Unreleased — 2026-11-02: the session on LE4 (3) (production pass)
+
+### Fixed
+- **Only the vehicle's tanks end a burn or hold a cold-flow chamber**
+  (`Session._burnout_check`, `Session._chamber`). Both counted every tank on the
+  stand, cart included: a cart transfer tank the loads had left dry sent every Fire
+  to Vent at T+0.00 s with both flight tanks full ("Burnout at T+0.00 s: Fuel
+  Transfer Tank ran dry"), and on a stand with no engine model a 50 psig dewar kept
+  the chamber at atmosphere. `burn()` already counted the vehicle alone.
+- **A bottle being charged gives what the network draws** (`BottleSim.advance`).
+  The built-in charge returned before the draw was applied, so a press valve opened
+  during GN2 High Press filled the LOX ullage from gas the COPV never lost: 290 g of
+  nitrogen from nothing on LE4 (3), opened by the watcher as "Mass not accounted
+  for". The charge and the draw now land in one step (dm/dt = charge - draw); the
+  stand's mass error stays at round-off.
+- **T-0 primes the tanks no higher than the bottle and no lower than atmosphere**
+  (`burn.reachable_lockup`, used by `prime_at_t0` and `jump_to_t0`). The
+  regulator's law, dome + bias - S x inlet, does not stop at the inlet: T-0 primed
+  LE4 (3) at 593.8 psia off a 414.7 psia COPV, and at 9.6 psia with the dome knob at
+  0. A bottle under the lockup leaves the regulator wide open and the tanks at the
+  bottle; a lockup under atmosphere is a shut regulator. A T-0 note says which.
+  `T0.lockup_psi` is still each regulator's own lockup; `T0.tank_psi` is where the
+  tanks went. `regulator_lockup` is unchanged (the GSE tab's range reads the law).
+  With regulators locking up apart, the spread note names where the tanks went too
+  (it said the lower lockup while the next note said the bottle).
+- **An abort in the LOX-chill window runs at real time** (`_press_path_timescale`).
+  With the fuel loaded and the LOX tank empty, Engine Abort drains the fuel by
+  gravity through its open main while its press path, the manifold, is vented
+  through the empty LOX tank. That "supply" sat at atmosphere with the tank, the
+  band was met, and the guard asked for 0.27 ms couplings: 79 per 20 ms step, 10 s
+  of CPU per 0.25 s tick, ~35 min of wall clock for the 52 s drain. A supply within
+  its band of atmosphere is a vent and asks for nothing (now 1 coupling, 0.15 s CPU
+  per tick).
+- **`Setup.supply_press_s` has a Configuration row** ("Cart supply press time",
+  feed-twin `backend/tunables.py`), so it is dialled on the Configuration tab and
+  carried in every run record's inputs (`wire_setup`). It was the one assumed number
+  with neither. `feed-twin/tests/test_tunables.py` now holds every Setup field to a
+  row, less `tick_budget` (numerics, off) and `ullage_wall_T0_K` (a per-tank map,
+  dialled as `cryogen_ullage_wall_T0_K`).
+- **A COPV charging is not "down to" anything** (`BottleSim.peak`, `_notes`). The
+  note read "COPV is down to 107 psia, 3% of what it was filled to" on every tick of
+  the first quarter of a charge from empty. It now says how far a bottle is down
+  from the most it has held since its last charge or T-0 prime ("down to 415 psia,
+  10% of the 4,018 psia it was filled to"), only once it has fallen under a quarter
+  of its target from above it, and nothing while it charges. A bottle primed low, a
+  charge stopped short, or a recharge after a dump is not "down to" anything.
+- **A bottle dumped at atmosphere stays at atmosphere** (`BottleSim._at_atmosphere`,
+  the built-in dump). The dump took a ninth of the gas a second whatever the bottle
+  held, and the floor put it back at the wall's density with none of its energy:
+  every step the gas cooled, a COPV vented at Emergency or GSE Abort read 14.4
+  psia, and the floor booked ~0.55 g/s of clamp mass for as long as the abort
+  lasted. The dump now takes only what stands above an atmosphere at the gas's
+  temperature, and the floor restates the energy with the mass, as
+  `TankSim._settled` does.
+- **The critical-point note is about the propellant, not the total pressure**
+  (`_notes`). It compared a tank's total pressure with its propellant's critical
+  pressure and always added "the model can go no higher. The drawing has no relief
+  valve": LE4 (3) with the dome at 735 sat in Ready at 744.6 psia, above oxygen's
+  731 psia, with 90 K LOX under nitrogen (an ordinary compressed liquid) and OU-RV
+  drawn. It now fires when the propellant's vapour partial pressure, or the
+  saturation pressure of its liquid (bulk or surface, whichever is warmer), is
+  within 3 % of critical -- a shut LOX tank boiled up on its own oxygen still gets
+  it -- and says "no relief valve" only of a tank with none drawn on it
+  (`Session._reliefs_on`: the COPV's relief does not lift for a tank).
+- **A trip says the vessel is past its rating, and names the reliefs it beat**
+  (`_check_limits`, `Session._reliefs_on`). The limit is the drawing's burst over a
+  factor of two, and the trip said "The tank would have failed" at half the burst.
+  It now reads "Eth-Tank reached 769.7 psia, over its 764.7 psia MAWP: past its
+  rating a real tank is at risk, so the stand stops here. RV-F is set at or above
+  that limit and cannot lift before it." A relief counts when it is drawn on the
+  vessel's gas side (reached without crossing a regulator, another vessel or another
+  relief). The trip limit itself is unchanged.
+- **A poured load does p dV work on the ullage it displaces** (`TankSim._collect`,
+  the built-in fuel load and the dewar load). The liquid rose and the ullage shrank
+  with its energy untouched; the vent then took the displaced gas at its enthalpy
+  and what stayed lost p v per kilogram vented. By hand, an adiabatic displacement
+  at constant pressure leaves the gas where it was (the liquid's work on the gas
+  pays the flow work leaving): `Tank.rates` books exactly this as
+  `expansion_power` for a draining tank, and `_collect` now books it with the sign
+  turned.
+- **A vented LOX load keeps its ullage over the liquid** (`TankSim._settled`,
+  `TankSim._specific_energy_at`). Each time a venting tank dipped under the air, the
+  floor restated the ullage's energy at u(1 atm, T) while its nitrogen held only its
+  partial pressure beside the oxygen vapour; nitrogen near its dew line is far from
+  ideal, so the gas read back ~1 K colder than it was restated at, and the next dip
+  restated it colder still. On LE4 (3) the LOX load ran its ullage to 77.4 K over
+  90.2 K liquid and a 92.2 K wall, drew 0.70 kg of "air" in through a vent blowing
+  out, and booked -0.60 kg of clamps; the Solver tab failed Clamps, Mass balance and
+  Watch after every pad run. The floor now restates at the pressurant's own partial
+  density.
+- **The tick split is documented as the code does it**: round(tick / live_step)
+  equal steps, at least one (the Configuration row and PHYSICS-BENCHMARK 3.10 said a
+  ceiling). Rounding is what Layer X's 0.05 s step runs on (two 0.025 s steps); a
+  ceiling would make it three and move every Layer X number, so it stays a decision
+  for a fresh golden. `feed-twin/tests/test_session.py`:
+  `test_a_tick_off_the_grid_is_rounded_to_it`. No number moves.
+
+### Changed results
+- A drawn-GSE stand whose cart tank has run dry now fires (LE4 (3), 2 kg left in
+  the transfer tank, Fuel Fill, T-0, Fire: 5.4 kN at T+0.25 s, was Vent at
+  T+0.00 s). Nothing moves on a stand without a cart or with a cart tank holding
+  propellant; the benchmark has neither.
+- A COPV charged by the built-in charge while something draws on it now loses what
+  is drawn (LE4 (3), LOX press valve opened 2 s into GN2 High Press: COPV 977.9 psia
+  at t=5 s, was 1,954.7; mass error 1e-16 kg, was 0.290 kg). The shipped table
+  charges with the press valves shut, and T-0 and the benchmark set the bottle
+  directly, so no burn moves.
+- T-0 with the COPV under the lockup, or the dome under the supply effect: LE4 (3)
+  COPV 100 / 400 psig -> tanks 114.7 / 414.7 psia (were 598.2 / 593.8); dome 0 ->
+  14.7 psia (was 9.6). The Study's low-charge cases start from the bottle. At the
+  stand's 3,750 psig charge and every benchmark case nothing moves
+  (`scripts/physics_benchmark.py` passes).
+- The abort drain above on its coupling step: the fuel left after 0.22 s of Engine
+  Abort differs by 0.3 g of 4.09 kg between 33 couplings per step and 1. No burn
+  moves: a burning tank's supply is the regulated manifold.
+- A COPV dumped to the air: 14.70 psia at the gas's own ~302 K (was 14.39 psia,
+  cooling 0.03 K/s); the bottle's clamp ledger grows 5 ug/s at rest (was 0.55 g/s).
+  The blowdown down to atmosphere is unchanged. No burn reaches the floor; the
+  benchmark passes.
+- LE4 (3) Fuel Fill (the built-in 15 s pour onto a 293 K tank at atmosphere): the
+  fuel ullage ends the pour at 293.0 K (was 284.65 K, then warming back and pressing
+  the shut tank 0.13 psi). The LOX load takes the same term. T-0, the burns and the
+  benchmark do not pour; `scripts/physics_benchmark.py` passes.
+- LE4 (3) Ox Fill (chill skipped), first 120 s: coldest ullage 91.3 K (was 77.3),
+  LOX clamps 0 (was -242 g), air drawn through the vent 0.6 g (was 282 g), Solver
+  guard 103 ppm (was -39,240); 1.466 kg loaded (was 1.482). The built-in chill
+  restates at the wall at a whole atmosphere, its own partial density, and is
+  unchanged. No burn floors its ullage; the benchmark passes.
+
+### Tests
+- `test_rocket_and_gse.py`: `test_an_empty_cart_tank_is_not_a_burnout`,
+  `test_a_cold_flow_is_lit_by_the_vehicle_tanks_not_the_cart`,
+  `test_a_trip_says_what_it_is_and_which_reliefs_it_beat`; feed-twin
+  `test_psia_display.py` follows the trip's new wording.
+- `test_ignore_gse.py`: `test_a_bottle_being_charged_gives_what_the_network_draws`,
+  `test_a_bottle_charging_is_not_down_to_anything`,
+  `test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere`,
+  `test_a_poured_load_displaces_the_ullage_without_cooling_it`,
+  `test_a_vented_lox_load_keeps_its_ullage_over_the_liquid` (slow).
+- `test_jump_to_t0.py`: `test_a_bottle_under_the_lockup_primes_the_tanks_at_the_bottle`,
+  `test_a_lockup_under_atmosphere_primes_the_tanks_at_atmosphere`,
+  `test_subcooled_lox_over_its_critical_pressure_is_not_critical`.
+- `test_press_path_coupling.py`:
+  `test_a_tank_draining_onto_a_vented_manifold_asks_for_nothing` (also bounds the
+  one-coupling drain's ring under 0.05 psi).
+- Review (2026-11-02): `test_ignore_gse.py`: `test_a_bottle_at_the_air_drawn_on_reads_the_air`
+  (the floor apart from the dump, which passed on the old floor),
+  `test_a_primed_bottle_is_down_from_its_prime`, and a recharge after a dump in
+  `test_a_bottle_charging_is_not_down_to_anything`; `test_jump_to_t0.py`:
+  `test_regulators_apart_over_a_low_bottle_say_where_the_tanks_went`, and the
+  critical-point test now drops the LOX tank's own relief.
+
+## Unreleased — 2026-11-02: the drawing as built (overnight audit, network)
+
+### Fixed
+- **An itemised line gets its line wall** (`Session._build_line_walls`,
+  `comps.wall.wall_runs`, `SegmentedPipe.wetted_runs`). The wall build read only
+  the line-level `p["bore"]`, which the segment list supersedes, so every itemised
+  line was bare: on LE4 (3) the default-on fitting heat built no wall at all in
+  Hotbench or Layer X. Geometry now comes from the segments (bore, and the run as
+  installed with fitting bodies); the metal from the line-level `fitting_count`, as
+  on a plain line. A one-segment run builds the darcy line's wall.
+- **A check valve or regulator is read by its ports** (`pid/network.py`
+  `DIRECTED_TYPES`, `_sides_by_port`). With lines on both sides the line
+  direction decided, and pid-designer's line direction is only where the drag
+  started: a CV drawn right but with both lines dragged from the far end sat with
+  the bottle on its outlet and passed nothing, while one pid-designer flags
+  `cv-backwards` flowed. A CV or PR whose every line is on `l`/`r` now takes `l` as
+  its inlet, and says so when the lines ran the other way. Symmetric valves read as
+  before. No drawing in the repo, nor LE4 (3), builds a different network (36
+  builds compared; the only conflict, DR-REG-G, is a dome loader and not plumbed).
+- **A dome valve is no vent when the cart is cut** (`_unloaded_dome_valves`).
+  Rocket only, the loader of DPR_HP's dome went with the cart, so the dome line was
+  not found and DR-CTRL-R -- the rocket's dome isolation solenoid, between the
+  dome port and the capped DR-QD-B -- was reported as "venting to atmosphere" with
+  its dome-side node (where DR-PT-R reads) pinned there. A dome-loaded regulator's
+  dome line is now walked without its loader, as the session walks a cut dome
+  line; a walk that reaches a vessel, a boundary or another regulator (a dome
+  tapped off plumbing) is left as before. Valve roles and every other vent are
+  unchanged on the LE4 fixture and LE4 (3).
+- **Paired disconnects a drawn line already joins are not "left unmated"**
+  (`_mate_disconnects`). HP-QD-A/HP-QD-B on the LE4 cart are paired and joined by
+  their own line; pid-designer reads that as coupled and says nothing, the twin
+  warned of a fault that is not there. The pair is now left as drawn.
+- **The partial pressures decide evaporation or condensation; the heat only pays
+  for it** (`SaturatedVapour.exchange`). The latent share was `q x clip(driving)`,
+  so a subsaturated surface losing heat condensed vapour that was not there (LE4
+  (3)'s vented ethanol tank made 3.3 mg/s of liquid from a vapour mass of zero),
+  a supersaturated one gaining heat condensed, and one losing heat evaporated. Now
+  only heat in under a subsaturated ullage evaporates and heat out under a
+  supersaturated one condenses; the other two are sensible.
+- **A stratified tank counts the wall's heat once** (`Tank.rates`). The exchange
+  priced as latent at the surface the wall heat that goes to the bulk, and the layer
+  was debited for it again; a wall colder than the liquid warmed the layer above the
+  bulk, the gas and the wall. The exchange now sees only what reaches the surface.
+  `docs/PHYSICS-BENCHMARK.md` 1.5b.
+- **A probe clipped to a line reads the line** (`build_network` step 3b,
+  `PidNode.attached_at`, `roles._clip_with`). pid-designer clips an RTD, TC or load
+  cell to a line (`attachedTo` = the line's id, `attachedAt` = the fraction from its
+  source end); the twin resolved clips against symbols only, so the probe read
+  nothing, was reported "not clipped to anything", and with the cart cut was dropped
+  from the vehicle without a word. It now reads the end of the line it sits nearer
+  to, and stays with whichever side holds both ends. No drawing in the repo nor
+  LE4 (3) clips a probe to a line.
+- **A drawing holding two rockets is refused, with the pages named**
+  (`_separate_vehicles`). pid-designer's Duplicate page ("a hotfire and a launch
+  version") keeps every tag and checks tags per page; the twin builds every page
+  into one network, so LE4 with its Rocket page copied built two vehicles sharing
+  seven signals, no valve bound, and Fire sat at 0 N with no message. A drawing
+  whose engines sit on more than one drawn-line piece now raises
+  (`AssemblyError("build", ...)`): "... holds 2 separate vehicles, each with its own
+  engine: ENG-1 (page Rocket); ENG-1 (page Rocket (copy)) ... Keep one version on this
+  drawing and save the other as a drawing of its own." Two valves the table drives
+  under one tag (a copied cart page) are said, with their pages. No drawing in the
+  repo nor LE4 (3) has either.
+
+### Changed results
+- LE4 (3), ignore_gse, GN2: Hotbench T-0 burn mean thrust 6142.9 -> 6175.5 N, COPV
+  at t = 4 s 1140.8 -> 1212.7 psia; Layer X (replay off) mean thrust 6148.9 ->
+  6175.2 N, burn 3.860 -> 3.843 s, COPV at burnout 1211.6 -> 1284.6 psia, ox/fuel at
+  end +4.5/+3.6 psi. Table in `docs/PHYSICS-BENCHMARK.md` 2.4b2. The same four lines
+  are itemised in `tests/fixtures/le4_rocket_and_gse.json` and the feed-twin sample
+  stand. No benchmark drawing itemises a line: `scripts/physics_benchmark.py` passes
+  unchanged, and the Layer X golden (`copv_study_he`) does not move.
+- The shipped library's LE4 drawings (`feed-twin/backend/library`: LE4 (1), LE4 (3),
+  LE4 e2e) itemise three of those lines -- both press runs, and the fuel run off the
+  tank, which states no bore and stays bare -- and move the same way: library LE4
+  (3) with the Ethalox 7200N Doublet at the default setup, T-0 burn mean thrust
+  7153.6 -> 7194.4 N. On the same three drawings DPR_HP's dome solenoid DP-SOL-F is no
+  longer read as a vent, and its dome node (`junc_12`, where DP-PT-R reads) is no
+  longer pinned to atmosphere, full build and rocket-only alike.
+- Vapour quadrants and the layer's wall heat: the LE4 (3) T-0 burn is bit-identical
+  while it fires; after burnout the drained fuel tank's dregs hold 293.0 K (were
+  drifting to 291.3 K). On the pad the vented fuel tank's mass holds at 4.40379 kg
+  (grew to 4.40393 kg in 65 s) and its surface cools towards the 290 K gas (292.69 K)
+  instead of warming above everything. A shut LOX tank at 40 % fill (feed-twin
+  `test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one`) climbs 37.3 psig
+  in three minutes insulated (was 37.8) and 39.6 bare (was 44.8): the wrap is worth
+  2.3 psi there, not 7.0, and that test's margin is now 1.5 psi (was 3). The bare
+  figure came from bulk-bound wall heat evaporating the surface. Benchmark:
+  50/50, figures identical.
+- The fourth quadrant (heat in under a supersaturated ullage, which used to
+  condense) is hit on the pad, not in the burn: in
+  `test_ox_fill_loads_the_flight_lox_tank_from_the_dewar` the LE4 fixture's LOX
+  tank fills exactly as before, and sealed in Armed afterwards it holds 117.5 g of
+  oxygen vapour at 751.7 psig (was 104.9 g at 751.0 psig).
+
+### Tests
+- `tests/test_line_walls.py`: one segment builds the darcy line's wall, the metal is
+  worked by hand, a drawn wall thickness adds tube per segment, a run with no bore
+  stays bare, and the LE4 press lines get walls. Four fail with the old build.
+- `tests/test_pid_drawn_freely.py`: a CV and a PR dragged against the flow flow,
+  in flow order read as before, and a CV drawn backwards checks the flow and says
+  why. Three fail with the old reading.
+- `test_ignore_gse.py::test_the_rockets_dome_valve_is_no_vent_with_the_cart_cut`,
+  `test_rocket_and_gse.py::test_a_pair_drawn_joined_is_not_called_unmated`,
+  `test_pages_and_mates.py::test_halves_joined_by_their_own_line_are_coupled_and_nothing_is_said`:
+  each fails on the old build.
+- `test_vapour.py`: the four quadrants and a vented ethanol tank losing heat;
+  `test_stratification.py::test_the_wall_heat_that_goes_to_the_bulk_boils_nothing_at_the_surface`.
+  Five fail on the old model; the evaporating quadrant passes both ways.
+- `tests/test_probes_on_lines.py`: each end of the line, a clip saved without a
+  position, and the vehicle cut keeping it. Four fail on the old build; a probe on a
+  tank reads as before.
+- `tests/test_two_vehicles.py`: LE4 with its Rocket page duplicated is refused, full
+  and rocket-only, naming both pages; a copied cart page says its shared tags; LE4
+  as drawn builds without either. Three fail on the old build.
+
 ## Unreleased — 2026-10-17: the stand's own behaviour (dry-run defects)
 
 ### Changed

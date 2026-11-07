@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { reviveUiConfig } from './persist'
-import { defaultUiConfig } from './serialise'
+import { defaultUiConfig, toEjectionRequest } from './serialise'
 
 const stored = (patch: Record<string, unknown>) =>
   JSON.stringify({ ...defaultUiConfig(), ...patch })
@@ -105,5 +105,32 @@ describe('reviving a stored config', () => {
     const broken = JSON.parse(stored({}))
     broken.devices[0].CdS = 0
     expect(reviveUiConfig(JSON.stringify(broken))!.devices[0].CdS).toBe(0)
+  })
+  it('opens a design saved before Ejection & Pins on its defaults', () => {
+    const { ejection: _e, ...old } = defaultUiConfig()
+    const ui = reviveUiConfig(JSON.stringify(old))!
+    expect(ui.ejection).toEqual(defaultUiConfig().ejection)
+  })
+
+  it('keeps edited ejection inputs and fills a joint field it predates', () => {
+    const ej = defaultUiConfig().ejection
+    const { pin: _p, ...oldJoint } = { ...ej.joints[1], m_forward: 4.2 }
+    const ui = reviveUiConfig(stored({
+      ejection: { ...ej, trapped_pressure: false, joints: [oldJoint], vent: { n_holes: 3 } },
+    }))!
+    expect(ui.ejection.trapped_pressure).toBe(false)
+    expect(ui.ejection.joints).toHaveLength(1)
+    expect(ui.ejection.joints[0].m_forward).toBe(4.2)
+    expect(ui.ejection.joints[0].pin).toBeNull()
+    expect(ui.ejection.vent).toEqual({ ...ej.vent, n_holes: 3 })
+  })
+  it('never sends the chosen pin, or a field from an older save, to the backend', () => {
+    // POST /api/ejection is extra="forbid": either would be a 422 on every run.
+    const ej = defaultUiConfig().ejection
+    const old = { ...ej.joints[0], pin: '6-32', F_pin_min: 300, n_override: 2 }
+    const ui = reviveUiConfig(stored({ ejection: { ...ej, joints: [old] } }))!
+    expect(ui.ejection.joints[0].pin).toBe('6-32')
+    expect(Object.keys(toEjectionRequest(ui).ejection.joints[0]).sort())
+      .toEqual(['bay_id', 'bay_length', 'm_forward', 'name', 'role'])
   })
 })

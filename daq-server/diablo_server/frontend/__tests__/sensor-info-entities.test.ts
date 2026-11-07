@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildActChannelsFromBoards,
+  buildBallValveChannelsFromBoards,
   buildEncoderDataFromBoards,
   buildLcDataFromBoards,
   buildRtdDataFromBoards,
@@ -177,5 +178,19 @@ describe('two boards of one type sharing a connector number', () => {
     const rtd = buildRtdDataFromBoards(boards);
     expect(rtd.map((r) => r.calEntity)).toEqual(['RTD1_Cal.CH1', 'RTD2_Cal.CH1']);
     expect(new Set(rtd.map((r) => r.label)).size).toBe(2);
+  });
+});
+
+describe('buildBallValveChannelsFromBoards', () => {
+  it('lists a ball valve board under BV entities, and keeps it out of the actuator table', () => {
+    const boards = {
+      act_11: { type: 'ACTUATOR', enabled: true, board_id: 11, active_connectors: [1] },
+      ball_valve_board: { type: 'BALL_VALVE', enabled: true, board_id: 71, active_connectors: [1] },
+      off: { type: 'BALL_VALVE', enabled: false, board_id: 72, active_connectors: [1] },
+    };
+    expect(buildBallValveChannelsFromBoards(boards)).toEqual([
+      { entity: 'BV1.CH1', calEntity: 'BV1_Cal.CH1', label: 'B71 Ch1', boardId: 71, localCh: 1 },
+    ]);
+    expect(buildActChannelsFromBoards(boards).map((r) => r.boardId)).toEqual([11]);
   });
 });

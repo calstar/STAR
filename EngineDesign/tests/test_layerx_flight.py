@@ -239,7 +239,9 @@ def _ungated(flight, t):
     reference = float(getattr(motor, "reference_pressure", None) or 0.0)
     pressure = float(flight.env.pressure(flight.z(t))) if reference else 0.0
     thrust = float(motor.thrust(t)) + (reference - pressure) * area if reference else float(motor.thrust(t))
-    return (thrust + float(flight.R3(t))) / float(flight.rocket.total_mass(t))
+    # The drag as axial_acceleration reads it (linear between RocketPy's nodes since 2026-11-02, not its
+    # ringing spline): this test isolates the pressure-thrust and rail gate, not the drag's reading.
+    return (thrust + flt._axial_drag(flight, t)) / float(flight.rocket.total_mass(t))
 
 
 def test_the_coast_reads_drag_only(he_built):

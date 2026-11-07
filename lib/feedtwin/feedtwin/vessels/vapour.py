@@ -153,9 +153,10 @@ class SaturatedVapour:
         mdot_evap = q_interface / h_fg(T_liquid)
 
     with ``h_fg`` the latent heat at the liquid's own temperature. Heat leaving
-    the surface the other way (a cold ullage over warmer liquid, or a vapour
-    partial pressure above saturation) condenses at the same rate with the sign
-    reversed.
+    the surface under a vapour partial pressure above saturation condenses at
+    the same rate with the sign reversed. Heat whose direction disagrees with
+    the partial pressures -- leaving a subsaturated surface, or arriving at a
+    supersaturated one -- changes no phase and is all sensible.
 
     ``saturated_fraction`` is the one knob, and it is a physical statement
     rather than a tuning factor: how much of the interfacial heat load the
@@ -198,7 +199,20 @@ class SaturatedVapour:
         if p_sat <= 0.0:
             return VapourExchange()
         driving = (p_sat - vapour_partial_pressure) / p_sat
-        share = self.saturated_fraction * max(min(driving, 1.0), -1.0)
+        # Which way the mass goes is the partial pressures' to say, and the heat
+        # can only carry it that way. Heat arriving at a subsaturated surface
+        # evaporates it; heat leaving one under a supersaturated ullage is the
+        # latent heat of the vapour condensing on it. The other two cases have
+        # no phase change to pay for: a subsaturated surface that loses heat
+        # cools (it does not condense vapour that is not there -- with none in
+        # the ullage that made liquid out of nothing), and one that gains heat
+        # under a supersaturated ullage warms until its own vapour pressure
+        # meets the partial pressure. The product of the two signs used to
+        # decide it, which got three of the four cases wrong: both of those,
+        # and heat leaving a supersaturated surface, which it evaporated.
+        if heat_to_interface * driving <= 0.0:
+            return VapourExchange()
+        share = self.saturated_fraction * min(abs(driving), 1.0)
 
         latent_power = heat_to_interface * share
         return VapourExchange(mdot=latent_power / h_fg, latent_power=latent_power)

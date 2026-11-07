@@ -94,6 +94,34 @@ def test_actuator_role_names_sense_and_command_entities(labels):
     assert labels["ACT_CMD.B2.CH1"] == "LOX Main"
 
 
+def test_ball_valve_role_names_its_own_entities(elodin_dir):
+    # Board 71 is slot 1, as is actuator board 11; the ball valve lives under BV*, so its role
+    # must not land on ACT1.* (which is board 11's).
+    snapshot(
+        elodin_dir,
+        "bv",
+        """
+[boards.act_11]
+type = "ACTUATOR"
+board_id = 11
+
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+board_id = 71
+
+[actuator_roles]
+"Main Ball Valve" = ["NC", 1, 71]
+""",
+    )
+    labels = run_config.entity_labels(run_config.load("bv"))
+    assert labels["BV1.CH1"] == "Main Ball Valve"
+    assert labels["BV1_Cal.CH1"] == "Main Ball Valve"
+    assert labels["BV_CMD.B1.CH1"] == "Main Ball Valve"
+    assert "ACT1.CH1" not in labels
+    assert "ACT_CMD.B1.CH1" not in labels
+    assert labels["BOARD.HB_71"] == "Ball Valve Board"
+
+
 def test_actuator_role_board_id_defaults_to_the_first_actuator_board(elodin_dir):
     # Two-element form (no board_id) predates multi-board actuators; it means board 11.
     snapshot(

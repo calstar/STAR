@@ -10,8 +10,23 @@
 namespace fsw {
 namespace config {
 
-/** Board kinds from [boards.*] in config.toml (order matches prior daq_bridge enum). */
-enum class ActiveBoardKind : uint8_t { PT, LC, TC, RTD, ACTUATOR, ENCODER, ENVIRONMENTAL, UNKNOWN };
+/** Board kinds from [boards.*] in config.toml (order matches prior daq_bridge enum).
+ *
+ * BALL_VALVE is a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire): commanded
+ * like an actuator through [actuator_roles], but its SENSOR_DATA is a 4-20 mA position, not a
+ * current sense, and it has its own Elodin namespace (0x33-0x35) so it never shares keys with an
+ * ACTUATOR board on the same board_id % 10 slot. */
+enum class ActiveBoardKind : uint8_t {
+    PT,
+    LC,
+    TC,
+    RTD,
+    ACTUATOR,
+    ENCODER,
+    ENVIRONMENTAL,
+    BALL_VALVE,
+    UNKNOWN
+};
 
 /**
  * Sensor interface of a PT board, declared by `pt_type` in its [boards.*] section.

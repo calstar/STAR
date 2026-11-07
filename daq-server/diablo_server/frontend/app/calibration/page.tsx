@@ -13,6 +13,7 @@ import {
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { CalibrationChart, PhysicsParams, LcPhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
+import { BallValveCalPanel } from '@/components/calibration/BallValveCalPanel';
 
 type Model = 'cubic' | 'robust' | 'physics';
 type Kind = 'PT' | 'LC';
@@ -242,7 +243,7 @@ export default function CalibrationPage() {
 
   // Load full config once (physics params).
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: Record<string, any> } | null) => {
         const cfg = data?.config;
@@ -482,6 +483,9 @@ export default function CalibrationPage() {
             )}
           </div>
         )}
+
+        {/* Ball valves — two-point (fully closed / fully open), stored by the backend */}
+        <BallValveCalPanel config={cfgRoot} sessionActive={sessionActive} />
 
         {/* Global action: Zero all — captures a 0 reference point on every cubic/robust PT + LC
             sensor. It's a real point (feeds the shared fit + persists), NOT a tare.

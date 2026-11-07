@@ -71,6 +71,30 @@ def test_an_override_lands_in_the_drawing_with_its_provenance(drawing):
     assert missing == ["node:NOPE.x"]
 
 
+def test_the_restatement_table_reads_and_takes_absolute_pressures_in_psia(drawing):
+    """Rail -> Measured values listed 'COPV pressure 3750 psi' beside a rail reading 3765 psia, and sent what
+    was typed with the bare 'psi', which the twin reads as gauge: typing the rail's 3765 gave the burn 3779.7
+    psia (ADR 0004/0007). The table now carries the psia each absolute pressure means, by the drawing rule."""
+    from engine.layerx.measurements import override_view
+
+    atm = 101325.0 / 6894.757293168361                  # 14.6959 psi: a drawn bare psi is gauge
+    rows = {(r["target"], r["parameter"]): r for r in parameter_table(drawing.payload)}
+    assert rows[("node:KB1", "pressure")]["psia"] == pytest.approx(4500.0 + atm)
+    assert rows[("node:OXT", "MAWP")]["psia"] == pytest.approx(1000.0 + atm)
+    assert rows[("node:PR_D", "setpoint")]["psia"] == pytest.approx(500.0 + atm)
+    assert rows[("node:ENG", "pressure")]["psia"] == pytest.approx(350.0)    # the chamber is quoted absolute
+    assert "psia" not in rows[("node:PR_D", "flow_droop")]                   # a difference stays as drawn
+    assert "psia" not in rows[("node:PR_D", "dome_bias")]
+    # A restatement saved before the table spoke psia (bare psi, gauge) reads back as what it means...
+    old = Override(target="node:KB1", parameter="pressure", value=3750.0, unit="psi", source="fill log")
+    assert override_view(old, list(rows.values()))["psia"] == pytest.approx(3750.0 + atm)
+    # ...and one typed in psia lands on the drawing as psia, the absolute pressure that was typed.
+    typed = Override(target="node:KB1", parameter="pressure", value=3765.0, unit="psia", source="fill log")
+    payload, _, _ = apply_overrides(drawing.payload, [typed])
+    landed = {(r["target"], r["parameter"]): r for r in parameter_table(payload)}[("node:KB1", "pressure")]
+    assert landed["unit"] == "psia" and landed["psia"] == pytest.approx(3765.0)
+
+
 def test_a_restated_parameter_reaches_the_twin_as_measured(config, drawing):
     """The override is not a label: the regulator component the twin builds carries the
     restated value, with the measured provenance, and the burn plan is prepared from it."""
