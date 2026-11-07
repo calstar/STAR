@@ -106,4 +106,17 @@ RadioStatus Sx1262::receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     return RadioStatus::Ok;
 }
 
+bool Sx1262::packet_status(PacketStatus& out) {
+    // Reply bytes: junk, status, RssiPkt, SnrPkt, SignalRssiPkt.
+    const uint8_t tx[5] = {kOpGetPacketStatus, 0, 0, 0, 0};
+    uint8_t rx[5];
+    if (!command(tx, rx, sizeof tx) || !status_ok(rx[1])) {
+        return false;
+    }
+    out.rssi_x2 = static_cast<int16_t>(-static_cast<int16_t>(rx[2]));
+    out.snr_x4 = static_cast<int8_t>(rx[3]);  // two's complement
+    out.signal_rssi_x2 = static_cast<int16_t>(-static_cast<int16_t>(rx[4]));
+    return true;
+}
+
 }  // namespace radio_link

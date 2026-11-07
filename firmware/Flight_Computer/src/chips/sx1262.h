@@ -28,6 +28,7 @@ protected:
 constexpr uint8_t kOpClearIrqStatus = 0x02;
 constexpr uint8_t kOpGetIrqStatus = 0x12;
 constexpr uint8_t kOpGetRxBufferStatus = 0x13;
+constexpr uint8_t kOpGetPacketStatus = 0x14;
 constexpr uint8_t kOpReadBuffer = 0x1E;
 constexpr uint8_t kOpSetRx = 0x82;
 
@@ -40,6 +41,15 @@ constexpr uint16_t kIrqCrcErr = 1u << 6;     // the radio's own CRC was wrong
 // True when a reply's status byte is one a working chip sends (Table 13-76,
 // p.95); 0x00/0xFF (no chip, stuck MISO) and error statuses are false.
 bool sx1262_status_ok(uint8_t status);
+
+// Signal quality of the last LoRa packet, from GetPacketStatus (opcode 0x14,
+// datasheet Rev 1.2, Tables 13-79 and 13-80, page 96). Kept in the chip's own
+// units so nothing is rounded: RSSI in half-dB steps, SNR in quarter-dB steps.
+struct PacketStatus {
+    int16_t rssi_x2;         // average RSSI over the packet, dBm x 2
+    int8_t snr_x4;           // SNR, dB x 4 (negative below the noise floor)
+    int16_t signal_rssi_x2;  // RSSI of the LoRa signal after despreading
+};
 
 // Receives packets from an SX1262 over a SpiBus.
 //
@@ -65,6 +75,10 @@ public:
     // Packets the radio received but rejected (LoRa header or CRC error).
     // receive() reports them as NoData; this count makes a bad antenna or
     // too much range visible in telemetry. Needs LoRa CRC on at start-up.
+    // Signal quality of the packet receive() just returned (call it right
+    // after an Ok, before the next packet arrives). False if the chip did
+    // not answer; `out` is then left alone.
+    bool packet_status(PacketStatus& out);
     uint32_t crc_errors() const {
         return crc_errors_;
     }
