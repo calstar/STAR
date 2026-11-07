@@ -28,6 +28,10 @@ struct ActuatorRole {
     std::string board_ip;  // IP of the board that owns this actuator
     bool is_no{false};     // Normally Open: invert the logical position
     bool is_pwm{false};    // assigned to controller_service: sequencer skips it in FIRE
+    // Elodin table its commanded state is published on: [0x32] ACT_CMD for actuator boards,
+    // [0x35] BV_CMD for a ball valve board, which has its own namespace so board 71 and actuator
+    // board 11 (both slot 1) never write the same key.
+    uint8_t cmd_table_hi{0x32};
 };
 
 /**
@@ -224,9 +228,10 @@ private:
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
 
-    // Publish commanded actuator state [0x32, global_channel] to Elodin DB.
-    // global_channel encodes board + local channel to avoid collisions across boards.
-    void publishCommandedState(uint8_t global_channel, uint8_t logical_pos);
+    // Publish commanded actuator state [table_hi, global_channel] to Elodin DB: 0x32 (ACT_CMD) or
+    // 0x35 (BV_CMD), from ActuatorRole::cmd_table_hi. global_channel encodes board + local channel
+    // to avoid collisions across boards.
+    void publishCommandedState(uint8_t table_hi, uint8_t global_channel, uint8_t logical_pos);
 };
 
 }  // namespace sequencer

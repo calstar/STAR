@@ -55,6 +55,7 @@
 #include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "calibration/TypeK.hpp"
+#include "calibration/ValvePosition.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/T7Messages.hpp"
@@ -63,6 +64,7 @@
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "elodin/ResubscribeBackoff.hpp"
+#include "elodin/SubscriptionTracker.hpp"
 #include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
@@ -692,6 +694,7 @@ int main(int argc, char* argv[]) {
     std::vector<BoardChannels> lc_boards = boards_of(fsw::config::ActiveBoardKind::LC);
     std::vector<BoardChannels> enc_boards = boards_of(fsw::config::ActiveBoardKind::ENCODER);
     std::vector<BoardChannels> act_boards = boards_of(fsw::config::ActiveBoardKind::ACTUATOR);
+    std::vector<BoardChannels> bv_boards = boards_of(fsw::config::ActiveBoardKind::BALL_VALVE);
 
     // Per-PT-board sensor interface and 4-20 mA conversion parameters, keyed by Elodin slot.
     // board_simulator.py back-calculates i_ma from the target PSI and sends valid 4-20 mA ADC
@@ -1394,18 +1397,48 @@ int main(int argc, char* argv[]) {
     // Single ElodinClient for both subscribe (read) and publish (write)
     fsw::elodin::ElodinClient elodin_client;
 
-    // T7: register the calibrated tables this service publishes and subscribe to t7_bridge's raw
-    // ones (inputs + each TC board's cold junction). Called wherever the ESP32 tables are.
-    auto register_and_subscribe_t7 = [&]() -> bool {
-        if (t7_map.empty())
-            return true;
-        std::map<uint8_t, std::vector<fsw::elodin::DatabaseConfig::T7Table>> by_slot;
+    // Every table this service writes, and every raw table it calibrates (ball valves have their
+    // own type_hi bytes, so they sit beside the six sensor kinds rather than among them; a LabJack
+    // T7 is one more source, under 0x26).
+    auto register_calibrated = [&]() {
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        if (!bv_boards.empty())
+            fsw::elodin::DatabaseConfig::register_ball_valve_calibrated_tables(elodin_client,
+                                                                               bv_boards);
+        std::map<uint8_t, std::vector<fsw::elodin::DatabaseConfig::T7Table>> t7_by_slot;
         for (const auto& t : t7_map.all())
-            by_slot[t.slot].push_back(
+            t7_by_slot[t.slot].push_back(
                 {static_cast<uint8_t>(t.channel.ain), fsw::t7::calibrated_field(t.channel.kind)});
-        for (const auto& [slot, tables] : by_slot)
+        for (const auto& [slot, tables] : t7_by_slot)
             fsw::elodin::DatabaseConfig::register_t7_calibrated_tables(elodin_client, slot, tables);
-        return elodin_client.subscribe_tables(t7_map.raw_tables());
+    };
+    // A T7's raw tables (inputs + each TC slot's cold junction) go through the same tracker as the
+    // ESP32 ones: t7_bridge registers them when it connects, often after this service subscribed,
+    // and a refused table is asked for again by name. Re-subscribing to a T7 merely because it
+    // has gone quiet (an unplugged T7) would stack a second stream on a table the DB accepted.
+    auto raw_tables = [&]() {
+        auto t = fsw::elodin::raw_sensor_tables(pt_boards, act_boards, tc_boards, rtd_boards,
+                                                lc_boards, enc_boards);
+        const auto bv = fsw::elodin::ball_valve_raw_tables(bv_boards);
+        t.insert(t.end(), bv.begin(), bv.end());
+        const auto t7 = t7_map.raw_tables();
+        t.insert(t.end(), t7.begin(), t7.end());
+        return t;
+    };
+
+    // Every subscription goes out under its own request id, so a refusal (the DB answers a
+    // subscription to a table nobody has registered yet with ErrorResponse) names the table to
+    // ask for again. See SubscriptionTracker.hpp.
+    fsw::elodin::SubscriptionTracker sub_tracker;
+    auto subscribe_all = [&]() -> bool {
+        sub_tracker.reset();
+        auto tables = raw_tables();
+        tables.push_back(fsw::elodin::kTableCalibrationCommand);
+        bool ok = true;
+        for (const auto& t : tables)
+            ok = elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t)) && ok;
+        return ok;
     };
 
     auto connect_and_register = [&]() -> bool {
@@ -1414,22 +1447,13 @@ int main(int argc, char* argv[]) {
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(
-            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        register_calibrated();
         // The raw sensor tables this service calibrates, built from the boards actually in
         // config. This used to be subscribe_stream(), which guessed boards 1-8 x channels 1-10
         // and sent 481 subscribe messages regardless of the rig.
-        if (!elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards))) {
-            std::cerr << "[Cal] Failed to subscribe to raw sensor tables" << std::endl;
-            return false;
-        }
-        if (!elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand})) {
-            std::cerr << "[Cal] Failed to subscribe to CalibrationCommand [0x46,0x00]" << std::endl;
-            return false;
-        }
-        if (!register_and_subscribe_t7()) {
-            std::cerr << "[Cal] Failed to subscribe to LabJack T7 raw tables" << std::endl;
+        if (!subscribe_all()) {
+            std::cerr << "[Cal] Failed to subscribe to raw sensor tables / CalibrationCommand"
+                      << std::endl;
             return false;
         }
         std::cout << "[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
@@ -1453,16 +1477,10 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    // Raw tables registered after we subscribed (a publisher that started after this service —
-    // every session start) are picked up by re-subscribing once they have been quiet: after 1 s,
-    // then 2, 4, and every 5 s while they stay quiet.
+    // If every raw table goes quiet (none were registered yet when we subscribed, or the DB
+    // dropped the subscriptions), re-subscribe to all of them: after 1 s, then 2, 4, and every
+    // 5 s while they stay quiet. A table the DB refused while others stream is sub_tracker's job.
     fsw::elodin::ResubscribeBackoff raw_resub(std::chrono::steady_clock::now());
-    // LabJack T7 tables are re-subscribed on their own clock. t7_bridge registers them whenever it
-    // connects, which can be after this service subscribed, and Elodin does not deliver a table
-    // that did not exist at subscribe time. On a rig with ESP32 boards streaming, their packets
-    // keep the raw clock fresh, so a T7 gap would otherwise never trigger a re-subscribe — and
-    // T7 packets must not mask a missing ESP32 subscription either.
-    fsw::elodin::ResubscribeBackoff t7_resub(std::chrono::steady_clock::now());
     std::map<uint16_t, int32_t> last_adc_map;
 
     while (running) {
@@ -1470,16 +1488,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(
-                    elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
-                    act_boards);
-                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
-                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
-                register_and_subscribe_t7();
+                register_calibrated();
+                subscribe_all();
                 elodin_client.set_recv_timeout_ms(1000);
                 raw_resub.restart(std::chrono::steady_clock::now());
-                t7_resub.restart(std::chrono::steady_clock::now());
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1499,17 +1511,14 @@ int main(int argc, char* argv[]) {
             if (raw_resub.due(now_s)) {
                 std::cout << "[Cal] No packets for " << secs(raw_resub.silence(now_s))
                           << "s — re-subscribing to raw streams" << std::endl;
-                elodin_client.subscribe_tables(fsw::elodin::raw_sensor_tables(
-                    pt_boards, act_boards, tc_boards, rtd_boards, lc_boards, enc_boards));
-                elodin_client.subscribe_tables({fsw::elodin::kTableCalibrationCommand});
+                subscribe_all();
                 raw_resub.subscribed(now_s);
             }
-            if (!t7_map.empty() && t7_resub.due(now_s)) {
-                std::cout << "[Cal] No LabJack T7 packets for " << secs(t7_resub.silence(now_s))
-                          << "s — re-subscribing to the T7 raw tables" << std::endl;
-                register_and_subscribe_t7();
-                t7_resub.subscribed(now_s);
-            }
+            // A table the DB refused (its publisher had not registered it yet) is asked for again
+            // until it is accepted. The check above never fires for this: the other tables keep
+            // packets arriving.
+            for (const auto& t : sub_tracker.due(now_s))
+                elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t));
         }
 
         ssize_t pkt_len = elodin_client.read_packet(pkt_buf, sizeof(pkt_buf));
@@ -1517,6 +1526,14 @@ int main(int argc, char* argv[]) {
             continue;
         if (pkt_len < 8)
             continue;
+        if (fsw::elodin::is_error_response(pkt_buf, static_cast<size_t>(pkt_len))) {
+            const auto t = sub_tracker.rejected(pkt_buf[7], std::chrono::steady_clock::now());
+            if (t.first != 0 || t.second != 0)
+                std::cout << "[Cal] DB refused the subscription to [0x" << std::hex
+                          << static_cast<int>(t.first) << ",0x" << static_cast<int>(t.second)
+                          << std::dec << "] (not registered yet) — asking again" << std::endl;
+            continue;
+        }
 
         const uint8_t type_hi = pkt_buf[5];
         const uint8_t type_lo = pkt_buf[6];
@@ -1743,7 +1760,7 @@ int main(int argc, char* argv[]) {
             std::memcpy(&volts_f, p + 12, sizeof(volts_f));
             const uint64_t rx_ns = mono_ns();
             const uint8_t slot = static_cast<uint8_t>((type_lo >> 5) + 1);
-            t7_resub.packet(std::chrono::steady_clock::now());
+            raw_resub.packet(std::chrono::steady_clock::now());
             if (!std::isfinite(volts_f))
                 continue;
             if (offset == fsw::t7::kCjcTableOffset) {
@@ -1820,7 +1837,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30)
+        if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30 &&
+            type_hi != fsw::elodin::kBallValveRawHi)
             continue;
         // Within each 32-slot block: raw = offset 0x01-0x0A, cal = offset 0x11-0x1A
         // Check if this is a calibrated packet (our own output) by testing if
@@ -2011,6 +2029,13 @@ int main(int argc, char* argv[]) {
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a),
                 adc_u32, cal_status);
             elodin_client.publish(static_cast<uint16_t>((0x31 << 8) | cal_lo), cal_msg);
+        } else if (type_hi == fsw::elodin::kBallValveRawHi) {  // Ball valve position (4-20 mA)
+            const auto pos = fsw::calibration::valve_position::from_counts(adc_u32);
+            comms::messages::sensor::CalibratedValvePositionMessage cal_msg(
+                ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, pos.percent_open, adc_u32,
+                pos.status);
+            elodin_client.publish(
+                static_cast<uint16_t>((fsw::elodin::kBallValveCalHi << 8) | cal_lo), cal_msg);
         }
 
         elodin_client.flush_batch();

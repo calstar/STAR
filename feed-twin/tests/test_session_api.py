@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -444,3 +445,176 @@ def test_the_history_says_when_each_state_began() -> None:
     ).json()
     assert [e["label"] for e in history["events"]] == ["Armed"]
     assert 0.4 < history["events"][0]["t"] < 0.6
+
+
+# ------------------------------------------------- what the door must refuse
+
+
+def _raw(path: str, text: str) -> Any:
+    """A body as a script or a stand file might send it: JSON with NaN in it,
+    which Python's json reads (the TestClient's own would not write one)."""
+    return client.post(path, content=text, headers={"content-type": "application/json"})
+
+
+def test_a_setting_that_is_not_a_number_is_refused_and_changes_nothing() -> None:
+    """NaN passed every clamp (``max(nan, low)`` is nan): a COPV target of
+    'nan' made every later tick and command a 500 until a good one was sent,
+    and a dome of NaN read psig null on every frame. Refused now,
+    naming the row, before the stand is touched; it goes on ticking."""
+    state = open_session()
+    sid = state["id"]
+    before = state["setup"]
+    for body in (
+        {"setup": {"copv_target": "nan"}},
+        {"setup": {"dome": "inf"}},
+        {"setup": {"copv_target": "lots"}},
+        {"setup": {"line_walls": "maybe"}},
+        {"setup": {"pressurant": "argon"}},
+    ):
+        r = client.post(f"/api/session/{sid}/command", json=body)
+        assert r.status_code == 422, (body, r.text)
+        key = next(iter(body["setup"]))
+        assert key in r.json()["detail"], r.text
+    r = _raw(f"/api/session/{sid}/command", '{"setup": {"live_step": NaN}}')
+    assert r.status_code == 422 and "live_step" in r.json()["detail"], r.text
+    r = _raw(f"/api/session/{sid}/command", '{"dome": NaN}')
+    assert r.status_code == 422 and "dome" in r.json()["detail"], r.text
+    after = tick(sid)
+    assert after["setup"] == before
+    command(sid, state="Armed")
+    sane(tick(sid))
+
+
+def test_a_knob_that_is_not_a_number_is_refused() -> None:
+    """The knob clamp let NaN through too: a dome knob of 'nan' was a 200, the
+    dial read null and T-0 primed the tanks off it with nothing said."""
+    state = open_session()
+    sid = state["id"]
+    if not state["knobs"]:
+        pytest.skip("this stand has no knob")
+    knob = state["knobs"][0]
+    for value in ("nan", "inf", "-inf"):
+        r = client.post(
+            f"/api/session/{sid}/command",
+            json={"knob": {"id": knob["id"], "value": value}},
+        )
+        assert r.status_code == 422, (value, r.text)
+    assert tick(sid)["knobs"][0]["psig"] == knob["psig"]
+
+
+def test_a_flag_written_false_is_off() -> None:
+    """``bool("false")`` is True: the string turned every flag on."""
+    sid = open_session(line_walls=True, auto_vent=True)["id"]
+    setup = command(sid, setup={"line_walls": "false", "auto_vent": "0"})["setup"]
+    assert setup["line_walls"] is False and setup["auto_vent"] is False
+    setup = command(sid, setup={"line_walls": "true", "auto_vent": 1})["setup"]
+    assert setup["line_walls"] is True and setup["auto_vent"] is True
+
+
+def test_a_saved_stand_with_an_unreadable_setting_still_opens() -> None:
+    """Opening is lenient on purpose (test_garbage_setup_is_ignored...): a stand
+    document is opened, an unreadable row in it kept at its default. NaN is one
+    more such value, not a session that fails every tick."""
+    from backend.session import Setup
+
+    diagram, engine = ids()
+    r = _raw(
+        f"/api/session?diagram={diagram}&engine={engine}",
+        '{"state": "Idle", "copv_target": NaN, "live_step": NaN, "line_walls": "no"}',
+    )
+    assert r.status_code == 200, r.text
+    state = r.json()
+    assert state["setup"]["live_step"] == Setup().live_step
+    assert state["setup"]["copv_target"] is not None
+    assert state["setup"]["line_walls"] is False
+    sane(tick(state["id"]))
+
+
+def test_a_setup_that_is_not_an_object_is_refused() -> None:
+    sid = open_session()["id"]
+    for setup in ([1], "x", 5):
+        r = client.post(f"/api/session/{sid}/command", json={"setup": setup})
+        assert r.status_code == 422, (setup, r.text)
+
+
+def test_a_setting_the_stand_cannot_run_is_undone() -> None:
+    """A value every clamp passes can still be one the stand cannot step with.
+    It used to stay set, and every tick after failed. The first frame
+    after the change is the test: if it fails, the stand keeps the setup it had
+    and says why."""
+    from backend import main
+
+    state = open_session()
+    sid = state["id"]
+    session = main._SESSIONS[sid]
+    real = session.step
+
+    def step(dt: float) -> Any:
+        if session.setup.ambient_leak == 7.25:
+            raise ValueError("p=nan is not a finite number")
+        return real(dt)
+
+    session.step = step  # type: ignore[method-assign]
+    r = client.post(
+        f"/api/session/{sid}/command", json={"setup": {"ambient_leak": 7.25}}
+    )
+    assert r.status_code == 422, r.text
+    assert "keeps" in r.json()["detail"]
+    assert session.setup.ambient_leak == state["setup"]["ambient_leak"]
+    sane(tick(sid))
+
+
+def test_a_tick_that_cannot_be_read_is_refused_not_a_crash() -> None:
+    sid = open_session()["id"]
+    for dt in ('"abc"', "NaN", "Infinity", "[1]"):
+        r = _raw(f"/api/session/{sid}/tick", '{"dt": %s}' % dt)
+        assert r.status_code == 422, (dt, r.text)
+        assert "dt" in r.json()["detail"], r.text
+    sane(tick(sid))
+
+
+def test_a_tick_that_fails_leaves_its_traceback_in_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every exception in a step came back a 422 and nothing was logged: a
+    physics crash in a live burn left no traceback on the server."""
+    from backend import main
+
+    sid = open_session()["id"]
+    session = main._SESSIONS[sid]
+
+    def step(dt: float) -> Any:
+        raise RuntimeError("the solver fell over")
+
+    session.step = step  # type: ignore[method-assign]
+    with caplog.at_level("ERROR"):
+        r = client.post(f"/api/session/{sid}/tick", json={"dt": 0.1})
+    assert r.status_code == 422 and "fell over" in r.json()["detail"]
+    logged = [rec for rec in caplog.records if rec.exc_info]
+    assert logged and sid in logged[0].getMessage()
+
+
+def test_an_unknown_valve_is_a_404_not_a_phantom_held_valve() -> None:
+    """A valve id the drawing does not have was a 200 and listed as held: the
+    console showed '1 held' with nothing to release."""
+    state = open_session()
+    sid = state["id"]
+    for body in ({"valve": "nope", "open": True}, {"release": "nope"}):
+        r = client.post(f"/api/session/{sid}/command", json=body)
+        assert r.status_code == 404, (body, r.text)
+        assert "nope" in r.json()["detail"]
+    assert tick(sid)["held"] == []
+
+
+def test_release_all_releases_every_held_valve() -> None:
+    """The console's Release all sends ``release: '*'``, which the server read
+    as a valve called '*': it released nothing."""
+    state = open_session()
+    sid = state["id"]
+    valves = sorted(state["open"])[:2]
+    for v in valves:
+        command(sid, valve=v, open=True)
+    assert sorted(tick(sid)["held"]) == valves
+    assert command(sid, release="*")["held"] == []
+    command(sid, valve=valves[0], open=True)
+    assert command(sid, release=valves[0])["held"] == []

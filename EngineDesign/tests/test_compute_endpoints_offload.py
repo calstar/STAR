@@ -267,3 +267,114 @@ def test_set_config_swaps_config_and_runner_together(monkeypatch):
         "a solve starting while the runner built took the new config beside the old runner"
     )
     assert app.config is new_config and isinstance(app.runner, BuildingRunner)
+
+
+# --- Flight and controller ----------------------------------------------------------------------
+#
+# The same freeze, measured on the LE4 (3) stand's engine with /api/health polled every 50 ms:
+# /api/flight/optimize-altitude left health unanswered for 6.3 s, /api/flight/simulate 0.6 s; the
+# controller's /simulate and /simulate-layer2 loop the DDP solve and the engine inline.
+
+from backend.routers import control as control_router  # noqa: E402
+from backend.routers import flight as flight_router  # noqa: E402
+
+
+def _flight_arrays():
+    return dict(
+        time_array=[0.0, 1.0, 2.0],
+        thrust_array=[6800.0, 6800.0, 6800.0],
+        mdot_O_array=[1.9, 1.9, 1.9],
+        mdot_F_array=[1.2, 1.2, 1.2],
+    )
+
+
+def test_flight_simulate_runs_off_the_event_loop(monkeypatch):
+    pytest.importorskip("rocketpy", reason="the flight endpoints need RocketPy")
+
+    async def run(session, spy):
+        monkeypatch.setattr(flight_router, "_execute_flight_simulation", spy)
+        await flight_router.simulate_flight(flight_router.FlightSimRequest(**_flight_arrays()), session=session)
+
+    loop_tid, tid = _drive(run)
+    assert tid is not None, "/api/flight/simulate did not fly"
+    assert tid != loop_tid, "the flight ran on the event-loop thread"
+
+
+def test_flight_optimize_altitude_runs_off_the_event_loop(monkeypatch):
+    pytest.importorskip("rocketpy", reason="the flight endpoints need RocketPy")
+    import engine.pipeline.flight_altitude_optimizer as altitude
+
+    async def run(session, spy):
+        monkeypatch.setattr(altitude, "optimize_minimum_fuel_burn_time", spy)
+        await flight_router.optimize_flight_altitude(
+            flight_router.FlightOptimizeRequest(**_flight_arrays(), target_apogee_m=1000.0),
+            session=session,
+        )
+
+    loop_tid, tid = _drive(run)
+    assert tid is not None, "/api/flight/optimize-altitude did not search"
+    assert tid != loop_tid, (
+        "the altitude search (a dozen flights) ran on the event-loop thread -- /api/health waited "
+        "6.3 s for it on the LE4 stand"
+    )
+
+
+def _meas():
+    return control_router.MeasurementRequest(
+        P_copv=18.96e6, P_reg=6.89e6, P_u_fuel=3.5e6, P_u_ox=3.5e6, P_d_fuel=3.4e6, P_d_ox=3.4e6,
+    )
+
+
+def _nav():
+    return control_router.NavStateRequest(h=0.0, vz=0.0, theta=0.0, mass_estimate=100.0)
+
+
+def _thrust_cmd():
+    return control_router.CommandRequest(command_type="thrust_desired", thrust_desired=6800.0)
+
+
+@pytest.mark.parametrize("endpoint", ["init", "simulate", "simulate-layer2"])
+def test_controller_solves_run_off_the_event_loop(monkeypatch, endpoint):
+    """Each builds the DDP controller (its engine wrapper) and, but for init, loops it."""
+
+    async def run(session, spy):
+        session.controller.controller = None
+        monkeypatch.setattr(control_router, "RobustDDPController", spy)
+        if endpoint == "init":
+            await control_router.init_controller(control_router.ControllerInitRequest(), session=session)
+        elif endpoint == "simulate":
+            await control_router.simulate_controller(
+                control_router.ControllerSimulateRequest(
+                    initial_meas=_meas(), initial_nav=_nav(), cmd=_thrust_cmd(), duration=0.1,
+                ),
+                session=session,
+            )
+        else:
+            await control_router.simulate_layer2_controller(
+                control_router.Layer2ControllerSimulateRequest(
+                    thrust_curve_time=[0.0, 0.1], thrust_curve_values=[6800.0, 6800.0],
+                ),
+                session=session,
+            )
+
+    loop_tid, tid = _drive(run)
+    assert tid is not None, f"/api/control/{endpoint} did not build the controller"
+    assert tid != loop_tid, f"/api/control/{endpoint} ran its solve on the event-loop thread"
+
+
+def test_controller_step_runs_off_the_event_loop():
+    import types
+
+    async def run(session, spy):
+        session.controller.controller = types.SimpleNamespace(step=spy)
+        await control_router.controller_step(
+            control_router.ControllerStepRequest(meas=_meas(), nav=_nav(), cmd=_thrust_cmd()),
+            session=session,
+        )
+
+    try:
+        loop_tid, tid = _drive(run)
+    finally:
+        session_mod.registry.get("compute-offload-test@berkeley.edu").controller.controller = None
+    assert tid is not None, "/api/control/step did not step the controller"
+    assert tid != loop_tid, "the controller step ran on the event-loop thread"

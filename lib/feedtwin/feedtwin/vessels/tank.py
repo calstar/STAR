@@ -731,7 +731,38 @@ class Tank:
         # warms. The vapour model decides the split, and with NoVapour fitted
         # it is all sensible, which is what this method did before. Heat the
         # wall has already turned to vapour is not on the table here.
-        q_interface = q_liquid + q_wetted - q_boil
+        #
+        # With a surface layer, the wall's convective heat that never reaches
+        # the surface (`to_bulk`, below) is not on it either. It used to be:
+        # the exchange priced it as latent at the surface and the layer was
+        # then debited for it a second time on its way to the bulk -- a wall
+        # colder than the liquid made the surface condense vapour it did not
+        # have, and warmed the layer above everything around it.
+        m_surface = m_bulk = 0.0
+        q_wall_conv = q_wetted - q_boil
+        to_bulk = 0.0
+        if layered:
+            m_surface = self.surface_mass(state, rho_l)
+            m_bulk = state.liquid_mass - m_surface
+            if m_surface > 0.0 and m_bulk > 1e-6:
+                # Liquid warmed at the wall arrives at the surface no hotter
+                # than the wall that warmed it. The wall's convective heat
+                # therefore feeds the layer only while the layer is below the
+                # wall; past that it can only thicken the layer, which in a
+                # slab of fixed depth means it goes to the bulk. Without this
+                # bound a wall a few kelvin warm, dumping its stored heat into
+                # a few hundred grams, put the surface tens of kelvin above
+                # the metal. The ullage's heat needs no such guard: the
+                # collapse term already follows T_gas - T_surface and turns
+                # off on its own.
+                span = T_wetted - state.liquid_temperature
+                reach = (
+                    min(max((T_wetted - T_surface) / span, 0.0), 1.0)
+                    if span > 1e-9
+                    else 0.0
+                )
+                to_bulk = q_wall_conv * (1.0 - reach)
+        q_interface = q_liquid + q_wetted - q_boil - to_bulk
         exchange = self.vapour.exchange(
             liquid=self.liquid,
             liquid_temperature=T_surface,
@@ -755,33 +786,15 @@ class Tank:
             # too, and the slab of liquid at the top takes all of it as
             # sensible heat -- fifteen kilograms do not warm, a few hundred
             # grams do, and the vapour pressure follows *them*. The bulk
-            # sees only what leaks down through the layer.
-            m_surface = self.surface_mass(state, rho_l)
-            m_bulk = state.liquid_mass - m_surface
+            # sees only what leaks down through the layer, and the wall's
+            # heat that never reached the surface (`to_bulk`, above).
             q_mix = (
                 self.surface_mixing
                 * self.interface_area(state)
                 * (T_surface - state.liquid_temperature)
             )
-            # Liquid warmed at the wall arrives at the surface no hotter than
-            # the wall that warmed it. The wall's convective heat therefore
-            # feeds the layer only while the layer is below the wall; past
-            # that it can only thicken the layer, which in a slab of fixed
-            # depth means it goes to the bulk. Without this bound a wall a
-            # few kelvin warm, dumping its stored heat into a few hundred
-            # grams, put the surface tens of kelvin above the metal. The
-            # ullage's heat needs no such guard: the collapse term already
-            # follows T_gas - T_surface and turns off on its own.
-            q_wall_conv = q_wetted - q_boil
-            span = T_wetted - state.liquid_temperature
-            reach = (
-                min(max((T_wetted - T_surface) / span, 0.0), 1.0)
-                if span > 1e-9
-                else 0.0
-            )
-            to_bulk = q_wall_conv * (1.0 - reach)
             if m_surface > 0.0 and m_bulk > 1e-6:
-                net = sensible - to_bulk - q_mix
+                net = sensible - q_mix
                 # A surface at saturation for the tank's total pressure does
                 # not superheat: it boils. Once the layer is there, the heat
                 # that would have warmed it evaporates it instead, and the

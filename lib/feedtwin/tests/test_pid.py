@@ -191,6 +191,21 @@ def test_a_tank_is_one_symbol_and_two_pressures() -> None:
     assert (outlet - ullage) / PSI == pytest.approx(1.5, abs=1.5)
 
 
+def test_a_bend_line_builds_the_geometry_aware_bend() -> None:
+    """``lineType: bend`` is the hardline Bend, whose only correlation model is
+    ``rounded``. It used to ask for a ``darcy`` bend, which has no builder, so
+    the drawing could not be built at all."""
+    from feedtwin.comps.elements import Bend
+
+    payload = minimal()
+    payload["edges"][0]["data"] = {  # type: ignore[index]
+        "lineType": "bend",
+        "params": {"bore": P(9.5, "mm"), "bend_radius": P(30.0, "mm")},
+    }
+    built = build_network(read_diagram(payload, name="minimal"))
+    assert isinstance(built.network.branches["e1"].component, Bend)
+
+
 def test_pressurant_lands_on_the_ullage_not_the_liquid_side() -> None:
     built = build_network(read_diagram(minimal(), name="minimal"))
     assert built.network.branches["e2"].downstream == built.tanks["T1"].ullage

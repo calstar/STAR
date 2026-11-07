@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import '@xyflow/react/dist/style.css';
 import {
-  Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow, ReactFlowProvider, applyNodeChanges, useNodesInitialized,
+  Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow, ReactFlowProvider, applyNodeChanges,
 } from '@xyflow/react';
 import type { Edge, Node, NodeChange, NodeMouseHandler } from '@xyflow/react';
 import { ReadOnlyProvider } from '@stardesign-ui';
@@ -16,7 +16,7 @@ import { VentLayer } from './VentLayer';
 import { SignalLayer } from './SignalLayer';
 import { PageBar } from './PageBar';
 import { migrate } from './migrate';
-import { useArrive } from './arrival';
+import { useArrive, useSheetMeasured } from './arrival';
 import { applyPage, listPages, pageOf } from './pages';
 import type { PIDNodeData } from './types';
 
@@ -52,6 +52,20 @@ export interface DrawingViewProps {
   /** A page tab was picked. */
   onPageChange?: (page: string) => void;
   children?: ReactNode;
+}
+
+/** The symbols of the page on the canvas, for what the host draws inside it. */
+const SheetIds = createContext<readonly string[]>([]);
+
+/**
+ * Whether the page on the canvas is up and every symbol on it measured: the
+ * moment to fit or restore a view (`sheetMeasured`). For what a host renders
+ * inside the canvas -- feed-twin's KeepView restores where the page was
+ * looked at, and a restore taken earlier was resolved by the first few
+ * symbols measured.
+ */
+export function useSheetReady(): boolean {
+  return useSheetMeasured(useContext(SheetIds));
 }
 
 const EDGE_TYPES = { smoothstep: BranchableEdge, default: BranchableEdge };
@@ -101,6 +115,7 @@ function Sheet({
   }, [nodes, doc.edges, current, clickable]);
 
   const sheetKey = useMemo(() => [doc.nodes, current], [doc.nodes, current]);
+  const pageIds = useMemo(() => shown.nodes.filter(n => !n.hidden).map(n => n.id), [shown.nodes]);
 
   const onNodeClick = useCallback<NodeMouseHandler>((_, n) => onSymbolClick?.(n.id), [onSymbolClick]);
   const count = useCallback(
@@ -137,8 +152,10 @@ function Sheet({
                 <VentLayer nodes={shown.nodes} edges={shown.edges} />
                 <SignalLayer nodes={shown.nodes} edges={shown.edges} />
                 <Controls showInteractive={false} />
-                <FitOnChange sheet={sheetKey} />
-                {children}
+                <SheetIds.Provider value={pageIds}>
+                  <FitOnChange sheet={sheetKey} />
+                  {children}
+                </SheetIds.Provider>
               </ReactFlow>
             </BranchDragProvider>
           </FluidProvider>
@@ -165,12 +182,13 @@ function Sheet({
  * A new page, or a new drawing, is a new sheet: put it up as the editor does
  * on arrival (`useArrive`, arrival.ts) -- whole, or a tall page at full width
  * from its top so its tags and pressures can be read -- once its symbols are
- * measured. React Flow's own `fitView` fits once, on the first render, before
- * a symbol has a size.
+ * measured -- every symbol of this page (`useSheetReady`), not whatever the
+ * store measured last. React Flow's own `fitView` fits once, on the first
+ * render, before a symbol has a size.
  */
 function FitOnChange({ sheet }: { sheet: unknown }) {
   const arrive = useArrive();
-  const ready = useNodesInitialized();
+  const ready = useSheetReady();
   const fitted = useRef<unknown>(null);
   useEffect(() => {
     if (!ready || fitted.current === sheet) return;

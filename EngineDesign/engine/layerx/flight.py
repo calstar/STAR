@@ -247,6 +247,25 @@ def _ceiling(config: Any, apogee_agl: float, elevation: float) -> Optional[Dict[
             "passed": apogee_agl <= cap_agl}
 
 
+def _axial_drag(flight: Any, t: float) -> float:
+    """RocketPy's axial aerodynamic force ``R3`` at ``t`` [N], linear between its solution nodes.
+
+    RocketPy's own ``Flight.R3`` is a cubic spline over those nodes (rocketpy 1.11 and 1.13 alike),
+    and the force steps at burnout, where the drag switches from the power-on to the power-off Cd:
+    the spline rings across the step. On the LE4 helium flight it read -423 N 36 ms before cutoff,
+    between -646 N (50 ms earlier) and -747 N (at cutoff), while the speed rose: a +3.4 % spike in
+    the specific force (inline 94.50 m/s^2 against RocketPy's 97.81), which also set the reported
+    max acceleration. Linear between nodes is bounded by them; elsewhere the two agree to ~0.1 N."""
+    r3 = flight.R3
+    try:
+        x, y = np.asarray(r3.x_array, dtype=float), np.asarray(r3.y_array, dtype=float)
+    except (AttributeError, TypeError, ValueError):
+        return float(r3(t))
+    if x.size < 2 or x.shape != y.shape:
+        return float(r3(t))
+    return float(np.interp(t, x, y))
+
+
 def axial_acceleration(flight: Any, t: float) -> float:
     """Proper acceleration along the vehicle axis at ``t`` [m/s^2]: what an accelerometer on it
     reads, and what a liquid column feels. The specific force along the axis: net thrust (the
@@ -280,7 +299,7 @@ def axial_acceleration(flight: Any, t: float) -> float:
         thrust = float(motor.thrust(t)) + (reference - pressure) * area
     else:
         thrust = float(motor.thrust(t))
-    specific = (thrust + float(flight.R3(t))) / float(flight.rocket.total_mass(t))
+    specific = (thrust + _axial_drag(flight, t)) / float(flight.rocket.total_mass(t))
     if t < float(flight.out_of_rail_time):
         held = G0 * math.sin(math.radians(float(flight.inclination)))
         if specific < held:

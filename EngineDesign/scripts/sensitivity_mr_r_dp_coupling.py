@@ -30,14 +30,12 @@ TARGET_MR = 3.5
 
 
 def ambient_pa_from_config(cfg) -> float:
+    """The engine solver's site ambient (engine.core.runner, the 1976 standard atmosphere)."""
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
     env = getattr(cfg, "environment", None)
     el = float(getattr(env, "elevation", 0.0) or 0.0)
-    p0 = 101325.0
-    m_mol = 0.0289644
-    g = 9.80665
-    r_gas = 8.31447
-    t0 = 288.15
-    return float(p0 * math.exp(-m_mol * g * el / (r_gas * t0)))
+    return float(compute_ambient_pressure_from_elevation(el))
 
 
 def apply_cd_multipliers(cfg, m_o: float, m_f: float) -> None:

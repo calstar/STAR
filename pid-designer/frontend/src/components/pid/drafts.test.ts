@@ -103,3 +103,26 @@ describe('a pressure at a place, reopened', () => {
     expect(Math.abs(back.value - 14.695948775513 - 4000)).toBeLessThan(1e-4);
   });
 });
+
+describe('a number reopened to a sensible precision', () => {
+  const at = (value: number, unit: string) => ({ value, unit, source: 'estimated' }) as ParamValue;
+  const length = (key: string) => ({ key, label: key, dimension: 'length' }) as ParamSpec;
+
+  it('shows a sketch\'s inch bore and its fall without the binary noise', () => {
+    // LE4 (3)'s junc_49-junc_48 line: 0.43 in times 25.4, and the fall off
+    // the sketch's geometry, shown verbatim as 10.921999999999999 mm and
+    // 0.8029517354603677 m.
+    expect(toDraft(length('bore'), at(0.43 * 25.4, 'mm')).value).toBe('10.922');
+    expect(toDraft(length('fall'), at(0.8029517354603677, 'm')).value).toBe('0.802952');
+  });
+
+  it('leaves a number with no more to it as it was typed', () => {
+    expect(toDraft(length('length'), at(0.817, 'm')).value).toBe('0.817');
+    expect(toDraft(cv, at(0.0015, 'Cv')).value).toBe('0.0015');
+  });
+
+  it('keeps a pressure to the thousandth of a psi it was typed to', () => {
+    const p = { key: 'pressure', label: 'p', dimension: 'pressure' } as ParamSpec;
+    expect(toDraft(p, at(15014.696, 'psia'), 'KBOTTLE').value).toBe('15014.696');
+  });
+});

@@ -63,7 +63,27 @@ export const diffKeys = (have, want) => ({
 // ── Boards ───────────────────────────────────────────────────────────────────
 const BOARD_TYPE_LABEL = {
     PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
-    ENVIRONMENTAL: 'Environmental', T7: 'LabJack T7',
+    ENVIRONMENTAL: 'Environmental', BALL_VALVE: 'Ball Valve', T7: 'LabJack T7',
+};
+/** [boards.*].type of a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). */
+export const BALL_VALVE_TYPE = 'BALL_VALVE';
+/**
+ * board_ids of every [boards.*] with type BALL_VALVE, enabled or not. An actuator role whose
+ * board_id is in this set is a ball valve: no NO/NC (1 is open on the wire), no PWM, and its
+ * position (not a current) is what shows under it.
+ */
+export const ballValveBoardIds = (config) => {
+    const boards = (config?.boards && typeof config.boards === 'object')
+        ? config.boards : {};
+    const ids = new Set();
+    for (const b of Object.values(boards)) {
+        if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE)
+            continue;
+        const id = Number(b?.board_id ?? b?.id);
+        if (Number.isInteger(id))
+            ids.add(id);
+    }
+    return ids;
 };
 /**
  * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
@@ -405,6 +425,18 @@ export function t7RoleClashes(config) {
  * state-machine rules for the same reason — that is a different and much louder problem, and
  * burying it under fifty derived complaints helps nobody.
  */
+/**
+ * Where a board sits when no DHCP server answered it: 169.254.<1 + mac[4] % 254>.<mac[5]>.
+ * Must match BoardNet::recoveryAddress (firmware/Hotfire_Code/common/board_net.h),
+ * firmware/tools/ota_upload.py and deploy/dhcp/generate_dhcp_config.py. Null for a malformed MAC.
+ */
+export function recoveryAddress(mac) {
+    const parts = mac.trim().split(/[:-]/);
+    if (parts.length !== 6 || !parts.every((p) => /^[0-9a-fA-F]{2}$/.test(p)))
+        return null;
+    const b = parts.map((p) => parseInt(p, 16));
+    return `169.254.${1 + (b[4] % 254)}.${b[5]}`;
+}
 export function validateConfigForRun(config, csv) {
     const issues = [];
     const add = (page, level, message) => issues.push({ page, level, message });
@@ -422,6 +454,34 @@ export function validateConfigForRun(config, csv) {
     // ── T7 roles vs every other sensor's ──────────────────────────────────────
     for (const { boardKey, message } of t7RoleClashes(config))
         add('boards', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
+    // ── DHCP identity (boards with a mac = line) ──────────────────────────────
+    // star-dhcp-sync refuses these too, leaving the served reservations stale, so
+    // they are caught here, where they can be fixed. The board takes its ID from
+    // its DHCP address (firmware board_net.h), so board_id and ip must agree; and
+    // two boards on one recovery address could not be reflashed if DHCP failed.
+    const recoveryOwner = new Map();
+    for (const key of Object.keys(boards)) {
+        const b = boards[key] ?? {};
+        const mac = typeof b.mac === 'string' ? b.mac.trim() : '';
+        if (!mac || typeof b.ip !== 'string')
+            continue;
+        const name = `${boardDisplayName(boards, key)} (${key})`;
+        const octet = Number(b.ip.split('.').pop());
+        if (b.board_id !== undefined && Number(b.board_id) !== octet)
+            add('boards', 'error', `${name}: board_id ${b.board_id} but ip ${b.ip}. The board takes its ID from its address, ` +
+                `so set board_id to ${octet} or change the ip.`);
+        const rec = recoveryAddress(mac);
+        if (rec === null) {
+            add('boards', 'error', `${name}: mac "${mac}" is not a MAC address (aa:bb:cc:dd:ee:ff).`);
+            continue;
+        }
+        const other = recoveryOwner.get(rec);
+        if (other)
+            add('boards', 'error', `${name} and ${other} would share the recovery address ${rec} (their MACs end alike), so ` +
+                'neither could be reflashed there if DHCP failed. Check both mac = lines.');
+        else
+            recoveryOwner.set(rec, name);
+    }
     // ── Roles vs active_connectors ────────────────────────────────────────────
     // active_connectors is wire-level: config_broadcast packs it into the packet sent to the
     // board (build_sensor_config) and the firmware loops over those ids, so it decides which
@@ -443,8 +503,10 @@ export function validateConfigForRun(config, csv) {
         // A disabled board samples nothing, so nothing about its channels can be wrong.
         if (b.enabled === false)
             continue;
-        // An ACTUATOR board names its channels in [actuator_roles], not sensor_roles_<board>.
-        if (String(b.type ?? '').toUpperCase() === 'ACTUATOR')
+        // ACTUATOR and BALL_VALVE boards name their channels in [actuator_roles], not
+        // sensor_roles_<board>.
+        const type = String(b.type ?? '').toUpperCase();
+        if (type === 'ACTUATOR' || type === BALL_VALVE_TYPE)
             continue;
         const declared = Array.isArray(b.active_connectors)
             ? b.active_connectors.map(Number).filter((n) => Number.isFinite(n))
@@ -457,6 +519,52 @@ export function validateConfigForRun(config, csv) {
             add('boards', 'warn', `${boardDisplayName(boards, key)} (${key}): ${orphans.join(', ')} name channel(s) the ` +
                 'board is not told to sample, so those roles can never show data. Add them to Active ' +
                 'Connectors, or remove the roles.');
+        }
+    }
+    // ── Actuator roles on a board that is not declared ───────────────────────
+    // A role is ["kind", channel, board_id]. The board's IP, and whether it is an actuator or a ball
+    // valve, come only from its [boards.*] entry, so a role on an undeclared board commands nothing
+    // and nothing said so -- e.g. a ball valve role on board 71 in a profile copied before the ball
+    // valve board was added to the shipped ones.
+    const declaredIds = new Set(Object.values(boards).map((b) => Number(b?.board_id ?? b?.id)).filter((n) => Number.isFinite(n)));
+    for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+        if (!Array.isArray(tup) || tup.length < 3)
+            continue;
+        const id = Number(tup[2]);
+        if (!Number.isFinite(id) || declaredIds.has(id))
+            continue;
+        add('roles', 'error', `${role} is on board ${tup[2]}, which is not in Boards. Add board ${tup[2]} under Boards ` +
+            `(type ACTUATOR, or BALL_VALVE for a motorized ball valve), or move the role.`);
+    }
+    // ── Ball valve roles ──────────────────────────────────────────────────────
+    // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would
+    // close it. The C++ forces pass-through anyway; this says so where it can be fixed. Nor is it a
+    // PWM output: a 4th element would hand it to the controller and skip it in the fire state.
+    // Nor can a role name a valve the board does not have: active_connectors is the only statement
+    // of which valves exist, and a channel outside it has no position to show and no command table.
+    const bvIds = ballValveBoardIds(config);
+    if (bvIds.size > 0) {
+        const bvConnectors = new Map();
+        for (const b of Object.values(boards)) {
+            if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE)
+                continue;
+            const id = Number(b?.board_id ?? b?.id);
+            const declared = Array.isArray(b?.active_connectors)
+                ? b.active_connectors.map(Number).filter((n) => Number.isFinite(n))
+                : [];
+            bvConnectors.set(id, declared);
+        }
+        for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+            if (!Array.isArray(tup) || !bvIds.has(Number(tup[2])))
+                continue;
+            const declared = bvConnectors.get(Number(tup[2])) ?? [];
+            if (!declared.includes(Number(tup[1])))
+                add('roles', 'error', `${role} is valve ${tup[1]} on ball valve board ${tup[2]}, which lists active_connectors ` +
+                    `[${declared.join(', ')}]. Add ${tup[1]} to the board's Active Connectors, or move the role.`);
+            if (String(tup[0] ?? '').toUpperCase() === 'NO')
+                add('roles', 'error', `${role} is on ball valve board ${tup[2]} and is marked NO. A ball valve has no NO/NC — 1 opens it — so set it to NC.`);
+            if (tup.length >= 4 && String(tup[3] ?? '') !== '')
+                add('roles', 'error', `${role} is on ball valve board ${tup[2]} but is assigned to the controller (${tup[3]}). A ball valve is not a PWM output.`);
         }
     }
     // ── Controller PWM assignment ─────────────────────────────────────────────

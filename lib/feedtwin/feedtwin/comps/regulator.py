@@ -360,12 +360,30 @@ class Regulator(HydraulicComponent):
         # the outlet is whatever the line gives it.
         seat_dp = self._seat_dp(magnitude, flow)
 
-        target = self.outlet_setpoint(mdot, flow)
+        target = self.outlet_setpoint(mdot, flow) + self._creep(magnitude)
         required = p_in - target
 
         # A regulator cannot raise pressure and cannot drop less than its own
         # seat does. Whichever binds, wins.
         return max(required, seat_dp, 0.0)
+
+    def _creep(self, magnitude: float) -> float:
+        """The part of the lockup rise still on the outlet at this flow [Pa].
+
+        All of it at zero flow (lockup), none once the flow has paid it back at
+        the droop's own rate (``rise . rated / droop``). Without the ramp the
+        rise stepped the branch at zero flow -- lockup there, the droop line
+        just above -- and a tank sitting between the setpoint and lockup, which
+        is where one held at lockup rests, had no root. No rise, no creep: a
+        regulator that declares none is exactly what it was.
+        """
+        rise = self.p.get("lockup_rise", 0.0)
+        droop = self.p.get("flow_droop", 0.0)
+        rated = self.p.get("rated_flow", 0.0)
+        if rise <= 0.0 or droop <= 0.0 or rated <= 0.0:
+            return 0.0
+        paid = magnitude * droop / rated
+        return rise - paid if paid < rise else 0.0
 
     def total_dp(self, mdot: float, flow: FlowConditions) -> float:
         """Signed, and **not** the base class's mirror of the forward loss.
@@ -419,7 +437,9 @@ class Regulator(HydraulicComponent):
         reporting a shut valve.
         """
         setpoint = self.outlet_setpoint(0.0, flow)
-        required = flow.p_upstream - setpoint
+        # Shut above *lockup*, the outlet at zero flow, which carries the rise
+        # (the creep ramps it in; see _creep). No rise, the setpoint as before.
+        required = flow.p_upstream - setpoint - self._creep(0.0)
         # The band is a *fraction of the setpoint*, not a fixed pascal. With a
         # 1 Pa threshold a regulator whose downstream is sitting on its
         # setpoint -- which is exactly where a pressurised tank sits -- flips
@@ -464,10 +484,30 @@ class Regulator(HydraulicComponent):
                 else 0.0
             ),
             "dp": dp,
+            "rated_multiple": self._rated_multiple(mdot),
         }
+
+    def _rated_multiple(self, mdot: float) -> float:
+        """``|mdot| / rated_flow``: how far along the datasheet's droop line
+        this flow is (0 when the regulator has no droop scale)."""
+        rated = self.p.get("rated_flow", 0.0)
+        return abs(mdot) / rated if rated > 0.0 else 0.0
 
     def check(self) -> list[Violation]:
         out: list[Violation] = []
+        rated_param = self.instance.params.get("rated_flow")
+        if rated_param is not None and rated_param.source.is_assumed:
+            out.append(
+                Violation(
+                    self.id,
+                    "rated_flow",
+                    f"rated_flow is {rated_param.source.value}, not measured. The "
+                    "droop is quoted at the rated flow and scales with it, so an "
+                    "assumed one moves every regulated pressure; a flow past it "
+                    "extrapolates the datasheet's line.",
+                    severity="warning",
+                )
+            )
         for name in ("supply_coefficient", "flow_droop"):
             param = self.instance.params.get(name)
             if param is not None and param.source.is_assumed:
@@ -557,6 +597,23 @@ class Regulator(HydraulicComponent):
                     f"only {dp / 6894.757:.1f} psi across the regulator, below "
                     f"the {minimum / 6894.757:.1f} psi it needs to control. The "
                     "outlet is not being regulated at this point.",
+                )
+            )
+        droop = self.p.get("flow_droop", 0.0)
+        multiple = self._rated_multiple(mdot)
+        if droop > 0.0 and multiple > 1.0:
+            # Flagged, never clamped: the physics stays the linear law, the run
+            # says it is past what the datasheet characterised.
+            out.append(
+                Violation(
+                    self.id,
+                    "rated_flow",
+                    f"running at {multiple:.2f}x its rated flow "
+                    f"({abs(mdot):.4g} kg/s against "
+                    f"{self.p['rated_flow']:.4g} kg/s): the droop there, "
+                    f"{droop * multiple / 6894.757:.1f} psi, is the datasheet's "
+                    "line extrapolated past where it was measured.",
+                    severity="warning",
                 )
             )
         if self.is_saturated(mdot, flow):

@@ -123,7 +123,7 @@ export default function SelfTestsPage() {
     }, [ws, updateSensor, updateBoards]);
 
     useEffect(() => {
-        fetch(`${getApiBaseUrl()}/api/config`)
+        fetch(`${getApiBaseUrl()}/api/config/running`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[] }> } } | null) => {
                 const boards = data?.config?.boards;

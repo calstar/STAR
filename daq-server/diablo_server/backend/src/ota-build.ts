@@ -189,6 +189,7 @@ export const BOARD_TYPE_TO_PROJECT: Record<string, string> = {
   LC: 'firmware/Hotfire_Code/LC_Hotfire',
   TC: 'firmware/Hotfire_Code/TC_Hotfire',
   RTD: 'firmware/Hotfire_Code/RTD_Hotfire',
+  BALL_VALVE: 'firmware/Hotfire_Code/BallValve_Hotfire',
 };
 
 export interface FlashAllBoard {

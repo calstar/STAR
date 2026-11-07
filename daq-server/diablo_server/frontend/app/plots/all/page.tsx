@@ -122,8 +122,9 @@ export default function AllPlotsPage() {
 
   // Per-tab actuator panels from config (filter by name keyword)
   const { actuators } = useActuatorsFromConfig();
-  const toPanel = (a: { name: string; entity: string }) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) });
-  const tabActuators: Record<TabId, { label: string; entity: string; color: string }[]> = {
+  const toPanel = (a: { name: string; entity: string; ballValve?: boolean }) =>
+    ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity), ballValve: a.ballValve });
+  const tabActuators: Record<TabId, { label: string; entity: string; color: string; ballValve?: boolean }[]> = {
     fuel: actuators.filter((a) => a.name.includes('Fuel')).map(toPanel),
     lox: actuators.filter((a) => a.name.includes('LOX') || a.name.includes('Ox')).map(toPanel),
     gse: actuators.filter((a) => a.name.includes('GSE')).map(toPanel),

@@ -466,6 +466,31 @@ def test_saturation_margin_total_and_static_by_hand():
     assert {r["id"]: r for r in sat["nodes"]}["MVF.in"]["flagged"]
 
 
+def test_a_dead_leg_held_at_atmosphere_is_not_graded():
+    """LE4 (3)'s capped LOX fill QD and its dump valve's outlet sit at 14.696 psia with no flow, LOX at
+    90.19 K on its own saturation line: -0.003 psi, amber on every LOX burn. A node no branch carries
+    flow through while firing is skipped and listed; the feed's own nodes are graded as before."""
+    import CoolProp.CoolProp as CP
+    res = _synthetic()
+    T = 90.0
+    psat = CP.PropsSI("P", "T", T, "Q", 0, "Oxygen") / PSI
+    res["network"]["nodes"]["DUMP.out"] = {"label": "Ox-Dump outlet", "kind": "port", "side": "ox", "phase": "liquid",
+                                           "p_psia": [psat - 0.003] * N, "T_K": [T] * N}
+    res["network"]["branches"]["DUMP"] = {"label": "Ox-Dump", "kind": "valve", "from": "OXT.out", "to": "DUMP.out",
+                                          "side": "ox", "mdot": [0.0] * N, "dp_psi": [0.0] * N, "cv": 2.0, "state": None}
+    prep = _fake_prep(res)
+    sat = S.build_saturation(res, prep)
+    rows = {r["id"]: r for r in sat["nodes"]}
+    assert "DUMP.out" not in rows
+    assert any(s.startswith("Ox-Dump outlet (no flow") for s in sat["skipped"])
+    assert sat["worst"]["id"] != "DUMP.out" and sat["worst"]["min_psi"] > 25.0
+    assert {"OXT.out", "MVO.in", "MVO.out", "ENG.oxidiser"} <= set(rows)
+    # The same node with propellant moving through it is graded (and flagged, at -0.003 psi).
+    res["network"]["branches"]["DUMP"]["mdot"] = [0.0, 0.0, 0.5, 0.5]
+    rows = {r["id"]: r for r in S.build_saturation(res, _fake_prep(res))["nodes"]}
+    assert rows["DUMP.out"]["min_psi"] == pytest.approx(-0.003, abs=1e-9) and rows["DUMP.out"]["flagged"]
+
+
 def test_cavitation_number_by_hand_and_flip_risk():
     import CoolProp.CoolProp as CP
     res = _synthetic()
@@ -710,6 +735,39 @@ def test_ledger_rows_design_from_forward_delivered_from_the_burn():
     # without a Forward solve the Forward rows say so instead of guessing
     led = {r["key"]: r for r in LG.build_ledger(res, None, cfg)}
     assert led["pc"]["design_value"] is None and "no Forward" in led["pc"]["design_source"]
+
+
+def test_ledger_with_the_erosion_replay_off_reads_the_twins_chamber():
+    """Nozzle erosion off (run 20261102-123645-807b98): no replay, no ``delivered``. The burn still
+    fired, on the twin's chamber; Pc, O/F, thrust, Isp and the flows read '—' in the Overview ledger.
+    They come from ``series.chamber`` and the sides' flows; what only the replay computes says why."""
+    res = _synthetic()
+    s = res["series"]
+    s["chamber"].update({"mr": [0.0, 0.0, 1.50, 1.52], "thrust_N": [0.0, 0.0, 6100.0, 6150.0],
+                         "isp_s": [0.0, 0.0, 221.0, 222.0]})
+    res["summary"] = {"burn_time_s": 3.86, "total_impulse_Ns": 23730.0}
+    res["provenance"] = {"settings": {"replay": False}}
+    cfg = _fake_config()
+    cfg.chamber_geometry = SimpleNamespace(A_throat=1.7947e-3, expansion_ratio=4.8276, Lstar=1.3586,
+                                           nozzle_efficiency=0.95)
+    cfg.thrust = SimpleNamespace(burn_time=3.994)
+    cfg.design_requirements = SimpleNamespace(lox_tank_capacity_kg=6.611, fuel_tank_capacity_kg=4.404)
+    rows = {r["key"]: r for r in LG.build_ledger(res, None, cfg)}
+    # firing steps only (2 and 3), equal weights without dt
+    assert rows["pc"]["delivered"]["min"] == pytest.approx(400.0)
+    assert rows["pc"]["delivered"]["max"] == pytest.approx(401.0)
+    assert rows["pc"]["series_ref"] == "series.chamber.pc_psia"
+    assert rows["of"]["delivered"]["mean"] == pytest.approx(1.51)
+    assert rows["thrust"]["delivered"]["end"] == pytest.approx(6150.0)
+    assert rows["isp"]["delivered"]["start"] == pytest.approx(221.0)
+    assert rows["mdot_ox"]["delivered"]["end"] == pytest.approx(1.9)
+    assert rows["impulse"]["delivered"]["mean"] == pytest.approx(23730.0)
+    # the eroding throat and eta_c* are the replay's alone: none, and the row says why
+    for key in ("throat_area", "eta_cstar"):
+        assert rows[key]["delivered"] is None
+        assert rows[key]["missing"] == "erosion off"
+        assert "nozzle erosion off" in rows[key]["note"]
+    assert "missing" not in rows["pc"]
 
 
 # ---- the recorder's own shape: the tank head as an element on the path -----------------------------

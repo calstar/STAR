@@ -8,15 +8,20 @@ import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS, getEntityColor } from '@/lib/sensor-colors';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { stateNameUpper } from '@/lib/states';
+import { BallValvePositionText } from '@/components/plots/ActuatorStatePanel';
 
-/** Display follows commanded state only (state machine / user command); no ADC. */
-function ActuatorStatusRow({ label, entity }: { label: string; entity: string }) {
+/** Display follows commanded state (state machine / user command); a ball valve adds its position. */
+function ActuatorStatusRow({ label, entity, ballValve }: { label: string; entity: string; ballValve?: boolean }) {
   const commanded = useActuatorCommandedState(entity);
   const isOpen = commanded === ActuatorState.OPEN;
   const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
   return (
     <div className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
       <span className="text-base font-semibold text-text">{label}</span>
+      {ballValve && (
+        <BallValvePositionText entity={entity} commanded={commanded}
+          className="ml-auto mr-3 text-sm font-mono tabular-nums text-yellow-400" />
+      )}
       <span className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasState ? 'bg-gray-800 text-gray-600' : isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'}`}>
         {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
       </span>
@@ -76,7 +81,7 @@ export default function StatusPage() {
   const boardsMap = useSensorStore((s) => s.boards);
   const currentState = useSensorStore((s) => s.currentState);
   const { actuators } = useActuatorsFromConfig();
-  const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity, channel: a.channel }));
+  const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity, channel: a.channel, ballValve: a.ballValve }));
   useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
 
@@ -147,7 +152,7 @@ export default function StatusPage() {
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Actuators</h2>
           <div className="space-y-2">
             {ACTUATORS.map((a) => (
-              <ActuatorStatusRow key={a.label} label={a.label} entity={a.entity} />
+              <ActuatorStatusRow key={a.label} label={a.label} entity={a.entity} ballValve={a.ballValve} />
             ))}
           </div>
         </div>

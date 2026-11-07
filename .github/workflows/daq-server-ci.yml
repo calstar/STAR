@@ -131,6 +131,48 @@ jobs:
       working-directory: daq-server/diablo_server/frontend
       run: npm run test:build
 
+  # The VIDCOMM video backend against the real gateway: the pinned MediaMTX
+  # (scripts/video-gateway.sh, checksum-verified), an ffmpeg test-pattern camera
+  # with audio, and headless Chromium doing WHEP through the backend's proxy.
+  # Hermetic -- no stand hardware -- and the only place the gateway's real
+  # behaviour (API calls, video-only negotiation, restart refill) is checked.
+  video-gateway:
+    name: Video gateway (real MediaMTX + Chromium)
+    # Not ubuntu-latest: that is 26.04, and the pinned Playwright refuses to install
+    # Chromium there ("Playwright does not support chromium on ubuntu26.04-x64"). Same
+    # pin as the E2E browser job below.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: daq-server/diablo_server/backend/package-lock.json
+
+    - name: Install ffmpeg
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+    - name: Install backend dependencies
+      working-directory: daq-server/diablo_server/backend
+      run: npm ci || npm install
+
+    - name: Install Chromium
+      working-directory: daq-server/diablo_server/backend
+      run: npx playwright-core install --with-deps chromium
+
+    - name: Fetch the pinned gateway
+      run: scripts/video-gateway.sh --fetch
+
+    - name: Run the gateway integration test
+      working-directory: daq-server/diablo_server/backend
+      run: npm run test:video-gateway
+
   # Build with multiple compilers (Release only)
   build:
     name: Build (${{ matrix.compiler }} — Release)

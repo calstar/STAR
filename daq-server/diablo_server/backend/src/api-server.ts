@@ -12,7 +12,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 // ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
 // does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { readConfig, readDeployedConfig, writeConfig, getConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
+import { readConfig, readDeployedConfig, writeConfig, getConfigPath, getRunningConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
 import {
   listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
   getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
@@ -38,6 +38,9 @@ import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
 import { t7Channels } from '../../shared/config-validation.js';
+import { handleVideoRequest } from './video/routes.js';
+import type { VideoService } from './video/service.js';
+import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -327,6 +330,8 @@ export interface APIHandlerOptions {
   /** A calibration profile was loaded / a blank was created on disk: tell the calibration service
    *  to re-read the live store (cmd 7) so the swap takes effect without a session restart. */
   onCalibrationReload?: () => void;
+  /** The VIDCOMM video pane's backend; /api/video/* answers 404 without it. */
+  video?: VideoService;
 }
 
 /**
@@ -359,7 +364,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload, video } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -367,7 +372,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -379,11 +384,22 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
     try {
+      // Video owns its own sub-tree (video/routes.ts) rather than growing this chain.
+      if (video && url.pathname.startsWith('/api/video/')) {
+        await handleVideoRequest(req, res, url.pathname, video);
+        return true;
+      }
       if (url.pathname === '/api/config' && req.method === 'GET') {
         // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
         const config = readActiveProfile();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ config, active: getActiveProfileName() }));
+      } else if (url.pathname === '/api/config/running' && req.method === 'GET') {
+        // The config the pipeline is reading right now (routes/config.ts getRunningConfigPath):
+        // what every page that DISPLAYS the stand reads. /api/config is the editor's draft (the
+        // active profile), which differs from it during a session and in every simulated run.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ config: readDeployedConfig(), path: getRunningConfigPath() }));
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
         // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
         // during a session config.toml is frozen — the write is a draft applied at the next start.
@@ -920,6 +936,32 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         } else {
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'GET') {
+        // Each ball valve channel's stored closed/open endpoints and its live reading.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'POST') {
+        // { entity: "BV1_Cal.CH1", action: "closed" | "open" | "clear" }
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        const entity = String(body?.entity ?? '');
+        const action = String(body?.action ?? '');
+        if (action === 'clear') {
+          clearEndpoints(entity);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+        } else if (action === 'closed' || action === 'open') {
+          const r = captureEndpoint(entity, action);
+          res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(r.ok ? { valves: valveCalibrationSnapshot() } : { error: r.error }));
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
         }
       } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
         // The live load-cell tares, for the UI to badge tared channels and show their offsets.

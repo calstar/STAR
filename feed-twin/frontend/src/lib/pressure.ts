@@ -138,10 +138,39 @@ export const isGaugeInput = (key: string, gaugeSetup: ReadonlySet<string>): bool
 export const isGaugeTunable = (t: { unit: string; gauge_wire?: boolean }): boolean =>
   Boolean(t.gauge_wire) || t.unit === GAUGE;
 
-/** A value with its own unit (a drawing's parameter, an assumption), shown
- *  absolute when it is gauge. Any other unit is shown as written. */
-export const asShown = (v: { value: number; unit: string }): { value: number; unit: string } =>
-  isGaugeUnit(v.unit) ? { value: toPsia(v.value), unit: PRESSURE_UNIT } : v;
+/** The parameters that are a pressure difference, not a pressure at a place:
+ *  `feedtwin.model.pressure.DIFFERENCE`, which reads a drawing by the same
+ *  list (pressure.test.ts holds the two together). Shown in plain psi. */
+export const PRESSURE_DIFFERENCES: ReadonlySet<string> = new Set([
+  'dome_bias',
+  'flow_droop',
+  'lockup_rise',
+  'cracking_pressure',
+  'set_pressure',
+  'reseat_pressure',
+  'min_inlet_differential',
+  'pressure_drop',
+  'dp',
+]);
+
+/** The library's SI pressure units [Pa each]. Its pascals are absolute, as
+ *  the model works: a default it fills in arrives in them. */
+const PASCALS: Record<string, number> = { Pa: 1, kPa: 1e3, MPa: 1e6, bar: 1e5 };
+
+/** A value with its own unit (a drawing's parameter, an assumption), as a
+ *  person reads it: a gauge pressure absolute, a pressure the library holds in
+ *  pascals in psia -- or plain psi when `parameter` is a difference
+ *  (PRESSURE_DIFFERENCES); any pressure named in neither list is absolute, as
+ *  the drawing reader takes it. Any other unit is shown as written. */
+export const asShown = (
+  v: { value: number; unit: string },
+  parameter = '',
+): { value: number; unit: string } => {
+  if (isGaugeUnit(v.unit)) return { value: toPsia(v.value), unit: PRESSURE_UNIT };
+  const pascals = PASCALS[v.unit];
+  if (pascals === undefined) return v;
+  return { value: (v.value * pascals) / PSI_PA, unit: PRESSURE_DIFFERENCES.has(parameter) ? 'psi' : PRESSURE_UNIT };
+};
 
 /** The hover on a transducer's reading. The real stand's DAQ shows gauge, so
  *  an operator checking the twin against it needs the number it would print. */

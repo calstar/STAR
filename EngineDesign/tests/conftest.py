@@ -28,21 +28,10 @@ _QUARANTINE_FILES = {
 }
 
 # Individual tests quarantined, keyed by "<file>::<Class>::<method>".
+# (2026-11-02: the Bernoulli-closure self-consistency check and the Layer 1
+# stability-margin default were revived -- both pass on this tree, and the
+# quarantine was hiding two working regression guards.)
 _QUARANTINE_TESTS = {
-    # Self-consistency invariant (reported mdot_from_bernoulli vs Cd·A·√(2ρΔp))
-    # at rtol=1e-14. Now mismatches on main — likely the diagnostic computes
-    # mdot slightly differently than it reports. FLAG: investigate; this is a
-    # real consistency check, not just numeric drift.
-    "test_impinging_feed_orifice_closure.py::TestImpingingFeedOrificeClosure::test_mdot_matches_bernoulli_with_reported_delta_p_injector": (
-        "stale/possibly-real: reported Bernoulli mdot no longer matches the "
-        "analytic formula at rtol=1e-14 — investigate the diagnostic before "
-        "reviving"
-    ),
-    # Default optimizer bound changed (test expects 0.15, code now yields 0.2).
-    "test_layer1_impinging_vector.py::TestLayer1ImpingingVector::test_min_stability_margin_default_worker_parent_aligned": (
-        "stale: asserts an old default bound (0.15); current default is 0.2 — "
-        "update the expected value if 0.2 is intended"
-    ),
     # Mock-based unit test: layer1 now deepcopies the config, and a MagicMock's
     # deepcopy does not preserve `injector.type = "pintle"` as a string, so the
     # injector-type validation rejects it.

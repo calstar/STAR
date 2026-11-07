@@ -8,9 +8,11 @@
  * other view's chrome longer.
  */
 
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Navigate, useLocation, useRoutes, type RouteObject } from 'react-router-dom';
 import { TopBar } from './components/TopBar';
 import { StandProvider, useStand } from './stand';
+import { pendingWords } from './lib/standPick';
 import { HookupProvider } from './lib/useHookup';
 import TripOverlay from './components/TripOverlay';
 import { NoStand } from './components/NoStand';
@@ -26,6 +28,7 @@ import { Runs } from './views/Runs';
 import { Study } from './views/Study';
 import { Library } from './views/Library';
 import { ReportView } from './views/ReportView';
+import { askedStand, missedStand } from './lib/standLink';
 
 /** The views, in three groups: running the stand, reading what it did, and
  *  setting it up. Thirteen tabs in one row read as a list to search; three
@@ -45,21 +48,45 @@ export const VIEWS = [
   { group: 'Set up', path: '/report', label: 'Checks', hint: 'What the twin read from the drawing, what it had to assume, and what looks wrong' },
 ] as const;
 
+/** Which view each address shows. An address that is no view goes to the
+ *  Console: it drew the header over an empty page, and React Router warned
+ *  "No routes matched" on every tick. */
+export const ROUTES: RouteObject[] = [
+  { path: '/', element: <Console /> },
+  { path: '/gse', element: <Gse /> },
+  // The knobs were a tab; they are at the foot of GSE Controls.
+  { path: '/hookup', element: <Navigate to="/gse" replace /> },
+  { path: '/statemachine', element: <StateMachineView /> },
+  { path: '/config', element: <Config /> },
+  { path: '/pid', element: <Pid /> },
+  { path: '/plots', element: <Plots /> },
+  { path: '/engine', element: <Engine /> },
+  { path: '/mixture', element: <Engine /> },
+  { path: '/runs', element: <Runs /> },
+  { path: '/solver', element: <Solver /> },
+  { path: '/study', element: <Study /> },
+  { path: '/library', element: <Library /> },
+  { path: '/report', element: <ReportView /> },
+  { path: '*', element: <Navigate to="/" replace /> },
+];
+
+function Routed() {
+  return useRoutes(ROUTES);
+}
+
 /** A switch of drawing or engine waiting for a yes: the stand on screen is
  *  past Idle and switching throws it away. */
 function PendingPickBar() {
   const { pendingPick, confirmPick, cancelPick } = useStand();
   if (!pendingPick) return null;
+  const words = pendingWords(pendingPick);
   return (
     <div className="flex flex-shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--color-warning)] px-8 py-2.5 font-mono text-[12px]">
-      <span className="text-[var(--ink)]">
-        Put {pendingPick.kind === 'diagram' ? 'the drawing' : 'the engine'}{' '}
-        <span className="font-semibold">{pendingPick.name}</span> on the console?
-      </span>
-      <span className="text-[var(--ink-3)]">The stand is {pendingPick.losing}; switching starts a fresh, empty stand.</span>
+      <span className="text-[var(--ink)]">{words.ask}</span>
+      <span className="text-[var(--ink-3)]">{words.why}</span>
       <span className="ml-auto flex gap-2">
         <button type="button" onClick={confirmPick} className="ctl h-7 px-3 text-[10px]">
-          Switch
+          {words.yes}
         </button>
         <button type="button" onClick={cancelPick} className="ctl h-7 px-3 text-[10px]">
           Keep this stand
@@ -76,6 +103,17 @@ function Shell() {
   // Every view but the Library reads a stand. Without one it shows why and
   // the way out, not its own "Loading…" that never ends.
   const standless = (!live || !model) && pathname !== '/library';
+  // A link that named a stand (`/?stand=<id>`), read before the provider
+  // drops it from the address. Whether it opened is decided once, when the
+  // first stand lands -- a stand picked later is not the link missing -- and
+  // said until dismissed.
+  const [asked] = useState(() => askedStand(window.location.search));
+  const [missed, setMissed] = useState<string | null>(asked ? null : '');
+  const landed = Boolean(live && model) || Boolean(stand.noStand && stand.noStand.kind !== 'library');
+  const opened = stand.standDoc?.ref ?? null;
+  useEffect(() => {
+    if (missed === null && landed) setMissed(missedStand(asked, opened, true));
+  }, [missed, landed, asked, opened]);
 
   return (
     <div className="flex h-full flex-col">
@@ -83,8 +121,25 @@ function Shell() {
 
       <PendingPickBar />
       {error && (
-        <p className="flex-shrink-0 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-danger)]">
-          {error}
+        <p className="flex flex-shrink-0 items-baseline gap-4 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-danger)]">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            onClick={stand.dismissError}
+            aria-label="Dismiss"
+            title="Dismiss. It also goes on the next action that goes through."
+            className="flex-shrink-0 text-[var(--ink-3)] hover:text-[var(--ink)]"
+          >
+            ×
+          </button>
+        </p>
+      )}
+      {missed && (
+        <p className="flex flex-shrink-0 items-baseline gap-4 border-b border-[var(--line)] px-8 py-2 font-mono text-[12px] text-[var(--color-warning)]">
+          {missed}
+          <button type="button" onClick={() => setMissed('')} className="ml-auto text-[var(--ink-3)] hover:text-[var(--ink)]">
+            Dismiss
+          </button>
         </p>
       )}
 
@@ -93,23 +148,7 @@ function Shell() {
         {standless ? (
           <NoStand />
         ) : (
-        <Routes>
-          <Route path="/" element={<Console />} />
-          <Route path="/gse" element={<Gse />} />
-          {/* The knobs were a tab; they are at the foot of GSE Controls. */}
-          <Route path="/hookup" element={<Navigate to="/gse" replace />} />
-          <Route path="/statemachine" element={<StateMachineView />} />
-          <Route path="/config" element={<Config />} />
-          <Route path="/pid" element={<Pid />} />
-          <Route path="/plots" element={<Plots />} />
-          <Route path="/engine" element={<Engine />} />
-          <Route path="/mixture" element={<Engine />} />
-          <Route path="/runs" element={<Runs />} />
-          <Route path="/solver" element={<Solver />} />
-          <Route path="/study" element={<Study />} />
-          <Route path="/library" element={<Library />} />
-          <Route path="/report" element={<ReportView />} />
-        </Routes>
+        <Routed />
         )}
       </main>
     </div>

@@ -59,8 +59,8 @@ def actuator_profile() -> BoardProfile:
         connector_labels={i: f"Actuator {i}" for i in range(1, 11)},
         reading_name="Current sense",
         value_unit="V",
-        # firmware sends analogRead volts as IEEE-754 float bits, not ADC codes
-        value_encoding="float",
+        # firmware sends raw 12-bit analogRead counts (3.3 V full scale)
+        value_encoding="act_adc12",
         necessary_for_abort=False,
         enable_serial_printing=True,
         # OTA: which PlatformIO project the OTA tab builds and pushes

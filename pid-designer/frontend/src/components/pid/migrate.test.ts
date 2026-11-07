@@ -29,6 +29,32 @@ describe('an older drawing opens in today\'s vocabulary', () => {
   });
 });
 
+describe('a dewar filled in before ADR 0004 read its psi as gauge', () => {
+  // LE4 (3)'s node_62 as it is stored: 50 psi beside 103.79 K, Tsat at
+  // 50 psia. CoolProp: 103.78 K at 50 psia, 107.21 K at 64.696 psia (50 psig).
+  const SAT = 'NIST WebBook saturation curve, interpolated in log p';
+  const dewar = (temperature: Record<string, unknown>, pressure = { value: 50, unit: 'psi', source: 'estimated' }) => ({
+    id: 'node_62', type: 'DEWAR', position: { x: 0, y: 0 },
+    data: { componentType: 'DEWAR', label: 'LOX-DW', fluid: 'oxygen', params: { pressure, temperature } },
+  }) as unknown as Node;
+  const tOf = (n: Node) => (n.data as { params: { temperature: { value: number; reference?: string } } }).params.temperature;
+
+  it('opens at Tsat of its pressure read as gauge', () => {
+    const [out] = migrate({ nodes: [dewar({ value: 103.79, unit: 'K', source: 'default', reference: `${SAT}, at 50 psi` })],
+      edges: [] }).nodes;
+    expect(tOf(out).value).toBeCloseTo(107.21, 1);
+    expect(tOf(out).reference).toBe(`${SAT}, at 64.696 psia`);
+  });
+
+  it('leaves one already on the curve, and one somebody typed', () => {
+    const on = dewar({ value: 103.79, unit: 'K', source: 'default', reference: `${SAT}, at 50 psia` },
+      { value: 50, unit: 'psia', source: 'estimated' });
+    const typed = dewar({ value: 103.79, unit: 'K', source: 'measured' });
+    const d = { nodes: [on, typed], edges: [] as Edge[] };
+    expect(migrate(d).nodes).toBe(d.nodes);
+  });
+});
+
 const valve = (id: string, x: number, y: number): Node => ({
   id, type: 'MAN', position: { x, y }, measured: { width: 60, height: 60 },
   data: { componentType: 'MAN', label: id },

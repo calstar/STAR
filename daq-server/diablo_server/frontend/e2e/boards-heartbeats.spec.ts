@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 /**
  * Boards / Heartbeats page: **every** card must show State ACTIVE (only pass state). Also CONNECTED,
- * numeric Heartbeat Hz (not ---), Self Test ALL PASSED (N/A for environmental).
+ * numeric Heartbeat Hz (not ---), Self Test ALL PASSED (N/A for environmental and ball valve).
  */
 const SETTLE_MS = Math.max(0, parseInt(process.env.E2E_SETTLE_MS ?? '5000', 10) || 5000);
 
@@ -87,9 +87,11 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         failures.push('Heartbeat --- (expected numeric Hz)');
       }
 
-      // No self-test on an environmental board or a LabJack T7 (not ESP32 firmware).
+      // Environmental and ball valve boards run no self-test (neither firmware sends SELF_TEST), nor
+      // does a LabJack T7 (not ESP32 firmware); the page says N/A for them (app/boards/page.tsx).
       const boardType = card.getAttribute('data-board-type');
-      const expectedSelfTest = boardType === 'ENVIRONMENTAL' || boardType === 'T7' ? 'N/A' : 'ALL PASSED';
+      const expectedSelfTest =
+        boardType === 'ENVIRONMENTAL' || boardType === 'BALL_VALVE' || boardType === 'T7' ? 'N/A' : 'ALL PASSED';
       if (selfTest !== expectedSelfTest) {
         failures.push(
           `Self Test ${selfTest || '(missing)'} (expected ${expectedSelfTest})`,
@@ -109,7 +111,7 @@ function formatBoardIssues(result: BoardHeartbeatResult): string {
 
   if (cardCount > 0) {
     lines.push(
-      `Rendered board cards: ${cardCount}. Pass = every card: Status CONNECTED, State ACTIVE, Heartbeat Hz, Self Test ALL PASSED (N/A for environmental).`,
+      `Rendered board cards: ${cardCount}. Pass = every card: Status CONNECTED, State ACTIVE, Heartbeat Hz, Self Test ALL PASSED (N/A for environmental and ball valve).`,
     );
     lines.push('');
   }

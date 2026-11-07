@@ -79,7 +79,7 @@ export default function ControllerPage() {
   const loadLcConfig = useCallback(async () => {
     try {
       const base = getApiBaseUrl();
-      const res = await fetch(`${base}/api/config`);
+      const res = await fetch(`${base}/api/config/running`);
       // /api/config answers { config, active } — reading cfg.boards here found nothing,
       // so this plot silently fell back to a hardcoded channel 1 on every rig.
       const cfg = await res.json();

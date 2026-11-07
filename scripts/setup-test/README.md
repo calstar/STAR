@@ -53,7 +53,13 @@ bash scripts/setup-test/run-macos.sh pid-designer
 bash scripts/setup-test/run-macos.sh all
 ```
 
-Projects: `pid-designer` | `star-openrocket` | `engine-design` | `firmware` | `daq-server` | `all`
+Projects: `pid-designer` | `star-openrocket` | `feed-twin` | `engine-design` | `firmware` | `daq-server` | `all`
+
+Without installing anything, `bash scripts/setup-test/passthru.sh` checks that
+`setup.sh` hands each project only the flags its own `setup.sh` takes (every
+one stops on a flag it does not know: `setup.sh --all --no-hook` used to fail
+three of them), and `bash scripts/setup-test/python-floor.sh` that feed-twin's
+setup picks a Python of at least 3.11 over an older `python3`, or refuses.
 
 ### Useful flags
 

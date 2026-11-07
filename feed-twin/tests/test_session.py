@@ -812,7 +812,11 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     bulk that does not pressurise anything. Since the ullage stopped trading
     heat with the whole tank's wall (Setup.ullage_wall_by_level, 2026-10-06)
     an 85 % full tank shows the wrap as 1.3 psi in ten minutes -- true, and
-    too small to test -- and this load shows it as 5 psi in three."""
+    too small to test -- and this load shows it as 2.3 psi in three (37.3 psig
+    against 39.6). It read 7 until the surface layer stopped evaporating with
+    the wall heat that goes to the bulk (2026-11-02, docs/PHYSICS-BENCHMARK.md
+    1.5b): the bare tank's extra leak lands on a wetted wall colder than the
+    layer, so it warms the subcooled bulk, which presses nothing."""
     from dataclasses import replace
 
     def shut(bare: bool) -> float:
@@ -832,7 +836,7 @@ def test_an_insulated_shut_lox_tank_climbs_slower_than_a_bare_one() -> None:
     insulated, bare = shut(False), shut(True)
     # Three minutes at tens of psi a minute.
     assert 20.0 < insulated < 150.0, insulated
-    assert bare > insulated + 3.0, (bare, insulated)
+    assert bare > insulated + 1.5, (bare, insulated)
 
 
 def test_a_small_ullage_press_lands_on_lockup_not_past_it() -> None:
@@ -872,6 +876,23 @@ def test_a_panel_tick_integrates_on_the_study_grid() -> None:
     assert all(abs(dt - 0.02) < 1e-6 for dt in dts), dts
     assert Setup().max_iterations == 120, "the study's Newton budget"
     assert Setup().tick_budget >= 1e6, "no wall-clock fold"
+
+
+def test_a_tick_off_the_grid_is_rounded_to_it() -> None:
+    """The split is round(tick / live_step) equal steps, as the Configuration row
+    and PHYSICS-BENCHMARK 3.10 say (they said a ceiling, which the code never
+    did). A wall-clock tick of 0.21 s is ten 0.021 s steps, and a burn's 0.05 s
+    step -- Layer X's -- is two of 0.025 s; a ceiling would make it three and
+    move every Layer X number."""
+    for dt, n in ((0.21, 10), (0.05, 2), (0.25, 12)):
+        session = stand()
+        before = len(session.history)
+        session.step(dt)
+        assert len(session.history) - before == n, dt
+        recent = list(session.history)[-n:]
+        dts = [b.t - a.t for a, b in zip(recent, recent[1:])]
+        # The history clock is kept to 0.1 ms.
+        assert all(abs(step - dt / n) < 2e-4 for step in dts), (dt, dts)
 
 
 def test_a_vessel_over_its_mawp_trips_the_stand() -> None:

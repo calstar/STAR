@@ -78,8 +78,36 @@ def Q(key: str, label: str, value: Any, unit: str = "", *, digits: int = 3, basi
 
 def V(key: str, label: str, value: Any, unit: str, status: str, threshold: str, basis: str,
       assumed: Sequence[str] = (), digits: int = 2) -> Dict[str, Any]:
-    return {"key": key, "label": label, "value": _f(value), "unit": unit, "digits": digits,
+    v = value if isinstance(value, str) else _f(value)
+    return {"key": key, "label": label, "value": v, "unit": unit, "digits": digits,
             "status": status, "threshold": threshold, "basis": basis, "assumed": list(assumed)}
+
+
+#: How each CEA table axis reads in a sentence, and the factor to its display unit.
+_CEA_AXES = {"Pc": ("Pc", 1.0 / PSI, "psia", 0), "MR": ("O/F", 1.0, "", 2), "eps": ("ε", 1.0, "", 2)}
+
+
+def cea_off_table(d: Mapping[str, Any], at: Optional[Mapping[str, Any]] = None) -> Optional[str]:
+    """None when the solve read its thermochemistry inside the CEA table; else a sentence.
+
+    ``d`` is a solve's diagnostics (chamber_solver: ``cea_clamped``, ``cea_table_range``); ``at``
+    the solved values by axis ({"Pc": Pa, "MR": .., "eps": ..}) when known. The cache clamps an
+    off-table input to the edge without a word, so a point past it is solved on the edge's c*, Tc
+    and γ: on the LE4 (3) stand at 578/300 psia the solve lands at O/F 3.52 on a 1.0–2.5 table.
+    """
+    axes = [a for a in (d.get("cea_clamped") or ()) if a in _CEA_AXES]
+    if not axes:
+        return None
+    rng = d.get("cea_table_range") or {}
+    parts = []
+    for a in axes:
+        name, k, unit, dg = _CEA_AXES[a]
+        u = f" {unit}" if unit else ""
+        lo_hi = rng.get(a)
+        val = _f((at or {}).get(a))
+        span = f"{lo_hi[0] * k:.{dg}f}–{lo_hi[1] * k:.{dg}f}{u}" if lo_hi else "the table"
+        parts.append(f"{name} {val * k:.{dg}f}{u} outside {span}" if val is not None else f"{name} outside {span}")
+    return "; ".join(parts) + ": thermochemistry clamped to the table edge"
 
 
 def _grade(value: Optional[float], ok: float, warn: Optional[float] = None, *, higher_is_better: bool = True) -> str:
@@ -99,7 +127,7 @@ def _grade(value: Optional[float], ok: float, warn: Optional[float] = None, *, h
 
 def _headline(r: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return [
-        Q("F", "Thrust", _f(r.get("F")) and r["F"] / 1000.0, "kN", digits=2, basis="F = Cf · Pc · At",
+        Q("F", "Thrust", _f(r.get("F")) and r["F"] / 1000.0, "kN", digits=2, basis="F = Cf · Pc_ns · At (Pc_ns = Pc / κ, in Chamber)",
           assumed=_THRUST),
         Q("Isp", "Isp", r.get("Isp"), "s", digits=1, basis="F / (ṁ g0)", assumed=_THRUST),
         Q("Pc", "Chamber pressure", _f(r.get("Pc")) and r["Pc"] / PSI, "psia", digits=1,
@@ -143,24 +171,36 @@ def _verdicts(cfg: Any, r: Mapping[str, Any], sr: Mapping[str, Any]) -> List[Dic
     e = min(eta) if eta else None
     out.append(V("stiffness", "Injector ΔP/Pc", e and 100.0 * e, "%", _grade(e, 0.15, 0.10), "≥ 15 %",
                  "the softer injector's drop over Pc (Huzel & Huang 4.2)", assumed=_FLOW, digits=0))
+    # Thermochemistry: was the point inside the CEA table, or read off its clamped edge?
+    off = cea_off_table(d, {"Pc": r.get("Pc"), "MR": r.get("MR"), "eps": r.get("eps")})
+    out.append(V("cea_table", "CEA table", "outside" if off else "inside", "", "bad" if off else "ok",
+                 "Pc, O/F and ε inside the table",
+                 off or "c*, Tc and γ interpolated inside the CEA table at the solved Pc and O/F"))
     return out
 
 
 def _chamber(cfg: Any, r: Mapping[str, Any]) -> Dict[str, Any]:
     ci = r.get("chamber_intrinsics") or {}
+    d = r.get("diagnostics") or {}
     At = _f(r.get("A_throat"))
     cg = cfg.chamber_geometry
     Dc = _f(getattr(cg, "chamber_diameter", None))
     CR = (Dc / math.sqrt(4 * At / math.pi)) ** 2 if (Dc and At) else None
     qs = [
         Q("Pc", "Chamber pressure", _f(r.get("Pc")) and r["Pc"] / PSI, "psia", digits=1, assumed=_FLOW + _CSTAR),
+        # The pressure the nozzle relations use: the injector-end Pc less the Rayleigh loss of heat
+        # added to moving gas. Shown so F = Cf · Pc_ns · At and c* = Pc_ns · At / ṁ close from the page.
+        Q("Pc_ns", "Nozzle stagnation pressure", _f(d.get("Pc_ns")) and d["Pc_ns"] / PSI, "psia", digits=2,
+          basis="Pc / κ (Rayleigh loss)", assumed=_FLOW + _CSTAR),
+        Q("kappa", "Rayleigh loss κ", d.get("stagnation_loss_kappa"), "", digits=5, basis="Pc / Pc_ns, from the "
+          "contraction ratio and γ", detail=True),
         Q("Tc", "Chamber temperature", r.get("Tc"), "K", digits=0, basis="CEA at Pc and O/F"),
         Q("Lstar", "L*", _f(ci.get("Lstar")) and ci["Lstar"] * 1000.0, "mm", digits=0, basis="V_c / A_t"),
         Q("theta_c", "Gas residence", _f(ci.get("residence_time")) and ci["residence_time"] * 1000.0, "ms",
           digits=2, basis="ρ_c V_c / ṁ"),
         Q("CR", "Contraction ratio", CR, "", digits=2, basis="(D_c / D_t)²"),
         Q("M_c", "Chamber Mach", ci.get("mach_number_chamber"), "", digits=3, basis="mean gas speed / a"),
-        Q("cstar", "c*", r.get("cstar_actual"), "m/s", digits=0, basis="η c* · c*_CEA", assumed=_CSTAR),
+        Q("cstar", "c*", r.get("cstar_actual"), "m/s", digits=0, basis="η c* · c*_CEA = Pc_ns · At / ṁ", assumed=_CSTAR),
         Q("cstar_ideal", "c* ideal", r.get("cstar_ideal"), "m/s", digits=0, basis="CEA", detail=True),
         Q("gamma", "γ", r.get("gamma"), "", digits=4, basis="CEA, chamber", detail=True),
         Q("R", "R", r.get("R"), "J/(kg·K)", digits=1, basis="CEA, chamber", detail=True),
@@ -175,7 +215,7 @@ def _nozzle(cfg: Any, r: Mapping[str, Any]) -> Dict[str, Any]:
     pe = _f(r.get("P_exit"))
     sep = pe / Pa if (pe and Pa) else None
     qs = [
-        Q("Cf", "Cf", r.get("Cf_actual"), "", digits=4, basis="ζ_n · Cf_vac − pa ε / Pc", assumed=("nozzle",)),
+        Q("Cf", "Cf", r.get("Cf_actual"), "", digits=4, basis="F / (Pc_ns · At) = ζ_n · Cf_vac − pa ε / Pc_ns", assumed=("nozzle",)),
         Q("Cf_ideal", "Cf ideal", r.get("Cf_ideal"), "", digits=4, basis="CEA", detail=True),
         Q("eps", "Expansion ratio", r.get("eps"), "", digits=2, basis="A_e / A_t"),
         Q("P_exit", "Exit pressure", pe and pe / PSI, "psia", digits=2, basis="CEA Pc/Pe at ε"),

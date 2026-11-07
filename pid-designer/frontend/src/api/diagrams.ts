@@ -45,12 +45,23 @@ export type DiagramMeta = DesignMeta;
  */
 export function toStored(data: Snapshot): Snapshot {
   return {
-    nodes: data.nodes.map(({ selected: _s, dragging: _d, measured: _m, ...node }) => node) as Node[],
+    // `hidden` is which page the canvas is showing (pages.ts) -- the page a
+    // symbol is on is its `data.page` -- and `resizing` a section mid-drag.
+    // Kept, they were saved and exported: LE4 (3) carries 32 stale `hidden`
+    // flags. A section's `width` and `height` are its drawn size and stay.
+    nodes: data.nodes.map(({ selected: _s, dragging: _d, measured: _m, hidden: _h, resizing: _r, ...node }) => node) as Node[],
     // `reconnectable` is the canvas's too: which ends of a line may be
     // carried elsewhere, worked out afresh for every view of it.
-    edges: data.edges.map(({ selected: _s, reconnectable: _r, ...edge }) => edge) as Edge[],
+    edges: data.edges.map(({ selected: _s, reconnectable: _r, hidden: _h, ...edge }) => edge) as Edge[],
   };
 }
+
+/**
+ * The drawing as the JSON export writes it: what is stored, nothing of the
+ * view. It was the canvas's snapshot verbatim -- every node `measured`, one
+ * `selected`, the other page's symbols `hidden`.
+ */
+export const drawingJSON = (data: Snapshot): string => JSON.stringify(toStored(data), null, 2);
 
 const api = createDesignApi<Snapshot>({
   base: '/api/pid/diagrams',

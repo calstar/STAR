@@ -514,6 +514,10 @@ def test_le4_diagnostics_run_on_the_golden_burn_and_leave_it_alone(le4):
     r_ox = wh[0]
     v = r_ox["v0_m_s"]
     assert r_ox["joukowsky_psi"] == pytest.approx(1150.5 * 897.0 * v / PSI, rel=0.01)
+    # Each line against the absolute pressure its tank trips the stand at (prepare.vessel_trip), as it
+    # is: the standard atmosphere was added on top of it, a rating one atmosphere over the trip.
+    for r, side in zip(wh, ("oxidiser", "fuel")):
+        assert r["rating_psia"] == pytest.approx(prep.derived["tank_mawp_psi"][prep.roles[side]], abs=1e-9)
     import json
 
     for block in [st, sd, *of, *wh]:

@@ -93,26 +93,29 @@ void ElodinClient::set_recv_timeout_ms(int timeout_ms) {
 }
 
 bool ElodinClient::subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids) {
-    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
     bool ok = true;
-
-    for (const auto& [hi, lo] : table_ids) {
-        std::vector<uint8_t> data(10, 0x00);
-        uint32_t len = 2 + 4;
-        std::memcpy(data.data(), &len, 4);
-        data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
-        data[5] = msgstream_id[0];
-        data[6] = msgstream_id[1];
-        data[7] = 0x00;
-        data[8] = hi;
-        data[9] = lo;
+    for (const auto& [hi, lo] : table_ids)
         // Was fire-and-forget returning true unconditionally, which made every
         // `if (!subscribe_...())` error path in the callers dead code.
-        if (!send_msg(msgstream_id, data))
+        if (!subscribe_table(hi, lo, 0))
             ok = false;
-    }
-
     return ok;
+}
+
+bool ElodinClient::subscribe_table(uint8_t hi, uint8_t lo, uint8_t request_id) {
+    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
+    std::vector<uint8_t> data(10, 0x00);
+    uint32_t len = 2 + 4;
+    std::memcpy(data.data(), &len, 4);
+    data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
+    data[5] = msgstream_id[0];
+    data[6] = msgstream_id[1];
+    // The DB echoes this in an ErrorResponse, which is the only way to tell which subscription it
+    // refused (SubscriptionTracker).
+    data[7] = request_id;
+    data[8] = hi;
+    data[9] = lo;
+    return send_msg(msgstream_id, data);
 }
 
 void ElodinClient::begin_batch() {

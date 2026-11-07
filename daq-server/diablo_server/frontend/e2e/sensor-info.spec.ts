@@ -147,4 +147,15 @@ test.describe('Sensor Info page', () => {
 
     assertNoPlaceholderIssues(issues);
   });
+
+  // config_base.toml (the sim config) enables board 71, a motorized ball valve. Its row only exists
+  // if the frontend knows the BALL_VALVE type, and its % only fills if the whole path works: sim →
+  // daq_bridge [0x33] → calibration [0x34] position_pct → backend → here. The placeholder check
+  // above would pass with the table simply missing, so this one asks for it by name.
+  test('shows the ball valve position (board 71)', async ({ page }) => {
+    await page.goto('/sensor-info');
+    await expect(page.getByRole('heading', { name: 'Sensor Info' })).toBeVisible();
+    const cell = page.getByTestId('ball-valve-open:B71 Ch1');
+    await expect(cell).toHaveText(/^\d+(\.\d+)? %$/, { timeout: LOADING_TIMEOUT_MS });
+  });
 });

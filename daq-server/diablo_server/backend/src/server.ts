@@ -27,11 +27,13 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
+import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
+import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
@@ -46,6 +48,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
+import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
@@ -109,6 +112,7 @@ function streamBudgetFor(high: number, _low: number): StreamBudget {
   if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
   if (high === 0x26) return 'gui';  // LabJack T7 (t7_bridge), raw and calibrated
   if (high === 0x30 || high === 0x31) return 'gui';
+  if (high === 0x33 || high === 0x34) return 'gui';  // ball valve position
   if (high === 0x24) return 'encoder';
   return null;
 }
@@ -295,6 +299,7 @@ import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdow
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
+import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
 import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
@@ -466,7 +471,8 @@ function broadcastCommandedActuatorsForState(state: SystemState): void {
 
 // ── Actuator state mismatch detection ────────────────────────────────────────
 
-/** Last-known actuator_state (sensed from [0x31] current-sense) per entity */
+/** Last-known actuator_state per entity: [0x31] current-sense (ACT*), or a ball valve's position
+ *  (BV*, see ball-valve.ts). Absent = not known, which never raises a mismatch. */
 const actuatorSensedState = new Map<string, number>();
 const ACTUATOR_MISMATCH_DELAY_MS = 5000;
 let actuatorMismatchTimer: NodeJS.Timeout | null = null;
@@ -526,6 +532,7 @@ function updateBoard(low: number, payload: Buffer): void {
   else if (boardType === 5) typeStr = 'ACTUATOR';
   else if (boardType === 6 || boardId === 61) typeStr = 'ENCODER';
   else if (boardType === 7) typeStr = 'ENVIRONMENTAL';
+  else if (boardType === 8) typeStr = 'BALL_VALVE';
 
   let status = boardsStatus.get(boardId);
   const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > BOARD_HEARTBEAT_STALE_MS;
@@ -769,7 +776,13 @@ let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
+// The video pane: keeps the gateway (MediaMTX, sensor-video) in step with config/video.json.
+// Independent of the run pipeline: a missing gateway only greys the video view.
+const video = new VideoService();
+video.start();
+
 const apiHandler = createAPIHandler({
+  video,
   getEngineState: () => currentState,
   getDebugInfo: () => {
     // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
@@ -909,6 +922,7 @@ function broadcastBoardStatus(): void {
 
   // Compute frequencyHz from heartbeatTimes for each board
   for (const b of boards) {
+    b.dhcp = getBoardDhcpStatus(b.ip);
     const times = b.heartbeatTimes;
     if (times && times.length >= 2) {
       const span = times[times.length - 1] - times[0];
@@ -921,6 +935,7 @@ function broadcastBoardStatus(): void {
   broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
 }
 
+startDhcpStatusPoller();
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
 // ── Keepalive ────────────────────────────────────────────────────────────────
@@ -1640,7 +1655,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // would apply today's offset to yesterday's samples) and rather than in the outbox drain
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
-    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers, _t7CalFields));
+    // applyValveCalibration replaces a ball valve's position_pct with its two-point calibrated
+    // figure (ball-valve-cal.ts) before the mismatch check below and the browser see it.
+    const parsedList = applyValveCalibration(
+      expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers, _t7CalFields)));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1704,6 +1722,22 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
     for (const parsed of parsedList) {
       if (!Number.isFinite(parsed.value)) continue;
+
+      // A ball valve's sensed state comes from its position [0x34]: open/closed near the ends of
+      // travel, nothing while it travels or its loop is dead (ball-valve.ts).
+      if (parsed.component === 'position_pct') {
+        const sensedEntity = ballValveSensedEntity(parsed.entity);
+        if (sensedEntity) {
+          const status = parsedList.find((p) => p.entity === parsed.entity && p.component === 'cal_status')?.value;
+          const sensed = sensedStateFromPosition(parsed.value, status);
+          const prev = actuatorSensedState.get(sensedEntity);
+          if (sensed === undefined) actuatorSensedState.delete(sensedEntity);
+          else actuatorSensedState.set(sensedEntity, sensed);
+          if (prev !== sensed && activeNotificationKeys.has('actuator_mismatch')) {
+            scheduleActuatorMismatchCheck(currentState);
+          }
+        }
+      }
 
       // Track actuator sensed state [0x31] for mismatch detection
       if (parsed.component === 'actuator_state') {

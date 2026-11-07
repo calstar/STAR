@@ -42,6 +42,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
   // LabJack T7: one group per T7 (t7<slot>), like PT boards — it is one device on one link.
   const t7 = entity.match(/^T7(\d+)(?:_Cal)?\.AIN/);
   if (t7) return `t7${t7[1]}`;
+  if (/^BV\d+(_Cal)?\.CH/.test(entity)) return 'bv';
   return null;
 }
 
@@ -53,7 +54,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
 export function isPrimaryPhysicalStream(entity: string, component: string): boolean {
   if (/^ENV\d+$/.test(entity)) return component === 'temperature_c';
   if (component === 'raw_adc_counts') {
-    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH/.test(entity);
+    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH|^BV\d+\.CH/.test(entity);
   }
   if (component === 'raw_resistance_counts') {
     return /^RTD\d+(_Cal)?\.CH/.test(entity);

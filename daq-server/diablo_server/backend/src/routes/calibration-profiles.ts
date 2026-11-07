@@ -43,6 +43,12 @@ function getCalibrationsDir(): string {
   return candidates[0];
 }
 
+/** Ball valve closed/open endpoints (ball-valve-cal.ts). Not session-scoped: they describe the
+ *  valve, so unlike the load-cell tare this file is never cleared at session start. */
+export function ballValveCalPath(): string {
+  return path.join(getCalibrationsDir(), 'ball_valve_endpoints.json');
+}
+
 export function livePath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.json');
 }

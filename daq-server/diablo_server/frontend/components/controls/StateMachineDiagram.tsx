@@ -176,14 +176,16 @@ export default function StateMachineDiagram() {
   // which reads window.event, and under vitest a refused /api/states fetch landing just after the
   // file's jsdom teardown threw "window is not defined" (a CI flake, StateMachineDiagram.test.tsx).
   useEffect(() => {
-    let alive = true;
+    // A load can resolve after unmount (a test's teardown, a page change): bumping state then
+    // throws "window is not defined" under jsdom teardown, so a finished load checks first.
+    let mounted = true;
     const refreshStates = (force: boolean) =>
       void loadStates(getApiBaseUrl(), force).then(() => {
-        if (alive) setStatesVersion((v) => v + 1);
+        if (mounted) setStatesVersion((v) => v + 1);
       });
     refreshStates(false);
     const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
-    return () => { alive = false; unsub(); };
+    return () => { mounted = false; unsub(); };
   }, [ws]);
 
   useEffect(() => {
@@ -357,7 +359,10 @@ export default function StateMachineDiagram() {
       <div className="overflow-hidden min-h-0 flex-1 flex flex-col">
         <svg viewBox={`0 0 ${svgW} ${svgH}`}
           className="min-h-0 flex-1"
-          style={{ display: 'block', width: '100%', height: '100%' }}
+          // aspectRatio only applies when the parent leaves height open (the stacked
+          // narrow layout): the diagram then takes its natural height for its width
+          // instead of collapsing. In a sized panel, height:100% still wins.
+          style={{ display: 'block', width: '100%', height: '100%', aspectRatio: `${svgW} / ${svgH}` }}
           preserveAspectRatio="xMidYMin meet">
           <defs>
             <marker id="arr-green" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">

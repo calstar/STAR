@@ -46,7 +46,12 @@ def seen() -> list[httpx.Request]:
                     {
                         "owner": "aidan@berkeley.edu",
                         "ownerName": "Aidan",
-                        "designs": [{"id": "ox-stand", "name": "Ox stand"}],
+                        "designs": [
+                            # Opens: an open_to_all store's older design.
+                            {"id": "ox-stand", "name": "Ox stand", "editable": True},
+                            # Copy-only: /load refuses it (R001).
+                            {"id": "private", "name": "Private", "editable": False},
+                        ],
                     }
                 ],
             )
@@ -105,6 +110,8 @@ async def test_nothing_but_identity_is_forwarded(seen: list[httpx.Request]) -> N
 async def test_listing_merges_mine_and_everyone_elses(
     seen: list[httpx.Request],
 ) -> None:
+    """Everything the caller may open. A copy-only browse entry is not, so
+    it is not offered: a pull of it is a 403 (R001)."""
     found = await list_documents(tools()["pid-designer"], {})
     ids = {d["id"] for d in found}
     assert ids == {"mine", "ox-stand"}
@@ -219,3 +226,34 @@ async def test_browse_failing_does_not_stop_your_own_designs() -> None:
         assert [d["id"] for d in found] == ["mine"]
     finally:
         designtools.transport = None
+
+
+# ------------------------------------------------------- provenance, parsed
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("owner", "doc", "release"),
+    [
+        ("local", "le4-3", "hotfire@pad-2"),  # R010: the store keeps the '@'
+        ("alice@team.org", "le4-3", "0.4"),
+        ("alice@team.org", "a@b", "rev@1"),  # a slug keeps '@' too
+        ("local", "le4-3", ""),
+        ("", "le4-3", ""),
+    ],
+)
+async def test_every_provenance_fetch_writes_parses_back(
+    seen: list[httpx.Request], owner: str, doc: str, release: str
+) -> None:
+    """parse_source split on the last '@', so a release labelled
+    'hotfire@pad-2' read as the working copy of document 'le4-3@release
+    hotfire': freshness 404'd and the drawing lost its saved hookup (R010)."""
+    _, provenance = await fetch(
+        tools()["pid-designer"], doc, owner=owner, release=release, headers={}
+    )
+    assert designtools.parse_source(provenance) == (
+        "pid-designer",
+        owner,
+        doc,
+        release,
+    )

@@ -373,6 +373,28 @@ tc_type = "K"
 role = "Placeholder TC"
 range = 0.1                    # a thermocouple is millivolts; 0.1 V covers type K to 1372 C
 
+# Motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire), two valves on connectors 1
+# and 2. Each is commanded like an actuator through [actuator_roles] -- ["NC", 1, 71] and
+# ["NC", 2, 71]; a ball valve has no NO/NC -- and streams its position (4-20 mA) instead of a
+# current sense. A role's channel must be one of active_connectors. The board opens its valves
+# itself 5 s after server heartbeats stop, and is left out of the abort lists sent to actuator
+# boards.
+# Disabled until the board is on the stand. `mac` is the prototype ESP32-WROOM-32 (Ethernet MAC =
+# base MAC + 3, as its serial log prints it); a replacement board needs its own.
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+ip = "192.168.2.71"
+mac = "fc:b4:67:73:cf:63"
+send_port = 5005
+listen_port = 5005
+board_id = 71
+enabled = false
+enable_serial_printing = 0
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1, 2 ]
+
 # Stacklight board: add to the board registry once it has a real IP / MAC.
 # (Kept out for now: it has no simulator, so the GUI would list it as DISCONNECTED,
 # and the config tests need an active_connectors list on every registered board.)
@@ -504,55 +526,67 @@ sensitivity_mv_per_v = 2
 pga_gain = 32
 full_scale_value = 300
 
+# NOP/MEOP/POP per system; top-bar gauges point here by their `limits` key. show_in_top_bar = false
+# hides that entry's NOP/MEOP lines and numbers on the top bar (the gauge still turns amber/red).
 [pressure_limits.GN2_High]
 NOP = 4000
 MEOP = 5000
 POP = 1000
+show_in_top_bar = true
 
 [pressure_limits.GN2_Regulated]
 NOP = 900
 MEOP = 1250
 POP = 9000
+show_in_top_bar = true
 
 [pressure_limits.Fuel_Upstream]
 NOP = 540
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Fuel_Downstream]
 NOP = 540
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Ox_Upstream]
 NOP = 505
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Ox_Downstream]
 NOP = 505
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.GSE_Low]
 NOP = 130
 MEOP = 155
 POP = 800
+show_in_top_bar = true
 
 [pressure_limits.GSE_Mid]
 NOP = 1500
 MEOP = 2000
 POP = 5000
+show_in_top_bar = true
 
 [pressure_limits.GSE_High]
 NOP = 4000
 MEOP = 5000
 POP = 800
+show_in_top_bar = true
 
 [pressure_limits.Chamber]
 NOP = 500
 MEOP = 650
 POP = 800
+show_in_top_bar = true
 
 [state_machine]
 actuator_csv = "config/state_machine_actuators.csv"

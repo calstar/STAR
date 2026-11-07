@@ -176,7 +176,8 @@ function serverRow(res: LayerXResult, e: LedgerEntry, u: Units): LedgerRow {
   };
   const lo = e.delivered?.min;
   const hi = e.delivered?.max;
-  const delivered = lo === null || lo === undefined || hi === null || hi === undefined ? f(e.delivered?.mean)
+  const delivered = !e.delivered && e.missing ? e.missing
+    : lo === null || lo === undefined || hi === null || hi === undefined ? f(e.delivered?.mean)
     : f(lo) === f(hi) ? f(lo) : `${f(lo, false)} – ${f(hi)}`;
   const ref = resolveRef(res, e.series_ref);
   const design = e.design_value === null || e.design_value === undefined ? null : plain ? e.design_value : toModel(e.design_value);
@@ -264,7 +265,8 @@ function Ledger({ data }: { data: RunData }) {
         <tbody>
           {rows.map((r) => (
             <tr key={r.key} className="border-t border-[var(--lx-line)]">
-              <th scope="row" className="truncate py-1.5 pr-2 text-left font-normal text-[var(--lx-text-2)]">{r.label}</th>
+              {/* The quantity wraps on a laptop rather than cut: 'LOX tank pre...' and 'LOX feed los...' at 1366 px. */}
+              <th scope="row" className="break-words py-1.5 pr-2 text-left font-normal leading-[1.25] text-[var(--lx-text-2)] 2xl:truncate">{r.label}</th>
               <td className="lx-num truncate py-1.5 pr-2 text-right text-[var(--lx-text-2)]" title={r.design}>{r.design}</td>
               <td className="lx-num truncate py-1.5 pr-2 text-right text-[var(--lx-text)]" title={r.delivered}>{r.delivered}</td>
               <td className="py-1.5">{r.spark && <MiniSpark t={r.spark.t} values={r.spark.values} color={r.spark.color} band={r.spark.band} width={52} />}</td>

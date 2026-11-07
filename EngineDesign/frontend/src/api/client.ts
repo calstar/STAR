@@ -384,6 +384,9 @@ export interface SwitchResponse {
   // "Needs re-optimization": set when a propellant overlay left the chamber seeded for the old
   // propellant. null after a clean injector swap (canonical configs are internally coherent).
   design_warning?: string | null;
+  // The fluid properties differ from the propellant preset's (a canonical config's old LOX block):
+  // not a stale chamber, so not "needs re-optimization"; refresh them from the preset.
+  fluid_warning?: string | null;
 }
 
 export async function getSwitchOptions(): Promise<ApiResponse<SwitchOptions>> {
@@ -540,6 +543,25 @@ export interface TimeSeriesSummary {
   copv_initial_mass_kg?: number;
   copv_min_margin_psi?: number;
   copv_volume_L?: number;
+  /** 'configured': the charge press_tank.initial_gas_mass loads, checked; 'sized': none set, so the
+   *  P0/m0 above are what the curve needs (zero margin by construction). */
+  copv_mode?: 'configured' | 'sized';
+  copv_required_pressure_psi?: number;
+  copv_required_mass_kg?: number;
+  /** design_requirements.regulator_min_differential_psi, when set. */
+  copv_margin_needed_psi?: number | null;
+  /** The configured load per tank, and how far short of the curve it falls (regulated runs). */
+  lox_loaded_kg?: number;
+  fuel_loaded_kg?: number;
+  lox_short_kg?: number;
+  fuel_short_kg?: number;
+  lox_depletion_time_s?: number;
+  fuel_depletion_time_s?: number;
+  propellant_short_note?: string;
+  /** Points whose CEA lookup was clamped to the table edge, which axes, and a sentence. */
+  cea_clamped_points?: number;
+  cea_clamped_axes?: string[];
+  cea_clamped_note?: string;
 }
 
 // Response for generate endpoint
@@ -547,6 +569,8 @@ export interface GenerateProfileResponse {
   status: string;
   data: TimeSeriesData;
   summary: TimeSeriesSummary;
+  /** Set when a YAML upload replaced the session config. */
+  load_token?: string | null;
 }
 
 // Response for segments endpoint
@@ -607,6 +631,8 @@ export async function uploadTimeseriesFromCSV(
   try {
     const response = await fetch(`${API_BASE}/timeseries/from-csv`, {
       method: 'POST',
+      // A YAML here replaces the session config, as /config/upload does: same checkout headers.
+      headers: designHeaders(),
       body: formData,
     });
 
@@ -616,6 +642,7 @@ export async function uploadTimeseriesFromCSV(
     }
 
     const data = await response.json();
+    if (data?.load_token) ownLoadToken = data.load_token;
     return { data };
   } catch (err) {
     return { error: thrownText(err, 'The CSV upload failed.') };
@@ -1507,6 +1534,7 @@ export async function uploadLayer2Config(file: File): Promise<ApiResponse<Upload
   try {
     const response = await fetch(`${API_BASE}/optimizer/layer2/upload-config`, {
       method: 'POST',
+      headers: designHeaders(),
       body: formData,
     });
 
@@ -1915,6 +1943,7 @@ export async function uploadLayer3Config(file: File): Promise<ApiResponse<Upload
   try {
     const response = await fetch(`${API_BASE}/optimizer/layer3/upload-config`, {
       method: 'POST',
+      headers: designHeaders(),
       body: formData,
     });
 
