@@ -15,36 +15,37 @@
 #include <vector>
 
 #include "config/LoadActiveBoards.hpp"  // ActiveBoardKind, PtInterface, PtBoardConfig, BoardChannels
-#include "time/BoardClockSync.hpp"      // fsw::time::TimeSyncConfig
+#include "config/NetworkDefaults.hpp"
+#include "time/BoardClockSync.hpp"  // fsw::time::TimeSyncConfig
 
 namespace fsw {
 namespace config {
 
 struct NetworkConfig {
-    std::string bind_ip = "0.0.0.0";    // [network].bind_ip
-    uint16_t sensor_port = 5006;        // [network].sensor_port
-    uint16_t actuator_cmd_port = 5005;  // [network].actuator_cmd_port
+    std::string bind_ip = "0.0.0.0";                    // [network].bind_ip
+    uint16_t sensor_port = defaults::kSensorPort;       // [network].sensor_port
+    uint16_t actuator_cmd_port = defaults::kBoardPort;  // [network].actuator_cmd_port
 };
 
 struct DatabaseConfig {
-    std::string host = "127.0.0.1";  // [database].host
-    uint16_t port = 2240;            // [database].port
+    std::string host = "127.0.0.1";         // [database].host
+    uint16_t port = defaults::kElodinPort;  // [database].port
 };
 
 struct ServerHeartbeatConfig {    // [server_heartbeat]
     uint32_t interval_ms = 1000;  // daq_bridge default (file usually supplies)
-    uint16_t broadcast_port = 5005;
-    std::string broadcast_ip = "255.255.255.255";
+    uint16_t broadcast_port = defaults::kBoardPort;
+    std::string broadcast_ip = defaults::kLimitedBroadcast;
     bool send_from_daq_bridge = true;  // synthesized: false when [heartbeat_service].enabled
 };
 
 struct HeartbeatServiceConfig {  // [heartbeat_service]
     bool enabled = false;
     uint32_t interval_ms = 1000;  // clamped >=100 at use site
-    std::string broadcast_ip = "192.168.2.255";
-    uint16_t broadcast_port = 5005;
+    std::string broadcast_ip = defaults::kGseBroadcast;
+    uint16_t broadcast_port = defaults::kBoardPort;
     std::string elodin_host = "127.0.0.1";
-    uint16_t elodin_port = 2240;
+    uint16_t elodin_port = defaults::kElodinPort;
 };
 
 struct LogsConfig {
@@ -52,7 +53,7 @@ struct LogsConfig {
 };
 
 struct ControllerServiceConfig {  // [controller_service]
-    uint16_t port = 9999;
+    uint16_t port = defaults::kControllerServicePort;
     std::string host = "127.0.0.1";
     uint32_t fire_duration_ms = 6000;
     uint32_t fire_extended_ms = 10000;
@@ -83,7 +84,7 @@ struct ControllerConfig {  // [controller]
 };
 
 struct ActuatorServiceConfig {  // [actuator_service]
-    uint16_t port = 9998;
+    uint16_t port = defaults::kActuatorServicePort;
     std::string bind_address = "0.0.0.0";
 };
 
@@ -225,8 +226,8 @@ struct BoardConfig {
     int board_id = -1;  // board_id, with legacy "id" fallback
     bool enabled = true;
     int num_actuators = 0;
-    uint16_t send_port = 5005;
-    uint16_t listen_port = 5005;
+    uint16_t send_port = defaults::kBoardPort;
+    uint16_t listen_port = defaults::kBoardPort;
     int enable_serial_printing = 0;  // tolerate bool-or-int; clamped 0..3
     int voltage_reference = 0;
     bool necessary_for_abort = false;
