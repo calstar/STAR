@@ -40,6 +40,23 @@ typedef struct {
     uint32_t arms, disarms;
 } radio_status_t;
 
+/* The last frame received (any type), with its signal quality. RSSI in
+ * dBm x 2 and SNR in dB x 4: the SX1262's own units (GetPacketStatus). */
+typedef struct {
+    uint32_t count; /* frames received so far; 0 = the rest is not valid */
+    uint32_t at_ms; /* board_now_ms() when it was read */
+    uint8_t type;   /* FrameType */
+    uint16_t seq;
+    uint8_t payload_len;
+    uint8_t payload[16]; /* first 16 bytes */
+    bool quality_ok;     /* GetPacketStatus answered */
+    int16_t rssi_x2;
+    int8_t snr_x4;
+    int16_t signal_rssi_x2;
+} radio_rx_t;
+
+void radio_task_last_rx(radio_rx_t* out);
+
 /* Called from the radio task when the ARM gate confirms a command. */
 void radio_task_on_command(void (*callback)(radio_command_t command));
 

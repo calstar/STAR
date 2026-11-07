@@ -34,6 +34,17 @@ public:
         transfers_ = 0;
         log_len_ = 0;
         last_len_ = 0;
+        rssi_pkt_ = 0;
+        snr_pkt_ = 0;
+        signal_rssi_pkt_ = 0;
+    }
+
+    // Raw GetPacketStatus bytes the chip will report (datasheet units).
+    void set_packet_status(uint8_t rssi_pkt, uint8_t snr_pkt,
+                           uint8_t signal_rssi_pkt) {
+        rssi_pkt_ = rssi_pkt;
+        snr_pkt_ = snr_pkt;
+        signal_rssi_pkt_ = signal_rssi_pkt;
     }
 
     // Pretend a packet arrived and was stored at `start`.
@@ -127,6 +138,12 @@ public:
                     rx[i] = buffer_[(tx[1] + (i - 3)) & 0xFF];
                 }
                 break;
+            case kOpGetPacketStatus:
+                rx[1] = status_;
+                rx[2] = rssi_pkt_;
+                rx[3] = snr_pkt_;
+                rx[4] = signal_rssi_pkt_;
+                break;
             case kOpClearIrqStatus:
                 irq_ = static_cast<uint16_t>(
                     irq_ & ~static_cast<uint16_t>((tx[1] << 8) | tx[2]));
@@ -151,6 +168,9 @@ private:
     unsigned log_len_;
     uint8_t last_[kLastSize];
     unsigned last_len_;
+    uint8_t rssi_pkt_;
+    uint8_t snr_pkt_;
+    uint8_t signal_rssi_pkt_;
 };
 
 }  // namespace radio_link

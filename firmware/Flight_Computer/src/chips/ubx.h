@@ -11,6 +11,9 @@
  *              configuration is re-sent on every power-up
  *   ACK        0x05 0x01 ACK / 0x05 0x00 NAK, payload = acked class, id
  *   NAV-PVT    0x01 0x07, 92 bytes (3.15.11, p.95)
+ *   NAV-SAT    0x01 0x35, 8 + numSvs*12 bytes (3.15.13, p.98)
+ *   MON-RF     0x0A 0x38, 4 + nBlocks*24 bytes (3.14.6, p.86)
+ *   A message with an empty payload polls the module for that message.
  * Keys used (Section 6, p.136-154): CFG-UART1-BAUDRATE 0x40520001 U4,
  * CFG-UART1OUTPROT-NMEA 0x10740002 L, CFG-MSGOUT-UBX_NAV_PVT_UART1
  * 0x20910007 U1, CFG-RATE-MEAS 0x30210001 U2 (ms), CFG-NAVSPG-DYNMODEL
@@ -28,7 +31,10 @@ extern "C" {
 #define UBX_CLASS_NAV 0x01U
 #define UBX_CLASS_ACK 0x05U
 #define UBX_CLASS_CFG 0x06U
+#define UBX_CLASS_MON 0x0AU
 #define UBX_ID_NAV_PVT 0x07U
+#define UBX_ID_NAV_SAT 0x35U
+#define UBX_ID_MON_RF 0x38U
 #define UBX_ID_ACK_ACK 0x01U
 #define UBX_ID_ACK_NAK 0x00U
 #define UBX_ID_CFG_VALSET 0x8AU
@@ -72,6 +78,46 @@ typedef struct {
 
 /* Decode a NAV-PVT payload (exactly 92 bytes). */
 bool ubx_parse_nav_pvt(const uint8_t* payload, uint16_t len, ubx_pvt_t* out);
+
+/* A poll request (the message with no payload); returns frame length. */
+size_t ubx_poll(uint8_t* out, size_t cap, uint8_t cls, uint8_t id);
+
+/* MON-RF antenna supervisor values (3.14.6, p.86) */
+#define UBX_ANT_INIT 0U
+#define UBX_ANT_DONTKNOW 1U
+#define UBX_ANT_OK 2U
+#define UBX_ANT_SHORT 3U
+#define UBX_ANT_OPEN 4U
+#define UBX_ANT_POWER_OFF 0U
+#define UBX_ANT_POWER_ON 1U
+#define UBX_ANT_POWER_DONTKNOW 2U
+
+/* MON-RF, first RF block (L1, the only band on the MAX-M10S). */
+typedef struct {
+    uint8_t ant_status; /* UBX_ANT_* */
+    uint8_t ant_power;  /* UBX_ANT_POWER_* */
+    uint8_t jamming;    /* 0 unknown, 1 ok, 2 warning, 3 critical */
+    uint8_t cw;         /* CW jamming suppression, 0 none .. 255 strong */
+    uint16_t noise;     /* noisePerMS */
+    uint16_t agc;       /* agcCnt, 0..8191 */
+} ubx_rf_t;
+
+/* Decode a MON-RF payload with at least one RF block. */
+bool ubx_parse_mon_rf(const uint8_t* payload, uint16_t len, ubx_rf_t* out);
+
+/* NAV-SAT condensed to counts. `len` may be a captured prefix of the
+ * payload: `listed` is the module's numSvs, the rest count only the SVs
+ * whose 12-byte blocks are within `len` (`seen` of them). */
+typedef struct {
+    uint8_t listed;      /* numSvs: known visible or tracked */
+    uint8_t seen;        /* blocks decoded (< listed if truncated) */
+    uint8_t with_signal; /* cno > 0 */
+    uint8_t locked;      /* qualityInd >= 4: code locked, time synced */
+    uint8_t used;        /* svUsed: in the navigation solution */
+    uint8_t best_cno;    /* strongest C/N0, dB-Hz */
+} ubx_sats_t;
+
+bool ubx_sat_summary(const uint8_t* payload, uint16_t len, ubx_sats_t* out);
 
 #ifdef __cplusplus
 }

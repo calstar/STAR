@@ -4,6 +4,7 @@
 #include "board_adc.h"
 #include "board_spi.h"
 #include "board_time.h"
+#include "board_uart9.h"
 #include "cmsis_os2.h"
 #include "gnss_frame.h"
 #include "main.h"
@@ -55,8 +56,7 @@ static bool uart9_set_baud(uint32_t baud) {
     if (huart9.Init.BaudRate == baud) {
         return true;
     }
-    huart9.Init.BaudRate = baud;
-    return HAL_UART_Init(&huart9) == HAL_OK;
+    return board_uart9_apply_baud(baud); /* keeps the FIFO on */
 }
 
 /*

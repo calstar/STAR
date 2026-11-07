@@ -22,6 +22,11 @@ bool gnss_task_start(void);
  * (Idle). Any task. */
 void gnss_task_set_active(bool on);
 
+/* true: once a second while running, ask the module for its antenna and
+ * satellite status (core->rf, core->sats). Off at start; the bench build
+ * turns it on. Any task. */
+void gnss_task_poll_status(bool on);
+
 /* Read-only view for telemetry (counters, latest fix). */
 const gnss_core_t* gnss_task_core(void);
 

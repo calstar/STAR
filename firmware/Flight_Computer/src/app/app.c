@@ -7,6 +7,9 @@
 #include "mode.h"
 #include "radio_task.h"
 #include "sensors_task.h"
+#ifdef STAR_BENCH
+#include "bench_task.h"
+#endif
 
 static bool start_emmc(void) {
     static const osThreadAttr_t attr = {
@@ -31,7 +34,17 @@ bool app_start(void) {
     ok = radio_task_start() && ok;
     ok = idle_task_start() && ok;
     radio_task_on_command(on_radio_command);
+#ifdef STAR_BENCH
+    /* Bench build (pio run -e bench): stay awake in SELF_TEST with the
+     * sensors and GPS running, so their readings can be watched over SWD.
+     * Not Idle, not ARMED: no sleep, no eMMC recording, no pyro. Never
+     * flown. */
+    sensors_task_set_active(true);
+    gnss_task_set_active(true);
+    ok = bench_task_start() && ok;
+#else
     /* Every task starts stopped; the state decides what runs (mode_core). */
     app_set_state(FLIGHT_IDLE);
+#endif
     return ok;
 }

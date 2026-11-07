@@ -235,6 +235,59 @@ static void test_damaged_packets_are_counted(void) {
     TEST_ASSERT_EQUAL_UINT32(2, radio.crc_errors());
 }
 
+// GetPacketStatus: 0x14 then four NOPs; RSSI = -RssiPkt/2 dBm, SNR =
+// SnrPkt/4 dB in two's complement (datasheet Rev 1.2, Table 13-80, p.96).
+static void test_packet_status_sends_0x14_and_four_nops(void) {
+    Sx1262 radio(chip);
+    PacketStatus ps;
+    TEST_ASSERT_TRUE(radio.packet_status(ps));
+    TEST_ASSERT_EQUAL_UINT(1, chip.commands_logged());
+    TEST_ASSERT_EQUAL_UINT(5, chip.last_len());
+    TEST_ASSERT_EQUAL_HEX8(kOpGetPacketStatus, chip.last_byte(0));
+    for (unsigned i = 1; i < 5; i++) {
+        TEST_ASSERT_EQUAL_HEX8(0x00, chip.last_byte(i));
+    }
+}
+
+static void test_packet_status_converts_rssi_and_negative_snr(void) {
+    Sx1262 radio(chip);
+    // RssiPkt 0xB5 = 181 -> -90.5 dBm; SnrPkt 0xEC = -20 -> -5 dB;
+    // SignalRssiPkt 0xC8 = 200 -> -100 dBm.
+    chip.set_packet_status(0xB5, 0xEC, 0xC8);
+    PacketStatus ps;
+    TEST_ASSERT_TRUE(radio.packet_status(ps));
+    TEST_ASSERT_EQUAL_INT16(-181, ps.rssi_x2);
+    TEST_ASSERT_EQUAL_INT8(-20, ps.snr_x4);
+    TEST_ASSERT_EQUAL_INT16(-200, ps.signal_rssi_x2);
+}
+
+static void test_packet_status_positive_snr(void) {
+    Sx1262 radio(chip);
+    chip.set_packet_status(0x50, 0x28, 0x52);  // -40 dBm, +10 dB, -41 dBm
+    PacketStatus ps;
+    TEST_ASSERT_TRUE(radio.packet_status(ps));
+    TEST_ASSERT_EQUAL_INT16(-80, ps.rssi_x2);
+    TEST_ASSERT_EQUAL_INT8(40, ps.snr_x4);
+    TEST_ASSERT_EQUAL_INT16(-82, ps.signal_rssi_x2);
+}
+
+static void test_packet_status_missing_chip_leaves_output_alone(void) {
+    Sx1262 radio(chip);
+    chip.set_stuck(0x00);
+    PacketStatus ps = {7, 7, 7};
+    TEST_ASSERT_FALSE(radio.packet_status(ps));
+    TEST_ASSERT_EQUAL_INT16(7, ps.rssi_x2);
+    TEST_ASSERT_EQUAL_INT8(7, ps.snr_x4);
+}
+
+static void test_packet_status_busy_never_clears(void) {
+    Sx1262 radio(chip);
+    chip.set_never_ready();
+    PacketStatus ps;
+    TEST_ASSERT_FALSE(radio.packet_status(ps));
+    TEST_ASSERT_EQUAL_UINT(0, chip.transfers());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_no_flags_returns_no_data);
@@ -256,5 +309,10 @@ int main(void) {
     RUN_TEST(test_start_rx_continuous_sends_setrx_ffffff);
     RUN_TEST(test_start_rx_continuous_fails_when_busy_never_clears);
     RUN_TEST(test_damaged_packets_are_counted);
+    RUN_TEST(test_packet_status_sends_0x14_and_four_nops);
+    RUN_TEST(test_packet_status_converts_rssi_and_negative_snr);
+    RUN_TEST(test_packet_status_positive_snr);
+    RUN_TEST(test_packet_status_missing_chip_leaves_output_alone);
+    RUN_TEST(test_packet_status_busy_never_clears);
     return UNITY_END();
 }
