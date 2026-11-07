@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import VideoTile from '@/components/video/VideoTile';
 import { createPreview, deletePreview, fetchVideoConfig, saveVideoConfig, UDP_PORTS, VideoApiError, type GatewayChange } from '@/lib/video/api';
 import {
-  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, obsUrls, toSave, withKind, withLabel, withPreset, type DraftStream,
+  draftLayoutFrom, draftsFrom, isDirty, layoutIds, newDraft, obsUrls, startLayout, toSave, withKind, withLabel, withPreset, type DraftStream,
 } from '@/lib/video/editor';
 import { CONTROLS_SLOT, geometry, PRESET_LABELS, PRESETS, type VideoLayout } from '@/lib/video/layout';
 import { previewEndpoint } from '@/lib/video/whep';
@@ -311,10 +311,13 @@ function LayoutSection({ layout, drafts, onChange }: { layout: VideoLayout; draf
 }
 
 export default function StreamEditor({
-  onClose, onSaved, onDraftLayout,
+  onClose, onSaved, onDraftLayout, shownLayout,
 }: {
   onClose: () => void;
   onSaved: () => void;
+  /** The layout on screen as Edit opened, in stream ids: the stand's with this operator's
+   *  tile picks on top. The editor starts from it, so Save keeps what the operator sees. */
+  shownLayout?: VideoLayout;
   /** The draft stand layout, in stream ids, as it changes (null when the editor closes). */
   onDraftLayout?: (layout: VideoLayout | null) => void;
 }) {
@@ -328,17 +331,19 @@ export default function StreamEditor({
   const [ingestHost, setIngestHost] = useState('');
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  // As Edit opened: later tile picks (there are none while editing) must not move the draft.
+  const shownAtOpen = useRef(shownLayout);
 
   useEffect(() => {
     fetchVideoConfig()
       .then((cfg) => {
         const d = draftsFrom(cfg);
-        const l = draftLayoutFrom(cfg.layout, d);
         setRevision(cfg.revision);
         setOriginal(d);
         setDrafts(d);
-        setOriginalLayout(l);
-        setLayout(l);
+        // Dirty against the saved layout, so picks that differ from it can be saved as they are.
+        setOriginalLayout(draftLayoutFrom(cfg.layout, d));
+        setLayout(draftLayoutFrom(startLayout(cfg.layout, shownAtOpen.current), d));
         const g = { host: cfg.gateway.host, passwordSet: cfg.gateway.passwordSet, newPassword: '', clearPassword: false };
         setOriginalGateway(g);
         setGateway(g);

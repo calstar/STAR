@@ -151,6 +151,17 @@ export function draftLayoutFrom(layout: VideoLayout, drafts: DraftStream[]): Vid
   return { preset: layout.preset, slots: layout.slots.map((id) => (id ? keyOf.get(id) ?? null : null)) };
 }
 
+/**
+ * The layout the editor opens with: what this operator is looking at, when that is the saved
+ * preset with their own picks in its slots (tile pickers live in this browser only). Opening
+ * from the saved layout instead would make Save write the saved slots back -- often all empty
+ * -- and the page drops the operator's picks on save, so every tile went to Empty.
+ */
+export function startLayout(saved: VideoLayout, shown: VideoLayout | null | undefined): VideoLayout {
+  if (!shown || shown.preset !== saved.preset || shown.slots.length !== saved.slots.length) return saved;
+  return { preset: saved.preset, slots: [...shown.slots] };
+}
+
 /** The editor's layout as the server takes it: keys -> current ids; gone -> empty. */
 export function layoutIds(layout: VideoLayout, drafts: DraftStream[]): VideoLayout {
   const idOf = new Map<string, string>([...drafts.map((d) => [d.key, d.id.trim()] as [string, string]), [CONTROLS_SLOT, CONTROLS_SLOT]]);
