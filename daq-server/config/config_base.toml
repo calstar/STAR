@@ -46,6 +46,7 @@ tabs = [
   "boards",
   "self-tests",
   "session",
+  "video",
   "config"
 ]
 
