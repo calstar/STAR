@@ -16,7 +16,12 @@
 extern "C" {
 #endif
 
+/* Starts stopped: chips stay in power-down until sensors_task_set_active. */
 bool sensors_task_start(void);
+
+/* true: init the three chips and sample; false: power them down (Idle).
+ * Any task; takes effect on the sensors task's next wake. */
+void sensors_task_set_active(bool on);
 
 /* Snapshot of the latest samples and per-sensor counters (any task). */
 void sensors_task_snapshot(sensors_core_t* out);

@@ -64,6 +64,7 @@ static void rig_init(rig_t* r, uint32_t start_us) {
     r->imu.self_clear_reg = 0x12;
     r->imu.self_clear_bits = 0x01;
     r->imu.clear_after_reads = 1;
+    r->imu.self_clear_rearm = 1;
     static const uint8_t imu_out[14] = {0x00, 0x02, 1,    0, 2, 0, 3,
                                         0,    0x00, 0xF8, 0, 0, 0, 0x08};
     memcpy(&r->imu.regs[0x20], imu_out, sizeof(imu_out));
@@ -203,6 +204,28 @@ static void test_dead_baro_bus_is_reported(void) {
     CHECK(r.core.baro.last_error == DEV_ERR_BUS);
 }
 
+/* Idle: both accelerometers in power-down by their datasheets' registers,
+ * then a fresh init on Arm restores the full rates. */
+static void test_stop_powers_down_and_init_restarts(void) {
+    static rig_t r;
+    rig_init(&r, 1000);
+    run(&r, 101000);
+    sensors_core_stop(&r.core);
+    CHECK(r.imu.regs[0x10] == 0x00 && r.imu.regs[0x11] == 0x00); /* ODR 0 */
+    CHECK(r.highg.regs[0x20] == 0x07); /* CTRL_REG1 PM = 000 */
+    CHECK(!r.core.imu.ok && !r.core.highg.ok && !r.core.baro.ok);
+    CHECK(r.core.baro_phase == 0);
+    unsigned before = r.sink.n[0];
+    r.now += 5000000U; /* 5 s of Idle: the task does not step the core */
+    sensors_core_init(&r.core, r.now);
+    CHECK(r.imu.regs[0x10] == 0x74 && r.highg.regs[0x20] == 0x37);
+    r.next_imu = r.now + SENSORS_IMU_PERIOD_US;
+    r.next_highg = r.now + SENSORS_HIGHG_PERIOD_US;
+    uint32_t t = r.now;
+    run(&r, t + 1000000U);
+    CHECK(r.sink.n[0] - before >= 832 && r.sink.n[0] - before <= 834);
+}
+
 static void test_wait_never_overshoots_a_deadline(void) {
     static rig_t r;
     rig_init(&r, 0);
@@ -226,6 +249,7 @@ int main(void) {
     test_failing_imu_is_dropped_and_recovered();
     test_wrong_chip_never_produces_and_keeps_retrying();
     test_dead_baro_bus_is_reported();
+    test_stop_powers_down_and_init_restarts();
     test_wait_never_overshoots_a_deadline();
     test_clock_wrap_is_harmless();
     puts("sensors_core: all tests passed");

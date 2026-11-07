@@ -66,6 +66,15 @@ void sensors_core_init(sensors_core_t* c, uint32_t now_us) {
     init_baro(c, now_us);
 }
 
+void sensors_core_stop(sensors_core_t* c) {
+    (void)ism330_power_down(&c->imu_bus);
+    (void)h3lis_power_down(&c->highg_bus);
+    c->imu.ok = false;
+    c->highg.ok = false;
+    c->baro.ok = false;
+    c->baro_phase = 0;
+}
+
 static void read_imu(sensors_core_t* c, uint32_t t_us, uint32_t now_us) {
     ism330_sample_t s;
     int err = ism330_read(&c->imu_bus, &s);

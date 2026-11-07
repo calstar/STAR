@@ -93,9 +93,9 @@ check() {
 
 stage() { [ "$LIST" = 1 ] && echo "── $1" || printf '\n── %s\n' "$1"; }
 
-ctest_suite() { # name source_dir
+ctest_suite() { # name source_dir [sanitizer option, default SELF_TEST_SANITIZERS]
   local build="$OUT/build_$1"
-  cmake -S "$HERE/$2" -B "$build" -DSELF_TEST_SANITIZERS=ON >/dev/null &&
+  cmake -S "$HERE/$2" -B "$build" -D"${3:-SELF_TEST_SANITIZERS}"=ON >/dev/null &&
     cmake --build "$build" -j 4 &&
     ctest --test-dir "$build" --output-on-failure
 }
@@ -158,7 +158,7 @@ check dma_placement "every DMA buffer links into RAM_D1 (0x24000000-0x2404FFFF)"
 
 # ── stage 2: unit suites ───────────────────────────────────────────────────
 stage "2  unit suites (ASan/UBSan)"
-check radio "radio link: frames, ARM gate, SX1262, fake radio (PlatformIO native)" \
+check radio "radio: frames, ARM gate, SX1262 receive + start-up + TxDone (PlatformIO native)" \
   "$PIO" test -d "$HERE" -e native
 check self_test "self-test coordinator + device protocols, GNSS frames, SD SPI" \
   ctest_suite self_test tests/self_test
@@ -166,33 +166,43 @@ check emmc "eMMC log: chunks, mount, torn writes, card checks, flight state" \
   ctest_suite emmc tests/emmc
 check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
   ctest_suite chips tests/chips
-check app "task cores + boot report: sensors, GNSS, battery, self-test verdict" ctest_suite app tests/app
+check app "task cores: sensors, GNSS, boot report, sleep math, mode" ctest_suite app tests/app
+check idle "Idle logic (Aaron, PR #162): heartbeat schedule, battery, Arm" \
+  ctest_suite idle tests/idle IDLE_SANITIZERS
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
-stage "3  end to end: flight profile -> drivers -> cores -> eMMC -> read back"
+stage "3  end to end: flight (drivers -> cores -> eMMC) and Idle (heartbeats, Stop, Arm)"
 E2E_BUILD="$OUT/build_e2e"
 E2E_READY=0
 if [ "$LIST" = 1 ] || cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" -DSELF_TEST_SANITIZERS=ON >"$OUT/e2e_build.log" 2>&1 &&
    cmake --build "$E2E_BUILD" -j 4 >>"$OUT/e2e_build.log" 2>&1; then
   E2E_READY=1
 fi
+# flight_e2e: the flight (sensors, GPS, eMMC); idle_e2e: Idle (heartbeats,
+# Stop, Arm over LoRa). Same CHECK line protocol.
+E2E_BINS="flight_e2e idle_e2e"
 if [ "$LIST" = 1 ]; then
-  while IFS=$'\t' read -r id what; do
-    NUM=$((NUM + 1)); printf '%2d  %-18s %s\n' "$NUM" "$id" "$what"
-  done < <(cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" >/dev/null 2>&1 &&
-           cmake --build "$E2E_BUILD" >/dev/null 2>&1 && "$E2E_BUILD/flight_e2e" --list)
+  cmake -S "$HERE/tests/e2e" -B "$E2E_BUILD" >/dev/null 2>&1 &&
+    cmake --build "$E2E_BUILD" >/dev/null 2>&1
+  for bin in $E2E_BINS; do
+    while IFS=$'\t' read -r id what; do
+      NUM=$((NUM + 1)); printf '%2d  %-18s %s\n' "$NUM" "$id" "$what"
+    done < <("$E2E_BUILD/$bin" --list)
+  done
 elif [ "$E2E_READY" = 1 ]; then
-  while IFS=$'\t' read -r id what; do
-    NUM=$((NUM + 1))
-    selected "$id" "$NUM" || continue
-    t0=$(now)
-    line="$("$E2E_BUILD/flight_e2e" --only="$id" 2>"$OUT/$id.log" | grep '^CHECK ')"
-    t1=$(now)
-    status=$(echo "$line" | awk '{print $3}')
-    detail="${line#*| }"
-    echo "$line" >>"$OUT/$id.log"
-    record "$id" "$what" "${status:-FAIL}" "$detail" "$(echo "$t1 - $t0" | bc)"
-  done < <("$E2E_BUILD/flight_e2e" --list)
+  for bin in $E2E_BINS; do
+    while IFS=$'\t' read -r id what; do
+      NUM=$((NUM + 1))
+      selected "$id" "$NUM" || continue
+      t0=$(now)
+      line="$("$E2E_BUILD/$bin" --only="$id" 2>"$OUT/$id.log" | grep '^CHECK ')"
+      t1=$(now)
+      status=$(echo "$line" | awk '{print $3}')
+      detail="${line#*| }"
+      echo "$line" >>"$OUT/$id.log"
+      record "$id" "$what" "${status:-FAIL}" "$detail" "$(echo "$t1 - $t0" | bc)"
+    done < <("$E2E_BUILD/$bin" --list)
+  done
 else
   NUM=$((NUM + 1))
   record e2e_build "end-to-end harness builds" FAIL "see $OUT/e2e_build.log" 0
@@ -230,7 +240,11 @@ board_report() {
   cat >"$OUT/report.gdb" <<'GDB'
 set pagination off
 target extended-remote :3333
-monitor reset run
+monitor reset halt
+# DBGMCU_CR (0x5C001004, RM0468 p.3230): keep SWD alive in Sleep/Stop (D1)
+# and Stop (D3), or the board vanishes from the debugger at its first sleep.
+monitor mmw 0x5C001004 0x00000083 0
+monitor resume
 set $tries = 0
 while $tries < 45
   shell sleep 1
@@ -258,6 +272,14 @@ printf "VERDICT %d\n", g_bringup_report.report.verdict
 printf "REPORT_BEGIN\n"
 printf "%s", &g_bringup_report.report.text[0]
 printf "REPORT_END\n"
+# FLASH_OPTSR_CUR (0x5200201C): bit 6 NRST_STOP_D1 (RM0468 p.208)
+printf "OPTSR %u\n", *(unsigned int*)0x5200201C
+# Idle: let it sleep through a few heartbeats, then read the counters.
+monitor resume
+shell sleep 35
+monitor halt
+printf "SLEEP %d %d %u %u %u %u\n", 'board_sleep.c'::info.ready, 'board_sleep.c'::info.stop_allowed, 'board_sleep.c'::info.lsi_hz, 'board_sleep.c'::info.sleeps, 'board_sleep.c'::info.rtc_wakes, 'board_sleep.c'::info.awake_waits
+printf "IDLE %u %u %d\n", 'idle_task.c'::idle.last.sequence, 'idle_task.c'::idle.last.consecutive_send_failures, 'idle_task.c'::idle.last.previous_send
 monitor resume
 detach
 GDB
@@ -293,6 +315,33 @@ board_verdict() {
   esac
 }
 
+board_option_bytes() {
+  local optsr; optsr=$(awk '/^OPTSR /{print $2}' "$OUT/board_report.txt")
+  [ -n "$optsr" ] || { echo "FAIL option bytes not read"; return 1; }
+  if (( (optsr >> 6) & 1 )); then
+    echo "NRST_STOP_D1 = 1: Stop does not reset the chip"
+  else
+    echo "FAIL NRST_STOP_D1 = 0: Stop would reset the chip, so Idle waits awake."
+    echo "Set it with STM32CubeProgrammer (option bytes, User Configuration)."
+    return 1
+  fi
+}
+
+board_lsi() {
+  local ready lsi; read -r _ ready _ lsi _ < <(grep '^SLEEP ' "$OUT/board_report.txt")
+  echo "LSI measured at ${lsi:-?} Hz (32 kHz nominal)"
+  [ "$ready" = 1 ] && [ "${lsi:-0}" -ge 28800 ] && [ "${lsi:-0}" -le 35200 ]
+}
+
+board_idle() {
+  local sleeps wakes waits seq fails prev
+  read -r _ _ _ _ sleeps wakes waits < <(grep '^SLEEP ' "$OUT/board_report.txt")
+  read -r _ seq fails prev < <(grep '^IDLE ' "$OUT/board_report.txt")
+  echo "35 s of Idle: ${seq:-?} heartbeats, ${sleeps:-?} Stop sleeps, ${wakes:-?} RTC wakes, ${waits:-?} refused, ${fails:-?} failed sends"
+  [ "${seq:-0}" -ge 3 ] && [ "${sleeps:-0}" -ge 3 ] && [ "${wakes:-0}" -ge 3 ] &&
+    [ "${fails:-1}" = 0 ] || { echo "FAIL Idle did not sleep and send as expected"; return 1; }
+}
+
 board_device() { # device_id
   local line; line=$(grep "^DEV $1 " "$OUT/board_report.txt")
   echo "$line"
@@ -315,6 +364,9 @@ if [ "$BOARD" = 1 ] || [ "$LIST" = 1 ]; then
   check board_verdict "the board's own verdict is READY (LED2 off)" board_verdict
   check board_app "application tasks started after the self-test" \
     grep -q '^APP 1' "$OUT/board_report.txt"
+  check board_option_bytes "NRST_STOP_D1 = 1: Stop sleeps, not resets" board_option_bytes
+  check board_lsi "RTC's LSI measured within 10 % of 32 kHz" board_lsi
+  check board_idle "35 s of Idle: >= 3 heartbeats sent (TxDone), Stop + RTC wakes" board_idle
   if [ "$LIST" = 0 ] && [ -s "$OUT/board_report.txt" ]; then
     printf '\n  The board reports:\n'
     sed -n '/^REPORT_BEGIN/,/^REPORT_END/p' "$OUT/board_report.txt" | sed '1d;$d' | sed 's/^/    /'

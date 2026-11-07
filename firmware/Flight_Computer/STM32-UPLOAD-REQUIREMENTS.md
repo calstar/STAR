@@ -282,7 +282,7 @@ works too, with Arm GNU on PATH:
 -e flight` before committing. A newly enabled peripheral's HAL file lands in
 `Drivers/.../Src` and is picked up automatically. A new middleware folder
 needs a `build_src_filter` line. Still open in the `.ioc`: HSE (25 MHz Y1) +
-PLL (SYSCLK is 64 MHz from HSI), RTC on LSI with the wakeup timer, USB
+PLL (SYSCLK is 64 MHz from HSI), USB
 device-only.
 
 ---

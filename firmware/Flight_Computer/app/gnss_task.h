@@ -15,7 +15,12 @@
 extern "C" {
 #endif
 
+/* Starts stopped: the GPS rail is switched by gnss_task_set_active. */
 bool gnss_task_start(void);
+
+/* true: GPS rail on, detect + configure, 10 Hz fixes; false: rail off
+ * (Idle). Any task. */
+void gnss_task_set_active(bool on);
 
 /* Read-only view for telemetry (counters, latest fix). */
 const gnss_core_t* gnss_task_core(void);

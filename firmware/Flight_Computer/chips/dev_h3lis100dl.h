@@ -36,6 +36,10 @@ typedef struct {
 /* Identify, configure and verify. */
 int h3lis_init(const dev_bus_t* bus);
 
+/* Power-down (Idle): CTRL_REG1 PM = 000 (Table 18 p.25), axes left on:
+ * 0x07, the power-on value (p.24). h3lis_init() wakes it again. */
+int h3lis_power_down(const dev_bus_t* bus);
+
 /* One 5-byte burst from OUT_X (29h) with auto-increment. */
 int h3lis_read(const dev_bus_t* bus, h3lis_sample_t* out);
 

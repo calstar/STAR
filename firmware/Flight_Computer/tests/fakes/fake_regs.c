@@ -36,6 +36,12 @@ static int xfer(void* ctx, const uint8_t* tx, uint8_t* rx, uint16_t len) {
         } else {
             uint8_t keep = f->stuck[a];
             f->regs[a] = (uint8_t)((f->regs[a] & keep) | (tx[i] & ~keep));
+            /* A real self-clearing bit clears after every write that sets
+             * it (ISM330DHCX SW_RESET, p.51), not only the first. */
+            if (a == f->self_clear_reg && (tx[i] & f->self_clear_bits) &&
+                f->self_clear_rearm) {
+                f->clear_after_reads = f->self_clear_rearm;
+            }
             if (f->writes < sizeof(f->write_reg)) {
                 f->write_reg[f->writes] = a;
                 f->write_val[f->writes] = tx[i];

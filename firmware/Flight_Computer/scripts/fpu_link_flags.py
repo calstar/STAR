@@ -11,6 +11,10 @@ Import("env")  # noqa: F821  (provided by PlatformIO/SCons)
 
 FPU = ["-mfpu=fpv5-d16", "-mfloat-abi=hard"]
 
+# C++ (Ryan's radio code in src/, app/*.cpp): no exceptions, no RTTI, no
+# guard locks around function statics; nothing here needs them.
+env.Append(CXXFLAGS=["-fno-exceptions", "-fno-rtti", "-fno-threadsafe-statics"])
+
 env.Append(
     ASFLAGS=FPU,
     LINKFLAGS=FPU + ["--specs=nano.specs", "-Wl,--print-memory-usage"],
