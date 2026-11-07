@@ -106,6 +106,30 @@ static void test_heartbeat_is_counted_but_not_acted_on(void) {
     TEST_ASSERT_TRUE(fake::inject(out, static_cast<uint8_t>(n)));
     TEST_ASSERT_EQUAL(ArmAction::None, lk.poll(0));
     TEST_ASSERT_EQUAL_UINT32(1, lk.frames_ok());
+    // The decoded frame stays readable for telemetry / link tests.
+    TEST_ASSERT_EQUAL(FrameType::Heartbeat, lk.last_frame().type);
+    TEST_ASSERT_EQUAL_UINT16(9, lk.last_frame().seq);
+    TEST_ASSERT_EQUAL_UINT8(7, lk.last_frame().payload_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(payload, lk.last_frame().payload, 7);
+}
+
+static void test_bad_frame_does_not_replace_the_last_good_one(void) {
+    uint8_t payload[7] = {1, 0x10, 0x1C, 0, 0, 0, 0};
+    uint8_t out[kFrameMaxLen];
+    size_t n = 0;
+    TEST_ASSERT_EQUAL(
+        FrameStatus::Ok,
+        encode_frame(FrameType::Heartbeat, 41, payload, 7, out, sizeof out, n));
+    TEST_ASSERT_TRUE(fake::inject(out, static_cast<uint8_t>(n)));
+    (void)lk.poll(0);
+    TEST_ASSERT_EQUAL(
+        FrameStatus::Ok,
+        encode_frame(FrameType::Heartbeat, 42, payload, 7, out, sizeof out, n));
+    out[n - 1] ^= 0xFF; /* a different frame, CRC broken */
+    TEST_ASSERT_TRUE(fake::inject(out, static_cast<uint8_t>(n)));
+    (void)lk.poll(0);
+    TEST_ASSERT_EQUAL_UINT32(1, lk.frames_ok());
+    TEST_ASSERT_EQUAL_UINT16(41, lk.last_frame().seq);
 }
 
 static void test_send_goes_through_the_seam(void) {
@@ -145,6 +169,7 @@ int main(void) {
     RUN_TEST(test_noise_between_good_arms_does_not_cancel_them);
     RUN_TEST(test_pure_noise_never_arms);
     RUN_TEST(test_heartbeat_is_counted_but_not_acted_on);
+    RUN_TEST(test_bad_frame_does_not_replace_the_last_good_one);
     RUN_TEST(test_send_goes_through_the_seam);
     RUN_TEST(test_radio_errors_are_counted_apart_from_bad_frames);
     return UNITY_END();

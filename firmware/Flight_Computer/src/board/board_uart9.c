@@ -20,6 +20,21 @@ static void arm(void) {
     }
 }
 
+bool board_uart9_apply_baud(uint32_t baud) {
+    huart9.Init.BaudRate = baud;
+    /* HAL_UART_Init rewrites CR1 and clears FIFOEN, but leaves the handle's
+     * FifoMode at "enabled". Receive then waits for the RX FIFO threshold
+     * interrupt, which can't fire with the FIFO off: bytes overrun the
+     * single data register and only the one waiting at line idle arrives.
+     * So re-apply MX_UART9_Init's FIFO setup (keep in step with the .ioc). */
+    return HAL_UART_Init(&huart9) == HAL_OK &&
+           HAL_UARTEx_SetTxFifoThreshold(&huart9, UART_TXFIFO_THRESHOLD_1_8) ==
+               HAL_OK &&
+           HAL_UARTEx_SetRxFifoThreshold(&huart9, UART_RXFIFO_THRESHOLD_1_2) ==
+               HAL_OK &&
+           HAL_UARTEx_EnableFifoMode(&huart9) == HAL_OK;
+}
+
 bool board_uart9_start(osThreadId_t thread, uint32_t flag) {
     owner_flag = flag;
     owner = thread;
@@ -43,13 +58,15 @@ void board_uart9_send(const uint8_t* bytes, uint16_t len) {
 
 void board_uart9_set_baud(uint32_t baud) {
     (void)HAL_UART_AbortReceive_IT(&huart9);
-    huart9.Init.BaudRate = baud;
-    if (HAL_UART_Init(&huart9) != HAL_OK) {
+    if (!board_uart9_apply_baud(baud)) {
         errors = errors + 1U;
     }
     arm();
 }
 
+uint32_t board_uart9_rx_bytes(void) {
+    return head;
+}
 uint32_t board_uart9_overflows(void) {
     return overflows;
 }
@@ -81,6 +98,11 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t size) {
 void HAL_UART_ErrorCallback(UART_HandleTypeDef* huart) {
     if (huart == &huart9) {
         errors = errors + 1U;
-        arm();
+        /* An overrun ends the reception (HAL aborts it): start again. A
+         * framing/noise/parity error keeps it running, so re-arming then
+         * would only fail as busy. */
+        if (huart->RxState == HAL_UART_STATE_READY) {
+            arm();
+        }
     }
 }

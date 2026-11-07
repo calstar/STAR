@@ -61,7 +61,19 @@ public:
 
 BoardBus bus;
 BoardControl control;
-Sx1262Setup setup(bus, control, kDefaultLora);
+// The flight settings, except a bench build may lower the transmit power
+// (STAR_RADIO_POWER_DBM, -9..+22 on the high-power PA, datasheet p.84).
+#ifdef STAR_RADIO_POWER_DBM
+constexpr LoraConfig kLora = {kDefaultLora.freq_hz,  kDefaultLora.sf,
+                              kDefaultLora.bw,       kDefaultLora.cr,
+                              kDefaultLora.preamble, STAR_RADIO_POWER_DBM,
+                              kDefaultLora.sync_word};
+static_assert(STAR_RADIO_POWER_DBM >= -9 && STAR_RADIO_POWER_DBM <= 22,
+              "SX1262 high-power PA range is -9..+22 dBm");
+#else
+constexpr LoraConfig kLora = kDefaultLora;
+#endif
+Sx1262Setup setup(bus, control, kLora);
 Sx1262 receiver(bus);
 Link link(kTargetId);
 
@@ -69,6 +81,7 @@ osMutexId_t mutex;
 bool configured;
 uint16_t tx_seq;
 radio_status_t status;
+radio_rx_t last_rx;
 void (*on_command)(radio_command_t);
 uint8_t frame_buf[kFrameMaxLen];
 
@@ -103,7 +116,26 @@ void radio_task(void*) {
             continue;
         }
         take();
+        const uint32_t ok_before = link.frames_ok();
         const ArmAction action = link.poll(board_now_ms());
+        if (link.frames_ok() != ok_before) {
+            // Read the signal quality now, before the next packet lands.
+            PacketStatus ps = {0, 0, 0};
+            const Frame& f = link.last_frame();
+            last_rx.quality_ok = receiver.packet_status(ps);
+            last_rx.rssi_x2 = ps.rssi_x2;
+            last_rx.snr_x4 = ps.snr_x4;
+            last_rx.signal_rssi_x2 = ps.signal_rssi_x2;
+            last_rx.type = static_cast<uint8_t>(f.type);
+            last_rx.seq = f.seq;
+            last_rx.payload_len = f.payload_len;
+            memcpy(last_rx.payload, f.payload,
+                   f.payload_len < sizeof last_rx.payload
+                       ? f.payload_len
+                       : sizeof last_rx.payload);
+            last_rx.at_ms = board_now_ms();
+            last_rx.count++;
+        }
         status.frames_ok = link.frames_ok();
         status.frames_dropped = link.frames_dropped();
         status.radio_errors = link.radio_errors();
@@ -191,6 +223,16 @@ radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
 
 void radio_task_status(radio_status_t* out) {
     *out = status;
+}
+
+void radio_task_last_rx(radio_rx_t* out) {
+    if (!mutex) {
+        *out = last_rx;
+        return;
+    }
+    take();
+    *out = last_rx;
+    give();
 }
 
 }  // extern "C"

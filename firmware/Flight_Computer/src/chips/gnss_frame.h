@@ -26,7 +26,8 @@ typedef enum {
 
 #define GNSS_FRAME_NMEA_MAX_BODY 96U /* NMEA 0183 says 82 incl. $ and CRLF */
 #define GNSS_FRAME_UBX_MAX_PAYLOAD 1024U
-#define GNSS_FRAME_UBX_CAPTURE 100U /* NAV-PVT is 92 */
+/* NAV-PVT is 92; NAV-SAT is 8 + 12 per satellite, so 488 holds 40. */
+#define GNSS_FRAME_UBX_CAPTURE 488U
 
 typedef struct {
     uint8_t state;
