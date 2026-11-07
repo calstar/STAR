@@ -145,9 +145,13 @@ if [ ! -x "$OTA_BIN" ]; then
 fi
 # The backend must read the config the pipeline reads, or the GUI shows a different stand from
 # the one running (routes/config.ts getRunningConfigPath). Empty unless USE_SIM=1.
+# Under USE_SIM the config editor's file (CONFIG_PATH) is the sim config too: the backend seeds the
+# editor's active profile from it (/tmp/gui_logs/profiles/, wiped below on every sim start), so the
+# editor shows the sim stand -- its T7 included -- and a sim edit never writes the checkout's
+# config/config.toml.
 BACKEND_RUNNING_CONFIG=""
 if [ "${USE_SIM:-0}" = "1" ]; then
-  BACKEND_RUNNING_CONFIG="RUNNING_CONFIG_PATH=$CONFIG_FILE "
+  BACKEND_RUNNING_CONFIG="RUNNING_CONFIG_PATH=$CONFIG_FILE CONFIG_PATH=$CONFIG_FILE "
 fi
 pkill -f "ota_service" 2>/dev/null || true
 
