@@ -48,6 +48,7 @@
 
 #include "calibration/CaptureWindow.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
+#include "calibration/HpPtCode.hpp"
 #include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/RobustCalibrationManager.hpp"
@@ -290,18 +291,6 @@ static double select_lc_kg(uint16_t uid, double kg_cubic, double kg_phys, bool c
  * the whole measurement. Optional per-channel mA hysteresis kills threshold flicker at ~4 mA
  * open-circuit noise.
  */
-/**
- * HP PT shunt codes are defined as unsigned in [0, 2^31) vs 2.5 V ref (see board_simulator).
- * The same 21-byte field is often viewed as int32 in tools; a "reasonable" negative signed code
- * becomes uint32 >= 2^31 and convert_hp_pt_to_pressure used to return 0 PSI for all channels.
- */
-static uint32_t coerce_hp_pt_adc_counts(int32_t /* as_signed */, uint32_t as_unsigned) {
-    constexpr uint32_t kMaxCode = 2147483647u;  // 2^31 - 1, top of normalized scale
-    // HP 4–20 mA shunt codes are defined as unsigned vs 2.5 V ref. Always interpret the wire as
-    // uint32 — int32 sign makes many valid codes look "negative" and the old path returned 0.
-    return as_unsigned > kMaxCode ? kMaxCode : as_unsigned;
-}
-
 static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw,
                                         const fsw::config::PtBoardConfig& board,
                                         double full_scale_psi, double sense_resistor_ohms,
@@ -1737,10 +1726,10 @@ int main(int argc, char* argv[]) {
             const bool is_loop = loop_board != nullptr;
             const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
 
-            // The ADC cubic/robust and captures work in: for a 4-20 mA board, the coerced unsigned
-            // shunt code (board_simulator back-calculates valid codes in sim too); else the raw
-            // i32.
-            const uint32_t hp_wire_adc = is_loop ? coerce_hp_pt_adc_counts(adc_i32, adc_u32) : 0u;
+            // The ADC cubic/robust and captures work in: for a 4-20 mA board, the shunt code with a
+            // negative reading (an open loop's noise below 0 V) taken as no current -- never as full
+            // scale (see HpPtCode.hpp); else the raw i32.
+            const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
             last_adc_map[uid] = cal_adc;
