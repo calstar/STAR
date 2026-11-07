@@ -5,7 +5,7 @@
 #include "unity.h"
 
 // Build the code under test.
-#include "../../src/sx1262.cpp"
+#include "../../../src/chips/sx1262.cpp"
 
 using namespace radio_link;
 

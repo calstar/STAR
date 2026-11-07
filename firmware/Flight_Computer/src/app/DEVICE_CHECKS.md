@@ -2,7 +2,7 @@
 
 Reviewed October 29, 2026 against `inez/flight_computer` at `f8e110d5`. [Inez's answers in #137](https://github.com/calstar/STAR/issues/137#issuecomment-6486161496) confirm the first-spin components and intended behavior. Commit `550e5483` updates the CubeMX configuration but explicitly leaves generated C regeneration outstanding. Board arrival is expected around November 6; these checks have only been exercised on a host.
 
-The [component page](https://starberkeley.notion.site/Flight-Computer-components-3be50d7304ab806498d3cb20449516c2), manufacturer datasheets, and Inez's board review establish the map below. Routing is recorded in [`firmware.ioc`](../firmware.ioc). Generated [`main.c`](Src/main.c) still has old defaults.
+The [component page](https://starberkeley.notion.site/Flight-Computer-components-3be50d7304ab806498d3cb20449516c2), manufacturer datasheets, and Inez's board review establish the map below. Routing is recorded in [`firmware.ioc`](../../firmware.ioc). Generated [`main.c`](../../Core/Src/main.c) still has old defaults.
 
 ## Repository follow-up: October 28, 2026
 
@@ -10,7 +10,7 @@ Inez merged [self-test PR #138](https://github.com/calstar/STAR/pull/138) into `
 
 | Related work | What it establishes | Self-test integration decision |
 | --- | --- | --- |
-| [Radio API #139](https://github.com/calstar/STAR/pull/139), merged into `main` as `333d3332` | C++11 `radio_link::radio_probe`, `radio_receive`, and `radio_send` declarations in `firmware/Flight_Computer/src/radio.h`; SX1262 command-link intent | Share the eventual radio driver through a C-compatible adapter. Do not provide another competing radio implementation. The header has no implementation, deadline argument or delivery guarantee. |
+| [Radio API #139](https://github.com/calstar/STAR/pull/139), merged into `main` as `333d3332` | C++11 `radio_link::radio_probe`, `radio_receive`, and `radio_send` declarations in `firmware/Flight_Computer/src/radio/radio.h`; SX1262 command-link intent | Share the eventual radio driver through a C-compatible adapter. Do not provide another competing radio implementation. The header has no implementation, deadline argument or delivery guarantee. |
 | [ISM330DHCX driver #140](https://github.com/calstar/STAR/pull/140), open at `02656fc2` | Register-level read/write callbacks and WHO_AM_I `0x6B`, consistent with our identity check | Reuse the eventual bus owner, but retain a read-only identity probe. Do not call `ism330dhcx_init` from self-test: it resets and reconfigures the sensor. This proposed driver is not yet a dependency of the flight-computer branch. |
 
 The current radio header explicitly permits `radio_send` to do nothing and return `Ok`. Therefore an adapter must not translate that return value into `publish_status = PASS`. Keep publication unsupported until the driver actually sends and the team defines its delivery criterion. Likewise, `radio_probe()` has no execution-time contract; calling it inside a bounded coordinator callback requires a driver deadline guarantee or a separate service that owns the operation and exposes a cached result.
@@ -40,7 +40,7 @@ SPI1 routes PA5/PA6/PA7 (SCK/MISO/MOSI), SPI2 PB10/PC2_C/PC3_C, and SPI3 PB3/PB4
 
 ## Implemented transactions
 
-[`self_test_devices.c`](Src/self_test_devices.c) uses an injected SPI exchange callback. Tests inspect the wire bytes and inject replies. All frames use eight-bit, MSB-first transfers. The clock values below are ceilings, not recommended board operating rates.
+[`self_test_devices.c`](self_test_devices.c) uses an injected SPI exchange callback. Tests inspect the wire bytes and inject replies. All frames use eight-bit, MSB-first transfers. The clock values below are ceilings, not recommended board operating rates.
 
 | Device | Transmit bytes | Read / acceptance | Requested mode; maximum clock |
 | --- | --- | --- | --- |
@@ -58,7 +58,7 @@ Sensor identity reads do not exercise built-in mechanical self-test, measure noi
 
 ## Adapter requirements
 
-Initialize `self_test_devices_t` with an exchange callback and its context. Enable only verified devices in `configured_mask` using `SELF_TEST_DEVICE_ENABLED(id)`. The probe function matches `self_test_port_t.probe`; use a board-context wrapper when combining it with battery/publication callbacks. Device IDs are declared in [`self_test_devices.h`](Inc/self_test_devices.h). Unsupported GNSS/NAND/eMMC IDs return `NOT_IMPLEMENTED`; disabled bindings return `NOT_CONFIGURED`.
+Initialize `self_test_devices_t` with an exchange callback and its context. Enable only verified devices in `configured_mask` using `SELF_TEST_DEVICE_ENABLED(id)`. The probe function matches `self_test_port_t.probe`; use a board-context wrapper when combining it with battery/publication callbacks. Device IDs are declared in [`self_test_devices.h`](self_test_devices.h). Unsupported GNSS/NAND/eMMC IDs return `NOT_IMPLEMENTED`; disabled bindings return `NOT_CONFIGURED`.
 
 The exchange callback must select the correct bus/CS, enforce mode and clock ceiling, and use eight-bit transfers. Assert and release CS separately for each frame. Respect datasheet CS setup/hold and inter-command timing. The entire batch shares one deadline, including lock acquisition, BUSY waits, transfers and cleanup. Return `PASS` only after receiving every byte; propagate failures and partial transfers. The adapter must release CS, locks and transfers before returning. Check SX1262 BUSY before each command and return a bounded timeout if it stays high.
 
@@ -98,4 +98,4 @@ Page numbers below are printed PDF pages. Attached files were retrieved through 
 
 ## Validation
 
-The host suite compiles the production coordinator and device-check sources with warnings as errors. Protocol tests cover exact commands/modes/clock ceilings, response byte positions, wrong identities, blank PROM, the manufacturer's CRC vector, single-bit calibration corruption, radio status/error handling, unconfigured devices, transport errors, and coordinator reset. Run the commands in [README.md](README.md) with sanitizers and in Release configuration. Hardware timing, electrical behavior and target integration remain unverified.
+The host suite compiles the production coordinator and device-check sources with warnings as errors. Protocol tests cover exact commands/modes/clock ceilings, response byte positions, wrong identities, blank PROM, the manufacturer's CRC vector, single-bit calibration corruption, radio status/error handling, unconfigured devices, transport errors, and coordinator reset. Run the commands in [README.md](SELF_TEST.md) with sanitizers and in Release configuration. Hardware timing, electrical behavior and target integration remain unverified.

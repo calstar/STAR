@@ -5,9 +5,9 @@
 #include "unity.h"
 
 // Build the code under test, plus the fake radio from the radio.h tests.
-#include "../../src/arm_gate.cpp"
-#include "../../src/frame.cpp"
-#include "../../src/link.cpp"
+#include "../../../src/radio/arm_gate.cpp"
+#include "../../../src/radio/frame.cpp"
+#include "../../../src/radio/link.cpp"
 #include "../test_radio_seam/radio_fake.cpp"
 
 using namespace radio_link;

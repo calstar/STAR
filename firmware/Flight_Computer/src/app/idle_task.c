@@ -10,9 +10,9 @@
 
 #define EV_MODE (1U << 0)
 #define EV_CMD (1U << 1)
-#define FRAME_HEARTBEAT 0x01U /* src/frame.h FrameType::Heartbeat */
+#define FRAME_HEARTBEAT 0x01U /* src/radio/frame.h FrameType::Heartbeat */
 
-/* Aaron's proposals (Core/IDLE.md); the budget covers one SF9 TxDone
+/* Aaron's proposals (src/app/IDLE.md); the budget covers one SF9 TxDone
  * (2 x 165 ms time on air + 50 ms, sx1262_setup.cpp). */
 static const idle_config_t config = {
     .heartbeat_interval_ms = 10000,

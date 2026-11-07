@@ -2,7 +2,7 @@
 #define STAR_IDLE_TASK_H
 
 /*
- * The Idle loop on the board: Aaron's idle.c (PR #162, Core/IDLE.md) with
+ * The Idle loop on the board: Aaron's idle.c (PR #162, src/app/IDLE.md) with
  * the real adapters, sleeping in Stop between heartbeats (board_sleep).
  *
  *   read_battery    board_bringup_read_battery (PA0, mean of 16)
@@ -10,7 +10,7 @@
  *   send_heartbeat  Ryan's Heartbeat frame over the radio task, PASS only
  *                   after TxDone: state u8 (IDLE), battery_mV u16 (0 on
  *                   USB or an unread ADC: never USB's 5 V as the pack),
- *                   uptime_s u32 (src/frame.h). The previous-send result
+ *                   uptime_s u32 (src/radio/frame.h). The previous-send result
  *                   and failure count do not fit the 7-byte frame (#162
  *                   open question 3).
  *   poll_command    commands the radio task's ARM gate confirmed

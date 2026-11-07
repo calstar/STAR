@@ -2,8 +2,8 @@
 // registers, IRQ flags and device errors the way the datasheet describes.
 #include <string.h>
 
-#include "../../src/sx1262.cpp"
-#include "../../src/sx1262_setup.cpp"
+#include "../../../src/chips/sx1262.cpp"
+#include "../../../src/chips/sx1262_setup.cpp"
 #include "unity.h"
 
 using namespace radio_link;

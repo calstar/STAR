@@ -4,7 +4,7 @@
 #include "unity.h"
 
 // Build the code under test.
-#include "../../src/frame.cpp"
+#include "../../../src/radio/frame.cpp"
 
 using namespace radio_link;
 

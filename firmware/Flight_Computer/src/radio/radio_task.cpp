@@ -123,7 +123,7 @@ void radio_task(void*) {
 
 }  // namespace
 
-// Ryan's seam (src/radio.h), on the real chip. Callers hold the mutex:
+// Ryan's seam (src/radio/radio.h), on the real chip. Callers hold the mutex:
 // link.poll() inside the task, radio_send() inside radio_task_send_frame().
 namespace radio_link {
 RadioStatus radio_probe() {

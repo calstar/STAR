@@ -70,7 +70,7 @@ Stop mode.
 
 ## 3. When the eMMC is used: from ARMED
 
-The state machine (`Core/Inc/flight_state.h`, from `Flight_computer.drawio`):
+The state machine (`src/app/flight_state.h`, from `Flight_computer.drawio`):
 
 ```
 power on ─► SELF_TEST ─(done)─► IDLE ─(Arm)─► ARMED ─(launch)─► LAUNCHED ─(apogee)─► RECOVERY
@@ -340,9 +340,9 @@ tasks can call it unconditionally.
 
 | File | What |
 |---|---|
-| `Core/Inc/flight_state.h`, `Core/Src/flight_state.c` | the diagram's transition table |
-| `Core/Inc/emmc_port.h` | the seam |
-| `Core/Inc/emmc_log.h`, `Core/Src/emmc_log.c` | the log: format, queue, mount |
-| `Core/Inc/emmc_card.h`, `Core/Src/emmc_card.c` | CID/EXT_CSD checks against the datasheet |
-| `Core/Inc/emmc_stm32.h`, `Core/Src/emmc_stm32.c` | board adapter (not yet compiled; buffers need the RAM_D1 section, §7) |
+| `src/app/flight_state.h`, `src/app/flight_state.c` | the diagram's transition table |
+| `src/app/emmc_port.h` | the seam |
+| `src/app/emmc_log.h`, `src/app/emmc_log.c` | the log: format, queue, mount |
+| `src/chips/emmc_card.h`, `src/chips/emmc_card.c` | CID/EXT_CSD checks against the datasheet |
+| `src/board/emmc_stm32.h`, `src/board/emmc_stm32.c` | board adapter (not yet compiled; buffers need the RAM_D1 section, §7) |
 | `tests/emmc/` | host tests; CI job `stm32-emmc-host` |
