@@ -36,6 +36,11 @@ public:
     uint32_t radio_errors() const {
         return radio_errors_;
     }  // the radio did not answer (ErrNotFound, ErrTimeout, ...)
+    // The last frame that decoded (any type), for telemetry and link tests.
+    // Valid once frames_ok() > 0; the next good frame overwrites it.
+    const Frame& last_frame() const {
+        return frame_;
+    }
 
 private:
     ArmGate gate_;
