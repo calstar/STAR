@@ -2211,6 +2211,42 @@ export default function ConfigPage() {
         placeholder={title}
       />
     );
+    const sel = (i: number, field: string, title: string, opts: [string, string][], placeholder: string) => (
+      <select value={String(chs[i]?.[field] ?? '')} disabled={!canEdit} className={cell} title={title}
+        onChange={(e) => setT7ChannelField(boardKey, i, field,
+          e.target.value === '' ? undefined : field === 'signal' ? e.target.value : Number(e.target.value))}>
+        <option value="">{placeholder}</option>
+        {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    );
+    // The datasheet numbers each kind's physics conversion needs, one labelled column per field;
+    // a column is shown only when some channel uses it, and a channel it does not apply to shows —.
+    type T7Col = { key: string; label: string; title: string; applies: (c: any) => boolean; render: (c: any, i: number) => ReactNode };
+    const allCols: T7Col[] = [
+      { key: 'signal', label: 'Signal', title: 'PT transducer output', applies: (c) => c?.kind === 'PT',
+        render: (_c, i) => sel(i, 'signal', 'PT transducer output', T7_PT_SIGNALS.map((sg) => [sg, sg]), 'choose…') },
+      { key: 'full_scale', label: 'Full scale', title: 'PT: psi at full output · LC: rated capacity in kg',
+        applies: (c) => c?.kind === 'PT' || c?.kind === 'LC',
+        render: (c, i) => (
+          <span className="inline-flex items-center gap-1">
+            {num(i, 'full_scale', c?.kind === 'LC' ? 'rated kg' : 'full scale psi')}
+            <span className="text-xs text-text-muted">{c?.kind === 'LC' ? 'kg' : 'psi'}</span>
+          </span>) },
+      { key: 'shunt_ohms', label: 'Shunt (Ω)', title: '4-20 mA shunt resistor', applies: (c) => c?.kind === 'PT' && c?.signal === '4-20mA',
+        render: (_c, i) => num(i, 'shunt_ohms', 'shunt Ω') },
+      { key: 'sensitivity_mv_per_v', label: 'Sensitivity (mV/V)', title: 'Load cell rated output', applies: (c) => c?.kind === 'LC',
+        render: (_c, i) => num(i, 'sensitivity_mv_per_v', 'mV/V') },
+      { key: 'excitation_v', label: 'Excitation (V)', title: 'Load cell bridge excitation', applies: (c) => c?.kind === 'LC',
+        render: (_c, i) => num(i, 'excitation_v', 'excitation V') },
+      { key: 'r0_ohms', label: 'RTD element', title: 'RTD element (R at 0 °C)', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => sel(i, 'r0_ohms', 'RTD element (R at 0 °C)', [['100', 'Pt100'], ['1000', 'Pt1000']], 'choose…') },
+      { key: 'ljtr_ohms', label: 'LJTick-Resistance', title: 'LJTick-Resistance model (its fixed resistor)', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => sel(i, 'ljtr_ohms', 'LJTick-Resistance model (its fixed resistor)',
+          [['1000', 'LJTR-1k'], ['10000', 'LJTR-10k'], ['100000', 'LJTR-100k'], ['1000000', 'LJTR-1M']], 'choose…') },
+      { key: 'vref_v', label: 'Vref (V)', title: 'LJTick-Resistance reference; empty = 2.5', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => num(i, 'vref_v', '2.5') },
+    ];
+    const cols = allCols.filter((col) => chs.some((c) => col.applies(c)));
     return (
       <div className="p-4 pt-0 space-y-6">
         <FieldSection title="General">
@@ -2248,13 +2284,6 @@ export default function ConfigPage() {
           <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-gray-700/70 pb-1.5">
             Channels
           </h4>
-          <p className="text-xs text-text-muted">
-            Each PT, TC, LC and RTD channel is calibrated and shown like an ESP32 sensor of that kind,
-            under its role, in psi, °C or kg — captures, zeroes and tares on the Calibration
-            pages included. The physics numbers are the sensor&apos;s datasheet values, which the
-            Physics model (the default) streams; a Cubic or Robust sensor reads 0 until it has
-            captured points, exactly as on an ESP32 board.
-          </p>
           <div className="overflow-x-auto">
             <table className="text-sm">
               <thead>
@@ -2263,9 +2292,9 @@ export default function ConfigPage() {
                   <th className="px-2 py-1">Kind</th>
                   <th className="px-2 py-1">Role</th>
                   <th className="px-2 py-1">Range ±V</th>
-                  <th className="px-2 py-1" title="AIN(n) − AIN(n+1); n must be even">Diff.</th>
+                  <th className="px-2 py-1" title="AIN(n) − AIN(n+1); n must be even">Differential</th>
                   <th className="px-2 py-1" title="Calibration model, as for an ESP32 sensor">Model</th>
-                  <th className="px-2 py-1">Physics (datasheet)</th>
+                  {cols.map((col) => <th key={col.key} className="px-2 py-1 whitespace-nowrap" title={col.title}>{col.label}</th>)}
                   <th className="px-2 py-1" />
                 </tr>
               </thead>
@@ -2318,49 +2347,11 @@ export default function ConfigPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-2 py-1">
-                      <div className="flex flex-wrap gap-2 items-center">
-                        {c?.kind === 'PT' && (
-                          <>
-                            <select value={c?.signal ?? ''} disabled={!canEdit} className={cell} title="Transducer output"
-                              onChange={(e) => setT7ChannelField(boardKey, i, 'signal', e.target.value)}>
-                              <option value="">signal…</option>
-                              {T7_PT_SIGNALS.map((sg) => <option key={sg} value={sg}>{sg}</option>)}
-                            </select>
-                            {num(i, 'full_scale', 'full scale psi')}
-                            {c?.signal === '4-20mA' && num(i, 'shunt_ohms', 'shunt Ω')}
-                          </>
-                        )}
-                        {c?.kind === 'LC' && (
-                          <>
-                            {num(i, 'full_scale', 'rated kg')}
-                            {num(i, 'sensitivity_mv_per_v', 'mV/V')}
-                            {num(i, 'excitation_v', 'excitation V')}
-                          </>
-                        )}
-                        {c?.kind === 'TC' && <span className="text-xs text-text-muted pt-1.5">type K, CJC from the T7&apos;s internal sensor</span>}
-                        {c?.kind === 'RTD' && (
-                          <>
-                            <select value={String(c?.r0_ohms ?? '')} disabled={!canEdit} className={cell} title="RTD element (R at 0 °C)"
-                              onChange={(e) => setT7ChannelField(boardKey, i, 'r0_ohms', e.target.value === '' ? undefined : Number(e.target.value))}>
-                              <option value="">element…</option>
-                              <option value="100">Pt100</option>
-                              <option value="1000">Pt1000</option>
-                            </select>
-                            <select value={String(c?.ljtr_ohms ?? '')} disabled={!canEdit} className={cell} title="LJTick-Resistance model (its fixed resistor)"
-                              onChange={(e) => setT7ChannelField(boardKey, i, 'ljtr_ohms', e.target.value === '' ? undefined : Number(e.target.value))}>
-                              <option value="">LJTick-Resistance…</option>
-                              <option value="1000">LJTR-1k</option>
-                              <option value="10000">LJTR-10k</option>
-                              <option value="100000">LJTR-100k</option>
-                              <option value="1000000">LJTR-1M</option>
-                            </select>
-                            {num(i, 'vref_v', 'Vref (2.5)', 'w-24')}
-                          </>
-                        )}
-                        {c?.kind === 'VOLTAGE' && <span className="text-xs text-text-muted pt-1.5">volts only (no GUI sensor)</span>}
-                      </div>
-                    </td>
+                    {cols.map((col) => (
+                      <td key={col.key} className="px-2 py-1">
+                        {col.applies(c) ? col.render(c, i) : <span className="text-text-muted pt-1.5 inline-block">—</span>}
+                      </td>
+                    ))}
                     <td className="px-2 py-1">
                       <button type="button" disabled={!canEdit} onClick={() => removeT7Channel(boardKey, i)}
                         className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">
