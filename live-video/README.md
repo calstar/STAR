@@ -164,6 +164,12 @@ are under **Bench setup**.
 bundled, so other Macs need no Homebrew. It builds for Apple silicon only. The app is ad-hoc signed;
 after copying it to another Mac, run `xattr -dr com.apple.quarantine "HiDes Viewer.app"` once.
 
+`scripts/make-app.sh --install` also puts it in `/Applications` (`~/Applications` if that is not
+writable) and keeps it in the Dock, so it opens like any other app. Re-run it after pulling to update.
+
+The UDP target (the app's Send to UDP, the CLI's `--udp`) takes a name or an IPv4 address:
+`star-rfs.local:5600` and `192.168.2.20:5600` both work. A name is looked up when the output starts.
+
 ### Tests with recorded streams
 
 Two tests run only when given a stream file:

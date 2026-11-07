@@ -30,7 +30,7 @@ func option(_ name: String, in arguments: [String]) -> String? {
 func parseUDP(_ value: String) throws -> UDPOutput {
     let parts = value.split(separator: ":")
     guard parts.count == 2, let port = UInt16(parts[1]) else {
-        throw HiDesError.malformedReply("expected HOST:PORT, got \(value)")
+        throw HiDesError.udpTarget("expected HOST:PORT, got \(value)")
     }
     return try UDPOutput(host: String(parts[0]), port: port)
 }
