@@ -743,3 +743,34 @@ describe('zoom to fill', () => {
     expect(JSON.parse(readFileSync(CONFIG, 'utf8')).streams[0].fill).toBe(true);
   });
 });
+
+describe('recordings, through the agent', () => {
+  it('lists and opens through the agent, and an agent refusal comes back as its words', async () => {
+    const seen: any[] = [];
+    const srv = http.createServer((req, res) => {
+      let b = ''; req.on('data', (c) => (b += c));
+      req.on('end', () => {
+        seen.push({ url: req.url, body: b ? JSON.parse(b) : undefined });
+        const refuse = req.url === '/open' && JSON.parse(b).name === 'bad';
+        res.writeHead(refuse ? 409 : 200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(refuse ? { error: 'not a recording' } : req.url === '/recordings' ? { dir: '/r', recordings: [] } : { opened: '/r' }));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, host: '127.0.0.1' }, new FakeGateway());
+    const api = http.createServer(async (req, res) => { await handleVideoRequest(req, res, new URL(req.url!, 'http://x').pathname, svc); });
+    await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+    try {
+      expect(await (await fetch(`${base}/api/video/recordings`)).json()).toEqual({ dir: '/r', recordings: [] });
+      const ok = await fetch(`${base}/api/video/recordings/open`, { method: 'POST', body: JSON.stringify({ name: '2026-11-06_120000_save' }) });
+      expect(ok.status).toBe(200);
+      expect(seen.at(-1)).toEqual({ url: '/open', body: { name: '2026-11-06_120000_save' } });
+      const bad = await fetch(`${base}/api/video/recordings/open`, { method: 'POST', body: JSON.stringify({ name: 'bad' }) });
+      expect(bad.status).toBe(502);
+      expect((await bad.json()).error).toBe('not a recording');
+    } finally {
+      srv.close(); api.close();
+    }
+  });
+});

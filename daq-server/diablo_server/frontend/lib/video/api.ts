@@ -189,3 +189,29 @@ export function describeRecording(r: SaveResult & { reason: string; startedAt?: 
     + (gapped.length ? `; gaps (stream was down) in ${gapped.map((s) => s.stream).join(', ')}` : '')
     + (bad.length ? `; not recorded: ${bad.map((b) => `${b.stream} (${b.error})`).join(', ')}` : '');
 }
+
+// ── Recordings on the gateway machine ─────────────────────────────────────────
+
+export interface RecordingEntry {
+  /** Folder name, e.g. 2026-11-06_141503_record */
+  name: string;
+  /** "save" or "record" */
+  kind: string;
+  startedAt: number;
+  /** Still being recorded. */
+  active: boolean;
+  files: { stream: string; bytes: number }[];
+  bytes: number;
+}
+
+export const listRecordings = () => call<{ dir: string; recordings: RecordingEntry[] }>('GET', '/api/video/recordings');
+
+/** Open one recording (or, with no name, the recordings folder) in the gateway machine's file manager. */
+export const openRecording = (name?: string) => call<{ opened: string }>('POST', '/api/video/recordings/open', name ? { name } : {});
+
+/** "1.4 GB", "230 MB", "12 KB" */
+export function size(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+}

@@ -69,6 +69,8 @@ overhangs, for cameras whose shape wastes the slot. Off by default: letterboxing
 - Streams marked **include in recording** are buffered continuously (10 s segments, 5 min).
 - **Save last 5 min** keeps the buffer. **Record** keeps from the press until **Stop**.
 - Output: `video/recordings/<time>_save|record/<stream>.mp4`, video only, no re-encode. The
+  **Recordings** view (`/recordings`) lists them and opens a folder in the gateway machine's
+  file manager (Finder; xdg-open on Linux) -- useful when you are at that machine. The
   note after a save names gaps (gateway or camera down) and streams that were missing.
 - The disk guard runs on the gateway machine: Record is refused below 20 GB free, and stops
   cleanly at 5 GB. A recording interrupted by a restart is finished when the gateway starts.

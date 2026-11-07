@@ -3,9 +3,12 @@
  * and choosing the segments that cover a Save. Its file work against real segments and ffmpeg
  * is in test/video-gateway.integration.test.ts.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 // @ts-expect-error -- plain ESM, no types: it runs on the gateway machine with bare Node
-import { countGaps, segmentStart, segmentsForWindow, stamp } from '../../../../video/agent.mjs';
+import { countGaps, createAgent, openerFor, segmentStart, segmentsForWindow, stamp } from '../../../../video/agent.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 const at = (h: number, m: number, s: number) => new Date(2026, 10, 6, h, m, s).getTime();
 const name = (h: number, m: number, s: number) =>
@@ -59,4 +62,47 @@ describe('folder names', () => {
   it('sort by time', () => {
     expect(stamp(new Date(2026, 10, 6, 9, 5, 3))).toBe('2026-11-06_090503');
   });
+});
+
+describe('the recordings list and Open', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'video-agent-'));
+  const rec = join(dir, 'recordings');
+  const opened: string[] = [];
+  const agent = createAgent({ videoDir: dir, openPath: async (p: string) => { opened.push(p); } });
+
+  mkdirSync(join(rec, '2026-11-06_120000_save'), { recursive: true });
+  writeFileSync(join(rec, '2026-11-06_120000_save', 'pad.mp4'), Buffer.alloc(1000));
+  writeFileSync(join(rec, '2026-11-06_120000_save', 'eng.mp4'), Buffer.alloc(500));
+  mkdirSync(join(rec, '2026-11-06_130500_record'), { recursive: true });
+  writeFileSync(join(rec, '2026-11-06_130500_record', 'pad.mp4'), Buffer.alloc(2000));
+  mkdirSync(join(rec, 'not-a-recording'), { recursive: true });
+
+  it('lists recordings newest first, with their files and sizes, ignoring other folders', async () => {
+    const { recordings, dir: where } = await agent.listRecordings();
+    expect(where).toBe(rec);
+    expect(recordings.map((r: any) => r.name)).toEqual(['2026-11-06_130500_record', '2026-11-06_120000_save']);
+    expect(recordings[1]).toMatchObject({ kind: 'save', bytes: 1500, files: [{ stream: 'eng', bytes: 500 }, { stream: 'pad', bytes: 1000 }], active: false });
+    expect(recordings[0].startedAt).toBe(new Date(2026, 10, 6, 13, 5, 0).getTime());
+  });
+
+  it('opens the folder, or one recording, and nothing else', async () => {
+    await agent.openFolder(undefined);
+    await agent.openFolder('2026-11-06_120000_save');
+    expect(opened).toEqual([rec, join(rec, '2026-11-06_120000_save')]);
+    for (const bad of ['../../etc', '/etc', 'not-a-recording', '2026-11-06_999999_save', 42]) {
+      await expect(agent.openFolder(bad as any)).rejects.toThrow(/not a recording|no such recording/);
+    }
+    expect(opened).toHaveLength(2);
+  });
+
+  it('a machine with no file manager says so', async () => {
+    const headless = createAgent({ videoDir: dir, openPath: async () => { throw new Error('xdg-open: no method available'); } });
+    await expect(headless.openFolder(undefined)).rejects.toThrow(/could not open a file manager on this machine/);
+  });
+
+  it('uses Finder on macOS and xdg-open on Linux', () => {
+    expect([openerFor('darwin'), openerFor('linux'), openerFor('win32')]).toEqual(['open', 'xdg-open', 'explorer']);
+  });
+
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 });

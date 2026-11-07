@@ -265,6 +265,16 @@ export class VideoService {
     return done;
   }
 
+  /** The kept recordings on the gateway machine, newest first. */
+  listRecordings(): Promise<{ dir: string; recordings: unknown[] }> {
+    return this.agent('GET', '/recordings', undefined, AGENT_STATUS_TIMEOUT_MS);
+  }
+
+  /** Open the recordings folder (or one recording) in the gateway machine's file manager. */
+  openRecording(name?: string): Promise<{ opened: string }> {
+    return this.agent('POST', '/open', { name }, AGENT_STATUS_TIMEOUT_MS);
+  }
+
   /** Keep the last buffer window of every stream marked "include in recording". */
   async save(): Promise<SaveResult> {
     const streams = this.current().config.streams.filter((s) => s.record).map((s) => s.id);

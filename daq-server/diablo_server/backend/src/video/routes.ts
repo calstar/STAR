@@ -12,6 +12,9 @@
  *   GET    /api/video/streams/:id[/low]/check         why that camera is not giving video
  *   POST   /api/video/save                            keep the last buffer window (the agent)
  *   POST   /api/video/record/start | /record/stop     record included streams (the agent)
+ *   GET    /api/video/recordings                      the kept recordings (the agent)
+ *   POST   /api/video/recordings/open                 open one ({ name }) or the folder, in the
+ *                                                     gateway machine's file manager
  *
  * The WHEP routes are a proxy, so a browser's handshake travels the same origin and the same
  * sign-in as the rest of the GUI, and the gateway's HTTP side never faces the LAN. Only the
@@ -194,6 +197,15 @@ export async function handleVideoRequest(
     }
     if (pathname === '/api/video/record/stop' && req.method === 'POST') {
       sendJson(res, 200, await video.stopRecording());
+      return true;
+    }
+    if (pathname === '/api/video/recordings' && req.method === 'GET') {
+      sendJson(res, 200, await video.listRecordings());
+      return true;
+    }
+    if (pathname === '/api/video/recordings/open' && req.method === 'POST') {
+      const body = await readJson(req);
+      sendJson(res, 200, await video.openRecording(typeof body.name === 'string' ? body.name : undefined));
       return true;
     }
 

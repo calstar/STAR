@@ -172,3 +172,10 @@ describe('zoom to fill in the editor', () => {
     expect(draftsFrom(cfg)[0].fill).toBe(true);
   });
 });
+
+describe('recording sizes', () => {
+  it('read in the unit that fits', async () => {
+    const { size } = await import('@/lib/video/api');
+    expect([size(1_400_000_000), size(230_400_000), size(12_000), size(10)]).toEqual(['1.4 GB', '230 MB', '12 KB', '1 KB']);
+  });
+});

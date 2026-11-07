@@ -22,6 +22,7 @@ export const SensorInfoPage     = lazy(() => import('@/app/sensor-info/page'));
 export const StatusPage         = lazy(() => import('@/app/status/page'));
 export const SessionPage        = lazy(() => import('@/app/session/page'));
 export const VideoPage          = lazy(() => import('@/app/video/page'));
+export const RecordingsPage     = lazy(() => import('@/app/recordings/page'));
 
 export const AllPlotsPage       = lazy(() => import('@/app/plots/all/page'));
 export const ChamberPage        = lazy(() => import('@/app/plots/chamber/page'));

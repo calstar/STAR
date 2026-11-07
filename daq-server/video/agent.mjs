@@ -11,6 +11,9 @@
  *   POST /save          keep the last BUFFER_SECONDS of the given streams: { streams: [id] }
  *   POST /record/start  record the given streams from now: { streams, refuseBelowBytes, stopBelowBytes }
  *   POST /record/stop   end it: one file per stream
+ *   GET  /recordings    the kept recordings, newest first: folder, kind, when, files
+ *   POST /open          open the recordings folder (or one recording: { name }) in this
+ *                       machine's file manager -- Finder, or xdg-open on Linux
  *
  * Recording: from the press until Stop, each finished segment is linked into the
  * recording's folder as it completes (so a long recording outlives the buffer's cleanup),
@@ -83,6 +86,14 @@ export function countGaps(names) {
   return diffs.filter((d) => d > Math.max(2 * typical, typical + 5000)).length;
 }
 
+/** A recording folder's name: stamp(), then "_save" / "_record" (or another label). */
+export const RECORDING_NAME_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})_([a-z0-9-]{1,32})$/i;
+
+/** The command that opens a folder in this machine's file manager. */
+export function openerFor(platform) {
+  return platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer' : 'xdg-open';
+}
+
 /** "2026-11-06_141503" in local time: a folder name that sorts. */
 export function stamp(date) {
   const p = (n) => String(n).padStart(2, '0');
@@ -101,6 +112,12 @@ export function createAgent({
   password = process.env.VIDEO_GATEWAY_PASSWORD || '',
   ffmpeg = process.env.FFMPEG || 'ffmpeg',
   now = () => Date.now(),
+  /** Opens a path in the file manager; resolves, or rejects with why. Injected by tests. */
+  openPath = (path) => new Promise((ok, fail) => {
+    execFile(openerFor(process.platform), [path], { timeout: 10_000 }, (err, _o, stderr) => (err
+      ? fail(new Error(String(stderr).trim().split('\n').pop() || err.message))
+      : ok()));
+  }),
 } = {}) {
   const bufferDir = resolve(videoDir, 'buffer', 'raw');
   const recordingsDir = resolve(videoDir, 'recordings');
@@ -333,6 +350,55 @@ export function createAgent({
     return Math.round(total);
   }
 
+  // ── Recordings on disk ──────────────────────────────────────────────────────
+
+  /** The kept recordings, newest first. A recording still in progress is marked active. */
+  async function listRecordings() {
+    let names = [];
+    try { names = await fs.readdir(recordingsDir); } catch { return { dir: recordingsDir, recordings: [] }; }
+    const out = [];
+    for (const name of names) {
+      const m = name.match(RECORDING_NAME_RE);
+      if (!m) continue;
+      const [, y, mo, d, h, mi, sec, label] = m;
+      const folder = join(recordingsDir, name);
+      const entries = await fs.readdir(folder).catch(() => []);
+      const files = [];
+      for (const f of entries.filter((e) => e.endsWith('.mp4')).sort()) {
+        const st = await fs.stat(join(folder, f)).catch(() => null);
+        if (st) files.push({ stream: f.slice(0, -4), bytes: st.size });
+      }
+      out.push({
+        name,
+        kind: label,
+        startedAt: new Date(+y, +mo - 1, +d, +h, +mi, +sec).getTime(),
+        active: !!rec && rec.folder === folder,
+        files,
+        bytes: files.reduce((n, f) => n + f.bytes, 0),
+      });
+    }
+    out.sort((a, b) => b.startedAt - a.startedAt || b.name.localeCompare(a.name));
+    return { dir: recordingsDir, recordings: out };
+  }
+
+  /** Open the recordings folder, or one recording in it, in this machine's file manager. */
+  async function openFolder(name) {
+    let target = recordingsDir;
+    if (name !== undefined && name !== null && name !== '') {
+      // Only a name this agent would list: never a path from the request.
+      if (typeof name !== 'string' || !RECORDING_NAME_RE.test(name)) throw new Refused('not a recording');
+      target = join(recordingsDir, name);
+    }
+    await fs.mkdir(recordingsDir, { recursive: true });
+    if (!(await fs.stat(target).then((st) => st.isDirectory()).catch(() => false))) throw new Refused('no such recording');
+    try {
+      await openPath(target);
+    } catch (e) {
+      throw new Refused(`could not open a file manager on this machine (${e.message})`);
+    }
+    return { opened: target };
+  }
+
   function authorized(req) {
     const ip = req.socket.remoteAddress || '';
     if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
@@ -347,11 +413,13 @@ export function createAgent({
     if (!authorized(req)) return send(401, { error: 'the video agent needs the gateway password' });
     try {
       if (req.method === 'GET' && req.url === '/status') return send(200, await status());
-      if (req.method === 'POST' && ['/save', '/record/start', '/record/stop'].includes(req.url)) {
+      if (req.method === 'GET' && req.url === '/recordings') return send(200, await listRecordings());
+      if (req.method === 'POST' && ['/save', '/record/start', '/record/stop', '/open'].includes(req.url)) {
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) return send(413, { error: 'body too large' }); }
         let input;
         try { input = JSON.parse(body || '{}'); } catch { return send(400, { error: 'body is not JSON' }); }
+        if (req.url === '/open') return send(200, await openFolder(input.name));
         if (req.url === '/record/stop') return send(200, await stopRecording());
         const streams = Array.isArray(input.streams) ? input.streams.filter((s) => typeof s === 'string' && STREAM_ID_RE.test(s)) : [];
         if (!streams.length) return send(400, { error: 'no streams given' });
@@ -365,7 +433,7 @@ export function createAgent({
     }
   });
 
-  return { server, status, save, startRecording, stopRecording, recover };
+  return { server, status, save, startRecording, stopRecording, recover, listRecordings, openFolder };
 }
 
 // ── Run ──────────────────────────────────────────────────────────────────────
