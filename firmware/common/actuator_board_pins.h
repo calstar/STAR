@@ -47,10 +47,9 @@ constexpr Layout Actuator_Board = {
 
     // ACTUATOR_1 through ACTUATOR_10
     // Pre-remap order (Jan 2026): 7, 5, 48, 21, 36, 6, 4, 47, 14, 35.
-    // The remap is a permutation of those ten pins; ACTUATOR_8 is the one
-    // that maps to 47 (its old current-sense partner was GPIO 10). It was
-    // typed as 21, which drove ACTUATOR_4's pin (#163).
-    4, 6, 14, 21, 35, 5, 7, 47, 48, 36,
+    // ACTUATOR_4 is GPIO 47 and ACTUATOR_8 is GPIO 21 (the team, 2026-11-06).
+    // Both were typed as 21, so commanding either drove the same pin (#163).
+    4, 6, 14, 47, 35, 5, 7, 21, 48, 36,
 
     // CURRENT_SENSE_1 through CURRENT_SENSE_10
     // Hardware mapping: 1→18, 2→9, 3→13, 4→11, 5→1, 6→17, 7→8, 8→10, 9→12, 10→2
