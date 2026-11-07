@@ -3,6 +3,7 @@
 #include "board_time.h"
 #include "board_uart9.h"
 #include "cmsis_os2.h"
+#include "daq_task.h"
 #include "emmc_stm32.h"
 
 #define EV_RX (1U << 0)
@@ -21,6 +22,7 @@ static void set_baud(void* ctx, uint32_t baud) {
 
 static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
+    daq_record(type, data, len);
     (void)emmc_log_append(emmc_stm32_log(), type, osKernelGetTickCount(), data,
                           len);
 }

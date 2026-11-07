@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'firmware/**'
+      - 'lib/daq-protocol/**'
       - '.github/workflows/firmware-ci.yml'
   pull_request:
     paths:
       - 'firmware/**'
+      - 'lib/daq-protocol/**'
       - '.github/workflows/firmware-ci.yml'
 
 jobs:
@@ -23,6 +25,18 @@ jobs:
         run: cmake --build /tmp/star-self-test
       - name: Run portable tests
         run: ctest --test-dir /tmp/star-self-test --output-on-failure
+
+  stm32-ethernet-host:
+    name: STM32 Ethernet transport and DAQv2 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with sanitizers
+        run: cmake -S firmware/Flight_Computer/tests/ethernet -B /tmp/star-ethernet -DSELF_TEST_SANITIZERS=ON
+      - name: Build
+        run: cmake --build /tmp/star-ethernet
+      - name: Test
+        run: ctest --test-dir /tmp/star-ethernet --output-on-failure
 
   stm32-emmc-host:
     name: STM32 flight state + eMMC log (host only)
