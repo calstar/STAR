@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CAMERAS, clipAt, coverage, clipUrl, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
+import { MAX_CAMERAS, clipAt, coverage, clipUrl, followerCorrection, MAX_NUDGE, SEEK_DRIFT_S, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
@@ -173,10 +173,28 @@ describe('several cameras', () => {
     expect(leaderOf(['a'], clips, null)).toBeNull();
   });
 
-  it('a follower is re-seeked only past one frame of drift', () => {
-    expect(drifted(10.02, 10, 1 / 30)).toBe(false);
-    expect(drifted(10.04, 10, 1 / 30)).toBe(true);
-    expect(drifted(9.96, 10, 1 / 30)).toBe(true);
+  describe('keeping a follower in step', () => {
+    const f = 1 / 30;
+    it('within a frame: left alone at 1x', () => {
+      expect(followerCorrection(10.02, 10, f)).toEqual({ seek: false, rate: 1 });
+      expect(followerCorrection(9.98, 10, f)).toEqual({ seek: false, rate: 1 });
+    });
+    it('a little ahead: slowed, not seeked; a little behind: sped up', () => {
+      const ahead = followerCorrection(10.05, 10, f);
+      expect(ahead.seek).toBe(false);
+      expect(ahead.rate).toBeCloseTo(0.95);
+      const behind = followerCorrection(9.95, 10, f);
+      expect(behind.seek).toBe(false);
+      expect(behind.rate).toBeCloseTo(1.05);
+    });
+    it('the nudge is capped, so catching up is never visible as speed', () => {
+      expect(followerCorrection(10.6, 10, f).rate).toBeCloseTo(1 - MAX_NUDGE);
+      expect(followerCorrection(9.4, 10, f).rate).toBeCloseTo(1 + MAX_NUDGE);
+    });
+    it('far out (stalled, never started): one seek', () => {
+      expect(followerCorrection(10 + SEEK_DRIFT_S + 0.1, 10, f)).toEqual({ seek: true, rate: 1 });
+      expect(followerCorrection(10 - SEEK_DRIFT_S - 0.1, 10, f)).toEqual({ seek: true, rate: 1 });
+    });
   });
 });
 

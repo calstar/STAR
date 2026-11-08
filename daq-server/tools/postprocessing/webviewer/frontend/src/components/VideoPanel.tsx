@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VideoClip } from '../types';
 import {
-  MAX_CAMERAS, clipAt, clipUrl, drifted, fileOffset, fileToWall, frameSeconds,
+  MAX_CAMERAS, clipAt, clipUrl, fileOffset, fileToWall, followerCorrection, frameSeconds,
   leaderOf, playable, sameClip, streamsOf, toggleCamera,
 } from '../video';
 
@@ -38,6 +38,9 @@ const typing = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
 };
+
+// A follower seeked into step is not measured again for this long (see followerCorrection).
+const RESETTLE_MS = 1500;
 
 // While playing, a playhead within this of where a video already is came from playback
 // itself: seeking to it would stall the video for nothing. Fine drift is the leader's job.
@@ -90,6 +93,8 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
   playheadRef.current = playhead;
   const report = useRef(onPlayhead);
   report.current = onPlayhead;
+  // When each follower was last seeked into step (performance.now()), so it gets to land.
+  const resettled = useRef(new Map<string, number>());
 
   const tiles = shown.map((stream) => {
     const at = playhead == null ? null : clipAt(clips, stream, playhead);
@@ -110,6 +115,7 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
         continue;
       }
       const go = () => {
+        if (!playing && v.playbackRate !== 1) v.playbackRate = 1;
         const following = playing && !v.paused && Math.abs(v.currentTime - at.offset) < FOLLOW_SLOP_S;
         if (!following) v.currentTime = Math.min(at.offset, Math.max(0, (v.duration || at.clip.duration) - 1e-3));
         // A refusal (autoplay policy, an undecodable file) stops play. An AbortError does
@@ -142,6 +148,8 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
     const v = leader ? videos.current.get(leader) : undefined;
     if (!playing || !leader || !leaderAt || !v) return;
     const clip = leaderAt.clip;
+    // The leader sets the pace, so it runs at 1x, even if it was a follower being steered.
+    if (v.playbackRate !== 1) v.playbackRate = 1;
     const others = () => [...videos.current.entries()].filter(([s]) => s !== leader);
     const onFrame = (fileS: number) => {
       // Only frames of this clip, settled where it was put. A file just switched in (a
@@ -154,11 +162,23 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
       const now = playheadRef.current;
       if (now != null && wall < now - FOLLOW_SLOP_S) return;
       report.current(wall);
+      const t = performance.now();
       for (const [s, f] of others()) {
         const fc = loaded.current.get(s);
         if (!fc || f.paused || f.seeking) continue;
         const wanted = fileOffset(fc, wall);
-        if (wanted != null && drifted(f.currentTime, wanted, frameSeconds(fc))) f.currentTime = wanted;
+        if (wanted == null) continue;
+        const fix = followerCorrection(f.currentTime, wanted, frameSeconds(fc));
+        if (fix.seek) {
+          // Leave it alone until the seek lands and it has played a moment: measured
+          // mid-seek it reads as still out, and a second seek is the stall itself.
+          if (t - (resettled.current.get(s) ?? -Infinity) < RESETTLE_MS) continue;
+          resettled.current.set(s, t);
+          f.playbackRate = 1;
+          f.currentTime = wanted;
+        } else if (f.playbackRate !== fix.rate) {
+          f.playbackRate = fix.rate;
+        }
       }
     };
     // The last frame is shown 1/fps before the file's end, so the playhead would stop just

@@ -129,9 +129,31 @@ export function leaderOf(shown: string[], clips: VideoClip[], t: number | null):
   return null;
 }
 
-/** A follower is re-seeked only once it has drifted more than one of its own frames from
- *  where the leader says it should be: a seek costs a decode from the last keyframe. */
-export const drifted = (current: number, wanted: number, frame: number) => Math.abs(current - wanted) > frame;
+/** Past this much drift a follower is seeked; below it, it is steered by its speed. */
+export const SEEK_DRIFT_S = 1;
+/** The most a follower's speed is nudged while it catches up (±10%: not visible). */
+export const MAX_NUDGE = 0.1;
+
+/**
+ * How to bring a follower back in step with the leader, given where it is (`current`) and
+ * where the leader says it should be (`wanted`), in file seconds:
+ *
+ * - within one of its frames: leave it at 1×;
+ * - more than a frame but under SEEK_DRIFT_S: change its speed, by the drift per second up
+ *   to ±MAX_NUDGE, so it closes the gap over the next second or so while it keeps playing;
+ * - further than that (it stalled, or never started): seek it, once.
+ *
+ * Steering rather than seeking is what keeps a tile from freezing. Safari seeks a playing
+ * video by decoding forward from the last keyframe, slowly: a follower seeked into line
+ * for being a frame out had fallen out again by the time the seek landed, was seeked
+ * again, and its picture stood still for seconds after play started.
+ */
+export function followerCorrection(current: number, wanted: number, frame: number): { seek: boolean; rate: number } {
+  const ahead = current - wanted;
+  if (Math.abs(ahead) > SEEK_DRIFT_S) return { seek: true, rate: 1 };
+  if (Math.abs(ahead) <= frame) return { seek: false, rate: 1 };
+  return { seek: false, rate: 1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, ahead)) };
+}
 
 /** Breaks shorter than this between two stretches of footage are not shown as gaps: they
  *  are a segment boundary's few ms, not an outage anyone needs to see. */

@@ -103,7 +103,10 @@ hook: no series, no fetch.
 **Playback.** Play/pause (space) runs at 1×, and while it plays one tile leads: the first
 camera shown with footage there drives the playhead from the frames it actually shows
 (`requestVideoFrameCallback`). On each of its frames, every other playing tile is checked
-against that instant and re-seeked only past one frame of drift. When the leader's footage
+against that instant. A tile more than a frame out is steered back by its speed (up to
+±10 %, not visible) rather than seeked; only one more than a second out is seeked, once,
+and then left to settle. Seeking for small drift froze tiles in Safari, which seeks a
+playing video slowly. When the leader's footage
 ends, the next camera with footage takes over. Where the camera
 has no footage, the page clock carries the playhead on at real speed. ← / → (and ◀ ▶) step
 one frame, using the clip's own frame period from its mp4 header. Drag the playhead's tab
