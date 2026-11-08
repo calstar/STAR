@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clipAt, clipUrl, fileOffset, fileToWall, frameSeconds, pageForward, playable, sameClip, streamsOf } from './video';
+import { MAX_CAMERAS, clipAt, clipUrl, defaultCameras, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
@@ -138,5 +138,41 @@ describe('playback', () => {
       expect(pageForward([85, 95], bounds, 95.1)).toEqual([90, 100]);
       expect(pageForward([90, 100], bounds, 100.5)).toBeNull();
     });
+  });
+});
+
+describe('several cameras', () => {
+  it('open on the preferred camera if the run has it, else the first with footage', () => {
+    expect(defaultCameras(['a', 'b', 'c'], 'b')).toEqual(['b']);
+    expect(defaultCameras(['a', 'b', 'c'], 'zz')).toEqual(['a']);
+    expect(defaultCameras(['a', 'b', 'c'], null)).toEqual(['a']);
+    expect(defaultCameras([], 'a')).toEqual([]);
+  });
+
+  it('turning cameras on keeps picker order, stops at four, and never empties', () => {
+    const order = ['a', 'b', 'c', 'd', 'e'];
+    expect(toggleCamera(['c'], 'a', order)).toEqual(['a', 'c']);
+    expect(toggleCamera(['a', 'b', 'c', 'd'], 'e', order)).toEqual(['a', 'b', 'c', 'd']);
+    expect(toggleCamera(['a', 'c'], 'a', order)).toEqual(['c']);
+    expect(toggleCamera(['a'], 'a', order)).toEqual(['a']);
+    expect(MAX_CAMERAS).toBe(4);
+  });
+
+  it('the leader is the first shown camera with footage left to play', () => {
+    const clips = [clip('a', 'record', 100, 10), clip('b', 'record', 95, 30)];
+    expect(leaderOf(['a', 'b'], clips, 105)).toBe('a');
+    expect(leaderOf(['b', 'a'], clips, 105)).toBe('b');
+    // a's footage is over (or on its last frame): b leads.
+    expect(leaderOf(['a', 'b'], clips, 110)).toBe('b');
+    expect(leaderOf(['a', 'b'], clips, 112)).toBe('b');
+    // Nobody has footage: the page clock carries the playhead.
+    expect(leaderOf(['a', 'b'], clips, 200)).toBeNull();
+    expect(leaderOf(['a'], clips, null)).toBeNull();
+  });
+
+  it('a follower is re-seeked only past one frame of drift', () => {
+    expect(drifted(10.02, 10, 1 / 30)).toBe(false);
+    expect(drifted(10.04, 10, 1 / 30)).toBe(true);
+    expect(drifted(9.96, 10, 1 / 30)).toBe(true);
   });
 });

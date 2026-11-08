@@ -88,8 +88,17 @@ moment; a drag still zooms and hovering never seeks. In compose the folder is
 mounted instead and the panel never appears. Desert recordings are copied in afterwards
 (`daq-server/video/README.md`).
 
-**Playback.** Play/pause (space) runs at 1×, and while it plays the video drives the
-playhead from the frames it actually shows (`requestVideoFrameCallback`). Where the camera
+**Cameras.** The panel lists cameras, not files: a camera's footage in a run is all its
+clips together, and where a Save and a Record hold the same moment the Record plays. One
+camera shows at first, the one starred (★, remembered per browser) if the run has it.
+Up to four can be on, in a grid. A camera that is off has no `<video>` at all, so it costs
+nothing.
+
+**Playback.** Play/pause (space) runs at 1×, and while it plays one tile leads: the first
+camera shown with footage there drives the playhead from the frames it actually shows
+(`requestVideoFrameCallback`). On each of its frames, every other playing tile is checked
+against that instant and re-seeked only past one frame of drift. When the leader's footage
+ends, the next camera with footage takes over. Where the camera
 has no footage, the page clock carries the playhead on at real speed. ← / → (and ◀ ▶) step
 one frame, using the clip's own frame period from its mp4 header. Drag the playhead's tab
 to scrub. When it runs off the right edge of a zoomed plot, the view pages forward one

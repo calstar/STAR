@@ -94,3 +94,38 @@ export function pageForward(
   if (end > bounds[1]) [start, end] = [bounds[1] - span, bounds[1]];
   return [start, end];
 }
+
+/** Most cameras shown at once: each one decodes its own video. */
+export const MAX_CAMERAS = 4;
+
+/** The cameras a run opens with: the viewer's preferred one if this run has it, else the
+ *  first that has footage. */
+export function defaultCameras(streams: string[], preferred: string | null): string[] {
+  if (preferred && streams.includes(preferred)) return [preferred];
+  return streams.length ? [streams[0]] : [];
+}
+
+/** Turn a camera on or off, keeping the shown ones in picker order and at most
+ *  MAX_CAMERAS; the last one cannot be turned off (there would be nothing to watch). */
+export function toggleCamera(shown: string[], stream: string, order: string[]): string[] {
+  if (shown.includes(stream)) return shown.length > 1 ? shown.filter((s) => s !== stream) : shown;
+  if (shown.length >= MAX_CAMERAS) return shown;
+  return order.filter((s) => s === stream || shown.includes(s));
+}
+
+/**
+ * During play, the tile whose frames move the playhead: the first shown camera (in order)
+ * with footage left to play at `t`. Null when none has, and the page clock carries it.
+ */
+export function leaderOf(shown: string[], clips: VideoClip[], t: number | null): string | null {
+  if (t == null) return null;
+  for (const s of shown) {
+    const at = clipAt(clips, s, t);
+    if (at && playable(at.clip, at.offset)) return s;
+  }
+  return null;
+}
+
+/** A follower is re-seeked only once it has drifted more than one of its own frames from
+ *  where the leader says it should be: a seek costs a decode from the last keyframe. */
+export const drifted = (current: number, wanted: number, frame: number) => Math.abs(current - wanted) > frame;
