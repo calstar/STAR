@@ -1,0 +1,25 @@
+{
+  "name": "star-fc-gui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "STAR Flight Computer bench app: the window (renders the Rust backend's view)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "tauri": "tauri",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "lit-html": "3.3.3",
+    "uplot": "1.6.32"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@tauri-apps/cli": "2.12.4",
+    "typescript": "5.9.3",
+    "vite": "7.3.7"
+  }
+}

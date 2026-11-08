@@ -32,6 +32,7 @@ Test-GUI/
 │   ├── sense_gui.py       # <- profiles + launch(), pick with --board
 │   ├── requirements.txt
 │   └── README.md
+├── FlightComputer-GUI/    # STM32 flight computer over USB: Rust + Tauri app (own protocol; see its README)
 ├── Actuator-GUI/          # Actuator board  (reference actuator example)
 │   ├── actuator_gui.py    # <- profile (kind="actuator") + launch()
 │   ├── requirements.txt
