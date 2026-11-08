@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
-import starWordmark from './assets/star-wordmark.png';
 import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource, VideoClip } from './types';
 import { fmtBytes, fmtDuration } from './util';
 import { coverage, pageForward } from './video';
@@ -281,12 +280,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {/* Wordmark, divider, title — the header the other STAR apps use
-            (star-openrocket/frontend/src/App.tsx). The asset is synced from
-            assets/brand by scripts/sync-brand.sh; do not hand-edit the copy. */}
-        <img className="topbar-logo" src={starWordmark} alt="STAR" />
-        <div className="topbar-divider" />
-        <h1>DAQ Run Viewer</h1>
+        {/* The DAQ console's header (diablo_server/frontend TabBar): its name with
+            "a STAR project" under it, a hairline, then this view, underlined. */}
+        <span className="brand" title="Diablo DAQ: the stand's data acquisition and control. A STAR project.">
+          <span className="brand-name">Diablo DAQ</span>
+          <span className="brand-sub">a STAR project</span>
+        </span>
+        <h1>Run Viewer</h1>
       </header>
 
       <div className="body">
@@ -467,18 +467,28 @@ export default function App() {
                         Reset view
                       </button>
                       <div className="spacer" />
-                      <a className="btn" href={api.downloadUrl(runId, [], null, null, timeSource)}>
-                        Download run CSV
-                      </a>
-                      <a
-                        className={`btn${selArr.length ? '' : ' disabled'}`}
-                        href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end, timeSource) : undefined}
-                      >
-                        Export plot CSV
-                      </a>
-                      <button className="btn" onClick={savePng} disabled={series.length === 0}>
-                        Save image
-                      </button>
+                      {/* One labelled group, as the console sets its toggles: the three
+                          ways out of the viewer, named short so the row fits a laptop. */}
+                      <span className="tr-label">Export</span>
+                      <div className="seg">
+                        <a
+                          className="btn"
+                          href={api.downloadUrl(runId, [], null, null, timeSource)}
+                          title="Download every primary channel of the whole run as CSV (long format: time, component, value)"
+                        >
+                          Run CSV
+                        </a>
+                        <a
+                          className={`btn${selArr.length ? '' : ' disabled'}`}
+                          href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end, timeSource) : undefined}
+                          title="Export the plotted channels over the current window as CSV (one column per channel)"
+                        >
+                          Plot CSV
+                        </a>
+                        <button className="btn" onClick={savePng} disabled={series.length === 0} title="Save the plot as a PNG image">
+                          PNG
+                        </button>
+                      </div>
                     </div>
 
                     <div className="chart-wrap">

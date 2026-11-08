@@ -307,30 +307,33 @@ uPlot canvas ──toBlob()──▶ PNG
 
 ## Theme
 
-The header is the one the other STAR apps use — wordmark, rule, title (see
-`star-openrocket/frontend/src/App.tsx`). `star-wordmark.png` is synced from
-`assets/brand` by `scripts/sync-brand.sh`; the copy under `src/assets/` is generated, so
-edit the master and re-run the script.
+Drawn the way the DAQ console is (`daq-server/diablo_server/frontend/app/globals.css`;
+feed-twin's console shares it), so the viewer reads as part of the same stand: true black,
+a panel is a region between hairlines rather than a card, nothing is rounded or casts a
+shadow, labels and controls are small spaced monospace capitals, related buttons share
+one hairline box (the console's segmented control: Play/step, the exports), and colour is
+kept for what it means: each channel's trace colour on the plot, amber for "not exact or
+not real" (a simulated run, a clip placed approximately). The header is the console's:
+"Diablo DAQ" with "a STAR project" under it, a hairline, then this view. Inter is served
+from `public/fonts` (the same files the DAQ ships, SIL OFL), so the viewer draws the same
+on the stand's offline network.
 
-Controls are a base plus variants, mirroring the vocabulary the design tools share
-(`lib/stardesign-ui/src/theme.ts`): `.btn` bordered by default, `.btn.ghost` chromeless
-for controls that are always present but rarely the point (Clear), `.btn.sm` compact for
-a row shared with inputs; `.input` for every text field, with the classes beside it
-setting only width. Both live in a **Primitives** block at the top of `styles.css`, ahead
-of every app section — declared after their consumers, a base rule wins on equal
-specificity, which is how the Config filter once rendered full-width and the description
-box grew a border it was meant not to have. `.btn` also sets an explicit `line-height`,
-because a `<button>` takes the UA's `normal` while an `<a class="btn">` inherits the
-body's 1.45, which rendered the CSV links 3px taller than the buttons beside them.
+Controls are a base plus variants: `.btn` a hairline box by default, `.btn.ghost` with no
+box until hovered (Clear), `.btn.sm` compact for a row shared with inputs, `.seg` to set
+buttons into one box; `.input` for every text field, with the classes beside it setting
+only width. Both live in a **Primitives** block at the top of `styles.css`, ahead of every
+app section — declared after their consumers, a base rule wins on equal specificity, which
+is how the Config filter once rendered full-width and the description box grew a border it
+was meant not to have. `.btn` also sets an explicit `line-height`, because a `<button>`
+takes the UA's `normal` while an `<a class="btn">` inherits the body's 1.45.
 
-Dark-only otherwise, adopting the conventions the recovery-calculator enforces
-(`recovery-calculator/frontend/src/lib/theme.test.ts`): a `--color-*` token
-namespace where every text tier clears WCAG **AAA (7:1)** on every background, a
-`--text-*` scale that never drops below **13px**, and a chart palette kept as
-literal hex in `src/chartTheme.ts` (canvas ignores `var()`, which is why axis
-text must not be left to default to black). `frontend/theme.check.mjs` (run via
-`npm test`) parses `styles.css` directly and fails on any contrast, type-scale,
-palette-mirror, or undeclared-var violation.
+Two guardrails are the viewer's own and win over the console where they differ
+(`frontend/theme.check.mjs`, run by `npm test`, after the recovery-calculator's theme
+test): every text tier clears WCAG **AAA (7:1)** on every background, so the quietest grey
+is `#a3a3a3` where the console uses `#7a7a7a`; and no text is below **13px**, where the
+console sets its capitals at 11-12px. The check parses `styles.css` and also holds the
+canvas colours in `src/chartTheme.ts` (axis, grid, playhead, coverage band: literal hex,
+because a canvas ignores `var()`) to the CSS tokens they mirror.
 
 ## Notes
 
