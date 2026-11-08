@@ -1,0 +1,26 @@
+[workspace]
+members = [".", "src-tauri"]
+# `cargo test` at the root builds the core only: it needs no webview libraries.
+default-members = ["."]
+resolver = "2"
+
+[package]
+name = "star-fc"
+version = "0.1.0"
+edition = "2021"
+description = "STAR flight computer bench app: protocol, decoding, simulated board, backend"
+publish = false
+
+[dependencies]
+serialport = { version = "4.10", default-features = false }
+crc32fast = "1.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "7"
+
+[dev-dependencies]
+tempfile = "3"
+tungstenite = "0.28"
+
+[profile.dev.package."*"]
+opt-level = 2
