@@ -65,6 +65,25 @@ export class AgentError extends Error {}
 const AGENT_STATUS_TIMEOUT_MS = 8000;
 /** A Save concatenates up to 5 minutes per stream; ffmpeg does that in about a second each. */
 const AGENT_SAVE_TIMEOUT_MS = 120_000;
+/** Round trips per clock measurement; the quickest one is kept. */
+const CLOCK_SAMPLES = 3;
+const CLOCK_TIMEOUT_MS = 2000;
+
+/** One timed round trip to the agent's clock: sent and received on ours, `agentNow` on its. */
+export interface ClockSample { sent: number; agentNow: number; received: number }
+
+/**
+ * The gateway's clock minus this machine's (whose clock the sensors are stamped on), from
+ * timed round trips, NTP-style: the agent read its clock somewhere inside the round trip, so
+ * take the midpoint, and the half round trip is how far off that can be. The quickest round
+ * trip is the tightest bound, so that one is kept. Null with no usable sample.
+ */
+export function clockOffset(samples: ClockSample[]): { offsetMs: number; uncertaintyMs: number } | null {
+  const ok = samples.filter((x) => Number.isFinite(x.agentNow) && x.received >= x.sent);
+  if (!ok.length) return null;
+  const best = ok.reduce((a, b) => (b.received - b.sent < a.received - a.sent ? b : a));
+  return { offsetMs: best.agentNow - (best.sent + best.received) / 2, uncertaintyMs: (best.received - best.sent) / 2 };
+}
 
 let cachedLanName: string | undefined;
 
@@ -253,8 +272,9 @@ export class VideoService {
   async startRecording(): Promise<{ folder: string; startedAt: number; streams: string[] }> {
     const streams = this.current().config.streams.filter((s) => s.record).map((s) => s.id);
     if (!streams.length) throw new AgentError('no stream is marked "include in recording"');
+    const clock = await this.measureClock();
     const started = await this.agent<{ folder: string; startedAt: number; streams: string[] }>(
-      'POST', '/record/start', { streams, ...this.guardBytes() }, AGENT_STATUS_TIMEOUT_MS);
+      'POST', '/record/start', { streams, ...this.guardBytes(), ...(clock ? { clock } : {}) }, AGENT_STATUS_TIMEOUT_MS);
     await this.refreshBuffer();
     return started;
   }
@@ -279,7 +299,28 @@ export class VideoService {
   async save(): Promise<SaveResult> {
     const streams = this.current().config.streams.filter((s) => s.record).map((s) => s.id);
     if (!streams.length) throw new AgentError('no stream is marked "include in recording"');
-    return this.agent<SaveResult>('POST', '/save', { streams, label: 'save' }, AGENT_SAVE_TIMEOUT_MS);
+    const clock = await this.measureClock();
+    return this.agent<SaveResult>('POST', '/save', { streams, label: 'save', ...(clock ? { clock } : {}) }, AGENT_SAVE_TIMEOUT_MS);
+  }
+
+  /**
+   * How far the gateway's clock is from this one (clockOffset), for the recording's timing
+   * file. Null if the agent cannot say (unreachable, or one from before GET /clock): the
+   * Save or Record goes ahead regardless, and the viewer then takes the clocks as equal.
+   */
+  async measureClock(): Promise<{ offsetMs: number; uncertaintyMs: number } | null> {
+    const samples: ClockSample[] = [];
+    for (let i = 0; i < CLOCK_SAMPLES; i++) {
+      try {
+        const sent = Date.now();
+        const r = await this.agent<{ now?: unknown }>('GET', '/clock', undefined, CLOCK_TIMEOUT_MS);
+        const received = Date.now();
+        if (typeof r?.now === 'number') samples.push({ sent, agentNow: r.now, received });
+      } catch {
+        break;
+      }
+    }
+    return clockOffset(samples);
   }
 
   /** Why stream `id` (or its low-res URL) is not giving video. undefined: no such stream. */

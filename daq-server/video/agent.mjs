@@ -8,6 +8,8 @@
  * supervisor restarts both) and does the file work the backend asks for:
  *
  *   GET  /status        buffer contents per stream, free disk, the recording (if any)
+ *   GET  /clock         this machine's clock, { now } in epoch ms: the DAQ backend times the
+ *                       round trip to learn how far this clock is from its own (the sensors')
  *   POST /save          keep the last BUFFER_SECONDS of the given streams: { streams: [id] }
  *   POST /record/start  record the given streams from now: { streams, refuseBelowBytes, stopBelowBytes }
  *   POST /record/stop   end it: one file per stream
@@ -30,7 +32,16 @@
  * because camera audio is not kept (VIDCOMM decision). The segment still being written is
  * copied, not linked, so the file is exactly what had arrived when Save was pressed.
  *
- * No dependencies beyond Node >= 18.15 and ffmpeg. Auth: this machine is trusted, as it is
+ * Timing: beside each kept `<stream>.mp4` the agent writes `<stream>.json`, which says when
+ * each stretch of the file was filmed (see timingFor). The concat joins segments end to end,
+ * so an outage would otherwise slide everything after it early, and the keyframe cut moves
+ * the first frame away from the press. The DAQ Run Viewer reads it to place the video on a
+ * run's timeline. It costs one ffprobe per kept segment, at Stop/Save only. Save and
+ * Record start may carry `clock: { offsetMs, uncertaintyMs }`, the DAQ backend's measure of
+ * this machine's clock minus its own; it goes into the timing file as clockOffsetMs /
+ * clockUncertaintyMs, so the viewer can put gateway times on the sensors' clock.
+ *
+ * No dependencies beyond Node >= 18.15 and ffmpeg (with its ffprobe). Auth: this machine is trusted, as it is
  * by MediaMTX; anyone else needs user "daq" and the gateway password
  * (VIDEO_GATEWAY_PASSWORD, from scripts/video-gateway.sh).
  *
@@ -86,6 +97,39 @@ export function countGaps(names) {
   return diffs.filter((d) => d > Math.max(2 * typical, typical + 5000)).length;
 }
 
+export const TIMING_VERSION = 1;
+
+/**
+ * Where each stretch of a kept file sits in wall time, from the segments it was concatenated
+ * from: `names` (oldest first), each segment's own media duration in seconds, and the kept
+ * file's duration. One piece per segment, `{ fileS, wallMs }`: the file at `fileS` seconds
+ * was filmed at `wallMs` (the gateway's clock, as MediaMTX named the segment), and runs on
+ * at real speed until the next piece. A gap between pieces' wall times is an outage.
+ *
+ * The concat cuts the first segment at a keyframe before the press, so the file is shorter
+ * than the segments by however much of the first one it skipped: that difference is where
+ * the first frame really is.
+ */
+export function timingFor(names, segSeconds, fileSeconds) {
+  const total = segSeconds.reduce((a, b) => a + b, 0);
+  const skip = Math.min(Math.max(0, total - fileSeconds), segSeconds[0] ?? 0);
+  const pieces = [];
+  let pos = 0;
+  names.forEach((name, i) => {
+    const cut = i === 0 ? skip : 0;
+    pieces.push({ fileS: +pos.toFixed(6), wallMs: segmentStart(name) + Math.round(cut * 1000) });
+    pos += segSeconds[i] - cut;
+  });
+  return { version: TIMING_VERSION, firstFrameMs: pieces[0]?.wallMs ?? null, durationS: fileSeconds, pieces, latencyMs: 0 };
+}
+
+/** A DAQ-measured clock offset from a request body, or null if it is not a usable one. */
+export function clockFrom(input) {
+  const c = input?.clock;
+  if (!c || !Number.isFinite(c.offsetMs) || !Number.isFinite(c.uncertaintyMs) || c.uncertaintyMs < 0) return null;
+  return { clockOffsetMs: c.offsetMs, clockUncertaintyMs: c.uncertaintyMs };
+}
+
 /** A recording folder's name: stamp(), then "_save" / "_record" (or another label). */
 export const RECORDING_NAME_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})(\d{2})_([a-z0-9-]{1,32})$/i;
 
@@ -106,11 +150,31 @@ function run(cmd, args) {
   });
 }
 
+function runOut(cmd, args) {
+  return new Promise((ok, fail) => {
+    execFile(cmd, args, { maxBuffer: 1 << 20 }, (err, out, stderr) => (err ? fail(new Error(`${cmd}: ${String(stderr).trim().split('\n').pop() || err.message}`)) : ok(String(out))));
+  });
+}
+
+/** Map `fn` over `items`, at most `limit` at a time, keeping order. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  }));
+  return out;
+}
+
 export function createAgent({
   videoDir = process.cwd(),
   bufferSeconds = Number(process.env.VIDEO_BUFFER_SECONDS) || DEFAULT_BUFFER_SECONDS,
   password = process.env.VIDEO_GATEWAY_PASSWORD || '',
   ffmpeg = process.env.FFMPEG || 'ffmpeg',
+  ffprobe = process.env.FFPROBE || 'ffprobe',
   now = () => Date.now(),
   /** Opens a path in the file manager; resolves, or rejects with why. Injected by tests. */
   openPath = (path) => new Promise((ok, fail) => {
@@ -170,12 +234,35 @@ export function createAgent({
     return (await fs.stat(out)).size;
   }
 
+  const probeSeconds = async (file) => {
+    const v = parseFloat(await runOut(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]));
+    if (!Number.isFinite(v)) throw new Error(`ffprobe: no duration for ${file}`);
+    return v;
+  };
+
+  /**
+   * Write `<out minus .mp4>.json`, the kept file's timing (timingFor), from the segments
+   * still in `work`. Never fails the keep: without it the viewer places the clip by its
+   * folder name, approximately, and says so.
+   */
+  async function writeTiming(work, names, out, extra) {
+    try {
+      const segSeconds = await mapLimit(names, 8, (n) => probeSeconds(join(work, n)));
+      const timing = { ...timingFor(names, segSeconds, await probeSeconds(out)), ...extra };
+      await fs.writeFile(out.replace(/\.mp4$/, '.json'), JSON.stringify(timing));
+      return true;
+    } catch (e) {
+      console.error(`video-agent: no timing file for ${out} (${e.message})`);
+      return false;
+    }
+  }
+
   /** Link a finished segment into `work` (instant; immune to MediaMTX deleting it). */
   const linkInto = (id, name, work) => fs.link(join(bufferDir, id, name), join(work, name))
     .catch((e) => (e.code === 'EEXIST' ? undefined : fs.copyFile(join(bufferDir, id, name), join(work, name))));
 
   /** Keep the last bufferSeconds of each stream: one video-only file per stream. */
-  async function save({ streams, label = 'save' }) {
+  async function save({ streams, label = 'save', clock = null }) {
     const t = now();
     const folder = join(recordingsDir, `${stamp(new Date(t))}_${String(label).replace(/[^a-z0-9-]+/gi, '-').slice(0, 32) || 'save'}`);
     await fs.mkdir(folder, { recursive: true });
@@ -195,6 +282,7 @@ export function createAgent({
         }
         const out = join(folder, `${id}.mp4`);
         const size = await writeKept(work, names, out);
+        await writeTiming(work, names, out, { stream: id, kind: String(label), ...clock });
         // How much it really covers: the window, or less if the buffer is younger than that.
         const seconds = Math.round(Math.min(bufferSeconds * 1000, t - segmentStart(names[0])) / 1000);
         return { stream: id, file: out, bytes: size, seconds, gaps: countGaps(names) };
@@ -235,7 +323,7 @@ export function createAgent({
   }
 
   /** One file per stream from a recording folder's work dirs; removes them. */
-  async function finish(folder, streams, startedAt, stoppedAt, reason) {
+  async function finish(folder, streams, startedAt, stoppedAt, reason, clock = null) {
     const results = await Promise.all(streams.map(async (id) => {
       const work = join(folder, `.${id}`);
       try {
@@ -245,6 +333,7 @@ export function createAgent({
         const first = segmentStart(names[0]);
         const out = join(folder, `${id}.mp4`);
         const bytes = await writeKept(work, names, out, Math.max(0, startedAt - first));
+        await writeTiming(work, names, out, { stream: id, kind: 'record', ...clock });
         return { stream: id, file: out, bytes, seconds: Math.round((stoppedAt - startedAt) / 1000), gaps: countGaps(names) };
       } catch (e) {
         return { stream: id, error: e.message };
@@ -256,7 +345,7 @@ export function createAgent({
     return { folder, startedAt, stoppedAt, reason, streams: results };
   }
 
-  async function startRecording({ streams, refuseBelowBytes = 0, stopBelowBytes = 0 }) {
+  async function startRecording({ streams, refuseBelowBytes = 0, stopBelowBytes = 0, clock = null }) {
     if (rec) throw new Refused(`already recording since ${new Date(rec.startedAt).toLocaleTimeString()}`);
     const d = disk();
     if (d && d.freeBytes < refuseBelowBytes) {
@@ -265,8 +354,8 @@ export function createAgent({
     const startedAt = now();
     const folder = join(recordingsDir, `${stamp(new Date(startedAt))}_record`);
     for (const id of streams) await fs.mkdir(join(folder, `.${id}`), { recursive: true });
-    await fs.writeFile(join(folder, META), JSON.stringify({ startedAt, streams }));
-    const r = { folder, startedAt, streams, stopBelowBytes, linked: Object.fromEntries(streams.map((id) => [id, new Set()])) };
+    await fs.writeFile(join(folder, META), JSON.stringify({ startedAt, streams, clock }));
+    const r = { folder, startedAt, streams, stopBelowBytes, clock, linked: Object.fromEntries(streams.map((id) => [id, new Set()])) };
     rec = r;
     r.timer = setInterval(() => void tick(r), 2000);
     r.timer.unref?.();
@@ -300,7 +389,7 @@ export function createAgent({
       while (r.busy) await new Promise((ok) => setTimeout(ok, 50));
       const stoppedAt = now();
       await collect(r, true);
-      lastRecording = await finish(r.folder, r.streams, r.startedAt, stoppedAt, reason);
+      lastRecording = await finish(r.folder, r.streams, r.startedAt, stoppedAt, reason, r.clock);
       return lastRecording;
     } finally {
       rec = null;
@@ -316,7 +405,7 @@ export function createAgent({
       const meta = await fs.readFile(join(folder, META), 'utf8').then(JSON.parse).catch(() => null);
       if (!meta) continue;
       const st = await fs.stat(join(folder, META));
-      lastRecording = await finish(folder, meta.streams, meta.startedAt, Math.max(st.mtimeMs, meta.startedAt), 'interrupted (the gateway restarted)');
+      lastRecording = await finish(folder, meta.streams, meta.startedAt, Math.max(st.mtimeMs, meta.startedAt), 'interrupted (the gateway restarted)', meta.clock ?? null);
       console.error(`video-agent: finished an interrupted recording in ${folder}`);
     }
   }
@@ -414,6 +503,7 @@ export function createAgent({
     try {
       if (req.method === 'GET' && req.url === '/status') return send(200, await status());
       if (req.method === 'GET' && req.url === '/recordings') return send(200, await listRecordings());
+      if (req.method === 'GET' && req.url === '/clock') return send(200, { now: now() });
       if (req.method === 'POST' && ['/save', '/record/start', '/record/stop', '/open'].includes(req.url)) {
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) return send(413, { error: 'body too large' }); }
@@ -423,9 +513,9 @@ export function createAgent({
         if (req.url === '/record/stop') return send(200, await stopRecording());
         const streams = Array.isArray(input.streams) ? input.streams.filter((s) => typeof s === 'string' && STREAM_ID_RE.test(s)) : [];
         if (!streams.length) return send(400, { error: 'no streams given' });
-        if (req.url === '/save') return send(200, await save({ streams, label: input.label }));
+        if (req.url === '/save') return send(200, await save({ streams, label: input.label, clock: clockFrom(input) }));
         const bytes = (v) => (Number.isFinite(v) && v >= 0 ? v : 0);
-        return send(200, await startRecording({ streams, refuseBelowBytes: bytes(input.refuseBelowBytes), stopBelowBytes: bytes(input.stopBelowBytes) }));
+        return send(200, await startRecording({ streams, refuseBelowBytes: bytes(input.refuseBelowBytes), stopBelowBytes: bytes(input.stopBelowBytes), clock: clockFrom(input) }));
       }
       return send(404, { error: 'not found' });
     } catch (e) {

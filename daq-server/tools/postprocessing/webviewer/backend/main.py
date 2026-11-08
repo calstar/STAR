@@ -10,10 +10,10 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, descriptions, export_cache, run_config, runs, series, summary
+from . import config, descriptions, export_cache, run_config, runs, series, summary, video
 
 app = FastAPI(title="Elodin Past-Run Viewer")
 
@@ -191,6 +191,40 @@ def api_download(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+@app.get("/api/runs/{run_id}/video")
+def api_run_video(run_id: str):
+    """The video clips that overlap this run, on the epoch-seconds axis the plot uses.
+
+    Matched against the run's whole extent on either clock, so switching the plot to
+    DB write time never hides a clip. Needs the index (that is where the extent lives);
+    an un-indexed run has no plot to put video on anyway. `available` is false when no
+    recordings folder is mounted: the page then shows no video panel at all.
+    """
+    if not config.RUN_RE.match(run_id):
+        raise HTTPException(400, "invalid run id")
+    if not video.available():
+        return {"available": False, "clips": []}
+    if not export_cache.is_cached(run_id):
+        raise HTTPException(409, "run is not indexed yet")
+    index = export_cache.get_index(run_id)
+    lows = [t for t in (index.get("t_min"), index.get("sensor_t_min")) if t is not None]
+    highs = [t for t in (index.get("t_max"), index.get("sensor_t_max")) if t is not None]
+    if not lows or not highs:
+        return {"available": True, "clips": []}
+    clips = video.clips_overlapping(min(lows), max(highs))
+    return {"available": True, "clips": [c.as_json() for c in clips]}
+
+
+@app.get("/api/video/{recording}/{stream}.mp4")
+def api_video_file(recording: str, stream: str):
+    """One clip's file, with HTTP Range (Starlette's FileResponse answers 206) so the
+    browser can seek without downloading the whole recording."""
+    path = video.clip_file(recording, stream)
+    if path is None:
+        raise HTTPException(404, "no such clip")
+    return FileResponse(path, media_type="video/mp4")
 
 
 # Serve the built frontend if present (single-process deployment). Mounted last

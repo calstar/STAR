@@ -1,4 +1,4 @@
-import type { Run, RunIndex, RunSummary, SeriesResponse, TimeSource } from './types';
+import type { Run, RunIndex, RunSummary, RunVideo, SeriesResponse, TimeSource } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url);
@@ -47,6 +47,9 @@ export const api = {
   },
 
   config: getConfig,
+
+  // Video clips overlapping the run. Indexed runs only (409 otherwise).
+  video: (runId: string) => getJSON<RunVideo>(`/api/runs/${runId}/video`),
 
   setDescription,
 
