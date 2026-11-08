@@ -18,6 +18,7 @@ import {
 import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName, ballValveBoardIds,
   CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
+  t7Channels, t7BoardIssues, t7RoleClashes, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
 } from '@/lib/config-validation';
 import {
   slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
@@ -176,6 +177,9 @@ const DEFAULT_CONFIG: ConfigData = {};
  * fields (previously one flat grid) by concern — General / Network / Channels / Signal / Safety —
  * makes a board legible at a glance instead of a wall of inputs.
  */
+/** Board types the editor offers. T7 is a LabJack (t7_bridge); the rest are ESP32 boards. */
+const BOARD_TYPES = ['PT', 'ACTUATOR', 'BALL_VALVE', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL', 'T7'];
+
 function FieldSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
@@ -1484,6 +1488,96 @@ export default function ConfigPage() {
     });
   };
 
+  // ── Board type ───────────────────────────────────────────────────────────────
+  // An ESP32 board and a LabJack T7 share no keys beyond identity: the ESP32 side is ports,
+  // active_connectors and an ADC reference; a T7 is stream settings and a channel table. Switching
+  // type drops the other side's keys, so a board never carries settings nothing reads (and never
+  // both active_connectors and channels — two channel lists that could disagree).
+  const ESP32_ONLY_KEYS = ['send_port', 'listen_port', 'active_connectors', 'active_connections',
+    'num_actuators', 'pt_type', 'voltage_reference', 'adc_ref_voltage', 'hp_pt_full_scale_psi',
+    'hp_pt_sense_resistor_ohms', 'enable_serial_printing', 'necessary_for_abort',
+    'designated_survivor'];
+  const T7_ONLY_KEYS = ['channels', 'serial', 'scan_rate_hz', 'resolution_index', 'settling_us',
+    'scans_per_read', 'cjc_offset_k'];
+  const setBoardType = (boardKey: string, next: string) => {
+    const prevType = (config.boards as any)?.[boardKey]?.type;
+    updateBoard(boardKey, 'type', next);
+    if (next === 'T7' && prevType !== 'T7') {
+      for (const k of ESP32_ONLY_KEYS) updateBoard(boardKey, k, undefined);
+      updateBoard(boardKey, 'scan_rate_hz', 100);
+      updateBoard(boardKey, 'channels', []);
+    } else if (next !== 'T7' && prevType === 'T7') {
+      for (const k of T7_ONLY_KEYS) updateBoard(boardKey, k, undefined);
+      updateBoard(boardKey, 'active_connectors', []);
+    }
+  };
+
+  /** One T7 channel row's fields, cleaned for its kind: a field the kind does not use is removed
+   *  rather than left behind, because t7_bridge refuses a channel that carries one. */
+  const T7_KIND_FIELDS: Record<string, string[]> = {
+    PT: ['signal', 'full_scale', 'shunt_ohms'],
+    TC: ['tc_type'],
+    LC: ['full_scale', 'sensitivity_mv_per_v', 'excitation_v'],
+    RTD: ['r0_ohms', 'ljtr_ohms', 'vref_v'],
+    VOLTAGE: [],
+  };
+  const T7_KIND_SPECIFIC = ['signal', 'full_scale', 'shunt_ohms', 'tc_type', 'sensitivity_mv_per_v', 'excitation_v',
+    'r0_ohms', 'ljtr_ohms', 'vref_v'];
+  const t7ChannelsOf = (boardKey: string): any[] =>
+    Array.isArray((config.boards as any)?.[boardKey]?.channels) ? (config.boards as any)[boardKey].channels : [];
+  const setT7Channels = (boardKey: string, chs: any[]) => updateBoard(boardKey, 'channels', chs);
+  /** A T7 PT / LC input's calibration model lives where an ESP32 sensor's does:
+   *  [calibration_model_<board>] by role. Absent reads as physics (calibration_service's default). */
+  const t7ModelOf = (boardKey: string, role: string): string =>
+    ((config as any)[`calibration_model_${boardKey}`]?.[role] as string) ?? 'physics';
+  const setT7Model = (boardKey: string, role: string, model: string | undefined, renameTo?: string) =>
+    setConfig((prev) => {
+      const key = `calibration_model_${boardKey}`;
+      const models: Record<string, string> = { ...(((prev as any)[key] as Record<string, string>) || {}) };
+      const current = models[role];
+      delete models[role];
+      if (renameTo !== undefined) {
+        if (current !== undefined && renameTo) models[renameTo] = current;
+      } else if (model !== undefined) {
+        models[role] = model;
+      }
+      return { ...prev, [key]: models } as ConfigData;
+    });
+  const setT7ChannelField = (boardKey: string, i: number, field: string, value: any) => {
+    const chs = t7ChannelsOf(boardKey).map((c) => ({ ...c }));
+    const c = chs[i];
+    // The model is filed by role, so a rename carries it along rather than orphaning it.
+    if (field === 'role' && c.role && c.role !== value) {
+      setT7Model(boardKey, c.role, undefined, value ?? '');
+      // A PT's pressure limits row and gauge are keyed by its role too (as on an ESP32 PT board).
+      const oldRole = c.role;
+      if (c.kind === 'PT' && value)
+        setConfig((prev) => ({ ...prev, ...renamePressureLimitRole(prev, oldRole, value) }) as ConfigData);
+    }
+    if (value === undefined || value === '') delete c[field];
+    else c[field] = value;
+    if (field === 'kind') {
+      for (const k of T7_KIND_SPECIFIC) if (!T7_KIND_FIELDS[value]?.includes(k)) delete c[k];
+      if (value === 'TC') { c.tc_type = 'K'; c.range = 0.1; }
+      if (value === 'PT') { c.signal = c.signal ?? '0-5V'; c.range = 10; }
+      if (value === 'LC') c.range = 0.1;
+      // A Pt1000 on an LJTick-Resistance-1k is the usual pairing; the divider tops out at the
+      // tick's 2.5 V reference, so only the 10 V range covers it.
+      if (value === 'RTD') { c.r0_ohms = c.r0_ohms ?? 1000; c.ljtr_ohms = c.ljtr_ohms ?? 1000; c.range = 10; }
+    }
+    if (field === 'signal' && value !== '4-20mA') delete c.shunt_ohms;
+    setT7Channels(boardKey, chs);
+  };
+  const addT7Channel = (boardKey: string) => {
+    const chs = t7ChannelsOf(boardKey);
+    const used = new Set(chs.flatMap((c) => [c.ain, c.differential ? c.ain + 1 : -1]));
+    let ain = 0;
+    while (used.has(ain) && ain < T7_MAX_AIN) ain++;
+    setT7Channels(boardKey, [...chs, { ain, kind: 'PT', role: '', range: 10, signal: '0-5V' }]);
+  };
+  const removeT7Channel = (boardKey: string, i: number) =>
+    setT7Channels(boardKey, t7ChannelsOf(boardKey).filter((_, j) => j !== i));
+
   // ── [gui] helpers: tab list + top-bar pressure bars ──────────────────────────
   const guiTabs: string[] = config.gui?.tabs ?? [];
   const guiBars = config.gui?.pressure_bars ?? [];
@@ -1611,6 +1705,10 @@ export default function ConfigPage() {
       if (!section.startsWith('sensor_roles_') || typeof roles !== 'object' || !roles) continue;
       for (const role of Object.keys(roles as Record<string, unknown>)) sensors.add(slugify(role));
     }
+    // A PT on a LabJack T7 is readable by pressure() too: the sequencer resolves it to the T7's
+    // calibrated table (fsw::config::pt_role_tables).
+    for (const ch of t7Channels(config.boards as Record<string, any> | undefined))
+      if (ch.enabled && ch.kind === 'PT' && ch.role) sensors.add(slugify(ch.role));
     const names = (config.states || []).map((s) => String(s.name ?? '')).filter(Boolean);
     const states = new Set(names.map(slugify));
 
@@ -2098,6 +2196,196 @@ export default function ConfigPage() {
     );
   };
 
+  /**
+   * A LabJack T7's card body. Its channels are the [[boards.<name>.channels]] table t7_bridge
+   * streams; each PT / TC / LC row is a sensor the rest of the GUI shows under its role, in psi /
+   * °C / kg. Problems are t7BoardIssues() — the same rules t7_bridge and the session gate apply.
+   */
+  const renderT7Board = (boardKey: string, b: any, slotIssue: string | null) => {
+    const chs = t7ChannelsOf(boardKey);
+    const issues = [
+      ...t7BoardIssues((config.boards || {}) as Record<string, any>, boardKey),
+      ...t7RoleClashes(config).filter((c) => c.boardKey === boardKey).map((c) => c.message),
+    ];
+    const hasTc = chs.some((c) => c?.kind === 'TC');
+    const cell = 'px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed';
+    const num = (i: number, field: string, title: string, width = 'w-24') => (
+      <CommitOnBlurNumber
+        value={typeof chs[i]?.[field] === 'number' ? chs[i][field] : undefined}
+        allowEmpty
+        onCommit={(n) => setT7ChannelField(boardKey, i, field, n)}
+        disabled={!canEdit}
+        className={`${cell} ${width}`}
+        title={title}
+        placeholder={title}
+      />
+    );
+    const sel = (i: number, field: string, title: string, opts: [string, string][], placeholder: string) => (
+      <select value={String(chs[i]?.[field] ?? '')} disabled={!canEdit} className={cell} title={title}
+        onChange={(e) => setT7ChannelField(boardKey, i, field,
+          e.target.value === '' ? undefined : field === 'signal' ? e.target.value : Number(e.target.value))}>
+        <option value="">{placeholder}</option>
+        {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    );
+    // The datasheet numbers each kind's physics conversion needs, one labelled column per field;
+    // a column is shown only when some channel uses it, and a channel it does not apply to shows —.
+    type T7Col = { key: string; label: string; title: string; applies: (c: any) => boolean; render: (c: any, i: number) => ReactNode };
+    const allCols: T7Col[] = [
+      { key: 'signal', label: 'Signal', title: 'PT transducer output', applies: (c) => c?.kind === 'PT',
+        render: (_c, i) => sel(i, 'signal', 'PT transducer output', T7_PT_SIGNALS.map((sg) => [sg, sg]), 'choose…') },
+      { key: 'full_scale', label: 'Full scale', title: 'PT: psi at full output · LC: rated capacity in kg',
+        applies: (c) => c?.kind === 'PT' || c?.kind === 'LC',
+        render: (c, i) => (
+          <span className="inline-flex items-center gap-1">
+            {num(i, 'full_scale', c?.kind === 'LC' ? 'rated kg' : 'full scale psi')}
+            <span className="text-xs text-text-muted">{c?.kind === 'LC' ? 'kg' : 'psi'}</span>
+          </span>) },
+      { key: 'shunt_ohms', label: 'Shunt (Ω)', title: '4-20 mA shunt resistor', applies: (c) => c?.kind === 'PT' && c?.signal === '4-20mA',
+        render: (_c, i) => num(i, 'shunt_ohms', 'shunt Ω') },
+      { key: 'sensitivity_mv_per_v', label: 'Sensitivity (mV/V)', title: 'Load cell rated output', applies: (c) => c?.kind === 'LC',
+        render: (_c, i) => num(i, 'sensitivity_mv_per_v', 'mV/V') },
+      { key: 'excitation_v', label: 'Excitation (V)', title: 'Load cell bridge excitation', applies: (c) => c?.kind === 'LC',
+        render: (_c, i) => num(i, 'excitation_v', 'excitation V') },
+      { key: 'r0_ohms', label: 'RTD element', title: 'RTD element (R at 0 °C)', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => sel(i, 'r0_ohms', 'RTD element (R at 0 °C)', [['100', 'Pt100'], ['1000', 'Pt1000']], 'choose…') },
+      { key: 'ljtr_ohms', label: 'LJTick-Resistance', title: 'LJTick-Resistance model (its fixed resistor)', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => sel(i, 'ljtr_ohms', 'LJTick-Resistance model (its fixed resistor)',
+          [['1000', 'LJTR-1k'], ['10000', 'LJTR-10k'], ['100000', 'LJTR-100k'], ['1000000', 'LJTR-1M']], 'choose…') },
+      { key: 'vref_v', label: 'Vref (V)', title: 'LJTick-Resistance reference; empty = 2.5', applies: (c) => c?.kind === 'RTD',
+        render: (_c, i) => num(i, 'vref_v', '2.5') },
+    ];
+    const cols = allCols.filter((col) => chs.some((c) => col.applies(c)));
+    return (
+      <div className="p-4 pt-0 space-y-6">
+        <FieldSection title="General">
+          {renderField('Type', b.type, (val) => setBoardType(boardKey, val), 'select', BOARD_TYPES)}
+          <div className="space-y-1">
+            {renderField('Board ID', b.board_id, (val) => updateBoard(boardKey, 'board_id', val), 'number',
+              undefined, 'IP last octet; Elodin slot = ID % 10')}
+            {slotIssue && <InlineIssue level="error" className="mt-2">{slotIssue}</InlineIssue>}
+          </div>
+          {renderField('Enabled', b.enabled, (val) => updateBoard(boardKey, 'enabled', val), 'boolean')}
+        </FieldSection>
+
+        <FieldSection title="Network">
+          {renderField('IP', b.ip, (val) => updateBoard(boardKey, 'ip', val))}
+          {renderField('MAC', b.mac, (val) => updateBoard(boardKey, 'mac', val), 'text', undefined,
+            'DHCP reservation; from the lease table')}
+          {renderField('Serial number', b.serial, (val) => updateBoard(boardKey, 'serial', val), 'number',
+            undefined, 'optional; refuses any other unit')}
+        </FieldSection>
+
+        <FieldSection title="Stream">
+          {renderField('Scan rate (Hz)', b.scan_rate_hz, (val) => updateBoard(boardKey, 'scan_rate_hz', val), 'number',
+            undefined, 'every channel once per scan')}
+          {renderField('Resolution index', b.resolution_index, (val) => updateBoard(boardKey, 'resolution_index', val), 'number',
+            undefined, '0-8; 0 = default')}
+          {renderField('Settling (µs)', b.settling_us, (val) => updateBoard(boardKey, 'settling_us', val), 'number',
+            undefined, '0 = automatic')}
+          {renderField('Scans per read', b.scans_per_read, (val) => updateBoard(boardKey, 'scans_per_read', val), 'number',
+            undefined, 'per LJM read; empty = a 50 ms block')}
+          {hasTc && renderField('CJC offset (K)', b.cjc_offset_k, (val) => updateBoard(boardKey, 'cjc_offset_k', val), 'number',
+            undefined, 'terminals vs internal sensor; default −3.0 (screw terminals; ~−4.9 on a CB37)')}
+        </FieldSection>
+
+        <section className="space-y-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-gray-700/70 pb-1.5">
+            Channels
+          </h4>
+          <div className="overflow-x-auto">
+            <table className="text-sm">
+              <thead>
+                <tr className="text-left text-xs text-text-muted">
+                  <th className="px-2 py-1">AIN</th>
+                  <th className="px-2 py-1">Kind</th>
+                  <th className="px-2 py-1">Role</th>
+                  <th className="px-2 py-1">Range ±V</th>
+                  <th className="px-2 py-1" title="AIN(n) − AIN(n+1); n must be even">Differential</th>
+                  <th className="px-2 py-1" title="Calibration model, as for an ESP32 sensor">Model</th>
+                  {cols.map((col) => <th key={col.key} className="px-2 py-1 whitespace-nowrap" title={col.title}>{col.label}</th>)}
+                  <th className="px-2 py-1" />
+                </tr>
+              </thead>
+              <tbody>
+                {chs.map((c, i) => (
+                  <tr key={i} className="align-top">
+                    <td className="px-2 py-1">
+                      <CommitOnBlurNumber
+                        value={typeof c?.ain === 'number' ? c.ain : undefined}
+                        onCommit={(n) => setT7ChannelField(boardKey, i, 'ain', n)}
+                        disabled={!canEdit}
+                        className={`${cell} w-16`}
+                        title={`AIN number, 0-${T7_MAX_AIN}`}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <select value={c?.kind ?? ''} disabled={!canEdit} className={cell}
+                        onChange={(e) => setT7ChannelField(boardKey, i, 'kind', e.target.value)}>
+                        {['PT', 'TC', 'LC', 'RTD', 'VOLTAGE'].map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      <input type="text" value={c?.role ?? ''} disabled={!canEdit} className={`${cell} w-40`}
+                        placeholder={c?.kind === 'VOLTAGE' ? '(optional)' : 'name, e.g. LOX Tank'}
+                        onChange={(e) => setT7ChannelField(boardKey, i, 'role', e.target.value)} />
+                    </td>
+                    <td className="px-2 py-1">
+                      <select value={String(c?.range ?? (c?.kind === 'TC' ? 0.1 : 10))} disabled={!canEdit} className={cell}
+                        onChange={(e) => setT7ChannelField(boardKey, i, 'range', Number(e.target.value))}>
+                        {T7_RANGES.map((r) => <option key={r} value={String(r)}>{r}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      <input type="checkbox" checked={c?.differential === true} disabled={!canEdit}
+                        className="w-4 h-4 mt-2"
+                        onChange={(e) => setT7ChannelField(boardKey, i, 'differential', e.target.checked ? true : undefined)} />
+                    </td>
+                    <td className="px-2 py-1">
+                      {(c?.kind === 'PT' || c?.kind === 'LC') && c?.role ? (
+                        <select value={t7ModelOf(boardKey, c.role)} disabled={!canEdit} className={cell}
+                          title="Streaming calibration model for this sensor"
+                          onChange={(e) => setT7Model(boardKey, c.role, e.target.value)}>
+                          <option value="cubic">Cubic</option>
+                          {c.kind === 'PT' && <option value="robust">Robust</option>}
+                          <option value="physics">Physics</option>
+                        </select>
+                      ) : (
+                        <span className="text-xs text-text-muted pt-1.5 inline-block">
+                          {c?.kind === 'TC' || c?.kind === 'RTD' ? 'physics' : c?.kind === 'VOLTAGE' ? '—' : 'needs a role'}
+                        </span>
+                      )}
+                    </td>
+                    {cols.map((col) => (
+                      <td key={col.key} className="px-2 py-1">
+                        {col.applies(c) ? col.render(c, i) : <span className="text-text-muted pt-1.5 inline-block">—</span>}
+                      </td>
+                    ))}
+                    <td className="px-2 py-1">
+                      <button type="button" disabled={!canEdit} onClick={() => removeT7Channel(boardKey, i)}
+                        className="px-2 py-1 text-xs bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button type="button" disabled={!canEdit} onClick={() => addT7Channel(boardKey)}
+            className="px-3 py-1.5 text-sm bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">
+            + Add channel
+          </button>
+          {issues.length > 0 && (
+            <div className="space-y-1">
+              {issues.map((m) => <InlineIssue key={m} level="error">{m}</InlineIssue>)}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <main className="min-h-screen bg-background text-text p-8">
@@ -2291,8 +2579,7 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-1">Boards</h2>
               <p className="text-sm text-text-muted mb-4">
-                Editable. Board config (roles, active connectors, voltage reference, abort thresholds,
-                enable flags) is re-broadcast to the boards live — the config-broadcast service re-reads
+                Editable. Board config (roles, active connectors, voltage reference, enable flags) is re-broadcast to the boards live — the config-broadcast service re-reads
                 on save, so changes apply without restarting the server or a session. Note: the DAQ
                 pipeline (daq_bridge/calibration/controller) picks up routing/identity changes on the
                 next session start.
@@ -2327,6 +2614,8 @@ export default function ConfigPage() {
                   // statement of which channels exist. There is no separate count any more.
                   const channels = b.type === 'ACTUATOR'
                     ? (b.num_actuators !== undefined ? `${b.num_actuators} act` : null)
+                    : b.type === 'T7'
+                      ? (Array.isArray(b.channels) ? `${b.channels.length} AIN` : null)
                     : b.type === 'BALL_VALVE'
                       ? (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} valve` : null)
                       : (Array.isArray(b.active_connectors) ? `${b.active_connectors.length} ch` : null);
@@ -2405,15 +2694,16 @@ export default function ConfigPage() {
                         </span>
                       )}
                     </div>
-                    {open && (
+                    {open && b.type === 'T7' && renderT7Board(boardKey, b, slotIssue)}
+                    {open && b.type !== 'T7' && (
                     <div className="p-4 pt-0 space-y-6">
                       <FieldSection title="General">
                         {renderField(
                           'Type',
                           (board as any).type,
-                          (val) => updateBoard(boardKey, 'type', val),
+                          (val) => setBoardType(boardKey, val),
                           'select',
-                          ['PT', 'ACTUATOR', 'BALL_VALVE', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL']
+                          BOARD_TYPES
                         )}
                         <div className="space-y-1">
                           {renderField(
@@ -2592,6 +2882,33 @@ export default function ConfigPage() {
                 >
                   + Add Board
                 </button>
+                <button
+                  onClick={() => {
+                    const boards = (config.boards || {}) as Record<string, any>;
+                    let n = Object.keys(boards).filter((k) => boards[k]?.type === 'T7').length + 1;
+                    while (boards[`labjack_${n}`]) n++;
+                    const newKey = `labjack_${n}`;
+                    // First board_id in 81-88 whose slot no other T7 and no board_id holds; the IP
+                    // follows the board_id like every board on the LAN (192.168.2.<board_id>).
+                    const ids = new Set(Object.values(boards).map((b: any) => b?.board_id));
+                    const t7Slots = new Set(Object.values(boards).filter((b: any) => b?.type === 'T7')
+                      .map((b: any) => (b.board_id % 10) || 10));
+                    const id = [81, 82, 83, 84, 85, 86, 87, 88].find((x) => !ids.has(x) && !t7Slots.has(x % 10));
+                    updateBoard(newKey, 'type', 'T7');
+                    if (id !== undefined) {
+                      updateBoard(newKey, 'board_id', id);
+                      updateBoard(newKey, 'ip', `192.168.2.${id}`);
+                    }
+                    updateBoard(newKey, 'mac', '');
+                    updateBoard(newKey, 'enabled', false);
+                    updateBoard(newKey, 'scan_rate_hz', 100);
+                    updateBoard(newKey, 'channels', []);
+                    setOpenBoards((prev) => ({ ...prev, [newKey]: true }));
+                  }}
+                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 ml-2"
+                >
+                  + Add LabJack T7
+                </button>
               </div>
             </div>
           )}
@@ -2634,6 +2951,12 @@ export default function ConfigPage() {
           {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
+              {Object.values((config.boards || {}) as Record<string, any>).some((b) => b?.type === 'T7') && (
+                <p className="text-sm text-text-muted mb-4">
+                  LabJack T7 channels are named, and their conversion set, in each T7&apos;s channel
+                  table on the Boards tab.
+                </p>
+              )}
               <div className="space-y-8">
                 {/* One role panel per sensor board in config: sensor_roles_<boardKey>. Generalized
                     from a fixed pt_board/pt2/rtd/tc list so any board (incl. a 3rd PT board or an
@@ -3463,8 +3786,7 @@ export default function ConfigPage() {
                     <p>
                       No state is flagged <strong>Abort</strong>. Aborts are <em>not</em> disabled — the
                       controller falls back to its built-in aborts (Engine / GSE / Emergency), which may
-                      not match your states. Flag the intended abort state(s) explicitly. (Board over-pressure
-                      aborts via <code>[abort_pts]</code> are separate and still active.)
+                      not match your states. Flag the intended abort state(s) explicitly.
                     </p>
                   </InlineIssue>
                 )}
@@ -4047,63 +4369,9 @@ export default function ConfigPage() {
                 })()}
               </div>
 
-              {/* ── Abort thresholds ────────────────────────────────────────────────── */}
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">Abort pressure thresholds</h3>
-                <p className="text-sm text-text-muted">
-                  PSI limits broadcast to the boards, which abort autonomously when a sensor exceeds
-                  them — they do not depend on the server being alive. The name must match a sensor
-                  role exactly.
-                </p>
-                <div className="space-y-2">
-                  {Object.entries(config.abort_pts || {}).map(([role, psi], i) => (
-                    <div key={`abort:${i}`} className="flex items-center gap-3">
-                      <CommitOnBlurName
-                        value={role}
-                        siblings={Object.keys(config.abort_pts || {})}
-                        rowKey={`abort:${role}`}
-                        onDupChange={onRoleDup}
-                        onRename={(next) => {
-                          const rebuilt: Record<string, any> = {};
-                          for (const [k, v] of Object.entries(config.abort_pts || {})) rebuilt[k === role ? next : k] = v;
-                          setConfig({ ...config, abort_pts: rebuilt } as ConfigData);
-                        }}
-                        onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
-                        className="flex-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <CommitOnBlurNumber
-                        value={psi as number}
-                        onCommit={(v) => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), [role]: v } } as ConfigData)}
-                        className="w-28 px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white"
-                      />
-                      <span className="text-sm text-text-muted w-10">PSI</span>
-                      <button
-                        onClick={() => {
-                          const next = { ...(config.abort_pts || {}) };
-                          delete next[role];
-                          setConfig({ ...config, abort_pts: next } as ConfigData);
-                        }}
-                        disabled={!canEdit}
-                        className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                  {Object.keys(config.abort_pts || {}).length === 0 && (
-                    <p className="text-sm text-amber-300/90">
-                      No abort thresholds configured — the boards will not abort on over-pressure by themselves.
-                    </p>
-                  )}
-                  <button
-                    onClick={() => setConfig({ ...config, abort_pts: { ...(config.abort_pts || {}), 'New Abort PT': 0 } } as ConfigData)}
-                    disabled={!canEdit}
-                    className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    + Add threshold
-                  </button>
-                </div>
-              </div>
+              {/* [abort_pts] is not edited here: the actuator firmware never acts on it today (its only
+                  consumer, the PTAbort state, sits behind ENABLE_ALL_STATE_TRANSITIONS = false in
+                  firmware/Hotfire_Code/common/hotfire_config.h). See docs/CONFIGURATION_GUIDE.md. */}
             </div>
           )}
 

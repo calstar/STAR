@@ -9,6 +9,8 @@
  * for it yet; typing a value creates it.
  */
 
+import { t7Channels } from '@/lib/config-validation';
+
 /** [pressure_limits] key for a PT role: "GN2 High" -> "GN2_High". */
 export const pressureLimitKeyForRole = (role: string): string => role.trim().replace(/\s+/g, '_');
 
@@ -31,14 +33,16 @@ export type PressureLimitRow = {
   gauges: string[];
 };
 
-/** PT-board role names, from each PT board's [sensor_roles_<boardKey>]. */
+/** PT role names: each PT board's [sensor_roles_<boardKey>], plus every PT channel on a LabJack
+ *  T7, which is named in its own channel row rather than in a sensor_roles_ section. */
 export function pressureRolesOf(config: any): string[] {
   const boards: Record<string, any> = config?.boards ?? {};
-  return Array.from(new Set(
-    Object.entries(boards)
+  return Array.from(new Set([
+    ...Object.entries(boards)
       .filter(([, b]) => b?.type === 'PT')
       .flatMap(([boardKey]) => Object.keys(config?.[`sensor_roles_${boardKey}`] ?? {})),
-  )).sort();
+    ...t7Channels(boards).filter((c) => c.kind === 'PT' && c.role).map((c) => c.role),
+  ])).sort();
 }
 
 export function pressureLimitRows(config: any): PressureLimitRow[] {

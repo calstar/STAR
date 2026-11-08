@@ -77,6 +77,54 @@ export declare const boardDisplayName: (boards: Record<string, any>, boardKey: s
  * lib/src/config/LoadActiveBoards.cpp.
  */
 export declare const boardSlotIssue: (boards: Record<string, any>, boardKey: string) => string | null;
+export type T7Kind = 'PT' | 'TC' | 'LC' | 'RTD' | 'VOLTAGE';
+/** The field a calibrated T7 channel publishes, by kind; VOLTAGE has no calibrated table. */
+export declare const T7_CAL_FIELD: Record<string, string | undefined>;
+export declare const T7_PT_SIGNALS: readonly ["0-5V", "0.5-4.5V", "1-5V", "0-10V", "4-20mA"];
+export declare const T7_RANGES: readonly [10, 1, 0.1, 0.01];
+export declare const T7_MAX_AIN = 13;
+/** AIN14 is the T7's internal temperature sensor, streamed raw for thermocouple CJC. */
+export declare const T7_CJC_AIN = 14;
+export interface T7ChannelInfo {
+    boardKey: string;
+    boardId: number;
+    boardIp: string;
+    enabled: boolean;
+    slot: number;
+    ain: number;
+    /** 'CJC' is the AIN14 entry a board with a thermocouple streams; it has no role. */
+    kind: T7Kind | 'CJC';
+    role: string;
+    rawLow: number;
+    entity: string;
+    /** null for VOLTAGE and CJC, which publish volts only. */
+    calLow: number | null;
+    calEntity: string | null;
+    calField: string | null;
+}
+/**
+ * Every T7 channel in `boards`, in config order, with the tables t7_bridge publishes it to.
+ * Disabled boards are included (enabled: false) so an editor can still show them; anything that
+ * subscribes or lists live sensors filters them out. Malformed entries (no integer ain, no
+ * integer board_id) are skipped — t7BoardIssues() is what reports them.
+ */
+export declare function t7Channels(boards: Record<string, any> | undefined | null): T7ChannelInfo[];
+/**
+ * What is wrong with one T7 board, as plain sentences; [] for a fine one or a non-T7. Mirrors
+ * parse_t7_boards() in lib/src/config/T7Config.cpp check for check, so the editor and the session
+ * gate refuse exactly what t7_bridge would.
+ */
+export declare function t7BoardIssues(boards: Record<string, any>, boardKey: string): string[];
+/**
+ * Enabled T7 inputs whose role an ESP32 sensor ([sensor_roles_<board>]) already has. The GUI finds
+ * a sensor by its role (sensorByRole, [gui.groups], pressure bars) and calibration files it by
+ * role, so a shared name would make one of the two unreachable.
+ */
+export declare function t7RoleClashes(config: any): Array<{
+    boardKey: string;
+    ain: number;
+    message: string;
+}>;
 /**
  * Every reason this config is unfit to run, in the order an operator would work through them.
  *

@@ -90,3 +90,33 @@ describe('a PT limits row follows its role', () => {
     expect(Object.keys(pruneOrphanPressureLimits(cfg).pressure_limits)).toEqual(['Ox_Tank', 'Fuel_Tank']);
   });
 });
+
+describe('a PT on a LabJack T7', () => {
+  // A T7 names its PT in its channel row, not in a sensor_roles_ section; #170's rows were built
+  // from sensor_roles_ alone, so a T7 PT had no limits row and its gauge used generic thresholds.
+  const t7 = {
+    ...config,
+    boards: {
+      ...config.boards,
+      labjack_1: {
+        type: 'T7', board_id: 81, channels: [
+          { ain: 1, kind: 'PT', role: 'T7 Tank PT', signal: '4-20mA', shunt_ohms: 250, full_scale: 1000 },
+          { ain: 2, kind: 'TC', role: 'T7 Nozzle TC', tc_type: 'K', range: 0.1 },
+        ],
+      },
+    },
+  };
+
+  it('has a limits row; its TC does not', () => {
+    const rows = pressureLimitRows(t7);
+    expect(rows.find((r) => r.key === 'T7_Tank_PT')).toMatchObject({ kind: 'pt', label: 'T7 Tank PT', defined: false });
+    expect(rows.some((r) => r.label === 'T7 Nozzle TC')).toBe(false);
+  });
+
+  it('keeps its limits across a rename', () => {
+    const named = { ...t7, pressure_limits: { ...t7.pressure_limits, T7_Tank_PT: { NOP: 400, MEOP: 500, POP: 600 } } };
+    const patch = renamePressureLimitRole(named, 'T7 Tank PT', 'Run Tank');
+    expect(patch.pressure_limits.Run_Tank).toEqual({ NOP: 400, MEOP: 500, POP: 600 });
+    expect(patch.pressure_limits.T7_Tank_PT).toBeUndefined();
+  });
+});

@@ -129,6 +129,8 @@ export default function CalibrationPage() {
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
+  // LabJack T7 inputs are here too: calibration_service calibrates them exactly like an ESP32
+  // PT / LC (uid board_id*100 + AIN). Their "ADC" column is the reading in microvolts.
   const ptChannels = useMemo(() => allSensors.filter((c) => c.type === 'PT'), [allSensors]);
   const lcChannels = useMemo(() => allSensors.filter((c) => c.type === 'LC'), [allSensors]);
 

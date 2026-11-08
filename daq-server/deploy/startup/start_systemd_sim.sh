@@ -81,7 +81,7 @@ bash "$PROJECT/deploy/systemd/install_services.sh" >/dev/null
 systemctl --user daemon-reload
 
 # ── Clean slate, then start only the always-on web + support layer ───────────
-PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator"
+PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator sensor-t7"
 # SKIP_FRONTEND=1 omits the Vite dist build (CI/WS-only runs don't need the GUI;
 # the backend still serves :8081 and, if dist already exists, :3000).
 WEB_UNITS="sensor-backend sensor-config-broadcast sensor-heartbeat sensor-video"

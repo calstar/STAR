@@ -8,6 +8,11 @@
 namespace fsw {
 namespace config {
 
+namespace detail {
+// T7Config.cpp — kept out of T7Config.hpp so the header does not drag toml++ into every includer.
+std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::string>& errors);
+}  // namespace detail
+
 namespace {
 
 using CNV = toml::node_view<const toml::node>;
@@ -381,6 +386,7 @@ Config from_table(const toml::table& t) {
     }
 
     validate_environmental_boards(c);
+    c.t7_boards = detail::parse_t7_boards(t, c.t7_errors);
     return c;
 }
 

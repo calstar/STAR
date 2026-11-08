@@ -481,7 +481,8 @@ export default function SensorInfoPage() {
           .filter((s) => {
             if (typeof s?.calEntity !== 'string') return false;
             const calEntity = s.calEntity as string;
-            return calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity);
+            // s.type === 'PT' includes a LabJack T7 PT (T7<slot>_Cal.AIN<n>).
+            return s.type === 'PT' || calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity);
           })
           .map((s) => {
             const role = String(s.role || s.calEntity);

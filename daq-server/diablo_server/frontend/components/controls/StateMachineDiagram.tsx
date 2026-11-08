@@ -172,6 +172,9 @@ export default function StateMachineDiagram() {
   // Load the config-declared states (names + panel positions) on mount, and RELOAD them whenever a
   // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
   // positions until a full page reload.
+  // `alive` drops a load that settles after unmount: setState then still reaches React's scheduler,
+  // which reads window.event, and under vitest a refused /api/states fetch landing just after the
+  // file's jsdom teardown threw "window is not defined" (a CI flake, StateMachineDiagram.test.tsx).
   useEffect(() => {
     // A load can resolve after unmount (a test's teardown, a page change): bumping state then
     // throws "window is not defined" under jsdom teardown, so a finished load checks first.

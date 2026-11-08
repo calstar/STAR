@@ -27,6 +27,7 @@ replaces *how* a board gets its address, not *which* address.
 |----------------|-------------------------------------------------|
 | `.20`          | DAQ server (static, set outside DHCP)           |
 | `.11`–`.61`    | Board static reservations (`ip` == `board_id`)  |
+| `.81`          | LabJack T7 (`boards.labjack_1`, `board_id` 81)  |
 | `.100`–`.150`  | Board discovery range (reserved, not DHCP)      |
 | `.200`–`.250`  | **Dynamic pool** for unknown boards (2h lease)  |
 

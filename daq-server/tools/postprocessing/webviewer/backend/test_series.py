@@ -72,6 +72,19 @@ def test_classify_families_and_kinds():
     assert h.family == "Other" and not h.primary
 
 
+def test_classify_labjack_t7():
+    # "T71" is the T7 on slot 1, not family "T" with board 71.
+    raw = classify("T71.AIN1.volts")
+    assert raw.family == "T7" and raw.unit == "V" and raw.primary
+    cal = classify("T71_Cal.AIN1.pressure_psi")
+    assert cal.family == "T7_Cal" and cal.unit == "psi"
+    code = classify("T71_Cal.AIN1.raw_uv")
+    assert code.unit == "µV" and not code.primary  # plumbing, like raw_adc
+    assert classify("T71.CJC.temperature_c").unit == "°C"
+    # The ESP32 families are unchanged.
+    assert classify("PT1.CH1.raw_adc_counts").family == "PT"
+
+
 def test_wide_csv_union_and_ffill(monkeypatch):
     # Two channels on different timebases: continuous (NaN gaps) + discrete (ffill).
     def fake_load(_run, name, _src="sensor"):
@@ -98,7 +111,7 @@ def test_wide_csv_union_and_ffill(monkeypatch):
 
 def test_wide_csv_role_row_aligns_with_the_columns(monkeypatch, tmp_path):
     """The second header row names what each column IS. The component name stays the
-    column key (analyze_run.py and every analysis script key on it); the role rides
+    column key (every analysis script keys on it); the role rides
     underneath, blank where the run's config names nothing."""
     monkeypatch.setattr(config, "ELODIN_DIR", tmp_path)
     (tmp_path / "daq_20260902_120000.toml").write_text(

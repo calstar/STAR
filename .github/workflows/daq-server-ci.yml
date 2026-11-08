@@ -1004,7 +1004,7 @@ jobs:
       run: |
         mkdir -p /tmp/session_logs
         for u in sensor-backend sensor-elodin sensor-daq sensor-calibration \
-                 sensor-controller sensor-actuator sensor-simulator \
+                 sensor-controller sensor-actuator sensor-simulator sensor-t7 \
                  sensor-config-broadcast sensor-heartbeat; do
           journalctl --user -u "$u" --no-pager > "/tmp/session_logs/$u.log" 2>&1 || true
         done

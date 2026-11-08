@@ -12,6 +12,7 @@
  * built dynamically from config.toml sensor_roles / actuator_roles.
  */
 
+import { t7Channels } from './config-validation';
 import { create } from 'zustand';
 import { useCallback, useEffect, useMemo } from 'react';
 import {
@@ -243,6 +244,22 @@ export function buildAliasesFromConfig(config: any): void {
       if (!isFinite(ch)) continue;
       addSensorAliases(roleName, ch, rawPrefix, calPrefix, components, type === 'PT');
     }
+  }
+
+  // LabJack T7 channels (t7_bridge): a PT / TC / LC on a T7 answers to the same role keys an
+  // ESP32 sensor of that kind does — PT_Cal.<Role>, TC_Cal.<Role>, LC_Cal.<Role> and the raw
+  // <KIND>.<Role> — plus its own T7<slot>_Cal.<Role>. Its streams are T7<slot>_Cal.AIN<n>.<field>
+  // (psi / °C / kg, plus raw_uv) and T7<slot>.AIN<n>.volts.
+  for (const ch of t7Channels(boards)) {
+    if (!ch.enabled || !ch.calEntity || !ch.calField || !ch.role) continue;
+    const role = ch.role.replace(/\s+/g, '_');
+    const t7Cal = `T7${ch.slot}_Cal`, t7Raw = `T7${ch.slot}`;
+    for (const comp of [ch.calField, 'raw_uv']) {
+      addAlias(`${ch.kind}_Cal.${role}.${comp}`, `${ch.calEntity}.${comp}`);
+      addAlias(`${t7Cal}.${role}.${comp}`, `${ch.calEntity}.${comp}`);
+    }
+    addAlias(`${ch.kind}.${role}.volts`, `${ch.entity}.volts`);
+    addAlias(`${t7Raw}.${role}.volts`, `${ch.entity}.volts`);
   }
 
   // (HP PT board reads its own [sensor_roles_<boardKey>] section in the generic loop above —

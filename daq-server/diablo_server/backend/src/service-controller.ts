@@ -78,8 +78,22 @@ const BASE_UNITS = [
   'sensor-actuator',
 ];
 
-function pipelineUnits(simulated: boolean): string[] {
+/**
+ * sensor-t7 (t7_bridge, LabJack T7 inputs) is part of the pipeline only where its unit is
+ * installed. systemctl refuses to start or stop a unit it has never heard of, so naming it on a
+ * box whose install_services.sh predates it would fail every session start, not just the T7. Where
+ * it is installed but no T7 is enabled, t7_bridge exits 0 and the unit simply stays inactive.
+ */
+export const T7_UNIT = 'sensor-t7';
+const T7_UNIT_FILE = join(homedir(), '.config', 'systemd', 'user', `${T7_UNIT}.service`);
+let t7UnitInstalled = (): boolean => existsSync(T7_UNIT_FILE);
+export function setT7UnitInstalledForTests(fn: () => boolean): void {
+  t7UnitInstalled = fn;
+}
+
+export function pipelineUnits(simulated: boolean): string[] {
   const units = [...BASE_UNITS];
+  if (t7UnitInstalled()) units.push(T7_UNIT);
   if (simulated) units.push('sensor-simulator');
   return units;
 }

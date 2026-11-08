@@ -335,6 +335,48 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# LabJack T7 (t7_bridge). A simulated run streams it as a stand-in device (t7_bridge --fake), and
+# test_integration.sh asserts on these exact channels — change them together.
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+mac = "90:2e:87:01:24:f1"
+board_id = 81
+enabled = true
+scan_rate_hz = 100.0
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "T7 Tank PT"
+signal = "4-20mA"
+shunt_ohms = 250.0
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+role = "T7 Nozzle TC"
+tc_type = "K"
+range = 0.1
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "T7 LOX RTD"
+r0_ohms = 1000.0      # Pt1000
+ljtr_ohms = 1000.0    # on an LJTick-Resistance-1k
+
+[[boards.labjack_1.channels]]
+ain = 4
+kind = "LC"
+role = "T7 Thrust LC"
+differential = true
+range = 0.1
+full_scale = 500.0
+sensitivity_mv_per_v = 2.0
+excitation_v = 10.0
+
 # Motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire), two valves on connectors 1
 # and 2. Each is commanded like an actuator through [actuator_roles] -- ["NC", 1, 71] and
 # ["NC", 2, 71]; a ball valve has no NO/NC -- and streams its position (4-20 mA) instead of a
@@ -436,6 +478,9 @@ active_connectors = [ 1, 2 ]
 # [calibration_full_scale_lc_board]
 # "Thrust" = 500
 
+# UNUSED today: these reach the actuator board in its config packet, but the firmware only reads
+# them in its PTAbort state, which is unreachable while ENABLE_ALL_STATE_TRANSITIONS = false
+# (firmware/Hotfire_Code/common/hotfire_config.h). No board aborts on them. Hidden in the GUI.
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400

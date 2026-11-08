@@ -157,7 +157,7 @@ export default function BoardsPage() {
       .catch((e: unknown) => revert(e instanceof Error ? e.message : 'request failed'));
   }, []);
 
-  const TYPE_ORDER = ['ACTUATOR', 'BALL_VALVE', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
+  const TYPE_ORDER = ['ACTUATOR', 'BALL_VALVE', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL', 'T7'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
@@ -238,9 +238,10 @@ export default function BoardsPage() {
                   {boards.map((b, index) => {
                     const stale = isBoardLiveTelemetryStale(b);
                     const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
-                    // Neither the environmental nor the ball valve firmware sends SELF_TEST.
+                    // No self-test on an environmental board, a ball valve board (neither firmware
+                    // sends SELF_TEST) or a LabJack T7 (not ESP32 firmware).
                     let testStatus: 'Untested' | 'Passed' | 'Failed' | 'Pending' | 'N/A' =
-                      b.type === 'ENVIRONMENTAL' || b.type === 'BALL_VALVE' ? 'N/A' : 'Untested';
+                      b.type === 'ENVIRONMENTAL' || b.type === 'BALL_VALVE' || b.type === 'T7' ? 'N/A' : 'Untested';
                     if (testStatus !== 'N/A' && testKeys.length > 0) {
                       const anyFail = testKeys.some(k => sensorData[k] === 0);
                       const expected = expectedCountById[b.id] ?? 0;
@@ -258,6 +259,9 @@ export default function BoardsPage() {
                     else if (b.boardState === 2) boardStateLabel = 'Active';
                     else if (b.boardState === 3) boardStateLabel = 'Abort';
                     else if (b.boardState === 4) boardStateLabel = 'Abort done';
+                    // A LabJack T7 has no board state machine; its "heartbeat" is its data
+                    // (server.ts noteT7Alive), so fresh data means it is streaming: Active.
+                    if (b.type === 'T7') boardStateLabel = 'Active';
                     if (stale) boardStateLabel = '---';
                     const engineLabel = stale ? '---' : engineStateCodeToLabel(b.engineState);
                     const liveConnected = !stale && (b.operational ?? b.connected);

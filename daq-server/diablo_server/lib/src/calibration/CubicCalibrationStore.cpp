@@ -35,7 +35,8 @@ CubicCalibrationStore::CubicCalibrationStore(std::string file_path)
 
 void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uint8_t connector,
                                              uint8_t logical_ch, const std::string& role,
-                                             const std::string& active_model, SensorKind kind) {
+                                             const std::string& active_model, SensorKind kind,
+                                             const std::string& raw_unit) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = channels_[uid];
     ch.uid = uid;
@@ -48,6 +49,7 @@ void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uin
     if (!active_model.empty())
         ch.active_model = active_model;  // config truth; wins over a disk-restored value
     ch.kind = kind;                      // config truth, likewise
+    ch.raw_unit = raw_unit;              // config truth: which hardware this uid reads through
     // A config edit that moves a sensor between cubic and linear (a profile swap, a reload) must
     // re-derive the curve it streams from the points it already has; otherwise the old degree's
     // fit keeps streaming under the new model's name until the next capture.
@@ -274,6 +276,7 @@ std::string CubicCalibrationStore::serialize() const {
         cj["role"] = ch.role;
         cj["active_model"] = ch.active_model;
         cj["kind"] = ch.kind == SensorKind::LC ? "LC" : "PT";
+        cj["rawUnit"] = ch.raw_unit;
         cj["numPoints"] = ch.points.size();
         cj["status"] = ch.status;
         cj["last_error"] = ch.last_error;
@@ -414,11 +417,34 @@ size_t CubicCalibrationStore::load() {
         }
 
         // Destination = where that role lives now (config truth); else the persisted uid.
+        // A legacy entry has no rawUnit: everything written before T7 support was an ADC code.
+        const std::string entry_unit = cj.value("rawUnit", std::string(kRawUnitAdc));
         uint16_t uid = persisted_uid;
         if (!entry_role.empty()) {
             auto rit = role_to_uid.find(entry_role);
-            if (rit != role_to_uid.end())
-                uid = rit->second;
+            if (rit != role_to_uid.end()) {
+                if (channels_[rit->second].raw_unit == entry_unit) {
+                    uid = rit->second;
+                } else {
+                    std::cout << "[CubicStore] role '" << entry_role << "' cal was taken in "
+                              << entry_unit << " but the channel it now names reads "
+                              << channels_[rit->second].raw_unit
+                              << " — NOT attached; recalibrate it. The old points are kept under "
+                                 "uid "
+                              << persisted_uid << "." << std::endl;
+                }
+            }
+        }
+        // Even at its own uid, never merge across units (a board changed type, keeping its id).
+        {
+            auto dit = channels_.find(uid);
+            if (dit != channels_.end() && dit->second.uid != 0 &&
+                dit->second.raw_unit != entry_unit) {
+                std::cout << "[CubicStore] uid " << uid << " cal was taken in " << entry_unit
+                          << " but uid " << uid << " now reads " << dit->second.raw_unit
+                          << " — dropped; recalibrate it." << std::endl;
+                continue;
+            }
         }
 
         // Merge into the channel register_channel() created at startup (config is the source of
@@ -430,8 +456,15 @@ size_t CubicCalibrationStore::load() {
             ch.uid = uid;
             ch.board_id = static_cast<uint8_t>(uid / 100);
             ch.connector = static_cast<uint8_t>(uid % 100);
+            // An orphan keeps the logical channel it was saved with when it has one: a T7
+            // channel's lives above the ESP32 range, and re-deriving it the ESP32 way would land
+            // its fit on a live ESP32 sensor's logical channel.
             ch.logical_ch =
-                pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+                entry_unit == kRawUnitMicrovolts && cj.contains("logicalCh") &&
+                        cj["logicalCh"].is_number_integer()
+                    ? static_cast<uint8_t>(cj["logicalCh"].get<int>())
+                    : pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+            ch.raw_unit = entry_unit;
             ch.role = entry_role;
             ch.active_model = cj.value("active_model", std::string("cubic"));
             // Only an ORPHAN takes its kind from the file; a channel the config registered
