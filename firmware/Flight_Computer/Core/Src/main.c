@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "board.h"
 #include "bringup_task.h"
+#include "usbd_cdc_if.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -67,7 +68,7 @@ UART_HandleTypeDef huart9;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
@@ -108,7 +109,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  usb_bootloader_check();
   /* USER CODE END 1 */
 
   /* MPU Configuration--------------------------------------------------------*/

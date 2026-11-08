@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include "stm32h7xx.h"
+#include "mode.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +35,7 @@
 /* USER CODE BEGIN PV */
 /* Global status flag to check if a PC serial terminal is actively open */
 volatile bool g_usb_terminal_connected = false;
+static uint8_t line_coding[7] = {0x00, 0xC2, 0x01, 0x00, 0, 0, 8}; /* 115200 8N1 */
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -64,7 +66,8 @@ volatile bool g_usb_terminal_connected = false;
   */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
-#define SYSTEM_MEMORY_BOOTLOADER_ADDRESS  0x1FF09000UL
+#define BOOTLOADER_ADDR  0x1FF09800UL /* ST's H723 example; confirm in AN2606 */
+#define BOOTLOADER_MAGIC 0xB007100DUL /* RTC->BKP0R, survives the reset */
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -132,7 +135,7 @@ static int8_t CDC_Receive_HS(uint8_t* pbuf, uint32_t *Len);
 static int8_t CDC_TransmitCplt_HS(uint8_t *pbuf, uint32_t *Len, uint8_t epnum);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
-void JumpToSystemBootloader(void);
+static bool is_bootloader_cmd(const uint8_t *b, uint32_t n);
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -210,11 +213,11 @@ static int8_t CDC_Control_HS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
     break;
 
   case CDC_SET_LINE_CODING:
-
+    memcpy(line_coding, pbuf, sizeof line_coding);
     break;
 
   case CDC_GET_LINE_CODING:
-
+    memcpy(pbuf, line_coding, sizeof line_coding);
     break;
 
   case CDC_SET_CONTROL_LINE_STATE:
@@ -258,10 +261,12 @@ static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceHS);
 
-  // Check if received message matches "BOOTLOADER"
-  if (*Len >= 10 && strncmp((char*)Buf, "BOOTLOADER", 10) == 0)
+  /* Only in IDLE. Reset, and main() jumps before anything else starts. */
+  if (app_state() == FLIGHT_IDLE && is_bootloader_cmd(Buf, *Len))
   {
-      JumpToSystemBootloader();
+    HAL_PWR_EnableBkUpAccess();
+    RTC->BKP0R = BOOTLOADER_MAGIC;
+    NVIC_SystemReset();
   }
 
   return (USBD_OK);
@@ -279,13 +284,11 @@ uint8_t CDC_Transmit_HS(uint8_t* Buf, uint16_t Len)
 {
   uint8_t result = USBD_OK;
   /* USER CODE BEGIN 12 */
-  // Level 3 Guard: Only attempt transmit if a host terminal application is open (DTR set)
-  if (!g_usb_terminal_connected)
-  {
-      return USBD_FAIL;
-  }
-
   USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceHS.pClassData;
+  if (!usb_terminal_open() || hcdc == NULL)
+  {
+    return USBD_FAIL;
+  }
   if (hcdc->TxState != 0){
     return USBD_BUSY;
   }
@@ -319,40 +322,32 @@ static int8_t CDC_TransmitCplt_HS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-typedef void (*pFunction)(void);
-
-void JumpToSystemBootloader(void)
+bool usb_configured(void)
 {
-    uint32_t JumpAddress;
-    pFunction JumpToBootloader;
+  return hUsbDeviceHS.dev_state == USBD_STATE_CONFIGURED; /* unplug reads as suspended */
+}
 
-    // 1. Disable all global interrupts
-    __disable_irq();
+bool usb_terminal_open(void)
+{
+  return g_usb_terminal_connected && usb_configured();
+}
 
-    // 2. Disable SysTick timer and reset its registers
-    SysTick->CTRL = 0;
-    SysTick->LOAD = 0;
-    SysTick->VAL  = 0;
+/* "BOOTLOADER" exactly, with an optional line ending. */
+static bool is_bootloader_cmd(const uint8_t *b, uint32_t n)
+{
+  while (n > 0 && (b[n - 1] == '\r' || b[n - 1] == '\n')) n--;
+  return n == 10 && memcmp(b, "BOOTLOADER", 10) == 0;
+}
 
-    // 3. Clear pending interrupts and reset RCC clock settings
-    HAL_RCC_DeInit();
-
-    // 4. Clear Interrupt Enable Register & Pending Register in NVIC
-    for (uint8_t i = 0; i < 8; i++)
-    {
-        NVIC->ICER[i] = 0xFFFFFFFF;
-        NVIC->ICPR[i] = 0xFFFFFFFF;
-    }
-
-    // 5. Fetch the Bootloader Main Stack Pointer (MSP) and Reset Vector address
-    JumpAddress = *(__IO uint32_t*) (SYSTEM_MEMORY_BOOTLOADER_ADDRESS + 4);
-    JumpToBootloader = (pFunction) JumpAddress;
-
-    // 6. Set Main Stack Pointer to Bootloader Stack Address
-    __set_MSP(*(__IO uint32_t*) SYSTEM_MEMORY_BOOTLOADER_ADDRESS);
-
-    // 7. Jump to System Bootloader
-    JumpToBootloader();
+/* First thing in main(): straight from reset, so nothing needs undoing. */
+void usb_bootloader_check(void)
+{
+  __HAL_RCC_RTC_CLK_ENABLE();
+  if (RTC->BKP0R != BOOTLOADER_MAGIC) return;
+  HAL_PWR_EnableBkUpAccess();
+  RTC->BKP0R = 0;
+  __set_MSP(*(volatile uint32_t *)BOOTLOADER_ADDR);
+  ((void (*)(void))(*(volatile uint32_t *)(BOOTLOADER_ADDR + 4)))();
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

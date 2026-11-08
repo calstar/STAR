@@ -6,6 +6,7 @@
 #include "main.h"
 #include "sleep_math.h"
 #include "task.h"
+#include "usbd_cdc_if.h"
 
 extern RTC_HandleTypeDef hrtc;
 void SystemClock_Config(void);
@@ -65,7 +66,8 @@ const board_sleep_info_t* board_sleep_info(void) {
 }
 
 uint32_t board_sleep(uint32_t ms, bool (*wake_now)(void)) {
-    if (!info.ready || !info.stop_allowed) {
+    /* Stop gates off the USB clocks: stay awake while a host is attached. */
+    if (!info.ready || !info.stop_allowed || usb_configured()) {
         info.awake_waits++;
         return 0;
     }
