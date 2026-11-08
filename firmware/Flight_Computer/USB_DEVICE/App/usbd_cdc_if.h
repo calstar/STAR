@@ -112,6 +112,7 @@ uint8_t CDC_Transmit_HS(uint8_t* Buf, uint16_t Len);
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
 bool usb_configured(void);
 bool usb_terminal_open(void); /* configured and DTR set */
+bool usb_tx_ready(void);      /* the IN endpoint can take a frame */
 void usb_bootloader_check(void);
 
 /* USER CODE END EXPORTED_FUNCTIONS */

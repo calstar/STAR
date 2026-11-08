@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include "stm32h7xx.h"
 #include "mode.h"
+#include "usb_link.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -258,6 +259,7 @@ static int8_t CDC_Control_HS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 11 */
+  usb_link_rx(Buf, *Len); /* copied out before the buffer is re-armed */
   USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceHS);
 
@@ -325,6 +327,12 @@ static int8_t CDC_TransmitCplt_HS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 bool usb_configured(void)
 {
   return hUsbDeviceHS.dev_state == USBD_STATE_CONFIGURED; /* unplug reads as suspended */
+}
+
+bool usb_tx_ready(void)
+{
+  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceHS.pClassData;
+  return hcdc != NULL && hcdc->TxState == 0;
 }
 
 bool usb_terminal_open(void)

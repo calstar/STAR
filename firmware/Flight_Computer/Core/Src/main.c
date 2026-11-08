@@ -27,6 +27,7 @@
 #include "board.h"
 #include "bringup_task.h"
 #include "usbd_cdc_if.h"
+#include "usb_link.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -1079,11 +1080,7 @@ void StartDefaultTask(void *argument)
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  usb_link_run(); /* the GUI's link; never returns */
   /* USER CODE END 5 */
 }
 
