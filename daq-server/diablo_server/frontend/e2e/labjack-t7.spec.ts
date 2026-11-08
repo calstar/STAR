@@ -80,9 +80,10 @@ test('the config editor shows the T7 and validates its channel table as it is ed
     .toEqual([T7.pt.role, T7.tc.role, T7.rtd.role, T7.lc.role]);
   // PT and LC take a calibration model like an ESP32 sensor; the default is physics.
   await expect(page.getByTitle('Streaming calibration model for this sensor').first()).toHaveValue('physics');
-  // The RTD row names its element and its LJTick-Resistance.
-  await expect(page.getByTitle('RTD element (R at 0 °C)')).toHaveValue('1000');
-  await expect(page.getByTitle('LJTick-Resistance model (its fixed resistor)')).toHaveValue('1000');
+  // The RTD row names its element and its LJTick-Resistance. By role: each column header carries
+  // the same title as its inputs, so a bare getByTitle matches the header too.
+  await expect(page.getByRole('combobox', { name: 'RTD element (R at 0 °C)', exact: true })).toHaveValue('1000');
+  await expect(page.getByRole('combobox', { name: 'LJTick-Resistance model (its fixed resistor)', exact: true })).toHaveValue('1000');
   // A clean T7 shows no problems.
   await expect(page.getByText('needs a role', { exact: false })).toHaveCount(0);
 
