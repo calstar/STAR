@@ -60,29 +60,28 @@ describe('ball valve tile on the main panel', () => {
     await act(async () => { await waitForSensorFlush(); });
   };
 
-  it('a ball valve tile is open or closed from BV_CMD, with no position reading', async () => {
+  it('shows % OPEN / % CLOSED from BV entities, following the command', async () => {
     const { default: ActuatorControlByName } = await import('@/components/controls/ActuatorControlByName');
     render(<ActuatorControlByName name="Main Ball Valve" channel={1} entity="ACT.Main_Ball_Valve" boardId={71} ballValve />);
-    const tile = () => screen.getByRole('button', { name: /^Main Ball Valve:/ });
 
     await push('BV1_Cal.CH1', 'position_pct', 40);
     await push('BV1_Cal.CH1', 'cal_status', 1);
     await push('BV_CMD.B1.CH1', 'actuator_state_commanded', 1);
-    expect(tile()).toHaveAttribute('data-state', 'open');
+    expect(screen.getByTestId('actuator-reading:Main Ball Valve')).toHaveTextContent('40% OPEN');
 
     await push('BV_CMD.B1.CH1', 'actuator_state_commanded', 0);
-    expect(tile()).toHaveAttribute('data-state', 'closed');
+    expect(screen.getByTestId('actuator-reading:Main Ball Valve')).toHaveTextContent('60% CLOSED');
 
-    expect(screen.queryByTestId('actuator-reading:Main Ball Valve')).toBeNull();
-    expect(screen.queryByText(/%/)).toBeNull();
+    // The raw reading rides on the same calibrated entity; the tile shows its current after.
+    await push('BV1_Cal.CH1', 'raw_adc', 1489);
+    expect(screen.getByTestId('actuator-reading:Main Ball Valve')).toHaveTextContent('60% CLOSED, 12.0 mA');
   });
 
-  it('an actuator tile shows no reading line, not even its current', async () => {
+  it('an actuator tile still shows its current', async () => {
     const { default: ActuatorControlByName } = await import('@/components/controls/ActuatorControlByName');
     render(<ActuatorControlByName name="Fuel Main" channel={1} entity="ACT.Fuel_Main" boardId={11} />);
     await push('ACT1_Cal.CH1', 'current_a', 1.25);
-    expect(screen.queryByTestId('actuator-reading:Fuel Main')).toBeNull();
-    expect(screen.queryByText(/1\.25 A/)).toBeNull();
+    expect(screen.getByTestId('actuator-reading:Fuel Main')).toHaveTextContent('1.25 A');
   });
 
   it('maps the role to BV entities, not to actuator board 11 on the same slot', async () => {
