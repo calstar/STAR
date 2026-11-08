@@ -133,7 +133,7 @@ the real backend over a WebSocket (`examples/serve.rs`, a fresh simulated board
 per page), and presses its buttons by name: the same flows, plus Apply greying
 out and a number being typed key by key not getting overwritten.
 
-`tests/firmware_writer.rs` compiles `firmware/Flight_Computer/Core/Src/emmc_log.c`
+`tests/firmware_writer.rs` compiles `firmware/Flight_Computer/src/app/emmc_log.c`
 with the machine's C compiler, writes a disk image with the real writer, and
 decodes it here. Without a compiler it is skipped, unless
 `FC_REQUIRE_FIRMWARE_TEST=1`, which CI sets on Linux and macOS.

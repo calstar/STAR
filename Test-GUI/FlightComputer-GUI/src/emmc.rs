@@ -1,6 +1,6 @@
 //! Decoder for the eMMC flight log.
 //!
-//! The format is Core/Inc/emmc_log.h on the firmware side; this is a second,
+//! The format is src/app/emmc_log.h on the firmware side; this is a second,
 //! independent implementation of its reader, so a format bug cannot hide by
 //! being read back with the code that wrote it.
 //!

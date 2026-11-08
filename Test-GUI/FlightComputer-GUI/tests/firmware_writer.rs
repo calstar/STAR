@@ -28,7 +28,7 @@ fn compiler() -> Option<&'static str> {
 fn firmware_image() -> Option<(Vec<u8>, u32)> {
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
     let fw: PathBuf = here.join("../../firmware/Flight_Computer");
-    let src = fw.join("Core/Src");
+    let src = fw.join("src/app");
     if !src.join("emmc_log.c").exists() {
         skip("firmware sources not found");
         return None;
@@ -46,7 +46,7 @@ fn firmware_image() -> Option<(Vec<u8>, u32)> {
         .arg(src.join("emmc_log.c"))
         .arg(src.join("flight_state.c"))
         .arg("-I")
-        .arg(fw.join("Core/Inc"))
+        .arg(fw.join("src/app"))
         .status()
         .expect("run the C compiler");
     assert!(st.success(), "compiling write_image.c failed");
