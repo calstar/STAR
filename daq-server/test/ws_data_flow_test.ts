@@ -15,7 +15,7 @@
  *   bash test/test_integration.sh --only=sensor_data
  *
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
- * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
+ * cal_stability, cal_lc_tare, cal_lc_linear, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
  * conservation, config_validate, environmental, ball_valve — or numbers 1–6, 10–12, 14–15
@@ -95,7 +95,7 @@ function parseOnlyTests(): Set<string> | null {
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
-    'cal_lc_tare',
+    'cal_lc_tare', 'cal_lc_linear',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
@@ -2485,6 +2485,95 @@ async function testClearToNothing(ws: WebSocket): Promise<void> {
   assert(fc.length === 0, `cal_clear: robust preview curve cleared (${fc.length} samples)`);
 }
 
+// ── Test: the load-cell `linear` model — the default, end to end ─────────────────────────────
+//
+// A load cell with no [calibration_model_*] entry is `linear`: a straight-line fit through its
+// captures, so a tare (an ADC code evaluated through the curve) cancels a zero drift exactly. Why
+// that matters is proved in lib/test/test_lc_linear_fit.cpp; the sim holds each channel's ADC
+// constant, so drift itself cannot be staged here. What this proves is the plumbing, through
+// every process, on a channel the harness leaves unconfigured (lc_board_2 CH6):
+//   1. the default reaches the service: the store records active_model "linear";
+//   2. with no fit it streams the datasheet physics conversion — what an unconfigured load cell
+//      read before linear existed — and one point is not a fit, so it still does;
+//   3. a second point makes a line: the stream moves to the fit, and the record carries the
+//      line (degree 1) as the active fit, plus both candidate fits for the calibration page;
+//   4. clearing returns it to physics.
+async function testLcLinear(ws: WebSocket): Promise<void> {
+  console.log('\n📏 Test 23: LC linear model (the default) end-to-end');
+  const CH = 6, BOARD = 42, UID = BOARD * 100 + CH;       // lc_board_2 CH6: no role, no model
+  const ENTITY = 'LC2_Cal.CH6';
+  const SETTLE_MS = 2500;
+  // config_base [calibration.lc]: the physics conversion every unconfigured load cell streams.
+  const SENS_MV_PER_V = 2, PGA = 32, FULL_SCALE_KG = 300;
+  const physicsKg = (adc: number) => (adc / ((SENS_MV_PER_V / 1000) * PGA * 2 ** 31)) * FULL_SCALE_KG;
+
+  const pointsNow = () => (readCalRecord(UID)?.numPoints as number | undefined) ?? 0;
+  // ONE capture, waited on until the store has it: the "one point is not a line" step needs
+  // exactly one, and a capture can be refused when the window has no fresh samples.
+  const captureOne = async (ref: number): Promise<boolean> => {
+    const before = pointsNow();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      send(ws, { type: 'calibration_command', timestamp: Date.now(),
+        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+      for (let i = 0; i < 10; i++) { await sleep(300); if (pointsNow() > before) return true; }
+    }
+    return false;
+  };
+  const readings = async () => ({
+    kg: await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS),
+    adc: await meanOf(ws, ENTITY, 'raw_adc', SETTLE_MS),
+  });
+
+  // ── 1. the default ────────────────────────────────────────────────────────
+  const rec0 = readCalRecord(UID);
+  if (!rec0) { assert(false, `cal_lc_linear: no store record for LC uid ${UID}`); return; }
+  assert(rec0.active_model === 'linear',
+    `cal_lc_linear: an LC with no model in config is "linear" (store says ${String(rec0.active_model)})`);
+
+  // ── 2. no fit → physics, and one point is still no fit ────────────────────
+  const r0 = await readings();
+  if (r0.kg === null || r0.adc === null) {
+    assert(false, `cal_lc_linear: no ${ENTITY} traffic (force_kg=${r0.kg} raw_adc=${r0.adc})`);
+    return;
+  }
+  const phys = physicsKg(r0.adc);
+  console.log(`  uncaptured: force_kg=${r0.kg.toFixed(3)} physics(${r0.adc.toFixed(0)})=${phys.toFixed(3)}`);
+  assert(Math.abs(r0.kg - phys) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: uncaptured linear streams physics (${r0.kg.toFixed(3)} vs ${phys.toFixed(3)} kg)`);
+
+  // A reference well away from what physics reads, so "streams the fit" cannot pass by accident.
+  const REF = Math.round(phys) + 40;
+  if (!(await captureOne(REF))) { assert(false, 'cal_lc_linear: first capture never landed'); return; }
+  const r1 = await readings();
+  const rec1 = readCalRecord(UID);
+  console.log(`  1 point: force_kg=${r1.kg?.toFixed(3)} status=${String(rec1?.status)}`);
+  assert(rec1?.status === 'PENDING', `cal_lc_linear: one point is PENDING (${String(rec1?.status)})`);
+  assert(r1.kg !== null && Math.abs(r1.kg - phys) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: one point is not a line — still physics (${r1.kg?.toFixed(3)} vs ${phys.toFixed(3)} kg)`);
+
+  // ── 3. two points → the line streams ──────────────────────────────────────
+  if (!(await captureOne(REF))) { assert(false, 'cal_lc_linear: second capture never landed'); return; }
+  const r2 = await readings();
+  const rec2 = readCalRecord(UID) ?? {};
+  const fits = (rec2.fits ?? {}) as { linear?: { valid?: boolean; degree?: number }; cubic?: { valid?: boolean } };
+  console.log(`  2 points: force_kg=${r2.kg?.toFixed(3)} degree=${String(rec2.degree)} status=${String(rec2.status)}`);
+  assert(rec2.status === 'OK' && rec2.degree === 1,
+    `cal_lc_linear: two points fit a line (status ${String(rec2.status)}, degree ${String(rec2.degree)})`);
+  assert(fits.linear?.valid === true && fits.linear?.degree === 1 && fits.cubic?.valid === true,
+    `cal_lc_linear: the record carries both fits for the page (${JSON.stringify(fits)})`);
+  assert(r2.kg !== null && Math.abs(r2.kg - REF) < 0.5,
+    `cal_lc_linear: the stream moved to the fit (${r2.kg?.toFixed(3)} kg, captured at ${REF})`);
+
+  // ── 4. clear → physics again (and the shared store is left as found) ─────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  for (let i = 0; i < 10 && pointsNow() !== 0; i++) await sleep(300);
+  const r3 = await readings();
+  assert(pointsNow() === 0, `cal_lc_linear: clear wiped the points (${pointsNow()})`);
+  assert(r3.kg !== null && r3.adc !== null && Math.abs(r3.kg - physicsKg(r3.adc)) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: cleared, back to physics (${r3.kg?.toFixed(3)} kg)`);
+}
+
 // ── Test: LC capture builds a cubic fit (mirrors testSharedPoints for a load cell uid). LC has no
 // robust learner (no drift-learning), so unlike a PT capture this must NOT populate fitCurve.
 async function testLcCapture(ws: WebSocket): Promise<void> {
@@ -3578,6 +3667,7 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_linear')) await testLcLinear(ws);
     // Injected packets are not in the simulator's counters. Keep this after
     // conservation and the other read-only checks against simulator ground truth.
     if (IS_THIN && runTest('environmental')) await testEnvironmentalDataFlow(ws);
