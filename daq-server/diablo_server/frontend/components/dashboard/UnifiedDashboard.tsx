@@ -56,7 +56,7 @@ export default function UnifiedDashboard() {
 
         <div className="flex min-w-0 flex-col lg:contents xl:flex xl:min-h-0 xl:border-l xl:border-line xl:pl-8">
           {/* Actuators: 4x4 grid (two across on a landscape tablet). Rows never go below a
-              tile's content height (name, current, buttons) -- squeezed past that, the name
+              tile's content height (name, current, state box; the card is the toggle) -- squeezed past that, the name
               row collapsed to nothing and the tiles showed only "0.40 A". On a tablet, when
               the column is too short, the grid scrolls.
               Desktop (xl): the panel takes its four rows' natural height and the state
@@ -64,7 +64,7 @@ export default function UnifiedDashboard() {
               fourth row off on a laptop-height screen. */}
           <section className="flex min-w-0 flex-col border-b border-line py-4 lg:min-h-0 lg:border-b-0 lg:border-l lg:px-5 xl:flex-none xl:border-b xl:border-l-0 xl:px-0 xl:py-5">
             <h2 className="caps mb-3 flex-shrink-0 lg:mb-2 xl:mb-3">Actuators</h2>
-            <div className="grid auto-rows-[minmax(64px,auto)] grid-cols-2 gap-2 sm:grid-cols-4 lg:min-h-0 lg:flex-1 lg:auto-rows-[minmax(55px,1fr)] lg:grid-cols-2 lg:gap-1.5 lg:overflow-y-auto xl:flex-none xl:grid-cols-4 xl:grid-rows-[repeat(4,minmax(52px,auto))] xl:gap-2 xl:overflow-visible">
+            <div className="grid auto-rows-[minmax(70px,auto)] grid-cols-2 gap-[9px] sm:grid-cols-4 lg:min-h-0 lg:flex-1 lg:auto-rows-[minmax(60px,1fr)] lg:grid-cols-2 lg:gap-[7px] lg:overflow-y-auto xl:flex-none xl:grid-cols-4 xl:grid-rows-[repeat(4,minmax(57px,auto))] xl:gap-[9px] xl:overflow-visible">
               {Array.from({ length: 16 }, (_, i) => {
                 const a = actuatorsFromConfig[i];
                 // Placeholders only hold the 4x4 shape; anywhere else they are just blank tiles.
