@@ -84,23 +84,19 @@ impl Drop for Rig {
 #[test]
 fn status_and_live() {
     let r = Rig::new();
+    // The Status tab is the board's value table, shown as sent (gui_map.c).
     let st = r.b.view().status;
-    assert_eq!(st.sections[0].rows[0].value, "IDLE");
+    assert_eq!(st.self_test.len(), 8);
     assert!(st.self_test.iter().all(|row| row.value != "—"));
-    // Battery and pyro continuity are the board's own conversions and verdicts,
-    // shown as sent (the simulated board: 2S battery OK, e-match on channel 1).
     let rows: Vec<_> = st.sections.iter().flat_map(|s| s.rows.iter()).collect();
     let find = |name: &str| rows.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("{name}"));
+    assert_eq!((find("State").value.as_str(), find("State").chip), ("IDLE", Some(Tone::Good)));
+    // The simulated board reads 7890-7909 mV.
     let battery = find("Battery");
-    // The simulated board reads 7.890-7.909 V, so the two-decimal text is 7.89, 7.90 or 7.91.
-    let volts: f64 = battery.value.strip_suffix(" V, OK").and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{}", battery.value));
-    assert!((7.85..=7.95).contains(&volts), "{}", battery.value);
-    assert_eq!(battery.chip, Some(Tone::Good));
-    let p1 = find("Pyro 1 continuity");
-    assert!(p1.value.starts_with("continuity, 1.6") && p1.value.ends_with(" Ω"), "{}", p1.value);
-    assert_eq!(p1.chip, Some(Tone::Good));
-    assert_eq!(find("Pyro 2 continuity").value, "open", "over range: no resistance shown");
-    assert_eq!(find("Pyro 2 continuity").chip, Some(Tone::Warn));
+    let mv: u32 = battery.value.strip_suffix(" mV").and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{}", battery.value));
+    assert!((7_890..=7_910).contains(&mv), "{}", battery.value);
+    assert_eq!((find("Battery state").value.as_str(), find("Battery state").chip), ("OK", Some(Tone::Good)));
+    assert_eq!(find("Gnss satellites").value, "11", "a row the app has no code for is still shown");
     // Samples are scaled with the ACTIVE config: a resting board reads ~1 g.
     let az = || -> Option<f64> {
         let live = r.sink.live.lock().unwrap();
@@ -117,9 +113,9 @@ fn status_and_live() {
     }
     let az = az().expect("live accel samples");
     assert!((az - 1.0).abs() < 0.1, "resting board reads ~1 g, got {az}");
-    // Stream off: the board stops (it says so in its STATUS).
+    // Stream off: the board stops (it says so in its stream_rate_hz row).
     r.send(Command::SetStream { rate: 0, mask: 0x0F });
-    assert!(r.wait(5.0, |v| v.status.sections[2].rows[1].value == "off"));
+    assert!(r.wait(5.0, |v| v.status.sections[0].rows.iter().any(|r| r.name == "Stream rate hz" && r.value == "0 Hz")));
     assert!(*r.sink.views.lock().unwrap() > 0);
 }
 

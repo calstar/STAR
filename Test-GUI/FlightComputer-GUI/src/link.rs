@@ -123,7 +123,8 @@ struct Pending<P> {
 pub enum Event<P> {
     Connected(p::Info),
     Disconnected(String),
-    Status(p::Status),
+    /// One row of the board's value table.
+    Value(p::Value),
     Sample(u8, Vec<u8>),
     Text(String),
     /// The answer to a request: the reply frame, or why there is none (timeout).
@@ -232,9 +233,9 @@ impl<P: Clone> Client<P> {
     fn on_frame(&mut self, fr: Frame) {
         if fr.seq == 0 {
             match fr.ty {
-                msg::STATUS => {
-                    if let Ok(s) = p::Status::unpack(&fr.payload) {
-                        self.events.push(Event::Status(s));
+                msg::VALUE => {
+                    if let Ok(v) = p::Value::unpack(&fr.payload) {
+                        self.events.push(Event::Value(v));
                     }
                 }
                 msg::SAMPLE if !fr.payload.is_empty() => self.events.push(Event::Sample(fr.payload[0], fr.payload[1..].to_vec())),
@@ -254,11 +255,6 @@ impl<P: Clone> Client<P> {
             return;
         }
         let pend = self.pending.remove(&fr.seq).unwrap();
-        if fr.ty == msg::STATUS {
-            if let Ok(s) = p::Status::unpack(&fr.payload) {
-                self.events.push(Event::Status(s));
-            }
-        }
         match pend.purpose {
             Some(pp) => self.events.push(Event::Reply(pp, Ok(fr))),
             None => self.on_hello(fr),

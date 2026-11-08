@@ -200,8 +200,9 @@ impl LiveState {
     }
 
     pub fn on_sample(&mut self, sh: &Shared, t: u8, data: &[u8]) {
-        let Some(conf) = &sh.active_config else { return };
-        let Some(d) = rec::decode(t, data, conf, P0_PA) else { return };
+        // A board that cannot report its config runs the firmware defaults (PROTOCOL.md §5).
+        let conf = sh.active_config.unwrap_or_else(crate::config::defaults);
+        let Some(d) = rec::decode(t, data, &conf, P0_PA) else { return };
         self.latest.insert(t, d);
         let now = self.t0.elapsed().as_secs_f64();
         let (batch, last_t, broken) = (&mut self.batch, &mut self.last_t, &mut self.broken);

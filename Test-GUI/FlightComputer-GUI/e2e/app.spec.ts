@@ -20,8 +20,8 @@ const tab = (page: Page, name: string) => page.getByRole("tab", { name }).click(
 
 test("status and live", async ({ page }) => {
   await connect(page);
-  await expect(page.locator(".rows dt", { hasText: "Flight state" }).locator("+ dd")).toHaveText("IDLE");
-  await expect(page.locator(".selftest li", { hasText: "IMU" })).toContainText("pass");
+  await expect(page.locator(".rows dt", { hasText: /^State$/ }).locator("+ dd")).toHaveText("IDLE");
+  await expect(page.locator(".selftest li", { hasText: /^Imu/ })).toContainText("PASS");
 
   await tab(page, "Live");
   const accel = page.getByTestId("readings").locator(".reading", { hasText: "Accel (IMU)" });
@@ -52,10 +52,10 @@ test("status and live", async ({ page }) => {
   await expect(box).toContainText(/z [+-]?\d+\.\d{3} g/);
   await expect(page.locator(".live-charts .chart-hover.show")).toHaveCount(1); // only the hovered chart
 
-  // Stream off: the board says so in its STATUS.
+  // Stream off: the board says so in its stream_rate_hz row.
   await page.getByLabel("Stream rate").selectOption({ label: "Off" });
   await tab(page, "Status");
-  await expect(page.locator(".rows dt", { hasText: "Streaming" }).locator("+ dd")).toHaveText("off");
+  await expect(page.locator(".rows dt", { hasText: /^Stream rate hz$/ }).locator("+ dd")).toHaveText("0 Hz");
 });
 
 test("download a flight and plot it", async ({ page }) => {

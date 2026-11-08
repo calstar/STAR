@@ -2,9 +2,10 @@
 
 What the STM32 firmware must implement for the bench GUI. The reference
 implementation is `src/protocol.rs`; `src/fake_board.rs` is a working
-board-side example, and their unit tests pin both. **Nothing here runs on
-the board yet.** Proposed 2026-11-06; change it here and in `protocol.rs`
-together.
+board-side example, and their unit tests pin both. **On the board so far**
+(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE and SAMPLE;
+the rest answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
+`protocol.rs` together.
 
 ## 1. Transport
 
@@ -31,13 +32,13 @@ on wire:  COBS(decoded) 0x00
 ## 3. Requests and replies
 
 The host numbers requests `seq` 1..255. The board answers with the same `seq`.
-The board sends its own messages (`STATUS` heartbeat, `SAMPLE`, `TEXT`) with
+The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 `seq` 0.
 
 | type | name | payload (host → board) | board answers |
 |---|---|---|---|
 | 0x01 | HELLO | — | INFO |
-| 0x02 | GET_STATUS | — | STATUS |
+| 0x02 | GET_STATUS | — | every VALUE row (seq 0), then ACK |
 | 0x03 | SET_STREAM | `u16 rate_hz, u8 mask` (bit 0 IMU, 1 high-g, 2 baro, 3 GNSS) | ACK |
 | 0x10 | CONFIG_GET | `u8 slot` (0 active/RAM, 1 saved/flash, 2 firmware defaults) | CONFIG, or ACK FLASH_ERROR if slot 1 is empty |
 | 0x11 | CONFIG_SET | config blob (§5) | ACK. Validated and applied to RAM, **not** saved |
@@ -54,7 +55,7 @@ The board sends its own messages (`STATUS` heartbeat, `SAMPLE`, `TEXT`) with
 |---|---|---|
 | 0x7F | ACK | `u8 for_type, u8 result, u16 detail` |
 | 0x81 | INFO | `u8 protocol_version (1), u8 config_version, u16 config_size, u32 uptime_ms, u8 uid[12], char fw_git[16], u32 build_unix` |
-| 0x82 | STATUS | see below; also sent unsolicited at 1 Hz |
+| 0x83 | VALUE | one row of the board's value table, see below; every row at 1 Hz |
 | 0x90 | CONFIG | `u8 slot, blob` |
 | 0xA0 | LOG_INFO_REPLY | `u8 disk_state, u32 epoch, u32 data_start_lba, u32 capacity_blocks, u32 blocks_used, u32 sessions` |
 | 0xA1 | SESSIONS | `u16 total, u8 n, n × {u32 session, u32 first_block, u32 blocks, u32 duration_ms, u32 utc_start}`, n ≤ 24 |
@@ -67,18 +68,21 @@ The board sends its own messages (`STATUS` heartbeat, `SAMPLE`, `TEXT`) with
 flight state) · 5 BUSY · 6 FLASH_ERROR · 7 STORAGE_ERROR · 8 NOT_IMPLEMENTED ·
 9 BAD_MAGIC.
 
-**STATUS** (`<BBIHB8sBBBIII2B2HIH`, 44 B): `u8 state` (flight_state_t), `u8 flags`,
-`u32 uptime_ms`, `u16 battery_mv`, `u8 battery_state`, `u8 self_test[8]`
-(self_test result per device ID, `self_test_devices.h` order), `u8 gnss_fix`
-(UBX fixType), `u8 gnss_sv`, `u8 disk_state` (emmc_disk_state_t),
-`u32 log_blocks_used`, `u32 log_blocks_total`, `u32 log_dropped`,
-`u8 pyro_state[2]`, `u16 pyro_mohm[2]`, `u32 sensor_errors`, `u16 stream_rate_hz`.
-Flags: bit 0 on USB power (TPS2121 `SW_ST`), bit 1 RAM config differs from flash,
-bit 2 streaming, bit 3 flash held no valid config (running defaults).
+**VALUE** (`u8 index, u8 count, u8 type, u32 value`, then three NUL-ended
+strings: `name`, `unit`, `labels`). One row of the firmware's value table,
+`src/app/gui_map.c`, which is the one place a firmware value gets its GUI
+name. The GUI shows the rows it is sent, in order, so a row added, renamed or
+removed there needs no GUI change. Types: 0 u8, 1 u16, 2 u32, 3 i8, 4 i16,
+5 i32 (`value` holds it sign-extended). `labels` is a comma list naming an
+enum's values from 0 (`"UNKNOWN,OK,WARN"`), empty for a plain number. Rows
+named `self_test_*` go in the self-test list. The GUI reads three names itself:
+`state` (flight_state_t), `flags` and `stream_rate_hz`. Flags: bit 0 on USB
+power (TPS2121 `SW_ST`), bit 1 RAM config differs from flash, bit 2 streaming,
+bit 3 flash held no valid config (running defaults).
 
 **The board converts and judges its own analog readings.** It knows its divider
 resistors, ADC reference, sense circuit and battery; the app knows none of them
-and shows what STATUS says, unchanged. No raw ADC counts go over USB.
+and shows what its VALUE rows say, unchanged. No raw ADC counts go over USB.
 
 - `battery_mv`: battery voltage in mV, after the divider and ADC reference are
   accounted for. 0 when `battery_state` is NOT_MEASURED.
@@ -93,7 +97,7 @@ and shows what STATUS says, unchanged. No raw ADC counts go over USB.
 
 ## 4. When the board talks: the DTR gate
 
-The board sends **nothing unsolicited** (no STATUS heartbeat, no SAMPLE) unless all of these hold:
+The board sends **nothing unsolicited** (no VALUE rows, no SAMPLE) unless all of these hold:
 
 1. USB is *configured* (enumerated by a host), **and**
 2. the bus is not *suspended*. A host stops sending SOF packets within 3 ms
@@ -173,7 +177,7 @@ stays in the band**: `radio_freq_hz ± radio_bw_hz / 2` must be inside
   At boot the board takes the valid record with the highest sequence. When the
   sector is full it is erased and the current config is written first. The
   sector is erased only in IDLE, because erasing stalls the CPU. A torn write or
-  a blank sector falls back to defaults and sets STATUS flag bit 3. The linker
+  a blank sector falls back to defaults and sets bit 3 of the `flags` row. The linker
   script's FLASH length becomes 384K.
 - **The config goes in every flight log.** On ARMED, right after
   SESSION_START, the board appends record **0x16 REC_CONFIG** carrying the active

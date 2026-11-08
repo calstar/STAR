@@ -306,8 +306,8 @@ impl FakeBoard {
                 self.send(msg::INFO, fr.seq, &info.pack());
             }
             msg::GET_STATUS => {
-                let s = self.status().pack();
-                self.send(msg::STATUS, fr.seq, &s);
+                self.send_values();
+                self.ack(&fr, result::OK, 0);
             }
             msg::SET_STREAM => {
                 if pl.len() != 3 {
@@ -460,7 +460,11 @@ impl FakeBoard {
         out
     }
 
-    pub fn status(&mut self) -> p::Status {
+    /// The board's value table, named and labelled as the firmware's
+    /// `src/app/gui_map.c` names them.
+    pub fn values(&mut self) -> Vec<p::Value> {
+        use p::value_type::*;
+        const RESULT: &str = "PENDING,PASS,FAIL,TIMEOUT,NOT_CONFIGURED,NOT_IMPLEMENTED";
         let mut flags = p::FLAG_ON_USB_POWER;
         let active_blob = cfg::pack(&self.active).ok();
         if self.saved.is_none() || active_blob != self.saved {
@@ -473,33 +477,50 @@ impl FakeBoard {
             flags |= p::FLAG_CONFIG_DEFAULTS;
         }
         let done = self.state() != state::SELF_TEST;
-        let mut results = [st::PASS, st::PASS, st::PASS, st::NOT_CONFIGURED, st::PASS, st::PASS, st::NOT_IMPLEMENTED, st::PASS];
-        if !done {
-            for r in &mut results {
-                if *r == st::PASS {
-                    *r = st::PENDING;
-                }
-            }
-        }
-        p::Status {
-            state: self.state(),
-            flags,
-            uptime_ms: (self.uptime() * 1000.0) as u64 as u32,
-            // A 2S LiPo near full, judged OK; the real board converts and judges.
-            battery_mv: (7_900 + (self.rng.uniform() * 20.0) as i32 - 10) as u16,
-            battery_state: p::battery::OK,
-            self_test: results,
-            gnss_fix: if done { 3 } else { 0 },
-            gnss_sv: if done { 11 } else { 0 },
-            disk: if self.mounted { p::disk::MOUNTED } else { p::disk::UNMOUNTED },
-            log_blocks_used: self.log.blocks.len() as u32,
-            log_blocks_total: CAPACITY - DATA_START,
-            log_dropped: 0,
-            // Channel 1 has an e-match on it, channel 2 is empty.
-            pyro_state: [p::pyro::CONTINUITY, p::pyro::OPEN],
-            pyro_mohm: [(1_600 + (self.rng.uniform() * 10.0) as i32) as u16, p::pyro::OVER_RANGE],
-            sensor_errors: 0,
-            stream_rate_hz: self.stream_rate,
+        let pass = if done { st::PASS } else { st::PENDING };
+        // A 2S LiPo near full, judged OK; the real board converts and judges.
+        let battery_mv = (7_900 + (self.rng.uniform() * 20.0) as i32 - 10) as u32;
+        let rows: Vec<(&str, u8, u32, &str, &str)> = vec![
+            ("state", U8, self.state() as u32, "", "SELF_TEST,IDLE,ARMED,LAUNCHED,RECOVERY"),
+            ("flags", U8, flags as u32, "", ""),
+            ("uptime", U32, (self.uptime() * 1000.0) as u64 as u32, "ms", ""),
+            ("battery", U16, battery_mv, "mV", ""),
+            ("battery_state", U8, 1, "", "UNKNOWN,OK,WARN,FAIL,USB,INVALID"),
+            ("self_test_imu", U8, pass as u32, "", RESULT),
+            ("self_test_high_g", U8, pass as u32, "", RESULT),
+            ("self_test_barometer", U8, pass as u32, "", RESULT),
+            ("self_test_ethernet", U8, st::NOT_CONFIGURED as u32, "", RESULT),
+            ("self_test_radio", U8, pass as u32, "", RESULT),
+            ("self_test_gnss", U8, pass as u32, "", RESULT),
+            ("self_test_nand", U8, st::NOT_IMPLEMENTED as u32, "", RESULT),
+            ("self_test_emmc", U8, pass as u32, "", RESULT),
+            ("gnss_fix", U8, if done { 3 } else { 0 }, "", "NO_FIX,DEAD_RECKONING,2D,3D,GNSS_DR,TIME_ONLY"),
+            ("gnss_satellites", U8, if done { 11 } else { 0 }, "", ""),
+            ("emmc", U8, self.mounted as u32, "", "UNMOUNTED,MOUNTED,FULL,FAULT"),
+            ("emmc_blocks_used", U32, self.log.blocks.len() as u32, "", ""),
+            ("emmc_blocks_total", U32, CAPACITY - DATA_START, "", ""),
+            ("emmc_dropped", U32, 0, "", ""),
+            ("sensor_errors", U32, 0, "", ""),
+            ("stream_rate_hz", U16, self.stream_rate as u32, "Hz", ""),
+        ];
+        let count = rows.len() as u8;
+        rows.into_iter()
+            .enumerate()
+            .map(|(i, (name, ty, raw, unit, labels))| p::Value {
+                index: i as u8,
+                count,
+                ty,
+                raw,
+                name: name.into(),
+                unit: unit.into(),
+                labels: labels.split(',').filter(|l| !l.is_empty()).map(String::from).collect(),
+            })
+            .collect()
+    }
+
+    fn send_values(&mut self) {
+        for v in self.values() {
+            self.send(msg::VALUE, 0, &v.pack());
         }
     }
 
@@ -525,8 +546,7 @@ impl FakeBoard {
         }
         if now >= self.next_status {
             self.next_status = now + 1.0;
-            let s = self.status().pack();
-            self.send(msg::STATUS, 0, &s);
+            self.send_values();
         }
         if self.stream_rate > 0 && now >= self.next_sample {
             self.next_sample = now + 1.0 / self.stream_rate as f64;
@@ -655,7 +675,7 @@ mod tests {
         *t.lock().unwrap() += 0.1;
         h.board.tick();
         let types: Vec<u8> = h.reader.feed(&h.board.host_read()).iter().map(|f| f.ty).collect();
-        assert!(types.contains(&msg::SAMPLE) && types.contains(&msg::STATUS));
+        assert!(types.contains(&msg::SAMPLE) && types.contains(&msg::VALUE));
     }
 
     #[test]

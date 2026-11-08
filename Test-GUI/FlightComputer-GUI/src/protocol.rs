@@ -83,7 +83,7 @@ pub fn cobs_decode(data: &[u8]) -> Result<Vec<u8>, String> {
 pub mod msg {
     // host -> board (requests)
     pub const HELLO: u8 = 0x01; // -> INFO
-    pub const GET_STATUS: u8 = 0x02; // -> STATUS
+    pub const GET_STATUS: u8 = 0x02; // -> every VALUE row, then ACK
     pub const SET_STREAM: u8 = 0x03; // u16 rate_hz, u8 mask -> ACK
     pub const CONFIG_GET: u8 = 0x10; // u8 slot -> CONFIG
     pub const CONFIG_SET: u8 = 0x11; // blob -> ACK (RAM, not saved)
@@ -99,7 +99,7 @@ pub mod msg {
     // board -> host
     pub const ACK: u8 = 0x7F; // u8 for_type, u8 result, u16 detail
     pub const INFO: u8 = 0x81;
-    pub const STATUS: u8 = 0x82; // also unsolicited at 1 Hz (seq 0)
+    pub const VALUE: u8 = 0x83; // one row of the board's table; all rows at 1 Hz (seq 0)
     pub const CONFIG: u8 = 0x90; // u8 slot, blob
     pub const LOG_INFO_REPLY: u8 = 0xA0;
     pub const SESSIONS: u8 = 0xA1;
@@ -194,36 +194,6 @@ pub mod disk {
     }
 }
 
-/// STATUS `battery_state`: the board's own judgment of `battery_mv`, against
-/// thresholds for the battery it is built for (the app has none).
-pub mod battery {
-    pub const NOT_MEASURED: u8 = 0;
-    pub const OK: u8 = 1;
-    pub const LOW: u8 = 2;
-    pub const CRITICAL: u8 = 3;
-
-    pub fn name(s: u8) -> String {
-        const N: [&str; 4] = ["not measured", "OK", "low", "critical"];
-        N.get(s as usize).map(|s| s.to_string()).unwrap_or_else(|| format!("state {s}"))
-    }
-}
-
-/// STATUS `pyro_state[]`: the board's continuity verdict per pyro channel, from
-/// its own sense circuit and thresholds.
-pub mod pyro {
-    pub const NOT_MEASURED: u8 = 0;
-    pub const OPEN: u8 = 1;
-    pub const CONTINUITY: u8 = 2;
-    pub const SHORT: u8 = 3;
-    /// `pyro_mohm` when the resistance is above what the board can measure.
-    pub const OVER_RANGE: u16 = 0xFFFF;
-
-    pub fn name(s: u8) -> String {
-        const N: [&str; 4] = ["not measured", "open", "continuity", "short"];
-        N.get(s as usize).map(|s| s.to_string()).unwrap_or_else(|| format!("state {s}"))
-    }
-}
-
 // SET_STREAM mask bits: which records the board streams.
 pub const STREAM_IMU: u8 = 1 << 0;
 pub const STREAM_HIGHG: u8 = 1 << 1;
@@ -234,7 +204,7 @@ pub const STREAM_ALL: u8 = 0x0F;
 pub const WIPE_MAGIC: u32 = 0x4550_4957; // "WIPE"
 pub const REBOOT_MAGIC: u32 = 0x544F_4F42; // "BOOT"
 
-// STATUS flag bits.
+// Bits of the "flags" value.
 pub const FLAG_ON_USB_POWER: u8 = 1 << 0; // TPS2121 says USB is powering the board
 pub const FLAG_CONFIG_UNSAVED: u8 = 1 << 1; // RAM config differs from flash
 pub const FLAG_STREAMING: u8 = 1 << 2;
@@ -464,70 +434,73 @@ impl Info {
     }
 }
 
+/// One row of the board's value table (firmware `src/app/gui_map.c`): the board
+/// names it, so the GUI shows whatever the table holds.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct Status {
-    pub state: u8,
-    pub flags: u8,
-    pub uptime_ms: u32,
-    /// Battery voltage, converted by the board (0 when not measured).
-    pub battery_mv: u16,
-    /// `battery::*`: the board's verdict on `battery_mv`.
-    pub battery_state: u8,
-    pub self_test: [u8; 8], // per device, in device-ID order
-    pub gnss_fix: u8,       // UBX fixType 0..5
-    pub gnss_sv: u8,
-    pub disk: u8,
-    pub log_blocks_used: u32,
-    pub log_blocks_total: u32,
-    pub log_dropped: u32,
-    /// `pyro::*` per channel: the board's continuity verdict.
-    pub pyro_state: [u8; 2],
-    /// Measured bridge resistance per channel, mΩ (`pyro::OVER_RANGE` above range).
-    pub pyro_mohm: [u16; 2],
-    pub sensor_errors: u32,
-    pub stream_rate_hz: u16,
+pub struct Value {
+    pub index: u8,
+    pub count: u8,
+    /// `value_type::*`: how to read `raw`.
+    pub ty: u8,
+    pub raw: u32,
+    pub name: String,
+    pub unit: String,
+    /// The enum's names, from 0; empty for a plain number.
+    pub labels: Vec<String>,
 }
 
-impl Status {
-    pub const SIZE: usize = 44;
+pub mod value_type {
+    pub const U8: u8 = 0;
+    pub const U16: u8 = 1;
+    pub const U32: u8 = 2;
+    pub const I8: u8 = 3;
+    pub const I16: u8 = 4;
+    pub const I32: u8 = 5;
+}
 
-    pub fn pack(&self) -> Vec<u8> {
-        let mut v = vec![self.state, self.flags];
-        v.extend_from_slice(&self.uptime_ms.to_le_bytes());
-        v.extend_from_slice(&self.battery_mv.to_le_bytes());
-        v.push(self.battery_state);
-        v.extend_from_slice(&self.self_test);
-        v.extend_from_slice(&[self.gnss_fix, self.gnss_sv, self.disk]);
-        for x in [self.log_blocks_used, self.log_blocks_total, self.log_dropped] {
-            v.extend_from_slice(&x.to_le_bytes());
+impl Value {
+    pub fn number(&self) -> i64 {
+        use value_type::*;
+        match self.ty {
+            I8 => self.raw as u8 as i8 as i64,
+            I16 => self.raw as u16 as i16 as i64,
+            I32 => self.raw as i32 as i64,
+            U8 => (self.raw & 0xFF) as i64,
+            U16 => (self.raw & 0xFFFF) as i64,
+            _ => self.raw as i64,
         }
-        v.extend_from_slice(&self.pyro_state);
-        v.extend_from_slice(&self.pyro_mohm[0].to_le_bytes());
-        v.extend_from_slice(&self.pyro_mohm[1].to_le_bytes());
-        v.extend_from_slice(&self.sensor_errors.to_le_bytes());
-        v.extend_from_slice(&self.stream_rate_hz.to_le_bytes());
+    }
+    /// The enum's name, if it has one for this value.
+    pub fn label(&self) -> Option<&str> {
+        usize::try_from(self.number()).ok().and_then(|i| self.labels.get(i)).map(|s| s.as_str())
+    }
+    pub fn text(&self) -> String {
+        match (self.label(), self.unit.is_empty()) {
+            (Some(l), _) => l.to_string(),
+            (None, true) => self.number().to_string(),
+            (None, false) => format!("{} {}", self.number(), self.unit),
+        }
+    }
+    pub fn pack(&self) -> Vec<u8> {
+        let mut v = vec![self.index, self.count, self.ty];
+        v.extend_from_slice(&self.raw.to_le_bytes());
+        for s in [&self.name, &self.unit, &self.labels.join(",")] {
+            v.extend_from_slice(s.as_bytes());
+            v.push(0);
+        }
         v
     }
     pub fn unpack(b: &[u8]) -> Result<Self, String> {
         let mut r = Rd::new(b);
-        Ok(Self {
-            state: r.u8()?,
-            flags: r.u8()?,
-            uptime_ms: r.u32()?,
-            battery_mv: r.u16()?,
-            battery_state: r.u8()?,
-            self_test: r.take(8)?.try_into().unwrap(),
-            gnss_fix: r.u8()?,
-            gnss_sv: r.u8()?,
-            disk: r.u8()?,
-            log_blocks_used: r.u32()?,
-            log_blocks_total: r.u32()?,
-            log_dropped: r.u32()?,
-            pyro_state: [r.u8()?, r.u8()?],
-            pyro_mohm: [r.u16()?, r.u16()?],
-            sensor_errors: r.u32()?,
-            stream_rate_hz: r.u16()?,
-        })
+        let (index, count, ty, raw) = (r.u8()?, r.u8()?, r.u8()?, r.u32()?);
+        let mut strs = b[7..].split(|&c| c == 0).map(|s| String::from_utf8_lossy(s).into_owned());
+        let mut next = || strs.next().ok_or_else(|| "VALUE: missing name, unit or labels".to_string());
+        let (name, unit, labels) = (next()?, next()?, next()?);
+        if index >= count || name.is_empty() {
+            return Err(format!("VALUE: bad row {index} of {count}"));
+        }
+        let labels = if labels.is_empty() { Vec::new() } else { labels.split(',').map(String::from).collect() };
+        Ok(Self { index, count, ty, raw, name, unit, labels })
     }
 }
 
@@ -666,26 +639,22 @@ mod tests {
 
     #[test]
     fn payload_structs_round_trip_and_sizes_match_protocol_md() {
-        let s = Status {
-            state: 1,
-            flags: 3,
-            uptime_ms: 1234,
-            battery_mv: 7400,
-            battery_state: 2,
-            self_test: [1, 1, 2, 4, 1, 0, 5, 1],
-            gnss_fix: 3,
-            gnss_sv: 9,
-            disk: 1,
-            log_blocks_used: 10,
-            log_blocks_total: 20,
-            log_dropped: 2,
-            pyro_state: [2, 1],
-            pyro_mohm: [1500, 0xFFFF],
-            sensor_errors: 7,
-            stream_rate_hz: 10,
+        let v = Value {
+            index: 1,
+            count: 3,
+            ty: value_type::U8,
+            raw: 1,
+            name: "state".into(),
+            unit: String::new(),
+            labels: vec!["SELF_TEST".into(), "IDLE".into()],
         };
-        assert_eq!(s.pack().len(), Status::SIZE); // PROTOCOL.md §3
-        assert_eq!(Status::unpack(&s.pack()).unwrap(), s);
+        assert_eq!(Value::unpack(&v.pack()).unwrap(), v);
+        assert_eq!(v.text(), "IDLE");
+        assert_eq!(Value { raw: 7, ..v.clone() }.text(), "7", "no label for 7: the number");
+        let mv = Value { ty: value_type::I16, raw: (-5i16) as u16 as u32, unit: "mV".into(), labels: vec![], ..v.clone() };
+        assert_eq!(Value::unpack(&mv.pack()).unwrap().text(), "-5 mV");
+        assert!(Value::unpack(&v.pack()[..8]).is_err(), "cut short");
+        assert!(Value::unpack(&Value { index: 3, ..v.clone() }.pack()).is_err(), "row past the count");
         let i = Info {
             protocol_version: 1,
             config_version: 1,
@@ -702,7 +671,6 @@ mod tests {
             SessionEntry { session: 2, first_block: 10, blocks: 5, duration_ms: 100, utc_start: 1_793_548_800 },
         ];
         assert_eq!(unpack_sessions(&pack_sessions(2, &e)).unwrap(), (2, e));
-        assert!(Status::unpack(&s.pack()[..42]).is_err());
     }
 
     #[test]

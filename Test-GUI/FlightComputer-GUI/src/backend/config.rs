@@ -320,19 +320,19 @@ impl ConfigState {
 
     // ---- the view
     fn banner(&self, sh: &Shared) -> (String, Option<Tone>) {
-        let Some(s) = &sh.status else {
+        let Some(flags) = sh.flags() else {
             return ("Not connected. You can still edit, import and export.".into(), None);
         };
-        if !p::state::configurable(s.state) {
+        if !sh.configurable() {
             ("The board is armed or flying: its settings cannot be changed until it is back in IDLE.".into(), Some(Tone::Bad))
-        } else if self.saved_note && s.flags & p::FLAG_CONFIG_UNSAVED == 0 {
+        } else if self.saved_note && flags & p::FLAG_CONFIG_UNSAVED == 0 {
             ("Saved. The board will boot with these settings.".into(), Some(Tone::Good))
-        } else if s.flags & p::FLAG_CONFIG_DEFAULTS != 0 {
+        } else if flags & p::FLAG_CONFIG_DEFAULTS != 0 {
             (
                 "The board found no valid config in flash and is running its built-in defaults. Save to make them stick.".into(),
                 Some(Tone::Warn),
             )
-        } else if s.flags & p::FLAG_CONFIG_UNSAVED != 0 {
+        } else if flags & p::FLAG_CONFIG_UNSAVED != 0 {
             (
                 "The board is running settings that are not saved. A reboot or power cycle goes back to the saved ones.".into(),
                 Some(Tone::Warn),

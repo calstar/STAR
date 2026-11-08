@@ -163,7 +163,8 @@ pub struct Shared {
     pub notices: Vec<Notice>,
     /// The config the board reported as ACTIVE: live samples are scaled with it.
     pub active_config: Option<Values>,
-    pub status: Option<p::Status>,
+    /// The board's value table, by row index (firmware gui_map.c).
+    pub values: Vec<Option<p::Value>>,
     pub flights_root: PathBuf,
 }
 
@@ -171,8 +172,15 @@ impl Shared {
     pub fn warn(&mut self, title: &str, text: impl Into<String>) {
         self.notices.push(Notice { title: title.into(), text: text.into() });
     }
+    /// A row of the board's table, by its GUI name.
+    pub fn value(&self, name: &str) -> Option<&p::Value> {
+        self.values.iter().flatten().find(|v| v.name == name)
+    }
     pub fn state(&self) -> Option<u8> {
-        self.status.as_ref().map(|s| s.state)
+        self.value("state").map(|v| v.number() as u8)
+    }
+    pub fn flags(&self) -> Option<u8> {
+        self.value("flags").map(|v| v.number() as u8)
     }
     pub fn configurable(&self) -> bool {
         self.state().is_some_and(p::state::configurable)
@@ -225,7 +233,7 @@ impl Controller {
                 client: Client::new(),
                 notices: Vec::new(),
                 active_config: None,
-                status: None,
+                values: Vec::new(),
                 flights_root: opts.flights_root.clone(),
             },
             live: live::LiveState::new(),
@@ -337,13 +345,15 @@ impl Controller {
                 Event::Disconnected(why) => {
                     self.conn = format!("Not connected ({why})");
                     self.sh.active_config = None;
-                    self.sh.status = None;
+                    self.sh.values.clear();
                     self.config.on_disconnected();
                     self.flights.on_disconnected(&mut self.sh);
                 }
-                Event::Status(s) => {
+                Event::Value(v) => {
                     self.last_heartbeat = Instant::now();
-                    self.sh.status = Some(s);
+                    let (i, n) = (v.index as usize, v.count as usize);
+                    self.sh.values.resize(n, None); // a table that changed size drops the rows past it
+                    self.sh.values[i] = Some(v);
                 }
                 Event::Sample(t, d) => self.live.on_sample(&self.sh, t, &d),
                 Event::Text(line) => {
@@ -389,7 +399,7 @@ impl Controller {
                 text: if lost { "No heartbeat from the board for 4 s".into() } else { self.conn.clone() },
                 heartbeat_lost: lost,
             },
-            state: self.sh.status.as_ref().map(|s| (format::state_name(s.state), format::state_tone(s.state))),
+            state: self.sh.value("state").and_then(|v| v.label()).map(|l| (l.replace('_', " "), format::label_tone(l))),
             notices: self.sh.notices.clone(),
             status: status::view(&self.sh, &self.messages),
             live: self.live.view(),

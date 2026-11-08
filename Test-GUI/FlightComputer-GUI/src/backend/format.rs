@@ -2,8 +2,6 @@
 
 use serde::Serialize;
 
-use crate::protocol::{battery, pyro, self_test as st, state};
-
 /// How a value should look. The frontend maps each to a colour; nothing else.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -15,45 +13,14 @@ pub enum Tone {
     Info,
 }
 
-pub fn state_tone(s: u8) -> Tone {
-    match s {
-        state::SELF_TEST => Tone::Warn,
-        state::IDLE => Tone::Good,
-        state::ARMED | state::LAUNCHED => Tone::Bad,
-        state::RECOVERY => Tone::Info,
-        _ => Tone::Neutral,
+/// The colour of an enum's name, as the firmware's table words it (gui_map.c).
+pub fn label_tone(label: &str) -> Tone {
+    match label {
+        "OK" | "PASS" | "IDLE" | "MOUNTED" | "3D" | "CONTINUITY" => Tone::Good,
+        "FAIL" | "TIMEOUT" | "FAULT" | "FULL" | "INVALID" | "ARMED" | "LAUNCHED" | "CRITICAL" | "SHORT" => Tone::Bad,
+        "RECOVERY" => Tone::Info,
+        _ => Tone::Warn,
     }
-}
-
-pub fn result_tone(r: u8) -> Tone {
-    match r {
-        st::PASS => Tone::Good,
-        st::FAIL | st::TIMEOUT => Tone::Bad,
-        st::PENDING => Tone::Warn,
-        _ => Tone::Neutral,
-    }
-}
-
-pub fn battery_tone(s: u8) -> Tone {
-    match s {
-        battery::OK => Tone::Good,
-        battery::LOW => Tone::Warn,
-        battery::CRITICAL => Tone::Bad,
-        _ => Tone::Neutral,
-    }
-}
-
-pub fn pyro_tone(s: u8) -> Tone {
-    match s {
-        pyro::CONTINUITY => Tone::Good,
-        pyro::OPEN => Tone::Warn,
-        pyro::SHORT => Tone::Bad,
-        _ => Tone::Neutral,
-    }
-}
-
-pub fn state_name(s: u8) -> String {
-    state::name(s).replace('_', " ")
 }
 
 pub fn fix_name(fix: u8) -> String {
@@ -126,6 +93,13 @@ mod tests {
         assert_eq!(utc_text(0), "1970-01-01 00:00:00");
         assert_eq!(utc_text(1_793_548_800), "2026-11-01 16:00:00");
         assert_eq!(utc_text(951_782_400), "2000-02-29 00:00:00"); // leap day
+    }
+
+    #[test]
+    fn label_tones() {
+        assert_eq!(label_tone("PASS"), Tone::Good);
+        assert_eq!(label_tone("ARMED"), Tone::Bad);
+        assert_eq!(label_tone("PENDING"), Tone::Warn, "anything unnamed is a warning");
     }
 
     #[test]
