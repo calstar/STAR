@@ -1,6 +1,6 @@
 /** The stream editor's rules (lib/video/editor.ts): ids from labels, and what a save sends. */
 import { describe, it, expect } from 'vitest';
-import { draftLayoutFrom, draftsFrom, freeUdpPort, isDirty, layoutIds, newDraft, slugId, toSave, withKind, withLabel, withPreset } from '@/lib/video/editor';
+import { draftLayoutFrom, draftsFrom, freeUdpPort, isDirty, layoutIds, newDraft, slugId, startLayout, toSave, withKind, withLabel, withPreset } from '@/lib/video/editor';
 
 const loaded = {
   revision: 'r1',
@@ -84,6 +84,24 @@ describe('layout in the editor', () => {
     expect(withPreset(l, '2x2')).toEqual({ preset: '2x2', slots: ['a', 'b', 'c', null] });
     expect(withPreset(l, '1+7').slots).toEqual(['a', 'b', 'c', null, null, 'f', null, null]);
     expect(withPreset(l, 'auto')).toEqual({ preset: 'auto', slots: [] });
+  });
+
+  it('opens from what the operator sees, so Save keeps their tile picks', () => {
+    // Saved slots empty; the operator put the pad camera and the controls in with the tile pickers.
+    const saved = { preset: '1+5' as const, slots: [null, null, null, null, null, null] };
+    const shown = { preset: '1+5' as const, slots: ['pad', '@controls', null, null, null, null] };
+    const drafts = draftsFrom({ ...loaded, layout: saved });
+    const layout = draftLayoutFrom(startLayout(saved, shown), drafts);
+    expect(layoutIds(layout, drafts)).toEqual(shown);
+    // ...and that counts as a change against the saved layout, so Save is offered.
+    expect(JSON.stringify(layout)).not.toBe(JSON.stringify(draftLayoutFrom(saved, drafts)));
+  });
+
+  it('opens from the saved layout when the screen is not showing it', () => {
+    const saved = { preset: '1+5' as const, slots: [null, 'pad', null, null, null, null] };
+    expect(startLayout(saved, undefined)).toEqual(saved);
+    expect(startLayout(saved, { preset: '2x2', slots: ['pad', null, null, null] })).toEqual(saved);
+    expect(startLayout(saved, { preset: '1+5', slots: ['pad'] })).toEqual(saved);
   });
 });
 
