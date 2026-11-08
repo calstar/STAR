@@ -1766,8 +1766,8 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
 
             // The ADC cubic/robust and captures work in: for a 4-20 mA board, the shunt code with a
-            // negative reading (an open loop's noise below 0 V) taken as no current -- never as full
-            // scale (see HpPtCode.hpp); else the raw i32.
+            // negative reading (an open loop's noise below 0 V) taken as no current -- never as
+            // full scale (see HpPtCode.hpp); else the raw i32.
             const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
