@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "calibration/CaptureWindow.hpp"
+#include "calibration/CommandDedupe.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/HpPtCode.hpp"
 #include "calibration/LcTareStore.hpp"
@@ -1435,6 +1436,8 @@ int main(int argc, char* argv[]) {
     auto last_packet_time = std::chrono::steady_clock::now();
     auto last_resubscribe = std::chrono::steady_clock::now();
     std::map<uint16_t, int32_t> last_adc_map;
+    // Every re-subscribe adds a copy of the command stream; handle each command once.
+    fsw::calibration::CommandDedupe command_dedupe;
 
     while (running) {
         if (!elodin_client.is_connected()) {
@@ -1515,6 +1518,8 @@ int main(int argc, char* argv[]) {
             // high byte survives (uid = board_id*100+connector can exceed 255).
             if (pkt_len >= 8 + 16) {
                 const uint8_t* p = pkt_buf + 8;
+                if (command_dedupe.seen(p))
+                    continue;  // the same command again, from a second subscription
                 uint8_t cmd_type = p[8];
                 uint16_t sensor_id =
                     static_cast<uint16_t>(p[10]) | (static_cast<uint16_t>(p[11]) << 8);
@@ -1761,8 +1766,8 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
 
             // The ADC cubic/robust and captures work in: for a 4-20 mA board, the shunt code with a
-            // negative reading (an open loop's noise below 0 V) taken as no current -- never as full
-            // scale (see HpPtCode.hpp); else the raw i32.
+            // negative reading (an open loop's noise below 0 V) taken as no current -- never as
+            // full scale (see HpPtCode.hpp); else the raw i32.
             const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
