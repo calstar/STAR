@@ -39,7 +39,7 @@ a Mac or `COMn` on Windows, and the port list puts ST's USB IDs first.
 
 | Tab | What it does |
 |---|---|
-| **Status** | Flight state, self-test result per chip, power source, battery, GNSS fix, eMMC state, pyro continuity per channel (the board converts and judges these; the app shows its verdicts), firmware hash, board debug lines. From the board's 1 Hz heartbeat. |
+| **Status** | The board's value table (firmware `src/app/gui_map.c`), shown as sent: flight state, battery, self-test per chip, GNSS, eMMC and whatever else the table lists. A row added there appears here with no app change. Every row arrives once a second. |
 | **Live** | The board sends its newest sample of each sensor at 1–100 Hz; plots of accel, gyro, high-g, baro altitude and GNSS altitude, last 30 s. A debug view: the full-rate data goes to the eMMC. |
 | **Config** | Every setting with the value on the board next to it: LoRa (frequency, SF, bandwidth, coding rate, power, preamble, sync word, heartbeat intervals), GNSS (rate, dynamic model, constellations), IMU (ODR, accel and gyro range), high-g ODR, baro oversampling. *Apply* runs it, *Save to flash* makes the board boot with it. Shows LoRa time on air, duty and sensitivity as you edit. Import/export as JSON. |
 | **Flights** | The eMMC as a file list: one row per flight (Arm to Un-arm) with start time (UTC, if GPS had a fix), length and size. *Download* saves a folder per flight under `Documents/STAR Flights/` with the raw blocks, CSVs per sensor and an events file, then plots it. *Wipe card* needs you to type WIPE. |
