@@ -66,7 +66,8 @@ constexpr bool actuatorPinsDistinct(const Layout& l) {
                         l.ACTUATOR_9, l.ACTUATOR_10};
     for (int i = 0; i < 10; ++i)
         for (int j = i + 1; j < 10; ++j)
-            if (pins[i] == pins[j]) return false;
+            if (pins[i] == pins[j])
+                return false;
     return true;
 }
 static_assert(actuatorPinsDistinct(Actuator_Board),

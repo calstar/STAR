@@ -131,7 +131,12 @@ if not VERIFY_ONLY:
         client_id=os.environ["GOOGLE_CLIENT_ID"],
         client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
         server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        # Always show Google's account chooser: someone signed in to a personal
+        # Google account would otherwise be logged in as it without being asked,
+        # and land on "not approved". No `hd` hint, since OUTSIDE_EMAILS admits
+        # a few non-Berkeley addresses that it would hide.
         client_kwargs={"scope": "openid email profile"},
+        authorize_params={"prompt": "select_account"},
     )
 
 

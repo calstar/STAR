@@ -59,6 +59,11 @@ class Settings:
     #: P&ID image is drawn by the app in a browser, so pid_image_link hands out a link
     #: here. Unset: that tool says so.
     pid_designer_public_url: str | None = None
+    #: The OAuth authorization server for clients with no header token (claude.ai
+    #: connectors): STARProject, which mints the tokens this server checks. Named
+    #: in /.well-known/oauth-protected-resource and in every 401. Defaults to the
+    #: origin of verify_url; unset on a dev server, where no token is checked.
+    auth_server: str | None = None
 
     @property
     def public_host(self) -> str:
@@ -122,4 +127,17 @@ def load(env: dict[str, str] | None = None) -> Settings:
         job_inline_wait_s=number("DESIGN_MCP_JOB_INLINE_WAIT_S", 25, minimum=0),
         app_urls=app_urls,
         pid_designer_public_url=env.get("PID_DESIGNER_PUBLIC_URL", "").strip().rstrip("/") or None,
+        auth_server=_auth_server(env, verify_url),
     )
+
+
+def _auth_server(env: dict[str, str], verify_url: str | None) -> str | None:
+    explicit = env.get("DESIGN_MCP_AUTH_SERVER", "").strip().rstrip("/")
+    if explicit:
+        if urlparse(explicit).scheme not in ("http", "https") or not urlparse(explicit).netloc:
+            raise SettingsError(f"DESIGN_MCP_AUTH_SERVER must be an http(s) URL, got {explicit!r}")
+        return explicit
+    if not verify_url:
+        return None
+    u = urlparse(verify_url)
+    return f"{u.scheme}://{u.netloc}"
