@@ -6,6 +6,10 @@
     GET  /files/{token}  a signed, short-lived download (files.py). No bearer: the
                          link is the credential, so an agent's sandbox can curl it.
     GET  /healthz        liveness, no auth, says nothing about anyone.
+    GET  /.well-known/oauth-protected-resource[/mcp]
+                         RFC 9728 metadata naming STARProject as the OAuth
+                         authorization server, for clients that cannot send a
+                         header token (claude.ai connectors). Every 401 points here.
 
 Everything else answers 404.
 """
@@ -51,9 +55,15 @@ back as a job_id: poll job_status.
 class BearerAuth:
     """Admit /mcp only with a token STARProject vouches for; bind its owner for the tools."""
 
-    def __init__(self, app: ASGIApp, verifier: TokenVerifier | DevVerifier) -> None:
+    def __init__(
+        self, app: ASGIApp, verifier: TokenVerifier | DevVerifier, resource_metadata: str | None = None
+    ) -> None:
         self.app = app
         self.verifier = verifier
+        challenge = 'Bearer realm="star-design-mcp"'
+        if resource_metadata:
+            challenge += f', resource_metadata="{resource_metadata}"'
+        self.challenge = challenge.encode()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not scope["path"].startswith("/mcp"):
@@ -71,7 +81,7 @@ class BearerAuth:
                     "status": status,
                     "headers": [
                         (b"content-type", b"application/json"),
-                        (b"www-authenticate", b'Bearer realm="star-design-mcp"'),
+                        (b"www-authenticate", self.challenge),
                     ],
                 }
             )
@@ -137,6 +147,21 @@ def build(settings: Settings, *, apps: Apps | None = None, verifier: Any = None)
     async def healthz(request: Request) -> Response:
         return JSONResponse({"ok": True})
 
+    metadata_url = f"{settings.public_url}/.well-known/oauth-protected-resource/mcp" if settings.auth_server else None
+
+    async def protected_resource(request: Request) -> Response:
+        if not settings.auth_server:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return JSONResponse(
+            {
+                "resource": f"{settings.public_url}/mcp",
+                "authorization_servers": [settings.auth_server],
+                "scopes_supported": ["design"],
+                "bearer_methods_supported": ["header"],
+            },
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
+
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
         async with mcp_app.router.lifespan_context(mcp_app):
@@ -146,11 +171,13 @@ def build(settings: Settings, *, apps: Apps | None = None, verifier: Any = None)
     app = Starlette(
         routes=[
             Route("/healthz", healthz),
+            Route("/.well-known/oauth-protected-resource", protected_resource),
+            Route("/.well-known/oauth-protected-resource/mcp", protected_resource),
             Route("/files/{token}", files.serve, methods=["GET", "HEAD"]),
             Mount("/", app=mcp_app),
         ],
         lifespan=lifespan,
     )
-    app.add_middleware(BearerAuth, verifier=verifier)
+    app.add_middleware(BearerAuth, verifier=verifier, resource_metadata=metadata_url)
     app.state.ctx = ctx
     return app
