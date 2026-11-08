@@ -351,7 +351,7 @@ body {
   color: var(--color-text-secondary); font: var(--text-2xs)/1.3 var(--font-mono); letter-spacing: .04em;
 }
 .video-play { min-width: 6.5em; }
-/* Camera picker: a name to show/hide it, a star to make it the one runs open on. */
+/* Camera picker: click a name to show or hide that camera. */
 .video-cams { display: flex; gap: 6px; flex-wrap: wrap; }
 .video-cam { display: inline-flex; border: 1px solid var(--color-line); }
 .video-cam.on { border-color: var(--color-text-secondary); }
@@ -361,10 +361,10 @@ body {
 }
 .video-cam button:hover:not(:disabled) { color: var(--color-text-primary); }
 .video-cam.on .video-cam-name { color: var(--color-bg-primary); background: var(--color-text-primary); }
+/* Hovered while on: keep the dark text (the generic hover lightens text, which on this
+   fill erased the name of the camera just clicked). */
+.video-cam.on .video-cam-name:hover:not(:disabled) { color: var(--color-bg-primary); background: var(--color-text-secondary); }
 .video-cam button:disabled { cursor: not-allowed; }
-.video-star { border-left: 1px solid var(--color-line) !important; }
-.video-cam.on .video-star { border-left-color: var(--color-text-secondary) !important; }
-.video-star.on { color: var(--color-sim) !important; }
 .video-el { width: 100%; height: 100%; object-fit: contain; display: block; }
 .video-el[hidden] { display: none; }
 .video-empty {

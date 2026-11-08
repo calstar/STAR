@@ -89,9 +89,9 @@ mounted instead and the panel never appears. Desert recordings are copied in aft
 (`daq-server/video/README.md`).
 
 **Cameras.** The panel lists cameras, not files: a camera's footage in a run is all its
-clips together, and where a Save and a Record hold the same moment the Record plays. One
-camera shows at first, the one starred (★, remembered per browser) if the run has it.
-Up to four can be on, in a grid. A camera that is off has no `<video>` at all, so it costs
+clips together, and where a Save and a Record hold the same moment the Record plays. A run
+opens on its first camera; click the others' names to add them. Up to four can be on, in
+a grid. A camera that is off has no `<video>` at all, so it costs
 nothing.
 
 **Coverage.** A thin band per shown camera runs along the top of the plot, filled where

@@ -108,13 +108,6 @@ export function pageForward(
 /** Most cameras shown at once: each one decodes its own video. */
 export const MAX_CAMERAS = 4;
 
-/** The cameras a run opens with: the viewer's preferred one if this run has it, else the
- *  first that has footage. */
-export function defaultCameras(streams: string[], preferred: string | null): string[] {
-  if (preferred && streams.includes(preferred)) return [preferred];
-  return streams.length ? [streams[0]] : [];
-}
-
 /** Turn a camera on or off, keeping the shown ones in picker order and at most
  *  MAX_CAMERAS; the last one cannot be turned off (there would be nothing to watch). */
 export function toggleCamera(shown: string[], stream: string, order: string[]): string[] {

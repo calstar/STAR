@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { VideoClip } from '../types';
 import {
-  MAX_CAMERAS, clipAt, clipUrl, defaultCameras, drifted, fileOffset, fileToWall, frameSeconds,
+  MAX_CAMERAS, clipAt, clipUrl, drifted, fileOffset, fileToWall, frameSeconds,
   leaderOf, playable, sameClip, streamsOf, toggleCamera,
 } from '../video';
 
@@ -16,22 +16,6 @@ interface Props {
   /** The cameras shown, in order, whenever that changes (the plot draws their coverage). */
   onShown?: (streams: string[]) => void;
 }
-
-// The camera a viewer wants first is theirs, not the run's: kept per browser.
-const PREFERRED_KEY = 'webviewer.videoPreferred';
-const loadPreferred = () => {
-  try {
-    return localStorage.getItem(PREFERRED_KEY);
-  } catch {
-    return null; // storage blocked: no preference
-  }
-};
-const savePreferred = (s: string | null) => {
-  try {
-    if (s) localStorage.setItem(PREFERRED_KEY, s);
-    else localStorage.removeItem(PREFERRED_KEY);
-  } catch { /* the preference simply doesn't persist */ }
-};
 
 /** What the clip's placement rests on, for its tooltip. */
 function timingNote(c: VideoClip): string {
@@ -72,11 +56,10 @@ const FOLLOW_SLOP_S = 0.25;
  */
 export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPlaying, onShown }: Props) {
   const streams = useMemo(() => streamsOf(clips), [clips]);
-  const [preferred, setPreferred] = useState<string | null>(loadPreferred);
-  const [shown, setShown] = useState<string[]>(() => defaultCameras(streams, loadPreferred()));
-  // A new run (new clip list): start again from the preferred camera.
+  // A run opens on its first camera; the picker adds the others.
+  const [shown, setShown] = useState<string[]>(() => streams.slice(0, 1));
   useEffect(() => {
-    setShown(defaultCameras(streams, loadPreferred()));
+    setShown(streams.slice(0, 1));
   }, [streams]);
 
   useEffect(() => {
@@ -252,11 +235,6 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
     return () => window.removeEventListener('keydown', onKey);
   }, [toggle, step]);
 
-  const star = (s: string) => {
-    const next = preferred === s ? null : s;
-    setPreferred(next);
-    savePreferred(next);
-  };
   const first = clips.find((c) => shown.includes(c.stream));
   const none = playhead == null;
 
@@ -289,14 +267,6 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
                   onClick={() => setShown((cur) => toggleCamera(cur, s, streams))}
                 >
                   {s}
-                </button>
-                <button
-                  className={`video-star${preferred === s ? ' on' : ''}`}
-                  aria-pressed={preferred === s}
-                  title={preferred === s ? 'Your preferred camera (opens first). Click to clear.' : 'Open runs on this camera'}
-                  onClick={() => star(s)}
-                >
-                  ★
                 </button>
               </span>
             );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CAMERAS, clipAt, coverage, clipUrl, defaultCameras, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
+import { MAX_CAMERAS, clipAt, coverage, clipUrl, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
@@ -152,13 +152,6 @@ describe('playback', () => {
 });
 
 describe('several cameras', () => {
-  it('open on the preferred camera if the run has it, else the first with footage', () => {
-    expect(defaultCameras(['a', 'b', 'c'], 'b')).toEqual(['b']);
-    expect(defaultCameras(['a', 'b', 'c'], 'zz')).toEqual(['a']);
-    expect(defaultCameras(['a', 'b', 'c'], null)).toEqual(['a']);
-    expect(defaultCameras([], 'a')).toEqual([]);
-  });
-
   it('turning cameras on keeps picker order, stops at four, and never empties', () => {
     const order = ['a', 'b', 'c', 'd', 'e'];
     expect(toggleCamera(['c'], 'a', order)).toEqual(['a', 'c']);
