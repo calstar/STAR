@@ -260,13 +260,18 @@ static const char* lc_model_name(LcModel m) {
     }
 }
 
-/** Ratiometric 0-5 V PT: excitation is the ADC reference, so the ADC fraction is the pressure
- *  fraction — psi = (adc / 2^31) * full_scale. Used by the `physics` model on non-loop boards. */
+/** Ratiometric PT, 0.5-4.5 V at 5 V excitation: excitation is the ADC reference, so the output
+ *  is 10 % of full code at zero and 90 % at full scale whatever the supply actually is —
+ *  psi = (adc / 2^31 - 0.1) / 0.8 * full_scale. Used by the `physics` model on non-loop boards.
+ *  The bench calibrations of 2026-02 put four of the stand's PTs within ~1.5 % of this. */
+constexpr double kRatiometricPtZeroFrac = 0.1;  // 0.5 V of 5 V
+constexpr double kRatiometricPtSpanFrac = 0.8;  // 4.5 V - 0.5 V of 5 V
 static double convert_ratiometric_pt_to_pressure(int32_t adc_raw, double full_scale_psi) {
     constexpr double ADC_MAX = 2147483648.0;  // 2^31
     if (!(full_scale_psi > 0.0))
         return 0.0;
-    const double psi = (static_cast<double>(adc_raw) / ADC_MAX) * full_scale_psi;
+    const double frac = static_cast<double>(adc_raw) / ADC_MAX;
+    const double psi = (frac - kRatiometricPtZeroFrac) / kRatiometricPtSpanFrac * full_scale_psi;
     if (!std::isfinite(psi))
         return 0.0;
     return std::clamp(psi, -0.05 * full_scale_psi, full_scale_psi * 1.05);
