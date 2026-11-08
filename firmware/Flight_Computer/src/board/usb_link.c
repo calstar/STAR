@@ -11,93 +11,33 @@
 #include "records.h"
 #include "sensors_task.h"
 #include "stream_buffer.h"
+#include "usb_frame.h"
 #include "usbd_cdc_if.h"
 
 enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03 };
 enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, SAMPLE = 0xB0 };
 enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, NOT_IMPLEMENTED = 8 };
-#define MAX_FRAME 1024U /* decoded: type, seq, payload, crc */
 #define MAX_RATE_HZ 200U
 
 static StreamBufferHandle_t rx;
 static volatile uint16_t rate_hz;
 static uint8_t mask;
-static uint8_t in[MAX_FRAME];
+static uint8_t in[USB_FRAME_MAX];
 static uint16_t in_len;
 static bool in_overflow;
-
-static uint16_t crc16(const uint8_t* d, size_t n) { /* CCITT-FALSE */
-    uint16_t c = 0xFFFF;
-    while (n--) {
-        c ^= (uint16_t)(*d++ << 8);
-        for (int i = 0; i < 8; ++i) {
-            c = (c & 0x8000U) ? (uint16_t)((c << 1) ^ 0x1021U)
-                              : (uint16_t)(c << 1);
-        }
-    }
-    return c;
-}
-
-/* The same COBS as the GUI's protocol.rs. Returns the encoded length. */
-static size_t cobs_encode(const uint8_t* s, size_t n, uint8_t* d) {
-    size_t code_at = 0, o = 1;
-    uint8_t code = 1;
-    for (size_t i = 0; i < n; ++i) {
-        if (s[i] != 0) {
-            d[o++] = s[i];
-            ++code;
-        }
-        if (s[i] == 0 || code == 0xFF) {
-            d[code_at] = code;
-            code_at = o++;
-            code = 1;
-        }
-    }
-    d[code_at] = code;
-    return o;
-}
-
-/* In place (d may be s). Returns the decoded length, 0 if malformed. */
-static size_t cobs_decode(const uint8_t* s, size_t n, uint8_t* d) {
-    size_t i = 0, o = 0;
-    while (i < n) {
-        uint8_t code = s[i++];
-        if (code == 0 || i + code - 1U > n) {
-            return 0;
-        }
-        for (uint8_t k = 1; k < code; ++k) {
-            d[o++] = s[i++];
-        }
-        if (code < 0xFF && i < n) {
-            d[o++] = 0;
-        }
-    }
-    return o;
-}
 
 /* may_drop: give up at once if the endpoint is busy (SAMPLEs). */
 static bool send(uint8_t type, uint8_t seq, const uint8_t* p, uint16_t n,
                  bool may_drop) {
-    static uint8_t raw[MAX_FRAME];
-    static uint8_t tx[MAX_FRAME + MAX_FRAME / 254U + 2U];
-    if (n + 4U > sizeof raw) {
-        return false;
-    }
+    static uint8_t tx[USB_FRAME_WIRE_MAX];
     for (int waited = 0; !usb_tx_ready(); ++waited) {
         if (may_drop || waited >= 50 || !usb_terminal_open()) {
             return false;
         }
         osDelay(1);
     }
-    raw[0] = type;
-    raw[1] = seq;
-    memcpy(raw + 2, p, n);
-    uint16_t crc = crc16(raw, n + 2U);
-    raw[n + 2U] = (uint8_t)crc;
-    raw[n + 3U] = (uint8_t)(crc >> 8);
-    size_t len = cobs_encode(raw, n + 4U, tx);
-    tx[len++] = 0;
-    return CDC_Transmit_HS(tx, (uint16_t)len) == USBD_OK;
+    size_t len = usb_frame_encode(type, seq, p, n, tx);
+    return len > 0 && CDC_Transmit_HS(tx, (uint16_t)len) == USBD_OK;
 }
 
 static void ack(uint8_t for_type, uint8_t seq, uint8_t result,
@@ -130,13 +70,10 @@ static void send_values(void) {
     }
 }
 
-static void handle(const uint8_t* f, size_t n) {
-    if (n < 4 || crc16(f, n - 2) != (uint16_t)(f[n - 2] | f[n - 1] << 8)) {
-        return; /* dropped silently; the host retries */
-    }
+/* f: a decoded frame, len: its payload length. */
+static void handle(const uint8_t* f, size_t len) {
     uint8_t type = f[0], seq = f[1];
     const uint8_t* p = f + 2;
-    size_t len = n - 4;
     switch (type) {
         case HELLO:
             send_info(seq);
@@ -173,9 +110,9 @@ static void feed(uint8_t c) {
         }
         return;
     }
-    size_t n = in_overflow ? 0 : cobs_decode(in, in_len, in);
-    if (n > 0) {
-        handle(in, n);
+    int len = in_overflow ? -1 : usb_frame_decode(in, in_len);
+    if (len >= 0) { /* a bad frame is dropped silently; the host retries */
+        handle(in, (size_t)len);
     }
     in_len = 0;
     in_overflow = false;

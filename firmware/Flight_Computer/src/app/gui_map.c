@@ -10,8 +10,6 @@
  */
 #include "gui_map.h"
 
-#include <string.h>
-
 #include "board_bringup.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
@@ -20,6 +18,7 @@
 #include "idle_task.h"
 #include "mode.h"
 #include "sensors_task.h"
+#include "usb_frame.h"
 #include "usb_link.h"
 
 #define FLIGHT "SELF_TEST,IDLE,ARMED,LAUNCHED,RECOVERY"
@@ -29,28 +28,28 @@
 #define FIX "NO_FIX,DEAD_RECKONING,2D,3D,GNSS_DR,TIME_ONLY"
 
 /* clang-format off */
-#define GUI_MAP(X)                                                                         \
-    X(U8,  app_state(),                         "state",             "",   FLIGHT)         \
-    X(U8,  flags(),                             "flags",             "",   "")             \
-    X(U32, osKernelGetTickCount(),              "uptime",            "ms", "")             \
-    X(U16, idle->last.supply_mv,                "battery",           "mV", "")             \
-    X(U8,  idle->last.battery,                  "battery_state",     "",   BATTERY)        \
-    X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_ETHERNET),  "self_test_ethernet",  "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_RADIO),     "self_test_radio",     "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_GNSS),      "self_test_gnss",      "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_NAND),      "self_test_nand",      "", RESULT)       \
-    X(U8,  self_test(SELF_TEST_DEVICE_EMMC),      "self_test_emmc",      "", RESULT)       \
-    X(U8,  gnss->latest.fix_type,               "gnss_fix",          "",   FIX)            \
-    X(U8,  gnss->latest.num_sv,                 "gnss_satellites",   "",   "")             \
-    X(U8,  emmc->disk,                           "emmc",              "",   DISK)           \
-    X(U32, log_used(),                          "emmc_blocks_used",  "",   "")             \
-    X(U32, emmc->capacity,                       "emmc_blocks_total", "",   "")             \
-    X(U32, emmc->stats.dropped,                  "emmc_dropped",      "",   "")             \
-    X(U32, sensors.imu.errors + sensors.highg.errors + sensors.baro.errors, "sensor_errors", "", "")         \
-    X(U16, usb_link_rate_hz(),                  "stream_rate_hz",    "Hz", "")
+#define GUI_MAP(X)                                                                      \
+    X(U8,  app_state(),                           "state",               "",   FLIGHT)  \
+    X(U8,  flags(),                               "flags",               "",   "")      \
+    X(U32, osKernelGetTickCount(),                "uptime",              "ms", "")      \
+    X(U16, idle->last.supply_mv,                  "battery",             "mV", "")      \
+    X(U8,  idle->last.battery,                    "battery_state",       "",   BATTERY) \
+    X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_ETHERNET),  "self_test_ethernet",  "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_RADIO),     "self_test_radio",     "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_GNSS),      "self_test_gnss",      "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_NAND),      "self_test_nand",      "",   RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_EMMC),      "self_test_emmc",      "",   RESULT)  \
+    X(U8,  gnss->latest.fix_type,                 "gnss_fix",            "",   FIX)     \
+    X(U8,  gnss->latest.num_sv,                   "gnss_satellites",     "",   "")      \
+    X(U8,  emmc->disk,                            "emmc",                "",   DISK)    \
+    X(U32, log_used(),                            "emmc_blocks_used",    "",   "")      \
+    X(U32, emmc->capacity,                        "emmc_blocks_total",   "",   "")      \
+    X(U32, emmc->stats.dropped,                   "emmc_dropped",        "",   "")      \
+    X(U32, sensor_errors(),                       "sensor_errors",       "",   "")      \
+    X(U16, usb_link_rate_hz(),                    "stream_rate_hz",      "Hz", "")
 /* clang-format on */
 
 enum { GUI_U8, GUI_U16, GUI_U32, GUI_I8, GUI_I16, GUI_I32 };
@@ -100,6 +99,10 @@ static uint32_t log_used(void) {
                : emmc->head - emmc->config.data_start_lba;
 }
 
+static uint32_t sensor_errors(void) {
+    return sensors.imu.errors + sensors.highg.errors + sensors.baro.errors;
+}
+
 uint8_t gui_map_count(void) {
     return (uint8_t)COUNT;
 }
@@ -115,26 +118,11 @@ void gui_map_read(void) {
 #undef X
 }
 
-static uint16_t put_str(uint8_t* out, uint16_t at, const char* str) {
-    size_t n = strlen(str) + 1U; /* with its NUL */
-    if (at + n > GUI_VALUE_MAX) {
-        n = 0;
-    }
-    memcpy(out + at, str, n);
-    return (uint16_t)(at + n);
-}
-
-/* index u8, count u8, type u8, value u32, then name, unit, labels (NUL
- * ended) */
 uint16_t gui_map_value(uint8_t i, uint8_t* out) {
     if (i >= COUNT) {
         return 0;
     }
-    out[0] = i;
-    out[1] = (uint8_t)COUNT;
-    out[2] = rows[i].type;
-    memcpy(out + 3, &values[i], 4); /* little-endian */
-    uint16_t n = put_str(out, 7, rows[i].name);
-    n = put_str(out, n, rows[i].unit);
-    return put_str(out, n, rows[i].labels);
+    return usb_frame_value(out, GUI_VALUE_MAX, i, (uint8_t)COUNT, rows[i].type,
+                           values[i], rows[i].name, rows[i].unit,
+                           rows[i].labels);
 }
