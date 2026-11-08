@@ -46,6 +46,7 @@ tabs = [
   "boards",
   "self-tests",
   "session",
+  "video",
   "config"
 ]
 
@@ -456,10 +457,12 @@ active_connectors = [ 1, 2 ]
 # "Fuel Upstream" = 1000
 
 # Load cells support the same per-sensor model selection as PT, minus robust/blend (LC doesn't
-# learn drift): "cubic" (operator-captured fit, built from the calibration GUI) or "physics"
-# (datasheet sensitivity/PGA-gain conversion — [calibration.lc] below, or per-sensor overrides).
-# A role with no entry here defaults to "physics" (today's behavior; unchanged unless you opt a
-# role into "cubic"). Requires a [sensor_roles_<lc_board>] section naming that board's connectors.
+# learn drift): "linear" (a straight line through the operator's captures — the default), "cubic"
+# (a cubic through them) or "physics" (datasheet sensitivity/PGA-gain conversion — [calibration.lc]
+# below, or per-sensor overrides). A role with no entry here is "linear": a tare then cancels a
+# zero drift exactly, where a cubic evaluated outside its captured range bends. Until it has two
+# captured points a linear sensor streams physics, so an uncaptured load cell reads as it always
+# did. Requires a [sensor_roles_<lc_board>] section naming that board's connectors.
 # [sensor_roles_lc_board]
 # "Thrust" = 1
 #

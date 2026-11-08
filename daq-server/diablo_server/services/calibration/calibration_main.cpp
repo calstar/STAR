@@ -49,6 +49,7 @@
 
 #include "calibration/CaptureWindow.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
+#include "calibration/HpPtCode.hpp"
 #include "calibration/LcTareStore.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/PtSmoothing.hpp"
@@ -110,16 +111,22 @@ std::unordered_map<uint16_t, double> g_pt_sense_resistor;
 std::optional<PtModel> g_env_override;
 
 /**
- * Which model an LC streams: an operator-built cubic fit, or the datasheet physics conversion
- * (sensitivity/PGA-gain formula). No robust/blend — load cells don't need drift-learning. Chosen
- * per sensor from [calibration_model_<lc_board>] in config; absent from the map means the default
- * below (see lc_model_for), NOT Cubic — an unconfigured LC keeps streaming physics exactly as
- * before this feature existed, so no rig's readings change until an operator opts a role into
- * "cubic".
+ * Which model an LC streams: a straight-line fit through the operator's captured points, a cubic
+ * fit through them, or the datasheet physics conversion (sensitivity/PGA-gain formula). No
+ * robust/blend — load cells don't need drift-learning. Chosen per sensor from
+ * [calibration_model_<lc_board>] in config; absent from the map means Linear (see lc_model_for).
+ *
+ * Why linear is the default: a load cell is linear to a few hundredths of a percent, and its zero
+ * drifts. A tare is taken as an ADC code and evaluated through the live curve, so on a line it
+ * cancels a pure zero shift exactly, wherever the zero has wandered. A cubic fitted over 400-500k
+ * and evaluated at a 200k zero extrapolates a full span past its data and bends, so the same tare
+ * leaves a load-dependent error. Until a linear sensor has two captured points it streams physics
+ * — exactly what an unconfigured LC streamed before this model existed — so a rig with no LC
+ * captures reads the same as before.
  */
-enum class LcModel { Cubic, Physics };
+enum class LcModel { Linear, Cubic, Physics };
 
-/** uid -> LC streaming model. A uid absent from this map defaults to Physics (see lc_model_for). */
+/** uid -> LC streaming model. A uid absent from this map defaults to Linear (see lc_model_for). */
 std::unordered_map<uint16_t, LcModel> g_lc_model;
 
 /** Per-sensor LC physics-mode parameters (from [calibration_full_scale_*] /
@@ -199,17 +206,27 @@ static const char* pt_model_name(PtModel m) {
     }
 }
 
-/** Parse a config model string for an LC role; "cubic" maps to Cubic, everything else (including
- *  unrecognized/"robust"/"blend", which LC doesn't support) maps to Physics. */
+/** Parse a config model string for an LC role: "linear" and "cubic" map to their fits, everything
+ *  else (including unrecognized/"robust"/"blend", which LC doesn't support) maps to Physics, as
+ *  it always has. */
 static LcModel parse_lc_model(const std::string& s) {
+    if (s == "linear")
+        return LcModel::Linear;
     return s == "cubic" ? LcModel::Cubic : LcModel::Physics;
 }
 
-/** Per-sensor LC streaming model; a uid absent from g_lc_model defaults to Physics (today's
- *  behavior) rather than Cubic — cubic is strictly opt-in per role. */
+/** Per-sensor LC streaming model; a uid absent from g_lc_model defaults to Linear, which streams
+ *  physics until it has a fit (see select_lc_kg), so an uncaptured LC reads as it always did. */
 static LcModel lc_model_for(uint16_t uid) {
     auto it = g_lc_model.find(uid);
-    return it == g_lc_model.end() ? LcModel::Physics : it->second;
+    return it == g_lc_model.end() ? LcModel::Linear : it->second;
+}
+
+/** True when this LC's published kilograms are its datasheet physics conversion: physics itself,
+ *  or a linear sensor that has no fit yet. Such a reading is "calibrated" in the status sense. */
+static bool lc_streams_physics(uint16_t uid, bool fit_ok) {
+    const LcModel m = lc_model_for(uid);
+    return m == LcModel::Physics || (m == LcModel::Linear && !fit_ok);
 }
 
 /** Per-sensor LC physics full-scale kg; falls back to the [calibration.lc] global when unset. */
@@ -232,7 +249,15 @@ static double lc_pga_gain_for(uint16_t uid, double fallback) {
 
 /** Config-string form of an LC model, for the cubic store's per-uid active_model tag. */
 static const char* lc_model_name(LcModel m) {
-    return m == LcModel::Cubic ? "cubic" : "physics";
+    switch (m) {
+        case LcModel::Linear:
+            return "linear";
+        case LcModel::Cubic:
+            return "cubic";
+        case LcModel::Physics:
+        default:
+            return "physics";
+    }
 }
 
 /** Ratiometric 0-5 V PT: excitation is the ADC reference, so the ADC fraction is the pressure
@@ -280,14 +305,18 @@ static double select_pt_psi(uint16_t uid, double psi_fac, double psi_rob, double
 
 /**
  * The LC source-selection rule, mirroring select_pt_psi minus robust/blend (LC doesn't learn
- * drift). `physics` (the datasheet sensitivity/PGA conversion) is also this uid's default when
- * absent from g_lc_model — see lc_model_for. A cubic uid with no captured points reads 0, same
- * "physics-or-nothing" philosophy PT's cubic mode uses once explicitly opted in.
+ * drift). `kg_fit` / `fit_ok` are this uid's fitted curve — linear or cubic per its model, since
+ * the store fits to the model's degree and that one curve is what lc_calibration holds. A cubic
+ * uid with no fit reads 0, the "physics-or-nothing" rule PT's cubic mode uses once explicitly
+ * opted in. A linear uid with no fit streams physics instead: linear is the default for every LC,
+ * so it must read exactly what an unconfigured LC read before it existed.
  */
-static double select_lc_kg(uint16_t uid, double kg_cubic, double kg_phys, bool cubic_ok) {
+static double select_lc_kg(uint16_t uid, double kg_fit, double kg_phys, bool fit_ok) {
     switch (lc_model_for(uid)) {
+        case LcModel::Linear:
+            return fit_ok ? kg_fit : kg_phys;
         case LcModel::Cubic:
-            return cubic_ok ? kg_cubic : 0.0;
+            return fit_ok ? kg_fit : 0.0;
         case LcModel::Physics:
         default:
             return kg_phys;
@@ -302,18 +331,6 @@ static double select_lc_kg(uint16_t uid, double kg_cubic, double kg_phys, bool c
  * the whole measurement. Optional per-channel mA hysteresis kills threshold flicker at ~4 mA
  * open-circuit noise.
  */
-/**
- * HP PT shunt codes are defined as unsigned in [0, 2^31) vs 2.5 V ref (see board_simulator).
- * The same 21-byte field is often viewed as int32 in tools; a "reasonable" negative signed code
- * becomes uint32 >= 2^31 and convert_hp_pt_to_pressure used to return 0 PSI for all channels.
- */
-static uint32_t coerce_hp_pt_adc_counts(int32_t /* as_signed */, uint32_t as_unsigned) {
-    constexpr uint32_t kMaxCode = 2147483647u;  // 2^31 - 1, top of normalized scale
-    // HP 4–20 mA shunt codes are defined as unsigned vs 2.5 V ref. Always interpret the wire as
-    // uint32 — int32 sign makes many valid codes look "negative" and the old path returned 0.
-    return as_unsigned > kMaxCode ? kMaxCode : as_unsigned;
-}
-
 static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw,
                                         const fsw::config::PtBoardConfig& board,
                                         double full_scale_psi, double sense_resistor_ohms,
@@ -822,7 +839,7 @@ int main(int argc, char* argv[]) {
             b.section.rfind("boards.", 0) == 0 ? b.section.substr(7) : b.section;
         const auto* roles = cal_cfg.sensor_roles_for("sensor_roles_" + board_key);
         if (roles == nullptr)
-            continue;  // no role map -> connectors default to physics (see lc_model_for)
+            continue;  // no role map -> connectors default to linear (see lc_model_for)
         const auto* models = cal_cfg.calibration_model_for("calibration_model_" + board_key);
         const auto* full_scales = cal_cfg.full_scale_for("calibration_full_scale_" + board_key);
         const auto* sensitivities = cal_cfg.sensitivity_for("calibration_sensitivity_" + board_key);
@@ -1384,11 +1401,17 @@ int main(int argc, char* argv[]) {
             std::cout << "[Calibration]   uid " << uid << " -> " << pt_model_name(m) << std::endl;
     }
     {
-        size_t lc_cubic_n = 0, lc_physics_n = 0;
-        for (uint16_t uid : g_lc_uids)
-            (lc_model_for(uid) == LcModel::Cubic ? lc_cubic_n : lc_physics_n)++;
-        std::cout << "[Calibration] LC: per-sensor model from config — default physics; "
-                  << lc_cubic_n << " cubic, " << lc_physics_n << " physics" << std::endl;
+        size_t lc_linear_n = 0, lc_cubic_n = 0, lc_physics_n = 0;
+        for (uint16_t uid : g_lc_uids) {
+            const LcModel m = lc_model_for(uid);
+            (m == LcModel::Linear  ? lc_linear_n
+             : m == LcModel::Cubic ? lc_cubic_n
+                                   : lc_physics_n)++;
+        }
+        std::cout << "[Calibration] LC: per-sensor model from config — default linear (physics "
+                     "until 2 points); "
+                  << lc_linear_n << " linear, " << lc_cubic_n << " cubic, " << lc_physics_n
+                  << " physics" << std::endl;
     }
 
     if (verbose())
@@ -1901,10 +1924,10 @@ int main(int argc, char* argv[]) {
             const bool is_loop = loop_board != nullptr;
             const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
 
-            // The ADC cubic/robust and captures work in: for a 4-20 mA board, the coerced unsigned
-            // shunt code (board_simulator back-calculates valid codes in sim too); else the raw
-            // i32.
-            const uint32_t hp_wire_adc = is_loop ? coerce_hp_pt_adc_counts(adc_i32, adc_u32) : 0u;
+            // The ADC cubic/robust and captures work in: for a 4-20 mA board, the shunt code with a
+            // negative reading (an open loop's noise below 0 V) taken as no current -- never as
+            // full scale (see HpPtCode.hpp); else the raw i32.
+            const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
             last_adc_map[uid] = cal_adc;
@@ -2011,8 +2034,8 @@ int main(int argc, char* argv[]) {
                 lc_pga_gain_for(uid, lc_pga_gain), lc_full_scale_for(uid, lc_full_scale_value));
 
             double force_kg = select_lc_kg(uid, kg_cubic, kg_phys, cubic_ok);
-            const bool is_physics_model = lc_model_for(uid) == LcModel::Physics;
-            const uint8_t cal_status = is_physics_model ? 1u : (cubic_ok ? 1u : 0u);
+            const uint8_t cal_status =
+                lc_streams_physics(uid, cubic_ok) ? 1u : (cubic_ok ? 1u : 0u);
             if (!std::isfinite(force_kg))
                 force_kg = 0.0;
 

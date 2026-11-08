@@ -125,6 +125,8 @@ export default function VideoPage() {
   // While editing, the grid shows the editor's draft, untouched by this operator's changes.
   const shown = editing && draftLayout ? draftLayout : stand;
   const eff = effectiveLayout(shown, ids, editing ? null : override);
+  // What this operator sees outside Edit: the editor opens from it, so Save keeps their picks.
+  const mine = effectiveLayout(stand, ids, override);
 
   // The stand layout moved on: this operator's changes no longer apply, so forget them.
   useEffect(() => {
@@ -294,6 +296,7 @@ export default function VideoPage() {
           onClose={() => setEditing(false)}
           onSaved={() => { setOverride(null); void load(); }}
           onDraftLayout={setDraftLayout}
+          shownLayout={stand.preset === 'auto' ? undefined : { preset: stand.preset, slots: mine.slots }}
         />
       )}
     </main>

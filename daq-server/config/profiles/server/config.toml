@@ -53,7 +53,7 @@ points_per_second = 20
 # the 20 pts/s GUI budget would quantize away. At the boards' ~48 Hz this is a
 # no-op -- it bounds a faster encoder board, it does not downsample this one.
 encoder_points_per_second = 100
-tabs = [ "unified", "boards", "config", "session" ]
+tabs = [ "unified", "boards", "config", "session", "video" ]
 
 # Explicit sensor→page membership (replaces role-name substring parsing in the plot pages).
 # Group name → ordered list of sensor role names; array order = display order on that page.
