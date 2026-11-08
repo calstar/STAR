@@ -2365,13 +2365,22 @@ async function testLcTare(ws: WebSocket): Promise<void> {
   // This channel is put in CUBIC mode by test_integration.sh. That matters: on the datasheet
   // physics conversion (every load cell's default) a capture cannot move the curve at all, so
   // the re-derivation this test exists to prove would be unobservable. Build a curve first.
+  // A batch is resent until at least one capture lands: the service refuses a capture whose last
+  // second holds fewer than 3 samples, and CI's 5 Hz simulator usually gives 4 with gaps to 2, so a
+  // whole 1.2 s batch can be refused (2026-11-08: the 250 kg batch landed nothing and the curve
+  // never moved).
   const captureAt = async (ref: number) => {
-    for (let i = 0; i < 10; i++) {
-      send(ws, { type: 'calibration_command', timestamp: Date.now(),
-        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
-      await sleep(120);
+    const pointsNow = () => (readCalRecord(UID)?.numPoints as number | undefined) ?? 0;
+    const before = pointsNow();
+    for (let batch = 0; batch < 3; batch++) {
+      for (let i = 0; i < 10; i++) {
+        send(ws, { type: 'calibration_command', timestamp: Date.now(),
+          payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+        await sleep(120);
+      }
+      await sleep(1500);
+      if (pointsNow() > before) return;
     }
-    await sleep(1500);
   };
   await captureAt(100);
 
