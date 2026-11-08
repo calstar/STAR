@@ -2,6 +2,7 @@ name: P&ID Designer CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'pid-designer/**'
       # The shared design core: its permission check is what stops one user

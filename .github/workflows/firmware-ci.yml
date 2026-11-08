@@ -2,6 +2,7 @@ name: Firmware CI
 
 on:
   push:
+    branches: [main]
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware-ci.yml'
@@ -9,6 +10,7 @@ on:
     paths:
       - 'firmware/**'
       - '.github/workflows/firmware-ci.yml'
+  workflow_dispatch:
 
 jobs:
   stm32-self-test-host:

@@ -2,6 +2,7 @@ name: callink-worker CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'callink-worker/**'
       - '.github/workflows/callink-worker-ci.yml'

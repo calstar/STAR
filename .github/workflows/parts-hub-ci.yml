@@ -9,6 +9,7 @@ name: Parts Hub CI
 # other workflows).
 'on':
   push:
+    branches: [main]
     paths:
       - 'parts-hub/**'
       - '.github/workflows/parts-hub-ci.yml'

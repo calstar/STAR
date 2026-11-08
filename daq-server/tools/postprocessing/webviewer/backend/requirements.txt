@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 pandas>=2.0
 pyarrow>=14
+starlette>=0.39  # FileResponse answers Range requests (video seeking)
+tzdata  # zoneinfo in the slim image: recording folders are named in the gateway's local time

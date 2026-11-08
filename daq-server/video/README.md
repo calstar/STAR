@@ -68,10 +68,24 @@ overhangs, for cameras whose shape wastes the slot. Off by default: letterboxing
 
 - Streams marked **include in recording** are buffered continuously (10 s segments, 5 min).
 - **Save last 5 min** keeps the buffer. **Record** keeps from the press until **Stop**.
-- Output: `video/recordings/<time>_save|record/<stream>.mp4`, video only, no re-encode. The
+- Output: `video/recordings/<time>_save|record/<stream>.mp4`, video only, no re-encode,
+  and `<stream>.json` beside it: when each stretch of the file was filmed (the keyframe cut
+  and any outage included), for the DAQ Run Viewer, with the gateway's clock offset from
+  the DAQ's (the backend measures it over `GET /clock` at each press). One ffprobe per
+  kept segment at Stop/Save; nothing while recording. The
   **Recordings** view (`/recordings`) lists them and opens a folder in the gateway machine's
   file manager (Finder; xdg-open on Linux) -- useful when you are at that machine. The
   note after a save names gaps (gateway or camera down) and streams that were missing.
+- The **DAQ Run Viewer** shows these clips above a run's plot, at their time
+  (`tools/postprocessing/webviewer`, `VIDEO_RECORDINGS_HOST_DIR`). After a desert trip,
+  copy the media Mac's recordings into that folder on star-rfs (names carry their
+  time, so a second copy changes nothing):
+
+  ```bash
+  rsync -av --exclude '.*' <media-mac>.local:<Recordings>/ <VIDEO_RECORDINGS_HOST_DIR>/
+  ```
+
+  `<Recordings>` is the folder `scripts/media-laptop.sh` prints at start-up.
 - The disk guard runs on the gateway machine: Record is refused below 20 GB free, and stops
   cleanly at 5 GB. A recording interrupted by a restart is finished when the gateway starts.
 

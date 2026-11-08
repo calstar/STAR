@@ -2,6 +2,7 @@ name: feed-twin CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'feed-twin/**'
       # The physics core. Every number this app produces comes from it, so a
