@@ -13,6 +13,8 @@ interface Props {
   onPlayhead: (t: number) => void;
   playing: boolean;
   onPlaying: (on: boolean) => void;
+  /** The cameras shown, in order, whenever that changes (the plot draws their coverage). */
+  onShown?: (streams: string[]) => void;
 }
 
 // The camera a viewer wants first is theirs, not the run's: kept per browser.
@@ -68,7 +70,7 @@ const FOLLOW_SLOP_S = 0.25;
  * re-seeked only past a frame of drift. Where no shown camera has footage, the page clock
  * carries the playhead at real speed until one does.
  */
-export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPlaying }: Props) {
+export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPlaying, onShown }: Props) {
   const streams = useMemo(() => streamsOf(clips), [clips]);
   const [preferred, setPreferred] = useState<string | null>(loadPreferred);
   const [shown, setShown] = useState<string[]>(() => defaultCameras(streams, loadPreferred()));
@@ -76,6 +78,11 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
   useEffect(() => {
     setShown(defaultCameras(streams, loadPreferred()));
   }, [streams]);
+
+  useEffect(() => {
+    onShown?.(shown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown.join('|')]);
 
   const videos = useRef(new Map<string, HTMLVideoElement>());
   const loaded = useRef(new Map<string, VideoClip>());

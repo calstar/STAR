@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CAMERAS, clipAt, clipUrl, defaultCameras, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
+import { MAX_CAMERAS, clipAt, coverage, clipUrl, defaultCameras, drifted, fileOffset, fileToWall, frameSeconds, leaderOf, pageForward, playable, sameClip, streamsOf, toggleCamera } from './video';
 import type { VideoClip } from './types';
 
 const clip = (stream: string, kind: string, start: number, duration: number, recording = `r${start}_${kind}`): VideoClip => ({
@@ -174,5 +174,27 @@ describe('several cameras', () => {
     expect(drifted(10.02, 10, 1 / 30)).toBe(false);
     expect(drifted(10.04, 10, 1 / 30)).toBe(true);
     expect(drifted(9.96, 10, 1 / 30)).toBe(true);
+  });
+});
+
+describe('coverage bands', () => {
+  it('one span per stretch of footage, sorted, other cameras ignored', () => {
+    const clips = [clip('a', 'record', 200, 10), clip('a', 'record', 100, 10), clip('b', 'record', 150, 10)];
+    expect(coverage(clips, 'a')).toEqual([[100, 110], [200, 210]]);
+    expect(coverage(clips, 'b')).toEqual([[150, 160]]);
+    expect(coverage(clips, 'c')).toEqual([]);
+  });
+
+  it('a Save and a Record of the same moment are one span', () => {
+    expect(coverage([clip('a', 'save', 50, 60), clip('a', 'record', 100, 30)], 'a')).toEqual([[50, 130]]);
+  });
+
+  it('an outage inside a clip is a gap; a segment boundary\'s few ms is not', () => {
+    const c: VideoClip = {
+      ...clip('a', 'record', 1000, 30),
+      end: 1062,
+      pieces: [{ fileS: 0, wall: 1000 }, { fileS: 10, wall: 1010.02 }, { fileS: 20, wall: 1052 }],
+    };
+    expect(coverage([c], 'a')).toEqual([[1000, 1020.02], [1052, 1062]]);
   });
 });

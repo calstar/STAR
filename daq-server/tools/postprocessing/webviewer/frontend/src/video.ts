@@ -129,3 +129,30 @@ export function leaderOf(shown: string[], clips: VideoClip[], t: number | null):
 /** A follower is re-seeked only once it has drifted more than one of its own frames from
  *  where the leader says it should be: a seek costs a decode from the last keyframe. */
 export const drifted = (current: number, wanted: number, frame: number) => Math.abs(current - wanted) > frame;
+
+/** Breaks shorter than this between two stretches of footage are not shown as gaps: they
+ *  are a segment boundary's few ms, not an outage anyone needs to see. */
+const COVERAGE_JOIN_S = 0.5;
+
+/**
+ * Where camera `stream` has footage: [start, end] spans in epoch seconds, sorted, overlaps
+ * (a Save and a Record of the same moment) merged, and the outages inside a clip left out.
+ */
+export function coverage(clips: VideoClip[], stream: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const c of clips) {
+    if (c.stream !== stream) continue;
+    c.pieces.forEach((p, i) => {
+      const len = (i + 1 < c.pieces.length ? c.pieces[i + 1].fileS : c.duration) - p.fileS;
+      if (len > 0) spans.push([p.wall, p.wall + len]);
+    });
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  for (const s of spans) {
+    const last = out[out.length - 1];
+    if (last && s[0] <= last[1] + COVERAGE_JOIN_S) last[1] = Math.max(last[1], s[1]);
+    else out.push([s[0], s[1]]);
+  }
+  return out;
+}

@@ -3,7 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { Series, SeriesMeta } from '../types';
 import { colorFor, fmtDuration, mergeForUplot } from '../util';
-import { AXIS_FONT, AXIS_STROKE, GRID_STROKE, LABEL_FONT, PLAYHEAD_STROKE } from '../chartTheme';
+import { AXIS_FONT, AXIS_STROKE, BAND_FILL, GRID_STROKE, LABEL_FONT, PLAYHEAD_STROKE } from '../chartTheme';
 
 interface Props {
   series: Series[];
@@ -24,7 +24,23 @@ interface Props {
   playhead?: number | null;
   /** A click (not a drag) on the plot, or a drag of the playhead's handle: put it there. */
   onPlayhead?: (t: number) => void;
+  /** Where each shown camera has footage: one thin band per camera along the top of the
+   *  plot. A click on a band puts the playhead at the start of that stretch. */
+  bands?: { label: string; spans: [number, number][] }[];
 }
+
+// Coverage bands, in CSS px from the top of the plot area: thin, so they never hide data,
+// with a little more than their height clickable.
+const BAND_TOP = 3;
+const BAND_H = 5;
+const BAND_GAP = 3;
+const bandTop = (i: number) => BAND_TOP + i * (BAND_H + BAND_GAP);
+
+/** Which band row a y (CSS px in the plot area) is on, or -1. */
+const bandRow = (y: number, n: number) => {
+  for (let i = 0; i < n; i++) if (y >= bandTop(i) - 2 && y <= bandTop(i) + BAND_H + 1) return i;
+  return -1;
+};
 
 // A press that moves less than this before release is a click, not a drag-zoom.
 const CLICK_SLOP_PX = 3;
@@ -113,7 +129,7 @@ function visitedSplits(u: uPlot, rows: number[]): number[] | null {
 
 export default function Chart({
   series, meta, view, bounds, minHeight = 320, onViewChange, onResetView, onReady,
-  playhead = null, onPlayhead,
+  playhead = null, onPlayhead, bands = [],
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const uRef = useRef<uPlot | null>(null);
@@ -130,6 +146,8 @@ export default function Chart({
   playheadRef.current = playhead;
   const playheadCb = useRef(onPlayhead);
   playheadCb.current = onPlayhead;
+  const bandsRef = useRef(bands);
+  bandsRef.current = bands;
   // Wheel events arrive in bursts; the scale follows every one of them so the zoom feels
   // direct, but the parent (which refetches the window at higher resolution) hears only
   // once the gesture settles.
@@ -280,6 +298,25 @@ export default function Chart({
         // The video playhead: one line over the plot, drawn with the plot, so moving it
         // costs a redraw and nothing else (no series, no refetch).
         draw: [
+          // Coverage bands first, so the playhead line crosses over them.
+          (u) => {
+            const bs = bandsRef.current;
+            if (!bs.length) return;
+            const { left, top, width } = u.bbox;
+            const ctx = u.ctx;
+            ctx.save();
+            ctx.fillStyle = BAND_FILL;
+            bs.forEach((b, i) => {
+              const y = top + bandTop(i) * devicePixelRatio;
+              for (const [s, e] of b.spans) {
+                const x0 = Math.max(left, u.valToPos(s, 'x', true));
+                const x1 = Math.min(left + width, u.valToPos(e, 'x', true));
+                // A stretch narrower than a pixel at this zoom still shows.
+                if (x1 >= left && x0 <= left + width) ctx.fillRect(x0, y, Math.max(x1 - x0, devicePixelRatio), BAND_H * devicePixelRatio);
+              }
+            });
+            ctx.restore();
+          },
           (u) => {
             const t = playheadRef.current;
             const css = t == null ? NaN : u.valToPos(t, 'x');
@@ -433,8 +470,21 @@ export default function Chart({
       down = null;
       if (!d || !playheadCb.current) return;
       if (Math.abs(e.clientX - d.x) > CLICK_SLOP_PX || Math.abs(e.clientY - d.y) > CLICK_SLOP_PX) return;
-      playheadCb.current(u.posToVal(e.clientX - u.over.getBoundingClientRect().left, 'x'));
+      const rect = u.over.getBoundingClientRect();
+      const t = u.posToVal(e.clientX - rect.left, 'x');
+      // On a coverage band: jump to the start of the stretch under the pointer.
+      const row = bandRow(e.clientY - rect.top, bandsRef.current.length);
+      const span = row >= 0 ? bandsRef.current[row].spans.find(([s, en]) => t >= s && t <= en) : undefined;
+      playheadCb.current(span ? span[0] : t);
     };
+    // Hovering a band names its camera (the bands are too thin to label).
+    const onHover = (e: MouseEvent) => {
+      const bs = bandsRef.current;
+      const row = bs.length ? bandRow(e.clientY - u.over.getBoundingClientRect().top, bs.length) : -1;
+      const title = row >= 0 ? `${bs[row].label}: click a stretch to jump to its start` : '';
+      if (u.over.title !== title) u.over.title = title;
+    };
+    u.over.addEventListener('mousemove', onHover);
     u.over.addEventListener('mousedown', onDown);
     u.over.addEventListener('mouseup', onUp);
 
@@ -461,6 +511,7 @@ export default function Chart({
       u.over.removeEventListener('mousedown', onDown);
       u.over.removeEventListener('mouseup', onUp);
       handle?.removeEventListener('mousedown', onGrip);
+      u.over.removeEventListener('mousemove', onHover);
       if (notifyTimer.current) clearTimeout(notifyTimer.current);
       u.destroy();
       uRef.current = null;
@@ -480,10 +531,10 @@ export default function Chart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, view[0], view[1]]);
 
-  // The playhead moved: redraw the canvas (no rebuild, no rescale) so the line follows.
+  // The playhead or the bands moved: redraw the canvas (no rebuild, no rescale).
   useEffect(() => {
     uRef.current?.redraw(false, false);
-  }, [playhead]);
+  }, [playhead, bands]);
 
   return <div ref={rootRef} style={{ width: '100%' }} />;
 }

@@ -108,6 +108,12 @@ check(
   tsConst('GRID_STROKE').toLowerCase() === colour('border').toLowerCase(),
   `GRID_STROKE (${tsConst('GRID_STROKE')}) != --color-border (${colour('border')})`,
 );
+for (const [ts, css] of [['PLAYHEAD_STROKE', 'playhead'], ['BAND_FILL', 'accent']]) {
+  check(
+    tsConst(ts).toLowerCase() === colour(css).toLowerCase(),
+    `${ts} (${tsConst(ts)}) != --color-${css} (${colour(css)})`,
+  );
+}
 const axisFontPx = Number(tsConst('AXIS_FONT').match(/^([\d.]+)px/)?.[1] ?? 0);
 check(axisFontPx >= 13, `AXIS_FONT is ${axisFontPx}px (< 13)`);
 

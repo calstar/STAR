@@ -94,6 +94,12 @@ camera shows at first, the one starred (★, remembered per browser) if the run 
 Up to four can be on, in a grid. A camera that is off has no `<video>` at all, so it costs
 nothing.
 
+**Coverage.** A thin band per shown camera runs along the top of the plot, filled where
+that camera has footage (Saves and Records merged, outages left empty), so a long run's
+few recorded seconds are visible at a glance. Hover a band to see which camera it is, and
+click it to put the playhead at the start of that stretch. It is drawn in uPlot's draw
+hook: no series, no fetch.
+
 **Playback.** Play/pause (space) runs at 1×, and while it plays one tile leads: the first
 camera shown with footage there drives the playhead from the frames it actually shows
 (`requestVideoFrameCallback`). On each of its frames, every other playing tile is checked

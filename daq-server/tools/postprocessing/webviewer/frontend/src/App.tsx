@@ -4,7 +4,7 @@ import { api } from './api';
 import starWordmark from './assets/star-wordmark.png';
 import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource, VideoClip } from './types';
 import { fmtBytes, fmtDuration } from './util';
-import { pageForward } from './video';
+import { coverage, pageForward } from './video';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
 import TimeRange from './components/TimeRange';
@@ -70,6 +70,12 @@ export default function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [playhead, setPlayhead] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  // The cameras the video panel shows; the plot draws where each has footage.
+  const [shownCams, setShownCams] = useState<string[]>([]);
+  const bands = useMemo(
+    () => shownCams.map((s) => ({ label: s, spans: coverage(clips, s) })),
+    [shownCams, clips],
+  );
   const seriesReq = useRef(0);
 
   useEffect(() => {
@@ -442,6 +448,7 @@ export default function App() {
                         onPlayhead={setPlayhead}
                         playing={playing}
                         onPlaying={setPlaying}
+                        onShown={setShownCams}
                       />
                     )}
                     <div className="toolbar">
@@ -486,6 +493,7 @@ export default function App() {
                           onReady={(u) => (uplotRef.current = u)}
                           playhead={clips.length > 0 ? playhead : null}
                           onPlayhead={clips.length > 0 ? setPlayhead : undefined}
+                          bands={clips.length > 0 ? bands : undefined}
                         />
                       ) : (
                         <div className="placeholder">
