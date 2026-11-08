@@ -62,6 +62,14 @@ void radio_task_on_command(void (*callback)(radio_command_t command));
 
 bool radio_task_start(void);
 
+/* Switch the radio to sniff mode (SetRxDutyCycle, DS 13.1.7).
+ * Safe to call from any task. The radio uses these parameters until
+ * radio_task_start_continuous_rx() or a new call to this function. */
+void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms);
+
+/* Switch the radio back to continuous RX (SetRx 0xFFFFFF). */
+void radio_task_start_continuous_rx(void);
+
 /* Frame type (src/radio/frame.h FrameType) + payload; blocks until TxDone. */
 radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
                                           uint8_t len);

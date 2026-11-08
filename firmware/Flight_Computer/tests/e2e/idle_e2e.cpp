@@ -148,10 +148,15 @@ idle_command_t poll_command(void*) {
     return c == MODE_CMD_ARM ? IDLE_CMD_ARM : IDLE_CMD_DISARM;
 }
 
+void set_state(flight_state_t to);
+
 // --- the radio task: DIO1 -> Link::poll -> ARM gate -> app_command -------
 void radio_task() {
     while (W->air.dio1()) {
         ArmAction a = W->link.poll(W->board);
+        // radio_task.cpp: after a DIO1 event, restart the sniff duty cycle
+        // (no-op in continuous RX).
+        (void)W->setup.rearm_rx();
         flight_state_t next = W->state;
         if (a == ArmAction::Arm || a == ArmAction::Disarm) {
             mode_command_t c =
@@ -162,7 +167,7 @@ void radio_task() {
                         W->queue[W->queued++] = c;
                     break;
                 case MODE_TRANSITION:
-                    W->state = next;
+                    set_state(next);
                     break;
                 default:
                     break;
@@ -176,6 +181,12 @@ void radio_task() {
 void set_state(flight_state_t to) {
     emmc_log_on_state(&W->log, W->state, to, W->board);
     W->state = to;
+    // mode.c: the radio sniffs in Idle and listens continuously otherwise.
+    if (mode_outputs(to).radio_sniff)
+        (void)W->setup.start_rx_duty_cycle(MODE_SNIFF_RX_MS,
+                                           MODE_SNIFF_SLEEP_MS);
+    else
+        (void)W->setup.start_rx_continuous();
 }
 
 // --- the ground station ---------------------------------------------------
@@ -219,6 +230,7 @@ void world_init(World& w) {
 void run(World& w, uint32_t until) {
     if (w.setup.configure() != SetupStep::Ok)
         return;
+    set_state(FLIGHT_IDLE);  // self-test done: Idle, the radio sniffing
     idle_enter(&w.idle, w.board);
     // board_sleep_init: LSI measured against TIM2 (exact here)
     const uint32_t lsi = kTrueLsiHz;
@@ -235,9 +247,9 @@ void run(World& w, uint32_t until) {
         uint32_t ms = r.event == IDLE_EVENT_SLEEP ? r.sleep_s * 1000u : 1000u;
         if (w.queued)
             continue;  // board_sleep's wake_now
-        // Asleep: the chip must be listening with RF_SW on receive.
+        // Asleep: the chip must be sniffing with RF_SW on receive.
         w.sleeps++;
-        if (!w.air.listening || !w.control.rx_switch)
+        if (!w.air.listening || !w.air.sniffing || !w.control.rx_switch)
             w.sleeps_deaf++;
         // The WUT fires after (reload + 1) x 16 true LSI cycles.
         uint32_t ticks = sleep_wut_reload(ms, lsi) + 1u;
@@ -346,8 +358,10 @@ void check_idle_rx_while_asleep() {
     EXPECT(w.sleeps >= 5, "only %u sleeps", w.sleeps);
     EXPECT(w.sleeps_deaf == 0, "%u of %u sleeps with the radio not listening",
            w.sleeps_deaf, w.sleeps);
-    note("%u sleeps, radio in continuous RX with RF_SW on receive in all",
-         w.sleeps);
+    note(
+        "%u sleeps, radio sniffing (SetRxDutyCycle) with RF_SW on receive "
+        "in all",
+        w.sleeps);
 }
 
 void check_idle_arm_wake() {
@@ -364,6 +378,10 @@ void check_idle_arm_wake() {
     mode_outputs_t o = mode_outputs(w.state);
     EXPECT(o.sensors && o.gps && !o.idle_loop, "ARMED does not start sensors");
     EXPECT(w.log.recording, "the eMMC log is not recording in ARMED");
+    // Both Arms were heard although the first one ended the sniff cycle
+    // (re-armed on DIO1); armed, the radio listens all the time.
+    EXPECT(w.air.listening && !w.air.sniffing, "ARMED but the radio is %s",
+           w.air.sniffing ? "still sniffing" : "deaf");
     static Beat b[32];
     unsigned n = beats(w, b, 32);
     EXPECT(n == 3, "%u heartbeats before the Arm (expected 0, 10, 20 s)", n);
@@ -441,7 +459,7 @@ const Check checks[] = {
      "Idle: a LoRa heartbeat every 10 s, 7.92 V, decoded by Ryan's frames",
      check_idle_heartbeat},
     {"idle_rx_asleep",
-     "Idle: radio listening (continuous RX, RF_SW) through every sleep",
+     "Idle: radio sniffing (duty cycle, RF_SW) through every sleep",
      check_idle_rx_while_asleep},
     {"idle_arm_wake",
      "Idle: ground Arm wakes on DIO1 -> ARMED, sensors + eMMC start",
