@@ -54,7 +54,6 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 void MX_SDMMC1_MMC_Init(void);
-void MX_USB_OTG_HS_HCD_Init(void);
 
 /* USER CODE BEGIN EFP */
 
@@ -145,8 +144,6 @@ void MX_USB_OTG_HS_HCD_Init(void);
 #define EMMC_D1_GPIO_Port GPIOC
 #define EMMC_RST_Pin GPIO_PIN_8
 #define EMMC_RST_GPIO_Port GPIOA
-#define USB_OTG_HS_ID_Pin GPIO_PIN_10
-#define USB_OTG_HS_ID_GPIO_Port GPIOA
 #define USB_D_N_Pin GPIO_PIN_11
 #define USB_D_N_GPIO_Port GPIOA
 #define USB_D_P_Pin GPIO_PIN_12

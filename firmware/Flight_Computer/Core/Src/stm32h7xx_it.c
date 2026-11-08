@@ -55,12 +55,11 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
 extern RTC_HandleTypeDef hrtc;
 extern MMC_HandleTypeDef hmmc1;
 extern TIM_HandleTypeDef htim2;
 extern UART_HandleTypeDef huart9;
-extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
-extern HCD_HandleTypeDef hhcd_USB_OTG_HS;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
@@ -285,7 +284,7 @@ void OTG_HS_EP1_IN_IRQHandler(void)
   /* USER CODE BEGIN OTG_HS_EP1_IN_IRQn 0 */
 
   /* USER CODE END OTG_HS_EP1_IN_IRQn 0 */
-  HAL_HCD_IRQHandler(&hhcd_USB_OTG_HS);
+  HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
   /* USER CODE BEGIN OTG_HS_EP1_IN_IRQn 1 */
 
   /* USER CODE END OTG_HS_EP1_IN_IRQn 1 */
@@ -299,17 +298,7 @@ void OTG_HS_IRQHandler(void)
   /* USER CODE BEGIN OTG_HS_IRQn 0 */
 
   /* USER CODE END OTG_HS_IRQn 0 */
-
-  if (hpcd_USB_OTG_HS.State==HAL_PCD_STATE_READY)
-  {
-    HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
-  }
-
-  if (hhcd_USB_OTG_HS.State==HAL_HCD_STATE_READY)
-  {
-    HAL_HCD_IRQHandler(&hhcd_USB_OTG_HS);
-  }
-
+  HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
   /* USER CODE BEGIN OTG_HS_IRQn 1 */
 
   /* USER CODE END OTG_HS_IRQn 1 */
