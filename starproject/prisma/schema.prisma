@@ -47,6 +47,7 @@ model User {
   approvedReimbursements  Reimbursement[]      @relation("ReimbursementApprovedBy")
   reimbursementEvents     ReimbursementEvent[] @relation("ReimbursementEventActor")
   apiTokens               ApiToken[]
+  oauthCodes              OAuthCode[]
   designReParts           TaskManufacturing[]  @relation("ManufacturingDesignRe")
   manufacturingReParts    TaskManufacturing[]  @relation("ManufacturingMfgRe")
   createdBomItems         BomItem[]            @relation("BomItemCreatedBy")
@@ -83,6 +84,41 @@ model ApiToken {
   revokedAt  DateTime?
 
   @@index([userId])
+}
+
+// OAuth for MCP clients that cannot send a header token (claude.ai custom
+// connectors): src/lib/oauth.ts, docs/MCP.md. An OAuth client is registered by
+// the client itself (RFC 7591, /oauth/register), so nothing about it is trusted
+// but its redirect URIs, and those must pass the allowlist in oauth.ts. A
+// finished authorization mints an ordinary ApiToken, so it shows in Settings →
+// API tokens and is revoked there like any other.
+model OAuthClient {
+  id           String      @id @default(cuid())
+  name         String
+  redirectUris String[]
+  createdAt    DateTime    @default(now())
+  codes        OAuthCode[]
+}
+
+// A one-time authorization code, stored as its SHA-256 and good for a few
+// minutes. `tokenId` is the token it was exchanged for: a second exchange of the
+// same code revokes that token (RFC 6749 §4.1.2), since the code has leaked.
+model OAuthCode {
+  id            String      @id @default(cuid())
+  codeHash      String      @unique
+  clientId      String
+  client        OAuthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  redirectUri   String
+  codeChallenge String
+  scopes        String[]
+  expiresAt     DateTime
+  usedAt        DateTime?
+  tokenId       String?
+  createdAt     DateTime    @default(now())
+
+  @@index([expiresAt])
 }
 
 model Project {

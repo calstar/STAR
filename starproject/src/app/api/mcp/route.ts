@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { authenticateBearer } from "@/lib/apiTokens";
 import { runAsIdentity } from "@/lib/auth";
+import { issuer } from "@/lib/oauth";
 import { createStarProjectServer } from "@/mcp/server";
 
 // The MCP endpoint. Streamable HTTP, stateless: each POST gets its own
@@ -14,12 +15,13 @@ import { createStarProjectServer } from "@/mcp/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const REALM = 'Bearer realm="starproject-mcp"';
-
+// resource_metadata (RFC 9728) is how an OAuth client such as a claude.ai
+// connector finds this app's authorization server (src/lib/oauth.ts).
 function unauthorized(reason: string) {
+  const challenge = `Bearer realm="starproject-mcp", resource_metadata="${issuer()}/.well-known/oauth-protected-resource/api/mcp"`;
   return NextResponse.json(
     { error: "unauthorized", reason, hint: "Send `Authorization: Bearer <token>`; mint one under Settings → API tokens." },
-    { status: 401, headers: { "WWW-Authenticate": REALM } },
+    { status: 401, headers: { "WWW-Authenticate": challenge } },
   );
 }
 

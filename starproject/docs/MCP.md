@@ -9,7 +9,8 @@ finance **as you**, with your permissions and the same audit trail the UI leaves
 - **Transport:** Streamable HTTP, stateless, JSON responses. `POST` carries JSON-RPC; `GET`/`DELETE`
   are accepted and answered per the spec (no sessions, so nothing to resume or delete).
 - **Auth:** `Authorization: Bearer sp_…` — a personal access token with the `starproject` scope.
-  No cookie, no OAuth.
+  No cookie. Clients that cannot send a header (claude.ai connectors) get the same kind of token
+  through OAuth; see [claude.ai connectors (OAuth)](#claudeai-connectors-oauth).
 
 STARProject issues the tokens for **both** of STAR's MCP servers: this one, and the design-tools
 server on the apps box (`https://mcp.starberkeley.org/mcp`, `design-mcp/README.md`). A token's
@@ -97,6 +98,42 @@ to read a resource.
 
 Without a token the endpoint answers `401` with `WWW-Authenticate: Bearer realm="starproject-mcp"`;
 a live token without the `starproject` scope answers `401` with reason `scope`.
+
+## claude.ai connectors (OAuth)
+
+A claude.ai custom connector takes only a URL, with no header, so STARProject is also an OAuth 2.1
+authorization server for **both** MCP servers (`src/lib/oauth.ts`). In claude.ai: **Settings →
+Connectors → Add custom connector**, and paste one URL, leaving the OAuth fields blank:
+
+| Connector | URL |
+|---|---|
+| STAR design tools | `https://mcp.starberkeley.org/mcp` |
+| STAR Project | `https://project.starberkeley.org/api/mcp` |
+
+**Connect** opens the STAR login, then a consent page that names the server, the account and where
+the access goes. **The STAR login decides whose token it is**, not the account claude.ai is signed in
+with: a claude.ai on a personal Gmail connects as whichever @berkeley.edu account signs in here.
+
+The flow, for reference:
+
+1. The server answers the first call with `401` and
+   `WWW-Authenticate: Bearer …, resource_metadata="…/.well-known/oauth-protected-resource/…"` (RFC 9728),
+   which names `https://project.starberkeley.org` as the authorization server.
+2. The client reads `/.well-known/oauth-authorization-server` (RFC 8414) and registers itself at
+   `/oauth/register` (RFC 7591). Registration is open, so only allowlisted redirect URIs are
+   accepted: claude.ai's and claude.com's `/api/mcp/auth_callback`, and loopback addresses (Claude
+   Code, Claude Desktop, `mcp-remote`). `OAUTH_EXTRA_REDIRECT_URIS` (comma-separated, exact) adds more.
+3. The browser goes to `/oauth/authorize`, which is cookie-gated like every page. PKCE (S256) is
+   required, and the `resource` the client names picks the one scope (`design` or `starproject`).
+   Allow issues a one-time code (hashed, 5 minutes).
+4. The client trades it at `/oauth/token` for an ordinary `sp_…` token with that one scope, named
+   "<client> (connector)". It lists and revokes under Settings → API tokens like any other, does not
+   expire on its own, and has no refresh token. Using a code twice revokes the token it got.
+
+Public paths on the EC2 Caddy: the two `.well-known` documents, `/oauth/register` and `/oauth/token`
+(`deploy/caddy/tests/check_gate_order.py` lists exactly these). `/oauth/authorize` stays gated.
+`DESIGN_MCP_RESOURCE` overrides the design server's URL (default `https://mcp.starberkeley.org/mcp`);
+the issuer and this server's resource come from `APP_BASE_URL`.
 
 ## Token checks for the design server (`/api/mcp/verify`)
 
