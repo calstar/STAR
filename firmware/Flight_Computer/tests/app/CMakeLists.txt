@@ -10,21 +10,24 @@ set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(FAKES ${ROOT}/tests/fakes)
 
 add_library(star_app STATIC
-    ${ROOT}/app/sensors_core.c
-    ${ROOT}/app/gnss_core.c
-    ${ROOT}/app/battery.c
-    ${ROOT}/app/boot_report.c
-    ${ROOT}/chips/ubx.c
-    ${ROOT}/Core/Src/gnss_frame.c
+    ${ROOT}/src/app/sensors_core.c
+    ${ROOT}/src/app/gnss_core.c
+    ${ROOT}/src/app/battery.c
+    ${ROOT}/src/app/boot_report.c
+    ${ROOT}/src/app/sleep_math.c
+    ${ROOT}/src/app/mode_core.c
+    ${ROOT}/src/app/flight_state.c
+    ${ROOT}/src/chips/ubx.c
+    ${ROOT}/src/chips/gnss_frame.c
     ${FAKES}/fake_gnss.c
-    ${ROOT}/chips/dev_ism330dhcx.c
-    ${ROOT}/chips/dev_h3lis100dl.c
-    ${ROOT}/chips/dev_ms5611.c
+    ${ROOT}/src/chips/dev_ism330dhcx.c
+    ${ROOT}/src/chips/dev_h3lis100dl.c
+    ${ROOT}/src/chips/dev_ms5611.c
     ${FAKES}/fake_regs.c
     ${FAKES}/fake_baro.c)
-target_include_directories(star_app PUBLIC ${ROOT}/app ${ROOT}/chips ${ROOT}/Core/Inc ${FAKES})
+target_include_directories(star_app PUBLIC ${ROOT}/src/app ${ROOT}/src/chips ${ROOT}/src/radio ${FAKES})
 
-set(TESTS test_sensors_core test_gnss_core test_boot_report)
+set(TESTS test_sensors_core test_gnss_core test_boot_report test_sleep_math test_mode_core)
 foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} PRIVATE star_app)

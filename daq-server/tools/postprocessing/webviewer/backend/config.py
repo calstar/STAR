@@ -36,6 +36,15 @@ DESCRIPTIONS_PATH = Path(
     os.environ.get("WEBVIEWER_DESCRIPTIONS_PATH", str(ELODIN_DIR / "run_descriptions.json"))
 ).expanduser()
 
+# The video gateway's recordings folder (daq-server/video/recordings), mounted
+# read-only. Unset, or not a directory: the viewer simply has no video. Never written.
+_video = os.environ.get("WEBVIEWER_VIDEO_DIR", "").strip()
+VIDEO_DIR: Path | None = Path(_video).expanduser() if _video else None
+
+# The time zone the gateway machine names its recording folders in (the agent's
+# stamp() uses local time). Only needed for clips with no timing sidecar.
+VIDEO_TZ = os.environ.get("WEBVIEWER_VIDEO_TZ", "America/Los_Angeles")
+
 # Cap the throughput of CSV downloads (bytes/sec) so a big whole-run export can't
 # saturate the host's uplink and starve other services on the box. A long run's
 # tidy CSV can be hundreds of MB; this paces it instead of forbidding it.

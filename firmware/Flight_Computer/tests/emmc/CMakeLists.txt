@@ -6,12 +6,12 @@ project(star_emmc LANGUAGES C)
 enable_testing()
 option(SELF_TEST_SANITIZERS "Run host tests with address/undefined sanitizers" OFF)
 
-set(FC_CORE ${CMAKE_CURRENT_LIST_DIR}/../../Core)
+set(FC_SRC ${CMAKE_CURRENT_LIST_DIR}/../../src)
 add_library(star_emmc STATIC
-    ${FC_CORE}/Src/flight_state.c
-    ${FC_CORE}/Src/emmc_log.c
-    ${FC_CORE}/Src/emmc_card.c)
-target_include_directories(star_emmc PUBLIC ${FC_CORE}/Inc)
+    ${FC_SRC}/app/flight_state.c
+    ${FC_SRC}/app/emmc_log.c
+    ${FC_SRC}/chips/emmc_card.c)
+target_include_directories(star_emmc PUBLIC ${FC_SRC}/app ${FC_SRC}/chips)
 target_compile_features(star_emmc PUBLIC c_std_99)
 set_target_properties(star_emmc PROPERTIES C_EXTENSIONS OFF)
 

@@ -206,8 +206,8 @@ own OpenOCD and arm-none-eabi-gdb, so nothing extra to install.
 
 ## First power-up: what the bring-up firmware does
 
-On boot, `bringup_task` (Core/Src/bringup_task.c) releases each chip's reset
-in order, then runs the self-test over every chip (see `Core/DEVICE_CHECKS.md`
+On boot, `bringup_task` (src/board/bringup_task.c) releases each chip's reset
+in order, then runs the self-test over every chip (see `src/app/DEVICE_CHECKS.md`
 and the commit history of `board_bringup.c`, one commit per chip). It never
 enables a pyro output and never transmits on the radio.
 
@@ -224,7 +224,7 @@ The battery is judged only when the TPS2121 runs the board from it (SW_ST,
 PE10, high). On USB the ADC reads USB's 5 V, so the report says "on USB"
 and does not judge the pack. The 7.0 V / 6.6 V levels are proposals (#137),
 the same as Aaron's idle module (PR #162). Conversion and sources:
-`app/battery.h` (schematic p.2 and p.12).
+`src/app/battery.h` (schematic p.2 and p.12).
 
 **Reading the report:** the board writes the whole self-test as text, one
 line per chip plus the battery voltage and the verdict. In a PlatformIO debug
@@ -282,7 +282,7 @@ works too, with Arm GNU on PATH:
 -e flight` before committing. A newly enabled peripheral's HAL file lands in
 `Drivers/.../Src` and is picked up automatically. A new middleware folder
 needs a `build_src_filter` line. Still open in the `.ioc`: HSE (25 MHz Y1) +
-PLL (SYSCLK is 64 MHz from HSI), RTC on LSI with the wakeup timer, USB
+PLL (SYSCLK is 64 MHz from HSI), USB
 device-only.
 
 ---

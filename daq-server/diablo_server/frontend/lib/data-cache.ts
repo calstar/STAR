@@ -117,6 +117,114 @@ function gapMarkers(w: { time: number[]; values: number[] }): number[] {
   return marks;
 }
 
+/** The hold in force at each of a series' own samples: the interval EMA through sample k.
+ *  It only changes at the series' own samples, so it is sized once per sample, not once
+ *  per grid point. Fewer than two samples gives no interval to measure; holdMsFor then
+ *  falls back to the readout window, the only other statement we have about "current". */
+function holdsAt(tw: number[]): Float64Array {
+  const holdAt = new Float64Array(tw.length);
+  let ema = -1;
+  if (tw.length > 0) holdAt[0] = holdMsFor(ema, 0);
+  for (let k = 1; k < tw.length; k++) {
+    ema = nextEma(ema, tw[k] - tw[k - 1]);
+    holdAt[k] = holdMsFor(ema, k);
+  }
+  return holdAt;
+}
+
+/** Buckets across a plot window before the grid is decimated (see bucketedHistory). About
+ *  two per pixel on a desktop plot; the grid is two points per bucket. */
+const PLOT_MAX_BUCKETS = 1500;
+
+type Win = { time: number[]; values: number[] };
+
+/**
+ * Align series onto fixed, absolute-time buckets, keeping each series' min and max per
+ * bucket in the order they happened. Used when the merged grid would be far denser than
+ * the pixels it is drawn on: 10 PTs over 5 min merge to ~60k x values, ~75 per pixel.
+ *
+ * Bucket edges are multiples of bucketMs on the epoch, never relative to the window or to
+ * any series, so a settled bucket draws identically on every frame; only the newest bucket,
+ * still filling, can change. Every extreme survives, so a spike is never sampled away.
+ * An empty bucket holds the series' last value while that sample's hold lasts, then NaN.
+ */
+function bucketedHistory(windows: (Win | null)[], bucketMs: number): { time: number[]; values: number[][] } {
+  let lo = Infinity, hi = -Infinity;
+  for (const w of windows) {
+    if (!w || w.time.length === 0) continue;
+    if (w.time[0] < lo) lo = w.time[0];
+    if (w.time[w.time.length - 1] > hi) hi = w.time[w.time.length - 1];
+  }
+  const b0 = Math.floor(lo / bucketMs);
+  const nb = Math.floor(hi / bucketMs) - b0 + 1;
+  const half = bucketMs / 2;
+  const time: number[] = new Array(2 * nb);
+  for (let k = 0; k < nb; k++) {
+    time[2 * k] = (b0 + k) * bucketMs;
+    time[2 * k + 1] = (b0 + k) * bucketMs + half;
+  }
+
+  const values = windows.map((w) => {
+    const out: number[] = new Array(2 * nb);
+    if (!w || w.time.length === 0) return out.fill(NaN);
+    const tw = w.time, vw = w.values, n = tw.length;
+    const holdAt = holdsAt(tw);
+    let j = 0;      // next unconsumed sample
+    let last = -1;  // newest sample consumed so far
+    for (let k = 0; k < nb; k++) {
+      const end = (b0 + k + 1) * bucketMs;
+      if (j < n && tw[j] < end) {
+        let mn = j, mx = j;
+        while (j < n && tw[j] < end) {
+          if (vw[j] < vw[mn]) mn = j;
+          if (vw[j] > vw[mx]) mx = j;
+          j++;
+        }
+        const first = tw[mn] <= tw[mx] ? mn : mx;
+        out[2 * k] = vw[first];
+        out[2 * k + 1] = vw[first === mn ? mx : mn];
+        last = j - 1;
+      } else {
+        for (let s = 0; s < 2; s++) {
+          const t = time[2 * k + s];
+          out[2 * k + s] = last >= 0 && t - tw[last] <= holdAt[last] ? vw[last] : NaN;
+        }
+      }
+    }
+    return out;
+  });
+  return { time, values };
+}
+
+/** Merge ascending arrays into one ascending array without duplicates. Pairwise, so it is
+ *  O(n log k) for k arrays; this runs on every plot frame. */
+function mergeSortedUnique(arrays: number[][]): number[] {
+  if (arrays.length === 0) return [];
+  let parts = arrays;
+  while (parts.length > 1) {
+    const next: number[][] = [];
+    for (let p = 0; p < parts.length; p += 2) {
+      if (p + 1 === parts.length) { next.push(parts[p]); continue; }
+      const a = parts[p], b = parts[p + 1];
+      const out: number[] = new Array(a.length + b.length);
+      let i = 0, j = 0, n = 0;
+      while (i < a.length || j < b.length) {
+        const v = j >= b.length || (i < a.length && a[i] <= b[j]) ? a[i++] : b[j++];
+        if (n === 0 || out[n - 1] !== v) out[n++] = v;
+      }
+      out.length = n;
+      next.push(out);
+    }
+    parts = next;
+  }
+  // A single input is returned as-is; dedupe it too so the contract holds.
+  const only = parts[0];
+  if (arrays.length > 1) return only;
+  const out: number[] = [];
+  for (const v of only) if (out.length === 0 || out[out.length - 1] !== v) out.push(v);
+  return out;
+}
+
 class SensorDataCache {
   private cache: Map<string, RingSeries> = new Map();
   private pruneInterval: ReturnType<typeof setInterval> | null = null;
@@ -348,8 +456,8 @@ class SensorDataCache {
 
   /**
    * Build aligned time + values arrays for a set of entity/component pairs.
-   * Times are epoch ms. Uses the first series with data as the time base;
-   * aligns others via nearest-neighbour lookup. One allocation per call.
+   * Times are epoch ms. The time base is every series' own sample times merged
+   * (plus gap markers); each series is sample-and-held onto it.
    */
   getAlignedHistory(
     entities: string[],
@@ -359,30 +467,31 @@ class SensorDataCache {
     const cutoffMs = serverNowMs() - windowSeconds * 1000;
     const keys     = entities.map((e, i) => `${e}.${componentMap[i]}`);
 
-    // Read every series once, then take the time base from the FRESHEST of them — the one
-    // whose last sample is newest (ties broken by point count).
+    // Read every series once, then take the time base from ALL of them: the union of every
+    // series' own sample times.
     //
-    // It used to be "the first key with data", which meant a stalled series silently
-    // truncated the grid: co-plotted live series were simply not drawn past the stalled
-    // one's last sample. That was invisible while everything got blanked anyway, and it
-    // is the reason a stalled sensor could take healthy ones down with it. Reading once
-    // also drops the duplicate readWindow the base series used to pay.
+    // It must not be one series' times. uPlot draws each series only at the shared x values,
+    // so a series sampled at another's timestamps shows whatever it held at those instants,
+    // not its own samples. The base used to be the freshest series, and with a dozen PTs on
+    // one plot "freshest" changes on nearly every 25 ms frame — so the same stored sample was
+    // drawn at full height in one frame and at its neighbour's value in the next. On
+    // 2026-11-07 a 1250 psi HPD-PT spike replayed from the live stream drew as 1250 in 6
+    // frames and 703 in 36; the plot flickered although the data never changed. (Before
+    // that the base was the first series with data, which truncated the grid at a stalled
+    // series' last sample.) See __tests__/plot-grid-union.test.ts.
     const windows = keys.map((k) => {
       const s = this.findSeries(k);
       return s ? this.readWindow(s, cutoffMs) : null;
     });
+    const withData = windows.filter((w): w is { time: number[]; values: number[] } => !!w && w.time.length > 0);
+    if (withData.length === 0) return null;
 
-    let baseWindow: { time: number[]; values: number[] } | null = null;
-    let baseLast = -Infinity;
-    for (const w of windows) {
-      if (!w || w.time.length === 0) continue;
-      const last = w.time[w.time.length - 1];
-      if (last > baseLast || (last === baseLast && baseWindow && w.time.length > baseWindow.time.length)) {
-        baseWindow = w;
-        baseLast = last;
-      }
-    }
-    if (!baseWindow) return null;
+    // Dense: fixed buckets instead of the merged grid (see bucketedHistory). The sum of the
+    // series' lengths bounds the merged grid from above, so this decides without merging.
+    const bucketMs = Math.max(1, Math.round((windowSeconds * 1000) / PLOT_MAX_BUCKETS));
+    let total = 0;
+    for (const w of withData) total += w.time.length;
+    if (total > 2 * PLOT_MAX_BUCKETS) return bucketedHistory(windows, bucketMs);
 
     // Splice a marker into every hole so the break has an x to live at (see gapMarkers).
     // Other series hold their value across that x, which is correct: they are still live,
@@ -390,7 +499,7 @@ class SensorDataCache {
     const marks = new Set<number>();
     for (const w of windows) if (w && w.time.length > 1) for (const m of gapMarkers(w)) marks.add(m);
 
-    let time = baseWindow.time;
+    let time = mergeSortedUnique(withData.map((w) => w.time));
     if (marks.size > 0) {
       const lo = time[0], hi = time[time.length - 1];
       const extra = [...marks].filter((m) => m > lo && m < hi);
@@ -406,22 +515,15 @@ class SensorDataCache {
     const values = windows.map((w) => {
       if (!w || w.time.length === 0) return new Array<number>(len).fill(NaN);
 
+      const tw = w.time, vw = w.values, n = tw.length;
+      const holdAt = holdsAt(tw);
+
       const out: number[] = new Array(len);
       let j = 0;
-      let ema = -1;   // mean inter-sample interval seen so far, ms
-      let seen = 0;
-
       for (let i = 0; i < len; i++) {
         const t = time[i];
-        while (j + 1 < w.time.length && w.time[j + 1] <= t) {
-          ema = nextEma(ema, w.time[j + 1] - w.time[j]);
-          seen++;
-          j++;
-        }
-        // Fewer than two samples gives no interval to measure; fall back to the readout
-        // window, the only other statement we have about what "current" means.
-        const hold = holdMsFor(ema, seen);
-        out[i] = (w.time[j] <= t && t - w.time[j] <= hold) ? w.values[j] : NaN;
+        while (j + 1 < n && tw[j + 1] <= t) j++;
+        out[i] = tw[j] <= t && t - tw[j] <= holdAt[j] ? vw[j] : NaN;
       }
       return out;
     });

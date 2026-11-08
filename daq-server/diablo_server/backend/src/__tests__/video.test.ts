@@ -682,6 +682,57 @@ describe('Save, through the video agent', () => {
   });
 });
 
+describe('the gateway clock, measured from here', () => {
+  it('is the agent\'s reading minus the midpoint of the quickest round trip', async () => {
+    const { clockOffset } = await import('../video/service.js');
+    // Gateway 5 s ahead. Round trips of 40, 4 and 20 ms: the 4 ms one bounds it best.
+    expect(clockOffset([
+      { sent: 1000, agentNow: 6030, received: 1040 },
+      { sent: 2000, agentNow: 7002, received: 2004 },
+      { sent: 3000, agentNow: 8015, received: 3020 },
+    ])).toEqual({ offsetMs: 5000, uncertaintyMs: 2 });
+    // Behind is negative.
+    expect(clockOffset([{ sent: 0, agentNow: -2995, received: 10 }])).toEqual({ offsetMs: -3000, uncertaintyMs: 5 });
+    expect(clockOffset([])).toBeNull();
+    expect(clockOffset([{ sent: 0, agentNow: NaN, received: 1 }])).toBeNull();
+  });
+
+  it('Save and Record hand the agent the measured offset; an agent with no clock gets none', async () => {
+    const SKEW = 4321;
+    let hasClock = true;
+    const seen: any[] = [];
+    const srv = http.createServer((req, res) => {
+      let b = ''; req.on('data', (c) => (b += c));
+      req.on('end', () => {
+        seen.push({ url: req.url, body: b ? JSON.parse(b) : undefined });
+        const [code, body] = req.url === '/clock'
+          ? (hasClock ? [200, { now: Date.now() + SKEW }] : [404, { error: 'not found' }])
+          : [200, req.url === '/status' ? {} : { folder: 'f', startedAt: 1, streams: ['pad'] }];
+        res.writeHead(code as number, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body));
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+    try {
+      writeConfig([pad]);
+      const svc = new VideoService({ apiUrl: 'x', webrtcUrl: 'x', agentUrl: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, host: '127.0.0.1' }, new FakeGateway());
+      await svc.save();
+      await svc.startRecording();
+      for (const url of ['/save', '/record/start']) {
+        const { clock } = seen.find((x) => x.url === url).body;
+        expect(Math.abs(clock.offsetMs - SKEW)).toBeLessThanOrEqual(clock.uncertaintyMs + 1);
+        expect(clock.uncertaintyMs).toBeLessThan(50);
+      }
+      expect(seen.filter((x) => x.url === '/clock').length).toBe(6);
+      hasClock = false;
+      seen.length = 0;
+      await svc.save();
+      expect(seen.find((x) => x.url === '/save').body).toEqual({ streams: ['pad'], label: 'save' });
+    } finally {
+      srv.close();
+    }
+  });
+});
+
 describe("this machine's LAN name", () => {
   it('on macOS is the Bonjour name, not the Unix hostname', async () => {
     const { lanName } = await import('../video/service.js');

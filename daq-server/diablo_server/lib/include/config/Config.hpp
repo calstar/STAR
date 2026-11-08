@@ -281,8 +281,9 @@ struct Config {
     // section name -> {role name -> channel}, e.g. "sensor_roles_pt_board" -> {"Fuel Upstream": 1}.
     std::map<std::string, std::map<std::string, int>> sensor_roles;
     std::map<std::string, double> abort_pts;  // [abort_pts]
-    // section name -> {role name -> "cubic"|"robust"|"physics"|"blend"}, e.g.
-    // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor PT streaming model.
+    // section name -> {role name -> "cubic"|"robust"|"physics"|"blend"} for a PT board, or
+    // "linear"|"cubic"|"physics" for an LC board (linear is the LC default), e.g.
+    // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor streaming model.
     std::map<std::string, std::map<std::string, std::string>> calibration_models;
     // Per-sensor physics-mode parameters, role-keyed, parallel to calibration_models:
     // [calibration_full_scale_<board>] role->PSI (PT) or role->kg (LC) and

@@ -15,12 +15,13 @@ import { getApiBaseUrl } from '@/lib/websocket';
 import { CalibrationChart, PhysicsParams, LcPhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
 import { BallValveCalPanel } from '@/components/calibration/BallValveCalPanel';
 
-type Model = 'cubic' | 'robust' | 'physics';
+type Model = 'cubic' | 'robust' | 'physics' | 'linear';
 type Kind = 'PT' | 'LC';
 
 // Per-model badge styling — the whole point is that a sensor's selected model reads at a glance.
 const MODEL_BADGE: Record<Model, string> = {
   cubic: 'text-sky-300 border-sky-600/60 bg-sky-900/40',
+  linear: 'text-emerald-300 border-emerald-600/60 bg-emerald-900/40',
   robust: 'text-violet-300 border-violet-600/60 bg-violet-900/40',
   physics: 'text-orange-300 border-orange-600/60 bg-orange-900/40',
 };
@@ -28,6 +29,8 @@ const MODEL_BADGE: Record<Model, string> = {
 // of the vocabulary (cubic/robust) means the same thing for either.
 function modelDesc(model: Model, kind: Kind): string {
   if (model === 'cubic') return 'Cubic fit from captured points.';
+  // A tare is an ADC code evaluated through this curve; on a line it cancels a zero drift exactly.
+  if (model === 'linear') return 'Straight-line fit from captured points; a tare cancels zero drift exactly. Datasheet conversion until 2 points.';
   if (model === 'robust') return 'Adaptive fit; learns from points, corrects drift.';
   return kind === 'LC'
     ? 'Datasheet conversion (sensitivity / PGA gain).'
@@ -56,8 +59,8 @@ interface SensorRowProps {
 }
 function SensorRow({ ch, model, status, calPsi, numPoints, selected, onSelect }: SensorRowProps) {
   const isDrift = status?.driftDetected ?? false;
-  const detail = model === 'physics'
-    ? 'datasheet'
+  const detail = model === 'physics' || (model === 'linear' && numPoints < 2)
+    ? (model === 'linear' ? 'datasheet until 2 pts' : 'datasheet')
     : model === 'robust'
       ? (status?.rlsUpdateCount ? `RLS ${status.rlsUpdateCount}` : 'no data yet')
       : (numPoints > 0 ? `${numPoints} point${numPoints === 1 ? '' : 's'}` : 'uncalibrated');
@@ -108,7 +111,7 @@ export default function CalibrationPage() {
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
   const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
-  const [overlay, setOverlay] = useState<{ cubic: boolean; robust: boolean; physics: boolean }>({ cubic: true, robust: true, physics: true });
+  const [overlay, setOverlay] = useState<{ cubic: boolean; linear: boolean; robust: boolean; physics: boolean }>({ cubic: true, linear: true, robust: true, physics: true });
   const [refInput, setRefInput] = useState('');
   const [showLoadCells, setShowLoadCells] = useState(true);
   // Captures write into the live ADC stream, which only exists while a session runs; with it off the
@@ -174,14 +177,14 @@ export default function CalibrationPage() {
   const [cfgRoot, setCfgRoot] = useState<Record<string, any>>({});
 
   // Each sensor's streaming model (service truth); default by interface/kind when the record is
-  // absent (PT: 4-20 mA -> physics else cubic; LC: physics — cubic is opt-in per role).
+  // absent (PT: 4-20 mA -> physics else cubic; LC: linear, which streams physics until 2 points).
   const modelOf = useCallback((uid: number): Model => {
     const rec = cubicState[String(uid)];
     if (rec?.active_model) return rec.active_model as Model;
     const pt = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
     if (pt) return pt.isHpPt ? 'physics' : 'cubic';
     const lc = lcChannels.find((c) => c.boardId * 100 + c.id === uid);
-    if (lc) return 'physics';
+    if (lc) return 'linear';
     return 'cubic';
   }, [cubicState, ptChannels, lcChannels]);
 
@@ -385,8 +388,9 @@ export default function CalibrationPage() {
     healthValue = selPhysics ? `${selPhysics.fullScale} ${unit}` : '—';
     healthClass = 'text-orange-300';
   } else {
-    healthLabel = 'Cubic fit';
+    healthLabel = selectedModel === 'linear' ? 'Linear fit' : 'Cubic fit';
     if (selPoints >= 2) { healthValue = 'Live'; healthClass = 'text-green-400'; }
+    else if (selectedModel === 'linear') { healthValue = 'Datasheet'; healthClass = 'text-orange-300'; }
     else if (selPoints === 1) { healthValue = 'Need ≥2 pts'; healthClass = 'text-amber-400'; }
     else { healthValue = 'None'; healthClass = 'text-gray-400'; }
   }
@@ -539,7 +543,7 @@ export default function CalibrationPage() {
                 </div>
                 <div className="text-sm text-text-muted mt-1.5 max-w-2xl">
                   {modelDesc(selectedModel, selectedKind ?? 'PT')}
-                  {selectedModel !== 'physics' && selPoints === 0 && (
+                  {selectedModel !== 'physics' && selectedModel !== 'linear' && selPoints === 0 && (
                     <span className="text-amber-400/80"> Reads 0 until you capture points.</span>
                   )}
                   {' '}<span className="text-gray-600">Change the model in Config → Roles.</span>
@@ -592,7 +596,7 @@ export default function CalibrationPage() {
               {selectedModel === 'physics' && (
                 <div className="text-sm text-orange-300/90 mb-3">
                   This sensor is in physics mode: points are recorded but do not change what it streams.
-                  Switch it to cubic or robust in Config &rarr; Roles to use them.
+                  Switch it to {selectedKind === 'LC' ? 'linear or cubic' : 'cubic or robust'} in Config &rarr; Roles to use them.
                 </div>
               )}
               {(
@@ -620,7 +624,7 @@ export default function CalibrationPage() {
                   </button>
                   <span className="text-sm text-text-muted">
                     {sessionActive
-                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
+                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'linear & cubic' : 'cubic & robust'} fits{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
                       : <>Start a session to calibrate — there is no live stream to capture.</>}
                   </span>
                 </div>
@@ -632,7 +636,7 @@ export default function CalibrationPage() {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
                 <div className="text-sm font-bold text-text">Curve previews</div>
                 <div className="flex items-center gap-4 text-sm flex-wrap">
-                  {((selectedKind === 'LC' ? ['cubic', 'physics'] : ['cubic', 'robust', 'physics']) as Model[]).map((m) => (
+                  {((selectedKind === 'LC' ? ['linear', 'cubic', 'physics'] : ['cubic', 'robust', 'physics']) as Model[]).map((m) => (
                     <label key={m} className="flex items-center gap-2 cursor-pointer select-none">
                       <input type="checkbox" checked={overlay[m]} onChange={(e) => setOverlay((o) => ({ ...o, [m]: e.target.checked }))} />
                       <span className="inline-block w-4 rounded" style={{ background: CURVE_COLORS[m], height: m === selectedModel ? 4 : 2 }} />

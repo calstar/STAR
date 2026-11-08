@@ -286,13 +286,22 @@ export interface CubicCaptureQuality {
     driftZ: number;
     settled: boolean;
 }
+/** One least-squares fit over a channel's points, in the normalized form the browser evaluates. */
+export interface CubicFitCurve {
+    valid: boolean;
+    degree: number;
+    rmse: number;
+    polyCoeffs: number[];
+    adcNormMin: number;
+    adcNormScale: number;
+}
 export interface CubicCalibrationChannel {
     boardId: number;
     connector: number;
     logicalCh: number;
     kind?: 'PT' | 'LC';
     role: string;
-    active_model: 'cubic' | 'robust' | 'physics';
+    active_model: 'cubic' | 'robust' | 'physics' | 'linear';
     numPoints: number;
     status: 'PENDING' | 'OK' | 'ERROR';
     last_error: string;
@@ -308,6 +317,10 @@ export interface CubicCalibrationChannel {
     polyCoeffs: number[];
     adcNormMin: number;
     adcNormScale: number;
+    fits?: {
+        cubic?: CubicFitCurve;
+        linear?: CubicFitCurve;
+    };
     points: CubicCalibrationPoint[];
     fitCurve?: {
         adc: number;

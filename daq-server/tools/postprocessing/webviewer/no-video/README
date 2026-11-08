@@ -1,0 +1,3 @@
+Empty on purpose: docker-compose mounts this as the viewer's video folder when
+VIDEO_RECORDINGS_HOST_DIR is unset, so Docker never creates a root-owned
+daq-server/video/recordings that the video agent then cannot write to.

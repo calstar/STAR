@@ -41,7 +41,7 @@ connection_retry_delay_ms = 1000
 downsample_mode = "envelope"
 points_per_second = 20
 encoder_points_per_second = 100
-tabs = [ "unified", "boards", "config", "calibration", "feed-char", "session" ]
+tabs = [ "unified", "boards", "config", "calibration", "feed-char", "session", "video" ]
 
 [[gui.pressure_bars]]
 label = "FF Vent"

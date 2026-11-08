@@ -20,6 +20,7 @@ typedef struct {
     uint8_t self_clear_reg; /* these bits clear after clear_after_reads */
     uint8_t self_clear_bits;
     unsigned clear_after_reads;
+    unsigned self_clear_rearm; /* non-zero: each set-write re-arms the count */
     uint8_t stuck[128]; /* bits that ignore writes (read-back mismatch) */
     unsigned transfers;
     unsigned writes;

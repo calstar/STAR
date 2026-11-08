@@ -14,7 +14,8 @@ printf 'config load %s\nproject generate\nexit\n' "$PWD/firmware.ioc" > "$script
 # Keep each file's line endings as they are in git (CubeMX's GUI wrote some
 # files CRLF, its command-line mode writes everything CRLF): only the real
 # changes should show up in the diff.
-for f in Core/Src/*.c Core/Inc/*.h; do
+for f in Core/Src/*.c Core/Inc/*.h ./*.ld firmware.ioc .mxproject \
+         cmake/stm32cubemx/CMakeLists.txt; do
     if git cat-file -e "HEAD:./$f" 2>/dev/null &&
        git show "HEAD:./$f" | head -3 | grep -q $'\r'; then
         perl -pi -e 's/\r?\n/\r\n/' "$f"   # file is CRLF in git
