@@ -439,11 +439,12 @@ sedi 's/^bind_ip = .*/bind_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # just has to be distinguishable from FireManager's 6000 ms default — no need to sit through a
 # realistic burn on every CI run.
 sedi 's/^duration_ms = .*/duration_ms = 1500/' "$TEST_CONFIG"
-# Put LC board 2 CH1 in CUBIC mode (config_base leaves every load cell on the datasheet physics
-# conversion, where select_lc_kg ignores captures entirely). cal_lc_tare needs a channel whose
-# curve an operator can actually move, because the property it exists to prove is that a tare
-# re-derives its kilograms from the stored ADC code when the curve changes underneath it. The
-# other two connectors (2, 6) stay on physics, so cal_lc_capture and cal_stability are unaffected.
+# Put LC board 2 CH1 in CUBIC mode (config_base leaves every load cell on the default "linear",
+# which streams physics until it has two points). cal_lc_tare needs a channel whose curve an
+# operator can actually move, because the property it exists to prove is that a tare re-derives
+# its kilograms from the stored ADC code when the curve changes underneath it. The other two
+# connectors (2, 6) are left unconfigured, i.e. linear: cal_lc_linear proves that default on CH6,
+# and cal_lc_capture's points on CH2 are cleared before anything reads it.
 cat >> "$TEST_CONFIG" <<'LCCUBIC'
 
 [sensor_roles_lc_board_2]

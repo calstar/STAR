@@ -2993,14 +2993,16 @@ export default function ConfigPage() {
                       // physics calibration was only ever settable rig-wide via [calibration.lc].
                       sensitivityKey: `calibration_sensitivity_${boardKey}`,
                       pgaKey: `calibration_pga_${boardKey}`,
-                      // Load cells carry a per-role model exactly like PTs — cubic fits the raw
+                      // Load cells carry a per-role model like PTs — linear or cubic fits the raw
                       // ADC, physics is the datasheet conversion — so they get the selector too.
-                      // Robust is PT-only (it is an RLS fit over PT captures), and an LC defaults
-                      // to physics because cubic is opt-in per role (see the calibration page).
+                      // Robust is PT-only (it is an RLS fit over PT captures). An LC defaults to
+                      // linear: a tare then cancels a zero drift exactly, where a cubic evaluated
+                      // outside its captured range bends. Linear streams physics until 2 points,
+                      // so an uncaptured LC reads as it did before (calibration_main.cpp LcModel).
                       showModel: isPT || isLC,
                       isLC,
                       isLoop,
-                      defaultModel: isLC ? 'physics' : isLoop ? 'physics' : 'cubic',
+                      defaultModel: isLC ? 'linear' : isLoop ? 'physics' : 'cubic',
                       // An LC's full scale is a FORCE, and its default is the rig-wide
                       // [calibration.lc] value the service falls back to — not the PT 1000 PSI,
                       // which is what this column used to offer a load cell.
@@ -3216,6 +3218,8 @@ export default function ConfigPage() {
                                   title="Streaming calibration model for this sensor"
                                   className="w-32 shrink-0 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                                 >
+                                  {/* Linear is a load cell's default: a tare cancels zero drift exactly on a line. */}
+                                  {isLC && <option value="linear">Linear</option>}
                                   <option value="cubic">Cubic</option>
                                   {/* Robust is an RLS fit over PT captures — not defined for a load cell. */}
                                   {!isLC && <option value="robust">Robust</option>}

@@ -245,7 +245,7 @@ final class ReceiverModel: ObservableObject {
         }
         let parts = udpTarget.split(separator: ":")
         guard parts.count == 2, let port = UInt16(parts[1]) else {
-            throw HiDesError.malformedReply("UDP target must be HOST:PORT")
+            throw HiDesError.udpTarget("must be HOST:PORT, e.g. star-rfs.local:5600")
         }
         pipeline.setOutput(try UDPOutput(host: String(parts[0]), port: port))
     }

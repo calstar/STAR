@@ -359,6 +359,16 @@ export interface CubicCaptureQuality {
   settled: boolean;
 }
 
+/** One least-squares fit over a channel's points, in the normalized form the browser evaluates. */
+export interface CubicFitCurve {
+  valid: boolean;
+  degree: number;                 // 1 for linear; up to 3 for cubic
+  rmse: number;
+  polyCoeffs: number[];
+  adcNormMin: number;
+  adcNormScale: number;
+}
+
 export interface CubicCalibrationChannel {
   boardId: number;
   connector: number;              // 1-based board-local connector
@@ -367,7 +377,8 @@ export interface CubicCalibrationChannel {
   // logical space (board 22 and board 42 are both slot 2), so the maps are split by kind.
   kind?: 'PT' | 'LC';
   role: string;                   // may be empty; the UI supplies it from sensor config
-  active_model: 'cubic' | 'robust' | 'physics';  // the model this uid streams (config truth)
+  // The model this uid streams (config truth). 'linear' is load cells only (their default).
+  active_model: 'cubic' | 'robust' | 'physics' | 'linear';
   numPoints: number;
   status: 'PENDING' | 'OK' | 'ERROR';
   last_error: string;
@@ -375,9 +386,12 @@ export interface CubicCalibrationChannel {
   degree: number;
   updatedAt: number;              // unix seconds
   coeffs: { A: number; B: number; C: number; D: number };  // raw-ADC-space cubic (cubic uids)
-  polyCoeffs: number[];           // normalized coeffs (well-conditioned; used for display eval)
+  polyCoeffs: number[];           // normalized coeffs of the ACTIVE fit (linear or cubic)
   adcNormMin: number;
   adcNormScale: number;
+  // Both candidate fits over the same points, so the page can draw linear beside cubic. Absent in
+  // a file written before linear existed; the active fit above is then the cubic.
+  fits?: { cubic?: CubicFitCurve; linear?: CubicFitCurve };
   points: CubicCalibrationPoint[];
   // Robust uids only: (adc, psi) samples of the live robust model, for the overlay curve. Cubic
   // uids draw their curve from polyCoeffs instead, so this is absent for them.

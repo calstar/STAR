@@ -110,6 +110,12 @@ target_link_libraries(test_capture_window
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME capture_window COMMAND test_capture_window)
 
+add_executable(test_hp_pt_code test/test_hp_pt_code.cpp)
+target_include_directories(test_hp_pt_code PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_test(NAME hp_pt_code COMMAND test_hp_pt_code)
+
 add_executable(test_lc_tare test/test_lc_tare.cpp)
 target_include_directories(test_lc_tare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -125,6 +131,14 @@ target_include_directories(test_cubic_store_namespace PRIVATE
 target_link_libraries(test_cubic_store_namespace
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME cubic_store_namespace COMMAND test_cubic_store_namespace)
+
+add_executable(test_lc_linear_fit test/test_lc_linear_fit.cpp)
+target_include_directories(test_lc_linear_fit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_lc_linear_fit
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME lc_linear_fit COMMAND test_lc_linear_fit)
 
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
