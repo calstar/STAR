@@ -35,7 +35,8 @@ function physicsPsi(adc: number, p: PhysicsParams): number {
     const iMa = (vSense / (p.senseResistor ?? 120)) * 1000;
     return ((iMa - 4) / 16) * p.fullScale;
   }
-  return frac * p.fullScale;
+  // 0.5-4.5 V at 5 V excitation: 10 % of full code at zero, 90 % at full scale.
+  return ((frac - 0.1) / 0.8) * p.fullScale;
 }
 
 // LC datasheet conversion — mirrors convert_lc_adc_to_force: excitation is the ADC reference, so it

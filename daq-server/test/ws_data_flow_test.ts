@@ -2203,16 +2203,17 @@ async function testCalibratedValueCorrectness(ws: WebSocket): Promise<void> {
   const ADC_MAX = 2147483648; // 2^31
 
   // test_integration.sh sets "GSE Low" (pt_board conn 2 → CH2) to physics; pt_board is 0-5V
-  // ratiometric with the default 1000 PSI full scale, so PT_Cal = (adc/2^31)*1000.
+  // ratiometric (0.5-4.5 V of 5 V) with the default 1000 PSI full scale, so
+  // PT_Cal = (adc/2^31 - 0.1)/0.8*1000.
   const phCal = cal.get(2), phAdc = adc.get(2);
   if (!phCal || phCal.length < 3 || !phAdc || phAdc.length < 3) {
     assert(false, 'cal_values: no PT1_Cal.CH2 (physics sensor) samples'); return;
   }
-  const a2 = median(phAdc), psi2 = median(phCal), expected2 = (a2 / ADC_MAX) * 1000;
+  const a2 = median(phAdc), psi2 = median(phCal), expected2 = ((a2 / ADC_MAX - 0.1) / 0.8) * 1000;
   const tol2 = Math.max(Math.abs(expected2) * 0.03, 5);
   assert(Math.abs(psi2) > 1, 'cal_values: physics CH2 is not 0 (datasheet conversion active)');
   assert(Math.abs(psi2 - expected2) <= tol2,
-    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31)*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
+    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31-0.1)/0.8*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
 
   // A cubic sensor with no captured points reads nothing. CH1 (Fuel Upstream) is cubic + uncalibrated.
   const c1 = cal.get(1);

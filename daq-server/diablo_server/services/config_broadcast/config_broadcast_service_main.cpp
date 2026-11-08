@@ -255,7 +255,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     // net was simply absent. A threshold that cannot be computed is now logged loudly and omitted
     // (no board trip for that one sensor) rather than shipped wrong or dropped in silence.
     //
-    // Only ratiometric-physics (0-5 V) inversion is implemented: adc = psi/full_scale * 2^31, the
+    // Only ratiometric-physics (0.5-4.5 V) inversion is implemented:
+    // adc = (0.1 + 0.8 * psi/full_scale) * 2^31, the
     // exact inverse of the calibration service's convert_ratiometric_pt_to_pressure. A sensor whose
     // model is cubic/robust/blend, or that sits on a 4-20 mA board, is refused here (set its
     // calibration_model to "physics" for a board trip, or it has none) — inverting the operator
@@ -323,7 +324,9 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             continue;
         }
         constexpr double ADC_MAX = 2147483648.0;  // 2^31
-        double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
+        // 0.5-4.5 V at 5 V excitation: 10 % of full code at zero, 90 % at full scale.
+        double adc =
+            std::clamp((0.1 + 0.8 * (threshold_psi / full_scale)) * ADC_MAX, 0.0, ADC_MAX - 1.0);
         abort_pt_list.push_back(
             {ipToU32Le(b.ip), static_cast<uint8_t>(channel), static_cast<uint32_t>(llround(adc))});
     }
