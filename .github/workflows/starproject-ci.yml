@@ -2,6 +2,7 @@ name: STARProject CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'starproject/**'
       # The finance serializer's test reads the worker's accepted keys from here.
