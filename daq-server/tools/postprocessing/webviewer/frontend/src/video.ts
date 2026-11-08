@@ -38,26 +38,36 @@ export function fileOffset(c: VideoClip, t: number): number | null {
 /**
  * The clip `stream` shows at time `t`, and the offset into it in seconds; null when that
  * camera has no footage then. Where clips overlap (a Save made during a Record holds the
- * same seconds), a Record wins, then the one that started first, so playback switches
- * file as rarely as possible.
+ * same seconds), one with footage left to play wins over one that is only on its last
+ * frame; then a Record; then the one that started first, so playback switches file as
+ * rarely as possible.
+ *
+ * The first rule is what lets play cross from a Record into the Save that carries on past
+ * it. Ranked on kind alone, the instant the Record ends still picked the Record, which has
+ * nothing left to play; the page clock stepped past it into the Save, whose first frame
+ * reported that same instant again, and the tile swapped files every frame.
  */
 export function clipAt(
   clips: VideoClip[],
   stream: string,
   t: number,
 ): { clip: VideoClip; offset: number } | null {
-  let best: { clip: VideoClip; offset: number } | null = null;
+  let best: { clip: VideoClip; offset: number; key: number[] } | null = null;
   for (const c of clips) {
     if (c.stream !== stream || t < c.start || t > c.end) continue;
     const offset = fileOffset(c, t);
     if (offset == null) continue;
-    const b = best?.clip;
-    if (!b || rank(c) < rank(b) || (rank(c) === rank(b) && c.start < b.start)) best = { clip: c, offset };
+    const key = [playable(c, offset) ? 0 : 1, rank(c), c.start];
+    if (!best || before(key, best.key)) best = { clip: c, offset, key };
   }
-  return best;
+  return best && { clip: best.clip, offset: best.offset };
 }
 
 const rank = (c: VideoClip) => (c.kind === 'record' ? 0 : 1);
+const before = (a: number[], b: number[]) => {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+};
 
 /** When the frame at `fileS` seconds into `c` was filmed (epoch seconds, DAQ clock). The
  *  inverse of fileOffset, for following a playing video with the playhead. */

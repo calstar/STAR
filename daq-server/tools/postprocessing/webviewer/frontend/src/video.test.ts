@@ -40,6 +40,16 @@ describe('clipAt', () => {
     expect(clipAt([save, rec], 'cam1', 60)?.clip).toBe(save);
   });
 
+  it('at a Record\'s last instant, the Save that carries on past it plays, not the spent Record', () => {
+    const rec = clip('cam1', 'record', 30, 30); // 30-60
+    const save = clip('cam1', 'save', 45, 30); // 45-75
+    expect(clipAt([rec, save], 'cam1', 60)?.clip).toBe(save);
+    expect(clipAt([rec, save], 'cam1', 60)?.offset).toBe(15);
+    expect(clipAt([rec, save], 'cam1', 59)?.clip).toBe(rec); // still the Record before that
+    // Alone, a clip's last instant is still that clip (its last frame stays on screen).
+    expect(clipAt([rec], 'cam1', 60)?.clip).toBe(rec);
+  });
+
   it('between two clips of the same kind, the earlier-started one plays', () => {
     const a = clip('cam1', 'save', 0, 300);
     const b = clip('cam1', 'save', 60, 300);

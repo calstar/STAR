@@ -129,7 +129,15 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
       const go = () => {
         const following = playing && !v.paused && Math.abs(v.currentTime - at.offset) < FOLLOW_SLOP_S;
         if (!following) v.currentTime = Math.min(at.offset, Math.max(0, (v.duration || at.clip.duration) - 1e-3));
-        if (playing && live && v.paused) v.play().catch(() => onPlaying(false));
+        // A refusal (autoplay policy, an undecodable file) stops play. An AbortError does
+        // not: it only means a newer load or pause overtook this play(), as when a camera
+        // switches from a Record to the Save that continues it, and the next placement
+        // plays the new file.
+        if (playing && live && v.paused) {
+          v.play().catch((e: unknown) => {
+            if ((e as { name?: string } | null)?.name !== 'AbortError') onPlaying(false);
+          });
+        }
         if ((!playing || !live) && !v.paused) v.pause();
       };
       if (!sameClip(loaded.current.get(stream) ?? null, at.clip)) {
@@ -153,7 +161,15 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
     const clip = leaderAt.clip;
     const others = () => [...videos.current.entries()].filter(([s]) => s !== leader);
     const onFrame = (fileS: number) => {
+      // Only frames of this clip, settled where it was put. A file just switched in (a
+      // Record handing on to the Save that continues it) presents its first frame before
+      // the seek to the playhead lands; reported, that frame would drag the playhead back
+      // to the file's start. Playing never moves the playhead backwards, so a frame
+      // behind it is one of those.
+      if (v.seeking || !sameClip(loaded.current.get(leader) ?? null, clip)) return;
       const wall = fileToWall(clip, fileS);
+      const now = playheadRef.current;
+      if (now != null && wall < now - FOLLOW_SLOP_S) return;
       report.current(wall);
       for (const [s, f] of others()) {
         const fc = loaded.current.get(s);
@@ -248,7 +264,7 @@ export default function VideoPanel({ clips, playhead, onPlayhead, playing, onPla
     <div className="video-panel">
       <div className="video-head">
         <span className="video-title">Video</span>
-        <div className="video-transport">
+        <div className="seg video-transport">
           <button className="btn sm" onClick={() => step(-1)} disabled={none} title="One frame back (←)">
             ◀
           </button>
