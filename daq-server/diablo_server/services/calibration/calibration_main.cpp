@@ -1419,8 +1419,8 @@ int main(int argc, char* argv[]) {
 
     if (!connect_and_register())
         return 1;
-    // Allow read_packet() to yield every 3 s so the re-subscribe check can fire
-    // when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
+    // Allow read_packet() to yield every 3 s so a refused subscription is asked for again (below)
+    // even when nothing else is arriving.
     elodin_client.set_recv_timeout_ms(3000);
 
     // Generous, but not for the reason the previous comment claimed ("handles large Elodin
@@ -1433,8 +1433,6 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    auto last_packet_time = std::chrono::steady_clock::now();
-    auto last_resubscribe = std::chrono::steady_clock::now();
     std::map<uint16_t, int32_t> last_adc_map;
     // Every re-subscribe adds a copy of the command stream; handle each command once.
     fsw::calibration::CommandDedupe command_dedupe;
@@ -1447,8 +1445,6 @@ int main(int argc, char* argv[]) {
                 register_calibrated();
                 subscribe_all();
                 elodin_client.set_recv_timeout_ms(3000);
-                last_resubscribe = std::chrono::steady_clock::now();
-                last_packet_time = std::chrono::steady_clock::now();
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1458,23 +1454,18 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // If no raw sensor packets received for 5 s, daq_bridge may have registered
-        // its VTables AFTER we subscribed — re-subscribe to pick them up.
+        // A table the DB refused (its publisher had not registered it yet) is asked for again
+        // until it is accepted; the refusal names it (SubscriptionTracker).
+        //
+        // Nothing else is re-sent. There used to be a fallback here that re-subscribed EVERY table
+        // after 5 s with no packets, but elodin-db treats a second subscribe on one connection as
+        // a second subscription and delivers the table twice: each firing stacked another copy of
+        // every stream, the command table included, so after N firings each capture, zero and
+        // tare was applied N+1 times (the stand re-subscribed 57 times in a quiet minute on
+        // 2026-11-07). A quiet stream is quiet because its board is; the DB refuses a table that
+        // does not exist yet, and a dropped connection resubscribes on reconnect above.
         {
-            auto now_s = std::chrono::steady_clock::now();
-            auto since_pkt =
-                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
-            auto since_sub =
-                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
-            if (since_pkt >= 5 && since_sub >= 5) {
-                std::cout << "[Cal] No packets for " << since_pkt
-                          << "s — re-subscribing to raw streams" << std::endl;
-                subscribe_all();
-                last_resubscribe = now_s;
-            }
-            // A table the DB refused (its publisher had not registered it yet) is asked for again
-            // until it is accepted. The check above never fires for this: the other tables keep
-            // packets arriving.
+            const auto now_s = std::chrono::steady_clock::now();
             for (const auto& t : sub_tracker.due(now_s))
                 elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t));
         }
@@ -1906,7 +1897,6 @@ int main(int argc, char* argv[]) {
 
         elodin_client.flush_batch();
 
-        last_packet_time = std::chrono::steady_clock::now();
         packet_count++;
         if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex
