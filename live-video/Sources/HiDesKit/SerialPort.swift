@@ -9,6 +9,7 @@ public enum HiDesError: Error, CustomStringConvertible {
     case usb(String)
     case driver(String, UInt32)
     case deviceNotFound
+    case udpTarget(String)
 
     public var description: String {
         switch self {
@@ -19,6 +20,7 @@ public enum HiDesError: Error, CustomStringConvertible {
         case let .usb(what): return "USB error: \(what)"
         case let .driver(what, code): return "\(what) failed: \(hiDesDriverErrorName(code))"
         case .deviceNotFound: return "No UT-130 found on USB"
+        case let .udpTarget(what): return "UDP target: \(what)"
         }
     }
 }
