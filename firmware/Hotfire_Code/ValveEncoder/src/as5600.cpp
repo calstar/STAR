@@ -8,9 +8,9 @@ constexpr uint8_t REG_RAW_MSB = 0x0C;
 constexpr uint8_t REG_AGC = 0x1A;
 constexpr uint8_t REG_MAG_HI = 0x1B;
 
-constexpr uint8_t STATUS_MH = 0x08;  // magnet too strong (AGC minimum)
-constexpr uint8_t STATUS_ML = 0x10;  // magnet too weak (AGC maximum)
-constexpr uint8_t STATUS_MD = 0x20;  // magnet detected
+constexpr uint8_t STATUS_MH = 0x08;  // too strong
+constexpr uint8_t STATUS_ML = 0x10;  // too weak
+constexpr uint8_t STATUS_MD = 0x20;  // detected
 }  // namespace
 
 bool As5600Reading::magnetDetected() const {
@@ -28,7 +28,7 @@ bool As5600Reading::usable() const {
 
 bool As5600::begin(int sda, int scl, uint32_t clock_hz) {
     bus_.begin(sda, scl, clock_hz);
-    bus_.setTimeOut(20);  // ms; don't hang the loop if the bus is stuck
+    bus_.setTimeOut(20);  // ms, so a stuck bus can't hang the loop
     return ping();
 }
 
@@ -40,7 +40,7 @@ bool As5600::ping() {
 bool As5600::readBytes(uint8_t reg, uint8_t* buf, uint8_t len) {
     bus_.beginTransmission(ADDR);
     bus_.write(reg);
-    if (bus_.endTransmission(false) != 0)  // repeated start
+    if (bus_.endTransmission(false) != 0)
         return false;
     if (bus_.requestFrom(ADDR, len) != len)
         return false;
@@ -51,7 +51,7 @@ bool As5600::readBytes(uint8_t reg, uint8_t* buf, uint8_t len) {
 
 As5600Reading As5600::read() {
     As5600Reading r;
-    uint8_t buf[3];  // STATUS, RAW_MSB, RAW_LSB are consecutive registers
+    uint8_t buf[3];  // STATUS, RAW_MSB, RAW_LSB are consecutive
     if (!readBytes(REG_STATUS, buf, 3))
         return r;
     r.i2c_ok = true;
@@ -64,12 +64,10 @@ void As5600::dumpDiagnostics(Print& out) {
     out.println("[AS5600] --- register dump ---");
     uint8_t v;
     if (readBytes(REG_ZMCO, &v, 1))
-        out.printf("  ZMCO   = %u  (times ZPOS/MPOS were burned, max 3)\n",
-                   v & 0x03);
+        out.printf("  ZMCO   = %u  (burn count, max 3)\n", v & 0x03);
     uint8_t two[2];
     if (readBytes(REG_CONF_HI, two, 2))
-        out.printf("  CONF   = 0x%02X%02X (0x0000 on a fresh part)\n", two[0],
-                   two[1]);
+        out.printf("  CONF   = 0x%02X%02X\n", two[0], two[1]);
     if (readBytes(REG_STATUS, &v, 1))
         out.printf("  STATUS = 0x%02X  MD=%d ML=%d MH=%d\n", v,
                    (v & STATUS_MD) != 0, (v & STATUS_ML) != 0,
@@ -77,10 +75,8 @@ void As5600::dumpDiagnostics(Print& out) {
     if (readBytes(REG_RAW_MSB, two, 2))
         out.printf("  RAW    = %u counts\n", ((two[0] << 8) | two[1]) & 0x0FFF);
     if (readBytes(REG_AGC, &v, 1))
-        out.printf(
-            "  AGC    = %u  (aim for mid-range; stuck at either end of its "
-            "range = magnet gap wrong)\n",
-            v);
+        out.printf("  AGC    = %u  (pinned at either end = wrong magnet gap)\n",
+                   v);
     if (readBytes(REG_MAG_HI, two, 2))
         out.printf("  MAG    = %u\n", ((two[0] << 8) | two[1]) & 0x0FFF);
     out.println("[AS5600] ---------------------");

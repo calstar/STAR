@@ -1,64 +1,40 @@
 #pragma once
 
-// Pin map for the Valve Encoder Board (ball valve position sensor).
-// Not the motorized-valve board (BallValve_Hotfire, board 71, Ethernet):
-// this one has no network port and reports to the Receiver Board over RS-485.
+// Pin map for the Valve Encoder Board: AS5600 -> ESP32-S3-WROOM-1 -> MAX3485
+// -> RS-485 to the Receiver Board. Source: BALL_VALVE schematic, 2026-10-20.
 //
-//   AS5600 encoder --I2C--> ESP32-S3-WROOM-1 --UART--> MAX3485 --RS-485-->
-//   Receiver Board
+// GPIO numbers, not the module pad numbers printed next to U3 on compute sheet:
 //
-// Source: BALL_VALVE schematic set dated 2026-10-20 (MainSheet, Compute,
-// RS485 Transceiver, Magnetic Encoder, Power). Checked against the netlist
-// embedded in the schematic PDF.
 //
-// EVERY NUMBER HERE IS AN ESP32-S3 GPIO NUMBER, NOT A MODULE PAD NUMBER.
-// The numbers printed next to U3's pins on the Compute sheet are the
-// ESP32-S3-WROOM-1 pad numbers. Code needs GPIO numbers:
+//   net          pad          GPIO
+//   TX           37 (TXD0)    43
+//   RX           36 (RXD0)    44
+//   DRIVER_EN    38 (IO2)      2
+//   RECEIVER_EN  39 (IO1)      1
+//   SDA          12 (IO8)      8
+//   SCL          17 (IO9)      9
+//   BOOT         27 (IO0)      0
 //
-//   net          module pad     GPIO
-//   TX           37 (TXD0)  ->  43
-//   RX           36 (RXD0)  ->  44
-//   DRIVER_EN    38 (IO2)   ->   2
-//   RECEIVER_EN  39 (IO1)   ->   1
-//   SDA          12 (IO8)   ->   8
-//   SCL          17 (IO9)   ->   9
-//   BOOT         27 (IO0)   ->   0
-//
-// For any pin that is not present on a board, set it to -1.
+// -1 = not present on this board.
 
 namespace valve_encoder_board_pins {
 
 struct Layout {
-    // ---- RS-485 transceiver (MAX3485, U4) ----
-    // ESP32 TX -> MAX3485 DI (pin 4). Net "TX".
-    int RS485_TX;
-    // MAX3485 RO (pin 1) -> ESP32 RX. Net "RX".
-    int RS485_RX;
-    // MAX3485 DE (pin 3), ACTIVE HIGH: HIGH = drive the bus (transmit).
-    // Net "DRIVER_EN".
-    int RS485_DE;
-    // MAX3485 /RE (pin 2), ACTIVE LOW: LOW = receiver on (listen),
-    // HIGH = receiver off. The schematic net is called "RECEIVER_EN", but
-    // the pin it drives is inverted, so writing HIGH turns the receiver OFF.
-    int RS485_RE_N;
+    // MAX3485 (U4)
+    int RS485_TX;    // -> DI
+    int RS485_RX;    // <- RO
+    int RS485_DE;    // active high: HIGH = transmit
+    int RS485_RE_N;  // active low, despite the net name RECEIVER_EN: HIGH = receiver off
 
-    // ---- AS5600 magnetic encoder (U6), I2C address 0x36 ----
-    // 4.7 k pull-ups on the board (R12, R13).
+    // AS5600 (U6), I2C 0x36, 4.7k pull-ups R12/R13
     int ENC_SDA;
     int ENC_SCL;
 
-    // ---- Misc ----
-    // BOOT button (SW1, 10 k pull-up). Strapping pin: held LOW during reset
-    // it puts the chip in download mode. Safe to read as an input afterwards.
-    int BOOT_BUTTON;
-    // Status LED driven by firmware. -1 on rev A: the red LED on the Power
-    // sheet is wired straight to 3.3 V, so it is a power light only.
-    int LED;
+    int BOOT_BUTTON;  // SW1, strapping pin, fine to read after boot
+    int LED;          // rev A LED is hard-wired to 3.3 V, so none
 };
 
-// Order here MUST match the struct above.
 
-// The real PCB, rev A (schematic dated 2026-10-20).
 constexpr Layout Valve_Encoder_RevA{
     // RS485_TX, RS485_RX, RS485_DE, RS485_RE_N
     43,
@@ -77,10 +53,8 @@ constexpr Layout Valve_Encoder_RevA{
     -1,
 };
 
-// Breadboard bench setup: an ESP32-S3 dev kit + MAX3485/MAX485 breakout +
-// AS5600 breakout, for testing before the PCB exists. Not GPIO43/44: on most
-// S3 dev kits those run to the onboard USB-to-UART chip, which would fight the
-// transceiver's RO output. SDA/SCL match the older Encoder_Board breadboard.
+// ESP32-S3 dev kit + MAX3485 and AS5600 breakouts. Avoids GPIO43/44, which
+// most dev kits wire to their USB-UART chip.
 constexpr Layout Devkit_Breadboard{
     // RS485_TX, RS485_RX, RS485_DE, RS485_RE_N
     10,
@@ -99,14 +73,15 @@ constexpr Layout Devkit_Breadboard{
     -1,
 };
 
-// Rev A schematic error: GPIO17 (pad 10) is wired to the GND net. Never set
-// it as an OUTPUT on rev A hardware; driving it HIGH shorts 3.3 V to ground.
+// Rev A schematic error: GPIO17 (pad 10) is tied to GND. Never make it an
+// OUTPUT on rev A; driving it HIGH shorts 3.3 V.
 constexpr int REV_A_GPIO_TIED_TO_GND = 17;
 
 #ifndef PINS_ACTIVE_LAYOUT
 #define PINS_ACTIVE_LAYOUT Valve_Encoder_RevA
 #endif
 
-constexpr const Layout& Pins = PINS_ACTIVE_LAYOUT;
+// static, or including this header from two .cpp files is a duplicate symbol.
+static constexpr const Layout& Pins = PINS_ACTIVE_LAYOUT;
 
 }  // namespace valve_encoder_board_pins

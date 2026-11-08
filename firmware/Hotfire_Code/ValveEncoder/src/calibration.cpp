@@ -3,7 +3,7 @@
 #include <Preferences.h>
 
 namespace {
-constexpr const char* NS = "valvecal";  // NVS namespace, max 15 chars
+constexpr const char* NS = "valvecal";
 }
 
 namespace calibration {

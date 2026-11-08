@@ -1,9 +1,6 @@
 #pragma once
 
-// Saves the valve's CLOSED / OPEN encoder positions in the ESP32's flash
-// (NVS, via Arduino Preferences) so they survive power cycles and reflashing.
-// Set them from the USB console: turn the valve fully closed, type `c`;
-// fully open, type `o`. See printHelp() in main.cpp.
+// CLOSED / OPEN positions in NVS, so they survive reboots and reflashing.
 
 #include "valve_state.h"
 

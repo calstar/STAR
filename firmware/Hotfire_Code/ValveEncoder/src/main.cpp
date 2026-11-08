@@ -1,19 +1,3 @@
-/**
- * ValveEncoder — ball valve position board (AS5600 + ESP32-S3 + MAX3485)
- *
- * The board's job (from the Compute sheet):
- *   1. Read the encoder                     -> as5600.cpp
- *   2. Interpret that angle into a state    -> include/valve_state.h
- *   3. Send that data over RS-485           -> rs485_link.cpp,
- *                                              include/valve_protocol.h
- *
- * Pins come from firmware/common/valve_encoder_board_pins.h.
- * Build settings (valve ID, baud, stream/polled) from platformio.ini.
- *
- * USB console at 115200 baud (pio device monitor): type `h` for commands.
- * Calibrate once per valve: fully closed -> `c`, fully open -> `o`.
- */
-
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -43,10 +27,6 @@ static uint32_t lastSendMs = 0;
 static uint32_t lastPrintMs = 0;
 static bool livePrint = true;
 
-// ---------------------------------------------------------------------------
-// Steps 1 + 2: read the encoder, classify
-// ---------------------------------------------------------------------------
-
 static void readEncoder() {
     reading = encoder.read();
     readingMs = millis();
@@ -69,10 +49,6 @@ static uint8_t statusFlags() {
     return f;
 }
 
-// ---------------------------------------------------------------------------
-// Step 3: send over RS-485
-// ---------------------------------------------------------------------------
-
 static void sendStatus() {
     valve_proto::ValveStatus s;
     s.seq = seq++;
@@ -90,18 +66,12 @@ static void sendStatus() {
 static void handleIncoming() {
     while (rs485.poll()) {
         const valve_proto::Frame& f = rs485.frame();
-        // Only answer polls addressed to this valve. Frames for other valves
-        // on a shared bus are ignored.
         if (f.type == static_cast<uint8_t>(valve_proto::MsgType::POLL) &&
             f.valve_id == cfg::VALVE_ADDR) {
             sendStatus();
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// USB console
-// ---------------------------------------------------------------------------
 
 static void printStatus() {
     float deg = reading.raw_angle * (360.0f / valve::COUNTS_PER_REV);
@@ -187,14 +157,14 @@ static void runCommand(char* line) {
             break;
         case 't': {
             float deg = atof(line + 1);
-            // Below 0.5 deg the window rounds to a few counts or none, and
-            // sensor noise alone would flicker the state.
+            // Below 0.5 deg, sensor noise alone flickers the state.
             if (deg < 0.5f || deg > 30.0f) {
                 Serial.println("usage: t <degrees>, between 0.5 and 30");
                 break;
             }
             cal.tolerance = valve::degToCounts(deg);
-            calibration::save(cal);
+            if (!calibration::save(cal))
+                Serial.println("SAVE FAILED");
             printCalibration();
             break;
         }
@@ -242,17 +212,13 @@ static void handleConsole() {
     }
 }
 
-// ---------------------------------------------------------------------------
-
 void setup() {
-    // Before anything else: transceiver to listen mode, so nothing we do
-    // during startup can drive the RS-485 bus.
     rs485.beginPinsSafe();
 
-    Serial.begin(115200);  // USB console (native USB, CDC on boot)
+    Serial.begin(115200);
     uint32_t t0 = millis();
     while (!Serial && millis() - t0 < 2000) {
-        delay(10);  // give a monitor a moment to attach; don't block forever
+        delay(10);
     }
 
     Serial.println();
@@ -292,7 +258,7 @@ void loop() {
         sendStatus();
     }
 #endif
-    handleIncoming();  // answers POLLs addressed to us (both modes)
+    handleIncoming();
 
     handleConsole();
     if (livePrint && now - lastPrintMs >= cfg::CONSOLE_PRINT_PERIOD_MS) {

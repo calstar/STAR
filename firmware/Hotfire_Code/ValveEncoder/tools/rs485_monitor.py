@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Watch a Valve Encoder Board's RS-485 output from a laptop.
 
-Hardware: any USB-to-RS-485 adapter. Wire its A to the board's RS485_A
-(J2 pin 1), B to RS485_B (J2 pin 2), and its GND to the board's GND. If you
-see only bad frames, swap A and B (vendors label them inconsistently).
+A to J2 pin 1, B to J2 pin 2, GND to GND. Only bad frames? Swap A and B.
 
     pip install pyserial
     python3 rs485_monitor.py --port /dev/ttyUSB0          # stream mode
@@ -11,7 +9,7 @@ see only bad frames, swap A and B (vendors label them inconsistently).
     python3 rs485_monitor.py --list                       # find the port
     python3 rs485_monitor.py --file capture.bin           # decode a capture
 
-Decodes the same frame format as include/valve_protocol.h (DRAFT v1).
+Frame format: include/valve_protocol.h.
 """
 
 import argparse
@@ -35,7 +33,6 @@ FLAGS = [
 
 
 def crc16(data: bytes, crc: int = 0xFFFF) -> int:
-    """CRC-16/CCITT-FALSE, same as valve_proto::crc16."""
     for byte in data:
         crc ^= byte << 8
         for _ in range(8):
@@ -50,8 +47,6 @@ def encode_frame(msg_type: int, valve_id: int, payload: bytes = b"") -> bytes:
 
 
 class Parser:
-    """Byte-at-a-time parser; mirrors valve_proto::Parser."""
-
     def __init__(self):
         self.buf = bytearray()
         self.good = 0
@@ -113,7 +108,7 @@ def run_file(path: str) -> int:
 
 def run_port(args) -> int:
     try:
-        import serial  # pyserial
+        import serial
     except ImportError:
         print("pip install pyserial", file=sys.stderr)
         return 2
@@ -126,13 +121,12 @@ def run_port(args) -> int:
         while True:
             now = time.time()
             if args.poll is not None and now - last_poll >= args.interval:
-                # Many USB adapters switch direction automatically.
                 ser.write(encode_frame(TYPE_POLL, args.poll))
                 ser.flush()
                 last_poll = now
             for frame in parser.feed(ser.read(256)):
                 if frame[0] == TYPE_POLL and args.poll is not None:
-                    continue  # our own poll echoed back by the adapter
+                    continue  # adapter echoes our own poll
                 print(describe(*frame))
             if now - last_stats >= 5:
                 print(f"-- good frames {parser.good}, bad {parser.bad}")

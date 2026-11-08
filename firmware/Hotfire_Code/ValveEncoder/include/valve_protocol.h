@@ -1,14 +1,10 @@
 #pragma once
 
-// RS-485 wire format between a Valve Encoder Board and the Receiver Board.
+// RS-485 frame format, Valve Encoder Board <-> Receiver Board.
+// CHECK Receiver Board. tools/rs485_monitor.py
+// mirror file, change both simultaneously
 //
-// *** DRAFT *** — agree this with whoever owns the Receiver Board before
-// either side depends on it. Change VERSION if the layout changes.
-//
-// Pure C++ (no Arduino), so it builds on the ESP32 and in host unit tests,
-// and tools/rs485_monitor.py decodes exactly the same bytes.
-//
-// Frame (all multi-byte fields little-endian):
+// Frame (multi-byte fields little-endian):
 //
 //   offset  size  field
 //   0       1     SYNC0 = 0xAA
@@ -20,22 +16,19 @@
 //   5+len   2     CRC-16/CCITT-FALSE over bytes [2 .. 5+len), little-endian
 //
 // VALVE_STATUS payload (9 bytes):
-//   0  u8   seq        increments every status frame (Receiver can spot drops)
+//   0  u8   seq        +1 per status frame, so drops are visible
 //   1  u8   state      ValveState (see valve_state.h)
 //   2  u8   flags      StatusFlags bits below
 //   3  u16  raw_angle  AS5600 RAW ANGLE, 0..4095 counts (360 deg = 4096)
-//   5  u32  uptime_ms  millis() on the valve board when the reading was taken
+//   5  u32  uptime_ms  millis() when the reading was taken
 //
-// POLL payload: 0 bytes. Sent by the Receiver; the addressed valve answers
-// with VALVE_STATUS. Needed when several valves share one bus. There is no
-// broadcast poll: every valve answering at once would collide on the bus.
+// POLL payload: 0 bytes. The addressed valve answers with VALVE_STATUS.
+// No broadcast poll: every valve answering at once would collide.
 
 #include <stddef.h>
 #include <stdint.h>
 
 namespace valve_proto {
-
-constexpr uint8_t VERSION = 1;
 
 constexpr uint8_t SYNC0 = 0xAA;
 constexpr uint8_t SYNC1 = 0x55;
@@ -49,13 +42,12 @@ enum class MsgType : uint8_t {
     POLL = 0x10,          // receiver -> valve
 };
 
-// Bits in the VALVE_STATUS flags byte.
 namespace StatusFlags {
 constexpr uint8_t MAGNET_DETECTED = 0x01;    // AS5600 STATUS.MD
 constexpr uint8_t MAGNET_TOO_WEAK = 0x02;    // AS5600 STATUS.ML
 constexpr uint8_t MAGNET_TOO_STRONG = 0x04;  // AS5600 STATUS.MH
-constexpr uint8_t I2C_ERROR = 0x08;          // encoder didn't answer
-constexpr uint8_t NOT_CALIBRATED = 0x10;     // no open/closed positions saved
+constexpr uint8_t I2C_ERROR = 0x08;
+constexpr uint8_t NOT_CALIBRATED = 0x10;
 }  // namespace StatusFlags
 
 constexpr uint8_t STATUS_PAYLOAD_LEN = 9;
@@ -68,8 +60,7 @@ struct ValveStatus {
     uint32_t uptime_ms;
 };
 
-// CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no final XOR.
-// Check value: crc16("123456789") == 0x29B1.
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF). crc16("123456789") == 0x29B1.
 inline uint16_t crc16(const uint8_t* data, size_t len, uint16_t crc = 0xFFFF) {
     for (size_t i = 0; i < len; i++) {
         crc ^= static_cast<uint16_t>(data[i]) << 8;
@@ -98,8 +89,7 @@ inline uint32_t getU32(const uint8_t* p) {
            (static_cast<uint32_t>(p[3]) << 24);
 }
 
-// Builds a complete frame into `out`. Returns its length, or 0 if it
-// doesn't fit or the payload is too long.
+// Returns the frame length, or 0 if it doesn't fit.
 inline size_t encodeFrame(MsgType type, uint8_t valve_id,
                           const uint8_t* payload, uint8_t len, uint8_t* out,
                           size_t out_cap) {
@@ -115,7 +105,6 @@ inline size_t encodeFrame(MsgType type, uint8_t valve_id,
     out[4] = len;
     for (uint8_t i = 0; i < len; i++)
         out[HEADER_LEN + i] = payload[i];
-    // CRC covers type, id, len and payload (not the sync bytes).
     putU16(out + HEADER_LEN + len, crc16(out + 2, 3 + len));
     return total;
 }
@@ -155,10 +144,7 @@ inline bool decodeStatus(const Frame& f, ValveStatus& s) {
     return true;
 }
 
-// Byte-at-a-time frame parser. Feed it every byte that arrives; feed()
-// returns true when a complete frame with a good CRC has landed in frame().
-// Garbage, half frames and bad CRCs are skipped, and it resynchronises on
-// the next 0xAA 0x55.
+// feed() returns true when a CRC-checked frame is ready in frame().
 class Parser {
 public:
     bool feed(uint8_t b) {
