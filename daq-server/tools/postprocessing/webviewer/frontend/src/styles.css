@@ -1,33 +1,75 @@
 /*
- * Dark-only theme, adopting the conventions enforced by the recovery-calculator
- * (see its src/lib/theme.test.ts): a `--color-*` token namespace where every
- * text tier clears WCAG AAA (7:1) on every background, a `--text-*` scale that
- * never drops below 13px, and themed scrollbars. `theme.check.mjs` parses this
- * file and fails if any of those rules break.
+ * The run viewer, drawn the way the DAQ console is (daq-server/diablo_server/frontend,
+ * app/globals.css; feed-twin's console shares it): true black, a panel is a region
+ * between hairlines rather than a card, nothing is rounded, floats or glows, labels and
+ * controls are small spaced monospace capitals, and colour is kept for what it means —
+ * each channel's trace colour on the plot, amber for "not exact / not real".
+ *
+ * Two departures from the console, both this viewer's own guardrails (theme.check.mjs,
+ * after the recovery-calculator's theme test): every text tier clears WCAG AAA (7:1) on
+ * every background, so the quietest grey is #a3a3a3 where the console uses #7a7a7a; and
+ * nothing is set below 13px, so the console's 11-12px capitals are 13px here.
  */
+
+/* Inter, served from this app (public/fonts, SIL OFL 1.1, Inter-OFL.txt beside it; the
+   same files the DAQ ships): a viewer opened on the stand's own network, with no
+   internet, still draws in the face it was designed in. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/inter-latin-ext-wght-normal.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('/fonts/inter-greek-wght-normal.woff2') format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+
 :root {
-  /* Backgrounds, darkest → lightest. bg-tertiary is the lightest surface any
-     text sits on, so it is the worst case the contrast test asserts against. */
-  --color-bg-primary: #0a0a0f;
-  --color-bg-secondary: #12121a;
-  --color-bg-tertiary: #1a1a24;
+  /* Backgrounds, darkest → lightest: the console's black, panel and hover. bg-tertiary
+     is the lightest surface any text sits on, so it is the contrast check's worst case. */
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0b0b0b;
+  --color-bg-tertiary: #161616;
 
-  /* Text tiers. All three clear 7:1 (AAA) on bg-tertiary and stay distinct. */
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #9fb0c4;
+  /* Text tiers: the console's ink, ink-2, and its gray-400 (its ink-3 fails AAA). */
+  --color-text-primary: #ededed;
+  --color-text-secondary: #bdbdbd;
+  --color-text-muted: #a3a3a3;
 
-  --color-border: #383848;
-  --color-accent: #3b82f6;
-  /* Drag-to-zoom band. uPlot's own .u-select is rgba(0,0,0,.07) — black on a near-black
-     plot, i.e. invisible, so the gesture gave no feedback at all. Accent-tinted instead,
-     light enough to read the lines through. */
-  --color-select: color-mix(in srgb, var(--color-accent) 20%, transparent);
-  --color-accent-hover: #2563eb;
-  --color-danger: #ef4444;
-  /* Simulated-run badge. Amber reads as "caution, not real data" and clears
-     7:1 on bg-tertiary like the text tiers do. */
-  --color-sim: #fbbf24;
+  /* The hairline between regions, and a control's edge. */
+  --color-line: #1f1f1f;
+  --color-border: #333333;
+  --color-border-hover: #5a5a5a;
+
+  /* "Selected" is ink, not a hue: across the console colour is never chrome. */
+  --color-accent: #ededed;
+  /* Drag-to-zoom band: a faint wash of ink, light enough to read the traces through. */
+  --color-select: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --color-danger: #f87171;
+  /* Amber means "caution": a simulated run, a clip placed only approximately. The
+     console's --color-warning. */
+  --color-sim: #e5b53a;
+  --color-playhead: #ededed; /* mirrored in chartTheme.ts PLAYHEAD_STROKE */
+  --color-band: #bdbdbd; /* mirrored in chartTheme.ts BAND_FILL: video coverage */
+
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
   /* Type scale, rem against a 16px root. Smallest step is 13px on purpose. */
   --text-2xs: 0.8125rem;
@@ -35,22 +77,31 @@
   --text-sm: 1rem;
   --text-base: 1.125rem;
   --text-lg: 1.375rem;
+
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
-  font: var(--text-xs)/1.45 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: var(--text-xs)/1.45 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+:focus-visible { outline: 1px solid var(--color-text-primary); outline-offset: 2px; }
 
-/* Scrollbars: track recedes into the surface, thumb is the divider colour. */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--color-bg-secondary); }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
-* { scrollbar-color: var(--color-border) var(--color-bg-secondary); }
+/* Scrollbars: thin and square, as the console's. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a2a; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+* { scrollbar-color: #2a2a2a transparent; scrollbar-width: thin; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
 
 /* ── Primitives ───────────────────────────────────────────────────────────────
    The shared input and button treatments, and the button variants. They live up
@@ -58,141 +109,156 @@ body {
    declared after their consumers (as they first were) a base rule silently won on
    equal specificity, which is how the Config filter came out full-width and the
    run-description box grew a border it was meant not to have. */
-/* One text-input treatment; the classes beside it only ever set width. Sizing and
-   appearance were previously restated per input, and because .picker-search came later
-   in the file than .cfg-search its full-width rule silently won on the Config tab. */
-.input {
-  padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 6px;
-  background: var(--color-bg-tertiary); color: var(--color-text-primary);
-  font-size: var(--text-xs); font-family: inherit; line-height: 1.4; min-width: 0;
+
+/* A section label: small, spaced capitals (the console's .caps). */
+.caps {
+  font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 500;
+  letter-spacing: .22em; text-transform: uppercase; color: var(--color-text-muted);
 }
-.input:focus { outline: none; border-color: var(--color-accent); }
+
+/* One text-input treatment; the classes beside it only ever set width. */
+.input {
+  padding: 5px 8px; border: 1px solid var(--color-border); border-radius: 0;
+  background: var(--color-bg-primary); color: var(--color-text-primary);
+  font-size: var(--text-xs); font-family: var(--font-mono); line-height: 1.4; min-width: 0;
+}
+.input:focus { outline: none; border-color: var(--color-text-secondary); }
 .input::placeholder { color: var(--color-text-muted); }
 
-/* One button vocabulary, mirroring the variants the design tools share
-   (lib/stardesign-ui/src/theme.ts): a bordered default and a chromeless ghost,
-   same metrics, differing only in weight. inline-flex so an <a class="btn">
-   (the CSV downloads) sits on the same baseline as a real <button>. */
+/* A console control: a hairline box, capitals, no fill until it is pressed or hovered.
+   inline-flex so an <a class="btn"> (the CSV downloads) sits on the same baseline as a
+   real <button>, with an explicit line-height for the same reason. */
 .btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 11px; border: 1px solid var(--color-border); border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 0;
   background: var(--color-bg-secondary); color: var(--color-text-primary);
-  cursor: pointer; text-decoration: none; font-size: var(--text-xs); font-family: inherit;
-  /* Explicit, because a <button> takes the UA's line-height: normal while an <a>
-     inherits the body's 1.45 — which rendered the CSV links 3px taller than the
-     buttons beside them on the same toolbar row. */
-  line-height: 1.4;
-  font-weight: 500; white-space: nowrap; transition: background-color .12s ease, border-color .12s ease;
+  cursor: pointer; text-decoration: none; user-select: none;
+  font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 600;
+  /* Wider-set than prose, tighter than the console's .16em: at 13px that tracking put
+     the plot toolbar on two rows at 1440px. */
+  letter-spacing: .07em; text-transform: uppercase; line-height: 1.4; white-space: nowrap;
+  transition: background-color .12s, border-color .12s, color .12s;
 }
-.btn:hover { background: var(--color-bg-tertiary); border-color: var(--color-text-muted); }
-.btn.disabled, .btn:disabled { opacity: .4; pointer-events: none; }
+.btn:hover { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.btn.disabled, .btn:disabled {
+  color: var(--color-text-muted); border-color: var(--color-line); background: transparent;
+  cursor: not-allowed; pointer-events: none;
+}
 
-/* Quiet variant: no chrome until hovered. For controls that are always present but
-   rarely the thing you came to press — "Clear" beside the sensor filter. */
-.btn.ghost { border-color: transparent; background: none; color: var(--color-text-secondary); }
-.btn.ghost:hover { border-color: transparent; background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+/* Quiet variant: no box until hovered. For controls that are always present but rarely
+   the thing you came to press — "Clear" beside the sensor filter. */
+.btn.ghost { border-color: transparent; background: none; color: var(--color-text-muted); }
+.btn.ghost:hover { border-color: var(--color-border); background: none; color: var(--color-text-primary); }
 
 /* Compact size, for buttons sharing a row with inputs rather than a toolbar. */
-.btn.sm { padding: 4px 8px; font-size: var(--text-2xs); }
-
+.btn.sm { padding: 3px 8px; }
 
 .app { display: flex; flex-direction: column; height: 100%; }
+
+/* The header, as the console's: the name in wide mono capitals with "a STAR project"
+   under it, a hairline, then the view, underlined because it is the one you are on. */
 .topbar {
-  display: flex; align-items: center; gap: 14px;
-  padding: 10px 18px; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);
+  display: flex; align-items: flex-end; gap: 22px;
+  padding: 12px 24px 0; border-bottom: 1px solid var(--color-line);
 }
-/* Wordmark then a rule then the title, as in the other STAR apps. The rule is
-   --color-border, not bg-secondary: this header IS bg-secondary, so openrocket's
-   divider colour would be invisible here. */
-.topbar-logo { height: 34px; width: auto; display: block; }
-.topbar-divider { width: 1px; align-self: stretch; margin: 2px 0; background: var(--color-border); }
-.topbar h1 { font-size: var(--text-base); margin: 0; font-weight: 650; }
+.brand {
+  display: flex; flex-direction: column; padding: 0 22px 10px 0; border-right: 1px solid var(--color-line);
+  font-family: var(--font-mono); line-height: 1; white-space: nowrap;
+}
+.brand-name { font-size: var(--text-sm); font-weight: 700; letter-spacing: .34em; text-transform: uppercase; }
+.brand-sub { margin-top: 5px; font-size: var(--text-2xs); letter-spacing: .06em; color: var(--color-text-muted); }
+.topbar h1 {
+  position: relative; margin: 0; padding-bottom: 10px;
+  font: 400 var(--text-2xs)/1 var(--font-mono); letter-spacing: .08em; color: var(--color-text-primary);
+}
+.topbar h1::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--color-text-primary); }
 
 .body { display: flex; flex: 1; min-height: 0; }
-.sidebar { width: 290px; border-right: 1px solid var(--color-border); background: var(--color-bg-secondary); display: flex; }
-.content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 18px; overflow: auto; }
-.placeholder { color: var(--color-text-muted); padding: 40px; text-align: center; font-size: var(--text-sm); }
+.sidebar { width: 290px; border-right: 1px solid var(--color-line); display: flex; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px 24px; overflow: auto; }
+.placeholder { color: var(--color-text-muted); padding: 40px; text-align: center; font-size: var(--text-xs); }
 
 /* Run list */
 .runlist { display: flex; flex-direction: column; width: 100%; }
-.runlist-head { padding: 12px 16px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; font-size: var(--text-2xs); letter-spacing: .05em; }
+.runlist-head {
+  padding: 14px 18px 10px; border-bottom: 1px solid var(--color-line);
+  font: 500 var(--text-2xs)/1 var(--font-mono); letter-spacing: .22em; text-transform: uppercase; color: var(--color-text-muted);
+}
 .runlist-scroll { overflow-y: auto; flex: 1; }
 .run-item {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: 100%; text-align: left; padding: 10px 16px; border: 0; border-left: 2px solid transparent;
-  background: none; color: var(--color-text-primary); cursor: pointer; position: relative;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  width: 100%; text-align: left; padding: 10px 18px; border: 0; border-left: 1px solid transparent;
+  border-bottom: 1px solid var(--color-line);
+  background: none; color: var(--color-text-secondary); cursor: pointer; position: relative; font-family: inherit;
 }
-.run-item:hover { background: var(--color-bg-tertiary); }
-.run-item.active { background: var(--color-bg-tertiary); border-left-color: var(--color-accent); }
-.run-date { font-size: var(--text-sm); font-weight: 550; }
+.run-item:hover { background: var(--color-bg-secondary); color: var(--color-text-primary); }
+.run-item.active { background: var(--color-bg-tertiary); border-left-color: var(--color-text-primary); color: var(--color-text-primary); }
+.run-date { font-size: var(--text-xs); font-weight: 600; }
 .run-idline { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.run-id { font-size: var(--text-xs); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; }
+.run-id { font: var(--text-2xs)/1.4 var(--font-mono); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; }
 .sim-badge {
-  flex: none; font-size: var(--text-2xs); font-weight: 650; line-height: 1;
-  letter-spacing: .06em; padding: 2px 5px; border-radius: 3px;
-  color: var(--color-sim); border: 1px solid var(--color-sim);
+  flex: none; font: 600 var(--text-2xs)/1 var(--font-mono); letter-spacing: .16em;
+  padding: 2px 5px; color: var(--color-sim); border: 1px solid var(--color-sim);
 }
-.run-cached { position: absolute; right: 14px; top: 13px; color: var(--color-accent); font-size: var(--text-2xs); }
+.run-cached { position: absolute; right: 16px; top: 14px; color: var(--color-text-secondary); font-size: var(--text-2xs); }
 /* Clamped to one line: it is a label, and a long one must not push the list around. */
 .run-desc-line {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--color-text-secondary); font-size: var(--text-2xs); font-style: italic;
+  color: var(--color-text-secondary); font-size: var(--text-2xs);
 }
 
 /* Run header */
-.run-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
-.run-title { font-size: var(--text-base); font-weight: 650; }
-.run-meta { color: var(--color-text-muted); font-size: var(--text-xs); }
-.busy { color: var(--color-accent); font-size: var(--text-xs); }
+.run-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.run-title { font: 700 var(--text-sm)/1.2 var(--font-mono); letter-spacing: .14em; }
+.run-meta { color: var(--color-text-muted); font: var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .04em; }
+.busy { color: var(--color-text-secondary); font-size: var(--text-xs); }
 
 /* Shared, editable one-liner for the run. Reads as text until you go near it, so it
    does not compete with the run title above it, but is plainly a field once hovered. */
-.run-desc { display: flex; align-items: center; gap: 10px; margin: -4px 0 12px; }
-/* The one input that reads as text until you go near it, so a run's own title stays
-   the loudest thing in the header. Chrome on hover, full input treatment on focus. */
+.run-desc { display: flex; align-items: center; gap: 10px; margin: -2px 0 12px; }
 .run-desc-input {
-  flex: 0 1 620px; border-color: transparent; background: none;
+  flex: 0 1 620px; border-color: transparent; background: none; font-family: inherit;
   color: var(--color-text-secondary);
 }
 .run-desc-input:hover { border-color: var(--color-border); }
-.run-desc-input:focus { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+.run-desc-input:focus { background: var(--color-bg-secondary); color: var(--color-text-primary); }
 .run-desc-input:disabled { opacity: .6; }
 .run-desc-note { color: var(--color-text-muted); font-size: var(--text-2xs); }
 .error { color: var(--color-danger); font-size: var(--text-xs); }
 
-/* Tabs — Plot / Config, plus the view-wide names toggle. Spans both panes because
-   the toggle governs the picker on the left and the chart on the right. */
-.tabs { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--color-border); }
-.tabs .tab + .tab { margin-left: -8px; } /* tabs sit closer to each other than to the toggles */
+/* Tabs — Plot / Config, plus the view-wide toggles: the console's view line. */
+.tabs { display: flex; align-items: flex-end; gap: 22px; margin-bottom: 14px; border-bottom: 1px solid var(--color-line); }
 .tab {
-  padding: 7px 15px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
-  background: none; color: var(--color-text-muted); cursor: pointer; font-size: var(--text-xs);
+  position: relative; padding: 6px 0 8px; border: 0; background: none; cursor: pointer;
+  font: var(--text-2xs)/1 var(--font-mono); letter-spacing: .08em; color: var(--color-text-muted);
 }
 .tab:hover { color: var(--color-text-secondary); }
-.tab.active { color: var(--color-text-primary); border-bottom-color: var(--color-accent); font-weight: 550; }
+.tab.active { color: var(--color-text-primary); }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--color-text-primary); }
+.tabs .picker-toggle { align-self: center; }
 /* Sits after the toggles, so it needs its own separation — without it the note runs
    straight on from the preceding checkbox label and reads as part of it. */
-.tabs-note { margin-left: 4px; color: var(--color-text-muted); font-size: var(--text-2xs); white-space: nowrap; }
+.tabs-note { align-self: center; margin-left: -10px; color: var(--color-text-muted); font: var(--text-2xs)/1 var(--font-mono); white-space: nowrap; }
 
 /* Config tab — the run's config snapshot, verbatim */
 .cfg { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }
 .cfg-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cfg-search { flex: 0 1 260px; }
-.cfg-count { color: var(--color-text-muted); font-size: var(--text-2xs); }
+.cfg-count { color: var(--color-text-muted); font: var(--text-2xs)/1 var(--font-mono); }
 .cfg-note { max-width: 46em; margin: 10px auto 0; color: var(--color-text-muted); font-size: var(--text-xs); text-align: left; }
 .cfg-pre {
   flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 14px 0;
-  background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px;
-  font: var(--text-2xs)/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border: 1px solid var(--color-line);
+  font: var(--text-2xs)/1.55 var(--font-mono);
   tab-size: 4;
 }
 .cfg-line { display: flex; gap: 14px; padding: 0 16px; white-space: pre; }
-.cfg-line:hover { background: var(--color-bg-tertiary); }
+.cfg-line:hover { background: var(--color-bg-secondary); }
 /* Gutter is excluded from selection so copying a range yields clean TOML. */
 .cfg-ln { flex: none; width: 3.5em; text-align: right; color: var(--color-text-muted); user-select: none; }
 .cfg-src { color: var(--color-text-secondary); }
 .tok-comment { color: var(--color-text-muted); }
-.tok-section { color: var(--color-accent); font-weight: 600; }
+.tok-section { color: var(--color-text-primary); font-weight: 700; }
 .tok-key { color: var(--color-text-primary); }
 .tok-val { color: var(--color-text-secondary); }
 
@@ -202,85 +268,134 @@ body {
 .pane-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 
 /* Sensor picker */
-.picker { display: flex; flex-direction: column; width: 100%; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.picker { display: flex; flex-direction: column; width: 100%; border: 1px solid var(--color-line); overflow: hidden; }
 /* Two deliberate rows in a 290px sidebar: the filter owns the first, the toggle and
    Clear share the second. Left to wrap on its own, Clear dropped to a row by itself
    under the input and read as detached from the control it belongs to. */
-.picker-controls { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+.picker-controls { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--color-line); flex-wrap: wrap; }
 .picker-search { flex: 1 1 100%; }
 .picker-controls .btn { margin-left: auto; }
-.picker-toggle { display: flex; align-items: center; gap: 5px; color: var(--color-text-muted); font-size: var(--text-2xs); white-space: nowrap; }
+.picker-toggle { display: flex; align-items: center; gap: 6px; color: var(--color-text-muted); font: var(--text-2xs)/1 var(--font-mono); letter-spacing: .04em; white-space: nowrap; }
+.picker-toggle input, .tree-check, .picker-item input { accent-color: #bdbdbd; }
 .picker-groups { overflow-y: auto; padding: 4px 0; }
 
 /* Collapsible tree: family → field/type → sensors. */
 .tree-row {
   display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
-  border: 0; background: none; color: var(--color-text-primary); cursor: pointer;
+  border: 0; background: none; color: var(--color-text-primary); cursor: pointer; font-family: inherit;
 }
-.tree-row:hover { background: var(--color-bg-tertiary); }
+.tree-row:hover { background: var(--color-bg-secondary); }
 .caret {
   display: inline-block; width: 10px; color: var(--color-text-muted);
   transition: transform .12s ease; font-size: var(--text-2xs);
 }
 .caret.open { transform: rotate(90deg); }
+/* How many are picked: a figure in a hairline box, not a coloured pill. */
 .tree-badge {
-  margin-left: auto; background: var(--color-accent); color: #fff;
-  font-size: var(--text-2xs); border-radius: 9px; padding: 0 7px; line-height: 1.6;
+  margin-left: auto; border: 1px solid var(--color-border); color: var(--color-text-primary);
+  font: 600 var(--text-2xs)/1.5 var(--font-mono); padding: 0 6px; font-variant-numeric: tabular-nums;
 }
 
-.tree-fam { padding: 7px 12px; font-weight: 700; font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); position: sticky; top: 0; background: var(--color-bg-secondary); }
+.tree-fam {
+  padding: 8px 12px; position: sticky; top: 0; background: var(--color-bg-primary);
+  font: 600 var(--text-2xs)/1 var(--font-mono); letter-spacing: .22em; text-transform: uppercase; color: var(--color-text-secondary);
+}
 .tree-field-hdr { gap: 6px; padding: 3px 12px 3px 22px; }
 .tree-caret-btn { flex-shrink: 0; display: flex; align-items: center; border: 0; background: none; padding: 0; cursor: pointer; }
 .tree-check { flex-shrink: 0; cursor: pointer; }
-.tree-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0; text-align: left; cursor: pointer; color: var(--color-text-secondary); font-size: var(--text-xs); }
-.tree-field-name { font-weight: 550; }
+.tree-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0; text-align: left; cursor: pointer; color: var(--color-text-secondary); font: var(--text-2xs)/1.4 var(--font-mono); }
+.tree-field-name { font-weight: 600; }
 .tree-count { color: var(--color-text-muted); font-size: var(--text-2xs); }
 
 .picker-item { display: flex; align-items: center; gap: 7px; padding: 3px 12px 3px 40px; cursor: pointer; }
-.picker-item:hover { background: var(--color-bg-tertiary); }
+.picker-item:hover { background: var(--color-bg-secondary); }
 .picker-label { font-size: var(--text-xs); color: var(--color-text-primary); }
 .picker-empty { padding: 16px; color: var(--color-text-muted); text-align: center; font-size: var(--text-xs); }
 
-/* Toolbar. The window controls and four buttons sit on one row down to ~1400px; the
-   metrics below are what buys the last ~25px of that, so trim labels before padding. */
-.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The console's segmented control: related buttons in one hairline box, split by
+   hairlines (Play / step; the exports). */
+.seg { display: inline-flex; border: 1px solid var(--color-border); }
+.seg .btn { border: 0; background: transparent; }
+.seg .btn + .btn { border-left: 1px solid var(--color-border); }
+.seg .btn:hover { background: var(--color-bg-tertiary); }
+.seg .btn.disabled, .seg .btn:disabled { border-color: var(--color-border); }
+
+/* Toolbar. */
+.toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .spacer { flex: 1; }
-.timerange { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: var(--text-xs); }
-.tr-label { color: var(--color-text-secondary); }
-.tr-input { width: 82px; font-variant-numeric: tabular-nums; }
+.timerange { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font: var(--text-2xs)/1 var(--font-mono); }
+.tr-label { color: var(--color-text-muted); letter-spacing: .16em; text-transform: uppercase; }
+.tr-input { width: 78px; font-variant-numeric: tabular-nums; }
 .tr-dash { color: var(--color-text-muted); }
-.tr-total { color: var(--color-text-muted); font-size: var(--text-2xs); }
+.tr-total { color: var(--color-text-muted); }
 
-/* The plot surface before a run is indexed. Same treatment as .chart-wrap, so it reads
-   as the plot area not yet filled, with the content anchored top-left like every other
-   pane. The run's facts are not repeated here; they are in the run header. */
-.notice {
-  flex: 1; min-height: 0; padding: 20px 22px;
-  background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px;
+/* The plot surface before a run is indexed: the plot's region, not yet filled. */
+.notice { flex: 1; min-height: 0; padding: 20px 22px; border: 1px solid var(--color-line); }
+.notice-title { font: 700 var(--text-2xs)/1.2 var(--font-mono); letter-spacing: .22em; text-transform: uppercase; }
+.notice-body { max-width: 56ch; margin: 10px 0 16px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+
+/* ── Video ────────────────────────────────────────────────────────────────────
+   Above the plot. Bounded height, so the plot keeps most of the pane. */
+.video-panel { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--color-line); padding: 10px 12px 12px; }
+.video-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.video-title { font: 500 var(--text-2xs)/1 var(--font-mono); letter-spacing: .22em; text-transform: uppercase; color: var(--color-text-muted); }
+.video-approx { color: var(--color-sim); cursor: help; }
+/* One to four tiles in the same height: one fills it, two sit side by side, 3-4 in a 2x2. */
+.video-grid { display: grid; gap: 1px; height: 34vh; min-height: 180px; background: var(--color-line); }
+.video-grid.n2 { grid-template-columns: 1fr 1fr; }
+.video-grid.n3, .video-grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.video-stage { position: relative; min-height: 0; background: var(--color-bg-primary); overflow: hidden; }
+.video-caption {
+  position: absolute; left: 0; bottom: 0; padding: 3px 8px;
+  background: color-mix(in srgb, var(--color-bg-primary) 82%, transparent);
+  color: var(--color-text-secondary); font: var(--text-2xs)/1.3 var(--font-mono); letter-spacing: .04em;
 }
-.notice-title { font-size: var(--text-sm); font-weight: 600; }
-.notice-body { max-width: 56ch; margin: 8px 0 16px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.video-play { min-width: 6.5em; }
+/* Camera picker: click a name to show or hide that camera. */
+.video-cams { display: flex; gap: 6px; flex-wrap: wrap; }
+.video-cam { display: inline-flex; border: 1px solid var(--color-line); }
+.video-cam.on { border-color: var(--color-text-secondary); }
+.video-cam button {
+  background: none; border: 0; color: var(--color-text-muted); cursor: pointer;
+  font: var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .06em; padding: 3px 9px;
+}
+.video-cam button:hover:not(:disabled) { color: var(--color-text-primary); }
+.video-cam.on .video-cam-name { color: var(--color-bg-primary); background: var(--color-text-primary); }
+/* Hovered while on: keep the dark text (the generic hover lightens text, which on this
+   fill erased the name of the camera just clicked). */
+.video-cam.on .video-cam-name:hover:not(:disabled) { color: var(--color-bg-primary); background: var(--color-text-secondary); }
+.video-cam button:disabled { cursor: not-allowed; }
+.video-el { width: 100%; height: 100%; object-fit: contain; display: block; }
+.video-el[hidden] { display: none; }
+.video-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--color-text-muted); font: var(--text-2xs)/1.4 var(--font-mono); letter-spacing: .16em; text-transform: uppercase;
+}
 
-/* Chart */
-.chart-wrap { position: relative; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px 22px; flex: 1; min-height: 440px; }
-.chart-busy { position: absolute; top: 16px; right: 18px; color: var(--color-accent); font-size: var(--text-2xs); }
+/* The playhead's grip: a wide invisible strip on the line, with a square tab at the top. */
+.playhead-handle { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; cursor: ew-resize; z-index: 5; }
+.playhead-handle::before { content: ''; position: absolute; top: 0; left: 2px; width: 8px; height: 8px; background: var(--color-playhead); }
+
+/* ── Chart ──────────────────────────────────────────────────────────────────── */
+.chart-wrap { position: relative; border: 1px solid var(--color-line); padding: 18px 20px; flex: 1; min-height: 440px; }
+.chart-busy { position: absolute; top: 14px; right: 16px; color: var(--color-text-muted); font: var(--text-2xs)/1 var(--font-mono); letter-spacing: .16em; text-transform: uppercase; }
 
 /* Drag-to-zoom: the band you are about to zoom into, and what it is worth in seconds. */
 .u-select {
   background: var(--color-select);
-  border-left: 1px solid var(--color-accent);
-  border-right: 1px solid var(--color-accent);
+  border-left: 1px solid var(--color-text-secondary);
+  border-right: 1px solid var(--color-text-secondary);
 }
 .u-select-span {
   position: absolute; top: 6px; transform: translateX(-50%);
-  padding: 2px 7px; border-radius: 4px; pointer-events: none; white-space: nowrap;
-  background: var(--color-bg-primary); border: 1px solid var(--color-accent);
-  color: var(--color-text-primary); font-size: var(--text-2xs);
+  padding: 2px 7px; pointer-events: none; white-space: nowrap;
+  background: var(--color-bg-primary); border: 1px solid var(--color-border);
+  color: var(--color-text-primary); font: var(--text-2xs)/1.3 var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
 /* uPlot legend — canvas axis text is themed in chartTheme.ts (var() doesn't
    resolve in a canvas), the legend is real DOM so it is themed here. */
-.u-legend { font-size: var(--text-2xs); color: var(--color-text-secondary); }
+.u-legend { font: var(--text-2xs)/1.4 var(--font-mono); color: var(--color-text-secondary); }
 .u-legend .u-value { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
 .u-legend .u-label { color: var(--color-text-secondary); }

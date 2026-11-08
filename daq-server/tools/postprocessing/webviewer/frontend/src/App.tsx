@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type uPlot from 'uplot';
 import { api } from './api';
-import starWordmark from './assets/star-wordmark.png';
-import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource } from './types';
+import type { Component, Run, RunIndex, RunSummary, Series, SeriesMeta, TimeSource, VideoClip } from './types';
 import { fmtBytes, fmtDuration } from './util';
+import { coverage, pageForward } from './video';
 import RunList from './components/RunList';
 import SensorPicker from './components/SensorPicker';
 import TimeRange from './components/TimeRange';
@@ -11,6 +11,7 @@ import Chart from './components/Chart';
 import ConfigView from './components/ConfigView';
 import RunDescription from './components/RunDescription';
 import RunSummaryPanel from './components/RunSummaryPanel';
+import VideoPanel from './components/VideoPanel';
 
 const MAX_POINTS = 4000;
 
@@ -63,6 +64,17 @@ export default function App() {
   const [series, setSeries] = useState<Series[]>([]);
   const [seriesBusy, setSeriesBusy] = useState(false);
   const uplotRef = useRef<uPlot | null>(null);
+
+  // Video clips overlapping the run (empty: no panel), and the playhead they follow.
+  const [clips, setClips] = useState<VideoClip[]>([]);
+  const [playhead, setPlayhead] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  // The cameras the video panel shows; the plot draws where each has footage.
+  const [shownCams, setShownCams] = useState<string[]>([]);
+  const bands = useMemo(
+    () => shownCams.map((s) => ({ label: s, spans: coverage(clips, s) })),
+    [shownCams, clips],
+  );
   const seriesReq = useRef(0);
 
   useEffect(() => {
@@ -109,6 +121,9 @@ export default function App() {
     setConfigText(undefined);
     setConfigErr(null);
     setSummary(null);
+    setClips([]);
+    setPlayhead(null);
+    setPlaying(false);
     // Cheap either way: the summary never exports, and the index is only fetched when one
     // already exists. A run is indexed on request (runIndex), not by being clicked.
     api
@@ -126,6 +141,20 @@ export default function App() {
       })
       .catch((e) => setIndexErr(String(e.message || e)));
   }, []);
+
+  // Which clips overlap this run: one listing on the server, once per indexed run. No
+  // recordings folder mounted, or none overlapping, and the page has no video panel.
+  useEffect(() => {
+    if (!index) return;
+    let live = true;
+    api
+      .video(index.run_id)
+      .then((v) => live && setClips(v.available ? v.clips : []))
+      .catch(() => live && setClips([]));
+    return () => {
+      live = false;
+    };
+  }, [index]);
 
   // Fetch series whenever the selection or window changes (debounced).
   useEffect(() => {
@@ -189,6 +218,18 @@ export default function App() {
     [win, bounds],
   );
   const zoomed = win.start != null || win.end != null;
+
+  // Playing: keep the playhead in sight by paging the plot one window forward when it runs
+  // off the right (same zoom, one refetch per page), and stop at the end of the run.
+  useEffect(() => {
+    if (!playing || playhead == null || !index) return;
+    if (playhead >= bounds[1]) {
+      setPlaying(false);
+      return;
+    }
+    const next = pageForward(view, bounds, playhead);
+    if (next) setWin({ start: next[0], end: next[1] });
+  }, [playing, playhead, view, bounds, index]);
   const resetView = useCallback(() => setWin({ start: null, end: null }), []);
 
   const toggle = (name: string) =>
@@ -239,12 +280,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {/* Wordmark, divider, title — the header the other STAR apps use
-            (star-openrocket/frontend/src/App.tsx). The asset is synced from
-            assets/brand by scripts/sync-brand.sh; do not hand-edit the copy. */}
-        <img className="topbar-logo" src={starWordmark} alt="STAR" />
-        <div className="topbar-divider" />
-        <h1>DAQ Run Viewer</h1>
+        {/* The DAQ console's header (diablo_server/frontend TabBar): its name with
+            "a STAR project" under it, a hairline, then this view, underlined. */}
+        <span className="brand" title="Diablo DAQ: the stand's data acquisition and control. A STAR project.">
+          <span className="brand-name">Diablo DAQ</span>
+          <span className="brand-sub">a STAR project</span>
+        </span>
+        <h1>Run Viewer</h1>
       </header>
 
       <div className="body">
@@ -399,6 +441,16 @@ export default function App() {
                   </div>
 
                   <div className="pane-right">
+                    {clips.length > 0 && (
+                      <VideoPanel
+                        clips={clips}
+                        playhead={playhead}
+                        onPlayhead={setPlayhead}
+                        playing={playing}
+                        onPlaying={setPlaying}
+                        onShown={setShownCams}
+                      />
+                    )}
                     <div className="toolbar">
                       {index.t_min != null && index.t_max != null && (
                         <TimeRange
@@ -415,18 +467,28 @@ export default function App() {
                         Reset view
                       </button>
                       <div className="spacer" />
-                      <a className="btn" href={api.downloadUrl(runId, [], null, null, timeSource)}>
-                        Download run CSV
-                      </a>
-                      <a
-                        className={`btn${selArr.length ? '' : ' disabled'}`}
-                        href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end, timeSource) : undefined}
-                      >
-                        Export plot CSV
-                      </a>
-                      <button className="btn" onClick={savePng} disabled={series.length === 0}>
-                        Save image
-                      </button>
+                      {/* One labelled group, as the console sets its toggles: the three
+                          ways out of the viewer, named short so the row fits a laptop. */}
+                      <span className="tr-label">Export</span>
+                      <div className="seg">
+                        <a
+                          className="btn"
+                          href={api.downloadUrl(runId, [], null, null, timeSource)}
+                          title="Download every primary channel of the whole run as CSV (long format: time, component, value)"
+                        >
+                          Run CSV
+                        </a>
+                        <a
+                          className={`btn${selArr.length ? '' : ' disabled'}`}
+                          href={selArr.length ? api.downloadUrl(runId, selArr, win.start, win.end, timeSource) : undefined}
+                          title="Export the plotted channels over the current window as CSV (one column per channel)"
+                        >
+                          Plot CSV
+                        </a>
+                        <button className="btn" onClick={savePng} disabled={series.length === 0} title="Save the plot as a PNG image">
+                          PNG
+                        </button>
+                      </div>
                     </div>
 
                     <div className="chart-wrap">
@@ -439,6 +501,9 @@ export default function App() {
                           onViewChange={onViewChange}
                           onResetView={resetView}
                           onReady={(u) => (uplotRef.current = u)}
+                          playhead={clips.length > 0 ? playhead : null}
+                          onPlayhead={clips.length > 0 ? setPlayhead : undefined}
+                          bands={clips.length > 0 ? bands : undefined}
                         />
                       ) : (
                         <div className="placeholder">

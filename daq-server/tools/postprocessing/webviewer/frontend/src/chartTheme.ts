@@ -9,10 +9,12 @@
  * too.** `theme.check.mjs` asserts these two stay in sync.
  */
 
-export const AXIS_STROKE = '#9fb0c4'; // --color-text-muted (7.8:1 on bg)
-export const GRID_STROKE = '#383848'; // --color-border
-export const AXIS_FONT = '13px system-ui, sans-serif'; // tick values, never below 13px
-export const LABEL_FONT = 'bold 15px system-ui, sans-serif'; // axis (unit) label — prominent
+export const AXIS_STROKE = '#a3a3a3'; // --color-text-muted (AAA on every bg)
+export const GRID_STROKE = '#1f1f1f'; // --color-line: the console's hairline grid
+export const AXIS_FONT = '13px "SF Mono", ui-monospace, Menlo, monospace'; // tick values, never below 13px
+export const BAND_FILL = '#bdbdbd'; // --color-band: video coverage bands
+export const PLAYHEAD_STROKE = '#ededed'; // --color-playhead: the video playhead line
+export const LABEL_FONT = '600 13px "SF Mono", ui-monospace, Menlo, monospace'; // axis (unit) label
 
 /*
  * Series palette: ten hues 36° apart at a constant OKLCH L≈0.62, cycled with

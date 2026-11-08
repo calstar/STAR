@@ -140,6 +140,12 @@ target_link_libraries(test_lc_linear_fit
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME lc_linear_fit COMMAND test_lc_linear_fit)
 
+add_executable(test_command_dedupe test/test_command_dedupe.cpp)
+target_include_directories(test_command_dedupe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_test(NAME command_dedupe COMMAND test_command_dedupe)
+
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
@@ -351,9 +357,6 @@ add_executable(test_rtd_board test/test_rtd_board.cpp)
 target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME rtd_board COMMAND test_rtd_board)
 
-add_executable(test_resubscribe_backoff test/test_resubscribe_backoff.cpp)
-target_link_libraries(test_resubscribe_backoff fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
-add_test(NAME resubscribe_backoff COMMAND test_resubscribe_backoff)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.

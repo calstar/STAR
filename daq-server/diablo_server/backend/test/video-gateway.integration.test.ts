@@ -17,7 +17,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawn, execFileSync, type ChildProcess } from 'child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -288,10 +288,13 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     expect(svc.bufferStatus()).toMatchObject({ available: true, bufferSeconds: 15 });
     expect(svc.bufferStatus().buffered?.cam1).toBeGreaterThanOrEqual(14);
 
+    const pressed = Date.now();
     const saved = await svc.save();
     const cam = saved.streams.find((x) => x.stream === 'cam1')!;
     expect(cam.error, JSON.stringify(saved)).toBeUndefined();
     expect(cam.file).toMatch(/recordings\/\d{4}-\d{2}-\d{2}_\d{6}_save\/cam1\.mp4$/);
+    // Read now: the next Save lands in the same second, so the same folder.
+    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
     // A stream with nothing buffered says so, without failing the others.
     const none = await (await fetch(`http://127.0.0.1:${ports.agent}/save`, { method: 'POST', body: JSON.stringify({ streams: ['never-sent', 'cam1'] }) })).json();
     expect(none.streams.find((x: any) => x.stream === 'never-sent').error).toMatch(/nothing buffered/);
@@ -304,10 +307,34 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     const seconds = Number(probe.format.duration);
     expect(seconds).toBeGreaterThanOrEqual(14);
     expect(seconds).toBeLessThanOrEqual(19);
+
+    // The timing file beside it: the clip ends where Save was pressed (to within a
+    // segment still being written) and starts the file's length before that.
+    expect(timing).toMatchObject({ version: 1, stream: 'cam1', kind: 'save', latencyMs: 0 });
+    expect(timing.durationS).toBeCloseTo(seconds, 1);
+    const last = timing.pieces[timing.pieces.length - 1];
+    const endMs = last.wallMs + (timing.durationS - last.fileS) * 1000;
+    expect(Math.abs(endMs - pressed)).toBeLessThan(2000);
+    expect(timing.firstFrameMs).toBe(timing.pieces[0].wallMs);
+    // The backend measured the gateway's clock against its own: the same machine here.
+    expect(Math.abs(timing.clockOffsetMs)).toBeLessThanOrEqual(timing.clockUncertaintyMs + 2);
+    expect(timing.clockUncertaintyMs).toBeLessThan(50);
   }, 60_000);
 
   it('Record: press to Stop, one video-only file per stream, trimmed to the press', async () => {
     await svc.sync();
+    // Press about 2 s into a 3 s segment, so the segment's start, the keyframe before the
+    // press (1 s apart) and the press itself are all different times: a timing file that
+    // took any of the wrong ones fails below.
+    await waitFor('a press ~2 s into a segment', async () => {
+      // segmentStart, restated: MediaMTX names a segment by its local start time.
+      const starts = readdirSync(join(dir, 'buffer', 'raw', 'cam1'))
+        .map((n) => n.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})-(\d{6})\.mp4$/))
+        .filter((m): m is RegExpMatchArray => !!m)
+        .map((m) => new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], Math.floor(+m[7] / 1000)).getTime());
+      const into = Date.now() - Math.max(...starts);
+      return into >= 1900 && into <= 2300 ? true : undefined;
+    }, 20_000);
     const started = await svc.startRecording();
     expect(started.streams).toEqual(['cam1', 'hides']);
     const t0 = Date.now();
@@ -325,6 +352,14 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     // Trimmed to the press (to a keyframe, 1 s apart here): not the whole segment before it.
     expect(Number(probe.format.duration)).toBeGreaterThan(held - 2);
     expect(Number(probe.format.duration)).toBeLessThan(held + 2);
+
+    // The timing file: the first frame is the keyframe at or before the press (1 s apart
+    // here), not the segment's start and not the press itself.
+    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
+    expect(timing).toMatchObject({ version: 1, stream: 'cam1', kind: 'record' });
+    expect(timing.firstFrameMs).toBeLessThanOrEqual(started.startedAt + 100);
+    expect(timing.firstFrameMs).toBeGreaterThan(started.startedAt - 1500);
+    expect(timing.durationS).toBeCloseTo(Number(probe.format.duration), 1);
   }, 60_000);
 
   it('the disk guard: refuses to start below the threshold, stops cleanly at the floor', async () => {
@@ -357,6 +392,10 @@ describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
     expect(cam.file, JSON.stringify(st.lastRecording)).toMatch(/cam1\.mp4$/);
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', cam.file], { encoding: 'utf8' }));
     expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // The clock offset measured at the press survived the restart (it rides in the
+    // recording's meta file) and reached the timing file.
+    const timing = JSON.parse(readFileSync(cam.file.replace(/\.mp4$/, '.json'), 'utf8'));
+    expect(Number.isFinite(timing.clockOffsetMs) && Number.isFinite(timing.clockUncertaintyMs)).toBe(true);
     startCamera(); // the restart test below expects the camera back
   }, 90_000);
 
