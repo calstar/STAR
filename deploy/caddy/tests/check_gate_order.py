@@ -42,10 +42,21 @@ PUBLIC_HOSTS = {"auth", "mcp"}
 #:   project /api/mcp -- (EC2 Caddyfile) the MCP endpoint for agents. The app
 #:   checks a per-user bearer token itself (starproject/src/app/api/mcp/route.ts)
 #:   and the handle strips X-Auth-* so no identity header reaches it.
+#:   project OAuth -- (EC2 Caddyfile) the metadata, /oauth/register and
+#:   /oauth/token, which an MCP client's servers call with no STAR cookie
+#:   (starproject/src/lib/oauth.ts). /oauth/authorize is not listed: the consent
+#:   page must stay behind the gate, since the login there decides whose token
+#:   is minted. The two /oauth entries are exact paths for that reason.
 PUBLIC_PATHS = {
     "parts": ("/panel/",),
     "analytics": ("/api/ingest",),
-    "project": ("/api/mcp",),
+    "project": (
+        "/api/mcp",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+        "/oauth/register",
+        "/oauth/token",
+    ),
 }
 
 

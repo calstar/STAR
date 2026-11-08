@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "calibration/CaptureWindow.hpp"
+#include "calibration/CommandDedupe.hpp"
 #include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/HpPtCode.hpp"
 #include "calibration/LcTareStore.hpp"
@@ -64,7 +65,6 @@
 #include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "elodin/ResubscribeBackoff.hpp"
 #include "elodin/SubscriptionTracker.hpp"
 #include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
@@ -1486,9 +1486,9 @@ int main(int argc, char* argv[]) {
 
     if (!connect_and_register())
         return 1;
-    // Allow read_packet() to yield every 1 s so the re-subscribe check can fire on its 1 s first
-    // step when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
-    elodin_client.set_recv_timeout_ms(1000);
+    // Allow read_packet() to yield every 3 s so a refused subscription is asked for again (below)
+    // even when nothing else is arriving.
+    elodin_client.set_recv_timeout_ms(3000);
 
     // Generous, but not for the reason the previous comment claimed ("handles large Elodin
     // subscription-ACK bursts"). ACKs are 19-23 bytes and arrive one per read_packet() call, so
@@ -1500,11 +1500,9 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    // If every raw table goes quiet (none were registered yet when we subscribed, or the DB
-    // dropped the subscriptions), re-subscribe to all of them: after 1 s, then 2, 4, and every
-    // 5 s while they stay quiet. A table the DB refused while others stream is sub_tracker's job.
-    fsw::elodin::ResubscribeBackoff raw_resub(std::chrono::steady_clock::now());
     std::map<uint16_t, int32_t> last_adc_map;
+    // Every re-subscribe adds a copy of the command stream; handle each command once.
+    fsw::calibration::CommandDedupe command_dedupe;
 
     while (running) {
         if (!elodin_client.is_connected()) {
@@ -1513,8 +1511,7 @@ int main(int argc, char* argv[]) {
             if (elodin_client.reconnect()) {
                 register_calibrated();
                 subscribe_all();
-                elodin_client.set_recv_timeout_ms(1000);
-                raw_resub.restart(std::chrono::steady_clock::now());
+                elodin_client.set_recv_timeout_ms(3000);
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
@@ -1524,22 +1521,18 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Quiet raw tables: daq_bridge / t7_bridge may have registered their VTables AFTER we
-        // subscribed — re-subscribe to pick them up (see ResubscribeBackoff for the schedule).
+        // A table the DB refused (its publisher had not registered it yet) is asked for again
+        // until it is accepted; the refusal names it (SubscriptionTracker).
+        //
+        // Nothing else is re-sent. There used to be a fallback here that re-subscribed EVERY table
+        // after 5 s with no packets, but elodin-db treats a second subscribe on one connection as
+        // a second subscription and delivers the table twice: each firing stacked another copy of
+        // every stream, the command table included, so after N firings each capture, zero and
+        // tare was applied N+1 times (the stand re-subscribed 57 times in a quiet minute on
+        // 2026-11-07). A quiet stream is quiet because its board is; the DB refuses a table that
+        // does not exist yet, and a dropped connection resubscribes on reconnect above.
         {
             const auto now_s = std::chrono::steady_clock::now();
-            const auto secs = [](auto d) {
-                return std::chrono::duration_cast<std::chrono::milliseconds>(d).count() / 1000.0;
-            };
-            if (raw_resub.due(now_s)) {
-                std::cout << "[Cal] No packets for " << secs(raw_resub.silence(now_s))
-                          << "s — re-subscribing to raw streams" << std::endl;
-                subscribe_all();
-                raw_resub.subscribed(now_s);
-            }
-            // A table the DB refused (its publisher had not registered it yet) is asked for again
-            // until it is accepted. The check above never fires for this: the other tables keep
-            // packets arriving.
             for (const auto& t : sub_tracker.due(now_s))
                 elodin_client.subscribe_table(t.first, t.second, sub_tracker.assign(t));
         }
@@ -1583,6 +1576,8 @@ int main(int argc, char* argv[]) {
             // high byte survives (uid = board_id*100+connector can exceed 255).
             if (pkt_len >= 8 + 16) {
                 const uint8_t* p = pkt_buf + 8;
+                if (command_dedupe.seen(p))
+                    continue;  // the same command again, from a second subscription
                 uint8_t cmd_type = p[8];
                 uint16_t sensor_id =
                     static_cast<uint16_t>(p[10]) | (static_cast<uint16_t>(p[11]) << 8);
@@ -1783,7 +1778,6 @@ int main(int argc, char* argv[]) {
             std::memcpy(&volts_f, p + 12, sizeof(volts_f));
             const uint64_t rx_ns = mono_ns();
             const uint8_t slot = static_cast<uint8_t>((type_lo >> 5) + 1);
-            raw_resub.packet(std::chrono::steady_clock::now());
             if (!std::isfinite(volts_f))
                 continue;
             if (offset == fsw::t7::kCjcTableOffset) {
@@ -1925,8 +1919,8 @@ int main(int argc, char* argv[]) {
             const uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
 
             // The ADC cubic/robust and captures work in: for a 4-20 mA board, the shunt code with a
-            // negative reading (an open loop's noise below 0 V) taken as no current -- never as full
-            // scale (see HpPtCode.hpp); else the raw i32.
+            // negative reading (an open loop's noise below 0 V) taken as no current -- never as
+            // full scale (see HpPtCode.hpp); else the raw i32.
             const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
@@ -2063,7 +2057,6 @@ int main(int argc, char* argv[]) {
 
         elodin_client.flush_batch();
 
-        raw_resub.packet(std::chrono::steady_clock::now());
         packet_count++;
         if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex

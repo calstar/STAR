@@ -5,6 +5,7 @@
 #include "gnss_task.h"
 #include "idle_task.h"
 #include "main.h"
+#include "radio_task.h"
 #include "sensors_task.h"
 
 static osMutexId_t lock;
@@ -33,6 +34,11 @@ void app_set_state(flight_state_t to) {
         sensors_task_set_active(o.sensors);
         gnss_task_set_active(o.gps);
         idle_task_set_active(o.idle_loop);
+        if (o.radio_sniff) {
+            radio_task_start_sniff(MODE_SNIFF_RX_MS, MODE_SNIFF_SLEEP_MS);
+        } else {
+            radio_task_start_continuous_rx();
+        }
         (void)emmc_log_on_state(emmc_stm32_log(), from, to,
                                 osKernelGetTickCount());
     }

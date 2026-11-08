@@ -26,6 +26,7 @@ constexpr uint8_t kOpWriteRegister = 0x0D;
 constexpr uint8_t kOpReadRegister = 0x1D;
 constexpr uint8_t kOpWriteBuffer = 0x0E;
 constexpr uint8_t kOpSetTx = 0x83;
+constexpr uint8_t kOpSetRxDutyCycle = 0x94;  // DS 13.1.7, p.71
 
 constexpr uint16_t kIrqTxDone = 1u << 0;  // Table 13-29, p.80
 constexpr uint16_t kIrqTimeout = 1u << 9;
@@ -139,10 +140,53 @@ bool Sx1262Setup::irq_status(uint16_t& irq) {
     return true;
 }
 
+bool Sx1262Setup::send_duty_cycle() {
+    const uint8_t dc[7] = {
+        kOpSetRxDutyCycle,
+        static_cast<uint8_t>(duty_rx_steps_ >> 16),
+        static_cast<uint8_t>(duty_rx_steps_ >> 8),
+        static_cast<uint8_t>(duty_rx_steps_),
+        static_cast<uint8_t>(duty_sleep_steps_ >> 16),
+        static_cast<uint8_t>(duty_sleep_steps_ >> 8),
+        static_cast<uint8_t>(duty_sleep_steps_),
+    };
+    return cmd(dc, sizeof dc);
+}
+
 bool Sx1262Setup::back_to_rx() {
     control_.set_rx_switch(true);
-    const uint8_t rx_mode[4] = {kOpSetRx, 0xFF, 0xFF, 0xFF};  // continuous
-    return set_packet_params(0xFF) && cmd(rx_mode, sizeof rx_mode);
+    if (!set_packet_params(0xFF))
+        return false;
+    if (rx_mode_ == RxMode::DutyCycle) {
+        return send_duty_cycle();
+    }
+    const uint8_t rx_cont[4] = {kOpSetRx, 0xFF, 0xFF, 0xFF};
+    return cmd(rx_cont, sizeof rx_cont);
+}
+
+bool Sx1262Setup::start_rx_duty_cycle(uint32_t rx_ms, uint32_t sleep_ms) {
+    // 1 ms = 64 steps (1000 µs / 15.625 µs, DS p.71)
+    const uint8_t standby[2] = {kOpSetStandby, 0x00};
+    if (!cmd(standby, sizeof standby))
+        return false;
+    duty_rx_steps_ = rx_ms * 64u;
+    duty_sleep_steps_ = sleep_ms * 64u;
+    rx_mode_ = RxMode::DutyCycle;
+    return back_to_rx();
+}
+
+bool Sx1262Setup::start_rx_continuous() {
+    const uint8_t standby[2] = {kOpSetStandby, 0x00};
+    if (!cmd(standby, sizeof standby))
+        return false;
+    rx_mode_ = RxMode::Continuous;
+    return back_to_rx();
+}
+
+bool Sx1262Setup::rearm_rx() {
+    if (rx_mode_ != RxMode::DutyCycle)
+        return true;
+    return back_to_rx();
 }
 
 SetupStep Sx1262Setup::configure() {

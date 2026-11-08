@@ -33,7 +33,8 @@ public:
     bool tx_never_done = false;  // TxDone never comes (bad PA, no antenna)
 
     // What happened.
-    bool listening = false;  // in continuous RX
+    bool listening = false;  // in RX: continuous, or a sniff duty cycle
+    bool sniffing = false;   // SetRxDutyCycle (0x94) is the RX mode
     uint16_t irq = 0;
     unsigned n_sent = 0;
     Sent sent[kMaxSent];
@@ -46,6 +47,12 @@ public:
         memcpy(buffer_ + kRxBase, bytes, n);
         rx_len_ = n;
         irq |= kIrqRxDone;
+        // In sniff mode a packet ends the duty cycle: the chip drops to
+        // STDBY_RC (DS 13.1.7, p.71) and is deaf until SetRxDutyCycle again.
+        // The ground's Arm preamble is assumed long enough to span the sleep
+        // (>= 260 symbols); tests/radio/test_sniff models the windows.
+        if (sniffing)
+            listening = false;
         return true;
     }
     bool dio1() const {
@@ -67,6 +74,11 @@ public:
                 break;
             case 0x82:  // SetRx: 0xFFFFFF = continuous
                 listening = tx[1] == 0xFF && tx[2] == 0xFF && tx[3] == 0xFF;
+                sniffing = false;
+                break;
+            case 0x94:  // SetRxDutyCycle: listen / sleep on its own (p.71)
+                listening = true;
+                sniffing = true;
                 break;
             case 0x8C:  // SetPacketParams: byte 4 = payload length
                 payload_len_ = tx[4];

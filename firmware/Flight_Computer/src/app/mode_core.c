@@ -1,10 +1,11 @@
 #include "mode_core.h"
 
 mode_outputs_t mode_outputs(flight_state_t state) {
-    mode_outputs_t o = {false, false, false, false};
+    mode_outputs_t o = {false, false, false, false, false};
     switch (state) {
         case FLIGHT_IDLE:
             o.idle_loop = true;
+            o.radio_sniff = true; /* ~0.15 mA instead of ~4.6 mA listening */
             break;
         case FLIGHT_ARMED:
         case FLIGHT_LAUNCHED:
