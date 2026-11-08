@@ -92,7 +92,9 @@ fn status_and_live() {
     let rows: Vec<_> = st.sections.iter().flat_map(|s| s.rows.iter()).collect();
     let find = |name: &str| rows.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("{name}"));
     let battery = find("Battery");
-    assert!(battery.value.starts_with("7.9") && battery.value.ends_with(" V, OK"), "{}", battery.value);
+    // The simulated board reads 7.890-7.909 V, so the two-decimal text is 7.89, 7.90 or 7.91.
+    let volts: f64 = battery.value.strip_suffix(" V, OK").and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{}", battery.value));
+    assert!((7.85..=7.95).contains(&volts), "{}", battery.value);
     assert_eq!(battery.chip, Some(Tone::Good));
     let p1 = find("Pyro 1 continuity");
     assert!(p1.value.starts_with("continuity, 1.6") && p1.value.ends_with(" Ω"), "{}", p1.value);
