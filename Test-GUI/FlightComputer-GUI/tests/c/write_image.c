@@ -1,6 +1,6 @@
 /*
  * Writes an eMMC disk image with the firmware's own log writer
- * (firmware/Flight_Computer/Core/Src/emmc_log.c) so the GUI's Python decoder
+ * (firmware/Flight_Computer/src/app/emmc_log.c) so the GUI's Python decoder
  * is tested against the real writer, not against its own fake.
  *
  *   write_image <out.img>

@@ -7,6 +7,9 @@ import { expect, test, type Page } from "@playwright/test";
 
 async function connect(page: Page) {
   await page.goto("/?ws=5179");
+  // Pick the simulated board by name: a CI machine has real serial ports too
+  // (/dev/ttyS0), and the app lists those first.
+  await page.getByLabel("Port").selectOption("sim://flight-computer");
   await expect(page.getByLabel("Port")).toHaveValue("sim://flight-computer");
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("status")).toContainText("Connected");

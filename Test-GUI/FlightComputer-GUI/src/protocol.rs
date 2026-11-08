@@ -143,7 +143,7 @@ pub mod slot {
     pub const DEFAULTS: u8 = 2; // compiled into the firmware
 }
 
-/// Core/Inc/flight_state.h
+/// src/app/flight_state.h
 pub mod state {
     pub const SELF_TEST: u8 = 0;
     pub const IDLE: u8 = 1;
@@ -163,7 +163,7 @@ pub mod state {
     }
 }
 
-/// Core/Inc/self_test_port.h
+/// src/app/self_test_port.h
 pub mod self_test {
     pub const PENDING: u8 = 0;
     pub const PASS: u8 = 1;
@@ -177,7 +177,7 @@ pub mod self_test {
         N.get(r as usize).map(|s| s.to_string()).unwrap_or_else(|| format!("code {r}"))
     }
 
-    /// Core/Inc/self_test_devices.h, in ID order.
+    /// src/app/self_test_devices.h, in ID order.
     pub const DEVICES: [&str; 8] = ["IMU", "High-g", "Barometer", "Ethernet", "Radio", "GNSS", "NAND", "eMMC"];
 }
 

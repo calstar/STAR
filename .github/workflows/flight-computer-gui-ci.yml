@@ -4,18 +4,18 @@ on:
   push:
     paths:
       - 'Test-GUI/FlightComputer-GUI/**'
-      - 'firmware/Flight_Computer/Core/Src/emmc_log.c'
-      - 'firmware/Flight_Computer/Core/Src/flight_state.c'
-      - 'firmware/Flight_Computer/Core/Inc/**'
-      - 'firmware/Flight_Computer/app/records.h'
+      - 'firmware/Flight_Computer/src/app/emmc_log.*'
+      - 'firmware/Flight_Computer/src/app/flight_state.*'
+      - 'firmware/Flight_Computer/src/app/self_test_*.h'
+      - 'firmware/Flight_Computer/src/app/records.h'
       - '.github/workflows/flight-computer-gui-ci.yml'
   pull_request:
     paths:
       - 'Test-GUI/FlightComputer-GUI/**'
-      - 'firmware/Flight_Computer/Core/Src/emmc_log.c'
-      - 'firmware/Flight_Computer/Core/Src/flight_state.c'
-      - 'firmware/Flight_Computer/Core/Inc/**'
-      - 'firmware/Flight_Computer/app/records.h'
+      - 'firmware/Flight_Computer/src/app/emmc_log.*'
+      - 'firmware/Flight_Computer/src/app/flight_state.*'
+      - 'firmware/Flight_Computer/src/app/self_test_*.h'
+      - 'firmware/Flight_Computer/src/app/records.h'
       - '.github/workflows/flight-computer-gui-ci.yml'
 
 jobs:

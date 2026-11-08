@@ -1,4 +1,4 @@
-//! Sensor records (firmware app/records.h), raw and in physical units.
+//! Sensor records (firmware src/app/records.h), raw and in physical units.
 //!
 //! The same structs arrive two ways: live, in SAMPLE frames over USB, and inside
 //! eMMC log blocks. Both go through `decode` here, so a plot of a live stream
@@ -21,7 +21,7 @@ pub const REC_EVENT: u8 = 0x15;
 /// Proposed (PROTOCOL.md): the config blob, first record of every session.
 pub const REC_CONFIG: u8 = 0x16;
 
-// Log-owned record types (Core/Inc/emmc_log.h).
+// Log-owned record types (src/app/emmc_log.h).
 pub const REC_SESSION_START: u8 = 0x01;
 pub const REC_STATE: u8 = 0x02;
 pub const REC_SESSION_END: u8 = 0x03;

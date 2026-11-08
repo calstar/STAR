@@ -59,7 +59,7 @@ The board sends its own messages (`STATUS` heartbeat, `SAMPLE`, `TEXT`) with
 | 0xA0 | LOG_INFO_REPLY | `u8 disk_state, u32 epoch, u32 data_start_lba, u32 capacity_blocks, u32 blocks_used, u32 sessions` |
 | 0xA1 | SESSIONS | `u16 total, u8 n, n × {u32 session, u32 first_block, u32 blocks, u32 duration_ms, u32 utc_start}`, n ≤ 24 |
 | 0xA2 | LOG_BLOCK | `u32 block_index, u8 raw[512]` |
-| 0xB0 | SAMPLE | `u8 record_type, record bytes` (`app/records.h` structs as-is) |
+| 0xB0 | SAMPLE | `u8 record_type, record bytes` (`src/app/records.h` structs as-is) |
 | 0xB1 | TEXT | UTF-8 debug line |
 
 **ACK results:** 0 OK · 1 BAD_FRAME (wrong payload size) · 2 UNKNOWN_TYPE ·
@@ -182,7 +182,7 @@ stays in the band**: `radio_freq_hz ± radio_bw_hz / 2` must be inside
 
 ## 6. eMMC log access (the Flights tab)
 
-The eMMC format is `Core/Inc/emmc_log.h`. Over USB the board only finds and
+The eMMC format is `src/app/emmc_log.h`. Over USB the board only finds and
 sends raw blocks. **The GUI checks every block itself** (magic, epoch, position,
 CRC-32), so a board-side bug cannot vouch for its own data.
 
@@ -213,7 +213,7 @@ flight at ~50 kB/s (~30 MB) downloads in about 30–40 s.
 
 ## 7. Record types in SAMPLE and in the log
 
-`app/records.h`: 0x10 IMU (18 B), 0x11 high-g (7 B), 0x12 baro (12 B), 0x13 GNSS
+`src/app/records.h`: 0x10 IMU (18 B), 0x11 high-g (7 B), 0x12 baro (12 B), 0x13 GNSS
 (49 B), 0x14 health and 0x15 event (layouts not defined yet), plus the proposed
 0x16 config (§5). The log's own records are 0x01–0x04 (`emmc_log.h`). One
 decoder (`src/records.rs`) serves both the live plots and downloaded flights.
