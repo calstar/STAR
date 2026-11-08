@@ -105,9 +105,15 @@ check(
   `AXIS_STROKE (${tsConst('AXIS_STROKE')}) != --color-text-muted (${colour('text-muted')})`,
 );
 check(
-  tsConst('GRID_STROKE').toLowerCase() === colour('border').toLowerCase(),
-  `GRID_STROKE (${tsConst('GRID_STROKE')}) != --color-border (${colour('border')})`,
+  tsConst('GRID_STROKE').toLowerCase() === colour('line').toLowerCase(),
+  `GRID_STROKE (${tsConst('GRID_STROKE')}) != --color-line (${colour('line')})`,
 );
+for (const [ts, css] of [['PLAYHEAD_STROKE', 'playhead'], ['BAND_FILL', 'band']]) {
+  check(
+    tsConst(ts).toLowerCase() === colour(css).toLowerCase(),
+    `${ts} (${tsConst(ts)}) != --color-${css} (${colour(css)})`,
+  );
+}
 const axisFontPx = Number(tsConst('AXIS_FONT').match(/^([\d.]+)px/)?.[1] ?? 0);
 check(axisFontPx >= 13, `AXIS_FONT is ${axisFontPx}px (< 13)`);
 

@@ -4,6 +4,7 @@ name: Engine Design CI
 # workflow triggers in some parsers (matches daq-server-ci.yml).
 'on':
   push:
+    branches: [main]
     paths:
       - 'EngineDesign/**'
       # The shared design core: its permission check is what stops one user

@@ -9,6 +9,7 @@ name: Deploy (Caddy) CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'deploy/caddy/**'
       - 'deploy/ec2/caddy/**'

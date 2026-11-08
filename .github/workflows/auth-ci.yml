@@ -6,6 +6,7 @@ name: Auth CI
 
 'on':
   push:
+    branches: [main]
     paths:
       - 'auth/**'
       - '.github/workflows/auth-ci.yml'
