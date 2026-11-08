@@ -2385,10 +2385,14 @@ async function testLcTare(ws: WebSocket): Promise<void> {
     `cal_lc_tare: untared, tared trace tracks absolute (gross ${grossBefore.toFixed(2)} vs tared ${taredBefore.toFixed(2)})`);
 
   // ── 2. tare: display goes to ~0, archive keeps the real load ───────────────
-  send(ws, { type: 'calibration_command', timestamp: Date.now(),
-    payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+  // Retried like a capture: the service refuses a tare whose last second holds fewer than 3 samples
+  // (CaptureWindow), and CI's simulator streams at 5 Hz, so one second sometimes holds 2.
   let rec: Record<string, unknown> | null = null;
-  for (let i = 0; i < 12; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  for (let attempt = 0; attempt < 5 && !rec; attempt++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+    for (let i = 0; i < 8; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  }
   if (!rec) { assert(false, `cal_lc_tare: service wrote no tare for ${ENTITY} (uid ${UID})`); return; }
   const offset1 = rec.offset_kg as number;
   const adcAtTare = rec.adc_at_tare as number;
@@ -2519,10 +2523,16 @@ async function testLcLinear(ws: WebSocket): Promise<void> {
     }
     return false;
   };
-  const readings = async () => ({
-    kg: await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS),
-    adc: await meanOf(ws, ENTITY, 'raw_adc', SETTLE_MS),
-  });
+  // The store file is written before the stream switches to the new curve, so give the stream a
+  // second to move before averaging it; otherwise the mean straddles the switch (under ASan it
+  // came out 80 % of the way there: 66.985 kg for a 75 kg fit).
+  const readings = async () => {
+    await sleep(1000);
+    return {
+      kg: await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS),
+      adc: await meanOf(ws, ENTITY, 'raw_adc', SETTLE_MS),
+    };
+  };
 
   // ── 1. the default ────────────────────────────────────────────────────────
   const rec0 = readCalRecord(UID);

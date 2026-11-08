@@ -8,7 +8,7 @@ import pytest
 from star_design_mcp import settings as settings_mod
 from star_design_mcp.tokens import TokenVerifier
 
-from .conftest import ALICE, BOB, NO_SCOPE
+from .conftest import ALICE, BOB, HOST, NO_SCOPE
 
 
 async def test_no_token_is_refused(harness):
@@ -47,6 +47,29 @@ async def test_files_and_health_need_no_bearer(harness):
     assert (await harness.client.get("/healthz")).status_code == 200
     # An unsigned file token is refused by the link check, not by bearer auth.
     assert (await harness.client.get("/files/abc.def")).status_code == 403
+
+
+async def test_a_401_points_oauth_clients_at_starproject(harness):
+    # claude.ai connectors can't send a header token: the 401 names the metadata,
+    # and the metadata names STARProject (the verify URL's origin) as the issuer.
+    r = await harness.rpc("tools/list", token=None)
+    challenge = r.headers["www-authenticate"]
+    url = challenge.split('resource_metadata="')[1].split('"')[0]
+    assert url.endswith("/.well-known/oauth-protected-resource/mcp")
+    meta = (await harness.client.get(url.replace(HOST, ""))).json()
+    assert meta["resource"] == f"{HOST}/mcp"
+    assert meta["authorization_servers"] == ["http://starproject.test"]
+    assert (await harness.client.get("/.well-known/oauth-protected-resource")).json() == meta
+
+
+def test_auth_server_can_be_named_and_is_absent_on_a_dev_server(env):
+    assert settings_mod.load({**env, "DESIGN_MCP_AUTH_SERVER": "https://project.example/"}).auth_server == (
+        "https://project.example"
+    )
+    dev = {k: v for k, v in env.items() if not k.startswith("DESIGN_MCP_VERIFY")}
+    assert settings_mod.load({**dev, "DESIGN_MCP_DEV_EMAIL": "a@berkeley.edu"}).auth_server is None
+    with pytest.raises(settings_mod.SettingsError):
+        settings_mod.load({**env, "DESIGN_MCP_AUTH_SERVER": "project.example"})
 
 
 # ── the verifier itself, against a fake STARProject ─────────────────────────
