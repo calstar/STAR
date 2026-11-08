@@ -1,7 +1,7 @@
 /**
- * The actuator tile is the control: green while commanded open, red while commanded closed,
- * grey before any command is known, and a click asks for the other state. With no state a
- * click closes. The tile never repaints itself on click -- colour follows [0x32] only.
+ * The actuator card is the control: one box along the bottom says OPEN or CLOSED (--- before
+ * any command is known), and a click on the card asks for the other state. With no state a
+ * click closes. The box never repaints itself on click -- it follows [0x32] only.
  */
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -34,9 +34,10 @@ const push = async (value: number) => {
 };
 
 const tile = (name = 'Fuel Main') => screen.getByRole('button', { name: new RegExp(`^${name}:`) });
+const box = (name = 'Fuel Main') => screen.getByTestId(`actuator-state:${name}`);
 const sent = () => sendCommand.mock.calls.map((c) => c[0].data.actuatorState);
 
-describe('actuator tile toggles by colour', () => {
+describe('actuator card toggles, the box shows its state', () => {
   beforeEach(async () => {
     buildAliasesFromConfig(CONFIG);
     controlEnabled = true;
@@ -47,37 +48,41 @@ describe('actuator tile toggles by colour', () => {
   });
   afterEach(() => cleanup());
 
-  it('has no Open/Close buttons, only the tile', () => {
+  it('has no Open/Close buttons, only the card', () => {
     expect(screen.queryByText(/^open$/i)).toBeNull();
     expect(screen.queryByText(/^close$/i)).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
   });
 
-  it('commanded open: green, and a click closes', async () => {
+  it('commanded open: the box says Open in green, and a click closes', async () => {
     await push(ActuatorState.OPEN);
     expect(tile()).toHaveAttribute('data-state', 'open');
-    expect(tile().className).toContain('green');
+    expect(box()).toHaveTextContent(/^Open$/);
+    expect(box().className).toContain('green');
     fireEvent.click(tile());
     expect(sent()).toEqual([ActuatorState.CLOSED]);
     // No optimistic repaint: still open until the stand says otherwise.
     expect(tile()).toHaveAttribute('data-state', 'open');
+    expect(box()).toHaveTextContent(/^Open$/);
   });
 
-  it('commanded closed: red, and a click opens', async () => {
+  it('commanded closed: the box says Closed in red, and a click opens', async () => {
     await push(ActuatorState.CLOSED);
     expect(tile()).toHaveAttribute('data-state', 'closed');
-    expect(tile().className).toContain('red');
+    expect(box()).toHaveTextContent(/^Closed$/);
+    expect(box().className).toContain('red');
     fireEvent.click(tile());
     expect(sent()).toEqual([ActuatorState.OPEN]);
   });
 
-  it('no state yet: neither colour, and a click closes', async () => {
+  it('no state yet: the box says ---, and a click closes', async () => {
     // Channel 2 has never had a command written; the store outlives each test.
     cleanup();
     const { default: ActuatorControlByName } = await import('@/components/controls/ActuatorControlByName');
     render(<ActuatorControlByName name="Fuel Vent" channel={2} entity="ACT.Fuel_Vent" boardId={11} />);
     expect(tile('Fuel Vent')).toHaveAttribute('data-state', 'no state');
-    expect(tile('Fuel Vent').className).not.toMatch(/green|red/);
+    expect(box('Fuel Vent')).toHaveTextContent(/^---$/);
+    expect(box('Fuel Vent').className).not.toMatch(/green|red/);
     fireEvent.click(tile('Fuel Vent'));
     expect(sent()).toEqual([ActuatorState.CLOSED]);
   });
