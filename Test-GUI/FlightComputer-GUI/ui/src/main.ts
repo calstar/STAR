@@ -121,6 +121,17 @@ function liveTab(v: View) {
   const l = v.live;
   return html`<div class="live-layout">
     <aside class="readings" data-testid="readings">
+      <h4 class="side-title">Flight stages</h4>
+      <ol class="stages" data-testid="stages">
+        ${v.stages.map(
+          (s) => html`<li class="stage ${s.status}">
+            <b>${s.name}${s.status === "current" ? html` <small>now</small>` : nothing}</b>
+            <span>${s.does}</span>
+            ${s.how ? html`<em>→ on ${s.how}</em>` : nothing}
+          </li>`,
+        )}
+      </ol>
+      <h4 class="side-title">Current readings</h4>
       ${ui.readings.map(
         (r) => html`<div class="reading ${r.stale ? "stale" : ""}">
           <div class="reading-label">${r.label}</div>

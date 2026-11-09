@@ -99,6 +99,7 @@ export interface View {
   state: [string, Tone] | null;
   notices: Notice[];
   status: StatusView;
+  stages: Stage[];
   live: LiveView;
   config: ConfigView;
   flights: FlightsView;
@@ -148,4 +149,12 @@ export interface Reading {
   values: [string, string][];
   unit: string;
   stale: boolean;
+}
+
+/** A flight stage on the Live tab's side panel (see stages.rs). */
+export interface Stage {
+  name: string;
+  does: string;
+  status: "done" | "current" | "next" | "later";
+  how: string | null;
 }

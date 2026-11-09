@@ -18,6 +18,7 @@ pub mod config;
 pub mod flights;
 pub mod format;
 pub mod live;
+pub mod stages;
 pub mod status;
 
 use std::path::PathBuf;
@@ -152,6 +153,8 @@ pub struct View {
     pub state: Option<(String, Tone)>,
     pub notices: Vec<Notice>,
     pub status: status::StatusView,
+    /// The flight stages, for the Live tab's side panel.
+    pub stages: Vec<stages::Stage>,
     pub live: live::LiveView,
     pub config: config::ConfigView,
     pub flights: flights::FlightsView,
@@ -410,6 +413,7 @@ impl Controller {
             state: self.sh.value("state").and_then(|v| v.label()).map(|l| (l.replace('_', " "), format::label_tone(l))),
             notices: self.sh.notices.clone(),
             status: status::view(&self.sh, &self.messages),
+            stages: stages::stages(self.sh.state()),
             live: self.live.view(),
             config: self.config.view(&self.sh),
             flights: self.flights.view(&self.sh),
