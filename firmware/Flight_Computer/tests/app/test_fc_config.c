@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "fc_config.h"
+#include "sensors_core.h"
 
 #define CHECK(c)                                                    \
     do {                                                            \
@@ -84,7 +85,30 @@ static void test_unreadable_slot_is_skipped(void) {
     CHECK(seq == 1 && got.radio_tx_dbm == 22 && next == 2);
 }
 
+static void test_sensor_registers_from_the_settings(void) {
+    /* The defaults are exactly the old constants (0x74, 0x71, 0x37, ...). */
+    fc_config_t c = fc_config_defaults();
+    sensors_settings_t s = sensors_settings(&c);
+    CHECK(s.imu_ctrl1_xl == 0x74 && s.imu_ctrl2_g == 0x71);
+    CHECK(s.imu_period_us == SENSORS_IMU_PERIOD_US);
+    CHECK(s.highg_ctrl1 == 0x37 &&
+          s.highg_period_us == SENSORS_HIGHG_PERIOD_US);
+    CHECK(s.baro_osr_step == 4 && s.baro_step_us == SENSORS_BARO_STEP_US);
+    /* 104 Hz, +-4 g, 250 dps; high-g 50 Hz; OSR 512 (datasheet codes). */
+    c.imu_odr_hz = 104;
+    c.imu_accel_fs_g = 4;
+    c.imu_gyro_fs_dps = 250;
+    c.highg_odr_hz = 50;
+    c.baro_osr = 512;
+    s = sensors_settings(&c);
+    CHECK(s.imu_ctrl1_xl == 0x48 && s.imu_ctrl2_g == 0x40);
+    CHECK(s.imu_period_us == 9615);
+    CHECK(s.highg_ctrl1 == 0x27 && s.highg_period_us == 20000);
+    CHECK(s.baro_osr_step == 1 && s.baro_step_us == 2000);
+}
+
 int main(void) {
+    test_sensor_registers_from_the_settings();
     test_defaults_are_allowed_and_round_trip();
     test_check_names_the_first_bad_field();
     test_newest_record_wins_and_torn_slots_are_skipped();

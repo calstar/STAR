@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "board_config.h"
 #include "board_exti.h"
 #include "board_spi.h"
 #include "cmsis_os2.h"
@@ -17,6 +18,7 @@ namespace {
 using namespace radio_link;
 
 constexpr uint32_t kEvDio1 = 1u << 0;
+constexpr uint32_t kEvConfig = 1u << 1;
 constexpr uint32_t kBusyTimeoutMs = 20;  // > calibrate 3.5 ms + TCXO 5 ms
 constexpr uint32_t kFrameTimeoutMs = 10;
 constexpr uint32_t kSetupRetryMs = 5000;
@@ -78,7 +80,10 @@ Sx1262 receiver(bus);
 Link link(kTargetId);
 
 osMutexId_t mutex;
+osThreadId_t thread;
 bool configured;
+LoraConfig pending;
+volatile bool reconfigure;
 uint16_t tx_seq;
 radio_status_t status;
 radio_rx_t last_rx;
@@ -109,12 +114,42 @@ void try_setup() {
     give();
 }
 
+// The link settings in fc_config, in the chip's codes. A bench build keeps
+// its lowered power (STAR_RADIO_POWER_DBM).
+LoraConfig lora_from(const fc_config_t& c) {
+    LoraConfig l = kLora;
+    l.freq_hz = c.radio_freq_hz;
+    l.sf = c.radio_sf;
+    l.bw = c.radio_bw_hz == 500000u   ? 0x06
+           : c.radio_bw_hz == 250000u ? 0x05
+                                      : 0x04;      // Table 13-48
+    l.cr = static_cast<uint8_t>(c.radio_cr - 4u);  // 5..8 -> 1..4
+    l.preamble = c.radio_preamble;
+    l.sync_word = c.radio_sync_word;
+#ifndef STAR_RADIO_POWER_DBM
+    l.power_dbm = c.radio_tx_dbm;
+#endif
+    return l;
+}
+
 void radio_task(void*) {
     board_exti_route(RADIO_DIO1_Pin, osThreadGetId(), kEvDio1);
+    const fc_config_t saved = board_config_get();
+    setup.set_config(lora_from(saved));
     try_setup();
     uint32_t last_setup = board_now_ms();
     for (;;) {
-        const uint32_t flags = osThreadFlagsWait(kEvDio1, osFlagsWaitAny, 1000);
+        const uint32_t flags =
+            osThreadFlagsWait(kEvDio1 | kEvConfig, osFlagsWaitAny, 1000);
+        if (reconfigure) {  // new settings: the full start-up again
+            take();
+            setup.set_config(pending);
+            reconfigure = false;
+            give();
+            try_setup();
+            last_setup = board_now_ms();
+            continue;
+        }
         if (!configured) {
             if (board_now_ms() - last_setup >= kSetupRetryMs) {
                 try_setup();
@@ -204,7 +239,8 @@ bool radio_task_start(void) {
         .tz_module = 0,
         .reserved = 0,
     };
-    return mutex && osThreadNew(radio_task, nullptr, &attr) != nullptr;
+    thread = mutex ? osThreadNew(radio_task, nullptr, &attr) : nullptr;
+    return thread != nullptr;
 }
 
 radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
@@ -237,6 +273,17 @@ radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
 
 void radio_task_status(radio_status_t* out) {
     *out = status;
+}
+
+void radio_task_set_config(const fc_config_t* c) {
+    if (!mutex || !thread) {
+        return;  // not started: it reads the settings when it starts
+    }
+    take();
+    pending = lora_from(*c);
+    reconfigure = true;
+    give();
+    (void)osThreadFlagsSet(thread, kEvConfig);
 }
 
 void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms) {

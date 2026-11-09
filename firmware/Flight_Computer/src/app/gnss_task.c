@@ -1,5 +1,6 @@
 #include "gnss_task.h"
 
+#include "board_config.h"
 #include "board_time.h"
 #include "board_uart9.h"
 #include "cmsis_os2.h"
@@ -57,6 +58,9 @@ static void gnss_task(void* argument) {
         }
         if (!active) {
             gps_power(true);
+            fc_config_t cfg = board_config_get(); /* this arming's settings */
+            core.rate_ms = cfg.gnss_rate_ms;
+            core.dyn_model = cfg.gnss_dyn_model;
             gnss_core_init(&core, board_time_us()); /* re-detect, reconfig */
             if (!uart_started) {
                 board_uart9_start(osThreadGetId(), EV_RX);

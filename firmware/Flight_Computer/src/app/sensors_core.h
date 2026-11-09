@@ -20,6 +20,7 @@
 
 #include "dev_bus.h"
 #include "dev_ms5611.h"
+#include "fc_config.h"
 #include "records.h"
 
 #ifdef __cplusplus
@@ -48,7 +49,17 @@ typedef struct {
     uint32_t retry_at_us;
 } sensors_device_t;
 
+/* Register values and periods from the settings (sensors_settings). */
 typedef struct {
+    uint8_t imu_ctrl1_xl, imu_ctrl2_g, highg_ctrl1, baro_osr_step;
+    uint32_t imu_period_us, highg_period_us, baro_step_us;
+} sensors_settings_t;
+
+sensors_settings_t sensors_settings(const fc_config_t* c);
+
+typedef struct {
+    /* Set before sensors_core_init; all zero = the defaults. */
+    sensors_settings_t settings;
     dev_bus_t imu_bus, highg_bus, baro_bus;
     sensors_sink_t sink;
     sensors_device_t imu, highg, baro;

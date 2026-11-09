@@ -1,6 +1,7 @@
 #include "idle_task.h"
 
 #include "board_bringup.h"
+#include "board_config.h"
 #include "board_sleep.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
@@ -14,7 +15,7 @@
 
 /* Aaron's proposals (src/app/IDLE.md); the budget covers one SF9 TxDone
  * (2 x 165 ms time on air + 50 ms, sx1262_setup.cpp). */
-static const idle_config_t config = {
+static idle_config_t config = {
     .heartbeat_interval_ms = 10000,
     .wake_tolerance_ms = 500,
     .callback_budget_ms = 500,
@@ -85,6 +86,7 @@ static void idle_task(void* argument) {
     static const idle_port_t port = {read_battery, on_usb, send_heartbeat,
                                      poll_command};
     (void)board_sleep_init();
+    config.heartbeat_interval_ms = board_config_get().hb_idle_ms;
     (void)idle_init(&idle, &config, &port, NULL);
     for (;;) {
         if (!want_active) {
@@ -119,6 +121,10 @@ bool idle_task_start(void) {
     commands = osMessageQueueNew(4, sizeof(uint8_t), NULL);
     thread = commands ? osThreadNew(idle_task, NULL, &attr) : NULL;
     return thread != NULL;
+}
+
+void idle_task_set_interval(uint32_t ms) {
+    idle.config.heartbeat_interval_ms = ms; /* from the next heartbeat */
 }
 
 void idle_task_set_active(bool on) {

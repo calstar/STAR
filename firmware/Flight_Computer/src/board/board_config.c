@@ -3,7 +3,9 @@
 #include <string.h>
 
 #include "FreeRTOS.h"
+#include "idle_task.h"
 #include "main.h"
+#include "radio_task.h"
 #include "task.h"
 
 #define SECTOR_ADDR 0x08060000UL
@@ -84,10 +86,23 @@ bool board_config_from_defaults(void) {
     return from_defaults;
 }
 
+static bool same_link(const fc_config_t* a, const fc_config_t* b) {
+    return a->radio_freq_hz == b->radio_freq_hz && a->radio_sf == b->radio_sf &&
+           a->radio_bw_hz == b->radio_bw_hz && a->radio_cr == b->radio_cr &&
+           a->radio_tx_dbm == b->radio_tx_dbm &&
+           a->radio_preamble == b->radio_preamble &&
+           a->radio_sync_word == b->radio_sync_word;
+}
+
 void board_config_set(const fc_config_t* c) {
     taskENTER_CRITICAL();
+    bool link = !same_link(&active, c);
     active = *c;
     taskEXIT_CRITICAL();
+    idle_task_set_interval(c->hb_idle_ms);
+    if (link) { /* a radio restart cuts the link: only when it changed */
+        radio_task_set_config(c);
+    }
 }
 
 static bool program(uint32_t addr, const uint8_t* rec) {

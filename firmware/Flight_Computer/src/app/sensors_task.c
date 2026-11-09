@@ -1,5 +1,6 @@
 #include "sensors_task.h"
 
+#include "board_config.h"
 #include "board_devbus.h"
 #include "board_exti.h"
 #include "board_time.h"
@@ -47,6 +48,8 @@ static void sensors_task(void* argument) {
         }
         if (!active) {
             osMutexAcquire(snapshot_lock, osWaitForever);
+            fc_config_t cfg = board_config_get(); /* this arming's settings */
+            core.settings = sensors_settings(&cfg);
             sensors_core_init(&core, board_time_us());
             osMutexRelease(snapshot_lock);
             active = true;

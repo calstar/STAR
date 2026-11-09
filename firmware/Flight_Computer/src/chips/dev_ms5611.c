@@ -48,11 +48,17 @@ int ms5611_read_prom(const dev_bus_t* bus, ms5611_prom_t* prom) {
 }
 
 int ms5611_start(const dev_bus_t* bus, ms5611_conversion_t which) {
-    if (!bus ||
+    return ms5611_start_osr(bus, which, 4);
+}
+
+int ms5611_start_osr(const dev_bus_t* bus, ms5611_conversion_t which,
+                     uint8_t osr_step) {
+    if (!bus || osr_step > 4 ||
         (which != MS5611_D1_PRESSURE && which != MS5611_D2_TEMPERATURE)) {
         return DEV_ERR_PARAM;
     }
-    const uint8_t cmd = (uint8_t)which;
+    /* 0x40/0x50 + 2 x step: OSR 256..4096 (AN520, datasheet p.10) */
+    const uint8_t cmd = (uint8_t)((which & 0xF0U) | (2U * osr_step));
     return bus->xfer(bus->ctx, &cmd, NULL, 1) == DEV_OK ? DEV_OK : DEV_ERR_BUS;
 }
 

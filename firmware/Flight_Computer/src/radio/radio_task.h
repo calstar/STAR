@@ -18,6 +18,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "fc_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -61,6 +63,10 @@ void radio_task_last_rx(radio_rx_t* out);
 void radio_task_on_command(void (*callback)(radio_command_t command));
 
 bool radio_task_start(void);
+
+/* New link settings (already checked): the radio task re-runs its full
+ * start-up with them, then returns to the RX mode it was in. */
+void radio_task_set_config(const fc_config_t* c);
 
 /* Switch the radio to sniff mode (SetRxDutyCycle, DS 13.1.7).
  * Safe to call from any task. The radio uses these parameters until

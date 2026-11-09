@@ -30,6 +30,8 @@ extern "C" {
 
 bool idle_task_start(void);
 void idle_task_set_active(bool on);
+/* Heartbeat interval (>= 1 s), from the next heartbeat on. */
+void idle_task_set_interval(uint32_t ms);
 void idle_task_command(mode_command_t command);
 
 /* The Idle instance, read-only (last heartbeat, schedule). */

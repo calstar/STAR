@@ -18,11 +18,12 @@ static void detect(gnss_core_t* c, uint32_t now_us) {
 }
 
 static void send_config(gnss_core_t* c, uint32_t now_us) {
-    static const ubx_item_t items[] = {
+    const ubx_item_t items[] = {
         {UBX_KEY_UART1OUTPROT_NMEA, 1, 0},
         {UBX_KEY_MSGOUT_NAV_PVT_UART1, 1, 1},
-        {UBX_KEY_RATE_MEAS, 2, GNSS_RATE_MS},
-        {UBX_KEY_NAVSPG_DYNMODEL, 1, UBX_DYNMODEL_AIR4},
+        {UBX_KEY_RATE_MEAS, 2, c->rate_ms ? c->rate_ms : GNSS_RATE_MS},
+        {UBX_KEY_NAVSPG_DYNMODEL, 1,
+         c->rate_ms ? c->dyn_model : UBX_DYNMODEL_AIR4},
     };
     uint8_t frame[64];
     size_t n = ubx_valset(frame, sizeof(frame), items,

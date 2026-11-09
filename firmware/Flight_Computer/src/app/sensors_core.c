@@ -31,7 +31,8 @@ static void succeeded(sensors_device_t* d) {
 
 static void init_imu(sensors_core_t* c, uint32_t now_us) {
     c->imu.inits++;
-    int err = ism330_init(&c->imu_bus);
+    int err = ism330_init_with(&c->imu_bus, c->settings.imu_ctrl1_xl,
+                               c->settings.imu_ctrl2_g);
     c->imu.ok = err == DEV_OK;
     c->imu.last_error = err;
     c->imu.error_streak = 0;
@@ -41,7 +42,7 @@ static void init_imu(sensors_core_t* c, uint32_t now_us) {
 
 static void init_highg(sensors_core_t* c, uint32_t now_us) {
     c->highg.inits++;
-    int err = h3lis_init(&c->highg_bus);
+    int err = h3lis_init_with(&c->highg_bus, c->settings.highg_ctrl1);
     c->highg.ok = err == DEV_OK;
     c->highg.last_error = err;
     c->highg.error_streak = 0;
@@ -60,7 +61,53 @@ static void init_baro(sensors_core_t* c, uint32_t now_us) {
     c->baro_due_us = now_us;
 }
 
+static uint8_t odr_code(uint16_t hz) { /* ISM330DHCX ODR nibble (p.53) */
+    static const uint16_t rates[] = {26, 52, 104, 208, 416, 833};
+    for (uint8_t i = 0; i < 6; ++i) {
+        if (rates[i] == hz) {
+            return (uint8_t)(i + 2U);
+        }
+    }
+    return 7; /* 833 Hz */
+}
+
+sensors_settings_t sensors_settings(const fc_config_t* c) {
+    sensors_settings_t s;
+    /* CTRL1_XL FS_XL[3:2]: 00 2 g, 01 16 g, 10 4 g, 11 8 g (p.53) */
+    uint8_t fs_xl = c->imu_accel_fs_g == 2   ? 0U
+                    : c->imu_accel_fs_g == 4 ? 2U
+                    : c->imu_accel_fs_g == 8 ? 3U
+                                             : 1U;
+    /* CTRL2_G FS_G[3:2] 250/500/1000/2000, FS_125 bit 1, FS_4000 bit 0 */
+    uint8_t fs_g = c->imu_gyro_fs_dps == 125    ? 0x02U
+                   : c->imu_gyro_fs_dps == 250  ? 0x00U
+                   : c->imu_gyro_fs_dps == 500  ? 0x04U
+                   : c->imu_gyro_fs_dps == 1000 ? 0x08U
+                   : c->imu_gyro_fs_dps == 2000 ? 0x0CU
+                                                : 0x01U;
+    uint8_t odr = odr_code(c->imu_odr_hz);
+    s.imu_ctrl1_xl = (uint8_t)(odr << 4 | fs_xl << 2);
+    s.imu_ctrl2_g = (uint8_t)(odr << 4 | fs_g);
+    s.imu_period_us = 1000000UL / c->imu_odr_hz;
+    /* H3LIS100DL CTRL_REG1: normal mode, DR[4:3] 50/100/400 Hz, X/Y/Z on */
+    uint8_t dr = c->highg_odr_hz == 50 ? 0U : c->highg_odr_hz == 100 ? 1U : 2U;
+    s.highg_ctrl1 = (uint8_t)(0x20U | dr << 3 | 0x07U);
+    s.highg_period_us = 1000000UL / c->highg_odr_hz;
+    /* MS5611 OSR 256 << step; conversion <= 0.60/1.17/2.28/4.54/9.04 ms */
+    static const uint8_t step_ms[] = {1, 2, 3, 5, 10};
+    s.baro_osr_step = 0;
+    while (s.baro_osr_step < 4 && (256U << s.baro_osr_step) < c->baro_osr) {
+        s.baro_osr_step++;
+    }
+    s.baro_step_us = step_ms[s.baro_osr_step] * 1000UL;
+    return s;
+}
+
 void sensors_core_init(sensors_core_t* c, uint32_t now_us) {
+    if (c->settings.imu_period_us == 0U) {
+        fc_config_t d = fc_config_defaults();
+        c->settings = sensors_settings(&d);
+    }
     init_imu(c, now_us);
     init_highg(c, now_us);
     init_baro(c, now_us);
@@ -118,7 +165,8 @@ static void step_baro(sensors_core_t* c, uint32_t now_us) {
     uint32_t raw = 0;
     switch (c->baro_phase) {
         case 0:
-            err = ms5611_start(&c->baro_bus, MS5611_D1_PRESSURE);
+            err = ms5611_start_osr(&c->baro_bus, MS5611_D1_PRESSURE,
+                                   c->settings.baro_osr_step);
             c->baro_phase = 1;
             break;
         case 1:
@@ -126,7 +174,8 @@ static void step_baro(sensors_core_t* c, uint32_t now_us) {
             if (err == DEV_OK) {
                 c->baro_d1 = raw;
                 c->baro_d1_us = now_us;
-                err = ms5611_start(&c->baro_bus, MS5611_D2_TEMPERATURE);
+                err = ms5611_start_osr(&c->baro_bus, MS5611_D2_TEMPERATURE,
+                                       c->settings.baro_osr_step);
             }
             c->baro_phase = err == DEV_OK ? 2 : 0;
             break;
@@ -143,7 +192,8 @@ static void step_baro(sensors_core_t* c, uint32_t now_us) {
                 c->baro_latest = r;
                 succeeded(&c->baro);
                 emit(c, REC_BARO, &r, sizeof(r));
-                err = ms5611_start(&c->baro_bus, MS5611_D1_PRESSURE);
+                err = ms5611_start_osr(&c->baro_bus, MS5611_D1_PRESSURE,
+                                       c->settings.baro_osr_step);
             }
             c->baro_phase = err == DEV_OK ? 1 : 0;
             break;
@@ -151,7 +201,7 @@ static void step_baro(sensors_core_t* c, uint32_t now_us) {
     if (err != DEV_OK) {
         failed(&c->baro, err, now_us);
     }
-    c->baro_due_us = now_us + (c->baro_phase ? SENSORS_BARO_STEP_US : 0U);
+    c->baro_due_us = now_us + (c->baro_phase ? c->settings.baro_step_us : 0U);
 }
 
 void sensors_core_step(sensors_core_t* c, uint32_t events, uint32_t imu_edge_us,
@@ -161,7 +211,7 @@ void sensors_core_step(sensors_core_t* c, uint32_t events, uint32_t imu_edge_us,
         if (events & SENSORS_EV_IMU) {
             read_imu(c, imu_edge_us, now_us);
         } else if (reached(now_us,
-                           c->imu_last_us + 2U * SENSORS_IMU_PERIOD_US)) {
+                           c->imu_last_us + 2U * c->settings.imu_period_us)) {
             c->imu.missed_drdy++;
             read_imu(c, now_us, now_us);
         }
@@ -172,8 +222,8 @@ void sensors_core_step(sensors_core_t* c, uint32_t events, uint32_t imu_edge_us,
     if (c->highg.ok) {
         if (events & SENSORS_EV_HIGHG) {
             read_highg(c, highg_edge_us, now_us);
-        } else if (reached(now_us,
-                           c->highg_last_us + 2U * SENSORS_HIGHG_PERIOD_US)) {
+        } else if (reached(now_us, c->highg_last_us +
+                                       2U * c->settings.highg_period_us)) {
             c->highg.missed_drdy++;
             read_highg(c, now_us, now_us);
         }
@@ -201,14 +251,14 @@ static uint32_t sooner(uint32_t a, uint32_t b) {
 
 uint32_t sensors_core_wait_us(const sensors_core_t* c, uint32_t now_us) {
     uint32_t wait = SENSORS_RETRY_US;
+    wait = sooner(wait, c->imu.ok
+                            ? until(now_us, c->imu_last_us +
+                                                2U * c->settings.imu_period_us)
+                            : until(now_us, c->imu.retry_at_us));
     wait = sooner(
-        wait, c->imu.ok
-                  ? until(now_us, c->imu_last_us + 2U * SENSORS_IMU_PERIOD_US)
-                  : until(now_us, c->imu.retry_at_us));
-    wait = sooner(wait, c->highg.ok
-                            ? until(now_us, c->highg_last_us +
-                                                2U * SENSORS_HIGHG_PERIOD_US)
-                            : until(now_us, c->highg.retry_at_us));
+        wait, c->highg.ok ? until(now_us, c->highg_last_us +
+                                              2U * c->settings.highg_period_us)
+                          : until(now_us, c->highg.retry_at_us));
     wait = sooner(wait, c->baro.ok ? until(now_us, c->baro_due_us)
                                    : until(now_us, c->baro.retry_at_us));
     return wait;

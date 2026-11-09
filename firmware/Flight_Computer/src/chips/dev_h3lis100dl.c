@@ -38,6 +38,10 @@ static int read_reg(const dev_bus_t* bus, uint8_t reg, uint8_t* value) {
 }
 
 int h3lis_init(const dev_bus_t* bus) {
+    return h3lis_init_with(bus, 0x37);
+}
+
+int h3lis_init_with(const dev_bus_t* bus, uint8_t ctrl_reg1) {
     if (!bus || !bus->xfer) {
         return DEV_ERR_PARAM;
     }
@@ -49,11 +53,13 @@ int h3lis_init(const dev_bus_t* bus) {
         return DEV_ERR_ID;
     }
     for (size_t i = 0; i < sizeof(config) / sizeof(config[0]); ++i) {
-        if (write_reg(bus, config[i].reg, config[i].value) != DEV_OK ||
+        uint8_t want =
+            config[i].reg == REG_CTRL_REG1 ? ctrl_reg1 : config[i].value;
+        if (write_reg(bus, config[i].reg, want) != DEV_OK ||
             read_reg(bus, config[i].reg, &value) != DEV_OK) {
             return DEV_ERR_BUS;
         }
-        if (value != config[i].value) {
+        if (value != want) {
             return DEV_ERR_VERIFY;
         }
     }

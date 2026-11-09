@@ -39,6 +39,9 @@ typedef struct {
 
 /* Identify, software-reset, configure and verify every register. */
 int ism330_init(const dev_bus_t* bus);
+/* The same, with CTRL1_XL / CTRL2_G from the settings (ism330_init: 0x74,
+ * 0x71). */
+int ism330_init_with(const dev_bus_t* bus, uint8_t ctrl1_xl, uint8_t ctrl2_g);
 
 /* Accelerometer and gyro to power-down (Idle): ODR_XL = ODR_G = 0000 in
  * CTRL1_XL / CTRL2_G (Table 43 p.49, Table 46 p.50); 3 uA (p.13). DRDY

@@ -46,6 +46,9 @@ int ms5611_read_prom(const dev_bus_t* bus, ms5611_prom_t* prom);
 
 /* Start a conversion; read it with ms5611_read_adc() >= 10 ms later. */
 int ms5611_start(const dev_bus_t* bus, ms5611_conversion_t which);
+/* The same at OSR 256 << osr_step (0..4; ms5611_start: 4 = OSR 4096). */
+int ms5611_start_osr(const dev_bus_t* bus, ms5611_conversion_t which,
+                     uint8_t osr_step);
 
 /* 24-bit result of the last conversion. */
 int ms5611_read_adc(const dev_bus_t* bus, uint32_t* raw);

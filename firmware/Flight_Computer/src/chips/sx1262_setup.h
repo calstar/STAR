@@ -80,6 +80,11 @@ public:
         : bus_(bus), control_(control), cfg_(cfg) {
     }
 
+    // New link settings; they take effect at the next configure().
+    void set_config(const LoraConfig& cfg) {
+        cfg_ = cfg;
+    }
+
     // Full start-up from power-on (chip out of reset, BUSY low). Leaves the
     // chip in continuous RX with RF_SW set for receive.
     SetupStep configure();

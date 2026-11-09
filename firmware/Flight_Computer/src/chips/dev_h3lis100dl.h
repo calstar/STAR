@@ -35,6 +35,8 @@ typedef struct {
 
 /* Identify, configure and verify. */
 int h3lis_init(const dev_bus_t* bus);
+/* The same, with CTRL_REG1 from the settings (h3lis_init: 0x37). */
+int h3lis_init_with(const dev_bus_t* bus, uint8_t ctrl_reg1);
 
 /* Power-down (Idle): CTRL_REG1 PM = 000 (Table 18 p.25), axes left on:
  * 0x07, the power-on value (p.24). h3lis_init() wakes it again. */

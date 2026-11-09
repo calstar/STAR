@@ -57,6 +57,9 @@ typedef struct {
     uint8_t tries;
     uint32_t deadline_us;
     uint32_t pps_us;
+    /* Set before gnss_core_init; 0 = GNSS_RATE_MS / airborne <4 g. */
+    uint16_t rate_ms;
+    uint8_t dyn_model;
     /* Counters */
     uint32_t detected_baud; /* last baud a frame was heard at */
     uint32_t fixes;         /* NAV-PVT records produced */
