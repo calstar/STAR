@@ -118,12 +118,12 @@ bool Sx1262Setup::write_register(uint16_t addr, const uint8_t* data,
     return cmd(tx, static_cast<uint16_t>(3 + n));
 }
 
-bool Sx1262Setup::set_packet_params(uint8_t payload_len) {
+bool Sx1262Setup::set_packet_params(uint8_t payload_len, uint16_t preamble) {
     // LoRa: preamble, explicit header, payload length (max in RX), CRC on,
     // standard IQ (Tables 13-66..13-70, p.91-92).
     const uint8_t tx[7] = {kOpSetPacketParams,
-                           static_cast<uint8_t>(cfg_.preamble >> 8),
-                           static_cast<uint8_t>(cfg_.preamble),
+                           static_cast<uint8_t>(preamble >> 8),
+                           static_cast<uint8_t>(preamble),
                            0x00,
                            payload_len,
                            0x01,
@@ -155,7 +155,7 @@ bool Sx1262Setup::send_duty_cycle() {
 
 bool Sx1262Setup::back_to_rx() {
     control_.set_rx_switch(true);
-    if (!set_packet_params(0xFF))
+    if (!set_packet_params(0xFF, cfg_.preamble))
         return false;
     if (rx_mode_ == RxMode::DutyCycle) {
         return send_duty_cycle();
@@ -256,7 +256,7 @@ SetupStep Sx1262Setup::configure() {
     if (!cmd(modulation, sizeof modulation)) {
         return SetupStep::Modulation;
     }
-    if (!set_packet_params(0xFF)) {
+    if (!set_packet_params(0xFF, cfg_.preamble)) {
         return SetupStep::PacketParams;
     }
     const uint8_t irq[9] = {kOpSetDioIrqParams,
@@ -296,7 +296,8 @@ SetupStep Sx1262Setup::configure() {
     return back_to_rx() ? SetupStep::Ok : SetupStep::StartRx;
 }
 
-RadioStatus Sx1262Setup::send(const uint8_t* bytes, uint8_t len) {
+RadioStatus Sx1262Setup::send(const uint8_t* bytes, uint8_t len,
+                              uint16_t preamble) {
     if (bytes == nullptr || len == 0) {
         return RadioStatus::ErrTooLong;  // radio.h: 1..255 bytes
     }
@@ -324,12 +325,17 @@ RadioStatus Sx1262Setup::send(const uint8_t* bytes, uint8_t len) {
         static_cast<uint8_t>((kIrqTxDone | kIrqTimeout) >> 8),
         static_cast<uint8_t>(kIrqTxDone | kIrqTimeout)};
     // Chip timeout: twice the time on air, in 15.625 us steps (p.69).
-    const uint32_t toa_us = lora_time_on_air_us(cfg_, len);
+    LoraConfig tx_cfg = cfg_;  // this packet's preamble; RX keeps cfg_'s
+    if (preamble) {
+        tx_cfg.preamble = preamble;
+    }
+    const uint32_t toa_us = lora_time_on_air_us(tx_cfg, len);
     const uint32_t steps = (2u * toa_us * 64u + 999u) / 1000u;
     const uint8_t set_tx[4] = {kOpSetTx, static_cast<uint8_t>(steps >> 16),
                                static_cast<uint8_t>(steps >> 8),
                                static_cast<uint8_t>(steps)};
-    if (!write_register(kRegTxModulation, &mod, 1) || !set_packet_params(len) ||
+    if (!write_register(kRegTxModulation, &mod, 1) ||
+        !set_packet_params(len, tx_cfg.preamble) ||
         !cmd(tx_, static_cast<uint16_t>(2 + len)) ||
         !cmd(clear, sizeof clear) || !cmd(set_tx, sizeof set_tx)) {
         back_to_rx();

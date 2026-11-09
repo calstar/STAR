@@ -92,6 +92,8 @@ radio_rx_t last_rx;
 bool want_sniff;
 uint32_t want_rx_ms, want_sleep_ms;
 void (*on_command)(radio_command_t);
+radio_frame_cb_t on_frame;
+uint16_t tx_preamble;  // this send's preamble (0 = configured); under mutex
 uint8_t frame_buf[kFrameMaxLen];
 
 void take() {
@@ -207,6 +209,10 @@ void radio_task(void*) {
                        : sizeof last_rx.payload);
             last_rx.at_ms = board_now_ms();
             last_rx.count++;
+            if (on_frame) {
+                on_frame(static_cast<uint8_t>(f.type), f.seq, f.payload,
+                         f.payload_len, ps.rssi_x2, ps.snr_x4);
+            }
         }
         // In sniff mode the chip returns to STDBY_RC after any DIO1 event
         // (RxDone, HeaderErr, CrcErr, p.71); restart the duty cycle so the
@@ -244,7 +250,7 @@ RadioStatus radio_receive(uint8_t* buf, uint8_t max_len, uint8_t& len) {
     return receiver.receive(buf, max_len, len);
 }
 RadioStatus radio_send(const uint8_t* bytes, uint8_t len) {
-    return setup.send(bytes, len);
+    return setup.send(bytes, len, tx_preamble);
 }
 }  // namespace radio_link
 
@@ -252,6 +258,10 @@ extern "C" {
 
 void radio_task_on_command(void (*callback)(radio_command_t)) {
     on_command = callback;
+}
+
+void radio_task_on_frame(radio_frame_cb_t callback) {
+    on_frame = callback;
 }
 
 bool radio_task_start(void) {
@@ -275,6 +285,13 @@ bool radio_task_start(void) {
 
 radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
                                           uint8_t len) {
+    return radio_task_send_frame_preamble(type, payload, len, 0);
+}
+
+radio_send_result_t radio_task_send_frame_preamble(uint8_t type,
+                                                   const uint8_t* payload,
+                                                   uint8_t len,
+                                                   uint16_t preamble) {
     if (!mutex) {
         return RADIO_SEND_NO_RADIO;
     }
@@ -290,7 +307,9 @@ radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
         return RADIO_SEND_BAD_FRAME;
     }
     tx_seq++;
+    tx_preamble = preamble;
     const RadioStatus rs = radio_send(frame_buf, static_cast<uint8_t>(n));
+    tx_preamble = 0;
     status.tx_ok = setup.tx_ok();
     status.tx_timeouts = setup.tx_timeouts();
     give();

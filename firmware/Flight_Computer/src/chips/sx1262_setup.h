@@ -93,7 +93,9 @@ public:
     // neither TxDone nor the chip's own Timeout came in time; ErrNotFound
     // if the chip stops answering. Always returns the chip to whichever RX
     // mode was last set (continuous or duty cycle).
-    RadioStatus send(const uint8_t* bytes, uint8_t len);
+    // preamble: symbols for this packet only (0 = the configured one). A
+    // receiver that sniffs (Idle) needs one longer than its sleep.
+    RadioStatus send(const uint8_t* bytes, uint8_t len, uint16_t preamble = 0);
 
     // Switch to sniff mode (DS 13.1.7, p.71): listen rx_ms, sleep sleep_ms,
     // repeat. Must be called from STDBY_RC or any RX mode. Returns false if
@@ -123,7 +125,7 @@ private:
     bool cmd(const uint8_t* tx, uint16_t n);
     bool read_register(uint16_t addr, uint8_t& value);
     bool write_register(uint16_t addr, const uint8_t* data, uint8_t n);
-    bool set_packet_params(uint8_t payload_len);
+    bool set_packet_params(uint8_t payload_len, uint16_t preamble);
     bool irq_status(uint16_t& irq);
     bool back_to_rx();
     bool send_duty_cycle();

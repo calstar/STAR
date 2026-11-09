@@ -62,6 +62,13 @@ void radio_task_last_rx(radio_rx_t* out);
 /* Called from the radio task when the ARM gate confirms a command. */
 void radio_task_on_command(void (*callback)(radio_command_t command));
 
+/* Every frame received with a good CRC, whole (the ground station's view).
+ * Called in the radio task: copy and return, never block. */
+typedef void (*radio_frame_cb_t)(uint8_t type, uint16_t seq,
+                                 const uint8_t* payload, uint8_t len,
+                                 int16_t rssi_x2, int16_t snr_x4);
+void radio_task_on_frame(radio_frame_cb_t callback);
+
 bool radio_task_start(void);
 
 /* New link settings (already checked): the radio task re-runs its full
@@ -77,6 +84,13 @@ void radio_task_start_sniff(uint32_t rx_ms, uint32_t sleep_ms);
 void radio_task_start_continuous_rx(void);
 
 /* Frame type (src/radio/frame.h FrameType) + payload; blocks until TxDone. */
+/* As radio_task_send_frame, with a preamble of `preamble` symbols for this
+ * frame (Arm/Un-arm to a rocket that sniffs in Idle: > 1 s, ~260+). */
+radio_send_result_t radio_task_send_frame_preamble(uint8_t type,
+                                                   const uint8_t* payload,
+                                                   uint8_t len,
+                                                   uint16_t preamble);
+
 radio_send_result_t radio_task_send_frame(uint8_t type, const uint8_t* payload,
                                           uint8_t len);
 

@@ -237,6 +237,30 @@ static void test_send_waits_for_tx_done_and_returns_to_rx(void) {
     TEST_ASSERT_EQUAL_UINT32(1, radio.tx_ok());
 }
 
+static void test_send_with_a_long_preamble_only_for_that_packet(void) {
+    // Arm/Un-arm to a sniffing rocket: 300 symbols on this packet only.
+    Sx1262Setup radio(chip, control, kDefaultLora);
+    TEST_ASSERT_EQUAL(SetupStep::Ok, radio.configure());
+    chip.n_cmds = 0;
+    const uint8_t frame[16] = {0};
+    TEST_ASSERT_EQUAL(RadioStatus::Ok, radio.send(frame, sizeof frame, 300));
+    int pp = chip.find(0x8C);
+    TEST_ASSERT_EQUAL_HEX8(0x01, chip.cmds[pp][1]);  // 300 = 0x012C
+    TEST_ASSERT_EQUAL_HEX8(0x2C, chip.cmds[pp][2]);
+    // The chip timeout covers the longer packet.
+    LoraConfig long_cfg = kDefaultLora;
+    long_cfg.preamble = 300;
+    const uint32_t steps =
+        (2u * lora_time_on_air_us(long_cfg, sizeof frame) * 64u + 999u) / 1000u;
+    int tx = chip.find(0x83);
+    TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(steps >> 16), chip.cmds[tx][1]);
+    TEST_ASSERT_EQUAL_HEX8(static_cast<uint8_t>(steps >> 8), chip.cmds[tx][2]);
+    // Listening again with the configured 8 symbols.
+    int rx_pp = chip.find(0x8C, tx);
+    TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[rx_pp][1]);
+    TEST_ASSERT_EQUAL_HEX8(0x08, chip.cmds[rx_pp][2]);
+}
+
 static void test_send_keeps_a_packet_that_just_arrived(void) {
     Sx1262Setup radio(chip, control, kDefaultLora);
     radio.configure();
@@ -394,6 +418,7 @@ int main(int, char**) {
     RUN_TEST(test_configure_follows_the_datasheet_order);
     RUN_TEST(test_configure_names_the_failing_step);
     RUN_TEST(test_send_waits_for_tx_done_and_returns_to_rx);
+    RUN_TEST(test_send_with_a_long_preamble_only_for_that_packet);
     RUN_TEST(test_send_keeps_a_packet_that_just_arrived);
     RUN_TEST(test_send_times_out);
     RUN_TEST(test_send_refuses_bad_input_and_dead_chip);
