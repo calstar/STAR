@@ -41,13 +41,15 @@ Flight_Computer/
 ├── firmware.ioc              # STM32CubeMX project: pins, clocks, peripherals
 ├── .mxproject                # CubeMX bookkeeping (generated)
 ├── Core/                     # CubeMX only: main.c, stm32h7xx_*, freertos.c (generated)
-├── Drivers/  Middlewares/    # ST HAL and FreeRTOS (vendored by CubeMX)
+├── Drivers/  Middlewares/    # ST HAL, FreeRTOS and the USB device library (vendored by CubeMX)
+├── USB_DEVICE/               # CubeMX only: the USB serial (CDC) device; user code in usbd_cdc_if.c
 ├── src/                      # every hand-written file
-│   ├── board/                # talks to the STM32: board_*, bring-up, sleep, eMMC adapter
+│   ├── board/                # talks to the STM32: board_*, bring-up, sleep, eMMC adapter, USB link
 │   ├── chips/                # chip drivers: IMU, high-g, baro, UBX, SD SPI, SX1262, eMMC card
 │   ├── radio/                # radio link: frame, ARM gate, Link, radio.h, radio task
 │   └── app/                  # portable logic and tasks: cores, flight state, Idle, self-test,
-│                             #   eMMC log, records (+ IDLE.md, SELF_TEST.md, DEVICE_CHECKS.md)
+│                             #   eMMC log, records, USB frames, gui_map (+ IDLE.md, SELF_TEST.md,
+│                             #   DEVICE_CHECKS.md)
 ├── tests/                    # every host test
 │   ├── radio/                # PlatformIO (Unity) suites: pio test -e native
 │   │   └── test_radio_seam/  #   e.g. 14 tests for what radio.h promises, with a pretend radio
@@ -79,6 +81,9 @@ You should see 14 tests pass. If `pio` is missing, install PlatformIO with
   before building or flashing. Tools to install, ST-Link wiring, upload commands
   and the rules for the CubeMX project.
 
+- [`src/app/gui_map.c`](src/app/gui_map.c): the one table that gives each firmware
+  value its name in the bench GUI (`Test-GUI/FlightComputer-GUI`, protocol in its
+  `PROTOCOL.md`). Add a row there and the GUI shows it.
 - [`src/radio/radio.h`](src/radio/radio.h): the radio functions. The comment above each
   one says what it promises.
 - [`tests/radio/test_radio_seam/test_main.cpp`](tests/radio/test_radio_seam/test_main.cpp):
