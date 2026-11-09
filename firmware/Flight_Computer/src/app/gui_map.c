@@ -81,6 +81,15 @@ static const struct {
 };
 #define COUNT (sizeof rows / sizeof rows[0])
 
+/* Every row fits one VALUE payload (7 bytes + three NUL-ended strings), or
+ * the build stops here instead of the row going out empty. */
+#define X(type, expr, name, unit, labels)                               \
+    _Static_assert(7U + sizeof(name) + sizeof(unit) + sizeof(labels) <= \
+                       GUI_VALUE_MAX,                                   \
+                   "gui_map row " name " is longer than GUI_VALUE_MAX");
+GUI_MAP(X)
+#undef X
+
 static uint32_t values[COUNT];
 static sensors_core_t sensors; /* a snapshot: too big for the stack */
 static const idle_t* idle;

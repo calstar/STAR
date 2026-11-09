@@ -9,7 +9,8 @@
 extern "C" {
 #endif
 
-#define GUI_VALUE_MAX 200U /* longest VALUE payload */
+#define GUI_VALUE_MAX \
+    256U /* longest VALUE payload (gui_map.c checks each row) */
 
 uint8_t gui_map_count(void);
 /* Read every row's value now; then gui_map_value() packs them. */
