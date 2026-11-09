@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "arm_gate.h"
 #include "board.h"
 #include "board_config.h"
 #include "board_exti.h"
@@ -258,6 +259,24 @@ extern "C" {
 
 void radio_task_on_command(void (*callback)(radio_command_t)) {
     on_command = callback;
+}
+
+radio_send_result_t radio_task_ground_command(bool arm) {
+    // > the 1 s Idle sniff sleep (mode_core.h: >= 260 symbols at SF9/125k)
+    constexpr uint16_t kLongPreamble = 300;
+    uint8_t p[kArmLen];
+    put_u32(p, kArmKey);
+    put_u32(p + 4, ~kArmKey);
+    p[8] = kTargetId;
+    const uint8_t type =
+        static_cast<uint8_t>(arm ? FrameType::Arm : FrameType::UnArm);
+    const uint8_t len = arm ? kArmLen : kUnArmLen;
+    radio_send_result_t r =
+        radio_task_send_frame_preamble(type, p, len, kLongPreamble);
+    if (r == RADIO_SEND_OK) {  // the pair: the next seq, right away
+        r = radio_task_send_frame_preamble(type, p, len, kLongPreamble);
+    }
+    return r;
 }
 
 void radio_task_on_frame(radio_frame_cb_t callback) {

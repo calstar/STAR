@@ -17,6 +17,10 @@ extern "C" {
 void usb_link_rx(const uint8_t* bytes, uint32_t len); /* USB interrupt */
 void usb_link_run(void); /* the USB task's loop; never returns */
 uint16_t usb_link_rate_hz(void);
+/* A radio frame heard (radio_task_on_frame, receiver role): queued and
+ * sent to the laptop as RADIO_RX. Radio task; never blocks (drops if full). */
+void usb_link_radio_rx(uint8_t type, uint16_t seq, const uint8_t* payload,
+                       uint8_t len, int16_t rssi_x2, int16_t snr_x4);
 
 #ifdef __cplusplus
 }

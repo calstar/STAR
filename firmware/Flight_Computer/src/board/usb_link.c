@@ -10,6 +10,7 @@
 #include "gui_map.h"
 #include "main.h"
 #include "mode.h"
+#include "radio_task.h"
 #include "records.h"
 #include "sensors_task.h"
 #include "stream_buffer.h"
@@ -18,12 +19,22 @@
 
 enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03 };
 enum { CONFIG_GET = 0x10, CONFIG_SET, CONFIG_SAVE, CONFIG_REVERT };
+enum { RADIO_ARM = 0x40, RADIO_UNARM = 0x41, RADIO_RX = 0xB2 };
 enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, CONFIG = 0x90, SAMPLE = 0xB0 };
 enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, WRONG_STATE = 4 };
-enum { FLASH_ERROR = 6, NOT_IMPLEMENTED = 8 };
+enum { FLASH_ERROR = 6, NOT_IMPLEMENTED = 8, RADIO_ERROR = 10 };
 #define MAX_RATE_HZ 200U
 
 static StreamBufferHandle_t rx;
+
+/* One received radio frame, as RADIO_RX sends it. */
+typedef struct {
+    uint8_t type, len;
+    uint16_t seq;
+    int16_t rssi_x2, snr_x4;
+    uint8_t payload[248]; /* frame.h kFrameMaxPayload */
+} heard_t;
+static osMessageQueueId_t heard;
 static volatile uint16_t rate_hz;
 static uint8_t mask;
 static uint8_t in[USB_FRAME_MAX];
@@ -165,6 +176,16 @@ static void handle(const uint8_t* f, size_t len) {
         case CONFIG_REVERT:
             handle_config(type, seq, p, len);
             break;
+        case RADIO_ARM:
+        case RADIO_UNARM:
+            if (board_config_boot_role() != FC_ROLE_RECEIVER) {
+                ack(type, seq, WRONG_STATE, 0xFF); /* a rocket sends none */
+            } else {
+                radio_send_result_t r =
+                    radio_task_ground_command(type == RADIO_ARM);
+                ack(type, seq, r == RADIO_SEND_OK ? OK : RADIO_ERROR, r);
+            }
+            break;
         default:
             ack(type, seq, NOT_IMPLEMENTED, 0);
             break;
@@ -221,12 +242,43 @@ void usb_link_rx(const uint8_t* bytes, uint32_t len) {
     }
 }
 
+void usb_link_radio_rx(uint8_t type, uint16_t seq, const uint8_t* payload,
+                       uint8_t len, int16_t rssi_x2, int16_t snr_x4) {
+    static heard_t h; /* radio task only: one at a time */
+    if (!heard || len > sizeof h.payload) {
+        return;
+    }
+    h.type = type;
+    h.len = len;
+    h.seq = seq;
+    h.rssi_x2 = rssi_x2;
+    h.snr_x4 = snr_x4;
+    memcpy(h.payload, payload, len);
+    (void)osMessageQueuePut(heard, &h, 0, 0); /* full: dropped */
+}
+
+/* type u8, seq u16, rssi_x2 i16, snr_x4 i16, len u8, payload */
+static void send_heard(void) {
+    static heard_t h;
+    static uint8_t p[8 + sizeof h.payload];
+    while (heard && osMessageQueueGet(heard, &h, NULL, 0) == osOK) {
+        p[0] = h.type;
+        memcpy(p + 1, &h.seq, 2);
+        memcpy(p + 3, &h.rssi_x2, 2);
+        memcpy(p + 5, &h.snr_x4, 2);
+        p[7] = h.len;
+        memcpy(p + 8, h.payload, h.len);
+        (void)send(RADIO_RX, 0, p, (uint16_t)(8U + h.len), false);
+    }
+}
+
 uint16_t usb_link_rate_hz(void) {
     return rate_hz;
 }
 
 void usb_link_run(void) {
     rx = xStreamBufferCreate(1024, 1);
+    heard = osMessageQueueNew(6, sizeof(heard_t), NULL);
     uint32_t next_values = 0, next_sample = 0;
     for (;;) {
         uint8_t b[64];
@@ -238,6 +290,7 @@ void usb_link_run(void) {
             rate_hz = 0; /* the next program to open the port asks again */
             continue;
         }
+        send_heard(); /* receiver role: what the radio heard */
         uint32_t now = osKernelGetTickCount();
         if ((int32_t)(now - next_values) >= 0) {
             send_values();

@@ -1,8 +1,10 @@
 #include "app.h"
 
+#include "board_config.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
 #include "gnss_task.h"
+#include "ground_task.h"
 #include "idle_task.h"
 #include "mode.h"
 #include "radio_task.h"
@@ -29,6 +31,9 @@ static void on_radio_command(radio_command_t command) {
 }
 
 bool app_start(void) {
+    if (board_config_boot_role() == FC_ROLE_RECEIVER) {
+        return ground_start(); /* the ground station: the radio only */
+    }
     bool ok = start_emmc();
     ok = sensors_task_start() && ok;
     ok = gnss_task_start() && ok;
