@@ -18,6 +18,7 @@
 #include "gnss_task.h"
 #include "idle_task.h"
 #include "mode.h"
+#include "radio_task.h"
 #include "sensors_task.h"
 #include "usb_frame.h"
 #include "usb_link.h"
@@ -27,6 +28,11 @@
 #define RESULT "PENDING,PASS,FAIL,TIMEOUT,NOT_CONFIGURED,NOT_IMPLEMENTED"
 #define DISK "UNMOUNTED,MOUNTED,FULL,FAULT"
 #define FIX "NO_FIX,DEAD_RECKONING,2D,3D,GNSS_DR,TIME_ONLY"
+/* SetupStep (sx1262_setup.h): OK, or the first start-up step that failed */
+#define SETUP                                                              \
+    "OK,STANDBY,REGULATOR,TCXO,CALIBRATE,RF_SWITCH,PACKET_TYPE,FREQUENCY," \
+    "IMAGE_CAL,PA_CONFIG,TX_PARAMS,BUFFER_BASE,MODULATION,PACKET_PARAMS,"  \
+    "IRQ_MAP,TX_CLAMP,SYNC_WORD,DEVICE_ERRORS,START_RX"
 
 /* clang-format off */
 #define GUI_MAP(X)                                                                      \
@@ -37,6 +43,8 @@
     X(U8,  idle->last.battery,                    "battery_state",       "",   BATTERY) \
     X(U32, idle->last.sequence,                   "idle_heartbeats",     "",   "")      \
     X(U8,  idle->last.previous_send,              "idle_last_send",      "",   RESULT)  \
+    X(U32, radio.setup_attempts,                  "radio_setups",        "",   "")      \
+    X(U8,  radio.setup_step,                      "radio_setup",         "",   SETUP)   \
     X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "",   RESULT)  \
     X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "",   RESULT)  \
     X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "",   RESULT)  \
@@ -77,6 +85,7 @@ static uint32_t values[COUNT];
 static sensors_core_t sensors; /* a snapshot: too big for the stack */
 static const idle_t* idle;
 static const gnss_core_t* gnss;
+static radio_status_t radio;
 static const emmc_log_t* emmc;
 
 static uint8_t flags(void) {
@@ -116,6 +125,7 @@ void gui_map_read(void) {
     sensors_task_snapshot(&sensors);
     idle = idle_task_state();
     gnss = gnss_task_core();
+    radio_task_status(&radio);
     emmc = emmc_stm32_log();
     size_t i = 0;
 #define X(type, expr, name, unit, labels) values[i++] = RAW_##type(expr);
