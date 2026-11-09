@@ -56,8 +56,8 @@ static void put32(uint8_t* p, uint32_t v) {
 }
 
 static void send_info(uint8_t seq) {
-    /* protocol 1, config v1 of 42 B, uptime, UID, fw_git, build time 0 */
-    uint8_t p[40] = {1, 1, 42, 0};
+    /* protocol 1, config version and size, uptime, UID, fw_git, build 0 */
+    uint8_t p[40] = {1, FC_CONFIG_VERSION, FC_CONFIG_SIZE, 0};
     put32(p + 4, osKernelGetTickCount());
     put32(p + 8, HAL_GetUIDw0());
     put32(p + 12, HAL_GetUIDw1());

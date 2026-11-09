@@ -16,10 +16,10 @@
 extern "C" {
 #endif
 
-/* Blob: header 4 + fields 34 + CRC-32 4. Record: "FCCF", sequence, blob,
+/* Blob: header 4 + fields 35 + CRC-32 4. Record: "FCCF", sequence, blob,
  * padded to two 32-byte flash words. */
-#define FC_CONFIG_VERSION 1U
-#define FC_CONFIG_SIZE 42U
+#define FC_CONFIG_VERSION 2U
+#define FC_CONFIG_SIZE 43U
 #define FC_CONFIG_RECORD 64U
 #define FC_CONFIG_MAGIC 0x46434346UL
 
@@ -42,12 +42,16 @@ typedef struct {
     uint16_t imu_gyro_fs_dps;
     uint16_t highg_odr_hz;
     uint16_t baro_osr;
+    uint8_t role; /* FC_ROLE_*: read at boot; a change applies after a reboot */
 } fc_config_t;
+
+#define FC_ROLE_TRANSMITTER 0U /* the flight computer */
+#define FC_ROLE_RECEIVER 1U    /* the ground station */
 
 fc_config_t fc_config_defaults(void);
 
 /* 0 if every field is one the firmware can run, else the first bad field's
- * id (1..18, PROTOCOL.md order). */
+ * id (1..19, PROTOCOL.md order). */
 uint8_t fc_config_check(const fc_config_t* c);
 
 void fc_config_pack(const fc_config_t* c, uint8_t out[FC_CONFIG_SIZE]);

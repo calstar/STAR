@@ -27,6 +27,7 @@
 #define BATTERY "UNKNOWN,OK,WARN,FAIL,USB,INVALID"
 #define RESULT "PENDING,PASS,FAIL,TIMEOUT,NOT_CONFIGURED,NOT_IMPLEMENTED"
 #define DISK "UNMOUNTED,MOUNTED,FULL,FAULT"
+#define ROLE "TRANSMITTER,RECEIVER" /* FC_ROLE_*, as this boot runs */
 #define FIX "NO_FIX,DEAD_RECKONING,2D,3D,GNSS_DR,TIME_ONLY"
 /* SetupStep (sx1262_setup.h): OK, or the first start-up step that failed */
 #define SETUP                                                              \
@@ -36,6 +37,7 @@
 
 /* clang-format off */
 #define GUI_MAP(X)                                                                          \
+    X(U8,  board_config_boot_role(),              "role",                "",       ROLE)    \
     X(U8,  app_state(),                           "state",               "",       FLIGHT)  \
     X(U8,  flags(),                               "flags",               "",       "")      \
     X(U32, osKernelGetTickCount(),                "uptime",              "ms",     "")      \

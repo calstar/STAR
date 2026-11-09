@@ -30,6 +30,7 @@ fc_config_t fc_config_defaults(void) {
         .imu_gyro_fs_dps = 4000,
         .highg_odr_hz = 400,
         .baro_osr = 4096,
+        .role = FC_ROLE_TRANSMITTER,
     };
     return c;
 }
@@ -90,6 +91,8 @@ uint8_t fc_config_check(const fc_config_t* c) {
         return 17;
     if (!ONE_OF(c->baro_osr, 256, 512, 1024, 2048, 4096))
         return 18;
+    if (c->role > FC_ROLE_RECEIVER)
+        return 19;
     return 0;
 }
 
@@ -129,7 +132,8 @@ static uint32_t get(const uint8_t** p, size_t n) {
     X(imu_accel_fs_g, 1)       \
     X(imu_gyro_fs_dps, 2)      \
     X(highg_odr_hz, 2)         \
-    X(baro_osr, 2)
+    X(baro_osr, 2)             \
+    X(role, 1)
 /* clang-format on */
 
 void fc_config_pack(const fc_config_t* c, uint8_t out[FC_CONFIG_SIZE]) {

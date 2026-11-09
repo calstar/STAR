@@ -26,6 +26,9 @@ bool board_config_saved(fc_config_t* out);
 bool board_config_unsaved(void);
 /* Flash held no valid settings at boot: running the defaults. */
 bool board_config_from_defaults(void);
+/* The role this boot runs (FC_ROLE_*): the running settings' role at boot.
+ * A role set since takes effect at the next boot. */
+uint8_t board_config_boot_role(void);
 
 /* Run these settings (already checked). They reach each chip when it next
  * starts; the radio and the Idle interval at once. */

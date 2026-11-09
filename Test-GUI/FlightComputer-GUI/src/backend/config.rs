@@ -471,7 +471,7 @@ mod tests {
     fn json_round_trip_and_rejections() {
         let v = cfg::defaults().with("radio_sf", 10);
         assert_eq!(import_json(&export_json(&v)).unwrap(), v);
-        let wrong = export_json(&v).replace("\"config_version\": 1", "\"config_version\": 2");
+        let wrong = export_json(&v).replace("\"config_version\": 2", "\"config_version\": 3");
         assert!(import_json(&wrong).unwrap_err().contains("version"));
         let unknown = export_json(&v).replace("\"radio_sf\"", "\"radio_spreading\"");
         assert!(import_json(&unknown).is_err());

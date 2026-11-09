@@ -14,6 +14,7 @@
 
 static fc_config_t active, saved;
 static bool have_saved, from_defaults, storage_ok;
+static uint8_t boot_role;
 static uint32_t sequence;
 static size_t next_slot;
 
@@ -61,6 +62,11 @@ void board_config_init(void) {
     }
     from_defaults = !have_saved;
     active = have_saved ? saved : fc_config_defaults();
+    boot_role = active.role;
+}
+
+uint8_t board_config_boot_role(void) {
+    return boot_role;
 }
 
 fc_config_t board_config_get(void) {

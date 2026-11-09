@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::ops::{Index, IndexMut};
 
-pub const CONFIG_VERSION: u8 = 1;
+pub const CONFIG_VERSION: u8 = 2;
 const HEADER: usize = 4; // u8 version, u8 reserved, u16 size (whole blob incl. CRC)
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,7 +124,7 @@ macro_rules! field {
     (@set $f:ident, help, $v:expr) => { $f.help = $v };
 }
 
-pub const N: usize = 18;
+pub const N: usize = 19;
 
 pub fn fields() -> &'static [Field; N] {
     use std::sync::OnceLock;
@@ -375,14 +375,28 @@ fn build_fields() -> [Field; N] {
             source = "TE MS5611-01BA03 datasheet p.3 (max conversion time per OSR)",
             help = "Barometer oversampling. Higher is less noise but slower."
         ),
+        // ---- what this board is
+        field!(
+            19,
+            "role",
+            "Board",
+            "Role",
+            U8,
+            0,
+            "",
+            choices = &[0, 1],
+            labels = &[(0, "Transmitter (flight computer)"), (1, "Receiver (ground station)")],
+            source = "firmware src/app/fc_config.h FC_ROLE_*: read at boot",
+            help = "What this board runs. Save, then reboot the board for a change to take effect."
+        ),
     ]
 }
 
-pub const GROUPS: [&str; 5] = ["Radio", "GNSS", "IMU", "High-g", "Barometer"];
+pub const GROUPS: [&str; 6] = ["Radio", "GNSS", "IMU", "High-g", "Barometer", "Board"];
 
 pub const SIZE: usize = {
     // header + body + CRC-32; body sizes in FIELDS order (checked in a test)
-    HEADER + (4 + 1 + 4 + 1 + 1 + 2 + 2 + 2 + 2 + 2) + (2 + 1 + 1) + (2 + 1 + 2) + 2 + 2 + 4
+    HEADER + (4 + 1 + 4 + 1 + 1 + 2 + 2 + 2 + 2 + 2) + (2 + 1 + 1) + (2 + 1 + 2) + 2 + 2 + 1 + 4
 };
 
 pub fn index(key: &str) -> usize {
@@ -571,7 +585,7 @@ mod tests {
     fn size_matches_fields_and_protocol_md() {
         let body: usize = fields().iter().map(|f| f.ty.size()).sum();
         assert_eq!(SIZE, HEADER + body + 4);
-        assert_eq!(SIZE, 42); // PROTOCOL.md §5
+        assert_eq!(SIZE, 43); // PROTOCOL.md §5
     }
 
     #[test]

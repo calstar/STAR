@@ -117,9 +117,9 @@ copy of each sensor (`sensors_core_t.*_latest`), sent at `rate_hz` (≤ 200). If
 the CDC IN endpoint is busy, the board **drops** the sample. It never waits, and
 it never delays a sensor task or the log writer.
 
-## 5. Config blob (version 1, 42 B)
+## 5. Config blob (version 2, 43 B)
 
-Header `u8 version (1), u8 reserved, u16 size (42)`, then the fields below in
+Header `u8 version (2), u8 reserved, u16 size (43)`, then the fields below in
 order, then `u32 CRC-32` (IEEE, the same function as `emmc_log_crc32`) over
 everything before it. Values are in physical units; the firmware maps them to
 register codes. The GUI's allowed sets (and their datasheet citations) are
@@ -145,6 +145,7 @@ register codes. The GUI's allowed sets (and their datasheet citations) are
 | 16 | imu_gyro_fs_dps | u16 | 125, 250, 500, 1000, 2000, 4000 | 4000 |
 | 17 | highg_odr_hz | u16 | 50, 100, 400 (no 1000 Hz normal mode) | 400 |
 | 18 | baro_osr | u16 | 256, 512, 1024, 2048, 4096 | 4096 |
+| 19 | role | u8 | 0 transmitter (flight computer), 1 receiver (ground station); read at boot | 0 |
 
 The allowed values are what the firmware can run (`src/app/fc_config.c`
 `fc_config_check`), narrower than the chips in places: SF 7–12 and 125/250/500 kHz
@@ -192,7 +193,7 @@ stays in the band**: `radio_freq_hz ± radio_bw_hz / 2` must be inside
   script's FLASH length becomes 384K.
 - **The config goes in every flight log.** On ARMED, right after
   SESSION_START, the board appends record **0x16 REC_CONFIG** carrying the active
-  blob (42 B). Without it a downloaded flight cannot know its accel and gyro LSB
+  blob (43 B). Without it a downloaded flight cannot know its accel and gyro LSB
   sizes, so the GUI falls back to the defaults and labels the flight that way.
 
 ## 6. eMMC log access (the Flights tab)
