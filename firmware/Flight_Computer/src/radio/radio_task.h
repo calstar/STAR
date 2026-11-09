@@ -93,7 +93,7 @@ radio_send_result_t radio_task_send_frame_preamble(uint8_t type,
 
 /* Ground station: Arm sends two Arm frames with consecutive seqs (the
  * rocket's gate needs both within kArmConfirmWindowMs), Un-arm sends two
- * Un-arm frames; both with a 300-symbol preamble, heard by a rocket that
+ * Un-arm frames; both with a 260-symbol preamble, heard by a rocket that
  * sniffs in Idle. Blocks ~3 s. The result of the last frame sent. */
 radio_send_result_t radio_task_ground_command(bool arm);
 

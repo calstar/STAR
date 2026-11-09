@@ -262,8 +262,11 @@ void radio_task_on_command(void (*callback)(radio_command_t)) {
 }
 
 radio_send_result_t radio_task_ground_command(bool arm) {
-    // > the 1 s Idle sniff sleep (mode_core.h: >= 260 symbols at SF9/125k)
-    constexpr uint16_t kLongPreamble = 300;
+    // A sniffing rocket (33 ms listen, 1000 ms sleep) must overlap the
+    // preamble: >= 1033 ms. Once it detects one it waits 2 x 33 + 1000 =
+    // 1066 ms for the header (SX1262 DS 13.1.7), so no longer than that:
+    // 260 symbols at SF9/125 kHz = 1065 ms (mode_core.h, test_sniff).
+    constexpr uint16_t kLongPreamble = 260;
     uint8_t p[kArmLen];
     put_u32(p, kArmKey);
     put_u32(p + 4, ~kArmKey);
