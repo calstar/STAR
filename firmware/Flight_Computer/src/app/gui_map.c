@@ -34,6 +34,8 @@
     X(U32, osKernelGetTickCount(),                "uptime",              "ms", "")      \
     X(U16, idle->last.supply_mv,                  "battery",             "mV", "")      \
     X(U8,  idle->last.battery,                    "battery_state",       "",   BATTERY) \
+    X(U32, idle->last.sequence,                   "idle_heartbeats",     "",   "")      \
+    X(U8,  idle->last.previous_send,              "idle_last_send",      "",   RESULT)  \
     X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "",   RESULT)  \
     X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "",   RESULT)  \
     X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "",   RESULT)  \
