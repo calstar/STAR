@@ -53,6 +53,10 @@ int payload_len_for(uint8_t type) {
             return kArmLen;
         case FrameType::UnArm:
             return kUnArmLen;
+        case FrameType::Status:
+            return kStatusLen;
+        case FrameType::Telemetry:
+            return kTelemetryLen;
         default:
             return -1;
     }

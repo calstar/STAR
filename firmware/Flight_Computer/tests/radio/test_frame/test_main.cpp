@@ -99,12 +99,11 @@ static void test_roundtrip_every_type(void) {
     static const struct {
         FrameType type;
         uint8_t len;
-    } cases[] = {{FrameType::Heartbeat, 7},
-                 {FrameType::SelfTest, 4},
-                 {FrameType::Arm, 9},
-                 {FrameType::UnArm, 0}};
+    } cases[] = {{FrameType::Heartbeat, 7}, {FrameType::SelfTest, 4},
+                 {FrameType::Arm, 9},       {FrameType::UnArm, 0},
+                 {FrameType::Status, 45},   {FrameType::Telemetry, 57}};
     for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; i++) {
-        uint8_t payload[9];
+        uint8_t payload[57];
         for (unsigned k = 0; k < sizeof payload; k++) {
             payload[k] = static_cast<uint8_t>(0x30 + k);
         }

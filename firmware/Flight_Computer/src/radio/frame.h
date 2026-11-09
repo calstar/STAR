@@ -46,6 +46,8 @@ static_assert(kFrameMaxLen <= kLoraMaxPacket,
 enum class FrameType : uint8_t {
     Heartbeat = 0x01,  // rocket -> ground
     SelfTest = 0x02,   // rocket -> ground
+    Status = 0x03,     // rocket -> ground, Idle: ADC + chip checks
+    Telemetry = 0x20,  // rocket -> ground, armed: latest sensors
     Arm = 0x10,        // ground -> rocket
     UnArm = 0x11,      // ground -> rocket
 };
@@ -55,6 +57,9 @@ constexpr uint8_t kHeartbeatLen = 7;
 constexpr uint8_t kSelfTestLen = 4;
 constexpr uint8_t kArmLen = 9;
 constexpr uint8_t kUnArmLen = 0;
+// Layouts in src/app/status_report.h (STATUS_REPORT_LEN, TELEMETRY_LEN).
+constexpr uint8_t kStatusLen = 45;
+constexpr uint8_t kTelemetryLen = 57;
 
 enum class FrameStatus : uint8_t {
     Ok = 0,
