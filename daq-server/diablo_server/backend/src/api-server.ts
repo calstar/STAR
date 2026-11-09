@@ -836,6 +836,9 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           tabs: gui.tabs ?? [],
           // [gui.groups]: page name → ordered role-name list (explicit sensor→page membership).
           groups: gui.groups ?? {},
+          // The state diagram's grid size (frontend lib/panel-layout.ts); absent = fit the states.
+          state_grid_rows: gui.state_grid_rows,
+          state_grid_cols: gui.state_grid_cols,
         }));
       } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
         // Return sensor configuration derived from config.toml:

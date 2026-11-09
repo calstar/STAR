@@ -8,6 +8,8 @@ import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
+import { orderByNames, stateGridSize, firstFreeCell } from '@/lib/panel-layout';
+import { ActuatorLayoutEditor, StateGridEditor, type Placement } from '@/components/controls/MainPageLayoutEditors';
 import { validateControllerPwmActuators, pwmAssignmentMap } from '@/lib/types';
 import {
   pressureLimitRows, pressureLimitKeyForRole, pressureRolesOf,
@@ -165,6 +167,10 @@ interface ConfigData {
     points_per_second?: number;
     tabs?: string[];
     pressure_bars?: Array<{ label?: string; role?: string; avg_roles?: string[]; limits?: string; color?: string }>;
+    // Main-page layout (lib/panel-layout.ts): actuator tile order, and the state grid's size.
+    actuator_order?: string[];
+    state_grid_rows?: number;
+    state_grid_cols?: number;
   };
 }
 
@@ -1664,6 +1670,48 @@ export default function ConfigPage() {
       return next as ConfigData;
     });
 
+  // ── Main-page layout: actuator tile order + the state grid ───────────────────
+  const actuatorTiles = (() => {
+    const roles = (config.actuator_roles || {}) as Record<string, any>;
+    const bvBoards = ballValveBoardIds(config);
+    return orderByNames(Object.keys(roles), config.gui?.actuator_order).map((name) => {
+      const arr = Array.isArray(roles[name]) ? roles[name] : [];
+      const channel = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
+      const boardId = typeof arr[2] === 'number' ? arr[2] : undefined;
+      return {
+        name, channel, boardId, entity: `ACT.${name.replace(/\s+/g, '_')}`,
+        ballValve: boardId != null && bvBoards.has(boardId),
+      };
+    });
+  })();
+  const setActuatorOrder = (names: string[]) =>
+    setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), actuator_order: names } }));
+  // A rename or removal keeps [gui] actuator_order naming only roles that exist.
+  const orderAfterRename = (gui: ConfigData['gui'], from: string, to: string | null) => {
+    const order = gui?.actuator_order;
+    if (!Array.isArray(order)) return gui;
+    return {
+      ...gui,
+      actuator_order: order.flatMap((n) => (n === from ? (to === null ? [] : [to]) : [n])),
+    };
+  };
+  const placeStates = (moves: Placement[]) =>
+    setConfig((prev) => {
+      const list = [...((prev.states || []) as any[])];
+      for (const { idx, cell } of moves) {
+        const st = { ...list[idx] };
+        if (cell) { st.panel_row = cell.row; st.panel_col = cell.col; }
+        else { delete st.panel_row; delete st.panel_col; }
+        list[idx] = st;
+      }
+      return { ...prev, states: list } as ConfigData;
+    });
+  const resizeStateGrid = (size: { rows: number; cols: number }) =>
+    setConfig((prev) => ({
+      ...prev,
+      gui: { ...(prev.gui || {}), state_grid_rows: size.rows, state_grid_cols: size.cols },
+    }));
+
   const setGuiTabs = (tabsList: string[]) =>
     setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), tabs: tabsList } }));
   const setGuiBars = (bars: any[]) =>
@@ -1952,17 +2000,17 @@ export default function ConfigPage() {
     const name = `New State ${next}`;
     // Auto-place on the diagram at the first free (row, col) so a new state is visible there right
     // away rather than off-diagram. Coordinates are 0-based (see lib/states.ts).
-    const usedCells = new Set(
-      stateList
-        .filter((s) => typeof s.panel_row === 'number' && typeof s.panel_col === 'number')
-        .map((s) => `${s.panel_row}:${s.panel_col}`),
-    );
-    const WIDTH = 6;
-    let pr = 0, pc = 0;
-    while (usedCells.has(`${pr}:${pc}`)) { pc += 1; if (pc >= WIDTH) { pc = 0; pr += 1; } }
+    // The first empty cell of the state grid (the one the State Machine tab draws), row by row.
+    // A full grid grows by a row, and a configured row count grows with it.
+    // With no [gui] state_grid_cols set, it is at least 6 wide, the width new states always wrapped at.
+    const fitted = stateGridSize(stateList, config.gui);
+    const grid = typeof config.gui?.state_grid_cols === 'number' ? fitted : { ...fitted, cols: Math.max(fitted.cols, 6) };
+    const free = firstFreeCell(stateList, grid) ?? { row: grid.rows, col: 0 };
+    const growRows = free.row >= grid.rows && typeof config.gui?.state_grid_rows === 'number';
     setConfig((prev) => ({
       ...prev,
-      states: [...((prev.states || []) as any[]), { id: next, name, panel_row: pr, panel_col: pc }],
+      states: [...((prev.states || []) as any[]), { id: next, name, panel_row: free.row, panel_col: free.col }],
+      ...(growRows ? { gui: { ...(prev.gui || {}), state_grid_rows: free.row + 1 } } : {}),
     } as ConfigData));
     // Keep the tables in step: the new state appears as a column everywhere immediately (and a
     // self-transition-only row in the transitions matrix), so a freshly added state is usable
@@ -3659,7 +3707,7 @@ export default function ConfigPage() {
                           onRename={(newName) => {
                             const rebuilt: Record<string, any> = {};
                             for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
-                            setConfig({ ...config, actuator_roles: rebuilt });
+                            setConfig({ ...config, actuator_roles: rebuilt, gui: orderAfterRename(config.gui, name, newName) });
                           }}
                           onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
                           className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -3711,7 +3759,7 @@ export default function ConfigPage() {
                           onClick={() => {
                             const updated = { ...config.actuator_roles };
                             delete updated[name];
-                            setConfig({ ...config, actuator_roles: updated });
+                            setConfig({ ...config, actuator_roles: updated, gui: orderAfterRename(config.gui, name, null) });
                           }}
                           className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
                         >
@@ -3790,6 +3838,15 @@ export default function ConfigPage() {
                   </>
                 );
                 })()}
+              </div>
+
+              <div className="mt-8 border-t border-gray-700 pt-6">
+                <h3 className="text-lg font-semibold mb-1">Main Page Actuators</h3>
+                <p className="text-sm text-text-muted mb-4">
+                  The actuator grid as the main page draws it. Drag a tile onto another&apos;s place to
+                  reorder; Save applies it. A new role goes at the end.
+                </p>
+                <ActuatorLayoutEditor tiles={actuatorTiles} onReorder={setActuatorOrder} disabled={!canEdit} />
               </div>
             </div>
           )}
@@ -4184,6 +4241,25 @@ export default function ConfigPage() {
                   has put every valve in a defined position.
                 </p>
               </div>
+
+              {/* ── Where each state sits on the main page's diagram ─────────────────────── */}
+              {stateList.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-lg font-semibold">State Grid</h3>
+                  <p className="text-sm text-text-muted">
+                    The main page&apos;s state diagram. Drag a state onto an empty cell to move it, or
+                    onto another state to swap them. A new state takes the first empty cell. Abort
+                    states can be placed but are not drawn on the main page.
+                  </p>
+                  <StateGridEditor
+                    states={stateList}
+                    size={stateGridSize(stateList, config.gui)}
+                    onPlace={placeStates}
+                    onResize={resizeStateGrid}
+                    disabled={!canEdit}
+                  />
+                </div>
+              )}
 
               {/* ── Dynamic-state scripts ──────────────────────────────────────────────────
                   Collapsed by default: most rigs have no dynamic states, and a permanently open
