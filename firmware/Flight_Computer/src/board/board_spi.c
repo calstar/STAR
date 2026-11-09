@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "board_time.h"
 #include "cmsis_os2.h"
 #include "main.h"
 
@@ -112,10 +113,29 @@ void board_spi_unlock(board_spi_device_t device) {
     }
 }
 
+static void wake(const board_spi_route_t* r) {
+    if (!r->busy_port ||
+        HAL_GPIO_ReadPin(r->busy_port, r->busy_pin) != GPIO_PIN_SET)
+        return;
+    HAL_GPIO_WritePin(r->cs_port, r->cs_pin, GPIO_PIN_RESET);
+    uint32_t t0 = board_time_us();
+    while (board_time_us() - t0 < 2U) { /* a short low pulse is enough */
+    }
+    HAL_GPIO_WritePin(r->cs_port, r->cs_pin, GPIO_PIN_SET);
+}
+
+void board_spi_wake(board_spi_device_t device) {
+    const board_spi_route_t* r = route(device);
+    if (r) {
+        wake(r);
+    }
+}
+
 static board_spi_status_t wait_busy_low(const board_spi_route_t* r,
                                         uint32_t deadline_ms) {
     if (!r->busy_port)
         return BOARD_SPI_OK;
+    wake(r);
     while (HAL_GPIO_ReadPin(r->busy_port, r->busy_pin) == GPIO_PIN_SET) {
         if (board_deadline_passed(deadline_ms))
             return BOARD_SPI_TIMEOUT;

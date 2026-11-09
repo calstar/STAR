@@ -60,6 +60,11 @@ void board_spi_unlock(board_spi_device_t device);
  * low) CS low, len bytes full duplex, CS high. tx == NULL clocks out 0xFF;
  * rx == NULL discards the reply.
  */
+/* SX1262: if BUSY is high, the chip may be asleep between Idle sniffs, and
+ * only an NSS falling edge wakes it (SX1262 DS 13.1.1); waiting for BUSY
+ * first never ends. Pulses NSS once when BUSY is high. Other devices: no-op. */
+void board_spi_wake(board_spi_device_t device);
+
 board_spi_status_t board_spi_frame(board_spi_device_t device, const uint8_t* tx,
                                    uint8_t* rx, uint16_t len,
                                    uint32_t deadline_ms);

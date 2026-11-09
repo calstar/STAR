@@ -29,6 +29,7 @@ constexpr uint8_t kTargetId = 0x01;
 class BoardBus : public SpiBus {
 public:
     bool wait_busy() override {
+        board_spi_wake(BOARD_SPI_RADIO);  // asleep between Idle sniffs
         const uint32_t deadline = board_now_ms() + kBusyTimeoutMs;
         while (HAL_GPIO_ReadPin(RADIO_BUSY_GPIO_Port, RADIO_BUSY_Pin) ==
                GPIO_PIN_SET) {
