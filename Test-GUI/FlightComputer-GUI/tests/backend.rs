@@ -91,10 +91,10 @@ fn status_and_live() {
     let rows: Vec<_> = st.sections.iter().flat_map(|s| s.rows.iter()).collect();
     let find = |name: &str| rows.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("{name}"));
     assert_eq!((find("State").value.as_str(), find("State").chip), ("IDLE", Some(Tone::Good)));
-    // The simulated board reads 7890-7909 mV.
+    // The simulated board reads 7890-7909 mV, shown in volts.
     let battery = find("Battery");
-    let mv: u32 = battery.value.strip_suffix(" mV").and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{}", battery.value));
-    assert!((7_890..=7_910).contains(&mv), "{}", battery.value);
+    let volts: f64 = battery.value.strip_suffix(" V").and_then(|v| v.parse().ok()).unwrap_or_else(|| panic!("{}", battery.value));
+    assert!((7.85..=7.95).contains(&volts), "{}", battery.value);
     assert_eq!((find("Battery state").value.as_str(), find("Battery state").chip), ("OK", Some(Tone::Good)));
     assert_eq!(find("Gnss satellites").value, "11", "a row the app has no code for is still shown");
     // Samples are scaled with the ACTIVE config: a resting board reads ~1 g.

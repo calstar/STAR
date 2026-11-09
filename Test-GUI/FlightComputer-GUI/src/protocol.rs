@@ -478,7 +478,14 @@ impl Value {
         match (self.label(), self.unit.is_empty()) {
             (Some(l), _) => l.to_string(),
             (None, true) => self.number().to_string(),
-            (None, false) => format!("{} {}", self.number(), self.unit),
+            (None, false) => match self.unit.as_str() {
+                "mV" => format!("{:.2} V", self.number() as f64 / 1000.0),
+                "ms" => {
+                    let t = self.number().max(0) / 1000;
+                    format!("{} h {:02} min {:02} s", t / 3600, t / 60 % 60, t % 60)
+                }
+                unit => format!("{} {unit}", self.number()),
+            },
         }
     }
     pub fn pack(&self) -> Vec<u8> {
@@ -651,8 +658,12 @@ mod tests {
         assert_eq!(Value::unpack(&v.pack()).unwrap(), v);
         assert_eq!(v.text(), "IDLE");
         assert_eq!(Value { raw: 7, ..v.clone() }.text(), "7", "no label for 7: the number");
-        let mv = Value { ty: value_type::I16, raw: (-5i16) as u16 as u32, unit: "mV".into(), labels: vec![], ..v.clone() };
-        assert_eq!(Value::unpack(&mv.pack()).unwrap().text(), "-5 mV");
+        let signed = Value { ty: value_type::I16, raw: (-5i16) as u16 as u32, unit: "Hz".into(), labels: vec![], ..v.clone() };
+        assert_eq!(Value::unpack(&signed.pack()).unwrap().text(), "-5 Hz");
+        let mv = Value { ty: value_type::U16, raw: 7_915, unit: "mV".into(), labels: vec![], ..v.clone() };
+        assert_eq!(mv.text(), "7.92 V", "mV is shown in volts");
+        let ms = Value { ty: value_type::U32, raw: 3_725_400, unit: "ms".into(), labels: vec![], ..v.clone() };
+        assert_eq!(ms.text(), "1 h 02 min 05 s", "ms is shown as a duration");
         assert!(Value::unpack(&v.pack()[..8]).is_err(), "cut short");
         assert!(Value::unpack(&Value { index: 3, ..v.clone() }.pack()).is_err(), "row past the count");
         let i = Info {
