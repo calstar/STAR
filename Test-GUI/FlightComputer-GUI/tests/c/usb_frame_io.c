@@ -3,10 +3,13 @@
  *
  *   usb_frame_io encode       one frame per line, hex, 0x00 included
  *   usb_frame_io decode HEX   "type seq payload-hex", or "bad"
+ *   usb_frame_io defaults     the firmware's default config blob, hex
+ *   usb_frame_io check HEX    "bad-blob", or the first bad field (0 = ok)
  */
 #include <stdio.h>
 #include <string.h>
 
+#include "fc_config.h"
 #include "usb_frame.h"
 
 static void print_hex(const uint8_t* b, size_t n) {
@@ -30,6 +33,27 @@ int main(int argc, char** argv) {
         memset(p, 0xAB, 300); /* a run longer than one COBS block */
         encode(0xB0, p, 300);
         encode(0x7F, p, 0);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "defaults") == 0) {
+        fc_config_t d = fc_config_defaults();
+        uint8_t blob[FC_CONFIG_SIZE];
+        fc_config_pack(&d, blob);
+        print_hex(blob, sizeof blob);
+        printf("\n");
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "check") == 0) {
+        uint8_t blob[FC_CONFIG_SIZE + 1];
+        size_t n = strlen(argv[2]) / 2;
+        if (n > sizeof blob) return 2;
+        for (size_t i = 0; i < n; ++i) sscanf(argv[2] + 2 * i, "%2hhx", &blob[i]);
+        fc_config_t c;
+        if (!fc_config_unpack(blob, n, &c)) {
+            printf("bad-blob\n");
+        } else {
+            printf("%u\n", fc_config_check(&c));
+        }
         return 0;
     }
     if (argc == 3 && strcmp(argv[1], "decode") == 0) {

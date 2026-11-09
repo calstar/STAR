@@ -155,9 +155,9 @@ fn build_fields() -> [Field; N] {
             U8,
             9,
             "",
-            choices = &[5, 6, 7, 8, 9, 10, 11, 12],
-            labels = &[(5, "SF5"), (6, "SF6"), (7, "SF7"), (8, "SF8"), (9, "SF9"), (10, "SF10"), (11, "SF11"), (12, "SF12")],
-            source = "Semtech SX1261/2 datasheet Rev 2.2 §6.1.1.1, SF5-SF12",
+            choices = &[7, 8, 9, 10, 11, 12],
+            labels = &[(7, "SF7"), (8, "SF8"), (9, "SF9"), (10, "SF10"), (11, "SF11"), (12, "SF12")],
+            source = "Semtech SX1261/2 datasheet Rev 2.2 §6.1.1.1 (chip: SF5-SF12); SF7-12 is what the firmware's time on air covers (firmware src/app/fc_config.c)",
             help = "Higher is longer range but slower."
         ),
         field!(
@@ -168,20 +168,9 @@ fn build_fields() -> [Field; N] {
             U32,
             125_000,
             "Hz",
-            choices = &[7810, 10420, 15630, 20830, 31250, 41670, 62500, 125_000, 250_000, 500_000],
-            labels = &[
-                (7810, "7.8 kHz"),
-                (10420, "10.4 kHz"),
-                (15630, "15.6 kHz"),
-                (20830, "20.8 kHz"),
-                (31250, "31.25 kHz"),
-                (41670, "41.7 kHz"),
-                (62500, "62.5 kHz"),
-                (125_000, "125 kHz"),
-                (250_000, "250 kHz"),
-                (500_000, "500 kHz")
-            ],
-            source = "Semtech SX1261/2 datasheet Rev 2.2 §13.4.5 SetModulationParams, LoRa BW",
+            choices = &[125_000, 250_000, 500_000],
+            labels = &[(125_000, "125 kHz"), (250_000, "250 kHz"), (500_000, "500 kHz")],
+            source = "Semtech SX1261/2 datasheet Rev 2.2 §13.4.5 SetModulationParams (chip: 7.8-500 kHz); 125/250/500 kHz is what the firmware's time on air covers (firmware src/app/fc_config.c)",
             help = "Narrower is longer range but slower."
         ),
         field!(
@@ -203,7 +192,7 @@ fn build_fields() -> [Field; N] {
             "Radio",
             "TX power",
             I8,
-            14,
+            22,
             "dBm",
             limits = (-9, 22),
             source = "Semtech SX1261/2 datasheet Rev 2.2 §13.4.4 SetTxParams, -9..+22 dBm on the SX1262 PA",
@@ -215,7 +204,7 @@ fn build_fields() -> [Field; N] {
             "Radio",
             "Preamble",
             U16,
-            12,
+            8,
             "symbols",
             limits = (6, 1024),
             source = "Semtech SX1261/2 datasheet Rev 2.2 §13.4.6 SetPacketParams (chip allows 1..65535)",
@@ -240,11 +229,11 @@ fn build_fields() -> [Field; N] {
             "Radio",
             "Heartbeat in self-test",
             U16,
-            500,
+            1000,
             "ms",
             limits = (100, 60_000),
             source = "#137: 1-2 Hz during self-test",
-            help = "How often the board radios its status during self-test."
+            help = "How often the board radios its status during self-test. Saved, but the firmware sends nothing during self-test yet."
         ),
         field!(
             9,
@@ -254,8 +243,8 @@ fn build_fields() -> [Field; N] {
             U16,
             10_000,
             "ms",
-            limits = (100, 60_000),
-            source = "#137: roughly every ten seconds in idle",
+            limits = (1000, 60_000),
+            source = "#137: roughly every ten seconds in idle; at least 1 s (Idle sleeps in whole seconds, firmware src/app/fc_config.c)",
             help = "How often the board radios its status while idle on the pad."
         ),
         field!(
@@ -267,7 +256,7 @@ fn build_fields() -> [Field; N] {
             500,
             "ms",
             limits = (100, 60_000),
-            help = "How often the board radios its status once armed and in flight."
+            help = "How often the board radios its status once armed and in flight. Saved, but nothing sends in flight yet."
         ),
         // ---- GNSS (MAX-M10S)
         field!(
@@ -313,9 +302,9 @@ fn build_fields() -> [Field; N] {
             U8,
             GNSS_GPS | GNSS_SBAS | GNSS_GALILEO | GNSS_BEIDOU | GNSS_QZSS,
             "",
-            limits = (1, 0x3F),
-            source = "u-blox M10 interface description, CFG-SIGNAL-*_ENA",
-            help = "Which satellite systems to track. GPS must stay on."
+            limits = (0x1F, 0x1F),
+            source = "u-blox M10 interface description, CFG-SIGNAL-*_ENA; the module's default, which the firmware does not change yet (firmware src/app/fc_config.c)",
+            help = "Which satellite systems to track. Fixed at the module's default until the firmware sends CFG-SIGNAL."
         ),
         // ---- IMU (ISM330DHCX)
         field!(
@@ -326,8 +315,8 @@ fn build_fields() -> [Field; N] {
             U16,
             833,
             "Hz",
-            choices = &[26, 52, 104, 208, 416, 833, 1666, 3332, 6667],
-            source = "ST ISM330DHCX datasheet DS13012 Rev 7 p.49 Table 43 (ODR_XL) / p.50 Table 46 (ODR_G); nominal rates",
+            choices = &[26, 52, 104, 208, 416, 833],
+            source = "ST ISM330DHCX datasheet DS13012 Rev 7 p.49 Table 43 (ODR_XL) / p.50 Table 46 (ODR_G); up to 833 Hz, the rate the sensor task and eMMC log are tested at (firmware src/app/fc_config.c)",
             help = "IMU sample rate, for both accel and gyro."
         ),
         field!(
@@ -366,8 +355,8 @@ fn build_fields() -> [Field; N] {
             U16,
             400,
             "Hz",
-            choices = &[50, 100, 400, 1000],
-            source = "ST H3LIS100DL datasheet DocID027504 Rev 2, CTRL_REG1 DR bits",
+            choices = &[50, 100, 400],
+            source = "ST H3LIS100DL datasheet DocID027504 Rev 2 p.26, CTRL_REG1 DR bits: normal mode 50/100/400 Hz (DR=11 not allowed)",
             help = "High-g accelerometer sample rate."
         ),
         // ---- barometer (MS5611)
@@ -590,8 +579,10 @@ mod tests {
         assert!(problems(&d.with("radio_freq_hz", 927_937_500).with("radio_bw_hz", 125_000)).is_empty());
         let over = problems(&d.with("radio_freq_hz", 927_950_000).with("radio_bw_hz", 125_000));
         assert!(over.iter().any(|(f, m)| f.key == "radio_freq_hz" && m.contains("outside")), "{over:?}");
-        let under = problems(&d.with("radio_freq_hz", 902_000_000).with("radio_bw_hz", 7_810));
+        // At the band's bottom edge, half of a 125 kHz signal is below it.
+        let under = problems(&d.with("radio_freq_hz", 902_000_000).with("radio_bw_hz", 125_000));
         assert_eq!(under.len(), 1, "{under:?}");
+        assert_eq!(under[0].0.key, "radio_freq_hz");
     }
 
     #[test]
@@ -613,6 +604,8 @@ mod tests {
         assert_eq!((d["imu_odr_hz"], d["imu_accel_fs_g"], d["imu_gyro_fs_dps"]), (833, 16, 4000));
         assert_eq!(d["highg_odr_hz"], 400);
         assert_eq!((d["gnss_rate_ms"], d["gnss_dyn_model"]), (100, 8));
+        // radio/sx1262_setup.h kDefaultLora and bringup_task.c, as fc_config_defaults().
+        assert_eq!((d["radio_tx_dbm"], d["radio_preamble"], d["hb_self_test_ms"]), (22, 8, 1000));
         // records.h hard-codes these scales; the defaults must reproduce them.
         assert_eq!(accel_mg_per_lsb(d["imu_accel_fs_g"]), Some(0.488));
         assert_eq!(gyro_mdps_per_lsb(d["imu_gyro_fs_dps"]), Some(140.0));

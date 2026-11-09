@@ -3,8 +3,8 @@
 What the STM32 firmware must implement for the bench GUI. The reference
 implementation is `src/protocol.rs`; `src/fake_board.rs` is a working
 board-side example, and their unit tests pin both. **On the board so far**
-(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE and SAMPLE;
-the rest answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
+(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE, SAMPLE and
+CONFIG_GET/SET/SAVE/REVERT; the rest answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
 `protocol.rs` together.
 
 ## 1. Transport
@@ -128,27 +128,38 @@ register codes. The GUI's allowed sets (and their datasheet citations) are
 | id | field | type | allowed | default |
 |---|---|---|---|---|
 | 1 | radio_freq_hz | u32 | 902 000 000 … 928 000 000, and the whole signal (± bw/2) inside it | 915 000 000 |
-| 2 | radio_sf | u8 | 5 … 12 | 9 |
-| 3 | radio_bw_hz | u32 | 7810, 10420, 15630, 20830, 31250, 41670, 62500, 125000, 250000, 500000 | 125000 |
+| 2 | radio_sf | u8 | 7 … 12 | 9 |
+| 3 | radio_bw_hz | u32 | 125000, 250000, 500000 | 125000 |
 | 4 | radio_cr | u8 | 5 … 8 (= 4/5 … 4/8) | 5 |
-| 5 | radio_tx_dbm | i8 | −9 … 22 | 14 |
-| 6 | radio_preamble | u16 | 6 … 1024 | 12 |
+| 5 | radio_tx_dbm | i8 | −9 … 22 | 22 |
+| 6 | radio_preamble | u16 | 6 … 1024 | 8 |
 | 7 | radio_sync_word | u16 | 0x1424, 0x3444 | 0x1424 |
-| 8 | hb_self_test_ms | u16 | 100 … 60000 | 500 |
-| 9 | hb_idle_ms | u16 | 100 … 60000 | 10000 |
-| 10 | hb_flight_ms | u16 | 100 … 60000 | 500 |
+| 8 | hb_self_test_ms | u16 | 100 … 60000 (saved; nothing sends in self-test yet) | 1000 |
+| 9 | hb_idle_ms | u16 | 1000 … 60000 | 10000 |
+| 10 | hb_flight_ms | u16 | 100 … 60000 (saved; nothing sends in flight yet) | 500 |
 | 11 | gnss_rate_ms | u16 | 100, 125, 200, 250, 500, 1000 | 100 |
 | 12 | gnss_dyn_model | u8 | 0, 2 … 8 (CFG-NAVSPG-DYNMODEL) | 8 (airborne <4g) |
-| 13 | gnss_constellations | u8 | bits: 0 GPS, 1 SBAS, 2 Galileo, 3 BeiDou, 4 QZSS, 5 GLONASS; GPS required | 0x1F |
-| 14 | imu_odr_hz | u16 | 26, 52, 104, 208, 416, 833, 1666, 3332, 6667 | 833 |
+| 13 | gnss_constellations | u8 | bits: 0 GPS, 1 SBAS, 2 Galileo, 3 BeiDou, 4 QZSS, 5 GLONASS. Only 0x1F (the module's default) until the firmware sends CFG-SIGNAL | 0x1F |
+| 14 | imu_odr_hz | u16 | 26, 52, 104, 208, 416, 833 | 833 |
 | 15 | imu_accel_fs_g | u8 | 2, 4, 8, 16 | 16 |
 | 16 | imu_gyro_fs_dps | u16 | 125, 250, 500, 1000, 2000, 4000 | 4000 |
-| 17 | highg_odr_hz | u16 | 50, 100, 400, 1000 | 400 |
+| 17 | highg_odr_hz | u16 | 50, 100, 400 (no 1000 Hz normal mode) | 400 |
 | 18 | baro_osr | u16 | 256, 512, 1024, 2048, 4096 | 4096 |
 
-Defaults reproduce what the firmware does today with constants: CTRL1_XL 0x74 and
-CTRL2_G 0x71, 400 Hz high-g, 10 Hz airborne-4g GNSS, the MS5611 10 ms step. **The
-radio defaults are placeholders.** No one has picked the frequency, SF or power yet.
+The allowed values are what the firmware can run (`src/app/fc_config.c`
+`fc_config_check`), narrower than the chips in places: SF 7–12 and 125/250/500 kHz
+are what its time-on-air covers, Idle sleeps in whole seconds. The defaults are what
+the firmware ran with constants before settings existed: CTRL1_XL 0x74 and CTRL2_G
+0x71, 400 Hz high-g, 10 Hz airborne-4g GNSS, the MS5611 10 ms step, +22 dBm with an
+8-symbol preamble. `tests/usb_frame.rs` holds `config.rs` to the firmware's checks
+and defaults. **The radio defaults are still placeholders**: no one has picked the
+frequency, SF or power.
+
+**When each setting takes effect on the board:** the radio at once (it reruns its
+start-up, which drops the link for a moment), the Idle interval from the next
+heartbeat, the IMU, high-g, barometer and GPS the next time they start (at Arm; they
+are off in SELF_TEST and IDLE, the only states that accept settings). Not done yet:
+the REC_CONFIG log record below.
 
 ### Amateur (ham) operation
 

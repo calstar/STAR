@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use star_fc::config::{self, by_key, defaults, fields};
 use star_fc::protocol::{decode_frame, encode_frame, Value};
 
 fn hex(b: &[u8]) -> String {
@@ -38,6 +39,9 @@ fn firmware_io() -> Option<PathBuf> {
                 .arg(&exe)
                 .arg(here.join("tests/c/usb_frame_io.c"))
                 .arg(src.join("usb_frame.c"))
+                .arg(src.join("fc_config.c"))
+                .arg(src.join("emmc_log.c"))
+                .arg(src.join("flight_state.c"))
                 .arg("-I")
                 .arg(&src)
                 .status()
@@ -81,4 +85,29 @@ fn firmware_frames_decode_here_and_ours_decode_there() {
     let mut bad = encode_frame(0x01, 9, &[1, 2, 3]);
     bad[2] ^= 0x40;
     assert_eq!(run(&exe, &["decode", &hex(&bad[..bad.len() - 1])]).trim(), "bad", "a corrupt frame is refused");
+}
+
+#[test]
+fn the_app_and_the_firmware_agree_on_the_config() {
+    let Some(exe) = firmware_io() else { return };
+    // Same defaults, byte for byte (layout, values, CRC).
+    let firmware = unhex(run(&exe, &["defaults"]).trim());
+    assert_eq!(firmware, config::pack(&defaults()).unwrap(), "default blob");
+    // Every value the app offers is one the firmware runs, and the app's
+    // limits refuse what the firmware refuses (same field named).
+    for f in fields() {
+        let tries: Vec<i64> = match (f.choices, f.limits) {
+            (Some(c), _) => c.to_vec(),
+            (None, Some((lo, hi))) => vec![lo - 1, lo, hi, hi + 1],
+            _ => vec![],
+        };
+        for v in tries {
+            let Ok(blob) = config::pack(&defaults().with(f.key, v)) else { continue }; // does not fit the field
+            let verdict = run(&exe, &["check", &hex(&blob)]);
+            let app_ok = config::problems(&defaults().with(f.key, v)).is_empty();
+            assert_eq!(verdict.trim() == "0", app_ok, "{} = {v}: firmware says {}", f.key, verdict.trim());
+        }
+    }
+    let bad = config::pack(&defaults().with("highg_odr_hz", 1000)).unwrap();
+    assert_eq!(run(&exe, &["check", &hex(&bad)]).trim(), by_key("highg_odr_hz").id.to_string());
 }
