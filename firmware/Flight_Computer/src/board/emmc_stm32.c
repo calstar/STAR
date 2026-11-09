@@ -152,8 +152,15 @@ static emmc_status_t port_start(void* context, uint32_t* block_count) {
      * HWFC_EN. */
     SET_BIT(hmmc1.Instance->CLKCR, SDMMC_CLKCR_HWFC_EN);
 
-    /* Polling read of EXT_CSD: once, before any DMA, at bring-up. */
-    if (HAL_MMC_GetCardExtCSD(&hmmc1, ext_csd, 100U) != HAL_OK) {
+    /* Polling read of EXT_CSD: once, before any DMA, at bring-up. It runs
+     * when the rocket arms, just as the sensors (realtime) and GPS start: a
+     * preempted poll stops draining the FIFO, flow control holds the clock,
+     * and the 100 ms timeout fires (seen on the bench: 128 of 512 bytes,
+     * disk FAULT). No task switch for these few ms; interrupts still run. */
+    vTaskSuspendAll();
+    HAL_StatusTypeDef ext = HAL_MMC_GetCardExtCSD(&hmmc1, ext_csd, 100U);
+    (void)xTaskResumeAll();
+    if (ext != HAL_OK) {
         return EMMC_ERR_IO;
     }
     emmc_card_parse(hmmc1.CID, (const uint8_t*)ext_csd, &card);
