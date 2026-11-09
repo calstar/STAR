@@ -481,9 +481,9 @@ mod tests {
     fn heartbeat_longer_than_interval_blocks_writing() {
         let mut t = ConfigState::new();
         assert!(t.checks().0.is_empty());
-        t.set_editor(cfg::defaults().with("radio_sf", 12).with("hb_flight_ms", 100));
-        // An SF12 heartbeat is ~1.2 s on air: longer than the 500 ms self-test and
-        // 100 ms flight intervals, shorter than the 10 s idle one.
+        t.set_editor(cfg::defaults().with("radio_sf", 12).with("hb_flight_ms", 500));
+        // An SF12 heartbeat is ~1.2 s on air: longer than the 1 s self-test and
+        // 500 ms flight intervals, shorter than the 10 s idle one.
         let (issues, _) = t.checks();
         assert_eq!(issues.len(), 2, "{issues:?}");
         assert!(issues.iter().all(|i| i.contains("longer than")));

@@ -136,7 +136,7 @@ register codes. The GUI's allowed sets (and their datasheet citations) are
 | 7 | radio_sync_word | u16 | 0x1424, 0x3444 | 0x1424 |
 | 8 | hb_self_test_ms | u16 | 100 … 60000 (saved; nothing sends in self-test yet) | 1000 |
 | 9 | hb_idle_ms | u16 | 1000 … 60000 | 10000 |
-| 10 | hb_flight_ms | u16 | 100 … 60000 (saved; nothing sends in flight yet) | 500 |
+| 10 | hb_flight_ms | u16 | 500 … 60000: telemetry period once armed (`telemetry_task.c`) | 500 |
 | 11 | gnss_rate_ms | u16 | 100, 125, 200, 250, 500, 1000 | 100 |
 | 12 | gnss_dyn_model | u8 | 0, 2 … 8 (CFG-NAVSPG-DYNMODEL) | 8 (airborne <4g) |
 | 13 | gnss_constellations | u8 | bits: 0 GPS, 1 SBAS, 2 Galileo, 3 BeiDou, 4 QZSS, 5 GLONASS. Only 0x1F (the module's default) until the firmware sends CFG-SIGNAL | 0x1F |

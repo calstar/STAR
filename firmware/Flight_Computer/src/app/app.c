@@ -7,6 +7,7 @@
 #include "mode.h"
 #include "radio_task.h"
 #include "sensors_task.h"
+#include "telemetry_task.h"
 #ifdef STAR_BENCH
 #include "bench_task.h"
 #endif
@@ -43,7 +44,10 @@ bool app_start(void) {
     gnss_task_set_active(true);
     ok = bench_task_start() && ok;
 #else
-    /* Every task starts stopped; the state decides what runs (mode_core). */
+    /* Every task starts stopped; the state decides what runs (mode_core).
+     * Telemetry sends only while armed (not in the bench build, whose own
+     * loops drive the radio). */
+    ok = telemetry_task_start() && ok;
     app_set_state(FLIGHT_IDLE);
 #endif
     return ok;

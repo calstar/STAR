@@ -255,8 +255,9 @@ fn build_fields() -> [Field; N] {
             U16,
             500,
             "ms",
-            limits = (100, 60_000),
-            help = "How often the board radios its status once armed and in flight. Saved, but nothing sends in flight yet."
+            limits = (500, 60_000),
+            source = "firmware src/app/telemetry_task.c: a 57-byte telemetry frame is ~350 ms on air at SF9/125 kHz, and the radio needs a gap to hear an Un-arm",
+            help = "How often the armed board radios its latest sensor readings (telemetry)."
         ),
         // ---- GNSS (MAX-M10S)
         field!(

@@ -72,7 +72,7 @@ uint8_t fc_config_check(const fc_config_t* c) {
         return 8;
     if (c->hb_idle_ms < 1000 || c->hb_idle_ms > 60000)
         return 9;
-    if (c->hb_flight_ms < 100 || c->hb_flight_ms > 60000)
+    if (c->hb_flight_ms < 500 || c->hb_flight_ms > 60000)
         return 10;
     if (!ONE_OF(c->gnss_rate_ms, 100, 125, 200, 250, 500, 1000))
         return 11;

@@ -33,7 +33,7 @@ typedef struct {
     uint16_t radio_sync_word;
     uint16_t hb_self_test_ms; /* stored only: self-test sends nothing yet */
     uint16_t hb_idle_ms;
-    uint16_t hb_flight_ms; /* stored only: nothing sends in flight yet */
+    uint16_t hb_flight_ms; /* telemetry period once armed, >= 500 ms */
     uint16_t gnss_rate_ms;
     uint8_t gnss_dyn_model;
     uint8_t gnss_constellations;
