@@ -17,6 +17,7 @@
 pub mod config;
 pub mod flights;
 pub mod format;
+pub mod heartbeats;
 pub mod live;
 pub mod stages;
 pub mod status;
@@ -220,6 +221,7 @@ const TICK: Duration = Duration::from_millis(50);
 pub struct Controller {
     pub sh: Shared,
     pub live: live::LiveState,
+    pub heartbeats: heartbeats::Heartbeats,
     pub config: config::ConfigState,
     pub flights: flights::FlightsState,
     pub messages: std::collections::VecDeque<String>,
@@ -242,6 +244,7 @@ impl Controller {
                 flights_root: opts.flights_root.clone(),
             },
             live: live::LiveState::new(),
+            heartbeats: heartbeats::Heartbeats::default(),
             config: config::ConfigState::new(),
             flights: flights::FlightsState::default(),
             messages: Default::default(),
@@ -348,6 +351,7 @@ impl Controller {
                     self.last_heartbeat = Instant::now();
                     self.conn = format!("Connected: {}  ·  firmware {}", self.port_label(&self.port), info.fw_git);
                     self.live.restart();
+                    self.heartbeats.clear();
                     self.sh.client.request(msg::GET_STATUS, &[], Purpose::Status);
                     self.live.push_stream(&mut self.sh);
                     self.config.read_board(&mut self.sh, true);
@@ -365,6 +369,9 @@ impl Controller {
                     let (i, n) = (v.index as usize, v.count as usize);
                     self.sh.values.resize(n, None); // a table that changed size drops the rows past it
                     self.sh.values[i] = Some(v);
+                    if i + 1 == n {
+                        self.heartbeats.on_round(&self.sh);
+                    }
                 }
                 Event::Sample(t, d) => self.live.on_sample(&self.sh, t, &d),
                 Event::Text(line) => {
@@ -414,9 +421,20 @@ impl Controller {
             notices: self.sh.notices.clone(),
             status: status::view(&self.sh, &self.messages),
             stages: stages::stages(self.sh.state()),
-            live: self.live.view(),
+            live: self.live_view(),
             config: self.config.view(&self.sh),
             flights: self.flights.view(&self.sh),
+        }
+    }
+
+    /// SELF_TEST and IDLE show the heartbeats; graphs from ARMED on, or
+    /// whenever samples arrive (the bench build, the simulated board).
+    fn live_view(&self) -> live::LiveView {
+        let quiet = self.sh.state().is_some_and(|s| s == p::state::SELF_TEST || s == p::state::IDLE);
+        live::LiveView {
+            heartbeats: quiet.then(|| self.heartbeats.rows()),
+            show_graphs: !quiet || self.live.receiving(),
+            ..self.live.view()
         }
     }
 

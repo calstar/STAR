@@ -7,7 +7,7 @@
 import { html, nothing, render, type TemplateResult } from "lit-html";
 import { connect, type Api } from "./api";
 import { FlightPlots, LivePlots } from "./plots";
-import type { Command, Reading, ConfigView, FieldView, FlightsView, Pick, Row, StatusView, Tone, View } from "./types";
+import type { Command, Reading, ConfigView, FieldView, FlightsView, HeartbeatRow, Pick, Row, StatusView, Tone, View } from "./types";
 import "./style.css";
 import logoBlue from "./assets/star-logo-blue.png";
 import logoWhite from "./assets/star-logo-white.png";
@@ -117,6 +117,21 @@ function statusTab(s: StatusView) {
 
 // ---------------------------------------------------------------- live
 
+function heartbeatTable(rows: HeartbeatRow[]) {
+  const c = (x: [string, Tone] | null) => (x ? chip(x[0], x[1]) : nothing);
+  return html`<section class="chart-card heartbeats" data-testid="heartbeats">
+    <header><h3>Idle heartbeats <span class="unit">newest first</span></h3></header>
+    ${rows.length
+      ? html`<div class="heartbeat-scroll"><table>
+          <thead><tr><th>#</th><th>Uptime</th><th>Battery</th><th></th><th>Self-test</th><th>Radio, last send</th></tr></thead>
+          <tbody>${rows.map(
+            (r) => html`<tr><td>${r.n}</td><td>${r.uptime}</td><td>${r.battery}</td><td>${c(r.battery_state)}</td><td>${r.chips}</td><td>${c(r.radio)}</td></tr>`,
+          )}</tbody>
+        </table></div>`
+      : html`<p class="muted">Waiting for the first heartbeat (about every 10 s in Idle).</p>`}
+  </section>`;
+}
+
 function liveTab(v: View) {
   const l = v.live;
   return html`<div class="live-layout">
@@ -165,7 +180,8 @@ function liveTab(v: View) {
       <button class="ghost" @click=${() => live.clear()}>Clear</button>
     </div>
     ${l.error ? html`<p class="banner tone-bad">${l.error}</p>` : nothing}
-    <div class="live-charts">
+    ${l.heartbeats ? heartbeatTable(l.heartbeats) : nothing}
+    <div class="live-charts" ?hidden=${!l.show_graphs}>
       ${l.plots.map(
         (p, i) => html`<section class="chart-card">
           <header>

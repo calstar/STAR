@@ -120,6 +120,17 @@ fn status_and_live() {
 }
 
 #[test]
+fn idle_shows_its_heartbeats_newest_first() {
+    let r = Rig::new();
+    // The simulated board counts a heartbeat every 10 s from its start, as the firmware does.
+    assert!(r.wait(15.0, |v| v.live.heartbeats.as_ref().is_some_and(|h| h.len() >= 2)), "{:?}", r.b.view().live.heartbeats);
+    let rows = r.b.view().live.heartbeats.unwrap();
+    assert!(rows[0].n > rows[1].n, "newest first");
+    assert_eq!(rows[0].chips, "6 of 8 pass"); // Ethernet not configured, NAND not implemented
+    assert!(r.b.view().live.show_graphs, "the simulated board streams in IDLE, so its graphs stay");
+}
+
+#[test]
 fn download_a_flight() {
     let r = Rig::new();
     assert!(r.wait(10.0, |v| v.flights.entries.len() == 2));

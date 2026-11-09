@@ -7,7 +7,7 @@
 //! gets them in batches (`live` events) and only draws them.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -110,6 +110,9 @@ pub struct LiveView {
     pub error: Option<String>,
     pub plots: Vec<PlotSpec>,
     pub window_s: f64,
+    /// SELF_TEST and IDLE: the Idle heartbeats, newest first.
+    pub heartbeats: Option<Vec<super::heartbeats::HeartbeatRow>>,
+    pub show_graphs: bool,
 }
 
 pub struct LiveState {
@@ -127,6 +130,7 @@ pub struct LiveState {
     /// The readings changed without a new sample (stream settings): send them.
     readings_dirty: bool,
     session: u32,
+    last_sample: Option<Instant>,
 }
 
 impl LiveState {
@@ -142,6 +146,7 @@ impl LiveState {
             broken: [false; PLOTS],
             readings_dirty: true,
             session: 0,
+            last_sample: None,
         }
     }
 
@@ -153,6 +158,7 @@ impl LiveState {
         self.broken = [false; PLOTS];
         self.readings_dirty = true;
         self.session += 1;
+        self.last_sample = None;
     }
 
     pub fn set_stream(&mut self, sh: &mut Shared, rate: u16, mask: u8) {
@@ -204,6 +210,7 @@ impl LiveState {
         let conf = sh.active_config.unwrap_or_else(crate::config::defaults);
         let Some(d) = rec::decode(t, data, &conf, P0_PA) else { return };
         self.latest.insert(t, d);
+        self.last_sample = Some(Instant::now());
         let now = self.t0.elapsed().as_secs_f64();
         let (batch, last_t, broken) = (&mut self.batch, &mut self.last_t, &mut self.broken);
         let mut put = |plot: usize, y: Vec<f64>| {
@@ -297,6 +304,11 @@ impl LiveState {
         ]
     }
 
+    /// Samples arrived in the last few seconds.
+    pub fn receiving(&self) -> bool {
+        self.last_sample.is_some_and(|t| t.elapsed() < Duration::from_secs(3))
+    }
+
     pub fn view(&self) -> LiveView {
         LiveView {
             rate: self.rate,
@@ -309,6 +321,8 @@ impl LiveState {
             error: self.error.clone(),
             plots: plots(),
             window_s: WINDOW_S,
+            heartbeats: None,
+            show_graphs: true,
         }
     }
 }

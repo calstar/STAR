@@ -36,6 +36,9 @@ export interface LiveView {
   error: string | null;
   plots: PlotSpec[];
   window_s: number;
+  /** SELF_TEST and IDLE: the Idle heartbeats, newest first. */
+  heartbeats: HeartbeatRow[] | null;
+  show_graphs: boolean;
 }
 
 export interface Opt {
@@ -152,6 +155,16 @@ export interface Reading {
 }
 
 /** A flight stage on the Live tab's side panel (see stages.rs). */
+/** One Idle heartbeat on the Live tab (see heartbeats.rs). */
+export interface HeartbeatRow {
+  n: number;
+  uptime: string;
+  battery: string;
+  battery_state: [string, Tone] | null;
+  chips: string;
+  radio: [string, Tone] | null;
+}
+
 export interface Stage {
   name: string;
   does: string;

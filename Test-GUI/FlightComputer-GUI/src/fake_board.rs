@@ -486,6 +486,8 @@ impl FakeBoard {
             ("uptime", U32, (self.uptime() * 1000.0) as u64 as u32, "ms", ""),
             ("battery", U16, battery_mv, "mV", ""),
             ("battery_state", U8, 1, "", "UNKNOWN,OK,WARN,FAIL,USB,INVALID"),
+            ("idle_heartbeats", U32, if done { 1 + (self.uptime() / 10.0) as u32 } else { 0 }, "", ""),
+            ("idle_last_send", U8, pass as u32, "", RESULT),
             ("self_test_imu", U8, pass as u32, "", RESULT),
             ("self_test_high_g", U8, pass as u32, "", RESULT),
             ("self_test_barometer", U8, pass as u32, "", RESULT),
