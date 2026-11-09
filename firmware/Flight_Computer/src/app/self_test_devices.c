@@ -24,6 +24,27 @@ static uint8_t prom_crc(const uint16_t prom[8]) {
     return (uint8_t)((remainder >> 12) & 0xFU);
 }
 
+uint8_t self_test_devices_value(const self_test_devices_t* devices,
+                                uint16_t device_id) {
+    const self_test_spi_frame_t* f = devices->frames;
+    switch (device_id) {
+        case SELF_TEST_DEVICE_IMU:
+        case SELF_TEST_DEVICE_HIGH_G:
+            return f[0].rx[1];
+        case SELF_TEST_DEVICE_ETHERNET:
+            return f[0].rx[3];
+        case SELF_TEST_DEVICE_BAROMETER: {
+            uint16_t prom[8];
+            for (uint8_t i = 0; i < 8; ++i) {
+                prom[i] = (uint16_t)(((uint16_t)f[i].rx[1] << 8) | f[i].rx[2]);
+            }
+            return prom_crc(prom);
+        }
+        default:
+            return 0;
+    }
+}
+
 self_test_reply_t self_test_devices_probe(void* context, uint16_t device_id,
                                           uint8_t attempt, uint32_t now_ms,
                                           uint32_t budget_ms) {

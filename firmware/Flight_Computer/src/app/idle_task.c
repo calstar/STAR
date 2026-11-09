@@ -1,6 +1,9 @@
 #include "idle_task.h"
 
+#include "FreeRTOS.h"
+#include "board_adc.h"
 #include "board_bringup.h"
+#include "board_chips.h"
 #include "board_config.h"
 #include "board_sleep.h"
 #include "bringup_task.h"
@@ -8,10 +11,12 @@
 #include "main.h"
 #include "mode.h"
 #include "radio_task.h"
+#include "task.h"
 
 #define EV_MODE (1U << 0)
 #define EV_CMD (1U << 1)
 #define FRAME_HEARTBEAT 0x01U /* src/radio/frame.h FrameType::Heartbeat */
+#define FRAME_STATUS 0x03U    /* FrameType::Status (status_report.h) */
 
 /* Aaron's proposals (src/app/IDLE.md); the budget covers one SF9 TxDone
  * (2 x 165 ms time on air + 50 ms, sx1262_setup.cpp). */
@@ -40,6 +45,38 @@ static bool on_usb(void* ctx) {
     return board_bringup_on_usb();
 }
 
+_Static_assert(BOARD_ADC_COUNT == STATUS_ADC_COUNT, "status_report adc[]");
+
+static status_report_t last_status;
+
+/* The Idle report: every ADC input and each chip, read now (board_chips.h). */
+static void send_status(const idle_heartbeat_t* hb) {
+    static status_report_t r; /* static: off the task stack */
+    board_adc_snapshot_t adc;
+    board_adc_snapshot(&adc, 10);
+    r.state = FLIGHT_IDLE;
+    r.uptime_ms = hb->uptime_ms;
+    r.sequence = hb->sequence;
+    for (int i = 0; i < STATUS_ADC_COUNT; ++i) {
+        r.adc[i] = adc.valid[i] ? adc.counts[i] : 0U;
+    }
+    r.battery_mv = hb->supply_mv;
+    r.flags = board_bringup_on_usb() ? STATUS_ON_USB : 0U;
+    board_chips_check(&r);
+    uint8_t p[STATUS_REPORT_LEN];
+    status_report_pack(&r, p);
+    (void)radio_task_send_frame(FRAME_STATUS, p, sizeof p);
+    taskENTER_CRITICAL();
+    last_status = r;
+    taskEXIT_CRITICAL();
+}
+
+void idle_task_last_status(status_report_t* out) {
+    taskENTER_CRITICAL();
+    *out = last_status;
+    taskEXIT_CRITICAL();
+}
+
 static self_test_reply_t send_heartbeat(void* ctx, const idle_heartbeat_t* hb,
                                         uint32_t budget_ms) {
     (void)ctx;
@@ -52,7 +89,11 @@ static self_test_reply_t send_heartbeat(void* ctx, const idle_heartbeat_t* hb,
                                 (uint8_t)(mv >> 8),   (uint8_t)up_s,
                                 (uint8_t)(up_s >> 8), (uint8_t)(up_s >> 16),
                                 (uint8_t)(up_s >> 24)};
-    switch (radio_task_send_frame(FRAME_HEARTBEAT, payload, sizeof payload)) {
+    radio_send_result_t sent =
+        radio_task_send_frame(FRAME_HEARTBEAT, payload, sizeof payload);
+    send_status(
+        hb); /* same wake, right after: the heartbeat's own result counts */
+    switch (sent) {
         case RADIO_SEND_OK:
             return (self_test_reply_t){SELF_TEST_PASS, 0};
         case RADIO_SEND_TIMEOUT:

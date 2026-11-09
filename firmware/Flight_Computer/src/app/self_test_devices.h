@@ -62,6 +62,12 @@ self_test_reply_t self_test_devices_probe(void* context, uint16_t device_id,
                                           uint8_t attempt, uint32_t now_ms,
                                           uint32_t budget_ms);
 
+/* What the last probe of `device_id` read back, from the scratch frames:
+ * the WHO_AM_I byte (IMU 0x6B, high-g 0x32), the W5500's VERSIONR (0x04),
+ * the MS5611's computed PROM CRC (0..15). 0 for the radio or no probe. */
+uint8_t self_test_devices_value(const self_test_devices_t* devices,
+                                uint16_t device_id);
+
 #ifdef __cplusplus
 }
 #endif

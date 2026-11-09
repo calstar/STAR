@@ -28,9 +28,11 @@
 
 #include <string.h>
 
+#include "FreeRTOS.h"
 #include "board.h"
 #include "cmsis_os2.h"
 #include "main.h"
+#include "task.h"
 
 extern MMC_HandleTypeDef hmmc1;
 
@@ -55,6 +57,12 @@ static volatile bool transfer_ok;
 static emmc_card_info_t card;
 static uint32_t card_issues;
 static bool card_known;
+static osMutexId_t call_lock;
+static osSemaphoreId_t call_done;
+static void (*volatile call_fn)(void* ctx);
+static void* volatile call_ctx;
+static osThreadId_t writer;
+#define EV_CALL 1U
 
 /* ---- helpers ---------------------------------------------------------- */
 
@@ -235,7 +243,9 @@ void HAL_MMC_ErrorCallback(MMC_HandleTypeDef* hmmc) {
 emmc_status_t emmc_stm32_init(void) {
     queue_mutex = osMutexNew(NULL);
     transfer_done = osSemaphoreNew(1U, 0U, NULL);
-    if (!queue_mutex || !transfer_done) {
+    call_lock = osMutexNew(NULL);
+    call_done = osSemaphoreNew(1U, 0U, NULL);
+    if (!queue_mutex || !transfer_done || !call_lock || !call_done) {
         return EMMC_ERR_NOT_READY;
     }
     emmc_log_config_t config = emmc_log_default_config();
@@ -257,12 +267,40 @@ const emmc_card_info_t* emmc_stm32_card(uint32_t* issues) {
     return &card;
 }
 
+bool emmc_stm32_call(void (*fn)(void* ctx), void* ctx) {
+    if (!writer || !call_lock) {
+        return false;
+    }
+    (void)osMutexAcquire(call_lock, osWaitForever);
+    (void)osSemaphoreAcquire(call_done, 0U); /* drop a stale release */
+    call_ctx = ctx;
+    call_fn = fn;
+    (void)osThreadFlagsSet(writer, EV_CALL);
+    bool ok = osSemaphoreAcquire(call_done, 500U) == osOK;
+    if (!ok) {
+        taskENTER_CRITICAL();
+        ok = call_fn == NULL; /* it ran just as the wait ended */
+        call_fn = NULL;
+        taskEXIT_CRITICAL();
+    }
+    (void)osMutexRelease(call_lock);
+    return ok;
+}
+
 void emmc_stm32_writer_task(void* argument) {
     (void)argument;
+    writer = osThreadGetId();
     for (;;) {
         (void)emmc_log_service(&flight_log, osKernelGetTickCount());
+        void (*fn)(void* ctx) = call_fn;
+        if (fn) { /* between transfers: nothing else is on the card */
+            fn(call_ctx);
+            call_fn = NULL;
+            (void)osSemaphoreRelease(call_done);
+        }
         if (emmc_log_backlog(&flight_log) == 0U) {
-            osDelay(10U); /* nothing sealed: check again in 10 ms */
+            /* nothing sealed: check again in 10 ms, or at once for a call */
+            (void)osThreadFlagsWait(EV_CALL, osFlagsWaitAny, 10U);
         }
     }
 }

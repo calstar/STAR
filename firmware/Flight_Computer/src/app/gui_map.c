@@ -35,32 +35,39 @@
     "IRQ_MAP,TX_CLAMP,SYNC_WORD,DEVICE_ERRORS,START_RX"
 
 /* clang-format off */
-#define GUI_MAP(X)                                                                      \
-    X(U8,  app_state(),                           "state",               "",   FLIGHT)  \
-    X(U8,  flags(),                               "flags",               "",   "")      \
-    X(U32, osKernelGetTickCount(),                "uptime",              "ms", "")      \
-    X(U16, idle->last.supply_mv,                  "battery",             "mV", "")      \
-    X(U8,  idle->last.battery,                    "battery_state",       "",   BATTERY) \
-    X(U32, idle->last.sequence,                   "idle_heartbeats",     "",   "")      \
-    X(U8,  idle->last.previous_send,              "idle_last_send",      "",   RESULT)  \
-    X(U32, radio.setup_attempts,                  "radio_setups",        "",   "")      \
-    X(U8,  radio.setup_step,                      "radio_setup",         "",   SETUP)   \
-    X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_ETHERNET),  "self_test_ethernet",  "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_RADIO),     "self_test_radio",     "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_GNSS),      "self_test_gnss",      "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_NAND),      "self_test_nand",      "",   RESULT)  \
-    X(U8,  self_test(SELF_TEST_DEVICE_EMMC),      "self_test_emmc",      "",   RESULT)  \
-    X(U8,  gnss->latest.fix_type,                 "gnss_fix",            "",   FIX)     \
-    X(U8,  gnss->latest.num_sv,                   "gnss_satellites",     "",   "")      \
-    X(U8,  emmc->disk,                            "emmc",                "",   DISK)    \
-    X(U32, log_used(),                            "emmc_blocks_used",    "",   "")      \
-    X(U32, emmc->capacity,                        "emmc_blocks_total",   "",   "")      \
-    X(U32, emmc->stats.dropped,                   "emmc_dropped",        "",   "")      \
-    X(U32, sensor_errors(),                       "sensor_errors",       "",   "")      \
-    X(U16, usb_link_rate_hz(),                    "stream_rate_hz",      "Hz", "")
+#define GUI_MAP(X)                                                                          \
+    X(U8,  app_state(),                           "state",               "",       FLIGHT)  \
+    X(U8,  flags(),                               "flags",               "",       "")      \
+    X(U32, osKernelGetTickCount(),                "uptime",              "ms",     "")      \
+    X(U16, idle->last.supply_mv,                  "battery",             "mV",     "")      \
+    X(U8,  idle->last.battery,                    "battery_state",       "",       BATTERY) \
+    X(U32, idle->last.sequence,                   "idle_heartbeats",     "",       "")      \
+    X(U8,  idle->last.previous_send,              "idle_last_send",      "",       RESULT)  \
+    X(U16, report.adc[0],                         "adc_vbat",            "counts", "")      \
+    X(U16, report.adc[1],                         "adc_ext_sense_1",     "counts", "")      \
+    X(U16, report.adc[2],                         "adc_pyro_1_cont",     "counts", "")      \
+    X(U16, report.adc[3],                         "adc_pyro_2_cont",     "counts", "")      \
+    X(U16, report.adc[4],                         "adc_ext_sense_2",     "counts", "")      \
+    X(U16, report.adc[5],                         "adc_alt_curr",        "counts", "")      \
+    X(U16, report.adc[6],                         "adc_curr",            "counts", "")      \
+    X(U32, radio.setup_attempts,                  "radio_setups",        "",       "")      \
+    X(U8,  radio.setup_step,                      "radio_setup",         "",       SETUP)   \
+    X(U8,  self_test(SELF_TEST_DEVICE_IMU),       "self_test_imu",       "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_HIGH_G),    "self_test_high_g",    "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_BAROMETER), "self_test_barometer", "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_ETHERNET),  "self_test_ethernet",  "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_RADIO),     "self_test_radio",     "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_GNSS),      "self_test_gnss",      "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_NAND),      "self_test_nand",      "",       RESULT)  \
+    X(U8,  self_test(SELF_TEST_DEVICE_EMMC),      "self_test_emmc",      "",       RESULT)  \
+    X(U8,  gnss->latest.fix_type,                 "gnss_fix",            "",       FIX)     \
+    X(U8,  gnss->latest.num_sv,                   "gnss_satellites",     "",       "")      \
+    X(U8,  emmc->disk,                            "emmc",                "",       DISK)    \
+    X(U32, log_used(),                            "emmc_blocks_used",    "",       "")      \
+    X(U32, emmc->capacity,                        "emmc_blocks_total",   "",       "")      \
+    X(U32, emmc->stats.dropped,                   "emmc_dropped",        "",       "")      \
+    X(U32, sensor_errors(),                       "sensor_errors",       "",       "")      \
+    X(U16, usb_link_rate_hz(),                    "stream_rate_hz",      "Hz",     "")
 /* clang-format on */
 
 enum { GUI_U8, GUI_U16, GUI_U32, GUI_I8, GUI_I16, GUI_I32 };
@@ -95,6 +102,7 @@ static sensors_core_t sensors; /* a snapshot: too big for the stack */
 static const idle_t* idle;
 static const gnss_core_t* gnss;
 static radio_status_t radio;
+static status_report_t report; /* the last Idle report (idle_task.c) */
 static const emmc_log_t* emmc;
 
 static uint8_t flags(void) {
@@ -135,6 +143,7 @@ void gui_map_read(void) {
     idle = idle_task_state();
     gnss = gnss_task_core();
     radio_task_status(&radio);
+    idle_task_last_status(&report);
     emmc = emmc_stm32_log();
     size_t i = 0;
 #define X(type, expr, name, unit, labels) values[i++] = RAW_##type(expr);

@@ -104,6 +104,7 @@ int main(void) {
     for (unsigned i = 0; i < 3; ++i) {
         fake.identity = identities[i];
         CHECK(probe(&devices, &fake, ids[i]).result == SELF_TEST_PASS);
+        CHECK(self_test_devices_value(&devices, ids[i]) == identities[i]);
         fake.identity ^= 1;
         self_test_reply_t bad = probe(&devices, &fake, ids[i]);
         CHECK(bad.result == SELF_TEST_FAIL);
@@ -120,6 +121,7 @@ int main(void) {
     memcpy(fake.prom, reference, sizeof(reference));
     CHECK(probe(&devices, &fake, SELF_TEST_DEVICE_BAROMETER).result ==
           SELF_TEST_PASS);
+    CHECK(self_test_devices_value(&devices, SELF_TEST_DEVICE_BAROMETER) == 0xB);
     fake.prom[7] = 0x45FB; /* Entire low byte excluded, not just CRC nibble. */
     CHECK(probe(&devices, &fake, SELF_TEST_DEVICE_BAROMETER).result ==
           SELF_TEST_PASS);

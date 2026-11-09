@@ -36,6 +36,12 @@ emmc_log_t* emmc_stm32_log(void);
  */
 const emmc_card_info_t* emmc_stm32_card(uint32_t* issues);
 
+/* Run fn(ctx) in the writer task between its transfers, so no card access
+ * overlaps another (CMD13 checks, log reads). Waits up to 500 ms; false if
+ * the writer is not running or did not get to it (fn may still run once,
+ * so ctx must outlive the call: make it static). Any task but the writer. */
+bool emmc_stm32_call(void (*fn)(void* ctx), void* ctx);
+
 /* The writer: loops emmc_log_service(). Run at low priority. */
 void emmc_stm32_writer_task(void* argument);
 
