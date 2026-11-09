@@ -19,9 +19,15 @@ import {
 // re-implemented here: an issue this page draws in red is exactly an issue that refuses a run.
 import {
   parseCsvGrid, serializeCsvGrid, diffKeys, boardSlotIssue, boardDisplayName, ballValveBoardIds,
-  CONFIG_PAGE_LABELS, type CsvGrid, type ConfigPageId,
-  t7Channels, t7BoardIssues, t7RoleClashes, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
+  CONFIG_PAGE_LABELS, CONFIG_TAB_IDS, type CsvGrid, type ConfigPageId,
+  t7Channels, t7BoardSettingsIssues, t7ChannelIssues, t7RoleClashes, T7_PT_SIGNALS, T7_RANGES, T7_MAX_AIN,
 } from '@/lib/config-validation';
+import {
+  moveItem, reorderGridCols, useDragReorder, useTransferDrag, DRAG_HANDLE_CLASS, TRANSFER_PANEL_CLASS,
+} from '@/lib/drag-reorder';
+import { moveSensorRole, moveActuatorRole, freeActuatorChannel, ACTUATOR_ROLE_BOARD_TYPES } from '@/lib/role-moves';
+import { nextStateId, fixStateIds } from '@/lib/states';
+import { GaugeColorPicker } from '@/components/ui/GaugeColorPicker';
 import {
   slugify, renameScriptSlug, checkScriptNames, isValidScriptFilename,
 } from '@/lib/state-script-names';
@@ -41,7 +47,6 @@ import {
  *    System  = every read-only page — startup-only binds the C++ services read once, plus config
  *              managed outside this editor. Last, because you open it to read a port, never to
  *              edit one. */
-const CONFIG_TAB_IDS = Object.keys(CONFIG_PAGE_LABELS) as ConfigPageId[];
 
 interface ConfigData {
   server_heartbeat?: {
@@ -1054,6 +1059,9 @@ export default function ConfigPage() {
   // Calibration profiles: whole-rig calibration snapshots you can Load / Save / blank from here.
   const [calProfiles, setCalProfiles] = useState<{ name: string; active: boolean }[]>([]);
   const [calActive, setCalActive] = useState('');
+  // The New-config dialog: a config is made with a calibration profile of the same name, copied
+  // from an existing calibration profile or fresh (blank).
+  const [newCfg, setNewCfg] = useState<{ name: string; cal: 'copy' | 'fresh'; calFrom: string; busy: boolean } | null>(null);
   const [calMsg, setCalMsg] = useState<string | null>(null);
   // Snapshots of the last-saved config + state CSVs, so we can tell if there are unsaved edits
   // (null until first load, so we never flag "dirty" before anything has loaded).
@@ -1335,14 +1343,34 @@ export default function ConfigPage() {
     }
   };
 
-  const createProfile = async () => {
-    const name = window.prompt('New config name (letters, digits, _ or -):', '')?.trim();
+  const createProfile = () => {
+    const calFrom = calActive || calProfiles[0]?.name || '';
+    setNewCfg({ name: '', cal: calFrom ? 'copy' : 'fresh', calFrom, busy: false });
+  };
+
+  const submitNewConfig = async () => {
+    if (!newCfg) return;
+    const name = newCfg.name.trim();
     if (!name) return;
+    setNewCfg({ ...newCfg, busy: true });
     try {
-      await profileAction('create', { name, from: activeProfile || undefined });
+      const data = await profileAction('create', {
+        name,
+        from: activeProfile || undefined,
+        calibration: newCfg.cal === 'copy' && newCfg.calFrom ? { from: newCfg.calFrom } : {},
+      });
+      if (data?.calibration_profiles) {
+        setCalProfiles(Array.isArray(data.calibration_profiles.profiles) ? data.calibration_profiles.profiles : []);
+        setCalActive(data.calibration_profiles.active || '');
+      }
+      setNewCfg(null);
       await loadProfiles();
-      if (window.confirm(`Created "${name}". Switch to it now?`)) await switchProfile(name);
+      const calNote = newCfg.cal === 'copy' && newCfg.calFrom
+        ? `a copy of calibration "${newCfg.calFrom}"` : 'a fresh calibration';
+      if (window.confirm(`Created config "${name}" with ${calNote}, also named "${name}". Switch to the config now?`))
+        await switchProfile(name);
     } catch (err: any) {
+      setNewCfg((prev) => (prev ? { ...prev, busy: false } : prev));
       setError(err.message || 'Failed to create config');
     }
   };
@@ -1508,6 +1536,7 @@ export default function ConfigPage() {
   const setBoardType = (boardKey: string, next: string) => {
     const prevType = (config.boards as any)?.[boardKey]?.type;
     updateBoard(boardKey, 'type', next);
+    applyPortDefaults(boardKey, next);
     if (next === 'T7' && prevType !== 'T7') {
       for (const k of ESP32_ONLY_KEYS) updateBoard(boardKey, k, undefined);
       updateBoard(boardKey, 'scan_rate_hz', 100);
@@ -1516,6 +1545,48 @@ export default function ConfigPage() {
       for (const k of T7_ONLY_KEYS) updateBoard(boardKey, k, undefined);
       updateBoard(boardKey, 'active_connectors', []);
     }
+  };
+
+  // ── Board identity and ports that follow from the type and ID ───────────────
+  // Every board sits at 192.168.2.<board_id> — the firmware takes its ID from its DHCP address and
+  // the validator refuses a mismatch — so the IP is derived from the Board ID, not typed. Every
+  // ESP32 board sends on 5005, and the ones that take commands (actuator, ball valve, encoder)
+  // also listen on 5005: written when a board is made or changes type, never shown.
+  const BOARD_SUBNET = '192.168.2.';
+  const LISTENING_TYPES = ['ACTUATOR', 'BALL_VALVE', 'ENCODER'];
+  const derivedIp = (id: unknown): string | null =>
+    Number.isInteger(id) && (id as number) >= 1 && (id as number) <= 254 ? `${BOARD_SUBNET}${id}` : null;
+  const setBoardId = (boardKey: string, val: any) => {
+    updateBoard(boardKey, 'board_id', val);
+    const ip = derivedIp(val);
+    if (ip) updateBoard(boardKey, 'ip', ip);
+  };
+  const applyPortDefaults = (boardKey: string, type: string) => {
+    if (type === 'T7') return;
+    const b = ((config.boards || {}) as Record<string, any>)[boardKey] || {};
+    if (b.send_port === undefined) updateBoard(boardKey, 'send_port', 5005);
+    if (LISTENING_TYPES.includes(type)) { if (b.listen_port === undefined) updateBoard(boardKey, 'listen_port', 5005); }
+    else if (b.listen_port !== undefined) updateBoard(boardKey, 'listen_port', undefined);
+  };
+  /** The board's IP, shown rather than edited, with a one-click fix when the file disagrees. */
+  const renderBoardIp = (boardKey: string, b: any) => {
+    const ip = derivedIp(b?.board_id);
+    return (
+      <div className="space-y-1">
+        <span className="block text-sm font-semibold">
+          IP <span className="text-xs text-text-muted ml-2">(from Board ID)</span>
+        </span>
+        <p className="px-3 py-2 font-mono text-sm text-text-muted" data-testid={`board-ip:${boardKey}`}>{ip ?? 'set a Board ID'}</p>
+        {ip && b?.ip !== undefined && b.ip !== ip && (
+          <InlineIssue level="warn" className="mt-2">
+            The config says <code>{String(b.ip)}</code>.{' '}
+            <button type="button" className="underline" disabled={!canEdit} onClick={() => updateBoard(boardKey, 'ip', ip)}>
+              Use {ip}
+            </button>
+          </InlineIssue>
+        )}
+      </div>
+    );
   };
 
   /** One T7 channel row's fields, cleaned for its kind: a field the kind does not use is removed
@@ -1921,12 +1992,11 @@ export default function ConfigPage() {
   };
 
   const addState = () => {
-    const used = new Set(stateList.map((s) => s.id));
-    // Never reuse an id: old Elodin run history stores the raw number with no name table beside
-    // it, so a recycled id silently relabels past runs. Always take the next free one. Ids start at
-    // 1 — id 0 is the legacy Debug enumerator (name-only, never a real state), so it's off-limits.
-    let next = 1;
-    while (used.has(next)) next++;
+    // Ids are hidden from the operator and assigned here. Elodin stores a state as its raw id, so a
+    // new state takes one above every id in the config rather than the lowest free one — which
+    // would hand a deleted state's number to a different state. Ids start at 1 (0 is the legacy
+    // Debug enumerator) and stop at 254 (255 means "unknown"); only past that is a gap reused.
+    const next = nextStateId(stateList);
     const name = `New State ${next}`;
     // Auto-place on the diagram at the first free (row, col) so a new state is visible there right
     // away rather than off-diagram. Coordinates are 0-based (see lib/states.ts).
@@ -1958,36 +2028,13 @@ export default function ConfigPage() {
     });
   };
 
-  // Swap two state columns in a grid (and, for transitions, the matching from-rows) so the table
-  // column order follows the state list order when states are reordered.
-  const swapGridCols = (g: CsvGrid | null, a: string, b: string, alsoRows: boolean): CsvGrid | null => {
-    if (!g) return g;
-    const ia = g.states.indexOf(a), ib = g.states.indexOf(b);
-    if (ia < 0 || ib < 0) return g;
-    const states = g.states.slice();
-    [states[ia], states[ib]] = [states[ib], states[ia]];
-    let rows = g.rows.map((r) => {
-      const cells = r.cells.slice();
-      [cells[ia], cells[ib]] = [cells[ib], cells[ia]];
-      return { ...r, cells };
-    });
-    if (alsoRows) {
-      const ra = rows.findIndex((r) => r.key === a), rb = rows.findIndex((r) => r.key === b);
-      if (ra >= 0 && rb >= 0) { rows = rows.slice(); [rows[ra], rows[rb]] = [rows[rb], rows[ra]]; }
-    }
-    return { states, rows };
-  };
-
-  const moveState = (idx: number, dir: -1 | 1) => {
-    const j = idx + dir;
-    if (j < 0 || j >= stateList.length) return;
-    const a = stateList[idx]?.name, b = stateList[j]?.name;
-    setConfig((prev) => ({ ...prev, states: moveInArray((prev.states || []) as any[], idx, dir) } as ConfigData));
-    if (a && b && a !== b) {
-      setCsvActuators((g) => swapGridCols(g, a, b, false));
-      setCsvDelays((g) => swapGridCols(g, a, b, false));
-      setCsvTransitions((g) => swapGridCols(g, a, b, true));
-    }
+  const moveState = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= stateList.length || to >= stateList.length) return;
+    const order = moveItem(stateList, from, to).map((st) => st?.name).filter((n): n is string => !!n);
+    setConfig((prev) => ({ ...prev, states: moveItem((prev.states || []) as any[], from, to) } as ConfigData));
+    setCsvActuators((g) => reorderGridCols(g, order, false));
+    setCsvDelays((g) => reorderGridCols(g, order, false));
+    setCsvTransitions((g) => reorderGridCols(g, order, true));
   };
 
   // Unsaved-changes tracking: compare the current config + state tables against the last-saved
@@ -2057,6 +2104,7 @@ export default function ConfigPage() {
   const stateIdDupes = stateList
     .map((s) => s.id)
     .filter((id, i, arr) => id !== undefined && arr.indexOf(id) !== i);
+  const stateIdsMissing = stateList.some((s) => !Number.isInteger(s.id) || (s.id as number) < 1 || (s.id as number) > 254);
   const stateNameDupes = stateList
     .map((s) => s.name)
     .filter((n, i, arr) => n !== undefined && arr.indexOf(n) !== i);
@@ -2152,13 +2200,40 @@ export default function ConfigPage() {
     }
   };
 
-  const moveInArray = <T,>(arr: T[], i: number, dir: -1 | 1): T[] => {
-    const j = i + dir;
-    if (j < 0 || j >= arr.length) return arr;
-    const next = arr.slice();
-    [next[i], next[j]] = [next[j], next[i]];
-    return next;
-  };
+  // Drag-to-reorder for the three ordered lists. Declared here, above the loading return, because
+  // they are hooks.
+  const tabsDrag = useDragReorder((from, to) => setGuiTabs(moveItem(guiTabs, from, to)), canEdit);
+  const barsDrag = useDragReorder((from, to) => setGuiBars(moveItem(guiBars, from, to)), canEdit);
+  const statesDrag = useDragReorder(moveState, canEdit);
+
+  // Dragging a role row onto another board's panel moves the role to that board (lib/role-moves).
+  // Targets are "sensor:<boardKey>" and "act:<board_id>"; only a board of the same type takes it.
+  type RoleDragItem =
+    | { kind: 'sensor'; name: string; fromKey: string; type: string }
+    | { kind: 'actuator'; name: string; fromBoardId?: number; type?: string };
+  const roleDrag = useTransferDrag<RoleDragItem>(
+    (it, target) => {
+      const boards = (config.boards || {}) as Record<string, any>;
+      if (it.kind === 'sensor') {
+        if (!target.startsWith('sensor:')) return false;
+        const key = target.slice('sensor:'.length);
+        return key !== it.fromKey && boards[key]?.type === it.type;
+      }
+      if (!target.startsWith('act:')) return false;
+      const id = Number(target.slice('act:'.length));
+      if (id === it.fromBoardId) return false;
+      const to = Object.values(boards).find((b: any) => Number(b?.board_id) === id && ACTUATOR_ROLE_BOARD_TYPES.includes(b?.type));
+      return !!to && (it.type === undefined || to.type === it.type);
+    },
+    (it, target) => {
+      const r = it.kind === 'sensor'
+        ? moveSensorRole(config, it.name, it.fromKey, target.slice('sensor:'.length))
+        : moveActuatorRole(config, it.name, Number(target.slice('act:'.length)));
+      if ('error' in r) { setError(r.error); setTimeout(() => setError(null), 5000); }
+      else setConfig(r.config);
+    },
+    canEdit,
+  );
 
   const updateArrayField = (section: string, field: string, value: string) => {
     const array = value.split(',').map(s => s.trim()).filter(s => s).map(s => {
@@ -2245,17 +2320,103 @@ export default function ConfigPage() {
   };
 
   /**
-   * A LabJack T7's card body. Its channels are the [[boards.<name>.channels]] table t7_bridge
-   * streams; each PT / TC / LC row is a sensor the rest of the GUI shows under its role, in psi /
-   * °C / kg. Problems are t7BoardIssues() — the same rules t7_bridge and the session gate apply.
+   * A board's optional name ([boards.*].name). It replaces "Actuator Board #2" wherever a board is
+   * shown, and is how the board is offered on the Roles tab; the config key never changes and
+   * nothing on the wire reads it. Cleared rather than saved empty, so an unnamed board has no key.
+   */
+  const renderBoardName = (boardKey: string, b: any) => {
+    const given = typeof b?.name === 'string' ? b.name.trim().toLowerCase() : '';
+    const clash = given
+      ? Object.entries((config.boards || {}) as Record<string, any>)
+          .find(([k, ob]) => k !== boardKey && typeof ob?.name === 'string' && ob.name.trim().toLowerCase() === given)?.[0]
+      : undefined;
+    return (
+      <div className="space-y-1">
+        {renderField('Name', b?.name, (val) => updateBoard(boardKey, 'name', String(val ?? '').trim() ? val : undefined),
+          'text', undefined, 'optional; shown instead of the type and number')}
+        {clash && <InlineIssue level="warn" className="mt-2">{clash} has this name too.</InlineIssue>}
+      </div>
+    );
+  };
+
+  /**
+   * A LabJack T7's card body: identity, network and stream. Its channel table is on the Roles tab
+   * (renderT7Channels), beside every other board's roles. Problems are t7BoardSettingsIssues().
    */
   const renderT7Board = (boardKey: string, b: any, slotIssue: string | null) => {
     const chs = t7ChannelsOf(boardKey);
+    const issues = t7BoardSettingsIssues((config.boards || {}) as Record<string, any>, boardKey);
+    const channelProblems = t7ChannelIssues((config.boards || {}) as Record<string, any>, boardKey).length
+      + t7RoleClashes(config).filter((c) => c.boardKey === boardKey).length;
+    const hasTc = chs.some((c) => c?.kind === 'TC');
+    return (
+      <div className="p-4 pt-0 space-y-6">
+        <FieldSection title="General">
+          {renderBoardName(boardKey, b)}
+          {renderField('Type', b.type, (val) => setBoardType(boardKey, val), 'select', BOARD_TYPES)}
+          <div className="space-y-1">
+            {renderField('Board ID', b.board_id, (val) => setBoardId(boardKey, val), 'number',
+              undefined, 'IP last octet; Elodin slot = ID % 10')}
+            {slotIssue && <InlineIssue level="error" className="mt-2">{slotIssue}</InlineIssue>}
+          </div>
+          {renderField('Enabled', b.enabled, (val) => updateBoard(boardKey, 'enabled', val), 'boolean')}
+        </FieldSection>
+
+        <FieldSection title="Network">
+          {renderBoardIp(boardKey, b)}
+          {renderField('MAC', b.mac, (val) => updateBoard(boardKey, 'mac', val), 'text', undefined,
+            'DHCP reservation; from the lease table')}
+          {renderField('Serial number', b.serial, (val) => updateBoard(boardKey, 'serial', val), 'number',
+            undefined, 'optional; refuses any other unit')}
+        </FieldSection>
+
+        <FieldSection title="Stream">
+          {renderField('Scan rate (Hz)', b.scan_rate_hz, (val) => updateBoard(boardKey, 'scan_rate_hz', val), 'number',
+            undefined, 'every channel once per scan')}
+          {renderField('Resolution index', b.resolution_index, (val) => updateBoard(boardKey, 'resolution_index', val), 'number',
+            undefined, '0-8; 0 = default')}
+          {renderField('Settling (µs)', b.settling_us, (val) => updateBoard(boardKey, 'settling_us', val), 'number',
+            undefined, '0 = automatic')}
+          {renderField('Scans per read', b.scans_per_read, (val) => updateBoard(boardKey, 'scans_per_read', val), 'number',
+            undefined, 'per LJM read; empty = a 50 ms block')}
+          {hasTc && renderField('CJC offset (K)', b.cjc_offset_k, (val) => updateBoard(boardKey, 'cjc_offset_k', val), 'number',
+            undefined, 'terminals vs internal sensor; default −3.0 (screw terminals; ~−4.9 on a CB37)')}
+        </FieldSection>
+
+        <section className="space-y-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-gray-700/70 pb-1.5">
+            Channels
+          </h4>
+          <p className="text-sm text-text-muted">
+            {chs.length} channel{chs.length === 1 ? '' : 's'}
+            {channelProblems > 0 && (
+              <span className="text-[var(--color-danger)]"> · {channelProblems} problem{channelProblems === 1 ? '' : 's'}</span>
+            )}
+            {' '}— named and set up on the{' '}
+            <button type="button" onClick={() => setActiveTab('roles')} className="underline hover:text-text">Roles tab</button>.
+          </p>
+          {issues.length > 0 && (
+            <div className="space-y-1">
+              {issues.map((m) => <InlineIssue key={m} level="error">{m}</InlineIssue>)}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  };
+
+  /**
+   * A LabJack T7's channel table, on the Roles tab: the [[boards.<name>.channels]] t7_bridge
+   * streams; each PT / TC / LC row is a sensor the rest of the GUI shows under its role, in psi /
+   * °C / kg. Problems are t7ChannelIssues() and t7RoleClashes() — the same rules t7_bridge and the
+   * session gate apply.
+   */
+  const renderT7Channels = (boardKey: string) => {
+    const chs = t7ChannelsOf(boardKey);
     const issues = [
-      ...t7BoardIssues((config.boards || {}) as Record<string, any>, boardKey),
+      ...t7ChannelIssues((config.boards || {}) as Record<string, any>, boardKey),
       ...t7RoleClashes(config).filter((c) => c.boardKey === boardKey).map((c) => c.message),
     ];
-    const hasTc = chs.some((c) => c?.kind === 'TC');
     const cell = 'px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed';
     const num = (i: number, field: string, title: string, width = 'w-24') => (
       <CommitOnBlurNumber
@@ -2305,42 +2466,7 @@ export default function ConfigPage() {
     ];
     const cols = allCols.filter((col) => chs.some((c) => col.applies(c)));
     return (
-      <div className="p-4 pt-0 space-y-6">
-        <FieldSection title="General">
-          {renderField('Type', b.type, (val) => setBoardType(boardKey, val), 'select', BOARD_TYPES)}
-          <div className="space-y-1">
-            {renderField('Board ID', b.board_id, (val) => updateBoard(boardKey, 'board_id', val), 'number',
-              undefined, 'IP last octet; Elodin slot = ID % 10')}
-            {slotIssue && <InlineIssue level="error" className="mt-2">{slotIssue}</InlineIssue>}
-          </div>
-          {renderField('Enabled', b.enabled, (val) => updateBoard(boardKey, 'enabled', val), 'boolean')}
-        </FieldSection>
-
-        <FieldSection title="Network">
-          {renderField('IP', b.ip, (val) => updateBoard(boardKey, 'ip', val))}
-          {renderField('MAC', b.mac, (val) => updateBoard(boardKey, 'mac', val), 'text', undefined,
-            'DHCP reservation; from the lease table')}
-          {renderField('Serial number', b.serial, (val) => updateBoard(boardKey, 'serial', val), 'number',
-            undefined, 'optional; refuses any other unit')}
-        </FieldSection>
-
-        <FieldSection title="Stream">
-          {renderField('Scan rate (Hz)', b.scan_rate_hz, (val) => updateBoard(boardKey, 'scan_rate_hz', val), 'number',
-            undefined, 'every channel once per scan')}
-          {renderField('Resolution index', b.resolution_index, (val) => updateBoard(boardKey, 'resolution_index', val), 'number',
-            undefined, '0-8; 0 = default')}
-          {renderField('Settling (µs)', b.settling_us, (val) => updateBoard(boardKey, 'settling_us', val), 'number',
-            undefined, '0 = automatic')}
-          {renderField('Scans per read', b.scans_per_read, (val) => updateBoard(boardKey, 'scans_per_read', val), 'number',
-            undefined, 'per LJM read; empty = a 50 ms block')}
-          {hasTc && renderField('CJC offset (K)', b.cjc_offset_k, (val) => updateBoard(boardKey, 'cjc_offset_k', val), 'number',
-            undefined, 'terminals vs internal sensor; default −3.0 (screw terminals; ~−4.9 on a CB37)')}
-        </FieldSection>
-
-        <section className="space-y-3">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-text-muted border-b border-gray-700/70 pb-1.5">
-            Channels
-          </h4>
+      <div className="space-y-3">
           <div className="overflow-x-auto">
             <table className="text-sm">
               <thead>
@@ -2429,7 +2555,6 @@ export default function ConfigPage() {
               {issues.map((m) => <InlineIssue key={m} level="error">{m}</InlineIssue>)}
             </div>
           )}
-        </section>
       </div>
     );
   };
@@ -2522,7 +2647,7 @@ export default function ConfigPage() {
           </select>
           <button onClick={createProfile} disabled={!canEdit}
             className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-            title={canEdit ? 'Create a new config from the current one' : 'Operators only'}>New</button>
+            title={canEdit ? 'Create a new config from the current one, with its own calibration profile' : 'Operators only'}>New</button>
           <button onClick={renameProfile} disabled={!canEdit || !activeProfile}
             className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
             title={canEdit ? 'Rename the active config' : 'Operators only'}>Rename</button>
@@ -2543,6 +2668,89 @@ export default function ConfigPage() {
             {showRunning ? 'Hide' : 'View'} running config.toml
           </button>
         </div>
+
+        {newCfg && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => { if (!newCfg.busy) setNewCfg(null); }}
+          >
+            <form
+              role="dialog"
+              aria-label="New config"
+              onClick={(e) => e.stopPropagation()}
+              onSubmit={(e) => { e.preventDefault(); void submitNewConfig(); }}
+              className="w-full max-w-md bg-card border border-gray-700 rounded-lg p-5 space-y-4"
+            >
+              <h2 className="text-lg font-bold">New config</h2>
+              <p className="text-sm text-text-muted">
+                A copy of <strong>{activeProfile || 'the active config'}</strong>, with a calibration profile of the same name.
+              </p>
+              <div className="space-y-1">
+                <label className="block text-sm font-semibold" htmlFor="new-config-name">Name</label>
+                <input
+                  id="new-config-name"
+                  autoFocus
+                  value={newCfg.name}
+                  onChange={(e) => setNewCfg({ ...newCfg, name: e.target.value })}
+                  placeholder="letters, digits, _ or -"
+                  className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                />
+                {newCfg.name.trim() && calProfiles.some((p) => p.name === newCfg.name.trim()) && (
+                  <InlineIssue level="error" className="mt-2">
+                    A calibration profile named &quot;{newCfg.name.trim()}&quot; already exists — pick another name.
+                  </InlineIssue>
+                )}
+              </div>
+              <fieldset className="space-y-2">
+                <legend className="text-sm font-semibold mb-1">Calibration</legend>
+                <label className={`flex items-center gap-2 text-sm ${calProfiles.length ? '' : 'opacity-50'}`}>
+                  <input
+                    type="radio"
+                    name="new-config-cal"
+                    checked={newCfg.cal === 'copy'}
+                    disabled={calProfiles.length === 0}
+                    onChange={() => setNewCfg({ ...newCfg, cal: 'copy' })}
+                  />
+                  Copy of
+                  <select
+                    value={newCfg.calFrom}
+                    disabled={calProfiles.length === 0}
+                    onChange={(e) => setNewCfg({ ...newCfg, cal: 'copy', calFrom: e.target.value })}
+                    className="px-2 py-1 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                  >
+                    {calProfiles.length === 0 && <option value="">— no calibration profiles saved —</option>}
+                    {calProfiles.map((p) => (
+                      <option key={p.name} value={p.name}>{p.name}{p.active ? ' (loaded)' : ''}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="new-config-cal"
+                    checked={newCfg.cal === 'fresh'}
+                    onChange={() => setNewCfg({ ...newCfg, cal: 'fresh' })}
+                  />
+                  Fresh — every sensor reads 0 until calibrated
+                </label>
+                <p className="text-xs text-text-muted">
+                  The calibration loaded now is not changed; load the new one from the Calibration tab when you want it.
+                </p>
+              </fieldset>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setNewCfg(null)} disabled={newCfg.busy}
+                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50">Cancel</button>
+                <button
+                  type="submit"
+                  disabled={newCfg.busy || !newCfg.name.trim() || calProfiles.some((p) => p.name === newCfg.name.trim())}
+                  className="ctl h-9 px-4 text-[11px] disabled:opacity-50"
+                >
+                  {newCfg.busy ? 'Creating…' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {sessionActive && (
           <div className="mb-4 p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
@@ -2746,6 +2954,7 @@ export default function ConfigPage() {
                     {open && b.type !== 'T7' && (
                     <div className="p-4 pt-0 space-y-6">
                       <FieldSection title="General">
+                        {renderBoardName(boardKey, b)}
                         {renderField(
                           'Type',
                           (board as any).type,
@@ -2757,8 +2966,10 @@ export default function ConfigPage() {
                           {renderField(
                             'Board ID',
                             (board as any).board_id,
-                            (val) => updateBoard(boardKey, 'board_id', val),
-                            'number'
+                            (val) => setBoardId(boardKey, val),
+                            'number',
+                            undefined,
+                            'IP last octet'
                           )}
                           {slotIssue && (
                             <InlineIssue level="error" className="mt-2">{slotIssue}</InlineIssue>
@@ -2772,24 +2983,11 @@ export default function ConfigPage() {
                         )}
                       </FieldSection>
 
+                      {/* Ports are not shown: every ESP32 board uses 5005 (applyPortDefaults). */}
                       <FieldSection title="Network">
-                        {renderField(
-                          'IP',
-                          (board as any).ip,
-                          (val) => updateBoard(boardKey, 'ip', val)
-                        )}
-                        {renderField(
-                          'Send Port',
-                          (board as any).send_port,
-                          (val) => updateBoard(boardKey, 'send_port', val),
-                          'number'
-                        )}
-                        {(board as any).listen_port !== undefined && renderField(
-                          'Listen Port',
-                          (board as any).listen_port,
-                          (val) => updateBoard(boardKey, 'listen_port', val),
-                          'number'
-                        )}
+                        {renderBoardIp(boardKey, b)}
+                        {renderField('MAC', b.mac, (val) => updateBoard(boardKey, 'mac', val), 'text', undefined,
+                          'DHCP reservation; from the lease table')}
                       </FieldSection>
 
                       <FieldSection title="Channels">
@@ -2887,15 +3085,9 @@ export default function ConfigPage() {
                       </FieldSection>
                       )}
 
-                      <FieldSection title="Safety & logging">
-                        {renderField(
-                          'Logging mode',
-                          String((board as any).enable_serial_printing ?? 0),
-                          (val) => updateBoard(boardKey, 'enable_serial_printing', Number(val)),
-                          'select',
-                          ['0', '1', '2', '3'],
-                          '0 USB only · 1 USB verbose · 2 stream Tier-1 · 3 stream Tier-1+2'
-                        )}
+                      {/* Only boards that carry a safety flag have anything to show here. */}
+                      {(b.necessary_for_abort !== undefined || (b.designated_survivor !== undefined && b.type === 'ACTUATOR')) && (
+                      <FieldSection title="Safety">
                         {(board as any).necessary_for_abort !== undefined && renderField(
                           'Necessary for abort',
                           (board as any).necessary_for_abort,
@@ -2909,6 +3101,23 @@ export default function ConfigPage() {
                           'boolean'
                         )}
                       </FieldSection>
+                      )}
+
+                      <details className="group">
+                        <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wider text-text-muted hover:text-text">
+                          Advanced
+                        </summary>
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {renderField(
+                            'Logging mode',
+                            String((board as any).enable_serial_printing ?? 0),
+                            (val) => updateBoard(boardKey, 'enable_serial_printing', Number(val)),
+                            'select',
+                            ['0', '1', '2', '3'],
+                            '0 USB only · 1 USB verbose · 2 stream Tier-1 · 3 stream Tier-1+2'
+                          )}
+                        </div>
+                      </details>
                     </div>
                     )}
                   </div>
@@ -2921,6 +3130,7 @@ export default function ConfigPage() {
                     updateBoard(newKey, 'pt_type', PT_TYPE_RATIOMETRIC);
                     updateBoard(newKey, 'enabled', false);
                     updateBoard(newKey, 'enable_serial_printing', 0);
+                    updateBoard(newKey, 'send_port', 5005);
                     // Matches PT_TYPE_RATIOMETRIC above; the Sensor type selector owns this from here.
                     updateBoard(newKey, 'voltage_reference', 1);
                     // A board you just created is empty — open it so it can be filled in.
@@ -2962,10 +3172,11 @@ export default function ConfigPage() {
           )}
 
           {activeTab === 'boards' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">ADC Voltage References</h2>
-              <p className="text-sm text-text-muted mb-4">
-                Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
+            <details className="bg-card rounded-lg p-6">
+              <summary className="cursor-pointer select-none text-xl font-bold">Advanced: ADC voltage references</summary>
+              <p className="text-sm text-text-muted my-4">
+                Fixed by the board hardware; the plots use them to turn raw counts into volts. Used when
+                voltage_reference = 0 (internal) or 2 (5V absolute); ratiometric boards need none.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
@@ -2977,14 +3188,6 @@ export default function ConfigPage() {
                   'Boards with voltage_reference = 0'
                 )}
                 {renderField(
-                  'VDD Nominal (V)',
-                  config.adc?.vdd_nominal_v,
-                  (val) => updateField('adc', 'vdd_nominal_v', val),
-                  'number',
-                  undefined,
-                  'Display only; ratiometric boards'
-                )}
-                {renderField(
                   'Absolute 5V (V)',
                   config.adc?.absolute_5v_v,
                   (val) => updateField('adc', 'absolute_5v_v', val),
@@ -2993,18 +3196,12 @@ export default function ConfigPage() {
                   'Boards with voltage_reference = 2'
                 )}
               </div>
-            </div>
+            </details>
           )}
 
           {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
-              {Object.values((config.boards || {}) as Record<string, any>).some((b) => b?.type === 'T7') && (
-                <p className="text-sm text-text-muted mb-4">
-                  LabJack T7 channels are named, and their conversion set, in each T7&apos;s channel
-                  table on the Boards tab.
-                </p>
-              )}
               <div className="space-y-8">
                 {/* One role panel per sensor board in config: sensor_roles_<boardKey>. Generalized
                     from a fixed pt_board/pt2/rtd/tc list so any board (incl. a 3rd PT board or an
@@ -3022,7 +3219,7 @@ export default function ConfigPage() {
                       key: `sensor_roles_${boardKey}`,
                       boardKey,
                       boardType: b.type as string,
-                      title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
+                      title: `${boardDisplayName(((config as any).boards || {}) as Record<string, any>, boardKey)} — ${b.type} roles`,
                       // The channels this board is told to sample — the only statement of
                       // which exist. Adding a role now picks from these rather than from a
                       // 1..num_sensors range, so a role cannot be created for a channel the
@@ -3095,9 +3292,22 @@ export default function ConfigPage() {
                   const connectorsWithoutRole = declared.length ? declared.filter((c) => !roleChannels.includes(c)) : [];
                   const inSync = rolesWithoutConnector.length === 0 && connectorsWithoutRole.length === 0;
 
+                  // A role can be dragged onto another board of this type, so a handle shows only when
+                  // there is one to drag it to.
+                  const canTransfer = Object.entries(((config as any).boards || {}) as Record<string, any>)
+                    .some(([k, ob]) => k !== boardKey && ob?.type === boardType);
+                  const target = `sensor:${boardKey}`;
                   return (
-                    <div key={key} className="space-y-4">
-                      <h3 className="text-lg font-semibold">{title}</h3>
+                    <div
+                      key={key}
+                      {...roleDrag.panelProps(target)}
+                      data-testid={`sensor-panel:${boardKey}`}
+                      className={`space-y-4 rounded-lg -m-2 p-2 transition-colors ${TRANSFER_PANEL_CLASS[roleDrag.panelState(target)]}`}
+                    >
+                      <h3 className="text-lg font-semibold">
+                        {title}
+                        <span className="ml-3 font-mono text-xs font-normal text-text-muted">[{key}]</span>
+                      </h3>
 
                       {/* The board's sampled channels, beside the roles that name them. */}
                       <div className="flex items-end gap-4 flex-wrap">
@@ -3174,6 +3384,7 @@ export default function ConfigPage() {
                           physics mode (see the disabled inputs below). */}
                       {entries.length > 0 && (
                         <div className="flex items-center gap-4 px-1 text-xs font-semibold uppercase tracking-wider text-text-muted">
+                          {canTransfer && <span className="w-5 shrink-0" aria-hidden="true" />}
                           <span className="flex-1">Role</span>
                           <span className="w-4 shrink-0" aria-hidden="true" />
                           <span className="w-28 shrink-0">Channel</span>
@@ -3208,7 +3419,14 @@ export default function ConfigPage() {
                           // Key by index, not name: keying by the (changing) name remounts the input
                           // on every keystroke → focus loss. Renames rebuild the map preserving order
                           // so the row stays in place (delete+re-add would jump it to the end).
-                          <div key={`${key}:${idx}`} className="flex items-center gap-4">
+                          <div key={`${key}:${idx}`} data-drag-row="" className="flex items-center gap-4">
+                            {canTransfer && (
+                              <span
+                                {...roleDrag.handleProps({ kind: 'sensor', name, fromKey: boardKey, type: boardType })}
+                                data-testid={`sensor-handle:${name}`}
+                                className={`${DRAG_HANDLE_CLASS} w-5 shrink-0 text-center`}
+                              >⠿</span>
+                            )}
                             <CommitOnBlurName
                               value={name}
                               siblings={Object.keys(map || {})}
@@ -3403,140 +3621,223 @@ export default function ConfigPage() {
                     </div>
                   );
                 })}
+                {/* A LabJack T7 names its sensors in its own channel table ([[boards.<key>.channels]],
+                    one row per AIN, role and conversion together) rather than a sensor_roles_
+                    section, so its panel is that table. The T7's identity, network and stream
+                    settings stay on the Boards tab. */}
+                {Object.entries((config.boards || {}) as Record<string, any>)
+                  .filter(([, b]) => b?.type === 'T7')
+                  .map(([boardKey]) => (
+                    <div key={`t7:${boardKey}`} className="space-y-4" data-testid={`t7-roles:${boardKey}`}>
+                      <h3 className="text-lg font-semibold">
+                        {boardDisplayName((config.boards || {}) as Record<string, any>, boardKey)} — channels
+                        <span className="ml-3 font-mono text-xs font-normal text-text-muted">[[boards.{boardKey}.channels]]</span>
+                      </h3>
+                      <p className="text-sm text-text-muted">
+                        Each analog input, its role (the sensor&apos;s name) and its conversion.
+                      </p>
+                      {renderT7Channels(boardKey)}
+                    </div>
+                  ))}
               </div>
             </div>
           )}
 
           {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
-              <div className="space-y-4">
+              <h2 className="text-xl font-bold mb-1">Actuator Roles</h2>
+              <p className="text-sm text-text-muted mb-4">
+                One panel per actuator and ball valve board. Drag a role&apos;s ⠿ onto another board of the
+                same type to move it there; it keeps its channel when that one is free.
+              </p>
+              <div className="space-y-6">
                 {(() => {
                 const bvBoards = ballValveBoardIds(config);
-                return Object.entries(config.actuator_roles || {})
-                  // File (insertion) order so editing a channel/board/name doesn't move the row.
-                  // Re-sorted by board_id then channel only on Save (sortRolesForSave), not mid-edit.
-                  .map(([name, value], idx) => {
-                  const arr = Array.isArray(value) ? value : [];
-                  const type = (arr[0] as string) || 'NC';
-                  const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
-                  const third = arr.length >= 3 ? arr[2] : undefined;
-                  const boardId = typeof third === 'number' ? third : (typeof third === 'string' ? Number(third) : undefined);
-                  // 4th element: which controller_service PWM output this actuator serves. Every
-                  // edit below goes through writeRole so changing a channel or polarity cannot
-                  // silently drop the assignment — which would hand the valve back to the
-                  // sequencer during a burn without anyone touching that field.
-                  const assignment = typeof arr[3] === 'string' ? arr[3] : '';
-                  // A ball valve has no NO/NC (1 opens it on the wire) and is never a PWM output,
-                  // so neither control is offered; its role is always written as NC.
-                  const isBallValve = boardId !== undefined && bvBoards.has(boardId);
-                  const writeRole = (t: string, ch: number, b: number | undefined, assign: string) => {
-                    const next: any[] = [t, ch];
-                    if (b !== undefined) next.push(b);
-                    if (assign) {
-                      if (b === undefined) next.push(boardId ?? 0);  // 4th element needs a 3rd
-                      next.push(assign);
-                    }
-                    setConfig({ ...config, actuator_roles: { ...config.actuator_roles, [name]: next as any } });
-                  };
-                  return (
-                  // Key by index, not name — keying by the changing name remounts the row each
-                  // keystroke (focus loss). Rename rebuilds preserving order so the row stays put.
-                  <div key={`act:${idx}`} className="flex items-center gap-4">
-                    <CommitOnBlurName
-                      value={name}
-                      siblings={Object.keys(config.actuator_roles || {})}
-                      rowKey={`act:${name}`}
-                      onDupChange={onRoleDup}
-                      onRename={(newName) => {
-                        const rebuilt: Record<string, any> = {};
-                        for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
-                        setConfig({ ...config, actuator_roles: rebuilt, gui: orderAfterRename(config.gui, name, newName) });
-                      }}
-                      onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
-                      className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                    />
-                    <span className="text-text-muted">=</span>
-                    {isBallValve ? (
-                      <span
-                        data-testid={`ball-valve-kind:${name}`}
-                        title="Ball valve: no NO/NC — 1 opens it, 0 closes it"
-                        className="w-[11.5rem] px-3 py-2 text-text-muted"
-                      >
-                        Ball valve
-                      </span>
-                    ) : (
-                    <select
-                      value={type}
-                      onChange={(e) => writeRole(e.target.value, actuatorId, boardId, assignment)}
-                      className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                    >
-                      <option value="NO">NO (Normally Open)</option>
-                      <option value="NC">NC (Normally Closed)</option>
-                    </select>
+                const boardsCfg = (config.boards || {}) as Record<string, any>;
+                const actBoards = Object.entries(boardsCfg)
+                  .filter(([, b]) => ACTUATOR_ROLE_BOARD_TYPES.includes(b?.type))
+                  .sort(([, a], [, b]) => Number(a?.board_id ?? 0) - Number(b?.board_id ?? 0));
+                const actBoardIds = new Set(actBoards.map(([, b]) => Number(b?.board_id)));
+                // Index in the whole map, so a row keeps its React key while it is edited.
+                const entries = Object.entries(config.actuator_roles || {}).map(([n, v], idx) => ({ n, v, idx }));
+                const boardIdOf = (v: any): number | undefined => {
+                  const t = Array.isArray(v) && v.length >= 3 ? Number(v[2]) : NaN;
+                  return Number.isFinite(t) ? t : undefined;
+                };
+                const renderRow = (name: string, value: any, idx: number, boardType: string | undefined, canTransfer: boolean) => {
+                  const boardOnFile = boardIdOf(value);
+                      const arr = Array.isArray(value) ? value : [];
+                      const type = (arr[0] as string) || 'NC';
+                      const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
+                      const third = arr.length >= 3 ? arr[2] : undefined;
+                      const boardId = typeof third === 'number' ? third : (typeof third === 'string' ? Number(third) : undefined);
+                      // 4th element: which controller_service PWM output this actuator serves. Every
+                      // edit below goes through writeRole so changing a channel or polarity cannot
+                      // silently drop the assignment — which would hand the valve back to the
+                      // sequencer during a burn without anyone touching that field.
+                      const assignment = typeof arr[3] === 'string' ? arr[3] : '';
+                      // A ball valve has no NO/NC (1 opens it on the wire) and is never a PWM output,
+                      // so neither control is offered; its role is always written as NC.
+                      const isBallValve = boardId !== undefined && bvBoards.has(boardId);
+                      const writeRole = (t: string, ch: number, b: number | undefined, assign: string) => {
+                        const next: any[] = [t, ch];
+                        if (b !== undefined) next.push(b);
+                        if (assign) {
+                          if (b === undefined) next.push(boardId ?? 0);  // 4th element needs a 3rd
+                          next.push(assign);
+                        }
+                        setConfig({ ...config, actuator_roles: { ...config.actuator_roles, [name]: next as any } });
+                      };
+                      return (
+                      // Key by index, not name — keying by the changing name remounts the row each
+                      // keystroke (focus loss). Rename rebuilds preserving order so the row stays put.
+                      <div key={`act:${idx}`} data-drag-row="" className="flex items-center gap-4">
+                        {canTransfer && (
+                          <span
+                            {...roleDrag.handleProps({ kind: 'actuator', name, fromBoardId: boardOnFile, type: boardType })}
+                            data-testid={`actuator-handle:${name}`}
+                            className={`${DRAG_HANDLE_CLASS} w-5 shrink-0 text-center`}
+                          >⠿</span>
+                        )}
+                        <CommitOnBlurName
+                          value={name}
+                          siblings={Object.keys(config.actuator_roles || {})}
+                          rowKey={`act:${name}`}
+                          onDupChange={onRoleDup}
+                          onRename={(newName) => {
+                            const rebuilt: Record<string, any> = {};
+                            for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
+                            setConfig({ ...config, actuator_roles: rebuilt, gui: orderAfterRename(config.gui, name, newName) });
+                          }}
+                          onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
+                          className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                        />
+                        <span className="text-text-muted">=</span>
+                        {isBallValve ? (
+                          <span
+                            data-testid={`ball-valve-kind:${name}`}
+                            title="Ball valve: no NO/NC — 1 opens it, 0 closes it"
+                            className="w-[11.5rem] px-3 py-2 text-text-muted"
+                          >
+                            Ball valve
+                          </span>
+                        ) : (
+                        <select
+                          value={type}
+                          onChange={(e) => writeRole(e.target.value, actuatorId, boardId, assignment)}
+                          className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="NO">NO (Normally Open)</option>
+                          <option value="NC">NC (Normally Closed)</option>
+                        </select>
+                        )}
+                        <CommitOnBlurNumber
+                          value={actuatorId}
+                          onCommit={(n) => { if (n !== undefined) writeRole(isBallValve ? 'NC' : type, n, boardId, isBallValve ? '' : assignment); }}
+                          className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                          placeholder="Ch"
+                        />
+                        {/* Assigning an actuator here is what hands it to controller_service: the
+                            controller resolves its PWM output from this, and the sequencer stops
+                            commanding the actuator during a burn so there is one writer. */}
+                        {isBallValve ? (
+                          <span className="w-40 px-3 py-2 text-text-muted">Sequencer</span>
+                        ) : (
+                        <select
+                          value={assignment}
+                          onChange={(e) => writeRole(type, actuatorId, boardId, e.target.value)}
+                          disabled={!canEdit}
+                          title="Which controller_service PWM output this actuator serves"
+                          className="w-40 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                        >
+                          <option value="">Sequencer</option>
+                          <option value="pwm_fuel">Controller: fuel</option>
+                          <option value="pwm_ox">Controller: ox</option>
+                        </select>
+                        )}
+                        <button
+                          onClick={() => {
+                            const updated = { ...config.actuator_roles };
+                            delete updated[name];
+                            setConfig({ ...config, actuator_roles: updated, gui: orderAfterRename(config.gui, name, null) });
+                          }}
+                          className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      );
+                };
+                const orphans = entries.filter(({ v }) => { const id = boardIdOf(v); return id === undefined || !actBoardIds.has(id); });
+                return (
+                  <>
+                    {actBoards.map(([boardKey, b]) => {
+                      const id = Number(b.board_id);
+                      const target = `act:${id}`;
+                      const rows = entries.filter(({ v }) => boardIdOf(v) === id);
+                      const canTransfer = actBoards.some(([k, ob]) => k !== boardKey && ob?.type === b.type);
+                      return (
+                        <div
+                          key={target}
+                          {...roleDrag.panelProps(target)}
+                          data-testid={`actuator-panel:${boardKey}`}
+                          className={`space-y-3 rounded-lg -m-2 p-2 transition-colors ${TRANSFER_PANEL_CLASS[roleDrag.panelState(target)]}`}
+                        >
+                          <h3 className={`text-lg font-semibold ${b.enabled === false ? 'text-text-muted' : ''}`}>
+                            {boardDisplayName(boardsCfg, boardKey)}
+                            <span className="ml-3 font-mono text-xs font-normal text-text-muted">
+                              {b.type === 'BALL_VALVE' ? 'ball valve' : 'actuator'} · ID {Number.isFinite(id) ? id : '—'}
+                            </span>
+                            {b.enabled === false && (
+                              <span className="ml-2 px-2 py-0.5 text-xs font-normal rounded bg-gray-700 text-text-muted">not enabled</span>
+                            )}
+                          </h3>
+                          {rows.length === 0 && <p className="text-sm text-text-muted">No roles on this board.</p>}
+                          <div className="space-y-3">
+                            {rows.map(({ n, v, idx }) => renderRow(n, v, idx, b.type, canTransfer))}
+                          </div>
+                          <button
+                            onClick={() => {
+                              const ch = freeActuatorChannel(config, b);
+                              if (ch === undefined) {
+                                setError('Every channel on this board already has a role — remove one, or drag one to another board.');
+                                setTimeout(() => setError(null), 4000);
+                                return;
+                              }
+                              const updated = { ...config.actuator_roles };
+                              let name = 'New Actuator';   // unique name so it doesn't merge onto an existing row
+                              let k = 2;
+                              while (name in updated) name = `New Actuator ${k++}`;
+                              updated[name] = ['NC', ch, id] as any;
+                              setConfig({ ...config, actuator_roles: updated });
+                            }}
+                            disabled={!Number.isFinite(id)}
+                            className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 disabled:opacity-50"
+                          >
+                            + Add Role
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {/* Roles whose board_id names no actuator or ball valve board: still in the
+                        config (the session gate reports them), and draggable onto a real board. */}
+                    {orphans.length > 0 && (
+                      <div className="space-y-3 rounded-lg border border-yellow-700/60 p-3" data-testid="actuator-panel:orphans">
+                        <h3 className="text-lg font-semibold">Not on any board</h3>
+                        <p className="text-sm text-text-muted">
+                          These roles name a board ID that no actuator or ball valve board has. Drag one onto a board to put it there.
+                        </p>
+                        <div className="space-y-3">
+                          {orphans.map(({ n, v, idx }) => renderRow(n, v, idx, undefined, actBoards.length > 0))}
+                        </div>
+                      </div>
                     )}
-                    <CommitOnBlurNumber
-                      value={actuatorId}
-                      onCommit={(n) => { if (n !== undefined) writeRole(isBallValve ? 'NC' : type, n, boardId, isBallValve ? '' : assignment); }}
-                      className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                      placeholder="Ch"
-                    />
-                    <CommitOnBlurNumber
-                      value={Number.isFinite(boardId as number) ? (boardId as number) : undefined}
-                      allowEmpty
-                      onCommit={(n) => {
-                        // Moving a role onto a ball valve board drops what a ball valve cannot have.
-                        const toBv = n !== undefined && bvBoards.has(n);
-                        writeRole(toBv ? 'NC' : type, actuatorId, n, toBv ? '' : assignment);
-                      }}
-                      className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                      placeholder="Board ID"
-                    />
-                    {/* Assigning an actuator here is what hands it to controller_service: the
-                        controller resolves its PWM output from this, and the sequencer stops
-                        commanding the actuator during a burn so there is one writer. */}
-                    {isBallValve ? (
-                      <span className="w-40 px-3 py-2 text-text-muted">Sequencer</span>
-                    ) : (
-                    <select
-                      value={assignment}
-                      onChange={(e) => writeRole(type, actuatorId, boardId, e.target.value)}
-                      disabled={!canEdit}
-                      title="Which controller_service PWM output this actuator serves"
-                      className="w-40 px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
-                    >
-                      <option value="">Sequencer</option>
-                      <option value="pwm_fuel">Controller: fuel</option>
-                      <option value="pwm_ox">Controller: ox</option>
-                    </select>
+                    {actBoards.length === 0 && orphans.length === 0 && (
+                      <p className="text-sm text-text-muted">No actuator or ball valve boards — add one on the Boards tab.</p>
                     )}
-                    <button
-                      onClick={() => {
-                        const updated = { ...config.actuator_roles };
-                        delete updated[name];
-                        setConfig({ ...config, actuator_roles: updated, gui: orderAfterRename(config.gui, name, null) });
-                      }}
-                      className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  );
-                });
+                  </>
+                );
                 })()}
-                <button
-                  onClick={() => {
-                    const updated = { ...config.actuator_roles };
-                    let name = 'New Actuator';   // unique name so it doesn't merge onto an existing row
-                    let n = 2;
-                    while (name in updated) name = `New Actuator ${n++}`;
-                    updated[name] = ['NC', 1, 12] as any;
-                    setConfig({ ...config, actuator_roles: updated });
-                  }}
-                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
-                >
-                  + Add Actuator Role
-                </button>
               </div>
 
               <div className="mt-8 border-t border-gray-700 pt-6">
@@ -3606,18 +3907,17 @@ export default function ConfigPage() {
               <div className="bg-card rounded-lg p-6">
                 <h2 className="text-xl font-bold mb-1">Tab Bar</h2>
                 <p className="text-sm text-text-muted mb-4">
-                  Which views are pinned to the header, in order. Others stay reachable via “All Views”.
+                  Which views are pinned to the header, in order — drag ⠿ to reorder. Others stay reachable via “All Views”.
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-2" {...tabsDrag.listProps()}>
                   {guiTabs.map((id, i) => (
-                    <div key={`${id}:${i}`} className="flex items-center gap-2">
-                      <span className="w-8 text-text-muted text-sm text-right">{i + 1}.</span>
+                    <div key={`${id}:${i}`} {...tabsDrag.rowProps(i)} className={`flex items-center gap-2 rounded ${tabsDrag.rowClass(i, guiTabs.length)}`}>
+                      <span {...tabsDrag.handleProps(i, guiTabs.length)} className={DRAG_HANDLE_CLASS}>⠿</span>
+                      <span className="w-6 text-text-muted text-sm text-right">{i + 1}.</span>
                       <span className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded">
                         {navItemById(id)?.name ?? id}
                         <span className="text-text-muted text-xs ml-2">({id})</span>
                       </span>
-                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, -1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
-                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, 1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
                       <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-9 px-3 text-[11px]">Remove</button>
                     </div>
                   ))}
@@ -3643,7 +3943,7 @@ export default function ConfigPage() {
               <div className="bg-card rounded-lg p-6">
                 <h2 className="text-xl font-bold mb-1">Top-Bar Pressure Gauges</h2>
                 <p className="text-sm text-text-muted mb-4">
-                  Ordered gauges in the header. NOP/MEOP come from Pressure Limits above (via the <code>limits</code> key).
+                  Ordered gauges in the header — drag ⠿ to reorder. NOP/MEOP come from Pressure Limits above (via the <code>limits</code> key).
                 </p>
                 {/* Column header so each field is labeled (md+ only; on mobile the fields stack). */}
                 <div className="hidden md:grid md:grid-cols-12 gap-2 px-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
@@ -3651,13 +3951,14 @@ export default function ConfigPage() {
                   <div className="md:col-span-3">Label on gauge</div>
                   <div className="md:col-span-2">Limits (NOP/MEOP)</div>
                   <div className="md:col-span-2">Color</div>
-                  <div className="md:col-span-2 text-right">Order · remove</div>
+                  <div className="md:col-span-2 text-right">Remove</div>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-3" {...barsDrag.listProps()}>
                   {guiBars.map((bar: any, i: number) => {
                     const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
                     return (
-                      <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
+                      <div key={i} {...barsDrag.rowProps(i)} className={`relative grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2 pl-7 ${barsDrag.rowClass(i, guiBars.length)}`}>
+                        <span {...barsDrag.handleProps(i, guiBars.length)} className={`${DRAG_HANDLE_CLASS} absolute left-1 top-1/2 -translate-y-1/2`}>⠿</span>
                         {/* Pick the pressure sensor in ONE dropdown; its limits come with it (matched by
                             the space→underscore [pressure_limits] key convention), and the label auto-fills
                             with the sensor name (still editable — shorten it as you like). */}
@@ -3691,13 +3992,13 @@ export default function ConfigPage() {
                           {limitRows.map((row) => <option key={row.key} value={row.key}>{row.label === row.key ? row.key : `${row.label} (${row.key})`}</option>)}
                           {bar.limits && !limitRows.some((row) => row.key === bar.limits) && <option value={bar.limits}>{bar.limits} (missing)</option>}
                         </select>
-                        <div className="md:col-span-2 flex items-center gap-1">
-                          <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
-                          <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        </div>
+                        <GaugeColorPicker
+                          value={bar.color}
+                          onChange={(hex) => setBar({ color: hex })}
+                          disabled={!canEdit}
+                          className="md:col-span-2"
+                        />
                         <div className="md:col-span-2 flex items-center justify-end gap-1">
-                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, -1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
-                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
                           <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-8 px-2 text-[11px]" title="Remove">✕</button>
                         </div>
                         <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="Optional — average multiple redundant sensors into this one gauge (comma-separated role names, e.g. two chamber PTs). Leave blank for a single sensor." className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
@@ -3706,7 +4007,7 @@ export default function ConfigPage() {
                   })}
                 </div>
                 <button
-                  onClick={() => setGuiBars([...guiBars, { label: '', role: '', limits: '', color: '#888888' }])}
+                  onClick={() => setGuiBars([...guiBars, { label: '', role: '', limits: '', color: '#9ca3af' }])}
                   className="mt-4 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
                 >
                   + Add Gauge
@@ -3759,43 +4060,6 @@ export default function ConfigPage() {
                   (val) => updateField('controller', 'pwm_duration_ms', val),
                   'number'
                 )}
-                {renderField(
-                  'Use C++ Controller',
-                  config.controller?.use_cpp_controller,
-                  (val) => updateField('controller', 'use_cpp_controller', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Command Type',
-                  config.controller?.command_type,
-                  (val) => updateField('controller', 'command_type', val),
-                  'select',
-                  ['THRUST_DESIRED', 'ALTITUDE_GOAL', 'PRESSURE_TARGET']
-                )}
-                {renderField(
-                  'Thrust Desired',
-                  config.controller?.thrust_desired,
-                  (val) => updateField('controller', 'thrust_desired', val),
-                  'number'
-                )}
-                {renderField(
-                  'Altitude Goal',
-                  config.controller?.altitude_goal,
-                  (val) => updateField('controller', 'altitude_goal', val),
-                  'number'
-                )}
-                {renderField(
-                  'Fuel Pressure Target',
-                  config.controller?.pressure_fuel_target,
-                  (val) => updateField('controller', 'pressure_fuel_target', val),
-                  'number'
-                )}
-                {renderField(
-                  'Ox Pressure Target',
-                  config.controller?.pressure_ox_target,
-                  (val) => updateField('controller', 'pressure_ox_target', val),
-                  'number'
-                )}
               </div>
             </div>
           )}
@@ -3822,13 +4086,28 @@ export default function ConfigPage() {
                 <p className="text-sm text-text-muted">
                   Names shown everywhere — logs, the diagram, and the column headers below. Row and
                   column place the state on the state diagram; leave them blank to keep it off the
-                  diagram. Ids are a stable key: rename and reorder freely, but never reuse an id,
-                  because past runs store the raw number.
+                  diagram. Rename, reorder and add freely — each state&apos;s number in the run
+                  history is assigned for you and stays with it.
                 </p>
 
-                {(stateIdDupes.length > 0 || stateNameDupes.length > 0) && (
+                {(stateIdDupes.length > 0 || stateIdsMissing || stateNameDupes.length > 0) && (
                   <InlineIssue level="error">
-                    {stateIdDupes.length > 0 && <p>Duplicate id(s): <strong>{stateIdDupes.join(', ')}</strong> — the later entry wins and the earlier state disappears.</p>}
+                    {(stateIdDupes.length > 0 || stateIdsMissing) && (
+                      <p>
+                        {stateIdDupes.length > 0
+                          ? <>Two states share id <strong>{stateIdDupes.join(', ')}</strong> — the later one disappears on load.</>
+                          : <>A state has no id, so the sequencer cannot load it.</>}
+                        {' '}(Probably from a hand-edited config.){' '}
+                        <button
+                          type="button"
+                          onClick={() => setConfig((prev) => ({ ...prev, states: fixStateIds((prev.states || []) as any[]) } as ConfigData))}
+                          disabled={!canEdit}
+                          className="underline"
+                        >
+                          Fix the ids
+                        </button>
+                      </p>
+                    )}
                     {stateNameDupes.length > 0 && <p>Duplicate name(s): <strong>{stateNameDupes.join(', ')}</strong> — CSV columns resolve by name, so one of them is unreachable.</p>}
                   </InlineIssue>
                 )}
@@ -3852,7 +4131,7 @@ export default function ConfigPage() {
                   <table className="text-sm w-full border-collapse">
                     <thead>
                       <tr className="bg-gray-700 text-white">
-                        <th className="px-3 py-2 text-left font-semibold w-20">ID</th>
+                        <th className="w-6" aria-label="Reorder" />
                         <th className="px-3 py-2 text-left font-semibold">Name</th>
                         <th className="px-3 py-2 text-left font-semibold w-24">Row</th>
                         <th className="px-3 py-2 text-left font-semibold w-24">Col</th>
@@ -3865,14 +4144,9 @@ export default function ConfigPage() {
                     </thead>
                     <tbody>
                       {stateList.map((st, i) => (
-                        <tr key={`state:${i}`} className={i % 2 ? 'bg-white/[0.04]' : ''}>
-                          <td className="px-3 py-1.5">
-                            <CommitOnBlurNumber
-                              value={st.id}
-                              onCommit={(v) => setState(i, { id: Math.max(1, Math.round(v)) })}
-                              className={`w-16 px-2 py-1 bg-gray-800 border rounded text-white ${st.id !== undefined && stateIdDupes.includes(st.id) ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-600'}`}
-                            />
-                            {st.id !== undefined && stateIdDupes.includes(st.id) && <div className="text-[10px] text-red-400 mt-0.5">duplicate id</div>}
+                        <tr key={`state:${i}`} {...statesDrag.rowProps(i)} className={`${i % 2 ? 'bg-white/[0.04]' : ''} ${statesDrag.rowClass(i, stateList.length, 'table')}`}>
+                          <td className="pl-2 py-1.5 w-6" title="Drag to reorder (also reorders the table columns)">
+                            <span {...statesDrag.handleProps(i, stateList.length)} className={DRAG_HANDLE_CLASS}>⠿</span>
                           </td>
                           <td className="px-3 py-1.5">
                             <input
@@ -3943,18 +4217,6 @@ export default function ConfigPage() {
                             />
                           </td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                            <button
-                              onClick={() => moveState(i, -1)}
-                              disabled={!canEdit || i === 0}
-                              title="Move up (also reorders the table columns)"
-                              className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-xs disabled:opacity-30 mr-1"
-                            >↑</button>
-                            <button
-                              onClick={() => moveState(i, 1)}
-                              disabled={!canEdit || i === stateList.length - 1}
-                              title="Move down (also reorders the table columns)"
-                              className="px-2 py-1 bg-gray-700 rounded hover:bg-gray-600 text-xs disabled:opacity-30 mr-1"
-                            >↓</button>
                             <button
                               onClick={() => removeState(i)}
                               disabled={!canEdit}
@@ -4490,262 +4752,6 @@ export default function ConfigPage() {
                 Profiles live in <code>scripts/calibration/calibrations/profiles</code> and are committed to
                 the repo, so a saved calibration travels between computers. New blank resets every sensor to 0.
               </p>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6 space-y-6">
-              <div>
-                <h2 className="text-xl font-bold mb-1">Network</h2>
-                <p className="text-sm text-amber-300/90 mb-4">
-                  Read-only — these are startup-only binds for the pipeline services and must match the
-                  board firmware. Changing them requires a deploy/restart, not a live edit.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {renderField(
-                    'Bind IP',
-                    config.network?.bind_ip,
-                    (val) => updateField('network', 'bind_ip', val),
-                    'text', undefined, 'DAQ bridge sensor-socket interface', true
-                  )}
-                  {renderField(
-                    'Sensor Port',
-                    config.network?.sensor_port,
-                    (val) => updateField('network', 'sensor_port', val),
-                    'number', undefined, 'UDP port boards send sensor data to', true
-                  )}
-                  {renderField(
-                    'Actuator Command Port',
-                    config.network?.actuator_cmd_port,
-                    (val) => updateField('network', 'actuator_cmd_port', val),
-                    'number', undefined, 'Port boards listen on for actuator commands', true
-                  )}
-                </div>
-              </div>
-
-              <div className="border-t border-gray-700 pt-6">
-                <h3 className="text-lg font-semibold mb-1">Board Discovery</h3>
-                <p className="text-sm text-amber-300/90 mb-4">
-                  Read-only — the discovery service scans this subnet/interface at startup. Editing it
-                  live has no effect until the pipeline restarts.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {renderField(
-                    'Enabled', config.discovery?.enabled,
-                    (val) => updateField('discovery', 'enabled', val),
-                    'boolean', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'Network Interface', config.discovery?.network_interface,
-                    (val) => updateField('discovery', 'network_interface', val),
-                    'text', undefined, '"auto" = interface with a 192.168.2.x IP', true
-                  )}
-                  {renderField(
-                    'Mode', config.discovery?.mode,
-                    (val) => updateField('discovery', 'mode', val),
-                    'select', ['passive', 'active', 'hybrid'], undefined, true
-                  )}
-                  {renderField(
-                    'Subnet', config.discovery?.subnet,
-                    (val) => updateField('discovery', 'subnet', val),
-                    'text', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'IP Range Start', config.discovery?.ip_range_start,
-                    (val) => updateField('discovery', 'ip_range_start', val),
-                    'number', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'IP Range End', config.discovery?.ip_range_end,
-                    (val) => updateField('discovery', 'ip_range_end', val),
-                    'number', undefined, undefined, true
-                  )}
-                  {renderField(
-                    'Discovery Timeout (seconds)', config.discovery?.discovery_timeout_seconds,
-                    (val) => updateField('discovery', 'discovery_timeout_seconds', val),
-                    'number', undefined, undefined, true
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Services</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — these are always-on support services (heartbeat, config-broadcast, data-logger).
-                They read their config once at their own startup and are <em>not</em> restarted by a session,
-                so edits here wouldn&apos;t take effect on a Start. Change them via a deploy/restart.
-              </p>
-              <div className="space-y-8">
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Heartbeat Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Polls backend /api/engine_state, broadcasts SERVER_HEARTBEAT to boards.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val), 'text', undefined, undefined, true)}
-                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number', undefined, undefined, true)}
-                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val), 'text', undefined, undefined, true)}
-                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number', undefined, undefined, true)}
-                  </div>
-                </div>
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Config Broadcast Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards. (It re-reads board config live each
-                    cycle; only these service-level settings need a restart.)
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val), 'text', undefined, undefined, true)}
-                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number', undefined, undefined, true)}
-                  </div>
-                </div>
-                <div className="border border-gray-700 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Data Logger Service</h3>
-                  <p className="text-sm text-text-muted mb-3">
-                    Records .sensorlog files; connects to backend WebSocket.
-                  </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean', undefined, undefined, true)}
-                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val), 'text', undefined, undefined, true)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Database</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — the Elodin DB connection is established at startup. Changing host/port live
-                would drop the live data link; edit via a deploy/restart, not here.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Host',
-                  config.database?.host,
-                  (val) => updateField('database', 'host', val),
-                  'text', undefined, undefined, true
-                )}
-                {renderField(
-                  'Port',
-                  config.database?.port,
-                  (val) => updateField('database', 'port', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Auto Flush Interval (ms)',
-                  config.database?.auto_flush_interval_ms,
-                  (val) => updateField('database', 'auto_flush_interval_ms', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Max Buffer Size',
-                  config.database?.max_buffer_size,
-                  (val) => updateField('database', 'max_buffer_size', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Connection Retry Attempts',
-                  config.database?.connection_retry_attempts,
-                  (val) => updateField('database', 'connection_retry_attempts', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Connection Retry Delay (ms)',
-                  config.database?.connection_retry_delay_ms,
-                  (val) => updateField('database', 'connection_retry_delay_ms', val),
-                  'number', undefined, undefined, true
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Server Heartbeat</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — the heartbeat broadcast is set up by the C++ services at startup. Editing it
-                live has no effect until the pipeline restarts.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Interval (ms)',
-                  config.server_heartbeat?.interval_ms,
-                  (val) => updateField('server_heartbeat', 'interval_ms', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Broadcast Port',
-                  config.server_heartbeat?.broadcast_port,
-                  (val) => updateField('server_heartbeat', 'broadcast_port', val),
-                  'number', undefined, undefined, true
-                )}
-                {renderField(
-                  'Broadcast IP',
-                  config.server_heartbeat?.broadcast_ip,
-                  (val) => updateField('server_heartbeat', 'broadcast_ip', val),
-                  'text', undefined, undefined, true
-                )}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Controller Service (C++)</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only for now — TCP port for FIRE_START / FIRE_STOP, read by the C++ controller
-                service at startup. Editing it live has no effect until the pipeline restarts.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number', undefined, undefined, true)}
-                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number', undefined, undefined, true)}
-                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number', undefined, undefined, true)}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Actuator Service (C++)</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only for now — the port/bind are read at C++ service startup (and the port is
-                overridden by an env var the startup script sets). Editing it live has no effect.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number', undefined, undefined, true)}
-                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val), 'text', undefined, undefined, true)}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">State Machine</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — state-machine setup (the actuator/transition CSVs) is managed outside this
-                editor. These paths are loaded by the sequencer at pipeline start, not live-editable here.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Actuator CSV',
-                  config.state_machine?.actuator_csv,
-                  (val) => updateField('state_machine', 'actuator_csv', val),
-                  'text', undefined, 'sequencer actuator sequence', true
-                )}
-                {renderField(
-                  'Transitions CSV',
-                  config.state_machine?.transitions_csv,
-                  (val) => updateField('state_machine', 'transitions_csv', val),
-                  'text', undefined, 'state transition matrix', true
-                )}
-              </div>
             </div>
           )}
 

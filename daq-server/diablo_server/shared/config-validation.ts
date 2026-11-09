@@ -29,19 +29,23 @@ import { isValidScriptFilename } from './state-script-names.js';
 /** Ceiling on a dynamic state's script timeout. Mirrors sequencer::kMaxScriptTimeoutMs. */
 const MAX_SCRIPT_TIMEOUT_MS = 600000;
 
-/** Ids match the config editor's tab ids, so an issue can name the page that fixes it. */
+/** Ids match the config editor's tab ids, so an issue can name the page that fixes it — except
+ *  'profile', which is the profile picker at the top of the editor rather than a tab of its own. */
 export type ConfigPageId =
-  | 'boards' | 'roles' | 'gui' | 'controller' | 'state' | 'calibration' | 'system';
+  | 'profile' | 'boards' | 'roles' | 'gui' | 'controller' | 'state' | 'calibration';
 
 export const CONFIG_PAGE_LABELS: Record<ConfigPageId, string> = {
+  profile: 'Config profile',
   boards: 'Boards',
   roles: 'Roles',
   gui: 'Top Bar & Limits',
   controller: 'Controller',
   state: 'State Machine',
   calibration: 'Calibration',
-  system: 'System',
 };
+
+/** The config editor's tabs, in order: every page id but 'profile'. */
+export const CONFIG_TAB_IDS = (Object.keys(CONFIG_PAGE_LABELS) as ConfigPageId[]).filter((id) => id !== 'profile');
 
 export type ConfigIssueLevel = 'error' | 'warn';
 
@@ -121,12 +125,19 @@ export const ballValveBoardIds = (config: any): Set<number> => {
   return ids;
 };
 
+/** The name an operator gave a board ([boards.*].name), trimmed; '' when it has none. */
+export const boardGivenName = (board: any): string =>
+  typeof board?.name === 'string' ? board.name.trim() : '';
+
 /**
- * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
- * Numbered by position among boards of the same type, so it tracks what is actually configured
- * instead of parsing digits out of the key.
+ * Friendly board name for display: its given name ([boards.*].name) when it has one, else
+ * "PT Board #2" rather than the raw `pt_board_2` config key — numbered by position among boards
+ * of the same type, so it tracks what is actually configured instead of parsing digits out of
+ * the key.
  */
 export const boardDisplayName = (boards: Record<string, any>, boardKey: string): string => {
+  const given = boardGivenName(boards?.[boardKey]);
+  if (given) return given;
   const type = boards?.[boardKey]?.type;
   if (typeof type !== 'string' || !type) return boardKey;
   const sameType = Object.keys(boards).filter((k) => boards[k]?.type === type);
@@ -267,6 +278,11 @@ export function t7Channels(boards: Record<string, any> | undefined | null): T7Ch
  * gate refuse exactly what t7_bridge would.
  */
 export function t7BoardIssues(boards: Record<string, any>, boardKey: string): string[] {
+  return [...t7BoardSettingsIssues(boards, boardKey), ...t7ChannelIssues(boards, boardKey)];
+}
+
+/** The part of t7BoardIssues() about the board itself (identity, network, stream) — the Boards tab. */
+export function t7BoardSettingsIssues(boards: Record<string, any>, boardKey: string): string[] {
   const b = boards?.[boardKey];
   if (!b || String(b.type ?? '').toUpperCase() !== 'T7') return [];
   const out: string[] = [];
@@ -288,6 +304,21 @@ export function t7BoardIssues(boards: Record<string, any>, boardKey: string): st
   if (num(b.scans_per_read, 0) < 0) out.push('scans_per_read cannot be negative.');
   const cjc = num(b.cjc_offset_k, -3.0);
   if (!Number.isFinite(cjc) || Math.abs(cjc) > 20) out.push('cjc_offset_k must be within ±20 K.');
+  if (enabled) {
+    const channels: any[] = Array.isArray(b.channels) ? b.channels : [];
+    if (rate * channels.length > 100000) out.push(`scan_rate_hz × channels = ${Math.round(rate * channels.length)} samples/s, beyond the T7's 100000.`);
+    out.push(...t7StreamLimitIssues(channels, rate, res, num(b.settling_us, 0)));
+  }
+  return out;
+}
+
+/** The part of t7BoardIssues() about the channel table — the Roles tab, where the table lives. */
+export function t7ChannelIssues(boards: Record<string, any>, boardKey: string): string[] {
+  const b = boards?.[boardKey];
+  if (!b || String(b.type ?? '').toUpperCase() !== 'T7') return [];
+  const out: string[] = [];
+  const num = (v: any, d: number) => (typeof v === 'number' ? v : d);
+  const enabled = b.enabled !== false;
 
   const channels: any[] = Array.isArray(b.channels) ? b.channels : [];
   if (b.channels !== undefined && !Array.isArray(b.channels)) out.push('channels must be a list of tables.');
@@ -357,11 +388,7 @@ export function t7BoardIssues(boards: Record<string, any>, boardKey: string): st
     if (kind !== 'LC' && (sens !== 0 || exc !== 0)) out.push(`${p}sensitivity_mv_per_v and excitation_v are only meaningful on an LC.`);
     if (kind !== 'PT' && kind !== 'LC' && fs !== 0) out.push(`${p}full_scale is only meaningful on a PT or LC.`);
   });
-  if (enabled) {
-    if (channels.length === 0) out.push('an enabled T7 needs at least one channel.');
-    if (rate * channels.length > 100000) out.push(`scan_rate_hz × channels = ${Math.round(rate * channels.length)} samples/s, beyond the T7's 100000.`);
-    out.push(...t7StreamLimitIssues(channels, rate, res, num(b.settling_us, 0)));
-  }
+  if (enabled && channels.length === 0) out.push('an enabled T7 needs at least one channel.');
   return out;
 }
 
@@ -472,14 +499,30 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
   for (const key of Object.keys(boards)) {
     const msg = boardSlotIssue(boards, key);
     if (msg) add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${msg}`);
-    // t7_bridge refuses to start on any of these, so the session would run without the T7.
-    for (const m of t7BoardIssues(boards, key))
+    // t7_bridge refuses to start on any of these, so the session would run without the T7. The
+    // channel table is edited on the Roles tab, so its problems point there.
+    for (const m of t7BoardSettingsIssues(boards, key))
       add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${m}`);
+    for (const m of t7ChannelIssues(boards, key))
+      add('roles', 'error', `${boardDisplayName(boards, key)} (${key}): ${m}`);
+  }
+
+  // ── Board names ───────────────────────────────────────────────────────────
+  // A name is how a board is picked on the Roles tab; two boards with one name are two identical
+  // entries in that list.
+  const nameOwner = new Map<string, string>();
+  for (const key of Object.keys(boards)) {
+    const given = boardGivenName(boards[key]);
+    if (!given) continue;
+    const other = nameOwner.get(given.toLowerCase());
+    if (other !== undefined)
+      add('boards', 'warn', `${other} and ${key} are both named "${given}"; give one another name.`);
+    else nameOwner.set(given.toLowerCase(), key);
   }
 
   // ── T7 roles vs every other sensor's ──────────────────────────────────────
   for (const { boardKey, message } of t7RoleClashes(config))
-    add('boards', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
+    add('roles', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
 
   // ── DHCP identity (boards with a mac = line) ──────────────────────────────
   // star-dhcp-sync refuses these too, leaving the served reservations stale, so
@@ -624,6 +667,9 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
     if (idDupes.length)
       add('state', 'error',
         `Duplicate state id(s): ${idDupes.join(', ')} — the later entry wins and the earlier state disappears.`);
+    if (stateList.some((s) => !Number.isInteger(s?.id) || s.id < 1 || s.id > 254))
+      add('state', 'error',
+        'A state has no id (or one outside 1-254), so the sequencer cannot load it — use "Fix the ids" on the State Machine tab.');
     if (nameDupes.length)
       add('state', 'error',
         `Duplicate state name(s): ${nameDupes.join(', ')} — CSV columns resolve by name, so one of them is unreachable.`);

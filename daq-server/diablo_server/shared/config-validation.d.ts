@@ -22,9 +22,12 @@
  * block the first press of Start, because an operator who wanted neither would not have configured
  * it that way; the second press runs anyway, and that decision is theirs to make at the pad.
  */
-/** Ids match the config editor's tab ids, so an issue can name the page that fixes it. */
-export type ConfigPageId = 'boards' | 'roles' | 'gui' | 'controller' | 'state' | 'calibration' | 'system';
+/** Ids match the config editor's tab ids, so an issue can name the page that fixes it — except
+ *  'profile', which is the profile picker at the top of the editor rather than a tab of its own. */
+export type ConfigPageId = 'profile' | 'boards' | 'roles' | 'gui' | 'controller' | 'state' | 'calibration';
 export declare const CONFIG_PAGE_LABELS: Record<ConfigPageId, string>;
+/** The config editor's tabs, in order: every page id but 'profile'. */
+export declare const CONFIG_TAB_IDS: ("state" | "boards" | "roles" | "gui" | "controller" | "calibration")[];
 export type ConfigIssueLevel = 'error' | 'warn';
 export interface ConfigIssue {
     /** The editor tab an operator opens to fix this. */
@@ -61,10 +64,13 @@ export declare const BALL_VALVE_TYPE = "BALL_VALVE";
  * position (not a current) is what shows under it.
  */
 export declare const ballValveBoardIds: (config: any) => Set<number>;
+/** The name an operator gave a board ([boards.*].name), trimmed; '' when it has none. */
+export declare const boardGivenName: (board: any) => string;
 /**
- * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
- * Numbered by position among boards of the same type, so it tracks what is actually configured
- * instead of parsing digits out of the key.
+ * Friendly board name for display: its given name ([boards.*].name) when it has one, else
+ * "PT Board #2" rather than the raw `pt_board_2` config key — numbered by position among boards
+ * of the same type, so it tracks what is actually configured instead of parsing digits out of
+ * the key.
  */
 export declare const boardDisplayName: (boards: Record<string, any>, boardKey: string) => string;
 /**
@@ -115,6 +121,10 @@ export declare function t7Channels(boards: Record<string, any> | undefined | nul
  * gate refuse exactly what t7_bridge would.
  */
 export declare function t7BoardIssues(boards: Record<string, any>, boardKey: string): string[];
+/** The part of t7BoardIssues() about the board itself (identity, network, stream) — the Boards tab. */
+export declare function t7BoardSettingsIssues(boards: Record<string, any>, boardKey: string): string[];
+/** The part of t7BoardIssues() about the channel table — the Roles tab, where the table lives. */
+export declare function t7ChannelIssues(boards: Record<string, any>, boardKey: string): string[];
 /**
  * Enabled T7 inputs whose role an ESP32 sensor ([sensor_roles_<board>]) already has. The GUI finds
  * a sensor by its role (sensorByRole, [gui.groups], pressure bars) and calibration files it by

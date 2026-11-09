@@ -12,7 +12,7 @@
  * re-read it (cmd 7) so the swap takes effect live. All ops are plain Node file copies — no wire
  * format change — because a "calibration file" is one JSON with every sensor keyed by uid.
  */
-import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -29,6 +29,9 @@ export function assertValidProfileName(name: string): void {
 
 /** Locate scripts/calibration/calibrations, covering dev (tsx) and dist layouts + cwd variants. */
 function getCalibrationsDir(): string {
+  // An explicit directory wins — the hermetic tests point this at a temp dir so they can never
+  // touch the real live store (which the integration harness has already lost once).
+  if (process.env.DAQ_CALIBRATIONS_DIR) return process.env.DAQ_CALIBRATIONS_DIR;
   const rel = 'scripts/calibration/calibrations';
   const candidates = [
     path.join(__dirname, '../../../..', rel),
@@ -156,16 +159,20 @@ function stripToBlank(json: any): any {
   return out;
 }
 
-/** Create a fresh blank calibration (all sensors read 0). Optionally also save it as a profile. */
-export function newBlankCalibration(name?: string): void {
-  // Base the scaffold on the current live store (or the committed default) so roles/models survive.
+/** A blank calibration store as text: the live store (or the committed default) stripped of every
+ *  point and fit, so each channel's identity/role/model survives and every sensor reads 0. */
+function blankCalibrationText(): string {
   let base: any = { cubic_state: {} };
   const seed = existsSync(livePath()) ? livePath() : (existsSync(defaultPath()) ? defaultPath() : '');
   if (seed) {
     try { base = JSON.parse(readFileSync(seed, 'utf-8')); } catch { /* start from empty scaffold */ }
   }
-  const blank = stripToBlank(base);
-  const text = JSON.stringify(blank, null, 2);
+  return JSON.stringify(stripToBlank(base), null, 2);
+}
+
+/** Create a fresh blank calibration (all sensors read 0). Optionally also save it as a profile. */
+export function newBlankCalibration(name?: string): void {
+  const text = blankCalibrationText();
   mkdirSync(path.dirname(livePath()), { recursive: true });
   writeFileSync(livePath(), text, 'utf-8');
   if (name) {
@@ -176,4 +183,31 @@ export function newBlankCalibration(name?: string): void {
   } else {
     setActiveProfileName('');
   }
+}
+
+/**
+ * Write a new named calibration profile — a copy of profile `from`, or a blank one when `from` is
+ * absent — WITHOUT touching the live store or which profile is loaded. This is what a new config
+ * profile gets beside it: making a config must not change what the running stream is calibrated
+ * with. Refuses a name already taken, so an existing calibration is never overwritten.
+ */
+export function createCalibrationProfile(name: string, from?: string): void {
+  assertValidProfileName(name);
+  const dest = profilePath(name);
+  if (existsSync(dest)) throw new Error(`Calibration profile "${name}" already exists`);
+  let text: string;
+  if (from) {
+    const src = profilePath(from);
+    if (!existsSync(src)) throw new Error(`Calibration profile "${from}" not found`);
+    text = readFileSync(src, 'utf-8');
+  } else {
+    text = blankCalibrationText();
+  }
+  mkdirSync(profilesDir(), { recursive: true });
+  writeFileSync(dest, text, 'utf-8');
+}
+
+/** Remove a calibration profile created a moment ago (rollback when the config beside it failed). */
+export function removeCalibrationProfile(name: string): void {
+  rmSync(profilePath(name), { force: true });
 }

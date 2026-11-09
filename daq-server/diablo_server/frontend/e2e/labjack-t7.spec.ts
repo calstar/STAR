@@ -65,47 +65,49 @@ test('the Calibration page lists the T7 PT and load cell', async ({ page }) => {
   await expect(page.getByText(T7.lc.role, { exact: false }).first()).toBeAttached();
 });
 
-test('the config editor shows the T7 and validates its channel table as it is edited', async ({ page }) => {
+test('the config editor shows the T7 on Roles and validates its channel table as it is edited', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/config?tab=boards');
-  const header = page.getByText('LabJack T7 Board', { exact: false }).first();
-  await expect(header).toBeVisible();
-  await header.click();
+  // The channel table lives on the Roles tab, as the T7's panel beside the ESP32 boards' roles.
+  await page.goto('/config?tab=roles');
+  // Scoped to the T7's panel: the ESP32 boards' role panels above it carry the same controls.
+  const t7 = page.getByTestId('t7-roles:labjack_1');
+  await expect(t7).toBeVisible();
+  await expect(t7.getByText('LabJack T7 Board', { exact: false }).first()).toBeVisible();
 
   // The four configured inputs, by role, each with its kind.
-  const roleInputs = page.locator('input[placeholder="name, e.g. LOX Tank"]');
+  const roleInputs = t7.locator('input[placeholder="name, e.g. LOX Tank"]');
   await expect(roleInputs).toHaveCount(4);
   await expect.poll(() => roleInputs.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value)))
     .toEqual([T7.pt.role, T7.tc.role, T7.rtd.role, T7.lc.role]);
   // PT and LC take a calibration model like an ESP32 sensor; the default is physics.
-  await expect(page.getByTitle('Streaming calibration model for this sensor').first()).toHaveValue('physics');
+  await expect(t7.getByTitle('Streaming calibration model for this sensor').first()).toHaveValue('physics');
   // The RTD row names its element and its LJTick-Resistance. By role: each column header carries
   // the same title as its inputs, so a bare getByTitle matches the header too.
-  await expect(page.getByRole('combobox', { name: 'RTD element (R at 0 °C)', exact: true })).toHaveValue('1000');
-  await expect(page.getByRole('combobox', { name: 'LJTick-Resistance model (its fixed resistor)', exact: true })).toHaveValue('1000');
+  await expect(t7.getByRole('combobox', { name: 'RTD element (R at 0 °C)', exact: true })).toHaveValue('1000');
+  await expect(t7.getByRole('combobox', { name: 'LJTick-Resistance model (its fixed resistor)', exact: true })).toHaveValue('1000');
   // A clean T7 shows no problems.
-  await expect(page.getByText('needs a role', { exact: false })).toHaveCount(0);
+  await expect(t7.getByText('needs a role', { exact: false })).toHaveCount(0);
 
   // Add a channel: it starts as a PT with no role, so the same rules t7_bridge applies flag it.
-  await page.getByRole('button', { name: '+ Add channel' }).click();
+  await t7.getByRole('button', { name: '+ Add channel' }).click();
   await expect(roleInputs).toHaveCount(5);
-  await expect(page.getByText('a PT channel needs a role', { exact: false })).toBeVisible();
-  await expect(page.getByText('a PT needs full_scale', { exact: false })).toBeVisible();
+  await expect(t7.getByText('a PT channel needs a role', { exact: false })).toBeVisible();
+  await expect(t7.getByText('a PT needs full_scale', { exact: false })).toBeVisible();
 
   // Make it a load cell: the PT rules give way to the LC ones.
-  const kinds = page.locator('tbody select').filter({ has: page.locator('option[value="VOLTAGE"]') });
+  const kinds = t7.locator('tbody select').filter({ has: page.locator('option[value="VOLTAGE"]') });
   await kinds.nth(4).selectOption('LC');
-  await expect(page.getByText('an LC needs excitation_v', { exact: false })).toBeVisible();
-  await expect(page.getByText('a PT needs full_scale', { exact: false })).toHaveCount(0);
+  await expect(t7.getByText('an LC needs excitation_v', { exact: false })).toBeVisible();
+  await expect(t7.getByText('a PT needs full_scale', { exact: false })).toHaveCount(0);
 
   // Reusing an ESP32 sensor's role is refused on the card, as the session gate refuses it.
   await roleInputs.nth(4).fill('Fuel Upstream');
-  await expect(page.getByText('is also a sensor on', { exact: false })).toBeVisible();
+  await expect(t7.getByText('is also a sensor on', { exact: false })).toBeVisible();
 
   // Remove it again: back to clean, nothing saved.
-  await page.locator('tbody').getByRole('button', { name: 'Remove' }).nth(4).click();
+  await t7.locator('tbody').getByRole('button', { name: 'Remove' }).nth(4).click();
   await expect(roleInputs).toHaveCount(4);
-  await expect(page.getByText('an LC needs excitation_v', { exact: false })).toHaveCount(0);
+  await expect(t7.getByText('an LC needs excitation_v', { exact: false })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
