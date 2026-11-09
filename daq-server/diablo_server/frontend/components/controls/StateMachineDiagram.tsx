@@ -7,6 +7,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useControlMode } from '@/lib/control-mode';
 import { allStates, loadStates, stateNameUpper, bootStateId } from '@/lib/states';
 import { getApiBaseUrl } from '@/lib/websocket';
+import { useGuiConfig } from '@/lib/gui-config';
+import { stateGridSize } from '@/lib/panel-layout';
 
 
 // States to exclude from diagram rendering
@@ -168,6 +170,7 @@ export default function StateMachineDiagram() {
   // module cache synchronously, so a version tick is what tells React the positions changed.
   const [, setStatesVersion] = useState(0);
   const { controlEnabled } = useControlMode();
+  const guiConfig = useGuiConfig();
 
   // Load the config-declared states (names + panel positions) on mount, and RELOAD them whenever a
   // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
@@ -335,9 +338,15 @@ export default function StateMachineDiagram() {
 
   // Derived from the placed states, so adding one in config widens the canvas instead of
   // drawing it off the edge.
+  // [gui] state_grid_rows / state_grid_cols can make the grid larger than that (the Config page's
+  // grid editor), so the main page has the same empty cells the operator laid the states out in.
   const placed = allStates().filter((x) => x.panelRow !== null && x.panelCol !== null);
-  const COLS = placed.length ? Math.max(...placed.map((x) => x.panelCol as number)) + 1 : COLS_FALLBACK;
-  const ROW_COUNT = placed.length ? Math.max(...placed.map((x) => x.panelRow as number)) + 1 : ROW_COUNT_FALLBACK;
+  const grid = stateGridSize(
+    placed.map((x) => ({ panel_row: x.panelRow, panel_col: x.panelCol })),
+    { state_grid_rows: guiConfig.stateGridRows, state_grid_cols: guiConfig.stateGridCols },
+  );
+  const COLS = grid.cols || COLS_FALLBACK;
+  const ROW_COUNT = grid.rows || ROW_COUNT_FALLBACK;
   const svgW = PAD * 2 + COLS * COL_GAP;
   const svgH = PAD * 2 + ROW_COUNT * ROW_GAP; // rows 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 

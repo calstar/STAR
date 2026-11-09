@@ -15,9 +15,11 @@ export interface ActuatorControlByNameProps {
   boardId?: number;
   /** On a BALL_VALVE board: shows % open / % closed (its position) in place of the current. */
   ballValve?: boolean;
+  /** Display only (the Config page's layout editor): never sends a command, whatever the mode. */
+  preview?: boolean;
 }
 
-export default function ActuatorControlByName({ name, channel, entity, boardId, ballValve = false }: ActuatorControlByNameProps) {
+export default function ActuatorControlByName({ name, channel, entity, boardId, ballValve = false, preview = false }: ActuatorControlByNameProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
   const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
@@ -35,7 +37,7 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
-  const canControl = debugMode && controlEnabled;
+  const canControl = !preview && debugMode && controlEnabled;
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
@@ -68,7 +70,7 @@ export default function ActuatorControlByName({ name, channel, entity, boardId, 
       aria-label={`${name}: ${stateLabel}. Click to ${actionLabel}.`}
       title={canControl ? `${name} ${stateLabel} — click to ${actionLabel}` : `${name} ${stateLabel}`}
       className={`relative flex h-full min-h-0 w-full flex-col border border-line-strong bg-[#0b0b0b] px-2 py-1 text-left transition-colors
-        ${canControl ? 'cursor-pointer hover:border-[#5a5a5a]' : 'cursor-not-allowed'}`}
+        ${canControl ? 'cursor-pointer hover:border-[#5a5a5a]' : preview ? '' : 'cursor-not-allowed'}`}
     >
       <div className="absolute right-2 top-1.5 flex items-center gap-1">
         {pending && <span className="text-yellow-400 text-[8px] leading-none">⟳</span>}
