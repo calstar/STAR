@@ -28,6 +28,7 @@
 #include "bringup_task.h"
 #include "usbd_cdc_if.h"
 #include "usb_link.h"
+#include "board_config.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -146,7 +147,7 @@ int main(void)
   MX_TIM1_Init();
   MX_RTC_Init();
   /* USER CODE BEGIN 2 */
-
+  board_config_init(); /* before any task reads the settings */
   /* USER CODE END 2 */
 
   /* Init scheduler */

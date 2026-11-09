@@ -11,6 +11,7 @@
 #include "gui_map.h"
 
 #include "board_bringup.h"
+#include "board_config.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
@@ -79,10 +80,12 @@ static const gnss_core_t* gnss;
 static const emmc_log_t* emmc;
 
 static uint8_t flags(void) {
-    /* bit 0 on USB power, bit 2 streaming, bit 3 running defaults (no
-     * config storage yet) */
+    /* bit 0 on USB power, 1 settings not saved, 2 streaming, 3 flash held
+     * no settings at boot (running the defaults) */
     return (uint8_t)((board_bringup_on_usb() ? 1U : 0U) |
-                     (usb_link_rate_hz() ? 4U : 0U) | 8U);
+                     (board_config_unsaved() ? 2U : 0U) |
+                     (usb_link_rate_hz() ? 4U : 0U) |
+                     (board_config_from_defaults() ? 8U : 0U));
 }
 
 static uint8_t self_test(uint16_t id) {

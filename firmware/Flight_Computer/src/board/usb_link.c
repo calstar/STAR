@@ -4,10 +4,12 @@
 #include <string.h>
 
 #include "FreeRTOS.h"
+#include "board_config.h"
 #include "cmsis_os2.h"
 #include "gnss_task.h"
 #include "gui_map.h"
 #include "main.h"
+#include "mode.h"
 #include "records.h"
 #include "sensors_task.h"
 #include "stream_buffer.h"
@@ -15,8 +17,10 @@
 #include "usbd_cdc_if.h"
 
 enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03 };
-enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, SAMPLE = 0xB0 };
-enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, NOT_IMPLEMENTED = 8 };
+enum { CONFIG_GET = 0x10, CONFIG_SET, CONFIG_SAVE, CONFIG_REVERT };
+enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, CONFIG = 0x90, SAMPLE = 0xB0 };
+enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, WRONG_STATE = 4 };
+enum { FLASH_ERROR = 6, NOT_IMPLEMENTED = 8 };
 #define MAX_RATE_HZ 200U
 
 static StreamBufferHandle_t rx;
@@ -70,6 +74,66 @@ static void send_values(void) {
     }
 }
 
+static void send_config(uint8_t slot, uint8_t seq, const fc_config_t* c) {
+    uint8_t p[1 + FC_CONFIG_SIZE] = {slot};
+    fc_config_pack(c, p + 1);
+    (void)send(CONFIG, seq, p, sizeof p, false);
+}
+
+/* Settings change only in SELF_TEST and IDLE (PROTOCOL.md §5). */
+static bool configurable(void) {
+    flight_state_t s = app_state();
+    return s == FLIGHT_SELF_TEST || s == FLIGHT_IDLE;
+}
+
+static void handle_config(uint8_t type, uint8_t seq, const uint8_t* p,
+                          size_t len) {
+    fc_config_t c;
+    if (type == CONFIG_GET) {
+        if (len != 1 || p[0] > 2) {
+            ack(type, seq, BAD_FRAME, 0);
+        } else if (p[0] == 1 && !board_config_saved(&c)) {
+            ack(type, seq, FLASH_ERROR, 0);
+        } else {
+            c = p[0] == 0   ? board_config_get()
+                : p[0] == 2 ? fc_config_defaults()
+                            : c;
+            send_config(p[0], seq, &c);
+        }
+        return;
+    }
+    if (!configurable()) {
+        ack(type, seq, WRONG_STATE, app_state());
+        return;
+    }
+    uint8_t bad;
+    switch (type) {
+        case CONFIG_SET:
+            if (!fc_config_unpack(p, len, &c)) {
+                ack(type, seq, BAD_FRAME, 0);
+            } else if ((bad = fc_config_check(&c)) != 0) {
+                ack(type, seq, BAD_VALUE, bad);
+            } else {
+                board_config_set(&c);
+                ack(type, seq, OK, 0);
+            }
+            break;
+        case CONFIG_SAVE: /* erasing stalls the CPU: Idle only */
+            ack(type, seq,
+                board_config_save(app_state() == FLIGHT_IDLE) ? OK
+                                                              : FLASH_ERROR,
+                0);
+            break;
+        default: /* CONFIG_REVERT */
+            if (!board_config_saved(&c)) {
+                c = fc_config_defaults();
+            }
+            board_config_set(&c);
+            ack(type, seq, OK, 0);
+            break;
+    }
+}
+
 /* f: a decoded frame, len: its payload length. */
 static void handle(const uint8_t* f, size_t len) {
     uint8_t type = f[0], seq = f[1];
@@ -95,6 +159,12 @@ static void handle(const uint8_t* f, size_t len) {
             }
             break;
         }
+        case CONFIG_GET:
+        case CONFIG_SET:
+        case CONFIG_SAVE:
+        case CONFIG_REVERT:
+            handle_config(type, seq, p, len);
+            break;
         default:
             ack(type, seq, NOT_IMPLEMENTED, 0);
             break;
