@@ -208,6 +208,7 @@ impl Default for Options {
 }
 
 const HEARTBEAT_LIMIT: Duration = Duration::from_secs(4);
+const PORT_SCAN: Duration = Duration::from_secs(2);
 /// The view is rebuilt at least this often (the watchdog needs it), and the
 /// live batch is flushed this often.
 const TICK: Duration = Duration::from_millis(50);
@@ -224,6 +225,7 @@ pub struct Controller {
     pub conn: String,
     sim_flash: PathBuf,
     last_heartbeat: Instant,
+    last_scan: Instant,
 }
 
 impl Controller {
@@ -245,12 +247,14 @@ impl Controller {
             conn: "Not connected".into(),
             sim_flash: opts.sim_flash.clone(),
             last_heartbeat: Instant::now(),
+            last_scan: Instant::now(),
         };
         c.rescan();
         c
     }
 
     pub fn rescan(&mut self) {
+        self.last_scan = Instant::now();
         self.ports = transport::list_ports();
         if !self.ports.iter().any(|(d, _)| *d == self.port) {
             self.port = self.ports.first().map(|p| p.0.clone()).unwrap_or_default();
@@ -331,6 +335,10 @@ impl Controller {
 
     /// Drain the link and route what came in.
     pub fn tick(&mut self) {
+        // A board plugged in (or flashed) after the app started shows up on its own.
+        if self.last_scan.elapsed() > PORT_SCAN {
+            self.rescan();
+        }
         for ev in self.sh.client.poll() {
             match ev {
                 Event::Connected(info) => {
