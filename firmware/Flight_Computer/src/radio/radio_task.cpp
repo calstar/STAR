@@ -92,6 +92,10 @@ radio_rx_t last_rx;
 // The RX mode last asked for (mode.c), kept so it survives a late start-up.
 bool want_sniff;
 uint32_t want_rx_ms, want_sleep_ms;
+// A first valid Arm heard while sniffing: listen continuously until the
+// confirm window ends (see the loop).
+bool confirming;
+uint32_t confirm_until;
 void (*on_command)(radio_command_t);
 radio_frame_cb_t on_frame;
 uint16_t tx_preamble;  // this send's preamble (0 = configured); under mutex
@@ -221,6 +225,24 @@ void radio_task(void*) {
         // is still cycling on its own and must not be interrupted.
         if (flags == kEvDio1) {
             setup.rearm_rx();
+        }
+        // The second Arm follows the first at once, and a sniff restarted
+        // now would catch its preamble at the very start: preamble + header
+        // then outlast the chip's 2 x rx + sleep wait (SX1262 DS 13.1.7) and
+        // it is lost, every time. So while an Arm is pending, listen
+        // continuously; back to sniffing when the pair completes, an Un-arm
+        // comes, or the window passes.
+        if (action == ArmAction::Pending && want_sniff) {
+            (void)setup.start_rx_continuous();
+            confirming = true;
+            confirm_until = board_now_ms() + kArmConfirmWindowMs;
+        } else if (confirming &&
+                   (action == ArmAction::Arm || action == ArmAction::Disarm ||
+                    board_deadline_passed(confirm_until))) {
+            confirming = false;
+            if (want_sniff) {
+                (void)setup.start_rx_duty_cycle(want_rx_ms, want_sleep_ms);
+            }
         }
         status.frames_ok = link.frames_ok();
         status.frames_dropped = link.frames_dropped();
