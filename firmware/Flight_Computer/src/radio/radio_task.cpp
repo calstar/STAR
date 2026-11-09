@@ -100,6 +100,35 @@ void give() {
     (void)osMutexRelease(mutex);
 }
 
+void try_setup();
+
+// configure() is written for a chip just out of reset. A running chip may be
+// asleep between sniffs (BUSY high until woken), and then the first command
+// times out. So a re-run starts as power-on does (board_bringup.c): NRESET
+// low >= 100 us, release, BUSY falls in STDBY_RC (SX1262 DS 8.1, 8.2.2).
+void reset_chip() {
+    HAL_GPIO_WritePin(RADIO_NRST_GPIO_Port, RADIO_NRST_Pin, GPIO_PIN_RESET);
+    osDelay(1);
+    HAL_GPIO_WritePin(RADIO_NRST_GPIO_Port, RADIO_NRST_Pin, GPIO_PIN_SET);
+    for (int i = 0; i < 50 && HAL_GPIO_ReadPin(RADIO_BUSY_GPIO_Port,
+                                               RADIO_BUSY_Pin) == GPIO_PIN_SET;
+         ++i) {
+        osDelay(1);
+    }
+}
+
+// Again from reset: new settings, or a start-up that failed.
+void restart(const LoraConfig* cfg) {
+    take();
+    if (cfg) {
+        setup.set_config(*cfg);
+    }
+    configured = false;  // nothing transmits through a chip in reset
+    reset_chip();
+    give();
+    try_setup();
+}
+
 void try_setup() {
     take();
     status.setup_attempts++;
@@ -143,16 +172,16 @@ void radio_task(void*) {
             osThreadFlagsWait(kEvDio1 | kEvConfig, osFlagsWaitAny, 1000);
         if (reconfigure) {  // new settings: the full start-up again
             take();
-            setup.set_config(pending);
+            const LoraConfig cfg = pending;
             reconfigure = false;
             give();
-            try_setup();
+            restart(&cfg);
             last_setup = board_now_ms();
             continue;
         }
         if (!configured) {
             if (board_now_ms() - last_setup >= kSetupRetryMs) {
-                try_setup();
+                restart(nullptr);
                 last_setup = board_now_ms();
             }
             continue;
