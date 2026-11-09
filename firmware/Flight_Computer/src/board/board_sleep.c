@@ -91,8 +91,14 @@ uint32_t board_sleep(uint32_t ms, bool (*wake_now)(void)) {
     HAL_PWREx_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI,
                             PWR_D1_DOMAIN);
 
-    /* Awake: clocks first, then read how long that was. */
+    /* Awake: clocks first, then read how long that was. Stop turns every PLL
+     * off and SystemClock_Config restores only PLL1; PLL2 clocks the ADC
+     * (battery). Its settings survive Stop, so switch it back on. */
     SystemClock_Config();
+    __HAL_RCC_PLL2_ENABLE();
+    for (uint32_t i = 0; i < 100000U && !__HAL_RCC_GET_FLAG(RCC_FLAG_PLL2RDY);
+         ++i) {
+    }
     (void)HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
     __HAL_RTC_WRITEPROTECTION_DISABLE(&hrtc);
     (void)HAL_RTC_WaitForSynchro(&hrtc); /* shadow registers stale after Stop */
