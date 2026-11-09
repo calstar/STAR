@@ -124,11 +124,7 @@ function liveTab(v: View) {
       <h4 class="side-title">Flight stages</h4>
       <ol class="stages" data-testid="stages">
         ${v.stages.map(
-          (s) => html`<li class="stage ${s.status}">
-            <b>${s.name}${s.status === "current" ? html` <small>now</small>` : nothing}</b>
-            <span>${s.does}</span>
-            ${s.how ? html`<em>→ on ${s.how}</em>` : nothing}
-          </li>`,
+          (s) => html`<li class="stage ${s.status}" title=${s.how ? `${s.does}\nNext on: ${s.how}` : s.does}>${s.name}</li>`,
         )}
       </ol>
       <h4 class="side-title">Current readings</h4>
