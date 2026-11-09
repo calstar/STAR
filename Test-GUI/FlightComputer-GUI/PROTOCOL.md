@@ -3,8 +3,9 @@
 What the STM32 firmware must implement for the bench GUI. The reference
 implementation is `src/protocol.rs`; `src/fake_board.rs` is a working
 board-side example, and their unit tests pin both. **On the board so far**
-(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE, SAMPLE and
-CONFIG_GET/SET/SAVE/REVERT; the rest answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
+(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE, SAMPLE,
+CONFIG_GET/SET/SAVE/REVERT, LOG_INFO/SESSIONS/READ/ABORT, and on a receiver
+RADIO_ARM/UNARM/RX (§8); LOG_WIPE and REBOOT answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
 `protocol.rs` together.
 
 ## 1. Transport
@@ -50,6 +51,8 @@ The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 | 0x23 | LOG_ABORT | — | ACK (and the running LOG_READ ends with ACK OK, detail 1) |
 | 0x24 | LOG_WIPE | `u32 0x45504957` ("WIPE") | ACK |
 | 0x30 | REBOOT | `u32 0x544F4F42` ("BOOT") | ACK, then reset |
+| 0x40 | RADIO_ARM | — | receiver only: sends the Arm pair (§8); ACK OK or RADIO_ERROR |
+| 0x41 | RADIO_UNARM | — | receiver only: sends Un-arm twice (§8); ACK OK or RADIO_ERROR |
 
 | type | name (board → host) | payload |
 |---|---|---|
@@ -62,11 +65,12 @@ The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 | 0xA2 | LOG_BLOCK | `u32 block_index, u8 raw[512]` |
 | 0xB0 | SAMPLE | `u8 record_type, record bytes` (`src/app/records.h` structs as-is) |
 | 0xB1 | TEXT | UTF-8 debug line |
+| 0xB2 | RADIO_RX | receiver only: `u8 type, u16 seq, i16 rssi_x2, i16 snr_x4, u8 len, payload`, every radio frame heard (§8) |
 
 **ACK results:** 0 OK · 1 BAD_FRAME (wrong payload size) · 2 UNKNOWN_TYPE ·
 3 BAD_VALUE (detail = config field id, or the bad number) · 4 WRONG_STATE (detail =
 flight state) · 5 BUSY · 6 FLASH_ERROR · 7 STORAGE_ERROR · 8 NOT_IMPLEMENTED ·
-9 BAD_MAGIC.
+9 BAD_MAGIC · 10 RADIO_ERROR (detail = the radio's send result).
 
 **VALUE** (`u8 index, u8 count, u8 type, u32 value`, then three NUL-ended
 strings: `name`, `unit`, `labels`). One row of the firmware's value table,
@@ -233,3 +237,29 @@ flight at ~50 kB/s (~30 MB) downloads in about 30–40 s.
 (49 B), 0x14 health and 0x15 event (layouts not defined yet), plus the proposed
 0x16 config (§5). The log's own records are 0x01–0x04 (`emmc_log.h`). One
 decoder (`src/records.rs`) serves both the live plots and downloaded flights.
+
+## 8. The receiver (ground station) and the radio frames
+
+A board whose config `role` is 1 boots as the ground station (`src/app/ground_task.c`):
+its radio listens all the time and nothing else runs (no Idle, sensors, GPS, eMMC,
+telemetry); it never arms itself. Every radio frame it hears goes to the laptop as
+RADIO_RX. The radio frames (`src/radio/frame.h`, CRC-16 as in §2, payloads
+little-endian, layouts in `src/app/status_report.h`):
+
+| type | name | from | payload |
+|---|---|---|---|
+| 0x01 | Heartbeat | rocket, Idle, ~10 s | `u8 state, u16 battery_mv (0 on USB), u32 uptime_s` |
+| 0x03 | Status | rocket, right after each heartbeat | `u8 state, u32 uptime_ms, u32 heartbeat_count, u16 adc[7]` (raw: VBAT, EXT_SENSE_1, PYRO_1/2_CONT, EXT_SENSE_2, ALT_CURR, CURR), `u16 battery_mv, u8 flags (bit 0 on USB), u8 live_mask, {u8 result, u8 value} x8` (self-test order; value: IMU/high-g WHO_AM_I, baro PROM CRC, radio start-up step, eMMC CMD13 state), `u16 radio_device_errors` (45 B) |
+| 0x20 | Telemetry | rocket, armed, every `hb_flight_ms` | `u8 state, u32 uptime_ms, u8 fresh` (bit = IMU, high-g, baro, GNSS new), `rec_imu_t, rec_highg_t, rec_baro_t` (records.h), `i32 lat_e7, lon_e7, hmsl_mm, u8 fix, u8 sats` (57 B) |
+| 0x10 | Arm | ground | `u32 key, u32 ~key, u8 target` (`arm_gate.h`) |
+| 0x11 | UnArm | ground | — |
+
+**Arming.** The rocket's gate needs two Arm frames with consecutive sequence numbers
+within 2 s. In Idle the rocket listens 33 ms a second, so the ground sends each with a
+260-symbol preamble (1065 ms: long enough to span the sleep, short enough for the
+chip's 2 x 33 + 1000 ms header wait, SX1262 DS 13.1.7), and the rocket listens
+continuously while the first is pending. There is no radio ACK: the ground knows the
+rocket armed from its Telemetry (state ARMED), and disarmed from its Heartbeat (IDLE,
+sent on entering Idle). A sniff misses a preamble now and then, and an armed rocket is
+deaf while it sends Telemetry, so **send again until the rocket's own frames show the
+new state** (bench, 2026-11-08: Arm took 1-3 tries, Un-arm 1-3).

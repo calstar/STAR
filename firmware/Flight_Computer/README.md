@@ -103,6 +103,25 @@ What exists, and what has been tested where.
 
 Run all of them on a laptop: `cd firmware/Flight_Computer && pio test -e native`
 
+### On two boards (2026-11-08)
+
+Board A flight firmware (role transmitter), board B the same firmware with config
+`role` = receiver (`src/app/ground_task.c`), a laptop on B's USB. Frames and the
+ground's Arm/Un-arm are in `Test-GUI/FlightComputer-GUI/PROTOCOL.md` section 8.
+
+| Check | Result |
+|---|---|
+| Idle Heartbeat + Status (7 ADC counts, each chip's read-back) A to B | 18 of 18 frames, 0 CRC errors, RSSI -2..-26 dBm at the bench |
+| Arm by radio from B | A ARMED in 1-3 tries (a 33 ms sniff misses a preamble now and then) |
+| Recording while armed | eMMC mounted, 60 chunks / ~25 s, 0 records dropped |
+| Power off, back on, read back over USB | 2 sessions, 2816 of 2816 blocks valid (magic, epoch, position, CRC-32) |
+
+Bugs found and fixed on the way: the SX1262 asleep between sniffs was never
+woken before a command (`board_spi_wake`), so most Idle sends failed; the
+second Arm frame was always lost to the sniff's header wait (the radio now
+listens continuously while an Arm is pending); the eMMC's polled EXT_CSD read
+was starved at Arm and the disk went FAULT (no task switch during that read).
+
 ### Not done yet
 
 Nothing here has run on a real radio or on the STM32.

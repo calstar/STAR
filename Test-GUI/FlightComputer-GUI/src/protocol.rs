@@ -119,9 +119,10 @@ pub mod result {
     pub const STORAGE_ERROR: u8 = 7; // the eMMC failed to come up or to read
     pub const NOT_IMPLEMENTED: u8 = 8;
     pub const BAD_MAGIC: u8 = 9;
+    pub const RADIO_ERROR: u8 = 10; // RADIO_ARM/UNARM: the radio did not send
 
     pub fn name(r: u8) -> String {
-        const NAMES: [&str; 10] = [
+        const NAMES: [&str; 11] = [
             "OK",
             "BAD_FRAME",
             "UNKNOWN_TYPE",
@@ -132,6 +133,7 @@ pub mod result {
             "STORAGE_ERROR",
             "NOT_IMPLEMENTED",
             "BAD_MAGIC",
+            "RADIO_ERROR",
         ];
         NAMES.get(r as usize).map(|s| s.to_string()).unwrap_or_else(|| format!("result {r}"))
     }
