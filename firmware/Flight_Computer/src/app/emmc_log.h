@@ -191,6 +191,32 @@ uint8_t emmc_log_backlog(const emmc_log_t* log);
 /* IEEE CRC-32 (reflected 0xEDB88320, init/xorout 0xFFFFFFFF). */
 uint32_t emmc_log_crc32(const void* data, uint32_t len);
 
+/*
+ * Reading the log back (USB, PROTOCOL.md section 6). Each call does card
+ * I/O: run it where emmc_log_service() runs (the writer task), never while
+ * recording. None of them writes anything.
+ */
+typedef struct {
+    uint32_t session;     /* numbered from 1 across power cycles */
+    uint32_t first_block; /* log block index (LBA - data_start) */
+    uint32_t blocks;
+    uint32_t duration_ms; /* last record's t_ms - first's */
+} emmc_log_session_t;
+
+/* Mount for reading, as Arm would, except a card with no log volume is
+ * left as it is (never formatted) and reads as empty. Recording: busy. */
+emmc_status_t emmc_log_open(emmc_log_t* log);
+/* Log blocks in use (0 until mounted or on an empty card). */
+uint32_t emmc_log_used(const emmc_log_t* log);
+/* Sessions oldest first, from the start-th: up to max of them into out
+ * (*n), and how many there are in all (*total). */
+emmc_status_t emmc_log_sessions(emmc_log_t* log, uint32_t start,
+                                emmc_log_session_t* out, uint32_t max,
+                                uint32_t* n, uint32_t* total);
+/* Raw log block k (< emmc_log_used) into buf (one block, DMA-reachable
+ * on the board). */
+emmc_status_t emmc_log_read(emmc_log_t* log, uint32_t k, uint8_t* buf);
+
 #ifdef __cplusplus
 }
 #endif

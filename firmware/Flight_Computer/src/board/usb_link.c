@@ -6,6 +6,7 @@
 #include "FreeRTOS.h"
 #include "board_config.h"
 #include "cmsis_os2.h"
+#include "emmc_stm32.h"
 #include "gnss_task.h"
 #include "gui_map.h"
 #include "main.h"
@@ -20,9 +21,13 @@
 enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03 };
 enum { CONFIG_GET = 0x10, CONFIG_SET, CONFIG_SAVE, CONFIG_REVERT };
 enum { RADIO_ARM = 0x40, RADIO_UNARM = 0x41, RADIO_RX = 0xB2 };
+enum { LOG_INFO = 0x20, LOG_SESSIONS, LOG_READ, LOG_ABORT };
+enum { LOG_INFO_REPLY = 0xA0, SESSIONS = 0xA1, LOG_BLOCK = 0xA2 };
+#define SESSIONS_PER_FRAME 24U
 enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, CONFIG = 0x90, SAMPLE = 0xB0 };
 enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, WRONG_STATE = 4 };
-enum { FLASH_ERROR = 6, NOT_IMPLEMENTED = 8, RADIO_ERROR = 10 };
+enum { BUSY = 5, FLASH_ERROR = 6, STORAGE_ERROR = 7, NOT_IMPLEMENTED = 8 };
+enum { RADIO_ERROR = 10 };
 #define MAX_RATE_HZ 200U
 
 static StreamBufferHandle_t rx;
@@ -35,6 +40,13 @@ typedef struct {
     uint8_t payload[248]; /* frame.h kFrameMaxPayload */
 } heard_t;
 static osMessageQueueId_t heard;
+
+/* The LOG_READ in progress (one at a time): blocks [next, end). */
+static struct {
+    bool active;
+    uint8_t seq;
+    uint32_t next, end;
+} reading;
 static volatile uint16_t rate_hz;
 static uint8_t mask;
 static uint8_t in[USB_FRAME_MAX];
@@ -145,6 +157,118 @@ static void handle_config(uint8_t type, uint8_t seq, const uint8_t* p,
     }
 }
 
+static void put_u32(uint8_t* p, uint32_t v) {
+    memcpy(p, &v, 4); /* little-endian */
+}
+
+static uint32_t get_u32(const uint8_t* p) {
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+}
+
+/* The flight log, read back (PROTOCOL.md section 6). Not while recording:
+ * the reads run in the writer task, between its chunk writes. */
+static void handle_log(uint8_t type, uint8_t seq, const uint8_t* p,
+                       size_t len) {
+    if (type == LOG_ABORT) {
+        if (reading.active) {
+            reading.active = false;
+            ack(LOG_READ, reading.seq, OK, 1); /* the read ends: aborted */
+        }
+        ack(type, seq, OK, 0);
+        return;
+    }
+    if (!configurable()) {
+        ack(type, seq, WRONG_STATE, app_state());
+        return;
+    }
+    if (reading.active) {
+        ack(type, seq, BUSY, 0);
+        return;
+    }
+    if (emmc_stm32_open() != EMMC_OK) {
+        ack(type, seq, STORAGE_ERROR, 0);
+        return;
+    }
+    const emmc_log_t* log = emmc_stm32_log();
+    static emmc_log_session_t list[SESSIONS_PER_FRAME];
+    uint32_t n = 0, total = 0;
+    if (type == LOG_INFO) {
+        /* disk u8, epoch, data start, capacity, blocks used, sessions u32 */
+        uint8_t r[21] = {(uint8_t)log->disk};
+        if (emmc_stm32_sessions(0, list, 0, &n, &total) != EMMC_OK) {
+            ack(type, seq, STORAGE_ERROR, 0);
+            return;
+        }
+        put_u32(r + 1, log->epoch);
+        put_u32(r + 5, log->config.data_start_lba);
+        put_u32(r + 9, log->capacity);
+        put_u32(r + 13, emmc_log_used(log));
+        put_u32(r + 17, total);
+        (void)send(LOG_INFO_REPLY, seq, r, sizeof r, false);
+    } else if (type == LOG_SESSIONS) {
+        if (len != 2) {
+            ack(type, seq, BAD_FRAME, 0);
+            return;
+        }
+        uint16_t start = (uint16_t)(p[0] | p[1] << 8);
+        if (emmc_stm32_sessions(start, list, SESSIONS_PER_FRAME, &n, &total) !=
+            EMMC_OK) {
+            ack(type, seq, STORAGE_ERROR, 0);
+            return;
+        }
+        /* total u16, n u8, n x {session, first block, blocks, duration ms,
+         * utc start (0: GNSS time not decoded yet)} u32 */
+        static uint8_t r[3 + SESSIONS_PER_FRAME * 20U];
+        r[0] = (uint8_t)total;
+        r[1] = (uint8_t)(total >> 8);
+        r[2] = (uint8_t)n;
+        for (uint32_t i = 0; i < n; ++i) {
+            uint8_t* e = r + 3 + 20U * i;
+            put_u32(e, list[i].session);
+            put_u32(e + 4, list[i].first_block);
+            put_u32(e + 8, list[i].blocks);
+            put_u32(e + 12, list[i].duration_ms);
+            put_u32(e + 16, 0);
+        }
+        (void)send(SESSIONS, seq, r, (uint16_t)(3U + 20U * n), false);
+    } else { /* LOG_READ: blocks go out from the loop, one per pass */
+        if (len != 8) {
+            ack(type, seq, BAD_FRAME, 0);
+            return;
+        }
+        uint32_t first = get_u32(p), count = get_u32(p + 4);
+        uint32_t used = emmc_log_used(log);
+        reading.seq = seq;
+        reading.next = first < used ? first : used;
+        reading.end = count < used - reading.next ? reading.next + count : used;
+        reading.active = true;
+    }
+}
+
+/* One block of the LOG_READ in progress; the ACK after the last. */
+static void read_step(void) {
+    static uint8_t p[4 + EMMC_BLOCK_SIZE];
+    if (!reading.active) {
+        return;
+    }
+    if (reading.next >= reading.end) {
+        reading.active = false;
+        ack(LOG_READ, reading.seq, OK, 0);
+        return;
+    }
+    put_u32(p, reading.next);
+    if (emmc_stm32_read(reading.next, p + 4) != EMMC_OK) {
+        reading.active = false;
+        ack(LOG_READ, reading.seq, STORAGE_ERROR, 0);
+        return;
+    }
+    if (send(LOG_BLOCK, reading.seq, p, sizeof p, false)) {
+        reading.next++;
+    }
+}
+
 /* f: a decoded frame, len: its payload length. */
 static void handle(const uint8_t* f, size_t len) {
     uint8_t type = f[0], seq = f[1];
@@ -175,6 +299,12 @@ static void handle(const uint8_t* f, size_t len) {
         case CONFIG_SAVE:
         case CONFIG_REVERT:
             handle_config(type, seq, p, len);
+            break;
+        case LOG_INFO:
+        case LOG_SESSIONS:
+        case LOG_READ:
+        case LOG_ABORT:
+            handle_log(type, seq, p, len);
             break;
         case RADIO_ARM:
         case RADIO_UNARM:
@@ -288,9 +418,11 @@ void usb_link_run(void) {
         }
         if (!usb_terminal_open()) {
             rate_hz = 0; /* the next program to open the port asks again */
+            reading.active = false;
             continue;
         }
         send_heard(); /* receiver role: what the radio heard */
+        read_step();  /* a LOG_READ: one block per pass */
         uint32_t now = osKernelGetTickCount();
         if ((int32_t)(now - next_values) >= 0) {
             send_values();

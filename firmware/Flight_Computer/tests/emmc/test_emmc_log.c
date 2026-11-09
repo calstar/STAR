@@ -586,11 +586,52 @@ static void test_invalid_init(void) {
     free(d.blocks);
 }
 
+/* After a power cycle: open (no format), list both sessions, read blocks. */
+static void test_read_back(void) {
+    disk_t d;
+    emmc_log_t log;
+    disk_new(&d, DATA_START + 32 * 16);
+    log_new(&log, &d);
+    CHECK(emmc_log_open(&log) == EMMC_OK && emmc_log_used(&log) == 0);
+    CHECK(d.writes == 0); /* an empty card is not formatted by reading */
+    uint8_t x = 7;
+    for (int s = 0; s < 2; ++s) {
+        CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 100));
+        CHECK(emmc_log_append(&log, 0x11, 150, &x, 1));
+        CHECK(emmc_log_open(&log) == EMMC_ERR_NOT_READY); /* recording */
+        CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 400));
+        drain(&log, 500);
+    }
+
+    disk_power_cycle(&d);
+    log_new(&log, &d);
+    CHECK(emmc_log_used(&log) == 0);
+    CHECK(emmc_log_open(&log) == EMMC_OK);
+    CHECK(d.writes == 0);
+    CHECK(emmc_log_used(&log) == 2 * 32);
+    emmc_log_session_t s[4];
+    uint32_t n = 0, total = 0;
+    CHECK(emmc_log_sessions(&log, 0, s, 4, &n, &total) == EMMC_OK);
+    CHECK(n == 2 && total == 2);
+    CHECK(s[0].session == 1 && s[0].first_block == 0 && s[0].blocks == 32);
+    CHECK(s[1].session == 2 && s[1].first_block == 32 && s[1].blocks == 32);
+    CHECK(s[0].duration_ms == 300); /* SESSION_START at 100 .. END at 400 */
+    CHECK(emmc_log_sessions(&log, 1, s, 4, &n, &total) == EMMC_OK);
+    CHECK(n == 1 && total == 2 && s[0].session == 2); /* paging */
+    static uint8_t b[512];
+    CHECK(emmc_log_read(&log, 32, b) == EMMC_OK);
+    CHECK(memcmp(b, d.blocks + (size_t)(DATA_START + 32) * BS, BS) == 0);
+    CHECK(emmc_log_read(&log, 64, b) == EMMC_ERR_PARAM); /* past the end */
+    CHECK(d.writes == 0);
+    free(d.blocks);
+}
+
 int main(void) {
     test_crc();
     test_no_io_before_arm();
     test_session_roundtrip();
     test_sessions_and_remount();
+    test_read_back();
     test_flight_keeps_recording();
     test_flush_interval();
     test_backpressure();

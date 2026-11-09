@@ -351,7 +351,9 @@ static emmc_status_t format(emmc_log_t* log) {
                            log->config.write_budget_ms);
 }
 
-static emmc_status_t mount(emmc_log_t* log) {
+/* may_format false (reading back): a card with no valid superblock is left
+ * untouched, *found = false, the log stays UNMOUNTED. */
+static emmc_status_t mount(emmc_log_t* log, bool may_format, bool* found) {
     uint32_t capacity = 0;
     emmc_status_t st = log->port.start(log->context, &capacity);
     if (st != EMMC_OK) {
@@ -374,9 +376,13 @@ static emmc_status_t mount(emmc_log_t* log) {
         get32(s + 16) == capacity &&
         get32(s + 508) == emmc_log_crc32(s, 508U)) {
         log->epoch = get32(s + 8);
+    } else if (!may_format) {
+        *found = false;
+        return EMMC_OK;
     } else if ((st = format(log)) != EMMC_OK) {
         return st;
     }
+    *found = true;
 
     /* Binary search for the end, then look one chunk past it: a torn
      * multi-block write may leave a hole with valid blocks after it, and
@@ -442,7 +448,8 @@ emmc_status_t emmc_log_service(emmc_log_t* log, uint32_t now_ms) {
         return EMMC_OK;
     }
     if (disk == EMMC_DISK_UNMOUNTED) {
-        emmc_status_t st = mount(log);
+        bool found = false;
+        emmc_status_t st = mount(log, true, &found);
         if (st != EMMC_OK) {
             stop(log, EMMC_DISK_FAULT);
             release_write_chunk(log, false);
@@ -482,4 +489,142 @@ emmc_status_t emmc_log_service(emmc_log_t* log, uint32_t now_ms) {
         release_write_chunk(log, false);
     }
     return st;
+}
+
+/* ---- reading back --------------------------------------------------- */
+
+emmc_status_t emmc_log_open(emmc_log_t* log) {
+    lock(log);
+    emmc_disk_state_t disk = log->disk;
+    bool recording = log->recording;
+    unlock(log);
+    if (recording) {
+        return EMMC_ERR_NOT_READY;
+    }
+    if (disk == EMMC_DISK_MOUNTED || disk == EMMC_DISK_FULL) {
+        return EMMC_OK;
+    }
+    if (disk != EMMC_DISK_UNMOUNTED) {
+        return EMMC_ERR_NOT_READY; /* FAULT */
+    }
+    bool found = false;
+    return mount(log, false, &found);
+}
+
+uint32_t emmc_log_used(const emmc_log_t* log) {
+    bool mounted =
+        log->disk == EMMC_DISK_MOUNTED || log->disk == EMMC_DISK_FULL;
+    return mounted ? log->head - log->config.data_start_lba : 0U;
+}
+
+/* Session of log block k; 0 for a block that is not valid. */
+static emmc_status_t session_of(emmc_log_t* log, uint32_t k, uint32_t* s) {
+    bool valid = false;
+    emmc_status_t st = probe(log, k, &valid, s);
+    if (st == EMMC_OK && !valid) {
+        *s = 0;
+    }
+    return st;
+}
+
+/* First block in [0, n) of session s or later (sessions never decrease). */
+static emmc_status_t first_of(emmc_log_t* log, uint32_t n, uint32_t s,
+                              uint32_t* k) {
+    uint32_t lo = 0, hi = n;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2U, at = 0;
+        emmc_status_t st = session_of(log, mid, &at);
+        if (st != EMMC_OK) {
+            return st;
+        }
+        if (at < s) {
+            lo = mid + 1U;
+        } else {
+            hi = mid;
+        }
+    }
+    *k = lo;
+    return EMMC_OK;
+}
+
+/* t_ms of the first or last record in block k (*any false: no records). */
+static emmc_status_t record_time(emmc_log_t* log, uint32_t k, bool last,
+                                 uint32_t* t, bool* any) {
+    const uint8_t* b = log->scratch;
+    emmc_status_t st =
+        log->port.read(log->context, log->config.data_start_lba + k,
+                       log->scratch, 1U, log->config.read_budget_ms);
+    if (st != EMMC_OK) {
+        return st;
+    }
+    uint16_t used = get16(b + 18);
+    *any = false;
+    for (uint32_t i = 0; used <= EMMC_LOG_PAYLOAD_BYTES &&
+                         i + EMMC_LOG_RECORD_HEADER_BYTES <= used;) {
+        const uint8_t* r = b + EMMC_LOG_HEADER_BYTES + i;
+        *t = get32(r + 2);
+        *any = true;
+        if (!last) {
+            break;
+        }
+        i += EMMC_LOG_RECORD_HEADER_BYTES + r[1];
+    }
+    return EMMC_OK;
+}
+
+emmc_status_t emmc_log_sessions(emmc_log_t* log, uint32_t start,
+                                emmc_log_session_t* out, uint32_t max,
+                                uint32_t* n, uint32_t* total) {
+    uint32_t used = emmc_log_used(log), s0 = 0, s1 = 0;
+    emmc_status_t st;
+    *n = 0;
+    *total = 0;
+    if (used == 0U) {
+        return EMMC_OK;
+    }
+    if ((st = session_of(log, 0, &s0)) != EMMC_OK ||
+        (st = session_of(log, used - 1U, &s1)) != EMMC_OK) {
+        return st;
+    }
+    uint32_t first = 0;
+    for (uint32_t s = s0; s != 0U && s <= s1; ++s) {
+        uint32_t next = 0, at = 0;
+        if ((st = first_of(log, used, s + 1U, &next)) != EMMC_OK ||
+            (st = session_of(log, first, &at)) != EMMC_OK) {
+            return st;
+        }
+        if (first < next && at == s) { /* s has blocks: [first, next) */
+            if (*total >= start && *n < max) {
+                emmc_log_session_t* e = &out[(*n)++];
+                uint32_t t0 = 0, t1 = 0;
+                bool any = false;
+                e->session = s;
+                e->first_block = first;
+                e->blocks = next - first;
+                if ((st = record_time(log, first, false, &t0, &any)) !=
+                    EMMC_OK) {
+                    return st;
+                }
+                any = false; /* last data: skip pad blocks at the end */
+                for (uint32_t k = next; k > first && !any; --k) {
+                    if ((st = record_time(log, k - 1U, true, &t1, &any)) !=
+                        EMMC_OK) {
+                        return st;
+                    }
+                }
+                e->duration_ms = any ? t1 - t0 : 0U;
+            }
+            ++*total;
+        }
+        first = next;
+    }
+    return EMMC_OK;
+}
+
+emmc_status_t emmc_log_read(emmc_log_t* log, uint32_t k, uint8_t* buf) {
+    if (k >= emmc_log_used(log)) {
+        return EMMC_ERR_PARAM;
+    }
+    return log->port.read(log->context, log->config.data_start_lba + k, buf, 1U,
+                          log->config.read_budget_ms);
 }

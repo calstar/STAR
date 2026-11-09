@@ -48,6 +48,7 @@ extern MMC_HandleTypeDef hmmc1;
  * written. */
 static emmc_log_chunk_t chunks[LOG_CHUNKS] BOARD_DMA_BUFFER;
 static uint8_t scratch[EMMC_BLOCK_SIZE] BOARD_DMA_BUFFER;
+static uint8_t read_buf[EMMC_BLOCK_SIZE] BOARD_DMA_BUFFER; /* USB reads */
 static uint32_t ext_csd[EMMC_BLOCK_SIZE / 4U] BOARD_DMA_BUFFER;
 
 static emmc_log_t flight_log;
@@ -283,7 +284,7 @@ bool emmc_stm32_call(void (*fn)(void* ctx), void* ctx) {
     call_ctx = ctx;
     call_fn = fn;
     (void)osThreadFlagsSet(writer, EV_CALL);
-    bool ok = osSemaphoreAcquire(call_done, 500U) == osOK;
+    bool ok = osSemaphoreAcquire(call_done, 2000U) == osOK;
     if (!ok) {
         taskENTER_CRITICAL();
         ok = call_fn == NULL; /* it ran just as the wait ended */
@@ -292,6 +293,59 @@ bool emmc_stm32_call(void (*fn)(void* ctx), void* ctx) {
     }
     (void)osMutexRelease(call_lock);
     return ok;
+}
+
+/* One read-back request at a time (emmc_stm32_call serializes callers). */
+static struct {
+    emmc_status_t st;
+    uint32_t start, max, k;
+    uint32_t *n, *total;
+    emmc_log_session_t* out;
+    uint8_t* block;
+} req;
+
+static void do_open(void* ctx) {
+    (void)ctx;
+    req.st = emmc_log_open(&flight_log);
+}
+
+static void do_sessions(void* ctx) {
+    (void)ctx;
+    req.st = emmc_log_sessions(&flight_log, req.start, req.out, req.max, req.n,
+                               req.total);
+}
+
+static void do_read(void* ctx) {
+    (void)ctx;
+    req.st = emmc_log_read(&flight_log, req.k, read_buf);
+    if (req.st == EMMC_OK) {
+        memcpy(req.block, read_buf, EMMC_BLOCK_SIZE);
+    }
+}
+
+static emmc_status_t run(void (*fn)(void* ctx)) {
+    req.st = EMMC_ERR_TIMEOUT;
+    return emmc_stm32_call(fn, NULL) ? req.st : EMMC_ERR_TIMEOUT;
+}
+
+emmc_status_t emmc_stm32_open(void) {
+    return run(do_open);
+}
+
+emmc_status_t emmc_stm32_sessions(uint32_t start, emmc_log_session_t* out,
+                                  uint32_t max, uint32_t* n, uint32_t* total) {
+    req.start = start;
+    req.out = out;
+    req.max = max;
+    req.n = n;
+    req.total = total;
+    return run(do_sessions);
+}
+
+emmc_status_t emmc_stm32_read(uint32_t k, uint8_t out[EMMC_BLOCK_SIZE]) {
+    req.k = k;
+    req.block = out;
+    return run(do_read);
 }
 
 void emmc_stm32_writer_task(void* argument) {

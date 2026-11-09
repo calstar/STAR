@@ -42,6 +42,14 @@ const emmc_card_info_t* emmc_stm32_card(uint32_t* issues);
  * so ctx must outlive the call: make it static). Any task but the writer. */
 bool emmc_stm32_call(void (*fn)(void* ctx), void* ctx);
 
+/* Reading the log back (USB): emmc_log_open / _sessions / _read run in the
+ * writer task through emmc_stm32_call. EMMC_ERR_TIMEOUT if the writer did
+ * not get to it. */
+emmc_status_t emmc_stm32_open(void);
+emmc_status_t emmc_stm32_sessions(uint32_t start, emmc_log_session_t* out,
+                                  uint32_t max, uint32_t* n, uint32_t* total);
+emmc_status_t emmc_stm32_read(uint32_t k, uint8_t out[EMMC_BLOCK_SIZE]);
+
 /* The writer: loops emmc_log_service(). Run at low priority. */
 void emmc_stm32_writer_task(void* argument);
 
