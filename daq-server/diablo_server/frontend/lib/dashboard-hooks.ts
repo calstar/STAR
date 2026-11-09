@@ -9,6 +9,7 @@ import { useGuiConfig } from '@/lib/gui-config';
 import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressurePlotSeriesFromSensorList, type PressurePlotSeries } from '@/lib/pressure-bar-defs';
 import { ballValveBoardIds } from '@/lib/config-validation';
+import { orderByNames } from '@/lib/panel-layout';
 
 export type ActuatorEntry = {
   name: string;
@@ -31,7 +32,7 @@ export function useActuatorsFromConfig(): ActuatorEntry[] {
   const load = useCallback(() => {
     fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { config?: { actuator_roles?: Record<string, any>; boards?: Record<string, any>; adc?: { internal_v?: number; absolute_5v_v?: number } } } | null) => {
+      .then((data: { config?: { actuator_roles?: Record<string, any>; boards?: Record<string, any>; gui?: { actuator_order?: unknown[] }; adc?: { internal_v?: number; absolute_5v_v?: number } } } | null) => {
         const config = data?.config;
         const adc = config?.adc;
         if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
@@ -40,8 +41,11 @@ export function useActuatorsFromConfig(): ActuatorEntry[] {
         const roles = config?.actuator_roles;
         if (!roles || typeof roles !== 'object') return;
         const bvBoards = ballValveBoardIds(config);
+        // Tile order is [gui] actuator_order (dragged on the Config page's Roles tab), then any
+        // role it does not list in file order. No actuator_order = file order, as before.
+        const order = orderByNames(Object.keys(roles), config?.gui?.actuator_order);
         setActuators(
-          Object.entries(roles).map(([name, value]) => {
+          order.map((name) => [name, roles[name]] as const).map(([name, value]) => {
             const channel = Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' ? value[1] : 1;
             const boardId = Array.isArray(value) && value.length >= 3 && typeof value[2] === 'number' ? value[2] : undefined;
             const entity = `ACT.${name.replace(/\s+/g, '_')}`;
