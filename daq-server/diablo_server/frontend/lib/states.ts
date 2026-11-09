@@ -205,3 +205,36 @@ export function stateIdByName(name: string): number | null {
 export function allStates(): StateDef[] {
   return states;
 }
+
+// ── Assigning ids ────────────────────────────────────────────────────────────
+// The config editor hides ids and assigns them, so an operator never picks one.
+
+/** The id a new state takes: one above the highest in use, else the lowest free one once that
+ *  would pass 254 (the id is a u8 and 255 means "unknown"). */
+export function nextStateId(states: { id?: number }[]): number {
+  const used = new Set(states.map((s) => s.id).filter((n): n is number => Number.isInteger(n)));
+  const max = Math.max(0, ...used);
+  if (max < 254) return max + 1;
+  let n = 1;
+  while (used.has(n) && n < 254) n++;
+  return n;
+}
+
+/** Give every state that has no usable id, or repeats an earlier state's id, a fresh one. The
+ *  first holder of an id keeps it — it is the state past runs mean by that number. */
+export function fixStateIds<T extends { id?: number }>(states: T[]): T[] {
+  const kept = new Set<number>();
+  const needs: number[] = [];
+  states.forEach((st, i) => {
+    const id = st.id;
+    if (Number.isInteger(id) && (id as number) >= 1 && (id as number) <= 254 && !kept.has(id as number)) kept.add(id as number);
+    else needs.push(i);
+  });
+  const out = states.slice();
+  for (const i of needs) {
+    const id = nextStateId([...kept].map((n) => ({ id: n })));
+    kept.add(id);
+    out[i] = { ...out[i], id };
+  }
+  return out;
+}

@@ -65,13 +65,12 @@ test('the Calibration page lists the T7 PT and load cell', async ({ page }) => {
   await expect(page.getByText(T7.lc.role, { exact: false }).first()).toBeAttached();
 });
 
-test('the config editor shows the T7 and validates its channel table as it is edited', async ({ page }) => {
+test('the config editor shows the T7 on Roles and validates its channel table as it is edited', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/config?tab=boards');
-  const header = page.getByText('LabJack T7 Board', { exact: false }).first();
-  await expect(header).toBeVisible();
-  await header.click();
+  // The channel table lives on the Roles tab, as the T7's panel beside the ESP32 boards' roles.
+  await page.goto('/config?tab=roles');
+  await expect(page.getByText('LabJack T7 Board', { exact: false }).first()).toBeVisible();
 
   // The four configured inputs, by role, each with its kind.
   const roleInputs = page.locator('input[placeholder="name, e.g. LOX Tank"]');

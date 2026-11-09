@@ -253,7 +253,7 @@ describe('grouping for the session page', () => {
     expect(ids).toContain('boards');
     expect(ids).toContain('controller');
     expect(ids).toContain('state');
-    expect(ids).toContain('system');   // used by the "profile could not be read" issue
+    expect(ids).toContain('profile');  // used by the "profile could not be read" issue
   });
 });
 

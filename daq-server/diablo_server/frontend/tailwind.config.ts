@@ -49,6 +49,8 @@ const config: Config = {
     './src/**/*.{js,ts,jsx,tsx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    // lib/ carries class strings too (drag-reorder's drop line), which would otherwise be purged.
+    './lib/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     // Square, like the instruments. A dot that wants to be round says

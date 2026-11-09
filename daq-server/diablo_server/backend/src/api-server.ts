@@ -25,6 +25,8 @@ import {
   listCalibrationProfiles,
   saveCalibrationProfile,
   loadCalibrationProfile,
+  createCalibrationProfile,
+  removeCalibrationProfile,
   newBlankCalibration,
 } from './routes/calibration-profiles.js';
 import { isCurrentLoopBoard } from './sensor-config.js';
@@ -727,10 +729,25 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           return true;
         }
         try {
-          const { name, from } = await readJsonBody(req);
-          createProfile(name, from);
+          const { name, from, calibration } = await readJsonBody(req);
+          // A new config gets a calibration profile of the same name beside it: a copy of an
+          // existing calibration profile ({ from: "<name>" }) or a fresh blank one ({}). It is
+          // written first because it is the step that can refuse (name taken, source missing),
+          // and removed again if the config itself then fails, so neither is left half-made.
+          // The live calibration store and the loaded calibration profile are not touched.
+          const withCal = calibration && typeof calibration === 'object';
+          if (withCal) {
+            const calFrom = calibration.from ? String(calibration.from) : undefined;
+            createCalibrationProfile(String(name ?? ''), calFrom);
+          }
+          try {
+            createProfile(name, from);
+          } catch (e) {
+            if (withCal) removeCalibrationProfile(String(name));
+            throw e;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+          res.end(JSON.stringify({ success: true, profiles: listProfiles(), calibration_profiles: listCalibrationProfiles() }));
         } catch (error: any) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error?.message || 'Failed to create profile' }));
