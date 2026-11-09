@@ -143,6 +143,13 @@ void fc_config_pack(const fc_config_t* c, uint8_t out[FC_CONFIG_SIZE]) {
     put(p, emmc_log_crc32(out, FC_CONFIG_SIZE - 4U), 4);
 }
 
+bool fc_config_equal(const fc_config_t* a, const fc_config_t* b) {
+    uint8_t x[FC_CONFIG_SIZE], y[FC_CONFIG_SIZE];
+    fc_config_pack(a, x);
+    fc_config_pack(b, y);
+    return memcmp(x, y, sizeof x) == 0;
+}
+
 bool fc_config_unpack(const uint8_t* blob, size_t len, fc_config_t* out) {
     if (len != FC_CONFIG_SIZE || blob[0] != FC_CONFIG_VERSION ||
         (blob[2] | blob[3] << 8) != FC_CONFIG_SIZE) {

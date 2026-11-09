@@ -51,6 +51,8 @@ fc_config_t fc_config_defaults(void);
 uint8_t fc_config_check(const fc_config_t* c);
 
 void fc_config_pack(const fc_config_t* c, uint8_t out[FC_CONFIG_SIZE]);
+/* Same settings. Never memcmp the struct: its padding bytes are garbage. */
+bool fc_config_equal(const fc_config_t* a, const fc_config_t* b);
 /* false: wrong length, version, size or CRC (values not checked). */
 bool fc_config_unpack(const uint8_t* blob, size_t len, fc_config_t* out);
 

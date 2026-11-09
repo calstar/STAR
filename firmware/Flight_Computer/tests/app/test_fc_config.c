@@ -19,7 +19,10 @@ static void test_defaults_are_allowed_and_round_trip(void) {
     CHECK(fc_config_check(&d) == 0);
     fc_config_pack(&d, blob);
     CHECK(fc_config_unpack(blob, sizeof blob, &back));
-    CHECK(memcmp(&d, &back, sizeof d) == 0);
+    CHECK(fc_config_equal(&d, &back));
+    memset(&back, 0x5A, sizeof back); /* garbage in the padding too */
+    CHECK(fc_config_unpack(blob, sizeof blob, &back) &&
+          fc_config_equal(&d, &back));
     blob[10] ^= 1; /* any flipped bit: the CRC refuses it */
     CHECK(!fc_config_unpack(blob, sizeof blob, &back));
     CHECK(!fc_config_unpack(blob, sizeof blob - 1, &back));

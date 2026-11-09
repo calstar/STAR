@@ -77,7 +77,7 @@ bool board_config_saved(fc_config_t* out) {
 
 bool board_config_unsaved(void) {
     fc_config_t c = board_config_get();
-    return !have_saved || memcmp(&c, &saved, sizeof c) != 0;
+    return !have_saved || !fc_config_equal(&c, &saved);
 }
 
 bool board_config_from_defaults(void) {
@@ -128,5 +128,5 @@ bool board_config_save(bool erase_ok) {
     }
     (void)HAL_FLASH_Lock();
     scan(); /* read back: saved is what flash now holds */
-    return ok && have_saved && memcmp(&saved, &c, sizeof c) == 0;
+    return ok && have_saved && fc_config_equal(&saved, &c);
 }
