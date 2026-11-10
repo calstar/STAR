@@ -342,7 +342,8 @@ export function resetEncoderAcceptTimestampsForTests(): void {
   _encoderLastAcceptedTs = {};
 }
 
-/** True if any key in this stream’s alias chain had a SENSOR_UPDATE within SENSOR_DATA_STALE_MS. */
+/** True if any key in this stream’s alias chain is fresh: a SENSOR_UPDATE within its staleness
+ *  window (SENSOR_DATA_STALE_MS, stretched for slow channels; see staleWindowMsFor). */
 export function isSensorStreamFresh(entity: string, component: string): boolean {
   const key = `${entity}.${component}`;
   if (isSensorKeyFresh(key)) return true;

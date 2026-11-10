@@ -1196,7 +1196,8 @@ int main(int argc, char* argv[]) {
         if (!r.ok) {
             std::cout << "[Cal] " << what << " uid=" << static_cast<int>(uid) << " REJECTED ("
                       << r.reason << "): newest sample " << r.age_ms << "ms old, " << r.n
-                      << " in last " << fsw::calibration::kCaptureWindowMs << "ms" << std::endl;
+                      << " in last " << r.window_ms << "ms (limit " << r.max_age_ms << "ms)"
+                      << std::endl;
         }
         return r;
     };
@@ -1676,11 +1677,10 @@ int main(int argc, char* argv[]) {
                         apply_capture(sensor_id, cr.adc_avg, ref_val);
                         // Recorded either way; `settled` is how the GUI flags a capture taken
                         // while the reading was still moving.
-                        cubic_store.note_capture(sensor_id,
-                                                 fsw::calibration::CaptureQuality{
-                                                     true, unix_now(), cr.adc_avg, cr.n,
-                                                     fsw::calibration::kCaptureWindowMs, cr.spread,
-                                                     cr.drift, cr.drift_z, cr.settled});
+                        cubic_store.note_capture(sensor_id, fsw::calibration::CaptureQuality{
+                                                                true, unix_now(), cr.adc_avg, cr.n,
+                                                                cr.window_ms, cr.spread, cr.drift,
+                                                                cr.drift_z, cr.settled});
                         std::cout << "[Cal] Capture uid=" << static_cast<int>(sensor_id) << " ("
                                   << pt_model_name(pt_model_for(sensor_id)) << ") "
                                   << capture_detail(cr) << " ref=" << ref_val << std::endl;
