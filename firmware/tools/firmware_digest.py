@@ -27,8 +27,8 @@ import sys
 from pathlib import Path
 
 IMAGE_MAGIC = 0xE9
-HEADER_LEN = 24          # esp_image_header_t
-SEGMENT_HEADER_LEN = 8   # esp_image_segment_header_t: load_addr + data_len
+HEADER_LEN = 24  # esp_image_header_t
+SEGMENT_HEADER_LEN = 8  # esp_image_segment_header_t: load_addr + data_len
 HASH_LEN = 32
 
 
@@ -83,7 +83,7 @@ def image_digest(path: str | os.PathLike) -> tuple[bytes, dict]:
     end = info["image_len"]
 
     if info["hash_appended"]:
-        digest = data[end - HASH_LEN:end]
+        digest = data[end - HASH_LEN : end]
         # The same check IDF makes before handing the digest back. If this fails
         # the board would report ESP_ERR_IMAGE_INVALID and never send a digest,
         # so refusing here is the honest answer rather than a plausible hash.
@@ -139,10 +139,15 @@ def _record(path: str, digest: bytes, info: dict, board: str, pio_env: str) -> d
     rec["built_by"] = "ci" if os.environ.get("GITHUB_ACTIONS") else "local"
     # A toolchain bump changes every digest with no source change. Without these
     # fields the registry just looks corrupt when that happens.
+    # esptool assembles the .bin from the ELF, so it belongs in the provenance:
+    # when a digest disagreed across machines it was the first thing worth ruling
+    # out, and it was not recorded. "toolchains" is plural because a board pulls
+    # both the xtensa and riscv toolchains and naming one was misleading.
     for key, env in (
         ("platform", "STAR_PIO_PLATFORM"),
         ("framework", "STAR_PIO_FRAMEWORK"),
-        ("gcc", "STAR_PIO_GCC"),
+        ("toolchains", "STAR_PIO_TOOLCHAINS"),
+        ("esptool", "STAR_PIO_ESPTOOL"),
     ):
         if os.environ.get(env):
             rec[key] = os.environ[env]
@@ -153,9 +158,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("image", help="path to firmware.bin")
     ap.add_argument("--verbose", "-v", action="store_true")
-    ap.add_argument("--record", action="store_true", help="emit a registry record as JSON")
+    ap.add_argument(
+        "--record", action="store_true", help="emit a registry record as JSON"
+    )
     ap.add_argument("--board", default="", help="board name for --record")
-    ap.add_argument("--env", dest="pio_env", default="", help="PlatformIO env for --record")
+    ap.add_argument(
+        "--env", dest="pio_env", default="", help="PlatformIO env for --record"
+    )
     args = ap.parse_args()
 
     try:
@@ -168,8 +177,12 @@ def main() -> int:
         if not args.board:
             print("error: --record needs --board", file=sys.stderr)
             return 2
-        json.dump(_record(args.image, digest, info, args.board, args.pio_env),
-                  sys.stdout, indent=2, sort_keys=True)
+        json.dump(
+            _record(args.image, digest, info, args.board, args.pio_env),
+            sys.stdout,
+            indent=2,
+            sort_keys=True,
+        )
         print()
         return 0
 
