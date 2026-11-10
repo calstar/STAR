@@ -76,8 +76,10 @@ def main() -> int:
             dest.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
         print(f"{what:9} {board}/{digest[:16]}…")
 
-    print(f"\n{counts['new']} new, {counts['updated']} updated, "
-          f"{counts['unchanged']} already current")
+    print(
+        f"\n{counts['new']} new, {counts['updated']} updated, "
+        f"{counts['unchanged']} already current"
+    )
     return 0
 
 

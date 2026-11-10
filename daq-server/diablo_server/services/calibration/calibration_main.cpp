@@ -1348,12 +1348,13 @@ int main(int argc, char* argv[]) {
                 if (hit == live_logical.end())
                     continue;
                 std::cout << "[Calibration] Cubic: uid " << uid << " ('"
-                          << (c->role.empty() ? "<no role>" : c->role)
-                          << "', board " << static_cast<int>(c->board_id)
+                          << (c->role.empty() ? "<no role>" : c->role) << "', board "
+                          << static_cast<int>(c->board_id)
                           << " is not in the running config) sits on logical channel "
-                          << static_cast<int>(c->logical_ch) << ", which belongs to "
-                          << hit->second << " — its curve is NOT applied and does not touch that "
-                             "sensor." << std::endl;
+                          << static_cast<int>(c->logical_ch) << ", which belongs to " << hit->second
+                          << " — its curve is NOT applied and does not touch that "
+                             "sensor."
+                          << std::endl;
             }
             if (orphans > 0)
                 std::cout << "[Calibration] Cubic: " << orphans

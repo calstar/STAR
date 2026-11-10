@@ -85,8 +85,7 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
         for (uint8_t b : digest)
             hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
         std::cout << "[HeartbeatRouter] Board " << (int)logical_id
-                  << (was_known ? " firmware CHANGED to " : " firmware ") << hex.str()
-                  << std::endl;
+                  << (was_known ? " firmware CHANGED to " : " firmware ") << hex.str() << std::endl;
 
         if (elodin_client_.is_connected()) {
             comms::messages::board::BoardFirmwareElodinMessage fw;
