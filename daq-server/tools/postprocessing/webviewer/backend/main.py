@@ -217,6 +217,15 @@ def api_run_video(run_id: str):
     return {"available": True, "clips": [c.as_json() for c in clips]}
 
 
+# `private` keeps a shared cache in front of the viewer (Cloudflare, which caches .mp4 by
+# extension) from storing the clip. On a cache miss Cloudflare answers a Range request by
+# first pulling the whole object from byte 0, so a seek to the end of a fresh 190 MB Save
+# waited ~25 s per camera for its first byte (measured 2026-11-10) and the panel looked
+# dead. Uncached, the Range goes straight to this server and comes back at once. The
+# browser may still keep it: a finished clip never changes.
+VIDEO_CACHE_CONTROL = "private, max-age=86400"
+
+
 @app.get("/api/video/{recording}/{stream}.mp4")
 def api_video_file(recording: str, stream: str):
     """One clip's file, with HTTP Range (Starlette's FileResponse answers 206) so the
@@ -224,7 +233,7 @@ def api_video_file(recording: str, stream: str):
     path = video.clip_file(recording, stream)
     if path is None:
         raise HTTPException(404, "no such clip")
-    return FileResponse(path, media_type="video/mp4")
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": VIDEO_CACHE_CONTROL})
 
 
 # Serve the built frontend if present (single-process deployment). Mounted last

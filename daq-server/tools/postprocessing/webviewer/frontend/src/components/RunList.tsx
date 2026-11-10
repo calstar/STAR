@@ -5,6 +5,8 @@ interface Props {
   selected: string | null;
   onSelect: (id: string) => void;
   loading: boolean;
+  /** Fold the list away to a rail, giving its width to the plot and video. */
+  onHide: () => void;
 }
 
 function fmtStarted(iso: string): string {
@@ -15,10 +17,20 @@ function fmtStarted(iso: string): string {
   });
 }
 
-export default function RunList({ runs, selected, onSelect, loading }: Props) {
+export default function RunList({ runs, selected, onSelect, loading, onHide }: Props) {
   return (
     <div className="runlist">
-      <div className="runlist-head">Runs {loading ? '…' : `(${runs.length})`}</div>
+      <div className="runlist-head">
+        <span>Runs {loading ? '…' : `(${runs.length})`}</span>
+        <button
+          className="btn ghost sm collapse-btn"
+          onClick={onHide}
+          title="Hide the run list"
+          aria-label="Hide the run list"
+        >
+          ‹
+        </button>
+      </div>
       <div className="runlist-scroll">
         {runs.map((r) => (
           <button

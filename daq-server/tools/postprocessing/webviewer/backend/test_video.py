@@ -270,6 +270,18 @@ def test_clip_served_with_range(client, rec_dir):
     assert c.get(f"/api/video/{folder}/cam1.mp4").content == data
 
 
+def test_clip_is_not_stored_by_a_shared_cache(client, rec_dir):
+    # Cloudflare caches .mp4 by extension, and on a miss it answers a Range by pulling
+    # the whole file first: a seek near the end of a fresh clip waited ~25 s. `private`
+    # sends every Range straight here, on the full response and the partial one alike.
+    c, _ = client
+    put(rec_dir, "2026-11-07_140130_record", "cam1", 10)
+    url = "/api/video/2026-11-07_140130_record/cam1.mp4"
+    for r in (c.get(url), c.get(url, headers={"Range": "bytes=0-9"})):
+        directives = [d.strip() for d in r.headers["cache-control"].split(",")]
+        assert "private" in directives
+
+
 @pytest.mark.parametrize(
     "path",
     [
