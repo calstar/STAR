@@ -170,7 +170,7 @@ find_py_files() {
             find "$dir" \
                 \( -path "$dir/external"  -o -path "$dir/external/*" \
                 -o -path "$dir/build"     -o -path "$dir/build/*" \
-                -o -path "$dir/.pio"      -o -path "$dir/.pio/*" \
+                -o -name ".pio" \
                 -o -path "$dir/Archive"   -o -path "$dir/Archive/*" \
                 -o -path "$dir/libraries" -o -path "$dir/libraries/*" \
                 -o -name ".venv"          -o -name "venv" \
