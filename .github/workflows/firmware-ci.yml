@@ -126,6 +126,28 @@ jobs:
           fi
           git worktree remove --force "$WT"
 
+      # The two-path gate above cannot see this one: both of its builds share a
+      # single package store, so a path that varies with the STORE rather than
+      # the checkout slips through. PlatformIO names a package directory
+      # `<name>@<version>` as soon as the store holds two versions of it, that
+      # name reaches __FILE__, and the image then differs from CI's by the length
+      # of the suffix. reproducible_build.py maps it away; this proves it did.
+      - name: Image must carry no store-specific or absolute paths
+        run: |
+          set -euo pipefail
+          BIN="firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin"
+          BAD="$(strings -n 8 "$BIN" \
+                 | grep -E '^(/home|/Users|/github|/tmp/)|^/pio[^ ]*@' | sort -u || true)"
+          if [ -n "$BAD" ]; then
+            echo "::error::${{ matrix.board }} embeds paths that differ between machines."
+            printf '%s\n' "$BAD"
+            echo "A version-suffixed package dir (/pio/<name>@<version>) means the"
+            echo "mapping in firmware/tools/reproducible_build.py missed a package."
+            exit 1
+          fi
+          echo "mapped source paths only:"
+          strings -n 8 "$BIN" | grep -E '^/(star|pio|piocore)/' | sort -u | head -12
+
       - name: Write the registry record
         if: github.event_name != 'pull_request'
         run: |
@@ -136,7 +158,8 @@ jobs:
           # that looks like a toolchain bump rather than a corrupt registry.
           STAR_PIO_PLATFORM="$(sed -n 's/^Platform \(.*\)$/\1/p' <<<"$PKGS" | head -1)" \
           STAR_PIO_FRAMEWORK="$(grep -oE 'framework-arduino[^ ]* @ [^ ]+' <<<"$PKGS" | head -1)" \
-          STAR_PIO_GCC="$(grep -oE 'toolchain-[^ ]* @ [^ ]+' <<<"$PKGS" | head -1)" \
+          STAR_PIO_TOOLCHAINS="$(grep -oE 'toolchain-[^ ]* @ [^ ]+' <<<"$PKGS" | paste -sd', ' -)" \
+          STAR_PIO_ESPTOOL="$(grep -oE 'tool-esptool[^ ]* @ [^ ]+' <<<"$PKGS" | head -1)" \
           python3 firmware/tools/firmware_digest.py "$BIN" --record \
             --board '${{ matrix.board }}' --env '${{ matrix.pio_env }}' \
             > "/tmp/record-${{ matrix.board }}.json"
@@ -149,6 +172,17 @@ jobs:
           name: firmware-record-${{ matrix.board }}
           path: /tmp/record-${{ matrix.board }}.json
           retention-days: 7
+
+      # The image itself, on every event including PRs. Flashing this is the only
+      # way a board's digest is in the registry by construction -- a local build
+      # depends on the state of that machine's PlatformIO store. It is also what
+      # makes a disagreement diffable instead of guesswork.
+      - name: Upload the image
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-image-${{ matrix.board }}
+          path: firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin
+          retention-days: 30
 
   run-tests:
     name: Run Unit Tests
