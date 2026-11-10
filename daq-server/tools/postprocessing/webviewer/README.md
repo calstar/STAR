@@ -76,6 +76,9 @@ Single-process (build the frontend, serve everything from uvicorn):
   saturate the host uplink and starve co-located services — it paces, not caps
   size.
 - **Save image** — PNG of the current chart (uPlot canvas).
+- **Fold the lists** — the ‹ on the run list's header and on the sensor picker folds
+  each to a thin rail, giving its width to the plot and video; click the rail to bring
+  it back. The rail keeps the count of plotted channels. Remembered per browser.
 
 ## Video
 
@@ -116,7 +119,10 @@ Matching is by time overlap with the run's extent on either clock (`backend/vide
 a Save made after a run, or a recording copied in later, still finds it. A clip's duration
 comes from its mp4 header, read once and cached; a recording still in progress has no
 finished mp4 and is not listed. Files are served with HTTP Range, so the browser fetches
-only what it shows.
+only what it shows, and with `Cache-Control: private`, so Cloudflare passes each Range
+straight through instead of caching the clip. Cached, a miss made Cloudflare pull the whole
+file from byte 0 before answering: a seek to the end of a fresh 190 MB Save waited ~25 s
+per camera for its first byte, and the panel looked dead.
 
 **Timing.** The agent writes `<stream>.json` beside each clip it keeps: pieces saying
 which second of the file was filmed when, by the gateway's clock. They carry the keyframe

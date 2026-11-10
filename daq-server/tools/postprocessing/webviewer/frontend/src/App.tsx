@@ -22,6 +22,11 @@ type Tab = 'plot' | 'config';
 // numbers are what nobody could read.
 const NAMES_KEY = 'webviewer.showNames';
 const DB_CLOCK_KEY = 'webviewer.dbClock';
+// The two lists either side of the plot fold away to a rail, so the plot and the video
+// can have the screen. Per browser, like the toggles above: a laptop wants them folded,
+// a wide monitor does not.
+const RUNS_PANE_KEY = 'webviewer.showRunList';
+const SENSORS_PANE_KEY = 'webviewer.showSensorList';
 const loadPref = (key: string, dflt: boolean) => {
   try {
     const v = localStorage.getItem(key);
@@ -54,6 +59,16 @@ export default function App() {
   // far was read on, and it is the only way to see the raw arrival pattern.
   const [dbClock, setDbClock] = useState(() => loadPref(DB_CLOCK_KEY, false));
   const timeSource: TimeSource = dbClock ? 'db' : 'sensor';
+  const [showRunList, setShowRunList] = useState(() => loadPref(RUNS_PANE_KEY, true));
+  const [showSensorList, setShowSensorList] = useState(() => loadPref(SENSORS_PANE_KEY, true));
+  const toggleRunList = (on: boolean) => {
+    setShowRunList(on);
+    savePref(RUNS_PANE_KEY, on);
+  };
+  const toggleSensorList = (on: boolean) => {
+    setShowSensorList(on);
+    savePref(SENSORS_PANE_KEY, on);
+  };
   // undefined = not fetched yet, null = this run has no snapshot.
   const [configText, setConfigText] = useState<string | null | undefined>(undefined);
   const [configErr, setConfigErr] = useState<string | null>(null);
@@ -290,9 +305,27 @@ export default function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar">
-          <RunList runs={runs} selected={runId} onSelect={selectRun} loading={loadingRuns} />
-        </aside>
+        {showRunList ? (
+          <aside className="sidebar">
+            <RunList
+              runs={runs}
+              selected={runId}
+              onSelect={selectRun}
+              loading={loadingRuns}
+              onHide={() => toggleRunList(false)}
+            />
+          </aside>
+        ) : (
+          <button
+            className="rail rail-runs"
+            onClick={() => toggleRunList(true)}
+            title="Show the run list"
+            aria-label="Show the run list"
+          >
+            <span className="rail-arrow">›</span>
+            <span className="rail-label">Runs</span>
+          </button>
+        )}
 
         <main className="content">
           {!runId && <div className="placeholder">Select a run to begin.</div>}
@@ -429,16 +462,31 @@ export default function App() {
 
               {index && tab === 'plot' && (
                 <div className="workspace">
-                  <div className="pane-left">
-                    <SensorPicker
-                      components={index.components}
-                      selected={selected}
-                      showNames={showNames}
-                      onToggle={toggle}
-                      onToggleMany={toggleMany}
-                      onClear={() => setSelected(new Set())}
-                    />
-                  </div>
+                  {showSensorList ? (
+                    <div className="pane-left">
+                      <SensorPicker
+                        components={index.components}
+                        selected={selected}
+                        showNames={showNames}
+                        onToggle={toggle}
+                        onToggleMany={toggleMany}
+                        onClear={() => setSelected(new Set())}
+                        onHide={() => toggleSensorList(false)}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      className="rail rail-sensors"
+                      onClick={() => toggleSensorList(true)}
+                      title="Show the sensor list"
+                      aria-label="Show the sensor list"
+                    >
+                      <span className="rail-arrow">›</span>
+                      <span className="rail-label">
+                        Sensors{selected.size > 0 ? ` · ${selected.size}` : ''}
+                      </span>
+                    </button>
+                  )}
 
                   <div className="pane-right">
                     {clips.length > 0 && (

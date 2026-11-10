@@ -9,13 +9,15 @@ interface Props {
   onToggle: (name: string) => void;
   onToggleMany: (names: string[]) => void;
   onClear: () => void;
+  /** Fold the picker away to a rail, giving its width to the plot and video. */
+  onHide: () => void;
 }
 
 // Two-level tree: family (ACT, PT_Cal, …) → field/type (actuator_state,
 // raw_adc, pressure_psi, …) → the individual sensors under that field.
 // Families are expanded by default; field groups collapse to keep the tree
 // compact. A search auto-expands everything so matches are always visible.
-export default function SensorPicker({ components, selected, showNames, onToggle, onToggleMany, onClear }: Props) {
+export default function SensorPicker({ components, selected, showNames, onToggle, onToggleMany, onClear, onHide }: Props) {
   const [q, setQ] = useState('');
   const [showAll, setShowAll] = useState(false); // include plumbing/secondary fields
   const [collapsedFams, setCollapsedFams] = useState<Set<string>>(new Set());
@@ -105,6 +107,14 @@ export default function SensorPicker({ components, selected, showNames, onToggle
             Clear ({selected.size})
           </button>
         )}
+        <button
+          className="btn ghost sm collapse-btn"
+          onClick={onHide}
+          title="Hide the sensor list (the plot keeps its channels)"
+          aria-label="Hide the sensor list"
+        >
+          ‹
+        </button>
       </div>
 
       <div className="picker-groups">
