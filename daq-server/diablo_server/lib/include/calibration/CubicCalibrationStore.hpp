@@ -90,6 +90,19 @@ struct CubicChannel {
     // a legacy file, and any caller that does not say, keeps its historical meaning.
     SensorKind kind = SensorKind::PT;
     /**
+     * True when the RUNNING config declares a board/connector that owns this uid, i.e.
+     * register_channel() was called for it. False for an ORPHAN: an entry load() resumed from
+     * disk whose board is disabled, removed, or whose connector is not in active_connectors.
+     *
+     * An orphan's points stay here — durable, and they re-attach by role when the board comes
+     * back — but its `logical_ch` is NOT its own. logical_ch is (slot - 1) * 10 + connector with
+     * slot = board_id % 10, and nothing stops two boards of different kinds sharing a slot, so a
+     * disabled LC board 41's connectors 1/6/7 name the same logical channels as live PT board
+     * 21's. Anything that pushes a fit into (or clears it from) a live logical-channel map must
+     * therefore ask `live` first — see cal_target() below.
+     */
+    bool live = false;
+    /**
      * What a point's `adc` means: kRawUnitAdc for an ESP32 board's ADC code, kRawUnitMicrovolts for
      * a LabJack T7 channel's reading in µV. Calibration is filed by role, so a role that moves from
      * an ESP32 board to a T7 (or back) would otherwise carry a curve fitted in one unit onto a
@@ -114,6 +127,26 @@ struct CubicChannel {
     std::string last_error;
     double updated_at = 0.0;
 };
+
+/**
+ * Which live calibration manager a store entry's fit belongs in — the one rule every caller that
+ * applies a resumed curve to the running stream must go through.
+ *
+ * `None` for an orphan (see CubicChannel::live): it has no sensor streaming, and its logical
+ * channel is shared with whatever live board happens to own that slot. On 2026-11-09 LC board 41
+ * was disabled in config; its three saved entries (connectors 1, 6, 7) resumed as orphans, and
+ * because the service's LC/PT discriminant was built from ENABLED boards they were taken for PTs.
+ * Each held one point, so each fit was invalid, so the service CLEARED PT logical channels 1, 6
+ * and 7 — FT-PT-R, FF-PT and DR-PT-G — right after the PT entries had set them. All three streamed
+ * 0 psi, with raw ADC healthy and a good cubic sitting on disk.
+ */
+enum class CalTarget { None, PT, LC };
+
+inline CalTarget cal_target(const CubicChannel& ch) {
+    if (!ch.live)
+        return CalTarget::None;
+    return ch.kind == SensorKind::LC ? CalTarget::LC : CalTarget::PT;
+}
 
 /**
  * Owns the per-channel captured points and the fitted cubic for the calibration service.

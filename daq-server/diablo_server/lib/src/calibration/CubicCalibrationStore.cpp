@@ -40,6 +40,7 @@ void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uin
     std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = channels_[uid];
     ch.uid = uid;
+    ch.live = true;  // the running config owns this uid: its logical_ch is a live sensor's
     ch.board_id = board_id;
     ch.connector = connector;
     ch.logical_ch = logical_ch;
@@ -255,19 +256,40 @@ std::string CubicCalibrationStore::serialize() const {
     json lc_norm_scale = json::object();
     json state = json::object();
 
-    for (const auto& [uid, ch] : channels_) {
-        // Logical-channel-keyed maps: consumed by PTCalibrationManager / loadCalibrationJSON.
-        // Split by kind — a PT and a load cell on the same slot share a logical channel, and
-        // writing both into one map let the higher uid overwrite the other (see SensorKind).
-        if (ch.fit.valid) {
-            const std::string lkey = std::to_string(static_cast<int>(ch.logical_ch));
-            const bool is_lc = ch.kind == SensorKind::LC;
-            (is_lc ? lc_polys : polys)[lkey] = {ch.fit.A, ch.fit.B, ch.fit.C, ch.fit.D};
-            (is_lc ? lc_poly_coeffs : poly_coeffs)[lkey] = ch.fit.poly;
-            (is_lc ? lc_norm_min : norm_min)[lkey] = ch.fit.norm_min;
-            (is_lc ? lc_norm_scale : norm_scale)[lkey] = ch.fit.norm_scale;
-        }
+    // Logical-channel-keyed maps: consumed by PTCalibrationManager / loadCalibrationJSON (and the
+    // Node backend's own loadCalibrationJSON, which keys its CalibrationMap the same way).
+    //
+    // Split by kind — a PT and a load cell on the same slot share a logical channel, and writing
+    // both into one map let the higher uid overwrite the other (see SensorKind).
+    //
+    // And written LIVE FIRST, because the same collision exists inside a single kind, where the
+    // kind split cannot help: an orphan's logical channel is whatever live board now owns that
+    // slot, so a removed PT board's still-valid curve would overwrite the live PT that inherited
+    // the channel, in uid order, in the file that is the only record of either. A live channel
+    // therefore always wins its own logical channel; an orphan fills only a channel no live
+    // sensor claims, which keeps a blind reload (nothing registered, e.g. a reader that does not
+    // know the config) from emptying the overlay. Every entry's points are in cubic_state below
+    // regardless, so nothing is lost either way.
+    auto put_fit = [&](const CubicChannel& ch, bool only_if_absent) {
+        if (!ch.fit.valid)
+            return;
+        const std::string lkey = std::to_string(static_cast<int>(ch.logical_ch));
+        const bool is_lc = ch.kind == SensorKind::LC;
+        if (only_if_absent && (is_lc ? lc_polys : polys).contains(lkey))
+            return;
+        (is_lc ? lc_polys : polys)[lkey] = {ch.fit.A, ch.fit.B, ch.fit.C, ch.fit.D};
+        (is_lc ? lc_poly_coeffs : poly_coeffs)[lkey] = ch.fit.poly;
+        (is_lc ? lc_norm_min : norm_min)[lkey] = ch.fit.norm_min;
+        (is_lc ? lc_norm_scale : norm_scale)[lkey] = ch.fit.norm_scale;
+    };
+    for (const auto& [uid, ch] : channels_)
+        if (ch.live)
+            put_fit(ch, /*only_if_absent=*/false);
+    for (const auto& [uid, ch] : channels_)
+        if (!ch.live)
+            put_fit(ch, /*only_if_absent=*/true);
 
+    for (const auto& [uid, ch] : channels_) {
         // uid-keyed rich state for the UI (points + per-channel fit + identity).
         json cj;
         cj["boardId"] = static_cast<int>(ch.board_id);

@@ -1222,7 +1222,11 @@ int main(int argc, char* argv[]) {
     // 0), and reset the robust learner (PT only). No factory/baseline revert.
     auto apply_pt_clear = [&](uint16_t uid) {
         const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-        if (cch != nullptr)
+        // Only a LIVE channel's logical slot is its own to clear. An orphan (a disabled or
+        // removed board, still listed on the calibration page because its points are kept) shares
+        // its logical channel with whatever live board now owns that slot — so Clear on a dead
+        // LC-41 row would wipe FT-PT-R's cubic. Drop the points; leave the live map alone.
+        if (cch != nullptr && fsw::calibration::cal_target(*cch) == fsw::calibration::CalTarget::PT)
             pt_calibration.clear_calibration(cch->logical_ch);
         cubic_store.clear_channel(uid);
         robust_manager.reset_adjustment(uid);
@@ -1233,7 +1237,8 @@ int main(int argc, char* argv[]) {
     };
     auto apply_lc_clear = [&](uint16_t uid) {
         const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
-        if (cch != nullptr)
+        // Live channels only — see apply_pt_clear.
+        if (cch != nullptr && fsw::calibration::cal_target(*cch) == fsw::calibration::CalTarget::LC)
             lc_calibration.clear_calibration(cch->logical_ch);
         cubic_store.clear_channel(uid);
         cubic_store.save();
@@ -1288,8 +1293,16 @@ int main(int argc, char* argv[]) {
             const fsw::calibration::CubicChannel* cch = cubic_store.channel(uid);
             if (cch == nullptr)
                 continue;
+            // An ORPHAN — an entry whose board the running config no longer declares — has no
+            // sensor streaming, and its logical channel belongs to whatever live board owns that
+            // slot: disabled LC board 41's connectors 1/6/7 name PT board 21's logical 1/6/7.
+            // Neither apply nor clear; its points stay on disk and re-attach by role when the
+            // board comes back. See CubicChannel::live / cal_target().
+            const fsw::calibration::CalTarget target = fsw::calibration::cal_target(*cch);
+            if (target == fsw::calibration::CalTarget::None)
+                continue;
             const bool fit_ok = fit != nullptr && fit->valid;
-            if (is_lc_uid(uid)) {
+            if (target == fsw::calibration::CalTarget::LC) {
                 // LC: cubic fit only, no robust baseline to reseed.
                 if (fit_ok)
                     lc_calibration.set_calibration(cch->logical_ch,
@@ -1310,6 +1323,43 @@ int main(int argc, char* argv[]) {
                 fit_ok ? fsw::calibration::PTCalibrationCoeffs(fit->A, fit->B, fit->C, fit->D)
                        : fsw::calibration::PTCalibrationCoeffs(0.0, 0.0, 0.0, 0.0);
             robust_manager.reseed_sensor(uid, baseline);
+        }
+        // Say out loud which entries did NOT reach the stream, and which live sensor each one
+        // shadows. Silence here is what made 2026-11-09 take an afternoon: disabling LC board 41
+        // left three PTs reading 0 psi and nothing in any log connected the two. An orphan is
+        // normal (a board off for the day keeps its cal); an orphan sitting on a LIVE sensor's
+        // logical channel is the thing to see at a glance.
+        {
+            std::map<uint8_t, std::string> live_logical;  // logical_ch -> "role (uid)"
+            for (uint16_t uid : cubic_store.uids()) {
+                const fsw::calibration::CubicChannel* c = cubic_store.channel(uid);
+                if (c != nullptr && c->live)
+                    live_logical[c->logical_ch] =
+                        (c->role.empty() ? std::string("<no role>") : c->role) + " (uid " +
+                        std::to_string(uid) + ")";
+            }
+            size_t orphans = 0;
+            for (uint16_t uid : cubic_store.uids()) {
+                const fsw::calibration::CubicChannel* c = cubic_store.channel(uid);
+                if (c == nullptr || c->live)
+                    continue;
+                ++orphans;
+                const auto hit = live_logical.find(c->logical_ch);
+                if (hit == live_logical.end())
+                    continue;
+                std::cout << "[Calibration] Cubic: uid " << uid << " ('"
+                          << (c->role.empty() ? "<no role>" : c->role)
+                          << "', board " << static_cast<int>(c->board_id)
+                          << " is not in the running config) sits on logical channel "
+                          << static_cast<int>(c->logical_ch) << ", which belongs to "
+                          << hit->second << " — its curve is NOT applied and does not touch that "
+                             "sensor." << std::endl;
+            }
+            if (orphans > 0)
+                std::cout << "[Calibration] Cubic: " << orphans
+                          << " entr(ies) kept for boards not in the running config (points "
+                             "preserved; they re-attach by role when the board returns)."
+                          << std::endl;
         }
         // Restore learned robust θ only on process start (not on a live profile swap).
         if (restore_learned)
