@@ -141,6 +141,7 @@ find_cpp_files() {
                 -o -path "$dir/Flight_Computer/Core/Src/syscalls.c" -o -path "$dir/Flight_Computer/Core/Src/sysmem.c" \
                 -o -path "$dir/Flight_Computer/Core/Src/system_stm32h7xx.c" \
                 -o -path "$dir/Flight_Computer/Drivers" -o -path "$dir/Flight_Computer/Middlewares" \
+                -o -path "$dir/Flight_Computer/USB_DEVICE" \
                 -o -name node_modules -o -name nlohmann -o -name "toml++" \) -prune -o \
                 -type f \( -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" \) -print0
         else
@@ -160,7 +161,7 @@ find_py_files() {
             find "$dir" \
                 \( -path "$dir/external"  -o -path "$dir/external/*" \
                 -o -path "$dir/build"     -o -path "$dir/build/*" \
-                -o -path "$dir/.pio"      -o -path "$dir/.pio/*" \
+                -o -name ".pio" \
                 -o -path "$dir/Archive"   -o -path "$dir/Archive/*" \
                 -o -path "$dir/libraries" -o -path "$dir/libraries/*" \
                 -o -name ".venv"          -o -name "venv" \
