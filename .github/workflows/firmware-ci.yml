@@ -5,12 +5,25 @@ on:
     branches: [main]
     paths:
       - 'firmware/**'
+      # firmware/libraries/daq-protocol is a symlink to lib/daq-protocol, which
+      # SensorHotfireCore.h includes -- so a wire-format change rebuilds every
+      # board image without touching firmware/. Without this the registry would
+      # silently miss exactly the changes that matter most.
+      - 'lib/daq-protocol/**'
       - '.github/workflows/firmware-ci.yml'
   pull_request:
     paths:
       - 'firmware/**'
+      - 'lib/daq-protocol/**'
       - '.github/workflows/firmware-ci.yml'
   workflow_dispatch:
+
+# Every other workflow here does this; firmware-ci was the one that did not, so
+# each push to an open PR ran a full matrix to completion. Not cancelled on main:
+# a cancelled run there is a missing registry record.
+concurrency:
+  group: firmware-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   stm32-self-test-host:
@@ -46,18 +59,18 @@ jobs:
         run: ctest --test-dir /tmp/star-emmc --output-on-failure
 
   build-firmware:
-    name: Build ${{ matrix.project }}
+    name: Build ${{ matrix.board }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        project:
-          - Hotfire_Code/PT_Hotfire
-          - Hotfire_Code/TC_Hotfire
-          - Hotfire_Code/RTD_Hotfire
-          - Hotfire_Code/LC_Hotfire
-          - Hotfire_Code/Actuator_Hotfire
-          - Hotfire_Code/BallValve_Hotfire
+        include:
+          - { board: PT_Hotfire,        project: Hotfire_Code/PT_Hotfire,        pio_env: adafruit_feather_esp32s3 }
+          - { board: TC_Hotfire,        project: Hotfire_Code/TC_Hotfire,        pio_env: adafruit_feather_esp32s3 }
+          - { board: RTD_Hotfire,       project: Hotfire_Code/RTD_Hotfire,       pio_env: adafruit_feather_esp32s3 }
+          - { board: LC_Hotfire,        project: Hotfire_Code/LC_Hotfire,        pio_env: adafruit_feather_esp32s3 }
+          - { board: Actuator_Hotfire,  project: Hotfire_Code/Actuator_Hotfire,  pio_env: adafruit_feather_esp32s3 }
+          - { board: BallValve_Hotfire, project: Hotfire_Code/BallValve_Hotfire, pio_env: esp32dev }
 
     steps:
       - name: Checkout repository
@@ -74,8 +87,68 @@ jobs:
         run: pip install platformio
 
       - name: Compile firmware
-        run: pio run
+        run: pio run -e ${{ matrix.pio_env }}
         working-directory: firmware/${{ matrix.project }}
+
+      - name: Read the digest this image will report
+        id: digest
+        run: |
+          BIN="firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin"
+          python3 firmware/tools/firmware_digest.py "$BIN" --verbose
+          echo "digest=$(python3 firmware/tools/firmware_digest.py "$BIN")" >> "$GITHUB_OUTPUT"
+
+      # The gate. A digest that depends on where the build ran names the machine,
+      # not the firmware, and a registry keyed on it is worthless. Build the same
+      # commit again from a different path and require the same bytes.
+      # To confirm this gate can fail, drop `extra_scripts` from the project's
+      # platformio.ini and watch this step go red.
+      - name: Digest must not depend on the build path
+        run: |
+          set -euo pipefail
+          WT=/tmp/star-firmware-reproducibility-check-at-a-different-depth
+          git worktree add --detach "$WT" HEAD
+          ( cd "$WT/firmware/${{ matrix.project }}" && pio run -e ${{ matrix.pio_env }} )
+          A="${{ steps.digest.outputs.digest }}"
+          B="$(python3 firmware/tools/firmware_digest.py \
+                 "$WT/firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin")"
+          echo "at $GITHUB_WORKSPACE : $A"
+          echo "at $WT : $B"
+          if [ "$A" != "$B" ]; then
+            echo "::error::${{ matrix.board }} does not build reproducibly: the image \
+          carries its own build path, so every machine produces a different digest."
+            echo "Absolute paths found in the image:"
+            strings -n 8 "firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin" \
+              | grep -E '^(/home|/Users|/tmp|/github)' | sort -u | head -20 || true
+            echo "Usual cause: a __FILE__ expansion (ESP_ERROR_CHECK, assert, ESP_LOGx) in a"
+            echo "translation unit the -ffile-prefix-map flags do not cover."
+            echo "See firmware/tools/reproducible_build.py."
+            exit 1
+          fi
+          git worktree remove --force "$WT"
+
+      - name: Write the registry record
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          BIN="firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin"
+          PKGS="$(cd firmware/${{ matrix.project }} && pio pkg list -e ${{ matrix.pio_env }})"
+          # A toolchain bump changes every digest with no source change. Recorded so
+          # that looks like a toolchain bump rather than a corrupt registry.
+          STAR_PIO_PLATFORM="$(sed -n 's/^Platform \(.*\)$/\1/p' <<<"$PKGS" | head -1)" \
+          STAR_PIO_FRAMEWORK="$(grep -oE 'framework-arduino[^ ]* @ [^ ]+' <<<"$PKGS" | head -1)" \
+          STAR_PIO_GCC="$(grep -oE 'toolchain-[^ ]* @ [^ ]+' <<<"$PKGS" | head -1)" \
+          python3 firmware/tools/firmware_digest.py "$BIN" --record \
+            --board '${{ matrix.board }}' --env '${{ matrix.pio_env }}' \
+            > "/tmp/record-${{ matrix.board }}.json"
+          cat "/tmp/record-${{ matrix.board }}.json"
+
+      - name: Upload the record
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-record-${{ matrix.board }}
+          path: /tmp/record-${{ matrix.board }}.json
+          retention-days: 7
 
   run-tests:
     name: Run Unit Tests
@@ -129,3 +202,102 @@ jobs:
       - name: flight_test
         run: ./flight_test -v
         working-directory: firmware/Flight_Computer
+
+  # ---------------------------------------------------------------------------
+  # Publish the firmware registry.
+  #
+  # Maps the digest a board reports in its heartbeat back to the commit that
+  # built it. Records live on the `firmware-registry` branch, not on main, so:
+  #   * no branch-protection bypass is needed -- that branch is unprotected, so
+  #     the automatic GITHUB_TOKEN can push to it and there is no PAT to expire;
+  #   * main's history stays clean;
+  #   * pushes made with GITHUB_TOKEN do not trigger workflows, so this cannot
+  #     re-trigger firmware-ci.
+  #
+  # To read it:
+  #   git fetch origin firmware-registry:firmware-registry
+  #   git worktree add /tmp/fwreg firmware-registry
+  #   firmware/tools/which_firmware.py <digest> --registry /tmp/fwreg
+  # or, since the repo is public, straight over HTTP:
+  #   raw.githubusercontent.com/calstar/STAR/firmware-registry/PT_Hotfire/<digest>.json
+  # ---------------------------------------------------------------------------
+  publish-firmware-registry:
+    name: Publish firmware registry
+    runs-on: ubuntu-latest
+    needs: build-firmware
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download the records
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-record-*
+          path: /tmp/records
+          merge-multiple: true
+
+      - name: Merge into the firmware-registry branch and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(ls -A /tmp/records 2>/dev/null)" ]; then
+            echo "no records were produced; nothing to publish"
+            exit 0
+          fi
+
+          REG=/tmp/registry
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # The branch is an orphan: it shares no history with main and holds
+          # nothing but records.
+          if git clone --branch firmware-registry --single-branch --depth 1 "$URL" "$REG" 2>/dev/null; then
+            echo "cloned the existing firmware-registry branch"
+          else
+            echo "firmware-registry does not exist yet; starting it"
+            mkdir -p "$REG"
+            git -C "$REG" init -q -b firmware-registry
+            git -C "$REG" remote add origin "$URL"
+            cat > "$REG/README.md" <<'EOF'
+          # Firmware registry
+
+          One file per distinct firmware image: `<board>/<image_digest>.json`.
+
+          `image_digest` is what a board reports in its `BoardHeartbeatPacket` --
+          the SHA-256 ESP-IDF appends to the app image, which is what
+          `esp_partition_get_sha256()` returns. It is NOT `sha256(firmware.bin)`.
+
+          Written only by `.github/workflows/firmware-ci.yml` on pushes to main.
+          Look a digest up with `firmware/tools/which_firmware.py`.
+
+          Several commits can build byte-identical firmware, so each record lists
+          every commit known to produce it rather than naming one.
+          EOF
+          fi
+
+          git -C "$REG" config user.name  "github-actions[bot]"
+          git -C "$REG" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          python3 firmware/tools/registry_merge.py --records /tmp/records --registry "$REG"
+
+          cd "$REG"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "every image in this build is already recorded"
+            exit 0
+          fi
+          # Only paths with a slash are board directories; keeps README.md out of the subject.
+          BOARDS="$(git diff --cached --name-only | grep / | cut -d/ -f1 | sort -u | paste -sd, -)"
+          git commit -q -m "${BOARDS} @ ${GITHUB_SHA:0:8}" \
+                        -m "Built by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # A plain push: the branch is unprotected and this is the only writer.
+          git push origin firmware-registry
+          echo "published: $BOARDS"
