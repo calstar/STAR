@@ -488,6 +488,45 @@ bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client,
     return registered > 0;
 }
 
+bool DatabaseConfig::register_firmware_tables(ElodinClient& client,
+                                              const std::vector<uint8_t>& board_ids) {
+    std::cout << "[DatabaseConfig] Registering BOARD firmware VTables (" << board_ids.size()
+              << " boards)..." << std::endl;
+    int registered = 0;
+
+    // Firmware digest layout (41 bytes, written field by field with no padding):
+    //   u64 timestamp_ns (0,8) | u8 board_id (8) | u8[32] firmware_digest (9,32)
+    //
+    // Written only on a change, so this component is a history of reflashes rather
+    // than a per-tick column. Shares the heartbeat entity: one board, one entity.
+    for (uint8_t board_id : board_ids) {
+        std::string entity = "BOARD.HB_" + std::to_string(board_id);
+        std::string prefix = entity + ".";
+
+        auto vt = builder::vtable({
+            raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "firmware_seen_ns"))),
+            raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "firmware_board_id"))),
+            raw_field(9, 32, schema(PrimType::U8(), {32}, component(prefix + "firmware_digest"))),
+        });
+
+        uint64_t entity_id = 0x1000 + board_id;
+        if (!send_msg(client, VTableMsg{.id = {0x11, board_id}, .vtable = vt})) {
+            std::cerr << "[DatabaseConfig] ❌ Firmware VTable failed: " << entity << std::endl;
+            continue;
+        }
+
+        send_msg(client, set_component_name(prefix + "firmware_seen_ns"));
+        send_msg(client, set_component_name(prefix + "firmware_board_id"));
+        send_msg(client, set_component_name(prefix + "firmware_digest"));
+        send_msg(client, set_entity_name(entity_id, entity));
+        registered++;
+    }
+
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " firmware VTables"
+              << std::endl;
+    return registered > 0;
+}
+
 // Per-sensor self-test VTables: [0x60 + sensor_id, board_id].
 // Each sensor result gets its own VTable so Elodin VTableStream delivers every
 // result individually (a shared table only delivers the last-written row).

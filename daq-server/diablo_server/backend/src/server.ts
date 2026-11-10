@@ -26,6 +26,7 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
+import { recordFirmware } from './firmware-log.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
 import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
@@ -561,6 +562,30 @@ function updateBoard(low: number, payload: Buffer): void {
       console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
     }
   }
+}
+
+/**
+ * Record the firmware image a board reports running: shown live on the Boards pane and pinned to
+ * the run in `<dbDir>/firmware.jsonl`.
+ *
+ * Payload is BoardFirmwareElodinMessage (see comms/messages/board/BoardFirmwareMessage.hpp):
+ *   u64 timestamp_ns (0) | u8 board_id (8) | u8[32] firmware_digest (9)
+ */
+function updateBoardFirmware(low: number, payload: Buffer): void {
+  if (payload.length < 41) return;
+  const digest = payload.subarray(9, 41).toString('hex');
+  const status = boardsStatus.get(low);
+  if (!status) return; // heartbeat creates the entry; firmware only annotates it
+  if (status.firmwareDigest === digest) return;
+
+  const previous = status.firmwareDigest;
+  status.firmwareDigest = digest;
+  status.firmwareSeenMs = Date.now();
+  console.log(
+    `[ThinServer] Board ${low} (${status.type}) firmware ${previous ? 'changed to ' : ''}${digest.slice(0, 16)}…`,
+  );
+  recordFirmware(low, digest, status.type);
+  broadcastBoardStatus();
 }
 
 /**
@@ -1645,6 +1670,14 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     if (high === 0x10) {
       countHeartbeat(low);
       updateBoard(low, payload);
+      return;
+    }
+
+    // ── Board firmware digest [0x11, board_id] ──────────────────────────────
+    // daq_bridge publishes this only when a board's firmware changes, so this
+    // arrives once per board per boot or reflash, not per heartbeat.
+    if (high === 0x11) {
+      updateBoardFirmware(low, payload);
       return;
     }
 

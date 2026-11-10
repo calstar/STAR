@@ -1,6 +1,7 @@
 #ifndef FSW_HEARTBEAT_ROUTER_HPP
 #define FSW_HEARTBEAT_ROUTER_HPP
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -17,6 +18,11 @@ namespace routing {
  *
  * On each heartbeat:
  *  - Publishes a BoardHeartbeatElodinMessage to packet_id {0x10, board_id}.
+ *  - Publishes a BoardFirmwareElodinMessage to packet_id {0x11, board_id}, but only
+ *    when the board's firmware digest is first seen or changes. The digest is on
+ *    every heartbeat and changes only on a reflash, and Elodin writes every field
+ *    of every publish, so putting it on the heartbeat table would store the same
+ *    32 bytes 3600 times an hour per board. See BoardFirmwareMessage.hpp.
  *  - Tracks per-board last-seen time to detect reconnects and Setup re-entry.
  *  - Returns a BoardEvent so the caller (daq_bridge_main) can gate SENSOR_CONFIG re-sends.
  */
@@ -56,6 +62,11 @@ private:
         std::chrono::steady_clock::time_point last_seen;
         daq::BoardState last_board_state = daq::BoardState::SETUP;
         bool seen_before = false;
+        // Last firmware digest published for this board. `digest_known` is separate
+        // from an all-zero digest, which is a real value a board reports when
+        // esp_partition_get_sha256() failed -- that is worth recording, once.
+        std::array<uint8_t, 32> last_firmware_digest{};
+        bool digest_known = false;
     };
 
     elodin::ElodinClient& elodin_client_;

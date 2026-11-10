@@ -450,6 +450,17 @@ export interface BoardStatus {
   heartbeatTimes?: number[];
   /** Board-LAN DHCP status for this board's IP; absent when star-dhcp is not installed. */
   dhcp?: BoardDhcpStatus;
+  /**
+   * Lowercase hex SHA-256 of the firmware image the board reports running, from
+   * its heartbeat. This is the digest ESP-IDF appends to the app image, not
+   * sha256(firmware.bin); resolve it to a commit with
+   * firmware/tools/which_firmware.py. Absent until the board reports one; all
+   * zeros means the board could not compute it (its image does not verify) and
+   * is also what the board simulator sends.
+   */
+  firmwareDigest?: string;
+  /** Epoch ms when this digest was first seen, for display. */
+  firmwareSeenMs?: number;
 }
 
 /** What star-dhcp (dnsmasq) says about one board address. See backend/src/dhcp-status.ts. */

@@ -337,6 +337,10 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
         : Array.from({ length: 255 }, (_, i) => i + 1);
     for (const id of heartbeatBoardIds) {
         addUnique(0x10, id);
+        // Firmware digest [0x11, board_id]. daq_bridge writes it only when a board's
+        // firmware changes, so this pair is usually silent -- that is not a dead
+        // table, and it must stay subscribed or a reflash goes unnoticed.
+        addUnique(0x11, id);
         for (let s = 0x60; s <= 0x6F; s++) addUnique(s, id);
     }
 

@@ -1,8 +1,12 @@
 #include "routing/HeartbeatRouter.hpp"
 
 #include <chrono>
+#include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
+#include "comms/messages/board/BoardFirmwareMessage.hpp"
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 
 namespace fsw {
@@ -62,6 +66,37 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
 
         std::array<uint8_t, 2> pkt_id = {0x10, logical_id};
         elodin_client_.publish(pkt_id, msg);
+    }
+
+    // ── Publish the firmware digest, but only when it changes ────────────────
+    // On every heartbeat this is the same 32 bytes; it moves only when the board
+    // is reflashed. Elodin has no change detection, so writing it per tick would
+    // cost ~144 KB/board/hour to store one value. See BoardFirmwareMessage.hpp.
+    std::array<uint8_t, 32> digest{};
+    std::memcpy(digest.data(), heartbeat.firmware_hash, digest.size());
+    const bool digest_changed = !state.digest_known || digest != state.last_firmware_digest;
+
+    if (digest_changed) {
+        const bool was_known = state.digest_known;
+        state.last_firmware_digest = digest;
+        state.digest_known = true;
+
+        std::ostringstream hex;
+        for (uint8_t b : digest)
+            hex << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
+        std::cout << "[HeartbeatRouter] Board " << (int)logical_id
+                  << (was_known ? " firmware CHANGED to " : " firmware ") << hex.str()
+                  << std::endl;
+
+        if (elodin_client_.is_connected()) {
+            comms::messages::board::BoardFirmwareElodinMessage fw;
+            fw.setField<0>(receive_ts_ns);
+            fw.setField<1>(logical_id);
+            fw.setField<2>(digest);
+
+            std::array<uint8_t, 2> fw_pkt_id = {0x11, logical_id};
+            elodin_client_.publish(fw_pkt_id, fw);
+        }
     }
 
     return event;

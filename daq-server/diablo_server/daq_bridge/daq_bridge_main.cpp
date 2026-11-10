@@ -588,6 +588,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "⚠️  Ball valve RAW VTable registration failed" << std::endl;
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
+        fsw::elodin::DatabaseConfig::register_firmware_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
