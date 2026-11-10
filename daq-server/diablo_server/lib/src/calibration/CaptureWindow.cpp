@@ -53,17 +53,30 @@ CaptureResult CaptureWindow::capture(uint16_t uid, uint64_t now_rx_ns) const {
     const std::deque<AdcSample>& ring = it->second;
     const AdcSample& newest = ring.back();
 
+    // This sensor's own sample period, from the ring's mean spacing (sample clock). A fast
+    // PT gives a few ms and both bounds below stay at their floors, exactly as before; a
+    // ~1 Hz load cell gets a window that holds kMinCaptureSamples of its samples and a
+    // staleness limit it can actually meet. Mean, not median: a batched board delivers
+    // bursts of near-identical stamps, and only the mean still averages to the true rate.
+    uint64_t period_ms = 0;
+    if (ring.size() >= 2)
+        period_ms = ms_between(newest.ts_ns, ring.front().ts_ns) / (ring.size() - 1);
+    r.window_ms =
+        std::clamp<uint64_t>(kMinCaptureSamples * period_ms, kCaptureWindowMs, kMaxCaptureWindowMs);
+    r.max_age_ms =
+        std::clamp<uint64_t>(kStaleSamplePeriods * period_ms, kMaxSampleAgeMs, kMaxCaptureWindowMs);
+
     // Liveness, on OUR clock. A sensor that stopped publishing still "has" samples; that
     // is exactly how a capture on a dead channel used to succeed and record a stale code.
     r.age_ms = ms_between(now_rx_ns, newest.rx_ns);
-    if (r.age_ms > kMaxSampleAgeMs) {
+    if (r.age_ms > r.max_age_ms) {
         r.reason = kReasonStale;
         return r;
     }
 
     // Membership, anchored on the newest SAMPLE time rather than on now, so a constant
     // board-to-host epoch offset cancels instead of emptying the window.
-    const uint64_t window_ns = kCaptureWindowMs * NS_PER_MS;
+    const uint64_t window_ns = r.window_ms * NS_PER_MS;
     const uint64_t floor_ns = newest.ts_ns > window_ns ? newest.ts_ns - window_ns : 0;
 
     std::vector<double> vals;

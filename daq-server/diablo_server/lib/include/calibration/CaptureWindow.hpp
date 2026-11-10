@@ -62,15 +62,29 @@ namespace calibration {
 
 /** How far back a capture averages. ~14 samples on a 13.7 Hz load cell (standard error
  *  ~214 counts against a 53,000-count weight step) and ~61 on a PT — while staying short
- *  enough that a load change two seconds before the button cannot leak in. */
+ *  enough that a load change two seconds before the button cannot leak in.
+ *
+ *  This is the FLOOR. A sensor slower than kMinCaptureSamples per second gets a window of
+ *  kMinCaptureSamples of its own sample periods instead (see capture()): the LC boards at
+ *  SINC4 / 20 SPS deliver ~1 Hz per channel, and a fixed 1 s window never held three of
+ *  their samples, so every LC capture and Zero-All was refused as too_few or stale. */
 constexpr uint64_t kCaptureWindowMs = 1000;
-/** Newest sample older than this (in OUR clock) means the sensor is not live. */
+/** Newest sample older than this (in OUR clock) means the sensor is not live. A floor, like
+ *  the window: a slow sensor is allowed kStaleSamplePeriods of its own sample periods. */
 constexpr uint64_t kMaxSampleAgeMs = 1500;
 /** Below this a "mean" is not one, and the settle check has nothing to say. */
 constexpr size_t kMinCaptureSamples = 3;
-/** Ring eviction: by span so it self-sizes across 10-250 Hz, by count so memory is
- *  bounded if a board ever runs fast. Both are enforced on push. */
-constexpr uint64_t kRingSpanMs = 4000;
+/** Liveness allowance for a slow sensor, in its own sample periods: one late sample is
+ *  jitter, two missing in a row is a sensor that stopped. */
+constexpr uint64_t kStaleSamplePeriods = 2;
+/** Upper bound on the adaptive window and staleness allowance. A sensor slower than this
+ *  allows is not one a capture can honestly describe "right now"; it fails closed. */
+constexpr uint64_t kMaxCaptureWindowMs = 5000;
+/** Ring eviction: by span so it self-sizes across 1-250 Hz, by count so memory is
+ *  bounded if a board ever runs fast. Both are enforced on push. Must exceed
+ *  kMaxCaptureWindowMs by at least one slow sample period, or a slow sensor's window
+ *  could never fill. */
+constexpr uint64_t kRingSpanMs = 8000;
 constexpr size_t kRingMax = 1024;
 /** Half-mean difference, in standard errors, above which the window is not settled. */
 constexpr double kSettleZ = 6.0;
@@ -90,13 +104,15 @@ inline constexpr const char* kReasonTooFew = "too_few";
 struct CaptureResult {
     bool ok = false;  ///< false → the caller must NOT create a point
     double adc_avg = 0.0;
-    size_t n = 0;          ///< samples inside the window
-    uint64_t span_ms = 0;  ///< ts span actually covered
-    uint64_t age_ms = 0;   ///< how old the newest sample is, our clock
-    double spread = 0.0;   ///< max - min inside the window
-    double drift = 0.0;    ///< |mean(2nd half) - mean(1st half)|
-    double drift_z = 0.0;  ///< drift in standard errors
-    bool settled = true;   ///< false → recorded, but flagged
+    size_t n = 0;                           ///< samples inside the window
+    uint64_t span_ms = 0;                   ///< ts span actually covered
+    uint64_t age_ms = 0;                    ///< how old the newest sample is, our clock
+    uint64_t window_ms = kCaptureWindowMs;  ///< the window this sensor's rate called for
+    uint64_t max_age_ms = kMaxSampleAgeMs;  ///< the staleness limit it was held to
+    double spread = 0.0;                    ///< max - min inside the window
+    double drift = 0.0;                     ///< |mean(2nd half) - mean(1st half)|
+    double drift_z = 0.0;                   ///< drift in standard errors
+    bool settled = true;                    ///< false → recorded, but flagged
     const char* reason = kReasonOk;
 };
 
