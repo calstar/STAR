@@ -99,7 +99,7 @@ Fuel = [ "Fuel Upstream" ]
 mode = "board-clock"
 window_seconds = 10
 max_plausible_gap_s = 60
-max_batch_age_s = 5
+max_batch_age_s = 20  # > one batch of a slow board: an LC packet spans ~12 s on old firmware
 resync_threshold_ms = 1000
 log_interval_s = 10
 

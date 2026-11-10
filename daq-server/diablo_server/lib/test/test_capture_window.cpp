@@ -11,6 +11,7 @@
  *  2. window bound at high rate                6. settle detection (4 cases)
  *  3. stale sensor rejected, no fallback       7. ring eviction bounds
  *  4. no samples / too few                     8. uids() skips empty
+ *  9. ~1 Hz load cell captures (adaptive)     10. fast sensors keep the fixed bounds
  */
 
 #include <cinttypes>
@@ -232,8 +233,60 @@ void ring_bounds() {
     feed(w, 0, 15000, PT_PERIOD_MS, 20000);  // 60 s at 250 Hz
     CHECK(w.size(UID) <= fsw::calibration::kRingMax, "ring %zu should be capped at %zu",
           w.size(UID), fsw::calibration::kRingMax);
-    // Span eviction should bite first at this rate: 4 s at 250 Hz is ~1000 samples.
-    CHECK(w.size(UID) <= 1010, "span eviction should hold the ring near 4 s, got %zu", w.size(UID));
+    // At 250 Hz the count cap bites before the 8 s span (which would be ~2000 samples).
+    CHECK(w.size(UID) == fsw::calibration::kRingMax, "ring should sit at the count cap, got %zu",
+          w.size(UID));
+
+    // A slow sensor is bounded by span instead, and the span must outlast the largest window.
+    CaptureWindow slow;
+    uint64_t t = 0;
+    for (size_t i = 0; i < 60; i++, t += 1000) {
+        const uint64_t ns = EPOCH + t * NS_MS;
+        slow.push(UID, 100000, ns, ns);
+    }
+    CHECK(slow.size(UID) <= fsw::calibration::kRingSpanMs / 1000 + 1,
+          "1 Hz ring should hold ~8 s, got %zu", slow.size(UID));
+    CHECK(slow.size(UID) > fsw::calibration::kMaxCaptureWindowMs / 1000,
+          "1 Hz ring %zu must outlast the largest window", slow.size(UID));
+}
+
+// ── 9. A ~1 Hz load cell can be captured ─────────────────────────────────────────────
+//
+// The LC boards at SINC4 / 20 SPS give ~1.2 Hz per scale (board 42) and ~0.76 Hz per load
+// cell (board 41). With a fixed 1 s window and 1.5 s staleness limit every capture was
+// refused: on 2026-11-07 Zero All logged "REJECTED (stale): newest sample 7525ms old, 0 in
+// last 1000ms" for both scales. The window now scales to the sensor's own period.
+void slow_load_cell_captures() {
+    for (uint64_t period : {800ULL, 1300ULL}) {
+        CaptureWindow w;
+        Lcg noise;
+        uint64_t t = feed(w, 0, 10, period, 100000, &noise, 800);
+        // Captured half a period after the newest sample arrived: not stale.
+        const CaptureResult r = w.capture(UID, now_ns(t - period + period / 2));
+        CHECK(r.ok, "%" PRIu64 " ms load cell should capture, reason=%s", period, r.reason);
+        CHECK(r.n >= fsw::calibration::kMinCaptureSamples, "got %zu samples", r.n);
+        CHECK(r.window_ms == 3 * period, "window %" PRIu64 " should be 3 periods", r.window_ms);
+        CHECK(std::fabs(r.adc_avg - 100000.0) < 800.0, "mean %.1f", r.adc_avg);
+
+        // ...and still goes stale once it really stops: three periods with nothing.
+        const CaptureResult dead = w.capture(UID, now_ns(t - period + 3 * period));
+        CHECK(!dead.ok && std::string(dead.reason) == "stale",
+              "%" PRIu64 " ms sensor silent 3 periods must be stale, got %s", period, dead.reason);
+    }
+}
+
+// ── 10. Fast sensors keep the fixed bounds exactly ───────────────────────────────────
+void fast_sensor_bounds_unchanged() {
+    CaptureWindow w;
+    uint64_t t = feed(w, 0, 500, 15, 20000);  // a 66 Hz PT
+    const CaptureResult r = w.capture(UID, now_ns(t));
+    CHECK(r.ok && r.window_ms == fsw::calibration::kCaptureWindowMs,
+          "PT window %" PRIu64 " should stay at the floor", r.window_ms);
+    CHECK(r.max_age_ms == fsw::calibration::kMaxSampleAgeMs,
+          "PT staleness %" PRIu64 " should stay at the floor", r.max_age_ms);
+    const CaptureResult late = w.capture(UID, now_ns(t - 15 + 1600));
+    CHECK(!late.ok && std::string(late.reason) == "stale",
+          "a PT silent 1.6 s is stale as before, got %s", late.reason);
 }
 
 // ── 8. uids() is the live set ────────────────────────────────────────────────────────
@@ -263,6 +316,8 @@ int main() {
     settle_detection();
     ring_bounds();
     uids_reports_live_sensors();
+    slow_load_cell_captures();
+    fast_sensor_bounds_unchanged();
 
     if (g_failures == 0)
         std::printf("  ✅ all passed\n");
