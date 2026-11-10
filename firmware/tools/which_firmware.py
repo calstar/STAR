@@ -67,13 +67,17 @@ def main() -> int:
     hits = find(registry, args.digest)
     if not hits:
         if args.digest.strip("0") == "":
-            print("All-zero digest: the board did not report one. Either it has "
-                  "not computed it yet, or esp_partition_get_sha256() failed, "
-                  "which means the image on it does not verify.")
+            print(
+                "All-zero digest: the board did not report one. Either it has "
+                "not computed it yet, or esp_partition_get_sha256() failed, "
+                "which means the image on it does not verify."
+            )
             return 1
-        print(f"No image in the registry starts with {args.digest!r}.\n"
-              "That means this firmware was never built by CI on main -- a local "
-              "build, a branch, or an image from before the registry existed.")
+        print(
+            f"No image in the registry starts with {args.digest!r}.\n"
+            "That means this firmware was never built by CI on main -- a local "
+            "build, a branch, or an image from before the registry existed."
+        )
         return 1
     if len(hits) > 1:
         print(f"{args.digest!r} matches {len(hits)} images; give more characters:")
@@ -92,8 +96,15 @@ def main() -> int:
         print(f"commits        {len(commits)} commits build these exact bytes:")
         for c in commits:
             print(f"               {c}")
-    for key in ("subject", "first_seen_commit_at", "platform", "framework", "gcc",
-                "built_by", "run_url"):
+    for key in (
+        "subject",
+        "first_seen_commit_at",
+        "platform",
+        "framework",
+        "gcc",
+        "built_by",
+        "run_url",
+    ):
         if rec.get(key):
             print(f"{key:14} {rec[key]}")
     print(f"record         {rec['_path']}")
