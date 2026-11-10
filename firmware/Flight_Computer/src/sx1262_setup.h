@@ -37,14 +37,23 @@ protected:
 struct LoraConfig {
     uint32_t freq_hz;    // 915 MHz: in the Wio's 862-930 MHz band
     uint8_t sf;          // 7..12 (p.87)
-    uint8_t bw;          // LORA_BW code (Table 13-48, p.87): 0x04 = 125 kHz
+    uint8_t bw;          // LORA_BW code (Table 13-48, p.87): 0x04 = 125 kHz,
+                         // 0x05 = 250 kHz, 0x06 = 500 kHz
     uint8_t cr;          // 1..4 = 4/5..4/8 (Table 13-49)
     uint16_t preamble;   // symbols
     int8_t power_dbm;    // -9..+22 on the high-power PA (p.84)
     uint16_t sync_word;  // 0x1424 private network (reg 0x0740, p.65)
 };
 
-constexpr LoraConfig kDefaultLora = {915000000u, 9, 0x04, 1, 8, 22, 0x1424};
+// One fixed channel at +22 dBm in 902-928 MHz is legal under FCC 15.247(a)(2)
+// (digital modulation) only with a 6 dB bandwidth >= 500 kHz, so 500 kHz.
+// Confirm the occupied bandwidth on a spectrum analyzer.
+// SF11 at 500 kHz keeps SF9/125 kHz's 4.096 ms symbol (2^11 / 500 kHz), so
+// LDRO stays off (it starts at 16.38 ms, p.39) and the sensitivity loss is
+// about 1 dB instead of the 6 dB plain SF9 at 500 kHz would cost.
+// The ground station must match: 915 MHz, SF11, 500 kHz, CR 4/5, preamble 8,
+// sync word 0x1424, explicit header, CRC on.
+constexpr LoraConfig kDefaultLora = {915000000u, 11, 0x06, 1, 8, 22, 0x1424};
 
 // Steps of configure(); its return value names the first one that failed.
 enum class SetupStep : uint8_t {
