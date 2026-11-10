@@ -123,7 +123,7 @@ every control transfer.
 |---|---|
 | `hides rx-info`, `rx-init` | Read the receiver EEPROM; load firmware and init |
 | `hides rx-watch --freq KHZ --bw KHZ [--csv]` | Receive-only link status with automatic recovery |
-| `hides rx-stream --freq KHZ --bw KHZ --udp HOST:PORT` | Forward the TS over UDP, e.g. to `ffplay udp://127.0.0.1:5000` |
+| `hides rx-stream --freq KHZ --bw KHZ --udp HOST:PORT` | Forward the TS over UDP, e.g. to `ffplay udp://127.0.0.1:5000`, or to the DAQ video gateway at `<gateway>:5600` (ports 5600-5609; the Video view's Edit shows the exact address) |
 | `hides rx-scan --from KHZ --to KHZ [--step KHZ]` | Step across a range and print signal strength |
 | `hides tx-get PORT`, `tx-set PORT --freq KHZ …` | Read or change the transmitter's RF settings |
 | `hides tx-name PORT --service CALLSIGN` | Set the broadcast service name (16 characters max) |
@@ -163,6 +163,12 @@ are under **Bench setup**.
 `scripts/make-app.sh` builds `dist/HiDes Viewer.app` and `dist/cli/hides` in release mode with libusb
 bundled, so other Macs need no Homebrew. It builds for Apple silicon only. The app is ad-hoc signed;
 after copying it to another Mac, run `xattr -dr com.apple.quarantine "HiDes Viewer.app"` once.
+
+`scripts/make-app.sh --install` also puts it in `/Applications` (`~/Applications` if that is not
+writable) and keeps it in the Dock, so it opens like any other app. Re-run it after pulling to update.
+
+The UDP target (the app's Send to UDP, the CLI's `--udp`) takes a name or an IPv4 address:
+`star-rfs.local:5600` and `192.168.2.20:5600` both work. A name is looked up when the output starts.
 
 ### Tests with recorded streams
 

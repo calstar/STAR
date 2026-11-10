@@ -4,8 +4,20 @@
 #
 # The app is ad-hoc signed, not notarized. On another Mac, clear the download
 # quarantine once:  xattr -dr com.apple.quarantine "HiDes Viewer.app"
+#
+#   sh scripts/make-app.sh             build into dist/
+#   sh scripts/make-app.sh --install   build, copy to /Applications (~/Applications if
+#                                      that is not writable), and keep it in the Dock
 set -eu
 cd "$(dirname "$0")/.."
+
+install=0
+for a in "$@"; do
+  case "$a" in
+    --install) install=1 ;;
+    *) echo "unknown option $a" >&2; exit 2 ;;
+  esac
+done
 
 swift build -c release --product HiDesViewer
 swift build -c release --product hides
@@ -54,3 +66,23 @@ codesign --force --sign - "$app/Contents/Frameworks/libusb-1.0.0.dylib"
 codesign --force --sign - "$app"
 codesign --force --sign - dist/cli/libusb-1.0.0.dylib dist/cli/hides
 echo "Built $app and dist/cli/hides"
+
+[ "$install" = 1 ] || exit 0
+
+# Like any other app: in Applications, launched from the Dock, found by Spotlight.
+dest=/Applications
+[ -w "$dest" ] || { dest="$HOME/Applications"; mkdir -p "$dest"; }
+osascript -e 'quit app "HiDes Viewer"' >/dev/null 2>&1 || true
+rm -rf "$dest/HiDes Viewer.app"
+cp -R "$app" "$dest/"
+echo "Installed $dest/HiDes Viewer.app"
+
+# Pin it once; a re-install keeps the Dock as the operator arranged it.
+if defaults read com.apple.dock persistent-apps 2>/dev/null | grep -q 'HiDes%20Viewer.app'; then
+  echo "Already in the Dock"
+else
+  defaults write com.apple.dock persistent-apps -array-add \
+    "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://$(printf %s "$dest" | sed 's/ /%20/g')/HiDes%20Viewer.app/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
+  killall Dock
+  echo "Added to the Dock"
+fi

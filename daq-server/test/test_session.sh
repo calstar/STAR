@@ -18,7 +18,7 @@ export SESSION_TEST_DURATION_MS="${SESSION_TEST_DURATION_MS:-30000}"
 export SKIP_FRONTEND=1   # WS test hits :8081 directly; no GUI/Vite build needed
 export SKIP_CPP_BUILD="${SKIP_CPP_BUILD:-1}"  # CI supplies prebuilt binaries
 
-PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator"
+PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator sensor-t7"
 fail() { echo "❌ $*"; teardown; exit 1; }
 teardown() { bash "$DAQ_DIR/deploy/startup/stop_systemd_sim.sh" >/dev/null 2>&1 || true; }
 trap teardown EXIT

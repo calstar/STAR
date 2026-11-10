@@ -286,13 +286,22 @@ export interface CubicCaptureQuality {
     driftZ: number;
     settled: boolean;
 }
+/** One least-squares fit over a channel's points, in the normalized form the browser evaluates. */
+export interface CubicFitCurve {
+    valid: boolean;
+    degree: number;
+    rmse: number;
+    polyCoeffs: number[];
+    adcNormMin: number;
+    adcNormScale: number;
+}
 export interface CubicCalibrationChannel {
     boardId: number;
     connector: number;
     logicalCh: number;
     kind?: 'PT' | 'LC';
     role: string;
-    active_model: 'cubic' | 'robust' | 'physics';
+    active_model: 'cubic' | 'robust' | 'physics' | 'linear';
     numPoints: number;
     status: 'PENDING' | 'OK' | 'ERROR';
     last_error: string;
@@ -308,6 +317,10 @@ export interface CubicCalibrationChannel {
     polyCoeffs: number[];
     adcNormMin: number;
     adcNormScale: number;
+    fits?: {
+        cubic?: CubicFitCurve;
+        linear?: CubicFitCurve;
+    };
     points: CubicCalibrationPoint[];
     fitCurve?: {
         adc: number;
@@ -358,6 +371,22 @@ export interface BoardStatus {
     voltageReference?: number;
     /** History of recent heartbeat timestamps for frequency calculation. */
     heartbeatTimes?: number[];
+    /** Board-LAN DHCP status for this board's IP; absent when star-dhcp is not installed. */
+    dhcp?: BoardDhcpStatus;
+}
+/** What star-dhcp (dnsmasq) says about one board address. See backend/src/dhcp-status.ts. */
+export interface BoardDhcpStatus {
+    /** True if the served reservation table maps a MAC to this board's IP. */
+    reserved: boolean;
+    mac?: string;
+    hostname?: string;
+    /** Epoch ms of the latest DHCPACK for the reserved MAC, if any is in the journal. */
+    lastAckMs?: number;
+    /** Address that ACK handed out; should equal the board's IP. */
+    lastAckIp?: string;
+    /** Set when star-dhcp-sync refused the deployed config, so the served
+     *  reservations are older than the config (the generator's error line). */
+    syncError?: string;
 }
 export interface BoardStatusPayload {
     boards: BoardStatus[];

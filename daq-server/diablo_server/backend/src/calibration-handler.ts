@@ -4,6 +4,7 @@
  */
 
 import * as fs from 'fs';
+import { t7Channels } from '../../shared/config-validation.js';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
@@ -107,6 +108,9 @@ function getActiveChannels(host: CalibrationHost): number[] {
                 : [];
             for (const ch of activeChannels) channels.add(boardId * 100 + ch);
         }
+        // LabJack T7 PT / LC inputs: the same uid scheme with the AIN as the connector.
+        for (const ch of t7Channels(boards))
+            if (ch.enabled && (ch.kind === 'PT' || ch.kind === 'LC')) channels.add(ch.boardId * 100 + ch.ain);
     } catch {
         // Keep legacy fallbacks below.
     }

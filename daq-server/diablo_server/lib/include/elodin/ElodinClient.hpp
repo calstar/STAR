@@ -84,6 +84,9 @@ public:
      * @return false if any subscribe message failed to send.
      */
     bool subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids);
+    /** One table, under `request_id`, which the DB echoes if it refuses it (ErrorResponse
+     *  [0xE0, 0x1D]). subscribe_tables() sends 0 for all, so a refusal there names nothing. */
+    bool subscribe_table(uint8_t hi, uint8_t lo, uint8_t request_id);
 
     /**
      * @brief Begin batching — subsequent publish() calls go into an internal buffer.

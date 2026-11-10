@@ -87,10 +87,11 @@ async function collectBoardHeartbeatResult(page: Page): Promise<BoardHeartbeatRe
         failures.push('Heartbeat --- (expected numeric Hz)');
       }
 
-      // Environmental and ball valve boards run no self-test (neither firmware sends SELF_TEST), and
-      // the page says N/A for them (app/boards/page.tsx).
+      // Environmental and ball valve boards run no self-test (neither firmware sends SELF_TEST), nor
+      // does a LabJack T7 (not ESP32 firmware); the page says N/A for them (app/boards/page.tsx).
       const boardType = card.getAttribute('data-board-type');
-      const expectedSelfTest = boardType === 'ENVIRONMENTAL' || boardType === 'BALL_VALVE' ? 'N/A' : 'ALL PASSED';
+      const expectedSelfTest =
+        boardType === 'ENVIRONMENTAL' || boardType === 'BALL_VALVE' || boardType === 'T7' ? 'N/A' : 'ALL PASSED';
       if (selfTest !== expectedSelfTest) {
         failures.push(
           `Self Test ${selfTest || '(missing)'} (expected ${expectedSelfTest})`,

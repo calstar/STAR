@@ -10,6 +10,7 @@ name: Landing CI
 # other workflows).
 'on':
   push:
+    branches: [main]
     paths:
       - 'landing/**'
       - '.github/workflows/landing-ci.yml'

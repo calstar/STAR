@@ -4,6 +4,7 @@ name: STAR OpenRocket CI
 # workflow triggers in some parsers (matches daq-server-ci.yml).
 'on':
   push:
+    branches: [main]
     paths:
       - 'star-openrocket/**'
       # The shared design core and its UI: the core's permission check is what

@@ -39,9 +39,8 @@ using namespace actuator_board_pins;
 //-----------------------------------------------------------------------------
 // Board identity and network
 //-----------------------------------------------------------------------------
-static uint8_t board_id = BOARD_ID;
+static uint8_t board_id = 0;  // from the DHCP-assigned address; see board_net.h
 byte mac[6];
-IPAddress staticIP(192, 168, 2, BOARD_ID);
 IPAddress gateway(0, 0, 0, 0);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress dns(192, 168, 2, 1);
@@ -1091,13 +1090,6 @@ void setup() {
     FirmwareHash::print();
     Serial.println("Actuator Hotfire state machine starting...");
 
-    board_id = (uint8_t)BOARD_ID;
-    staticIP = IPAddress(192, 168, 2, (uint8_t)BOARD_ID);
-    Serial.print("Board ID and IP: ");
-    Serial.print(static_cast<unsigned>(board_id));
-    Serial.print(" / 192.168.2.");
-    Serial.println(static_cast<unsigned>(board_id));
-
     initializeActuators();
     initializeCurrentSensePins();
     initializePWMStates();
@@ -1108,7 +1100,7 @@ void setup() {
     led_cycle_start_ms = millis();
 
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
-    BoardNet::configure(net, mac, staticIP, subnet);
+    BoardNet::configure(net, mac);
     BoardNet::printMac(net);
     SPI.begin(Actuator_Board.ETH_SCLK, Actuator_Board.ETH_MISO,
               Actuator_Board.ETH_MOSI, Actuator_Board.ETH_CS);
@@ -1116,11 +1108,15 @@ void setup() {
     Ethernet.init(Actuator_Board.ETH_CS);
     delay(ETHERNET_INIT_DELAY_MS);
 #ifdef SENSOR_ETH_USE_DHCP
-    // The ground station decides our address; we only ask for one.
+    // The ground station decides our address, and our ID with it.
     BoardNet::begin(net, dns, gateway);
+    board_id = BoardNet::boardId(net);
 #else
-    Ethernet.begin(mac, staticIP, dns, gateway, subnet);
+    board_id = (uint8_t)BOARD_ID;
+    Ethernet.begin(mac, IPAddress(192, 168, 2, board_id), dns, gateway, subnet);
 #endif
+    Serial.print("Board ID: ");
+    Serial.println(static_cast<unsigned>(board_id));
     delay(ETHERNET_BEGIN_DELAY_MS);
 
     // W5500 / Ethernet status (same prints as the sense boards so the shared
@@ -1195,6 +1191,16 @@ void loop() {
 #ifdef SENSOR_ETH_USE_DHCP
     // Renew the lease as it expires; no-op while an OTA is in flight.
     BoardNet::maintainLease(net);
+    // On the recovery address, keep asking; a lease brings our ID with it.
+    if (BoardNet::retryDhcp(net, dns, gateway)) {
+        board_id = BoardNet::boardId(net);
+        HF_LOG("ONLINE board=");
+        HF_LOG(static_cast<unsigned>(board_id));
+        HF_LOG(" ip=");
+        HF_LOG(Ethernet.localIP());
+        HF_LOGLN_();
+        flushLogs();
+    }
 #endif
     // Non-blocking OTA check — blocks only if a client actually connects,
     // and never returns on success (the board reboots into the new image).

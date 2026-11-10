@@ -27,11 +27,13 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
-import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
+import { applyValveCalibration } from './ball-valve-cal.js';
+import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
+import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
@@ -46,6 +48,7 @@ import { ClientOutbox, FlushPacer, SOCKET_IDLE_BYTES, linkStatus } from './clien
 import { sendBackfill, type HistoryPayload } from './history-backfill.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
+import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
@@ -107,6 +110,7 @@ const BROADCAST_MIN_MS = 50;
 type StreamBudget = 'gui' | 'encoder' | null;
 function streamBudgetFor(high: number, _low: number): StreamBudget {
   if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
+  if (high === 0x26) return 'gui';  // LabJack T7 (t7_bridge), raw and calibrated
   if (high === 0x30 || high === 0x31) return 'gui';
   if (high === 0x33 || high === 0x34) return 'gui';  // ball valve position
   if (high === 0x24) return 'encoder';
@@ -296,7 +300,7 @@ let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
 import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
-import { countByLevel } from '../../shared/config-validation.js';
+import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -323,6 +327,8 @@ let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 /** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
  *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
 let _hpBoardNumbers = hpBoardNumbers();
+/** Cached T7 calibrated-table -> field map (which float is psi, °C or kg); rebuilt with it. */
+let _t7CalFields = t7CalFields();
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -341,8 +347,22 @@ function _ensurePtSlotCache(): void {
   } catch { /* fine — fallback below */ }
 }
 
-/** Map PT{n}.CH{m} entity to uniqueId = board_id*100+local_ch (matches calibration_service). */
+/** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
+const _t7SlotToBoardId = new Map<number, number>();
+
+/** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
+ *  (matches calibration_service, where a T7 input's channel is its AIN). */
 function uniqueIdFromPtEntity(entity: string): number | null {
+  const t7 = entity.match(/^T7(\d+)_Cal\.AIN(\d+)$/);
+  if (t7) {
+    if (_t7SlotToBoardId.size === 0) {
+      try {
+        for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+      } catch { /* no config: no T7 uid */ }
+    }
+    const bid = _t7SlotToBoardId.get(parseInt(t7[1], 10));
+    return bid !== undefined ? bid * 100 + parseInt(t7[2], 10) : null;
+  }
   const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
   if (!m) return null;
   const slot = parseInt(m[1], 10);
@@ -543,6 +563,36 @@ function updateBoard(low: number, payload: Buffer): void {
   }
 }
 
+/**
+ * A LabJack T7 sends no BOARD_HEARTBEAT — it is not an ESP32 board — so its liveness on the Boards
+ * pane is its data: each raw sample t7_bridge publishes stands in for a heartbeat, at most every
+ * T7_ALIVE_MARK_MS so the pane's heartbeat-rate reads as a steady ~2 Hz rather than the scan rate.
+ * The same BOARD_HEARTBEAT_STALE_MS sweep then marks it disconnected when its data stops.
+ */
+const T7_ALIVE_MARK_MS = 500;
+const t7LastMark = new Map<number, number>();
+function noteT7Alive(slot: number): void {
+  if (_t7SlotToBoardId.size === 0) {
+    try {
+      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+    } catch { return; }
+  }
+  const boardId = _t7SlotToBoardId.get(slot);
+  if (boardId === undefined) return;
+  const now = Date.now();
+  if (now - (t7LastMark.get(boardId) ?? 0) < T7_ALIVE_MARK_MS) return;
+  t7LastMark.set(boardId, now);
+  const status = boardsStatus.get(boardId);
+  if (!status) return;  // only boards config declares (loadBoardsFromConfig)
+  const wasDisconnected = status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > BOARD_HEARTBEAT_STALE_MS;
+  status.connected = true;
+  status.lastHeartbeatMs = now;
+  status.heartbeatTimes = status.heartbeatTimes ?? [];
+  status.heartbeatTimes.push(now);
+  if (status.heartbeatTimes.length > 20) status.heartbeatTimes.shift();
+  if (wasDisconnected) broadcastBoardStatus();
+}
+
 // Periodic heartbeat rate diagnostic — log actual arrival rates so we can
 // see if Elodin is delivering duplicates vs boards sending too fast.
 let hbDiagCount = new Map<number, number>();
@@ -726,7 +776,13 @@ let debugMode = false;
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
+// The video pane: keeps the gateway (MediaMTX, sensor-video) in step with config/video.json.
+// Independent of the run pipeline: a missing gateway only greys the video view.
+const video = new VideoService();
+video.start();
+
 const apiHandler = createAPIHandler({
+  video,
   getEngineState: () => currentState,
   getDebugInfo: () => {
     // Turns "the dashboards are stuck, restart the backend" into a diagnosis:
@@ -796,7 +852,9 @@ export function applyDeployedConfigChange(): void {
   calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
   calibrationHost.channelToEntityMap = calChannelToEntityMap;
   _ptSlotToBoardId.clear();
+  _t7SlotToBoardId.clear();
   _hpBoardNumbers = hpBoardNumbers();
+  _t7CalFields = t7CalFields();
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too
   // rather than relying on onStateCsvUpdated, which the session path never fires.
   try {
@@ -864,6 +922,7 @@ function broadcastBoardStatus(): void {
 
   // Compute frequencyHz from heartbeatTimes for each board
   for (const b of boards) {
+    b.dhcp = getBoardDhcpStatus(b.ip);
     const times = b.heartbeatTimes;
     if (times && times.length >= 2) {
       const span = times[times.length - 1] - times[0];
@@ -876,6 +935,7 @@ function broadcastBoardStatus(): void {
   broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
 }
 
+startDhcpStatusPoller();
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
 // ── Keepalive ────────────────────────────────────────────────────────────────
@@ -1595,7 +1655,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     // would apply today's offset to yesterday's samples) and rather than in the outbox drain
     // (which would leave the live stream tared and the reconnect backfill gross, because
     // emitSensorWindow records to history before it stages to any client).
-    const parsedList = expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers));
+    // applyValveCalibration replaces a ball valve's position_pct with its two-point calibrated
+    // figure (ball-valve-cal.ts) before the mismatch check below and the browser see it.
+    const parsedList = applyValveCalibration(
+      expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers, _t7CalFields)));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
@@ -1684,6 +1747,12 @@ elodin.on('packet', (header: any, payload: Buffer) => {
         if (prev !== parsed.value && activeNotificationKeys.has('actuator_mismatch')) {
           scheduleActuatorMismatchCheck(currentState);
         }
+      }
+
+      // A T7's raw data is its heartbeat (noteT7Alive).
+      if (parsed.component === 'volts' || parsed.component === 'temperature_c') {
+        const t7 = /^T7(\d+)\.(?:AIN\d+|CJC)$/.exec(parsed.entity);
+        if (t7) noteT7Alive(parseInt(t7[1], 10));
       }
 
       // Track raw ADC for calibration (uniqueId = board_id*100+channel, same as calibration_service)

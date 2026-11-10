@@ -35,7 +35,8 @@ CubicCalibrationStore::CubicCalibrationStore(std::string file_path)
 
 void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uint8_t connector,
                                              uint8_t logical_ch, const std::string& role,
-                                             const std::string& active_model, SensorKind kind) {
+                                             const std::string& active_model, SensorKind kind,
+                                             const std::string& raw_unit) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& ch = channels_[uid];
     ch.uid = uid;
@@ -44,12 +45,48 @@ void CubicCalibrationStore::register_channel(uint16_t uid, uint8_t board_id, uin
     ch.logical_ch = logical_ch;
     if (!role.empty())
         ch.role = role;
+    const std::string was = ch.active_model;
     if (!active_model.empty())
         ch.active_model = active_model;  // config truth; wins over a disk-restored value
     ch.kind = kind;                      // config truth, likewise
+    ch.raw_unit = raw_unit;              // config truth: which hardware this uid reads through
+    // A config edit that moves a sensor between cubic and linear (a profile swap, a reload) must
+    // re-derive the curve it streams from the points it already has; otherwise the old degree's
+    // fit keeps streaming under the new model's name until the next capture.
+    if (ch.active_model != was && !ch.points.empty())
+        refit(ch);
 }
 
-CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts) const {
+void CubicCalibrationStore::refit(CubicChannel& ch) {
+    if (ch.active_model == "robust") {
+        // Display-only points; the robust learner lives in the service.
+        ch.fit = CubicFit{};
+        ch.fit_cubic = CubicFit{};
+        ch.fit_linear = CubicFit{};
+        ch.status = ch.points.size() < 2 ? "PENDING" : "OK";
+        ch.last_error.clear();
+        return;
+    }
+    ch.fit_cubic = compute_fit(ch.points, 3);
+    ch.fit_linear = ch.points.size() >= 2 ? compute_fit(ch.points, 1) : CubicFit{};
+    const bool linear = ch.active_model == "linear";
+    ch.fit = linear ? ch.fit_linear : ch.fit_cubic;
+    if (ch.points.empty() || (linear && ch.points.size() < 2)) {
+        ch.status = "PENDING";
+        ch.last_error.clear();
+    } else if (!ch.fit.valid) {
+        ch.status = "ERROR";
+        ch.last_error = "fit produced non-finite coefficients";
+    } else if (ch.points.size() < 2) {
+        ch.status = "PENDING";
+        ch.last_error.clear();
+    } else {
+        ch.status = "OK";
+        ch.last_error.clear();
+    }
+}
+
+CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts, int max_degree) {
     CubicFit f;
     const int n = static_cast<int>(pts.size());
     if (n < 1)
@@ -68,7 +105,7 @@ CubicFit CubicCalibrationStore::compute_fit(const std::vector<CubicPoint>& pts) 
     f.norm_min = amean;
     f.norm_scale = scale;
 
-    int degree = std::min(3, n - 1);
+    int degree = std::min(std::clamp(max_degree, 0, 3), n - 1);
     if (degree < 0)
         degree = 0;
 
@@ -141,27 +178,9 @@ CubicFit CubicCalibrationStore::add_point(uint16_t uid, double adc, double psi) 
 
     ch.updated_at = pt.t;
 
-    if (ch.active_model == "robust") {
-        // Robust: the point is display-only; the RLS learner is updated by the service. Leave the
-        // cubic fit invalid so this uid is excluded from the logical polynomial maps and no cubic
-        // is applied. Status tracks point count.
-        ch.fit = CubicFit{};
-        ch.status = ch.points.size() < 2 ? "PENDING" : "OK";
-        ch.last_error.clear();
-        return ch.fit;
-    }
-
-    ch.fit = compute_fit(ch.points);
-    if (!ch.fit.valid) {
-        ch.status = "ERROR";
-        ch.last_error = "fit produced non-finite coefficients";
-    } else if (ch.points.size() < 2) {
-        ch.status = "PENDING";
-        ch.last_error.clear();
-    } else {
-        ch.status = "OK";
-        ch.last_error.clear();
-    }
+    // Robust: the point is display-only; the RLS learner is updated by the service, and refit
+    // leaves the fit invalid so this uid is excluded from the logical polynomial maps.
+    refit(ch);
     return ch.fit;
 }
 
@@ -187,6 +206,8 @@ void CubicCalibrationStore::clear_channel(uint16_t uid) {
         return;
     it->second.points.clear();
     it->second.fit = CubicFit{};
+    it->second.fit_cubic = CubicFit{};
+    it->second.fit_linear = CubicFit{};
     it->second.fit_curve.clear();
     it->second.status = "PENDING";
     it->second.last_error.clear();
@@ -255,6 +276,7 @@ std::string CubicCalibrationStore::serialize() const {
         cj["role"] = ch.role;
         cj["active_model"] = ch.active_model;
         cj["kind"] = ch.kind == SensorKind::LC ? "LC" : "PT";
+        cj["rawUnit"] = ch.raw_unit;
         cj["numPoints"] = ch.points.size();
         cj["status"] = ch.status;
         cj["last_error"] = ch.last_error;
@@ -265,6 +287,17 @@ std::string CubicCalibrationStore::serialize() const {
         cj["polyCoeffs"] = ch.fit.poly;
         cj["adcNormMin"] = ch.fit.norm_min;
         cj["adcNormScale"] = ch.fit.norm_scale;
+        // Both candidate fits over the same points, for the calibration page's curve previews.
+        // `polyCoeffs` above stays the ACTIVE fit, so every existing reader is unchanged.
+        auto fit_json = [](const CubicFit& f) {
+            return json{{"valid", f.valid},
+                        {"degree", f.degree},
+                        {"rmse", f.valid ? f.rmse : 0.0},
+                        {"polyCoeffs", f.poly},
+                        {"adcNormMin", f.norm_min},
+                        {"adcNormScale", f.norm_scale}};
+        };
+        cj["fits"] = {{"cubic", fit_json(ch.fit_cubic)}, {"linear", fit_json(ch.fit_linear)}};
         if (ch.last_capture.valid) {
             cj["last_capture"] = {{"t", ch.last_capture.t},
                                   {"adc", ch.last_capture.adc},
@@ -384,11 +417,34 @@ size_t CubicCalibrationStore::load() {
         }
 
         // Destination = where that role lives now (config truth); else the persisted uid.
+        // A legacy entry has no rawUnit: everything written before T7 support was an ADC code.
+        const std::string entry_unit = cj.value("rawUnit", std::string(kRawUnitAdc));
         uint16_t uid = persisted_uid;
         if (!entry_role.empty()) {
             auto rit = role_to_uid.find(entry_role);
-            if (rit != role_to_uid.end())
-                uid = rit->second;
+            if (rit != role_to_uid.end()) {
+                if (channels_[rit->second].raw_unit == entry_unit) {
+                    uid = rit->second;
+                } else {
+                    std::cout << "[CubicStore] role '" << entry_role << "' cal was taken in "
+                              << entry_unit << " but the channel it now names reads "
+                              << channels_[rit->second].raw_unit
+                              << " — NOT attached; recalibrate it. The old points are kept under "
+                                 "uid "
+                              << persisted_uid << "." << std::endl;
+                }
+            }
+        }
+        // Even at its own uid, never merge across units (a board changed type, keeping its id).
+        {
+            auto dit = channels_.find(uid);
+            if (dit != channels_.end() && dit->second.uid != 0 &&
+                dit->second.raw_unit != entry_unit) {
+                std::cout << "[CubicStore] uid " << uid << " cal was taken in " << entry_unit
+                          << " but uid " << uid << " now reads " << dit->second.raw_unit
+                          << " — dropped; recalibrate it." << std::endl;
+                continue;
+            }
         }
 
         // Merge into the channel register_channel() created at startup (config is the source of
@@ -400,8 +456,15 @@ size_t CubicCalibrationStore::load() {
             ch.uid = uid;
             ch.board_id = static_cast<uint8_t>(uid / 100);
             ch.connector = static_cast<uint8_t>(uid % 100);
+            // An orphan keeps the logical channel it was saved with when it has one: a T7
+            // channel's lives above the ESP32 range, and re-deriving it the ESP32 way would land
+            // its fit on a live ESP32 sensor's logical channel.
             ch.logical_ch =
-                pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+                entry_unit == kRawUnitMicrovolts && cj.contains("logicalCh") &&
+                        cj["logicalCh"].is_number_integer()
+                    ? static_cast<uint8_t>(cj["logicalCh"].get<int>())
+                    : pt_logical_calibration_channel(slot_from_board_id(ch.board_id), ch.connector);
+            ch.raw_unit = entry_unit;
             ch.role = entry_role;
             ch.active_model = cj.value("active_model", std::string("cubic"));
             // Only an ORPHAN takes its kind from the file; a channel the config registered
@@ -430,16 +493,9 @@ size_t CubicCalibrationStore::load() {
             for (const auto& pj : cj["fitCurve"])
                 ch.fit_curve.emplace_back(pj.value("adc", 0.0), pj.value("psi", 0.0));
 
-        if (ch.active_model == "robust") {
-            // Display-only points; no cubic fit. The service re-samples fit_curve after restoring
-            // the robust model from adjustments.json.
-            ch.fit = CubicFit{};
-            ch.status = ch.points.size() < 2 ? "PENDING" : "OK";
-        } else {
-            ch.fit = compute_fit(ch.points);
-            ch.status = !ch.fit.valid ? (ch.points.empty() ? "PENDING" : "ERROR")
-                                      : (ch.points.size() < 2 ? "PENDING" : "OK");
-        }
+        // Robust: display-only points, no fit; the service re-samples fit_curve after restoring
+        // the robust model from adjustments.json.
+        refit(ch);
         ch.updated_at = unix_now_sec();
         if (uid != persisted_uid)
             std::cout << "[CubicStore] role '" << entry_role << "' cal re-attached to connector "

@@ -35,6 +35,10 @@ export interface GuiConfig {
   /** [gui.groups]: page/group name → ordered list of sensor role names. Explicit sensor→page
    *  membership (replaces role-name substring parsing). Array order = display order. */
   groups: Record<string, string[]>;
+  /** [gui] state_grid_rows / state_grid_cols: the state diagram's grid size, if set
+   *  (lib/panel-layout.ts stateGridSize — never smaller than the placed states need). */
+  stateGridRows?: number;
+  stateGridCols?: number;
 }
 
 const EMPTY: GuiConfig = { pressureBars: [], tabs: [], groups: {} };
@@ -53,8 +57,14 @@ export async function fetchGuiConfig(): Promise<GuiConfig> {
       if (!res.ok) throw new Error(`gui-config fetch failed: ${res.status}`);
       return res.json();
     })
-    .then((data: { pressure_bars?: PressureBarConfig[]; tabs?: string[]; groups?: Record<string, string[]> }) => {
-      _cache = { pressureBars: data.pressure_bars ?? [], tabs: data.tabs ?? [], groups: data.groups ?? {} };
+    .then((data: {
+      pressure_bars?: PressureBarConfig[]; tabs?: string[]; groups?: Record<string, string[]>;
+      state_grid_rows?: number; state_grid_cols?: number;
+    }) => {
+      _cache = {
+        pressureBars: data.pressure_bars ?? [], tabs: data.tabs ?? [], groups: data.groups ?? {},
+        stateGridRows: data.state_grid_rows, stateGridCols: data.state_grid_cols,
+      };
       return _cache;
     })
     .catch((err) => {

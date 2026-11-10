@@ -165,8 +165,12 @@ loginctl enable-linger "$USER"     # let --user services run headless across reb
 # so the run pipeline is started on demand by the GUI's Session button — do NOT enable
 # the pipeline units on boot.
 systemctl --user enable --now \
-  sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat
+  sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat sensor-video
 ```
+
+`sensor-video` is the VIDCOMM video gateway (MediaMTX, `scripts/video-gateway.sh`): the
+Video view plays from it. It is independent of the backend -- restarting either leaves the
+other running -- and needs inbound UDP 8189 open to the LAN for browsers to get video.
 
 That's the start. The services are now running in the background.
 

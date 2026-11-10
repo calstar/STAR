@@ -49,9 +49,21 @@
 # token is the only identity that path can carry. Same shape as analytics
 # /api/ingest below: one route {} so the order written is the order run, and
 # deploy/caddy/tests/check_gate_order.py lists /api/mcp as public by design.
+#
+# OAuth for MCP clients with no header token (claude.ai connectors,
+# starproject/src/lib/oauth.ts): the metadata, client registration and the
+# code-for-token exchange are called by the client's servers, so they are public
+# too. /oauth/authorize is NOT: it is the consent page, and the STAR login in
+# front of it is what decides whose token comes out.
 {$SCHEME:http}://project.{$BASE_DOMAIN:starberkeley.org} {
 	route {
 		handle /api/mcp* {
+			request_header -X-Auth-Email
+			request_header -X-Auth-User
+			reverse_proxy starproject:3000
+		}
+		@oauth_public path /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource* /oauth/register /oauth/token
+		handle @oauth_public {
 			request_header -X-Auth-Email
 			request_header -X-Auth-User
 			reverse_proxy starproject:3000

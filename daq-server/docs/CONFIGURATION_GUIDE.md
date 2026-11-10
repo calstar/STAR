@@ -75,7 +75,7 @@ broadcast cycle** (~1 Hz). Board-level settings therefore reach hardware without
 - `[boards.*]` — `enabled`, `active_connectors`, `voltage_reference`, `necessary_for_abort`,
   `designated_survivor`, `enable_serial_printing`
 - `[actuator_roles]` and the Vent / Engine-Abort columns of `state_machine_actuators.csv`
-- **`[abort_pts]` — the autonomous overpressure trip thresholds**
+- **`[abort_pts]` — meant as autonomous overpressure trip thresholds; unused today (below), and no longer shown in the config editor**
 
 This is intentional. It is also worth understanding rather than assuming: the session freeze is
 the only thing that currently stops someone changing an abort trip mid-run, and that is a

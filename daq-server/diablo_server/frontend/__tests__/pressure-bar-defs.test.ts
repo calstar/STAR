@@ -82,4 +82,18 @@ describe('show_in_top_bar', () => {
     expect(defs[0].nop).toBe(4000);
     expect(defs[0].meop).toBe(5000);
   });
+
+  it('a gauge with no limits key follows its own PT row, so unticking that row hides the lines', () => {
+    const generic: PressureBarConfig[] = [
+      { label: 'DR-PT-G', role: 'DR-PT-G', limits: '' },
+      { label: 'GN2 HI', role: 'GN2 High' },
+    ];
+    const defs = buildPressureBarDefsFromSensorConfig(sensors, generic, {
+      ...limits,
+      'DR-PT-G': { show_in_top_bar: false } as any,
+    });
+    expect(defs.map((d) => d.showLimits)).toEqual([false, true]);
+    // GN2 High -> GN2_High by the space-to-underscore convention.
+    expect(defs[1].nop).toBe(4000);
+  });
 });

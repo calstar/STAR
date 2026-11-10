@@ -9,7 +9,8 @@
     "build": "tsc",
     "start": "USE_CPP_CONTROLLER=true node dist/server.js",
     "relay": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/elodin-relay.ts",
-    "test": "vitest run --exclude 'dist/**'"
+    "test": "vitest run --exclude 'dist/**'",
+    "test:video-gateway": "VIDEO_GATEWAY_IT=1 vitest run test/video-gateway.integration.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/ws": "^8.18.1",
+    "playwright-core": "^1.59.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vitest": "^4.1.0"

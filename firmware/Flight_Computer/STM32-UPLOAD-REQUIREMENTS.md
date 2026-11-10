@@ -189,6 +189,70 @@ st-flash --reset write .pio/build/flight/firmware.bin 0x08000000
 
 ---
 
+## The gate: `./flight_test`
+
+Run it before every commit. It lists every check with ✅/❌ and exits non-zero
+on any failure; CI runs it too.
+
+```bash
+./flight_test              # build, unit suites, end-to-end pipeline, canary
+./flight_test --board      # + flash and read the on-board self-test over SWD
+./flight_test --list       # every check id and what it proves
+./flight_test --only=conservation,12 -v
+```
+
+`--board` needs the board powered and the ST-Link on P1; it uses PlatformIO's
+own OpenOCD and arm-none-eabi-gdb, so nothing extra to install.
+
+## First power-up: what the bring-up firmware does
+
+On boot, `bringup_task` (src/board/bringup_task.c) releases each chip's reset
+in order, then runs the self-test over every chip (see `src/app/DEVICE_CHECKS.md`
+and the commit history of `board_bringup.c`, one commit per chip). It never
+enables a pyro output and never transmits on the radio.
+
+| You see | Meaning |
+|---|---|
+| LED1 blinking fast | checks running (up to ~30 s if many fail) |
+| LED1 1 Hz, LED2 off | **READY**: every chip passed and the battery is OK (or the board is on USB) |
+| LED1 1 Hz, LED2 blinking with it | **WARN**: an optional chip (GPS, Ethernet, SD NAND) failed, or the battery is below 7.0 V |
+| LED1 1 Hz, LED2 solid | **FAIL**: a required chip (IMU, high-g, baro, radio, eMMC) failed, or the battery is below 6.6 V, above 8.8 V or unreadable |
+| LED2 on, LED1 stopped | `Error_Handler()` halted the chip (an on-chip init failed) |
+| no LED at all | not running: power, flash or clock problem |
+
+The battery is judged only when the TPS2121 runs the board from it (SW_ST,
+PE10, high). On USB the ADC reads USB's 5 V, so the report says "on USB"
+and does not judge the pack. The 7.0 V / 6.6 V levels are proposals (#137),
+the same as Aaron's idle module (PR #162). Conversion and sources:
+`src/app/battery.h` (schematic p.2 and p.12).
+
+**Reading the report:** the board writes the whole self-test as text, one
+line per chip plus the battery voltage and the verdict. In a PlatformIO debug
+session (bug icon in VS Code; it uses the ST-Link), type in the debug console:
+
+```
+printf "%s", g_bringup_report.report.text
+```
+
+```
+STAR flight computer self-test, t = 3.2 s
+  IMU ISM330DHCX     PASS
+  ...
+  GPS MAX-M10S       PASS            9600 baud [optional]
+  SD NAND            TIMEOUT         (3 tries) [optional]
+  battery            7.92 V  OK
+  verdict            WARN (0 required, 1 optional failed)
+```
+
+`g_bringup_report.report` also holds the verdict, `battery.mv` and
+`result_bits` (bit = device id, set when it passed; the radio SelfTest
+frame's field). For the raw fields, add `g_bringup_report` to Watch.
+`self_test.devices[i]` holds each chip's `result` (1 = PASS, 2 = FAIL,
+3 = TIMEOUT, 4 = NOT_CONFIGURED, 5 = NOT_IMPLEMENTED), `diagnostic` and
+`attempts`; `analog.counts[]` holds the raw ADC counts in `board_adc.h`
+order. Diagnostic codes are documented in `board_bringup.h`
+(GNSS: baud that worked; SD NAND: stage << 8 | R1; eMMC: manufacturer ID).
+
 ## How the build works
 
 `[env:flight]` in `platformio.ini` (checked 2026-11-04: builds, 40 KB of
@@ -218,7 +282,7 @@ works too, with Arm GNU on PATH:
 -e flight` before committing. A newly enabled peripheral's HAL file lands in
 `Drivers/.../Src` and is picked up automatically. A new middleware folder
 needs a `build_src_filter` line. Still open in the `.ioc`: HSE (25 MHz Y1) +
-PLL (SYSCLK is 64 MHz from HSI), RTC on LSI with the wakeup timer, USB
+PLL (SYSCLK is 64 MHz from HSI), USB
 device-only.
 
 ---

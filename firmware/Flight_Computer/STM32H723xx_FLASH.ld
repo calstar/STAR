@@ -67,8 +67,8 @@ FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 512K
 _estack = ORIGIN(DTCMRAM) + LENGTH(DTCMRAM);    /* end of RAM */
 _sstack = _estack - _Min_Stack_Size;
 /* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x200;      /* required amount of heap  */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+_Min_Heap_Size = 0x800;      /* required amount of heap  */
+_Min_Stack_Size = 0x800; /* required amount of stack */
 
 /* Define output sections */
 SECTIONS
@@ -241,7 +241,20 @@ SECTIONS
     . = ALIGN(8);
   } >DTCMRAM
 
-
+  /* STAR: buffers a DMA engine must reach. Everything above lives in DTCM,
+   * which only the Cortex-M7 core and the MDMA can access (RM0468 Rev 3,
+   * Table 2 p.106, Section 2.1.2 p.108): not the SDMMC
+   * IDMA, DMA1/2 or BDMA. So DMA buffers go in AXI SRAM (RAM_D1). NOLOAD:
+   * not zeroed at boot; owners initialize them before use. Place a buffer
+   * here with BOARD_DMA_BUFFER (board.h). CubeMX does not overwrite this
+   * file on Generate Code. */
+  .dma_buffers (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.dma_buffers)
+    *(.dma_buffers*)
+    . = ALIGN(32);
+  } >RAM_D1
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

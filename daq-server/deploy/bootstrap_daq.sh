@@ -49,7 +49,7 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake ninja-build libeigen3-dev pkg-config \
   python3 python3-venv zlib1g-dev libssl-dev curl git \
-  dnsmasq
+  dnsmasq ffmpeg
 # dnsmasq serves DHCP static leases on the isolated board LAN. The distro ships
 # it as an enabled system service that would grab port 67 on every interface and
 # fight our board-LAN-only instance — disable it; the board DHCP runs as the
@@ -124,6 +124,13 @@ c_info "installing web-gui deps + building the SPA"
 ( cd "$DAQ" && FRONTEND_FORCE_BUILD=1 bash deploy/startup/ensure_frontend_build.sh )
 c_ok "SPA built → diablo_server/frontend/dist"
 
+# ── 6b. Video gateway binary ──────────────────────────────────────────────────
+# Fetched (and checksum-checked) now, while there is internet: sensor-video must start
+# at boot in the desert, where there is none.
+c_info "fetching the pinned video gateway (MediaMTX)"
+bash "$DAQ/scripts/video-gateway.sh" --fetch
+c_ok "video gateway → video/.bin/"
+
 # ── 7. Install systemd --user units ───────────────────────────────────────────
 c_info "installing systemd --user units"
 bash "$DAQ/deploy/systemd/install_services.sh"
@@ -138,7 +145,7 @@ if [ "$START" = "1" ]; then
     loginctl enable-linger "$USER" 2>/dev/null || true
     systemctl --user daemon-reload
     c_info "enabling + starting the web layer"
-    systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat
+    systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat sensor-video
     sleep 2
     systemctl --user --no-pager status sensor-backend | head -5 || true
     c_ok "web layer up — API :8081, SPA :3000. Session pipeline starts on demand (GUI Session button)."
@@ -193,7 +200,15 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
   c_info "ufw: allowing inbound TCP :3000 (GUI) and :8081 (API + WebSocket) from any source"
   sudo ufw allow 3000/tcp comment 'DAQ GUI (SPA)'
   sudo ufw allow 8081/tcp comment 'DAQ API + WebSocket'
-  c_ok "GUI/API port rules applied"
+  # Video: browsers receive WebRTC media from the gateway on this one UDP port. Its HTTP
+  # side (:8889, WHEP) and API (:8887) stay closed -- only the backend talks to them.
+  sudo ufw allow 8189/udp comment 'DAQ video (WebRTC media)'
+  # Pushed video (the HiDes link's MPEG-TS from HiDesViewer): the range video.json may use
+  # (UDP_PORTS in backend/src/video/config.ts), clear of the boards' 5000/5005/5006/5008.
+  sudo ufw allow 5600:5609/udp comment 'DAQ video (pushed MPEG-TS)'
+  # OBS on a streaming laptop reads the feeds over RTSP (user "obs", read-only, digest).
+  sudo ufw allow 8554/tcp comment 'DAQ video (RTSP for OBS)'
+  c_ok "GUI/API/video port rules applied"
 else
   c_info "ufw not active — skipping GUI/API port rules (nothing blocking :3000/:8081)."
 fi

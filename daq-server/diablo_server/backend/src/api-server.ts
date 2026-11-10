@@ -25,6 +25,8 @@ import {
   listCalibrationProfiles,
   saveCalibrationProfile,
   loadCalibrationProfile,
+  createCalibrationProfile,
+  removeCalibrationProfile,
   newBlankCalibration,
 } from './routes/calibration-profiles.js';
 import { isCurrentLoopBoard } from './sensor-config.js';
@@ -37,6 +39,10 @@ import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
+import { t7Channels } from '../../shared/config-validation.js';
+import { handleVideoRequest } from './video/routes.js';
+import type { VideoService } from './video/service.js';
+import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -59,6 +65,9 @@ export interface SensorConfigEntry {
   entity: string;
   /** Calibrated entity string, e.g. "PT1_Cal.CH1" */
   calEntity: string;
+  /** 'T7' for a LabJack T7 channel (t7_bridge): `id` is then its AIN number and the entities are
+   *  T7<slot>.AIN<n> / T7<slot>_Cal.AIN<n>. Absent for the ESP32 boards. */
+  source?: 'T7';
 }
 
 /**
@@ -90,8 +99,8 @@ function elodinSlotFromBoardId(boardId: number): number {
   return m === 0 ? 10 : m;
 }
 
-function buildSensorConfig(): SensorConfigEntry[] {
-  const config = readConfig();
+/** `/api/sensor-config`. Exported, with an injectable config, for the tests. */
+export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry[] {
   const boards = (config.boards || {}) as Record<string, any>;
   const sensors: SensorConfigEntry[] = [];
 
@@ -264,6 +273,26 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  // LabJack T7 channels: one more PT / TC / LC / RTD each, named by their role, in the same units, and
+  // calibrated by calibration_service exactly like an ESP32 PT / LC (uid board_id*100 + AIN), so
+  // PT and LC inputs take part in the calibration sequence as the ESP32 ones do.
+  for (const ch of t7Channels(boards)) {
+    if (!ch.enabled || ch.calEntity === null) continue;
+    if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC' && ch.kind !== 'RTD') continue;
+    sensors.push({
+      type: ch.kind,
+      id: ch.ain,
+      role: ch.role,
+      boardId: ch.boardId,
+      boardIp: ch.boardIp,
+      isHpPt: false,
+      inCalibrationSequence: ch.kind === 'PT' || ch.kind === 'LC',
+      entity: ch.entity,
+      calEntity: ch.calEntity,
+      source: 'T7',
+    });
+  }
+
   // Sort: board order first, then channel id within board
   sensors.sort((a, b) => {
     if (a.boardId !== b.boardId) return a.boardId - b.boardId;
@@ -303,6 +332,8 @@ export interface APIHandlerOptions {
   /** A calibration profile was loaded / a blank was created on disk: tell the calibration service
    *  to re-read the live store (cmd 7) so the swap takes effect without a session restart. */
   onCalibrationReload?: () => void;
+  /** The VIDCOMM video pane's backend; /api/video/* answers 404 without it. */
+  video?: VideoService;
 }
 
 /**
@@ -335,7 +366,7 @@ function readJsonBody(req: IncomingMessage): Promise<any> {
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload } = opts;
+  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload, video } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -343,7 +374,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
@@ -355,6 +386,11 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
     try {
+      // Video owns its own sub-tree (video/routes.ts) rather than growing this chain.
+      if (video && url.pathname.startsWith('/api/video/')) {
+        await handleVideoRequest(req, res, url.pathname, video);
+        return true;
+      }
       if (url.pathname === '/api/config' && req.method === 'GET') {
         // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
         const config = readActiveProfile();
@@ -693,10 +729,25 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           return true;
         }
         try {
-          const { name, from } = await readJsonBody(req);
-          createProfile(name, from);
+          const { name, from, calibration } = await readJsonBody(req);
+          // A new config gets a calibration profile of the same name beside it: a copy of an
+          // existing calibration profile ({ from: "<name>" }) or a fresh blank one ({}). It is
+          // written first because it is the step that can refuse (name taken, source missing),
+          // and removed again if the config itself then fails, so neither is left half-made.
+          // The live calibration store and the loaded calibration profile are not touched.
+          const withCal = calibration && typeof calibration === 'object';
+          if (withCal) {
+            const calFrom = calibration.from ? String(calibration.from) : undefined;
+            createCalibrationProfile(String(name ?? ''), calFrom);
+          }
+          try {
+            createProfile(name, from);
+          } catch (e) {
+            if (withCal) removeCalibrationProfile(String(name));
+            throw e;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+          res.end(JSON.stringify({ success: true, profiles: listProfiles(), calibration_profiles: listCalibrationProfiles() }));
         } catch (error: any) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: error?.message || 'Failed to create profile' }));
@@ -785,6 +836,9 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           tabs: gui.tabs ?? [],
           // [gui.groups]: page name → ordered role-name list (explicit sensor→page membership).
           groups: gui.groups ?? {},
+          // The state diagram's grid size (frontend lib/panel-layout.ts); absent = fit the states.
+          state_grid_rows: gui.state_grid_rows,
+          state_grid_cols: gui.state_grid_cols,
         }));
       } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
         // Return sensor configuration derived from config.toml:
@@ -902,6 +956,32 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         } else {
           try { JSON.parse(body); res.end(body); }
           catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
+        }
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'GET') {
+        // Each ball valve channel's stored closed/open endpoints and its live reading.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'POST') {
+        // { entity: "BV1_Cal.CH1", action: "closed" | "open" | "clear" }
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        const body = await readJsonBody(req);
+        const entity = String(body?.entity ?? '');
+        const action = String(body?.action ?? '');
+        if (action === 'clear') {
+          clearEndpoints(entity);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
+        } else if (action === 'closed' || action === 'open') {
+          const r = captureEndpoint(entity, action);
+          res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(r.ok ? { valves: valveCalibrationSnapshot() } : { error: r.error }));
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
         }
       } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
         // The live load-cell tares, for the UI to badge tared channels and show their offsets.
