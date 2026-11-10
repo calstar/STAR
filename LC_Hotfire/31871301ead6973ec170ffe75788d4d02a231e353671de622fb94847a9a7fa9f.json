@@ -2,10 +2,14 @@
   "board": "LC_Hotfire",
   "built_by": "ci",
   "commits": [
+    "08856295375a6aa6709ec7fe9fe7de6f98c53848",
     "5309c5cc7402ba6c6ff0e4183613de8388a4f91f"
   ],
   "file_sha256": "fef84ab46e411822eb645a63f7362b727187ca7cf9959aeba0d46c2edbfa33e4",
+  "first_run_id": "42748132055",
+  "first_run_url": "https://github.com/calstar/STAR/actions/runs/42748132055",
   "first_seen_commit_at": "2026-11-09T19:14:29-08:00",
+  "first_subject": "firmware: a board's hash names its commit, not its builder (#212)",
   "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
   "gcc": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5",
   "image_digest": "31871301ead6973ec170ffe75788d4d02a231e353671de622fb94847a9a7fa9f",
@@ -13,7 +17,7 @@
   "pio_env": "adafruit_feather_esp32s3",
   "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
   "run_attempt": "1",
-  "run_id": "42748132055",
-  "run_url": "https://github.com/calstar/STAR/actions/runs/42748132055",
-  "subject": "firmware: a board's hash names its commit, not its builder (#212)"
+  "run_id": "42753238811",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/42753238811",
+  "subject": "firmware: the digest must not depend on the builder's package store (#215)"
 }
