@@ -65,14 +65,41 @@ _MAPPINGS = [
 
 flags = []
 seen = set()
-for old, new in _MAPPINGS:
+
+
+def _add(old, new):
     if not old:
-        continue
+        return
     old = str(Path(old).resolve())
     if old in seen:
-        continue
+        return
     seen.add(old)
     flags.append(f"-ffile-prefix-map={old}={new}")
+
+
+for _old, _new in _MAPPINGS:
+    _add(_old, _new)
+
+# Strip the @version suffix off each package directory.
+#
+# Mapping the packages dir alone is not enough: PlatformIO names a package
+# directory `<name>` when it holds one version of it and `<name>@<version>`
+# when it holds more than one, and that name lands in __FILE__. So a clean
+# store compiled the Arduino core as
+#     /pio/framework-arduinoespressif32/cores/esp32/esp32-hal-spi.c
+# while a store that had ever seen a second espressif32 got
+#     /pio/framework-arduinoespressif32@4.20017.260907+sha.dcc1105b/cores/...
+# -- nine such strings, ~33 characters longer each, which moved the image by
+# 256 bytes and gave that machine a different digest from CI for the same
+# commit. These mappings come last because GCC applies the last mapping that
+# matches (checked on GCC 8.4.0), so they win over the packages-dir mapping.
+_packages = env.subst("$PROJECT_PACKAGES_DIR")  # noqa: F821
+if _packages:
+    _pkgdir = Path(_packages)
+    if _pkgdir.is_dir():
+        for _child in sorted(_pkgdir.iterdir()):
+            if _child.is_dir() and "@" in _child.name:
+                _add(_child, "/pio/" + _child.name.split("@", 1)[0])
 
 # CCFLAGS rather than CFLAGS/CXXFLAGS: it reaches C and C++ alike, and appending
 # to `env` (not `projenv`) in a pre: script reaches the Arduino core and the

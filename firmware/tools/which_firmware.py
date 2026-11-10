@@ -101,6 +101,8 @@ def main() -> int:
         "first_seen_commit_at",
         "platform",
         "framework",
+        "toolchains",
+        "esptool",
         "gcc",
         "built_by",
         "run_url",
