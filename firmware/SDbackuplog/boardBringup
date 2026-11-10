@@ -1,0 +1,47 @@
+/* Board patch for the SD NAND backup log (sdlog_stm32.c). Not compiled here:
+ * paste each part into the named file. */
+
+/* ===== board_spi.h: add ================================================= */
+
+/* Re-init the device's bus at the fastest SCK <= max_hz (SPI4/NAND only). */
+board_spi_status_t board_spi_set_max_hz(board_spi_device_t device,
+                                        uint32_t max_hz, uint32_t deadline_ms);
+
+/* ===== board_spi.c: add ================================================= */
+
+board_spi_status_t board_spi_set_max_hz(board_spi_device_t device,
+                                        uint32_t max_hz, uint32_t deadline_ms) {
+    const board_spi_route_t* r = route(device);
+    if (!r || device != BOARD_SPI_NAND) {
+        return BOARD_SPI_NOT_CONFIGURED;
+    }
+    board_spi_status_t st = board_spi_lock(device, deadline_ms);
+    if (st != BOARD_SPI_OK) {
+        return st;
+    }
+    /* H7 SPI_CFG1_MBR: prescaler code n divides by 2^(n+1), n = 0..7. */
+    uint32_t kernel = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SPI45);
+    uint32_t code = 0;
+    while (code < 7U && (kernel >> (code + 1U)) > max_hz) {
+        code++;
+    }
+    if ((kernel >> (code + 1U)) > max_hz) {
+        st = BOARD_SPI_NOT_CONFIGURED;
+    } else {
+        r->spi->Init.BaudRatePrescaler = code << SPI_CFG1_MBR_Pos;
+        st = HAL_SPI_Init(r->spi) == HAL_OK ? BOARD_SPI_OK : BOARD_SPI_ERROR;
+    }
+    board_spi_unlock(device);
+    return st;
+}
+
+/* ===== board_bringup.h: add ============================================= */
+
+/* The self-test SD NAND probe (init + CID, at the bus's current clock). */
+self_test_reply_t board_sd_nand_probe(uint32_t budget_ms);
+
+/* ===== board_bringup.c: change ========================================== */
+
+/* Rename `static self_test_reply_t sd_nand_probe(uint32_t budget_ms)` to
+ * `self_test_reply_t board_sd_nand_probe(uint32_t budget_ms)`, and its call in
+ * board_bringup_probe() to match. */
