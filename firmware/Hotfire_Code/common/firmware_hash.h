@@ -5,11 +5,11 @@
  *
  * esp_partition_get_sha256() returns the SHA-256 that ESP-IDF *appended* to the
  * app image at build time, after recomputing it once to check the image is
- * intact. It is therefore NOT sha256(firmware.bin): hashing the whole file folds
- * the appended digest into its own input and can never match this value. To
- * compare a board against a build, use firmware/tools/firmware_digest.py, and to
- * turn a digest into a commit use firmware/tools/which_firmware.py.
- * See FIRMWARE_HASH_VERIFICATION.md.
+ * intact. It is therefore NOT sha256(firmware.bin): hashing the whole file
+ * folds the appended digest into its own input and can never match this value.
+ * To compare a board against a build, use firmware/tools/firmware_digest.py,
+ * and to turn a digest into a commit use firmware/tools/which_firmware.py. See
+ * FIRMWARE_HASH_VERIFICATION.md.
  *
  * Any change to the image changes this, with or without a new commit. The build
  * is kept free of absolute paths so the same source hashes the same on every
