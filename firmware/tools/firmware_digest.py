@@ -139,10 +139,15 @@ def _record(path: str, digest: bytes, info: dict, board: str, pio_env: str) -> d
     rec["built_by"] = "ci" if os.environ.get("GITHUB_ACTIONS") else "local"
     # A toolchain bump changes every digest with no source change. Without these
     # fields the registry just looks corrupt when that happens.
+    # esptool assembles the .bin from the ELF, so it belongs in the provenance:
+    # when a digest disagreed across machines it was the first thing worth ruling
+    # out, and it was not recorded. "toolchains" is plural because a board pulls
+    # both the xtensa and riscv toolchains and naming one was misleading.
     for key, env in (
         ("platform", "STAR_PIO_PLATFORM"),
         ("framework", "STAR_PIO_FRAMEWORK"),
-        ("gcc", "STAR_PIO_GCC"),
+        ("toolchains", "STAR_PIO_TOOLCHAINS"),
+        ("esptool", "STAR_PIO_ESPTOOL"),
     ):
         if os.environ.get(env):
             rec[key] = os.environ[env]
