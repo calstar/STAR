@@ -1,0 +1,19 @@
+{
+  "board": "RTD_Hotfire",
+  "built_by": "ci",
+  "commits": [
+    "5309c5cc7402ba6c6ff0e4183613de8388a4f91f"
+  ],
+  "file_sha256": "afe34e693835d7058d08ce86fd4db44d160ac301b9e4f4d2c6bfd18640078166",
+  "first_seen_commit_at": "2026-11-09T19:14:29-08:00",
+  "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
+  "gcc": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5",
+  "image_digest": "3011a9eed6dd2e379e1ea205fd1a38727fa7cf0e52a674ae6e8fa98779491426",
+  "image_len": 321648,
+  "pio_env": "adafruit_feather_esp32s3",
+  "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
+  "run_attempt": "1",
+  "run_id": "42748132055",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/42748132055",
+  "subject": "firmware: a board's hash names its commit, not its builder (#212)"
+}
