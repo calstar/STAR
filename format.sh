@@ -129,6 +129,15 @@ find_cpp_files() {
             # from firmware.ioc and rewritten in CubeMX's own style on every Generate Code,
             # so formatting them would fail again on the next regeneration. Hand-written
             # files in Core (self_test*) are still checked.
+            #
+            # USB_DEVICE/ is the same thing one directory over -- CubeMX writes the whole
+            # tree from the .ioc -- and it was missed when #208 added it, which left the
+            # repo's formatting gate failing on main for code no human maintains. The
+            # flight computer's own flight_test draws the line in the same place: its
+            # format_clean() checks src/ and tests/ only, "Core/, Drivers/ and
+            # Middlewares/ are CubeMX's and are left as CubeMX writes them". The USER CODE
+            # blocks inside these files go unchecked as a result, exactly as they already
+            # do in Core/Src/main.c.
             find "$dir" \
                 \( -path "$dir/external"  -o -path "$dir/external/*" \
                 -o -path "$dir/build"     -o -path "$dir/build/*" \
