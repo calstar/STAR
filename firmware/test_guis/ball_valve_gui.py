@@ -10,8 +10,9 @@ Sends DAQv2 packets to firmware/Hotfire_Code/BallValve_Hotfire on UDP 5005:
   - ACTUATOR_COMMAND (actuator_id 1 or 2): state 1 = open (20 mA), 0 = closed.
 
 Listens on UDP 5006 for the board's BOARD_HEARTBEAT (alive, and ACTIVE when it
-hears our heartbeats) and SENSOR_DATA (sensor_id 1, 2: raw 12-bit ADC counts of
-each valve's 100 ohm position shunt; V = counts / 4095 * 3.3, 4-20 mA = 0.4-2.0 V).
+hears our heartbeats) and SENSOR_DATA (sensor_id 1, 2: each valve's position as
+the 12-bit counts an ideal 100 ohm shunt would read; V = counts / 4095 * 3.3,
+4-20 mA = 0.4-2.0 V. The Prop Receiver v2 reads 120 ohm calibrated and converts).
 
 Your computer needs an address on the board's subnet, e.g. 192.168.2.20/24.
 

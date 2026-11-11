@@ -18,8 +18,10 @@ All seven phases below are in. Where the build departs from the plan:
   stack that never delivers the broadcast heartbeat can still close it.
 
 Firmware: `firmware/Hotfire_Code/BallValve_Hotfire` (board 71). Two valves per
-board: actuator/sensor 1 (enable GPIO25, position GPIO32) and 2 (enable GPIO14,
-position GPIO35), `active_connectors = [ 1, 2 ]`.
+board (STAR Prop Receiver v2, ESP32-S3; pins in the firmware's `HARDWARE.md`): actuator/sensor 1
+(MCP4728 channel A into an XTR111, position on GPIO7) and 2 (channel B, position on GPIO2),
+`active_connectors = [ 1, 2 ]`. The board sends position as the counts the ideal 100 ohm loop
+below would read, converted from its calibrated 120 ohm reading.
 
 | Direction | Packet | Meaning |
 |---|---|---|

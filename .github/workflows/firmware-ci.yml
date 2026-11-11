@@ -70,7 +70,7 @@ jobs:
           - { board: RTD_Hotfire,       project: Hotfire_Code/RTD_Hotfire,       pio_env: adafruit_feather_esp32s3 }
           - { board: LC_Hotfire,        project: Hotfire_Code/LC_Hotfire,        pio_env: adafruit_feather_esp32s3 }
           - { board: Actuator_Hotfire,  project: Hotfire_Code/Actuator_Hotfire,  pio_env: adafruit_feather_esp32s3 }
-          - { board: BallValve_Hotfire, project: Hotfire_Code/BallValve_Hotfire, pio_env: esp32dev }
+          - { board: BallValve_Hotfire, project: Hotfire_Code/BallValve_Hotfire, pio_env: esp32s3 }
 
     steps:
       - name: Checkout repository

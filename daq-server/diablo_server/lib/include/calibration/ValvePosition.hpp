@@ -3,10 +3,11 @@
 /**
  * Motorized ball valve position: raw ADC counts -> % open.
  *
- * The valve reports its position as a 4-20 mA loop (4 mA closed, 20 mA open) across a 100 ohm
- * shunt into the ball valve board's 12-bit ESP32 ADC (firmware/Hotfire_Code/BallValve_Hotfire,
- * analogRead at 11 dB, 3.3 V full scale), so 0.4-2.0 V on the pin. The board sends raw counts and
- * the conversion happens here, like every other board.
+ * The valve reports its position as a 4-20 mA loop (4 mA closed, 20 mA open). The scale here is
+ * the retired protoboard's: a 100 ohm shunt into a 12-bit ESP32 ADC read raw at 11 dB, 3.3 V full
+ * scale, so 0.4-2.0 V on the pin. The STAR Prop Receiver v2
+ * (firmware/Hotfire_Code/BallValve_Hotfire) senses 120 ohm with a calibrated ADC and sends the
+ * counts this scale expects, so the conversion still happens here, like every other board.
  */
 
 #include <algorithm>

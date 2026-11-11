@@ -301,8 +301,8 @@ active_connectors = [ 1, 2 ]
 # current sense. A role's channel must be one of active_connectors. The board opens its valves
 # itself 5 s after server heartbeats stop, and is left out of the abort lists sent to actuator
 # boards.
-# Disabled until the board is on the stand. `mac` is the prototype ESP32-WROOM-32 (Ethernet MAC =
-# base MAC + 3, as its serial log prints it); a replacement board needs its own.
+# Disabled until the board is on the stand. `mac` is still the retired protoboard's ESP32-WROOM-32; the
+# Prop Receiver v2 (ESP32-S3) needs its own (Ethernet MAC = base MAC + 3, as its serial log prints it).
 [boards.ball_valve_board]
 type = "BALL_VALVE"
 ip = "192.168.2.71"
