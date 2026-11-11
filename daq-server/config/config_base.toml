@@ -385,7 +385,8 @@ excitation_v = 10.0
 # boards.
 # Enabled here, the sim/test config, so the simulator, test_integration.sh and the Playwright stack
 # all carry it; disabled in every deployed profile until the board is on the stand. `mac` is the
-# prototype ESP32-WROOM-32 (Ethernet MAC = base MAC + 3, as its serial log prints it). No role
+# retired protoboard's ESP32-WROOM-32; the Prop Receiver v2 (ESP32-S3) prints its own (Ethernet MAC =
+# base MAC + 3). No role
 # here: test_integration.sh names one in its own copy.
 [boards.ball_valve_board]
 type = "BALL_VALVE"
