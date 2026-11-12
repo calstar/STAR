@@ -155,6 +155,53 @@ describe('WebSocketClient', () => {
     expect(commandMessages[0].payload.data.holdMs).toBe(1500);
   });
 
+  it('should carry a valvePlan on a state_transition', async () => {
+    // Retiming the mains, or holding one side shut, rides on the same transition as the duration.
+    // The sequencer decides whether a state may accept one at all (never the burn) — this only
+    // checks the field survives the client.
+    const client = new WebSocketClient(['ws://test:8081']);
+    client.connect();
+    await vi.waitFor(() => {
+      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    });
+
+    client.sendCommand({
+      commandType: 'state_transition',
+      data: {
+        state: 13,
+        holdMs: 1000,
+        valvePlan: { 'Ox Main': { delayMs: 0 }, 'Fuel Main': { shut: true } },
+      } as any,
+    });
+
+    const commandMessages = mockWsInstance!.sentMessages
+      .map(s => JSON.parse(s))
+      .filter((m: WSMessage) => m.type === MessageType.SEND_COMMAND);
+
+    expect(commandMessages[0].payload.data.valvePlan).toEqual({
+      'Ox Main': { delayMs: 0 },
+      'Fuel Main': { shut: true },
+    });
+  });
+
+  it('should omit valvePlan entirely when nothing differs from the config', async () => {
+    // The opt-in half: the backend only appends ":VALVES=..." when the field is present, so an
+    // untouched valve card has to leave it absent and the frame stays what it always was.
+    const client = new WebSocketClient(['ws://test:8081']);
+    client.connect();
+    await vi.waitFor(() => {
+      expect(mockWsInstance?.readyState).toBe(MockWebSocket.OPEN);
+    });
+
+    client.sendCommand({ commandType: 'state_transition', data: { state: 13, holdMs: 1000 } as any });
+
+    const commandMessages = mockWsInstance!.sentMessages
+      .map(s => JSON.parse(s))
+      .filter((m: WSMessage) => m.type === MessageType.SEND_COMMAND);
+
+    expect(commandMessages[0].payload.data.valvePlan).toBeUndefined();
+  });
+
   it('should omit holdMs entirely for an ordinary transition', async () => {
     // Every existing caller must stay byte-identical on the wire: the backend only appends the
     // ":<ms>" suffix when holdMs is present, so an absent field has to stay absent.

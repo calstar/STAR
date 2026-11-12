@@ -32,6 +32,7 @@ import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
+import { valvePlanSuffix } from './valve-plan.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
 import { VideoService } from './video/service.js';
@@ -1342,10 +1343,26 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
         }
         holdSuffix = `:${holdMs}`;
       }
+      // Optional per-run valve plan: valves held shut for this entry, or opened on their own delay
+      // instead of the delays CSV's. Appended only when it is well formed, so a malformed plan
+      // never reaches the wire and a frame without one is byte-for-byte what it always was.
+      //
+      // Like the hold above, this check is convenience and not safety: the sequencer validates
+      // independently and is the authority on which states accept a plan at all (never the burn),
+      // which valves it may name, and whether a delay fits in the window. See valve-plan.ts.
+      let valveSuffix = '';
+      if (command.data.valvePlan !== undefined) {
+        const built = valvePlanSuffix(command.data.valvePlan);
+        if ('error' in built) {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Invalid valve plan: ${built.error}` } });
+          break;
+        }
+        valveSuffix = built.suffix;
+      }
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
-      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}\n`).then(({ ok, reply }) => {
-        console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}${valveSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${refusalText(reply)}` } });
         }

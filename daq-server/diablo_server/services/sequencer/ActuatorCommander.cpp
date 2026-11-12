@@ -392,8 +392,42 @@ bool ActuatorCommander::sendBatch(
 // ─────────────────────────────────────────────────────────────────────────────
 // applyForState — send all actuator commands for a state (one shot, batched by board)
 // ─────────────────────────────────────────────────────────────────────────────
-void ActuatorCommander::applyForState(State state, bool is_transition) {
+void ActuatorCommander::applyForState(State state, bool is_transition, const ValvePlan* plan) {
     const std::string state_name = StateMachine::name(state);
+
+    // A transition is where a plan arrives (or is cleared); a republish is where it is recalled.
+    // Resolved to a local copy once, so every use below reads the same plan even if a transition
+    // lands mid-call — and so no lock is held across the UDP sends.
+    ValvePlan plan_copy;
+    {
+        std::lock_guard<std::mutex> lk(plan_mutex_);
+        if (is_transition) {
+            active_plan_ = plan ? *plan : ValvePlan{};
+            active_plan_state_ = state;
+        }
+        if (active_plan_state_ == state)
+            plan_copy = active_plan_;
+    }
+    plan = plan_copy.empty() ? nullptr : &plan_copy;
+    // The delay this role actually waits on this entry: the plan's if it names the role, the
+    // delays CSV otherwise. One resolver, used by both the staging below and the pending-role
+    // bookkeeping that the republish filters on — those two reading the delay from different
+    // places is how a valve ends up either double-commanded or never commanded at all.
+    auto resolveDelay = [this, plan, &state_name,
+                         is_transition](const std::string& role) -> double {
+        if (!is_transition)
+            return 0.0;
+        if (plan) {
+            const auto ov = plan->find(role);
+            if (ov != plan->end())
+                return ov->second.hold_shut ? 0.0 : ov->second.delay_ms / 1000.0;
+        }
+        auto ds = state_actuator_delays_.find(state_name);
+        if (ds == state_actuator_delays_.end())
+            return 0.0;
+        auto it = ds->second.find(role);
+        return (it != ds->second.end() && it->second > 0.0) ? it->second : 0.0;
+    };
     auto it = findStateActuators(state_name);
     if (it == state_actuators_.end()) {
         std::cerr << "[ActuatorCommander] No CSV entry for state: " << state_name << std::endl;
@@ -439,6 +473,14 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         // is being overridden is worth saying out loud, since the two are fighting over one valve
         // and the script has no way to notice.
         int pos = logical_pos;
+        // The plan is a delta against the COLUMN, so it is applied before the script and the
+        // operator's manual override — both of those still outrank it, exactly as they outrank the
+        // column itself. A plan can only hold a valve shut, never open one the column closes.
+        if (plan) {
+            const auto ov = plan->find(act_name);
+            if (ov != plan->end() && ov->second.hold_shut)
+                pos = 0;
+        }
         auto sp = script_positions.find(act_name);
         if (sp != script_positions.end())
             pos = sp->second;
@@ -481,14 +523,8 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         const bool script_owned = script_positions.count(pc.role_name) > 0;
 
         double d = 0.0;
-        if (is_transition && !script_owned) {
-            auto ds = state_actuator_delays_.find(state_name);
-            if (ds != state_actuator_delays_.end()) {
-                auto it = ds->second.find(pc.role_name);
-                if (it != ds->second.end() && it->second > 0.0)
-                    d = it->second;
-            }
-        }
+        if (is_transition && !script_owned)
+            d = resolveDelay(pc.role_name);
         if (!is_transition && !script_owned) {
             std::lock_guard<std::mutex> lk(pending_roles_mutex_);
             if (pending_roles_.count(pc.role_name))
@@ -579,14 +615,18 @@ void ActuatorCommander::applyForState(State state, bool is_transition) {
         if (d > 0.0)
             order.emplace_back(d, 0);
 
+    // Keyed by the SAME resolved delay the staging used. This used to re-read the delays CSV
+    // directly, which is the one place a plan could have desynchronised from the schedule: a role
+    // staged at the plan's 250 ms would have had its pending flag cleared off the CSV's 1 s key
+    // instead, so the flag stayed set and the 1 Hz republish went on skipping that valve for the
+    // rest of the state.
     std::map<double, std::vector<std::string>> roles_by_delay;
     for (const auto& pc : pending) {
-        auto ds = state_actuator_delays_.find(state_name);
-        if (ds == state_actuator_delays_.end())
-            continue;
-        auto it = ds->second.find(pc.role_name);
-        if (it != ds->second.end() && it->second > 0.0)
-            roles_by_delay[it->second].push_back(pc.role_name);
+        if (script_positions.count(pc.role_name))
+            continue;  // never staged behind a delay — see the script_owned note above
+        const double d = resolveDelay(pc.role_name);
+        if (d > 0.0)
+            roles_by_delay[d].push_back(pc.role_name);
     }
 
     std::thread([this, gen, staged, order, emit, roles_by_delay]() mutable {

@@ -87,6 +87,18 @@ public:
     bool transitionTo(const std::string& state_name);
     bool transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
                       std::string* refusal_reason = nullptr);
+    /**
+     * Transition, with a per-run valve plan: valves held shut for this entry, or opened on their
+     * own delay instead of the delays CSV's. See ValvePlan.hpp for why it travels with the command
+     * instead of being stored.
+     *
+     * Honoured only for a state whose hold is gui_settable — the flow state — and only for valves
+     * that state's column OPENS. Anything else is REFUSED WITHOUT TRANSITIONING, for the reason
+     * the hold override is: a frame queued by a disconnected client and replayed on reconnect must
+     * leave the rig where it was, not retime a burn.
+     */
+    bool transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
+                      const ValvePlan& plan, std::string* refusal_reason = nullptr);
     /** Resolve-free overload. Internal callers use this so a state never round-trips through its
      *  own name, which is what let a rename refuse the fire timer's expiry transition. */
     bool transitionTo(State to);
@@ -185,7 +197,7 @@ private:
     // Worker-thread bodies. These hold the real logic and must only ever run on cmd_thread_ —
     // they assume single-threaded access to the state machine and the actuator tables.
     bool doTransitionTo(State to, uint32_t requested_hold_ms = 0,
-                        std::string* refusal_reason = nullptr);
+                        std::string* refusal_reason = nullptr, const ValvePlan* plan = nullptr);
     bool doSetDebugMode(bool enabled);
     bool doManualActuator(const std::string& name, int pos, std::string* refusal_reason = nullptr);
     bool doExtendFire();
@@ -219,6 +231,25 @@ private:
         uint32_t gate_close_delay_ms = 0;
         std::string gate_actuator;
     };
+
+    /**
+     * The valve a hold's window is measured on for one entry, and that valve's two staggers.
+     *
+     * Normally the configured gate actuator, with the two delays precomputed in HoldRule. A valve
+     * plan can change both: it can retime the gate, and it can hold the gate shut — which is what
+     * "characterize the other tank only" does on a stand whose [flow].gate_actuator is a fuel
+     * valve. A window measured on a valve that never opened is not a window, so when the gate is
+     * held shut the reference moves to the first valve that DOES open and the requested duration
+     * becomes how long that one is open.
+     */
+    struct HoldReference {
+        std::string role;
+        uint32_t open_delay_ms = 0;
+        uint32_t close_delay_ms = 0;
+    };
+
+    /** Resolve the reference valve for this entry. `plan` may be null (the configured gate). */
+    HoldReference holdReferenceFor(State to, const HoldRule& rule, const ValvePlan* plan) const;
 
     StateMachine state_machine_;
     ActuatorCommander actuator_commander_;

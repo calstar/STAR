@@ -3,7 +3,13 @@ import {
   computeCdAIntegral,
   computeCdAIncompressible,
   upstreamSlopePsiPerSec,
+  buildValvePlan,
+  referenceValve,
+  plannedHoldMs,
+  valvePlanProblem,
+  valvePlanSummary,
   type PressureSample,
+  type FlowValve,
 } from '@/lib/feed-characterization-utils';
 
 const PSI_TO_PA = 6894.76;
@@ -144,5 +150,98 @@ describe('upstreamSlopePsiPerSec', () => {
   it('returns NaN when the span has too few points to fit', () => {
     expect(Number.isNaN(upstreamSlopePsiPerSec(mk([[0, 400], [0.025, 399]]), 1, 0.3))).toBe(true);
     expect(Number.isNaN(upstreamSlopePsiPerSec([], 0))).toBe(true);
+  });
+});
+
+// ── Per-run valve plans ───────────────────────────────────────────────────────────────────────
+
+describe('valve plans', () => {
+  // A stand whose flow column opens both mains, with the ox main staggered half a second behind
+  // the fuel main and nothing lingering in the return state.
+  const VALVES: FlowValve[] = [
+    { role: 'Ox Main', delayMs: 500, closeDelayMs: 0 },
+    { role: 'Fuel Main', delayMs: 0, closeDelayMs: 0 },
+  ];
+  const GATE = 'Ox Main';
+
+  it('sends nothing when the operator has changed nothing', () => {
+    // The whole opt-in property: an untouched card has to produce the frame this page sent before
+    // plans existed, which is the one with no VALVES field at all.
+    expect(buildValvePlan(VALVES, {})).toEqual({});
+    expect(plannedHoldMs(1000, VALVES, {}, GATE)).toBe(1500);
+  });
+
+  it('cancelling a configured stagger is a real override, and shortens the hold', () => {
+    // "Make both mains open together": the ox main's 500 ms becomes 0. The hold must follow —
+    // reading the stagger from config here would hold the valves open half a second too long.
+    const settings = { 'Ox Main': { shut: false, delayMs: 0 } };
+    expect(buildValvePlan(VALVES, settings)).toEqual({ 'Ox Main': { delayMs: 0 } });
+    expect(plannedHoldMs(1000, VALVES, settings, GATE)).toBe(1000);
+    expect(valvePlanProblem(1000, VALVES, settings, GATE)).toBeNull();
+  });
+
+  it('a 0 that matches the config is not an override', () => {
+    expect(buildValvePlan(VALVES, { 'Fuel Main': { shut: false, delayMs: 0 } })).toEqual({});
+  });
+
+  it('introducing a stagger lengthens the hold by it, so the gate is open as long as asked', () => {
+    const settings = { 'Ox Main': { shut: false, delayMs: 250 } };
+    expect(buildValvePlan(VALVES, settings)).toEqual({ 'Ox Main': { delayMs: 250 } });
+    expect(plannedHoldMs(1000, VALVES, settings, GATE)).toBe(1250);
+  });
+
+  it('holding the gate shut moves the window to the valve that does open', () => {
+    // Characterizing the fuel side alone. A window still measured on the shut gate would hold the
+    // state 1500 ms for a 1000 ms request, with the fuel main open for all of it.
+    const settings = { 'Ox Main': { shut: true, delayMs: 500 } };
+    expect(buildValvePlan(VALVES, settings)).toEqual({ 'Ox Main': { shut: true } });
+    expect(referenceValve(VALVES, settings, GATE)).toBe('Fuel Main');
+    expect(plannedHoldMs(1000, VALVES, settings, GATE)).toBe(1000);
+    expect(valvePlanSummary(1000, VALVES, settings, GATE)).toContain('Ox Main held shut');
+  });
+
+  it('a stagger in the return state shortens the hold by the same amount', () => {
+    // The valve does not close at the expiry transition; it closes 300 ms after it.
+    const lingering: FlowValve[] = [
+      { role: 'Ox Main', delayMs: 500, closeDelayMs: 300 },
+      { role: 'Fuel Main', delayMs: 0, closeDelayMs: 0 },
+    ];
+    expect(plannedHoldMs(1000, lingering, {}, GATE)).toBe(1200);
+  });
+
+  it('refuses a plan with nothing flowing, and one whose valve opens after the window', () => {
+    const allShut = {
+      'Ox Main': { shut: true, delayMs: 0 },
+      'Fuel Main': { shut: true, delayMs: 0 },
+    };
+    expect(valvePlanProblem(1000, VALVES, allShut, GATE)).toMatch(/held shut/);
+    expect(referenceValve(VALVES, allShut, GATE)).toBeNull();
+
+    // The gate opens at +0 so the window is 1000 ms; the fuel main asked for +1000 never opens.
+    const late = {
+      'Ox Main': { shut: false, delayMs: 0 },
+      'Fuel Main': { shut: false, delayMs: 1000 },
+    };
+    expect(valvePlanProblem(1000, VALVES, late, GATE)).toMatch(/Fuel Main/);
+    // The same numbers inside a longer window are fine — the refusal is about the window.
+    expect(valvePlanProblem(2000, VALVES, late, GATE)).toBeNull();
+  });
+
+  it('a stand with no gate configured keeps the state-timed window it always had', () => {
+    expect(referenceValve(VALVES, {}, null)).toBeNull();
+    expect(plannedHoldMs(1000, VALVES, { 'Ox Main': { shut: false, delayMs: 300 } }, null)).toBe(1000);
+  });
+
+  it('says nothing at all when the CSVs named no valves', () => {
+    expect(buildValvePlan([], {})).toEqual({});
+    expect(valvePlanProblem(1000, [], {}, GATE)).toBeNull();
+    expect(valvePlanSummary(1000, [], {}, GATE)).toBeNull();
+  });
+
+  it('names the valve the duration is measured on in the run record', () => {
+    const summary = valvePlanSummary(1000, VALVES, {}, GATE);
+    expect(summary).toContain('Ox Main +500 ms');
+    expect(summary).toContain('window on Ox Main');
+    expect(summary).toContain('held 1500 ms');
   });
 });
