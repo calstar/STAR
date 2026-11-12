@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<title>STAR Switch</title>
+<style>
+  :root {
+    --bg: #111418; --card: #1b2027; --line: #2c333d; --text: #e8ecf1; --dim: #8a94a3;
+    --on: #2fb36b; --off: #59626f; --warn: #e0a526; --bad: #e5484d; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  main { max-width: 520px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 12px 16px; color: #fff;
+    background: var(--accent); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.secondary { background: var(--line); }
+  .notice { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; color: var(--dim); }
+  .notice.bad { border-color: var(--bad); color: var(--text); }
+  .notice a { color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .card.stale { border-color: var(--warn); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .name { font-weight: 600; }
+  .link { font-size: 13px; color: var(--dim); }
+  .link.down { color: var(--warn); }
+  .state { margin: 14px 0 10px; display: flex; align-items: center; gap: 12px; }
+  .pill { font-size: 28px; font-weight: 700; letter-spacing: .5px; padding: 6px 16px; border-radius: 999px; background: var(--off); }
+  .pill.on { background: var(--on); }
+  .pill.unknown { background: var(--line); color: var(--dim); }
+  .verdict { font-size: 14px; padding: 8px 10px; border-radius: 8px; margin-bottom: 12px; border-left: 4px solid var(--dim); background: #ffffff08; }
+  .verdict.ok { border-color: var(--on); } .verdict.warn { border-color: var(--warn); } .verdict.bad { border-color: var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .metric { background: #ffffff06; border-radius: 8px; padding: 8px; }
+  .metric .k { font-size: 12px; color: var(--dim); } .metric .v { font-size: 17px; font-variant-numeric: tabular-nums; }
+  .meta { font-size: 12px; color: var(--dim); margin-bottom: 12px; }
+  .meta .flag { color: var(--warn); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .actions .on { background: var(--on); } .actions .off { background: var(--bad); }
+  .actions button { padding: 16px; font-size: 18px; font-weight: 600; }
+  .forget { margin-top: 10px; width: 100%; background: transparent; color: var(--dim); padding: 6px; font-size: 13px; }
+  .modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+  .modal.open { display: flex; }
+  .modal .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; max-width: 420px; width: 100%; }
+  .modal h2 { margin: 0 0 8px; font-size: 20px; }
+  .modal p { color: var(--dim); margin: 0 0 18px; }
+  .modal .actions button.go-on { background: var(--on); } .modal .actions button.go-off { background: var(--bad); }
+  footer { margin-top: 20px; font-size: 12px; color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>STAR Switch</h1>
+    <button id="add">Connect switch</button>
+  </header>
+  <div id="unsupported" class="notice bad" hidden>
+    This browser has no Web Bluetooth.
+    On <b>iPhone/iPad</b>, open this page in the free
+    <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055">Bluefy</a> app.
+    On Android or a laptop, use Chrome or Edge. The page must be served over HTTPS (or localhost).
+  </div>
+  <div id="empty" class="notice">No switch connected. Power the board, then tap <b>Connect switch</b> and pick a <b>STAR-Switch-XXXX</b>.</div>
+  <div id="cards"></div>
+  <footer>
+    The output is latched: it stays as set until you change it. Closing this page or losing
+    Bluetooth does not turn anything off. Anyone in range can connect.
+  </footer>
+</main>
+
+<div id="confirm" class="modal" role="dialog" aria-modal="true">
+  <div class="box">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-body"></p>
+    <div class="actions">
+      <button class="secondary" id="confirm-cancel">Cancel</button>
+      <button id="confirm-go"></button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import {
+  SERVICE_UUID, OUTPUT_UUID, STATUS_UUID, NAME_PREFIX,
+  decodeStatus, senseVerdict, resetReasonName,
+} from "./protocol.js";
+
+const STALE_MS = 6000;  // status notifies every 2 s while connected
+const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
+
+const $ = (id) => document.getElementById(id);
+const switches = new Map();  // device.id -> Switch
+
+if (!navigator.bluetooth) {
+  $("unsupported").hidden = false;
+  $("empty").hidden = true;
+  $("add").disabled = true;
+}
+
+// ---------- confirmation ----------
+function confirmAction(title, body, goLabel, goClass) {
+  return new Promise((resolve) => {
+    $("confirm-title").textContent = title;
+    $("confirm-body").textContent = body;
+    const go = $("confirm-go");
+    go.textContent = goLabel;
+    go.className = goClass;
+    const modal = $("confirm");
+    modal.classList.add("open");
+    const done = (ok) => {
+      modal.classList.remove("open");
+      go.onclick = $("confirm-cancel").onclick = modal.onclick = null;
+      resolve(ok);
+    };
+    go.onclick = () => done(true);
+    $("confirm-cancel").onclick = () => done(false);
+    modal.onclick = (e) => { if (e.target === modal) done(false); };
+  });
+}
+
+// ---------- one switch ----------
+class Switch {
+  constructor(device) {
+    this.device = device;
+    this.outputChr = null;
+    this.status = null;
+    this.statusAt = 0;
+    this.statusError = null;
+    this.linkState = "connecting";
+    this.forgotten = false;
+    this.attempt = 0;
+    this.busy = false;
+    this.el = this.render();
+    device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
+  }
+
+  get name() { return this.device.name || "STAR-Switch"; }
+
+  async connect() {
+    this.linkState = "connecting";
+    this.update();
+    const server = await this.device.gatt.connect();
+    const svc = await server.getPrimaryService(SERVICE_UUID);
+    this.outputChr = await svc.getCharacteristic(OUTPUT_UUID);
+    const statusChr = await svc.getCharacteristic(STATUS_UUID);
+
+    statusChr.addEventListener("characteristicvaluechanged", (e) => this.onStatus(e.target.value));
+    this.outputChr.addEventListener("characteristicvaluechanged", (e) => this.onOutput(e.target.value));
+    await statusChr.startNotifications();
+    await this.outputChr.startNotifications();
+    this.onStatus(await statusChr.readValue());
+    this.onOutput(await this.outputChr.readValue());
+
+    this.attempt = 0;
+    this.linkState = "connected";
+    this.update();
+  }
+
+  onStatus(dv) {
+    try {
+      this.status = decodeStatus(dv);
+      this.statusError = null;
+    } catch (err) {
+      this.statusError = err.message;
+    }
+    this.statusAt = Date.now();
+    this.update();
+  }
+
+  onOutput(dv) {
+    if (dv.byteLength < 1) return;
+    const on = dv.getUint8(0) === 1;
+    if (this.status) this.status.output = on;
+    else this.status = { output: on, sense: 0 };
+    this.update();
+  }
+
+  onDisconnect() {
+    this.outputChr = null;
+    if (this.forgotten) return;
+    this.linkState = "reconnecting";
+    this.update();
+    const delay = RECONNECT_DELAYS_MS[Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)];
+    this.attempt++;
+    setTimeout(() => this.reconnect(), delay);
+  }
+
+  async reconnect() {
+    if (this.forgotten || this.device.gatt.connected) return;
+    try {
+      await this.connect();
+    } catch {
+      if (!this.device.gatt.connected) this.onDisconnect();
+    }
+  }
+
+  async requestOutput(on) {
+    const verb = on ? "ON" : "OFF";
+    const body = on
+      ? "This powers the altimeters. It stays on until someone turns it off; closing this page or losing Bluetooth will not turn it off."
+      : "This cuts power to the altimeters. If the rocket is armed on the pad, they will stop recording.";
+    const ok = await confirmAction(`Turn ${this.name} ${verb}?`, body, `Turn ${verb}`, on ? "go-on" : "go-off");
+    if (!ok || !this.outputChr) return;
+    this.busy = true;
+    this.update();
+    try {
+      const v = new Uint8Array([on ? 1 : 0]);
+      if (this.outputChr.writeValueWithResponse) await this.outputChr.writeValueWithResponse(v);
+      else await this.outputChr.writeValue(v);
+      // The firmware notifies the output characteristic once it has switched.
+      this.onOutput(await this.outputChr.readValue());
+    } catch (err) {
+      alert(`Could not switch ${this.name}: ${err.message}`);
+    } finally {
+      this.busy = false;
+      this.update();
+    }
+  }
+
+  forget() {
+    this.forgotten = true;
+    if (this.device.gatt.connected) this.device.gatt.disconnect();
+    this.el.remove();
+    switches.delete(this.device.id);
+    refreshEmpty();
+  }
+
+  render() {
+    const el = document.createElement("section");
+    el.className = "card";
+    el.innerHTML = `
+      <div class="row"><span class="name"></span><span class="link"></span></div>
+      <div class="state"><span class="pill unknown">—</span></div>
+      <div class="verdict" hidden></div>
+      <div class="grid">
+        <div class="metric"><div class="k">Supply</div><div class="v" data-k="v">—</div></div>
+        <div class="metric"><div class="k">Current</div><div class="v" data-k="i">—</div></div>
+        <div class="metric"><div class="k">Power</div><div class="v" data-k="p">—</div></div>
+      </div>
+      <div class="meta"></div>
+      <div class="actions">
+        <button class="on">Turn ON</button>
+        <button class="off">Turn OFF</button>
+      </div>
+      <button class="forget">Disconnect from this page</button>`;
+    el.querySelector(".name").textContent = this.name;
+    el.querySelector(".actions .on").onclick = () => this.requestOutput(true);
+    el.querySelector(".actions .off").onclick = () => this.requestOutput(false);
+    el.querySelector(".forget").onclick = () => this.forget();
+    $("cards").appendChild(el);
+    return el;
+  }
+
+  update() {
+    const el = this.el, s = this.status;
+    const live = this.linkState === "connected";
+    const stale = live && this.statusAt && Date.now() - this.statusAt > STALE_MS;
+
+    const link = el.querySelector(".link");
+    link.textContent = { connecting: "connecting…", connected: stale ? "no update" : "connected", reconnecting: "reconnecting…" }[this.linkState];
+    link.classList.toggle("down", !live || stale);
+    el.classList.toggle("stale", !live || stale);
+
+    const pill = el.querySelector(".pill");
+    if (s) {
+      pill.textContent = s.output ? "ON" : "OFF";
+      pill.className = `pill ${s.output ? "on" : ""}`;
+      if (!live) pill.textContent += " (last seen)";
+    }
+
+    const verdict = el.querySelector(".verdict");
+    if (this.statusError) {
+      verdict.hidden = false;
+      verdict.className = "verdict bad";
+      verdict.textContent = this.statusError;
+    } else if (s && s.version) {
+      const v = senseVerdict(s);
+      verdict.hidden = false;
+      verdict.className = `verdict ${v.level}`;
+      verdict.textContent = v.text;
+    }
+
+    if (s && s.version) {
+      const valid = s.inaOk && s.readingValid;
+      el.querySelector('[data-k="v"]').textContent = valid ? `${(s.supply_mV / 1000).toFixed(2)} V` : "—";
+      el.querySelector('[data-k="i"]').textContent = valid ? `${s.current_mA} mA` : "—";
+      el.querySelector('[data-k="p"]').textContent = valid ? `${(s.power_mW / 1000).toFixed(2)} W` : "—";
+      const meta = [`up ${fmtUptime(s.uptime_s)}`, `last boot: ${resetReasonName(s.resetReason)}`, `sense ${s.sense_mV} mV`];
+      let html = meta.map(esc).join(" · ");
+      if (!s.inaOk) html += ` · <span class="flag">INA260 missing</span>`;
+      if (s.restored) html += ` · <span class="flag">output restored after MCU reset</span>`;
+      el.querySelector(".meta").innerHTML = html;
+    }
+
+    const canWrite = live && !this.busy && !!this.outputChr;
+    el.querySelector(".actions .on").disabled = !canWrite || (s && s.output === true);
+    el.querySelector(".actions .off").disabled = !canWrite || (s && s.output === false);
+  }
+}
+
+function fmtUptime(t) {
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+}
+const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function refreshEmpty() { $("empty").hidden = switches.size > 0 || !navigator.bluetooth; }
+
+$("add").onclick = async () => {
+  let device;
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }, { namePrefix: NAME_PREFIX }],
+      optionalServices: [SERVICE_UUID],
+    });
+  } catch (err) {
+    if (err.name !== "NotFoundError") alert(err.message);  // NotFoundError = user cancelled
+    return;
+  }
+  let sw = switches.get(device.id);
+  if (sw && sw.device.gatt.connected) return;
+  if (!sw) {
+    sw = new Switch(device);
+    switches.set(device.id, sw);
+    refreshEmpty();
+  }
+  try {
+    await sw.connect();
+  } catch (err) {
+    alert(`Could not connect to ${sw.name}: ${err.message}`);
+    sw.forget();
+  }
+};
+
+// Re-render once a second so "no update" shows when notifications stop.
+setInterval(() => switches.forEach((sw) => sw.update()), 1000);
+</script>
+</body>
+</html>

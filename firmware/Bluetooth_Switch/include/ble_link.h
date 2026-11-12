@@ -6,7 +6,8 @@
 
 // BLE peripheral: one Switch service with an Output characteristic
 // (read/write/notify) and a Status characteristic (read/notify). Open: no
-// pairing or encryption, any central in range can connect.
+// pairing or encryption, any central in range can connect. Up to
+// CONFIG_BT_NIMBLE_MAX_CONNECTIONS centrals at once; notifications go to all.
 namespace ble_link {
 
 using OutputRequestFn = void (*)(bool on);

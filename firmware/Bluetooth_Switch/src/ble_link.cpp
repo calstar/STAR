@@ -22,18 +22,25 @@ NimBLECharacteristic *outputChr = nullptr;
 NimBLECharacteristic *statusChr = nullptr;
 OutputRequestFn outputRequest = nullptr;
 
-volatile bool isConnected = false;
+NimBLEServer *server = nullptr;
 
+// Several centrals may be connected at once; every one gets the notifications
+// and any one of them can switch the output (last write wins).
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer *s, ble_gap_conn_desc *desc) override {
-        isConnected = true;
         s->updateConnParams(desc->conn_handle, CONN_INTERVAL_MIN, CONN_INTERVAL_MAX,
                             CONN_LATENCY, CONN_TIMEOUT);
+        // A connection ends connectable advertising; keep advertising while
+        // there is a free slot so the next phone can still find the switch.
+        if (s->getConnectedCount() < CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
+            NimBLEDevice::startAdvertising();
+        }
     }
 
-    // Disconnecting never touches the output: losing the phone at the pad
-    // must not power down the altimeters.
-    void onDisconnect(NimBLEServer *, ble_gap_conn_desc *) override { isConnected = false; }
+    // Disconnecting never touches the output: losing a phone at the pad must
+    // not power down the altimeters. Advertising restarts by itself
+    // (advertiseOnDisconnect).
+    void onDisconnect(NimBLEServer *, ble_gap_conn_desc *) override {}
 };
 
 class OutputCallbacks : public NimBLECharacteristicCallbacks {
@@ -52,8 +59,9 @@ void begin(const char *name, OutputRequestFn on_output_request) {
     NimBLEDevice::init(name);
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-    NimBLEServer *server = NimBLEDevice::createServer();
+    server = NimBLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
+    server->advertiseOnDisconnect(true);
 
     NimBLEService *svc = server->createService(SERVICE_UUID);
     outputChr = svc->createCharacteristic(
@@ -71,17 +79,17 @@ void begin(const char *name, OutputRequestFn on_output_request) {
     adv->start();
 }
 
-bool connected() { return isConnected; }
+bool connected() { return server && server->getConnectedCount() > 0; }
 
 void publishOutput(bool on) {
     uint8_t v = on ? 1 : 0;
     outputChr->setValue(&v, 1);
-    if (isConnected) outputChr->notify();
+    if (connected()) outputChr->notify();
 }
 
 void publishStatus(const StatusPacket &pkt) {
     statusChr->setValue(reinterpret_cast<const uint8_t *>(&pkt), sizeof(pkt));
-    if (isConnected) statusChr->notify();
+    if (connected()) statusChr->notify();
 }
 
 }  // namespace ble_link
