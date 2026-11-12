@@ -53,10 +53,10 @@ export function senseVerdict(s) {
   if (s.sense === 0) return { level: "warn", text: "Sense settling" };
   if (s.output) {
     return s.sense === 3
-      ? { level: "ok", text: "Output live" }
-      : { level: "bad", text: `Output ON but sense reads ${name}: switch or supply fault` };
+      ? { level: "ok", text: "Armed: altimeter power live" }
+      : { level: "bad", text: `ARMED but sense reads ${name}: altimeters may be unpowered (switch or supply fault)` };
   }
   if (s.sense === 1) return { level: "ok", text: "Altimeter connected" };
   if (s.sense === 2) return { level: "warn", text: "Nothing connected (open)" };
-  return { level: "bad", text: "Output OFF but VOUT is live: back-fed or switch fault" };
+  return { level: "bad", text: "DISARMED but altimeter power is live: switch stuck or back-fed" };
 }

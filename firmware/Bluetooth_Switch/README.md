@@ -7,16 +7,16 @@ and monitored over BLE; the "are you sure" confirmation lives in the web client.
 ```bash
 pio run                 # build
 pio run -t upload       # flash over the USB-C port
-pio device monitor      # console: on | off | status
+pio device monitor      # console: arm | disarm | status
 ```
 
 ## Output policy
 
-- **Latched.** ON stays on until an explicit OFF (disable). Nothing times it out.
+- **Latched.** ARMED (output on) stays armed until an explicit DISARM. Nothing times it out.
 - **A BLE disconnect changes nothing.** Losing the phone at the pad keeps the altimeters powered.
 - **MCU reset keeps the output.** The EN pad is held with `gpio_hold`, and the state is
   re-applied from RTC memory after a watchdog, panic or brownout reset (`FLAG_RESTORED`).
-- **Power cycle comes up OFF.**
+- **Power cycle comes up DISARMED.**
 
 ## BLE
 
@@ -29,7 +29,7 @@ notifications, and the last write wins.
 | | UUID | Access |
 |---|---|---|
 | Service | `53544152-0001-4b8a-9d3e-7a1c2f6b0e10` | |
-| Output | `53544152-0002-4b8a-9d3e-7a1c2f6b0e10` | read, write, notify. `0x01` = ON, `0x00` = OFF (disable) |
+| Output | `53544152-0002-4b8a-9d3e-7a1c2f6b0e10` | read, write, notify. `0x01` = ARM (output on), `0x00` = DISARM (output off) |
 | Status | `53544152-0003-4b8a-9d3e-7a1c2f6b0e10` | read, notify (every 2 s while connected, and after every switch) |
 
 Status is 17 bytes, little-endian (`include/status.h`):
@@ -68,10 +68,10 @@ cd web && python3 -m http.server 8000     # then open http://localhost:8000 on t
 node web/test/protocol.test.mjs            # decoder vs the C StatusPacket (needs c++)
 ```
 
-Several switches can be connected on one page, each on its own card. ON and OFF
+Several switches can be connected on one page, each on its own card. Arm and Disarm
 both ask for confirmation. If the link drops, the page reconnects by itself. The card
 shows the last known state and marks it stale; the output is not touched. The
-card cross-checks the output against the sense line ("Output ON but sense reads
+card cross-checks the output against the sense line ("ARMED but sense reads
 open" means the switch or the supply has failed).
 
 When the status layout changes, bump `STATUS_VERSION` in `include/status.h` *and*

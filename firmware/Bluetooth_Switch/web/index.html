@@ -69,8 +69,8 @@
   <div id="empty" class="notice">No switch connected. Power the board, then tap <b>Connect switch</b> and pick a <b>STAR-Switch-XXXX</b>.</div>
   <div id="cards"></div>
   <footer>
-    The output is latched: it stays as set until you change it. Closing this page or losing
-    Bluetooth does not turn anything off. Anyone in range can connect.
+    Arming is latched: the altimeters stay powered until someone disarms. Closing this page or
+    losing Bluetooth does not disarm. Anyone in range can connect.
   </footer>
 </main>
 
@@ -201,11 +201,11 @@ class Switch {
   }
 
   async requestOutput(on) {
-    const verb = on ? "ON" : "OFF";
+    const verb = on ? "Arm" : "Disarm";
     const body = on
-      ? "This powers the altimeters. It stays on until someone turns it off; closing this page or losing Bluetooth will not turn it off."
-      : "This cuts power to the altimeters. If the rocket is armed on the pad, they will stop recording.";
-    const ok = await confirmAction(`Turn ${this.name} ${verb}?`, body, `Turn ${verb}`, on ? "go-on" : "go-off");
+      ? "This powers the altimeters. They stay armed until someone disarms; closing this page or losing Bluetooth will not disarm."
+      : "This cuts power to the altimeters. They will stop recording and will not fire charges.";
+    const ok = await confirmAction(`${verb} ${this.name}?`, body, verb, on ? "go-on" : "go-off");
     if (!ok || !this.outputChr) return;
     this.busy = true;
     this.update();
@@ -216,7 +216,7 @@ class Switch {
       // The firmware notifies the output characteristic once it has switched.
       this.onOutput(await this.outputChr.readValue());
     } catch (err) {
-      alert(`Could not switch ${this.name}: ${err.message}`);
+      alert(`Could not ${on ? "arm" : "disarm"} ${this.name}: ${err.message}`);
     } finally {
       this.busy = false;
       this.update();
@@ -245,8 +245,8 @@ class Switch {
       </div>
       <div class="meta"></div>
       <div class="actions">
-        <button class="on">Turn ON</button>
-        <button class="off">Turn OFF</button>
+        <button class="on">Arm</button>
+        <button class="off">Disarm</button>
       </div>
       <button class="forget">Disconnect from this page</button>`;
     el.querySelector(".name").textContent = this.name;
@@ -269,7 +269,7 @@ class Switch {
 
     const pill = el.querySelector(".pill");
     if (s) {
-      pill.textContent = s.output ? "ON" : "OFF";
+      pill.textContent = s.output ? "ARMED" : "DISARMED";
       pill.className = `pill ${s.output ? "on" : ""}`;
       if (!live) pill.textContent += " (last seen)";
     }
@@ -294,7 +294,7 @@ class Switch {
       const meta = [`up ${fmtUptime(s.uptime_s)}`, `last boot: ${resetReasonName(s.resetReason)}`, `sense ${s.sense_mV} mV`];
       let html = meta.map(esc).join(" · ");
       if (!s.inaOk) html += ` · <span class="flag">INA260 missing</span>`;
-      if (s.restored) html += ` · <span class="flag">output restored after MCU reset</span>`;
+      if (s.restored) html += ` · <span class="flag">armed state restored after MCU reset</span>`;
       el.querySelector(".meta").innerHTML = html;
     }
 

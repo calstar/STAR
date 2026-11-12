@@ -184,6 +184,45 @@ jobs:
           path: firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin
           retention-days: 30
 
+  # Not in the build-firmware matrix: that matrix gates on a path-independent
+  # digest and feeds the registry, and the switch reports no digest.
+  bluetooth-switch:
+    name: Bluetooth switch (firmware + web client)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Compile firmware
+        run: pio run -e bluetooth_switch
+        working-directory: firmware/Bluetooth_Switch
+
+      # Decodes bytes packed by the firmware's StatusPacket and checks the UUIDs
+      # and STATUS_VERSION match, so the page and the firmware can't drift apart.
+      - name: Web client protocol test
+        run: node web/test/protocol.test.mjs
+        working-directory: firmware/Bluetooth_Switch
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-image-Bluetooth_Switch
+          path: firmware/Bluetooth_Switch/.pio/build/bluetooth_switch/firmware.bin
+          retention-days: 30
+
   run-tests:
     name: Run Unit Tests
     runs-on: windows-latest

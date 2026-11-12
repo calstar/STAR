@@ -67,7 +67,7 @@ void setOutput(bool on) {
     restoredAfterReset = false;
     senseValidAtMs = millis() + SENSE_SETTLE_MS;
     lastStatusMs = 0;  // force a status update once the sense line settles
-    Serial.printf("[out] %s\n", on ? "ON" : "OFF (disabled)");
+    Serial.printf("[out] %s\n", on ? "ARMED" : "DISARMED");
     ble_link::publishOutput(on);
 }
 
@@ -115,7 +115,7 @@ StatusPacket buildStatus() {
 void printStatus(const StatusPacket &p) {
     static const char *SENSE_NAMES[] = {"unknown", "load", "open", "live"};
     Serial.printf("[status] out=%s sense=%s (%u mV) supply=%u mV I=%d mA P=%u mW%s%s\n",
-                  p.output ? "ON" : "OFF", SENSE_NAMES[p.sense < 4 ? p.sense : 0], p.sense_mV,
+                  p.output ? "ARMED" : "DISARMED", SENSE_NAMES[p.sense < 4 ? p.sense : 0], p.sense_mV,
                   p.supply_mV, p.current_mA, p.power_mW,
                   (p.flags & FLAG_INA_OK) ? "" : " [INA260 missing]",
                   (p.flags & FLAG_RESTORED) ? " [restored after reset]" : "");
@@ -123,7 +123,7 @@ void printStatus(const StatusPacket &p) {
 
 void onOutputRequest(bool on) { pendingOutput = on ? 1 : 0; }
 
-// Bench console over USB CDC: on | off | status
+// Bench console over USB CDC: arm | disarm | status (on/off still accepted)
 void handleSerial() {
     static String line;
     while (Serial.available()) {
@@ -133,14 +133,14 @@ void handleSerial() {
             continue;
         }
         line.trim();
-        if (line == "on") {
+        if (line == "arm" || line == "on") {
             setOutput(true);
-        } else if (line == "off") {
+        } else if (line == "disarm" || line == "off") {
             setOutput(false);
         } else if (line == "status") {
             printStatus(buildStatus());
         } else if (line.length()) {
-            Serial.println("commands: on | off | status");
+            Serial.println("commands: arm | disarm | status");
         }
         line = "";
     }
@@ -168,7 +168,7 @@ void setup() {
     ble_link::publishOutput(outputOn);
 
     Serial.printf("[boot] %s reset=%d output=%s ina260=%s\n", name,
-                  static_cast<int>(resetReason), outputOn ? "ON (restored)" : "OFF",
+                  static_cast<int>(resetReason), outputOn ? "ARMED (restored)" : "DISARMED",
                   inaOk ? "ok" : "MISSING");
 }
 
