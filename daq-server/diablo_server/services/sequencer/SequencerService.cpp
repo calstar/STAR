@@ -652,6 +652,25 @@ bool SequencerService::transitionTo(const std::string& state_name, uint32_t requ
     });
 }
 
+bool SequencerService::transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
+                                    const ValvePlan& plan, std::string* refusal_reason) {
+    // The plan is captured BY VALUE and the pointer handed on points at that copy. enqueueAndWait
+    // blocks until the worker has run the lambda, so the copy outlives every use of the pointer —
+    // and a copy rather than a reference because a caller is free to let its own plan die the
+    // moment this returns.
+    return enqueueAndWait([this, state_name, requested_hold_ms, plan, refusal_reason]() {
+        State to = StateMachine::fromName(state_name);
+        if (to == State::UNKNOWN) {
+            std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
+            if (refusal_reason)
+                *refusal_reason = "unknown state";
+            return false;
+        }
+        return doTransitionTo(to, requested_hold_ms, refusal_reason,
+                              plan.empty() ? nullptr : &plan);
+    });
+}
+
 bool SequencerService::transitionTo(State to) {
     return transitionTo(to, 0);
 }
@@ -663,8 +682,84 @@ bool SequencerService::transitionTo(State to, uint32_t requested_hold_ms,
     });
 }
 
+/**
+ * How long the state is held so that the REFERENCE VALVE is open for the requested duration.
+ *
+ * A pure function of the three numbers, called from the validation below and again when the hold
+ * is armed, because those two must agree: the validation refuses a plan whose valves open after
+ * the window ends, and a different arithmetic in the arming would refuse against one window and
+ * then run another.
+ */
+static uint32_t holdWindowMs(uint32_t requested_ms, uint32_t open_delay_ms,
+                             uint32_t close_delay_ms) {
+    const int64_t want = static_cast<int64_t>(requested_ms) +
+                         static_cast<int64_t>(open_delay_ms) -
+                         static_cast<int64_t>(close_delay_ms);
+    // Clamp rather than wrap: unsigned underflow here would become a ~49-day hold, valves open.
+    return want > 0 ? static_cast<uint32_t>(want) : 1;
+}
+
+SequencerService::HoldReference SequencerService::holdReferenceFor(State to, const HoldRule& rule,
+                                                                   const ValvePlan* plan) const {
+    const std::string state_name = StateMachine::name(to);
+    const std::string ret_name = rule.return_state != State::UNKNOWN
+                                     ? StateMachine::name(rule.return_state)
+                                     : std::string();
+
+    // What a valve's entry delay actually is on this run: the plan's if it names it, the CSV's
+    // otherwise. Only the ENTRY side can be retimed — the close happens in the return state, which
+    // no plan describes, so its stagger always comes from the CSV.
+    auto open_ms = [&](const std::string& role) -> uint32_t {
+        if (plan) {
+            const auto ov = plan->find(role);
+            if (ov != plan->end())
+                return ov->second.hold_shut ? 0u : ov->second.delay_ms;
+        }
+        return static_cast<uint32_t>(actuator_commander_.delayForRole(state_name, role) * 1000.0 +
+                                     0.5);
+    };
+    auto close_ms = [&](const std::string& role) -> uint32_t {
+        if (ret_name.empty())
+            return 0u;
+        return static_cast<uint32_t>(actuator_commander_.delayForRole(ret_name, role) * 1000.0 +
+                                     0.5);
+    };
+    auto held_shut = [&](const std::string& role) {
+        if (!plan)
+            return false;
+        const auto ov = plan->find(role);
+        return ov != plan->end() && ov->second.hold_shut;
+    };
+
+    HoldReference ref;
+    if (!rule.gate_actuator.empty() && !held_shut(rule.gate_actuator)) {
+        ref.role = rule.gate_actuator;
+        ref.open_delay_ms = open_ms(ref.role);
+        ref.close_delay_ms = close_ms(ref.role);
+        return ref;
+    }
+    if (rule.gate_actuator.empty())
+        return ref;  // no gate configured: the window is the STATE's, as it always was
+
+    // The gate is held shut. Measure on the first valve that does open instead, so the requested
+    // duration still means "how long the thing being characterized was open". Ties break on the
+    // name only to make the choice deterministic — it is logged, and two valves opening together
+    // give the same window either way.
+    for (const auto& [role, pos] : actuator_commander_.positionsForState(state_name)) {
+        if (pos != 1 || held_shut(role))
+            continue;
+        const uint32_t d = open_ms(role);
+        if (ref.role.empty() || d < ref.open_delay_ms) {
+            ref.role = role;
+            ref.open_delay_ms = d;
+            ref.close_delay_ms = close_ms(role);
+        }
+    }
+    return ref;
+}
+
 bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
-                                      std::string* refusal_reason) {
+                                      std::string* refusal_reason, const ValvePlan* plan) {
     State from = current_state_.load();
 
     HoldRule rule;
@@ -702,6 +797,71 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
             }
             // Republish so a client that moved its own display in anticipation is corrected —
             // the same courtesy the ordinary refusal path below extends.
+            publishState();
+            return false;
+        }
+    }
+
+    // Validate a per-run valve plan on the same terms, in the same place, and for the same reason
+    // as the hold above: before the abort broadcast, before the overrides are cleared, before the
+    // resend loop stops, before a single valve moves. A refused plan leaves the rig exactly where
+    // it was — never a transition that then runs some other valve timing than the one asked for.
+    if (plan && !plan->empty()) {
+        std::string why;
+        if (!has_rule || !rule.gui_settable) {
+            // The same gate the client-settable duration passes. The burn state is never
+            // gui_settable, so no frame can retime the valves of a burn.
+            why = "valve plan not permitted for this state";
+        } else {
+            const std::string to_name = StateMachine::name(to);
+            const auto positions = actuator_commander_.positionsForState(to_name);
+            size_t opening = 0;
+            for (const auto& [role, pos] : positions)
+                if (pos == 1)
+                    ++opening;
+            for (const auto& [role, ov] : *plan) {
+                const auto it = positions.find(role);
+                if (it == positions.end()) {
+                    why = "\"" + role + "\" is not an actuator " + to_name + " commands";
+                    break;
+                }
+                if (it->second != 1) {
+                    // A plan may only ever move a valve towards shut. Retiming a CLOSE would hold
+                    // a valve OPEN inside a state whose column shuts it — a flow path the config
+                    // does not have, invented by a client.
+                    why = "\"" + role + "\" is not opened by " + to_name +
+                          " — a plan can only retime or hold shut a valve the state opens";
+                    break;
+                }
+                if (ov.hold_shut)
+                    --opening;
+            }
+            if (why.empty() && opening == 0)
+                why = "the plan holds every valve shut — nothing would flow";
+            if (why.empty()) {
+                // A valve asked to open at or after the end of the window never opens at all: the
+                // expiry transition bumps the schedule generation and its pending stage is
+                // abandoned. Nothing is stranded, but the operator would weigh a catch believing
+                // both sides flowed, so it is refused rather than logged.
+                const HoldReference ref = holdReferenceFor(to, rule, plan);
+                const uint32_t hold = holdWindowMs(
+                    requested_hold_ms != 0 ? requested_hold_ms : rule.default_ms,
+                    ref.open_delay_ms, ref.close_delay_ms);
+                for (const auto& [role, ov] : *plan) {
+                    if (ov.hold_shut || ov.delay_ms < hold)
+                        continue;
+                    why = "\"" + role + "\" would open at " + std::to_string(ov.delay_ms) +
+                          " ms, at or after the " + std::to_string(hold) + " ms window ends";
+                    break;
+                }
+            }
+        }
+
+        if (!why.empty()) {
+            std::cerr << "[SequencerService] Refused valve plan on " << StateMachine::name(to)
+                      << ": " << why << std::endl;
+            if (refusal_reason)
+                *refusal_reason = why;
             publishState();
             return false;
         }
@@ -832,29 +992,36 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // "Sent 1 commands (+1s)", and completely without effect on any state on any profile, the
     // 80 ms fuel lead in default/server's Fire column included. The default argument is why it was
     // invisible — omitting it compiled clean and read exactly like the pre-delay call it once was.
-    actuator_commander_.applyForState(to, /*is_transition=*/!isAbortState(to));
+    actuator_commander_.applyForState(to, /*is_transition=*/!isAbortState(to), plan);
 
     // Arm the hold HERE, immediately after the valves are commanded, rather than at the end of the
     // transition: the window the operator asked for is the one between the open and the close, and
     // everything below (the resend thread spawn, the Elodin publishes) would otherwise be counted
     // inside it.
     if (has_rule && rule.return_state != State::UNKNOWN) {
-        // The requested duration is what the GATE valve should be open for, so the state is held
-        // for the gate's stagger plus that. Without this, a 1 s request on a state whose main opens
-        // 1 s late would close everything exactly as the main opened — zero flow.
+        // The requested duration is what the REFERENCE valve should be open for, so the state is
+        // held for that valve's stagger plus the duration. Without this, a 1 s request on a state
+        // whose main opens 1 s late would close everything exactly as the main opened — zero flow.
+        //
+        // The reference is the configured gate, unless this run's plan retimed it or held it shut
+        // (see holdReferenceFor). Resolved here rather than read from the rule because a plan is a
+        // property of this entry, not of the config the rule was built from.
         const uint32_t requested = requested_hold_ms != 0 ? requested_hold_ms : rule.default_ms;
+        const HoldReference ref = holdReferenceFor(to, rule, plan);
         // Both staggers. The entry delay pushes the valve's opening later, so the state must be
         // held longer; the return state's delay keeps it open past the expiry transition, so the
         // state must be held that much less. Net: hold = requested + open - close.
-        const int64_t want = static_cast<int64_t>(requested) +
-                             static_cast<int64_t>(rule.gate_open_delay_ms) -
-                             static_cast<int64_t>(rule.gate_close_delay_ms);
-        // Clamp rather than wrap: unsigned underflow here would become a ~49-day hold, valves open.
-        const uint32_t hold_ms = want > 0 ? static_cast<uint32_t>(want) : 1;
-        if (want <= 0)
-            std::cerr << "[SequencerService] Gate close delay (" << rule.gate_close_delay_ms
+        const uint32_t hold_ms = holdWindowMs(requested, ref.open_delay_ms, ref.close_delay_ms);
+        if (ref.close_delay_ms >= requested + ref.open_delay_ms)
+            std::cerr << "[SequencerService] Close delay (" << ref.close_delay_ms
                       << " ms) swallows the requested " << requested
                       << " ms window — holding 1 ms. Fix the delays CSV." << std::endl;
+        if (plan && !plan->empty())
+            std::cout << "[SequencerService] Valve plan on " << StateMachine::name(to)
+                      << ": window measured on \""
+                      << (ref.role.empty() ? std::string("(the state)") : ref.role) << "\" (+"
+                      << ref.open_delay_ms << " ms / -" << ref.close_delay_ms
+                      << " ms), holding " << hold_ms << " ms" << std::endl;
         const State return_state = rule.return_state;
         // The controller is told a burn started only when it owns the valves. When the sequencer
         // owns them there is no notifier at all rather than a suppressed one — nothing to forget
