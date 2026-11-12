@@ -9,6 +9,7 @@ namespace {
 const char *SERVICE_UUID = "53544152-0001-4b8a-9d3e-7a1c2f6b0e10";
 const char *OUTPUT_UUID = "53544152-0002-4b8a-9d3e-7a1c2f6b0e10";
 const char *STATUS_UUID = "53544152-0003-4b8a-9d3e-7a1c2f6b0e10";
+const char *FIRMWARE_UUID = "53544152-0004-4b8a-9d3e-7a1c2f6b0e10";
 
 // Advertising every 1 s while idle; connection interval 300-400 ms with a 6 s
 // supervision timeout. Units: adv 0.625 ms, conn interval 1.25 ms, timeout 10 ms.
@@ -20,6 +21,8 @@ constexpr uint16_t CONN_TIMEOUT = 600;
 
 NimBLECharacteristic *outputChr = nullptr;
 NimBLECharacteristic *statusChr = nullptr;
+NimBLECharacteristic *firmwareChr = nullptr;
+volatile uint32_t connects = 0;
 OutputRequestFn outputRequest = nullptr;
 
 NimBLEServer *server = nullptr;
@@ -28,6 +31,7 @@ NimBLEServer *server = nullptr;
 // and any one of them can switch the output (last write wins).
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer *s, ble_gap_conn_desc *desc) override {
+        connects = connects + 1;
         s->updateConnParams(desc->conn_handle, CONN_INTERVAL_MIN, CONN_INTERVAL_MAX,
                             CONN_LATENCY, CONN_TIMEOUT);
         // A connection ends connectable advertising; keep advertising while
@@ -69,6 +73,7 @@ void begin(const char *name, OutputRequestFn on_output_request) {
     outputChr->setCallbacks(new OutputCallbacks());
     statusChr = svc->createCharacteristic(STATUS_UUID,
                                           NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+    firmwareChr = svc->createCharacteristic(FIRMWARE_UUID, NIMBLE_PROPERTY::READ);
     svc->start();
 
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
@@ -78,6 +83,10 @@ void begin(const char *name, OutputRequestFn on_output_request) {
     adv->setMaxInterval(ADV_INTERVAL);
     adv->start();
 }
+
+uint32_t connectCount() { return connects; }
+
+void publishFirmwareHash(const uint8_t *sha256) { firmwareChr->setValue(sha256, 32); }
 
 bool connected() { return server && server->getConnectedCount() > 0; }
 

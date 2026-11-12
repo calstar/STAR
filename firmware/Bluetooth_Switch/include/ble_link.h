@@ -14,6 +14,8 @@ using OutputRequestFn = void (*)(bool on);
 
 void begin(const char *name, OutputRequestFn on_output_request);
 bool connected();
+uint32_t connectCount();  // connections accepted since boot
+void publishFirmwareHash(const uint8_t *sha256);  // 32 bytes, read-only characteristic
 void publishOutput(bool on);
 void publishStatus(const StatusPacket &pkt);
 

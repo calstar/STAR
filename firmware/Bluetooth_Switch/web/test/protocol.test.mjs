@@ -32,8 +32,18 @@ assert.throws(() => P.decodeStatus(new DataView(new ArrayBuffer(16))), /16 bytes
 
 // UUIDs must match the firmware's.
 const src = readFileSync(join(fw, "src", "ble_link.cpp"), "utf8");
-for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID]) assert.ok(src.includes(`"${u}"`), u);
+for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID, P.FIRMWARE_UUID]) assert.ok(src.includes(`"${u}"`), u);
 const status = readFileSync(join(fw, "include", "status.h"), "utf8");
 assert.match(status, new RegExp(`STATUS_VERSION = ${P.STATUS_VERSION};`));
+
+// Firmware hash: raw bytes -> the registry's lowercase file name.
+const h = new Uint8Array(32).map((_, i) => i * 8 + 1);
+assert.equal(P.digestHex(new DataView(h.buffer)), Array.from(h, (b) => b.toString(16).padStart(2, "0")).join(""));
+assert.match(P.digestHex(new DataView(h.buffer)), /^[0-9a-f]{64}$/);
+assert.throws(() => P.digestHex(new DataView(new ArrayBuffer(31))), /31 bytes/);
+assert.ok(P.registryUrl("ab").endsWith("/firmware-registry/Bluetooth_Switch/ab.json"));
+// The board name must match the one CI records it under.
+const ci = readFileSync(join(fw, "..", "..", ".github", "workflows", "firmware-ci.yml"), "utf8");
+assert.match(ci, new RegExp(`board: ${P.REGISTRY_BOARD},\\s+project: Bluetooth_Switch`));
 
 console.log("protocol ok");

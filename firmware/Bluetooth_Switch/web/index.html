@@ -32,7 +32,7 @@
   .link.down { color: var(--warn); }
   .state { margin: 14px 0 10px; display: flex; align-items: center; gap: 12px; }
   .pill { font-size: 28px; font-weight: 700; letter-spacing: .5px; padding: 6px 16px; border-radius: 999px; background: var(--off); }
-  .pill.on { background: var(--on); }
+  .pill.on { background: var(--bad); }  /* armed is the hazardous state: red, like the LED */
   .pill.unknown { background: var(--line); color: var(--dim); }
   .verdict { font-size: 14px; padding: 8px 10px; border-radius: 8px; margin-bottom: 12px; border-left: 4px solid var(--dim); background: #ffffff08; }
   .verdict.ok { border-color: var(--on); } .verdict.warn { border-color: var(--warn); } .verdict.bad { border-color: var(--bad); }
@@ -42,7 +42,7 @@
   .meta { font-size: 12px; color: var(--dim); margin-bottom: 12px; }
   .meta .flag { color: var(--warn); }
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .actions .on { background: var(--on); } .actions .off { background: var(--bad); }
+  .actions .on { background: var(--bad); } .actions .off { background: var(--on); }
   .actions button { padding: 16px; font-size: 18px; font-weight: 600; }
   .forget { margin-top: 10px; width: 100%; background: transparent; color: var(--dim); padding: 6px; font-size: 13px; }
   .modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
@@ -50,7 +50,7 @@
   .modal .box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; max-width: 420px; width: 100%; }
   .modal h2 { margin: 0 0 8px; font-size: 20px; }
   .modal p { color: var(--dim); margin: 0 0 18px; }
-  .modal .actions button.go-on { background: var(--on); } .modal .actions button.go-off { background: var(--bad); }
+  .modal .actions button.go-on { background: var(--bad); } .modal .actions button.go-off { background: var(--on); }
   footer { margin-top: 20px; font-size: 12px; color: var(--dim); }
 </style>
 </head>
@@ -87,8 +87,8 @@
 
 <script type="module">
 import {
-  SERVICE_UUID, OUTPUT_UUID, STATUS_UUID, NAME_PREFIX,
-  decodeStatus, senseVerdict, resetReasonName,
+  SERVICE_UUID, OUTPUT_UUID, STATUS_UUID, FIRMWARE_UUID, NAME_PREFIX,
+  decodeStatus, senseVerdict, resetReasonName, digestHex, registryUrl,
 } from "./protocol.js";
 
 const STALE_MS = 6000;  // status notifies every 2 s while connected
@@ -136,6 +136,7 @@ class Switch {
     this.forgotten = false;
     this.attempt = 0;
     this.busy = false;
+    this.firmware = null;  // {hex, text, level}
     this.el = this.render();
     device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
   }
@@ -156,9 +157,39 @@ class Switch {
     await this.outputChr.startNotifications();
     this.onStatus(await statusChr.readValue());
     this.onOutput(await this.outputChr.readValue());
+    if (!this.firmware) this.readFirmware(svc);  // once per board; not awaited
 
     this.attempt = 0;
     this.linkState = "connected";
+    this.update();
+  }
+
+  // The image SHA-256 the board reports, looked up in CI's firmware registry.
+  async readFirmware(svc) {
+    let hex;
+    try {
+      hex = digestHex(await (await svc.getCharacteristic(FIRMWARE_UUID)).readValue());
+    } catch {
+      this.firmware = { hex: null, text: "firmware hash not reported (older firmware)", level: "flag" };
+      return this.update();
+    }
+    this.firmware = { hex, text: "looking up…", level: "" };
+    this.update();
+    try {
+      const r = await fetch(registryUrl(hex), { cache: "no-cache" });
+      if (r.status === 404) {
+        this.firmware.text = "not a main build (local or PR image)";
+        this.firmware.level = "flag";
+      } else if (!r.ok) {
+        throw new Error(r.status);
+      } else {
+        const rec = await r.json();
+        const last = rec.commits?.[rec.commits.length - 1] ?? "";
+        this.firmware.text = `${last.slice(0, 8)} ${rec.subject ?? rec.first_subject ?? ""}`.trim();
+      }
+    } catch {
+      this.firmware.text = "registry unreachable (offline?)";
+    }
     this.update();
   }
 
@@ -244,6 +275,7 @@ class Switch {
         <div class="metric"><div class="k">Power</div><div class="v" data-k="p">—</div></div>
       </div>
       <div class="meta"></div>
+      <div class="meta fw"></div>
       <div class="actions">
         <button class="on">Arm</button>
         <button class="off">Disarm</button>
@@ -296,6 +328,14 @@ class Switch {
       if (!s.inaOk) html += ` · <span class="flag">INA260 missing</span>`;
       if (s.restored) html += ` · <span class="flag">armed state restored after MCU reset</span>`;
       el.querySelector(".meta").innerHTML = html;
+    }
+
+    const fw = this.firmware;
+    if (fw) {
+      const cls = fw.level ? ` class="${fw.level}"` : "";
+      el.querySelector(".fw").innerHTML = fw.hex
+        ? `firmware <span title="${fw.hex}">${fw.hex.slice(0, 12)}</span> · <span${cls}>${esc(fw.text)}</span>`
+        : `<span${cls}>${esc(fw.text)}</span>`;
     }
 
     const canWrite = live && !this.busy && !!this.outputChr;

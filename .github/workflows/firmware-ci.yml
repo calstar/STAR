@@ -71,6 +71,7 @@ jobs:
           - { board: LC_Hotfire,        project: Hotfire_Code/LC_Hotfire,        pio_env: adafruit_feather_esp32s3 }
           - { board: Actuator_Hotfire,  project: Hotfire_Code/Actuator_Hotfire,  pio_env: adafruit_feather_esp32s3 }
           - { board: BallValve_Hotfire, project: Hotfire_Code/BallValve_Hotfire, pio_env: esp32s3 }
+          - { board: Bluetooth_Switch,  project: Bluetooth_Switch,               pio_env: bluetooth_switch }
 
     steps:
       - name: Checkout repository
@@ -184,44 +185,32 @@ jobs:
           path: firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin
           retention-days: 30
 
-  # Not in the build-firmware matrix: that matrix gates on a path-independent
-  # digest and feeds the registry, and the switch reports no digest.
-  bluetooth-switch:
-    name: Bluetooth switch (firmware + web client)
+  # The switch's image is built, gated and registered by build-firmware above;
+  # these are its host-side checks.
+  bluetooth-switch-host:
+    name: Bluetooth switch (LED pattern + web client, host only)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install PlatformIO
-        run: pip install platformio
-
-      - name: Compile firmware
-        run: pio run -e bluetooth_switch
+      - name: LED pattern test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -Iinclude test/host/led_pattern_test.cpp -o /tmp/led_pattern_test
+          /tmp/led_pattern_test
         working-directory: firmware/Bluetooth_Switch
 
-      # Decodes bytes packed by the firmware's StatusPacket and checks the UUIDs
-      # and STATUS_VERSION match, so the page and the firmware can't drift apart.
+      # Decodes bytes packed by the firmware's StatusPacket and checks the UUIDs,
+      # STATUS_VERSION and registry board name match, so the page and the
+      # firmware can't drift apart.
       - name: Web client protocol test
         run: node web/test/protocol.test.mjs
         working-directory: firmware/Bluetooth_Switch
-
-      - name: Upload the image
-        uses: actions/upload-artifact@v4
-        with:
-          name: firmware-image-Bluetooth_Switch
-          path: firmware/Bluetooth_Switch/.pio/build/bluetooth_switch/firmware.bin
-          retention-days: 30
 
   run-tests:
     name: Run Unit Tests

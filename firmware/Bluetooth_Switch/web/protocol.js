@@ -4,6 +4,7 @@
 export const SERVICE_UUID = "53544152-0001-4b8a-9d3e-7a1c2f6b0e10";
 export const OUTPUT_UUID = "53544152-0002-4b8a-9d3e-7a1c2f6b0e10";
 export const STATUS_UUID = "53544152-0003-4b8a-9d3e-7a1c2f6b0e10";
+export const FIRMWARE_UUID = "53544152-0004-4b8a-9d3e-7a1c2f6b0e10";  // 32-byte image SHA-256, read-only
 export const NAME_PREFIX = "STAR-Switch";
 
 export const STATUS_VERSION = 1;
@@ -22,6 +23,20 @@ const RESET_REASONS = [
   "JTAG", "eFuse", "power glitch", "CPU lockup",
 ];
 export const resetReasonName = (r) => RESET_REASONS[r] ?? `reason ${r}`;
+
+// CI writes a record per image to the firmware-registry branch, keyed on the
+// digest the board reports (.github/workflows/firmware-ci.yml).
+export const REGISTRY_BOARD = "Bluetooth_Switch";
+export const registryUrl = (digestHex) =>
+  `https://raw.githubusercontent.com/calstar/STAR/firmware-registry/${REGISTRY_BOARD}/${digestHex}.json`;
+
+// DataView -> lowercase hex, the way the registry names files.
+export function digestHex(dv) {
+  if (dv.byteLength !== 32) throw new Error(`firmware hash is ${dv.byteLength} bytes, expected 32`);
+  let s = "";
+  for (let i = 0; i < 32; i++) s += dv.getUint8(i).toString(16).padStart(2, "0");
+  return s;
+}
 
 // DataView -> status object, or throws on a packet this page can't read.
 export function decodeStatus(dv) {

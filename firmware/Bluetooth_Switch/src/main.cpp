@@ -16,8 +16,10 @@
 #include <esp_mac.h>
 #include <esp_system.h>
 
+#include "../../Hotfire_Code/common/firmware_hash.h"
 #include "ble_link.h"
 #include "ina260.h"
+#include "led_pattern.h"
 #include "pins.h"
 #include "status.h"
 
@@ -34,6 +36,7 @@ constexpr uint32_t STATUS_PERIOD_IDLE_MS = 30000;
 constexpr uint32_t SENSE_SETTLE_MS = 500;  // 1M into C5 + C23, tau ~100 ms
 
 constexpr uint32_t LOOP_PERIOD_MS = 20;
+constexpr uint32_t LED_SENSE_PERIOD_MS = 250;  // how often the LED re-reads the sense line
 
 constexpr uint32_t RTC_MAGIC_ON = 0x53574F4E;   // "SWON"
 constexpr uint32_t RTC_MAGIC_OFF = 0x53574F46;  // "SWOF"
@@ -51,6 +54,14 @@ volatile int8_t pendingOutput = -1;
 uint32_t lastStatusMs = 0;
 uint32_t senseValidAtMs = 0;
 
+// LED state. lastCommandMs is 0 until the first arm/disarm of this boot.
+uint32_t lastCommandMs = 0;
+uint32_t lastConnectMs = 0;
+uint32_t seenConnects = 0;
+uint32_t lastLedSenseMs = 0;
+Sense ledSense = Sense::Unknown;
+led::Rgb ledShown{1, 1, 1};  // not a real colour, so the first write always lands
+
 void driveOutputPad(bool on) {
     gpio_hold_dis(static_cast<gpio_num_t>(PIN_OUT_EN));
     gpio_set_level(static_cast<gpio_num_t>(PIN_OUT_EN), on ? 1 : 0);
@@ -67,6 +78,8 @@ void setOutput(bool on) {
     restoredAfterReset = false;
     senseValidAtMs = millis() + SENSE_SETTLE_MS;
     lastStatusMs = 0;  // force a status update once the sense line settles
+    lastCommandMs = millis() ? millis() : 1;
+    ledSense = Sense::Unknown;
     Serial.printf("[out] %s\n", on ? "ARMED" : "DISARMED");
     ble_link::publishOutput(on);
 }
@@ -82,10 +95,36 @@ void restoreOutput() {
     driveOutputPad(on);
 }
 
+// Armed and not live reads as load/open, not Unknown: that is the fault the web
+// client and the LED flag. Unknown means only "still settling".
 Sense classifySense(uint32_t mv) {
     if (mv >= SENSE_LIVE_MIN_MV) return Sense::Live;
-    if (outputOn) return Sense::Unknown;  // on but not live: switch or supply fault
     return mv <= SENSE_LOAD_MAX_MV ? Sense::LoadPresent : Sense::Open;
+}
+
+Sense readSense(uint32_t mv) {
+    return static_cast<int32_t>(millis() - senseValidAtMs) >= 0 ? classifySense(mv) : Sense::Unknown;
+}
+
+uint32_t since(uint32_t thenMs, uint32_t nowMs) { return thenMs ? nowMs - thenMs : UINT32_MAX; }
+
+void updateLed(uint32_t now) {
+    uint32_t connects = ble_link::connectCount();
+    if (connects != seenConnects) {
+        seenConnects = connects;
+        lastConnectMs = now ? now : 1;
+    }
+    if (now - lastLedSenseMs >= LED_SENSE_PERIOD_MS) {
+        lastLedSenseMs = now;
+        ledSense = readSense(analogReadMilliVolts(PIN_CONT_ADC));
+    }
+    led::Inputs in{outputOn,          ledSense, restoredAfterReset, inaOk,
+                   since(lastCommandMs, now), since(lastConnectMs, now)};
+    led::Rgb c = led::color(in, now);
+    if (!(c == ledShown)) {
+        neopixelWrite(PIN_LED, c.r, c.g, c.b);  // SK6805 is GRB; neopixelWrite reorders
+        ledShown = c;
+    }
 }
 
 StatusPacket buildStatus() {
@@ -107,8 +146,7 @@ StatusPacket buildStatus() {
 
     uint32_t mv = analogReadMilliVolts(PIN_CONT_ADC);
     pkt.sense_mV = static_cast<uint16_t>(mv);
-    pkt.sense = static_cast<uint8_t>(
-        static_cast<int32_t>(millis() - senseValidAtMs) >= 0 ? classifySense(mv) : Sense::Unknown);
+    pkt.sense = static_cast<uint8_t>(readSense(mv));
     return pkt;
 }
 
@@ -139,6 +177,7 @@ void handleSerial() {
             setOutput(false);
         } else if (line == "status") {
             printStatus(buildStatus());
+            FirmwareHash::print();
         } else if (line.length()) {
             Serial.println("commands: arm | disarm | status");
         }
@@ -166,10 +205,13 @@ void setup() {
     snprintf(name, sizeof(name), "STAR-Switch-%02X%02X", mac[4], mac[5]);
     ble_link::begin(name, onOutputRequest);
     ble_link::publishOutput(outputOn);
+    // SHA-256 ESP-IDF appended to this image: what CI's firmware-registry is keyed on.
+    ble_link::publishFirmwareHash(FirmwareHash::get());
 
     Serial.printf("[boot] %s reset=%d output=%s ina260=%s\n", name,
                   static_cast<int>(resetReason), outputOn ? "ARMED (restored)" : "DISARMED",
                   inaOk ? "ok" : "MISSING");
+    FirmwareHash::print();
 }
 
 void loop() {
@@ -181,6 +223,7 @@ void loop() {
     }
 
     handleSerial();
+    updateLed(millis());
 
     uint32_t period = ble_link::connected() ? STATUS_PERIOD_CONNECTED_MS : STATUS_PERIOD_IDLE_MS;
     uint32_t now = millis();

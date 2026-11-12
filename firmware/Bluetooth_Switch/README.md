@@ -31,6 +31,7 @@ notifications, and the last write wins.
 | Service | `53544152-0001-4b8a-9d3e-7a1c2f6b0e10` | |
 | Output | `53544152-0002-4b8a-9d3e-7a1c2f6b0e10` | read, write, notify. `0x01` = ARM (output on), `0x00` = DISARM (output off) |
 | Status | `53544152-0003-4b8a-9d3e-7a1c2f6b0e10` | read, notify (every 2 s while connected, and after every switch) |
+| Firmware | `53544152-0004-4b8a-9d3e-7a1c2f6b0e10` | read. 32 bytes: the SHA-256 ESP-IDF appended to the running image |
 
 Status is 17 bytes, little-endian (`include/status.h`):
 
@@ -52,6 +53,45 @@ pulls VOUT up through 1 MΩ, so a connected altimeter reads "load present" and n
 connected reads "open". With the output on it should read "live". If it reads anything
 else, the switch or the supply has failed. The thresholds in `main.cpp` still need
 bench calibration.
+
+## Firmware hash
+
+The board reports the SHA-256 that ESP-IDF appended to its image (`firmware_hash.h`,
+shared with the hotfire boards): on the Firmware characteristic, at boot on the
+console, and with `status`. The build runs `firmware/tools/reproducible_build.py`, so
+the same commit hashes the same on every machine. Firmware CI builds it in the same
+matrix as the hotfire boards, and every push to `main` records the image on the
+`firmware-registry` branch under `Bluetooth_Switch/<digest>.json`. The web page looks
+the hash up there and shows the commit. To do it by hand:
+
+```bash
+firmware/tools/firmware_digest.py .pio/build/bluetooth_switch/firmware.bin   # what a board running this build reports
+firmware/tools/which_firmware.py <digest> --registry <firmware-registry checkout>  # which commit built it
+```
+
+A hash that isn't in the registry is a local or PR build.
+
+## Status LED (SK6805, GPIO5)
+
+| State | LED |
+|---|---|
+| Disarmed, altimeter detected | dim green blip every 3 s |
+| Disarmed, nothing connected | dim amber blip every 3 s |
+| **Armed**, output live | red blink, 1 Hz |
+| Armed, restored after an MCU reset | red blink with an amber blip between, until the next arm/disarm |
+| **Fault**: armed but VOUT not live, or disarmed but live | red/amber alternating, 5 Hz |
+| INA260 missing | amber double blip every 3 s, on top of the above |
+| Phone connects | one blue blip |
+| Arm / disarm command | one bright flash, red for armed, green for disarmed |
+
+The pattern is a pure function in `include/led_pattern.h`, tested on the host:
+
+```bash
+c++ -std=c++17 -Iinclude test/host/led_pattern_test.cpp -o /tmp/led && /tmp/led
+```
+
+The SK6805 draws roughly 1 mA even when dark. That's comparable to the other
+power savings below, so it's the first thing to cut if a pad sit runs the battery down.
 
 ## Web client (`web/`)
 
@@ -80,7 +120,6 @@ until both match.
 
 ## Not done yet
 
-- SK6805 status LED (GPIO5).
 - Light sleep. The prebuilt Arduino core doesn't enable power management or the
   32 kHz crystal clock source. The current savings are an 80 MHz CPU, 1 s
   advertising, a 300–400 ms connection interval and the INA260 in triggered mode.
