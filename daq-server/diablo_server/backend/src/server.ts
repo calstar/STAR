@@ -53,6 +53,8 @@ import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReloa
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
+import { planSwitchCommand, planSwitchDiscover, sendSwitchCommand } from './switch-command.js';
+import { CONTROL_COMMAND_TYPES } from './control-commands.js';
 import type { NotificationPayload } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate, QueryHistoricalRequest } from '../../shared/types.js';
 
@@ -61,10 +63,12 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
-const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
+// CONTROL_COMMAND_TYPES (control-commands.ts): gated on an approved operator with control on.
 // Per-connection control-auth state, stashed on the WebSocket.
 type WsWithControl = WebSocket & {
   __daqOperator?: boolean;
+  /** Who is on this socket (Caddy's X-Auth-Email; empty = local, no Caddy). For command logs. */
+  __daqEmail?: string;
   __daqControlAuthorized?: boolean;
   /** Cleared each keepalive sweep, set again on pong. A socket that misses a
    *  sweep is gone in a way TCP never reported (Wi-Fi drop, closed lid). */
@@ -978,6 +982,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
   const isOp = authEmail === '' ? true : isOperator(authEmail);
   (ws as WsWithControl).__daqOperator = isOp;
+  (ws as WsWithControl).__daqEmail = authEmail;
 
   // Sensor staging for this client (see client-outbox.ts). Registered before
   // any send so the first window produced after connect is already captured.
@@ -1336,6 +1341,28 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${refusalText(reply)}` } });
         }
       });
+      break;
+    }
+    case 'switch': {
+      // Arm/disarm a Bluetooth switch. No optimistic state: the card waits for the switch's own
+      // report (SW<role>.output) and the env board's answer (SW<role>.cmd_id/cmd_result).
+      const plan = planSwitchCommand(command.data, safeReadConfigForGui());
+      if ('error' in plan) {
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: plan.error } });
+        break;
+      }
+      console.log(`[ThinServer] Switch command ${plan.line.trim()} from ${(ws as WsWithControl).__daqEmail || 'local'}`);
+      sendSwitchCommand(plan.line, plan.port);
+      break;
+    }
+    case 'switch_discover': {
+      // Not gated: a scan moves nothing, and finding a switch's MAC is how one gets bound.
+      const plan = planSwitchDiscover(safeReadConfigForGui());
+      if ('error' in plan) {
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: plan.error } });
+        break;
+      }
+      sendSwitchCommand(plan.line, plan.port);
       break;
     }
     case 'debug_mode': {

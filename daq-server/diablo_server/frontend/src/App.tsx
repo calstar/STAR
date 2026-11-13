@@ -87,6 +87,7 @@ export default function App() {
               <Route path="/controller" element={<P.ControllerPage />} />
               <Route path="/encoders" element={<P.EncodersPage />} />
               <Route path="/environmental" element={<P.EnvironmentalPage />} />
+              <Route path="/switches" element={<P.SwitchesPage />} />
               <Route path="/flash" element={<P.FlashPage />} />
               <Route path="/livestream" element={<LivestreamRoute />} />
               <Route path="/self-tests" element={<P.SelfTestsPage />} />

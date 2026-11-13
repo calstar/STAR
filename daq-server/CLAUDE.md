@@ -35,6 +35,9 @@ asked for that specific action**:
 - `build/bin/controller_service` — drives the PWM ignition gate
 - Any `TRANSITION:`, `ACTUATOR:`, `DEBUG_MODE:`, `EXTEND_FIRE`, `RELOAD_CONFIG` sent to TCP `:9998`
 - `FIRE_START` / `FIRE_STOP` to TCP `:9999`
+- Any line sent to `switch_service`'s command port (UDP `127.0.0.1:8094`, `[switch_service].command_port`)
+  — it arms or disarms a Bluetooth altimeter switch through the environmental board: real
+  altimeter (and deployment-charge) power
 - `systemctl --user start|restart|stop` of `sensor-actuator`, `sensor-controller`, `sensor-daq`,
   `sensor-elodin`, `sensor-calibration`, `sensor-simulator`
 - `test/test_integration.sh` — launches the whole stack **and deletes the live calibration store**

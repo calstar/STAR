@@ -36,11 +36,21 @@ const bad = new Uint8Array(bytes); bad[0] = 2;
 assert.throws(() => P.decodeStatus(new DataView(bad.buffer)), /version 2/);
 assert.throws(() => P.decodeStatus(new DataView(new ArrayBuffer(16))), /16 bytes/);
 
-// UUIDs must match the firmware's.
-const src = readFileSync(join(fw, "src", "ble_link.cpp"), "utf8");
-for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID, P.FIRMWARE_UUID]) assert.ok(src.includes(`"${u}"`), u);
-const status = readFileSync(join(fw, "include", "status.h"), "utf8");
+// UUIDs must match the firmware's (one definition, shared with the env board).
+const lib = join(fw, "..", "..", "lib", "daq-protocol");
+const status = readFileSync(join(lib, "src", "SwitchStatus.h"), "utf8");
+for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID, P.FIRMWARE_UUID]) assert.ok(status.includes(`"${u}"`), u);
 assert.match(status, new RegExp(`STATUS_VERSION = ${P.STATUS_VERSION};`));
+
+// The shared verdict cases: the DAQ's Switches page runs the same file, so the
+// two readers can't disagree about what a status means.
+const { cases } = JSON.parse(readFileSync(join(lib, "test", "switch_verdicts.json"), "utf8"));
+assert.ok(cases.length > 0);
+for (const c of cases) {
+  const raw = Uint8Array.from(c.status.match(/../g), (h) => parseInt(h, 16));
+  const v = P.senseVerdict(P.decodeStatus(new DataView(raw.buffer)));
+  assert.deepEqual(v, { level: c.level, text: c.text }, c.name);
+}
 
 // Firmware hash: raw bytes -> the registry's lowercase file name.
 const h = new Uint8Array(32).map((_, i) => i * 8 + 1);

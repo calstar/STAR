@@ -287,6 +287,21 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
             if (typeHi < 0) continue;
             addBoard(typeHi, boardNumber, active);
         }
+        // Bluetooth switches the environmental board relays: one [0x27, role] table per
+        // [switch_roles.*] entry, while [switch_service] is on (daq_bridge registers the same).
+        const sw = (cfg as { switch_service?: { enabled?: unknown }; switch_roles?: unknown });
+        if (sw.switch_service?.enabled === true) {
+            for (let slot = 0; slot < 8; slot++) addUnique(0x29, slot);  // "Find switches"
+        }
+        if (sw.switch_service?.enabled === true && sw.switch_roles && typeof sw.switch_roles === 'object') {
+            for (const raw of Object.values(sw.switch_roles as Record<string, unknown>)) {
+                const role = Number((raw as { role?: unknown })?.role);
+                if (Number.isInteger(role) && role >= 0 && role <= 4) {
+                    addUnique(0x27, role);  // status
+                    addUnique(0x28, role);  // command results
+                }
+            }
+        }
     } catch (e) {
         console.warn('[VTableStream] config-driven subscriptions failed, using fallbacks only:', e);
     }

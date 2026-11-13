@@ -118,9 +118,14 @@ shows the last known state and marks it stale; the output is not touched. The
 card cross-checks the output against the sense line ("ARMED but sense reads
 open" means the switch or the supply has failed).
 
-When the status layout changes, bump `STATUS_VERSION` in `include/status.h` *and*
-`web/protocol.js`. The page refuses a version it doesn't know, and the test fails
-until both match.
+The status layout is defined once, in `lib/daq-protocol/src/SwitchStatus.h`
+(`include/status.h` only brings the names in), because the environmental board
+relays these bytes and the DAQ decodes them too. When it changes, bump
+`STATUS_VERSION` there *and* in `web/protocol.js`. The page refuses a version it
+doesn't know, and the test fails until both match. What a status *means* (no
+battery, armed and live, stuck on...) is pinned by
+`lib/daq-protocol/test/switch_verdicts.json`; the page's test runs every case, and
+the DAQ's Switches page runs the same file.
 
 ## Power
 
@@ -139,4 +144,5 @@ existing sdkconfig wins over the defaults.
 The chip only light-sleeps on battery: while USB is plugged in it holds itself
 awake so the console and flashing work. The console's `status` line says which
 (`power=light sleep` / `awake for USB`). Other savings: 80 MHz CPU, 1 s
-advertising, 300–400 ms connection interval, INA260 in triggered mode.
+advertising, 300–400 ms connection interval with slave latency 4 (the switch
+answers every ~1.5–2 s while idle), INA260 in triggered mode.

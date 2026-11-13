@@ -323,4 +323,90 @@ struct __attribute__((packed)) StacklightCommandPacket {
   uint8_t buzzer;
 };
 
+
+//==============================================================================
+// Bluetooth switch relay (environmental board)
+//==============================================================================
+
+// At most this many switches per environmental board.
+constexpr uint8_t MAX_SWITCHES = 5;
+// Room for the switch's raw status (17 bytes at STATUS_VERSION 1) to grow.
+constexpr uint8_t MAX_SWITCH_STATUS_BYTES = 32;
+
+/** One configured switch. `role` is the server's index (0..MAX_SWITCHES-1);
+ *  names stay on the server. `mac` is the switch's BT MAC, most significant
+ *  byte first, as it is printed. */
+struct __attribute__((packed)) SwitchConfigEntry {
+  uint8_t role;
+  uint8_t mac[6];
+};
+
+/** The whole switch list (not the wire layout: on the wire it is
+ *  hash (u32) + count (u8) + count x SwitchConfigEntry). */
+struct SwitchConfig {
+  uint8_t count = 0;
+  SwitchConfigEntry entries[MAX_SWITCHES] = {};
+};
+
+enum class SwitchLink : uint8_t {
+  DOWN = 0, // not connected (searching, or never seen)
+  UP = 1,   // connected
+};
+
+/** SWITCH_COMMAND body: set a role's output. Absolute, never a toggle, so a repeated or
+ *  duplicated packet cannot flip the switch back. */
+struct __attribute__((packed)) SwitchCommandPacket {
+  uint16_t command_id; // chosen by the DAQ; echoed in the result
+  uint8_t role;
+  uint8_t output;      // 1 = arm (output on), 0 = disarm
+};
+
+enum class SwitchCommandResult : uint8_t {
+  WRITTEN = 0,      // the switch accepted the write (its status says what it did)
+  NO_LINK = 1,      // that switch is not connected; nothing was sent, nothing queued
+  WRITE_FAILED = 2, // connected, but the write was not acknowledged
+  UNKNOWN_ROLE = 3, // no switch is listed under that role
+  NO_CONFIG = 4,    // the env board holds no switch list yet
+  BAD_COMMAND = 5,  // output other than 0/1, or the relay was busy
+};
+
+/** SWITCH_COMMAND_RESULT body. */
+struct __attribute__((packed)) SwitchCommandResultPacket {
+  uint16_t command_id;
+  uint8_t role;
+  uint8_t output; // as requested
+  SwitchCommandResult result;
+};
+
+// "Find switches": at most this many unlisted switches are reported per scan.
+constexpr uint8_t MAX_SEEN_SWITCHES = 8;
+
+/** SWITCH_DISCOVER body: scan this long, reporting switches not on the list. */
+struct __attribute__((packed)) SwitchDiscoverPacket {
+  uint8_t duration_s;
+};
+
+/** SWITCH_SEEN body: an unlisted switch heard during a discovery scan. `slot` is the env board's
+ *  index for it in this scan (0..MAX_SEEN_SWITCHES-1), so each has its own row. Discovery never
+ *  connects to it. */
+struct __attribute__((packed)) SwitchSeenPacket {
+  uint8_t slot;
+  uint8_t mac[6]; // most significant byte first, as printed
+  int8_t rssi;    // dBm
+};
+
+/** One role's link and its switch's last status, as the env board holds them.
+ *  `status` is the switch's StatusPacket bytes untouched (SwitchStatus.h);
+ *  `status_len` is 0 until the first one arrives. While the link is down the
+ *  last status is still sent, and `age_ms` says how old it is. */
+struct SwitchStatusReport {
+  uint8_t role = 0;
+  SwitchLink link = SwitchLink::DOWN;
+  int8_t rssi = 0;                  // dBm, 0 when unknown
+  uint16_t age_ms = 0xFFFF;         // since the last status notification, saturating
+  uint32_t config_hash = 0;         // of the switch list the env board holds
+  uint8_t status_len = 0;
+  uint8_t status[MAX_SWITCH_STATUS_BYTES] = {};
+};
+
 } // namespace daq

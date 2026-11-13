@@ -1,0 +1,71 @@
+{
+  "_about": "Bluetooth switch status -> verdict. Every reader of SwitchStatus.h (the switch web page, the DAQ Switches page) runs these. status is the 17 raw little-endian bytes, hex.",
+  "cases": [
+    {
+      "name": "armed, no battery",
+      "status": "0101030b90012800500100006400000001",
+      "level": "bad",
+      "text": "Armed, but no battery is connected, so the load has no power."
+    },
+    {
+      "name": "disarmed, no battery",
+      "status": "0100020b90012800500100006400000001",
+      "level": "warn",
+      "text": "No battery connected"
+    },
+    {
+      "name": "no battery outranks a live sense while disarmed",
+      "status": "0100030b90012800500100006400000001",
+      "level": "warn",
+      "text": "No battery connected"
+    },
+    {
+      "name": "sense still settling",
+      "status": "01000003d0202800500100006400000001",
+      "level": "warn",
+      "text": "Sense settling"
+    },
+    {
+      "name": "armed and live",
+      "status": "01010303d0202800500160096400000001",
+      "level": "ok",
+      "text": "Armed: output live"
+    },
+    {
+      "name": "armed but sense reads open",
+      "status": "01010203d020280050012c016400000001",
+      "level": "bad",
+      "text": "Armed, but no power is reaching the output. Check the battery; if it's fine, the switch may be faulty."
+    },
+    {
+      "name": "armed but sense reads load",
+      "status": "01010103d0202800500132006400000001",
+      "level": "bad",
+      "text": "Armed, but no power is reaching the output. Check the battery; if it's fine, the switch may be faulty."
+    },
+    {
+      "name": "disarmed, load present (continuity can't see through the bridge board)",
+      "status": "01000103d0202800500132006400000001",
+      "level": "ok",
+      "text": "Disarmed"
+    },
+    {
+      "name": "disarmed, open",
+      "status": "01000203d020280050012c016400000001",
+      "level": "ok",
+      "text": "Disarmed"
+    },
+    {
+      "name": "disarmed but live: stuck on",
+      "status": "01000303d0202800500160096400000001",
+      "level": "bad",
+      "text": "Disarmed, but the output still has power. The switch may be stuck on."
+    },
+    {
+      "name": "restored after reset, armed and live",
+      "status": "01010307d0202800500160096400000004",
+      "level": "ok",
+      "text": "Armed: output live"
+    }
+  ]
+}

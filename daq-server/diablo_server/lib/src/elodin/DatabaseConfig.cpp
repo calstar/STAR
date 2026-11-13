@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 
+#include "DiabloPackets.h"
 #include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
 
 using namespace vtable;
@@ -47,6 +48,80 @@ bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
              {"timestamp_ns", "temperature_c", "pressure_pa", "humidity_rh", "sample_ts_ms"})
             ok = send_msg(client, set_component_name(prefix + field)) && ok;
         ok = send_msg(client, set_entity_name((0x25u << 8) | board.board_id, entity)) && ok;
+    }
+    return ok;
+}
+
+bool DatabaseConfig::register_switch_tables(ElodinClient& client,
+                                           const std::vector<uint8_t>& roles) {
+    struct F {
+        uint16_t off, len;
+        PrimType (*type)();
+        const char* name;
+    };
+    static const F fields[] = {
+        {0, 8, PrimType::U64, "timestamp_ns"}, {8, 1, PrimType::U8, "link"},
+        {9, 1, PrimType::I8, "rssi"},          {10, 2, PrimType::U16, "age_ms"},
+        {12, 4, PrimType::U32, "config_hash"}, {16, 1, PrimType::U8, "status_valid"},
+        {17, 1, PrimType::U8, "output"},       {18, 1, PrimType::U8, "sense"},
+        {19, 1, PrimType::U8, "flags"},        {20, 2, PrimType::U16, "supply_mv"},
+        {22, 2, PrimType::I16, "current_ma"},  {24, 2, PrimType::U16, "power_mw"},
+        {26, 2, PrimType::U16, "sense_mv"},    {28, 4, PrimType::U32, "uptime_s"},
+        {32, 1, PrimType::U8, "reset_reason"}, {33, 1, PrimType::U8, "status_version"},
+    };
+    bool ok = true;
+    for (uint8_t role : roles) {
+        const std::string entity = "SW" + std::to_string(role);
+        const std::string prefix = entity + ".";
+        VTableBuilder b;
+        for (const auto& f : fields)
+            b.push_field(raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
+        auto vt = b.build();
+        if (!send_msg(client, VTableMsg{.id = {0x27, role}, .vtable = vt})) {
+            ok = false;
+            continue;
+        }
+        for (const auto& f : fields)
+            ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
+        ok = send_msg(client, set_entity_name((0x27u << 8) | role, entity)) && ok;
+
+        // [0x28, role]: command results, on the same entity.
+        static const F results[] = {
+            {0, 8, PrimType::U64, "cmd_timestamp_ns"},
+            {8, 2, PrimType::U16, "cmd_id"},
+            {10, 1, PrimType::U8, "cmd_output"},
+            {11, 1, PrimType::U8, "cmd_result"},
+        };
+        VTableBuilder rb;
+        for (const auto& f : results)
+            rb.push_field(raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
+        if (!send_msg(client, VTableMsg{.id = {0x28, role}, .vtable = rb.build()})) {
+            ok = false;
+            continue;
+        }
+        for (const auto& f : results)
+            ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
+    }
+    return ok;
+}
+
+bool DatabaseConfig::register_switch_seen_tables(ElodinClient& client) {
+    bool ok = true;
+    for (uint8_t slot = 0; slot < daq::MAX_SEEN_SWITCHES; ++slot) {
+        const std::string entity = "SWSEEN" + std::to_string(slot);
+        const std::string prefix = entity + ".";
+        auto vt = builder::vtable({
+            raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+            raw_field(8, 8, schema(PrimType::U64(), {}, component(prefix + "mac"))),
+            raw_field(16, 1, schema(PrimType::I8(), {}, component(prefix + "rssi"))),
+        });
+        if (!send_msg(client, VTableMsg{.id = {0x29, slot}, .vtable = vt})) {
+            ok = false;
+            continue;
+        }
+        for (const char* f : {"timestamp_ns", "mac", "rssi"})
+            ok = send_msg(client, set_component_name(prefix + f)) && ok;
+        ok = send_msg(client, set_entity_name((0x29u << 8) | slot, entity)) && ok;
     }
     return ok;
 }

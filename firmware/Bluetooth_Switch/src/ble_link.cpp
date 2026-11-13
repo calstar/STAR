@@ -5,19 +5,30 @@
 namespace ble_link {
 namespace {
 
-// Base UUID 5354_4152-xxxx ("STAR"); website must use the same values.
-const char *SERVICE_UUID = "53544152-0001-4b8a-9d3e-7a1c2f6b0e10";
-const char *OUTPUT_UUID = "53544152-0002-4b8a-9d3e-7a1c2f6b0e10";
-const char *STATUS_UUID = "53544152-0003-4b8a-9d3e-7a1c2f6b0e10";
-const char *FIRMWARE_UUID = "53544152-0004-4b8a-9d3e-7a1c2f6b0e10";
+// UUIDs are shared with the environmental board and the web page
+// (lib/daq-protocol/src/SwitchStatus.h).
+using daq::bt_switch::FIRMWARE_UUID;
+using daq::bt_switch::OUTPUT_UUID;
+using daq::bt_switch::SERVICE_UUID;
+using daq::bt_switch::STATUS_UUID;
 
 // Advertising every 1 s while idle; connection interval 300-400 ms with a 6 s
 // supervision timeout. Units: adv 0.625 ms, conn interval 1.25 ms, timeout 10 ms.
+//
+// Latency 4: with nothing to send, the switch may skip 4 connection events and
+// answer every 5th, ~1.5-2 s. Under light sleep the radio is most of the power
+// budget, and the environmental board holds a link to every switch all the
+// time; at latency 0 that link alone would wake the switch ~3x a second, more
+// than its advertising does. A command from the central waits up to ~2 s for
+// the next event the switch listens to. The timeout must stay above
+// (1 + latency) * interval * 2 = 4 s.
 constexpr uint16_t ADV_INTERVAL = 1600;
 constexpr uint16_t CONN_INTERVAL_MIN = 240;
 constexpr uint16_t CONN_INTERVAL_MAX = 320;
-constexpr uint16_t CONN_LATENCY = 0;
+constexpr uint16_t CONN_LATENCY = 4;
 constexpr uint16_t CONN_TIMEOUT = 600;
+static_assert(CONN_TIMEOUT * 10 > (1 + CONN_LATENCY) * CONN_INTERVAL_MAX * 125 / 100 * 2,
+              "supervision timeout too short for this latency");
 
 NimBLECharacteristic *outputChr = nullptr;
 NimBLECharacteristic *statusChr = nullptr;

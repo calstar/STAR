@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "DiabloPackets.h"
 #include "protocol/EncryptedFrame.hpp"
 #include "transport/NetworkSocket.hpp"
 
@@ -58,6 +59,28 @@ public:
     };
     std::optional<EnvironmentalSample> get_last_environmental();
 
+    // SWITCH_STATUS (type 19) from the environmental board's Bluetooth switch relay.
+    struct SwitchStatusSample {
+        daq::SwitchStatusReport report;
+        uint32_t board_timestamp_ms;
+        std::string source_ip;
+    };
+    std::optional<SwitchStatusSample> get_last_switch_status();
+
+    // SWITCH_COMMAND_RESULT (type 18): what the env board did with an operator's command.
+    struct SwitchResultSample {
+        daq::SwitchCommandResultPacket result;
+        std::string source_ip;
+    };
+    std::optional<SwitchResultSample> get_last_switch_result();
+
+    // SWITCH_SEEN (type 20): an unlisted switch heard by a "Find switches" scan.
+    struct SwitchSeenSample {
+        daq::SwitchSeenPacket seen;
+        std::string source_ip;
+    };
+    std::optional<SwitchSeenSample> get_last_switch_seen();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -70,6 +93,9 @@ private:
     std::vector<uint8_t> last_log_buffer_;
     std::string last_log_source_ip_;
     std::optional<EnvironmentalSample> last_environmental_;
+    std::optional<SwitchStatusSample> last_switch_status_;
+    std::optional<SwitchResultSample> last_switch_result_;
+    std::optional<SwitchSeenSample> last_switch_seen_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };
