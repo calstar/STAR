@@ -12,10 +12,10 @@
 #include <vector>
 
 // DAQv2-Comms
-#include "DiabloEnums.h"
-#include "DiabloPacketUtils.cpp"
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPacketUtils.cpp"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 
 // ---------------------------------------------------------------------------
 // Replicate the actuator state machine enums and transition logic

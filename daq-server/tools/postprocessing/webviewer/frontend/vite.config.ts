@@ -7,7 +7,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
-    // Ports chosen to avoid the onshape-viewer / diablo_server services in this
+    // Ports chosen to avoid the onshape-viewer / star_server services in this
     // repo (which use 8000-8081, 3000, 2240, 5173-5176).
     port: 5273,
     proxy: {

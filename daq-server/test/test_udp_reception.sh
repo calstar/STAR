@@ -36,7 +36,7 @@ if [ "$FINAL" -gt "$INITIAL" ] || [ "$FINAL_PIPELINE" -gt "$INITIAL_PIPELINE" ];
     echo "  ✅ UDP reception is working! Packet was received."
 else
     echo "  ⚠️  Test packet not received (may be filtered by parser)"
-    echo "     This is OK - the parser only accepts DiabloAvionics format packets"
+    echo "     This is OK - the parser only accepts StarAvionics format packets"
 fi
 
 echo ""

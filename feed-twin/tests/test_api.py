@@ -250,7 +250,7 @@ def test_an_unknown_artifact_is_a_422_not_a_500() -> None:
 
 def test_the_machine_binds_to_the_drawings_valves() -> None:
     machine = client.get(f"/api/statemachine?diagram={diagram_id()}").json()
-    assert machine["name"] == "diablo"
+    assert machine["name"] == "engine"
     assert "Fire" in machine["states"]
     # MV-OX is the LOX main however the drawing spells it. Getting this wrong
     # leaves a main valve uncommanded, and a fire opens one side only.

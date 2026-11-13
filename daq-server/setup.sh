@@ -9,7 +9,7 @@
 #   1. System packages (Homebrew on macOS; apt on Linux/WSL — list mirrors CI)
 #   2. Rust toolchain + elodin-db (time-series telemetry DB)
 #   3. Python venv at daq-server/.venv + pip install -r requirements.txt
-#   4. npm install for diablo_server/backend and diablo_server/frontend
+#   4. npm install for star_server/backend and star_server/frontend
 #   5. cmake + build for daq_bridge, sequencer, heartbeat, config_broadcast,
 #      calibration, controller services
 #   6. Optional: pre-push format hook (interactive prompt)
@@ -176,20 +176,20 @@ fi
 deactivate
 
 # ─── 4. Node dependencies ────────────────────────────────────────────────────
-step "Node dependencies (diablo_server backend + frontend)"
+step "Node dependencies (star_server backend + frontend)"
 
-if [ -d "$DAQ_DIR/diablo_server/backend" ]; then
-  (cd "$DAQ_DIR/diablo_server/backend" && (npm ci --silent 2>/dev/null || npm install --silent))
+if [ -d "$DAQ_DIR/star_server/backend" ]; then
+  (cd "$DAQ_DIR/star_server/backend" && (npm ci --silent 2>/dev/null || npm install --silent))
   ok "Backend npm install done"
 else
-  warn "diablo_server/backend not found — skipping"
+  warn "star_server/backend not found — skipping"
 fi
 
-if [ -d "$DAQ_DIR/diablo_server/frontend" ]; then
-  (cd "$DAQ_DIR/diablo_server/frontend" && (npm ci --silent 2>/dev/null || npm install --silent))
+if [ -d "$DAQ_DIR/star_server/frontend" ]; then
+  (cd "$DAQ_DIR/star_server/frontend" && (npm ci --silent 2>/dev/null || npm install --silent))
   ok "Frontend npm install done"
 else
-  warn "diablo_server/frontend not found — skipping"
+  warn "star_server/frontend not found — skipping"
 fi
 
 # ─── 5. C++ build ────────────────────────────────────────────────────────────

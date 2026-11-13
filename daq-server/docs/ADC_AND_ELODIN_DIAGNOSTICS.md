@@ -11,15 +11,15 @@
 ## Pipeline Overview
 
 ```
-PT Board (DiabloAvionics) → UDP :5006 → daq_bridge
-  → DiabloBoardPacketParser (plain, NO encryption)
+PT Board (StarAvionics) → UDP :5006 → daq_bridge
+  → BoardPacketParser (plain, NO encryption)
   → SensorRouter.route_pt_samples (raw to Elodin)
   → SensorRouter.route_pt_samples_calibrated (daq_bridge inline calibration)
   → Elodin DB (if elodin_client connected)
   → Backend (direct subscription) → Frontend
 ```
 
-**Important:** The daq_bridge uses **DiabloBoardPacketParser** — plain DiabloAvionics format. It does **not** use EncryptedFrame / XOR decryption. If your boards send encrypted packets (different protocol), the daq_bridge will fail to parse them and nothing reaches Elodin.
+**Important:** The daq_bridge uses **BoardPacketParser** — plain StarAvionics format. It does **not** use EncryptedFrame / XOR decryption. If your boards send encrypted packets (different protocol), the daq_bridge will fail to parse them and nothing reaches Elodin.
 
 ---
 
@@ -56,7 +56,7 @@ The backend loads from `config.calibration.pt.json_path` (e.g. `tools/calibratio
 
 ### 4. **ADC byte order or interpretation**
 
-- DiabloBoardPacketParser: `read_le_u32` for the datapoint value.
+- BoardPacketParser: `read_le_u32` for the datapoint value.
 - Boards (ESP32/Arduino) are usually little-endian.
 - If a board sends big-endian or a different layout, ADC values will be misinterpreted and produce large errors.
 
@@ -66,7 +66,7 @@ The backend loads from `config.calibration.pt.json_path` (e.g. `tools/calibratio
 
 ### 1. **Packet format mismatch**
 
-daq_bridge expects DiabloAvionics SENSOR_DATA:
+daq_bridge expects StarAvionics SENSOR_DATA:
 - Header: `packet_type(1)=3`, `version(1)`, `timestamp(4 LE)`
 - Body: `num_chunks(1)`, `num_sensors(1)`, then per chunk: `timestamp(4 LE)` + per sensor: `sensor_id(1)`, `data(4 LE)`.
 
@@ -97,7 +97,7 @@ If `elodin_client.is_connected()` is false, `publishing` is false and no data is
 
 ### Step 1: Confirm packet format
 
-Run with a known-good source (e.g. board_simulator) that sends plain DiabloAvionics:
+Run with a known-good source (e.g. board_simulator) that sends plain StarAvionics:
 
 ```bash
 python sim/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006

@@ -39,10 +39,10 @@ import pyqtgraph as pg
 import numpy as np
 
 # Protocol constants from DAQv2-Comms.h
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
-# PacketType enum from DiabloEnums.h
+# PacketType enum from DaqEnums.h
 class PacketType:
     BOARD_HEARTBEAT = 1
     SERVER_HEARTBEAT = 2
@@ -113,7 +113,7 @@ def create_actuator_command_packet(commands: List[Tuple[int, int]]) -> bytes:
     
     # Packet header
     packet_type = PacketType.ACTUATOR_COMMAND
-    version = DIABLO_COMMS_VERSION
+    version = COMMS_VERSION
     timestamp = int(time.time() * 1000) & 0xFFFFFFFF  # 32-bit timestamp in milliseconds
     
     struct.pack_into(PACKET_HEADER_FORMAT, packet, offset, packet_type, version, timestamp)

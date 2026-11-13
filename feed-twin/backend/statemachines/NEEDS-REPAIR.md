@@ -1,4 +1,4 @@
-# `diablo_transitions.csv` — rows one cell short, and the stand reads them anyway
+# `engine_transitions.csv` — rows one cell short, and the stand reads them anyway
 
 This file was byte-identical to the DAQ's `state_transitions.csv`
 (`daq-server/config/profiles/default/` and `profiles/server/`) until the twin-side
@@ -13,7 +13,7 @@ DAQ's copy still has all 10 (checked 2026-10-08).
 
 ## How the stand reads them
 
-The DAQ's parser (`daq-server/diablo_server/backend/src/legacy/state-transitions.ts`)
+The DAQ's parser (`daq-server/star_server/backend/src/legacy/state-transitions.ts`)
 maps `row[j]` onto `headers[j-1]` and stops at the end of the row. A short row is
 therefore read **left-aligned**: it never says anything about `Emergency Abort`, and
 every cell before that lands on the column its position names.
@@ -50,7 +50,7 @@ today and will need its expectations updated when they are gone; that is the poi
 
 ## The actuator table has its own problems
 
-`diablo_actuators.csv` is well-formed (21 cells per row) and is read exactly as
+`engine_actuators.csv` is well-formed (21 cells per row) and is read exactly as
 written. Four cells cannot be what anybody meant:
 
 | state | commands OPEN | why it is wrong |

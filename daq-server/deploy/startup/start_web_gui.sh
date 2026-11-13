@@ -136,7 +136,7 @@ echo "🚀 Starting controller_service..."
 "$SCRIPT_DIR/../../build/bin/controller_service" --config "$SCRIPT_DIR/../../config/config.toml" --elodin-host 127.0.0.1 &
 CONTROLLER_PID=$!
 
-cd "$SCRIPT_DIR/../../diablo_server/frontend"
+cd "$SCRIPT_DIR/../../star_server/frontend"
 fi
 
 # C++ Calibration Service (skip in replay/demo)

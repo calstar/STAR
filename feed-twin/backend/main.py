@@ -151,7 +151,11 @@ from backend.tunables import TUNABLES, Tunable
 from backend.tunables import SetupError, describe as describe_tunables, parse_setup
 from backend.tunables import wire_setup
 from backend.study import StudyCase, StudyRequest, StudyRunner
-from backend.statemachine import available as sm_available, load_machine
+from backend.statemachine import (
+    available as sm_available,
+    canonical as sm_canonical,
+    load_machine,
+)
 from backend import daqbox
 from feedtwin.session.statemachine import StateMachine, machine_from_dict
 from feedtwin.session.core import builtin_rows
@@ -616,7 +620,7 @@ def _warm() -> None:
         )
         if diagram is None:
             return
-        stand = _stand(diagram.id, engine.id if engine else "", "hotfire", "diablo")
+        stand = _stand(diagram.id, engine.id if engine else "", "hotfire", "engine")
         Session(stand.model, stand.machine, stand.binding, hookup=stand.hookup).step(
             1e-3
         )
@@ -1443,10 +1447,12 @@ async def import_stand_bundle(
     # The state table: the stand's own travels in its hookup already. A named
     # table this server ships differently, or not at all, travels as the
     # stand's own -- when the stand has a hookup to carry it.
+    # A stand saved before a machine was renamed says the old name.
+    stand["machine"] = sm_canonical(str(stand.get("machine") or "engine"))
     machine = raw.get("machine") or {}
     table = machine.get("table")
     hookup = dict(stand.get("hookup") or {})
-    named = str(machine.get("name") or stand["machine"])
+    named = sm_canonical(str(machine.get("name") or stand["machine"]))
     if isinstance(table, Mapping) and not hookup.get("machine"):
         try:
             local: dict[str, Any] | None = load_machine(named).to_dict()
@@ -3105,7 +3111,7 @@ async def open_session(
     diagram: str,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     multiphase: bool = False,
     body: dict[str, Any] | None = Body(None),
 ) -> SessionOut:
@@ -3225,7 +3231,7 @@ async def open_session(
         diagram=diagram,
         engine=engine,
         fluid_set=fluid_set,
-        machine=machine,
+        machine=sm_canonical(machine),
         multiphase=multiphase,
         user=userdata.store.current_user(request),
         stand=stand_ref,
@@ -3303,7 +3309,7 @@ def _note_unbuildable(diagram: str, engine: str, reason: str) -> None:
     pinned on a good drawing."""
     if engine:
         try:
-            alone = _stand(diagram, "", "hotfire", "diablo")
+            alone = _stand(diagram, "", "hotfire", "engine")
             Session(alone.model, alone.machine, alone.binding, hookup=alone.hookup)
             return
         except (HTTPException, AssemblyError):
@@ -4188,7 +4194,7 @@ async def get_hookup(
     diagram: str,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     ignore_gse: bool = False,
 ) -> HookupOut:
     """The drawing's DAQ box, state table and knobs: saved, or the twin's
@@ -4202,7 +4208,7 @@ async def view_hookup(
     body: HookupBody,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     ignore_gse: bool = False,
     check: bool = True,
 ) -> HookupOut:
@@ -4240,7 +4246,7 @@ async def save_hookup(
     body: HookupBody,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Keep a hookup for this drawing's lineage. New stands open with it.
@@ -4263,7 +4269,7 @@ async def reset_hookup(
     diagram: str,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     ignore_gse: bool = False,
 ) -> HookupOut:
     """Forget this drawing's saved hookup: back to the twin's suggestion."""
@@ -5322,7 +5328,7 @@ def _session_from_inputs(
         str(inputs["diagram"]),
         str(inputs.get("engine") or ""),
         str(inputs.get("fluid_set") or "hotfire"),
-        str(inputs.get("machine") or "diablo"),
+        str(inputs.get("machine") or "engine"),
         bool(inputs.get("multiphase")),
         vehicle_only=setup.ignore_gse,
         gas=_pressurant_swap(setup.pressurant),
@@ -5341,7 +5347,7 @@ def _session_from_inputs(
     if any(r not in known for k in hookup.knobs for r in k.regulators):
         hookup = drawn
     # The table the run was recorded on, not whatever the drawing has now.
-    table = hookup.machine or _shipped_machine(str(inputs.get("machine") or "diablo"))
+    table = hookup.machine or _shipped_machine(str(inputs.get("machine") or "engine"))
     session = Session(
         stand.model,
         table,
@@ -5766,7 +5772,7 @@ async def state_machine(
     diagram: str,
     engine: str = "",
     fluid_set: str = "hotfire",
-    machine: str = "diablo",
+    machine: str = "engine",
     ignore_gse: bool = False,
 ) -> StateMachineOut:
     """The drawing's states and how they bind to its valves (the vehicle's

@@ -102,7 +102,7 @@ Boards (UDP) → daq_bridge → Elodin DB → relay (ws :9090) → backend → U
 
 **Controller measurement (10% sample):**
 
-- **Code**: `diablo_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
+- **Code**: `star_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
 - **Logic**: `if (tick % 10 == 0) { writeMeasurementToDB(meas); }`
 - **Console**: Same condition — `[Controller] tick=N` prints every 10th tick
 - **Verify**: Run `./build/bin/controller_service --config config/config.toml --elodin-host 127.0.0.1` — observe ticks 0, 10, 20, 30, 40… (every 10th tick)

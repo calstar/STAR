@@ -3,8 +3,8 @@ Per-board clock sync for plotting — a Python port of the DAQ server's
 ``fsw::time::BoardClockSync``.
 
 Straight port of:
-  daq-server/diablo_server/lib/include/time/BoardClockSync.hpp
-  daq-server/diablo_server/lib/src/time/BoardClockSync.cpp
+  daq-server/star_server/lib/include/time/BoardClockSync.hpp
+  daq-server/star_server/lib/src/time/BoardClockSync.cpp
 as used by the bridge in daq_bridge/daq_bridge_main.cpp. Keep the two in step —
 the algorithm, the config defaults, and the invariants below are theirs, not
 ours. Config defaults mirror [time_sync] in daq-server/config/config.toml.
@@ -229,7 +229,7 @@ class BoardClockSync:
 
 # -----------------------------------------------------------------------------
 def _self_test() -> None:
-    """Mirrors daq-server/diablo_server/lib/test/test_board_clock_sync.cpp."""
+    """Mirrors daq-server/star_server/lib/test/test_board_clock_sync.cpp."""
     S = 1_000_000_000  # ns per second
 
     # -- spreading: chunks keep their true spacing, not the arrival instant ---

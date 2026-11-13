@@ -45,7 +45,7 @@ try:
             ascii_str = "".join(chr(b) if 32 <= b < 127 else "." for b in data[:32])
             print(f"  ASCII: {ascii_str}")
 
-            # Check if it looks like DiabloAvionics packet
+            # Check if it looks like StarAvionics packet
             if len(data) >= 1:
                 first_byte = data[0]
                 if first_byte == 3:

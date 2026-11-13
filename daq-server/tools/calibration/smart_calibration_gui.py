@@ -76,7 +76,7 @@ class SmartCalibrationGUI:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Smart PT Calibration System - Diablo FSW")
+        self.root.title("Smart PT Calibration System - Star FSW")
         self.root.geometry("1800x1200")
         self.root.configure(bg="#2b2b2b")
 

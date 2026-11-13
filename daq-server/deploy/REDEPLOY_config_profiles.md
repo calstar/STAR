@@ -30,7 +30,7 @@ firmware; a flight config uses `192.168.3.x`, which requires a firmware rebuild 
 
 Find your checkout (the git repo root that contains `daq-server/`):
 ```bash
-systemctl --user cat sensor-backend | grep WorkingDirectory   # → …/daq-server/diablo_server/backend
+systemctl --user cat sensor-backend | grep WorkingDirectory   # → …/daq-server/star_server/backend
 DAQ=…/daq-server            # the daq-server dir from that path
 REPO="$(git -C "$DAQ" rev-parse --show-toplevel)"   # repo root (e.g. ~/STAR-daq)
 ```

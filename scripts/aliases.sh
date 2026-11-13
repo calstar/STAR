@@ -100,8 +100,8 @@ _star_python() {
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 # daq-server: unit (fast), integration (full pipeline), E2E (browser).
-alias daq-test="cd '$_STAR_ROOT/daq-server/diablo_server/frontend' && npm run test"
-alias daq-test-watch="cd '$_STAR_ROOT/daq-server/diablo_server/frontend' && npm run test:watch"
+alias daq-test="cd '$_STAR_ROOT/daq-server/star_server/frontend' && npm run test"
+alias daq-test-watch="cd '$_STAR_ROOT/daq-server/star_server/frontend' && npm run test:watch"
 alias daq-test-int="cd '$_STAR_ROOT/daq-server' && bash test/test_integration.sh"
 alias daq-test-e2e="bash '$_STAR_ROOT/daq-server/test/e2e_guitest_playwright.sh'"
 
@@ -132,16 +132,16 @@ alias landing-build="cd '$_STAR_ROOT/landing' && npm run build"
 alias daq-sim="bash '$_STAR_ROOT/daq-server/dev.sh' --sim"
 
 # Run one process on its own, outside the tmux stack.
-alias daq-backend="cd '$_STAR_ROOT/daq-server/diablo_server/backend' && npx tsx src/server.ts"
-alias daq-frontend="cd '$_STAR_ROOT/daq-server/diablo_server/frontend' && npm run dev"
+alias daq-backend="cd '$_STAR_ROOT/daq-server/star_server/backend' && npx tsx src/server.ts"
+alias daq-frontend="cd '$_STAR_ROOT/daq-server/star_server/frontend' && npm run dev"
 
 # Older names, kept: they appear throughout the daq-server docs.
 alias daq-gui="bash '$_STAR_ROOT/daq-server/dev.sh' --attach"
 alias daq-guitest="bash '$_STAR_ROOT/daq-server/dev.sh' --sim-attach"
 alias daq-stopgui="bash '$_STAR_ROOT/daq-server/dev.sh' --stop"
 alias daq-playwright="bash '$_STAR_ROOT/daq-server/test/e2e_guitest_playwright.sh'"
-alias daq-test-frontend="cd '$_STAR_ROOT/daq-server/diablo_server/frontend' && npm run test"
-alias daq-test-frontend-watch="cd '$_STAR_ROOT/daq-server/diablo_server/frontend' && npm run test:watch"
+alias daq-test-frontend="cd '$_STAR_ROOT/daq-server/star_server/frontend' && npm run test"
+alias daq-test-frontend-watch="cd '$_STAR_ROOT/daq-server/star_server/frontend' && npm run test:watch"
 
 # ── Production stack ──────────────────────────────────────────────────────────
 #

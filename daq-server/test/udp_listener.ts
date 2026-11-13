@@ -4,7 +4,7 @@
  *
  * Usage: tsx udp_listener.ts [port] [output_file] [timeout_seconds]
  *
- * Type 4 ACTUATOR_COMMAND (DiabloAvionics):
+ * Type 4 ACTUATOR_COMMAND (StarAvionics):
  *   Byte 0: packet_type (4)
  *   Byte 1: version
  *   Bytes 2-5: timestamp (uint32 LE)

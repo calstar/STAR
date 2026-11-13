@@ -386,7 +386,7 @@ static size_t create_no_connection_abort_packet(uint8_t* buffer,
         return 0;
     daq::PacketHeader header;
     header.packet_type = daq::PacketType::NO_CONNECTION_ABORT;
-    header.version = DIABLO_COMMS_VERSION;
+    header.version = COMMS_VERSION;
     header.timestamp = millis();
     memcpy(buffer, &header, sizeof(header));
     return sizeof(header);

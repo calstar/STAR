@@ -101,7 +101,7 @@ BoardState = type(
         "SELF_TEST": 10,
     },
 )()
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 SENSOR_DATA_PACKET_FORMAT = "<BB"
 SENSOR_DATA_PACKET_SIZE = 2
 SENSOR_DATA_CHUNK_FORMAT = "<I"
@@ -640,7 +640,7 @@ def upload_firmware_to_esp32(
 def _make_header(packet_type: int) -> bytes:
     """Build 6-byte packet header: type, version, timestamp (little-endian)."""
     ts = int(time.time() * 1000) & 0xFFFFFFFF
-    return struct.pack(PACKET_HEADER_FORMAT, packet_type, DIABLO_COMMS_VERSION, ts)
+    return struct.pack(PACKET_HEADER_FORMAT, packet_type, COMMS_VERSION, ts)
 
 
 def build_server_heartbeat_packet() -> bytes:

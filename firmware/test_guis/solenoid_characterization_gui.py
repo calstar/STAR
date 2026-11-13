@@ -66,7 +66,7 @@ import numpy as np
 import pandas as pd
 
 # Protocol constants from DAQv2-Comms.h
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 
@@ -739,7 +739,7 @@ def create_actuator_command_packet(commands: List[Tuple[int, int]]) -> bytes:
         packet,
         offset,
         PacketType.ACTUATOR_COMMAND,
-        DIABLO_COMMS_VERSION,
+        COMMS_VERSION,
         int(time.time() * 1000) & 0xFFFFFFFF,
     )
     offset += PACKET_HEADER_SIZE
@@ -783,7 +783,7 @@ def create_pwm_actuator_command_packet(
         packet,
         offset,
         PacketType.PWM_ACTUATOR_COMMAND,
-        DIABLO_COMMS_VERSION,
+        COMMS_VERSION,
         int(time.time() * 1000) & 0xFFFFFFFF,
     )
     offset += PACKET_HEADER_SIZE

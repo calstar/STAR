@@ -10,7 +10,7 @@
 #   - C++ binaries built (cmake/make): daq_bridge, sequencer_service
 #   - elodin-db in PATH or ~/.cargo/bin
 #   - Node.js 20+ with tsx
-#   - npm install done in diablo_server/backend
+#   - npm install done in star_server/backend
 #   - Python 3 with board_simulator.py dependencies (fallback data source)
 #
 # Browser / Playwright E2E is separate: bash test/e2e_guitest_playwright.sh (not run by this script).
@@ -120,7 +120,7 @@ kill_stale_integration_processes() {
     pkill -f "$REPO_ROOT.*$name" 2>/dev/null && killed=$((killed + 1)) || true
   done
   # Backend server (tsx src/server.ts) — match on the server.ts path
-  pkill -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null && killed=$((killed + 1)) || true
+  pkill -f "$REPO_ROOT/star_server/backend.*server\.ts" 2>/dev/null && killed=$((killed + 1)) || true
   # Elodin DB — match on the test DB path pattern
   pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
   # Also kill any process bound to our test ports
@@ -133,7 +133,7 @@ kill_stale_integration_processes() {
     for name in "${INTEGRATION_PROCESS_NAMES[@]}"; do
       pkill -9 -f "$REPO_ROOT.*$name" 2>/dev/null || true
     done
-    pkill -9 -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null || true
+    pkill -9 -f "$REPO_ROOT/star_server/backend.*server\.ts" 2>/dev/null || true
     pkill -9 -f "elodin.*integration_test" 2>/dev/null || true
     [ -n "$label" ] && echo "  $label: killed $killed stale process group(s)"
   fi
@@ -376,9 +376,9 @@ command -v tsx &>/dev/null || command -v npx &>/dev/null || fail "tsx or npx not
 echo "  ✅ tsx/npx available"
 
 # Ensure backend dependencies
-if [ ! -d "$REPO_ROOT/diablo_server/backend/node_modules/ws" ]; then
+if [ ! -d "$REPO_ROOT/star_server/backend/node_modules/ws" ]; then
   echo "  ⚠️  Installing backend dependencies..."
-  (cd "$REPO_ROOT/diablo_server/backend" && npm install)
+  (cd "$REPO_ROOT/star_server/backend" && npm install)
 fi
 echo "  ✅ backend node_modules"
 
@@ -812,7 +812,7 @@ fi
 
 if [ "$BACKEND" = "thin" ]; then
   echo "🖥️  Starting Backend server (server.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
+  (cd "$REPO_ROOT/star_server/backend" && \
     WS_PORT=$TEST_BACKEND_WS_PORT \
     ELODIN_HOST=127.0.0.1 \
     ELODIN_PORT=$TEST_ELODIN_PORT \
@@ -822,7 +822,7 @@ if [ "$BACKEND" = "thin" ]; then
     npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
   echo "🖥️  Starting Backend server (server-legacy.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
+  (cd "$REPO_ROOT/star_server/backend" && \
     WS_PORT=$TEST_BACKEND_WS_PORT \
     API_PORT=$TEST_BACKEND_API_PORT \
     ELODIN_HOST=127.0.0.1 \
@@ -1059,8 +1059,8 @@ fi
 # ── Start UDP Listener for Actuator Commands ─────────────────────────────────
 
 echo "📥 Starting UDP listener for actuator commands..."
-(cd "$REPO_ROOT/diablo_server/backend" && \
-  NODE_PATH="$REPO_ROOT/diablo_server/backend/node_modules" \
+(cd "$REPO_ROOT/star_server/backend" && \
+  NODE_PATH="$REPO_ROOT/star_server/backend/node_modules" \
   npx tsx "$SCRIPT_DIR/udp_listener.ts" "$TEST_ACTUATOR_UDP_PORT" "$UDP_COMMANDS_FILE" 120 > "$REPO_ROOT/.tmp/integration_udp_$$.log" 2>&1) &
 UDP_PID=$!
 PIDS+=($UDP_PID)
@@ -1084,7 +1084,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
 # Test 15 (sample conservation) reads the sim's live ground-truth stats file
 export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
-# cal_values reads the factory PT coeffs the service loaded (the test cwd is diablo_server/backend).
+# cal_values reads the factory PT coeffs the service loaded (the test cwd is star_server/backend).
 export INTEGRATION_CAL_DIR="$REPO_ROOT/scripts/calibration/calibrations"
 # Must match the points_per_second sed above — arms the envelope cap/floor asserts
 # (envelope mode only; throttle ignores points_per_second)
@@ -1096,8 +1096,8 @@ fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client
 [ "$VERBOSE" = "1" ] && export INTEGRATION_SELFTEST_DEBUG=1
-(cd "$REPO_ROOT/diablo_server/backend" && \
-  NODE_PATH="$REPO_ROOT/diablo_server/backend/node_modules" \
+(cd "$REPO_ROOT/star_server/backend" && \
+  NODE_PATH="$REPO_ROOT/star_server/backend/node_modules" \
   npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" \
   --received-stats "$RECEIVED_STATS_FILE" \
   --udp-commands "$UDP_COMMANDS_FILE" \

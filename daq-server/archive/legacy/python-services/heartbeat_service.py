@@ -30,7 +30,7 @@ if not CONFIG_PATH.is_file():
     CONFIG_PATH = Path("config/config.toml")  # cwd-relative fallback
 
 SERVER_HEARTBEAT_TYPE = 2
-DIABLO_VERSION = 0
+COMMS_VERSION = 0
 
 
 def load_toml(path: Path) -> dict:
@@ -81,7 +81,7 @@ def build_heartbeat_packet(engine_state: int) -> bytes:
     return bytes(
         [
             SERVER_HEARTBEAT_TYPE,
-            DIABLO_VERSION,
+            COMMS_VERSION,
             (ts_ms >> 0) & 0xFF,
             (ts_ms >> 8) & 0xFF,
             (ts_ms >> 16) & 0xFF,

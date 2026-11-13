@@ -24,7 +24,7 @@ FORMAT_ALL=false
 
 # C/C++ trees to format. Each path is relative to the repo root.
 TARGETS=(
-    "daq-server/diablo_server"
+    "daq-server/star_server"
     "daq-server/archive/legacy/utl"
     "firmware"
 )
@@ -118,7 +118,7 @@ find_cpp_files() {
             # is intentionally frozen old code.
             #
             # nlohmann/ and toml++/ are vendored single-header libraries living under
-            # diablo_server/lib/include. Reformatting them was always wrong — they are
+            # star_server/lib/include. Reformatting them was always wrong — they are
             # upstream code — and they are also clang-format memory bombs: json.hpp is
             # 899 KB and toml.hpp 475 KB of deeply-nested templates, and a single
             # clang-format on json.hpp was measured at 5.6 GB RSS, enough to invoke the

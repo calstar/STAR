@@ -199,7 +199,7 @@ To change the set, edit the lists at the top of `scripts/demo.sh` and run
 ## The stand's state table
 
 The demo stand does not run the DAQ's table as shipped. As the DAQ reads
-`feed-twin/backend/statemachines/diablo_actuators.csv`, **Engine Abort** and
+`feed-twin/backend/statemachines/engine_actuators.csv`, **Engine Abort** and
 **Emergency Abort** command the main valves and the press valves **open**
 (`NEEDS-REPAIR.md`, "The actuator table has its own problems"): an abort on a loaded
 stand keeps feeding the engine, and the twin shows it doing so. That is the right
