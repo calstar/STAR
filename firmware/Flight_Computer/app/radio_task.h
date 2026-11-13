@@ -12,7 +12,8 @@
  *
  * Sending: any task may call radio_task_send_frame(); it takes the radio
  * mutex, so a send and a receive never interleave on the chip, and returns
- * after TxDone (up to ~0.4 s at SF9) or a timeout.
+ * after TxDone or a timeout. At SF11 / 500 kHz a heartbeat is on air for
+ * about 0.15 s, and a full 255-byte frame for about 1.05 s.
  */
 
 #include <stdbool.h>

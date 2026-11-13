@@ -144,13 +144,24 @@ void tearDown(void) {
 static void test_frequency_word_and_time_on_air(void) {
     // Independent Python: 915e6 << 25 / 32e6; p.41 formula.
     TEST_ASSERT_EQUAL_HEX32(0x39300000, sx1262_frequency_word(915000000));
-    TEST_ASSERT_EQUAL_UINT32(164864, lora_time_on_air_us(kDefaultLora, 14));
+    // Default SF11 / 500 kHz: 4.096 ms symbols, LDRO off.
+    TEST_ASSERT_EQUAL_UINT32(144384, lora_time_on_air_us(kDefaultLora, 14));
     TEST_ASSERT_EQUAL_UINT32(103424, lora_time_on_air_us(kDefaultLora, 1));
+    TEST_ASSERT_EQUAL_UINT32(1045504, lora_time_on_air_us(kDefaultLora, 255));
+    LoraConfig sf9_500 = kDefaultLora;
+    sf9_500.sf = 9;  // 1.024 ms symbols
+    TEST_ASSERT_EQUAL_UINT32(41216, lora_time_on_air_us(sf9_500, 14));
+    LoraConfig sf9_125 = kDefaultLora;  // the old link, same 4.096 ms symbol
+    sf9_125.sf = 9;
+    sf9_125.bw = 0x04;
+    TEST_ASSERT_EQUAL_UINT32(164864, lora_time_on_air_us(sf9_125, 14));
     LoraConfig sf7 = kDefaultLora;
     sf7.sf = 7;
+    sf7.bw = 0x04;
     TEST_ASSERT_EQUAL_UINT32(399616, lora_time_on_air_us(sf7, 255));
     LoraConfig sf12 = kDefaultLora;
-    sf12.sf = 12;  // 32.8 ms symbols: LDRO on
+    sf12.sf = 12;  // 125 kHz: 32.8 ms symbols, LDRO on
+    sf12.bw = 0x04;
     TEST_ASSERT_EQUAL_UINT32(991232, lora_time_on_air_us(sf12, 10));
 }
 
@@ -178,7 +189,7 @@ static void test_configure_follows_the_datasheet_order(void) {
     TEST_ASSERT_EQUAL_HEX8_ARRAY(pa, chip.cmds[9], sizeof pa);
     const uint8_t power[] = {0x8E, 0x16, 0x04};  // +22 dBm, 200 us ramp
     TEST_ASSERT_EQUAL_HEX8_ARRAY(power, chip.cmds[10], sizeof power);
-    const uint8_t mod[] = {0x8B, 0x09, 0x04, 0x01, 0x00};  // SF9 125k 4/5
+    const uint8_t mod[] = {0x8B, 0x0B, 0x06, 0x01, 0x00};  // SF11 500k 4/5
     TEST_ASSERT_EQUAL_HEX8_ARRAY(mod, chip.cmds[12], sizeof mod);
     const uint8_t pkt[] = {0x8C, 0x00, 0x08, 0x00, 0xFF, 0x01, 0x00};
     TEST_ASSERT_EQUAL_HEX8_ARRAY(pkt, chip.cmds[13], sizeof pkt);  // CRC on
@@ -215,18 +226,21 @@ static void test_send_waits_for_tx_done_and_returns_to_rx(void) {
     TEST_ASSERT_EQUAL(SetupStep::Ok, radio.configure());
     chip.n_cmds = 0;
     const uint8_t frame[14] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+    chip.tx_modulation = 0x05;  // bit 2 set, as a 125 kHz send leaves it
     TEST_ASSERT_EQUAL(RadioStatus::Ok, radio.send(frame, sizeof frame));
     TEST_ASSERT_EQUAL_HEX8_ARRAY(frame, chip.buffer, sizeof frame);
-    TEST_ASSERT_EQUAL_HEX8(0x05, chip.tx_modulation);  // errata 15.1 bit 2
+    // Errata 15.1 (p.102): at 500 kHz bit 2 is cleared.
+    TEST_ASSERT_EQUAL_HEX8(0x01, chip.tx_modulation);
     int pp = chip.find(0x8C);
     TEST_ASSERT_TRUE(pp >= 0);
     TEST_ASSERT_EQUAL_HEX8(14, chip.cmds[pp][4]);  // payload length for TX
     int tx = chip.find(0x83);
     TEST_ASSERT_TRUE(tx > pp);
-    // Timeout = 2 x 164864 us in 15.625 us steps = 21103 (0x00526F).
+    // Timeout = 2 x 144384 us in 15.625 us steps, rounded up:
+    // 18482 (0x004832).
     TEST_ASSERT_EQUAL_HEX8(0x00, chip.cmds[tx][1]);
-    TEST_ASSERT_EQUAL_HEX8(0x52, chip.cmds[tx][2]);
-    TEST_ASSERT_EQUAL_HEX8(0x6F, chip.cmds[tx][3]);
+    TEST_ASSERT_EQUAL_HEX8(0x48, chip.cmds[tx][2]);
+    TEST_ASSERT_EQUAL_HEX8(0x32, chip.cmds[tx][3]);
     TEST_ASSERT_EQUAL_UINT(3, control.delays);  // polled until TxDone
     TEST_ASSERT_FALSE(control.rx_switch_during_tx);
     // Back to listening for any length.
@@ -235,6 +249,17 @@ static void test_send_waits_for_tx_done_and_returns_to_rx(void) {
     TEST_ASSERT_EQUAL_HEX8(0xFF, chip.cmds[chip.find(0x8C, tx)][4]);
     TEST_ASSERT_TRUE(control.rx_switch);
     TEST_ASSERT_EQUAL_UINT32(1, radio.tx_ok());
+}
+
+static void test_send_below_500k_sets_the_errata_bit(void) {
+    LoraConfig narrow = kDefaultLora;
+    narrow.sf = 9;
+    narrow.bw = 0x04;  // 125 kHz
+    Sx1262Setup radio(chip, control, narrow);
+    TEST_ASSERT_EQUAL(SetupStep::Ok, radio.configure());
+    const uint8_t frame[3] = {1, 2, 3};
+    TEST_ASSERT_EQUAL(RadioStatus::Ok, radio.send(frame, sizeof frame));
+    TEST_ASSERT_EQUAL_HEX8(0x05, chip.tx_modulation);  // errata 15.1 bit 2
 }
 
 static void test_send_keeps_a_packet_that_just_arrived(void) {
@@ -252,8 +277,8 @@ static void test_send_times_out(void) {
     chip.polls_until_done = -1;  // TxDone never comes
     const uint8_t frame[14] = {0};
     TEST_ASSERT_EQUAL(RadioStatus::ErrTimeout, radio.send(frame, sizeof frame));
-    // Host limit: 2 x ToA + 50 ms = 379 ms of 1 ms polls, then give up.
-    TEST_ASSERT_EQUAL_UINT(379, control.delays);
+    // Host limit: 2 x ToA + 50 ms = 338 ms of 1 ms polls, then give up.
+    TEST_ASSERT_EQUAL_UINT(338, control.delays);
     TEST_ASSERT_EQUAL_UINT32(1, radio.tx_timeouts());
     TEST_ASSERT_TRUE(control.rx_switch);  // still returned to RX
 
@@ -281,6 +306,7 @@ int main(int, char**) {
     RUN_TEST(test_configure_follows_the_datasheet_order);
     RUN_TEST(test_configure_names_the_failing_step);
     RUN_TEST(test_send_waits_for_tx_done_and_returns_to_rx);
+    RUN_TEST(test_send_below_500k_sets_the_errata_bit);
     RUN_TEST(test_send_keeps_a_packet_that_just_arrived);
     RUN_TEST(test_send_times_out);
     RUN_TEST(test_send_refuses_bad_input_and_dead_chip);
