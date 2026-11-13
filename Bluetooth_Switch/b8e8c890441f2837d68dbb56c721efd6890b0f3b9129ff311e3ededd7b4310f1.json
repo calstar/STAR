@@ -1,0 +1,20 @@
+{
+  "board": "Bluetooth_Switch",
+  "built_by": "ci",
+  "commits": [
+    "15b5a0c53c534aa05d6c19592f89c25e9a469698"
+  ],
+  "esptool": "tool-esptoolpy @ 2.41100.260830",
+  "file_sha256": "ebc4638d79521a6a21b288e38712de8e77abfc8be0a656fd7303fc36e508f3f7",
+  "first_seen_commit_at": "2026-11-12T21:21:13-08:00",
+  "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
+  "image_digest": "b8e8c890441f2837d68dbb56c721efd6890b0f3b9129ff311e3ededd7b4310f1",
+  "image_len": 531440,
+  "pio_env": "bluetooth_switch",
+  "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
+  "run_attempt": "1",
+  "run_id": "43371471728",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/43371471728",
+  "subject": "Bluetooth switch: light sleep, hide continuity, host the web client on EC2 (#220)",
+  "toolchains": "toolchain-esp32ulp @ 1.23800.240113,toolchain-esp32ulp @ ~1.23800.0) toolchain-riscv32-esp @ 8.4.0+2021r2-patch5,toolchain-riscv32-esp @ 8.4.0+2021r2-patch5)"
+}

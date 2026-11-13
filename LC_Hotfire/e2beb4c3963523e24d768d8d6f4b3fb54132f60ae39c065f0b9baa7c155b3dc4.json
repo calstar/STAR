@@ -2,6 +2,7 @@
   "board": "LC_Hotfire",
   "built_by": "ci",
   "commits": [
+    "15b5a0c53c534aa05d6c19592f89c25e9a469698",
     "3710ba43c801a9c838281323af7b59b1b22bc041",
     "746988b58c57703d8a9ad0bc3ef5940ca4f6cc36",
     "83fa407ea526ce01d5eb03892e5b4b6a217fa605",
@@ -20,8 +21,8 @@
   "pio_env": "adafruit_feather_esp32s3",
   "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
   "run_attempt": "1",
-  "run_id": "43353838674",
-  "run_url": "https://github.com/calstar/STAR/actions/runs/43353838674",
-  "subject": "Bluetooth switch firmware (WifiSwitch board) (#218)",
+  "run_id": "43371471728",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/43371471728",
+  "subject": "Bluetooth switch: light sleep, hide continuity, host the web client on EC2 (#220)",
   "toolchains": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5,toolchain-riscv32-esp @ 8.4.0+2021r2-patch5) toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5,toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)"
 }
