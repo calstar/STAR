@@ -2,19 +2,23 @@
   "board": "BallValve_Hotfire",
   "built_by": "ci",
   "commits": [
+    "746988b58c57703d8a9ad0bc3ef5940ca4f6cc36",
     "83fa407ea526ce01d5eb03892e5b4b6a217fa605"
   ],
   "esptool": "tool-esptoolpy @ 2.41100.260830",
   "file_sha256": "3454498859f0d9302c7fd7d28e32fac74c56c49f0bc3d3d06b2bb85f13de72f2",
+  "first_run_id": "43121858896",
+  "first_run_url": "https://github.com/calstar/STAR/actions/runs/43121858896",
   "first_seen_commit_at": "2026-11-11T15:42:20-08:00",
+  "first_subject": "Ball valve firmware for STAR Prop Receiver v2 (#217)",
   "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
   "image_digest": "5e3ad68465002248757a39e8902e17595519b57d349d858911777f799fbb7056",
   "image_len": 340016,
   "pio_env": "esp32s3",
   "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
   "run_attempt": "1",
-  "run_id": "43121858896",
-  "run_url": "https://github.com/calstar/STAR/actions/runs/43121858896",
-  "subject": "Ball valve firmware for STAR Prop Receiver v2 (#217)",
+  "run_id": "43351815017",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/43351815017",
+  "subject": "Flight computer: health task, IWDG through Idle sleep, SelfTest frame at start-up (#179)",
   "toolchains": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5,toolchain-riscv32-esp @ 8.4.0+2021r2-patch5) toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5,toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)"
 }
