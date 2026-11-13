@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { clearTareFile, setRunDir } from './lc-tare.js';
 
-// daq-server repo root (…/daq-server), from …/daq-server/diablo_server/backend/{src,dist}.
+// daq-server repo root (…/daq-server), from …/daq-server/star_server/backend/{src,dist}.
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SIM_SCRIPT = join(PROJECT_ROOT, 'sim', 'board_simulator.py');
 const SIM_CONFIG = join(PROJECT_ROOT, 'config', 'sim_config.toml');

@@ -53,7 +53,7 @@ sleep 1
 echo "✅ Elodin DB"
 
 # 2. Relay (must connect before daq_bridge writes)
-cd "$PROJECT/diablo_server/backend"
+cd "$PROJECT/star_server/backend"
 [ ! -d node_modules ] && npm install --silent
 npm run relay > /tmp/relay_fake.log 2>&1 &
 sleep 2
@@ -88,7 +88,7 @@ sleep 1
 echo "✅ Board simulator (PT, actuator heartbeats → :5006)"
 
 # 5. Backend
-cd "$PROJECT/diablo_server/backend"
+cd "$PROJECT/star_server/backend"
 ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=false"
 [ -x "$PROJECT/build/bin/actuator_service" ] && ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=true ACTUATOR_SERVICE_PORT=9998"
 ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false $ACTUATOR_SVC_ENV npm run dev > /tmp/backend_fake.log 2>&1 &

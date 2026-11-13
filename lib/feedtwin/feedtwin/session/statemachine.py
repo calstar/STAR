@@ -344,7 +344,7 @@ def load_machine(
             if len(row) != len(columns):
                 # A short row is read LEFT-ALIGNED, because that is how the
                 # stand reads it. The DAQ's own parser
-                # (diablo_server/backend/src/legacy/state-transitions.ts) maps
+                # (star_server/backend/src/legacy/state-transitions.ts) maps
                 # row[j] onto headers[j-1] and stops at the end of the row, so
                 # a 20-cell row simply never speaks about the last column.
                 # This twin used to refuse every move out of such a state on

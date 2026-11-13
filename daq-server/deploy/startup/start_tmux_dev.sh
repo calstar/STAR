@@ -64,13 +64,13 @@ else
 fi
 
 # Ensure web-gui dependencies are installed (tmux panes assume they exist).
-if [ ! -d "$PROJECT/diablo_server/backend/node_modules" ]; then
+if [ ! -d "$PROJECT/star_server/backend/node_modules" ]; then
   echo "📦 Installing web-gui backend dependencies..."
-  (cd "$PROJECT/diablo_server/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
+  (cd "$PROJECT/star_server/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
 fi
-if [ ! -d "$PROJECT/diablo_server/frontend/node_modules" ]; then
+if [ ! -d "$PROJECT/star_server/frontend/node_modules" ]; then
   echo "📦 Installing web-gui frontend dependencies..."
-  (cd "$PROJECT/diablo_server/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
+  (cd "$PROJECT/star_server/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
 fi
 
 # Check if services are already running via systemd
@@ -222,7 +222,7 @@ WAIT_FOR_BACKEND='echo "  ⏳ Waiting for backend WS (port '"$THIN_WS_PORT"')...
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
 # Backend also serves the built SPA on :3000 (GUI_PORT) and handles OTA flash
 # requests (OTA_SERVICE_PORT — previously set on the frontend's Next routes).
-CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && '"$BACKEND_RUNNING_CONFIG"'WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
+CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/star_server/backend && '"$BACKEND_RUNNING_CONFIG"'WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 THIN_STATS_LOG='"$THIN_STATS_LOG"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 # The frontend is a static Vite build served by the backend (GUI_PORT=3000).
@@ -231,7 +231,7 @@ CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 # Dev iteration: FRONTEND_DEV=1 runs `vite dev` on :3000 instead (backend's
 # static listener stands down automatically on port conflict).
 if [ "${FRONTEND_DEV:-0}" = "1" ]; then
-  CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — vite dev :3000 ══\n\n" && cd '"$PROJECT"'/diablo_server/frontend && npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
+  CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — vite dev :3000 ══\n\n" && cd '"$PROJECT"'/star_server/frontend && npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
 else
   CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — static build (served by backend :3000) ══\n\n" && bash '"$PROJECT"'/deploy/startup/ensure_frontend_build.sh 2>&1 | tee '"$CMD_LOG_FRONTEND"' && printf "\n  ✅ Frontend built — served by backend on :3000\n" && sleep infinity'
 fi
@@ -405,7 +405,7 @@ launch_background() {
     echo -n "."
   done
   echo " ready"
-  nohup bash -c "cd '$PROJECT/diablo_server/backend' && ${BACKEND_RUNNING_CONFIG}WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
+  nohup bash -c "cd '$PROJECT/star_server/backend' && ${BACKEND_RUNNING_CONFIG}WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 THIN_STATS_LOG='${THIN_STATS_LOG}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
   echo "    Backend:      PID $! → $LOGDIR/backend.log (serves GUI on :3000)"
 
   # Frontend: static build served by the backend — just ensure dist/ is current.

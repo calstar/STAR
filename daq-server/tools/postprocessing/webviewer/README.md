@@ -260,7 +260,7 @@ behind the caller's back; `POST /index` is the way to build one.
 `elodin-db` records identities, not meanings: a run DB holds `PT1.CH5`, `ACT2.CH3`,
 `ACT_CMD.B2.CH3`, `BOARD.HB_52`, and every state as a bare `u8`. The names live in
 `config.toml`, which the DAQ backend copies to `<dbDir>.toml` beside the run dir when a
-session starts (`diablo_server/backend/src/service-controller.ts`, `snapshotRunConfig`;
+session starts (`star_server/backend/src/service-controller.ts`, `snapshotRunConfig`;
 a sim run snapshots `sim_config.toml`). `backend/run_config.py` reads that back:
 
 | Config | Names |
@@ -315,7 +315,7 @@ uPlot canvas ──toBlob()──▶ PNG
 
 ## Theme
 
-Drawn the way the DAQ console is (`daq-server/diablo_server/frontend/app/globals.css`;
+Drawn the way the DAQ console is (`daq-server/star_server/frontend/app/globals.css`;
 feed-twin's console shares it), so the viewer reads as part of the same stand: true black,
 a panel is a region between hairlines rather than a card, nothing is rounded or casts a
 shadow, labels and controls are small spaced monospace capitals, related buttons share

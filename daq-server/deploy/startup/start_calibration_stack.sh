@@ -67,7 +67,7 @@ echo -e "${GREEN}✅ Elodin DB :2240${NC}"
 
 # Pane 1: Relay (must connect before DAQ bridge writes — first subscriber gets stream)
 tmux split-window -h -t calibration_stack:0.0
-tmux send-keys -t calibration_stack:0.1 "cd $REPO_ROOT/diablo_server/backend" C-m
+tmux send-keys -t calibration_stack:0.1 "cd $REPO_ROOT/star_server/backend" C-m
 tmux send-keys -t calibration_stack:0.1 "[ -d node_modules ] || npm install --silent" C-m
 tmux send-keys -t calibration_stack:0.1 "npm run relay" C-m
 sleep 2

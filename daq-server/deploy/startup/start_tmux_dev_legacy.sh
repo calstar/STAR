@@ -51,13 +51,13 @@ if [ -z "$ELODIN_DB_BIN" ]; then
 fi
 
 # Ensure web-gui dependencies are installed (tmux panes assume they exist).
-if [ ! -d "$PROJECT/diablo_server/backend/node_modules" ]; then
+if [ ! -d "$PROJECT/star_server/backend/node_modules" ]; then
   echo "📦 Installing web-gui backend dependencies..."
-  (cd "$PROJECT/diablo_server/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
+  (cd "$PROJECT/star_server/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
 fi
-if [ ! -d "$PROJECT/diablo_server/frontend/node_modules" ]; then
+if [ ! -d "$PROJECT/star_server/frontend/node_modules" ]; then
   echo "📦 Installing web-gui frontend dependencies..."
-  (cd "$PROJECT/diablo_server/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
+  (cd "$PROJECT/star_server/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
 fi
 
 # Check if services are already running via systemd
@@ -145,15 +145,15 @@ CMD_ACTUATOR="printf '\n  ══ ACTUATOR SERVICE (TCP :9998 → state → UDP c
 
 CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
-CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/diablo_server/backend && npm run relay 2>&1"
+CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/star_server/backend && npm run relay 2>&1"
 # Auto-detect whether the actuator_service binary is available for TCP forwarding.
 # If not built yet, disable TCP forwarding so state transitions send UDP directly.
 ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=false"
 if [ -x "$ACTUATOR_BIN" ]; then
   ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=true ACTUATOR_SERVICE_PORT=9998"
 fi
-CMD_WEB_BACKEND="printf '\n  ══ LEGACY BACKEND — WS :8081 (server-legacy.ts) ══\n\n' && sleep 5 && cd $PROJECT/diablo_server/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false USE_CPP_CONTROLLER=true npx tsx watch src/server-legacy.ts 2>&1"
-CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/diablo_server/frontend && npm run dev 2>&1"
+CMD_WEB_BACKEND="printf '\n  ══ LEGACY BACKEND — WS :8081 (server-legacy.ts) ══\n\n' && sleep 5 && cd $PROJECT/star_server/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false USE_CPP_CONTROLLER=true npx tsx watch src/server-legacy.ts 2>&1"
+CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/star_server/frontend && npm run dev 2>&1"
 # Calibration: Robust stack (Python) is primary; C++ polynomial disabled when USE_ROBUST_CALIBRATION=1 (default)
 USE_ROBUST_CAL="${USE_ROBUST_CALIBRATION:-1}"
 CAL_VERBOSE="${CAL_VERBOSE:-1}"

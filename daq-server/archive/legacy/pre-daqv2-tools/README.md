@@ -13,7 +13,7 @@ them work against the current stack:
 - `test_elodin_editor.sh` — same dead paths, plus `config/sensor_routing.toml`
   which no longer exists.
 
-Note: `diablo_server/transport/include/protocol/EncryptedFrame.hpp` is NOT
+Note: `star_server/transport/include/protocol/EncryptedFrame.hpp` is NOT
 part of this era despite its name — it holds the current host-side sample
 structs and is live (included by SensorRouter / SensorFramePipeline). Only the
 file name is a fossil.

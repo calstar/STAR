@@ -78,7 +78,7 @@ The tracked `config/config_base.toml` and `config/profiles/default/config.toml` 
 
 The board simulator supports `--only-type ENVIRONMENTAL` with the firmware's 5 Hz default rate. Use a loopback simulation config for local testing. The standard `test/ws_data_flow_test.ts` suite includes environmental values, units, epoch timestamps, heartbeat attribution, and malformed-packet rejection. Select these checks with `--backend=thin --only=environmental` against an existing test stack. The default packet source is `127.0.0.25`; `TEST_ENVIRONMENTAL_SOURCE_IP` overrides it for isolated tests.
 
-To test subscription retry and database restart recovery without hardware, build `daq_bridge`, install the backend dependencies, then run from `diablo_server/backend`:
+To test subscription retry and database restart recovery without hardware, build `daq_bridge`, install the backend dependencies, then run from `star_server/backend`:
 
 ```sh
 ELODIN_DB=/absolute/path/to/elodin-db \
@@ -133,7 +133,7 @@ in `lc_tare.json` is a cache the service re-derives on every capture, clear and 
 a 20 kg tank against a poor two-point fit that reads it as 18, then improve the fit until the same
 tank evaluates to 20, and a frozen 18 kg offset would display 2 kg for a tank that never moved.
 Re-deriving from the code gives 20 − 20 = 0. `test/ws_data_flow_test.ts`'s `cal_lc_tare` check
-proves this through the full stack; `diablo_server/lib/test/test_lc_tare.cpp` pins the store.
+proves this through the full stack; `star_server/lib/test/test_lc_tare.cpp` pins the store.
 
 ## Standard 21-Byte Sensor Message Layout
 
@@ -197,10 +197,10 @@ Match the sensor pattern: **`u8` at 8, then three padding bytes, then `u32` at 1
 
 If you change this layout, update **all** of the following in one change set:
 
-1. **`diablo_server/services/sequencer/SequencerService.cpp`** — `SequencerStateMsg` type and `publishState()` (e.g. `CommsMessage<u64, u8, std::array<u8,3>, u32, u8>` with explicit zero padding).
-2. **`diablo_server/lib/src/elodin/DatabaseConfig.cpp`** — `register_sequencer_vtable()`: `raw_field` offsets and lengths for `[0x50, 0x00]`.
-3. **`diablo_server/backend/src/elodin-protocol.ts`** — `parseElodinPacket()` branch for `high === 0x50 && low === 0x00`: `payload.length` minimum and `readUInt32LE` / `readUInt8` offsets.
-4. **`diablo_server/services/heartbeat/heartbeat_service_main.cpp`** (if still relevant) — any comment or parser that documents byte offsets; code that only reads **current state at payload byte 8** remains valid.
+1. **`star_server/services/sequencer/SequencerService.cpp`** — `SequencerStateMsg` type and `publishState()` (e.g. `CommsMessage<u64, u8, std::array<u8,3>, u32, u8>` with explicit zero padding).
+2. **`star_server/lib/src/elodin/DatabaseConfig.cpp`** — `register_sequencer_vtable()`: `raw_field` offsets and lengths for `[0x50, 0x00]`.
+3. **`star_server/backend/src/elodin-protocol.ts`** — `parseElodinPacket()` branch for `high === 0x50 && low === 0x00`: `payload.length` minimum and `readUInt32LE` / `readUInt8` offsets.
+4. **`star_server/services/heartbeat/heartbeat_service_main.cpp`** (if still relevant) — any comment or parser that documents byte offsets; code that only reads **current state at payload byte 8** remains valid.
 
 The relay still needs **`[0x50, 0x00]` in `SENSOR_SUBSCRIPTIONS`** in `elodin-vtable-registry.ts`; schema registration for this table is done by the **sequencer** via `DatabaseConfig::register_non_sensor_tables`, not necessarily by `registerControllerVTables()`.
 
@@ -208,7 +208,7 @@ The relay still needs **`[0x50, 0x00]` in `SENSOR_SUBSCRIPTIONS`** in `elodin-vt
 
 ### 1. C++ — DAQ Bridge Sensor Routing
 
-**`diablo_server/lib/src/routing/SensorRouter.cpp`**
+**`star_server/lib/src/routing/SensorRouter.cpp`**
 
 Add a routing function for the new type. This extracts samples from incoming UDP frames and packages them into Elodin messages with the correct VTable ID.
 
@@ -220,7 +220,7 @@ for (auto& [vtable_id, msg] : sg_msgs) {
 }
 ```
 
-**`diablo_server/lib/src/elodin/DatabaseConfig.cpp`**
+**`star_server/lib/src/elodin/DatabaseConfig.cpp`**
 
 Register the VTable schemas with Elodin so it accepts TABLE publishes:
 
@@ -237,7 +237,7 @@ for (int ch = 1; ch <= 6; ++ch) {
 
 ### 2. Relay — Register Schema AND Subscribe
 
-**`diablo_server/backend/src/elodin-vtable-registry.ts`**
+**`star_server/backend/src/elodin-vtable-registry.ts`**
 
 Two things are required in this file, and **both must be done or data will silently not flow**:
 
@@ -293,7 +293,7 @@ invariant: at least one row per channel per packet must reach the backend.
 
 ### 3. Protocol Parser — Parse the Binary Payload
 
-**`diablo_server/backend/src/elodin-protocol.ts`**
+**`star_server/backend/src/elodin-protocol.ts`**
 
 Add parsing logic in the `parseElodinPacket()` dispatcher function. Use the existing shared helpers for standard 21-byte layouts:
 
@@ -330,11 +330,11 @@ Add a `[sg_roles]` section (or similar) mapping channel IDs to names:
 "LOX_Tank_1" = 3
 ```
 
-**`diablo_server/backend/src/routes/config.ts`**
+**`star_server/backend/src/routes/config.ts`**
 
 Add a loader function (similar to `loadSensorRoleMap`) that reads the TOML section and returns a `Record<number, string>` mapping channel ID → entity name.
 
-**`diablo_server/backend/src/server.ts`**
+**`star_server/backend/src/server.ts`**
 
 Pass the new entity map to `parseElodinPacket` via the `EntityMaps` parameter.
 
@@ -352,7 +352,7 @@ As long as `parseElodinPacket` returns valid `ParsedSensorData`, the new sensor 
 
 ### 6. Frontend — Display the Data
 
-**`diablo_server/shared/types.ts`**
+**`star_server/shared/types.ts`**
 
 Add the sensor type to `SensorType` enum if needed:
 
@@ -364,7 +364,7 @@ export enum SensorType {
 }
 ```
 
-**`diablo_server/frontend/lib/store.ts`** (ALIASES)
+**`star_server/frontend/lib/store.ts`** (ALIASES)
 
 Add alias mappings if the entity names might come in different forms:
 

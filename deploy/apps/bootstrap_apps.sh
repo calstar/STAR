@@ -311,8 +311,8 @@ if [[ "$WITH_DAQ" == "1" ]]; then
     fi
 
     USE_SIM="$USE_SIM" bash scripts/build.sh                    # C++ binaries (build/bin)
-    (cd diablo_server/backend  && (npm ci || npm install))
-    (cd diablo_server/frontend && (npm ci || npm install))
+    (cd star_server/backend  && (npm ci || npm install))
+    (cd star_server/frontend && (npm ci || npm install))
     bash deploy/startup/ensure_frontend_build.sh               # frontend/dist (served on :3000)
 
     bash deploy/systemd/install_services.sh                    # units + WorkingDirectory drop-ins

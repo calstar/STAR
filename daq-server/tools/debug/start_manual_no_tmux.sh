@@ -15,7 +15,7 @@ sleep 2
 
 # 2. Start Relay
 echo "🚀 Starting Relay..."
-cd "$PROJECT/diablo_server/backend"
+cd "$PROJECT/star_server/backend"
 npm run relay > /tmp/manual_logs/relay.log 2>&1 &
 RELAY_PID=$!
 sleep 2

@@ -2,7 +2,7 @@
  * Board-scoped sensor entity names for Sensor Info and other panes.
  *
  * Elodin + thin backend emit TYPE<slot>.CH<n> (e.g. TC1.CH2, LC2.CH6), matching
- * diablo_server/backend/src/api-server.ts (buildSensorConfig) and elodin-protocol.
+ * star_server/backend/src/api-server.ts (buildSensorConfig) and elodin-protocol.
  * Generic names like TC.CH2 or LC.CH1 only work after alias setup in the store;
  * subscribing and displaying board-scoped names avoids races and broken string
  * replaces (e.g. LC2.CH1.replace('LC.', 'LC_Cal.') does nothing).

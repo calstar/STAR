@@ -104,7 +104,7 @@ by asking first.
 
 ```bash
 cd build && ctest --output-on-failure --parallel $(nproc)   # C++
-cd diablo_server/frontend && npm test && npm run lint       # TS
+cd star_server/frontend && npm test && npm run lint       # TS
 ```
 
 **`test/test_integration.sh` and `test/e2e_guitest_playwright.sh` launch the full stack and touch

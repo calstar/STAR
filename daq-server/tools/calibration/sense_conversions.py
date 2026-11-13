@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Sense conversions: K-type thermocouple, Pt100/Pt1000 RTD, load cell.
-Ported from diablo_server/frontend/lib/sense-conversions.ts (DiabloAvionics sense_testing_gui.py).
+Ported from star_server/frontend/lib/sense-conversions.ts (DiabloAvionics sense_testing_gui.py).
 
 Used by calibration_server.py as fallback when RobustCalibrationFramework has no calibration
 points, or for quick raw→physical conversion. Single source of truth for calibration service.

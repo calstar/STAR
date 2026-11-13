@@ -295,7 +295,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        {/* The DAQ console's header (diablo_server/frontend TabBar): its name with
+        {/* The DAQ console's header (star_server/frontend TabBar): its name with
             "a STAR project" under it, a hairline, then this view, underlined. */}
         <span className="brand" title="Diablo DAQ: the stand's data acquisition and control. A STAR project.">
           <span className="brand-name">Diablo DAQ</span>

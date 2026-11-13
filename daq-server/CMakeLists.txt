@@ -62,7 +62,7 @@ endif()
 # earlier never emit their add_test() registrations into CTest.
 enable_testing()
 
-add_subdirectory(diablo_server)
+add_subdirectory(star_server)
 
 if(EXISTS ${CMAKE_SOURCE_DIR}/tests)
     add_subdirectory(tests)

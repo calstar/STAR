@@ -426,7 +426,7 @@ endforeach()
 # WORKING_DIRECTORY matters here. Both tests build a real SequencerService, which resolves
 # config/config.toml and the state CSVs by trying "", "../" and "../../" from the cwd. CTest
 # otherwise runs a test from the build directory of the CMakeLists that declared it
-# (build/diablo_server/lib), which is three levels down — none of the three prefixes reach
+# (build/star_server/lib), which is three levels down — none of the three prefixes reach
 # daq-server/config from there, and init() fails. From the top of the build tree "../config/..."
 # resolves, which is also how CI invokes the other sequencer binaries.
 add_test(NAME sequencer_concurrency COMMAND test_sequencer_concurrency

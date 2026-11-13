@@ -13,7 +13,7 @@ DAQ's copy still has all 10 (checked 2026-10-08).
 
 ## How the stand reads them
 
-The DAQ's parser (`daq-server/diablo_server/backend/src/legacy/state-transitions.ts`)
+The DAQ's parser (`daq-server/star_server/backend/src/legacy/state-transitions.ts`)
 maps `row[j]` onto `headers[j-1]` and stops at the end of the row. A short row is
 therefore read **left-aligned**: it never says anything about `Emergency Abort`, and
 every cell before that lands on the column its position names.

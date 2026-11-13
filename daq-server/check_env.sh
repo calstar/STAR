@@ -117,7 +117,7 @@ CXX_STANDARD="${CXX_STANDARD:-20}"
 
 # Node.js minimum — 20 matches setup.sh, daq-server-ci.yml, and firmware-ci.yml.
 # (Was previously read from web-gui/start.sh which no longer exists; the whole
-# frontend lives under diablo_server/ now.)
+# frontend lives under star_server/ now.)
 NODE_MIN_MAJOR=20
 
 # ══ 2. SYSTEM TOOLS ═════════════════════════════════════════════════════════
@@ -251,10 +251,10 @@ printf "\n  Checking binaries:\n"
 SHLIB_EXT=".so"
 [ "$PLATFORM" = "macOS" ] && SHLIB_EXT=".dylib"
 
-# Post-diablo_server rename: executables land in build/bin/, shared libs in
+# Executables land in build/bin/, shared libs in
 # build/lib/, and the daqv2_comms static archive (from ../lib/daq-protocol) at
 # the top of build/. Kept in sync with CMakeLists targets — when a new service
-# is added under diablo_server/services/, add it here too.
+# is added under star_server/services/, add it here too.
 EXPECTED_BINS=(
     "build/bin/daq_bridge"
     "build/bin/sequencer_service"
@@ -269,12 +269,12 @@ EXPECTED_BINS=(
     "build/libdaqv2_comms.a"
 )
 
-# Source dirs for the "stale binary?" check. diablo_server/ holds every C++
+# Source dirs for the "stale binary?" check. star_server/ holds every C++
 # source under daq-server/; ../lib/daq-protocol is the wire-protocol library
 # that gets baked into libdaqv2_comms.a, so edits there also invalidate the
 # archive.
 SOURCE_DIRS=()
-[ -d "$REPO/diablo_server" ]      && SOURCE_DIRS+=("$REPO/diablo_server")
+[ -d "$REPO/star_server" ]      && SOURCE_DIRS+=("$REPO/star_server")
 [ -d "$REPO/../lib/daq-protocol" ] && SOURCE_DIRS+=("$REPO/../lib/daq-protocol")
 
 for artifact in "${EXPECTED_BINS[@]}"; do
@@ -385,10 +385,10 @@ check_node_env() {
     done
 }
 
-check_node_env "backend" "$REPO/diablo_server/backend" \
+check_node_env "backend" "$REPO/star_server/backend" \
     "ws" "tsx" "typescript" "msgpack-lite" "@iarna/toml"
 
-check_node_env "frontend" "$REPO/diablo_server/frontend" \
+check_node_env "frontend" "$REPO/star_server/frontend" \
     "next" "react" "typescript" "vitest" "uplot"
 
 # ══ 5. PYTHON ENVIRONMENT ═══════════════════════════════════════════════════

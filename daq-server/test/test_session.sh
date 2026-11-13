@@ -46,8 +46,8 @@ echo "  ✅ pipeline idle before start"
 # 4. Drive the full session lifecycle over the WebSocket.
 #    NODE_PATH → backend node_modules so the test's `ws` import resolves (the
 #    test file lives in test/, which has no node_modules — same as ws_data_flow_test).
-( cd "$DAQ_DIR/diablo_server/backend" \
-  && NODE_PATH="$DAQ_DIR/diablo_server/backend/node_modules" \
+( cd "$DAQ_DIR/star_server/backend" \
+  && NODE_PATH="$DAQ_DIR/star_server/backend/node_modules" \
      npx tsx "$DAQ_DIR/test/session_flow_test.ts" ) || fail "session_flow_test failed"
 
 # 5. Pipeline must be torn down again after the runs complete.

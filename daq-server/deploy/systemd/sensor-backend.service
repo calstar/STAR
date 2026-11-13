@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/sensor_system/diablo_server/backend
+WorkingDirectory=%h/sensor_system/star_server/backend
 ExecStart=/usr/bin/npm run dev
 Restart=always
 RestartSec=5

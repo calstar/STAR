@@ -38,7 +38,7 @@ interface StacklightState {
 
 /**
  * Mirrors stateToStacklight() in
- * daq-server/diablo_server/services/stacklight/stacklight_service_main.cpp
+ * daq-server/star_server/services/stacklight/stacklight_service_main.cpp
  * Keep these two in sync manually — no shared source of truth yet.
  */
 function sequencerStateToStacklight(state: number | null): StacklightState {

@@ -12,7 +12,7 @@ Runs on push / PR / manual dispatch. Jobs include:
 1. **Code Formatting Check** — runs `./format.sh --check` from the repo root
    (clang-format 19 for C++; `black --check` for Python).
 2. **Web GUI** — `npm run test` (Vitest) and `npm run test:build` (Next.js
-   build) in `daq-server/diablo_server/frontend`.
+   build) in `daq-server/star_server/frontend`.
 3. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
    12's libstdc++ (`--gcc-install-dir`) to avoid libstdc++ 14 + C++20
    `<format>`/`<chrono>` breakage.

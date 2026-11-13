@@ -88,7 +88,7 @@ Boards
 
 ## Packet IDs Reference
 
-The authoritative mapping lives in `diablo_server/backend/src/elodin-protocol.ts`.
+The authoritative mapping lives in `star_server/backend/src/elodin-protocol.ts`.
 The high byte selects the sensor family; the low byte encodes the board and
 channel: `low = (board-1)*0x20 + channel` (raw) or `+0x10` (calibrated), where
 `board = board_id % 10`.

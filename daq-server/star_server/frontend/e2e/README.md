@@ -5,7 +5,7 @@
 If Chromium fails to launch with missing `.so` libraries (e.g. `libnspr4.so`), install Playwright’s OS deps from the frontend directory:
 
 ```bash
-cd diablo_server/frontend
+cd star_server/frontend
 sudo npx playwright install-deps chromium
 ```
 
@@ -20,7 +20,7 @@ Since the Vite migration the frontend derives API/WS URLs from `window.location`
 ## Run locally
 
 1. Start the full stack (e.g. `./dev.sh --sim`, alias `daq-guitest`) — the backend serves the built GUI on :3000.
-2. From repo root: `bash test/e2e_sensor_info.sh`, **or** `npm run test:e2e` in `diablo_server/frontend` against the running stack.
+2. From repo root: `bash test/e2e_sensor_info.sh`, **or** `npm run test:e2e` in `star_server/frontend` against the running stack.
 
 ### One-shot: sim stack + Playwright + stop
 

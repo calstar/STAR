@@ -1,5 +1,5 @@
 /**
- * Copied from the DAQ (diablo_server/frontend/components/plots/PressureBar.tsx).
+ * Copied from the DAQ (star_server/frontend/components/plots/PressureBar.tsx).
  *
  * Verbatim in every part that decides what an operator sees: the non-linear
  * scale, where the NOP and MEOP lines sit, the thresholds at which the bar

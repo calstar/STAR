@@ -39,7 +39,7 @@ recorded at the bottom with *how*, rather than silently dropped, so a future aud
 **Files:** `firmware/Hotfire_Code/common/hotfire_config.h:33-34`,
 `firmware/Hotfire_Code/Actuator_Hotfire/src/main.cpp:838,959,975-978`,
 `firmware/Hotfire_Code/common/SensorHotfireCore.h:251-258`,
-`diablo_server/services/sequencer/AbortBroadcaster.cpp:165`
+`star_server/services/sequencer/AbortBroadcaster.cpp:165`
 
 **No board acts on `ABORT` (packet type 7).** Sensor boards do not decode it at all — their
 handler covers only `CLEAR_ABORT` (9) and `NO_CONNECTION_ABORT` (11). The actuator board decodes
@@ -73,7 +73,7 @@ of a packet with no consumer.
 > That is fixed (see Resolved), so the table below is live code for the first time.
 
 
-**File:** `diablo_server/services/heartbeat/heartbeat_service_main.cpp:54-87`
+**File:** `star_server/services/heartbeat/heartbeat_service_main.cpp:54-87`
 
 `stateToEngine()` is a literal `switch` over the *compiled* `sequencer::State` numbering
 (`case 16: return 3; // FIRE → FIRING`), and the heartbeat service is the only consumer of
@@ -101,7 +101,7 @@ states it maps.
 
 ### Backend — WebSocket commands are still parsed as `any`
 
-**File:** `diablo_server/backend/src/server.ts:891` (`handleMessage(ws, message: any)`)
+**File:** `star_server/backend/src/server.ts:891` (`handleMessage(ws, message: any)`)
 
 Real gates have been added since this was first written — `CONTROL_COMMAND_TYPES` requires
 an armed operator connection (`server.ts:934`), and `state_transition` now rejects ids the
@@ -121,7 +121,7 @@ validator is about thirty lines — either is fine; validating before dispatch i
 
 ### Frontend — No error boundaries anywhere in the app
 
-**Files:** `diablo_server/frontend/src/App.tsx`, `diablo_server/frontend/src/main.tsx`
+**Files:** `star_server/frontend/src/App.tsx`, `star_server/frontend/src/main.tsx`
 
 The app moved from Next.js to Vite + React Router since this item was written, but the gap
 is unchanged: `main.tsx` renders `<BrowserRouter><App /></BrowserRouter>` with no boundary
@@ -154,7 +154,7 @@ code with it. Keep `console.error`.
 
 ### Backend — The resolved config path is never logged
 
-**File:** `diablo_server/backend/src/routes/config.ts:19-81` (`getConfigPath`)
+**File:** `star_server/backend/src/routes/config.ts:19-81` (`getConfigPath`)
 
 The loader tries three candidate paths in a `try`/`continue` loop and returns the first that
 reads. Nothing is logged on success and nothing is logged for the attempts that failed. The
@@ -169,7 +169,7 @@ candidate. Cheap, and it turns "the sensors are all wrong" into a one-line diagn
 
 ### C++ — `config_broadcast` silently truncates at 255 entries
 
-**File:** `diablo_server/services/config_broadcast/config_broadcast_service_main.cpp:336-337`
+**File:** `star_server/services/config_broadcast/config_broadcast_service_main.cpp:336-337`
 
 ```cpp
 size_t N = std::min(abort_actuators.size(), size_t(255));
@@ -187,8 +187,8 @@ consequence, refusing to broadcast a truncated ACTUATOR_CONFIG is defensible too
 
 ### Tests — `test_imu_calibration` is never built
 
-**Files:** `diablo_server/lib/CMakeLists.txt`,
-`diablo_server/lib/test/test_imu_calibration.cpp`
+**Files:** `star_server/lib/CMakeLists.txt`,
+`star_server/lib/test/test_imu_calibration.cpp`
 
 `test_imu_calibration.cpp` has no `add_executable` at all — it is not compiled, so it can
 silently rot out of sync with the code it tests. (`test_robust_ddp`, which had the related
@@ -203,7 +203,7 @@ file, because it reads like coverage.
 
 ### Sensor Info — dual ADC columns (cal + raw) for debugging
 
-**File:** `diablo_server/frontend/app/sensor-info/page.tsx`
+**File:** `star_server/frontend/app/sensor-info/page.tsx`
 
 Still open, and the groundwork is in place: `rawEntity` is already carried on the sensor
 descriptor (`page.tsx:33`, populated at `page.tsx:451-454`) but nothing renders it. Every row
@@ -224,7 +224,7 @@ should be identical integers).
 
 ### C++ — `ElodinClient::send_msg` logs on every send
 
-**File:** `diablo_server/lib/src/elodin/ElodinClient.cpp:275`
+**File:** `star_server/lib/src/elodin/ElodinClient.cpp:275`
 
 `std::cout << "[ElodinClient] ✅ Sent registration message #" << send_count …` runs on every
 `send_msg`, not only on registration, with a function-local `static size_t` counter that is
@@ -353,7 +353,7 @@ sanitized (zero reports across every service log) and unsanitized (246 checks).
 - **Reinstating either is a real piece of work, not a revert.** clang-tidy needs
   `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` on the configure step, `compile_commands.json` shipped with
   the build artifacts (or the step moved into the build job), a checked-in `.clang-tidy`, and a full
-  run over `diablo_server/services` and `diablo_server/lib/src` before anyone knows what gating
+  run over `star_server/services` and `star_server/lib/src` before anyone knows what gating
   costs. The ASan/UBSan entry then under High was the better place to spend that effort, and two days
   later it was — see the entry above; it catches things no linter can, and the TSan job was already
   the template.

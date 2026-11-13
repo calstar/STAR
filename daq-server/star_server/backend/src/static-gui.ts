@@ -67,7 +67,7 @@ export function startGuiStaticServer(port: number, distDir = defaultDistDir()): 
       filePath = path.join(distDir, 'index.html');
       if (!fs.existsSync(filePath)) {
         res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end('<h1>Frontend not built</h1><p>Run <code>npm run build</code> in <code>diablo_server/frontend</code> (launch scripts do this automatically).</p>');
+        res.end('<h1>Frontend not built</h1><p>Run <code>npm run build</code> in <code>star_server/frontend</code> (launch scripts do this automatically).</p>');
         return;
       }
     }
