@@ -39,3 +39,29 @@ pio test -e native                    # switch relay logic, on the host
 
 The relay's logic is `lib/SwitchRelay` (no BLE, no network; host-tested). `src/switch_link.cpp`
 is the NimBLE central around it, in its own task so a blocking connect never stalls Ethernet.
+
+## Bench acceptance (before the pad)
+
+Run with this board and at least two switches, with a phone on the switch web page as well. Check
+every step against the switch's own LED and console (`status`), not only the DAQ. Record the date,
+the boards' firmware hashes (Boards page; the switch console prints its own) and anything that
+failed.
+
+Setup: fill `[switch_roles.*]` with the switches' MACs (or bind them with **Find switches**), set
+`[switch_service] enabled = true`, deploy, and start `sensor-switch`.
+
+| # | Do | Expect |
+|---|---|---|
+| 1 | Open the Switches page | One card per switch, Connected, DISARMED, signal in dBm |
+| 2 | Unlock control, Arm one, confirm | "Arming…" for up to ~2 s, then ARMED and "Armed: output live"; switch LED red |
+| 3 | Disarm it | DISARMED; LED back to green blips |
+| 4 | Arm one, then stop the DAQ (`sensor-switch`, then `sensor-daq`), then pull the env board's Ethernet | The switch stays armed (LED, console). Nothing changes on any switch |
+| 5 | Reconnect, restart; power-cycle the env board with a switch armed | Links come back within seconds; the card says ARMED; the switch never disarmed |
+| 6 | Power-cycle one switch | Its card goes Not connected, then reconnects DISARMED; the others don't flicker |
+| 7 | Phone on the web page connected while the DAQ arms/disarms | Both show the same state |
+| 8 | Walk a switch out of range | Card shows the lost link within ~6 s; Arm is disabled; a command sent anyway answers "not connected" |
+| 9 | Switches on battery (no USB: light sleep) | Commands still land, within ~2 s |
+| 10 | Unbound switch powered nearby, **Find switches** | It's listed with its MAC; nothing connects to it |
+| 11 | Lock control (or a non-operator account) | Arm/Disarm disabled; the backend refuses a forced command |
+
+Steps 4 and 5 are the "never on its own" promise; they can only be shown on hardware.
