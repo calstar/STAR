@@ -262,4 +262,5 @@ video/recordings/
 
 # Generated, never committed
 build-clang-ci/
+build-ci/
 star_server/backend/dist/
